@@ -1,0 +1,492 @@
+.app-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(circle at top, #162535 0%, #0d1014 65%);
+}
+
+.project-tabbar {
+  height: 40px;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 8px;
+  background: linear-gradient(90deg, #0a2434 0%, #1a1f3b 70%);
+  border-bottom: 1px solid rgba(148, 168, 196, 0.2);
+  -webkit-app-region: drag;
+  font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.project-tabbar-list {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.app-shell--macos .project-tabbar {
+  padding-left: 84px;
+}
+
+.project-tab {
+  display: flex;
+  align-items: center;
+  border-top: 0;
+  border-right: 1px solid transparent;
+  border-left: 1px solid transparent;
+  border-radius: 8px;
+  background-color: transparent;
+  color: #9aadc5;
+  height: 100%;
+  -webkit-app-region: no-drag;
+  cursor: grab;
+  user-select: none;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.project-tab--dragging {
+  cursor: grabbing;
+  z-index: 10;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+  transition: none !important;
+}
+
+.project-tab:hover {
+  color: #c4d5e9;
+}
+
+.project-tab:not(.project-tab--active):hover {
+  background-color: rgba(129, 163, 190, 0.14);
+}
+
+.project-tab--active {
+  background-color: #08172a;
+  border-right-color: rgba(129, 151, 182, 0.16);
+  border-left-color: rgba(129, 151, 182, 0.1);
+  color: #e1edf9;
+}
+
+.project-tab-main {
+  color: inherit;
+  height: 100%;
+  min-width: 0;
+  padding: 0 10px 0 13px;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: inherit;
+}
+
+.workspace .dv-tabs-and-actions-container,
+.workspace .dv-tab,
+.workspace .dv-default-tab,
+.workspace .dv-default-tab-content {
+  font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.workspace .dv-tab {
+  padding: 0 !important;
+  border: 0 !important;
+  margin: 0 !important;
+  background: transparent !important;
+}
+
+.workspace .dv-tab-content {
+  height: 100% !important;
+  width: 100% !important;
+}
+
+.project-tab-emoji {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.project-tab-title {
+  white-space: nowrap;
+}
+
+.project-tab-close {
+  appearance: none;
+  border: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  margin-right: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 19px;
+  line-height: 1;
+  padding: 0;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.project-tab--active .project-tab-close {
+  opacity: 1;
+}
+
+.project-tab:hover .project-tab-close {
+  opacity: 1;
+}
+
+.project-tab-close:hover:not(:disabled) {
+  background-color: rgba(133, 155, 181, 0.2);
+}
+
+.project-tab-close:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.project-tab-add {
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #8ea3b8;
+  width: 26px;
+  height: 26px;
+  margin: 0 2px 0 0;
+  padding: 0;
+  font-size: 21px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  align-self: center;
+  -webkit-app-region: no-drag;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.project-tab-add:hover {
+  background: rgba(129, 163, 190, 0.14);
+  color: #c4d5e9;
+}
+
+.project-tab-add:active {
+  background: rgba(129, 163, 190, 0.22);
+}
+
+.project-edit-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(4, 10, 18, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.project-edit-modal {
+  width: min(420px, 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(117, 142, 170, 0.38);
+  background: #0f1823;
+  color: #d8e6f5;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+}
+
+.project-edit-modal h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.project-edit-modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #a8bdd5;
+}
+
+.project-edit-modal input[type='text'] {
+  appearance: none;
+  border: 1px solid rgba(134, 159, 188, 0.32);
+  border-radius: 8px;
+  background: #0b121b;
+  color: #e1edf9;
+  padding: 9px 10px;
+  font-family: inherit;
+  font-size: 15px;
+}
+
+.project-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-name-row input[type='text'] {
+  flex: 1;
+}
+
+.emoji-picker-field {
+  position: relative;
+}
+
+.emoji-picker-trigger {
+  width: 40px;
+  height: 40px;
+  appearance: none;
+  border: 1px solid rgba(134, 159, 188, 0.32);
+  border-radius: 8px;
+  background: #0b121b;
+  color: #e1edf9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font: inherit;
+}
+
+.emoji-picker-trigger span:first-child {
+  font-size: 19px;
+  line-height: 1;
+}
+
+.emoji-picker-popover {
+  position: absolute;
+  z-index: 40;
+  top: 0;
+  left: calc(100% + 8px);
+}
+
+.project-edit-modal input[type='color'] {
+  width: 52px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(134, 159, 188, 0.32);
+  border-radius: 8px;
+  background: #0b121b;
+}
+
+.project-edit-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-top: 2px solid transparent;
+  border-right: 1px solid rgba(129, 151, 182, 0.18);
+  border-radius: 8px;
+  background: rgba(9, 15, 26, 0.75);
+  color: #dce9f6;
+  padding: 0 12px;
+}
+
+.project-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.project-edit-actions button {
+  appearance: none;
+  border: 1px solid rgba(134, 159, 188, 0.32);
+  border-radius: 8px;
+  background: #122237;
+  color: #dce9f6;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.project-edit-actions button[type='submit'] {
+  background: #19416c;
+  border-color: #2b5988;
+}
+
+.workspace-stack {
+  min-height: 0;
+  flex: 1;
+  position: relative;
+}
+
+.project-workspace {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.project-workspace--active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.error-banner {
+  padding: 0.5rem 0.75rem;
+  color: #ffd3d3;
+  background: #52222d;
+  border-bottom: 1px solid #712a39;
+  font-size: 12px;
+}
+
+.workspace {
+  min-height: 0;
+  flex: 1;
+}
+
+.project-workspace--macos .workspace .dv-groupview > .dv-tabs-and-actions-container .dv-void-container {
+  -webkit-app-region: no-drag;
+}
+
+.project-workspace--macos .workspace .dv-groupview > .dv-tabs-and-actions-container .dv-tab,
+.project-workspace--macos
+  .workspace
+  .dv-groupview
+  > .dv-tabs-and-actions-container
+  .termide-add-tab-button,
+.project-workspace--macos .workspace .dv-groupview > .dv-tabs-and-actions-container button {
+  -webkit-app-region: no-drag;
+}
+
+.termide-add-tab-button {
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  margin: 0 10px 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #8ea3b8;
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.termide-add-tab-button:hover {
+  background: rgba(129, 163, 190, 0.14);
+  border-color: rgba(121, 151, 176, 0.28);
+  color: #c4d9ea;
+}
+
+.termide-add-tab-button:active {
+  background: rgba(129, 163, 190, 0.2);
+  border-color: rgba(121, 151, 176, 0.4);
+}
+
+.dv-void-container .termide-add-tab-button {
+  align-self: center;
+}
+
+.terminal-panel {
+  width: 100%;
+  height: 100%;
+  padding: 6px;
+  background: #111316;
+}
+
+.terminal-panel .xterm {
+  height: 100%;
+}
+
+.terminal-tab-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 12px;
+  min-width: 0;
+  box-sizing: border-box;
+  border-right: 1px solid rgba(0, 0, 0, 0.2);
+  transition: opacity 0.1s ease, background-color 0.1s ease;
+  opacity: 0.5;
+  border-bottom: 2px solid transparent;
+}
+
+/* Focused tab: full opacity and colored border */
+.workspace .dv-active-tab .terminal-tab-content {
+  opacity: 1;
+  color: #fff;
+}
+
+.workspace .dv-active-tab .terminal-tab-content[data-has-color="true"] {
+  border-bottom-color: var(--tab-color);
+}
+
+/* Subtle hover feedback for inactive tabs */
+.terminal-tab-content:hover:not(.workspace .dv-active-tab .terminal-tab-content) {
+  opacity: 0.8;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.workspace .dv-active-tab .terminal-tab-content:hover {
+  opacity: 1;
+}
+
+.terminal-tab-emoji {
+  font-size: 14px;
+}
+
+.terminal-tab-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-tab-close {
+  appearance: none;
+  border: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  margin-left: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.terminal-tab-content:hover .terminal-tab-close {
+  opacity: 1;
+}
+
+.terminal-tab-close:hover {
+  background-color: rgba(133, 155, 181, 0.2);
+}

@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+
+# Build output
+/dist/
+/dist-ssr/
+/dist-electron/
+/release/
+/out/
+/build/
+
+# Logs
+logs/
+*.log
+*.pid
+*.pid.lock
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test/coverage
+coverage/
+.nyc_output/
+
+# Caches and temp
+.cache/
+.vite/
+.eslintcache
+*.tsbuildinfo
+/tmp/
+/temp/
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+*.local
+.envrc
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
