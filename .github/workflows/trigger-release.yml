@@ -1,0 +1,180 @@
+name: Trigger Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: trigger-release
+  cancel-in-progress: false
+
+jobs:
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run smoke checks
+        run: npm run smoke
+
+      - name: Validate release configuration
+        run: npm run test:release-config
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: smoke-test
+    outputs:
+      tag: ${{ steps.release_tag.outputs.tag }}
+      no_release: ${{ steps.release_tag.outputs.no_release }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create semantic release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run release
+
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          TAG=$(git tag --points-at HEAD | tail -n 1)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ -z "$TAG" ]; then
+            echo "no_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate AI release notes
+        if: steps.release_tag.outputs.no_release != 'true'
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: node scripts/generate-release-notes.mjs "${{ steps.release_tag.outputs.tag }}"
+
+      - name: Upload release notes artifact
+        if: steps.release_tag.outputs.no_release != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: RELEASE.md
+          if-no-files-found: error
+
+  build-binaries:
+    name: Build ${{ matrix.label }} Binary
+    runs-on: ${{ matrix.os }}
+    needs: release
+    if: needs.release.outputs.no_release != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macOS
+            script: npm run build:mac
+            pattern: release/**/*.dmg
+          - os: ubuntu-latest
+            label: Linux
+            script: npm run build:linux
+            pattern: release/**/*.AppImage
+
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync package version to release tag
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: npm version "${TAG#v}" --no-git-tag-version
+
+      - name: Build packaged app
+        run: ${{ matrix.script }}
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }} binary
+          path: ${{ matrix.pattern }}
+          if-no-files-found: error
+
+      - name: Attach binary to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+          ASSET_PATTERN: ${{ matrix.pattern }}
+        run: |
+          for file in $ASSET_PATTERN; do
+            gh release upload "$TAG" "$file" --repo "$GH_REPO" --clobber
+          done
+
+  publish-release-notes:
+    name: Publish Release Notes
+    runs-on: ubuntu-latest
+    needs: [release, build-binaries]
+    if: needs.release.outputs.no_release != 'true'
+
+    steps:
+      - name: Download release notes artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+
+      - name: Append release asset summary
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          cat <<EOF >> RELEASE.md
+
+          ## Release Assets
+
+          - macOS installer: https://github.com/${REPOSITORY}/releases/download/${TAG}/Termide-Mac-${TAG#v}-Installer.dmg
+          - Linux AppImage: https://github.com/${REPOSITORY}/releases/download/${TAG}/Termide-Linux-${TAG#v}.AppImage
+          EOF
+
+      - name: Update GitHub release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: gh release edit "$TAG" --repo "$GH_REPO" --notes-file RELEASE.md
