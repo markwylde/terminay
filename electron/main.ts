@@ -350,7 +350,7 @@ function setDockIcon(): void {
     return
   }
 
-  app.dock.setIcon(icon)
+  app.dock?.setIcon(icon)
 }
 
 ipcMain.handle('terminal:create', (event) => {
