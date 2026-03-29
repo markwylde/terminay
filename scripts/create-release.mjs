@@ -1,7 +1,5 @@
 import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
-import { resolve } from 'node:path'
 import { getNextVersion } from './release-utils.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -13,14 +11,6 @@ async function run(command, args) {
   })
 
   return stdout.trim()
-}
-
-async function getCurrentVersion() {
-  const packageJson = JSON.parse(
-    await readFile(resolve(process.cwd(), 'package.json'), 'utf8'),
-  )
-
-  return packageJson.version
 }
 
 async function getLatestTag() {
@@ -91,11 +81,9 @@ async function createGitHubRelease(tag) {
   throw new Error(`Failed to create GitHub release for ${tag}: ${error}`)
 }
 
-const currentVersion = await getCurrentVersion()
 const latestTag = await getLatestTag()
 const commitMessages = await getCommitMessages(latestTag)
 const nextVersion = getNextVersion({
-  currentVersion,
   latestTag,
   messages: commitMessages,
 })

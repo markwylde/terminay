@@ -33,13 +33,22 @@ test('bumps versions from an existing tag', () => {
   assert.equal(incrementVersion('1.2.3', 'major'), '2.0.0')
 })
 
-test('uses package version for the first release when no tag exists', () => {
+test('derives the first release from a 0.0.0 baseline when no tag exists', () => {
   assert.equal(
     getNextVersion({
-      currentVersion: '0.1.0',
       latestTag: null,
       messages: ['feat: initial release'],
     }),
     '0.1.0',
+  )
+})
+
+test('derives a patch first release from a 0.0.0 baseline', () => {
+  assert.equal(
+    getNextVersion({
+      latestTag: null,
+      messages: ['chore: initial release plumbing'],
+    }),
+    '0.0.1',
   )
 })

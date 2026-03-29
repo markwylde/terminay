@@ -124,7 +124,16 @@ jobs:
       - name: Sync package version to release tag
         env:
           TAG: ${{ needs.release.outputs.tag }}
-        run: npm version "${TAG#v}" --no-git-tag-version
+        run: |
+          TARGET_VERSION="${TAG#v}"
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+
+          if [ "$CURRENT_VERSION" = "$TARGET_VERSION" ]; then
+            echo "package.json already uses version $TARGET_VERSION"
+            exit 0
+          fi
+
+          npm version "$TARGET_VERSION" --no-git-tag-version
 
       - name: Build packaged app
         run: ${{ matrix.script }}

@@ -2,7 +2,7 @@
   "name": "termide",
   "productName": "Termide",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "A desktop terminal workspace built with Electron, React, and Vite.",
   "author": "Mark Wylde",
   "license": "MIT",
