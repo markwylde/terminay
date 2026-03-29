@@ -353,6 +353,11 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
 
         const onDblClick = (event: MouseEvent) => {
           const target = event.target as HTMLElement | null
+          const headerContainer = target?.closest('.dv-tabs-and-actions-container')
+          if (!headerContainer) {
+            return
+          }
+
           const isAddButtonClick = !!target?.closest('.termide-add-tab-button')
           if (isAddButtonClick) {
             return
@@ -718,11 +723,17 @@ function App() {
 
   const closeProject = useCallback(
     (projectId: string) => {
-      setProjects((current) => {
-        if (current.length <= 1) {
-          return current
+      const isLastProject = projects.length === 1 && projects[0]?.id === projectId
+      if (isLastProject) {
+        if (editingProjectId === projectId) {
+          closeEditModal()
         }
 
+        void window.termide.quitApp()
+        return
+      }
+
+      setProjects((current) => {
         const index = current.findIndex((project) => project.id === projectId)
         if (index === -1) {
           return current
@@ -741,7 +752,7 @@ function App() {
         return next
       })
     },
-    [activeProjectId, closeEditModal, editingProjectId],
+    [activeProjectId, closeEditModal, editingProjectId, projects],
   )
 
   const onReorder = (newOrder: ProjectTab[]) => {
@@ -885,9 +896,8 @@ function App() {
                     event.stopPropagation()
                     closeProject(project.id)
                   }}
-                  disabled={projects.length <= 1}
                   aria-label={`Close ${project.title}`}
-                  title={projects.length <= 1 ? 'At least one project tab is required' : 'Close tab'}
+                  title={projects.length <= 1 ? 'Close tab and exit app' : 'Close tab'}
                 >
                   <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M9 3L3 9M3 3L9 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>

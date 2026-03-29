@@ -504,6 +504,10 @@ ipcMain.handle('settings:reset-terminal', () => {
   return settings
 })
 
+ipcMain.handle('app:quit', () => {
+  app.quit()
+})
+
 app.on('web-contents-created', (_event, contents) => {
   contents.once('destroyed', () => {
     killSessionsForWebContents(contents.id)

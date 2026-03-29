@@ -20,6 +20,7 @@ export type SettingsChangeMessage = {
 }
 
 export interface TermideApi {
+  quitApp: () => Promise<void>
   createTerminal: () => Promise<{ id: string }>
   writeTerminal: (id: string, data: string) => void
   resizeTerminal: (id: string, cols: number, rows: number) => void

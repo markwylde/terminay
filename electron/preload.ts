@@ -23,6 +23,7 @@ type SettingsChangeMessage = {
 }
 
 const termideApi = {
+  quitApp: () => ipcRenderer.invoke('app:quit') as Promise<void>,
   createTerminal: () => ipcRenderer.invoke('terminal:create') as Promise<{ id: string }>,
   writeTerminal: (id: string, data: string) => ipcRenderer.send('terminal:write', { id, data }),
   resizeTerminal: (id: string, cols: number, rows: number) =>
