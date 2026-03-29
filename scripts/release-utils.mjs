@@ -67,7 +67,9 @@ export function getReleaseType(messages) {
   return level
 }
 
-export function getNextVersion({ currentVersion, latestTag, messages }) {
+const INITIAL_VERSION = '0.0.0'
+
+export function getNextVersion({ latestTag, messages }) {
   const releaseType = getReleaseType(messages)
 
   if (!releaseType) {
@@ -75,7 +77,7 @@ export function getNextVersion({ currentVersion, latestTag, messages }) {
   }
 
   if (!latestTag) {
-    return currentVersion
+    return incrementVersion(INITIAL_VERSION, releaseType)
   }
 
   return incrementVersion(latestTag.replace(/^v/, ''), releaseType)
