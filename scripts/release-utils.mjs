@@ -1,18 +1,6 @@
 const BREAKING_CHANGE_PATTERN = /(^|\n)BREAKING CHANGE:/m
 const CONVENTIONAL_COMMIT_PATTERN = /^(?<type>[a-z]+)(\([^)]+\))?(?<breaking>!)?:\s.+$/i
 
-const PATCH_TYPES = new Set([
-  'build',
-  'chore',
-  'ci',
-  'docs',
-  'fix',
-  'perf',
-  'refactor',
-  'revert',
-  'style',
-  'test',
-])
 
 function parseVersion(version) {
   const match = /^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$/.exec(version)
@@ -73,7 +61,6 @@ export function getReleaseType(messages) {
 
     if (type === 'feat') {
       level = 'minor'
-      continue
     }
   }
 

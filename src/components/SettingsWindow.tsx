@@ -217,7 +217,9 @@ export function SettingsWindow() {
       },
     )
 
-    sectionElements.forEach((element) => observer.observe(element))
+    sectionElements.forEach((element) => {
+      observer.observe(element)
+    })
 
     return () => {
       observer.disconnect()
