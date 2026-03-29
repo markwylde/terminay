@@ -12,16 +12,6 @@ Termide is a desktop terminal workspace built with Electron, React, and Vite. It
 - Pop active panels into separate windows
 - Rename tabs and give them colors or emoji markers
 
-## Stack
-
-- Electron
-- React
-- Vite
-- TypeScript
-- xterm.js
-- node-pty
-- dockview
-
 ## Getting started
 
 ### Prerequisites
@@ -60,26 +50,3 @@ Platform-specific packaging is also available:
 npm run build:mac
 npm run build:linux
 ```
-
-## Continuous integration
-
-GitHub Actions is configured to:
-
-- run linting and a production build smoke test on every pull request
-- provide a manual `Trigger Release` workflow that creates a release tag and GitHub release
-- build macOS and Linux binaries for that release and attach them to GitHub Releases
-
-The `Trigger Release` workflow expects an `OPENROUTER_API_KEY` repository secret so the AI release-notes step can run.
-
-## Repository layout
-
-```text
-electron/           Electron main and preload processes
-src/                React renderer application
-public/             Icons and static assets
-.github/workflows/  CI and build automation
-```
-
-## License
-
-[MIT](./LICENSE)
