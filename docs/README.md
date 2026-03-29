@@ -7,10 +7,10 @@ This is the documentation and landing page for Termide, built with Astro.
 To add screenshots to the landing page:
 
 1. Add landscape-oriented PNG images to `/public/screenshots/` folder
-2. Name them sequentially: `1.png`, `2.png`, `3.png`, etc.
-3. The site will automatically detect and display them
+2. Name them clearly, such as `screenshot1.png`, `screenshot2.png`, `screenshot3.png`, and `screenshot4.png`
+3. Update the `screenshots` array in `/src/pages/index.astro` if you add or rename files
 
-The hero section will use the first screenshot (`1.png`) as the main hero image.
+The hero section uses the first screenshot in the array as the main hero image.
 
 ## Development
 
