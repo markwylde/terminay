@@ -26,7 +26,7 @@ Termide is a desktop terminal workspace built with Electron, React, and Vite. It
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 24+
 - npm 10+
 - macOS or Linux for the packaged binaries in CI
 
@@ -66,7 +66,7 @@ npm run build:linux
 GitHub Actions is configured to:
 
 - run linting and a production build smoke test on every pull request
-- provide a manual `Trigger Release` workflow that creates a semantic release
+- provide a manual `Trigger Release` workflow that creates a release tag and GitHub release
 - build macOS and Linux binaries for that release and attach them to GitHub Releases
 
 The `Trigger Release` workflow expects an `OPENROUTER_API_KEY` repository secret so the AI release-notes step can run.

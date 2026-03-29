@@ -3,8 +3,10 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { chmodSync, existsSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { IPty } from 'node-pty'
+import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
+import type { TerminalSettings } from '../src/types/settings'
 
 const require = createRequire(import.meta.url)
 const pty = require('node-pty') as typeof import('node-pty')
@@ -50,6 +52,46 @@ interface TerminalSession {
 }
 
 const terminalSessions = new Map<string, TerminalSession>()
+let settingsWindow: BrowserWindow | null = null
+
+function getTerminalSettingsPath(): string {
+  return path.join(app.getPath('userData'), 'terminal-settings.json')
+}
+
+function readTerminalSettings(): TerminalSettings {
+  const settingsPath = getTerminalSettingsPath()
+
+  try {
+    if (!existsSync(settingsPath)) {
+      return defaultTerminalSettings
+    }
+
+    const fileContents = readFileSync(settingsPath, 'utf8')
+    return normalizeTerminalSettings(JSON.parse(fileContents))
+  } catch {
+    return defaultTerminalSettings
+  }
+}
+
+function writeTerminalSettings(settings: TerminalSettings): TerminalSettings {
+  const normalized = normalizeTerminalSettings(settings)
+  const settingsPath = getTerminalSettingsPath()
+
+  mkdirSync(path.dirname(settingsPath), { recursive: true })
+  writeFileSync(settingsPath, JSON.stringify(normalized, null, 2))
+  return normalized
+}
+
+function broadcastTerminalSettings(settings: TerminalSettings): void {
+  const payload = { settings }
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) {
+      continue
+    }
+
+    window.webContents.send('settings:terminal-changed', payload)
+  }
+}
 
 function ensureNodePtySpawnHelperIsExecutable(): void {
   if (process.platform === 'win32') {
@@ -209,6 +251,14 @@ function createAppMenu(): void {
           type: 'separator',
         },
         {
+          label: 'Settings',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => openSettingsWindow(),
+        },
+        {
+          type: 'separator',
+        },
+        {
           label: 'Close Terminal',
           accelerator: 'CmdOrCtrl+W',
           click: () => sendCommandToFocusedWindow('close-active'),
@@ -334,6 +384,44 @@ function createWindow() {
   }
 }
 
+function openSettingsWindow(): void {
+  const preloadPath = path.join(__dirname, 'preload.mjs')
+  const windowIconPath = getBrandAssetPath('termide.png') ?? getBrandAssetPath('termide.svg') ?? undefined
+
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus()
+    return
+  }
+
+  settingsWindow = new BrowserWindow({
+    icon: windowIconPath,
+    width: 1320,
+    height: 860,
+    minWidth: 980,
+    minHeight: 700,
+    title: 'Termide Settings',
+    autoHideMenuBar: true,
+    backgroundColor: '#0d1117',
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+
+  settingsWindow.on('closed', () => {
+    settingsWindow = null
+  })
+
+  if (VITE_DEV_SERVER_URL) {
+    settingsWindow.loadURL(`${VITE_DEV_SERVER_URL}?view=settings`)
+  } else {
+    settingsWindow.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+      query: { view: 'settings' },
+    })
+  }
+}
+
 function setDockIcon(): void {
   if (process.platform !== 'darwin') {
     return
@@ -398,6 +486,22 @@ ipcMain.on('terminal:resize', (_event, payload: { id: string; cols: number; rows
 
 ipcMain.on('terminal:kill', (_event, payload: { id: string }) => {
   killSession(payload.id)
+})
+
+ipcMain.handle('settings:get-terminal', () => {
+  return readTerminalSettings()
+})
+
+ipcMain.handle('settings:update-terminal', (_event, payload: TerminalSettings) => {
+  const settings = writeTerminalSettings(payload)
+  broadcastTerminalSettings(settings)
+  return settings
+})
+
+ipcMain.handle('settings:reset-terminal', () => {
+  const settings = writeTerminalSettings(defaultTerminalSettings)
+  broadcastTerminalSettings(settings)
+  return settings
 })
 
 app.on('web-contents-created', (_event, contents) => {

@@ -1,0 +1,451 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+
+<Layout title="Documentation - Termide">
+  <div class="docs-container">
+    <aside class="docs-sidebar">
+      <nav class="docs-nav">
+        <h3>Documentation</h3>
+        <ul>
+          <li><a href="#installation">Installation</a></li>
+          <li><a href="#getting-started">Getting Started</a></li>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#keyboard-shortcuts">Keyboard Shortcuts</a></li>
+          <li><a href="#configuration">Configuration</a></li>
+          <li><a href="#development">Development</a></li>
+        </ul>
+      </nav>
+    </aside>
+    
+    <main class="docs-content">
+      <h1 class="docs-title">Documentation</h1>
+      
+      <section id="installation" class="docs-section">
+        <h2>Installation</h2>
+        
+        <h3>Prerequisites</h3>
+        <ul>
+          <li>macOS or Linux</li>
+          <li>Node.js 24+ (for development)</li>
+          <li>npm 10+ (for development)</li>
+        </ul>
+
+        <h3>Download Pre-built Binaries</h3>
+        <p>
+          The easiest way to get started is to download the latest release from 
+          <a href="https://github.com/markwylde/termide/releases">GitHub Releases</a>.
+        </p>
+        <p>Available for:</p>
+        <ul>
+          <li>macOS (Apple Silicon)</li>
+          <li>macOS (Intel)</li>
+          <li>Linux (AppImage)</li>
+        </ul>
+
+        <h3>Build from Source</h3>
+        <p>If you prefer to build from source:</p>
+        <pre><code># Clone the repository
+git clone https://github.com/markwylde/termide.git
+cd termide
+
+# Install dependencies
+npm ci
+
+# Start development mode
+npm run dev
+
+# Build for production
+npm run build</code></pre>
+      </section>
+
+      <section id="getting-started" class="docs-section">
+        <h2>Getting Started</h2>
+        
+        <h3>Opening Terminal Sessions</h3>
+        <ol>
+          <li>Launch Termide</li>
+          <li>Click the <strong>+</strong> button or press <code>Cmd+N</code> (macOS) / <code>Ctrl+N</code> (Linux) to open a new terminal</li>
+          <li>Start typing commands in your native shell</li>
+        </ol>
+
+        <h3>Splitting Terminals</h3>
+        <ul>
+          <li>Right-click on any tab to split it horizontally or vertically</li>
+          <li>Drag the divider to resize panels</li>
+          <li>Each panel runs an independent shell session</li>
+        </ul>
+
+        <h3>Managing Tabs</h3>
+        <ul>
+          <li><strong>Rename</strong>: Double-click a tab name or right-click → Rename</li>
+          <li><strong>Change Color</strong>: Right-click → Set Color</li>
+          <li><strong>Add Emoji</strong>: Right-click → Set Emoji</li>
+          <li><strong>Reorder</strong>: Drag and drop tabs to reorder them</li>
+          <li><strong>Pop Out</strong>: Drag a tab outside the window to create a new window</li>
+        </ul>
+      </section>
+
+      <section id="features" class="docs-section">
+        <h2>Features</h2>
+        
+        <h3>Dockable Layout</h3>
+        <p>
+          Termide uses <a href="https://dockview.dev/">dockview</a> to provide a flexible, dockable tabbed interface. 
+          Split your workspace any way you want:
+        </p>
+        <ul>
+          <li>Horizontal splits</li>
+          <li>Vertical splits</li>
+          <li>Tab groups</li>
+          <li>Floating windows</li>
+        </ul>
+
+        <h3>Native Shell Sessions</h3>
+        <p>
+          Powered by <a href="https://github.com/microsoft/node-pty">node-pty</a>, Termide provides real native 
+          shell sessions that support:
+        </p>
+        <ul>
+          <li>Full ANSI color support</li>
+          <li>Complex terminal applications (vim, tmux, htop, etc.)</li>
+          <li>Proper signal handling</li>
+          <li>Native shell features (command history, tab completion, etc.)</li>
+        </ul>
+
+        <h3>Modern Terminal Experience</h3>
+        <p>
+          Built with <a href="https://xtermjs.org/">xterm.js</a> for a feature-rich terminal:
+        </p>
+        <ul>
+          <li>Unicode support</li>
+          <li>WebGL rendering</li>
+          <li>Customizable themes</li>
+          <li>Link detection</li>
+          <li>Mouse support</li>
+        </ul>
+      </section>
+
+      <section id="keyboard-shortcuts" class="docs-section">
+        <h2>Keyboard Shortcuts</h2>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Shortcut</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Cmd/Ctrl + N</code></td>
+              <td>New terminal</td>
+            </tr>
+            <tr>
+              <td><code>Cmd/Ctrl + W</code></td>
+              <td>Close current terminal</td>
+            </tr>
+            <tr>
+              <td><code>Cmd/Ctrl + Shift + T</code></td>
+              <td>Reopen closed terminal</td>
+            </tr>
+            <tr>
+              <td><code>Cmd/Ctrl + [1-9]</code></td>
+              <td>Switch to tab [1-9]</td>
+            </tr>
+            <tr>
+              <td><code>Cmd/Ctrl + Shift + [</code></td>
+              <td>Previous tab</td>
+            </tr>
+            <tr>
+              <td><code>Cmd/Ctrl + Shift + ]</code></td>
+              <td>Next tab</td>
+            </tr>
+            <tr>
+              <td><code>Cmd/Ctrl + +</code></td>
+              <td>Zoom in</td>
+            </tr>
+            <tr>
+              <td><code>Cmd/Ctrl + -</code></td>
+              <td>Zoom out</td>
+            </tr>
+            <tr>
+              <td><code>Cmd/Ctrl + 0</code></td>
+              <td>Reset zoom</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="configuration" class="docs-section">
+        <h2>Configuration</h2>
+        
+        <p>Termide stores configuration in the following locations:</p>
+        <ul>
+          <li><strong>macOS</strong>: <code>~/Library/Application Support/Termide/</code></li>
+          <li><strong>Linux</strong>: <code>~/.config/Termide/</code></li>
+        </ul>
+
+        <h3>Settings File</h3>
+        <p>Create a <code>config.json</code> file in the configuration directory:</p>
+        <pre><code>&#123;
+  "theme": "dark",
+  "fontSize": 14,
+  "fontFamily": "JetBrains Mono",
+  "shell": "/bin/zsh",
+  "cursorStyle": "block",
+  "scrollback": 10000
+&#125;</code></pre>
+      </section>
+
+      <section id="development" class="docs-section">
+        <h2>Development</h2>
+        
+        <h3>Project Structure</h3>
+        <pre><code>├── electron/       # Electron main and preload processes
+├── src/            # React renderer application
+├── public/         # Static assets
+└── docs/           # Documentation site</code></pre>
+
+        <h3>Development Scripts</h3>
+        <pre><code># Start development server
+npm run dev
+
+# Run linter
+npm run lint
+
+# Run smoke tests
+npm run smoke
+
+# Build application
+npm run build
+
+# Build for specific platform
+npm run build:mac
+npm run build:linux</code></pre>
+
+        <h3>Tech Stack</h3>
+        <ul>
+          <li><strong>Electron</strong>: Desktop app framework</li>
+          <li><strong>React</strong>: UI library</li>
+          <li><strong>Vite</strong>: Build tool</li>
+          <li><strong>TypeScript</strong>: Type safety</li>
+          <li><strong>xterm.js</strong>: Terminal emulator</li>
+          <li><strong>node-pty</strong>: Pseudo-terminal bindings</li>
+          <li><strong>dockview</strong>: Dockable layout system</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+</Layout>
+
+<style>
+  .docs-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem 2rem;
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 3rem;
+  }
+
+  .docs-sidebar {
+    position: sticky;
+    top: 100px;
+    height: fit-content;
+  }
+
+  .docs-nav h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+  }
+
+  .docs-nav ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .docs-nav li {
+    margin: 0.5rem 0;
+  }
+
+  .docs-nav a {
+    display: block;
+    padding: 0.5rem 1rem;
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    font-size: 0.9375rem;
+    transition: all 0.2s;
+  }
+
+  .docs-nav a:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  .docs-content {
+    max-width: 800px;
+  }
+
+  .docs-title {
+    font-size: 3rem;
+    font-weight: 700;
+    margin-bottom: 3rem;
+    color: var(--text-primary);
+  }
+
+  .docs-section {
+    margin-bottom: 4rem;
+    padding-bottom: 4rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .docs-section:last-child {
+    border-bottom: none;
+  }
+
+  .docs-section h2 {
+    font-size: 1.875rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+    margin-top: 0;
+    color: var(--text-primary);
+  }
+
+  .docs-section h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 2rem 0 1rem;
+    color: var(--text-primary);
+  }
+
+  .docs-section p {
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+    line-height: 1.7;
+  }
+
+  .docs-section ul,
+  .docs-section ol {
+    margin: 1rem 0;
+    padding-left: 1.5rem;
+    color: var(--text-secondary);
+  }
+
+  .docs-section li {
+    margin: 0.5rem 0;
+    line-height: 1.6;
+  }
+
+  .docs-section code {
+    font-family: var(--font-mono);
+    background: var(--bg-tertiary);
+    padding: 0.2em 0.4em;
+    border-radius: var(--radius-sm);
+    font-size: 0.9em;
+    color: var(--text-primary);
+  }
+
+  .docs-section pre {
+    background: var(--bg-secondary);
+    padding: 1.5rem;
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+    border: 1px solid var(--border-color);
+    margin: 1.5rem 0;
+  }
+
+  .docs-section pre code {
+    background: none;
+    padding: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.6;
+  }
+
+  .docs-section table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5rem 0;
+  }
+
+  .docs-section th,
+  .docs-section td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .docs-section th {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .docs-section td {
+    color: var(--text-secondary);
+  }
+
+  .docs-section a {
+    color: var(--accent-primary);
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+  }
+
+  .docs-section a:hover {
+    opacity: 0.8;
+  }
+
+  .docs-section strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  @media (max-width: 968px) {
+    .docs-container {
+      grid-template-columns: 1fr;
+      gap: 2rem;
+      padding: 1rem;
+    }
+
+    .docs-sidebar {
+      position: relative;
+      top: 0;
+      order: -1;
+    }
+
+    .docs-nav ul {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .docs-nav li {
+      margin: 0;
+    }
+
+    .docs-title {
+      font-size: 2rem;
+    }
+  }
+</style>
+
+<script>
+  // Smooth scroll for anchor links
+  document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+    anchor.addEventListener('click', function (e) {
+      e.preventDefault();
+      const target = document.querySelector(this.getAttribute('href'));
+      if (target) {
+        target.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+      }
+    });
+  });
+</script>
