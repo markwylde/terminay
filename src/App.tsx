@@ -42,27 +42,6 @@ type ProjectWorkspaceProps = {
   popoutUrl: string
 }
 
-function hexToRgba(hex: string, alpha: number): string {
-  const value = hex.trim().replace('#', '')
-  const normalized =
-    value.length === 3
-      ? value
-          .split('')
-          .map((char) => `${char}${char}`)
-          .join('')
-      : value
-
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
-    return `rgba(77, 181, 255, ${alpha})`
-  }
-
-  const r = Number.parseInt(normalized.slice(0, 2), 16)
-  const g = Number.parseInt(normalized.slice(2, 4), 16)
-  const b = Number.parseInt(normalized.slice(4, 6), 16)
-
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
-
 const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProps>(
   ({ isActive, isMac, popoutUrl }, ref) => {
     const dockviewApiRef = useRef<DockviewApi | null>(null)
@@ -343,7 +322,11 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
           button.className = 'termide-add-tab-button'
           button.setAttribute('aria-label', 'New terminal tab')
           button.title = 'New terminal tab'
-          button.textContent = '+'
+          button.innerHTML = `
+            <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M6 2V10M2 6H10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          `
           container.appendChild(button)
         }
       }
@@ -675,9 +658,8 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
               <div
                 className="project-edit-preview"
                 style={{
-                  borderTopColor: editingTerminalColor,
-                  backgroundColor: hexToRgba(editingTerminalColor, 0.2),
-                }}
+                  '--project-color': editingTerminalColor,
+                } as React.CSSProperties}
               >
                 <span aria-hidden="true">{editingTerminalEmoji || '🖥️'}</span>
                 <span>{editingTerminalTitle.trim() || 'Untitled Terminal'}</span>
@@ -882,7 +864,7 @@ function App() {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
                 className={`project-tab${project.id === activeProjectId ? ' project-tab--active' : ''}${project.id === draggingProjectId ? ' project-tab--dragging' : ''}`}
-                style={project.id === activeProjectId ? { backgroundColor: hexToRgba(project.color, 0.2) } : undefined}
+                style={{ '--project-color': project.color } as React.CSSProperties}
                 onDragStart={() => setDraggingProjectId(project.id)}
                 onDragEnd={() => setDraggingProjectId(null)}
                 onClick={() => setActiveProjectId(project.id)}
@@ -907,14 +889,18 @@ function App() {
                   aria-label={`Close ${project.title}`}
                   title={projects.length <= 1 ? 'At least one project tab is required' : 'Close tab'}
                 >
-                  ×
+                  <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9 3L3 9M3 3L9 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
                 </button>
               </Reorder.Item>
             ))}
           </AnimatePresence>
         </Reorder.Group>
         <button type="button" className="project-tab-add" onClick={addProject} aria-label="Add project tab" title="Add project tab">
-          +
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M6 2V10M2 6H10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
         </button>
       </header>
 
@@ -996,9 +982,8 @@ function App() {
             <div
               className="project-edit-preview"
               style={{
-                borderTopColor: editingColor,
-                backgroundColor: hexToRgba(editingColor, 0.2),
-              }}
+                '--project-color': editingColor,
+              } as React.CSSProperties}
             >
               <span aria-hidden="true">{editingEmoji || '🖥️'}</span>
               <span>{editingTitle.trim() || 'Untitled Project'}</span>

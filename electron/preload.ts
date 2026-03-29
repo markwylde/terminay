@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { TerminalSettings } from '../src/types/settings'
 
 type AppCommand =
   | 'new-terminal'
@@ -17,12 +18,20 @@ type TerminalExitMessage = {
   exitCode: number
 }
 
+type SettingsChangeMessage = {
+  settings: TerminalSettings
+}
+
 const termideApi = {
   createTerminal: () => ipcRenderer.invoke('terminal:create') as Promise<{ id: string }>,
   writeTerminal: (id: string, data: string) => ipcRenderer.send('terminal:write', { id, data }),
   resizeTerminal: (id: string, cols: number, rows: number) =>
     ipcRenderer.send('terminal:resize', { id, cols, rows }),
   killTerminal: (id: string) => ipcRenderer.send('terminal:kill', { id }),
+  getTerminalSettings: () => ipcRenderer.invoke('settings:get-terminal') as Promise<TerminalSettings>,
+  updateTerminalSettings: (settings: TerminalSettings) =>
+    ipcRenderer.invoke('settings:update-terminal', settings) as Promise<TerminalSettings>,
+  resetTerminalSettings: () => ipcRenderer.invoke('settings:reset-terminal') as Promise<TerminalSettings>,
   onTerminalData: (listener: (message: TerminalDataMessage) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: TerminalDataMessage) => listener(payload)
     ipcRenderer.on('terminal:data', wrapped)
@@ -45,6 +54,14 @@ const termideApi = {
 
     return () => {
       ipcRenderer.off('app:command', wrapped)
+    }
+  },
+  onTerminalSettingsChanged: (listener: (message: SettingsChangeMessage) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: SettingsChangeMessage) => listener(payload)
+    ipcRenderer.on('settings:terminal-changed', wrapped)
+
+    return () => {
+      ipcRenderer.off('settings:terminal-changed', wrapped)
     }
   },
 }

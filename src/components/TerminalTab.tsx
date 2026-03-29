@@ -11,17 +11,13 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
   const title = props.api.title
   const params = props.params
   const { color, emoji } = params || {}
+  const isActive = props.api.isActive
 
   const style = useMemo(() => {
-    const finalColor = color || '#0a0a0a'
-    const alpha = props.api.isActive ? 0.4 : 0.2
     return {
-      backgroundColor: hexToRgba(finalColor, alpha),
-      '--tab-color': color || 'transparent',
-      height: '100%',
-      width: '100%',
+      '--tab-color': color || '#4db5ff',
     } as React.CSSProperties
-  }, [color, props.api.isActive])
+  }, [color])
 
   const onClose = (event: React.MouseEvent) => {
     event.stopPropagation()
@@ -40,7 +36,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
 
   return (
     <div
-      className="terminal-tab-content"
+      className={`terminal-tab-content${isActive ? ' terminal-tab-content--active' : ''}`}
       style={style}
       data-panel-id={props.api.id}
       data-has-color={!!color}
@@ -56,29 +52,10 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
         onDoubleClick={(event) => event.stopPropagation()}
         aria-label="Close terminal"
       >
-        ×
+        <svg aria-hidden="true" width="10" height="10" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M9 3L3 9M3 3L9 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
       </button>
     </div>
   )
-}
-
-function hexToRgba(hex: string, alpha: number): string {
-  const value = hex.replace('#', '')
-  const normalized =
-    value.length === 3
-      ? value
-          .split('')
-          .map((char) => `${char}${char}`)
-          .join('')
-      : value
-
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
-    return `rgba(77, 181, 255, ${alpha})`
-  }
-
-  const r = parseInt(normalized.slice(0, 2), 16)
-  const g = parseInt(normalized.slice(2, 4), 16)
-  const b = parseInt(normalized.slice(4, 6), 16)
-
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }

@@ -1,0 +1,432 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+// Screenshots configuration - update this array when adding screenshots
+// Add your screenshots to /public/screenshots/ folder
+const screenshots = [
+  // Example format:
+  // { src: '/termide/screenshots/1.png', alt: 'Main interface' },
+  // { src: '/termide/screenshots/2.png', alt: 'Split terminals' },
+];
+
+const hasScreenshots = screenshots.length > 0;
+
+const features = [
+  {
+    icon: '🪟',
+    title: 'Dockable Layout',
+    description: 'Split terminals horizontally and vertically with a flexible, dockable tabbed interface.'
+  },
+  {
+    icon: '📱',
+    title: 'Pop-out Windows',
+    description: 'Drag panels into separate windows to organize your workflow across multiple screens.'
+  },
+  {
+    icon: '🎨',
+    title: 'Customizable Tabs',
+    description: 'Rename tabs, add colors, and use emoji markers to keep your workspace organized.'
+  },
+  {
+    icon: '⚡',
+    title: 'Native Performance',
+    description: 'Built with Electron and node-pty for fast, native shell sessions.'
+  },
+  {
+    icon: '🔧',
+    title: 'Modern Stack',
+    description: 'Powered by React, Vite, xterm.js, and dockview for a smooth experience.'
+  },
+  {
+    icon: '🖥️',
+    title: 'Cross-Platform',
+    description: 'Available for macOS and Linux with automatic updates via GitHub Releases.'
+  }
+];
+---
+
+<Layout title="Termide - A Modern Terminal Workspace">
+  <section class="hero">
+    <div class="hero-content">
+      <h1 class="hero-title">
+        A desktop terminal workspace
+        <span class="hero-subtitle">built for modern workflows</span>
+      </h1>
+      <p class="hero-description">
+        Split terminals, rearrange them, and pop active work out into separate windows. 
+        Termide pairs native shell sessions with a dockable tabbed layout.
+      </p>
+      <div class="hero-cta">
+        <a href="https://github.com/markwylde/termide/releases" class="btn btn-primary">
+          Download
+        </a>
+        <a href="/termide/docs" class="btn btn-secondary">
+          Documentation
+        </a>
+      </div>
+    </div>
+    <div class="hero-screenshot">
+      <div class="screenshot-frame">
+        {hasScreenshots ? (
+          <img 
+            src={screenshots[0].src} 
+            alt={screenshots[0].alt}
+            class="hero-image"
+          />
+        ) : (
+          <div class="screenshot-placeholder">
+            <span class="screenshot-text">Screenshot coming soon</span>
+            <span class="screenshot-hint">Add images to <code>/docs/public/screenshots/</code></span>
+          </div>
+        )}
+      </div>
+    </div>
+  </section>
+
+  <section class="features">
+    <div class="container">
+      <h2 class="section-title">Features</h2>
+      <div class="features-grid">
+        {features.map(feature => (
+          <div class="feature-card">
+            <span class="feature-icon">{feature.icon}</span>
+            <h3 class="feature-title">{feature.title}</h3>
+            <p class="feature-description">{feature.description}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  {screenshots.length > 1 && (
+    <section class="screenshots">
+      <div class="container">
+        <h2 class="section-title">Screenshots</h2>
+        <div class="screenshots-grid">
+          {screenshots.slice(1).map((screenshot, i) => (
+            <div class="screenshot-card">
+              <img 
+                src={screenshot.src} 
+                alt={screenshot.alt}
+                class="screenshot-image"
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+
+  {!hasScreenshots && (
+    <section class="screenshots">
+      <div class="container">
+        <h2 class="section-title">Screenshots</h2>
+        <div class="screenshots-grid">
+          {[1, 2, 3, 4].map((i) => (
+            <div class="screenshot-card">
+              <div class="screenshot-placeholder-small">
+                <span class="screenshot-text">Screenshot {i}</span>
+                <span class="screenshot-hint">Add to <code>/docs/public/screenshots/</code></span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+
+  <section class="cta">
+    <div class="container">
+      <h2 class="cta-title">Ready to try Termide?</h2>
+      <p class="cta-description">
+        Download the latest release for macOS or Linux and start organizing your terminal workspace today.
+      </p>
+      <div class="cta-buttons">
+        <a href="https://github.com/markwylde/termide/releases" class="btn btn-primary btn-large">
+          Get Termide
+        </a>
+        <a href="https://github.com/markwylde/termide" class="btn btn-secondary btn-large" target="_blank" rel="noopener">
+          View on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+  }
+
+  .hero {
+    padding: 6rem 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4rem;
+    align-items: center;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .hero-content {
+    max-width: 600px;
+  }
+
+  .hero-title {
+    font-size: clamp(2.5rem, 5vw, 4rem);
+    font-weight: 700;
+    line-height: 1.1;
+    margin-bottom: 1.5rem;
+  }
+
+  .hero-subtitle {
+    display: block;
+    color: var(--accent-primary);
+    margin-top: 0.5rem;
+  }
+
+  .hero-description {
+    font-size: 1.25rem;
+    color: var(--text-secondary);
+    margin-bottom: 2rem;
+    line-height: 1.7;
+  }
+
+  .hero-cta {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.875rem 1.5rem;
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    font-size: 1rem;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+  }
+
+  .btn-primary {
+    background: var(--accent-primary);
+    color: #000;
+  }
+
+  .btn-primary:hover {
+    background: var(--accent-secondary);
+    opacity: 1;
+  }
+
+  .btn-secondary {
+    background: transparent;
+    border-color: var(--border-color);
+    color: var(--text-primary);
+  }
+
+  .btn-secondary:hover {
+    border-color: var(--text-muted);
+    opacity: 1;
+  }
+
+  .btn-large {
+    padding: 1rem 2rem;
+    font-size: 1.125rem;
+  }
+
+  .hero-screenshot {
+    display: flex;
+    justify-content: center;
+  }
+
+  .screenshot-frame {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-xl);
+    padding: 1rem;
+    box-shadow: 0 25px 50px -12px var(--shadow-color);
+    border: 1px solid var(--border-color);
+    max-width: 600px;
+    width: 100%;
+  }
+
+  .hero-image {
+    width: 100%;
+    height: auto;
+    border-radius: var(--radius-lg);
+    display: block;
+  }
+
+  .screenshot-placeholder {
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    border: 2px dashed var(--border-color);
+  }
+
+  .screenshot-text {
+    font-size: 1.125rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+
+  .screenshot-hint {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .section-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 3rem;
+  }
+
+  .features {
+    padding: 6rem 0;
+    background: var(--bg-secondary);
+  }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 2rem;
+  }
+
+  .feature-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    transition: transform 0.2s, border-color 0.2s;
+  }
+
+  .feature-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--accent-primary);
+  }
+
+  .feature-icon {
+    font-size: 2rem;
+    margin-bottom: 1rem;
+    display: block;
+  }
+
+  .feature-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+  }
+
+  .feature-description {
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  .screenshots {
+    padding: 6rem 0;
+  }
+
+  .screenshots-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .screenshot-card {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+  }
+
+  .screenshot-image {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  .screenshot-placeholder-small {
+    aspect-ratio: 16 / 10;
+    background: var(--bg-tertiary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .cta {
+    padding: 6rem 2rem;
+    background: var(--bg-secondary);
+    text-align: center;
+  }
+
+  .cta-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+  }
+
+  .cta-description {
+    font-size: 1.125rem;
+    color: var(--text-secondary);
+    max-width: 600px;
+    margin: 0 auto 2rem;
+  }
+
+  .cta-buttons {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 968px) {
+    .hero {
+      grid-template-columns: 1fr;
+      text-align: center;
+      gap: 3rem;
+    }
+
+    .hero-content {
+      max-width: 100%;
+    }
+
+    .hero-cta {
+      justify-content: center;
+    }
+
+    .screenshot-frame {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .container {
+      padding: 0 1rem;
+    }
+
+    .hero {
+      padding: 4rem 1rem;
+    }
+
+    .features-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .section-title {
+      font-size: 2rem;
+    }
+  }
+</style>
