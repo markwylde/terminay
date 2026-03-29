@@ -2,7 +2,7 @@
 
 Termide is a desktop terminal workspace built with Electron, React, and Vite. It pairs native shell sessions with a dockable tabbed layout, so you can split terminals, rearrange them, and pop active work out into separate windows.
 
-![Termide screenshot](./.github/screenshot.png)
+![Termide screenshot](./screenshot1.png)
 
 ## What it does
 
