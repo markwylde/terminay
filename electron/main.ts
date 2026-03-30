@@ -190,6 +190,90 @@ function getCandidateShells(): string[] {
   ].filter((value, index, list) => value.length > 0 && list.indexOf(value) === index)
 }
 
+function getConfiguredShells(settings: TerminalSettings): string[] {
+  if (settings.shell.program.trim().length > 0) {
+    return [settings.shell.program.trim()]
+  }
+
+  return getCandidateShells()
+}
+
+function getShellBaseName(shellPath: string): string {
+  return path.basename(shellPath).toLowerCase()
+}
+
+function getShellStartupArgs(shellPath: string, startupMode: TerminalSettings['shell']['startupMode']): string[] {
+  const resolvedMode =
+    startupMode === 'auto'
+      ? (process.platform === 'darwin' ? 'login' : 'non-login')
+      : startupMode
+
+  if (resolvedMode !== 'login') {
+    return []
+  }
+
+  const shellBaseName = getShellBaseName(shellPath)
+  if (['zsh', 'bash', 'sh', 'ksh', 'fish'].includes(shellBaseName)) {
+    return ['-l']
+  }
+
+  return []
+}
+
+function parseCommandLineArgs(value: string): string[] {
+  const args: string[] = []
+  let current = ''
+  let quote: '"' | '\'' | null = null
+  let escaping = false
+
+  for (const char of value) {
+    if (escaping) {
+      current += char
+      escaping = false
+      continue
+    }
+
+    if (char === '\\') {
+      escaping = true
+      continue
+    }
+
+    if (quote) {
+      if (char === quote) {
+        quote = null
+      } else {
+        current += char
+      }
+      continue
+    }
+
+    if (char === '"' || char === '\'') {
+      quote = char
+      continue
+    }
+
+    if (/\s/.test(char)) {
+      if (current.length > 0) {
+        args.push(current)
+        current = ''
+      }
+      continue
+    }
+
+    current += char
+  }
+
+  if (escaping) {
+    current += '\\'
+  }
+
+  if (current.length > 0) {
+    args.push(current)
+  }
+
+  return args
+}
+
 function getTerminalSpawnEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
 
@@ -303,11 +387,12 @@ async function resolveTerminalCwd(sessionId: string): Promise<string | null> {
   return null
 }
 
-async function spawnWithFallbackShell(cwd?: string): Promise<IPty> {
-  const shells = getCandidateShells()
+async function spawnWithFallbackShell(settings: TerminalSettings, cwd?: string): Promise<IPty> {
+  const shells = getConfiguredShells(settings)
   let lastError: unknown = null
   const spawnCwd = await normalizeSpawnCwd(cwd)
   const spawnEnv = getTerminalSpawnEnv()
+  const extraArgs = parseCommandLineArgs(settings.shell.extraArgs)
 
   for (const shellPath of shells) {
     if (process.platform !== 'win32' && shellPath.startsWith('/') && !existsSync(shellPath)) {
@@ -315,7 +400,7 @@ async function spawnWithFallbackShell(cwd?: string): Promise<IPty> {
     }
 
     try {
-      return pty.spawn(shellPath, [], {
+      return pty.spawn(shellPath, [...getShellStartupArgs(shellPath, settings.shell.startupMode), ...extraArgs], {
         name: 'xterm-256color',
         cols: 80,
         rows: 24,
@@ -334,7 +419,7 @@ async function spawnWithFallbackShell(cwd?: string): Promise<IPty> {
 
 async function createPtySession(webContentsId: number, cwd?: string): Promise<TerminalSession> {
   const id = randomUUID()
-  const ptyProcess = await spawnWithFallbackShell(cwd)
+  const ptyProcess = await spawnWithFallbackShell(readTerminalSettings(), cwd)
 
   const session: TerminalSession = {
     id,
