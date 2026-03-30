@@ -105,7 +105,30 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(searchAddon)
     terminal.loadAddon(unicode11Addon)
-    terminal.loadAddon(new WebLinksAddon())
+    const isMac = navigator.platform.toLowerCase().includes('mac')
+
+    const linkHandler = (event: MouseEvent, uri: string) => {
+      const modifierKey = isMac ? event.metaKey : event.ctrlKey
+      if (modifierKey) {
+        event.preventDefault()
+        window.termide.openExternal(uri)
+      }
+    }
+
+    const linkHover = () => {
+      document.body.style.cursor = 'pointer'
+    }
+
+    const linkLeave = () => {
+      document.body.style.cursor = ''
+    }
+
+    terminal.loadAddon(
+      new WebLinksAddon(linkHandler, {
+        hover: linkHover,
+        leave: linkLeave,
+      }),
+    )
     terminal.unicode.activeVersion = '11'
 
     terminal.open(root)
