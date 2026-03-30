@@ -3,14 +3,20 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { execFile } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import type { IPty } from 'node-pty'
+import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
+import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
 
 const require = createRequire(import.meta.url)
 const pty = require('node-pty') as typeof import('node-pty')
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const execFileAsync = promisify(execFile)
 
 process.env.APP_ROOT = path.join(__dirname, '..')
 app.setName('Termide')
@@ -38,12 +44,25 @@ function getBrandAssetPath(filename: string): string | null {
   return null
 }
 
+function getWindowIconPath(): string | undefined {
+  if (process.platform === 'win32') {
+    return getBrandAssetPath('icon.ico') ?? getBrandAssetPath('termide.png') ?? undefined
+  }
+
+  if (process.platform === 'darwin') {
+    return getBrandAssetPath('icon.icns') ?? getBrandAssetPath('termide.png') ?? undefined
+  }
+
+  return getBrandAssetPath('termide.png') ?? getBrandAssetPath('termide.svg') ?? undefined
+}
+
 type AppCommand =
   | 'new-terminal'
   | 'split-horizontal'
   | 'split-vertical'
   | 'popout-active'
   | 'close-active'
+  | 'open-macro-launcher'
 
 interface TerminalSession {
   id: string
@@ -53,9 +72,14 @@ interface TerminalSession {
 
 const terminalSessions = new Map<string, TerminalSession>()
 let settingsWindow: BrowserWindow | null = null
+let macrosWindow: BrowserWindow | null = null
 
 function getTerminalSettingsPath(): string {
   return path.join(app.getPath('userData'), 'terminal-settings.json')
+}
+
+function getMacrosPath(): string {
+  return path.join(app.getPath('userData'), 'macros.json')
 }
 
 function readTerminalSettings(): TerminalSettings {
@@ -82,6 +106,30 @@ function writeTerminalSettings(settings: TerminalSettings): TerminalSettings {
   return normalized
 }
 
+function readMacros(): MacroDefinition[] {
+  const macrosPath = getMacrosPath()
+
+  try {
+    if (!existsSync(macrosPath)) {
+      return defaultMacros
+    }
+
+    const fileContents = readFileSync(macrosPath, 'utf8')
+    return normalizeMacros(JSON.parse(fileContents))
+  } catch {
+    return defaultMacros
+  }
+}
+
+function writeMacros(macros: MacroDefinition[]): MacroDefinition[] {
+  const normalized = normalizeMacros(macros)
+  const macrosPath = getMacrosPath()
+
+  mkdirSync(path.dirname(macrosPath), { recursive: true })
+  writeFileSync(macrosPath, JSON.stringify(normalized, null, 2))
+  return normalized
+}
+
 function broadcastTerminalSettings(settings: TerminalSettings): void {
   const payload = { settings }
   for (const window of BrowserWindow.getAllWindows()) {
@@ -90,6 +138,17 @@ function broadcastTerminalSettings(settings: TerminalSettings): void {
     }
 
     window.webContents.send('settings:terminal-changed', payload)
+  }
+}
+
+function broadcastMacros(macros: MacroDefinition[]): void {
+  const payload = { macros }
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) {
+      continue
+    }
+
+    window.webContents.send('settings:macros-changed', payload)
   }
 }
 
@@ -131,9 +190,209 @@ function getCandidateShells(): string[] {
   ].filter((value, index, list) => value.length > 0 && list.indexOf(value) === index)
 }
 
-function spawnWithFallbackShell(): IPty {
-  const shells = getCandidateShells()
+function getConfiguredShells(settings: TerminalSettings): string[] {
+  if (settings.shell.program.trim().length > 0) {
+    return [settings.shell.program.trim()]
+  }
+
+  return getCandidateShells()
+}
+
+function getShellBaseName(shellPath: string): string {
+  return path.basename(shellPath).toLowerCase()
+}
+
+function getShellStartupArgs(shellPath: string, startupMode: TerminalSettings['shell']['startupMode']): string[] {
+  const resolvedMode =
+    startupMode === 'auto'
+      ? (process.platform === 'darwin' ? 'login' : 'non-login')
+      : startupMode
+
+  if (resolvedMode !== 'login') {
+    return []
+  }
+
+  const shellBaseName = getShellBaseName(shellPath)
+  if (['zsh', 'bash', 'sh', 'ksh', 'fish'].includes(shellBaseName)) {
+    return ['-l']
+  }
+
+  return []
+}
+
+function parseCommandLineArgs(value: string): string[] {
+  const args: string[] = []
+  let current = ''
+  let quote: '"' | '\'' | null = null
+  let escaping = false
+
+  for (const char of value) {
+    if (escaping) {
+      current += char
+      escaping = false
+      continue
+    }
+
+    if (char === '\\') {
+      escaping = true
+      continue
+    }
+
+    if (quote) {
+      if (char === quote) {
+        quote = null
+      } else {
+        current += char
+      }
+      continue
+    }
+
+    if (char === '"' || char === '\'') {
+      quote = char
+      continue
+    }
+
+    if (/\s/.test(char)) {
+      if (current.length > 0) {
+        args.push(current)
+        current = ''
+      }
+      continue
+    }
+
+    current += char
+  }
+
+  if (escaping) {
+    current += '\\'
+  }
+
+  if (current.length > 0) {
+    args.push(current)
+  }
+
+  return args
+}
+
+function getTerminalSpawnEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+
+  if (process.platform !== 'darwin') {
+    return env
+  }
+
+  const utf8Locale = env.LC_ALL || env.LC_CTYPE || env.LANG || 'en_US.UTF-8'
+  const normalizedLocale = utf8Locale.toUpperCase().includes('UTF-8') ? utf8Locale : 'en_US.UTF-8'
+
+  // GUI-launched macOS apps may not inherit a UTF-8 locale, which breaks non-ASCII PTY I/O like emoji.
+  env.LANG = normalizedLocale
+  env.LC_CTYPE = normalizedLocale
+
+  return env
+}
+
+async function normalizeSpawnCwd(cwd?: string): Promise<string> {
+  const fallbackCwd = app.getPath('home')
+
+  if (!cwd) {
+    return fallbackCwd
+  }
+
+  try {
+    const cwdStats = await stat(cwd)
+    return cwdStats.isDirectory() ? cwd : fallbackCwd
+  } catch {
+    return fallbackCwd
+  }
+}
+
+async function getChildProcessIds(pid: number): Promise<number[]> {
+  try {
+    if (process.platform === 'linux') {
+      const { stdout } = await execFileAsync('pgrep', ['-P', String(pid)])
+      return stdout
+        .split('\n')
+        .map((value) => Number.parseInt(value.trim(), 10))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    }
+
+    if (process.platform === 'darwin') {
+      const { stdout } = await execFileAsync('pgrep', ['-P', String(pid)])
+      return stdout
+        .split('\n')
+        .map((value) => Number.parseInt(value.trim(), 10))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    }
+  } catch {
+    return []
+  }
+
+  return []
+}
+
+async function resolveDeepestProcessPid(pid: number): Promise<number> {
+  let currentPid = pid
+
+  while (true) {
+    const childPids = await getChildProcessIds(currentPid)
+    if (childPids.length !== 1) {
+      return currentPid
+    }
+
+    currentPid = childPids[0]
+  }
+}
+
+async function resolveProcessCwd(pid: number): Promise<string | null> {
+  try {
+    if (process.platform === 'linux') {
+      const { stdout } = await execFileAsync('readlink', [`/proc/${pid}/cwd`])
+      const cwd = stdout.trim()
+      return cwd.length > 0 ? cwd : null
+    }
+
+    if (process.platform === 'darwin') {
+      const { stdout } = await execFileAsync('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-Fn', '-p', String(pid)])
+      const cwdLine = stdout
+        .split('\n')
+        .find((line) => line.startsWith('n'))
+      const cwd = cwdLine?.slice(1).trim()
+      return cwd && cwd.length > 0 ? cwd : null
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+async function resolveTerminalCwd(sessionId: string): Promise<string | null> {
+  const session = terminalSessions.get(sessionId)
+  const rootPid = session?.process.pid
+
+  if (!rootPid || rootPid <= 0) {
+    return null
+  }
+
+  const deepestPid = await resolveDeepestProcessPid(rootPid)
+  const deepestCwd = await resolveProcessCwd(deepestPid)
+  if (deepestCwd) {
+    return deepestCwd
+  }
+
+  if (deepestPid !== rootPid) {
+    return resolveProcessCwd(rootPid)
+  }
+
+  return null
+}
+
+async function spawnWithFallbackShell(settings: TerminalSettings, cwd?: string): Promise<IPty> {
+  const shells = getConfiguredShells(settings)
   let lastError: unknown = null
+  const spawnCwd = await normalizeSpawnCwd(cwd)
+  const spawnEnv = getTerminalSpawnEnv()
+  const extraArgs = parseCommandLineArgs(settings.shell.extraArgs)
 
   for (const shellPath of shells) {
     if (process.platform !== 'win32' && shellPath.startsWith('/') && !existsSync(shellPath)) {
@@ -141,12 +400,12 @@ function spawnWithFallbackShell(): IPty {
     }
 
     try {
-      return pty.spawn(shellPath, [], {
+      return pty.spawn(shellPath, [...getShellStartupArgs(shellPath, settings.shell.startupMode), ...extraArgs], {
         name: 'xterm-256color',
         cols: 80,
         rows: 24,
-        cwd: app.getPath('home'),
-        env: process.env,
+        cwd: spawnCwd,
+        env: spawnEnv,
       })
     } catch (error) {
       lastError = error
@@ -158,9 +417,9 @@ function spawnWithFallbackShell(): IPty {
   )
 }
 
-function createPtySession(webContentsId: number): TerminalSession {
+async function createPtySession(webContentsId: number, cwd?: string): Promise<TerminalSession> {
   const id = randomUUID()
-  const ptyProcess = spawnWithFallbackShell()
+  const ptyProcess = await spawnWithFallbackShell(readTerminalSettings(), cwd)
 
   const session: TerminalSession = {
     id,
@@ -256,6 +515,11 @@ function createAppMenu(): void {
           click: () => openSettingsWindow(),
         },
         {
+          label: 'Macros',
+          accelerator: 'CmdOrCtrl+;',
+          click: () => openMacrosWindow(),
+        },
+        {
           type: 'separator',
         },
         {
@@ -282,6 +546,11 @@ function createAppMenu(): void {
           label: 'Pop Out Active Terminal',
           accelerator: 'CmdOrCtrl+Shift+P',
           click: () => sendCommandToFocusedWindow('popout-active'),
+        },
+        {
+          label: 'Open Macro Launcher',
+          accelerator: 'CmdOrCtrl+L',
+          click: () => sendCommandToFocusedWindow('open-macro-launcher'),
         },
       ],
     },
@@ -319,7 +588,7 @@ function createWindow() {
   const preloadPath = path.join(__dirname, 'preload.mjs')
   const isMac = process.platform === 'darwin'
   const usesOverlayTitlebar = process.platform === 'win32' || process.platform === 'linux'
-  const windowIconPath = getBrandAssetPath('termide.png') ?? getBrandAssetPath('termide.svg') ?? undefined
+  const windowIconPath = getWindowIconPath()
 
   mainWindow = new BrowserWindow({
     icon: windowIconPath,
@@ -386,7 +655,7 @@ function createWindow() {
 
 function openSettingsWindow(): void {
   const preloadPath = path.join(__dirname, 'preload.mjs')
-  const windowIconPath = getBrandAssetPath('termide.png') ?? getBrandAssetPath('termide.svg') ?? undefined
+  const windowIconPath = getWindowIconPath()
 
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.focus()
@@ -422,6 +691,44 @@ function openSettingsWindow(): void {
   }
 }
 
+function openMacrosWindow(): void {
+  const preloadPath = path.join(__dirname, 'preload.mjs')
+  const windowIconPath = getWindowIconPath()
+
+  if (macrosWindow && !macrosWindow.isDestroyed()) {
+    macrosWindow.focus()
+    return
+  }
+
+  macrosWindow = new BrowserWindow({
+    icon: windowIconPath,
+    width: 1100,
+    height: 760,
+    minWidth: 860,
+    minHeight: 620,
+    title: 'Termide Macros',
+    autoHideMenuBar: true,
+    backgroundColor: '#0d1117',
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+
+  macrosWindow.on('closed', () => {
+    macrosWindow = null
+  })
+
+  if (VITE_DEV_SERVER_URL) {
+    macrosWindow.loadURL(`${VITE_DEV_SERVER_URL}?view=macros`)
+  } else {
+    macrosWindow.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+      query: { view: 'macros' },
+    })
+  }
+}
+
 function setDockIcon(): void {
   if (process.platform !== 'darwin') {
     return
@@ -441,8 +748,8 @@ function setDockIcon(): void {
   app.dock?.setIcon(icon)
 }
 
-ipcMain.handle('terminal:create', (event) => {
-  const session = createPtySession(event.sender.id)
+ipcMain.handle('terminal:create', async (event, payload?: { cwd?: string }) => {
+  const session = await createPtySession(event.sender.id, payload?.cwd)
 
   session.process.onData((data: string) => {
     sendToSessionRenderer(session, 'terminal:data', { id: session.id, data })
@@ -457,6 +764,10 @@ ipcMain.handle('terminal:create', (event) => {
   })
 
   return { id: session.id }
+})
+
+ipcMain.handle('terminal:get-cwd', async (_event, payload: { id: string }) => {
+  return resolveTerminalCwd(payload.id)
 })
 
 ipcMain.on('terminal:write', (_event, payload: { id: string; data: string }) => {
@@ -502,6 +813,22 @@ ipcMain.handle('settings:reset-terminal', () => {
   const settings = writeTerminalSettings(defaultTerminalSettings)
   broadcastTerminalSettings(settings)
   return settings
+})
+
+ipcMain.handle('macros:get', () => {
+  return readMacros()
+})
+
+ipcMain.handle('macros:update', (_event, payload: MacroDefinition[]) => {
+  const macros = writeMacros(payload)
+  broadcastMacros(macros)
+  return macros
+})
+
+ipcMain.handle('macros:reset', () => {
+  const macros = writeMacros(defaultMacros)
+  broadcastMacros(macros)
+  return macros
 })
 
 ipcMain.handle('app:quit', () => {

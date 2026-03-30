@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal } from '@xterm/xterm'
 import {
   buildTerminalOptions,
@@ -36,14 +38,14 @@ function setValueAtPath(settings: TerminalSettings, key: string, value: boolean 
   }
 
   const [root, leaf] = segments
-  if (root !== 'theme' || !leaf) {
+  if ((root !== 'theme' && root !== 'shell') || !leaf) {
     return settings
   }
 
   return {
     ...settings,
-    theme: {
-      ...settings.theme,
+    [root]: {
+      ...(settings[root] as Record<string, boolean | number | string>),
       [leaf]: value,
     },
   }
@@ -64,10 +66,13 @@ function TerminalPreview({ settings }: { settings: TerminalSettings }) {
       ...buildTerminalOptions(settings),
       cols: 72,
       rows: 18,
-      allowProposedApi: false,
+      allowProposedApi: true,
     })
     const fitAddon = new FitAddon()
+    const unicode11Addon = new Unicode11Addon()
     terminal.loadAddon(fitAddon)
+    terminal.loadAddon(unicode11Addon)
+    terminal.unicode.activeVersion = '11'
     terminal.open(root)
     fitAddon.fit()
 
@@ -104,6 +109,28 @@ function Switch({ checked, onChange, label }: { checked: boolean; onChange: (val
   )
 }
 
+function renderCategoryIcon(title: string, children: ReactNode) {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" role="img">
+      <title>{title}</title>
+      {children}
+    </svg>
+  )
+}
+
+function getCategoryIcon(id: CategoryId) {
+  switch (id) {
+    case 'shell': return renderCategoryIcon('Shell', <><path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 7l3-3h10l3 3"/><path d="m9 12 2 2-2 2"/><line x1="13.5" y1="16" x2="16.5" y2="16"/></>)
+    case 'appearance': return renderCategoryIcon('Appearance', <><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></>)
+    case 'cursor': return renderCategoryIcon('Cursor', <path d="m4 4 7.07 17 2.51-7.39L21 11.07z"/>)
+    case 'interaction': return renderCategoryIcon('Interaction', <><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></>)
+    case 'scrolling': return renderCategoryIcon('Scrolling', <><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></>)
+    case 'accessibility': return renderCategoryIcon('Accessibility', <><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"/></>)
+    case 'theme': return renderCategoryIcon('Theme', <><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></>)
+    default: return renderCategoryIcon('Category', <circle cx="12" cy="12" r="10"/>)
+  }
+}
+
 export function SettingsWindow() {
   const { settings: persistedSettings, isLoading } = useTerminalSettings()
   const [draft, setDraft] = useState<TerminalSettings>(defaultTerminalSettings)
@@ -114,6 +141,26 @@ export function SettingsWindow() {
   const [query, setQuery] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [showPreview, setShowPreview] = useState(true)
+  const [previewHeight, setPreviewHeight] = useState(240)
+
+  const handleResizePointerDown = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startHeight = previewHeight
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const delta = startY - moveEvent.clientY
+      setPreviewHeight(Math.max(100, Math.min(800, startHeight + delta)))
+    }
+
+    const onPointerUp = () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+    }
+
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+  }
 
   const contentRef = useRef<HTMLDivElement>(null)
 
@@ -251,7 +298,6 @@ export function SettingsWindow() {
     }
   }
 
-  const currentCategory = terminalSettingsCategories.find((category) => category.id === activeCategoryId) ?? terminalSettingsCategories[0]
 
   const scrollToSection = (id: string) => {
     const el = document.getElementById(`section-${id}`)
@@ -350,28 +396,29 @@ export function SettingsWindow() {
         </header>
 
         <nav className="settings-nav">
-          {visibleCategories.map((cat) => (
-            <div key={cat.id} className="settings-nav-group">
-              <div className="settings-nav-group-title">{cat.label}</div>
-              {filteredSections
-                .filter((s) => s.categoryId === cat.id)
-                .map((section) => (
-                  <button
-                    key={section.id}
-                    className={`settings-nav-item ${activeSectionId === section.id ? 'settings-nav-item--active' : ''}`}
-                    aria-current={activeSectionId === section.id ? 'true' : undefined}
-                    onClick={() => {
-                      setActiveCategoryId(cat.id)
-                      setActiveSectionId(section.id)
-                      setQuery('')
-                      setTimeout(() => scrollToSection(section.id), 0)
-                    }}
-                  >
-                    {section.title}
-                  </button>
-                ))}
-            </div>
-          ))}
+          <div className="settings-nav-section">
+            {visibleCategories.map((cat) => (
+              <button
+                key={cat.id}
+                className={`settings-nav-item ${activeCategoryId === cat.id ? 'settings-nav-item--active' : ''}`}
+                aria-current={activeCategoryId === cat.id ? 'true' : undefined}
+                onClick={() => {
+                  setActiveCategoryId(cat.id)
+                  const firstSection = filteredSections.find((s) => s.categoryId === cat.id)
+                  if (firstSection) {
+                    setActiveSectionId(firstSection.id)
+                    setQuery('')
+                    setTimeout(() => scrollToSection(firstSection.id), 0)
+                  }
+                }}
+              >
+                <div className="settings-nav-item-inner" style={{ gap: 8 }}>
+                  <div className="settings-nav-icon" style={{ display: 'flex', alignItems: 'center', opacity: 0.8 }}>{getCategoryIcon(cat.id)}</div>
+                  <span>{cat.label}</span>
+                </div>
+              </button>
+            ))}
+          </div>
         </nav>
 
         <footer className="settings-sidebar-footer">
@@ -382,14 +429,9 @@ export function SettingsWindow() {
         </footer>
       </aside>
 
-      <main className="settings-main" ref={contentRef}>
-        <div className="settings-content">
-          {!query && (
-            <header className="settings-category-header">
-              <h2>{currentCategory.label}</h2>
-              <p>{currentCategory.description}</p>
-            </header>
-          )}
+      <div className="settings-right-pane">
+        <main className="settings-main" ref={contentRef}>
+          <div className="settings-content">
 
           {displayedCategories.map((cat) => {
             const sections = filteredSections.filter((s) => s.categoryId === cat.id)
@@ -397,11 +439,10 @@ export function SettingsWindow() {
 
             return (
               <div key={cat.id}>
-                {query && <h2 style={{ marginTop: 40, marginBottom: 20 }}>{cat.label}</h2>}
+                {query && <h3 className="settings-section-title" style={{ marginTop: 24, marginBottom: 16 }}>{cat.label}</h3>}
                 {sections.map((section) => (
                   <section key={section.id} id={`section-${section.id}`} className="settings-section">
                     <h3 className="settings-section-title">{section.title}</h3>
-                    <p className="settings-section-desc">{section.description}</p>
                     <div className="settings-group">
                       {section.fields.map((field) => (
                         <div key={field.key} className="settings-row">
@@ -419,42 +460,45 @@ export function SettingsWindow() {
             )
           })}
         </div>
-      </main>
+        </main>
 
-      {showPreview && (
-        <div className="settings-preview-dock">
-          <header className="settings-preview-header">
-            <span>Live Preview</span>
+        {showPreview && (
+          <>
+            <div className="settings-preview-resizer" onPointerDown={handleResizePointerDown} />
+            <div className="settings-preview-dock" style={{ height: previewHeight }}>
+              <header className="settings-preview-header">
+                <span>Live Preview</span>
+                <button
+                  onClick={() => setShowPreview(false)}
+                  style={{ background: 'none', border: 'none', color: 'var(--settings-text-muted)', cursor: 'pointer', fontSize: 12 }}
+                >
+                  Hide
+                </button>
+              </header>
+              <TerminalPreview settings={draft} />
+            </div>
+          </>
+        )}
+        {!showPreview && (
+          <div style={{ padding: '8px 16px', borderTop: '1px solid var(--settings-border)', background: 'var(--settings-sidebar-bg)', textAlign: 'center' }}>
             <button
-              onClick={() => setShowPreview(false)}
-              style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer' }}
+              onClick={() => setShowPreview(true)}
+              style={{
+                padding: '6px 16px',
+                borderRadius: 6,
+                background: 'var(--settings-accent)',
+                color: '#fff',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+              }}
             >
-              ✕
+              Show Live Preview
             </button>
-          </header>
-          <TerminalPreview settings={draft} />
-        </div>
-      )}
-      {!showPreview && (
-        <button
-          onClick={() => setShowPreview(true)}
-          style={{
-            position: 'fixed',
-            bottom: 24,
-            right: 24,
-            padding: '8px 16px',
-            borderRadius: 20,
-            background: 'var(--settings-accent)',
-            color: '#fff',
-            border: 'none',
-            cursor: 'pointer',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-            zIndex: 101,
-          }}
-        >
-          Show Preview
-        </button>
-      )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
