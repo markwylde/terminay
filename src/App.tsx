@@ -13,10 +13,13 @@ import data from '@emoji-mart/data'
 import Picker from '@emoji-mart/react'
 import { DockviewReact, getPanelData } from 'dockview'
 import type { Direction, DockviewApi, DockviewReadyEvent } from 'dockview'
+import { getMacroSubmitSuffix, mergeMacroFieldsWithTemplate, renderMacroTemplate } from './macroSettings'
 import type { AppCommand } from './types/termide'
 import { TerminalPanel } from './components/TerminalPanel'
 import { TerminalTab } from './components/TerminalTab'
 import type { TerminalPanelParams } from './components/TerminalTab'
+import { useMacroSettings } from './hooks/useMacroSettings'
+import type { MacroDefinition, MacroFieldValue } from './types/macros'
 import './App.css'
 
 type SplitDirection = Extract<Direction, 'below' | 'right'>
@@ -39,17 +42,29 @@ type ProjectWorkspaceHandle = {
 type ProjectWorkspaceProps = {
   isActive: boolean
   isMac: boolean
+  macros: MacroDefinition[]
   popoutUrl: string
 }
 
+const OPEN_TERMINAL_SWITCHER_EVENT = 'termide-open-terminal-switcher'
+
+type TerminalSwitcherItem = {
+  panelId: string
+  sessionId: string
+  title: string
+  emoji: string
+  color: string
+}
+
 const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProps>(
-  ({ isActive, isMac, popoutUrl }, ref) => {
+  ({ isActive, isMac, macros, popoutUrl }, ref) => {
     const dockviewApiRef = useRef<DockviewApi | null>(null)
     const panelSessionMapRef = useRef<Map<string, string>>(new Map())
     const terminalCounterRef = useRef(0)
     const draggingTransferRef = useRef<{ panelId?: string; groupId: string } | null>(null)
     const workspaceRef = useRef<HTMLElement | null>(null)
     const [errorText, setErrorText] = useState<string | null>(null)
+    const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null)
 
     const [editingTerminalPanelId, setEditingTerminalPanelId] = useState<string | null>(null)
     const [editingTerminalTitle, setEditingTerminalTitle] = useState('')
@@ -57,6 +72,268 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
     const [editingTerminalColor, setEditingTerminalColor] = useState('#4db5ff')
     const [isTerminalEmojiPickerOpen, setIsTerminalEmojiPickerOpen] = useState(false)
     const terminalEmojiPickerContainerRef = useRef<HTMLDivElement | null>(null)
+    const [isMacroLauncherOpen, setIsMacroLauncherOpen] = useState(false)
+    const [macroQuery, setMacroQuery] = useState('')
+    const [selectedMacroIndex, setSelectedMacroIndex] = useState(0)
+    const [macroToRun, setMacroToRun] = useState<MacroDefinition | null>(null)
+    const [macroFieldValues, setMacroFieldValues] = useState<Record<string, MacroFieldValue>>({})
+    const macroLauncherInputRef = useRef<HTMLInputElement | null>(null)
+    const firstMacroFieldRef = useRef<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null>(null)
+
+    const getActiveSessionId = useCallback(() => {
+      return dockviewApiRef.current?.activePanel?.params?.sessionId ?? null
+    }, [])
+
+    const focusActiveTerminal = useCallback(() => {
+      const sessionId = getActiveSessionId()
+      dockviewApiRef.current?.activePanel?.api.setActive()
+      setFocusedSessionId(sessionId)
+      window.requestAnimationFrame(() => {
+        window.dispatchEvent(
+          new CustomEvent('termide-focus-terminal', {
+            detail: { sessionId },
+          }),
+        )
+      })
+    }, [getActiveSessionId])
+
+    const [terminalSwitcherItems, setTerminalSwitcherItems] = useState<TerminalSwitcherItem[]>([])
+    const [isTerminalSwitcherOpen, setIsTerminalSwitcherOpen] = useState(false)
+    const [terminalSwitcherIndex, setTerminalSwitcherIndex] = useState(0)
+    const terminalSwitcherSelectionRef = useRef(0)
+
+    const getOrderedTerminalSwitcherItems = useCallback((): TerminalSwitcherItem[] => {
+      const api = dockviewApiRef.current
+      if (!api) {
+        return []
+      }
+
+      return api.groups
+        .map((group) => {
+          const referencePanel = group.activePanel ?? group.panels[0]
+          if (!referencePanel) {
+            return null
+          }
+
+          try {
+            if (referencePanel.api.getWindow() !== window) {
+              return null
+            }
+          } catch {
+            return null
+          }
+
+          const rect = group.element.getBoundingClientRect()
+          return {
+            group,
+            top: rect.top,
+            left: rect.left,
+          }
+        })
+        .filter((entry): entry is { group: DockviewApi['groups'][number]; top: number; left: number } => entry !== null)
+        .sort((a, b) => {
+          const verticalDistance = Math.abs(a.top - b.top)
+          if (verticalDistance > 24) {
+            return a.top - b.top
+          }
+
+          return a.left - b.left
+        })
+        .flatMap(({ group }) =>
+          group.panels.map((panel) => ({
+            panelId: panel.id,
+            sessionId: panel.params?.sessionId ?? '',
+            title: panel.title ?? 'Terminal',
+            emoji: panel.params?.emoji ?? '',
+            color: panel.params?.color ?? '#4db5ff',
+          })),
+        )
+        .filter((panel) => panel.sessionId.length > 0)
+    }, [])
+
+    const closeTerminalSwitcher = useCallback(() => {
+      terminalSwitcherSelectionRef.current = 0
+      setIsTerminalSwitcherOpen(false)
+      setTerminalSwitcherItems([])
+      setTerminalSwitcherIndex(0)
+    }, [])
+
+    const commitTerminalSwitcherSelection = useCallback(() => {
+      const api = dockviewApiRef.current
+      const selectedPanel = terminalSwitcherItems[terminalSwitcherSelectionRef.current]
+      closeTerminalSwitcher()
+
+      if (!api || !selectedPanel) {
+        return
+      }
+
+      api.getPanel(selectedPanel.panelId)?.api.setActive()
+      setErrorText(null)
+      window.requestAnimationFrame(() => {
+        window.dispatchEvent(
+          new CustomEvent('termide-focus-terminal', {
+            detail: { sessionId: selectedPanel.sessionId },
+          }),
+        )
+      })
+    }, [closeTerminalSwitcher, terminalSwitcherItems])
+
+    const moveTerminalSwitcherSelection = useCallback(
+      (direction: 1 | -1) => {
+        const items = terminalSwitcherItems
+        if (items.length <= 1) {
+          return
+        }
+
+        const nextIndex = (terminalSwitcherSelectionRef.current + direction + items.length) % items.length
+        terminalSwitcherSelectionRef.current = nextIndex
+        setTerminalSwitcherIndex(nextIndex)
+      },
+      [terminalSwitcherItems],
+    )
+
+    const openTerminalSwitcher = useCallback(
+      (direction: 1 | -1 = 1) => {
+        const items = getOrderedTerminalSwitcherItems()
+        if (items.length <= 1) {
+          return
+        }
+
+        const activePanelId = dockviewApiRef.current?.activePanel?.id
+        const activeIndex = activePanelId ? items.findIndex((item) => item.panelId === activePanelId) : -1
+        const startIndex = activeIndex >= 0 ? activeIndex : 0
+        const nextIndex = (startIndex + direction + items.length) % items.length
+
+        terminalSwitcherSelectionRef.current = nextIndex
+        setTerminalSwitcherItems(items)
+        setTerminalSwitcherIndex(nextIndex)
+        setIsTerminalSwitcherOpen(true)
+      },
+      [getOrderedTerminalSwitcherItems],
+    )
+
+    const closeMacroLauncher = useCallback(() => {
+      setIsMacroLauncherOpen(false)
+      setMacroQuery('')
+      setSelectedMacroIndex(0)
+      window.requestAnimationFrame(() => {
+        focusActiveTerminal()
+      })
+    }, [focusActiveTerminal])
+
+    const closeMacroParameterModal = useCallback(() => {
+      setMacroToRun(null)
+      setMacroFieldValues({})
+      window.requestAnimationFrame(() => {
+        focusActiveTerminal()
+      })
+    }, [focusActiveTerminal])
+
+    const filteredMacros = useMemo(() => {
+      const normalizedQuery = macroQuery.trim().toLowerCase()
+      if (!normalizedQuery) {
+        return macros
+      }
+
+      return macros.filter((macro) => {
+        const fieldText = mergeMacroFieldsWithTemplate(macro)
+          .map((field) => `${field.label} ${field.name}`)
+          .join(' ')
+          .toLowerCase()
+
+        return (
+          macro.title.toLowerCase().includes(normalizedQuery) ||
+          macro.description.toLowerCase().includes(normalizedQuery) ||
+          macro.template.toLowerCase().includes(normalizedQuery) ||
+          fieldText.includes(normalizedQuery)
+        )
+      })
+    }, [macroQuery, macros])
+
+    const submitMacroToTerminal = useCallback(
+      (macro: MacroDefinition, values: Record<string, MacroFieldValue>) => {
+        const sessionId = getActiveSessionId()
+        if (!sessionId) {
+          setErrorText('No active terminal is available to receive the macro.')
+          return
+        }
+
+        const rendered = renderMacroTemplate(macro.template, values) + getMacroSubmitSuffix(macro.submitMode)
+        window.termide.writeTerminal(sessionId, rendered)
+        setErrorText(null)
+        setMacroToRun(null)
+        setMacroFieldValues({})
+        setIsMacroLauncherOpen(false)
+        setMacroQuery('')
+        setSelectedMacroIndex(0)
+        window.requestAnimationFrame(() => {
+          focusActiveTerminal()
+        })
+      },
+      [focusActiveTerminal, getActiveSessionId],
+    )
+
+    const syncFocusedTerminalTabs = useCallback((sessionId: string | null) => {
+      const api = dockviewApiRef.current
+      if (!api) {
+        return
+      }
+
+      for (const [panelId, panelSessionId] of panelSessionMapRef.current.entries()) {
+        const panel = api.getPanel(panelId)
+        if (!panel) {
+          continue
+        }
+
+        const isFocused = panelSessionId === sessionId
+        if (panel.params?.isFocused === isFocused) {
+          continue
+        }
+
+        panel.api.updateParameters({ isFocused })
+      }
+    }, [])
+
+    const runMacro = useCallback(
+      (macro: MacroDefinition) => {
+        const effectiveFields = mergeMacroFieldsWithTemplate(macro)
+        if (effectiveFields.length === 0) {
+          submitMacroToTerminal(macro, {})
+          return
+        }
+
+        setMacroToRun(macro)
+        setMacroFieldValues(
+          Object.fromEntries(effectiveFields.map((field) => [field.name, field.defaultValue])) as Record<
+            string,
+            MacroFieldValue
+          >,
+        )
+        setIsMacroLauncherOpen(false)
+      },
+      [submitMacroToTerminal],
+    )
+
+    const validateMacroValues = useCallback((macro: MacroDefinition, values: Record<string, MacroFieldValue>) => {
+      for (const field of mergeMacroFieldsWithTemplate(macro)) {
+        if (!field.required) {
+          continue
+        }
+
+        const value = values[field.name]
+        const isMissing =
+          value === undefined ||
+          value === null ||
+          (typeof value === 'string' && value.trim().length === 0)
+
+        if (isMissing) {
+          setErrorText(`"${field.label}" is required before this macro can run.`)
+          return false
+        }
+      }
+
+      return true
+    }, [])
 
     const closeTerminalEditModal = useCallback(() => {
       setEditingTerminalPanelId(null)
@@ -115,7 +392,11 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
       }
 
       try {
-        const { id: sessionId } = await window.termide.createTerminal()
+        const activeSessionId = api.activePanel?.params?.sessionId
+        const inheritedCwd = activeSessionId ? await window.termide.getTerminalCwd(activeSessionId) : null
+        const { id: sessionId } = await window.termide.createTerminal(
+          inheritedCwd ? { cwd: inheritedCwd } : undefined,
+        )
 
         terminalCounterRef.current += 1
         const panelId = `terminal-${terminalCounterRef.current}`
@@ -125,7 +406,7 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
           title: `Terminal ${terminalCounterRef.current}`,
           component: 'terminal',
           tabComponent: 'terminalTab',
-          params: { sessionId, color: '#0a0a0a' },
+          params: { sessionId, color: '#0a0a0a', isFocused: false },
           position:
             options?.groupId && api.getGroup(options.groupId)
               ? {
@@ -142,6 +423,7 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
 
         panelSessionMapRef.current.set(panel.id, sessionId)
         panel.api.setActive()
+        setFocusedSessionId(sessionId)
         setErrorText(null)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -186,13 +468,29 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
             case 'close-active':
               closeActivePanel()
               break
+            case 'open-macro-launcher':
+              if (!getActiveSessionId()) {
+                setErrorText('Open a terminal before launching a macro.')
+                break
+              }
+
+              setMacroQuery('')
+              setSelectedMacroIndex(0)
+              setIsMacroLauncherOpen(true)
+              setMacroToRun(null)
+              setMacroFieldValues({})
+              break
             default:
               break
           }
         },
       }),
-      [addTerminal, closeActivePanel, popoutActivePanel],
+      [addTerminal, closeActivePanel, getActiveSessionId, popoutActivePanel],
     )
+
+    useEffect(() => {
+      syncFocusedTerminalTabs(focusedSessionId)
+    }, [focusedSessionId, syncFocusedTerminalTabs])
 
     const handleReady = useCallback(
       (event: DockviewReadyEvent) => {
@@ -206,6 +504,9 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
           }
 
           panelSessionMapRef.current.delete(panel.id)
+          setFocusedSessionId((current) =>
+            current === sessionId ? event.api.activePanel?.params?.sessionId ?? null : current,
+          )
           window.termide.killTerminal(sessionId)
         })
 
@@ -213,6 +514,18 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
       },
       [addTerminal],
     )
+
+    useEffect(() => {
+      const onTerminalFocused = (event: Event) => {
+        const customEvent = event as CustomEvent<{ sessionId?: string }>
+        setFocusedSessionId(customEvent.detail?.sessionId ?? null)
+      }
+
+      window.addEventListener('termide-terminal-focused', onTerminalFocused)
+      return () => {
+        window.removeEventListener('termide-terminal-focused', onTerminalFocused)
+      }
+    }, [])
 
     useEffect(() => {
       const cleanupByWindow = new Map<Window, () => void>()
@@ -530,7 +843,19 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
       if (clientWidth > 0 && clientHeight > 0) {
         api.layout(clientWidth, clientHeight)
       }
-    }, [isActive])
+
+      if (editingTerminalPanelId || isMacroLauncherOpen || macroToRun || isTerminalSwitcherOpen) {
+        return
+      }
+
+      const frame = window.requestAnimationFrame(() => {
+        focusActiveTerminal()
+      })
+
+      return () => {
+        window.cancelAnimationFrame(frame)
+      }
+    }, [editingTerminalPanelId, focusActiveTerminal, isActive, isMacroLauncherOpen, isTerminalSwitcherOpen, macroToRun])
 
     useEffect(() => {
       if (!editingTerminalPanelId) {
@@ -574,6 +899,183 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
       }
     }, [isTerminalEmojiPickerOpen])
 
+    useEffect(() => {
+      if (!isActive || editingTerminalPanelId || isMacroLauncherOpen || macroToRun) {
+        return
+      }
+
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.defaultPrevented) {
+          return
+        }
+
+        if (event.altKey && !event.ctrlKey && !event.metaKey && event.key === 'Tab') {
+          const target = event.target
+          if (
+            target instanceof HTMLElement &&
+            (target.closest('.terminal-panel') || target.closest('.xterm') || target.classList.contains('xterm-helper-textarea'))
+          ) {
+            return
+          }
+
+          event.preventDefault()
+          if (event.repeat) {
+            return
+          }
+
+          if (isTerminalSwitcherOpen) {
+            moveTerminalSwitcherSelection(event.shiftKey ? -1 : 1)
+            return
+          }
+
+          openTerminalSwitcher(event.shiftKey ? -1 : 1)
+          return
+        }
+
+        if (!isTerminalSwitcherOpen) {
+          return
+        }
+
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          closeTerminalSwitcher()
+        }
+      }
+
+      const onSwitcherRequest = (event: Event) => {
+        const customEvent = event as CustomEvent<{ direction?: 1 | -1 }>
+        const direction = customEvent.detail?.direction === -1 ? -1 : 1
+
+        if (isTerminalSwitcherOpen) {
+          moveTerminalSwitcherSelection(direction)
+          return
+        }
+
+        openTerminalSwitcher(direction)
+      }
+
+      const onKeyUp = (event: KeyboardEvent) => {
+        if (!isTerminalSwitcherOpen) {
+          return
+        }
+
+        if (event.key === 'Alt') {
+          event.preventDefault()
+          commitTerminalSwitcherSelection()
+        }
+      }
+
+      const onBlur = () => {
+        if (isTerminalSwitcherOpen) {
+          commitTerminalSwitcherSelection()
+        }
+      }
+
+      window.addEventListener('keydown', onKeyDown)
+      window.addEventListener('keyup', onKeyUp)
+      window.addEventListener(OPEN_TERMINAL_SWITCHER_EVENT, onSwitcherRequest)
+      window.addEventListener('blur', onBlur)
+      return () => {
+        window.removeEventListener('keydown', onKeyDown)
+        window.removeEventListener('keyup', onKeyUp)
+        window.removeEventListener(OPEN_TERMINAL_SWITCHER_EVENT, onSwitcherRequest)
+        window.removeEventListener('blur', onBlur)
+      }
+    }, [
+      closeTerminalSwitcher,
+      commitTerminalSwitcherSelection,
+      editingTerminalPanelId,
+      isActive,
+      isMacroLauncherOpen,
+      isTerminalSwitcherOpen,
+      macroToRun,
+      moveTerminalSwitcherSelection,
+      openTerminalSwitcher,
+    ])
+
+    useEffect(() => {
+      if (!isMacroLauncherOpen) {
+        return
+      }
+
+      window.requestAnimationFrame(() => {
+        macroLauncherInputRef.current?.focus()
+        macroLauncherInputRef.current?.select()
+      })
+    }, [isMacroLauncherOpen])
+
+    useEffect(() => {
+      if (filteredMacros.length === 0) {
+        setSelectedMacroIndex(0)
+        return
+      }
+
+      setSelectedMacroIndex((current) => Math.min(current, filteredMacros.length - 1))
+    }, [filteredMacros.length])
+
+    useEffect(() => {
+      if (!isMacroLauncherOpen) {
+        return
+      }
+
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          closeMacroLauncher()
+          return
+        }
+
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          setSelectedMacroIndex((current) => (filteredMacros.length === 0 ? 0 : (current + 1) % filteredMacros.length))
+          return
+        }
+
+        if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          setSelectedMacroIndex((current) =>
+            filteredMacros.length === 0 ? 0 : (current - 1 + filteredMacros.length) % filteredMacros.length,
+          )
+          return
+        }
+
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          const macro = filteredMacros[selectedMacroIndex]
+          if (macro) {
+            runMacro(macro)
+          }
+        }
+      }
+
+      window.addEventListener('keydown', onKeyDown)
+      return () => {
+        window.removeEventListener('keydown', onKeyDown)
+      }
+    }, [closeMacroLauncher, filteredMacros, isMacroLauncherOpen, runMacro, selectedMacroIndex])
+
+    useEffect(() => {
+      if (!macroToRun) {
+        return
+      }
+
+      window.requestAnimationFrame(() => {
+        firstMacroFieldRef.current?.focus()
+      })
+
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          closeMacroParameterModal()
+        }
+      }
+
+      window.addEventListener('keydown', onKeyDown)
+      return () => {
+        window.removeEventListener('keydown', onKeyDown)
+      }
+    }, [closeMacroParameterModal, macroToRun])
+
     return (
       <section
         className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
@@ -594,6 +1096,198 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
             floatingGroupBounds="boundedWithinViewport"
           />
         </main>
+
+        {isMacroLauncherOpen ? (
+          <div className="macro-launcher" role="dialog" aria-modal="true" aria-label="Macro launcher">
+            <div className="macro-launcher-panel">
+              <div className="macro-launcher-header">
+                <div>
+                  <p className="macro-launcher-kicker">Cmd+L</p>
+                  <h2>Run Macro</h2>
+                </div>
+                <button type="button" className="macro-launcher-close" onClick={closeMacroLauncher} aria-label="Close macro launcher">
+                  Esc
+                </button>
+              </div>
+
+              <input
+                ref={macroLauncherInputRef}
+                type="text"
+                className="macro-launcher-input"
+                value={macroQuery}
+                onChange={(event) => {
+                  setMacroQuery(event.target.value)
+                  setSelectedMacroIndex(0)
+                }}
+                placeholder="Search macros"
+              />
+
+              <div className="macro-launcher-list">
+                {filteredMacros.length === 0 ? (
+                  <p className="macro-launcher-empty">No macros match this search.</p>
+                ) : (
+                  filteredMacros.map((macro, index) => (
+                    <button
+                      key={macro.id}
+                      type="button"
+                      className={`macro-launcher-item${index === selectedMacroIndex ? ' macro-launcher-item--active' : ''}`}
+                      onMouseEnter={() => setSelectedMacroIndex(index)}
+                      onClick={() => runMacro(macro)}
+                    >
+                      <span className="macro-launcher-item-title">{macro.title}</span>
+                      <span className="macro-launcher-item-description">
+                        {macro.description || macro.template}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {isTerminalSwitcherOpen ? (
+          <div className="terminal-switcher" role="dialog" aria-modal="true" aria-label="Terminal switcher">
+            <div className="terminal-switcher-panel">
+              <div className="terminal-switcher-header">
+                <p className="terminal-switcher-kicker">Alt+Tab</p>
+                <span className="terminal-switcher-hint">Release Alt to switch</span>
+              </div>
+              <div className="terminal-switcher-list">
+                {terminalSwitcherItems.map((item, index) => (
+                  <button
+                    key={item.panelId}
+                    type="button"
+                    className={`terminal-switcher-item${index === terminalSwitcherIndex ? ' terminal-switcher-item--active' : ''}`}
+                    onMouseEnter={() => {
+                      terminalSwitcherSelectionRef.current = index
+                      setTerminalSwitcherIndex(index)
+                    }}
+                    onClick={() => {
+                      terminalSwitcherSelectionRef.current = index
+                      setTerminalSwitcherIndex(index)
+                      commitTerminalSwitcherSelection()
+                    }}
+                  >
+                    <span className="terminal-switcher-item-preview" style={{ '--tab-color': item.color } as React.CSSProperties}>
+                      <span className="terminal-switcher-item-dot" />
+                      <span className="terminal-switcher-item-emoji" aria-hidden="true">
+                        {item.emoji || '>'}
+                      </span>
+                    </span>
+                    <span className="terminal-switcher-item-title">{item.title}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {macroToRun ? (
+          <div className="project-edit-modal-backdrop" onClick={closeMacroParameterModal}>
+            <form
+              className="project-edit-modal project-edit-modal--wide"
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (!validateMacroValues(macroToRun, macroFieldValues)) {
+                  return
+                }
+                submitMacroToTerminal(macroToRun, macroFieldValues)
+              }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h2>{macroToRun.title}</h2>
+              <p className="macro-parameter-description">
+                {macroToRun.description || 'Fill in the parameters to render the final macro output.'}
+              </p>
+
+              {mergeMacroFieldsWithTemplate(macroToRun).map((field, index) => {
+                const value = macroFieldValues[field.name]
+                const firstFieldRef =
+                  index === 0
+                    ? (element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null) => {
+                        firstMacroFieldRef.current = element
+                      }
+                    : undefined
+                return (
+                  <div key={field.id} className="macro-parameter-field">
+                    <span>{field.label}</span>
+                    {field.type === 'textarea' ? (
+                      <textarea
+                        ref={firstFieldRef}
+                        className="project-edit-textarea"
+                        value={String(value ?? '')}
+                        placeholder={field.placeholder}
+                        onChange={(event) =>
+                          setMacroFieldValues((current) => ({
+                            ...current,
+                            [field.name]: event.target.value,
+                          }))
+                        }
+                        rows={4}
+                      />
+                    ) : field.type === 'select' ? (
+                      <select
+                        ref={firstFieldRef}
+                        className="project-edit-select"
+                        value={String(value ?? '')}
+                        onChange={(event) =>
+                          setMacroFieldValues((current) => ({
+                            ...current,
+                            [field.name]: event.target.value,
+                          }))
+                        }
+                      >
+                        {field.options.map((option) => (
+                          <option key={`${field.id}-${option.value}`} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : field.type === 'checkbox' ? (
+                      <input
+                        ref={firstFieldRef}
+                        type="checkbox"
+                        checked={Boolean(value)}
+                        onChange={(event) =>
+                          setMacroFieldValues((current) => ({
+                            ...current,
+                            [field.name]: event.target.checked,
+                          }))
+                        }
+                      />
+                    ) : (
+                      <input
+                        ref={firstFieldRef}
+                        type={field.type === 'number' ? 'number' : 'text'}
+                        value={String(value ?? '')}
+                        placeholder={field.placeholder}
+                        onChange={(event) =>
+                          setMacroFieldValues((current) => ({
+                            ...current,
+                            [field.name]:
+                              field.type === 'number' ? Number(event.target.value || 0) : event.target.value,
+                          }))
+                        }
+                      />
+                    )}
+                  </div>
+                )
+              })}
+
+              <div className="project-edit-preview project-edit-preview--multiline">
+                <pre>{renderMacroTemplate(macroToRun.template, macroFieldValues)}</pre>
+              </div>
+
+              <div className="project-edit-actions">
+                <button type="button" onClick={closeMacroParameterModal}>
+                  Cancel
+                </button>
+                <button type="submit">Type Macro</button>
+              </div>
+            </form>
+          </div>
+        ) : null}
 
         {editingTerminalPanelId ? (
           <div className="project-edit-modal-backdrop" onClick={closeTerminalEditModal}>
@@ -689,6 +1383,7 @@ ProjectWorkspace.displayName = 'ProjectWorkspace'
 function App() {
   const isMac = useMemo(() => navigator.userAgent.includes('Mac'), [])
   const popoutUrl = useMemo(() => new URL('popout.html', window.location.href).toString(), [])
+  const { macros } = useMacroSettings()
   const projectCounterRef = useRef(1)
   const workspaceRefs = useRef(new Map<string, ProjectWorkspaceHandle | null>())
 
@@ -923,6 +1618,7 @@ function App() {
             }}
             isActive={project.id === activeProjectId}
             isMac={isMac}
+            macros={macros}
             popoutUrl={popoutUrl}
           />
         ))}
