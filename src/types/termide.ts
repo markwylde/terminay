@@ -40,6 +40,7 @@ export interface TermideApi {
   getMacros: () => Promise<import('./macros').MacroDefinition[]>
   updateMacros: (macros: import('./macros').MacroDefinition[]) => Promise<import('./macros').MacroDefinition[]>
   resetMacros: () => Promise<import('./macros').MacroDefinition[]>
+  openExternal: (url: string) => Promise<void>
   onTerminalData: (listener: (message: TerminalDataMessage) => void) => () => void
   onTerminalExit: (listener: (message: TerminalExitMessage) => void) => () => void
   onAppCommand: (listener: (command: AppCommand) => void) => () => void
