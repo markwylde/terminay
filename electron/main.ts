@@ -835,6 +835,10 @@ ipcMain.handle('app:quit', () => {
   app.quit()
 })
 
+ipcMain.handle('shell:open-external', async (_event, url: string) => {
+  await shell.openExternal(url)
+})
+
 app.on('web-contents-created', (_event, contents) => {
   contents.once('destroyed', () => {
     killSessionsForWebContents(contents.id)

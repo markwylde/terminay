@@ -44,6 +44,7 @@ const termideApi = {
   getMacros: () => ipcRenderer.invoke('macros:get') as Promise<MacroDefinition[]>,
   updateMacros: (macros: MacroDefinition[]) => ipcRenderer.invoke('macros:update', macros) as Promise<MacroDefinition[]>,
   resetMacros: () => ipcRenderer.invoke('macros:reset') as Promise<MacroDefinition[]>,
+  openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
   onTerminalData: (listener: (message: TerminalDataMessage) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: TerminalDataMessage) => listener(payload)
     ipcRenderer.on('terminal:data', wrapped)
