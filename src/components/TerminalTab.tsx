@@ -5,13 +5,17 @@ export type TerminalPanelParams = {
   sessionId: string
   color?: string
   emoji?: string
+  isFocused?: boolean
 }
+
+const DEFAULT_TERMINAL_TAB_COLOR = '#0a0a0a'
 
 export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams>) {
   const title = props.api.title
   const params = props.params
   const { color, emoji } = params || {}
-  const isActive = props.api.isActive
+  const isFocused = params?.isFocused === true
+  const hasCustomColor = typeof color === 'string' && color !== DEFAULT_TERMINAL_TAB_COLOR
 
   const style = useMemo(() => {
     return {
@@ -36,10 +40,10 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
 
   return (
     <div
-      className={`terminal-tab-content${isActive ? ' terminal-tab-content--active' : ''}`}
+      className={`terminal-tab-content${isFocused ? ' terminal-tab-content--active' : ''}`}
       style={style}
       data-panel-id={props.api.id}
-      data-has-color={!!color}
+      data-has-color={hasCustomColor}
       title="Double-click to edit tab"
       onDoubleClick={onDoubleClick}
     >

@@ -4,6 +4,7 @@ import type { TerminalSettings } from './types/settings'
 type SettingsInputKind = 'boolean' | 'number' | 'text' | 'select' | 'color'
 
 type SettingsCategoryId =
+  | 'shell'
   | 'appearance'
   | 'cursor'
   | 'interaction'
@@ -41,6 +42,7 @@ export type SettingsCategoryDefinition = {
 }
 
 export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
+  { id: 'shell', label: 'Shell', description: 'Shell program, startup mode, and launch arguments.' },
   { id: 'appearance', label: 'Appearance', description: 'Typography, rendering, and visual density.' },
   { id: 'cursor', label: 'Cursor', description: 'Cursor style, width, and focus behavior.' },
   { id: 'interaction', label: 'Interaction', description: 'Input, selection, and keyboard behavior.' },
@@ -61,7 +63,7 @@ export const defaultTerminalSettings: TerminalSettings = {
   disableStdin: false,
   drawBoldTextInBrightColors: true,
   fastScrollSensitivity: 5,
-  fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+  fontFamily: 'Menlo, Monaco, Consolas, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Liberation Mono", "Courier New", monospace',
   fontSize: 13,
   fontWeight: '400',
   fontWeightBold: '700',
@@ -81,6 +83,11 @@ export const defaultTerminalSettings: TerminalSettings = {
   smoothScrollDuration: 0,
   tabStopWidth: 8,
   wordSeparator: ' ()[]{}\',"`',
+  shell: {
+    program: '',
+    startupMode: 'auto',
+    extraArgs: '',
+  },
   theme: {
     foreground: '#dce2f0',
     background: '#111316',
@@ -117,6 +124,48 @@ function makeField(definition: Omit<SettingsFieldDefinition, 'keywords'> & { key
 
 export const terminalSettingsSections: SettingsSectionDefinition[] = [
   {
+    id: 'shell-launch',
+    categoryId: 'shell',
+    title: 'Launch',
+    description: 'Choose which shell to run and how Termide starts it.',
+    fields: [
+      makeField({
+        key: 'shell.program',
+        label: 'Shell program',
+        description: 'Executable path or command name. Leave blank to use your system default shell.',
+        sectionId: 'shell-launch',
+        categoryId: 'shell',
+        input: 'text',
+        placeholder: '/bin/zsh',
+        keywords: ['zsh', 'bash', 'fish', 'nushell', 'default shell', 'executable'],
+      }),
+      makeField({
+        key: 'shell.startupMode',
+        label: 'Startup mode',
+        description: 'Auto uses a login shell on macOS so tools from Homebrew and other login PATH setup are available.',
+        sectionId: 'shell-launch',
+        categoryId: 'shell',
+        input: 'select',
+        options: [
+          { label: 'Auto', value: 'auto' },
+          { label: 'Login shell', value: 'login' },
+          { label: 'Non-login shell', value: 'non-login' },
+        ],
+        keywords: ['login shell', 'path', 'homebrew', 'gh', 'zprofile'],
+      }),
+      makeField({
+        key: 'shell.extraArgs',
+        label: 'Extra arguments',
+        description: 'Optional arguments appended after Termide-managed shell flags.',
+        sectionId: 'shell-launch',
+        categoryId: 'shell',
+        input: 'text',
+        placeholder: '--no-rcs',
+        keywords: ['args', 'arguments', 'flags', 'rc'],
+      }),
+    ],
+  },
+  {
     id: 'typography',
     categoryId: 'appearance',
     title: 'Typography',
@@ -129,7 +178,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         sectionId: 'typography',
         categoryId: 'appearance',
         input: 'text',
-        placeholder: 'Menlo, Monaco, Consolas, monospace',
+        placeholder: 'Menlo, Monaco, Consolas, "Apple Color Emoji", monospace',
         keywords: ['typeface', 'font', 'mono'],
       }),
       makeField({
@@ -637,6 +686,26 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
     smoothScrollDuration: clampNumber(Number(input.smoothScrollDuration), defaultTerminalSettings.smoothScrollDuration, 0, 2000),
     tabStopWidth: clampNumber(Number(input.tabStopWidth), defaultTerminalSettings.tabStopWidth, 1, 16),
     wordSeparator: typeof input.wordSeparator === 'string' ? input.wordSeparator : defaultTerminalSettings.wordSeparator,
+    shell: {
+      program:
+        typeof input.shell === 'object' &&
+        input.shell !== null &&
+        typeof input.shell.program === 'string'
+          ? input.shell.program.trim()
+          : defaultTerminalSettings.shell.program,
+      startupMode:
+        typeof input.shell === 'object' &&
+        input.shell !== null &&
+        (input.shell.startupMode === 'auto' || input.shell.startupMode === 'login' || input.shell.startupMode === 'non-login')
+          ? input.shell.startupMode
+          : defaultTerminalSettings.shell.startupMode,
+      extraArgs:
+        typeof input.shell === 'object' &&
+        input.shell !== null &&
+        typeof input.shell.extraArgs === 'string'
+          ? input.shell.extraArgs
+          : defaultTerminalSettings.shell.extraArgs,
+    },
     theme: {
       foreground: typeof themeInput.foreground === 'string' ? themeInput.foreground : defaultTerminalSettings.theme.foreground,
       background: typeof themeInput.background === 'string' ? themeInput.background : defaultTerminalSettings.theme.background,

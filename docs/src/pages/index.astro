@@ -1,4 +1,5 @@
 ---
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
 import Layout from '../layouts/Layout.astro';
 
 const basePath = import.meta.env.BASE_URL.endsWith('/')
@@ -12,8 +13,10 @@ const screenshots = [
   { src: `${basePath}screenshots/screenshot4.png`, alt: 'Termide interface showcasing additional terminal organization options' },
 ];
 
+// biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
 const hasScreenshots = screenshots.length > 0;
 
+// biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
 const features = [
   {
     icon: '🪟',

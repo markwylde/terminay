@@ -19,6 +19,7 @@
     "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
   },
   "win": {
+    "icon": "public/termide.png",
     "target": [
       {
         "target": "nsis",

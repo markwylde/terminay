@@ -27,6 +27,12 @@ export type TerminalThemeSettings = {
   brightWhite: string
 }
 
+export type ShellSettings = {
+  program: string
+  startupMode: 'auto' | 'login' | 'non-login'
+  extraArgs: string
+}
+
 export type TerminalSettings = {
   allowTransparency: boolean
   altClickMovesCursor: boolean
@@ -59,5 +65,6 @@ export type TerminalSettings = {
   smoothScrollDuration: number
   tabStopWidth: number
   wordSeparator: string
+  shell: ShellSettings
   theme: TerminalThemeSettings
 }
