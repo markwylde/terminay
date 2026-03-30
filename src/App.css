@@ -781,7 +781,10 @@
 .terminal-panel-root,
 .terminal-panel .xterm {
   position: absolute;
-  inset: 8px;
+  top: 2px;
+  right: 2px;
+  bottom: 8px;
+  left: 2px;
   height: auto;
 }
 

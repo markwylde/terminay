@@ -38,14 +38,14 @@ function setValueAtPath(settings: TerminalSettings, key: string, value: boolean 
   }
 
   const [root, leaf] = segments
-  if (root !== 'theme' || !leaf) {
+  if ((root !== 'theme' && root !== 'shell') || !leaf) {
     return settings
   }
 
   return {
     ...settings,
-    theme: {
-      ...settings.theme,
+    [root]: {
+      ...(settings[root] as Record<string, boolean | number | string>),
       [leaf]: value,
     },
   }
@@ -66,7 +66,7 @@ function TerminalPreview({ settings }: { settings: TerminalSettings }) {
       ...buildTerminalOptions(settings),
       cols: 72,
       rows: 18,
-      allowProposedApi: false,
+      allowProposedApi: true,
     })
     const fitAddon = new FitAddon()
     const unicode11Addon = new Unicode11Addon()
@@ -120,6 +120,7 @@ function renderCategoryIcon(title: string, children: ReactNode) {
 
 function getCategoryIcon(id: CategoryId) {
   switch (id) {
+    case 'shell': return renderCategoryIcon('Shell', <><path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 7l3-3h10l3 3"/><path d="m9 12 2 2-2 2"/><line x1="13.5" y1="16" x2="16.5" y2="16"/></>)
     case 'appearance': return renderCategoryIcon('Appearance', <><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></>)
     case 'cursor': return renderCategoryIcon('Cursor', <path d="m4 4 7.07 17 2.51-7.39L21 11.07z"/>)
     case 'interaction': return renderCategoryIcon('Interaction', <><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></>)
