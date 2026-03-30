@@ -4,7 +4,9 @@ interface Props {
   description?: string;
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
 const title = Astro.props.title
+// biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
 const description = Astro.props.description ?? "A modern desktop terminal workspace built with Electron, React, and Vite"
 ---
 
