@@ -4,6 +4,7 @@ import type { TerminalSettings } from './types/settings'
 type SettingsInputKind = 'boolean' | 'number' | 'text' | 'select' | 'color'
 
 type SettingsCategoryId =
+  | 'remote'
   | 'shell'
   | 'appearance'
   | 'cursor'
@@ -42,6 +43,7 @@ export type SettingsCategoryDefinition = {
 }
 
 export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
+  { id: 'remote', label: 'Remote Access', description: 'Remote host, local binding, and optional custom TLS files.' },
   { id: 'shell', label: 'Shell', description: 'Shell program, startup mode, and launch arguments.' },
   { id: 'appearance', label: 'Appearance', description: 'Typography, rendering, and visual density.' },
   { id: 'cursor', label: 'Cursor', description: 'Cursor style, width, and focus behavior.' },
@@ -83,6 +85,12 @@ export const defaultTerminalSettings: TerminalSettings = {
   smoothScrollDuration: 0,
   tabStopWidth: 8,
   wordSeparator: ' ()[]{}\',"`',
+  remoteAccess: {
+    bindAddress: '0.0.0.0',
+    origin: 'https://localhost:9443',
+    tlsCertPath: '',
+    tlsKeyPath: '',
+  },
   shell: {
     program: '',
     startupMode: 'auto',
@@ -123,6 +131,62 @@ function makeField(definition: Omit<SettingsFieldDefinition, 'keywords'> & { key
 }
 
 export const terminalSettingsSections: SettingsSectionDefinition[] = [
+  {
+    id: 'remote-access-host',
+    categoryId: 'remote',
+    title: 'Host & Origin',
+    description: 'Choose the HTTPS origin browsers will pair against and the local address Termide binds.',
+    fields: [
+      makeField({
+        key: 'remoteAccess.origin',
+        label: 'Remote origin',
+        description: 'Exact HTTPS origin browsers use for pairing and remote terminal access. Defaults to https://localhost:9443 for local setup.',
+        sectionId: 'remote-access-host',
+        categoryId: 'remote',
+        input: 'text',
+        placeholder: 'https://termide.example.com',
+        keywords: ['https', 'origin', 'hostname', 'domain', 'pairing', 'remote'],
+      }),
+      makeField({
+        key: 'remoteAccess.bindAddress',
+        label: 'Bind address',
+        description: 'Local interface address to bind the HTTPS server to. The default 0.0.0.0 listens on all interfaces.',
+        sectionId: 'remote-access-host',
+        categoryId: 'remote',
+        input: 'text',
+        placeholder: '0.0.0.0',
+        keywords: ['host', 'listen', 'bind', 'network', 'interface', '0.0.0.0'],
+      }),
+    ],
+  },
+  {
+    id: 'remote-access-tls',
+    categoryId: 'remote',
+    title: 'TLS',
+    description: 'Leave these blank to let Termide generate a self-signed certificate automatically.',
+    fields: [
+      makeField({
+        key: 'remoteAccess.tlsCertPath',
+        label: 'TLS certificate path',
+        description: 'Optional absolute path to a PEM certificate or full chain. Leave blank to use an auto-generated self-signed cert.',
+        sectionId: 'remote-access-tls',
+        categoryId: 'remote',
+        input: 'text',
+        placeholder: '/etc/letsencrypt/live/termide.example.com/fullchain.pem',
+        keywords: ['certificate', 'cert', 'pem', 'fullchain', 'https'],
+      }),
+      makeField({
+        key: 'remoteAccess.tlsKeyPath',
+        label: 'TLS private key path',
+        description: 'Optional absolute path to the PEM private key. Leave blank to use an auto-generated self-signed cert.',
+        sectionId: 'remote-access-tls',
+        categoryId: 'remote',
+        input: 'text',
+        placeholder: '/etc/letsencrypt/live/termide.example.com/privkey.pem',
+        keywords: ['private key', 'key', 'pem', 'tls', 'https'],
+      }),
+    ],
+  },
   {
     id: 'shell-launch',
     categoryId: 'shell',
@@ -621,6 +685,10 @@ function clampNumber(value: number, fallback: number, min?: number, max?: number
 
 export function normalizeTerminalSettings(candidate: unknown): TerminalSettings {
   const input = typeof candidate === 'object' && candidate !== null ? (candidate as Partial<TerminalSettings>) : {}
+  const remoteAccessInput =
+    typeof input.remoteAccess === 'object' && input.remoteAccess !== null
+      ? input.remoteAccess
+      : defaultTerminalSettings.remoteAccess
   const themeInput =
     typeof input.theme === 'object' && input.theme !== null
       ? (input.theme as Partial<TerminalSettings['theme']>)
@@ -686,6 +754,21 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
     smoothScrollDuration: clampNumber(Number(input.smoothScrollDuration), defaultTerminalSettings.smoothScrollDuration, 0, 2000),
     tabStopWidth: clampNumber(Number(input.tabStopWidth), defaultTerminalSettings.tabStopWidth, 1, 16),
     wordSeparator: typeof input.wordSeparator === 'string' ? input.wordSeparator : defaultTerminalSettings.wordSeparator,
+    remoteAccess: {
+      bindAddress:
+        typeof remoteAccessInput.bindAddress === 'string' && remoteAccessInput.bindAddress.trim().length > 0
+          ? remoteAccessInput.bindAddress
+          : defaultTerminalSettings.remoteAccess.bindAddress,
+      origin: typeof remoteAccessInput.origin === 'string' ? remoteAccessInput.origin : defaultTerminalSettings.remoteAccess.origin,
+      tlsCertPath:
+        typeof remoteAccessInput.tlsCertPath === 'string'
+          ? remoteAccessInput.tlsCertPath
+          : defaultTerminalSettings.remoteAccess.tlsCertPath,
+      tlsKeyPath:
+        typeof remoteAccessInput.tlsKeyPath === 'string'
+          ? remoteAccessInput.tlsKeyPath
+          : defaultTerminalSettings.remoteAccess.tlsKeyPath,
+    },
     shell: {
       program:
         typeof input.shell === 'object' &&

@@ -12,6 +12,7 @@ import {
 import type { SettingsFieldDefinition } from '../terminalSettings'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalSettings } from '../types/settings'
+import type { RemoteAccessStatus } from '../types/termide'
 import '../settings.css'
 
 type CategoryId = (typeof terminalSettingsCategories)[number]['id']
@@ -38,7 +39,7 @@ function setValueAtPath(settings: TerminalSettings, key: string, value: boolean 
   }
 
   const [root, leaf] = segments
-  if ((root !== 'theme' && root !== 'shell') || !leaf) {
+  if ((root !== 'theme' && root !== 'shell' && root !== 'remoteAccess') || !leaf) {
     return settings
   }
 
@@ -120,6 +121,7 @@ function renderCategoryIcon(title: string, children: ReactNode) {
 
 function getCategoryIcon(id: CategoryId) {
   switch (id) {
+    case 'remote': return renderCategoryIcon('Remote Access', <><path d="M5 12a7 7 0 0 1 14 0"/><path d="M8.5 12a3.5 3.5 0 0 1 7 0"/><circle cx="12" cy="16" r="1.4"/><path d="M12 17.5v2.5"/></>)
     case 'shell': return renderCategoryIcon('Shell', <><path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 7l3-3h10l3 3"/><path d="m9 12 2 2-2 2"/><line x1="13.5" y1="16" x2="16.5" y2="16"/></>)
     case 'appearance': return renderCategoryIcon('Appearance', <><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></>)
     case 'cursor': return renderCategoryIcon('Cursor', <path d="m4 4 7.07 17 2.51-7.39L21 11.07z"/>)
@@ -132,16 +134,28 @@ function getCategoryIcon(id: CategoryId) {
 }
 
 export function SettingsWindow() {
+  const searchParams = new URLSearchParams(window.location.search)
+  const initialSectionFromUrl = searchParams.get('section')
+  const initialCategoryFromUrl =
+    terminalSettingsSections.find((section) => section.id === initialSectionFromUrl)?.categoryId ?? 'appearance'
   const { settings: persistedSettings, isLoading } = useTerminalSettings()
   const [draft, setDraft] = useState<TerminalSettings>(defaultTerminalSettings)
-  const [activeCategoryId, setActiveCategoryId] = useState<CategoryId>('appearance')
+  const [activeCategoryId, setActiveCategoryId] = useState<CategoryId>(initialCategoryFromUrl)
   const [activeSectionId, setActiveSectionId] = useState<string>(
-    () => terminalSettingsSections.find((section) => section.categoryId === 'appearance')?.id ?? terminalSettingsSections[0]?.id ?? '',
+    () =>
+      initialSectionFromUrl ??
+      terminalSettingsSections.find((section) => section.categoryId === initialCategoryFromUrl)?.id ??
+      terminalSettingsSections[0]?.id ??
+      '',
   )
   const [query, setQuery] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [showPreview, setShowPreview] = useState(true)
   const [previewHeight, setPreviewHeight] = useState(240)
+  const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(null)
+  const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false)
+  const [isLinkCopied, setIsLinkCopied] = useState(false)
+  const [isUpdatingRemoteDevices, setIsUpdatingRemoteDevices] = useState(false)
 
   const handleResizePointerDown = (e: React.PointerEvent) => {
     e.preventDefault()
@@ -167,6 +181,25 @@ export function SettingsWindow() {
   useEffect(() => {
     setDraft(persistedSettings)
   }, [persistedSettings])
+
+  useEffect(() => {
+    let isMounted = true
+
+    void window.termide.getRemoteAccessStatus().then((status) => {
+      if (isMounted) {
+        setRemoteStatus(status)
+      }
+    })
+
+    const unsubscribe = window.termide.onRemoteAccessStatusChanged((status) => {
+      setRemoteStatus(status)
+    })
+
+    return () => {
+      isMounted = false
+      unsubscribe()
+    }
+  }, [])
 
   const normalizedQuery = query.trim().toLowerCase()
 
@@ -214,6 +247,26 @@ export function SettingsWindow() {
 
     setActiveSectionId(eligibleSections[0]?.id ?? '')
   }, [activeCategoryId, activeSectionId, filteredSections, normalizedQuery])
+
+  useEffect(() => {
+    const unsubscribe = window.termide.onSettingsFocusSection(({ sectionId }) => {
+      const section = terminalSettingsSections.find((candidate) => candidate.id === sectionId)
+      if (!section) {
+        return
+      }
+
+      setActiveCategoryId(section.categoryId)
+      setActiveSectionId(section.id)
+      window.requestAnimationFrame(() => {
+        const element = document.getElementById(`section-${section.id}`)
+        element?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  }, [])
 
   useEffect(() => {
     const root = contentRef.current
@@ -377,6 +430,196 @@ export function SettingsWindow() {
     }
   }
 
+  const toggleRemoteAccess = async () => {
+    setIsTogglingRemoteAccess(true)
+
+    try {
+      if (remoteStatus?.configurationIssue) {
+        setActiveCategoryId('remote')
+        setActiveSectionId('remote-access-host')
+        scrollToSection('remote-access-host')
+        return
+      }
+
+      const nextStatus = await window.termide.toggleRemoteAccessServer()
+      setRemoteStatus(nextStatus)
+    } finally {
+      setIsTogglingRemoteAccess(false)
+    }
+  }
+
+  const revokeDevice = async (deviceId: string) => {
+    setIsUpdatingRemoteDevices(true)
+    try {
+      const nextStatus = await window.termide.revokeRemoteAccessDevice(deviceId)
+      setRemoteStatus(nextStatus)
+    } finally {
+      setIsUpdatingRemoteDevices(false)
+    }
+  }
+
+  const closeConnection = async (connectionId: string) => {
+    setIsUpdatingRemoteDevices(true)
+    try {
+      const nextStatus = await window.termide.closeRemoteAccessConnection(connectionId)
+      setRemoteStatus(nextStatus)
+    } finally {
+      setIsUpdatingRemoteDevices(false)
+    }
+  }
+
+  const renderRemoteManagement = () => {
+    if (!displayedCategories.some((category) => category.id === 'remote')) {
+      return null
+    }
+
+    const remoteSummary = remoteStatus?.isRunning
+      ? remoteStatus.origin ?? 'Remote access is live.'
+      : remoteStatus?.errorMessage
+        ? 'Remote access could not start.'
+        : 'Remote access is ready.'
+
+    const remoteDescription = remoteStatus?.isRunning
+      ? 'Scan the QR code from a phone or browser, then manage trusted devices and live connections here.'
+      : remoteStatus?.errorMessage
+        ? `${remoteStatus.errorMessage} You can also add your own certificate files below later if you want.`
+        : 'Termide will use your Remote Access settings and generate a self-signed certificate automatically if you leave the TLS paths blank.'
+
+    return (
+      <section id="section-remote-access-management" className="settings-section">
+        <h3 className="settings-section-title">Pair Device & Live Access</h3>
+        <div className="settings-group">
+          <div className="settings-remote-panel">
+            <div className="settings-remote-panel-header">
+              <div>
+                <p className="settings-remote-kicker">Remote Access</p>
+                <h4>{remoteSummary}</h4>
+                <p>{remoteDescription}</p>
+              </div>
+              <button
+                type="button"
+                className="settings-primary-button"
+                onClick={() => void toggleRemoteAccess()}
+                disabled={isTogglingRemoteAccess}
+              >
+                {isTogglingRemoteAccess ? 'Working...' : remoteStatus?.isRunning ? 'Stop Remote Access' : 'Pair Device'}
+              </button>
+            </div>
+
+            {remoteStatus?.pairingQrCodeDataUrl ? (
+              <div className="settings-remote-grid">
+                <div className="settings-remote-card">
+                  <div className="settings-remote-card-header">
+                    <span className="settings-remote-card-label">Pairing QR</span>
+                    {remoteStatus.pairingUrl ? (
+                      <button
+                        type="button"
+                        className="settings-remote-copy-button"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(remoteStatus.pairingUrl!)
+                          setIsLinkCopied(true)
+                          setTimeout(() => setIsLinkCopied(false), 2000)
+                        }}
+                      >
+                        {isLinkCopied ? 'Copied' : 'Copy Link'}
+                      </button>
+                    ) : null}
+                  </div>
+                  <img className="settings-remote-qr" src={remoteStatus.pairingQrCodeDataUrl} alt="Remote pairing QR code" />
+                  <p className="settings-remote-meta">
+                    Expires {remoteStatus.pairingExpiresAt ? new Date(remoteStatus.pairingExpiresAt).toLocaleString() : 'soon'}
+                  </p>
+                </div>
+
+                <div className="settings-remote-card">
+                  <span className="settings-remote-card-label">Paired Devices</span>
+                  <div className="settings-remote-list">
+                    {remoteStatus.pairedDevices.length === 0 ? (
+                      <p className="settings-remote-empty">No paired browsers yet.</p>
+                    ) : (
+                      remoteStatus.pairedDevices.map((device) => (
+                        <div key={device.deviceId} className="settings-remote-item">
+                          <div>
+                            <strong>{device.name}</strong>
+                            <p>
+                              Added {new Date(device.addedAt).toLocaleString()}
+                              {device.lastSeenAt ? ` · Last seen ${new Date(device.lastSeenAt).toLocaleString()}` : ''}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="settings-danger-button settings-danger-button--quiet"
+                            disabled={isUpdatingRemoteDevices}
+                            onClick={() => void revokeDevice(device.deviceId)}
+                          >
+                            Revoke
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="settings-remote-card">
+                  <span className="settings-remote-card-label">Active Connections</span>
+                  <div className="settings-remote-list">
+                    {remoteStatus.connections.length === 0 ? (
+                      <p className="settings-remote-empty">No live remote connections.</p>
+                    ) : (
+                      remoteStatus.connections.map((connection) => (
+                        <div key={connection.connectionId} className="settings-remote-item">
+                          <div>
+                            <strong>{connection.deviceName}</strong>
+                            <p>{connection.attachedSessionCount} attached session{connection.attachedSessionCount === 1 ? '' : 's'}</p>
+                          </div>
+                          <button
+                            type="button"
+                            className="settings-secondary-button settings-secondary-button--small"
+                            disabled={isUpdatingRemoteDevices}
+                            onClick={() => void closeConnection(connection.connectionId)}
+                          >
+                            Close
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="settings-remote-card">
+                  <span className="settings-remote-card-label">Recent Audit Log</span>
+                  <div className="settings-remote-list">
+                    {remoteStatus.auditEvents.length === 0 ? (
+                      <p className="settings-remote-empty">No remote access events yet.</p>
+                    ) : (
+                      remoteStatus.auditEvents.map((event) => (
+                        <div
+                          key={`${event.occurredAt}-${event.action}-${event.connectionId ?? 'none'}-${event.deviceId ?? 'none'}`}
+                          className="settings-remote-item settings-remote-item--stacked"
+                        >
+                          <strong>{event.action.replace(/-/g, ' ')}</strong>
+                          <p>
+                            {new Date(event.occurredAt).toLocaleString()}
+                            {event.deviceName ? ` · ${event.deviceName}` : ''}
+                            {event.connectionId ? ` · ${event.connectionId.slice(0, 8)}` : ''}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="settings-remote-empty-state">
+                Click Pair Device to start remote access and generate a fresh pairing QR code for browsers.
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <div className="settings-shell">
       <aside className="settings-sidebar">
@@ -456,13 +699,14 @@ export function SettingsWindow() {
                     </div>
                   </section>
                 ))}
+                {cat.id === 'remote' ? renderRemoteManagement() : null}
               </div>
             )
           })}
         </div>
         </main>
 
-        {showPreview && (
+        {['appearance', 'cursor', 'theme'].includes(activeCategoryId) && showPreview && (
           <>
             <div className="settings-preview-resizer" onPointerDown={handleResizePointerDown} />
             <div className="settings-preview-dock" style={{ height: previewHeight }}>
@@ -479,7 +723,7 @@ export function SettingsWindow() {
             </div>
           </>
         )}
-        {!showPreview && (
+        {['appearance', 'cursor', 'theme'].includes(activeCategoryId) && !showPreview && (
           <div style={{ padding: '8px 16px', borderTop: '1px solid var(--settings-border)', background: 'var(--settings-sidebar-bg)', textAlign: 'center' }}>
             <button
               onClick={() => setShowPreview(true)}

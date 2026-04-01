@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, nativeImage, shell, webContents } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, nativeImage, shell, webContents, safeStorage } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -12,6 +12,7 @@ import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
+import { RemoteAccessService } from './remote/service'
 
 const require = createRequire(import.meta.url)
 const pty = require('node-pty') as typeof import('node-pty')
@@ -64,6 +65,36 @@ type AppCommand =
   | 'close-active'
   | 'open-macro-launcher'
 
+let terminalZoomLevel = 0
+
+function broadcastZoomChange(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) {
+      continue
+    }
+    window.webContents.send('terminal:zoom-changed', { zoomLevel: terminalZoomLevel })
+  }
+}
+
+function zoomIn(): void {
+  if (terminalZoomLevel < 10) {
+    terminalZoomLevel++
+    broadcastZoomChange()
+  }
+}
+
+function zoomOut(): void {
+  if (terminalZoomLevel > -5) {
+    terminalZoomLevel--
+    broadcastZoomChange()
+  }
+}
+
+function resetZoom(): void {
+  terminalZoomLevel = 0
+  broadcastZoomChange()
+}
+
 interface TerminalSession {
   id: string
   ownerWebContentsId: number
@@ -73,6 +104,43 @@ interface TerminalSession {
 const terminalSessions = new Map<string, TerminalSession>()
 let settingsWindow: BrowserWindow | null = null
 let macrosWindow: BrowserWindow | null = null
+const remoteAccessService = new RemoteAccessService({
+  app,
+  getControllableSession: (sessionId) => {
+    const session = terminalSessions.get(sessionId)
+    return session
+      ? {
+          close: () => killSession(sessionId),
+          resize: (cols: number, rows: number) => session.process.resize(cols, rows),
+          write: (data: string) => session.process.write(data),
+        }
+      : null
+  },
+  getRemoteAccessSettings: () => readTerminalSettings().remoteAccess,
+  onStatusChanged: (status) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.isDestroyed()) {
+        continue
+      }
+
+      window.webContents.send('remote:status-changed', status)
+    }
+  },
+  publicDir: process.env.VITE_PUBLIC,
+  rendererDistDir: RENDERER_DIST,
+  saveGeneratedTlsPaths: ({ certPath, keyPath }) => {
+    const currentSettings = readTerminalSettings()
+    const nextSettings = writeTerminalSettings({
+      ...currentSettings,
+      remoteAccess: {
+        ...currentSettings.remoteAccess,
+        tlsCertPath: certPath,
+        tlsKeyPath: keyPath,
+      },
+    })
+    broadcastTerminalSettings(nextSettings)
+  },
+})
 
 function getTerminalSettingsPath(): string {
   return path.join(app.getPath('userData'), 'terminal-settings.json')
@@ -80,6 +148,10 @@ function getTerminalSettingsPath(): string {
 
 function getMacrosPath(): string {
   return path.join(app.getPath('userData'), 'macros.json')
+}
+
+function getSecretsPath(): string {
+  return path.join(app.getPath('userData'), 'secrets.json')
 }
 
 function readTerminalSettings(): TerminalSettings {
@@ -128,6 +200,29 @@ function writeMacros(macros: MacroDefinition[]): MacroDefinition[] {
   mkdirSync(path.dirname(macrosPath), { recursive: true })
   writeFileSync(macrosPath, JSON.stringify(normalized, null, 2))
   return normalized
+}
+
+type SecretRecord = {
+  id: string
+  name: string
+  encryptedValue: string
+}
+
+function readSecrets(): SecretRecord[] {
+  const secretsPath = getSecretsPath()
+  try {
+    if (!existsSync(secretsPath)) {
+      return []
+    }
+    const content = readFileSync(secretsPath, 'utf8')
+    return JSON.parse(content)
+  } catch {
+    return []
+  }
+}
+
+function writeSecrets(secrets: SecretRecord[]): void {
+  writeFileSync(getSecretsPath(), JSON.stringify(secrets, null, 2))
 }
 
 function broadcastTerminalSettings(settings: TerminalSettings): void {
@@ -276,6 +371,10 @@ function parseCommandLineArgs(value: string): string[] {
 
 function getTerminalSpawnEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
+
+  // xterm.js renders true color, but many CLI tools only enable 24-bit output
+  // when COLORTERM explicitly advertises it.
+  env.COLORTERM = 'truecolor'
 
   if (process.platform !== 'darwin') {
     return env
@@ -428,6 +527,7 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
   }
 
   terminalSessions.set(id, session)
+  remoteAccessService.ensureSession(id)
   return session
 }
 
@@ -444,6 +544,7 @@ function killSession(id: string): void {
   }
 
   terminalSessions.delete(id)
+  remoteAccessService.removeSession(id)
 }
 
 function killSessionsForWebContents(webContentsId: number): void {
@@ -569,9 +670,21 @@ function createAppMenu(): void {
     {
       label: 'View',
       submenu: [
-        { role: 'resetZoom', accelerator: 'CmdOrCtrl+0' },
-        { role: 'zoomIn', accelerator: 'CmdOrCtrl+=' },
-        { role: 'zoomOut', accelerator: 'CmdOrCtrl+-' },
+        {
+          label: 'Reset Zoom',
+          accelerator: 'CmdOrCtrl+0',
+          click: () => resetZoom(),
+        },
+        {
+          label: 'Zoom In',
+          accelerator: 'CmdOrCtrl+=',
+          click: () => zoomIn(),
+        },
+        {
+          label: 'Zoom Out',
+          accelerator: 'CmdOrCtrl+-',
+          click: () => zoomOut(),
+        },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'forceReload' },
@@ -653,12 +766,15 @@ function createWindow() {
   }
 }
 
-function openSettingsWindow(): void {
+function openSettingsWindow(sectionId?: string): void {
   const preloadPath = path.join(__dirname, 'preload.mjs')
   const windowIconPath = getWindowIconPath()
 
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.focus()
+    if (sectionId) {
+      settingsWindow.webContents.send('settings:focus-section', { sectionId })
+    }
     return
   }
 
@@ -683,10 +799,15 @@ function openSettingsWindow(): void {
   })
 
   if (VITE_DEV_SERVER_URL) {
-    settingsWindow.loadURL(`${VITE_DEV_SERVER_URL}?view=settings`)
+    const target = new URL(VITE_DEV_SERVER_URL)
+    target.searchParams.set('view', 'settings')
+    if (sectionId) {
+      target.searchParams.set('section', sectionId)
+    }
+    settingsWindow.loadURL(target.toString())
   } else {
     settingsWindow.loadFile(path.join(RENDERER_DIST, 'index.html'), {
-      query: { view: 'settings' },
+      query: sectionId ? { view: 'settings', section: sectionId } : { view: 'settings' },
     })
   }
 }
@@ -753,6 +874,7 @@ ipcMain.handle('terminal:create', async (event, payload?: { cwd?: string }) => {
 
   session.process.onData((data: string) => {
     sendToSessionRenderer(session, 'terminal:data', { id: session.id, data })
+    remoteAccessService.appendSessionData(session.id, data)
   })
 
   session.process.onExit((exit: { exitCode: number; signal?: number }) => {
@@ -760,6 +882,7 @@ ipcMain.handle('terminal:create', async (event, payload?: { cwd?: string }) => {
       id: session.id,
       exitCode: exit.exitCode ?? 0,
     })
+    remoteAccessService.markSessionExit(session.id, exit.exitCode ?? 0)
     terminalSessions.delete(session.id)
   })
 
@@ -790,6 +913,7 @@ ipcMain.on('terminal:resize', (_event, payload: { id: string; cols: number; rows
 
   try {
     session.process.resize(cols, rows)
+    remoteAccessService.updateSessionSize(payload.id, cols, rows)
   } catch {
     // can throw during teardown races
   }
@@ -799,6 +923,31 @@ ipcMain.on('terminal:kill', (_event, payload: { id: string }) => {
   killSession(payload.id)
 })
 
+ipcMain.on(
+  'terminal:update-remote-metadata',
+  (
+    _event,
+    payload: {
+      id: string
+      title?: string
+      emoji?: string
+      color?: string
+      viewportWidth?: number
+      viewportHeight?: number
+      projectId?: string
+      projectTitle?: string
+      projectEmoji?: string
+      projectColor?: string
+    },
+  ) => {
+    remoteAccessService.updateSessionMetadata(payload.id, payload)
+  },
+)
+
+ipcMain.handle('terminal:get-zoom', () => {
+  return terminalZoomLevel
+})
+
 ipcMain.handle('settings:get-terminal', () => {
   return readTerminalSettings()
 })
@@ -806,12 +955,14 @@ ipcMain.handle('settings:get-terminal', () => {
 ipcMain.handle('settings:update-terminal', (_event, payload: TerminalSettings) => {
   const settings = writeTerminalSettings(payload)
   broadcastTerminalSettings(settings)
+  remoteAccessService.notifyStatusChanged()
   return settings
 })
 
 ipcMain.handle('settings:reset-terminal', () => {
   const settings = writeTerminalSettings(defaultTerminalSettings)
   broadcastTerminalSettings(settings)
+  remoteAccessService.notifyStatusChanged()
   return settings
 })
 
@@ -837,6 +988,91 @@ ipcMain.handle('app:quit', () => {
 
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
   await shell.openExternal(url)
+})
+
+ipcMain.handle('remote:get-status', () => {
+  return remoteAccessService.getStatus()
+})
+
+ipcMain.handle('remote:toggle-server', async () => {
+  return remoteAccessService.toggle()
+})
+
+ipcMain.handle('remote:revoke-device', async (_event, payload: { deviceId: string }) => {
+  return remoteAccessService.revokeDevice(payload.deviceId)
+})
+
+ipcMain.handle('remote:close-connection', async (_event, payload: { connectionId: string }) => {
+  return remoteAccessService.closeConnection(payload.connectionId)
+})
+
+ipcMain.handle('remote:set-pairing-address', async (_event, payload: { address: string }) => {
+  return remoteAccessService.setPairingAddress(payload.address)
+})
+
+ipcMain.handle('app:open-settings', (_event, payload?: { sectionId?: string }) => {
+  openSettingsWindow(payload?.sectionId)
+})
+
+ipcMain.handle('secrets:get', () => {
+  const secrets = readSecrets()
+  return secrets.map((s) => ({ id: s.id, name: s.name }))
+})
+
+ipcMain.handle('secrets:save', (_event, { name, value }) => {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Encryption is not available on this system.')
+  }
+  const secrets = readSecrets()
+  const id = randomUUID()
+  const encryptedValue = safeStorage.encryptString(value).toString('base64')
+  const record: SecretRecord = { id, name, encryptedValue }
+  secrets.push(record)
+  writeSecrets(secrets)
+  return { id, name }
+})
+
+ipcMain.handle('secrets:delete', (_event, id) => {
+  const secrets = readSecrets()
+  const index = secrets.findIndex((s) => s.id === id)
+  if (index !== -1) {
+    secrets.splice(index, 1)
+    writeSecrets(secrets)
+  }
+})
+
+ipcMain.handle('secrets:get-decrypted', (_event, id) => {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Encryption is not available on this system.')
+  }
+  const secrets = readSecrets()
+  const secret = secrets.find((s) => s.id === id)
+  if (!secret) {
+    throw new Error('Secret not found.')
+  }
+  return safeStorage.decryptString(Buffer.from(secret.encryptedValue, 'base64'))
+})
+
+ipcMain.handle('terminal:wait-for-inactivity', async (_event, { id, durationMs }) => {
+  const session = terminalSessions.get(id)
+  if (!session) {
+    return
+  }
+
+  return new Promise<void>((resolve) => {
+    let timeout = setTimeout(() => {
+      dataListener.dispose()
+      resolve()
+    }, durationMs)
+
+    const dataListener = session.process.onData(() => {
+      clearTimeout(timeout)
+      timeout = setTimeout(() => {
+        dataListener.dispose()
+        resolve()
+      }, durationMs)
+    })
+  })
 })
 
 app.on('web-contents-created', (_event, contents) => {
