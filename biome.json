@@ -12,7 +12,8 @@
       "!dist",
       "!dist-electron",
       "!release",
-      "!node_modules"
+      "!node_modules",
+      "!vendor"
     ]
   },
   "formatter": {
