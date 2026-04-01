@@ -4,12 +4,28 @@ import type {
   MacroFieldOption,
   MacroFieldType,
   MacroFieldValue,
-  MacroSubmitMode,
+  MacroStep,
+  MacroStepType,
 } from './types/macros'
 
 const placeholderPattern = /{{\s*([^{}]+?)\s*}}/g
 
 export const defaultMacros: MacroDefinition[] = [
+  {
+    id: 'update-os',
+    title: 'Update OS',
+    description: 'Example of a multi-step macro that updates the system.',
+    template: 'sudo apt-get update\nsudo apt-get upgrade -y',
+    submitMode: 'type-and-submit',
+    steps: [
+      { id: 'step-1', type: 'type', content: 'sudo apt-get update' },
+      { id: 'step-2', type: 'key', key: 'Enter' },
+      { id: 'step-3', type: 'wait_inactivity', durationMs: 3000 },
+      { id: 'step-4', type: 'type', content: 'sudo apt-get upgrade -y' },
+      { id: 'step-5', type: 'key', key: 'Enter' },
+    ],
+    fields: [],
+  },
   {
     id: 'create-pull-request',
     title: 'Create a pull request',
@@ -17,6 +33,13 @@ export const defaultMacros: MacroDefinition[] = [
     template:
       'Create a branch and commit all the unstaged changes into that branch, then push up and create a pull request using the gh cli tool.',
     submitMode: 'type-only',
+    steps: [
+      {
+        id: 'step-1',
+        type: 'type',
+        content: 'Create a branch and commit all the unstaged changes into that branch, then push up and create a pull request using the gh cli tool.',
+      },
+    ],
     fields: [],
   },
   {
@@ -25,6 +48,9 @@ export const defaultMacros: MacroDefinition[] = [
     description: 'Example macro showing how placeholders become form inputs.',
     template: 'Say hello to {{Name of person}} with a {{Emoji}} emoji',
     submitMode: 'type-only',
+    steps: [
+      { id: 'step-1', type: 'type', content: 'Say hello to {{Name of person}} with a {{Emoji}} emoji' },
+    ],
     fields: [
       {
         id: 'macro-field-1',
@@ -62,10 +88,6 @@ function normalizeBoolean(value: unknown, fallback = false): boolean {
 
 function normalizeNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(value) ? Number(value) : fallback
-}
-
-function normalizeSubmitMode(value: unknown): MacroSubmitMode {
-  return value === 'type-and-submit' ? 'type-and-submit' : 'type-only'
 }
 
 function normalizeFieldType(value: unknown): MacroFieldType {
@@ -144,6 +166,42 @@ function normalizeField(input: unknown, index: number): MacroFieldDefinition {
   }
 }
 
+function normalizeStepType(value: unknown): MacroStepType {
+  switch (value) {
+    case 'key':
+    case 'secret':
+    case 'wait_time':
+    case 'wait_inactivity':
+    case 'select_line':
+    case 'paste':
+      return value
+    default:
+      return 'type'
+  }
+}
+
+function normalizeStep(input: unknown, index: number): MacroStep {
+  const record = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {}
+  const type = normalizeStepType(record.type)
+  const id = normalizeString(record.id).trim() || `step-${index + 1}`
+
+  switch (type) {
+    case 'type':
+      return { id, type, content: normalizeString(record.content) }
+    case 'key':
+      return { id, type, key: normalizeString(record.key, 'Enter') }
+    case 'secret':
+      return { id, type, secretId: normalizeString(record.secretId) }
+    case 'wait_time':
+      return { id, type, durationMs: normalizeNumber(record.durationMs, 1000) }
+    case 'wait_inactivity':
+      return { id, type, durationMs: normalizeNumber(record.durationMs, 3000) }
+    case 'select_line':
+    case 'paste':
+      return { id, type }
+  }
+}
+
 export function extractTemplatePlaceholders(template: string): string[] {
   const matches = template.matchAll(placeholderPattern)
   const seen = new Set<string>()
@@ -157,6 +215,25 @@ export function extractTemplatePlaceholders(template: string): string[] {
 
     seen.add(placeholder)
     placeholders.push(placeholder)
+  }
+
+  return placeholders
+}
+
+export function extractAllMacroPlaceholders(macro: MacroDefinition): string[] {
+  const seen = new Set<string>()
+  const placeholders: string[] = []
+
+  for (const step of macro.steps) {
+    if (step.type === 'type') {
+      const stepPlaceholders = extractTemplatePlaceholders(step.content)
+      for (const p of stepPlaceholders) {
+        if (!seen.has(p)) {
+          seen.add(p)
+          placeholders.push(p)
+        }
+      }
+    }
   }
 
   return placeholders
@@ -179,25 +256,25 @@ export function renderMacroTemplate(template: string, values: Record<string, Mac
   })
 }
 
-export function inferFieldsFromTemplate(template: string): MacroFieldDefinition[] {
-  return extractTemplatePlaceholders(template).map((placeholder, index) => ({
-    id: `macro-field-${index + 1}`,
-    name: placeholder,
-    label: placeholder,
-    type: 'text',
-    required: true,
-    description: '',
-    placeholder: '',
-    defaultValue: '',
-    options: [],
-  }))
-}
+export function mergeFieldsWithSteps(steps: MacroStep[], fields: MacroFieldDefinition[]): MacroFieldDefinition[] {
+  const placeholders: string[] = []
+  const seen = new Set<string>()
 
-export function mergeFieldsWithTemplate(template: string, fields: MacroFieldDefinition[]): MacroFieldDefinition[] {
-  const placeholders = extractTemplatePlaceholders(template)
+  for (const step of steps) {
+    if (step.type === 'type') {
+      const stepPlaceholders = extractTemplatePlaceholders(step.content)
+      for (const p of stepPlaceholders) {
+        if (!seen.has(p)) {
+          seen.add(p)
+          placeholders.push(p)
+        }
+      }
+    }
+  }
+
   const placeholderSet = new Set(placeholders)
 
-  // Keep existing fields that are still in the template, in their current order
+  // Keep existing fields that are still in any step, in their current order
   const existingValidFields = fields.filter((f) => placeholderSet.has(f.name))
   const existingNames = new Set(existingValidFields.map((f) => f.name))
 
@@ -220,44 +297,78 @@ export function mergeFieldsWithTemplate(template: string, fields: MacroFieldDefi
 }
 
 export function mergeMacroFieldsWithTemplate(macro: MacroDefinition): MacroFieldDefinition[] {
-  const explicitFields = new Map(macro.fields.map((field) => [field.name.trim().toLowerCase(), field]))
-
-  return extractTemplatePlaceholders(macro.template).map((placeholder, index) => {
-    const existing = explicitFields.get(placeholder.toLowerCase())
-    if (existing) {
-      return existing
-    }
-
-    return {
-      id: `macro-field-${index + 1}`,
-      name: placeholder,
-      label: placeholder,
-      type: 'text',
-      required: true,
-      description: '',
-      placeholder: '',
-      defaultValue: '',
-      options: [],
-    }
-  })
+  return mergeFieldsWithSteps(macro.steps, macro.fields)
 }
 
-export function getMacroSubmitSuffix(submitMode: MacroSubmitMode): string {
+export function getMacroSubmitSuffix(submitMode: MacroDefinition['submitMode']): string {
   return submitMode === 'type-and-submit' ? '\r' : ''
+}
+
+function deriveLegacyTemplate(steps: MacroStep[]): Pick<MacroDefinition, 'submitMode' | 'template'> {
+  const lastStep = steps.length > 0 ? steps[steps.length - 1] : undefined
+  const submitMode: MacroDefinition['submitMode'] =
+    lastStep?.type === 'key' && lastStep.key === 'Enter' ? 'type-and-submit' : 'type-only'
+
+  const templateSteps = submitMode === 'type-and-submit' ? steps.slice(0, -1) : steps
+
+  return {
+    submitMode,
+    template: templateSteps
+      .map((step) => {
+        switch (step.type) {
+          case 'type':
+            return step.content
+          case 'key':
+            return `[key:${step.key}]`
+          case 'secret':
+            return `[secret:${step.secretId}]`
+          case 'wait_time':
+            return `[wait:${step.durationMs}]`
+          case 'wait_inactivity':
+            return `[wait-inactive:${step.durationMs}]`
+          case 'select_line':
+            return '[select-line]'
+          case 'paste':
+            return '[paste]'
+          default:
+            return ''
+        }
+      })
+      .join('\n'),
+  }
 }
 
 export function normalizeMacro(input: unknown, index: number): MacroDefinition {
   const record = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {}
-  const template = normalizeString(record.template)
   const explicitFields = Array.isArray(record.fields) ? record.fields.map(normalizeField) : []
+
+  let steps: MacroStep[] = []
+  if (Array.isArray(record.steps)) {
+    steps = record.steps.map(normalizeStep)
+  } else if (typeof record.template === 'string') {
+    // Legacy migration
+    steps.push({
+      id: 'step-1',
+      type: 'type',
+      content: record.template,
+    })
+    const submitMode = (record as Record<string, unknown>).submitMode
+    if (submitMode === 'type-and-submit') {
+      steps.push({
+        id: 'step-2',
+        type: 'key',
+        key: 'Enter',
+      })
+    }
+  }
 
   return {
     id: normalizeString(record.id).trim() || `macro-${index + 1}`,
     title: normalizeString(record.title).trim() || `Macro ${index + 1}`,
     description: normalizeString(record.description),
-    template,
-    submitMode: normalizeSubmitMode(record.submitMode),
-    fields: mergeFieldsWithTemplate(template, explicitFields),
+    ...deriveLegacyTemplate(steps),
+    steps,
+    fields: mergeFieldsWithSteps(steps, explicitFields),
   }
 }
 

@@ -33,6 +33,13 @@ export type ShellSettings = {
   extraArgs: string
 }
 
+export type RemoteAccessSettings = {
+  bindAddress: string
+  origin: string
+  tlsCertPath: string
+  tlsKeyPath: string
+}
+
 export type TerminalSettings = {
   allowTransparency: boolean
   altClickMovesCursor: boolean
@@ -65,6 +72,7 @@ export type TerminalSettings = {
   smoothScrollDuration: number
   tabStopWidth: number
   wordSeparator: string
+  remoteAccess: RemoteAccessSettings
   shell: ShellSettings
   theme: TerminalThemeSettings
 }
