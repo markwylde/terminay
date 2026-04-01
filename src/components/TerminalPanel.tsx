@@ -98,6 +98,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       allowProposedApi: true,
     })
     terminalRef.current = terminal
+
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
     const unicode11Addon = new Unicode11Addon()
@@ -105,6 +106,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(searchAddon)
     terminal.loadAddon(unicode11Addon)
+
     const isMac = navigator.platform.toLowerCase().includes('mac')
 
     const linkHandler = (event: MouseEvent, uri: string) => {
@@ -130,8 +132,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       }),
     )
     terminal.unicode.activeVersion = '11'
-
     terminal.open(root)
+
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.altKey && !event.ctrlKey && !event.metaKey && event.key === 'Tab') {
         event.preventDefault()
@@ -160,8 +162,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
       if (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        terminal.clear()
-        // Redraw the prompt and any in-progress input after the scrollback is dropped.
+        // Let the PTY remain the source of truth so every connected client
+        // converges on the same screen state.
         window.termide.writeTerminal(sessionId, '\u000c')
         return false
       }
@@ -172,6 +174,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     const fitAndResize = () => {
       fitAddon.fit()
       window.termide.resizeTerminal(sessionId, terminal.cols, terminal.rows)
+      window.termide.updateTerminalRemoteMetadata(sessionId, {
+        viewportHeight: Math.max(0, Math.round(root.clientHeight)),
+        viewportWidth: Math.max(0, Math.round(root.clientWidth)),
+      })
     }
 
     fitAndResize()
@@ -190,6 +196,23 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       }
 
       terminal.write(`\r\n\x1b[31m[process exited with code ${message.exitCode}]\x1b[0m\r\n`)
+    })
+
+    const zoomDisposer = window.termide.onTerminalZoomChanged((message) => {
+      const baseFontSize = settings.fontSize ?? 13
+      const newFontSize = baseFontSize + message.zoomLevel
+      terminal.options.fontSize = Math.max(6, newFontSize)
+      fitAddon.fit()
+      window.termide.resizeTerminal(sessionId, terminal.cols, terminal.rows)
+    })
+
+    void window.termide.getTerminalZoom().then((zoomLevel) => {
+      if (terminalRef.current !== terminal) {
+        return
+      }
+
+      terminal.options.fontSize = Math.max(6, (settings.fontSize ?? 13) + zoomLevel)
+      fitAndResize()
     })
 
     const dataDisposer = terminal.onData((data) => {
@@ -299,6 +322,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       dataDisposer.dispose()
       terminalExitDisposer()
       terminalDataDisposer()
+      zoomDisposer()
       searchAddonRef.current = null
       terminalRef.current = null
       terminal.dispose()

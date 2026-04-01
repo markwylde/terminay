@@ -13,13 +13,15 @@ import data from '@emoji-mart/data'
 import Picker from '@emoji-mart/react'
 import { DockviewReact, getPanelData } from 'dockview'
 import type { Direction, DockviewApi, DockviewReadyEvent } from 'dockview'
-import { getMacroSubmitSuffix, mergeMacroFieldsWithTemplate, renderMacroTemplate } from './macroSettings'
-import type { AppCommand } from './types/termide'
+import {
+  renderMacroTemplate,
+} from './macroSettings'
+import type { MacroDefinition, MacroFieldValue } from './types/macros'
+import type { AppCommand, RemoteAccessStatus } from './types/termide'
 import { TerminalPanel } from './components/TerminalPanel'
 import { TerminalTab } from './components/TerminalTab'
-import type { TerminalPanelParams } from './components/TerminalTab'
+import type { TerminalPanelParams, TerminalTabMacroRun } from './components/TerminalTab'
 import { useMacroSettings } from './hooks/useMacroSettings'
-import type { MacroDefinition, MacroFieldValue } from './types/macros'
 import './App.css'
 
 type SplitDirection = Extract<Direction, 'below' | 'right'>
@@ -44,9 +46,109 @@ type ProjectWorkspaceProps = {
   isMac: boolean
   macros: MacroDefinition[]
   popoutUrl: string
+  project: ProjectTab
 }
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'termide-open-terminal-switcher'
+
+function createAbortError(): Error {
+  const error = new Error('Macro execution canceled.')
+  error.name = 'AbortError'
+  return error
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw createAbortError()
+  }
+}
+
+function waitForDelay(durationMs: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(createAbortError())
+      return
+    }
+
+    const onAbort = () => {
+      window.clearTimeout(timeout)
+      reject(createAbortError())
+    }
+
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, durationMs)
+
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function waitForSessionInactivity(sessionId: string, durationMs: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(createAbortError())
+      return
+    }
+
+    let timeout = 0
+
+    const cleanup = () => {
+      window.clearTimeout(timeout)
+      dispose()
+      signal.removeEventListener('abort', onAbort)
+    }
+
+    const finish = () => {
+      cleanup()
+      resolve()
+    }
+
+    const onAbort = () => {
+      cleanup()
+      reject(createAbortError())
+    }
+
+    const restartTimer = () => {
+      window.clearTimeout(timeout)
+      timeout = window.setTimeout(finish, durationMs)
+    }
+
+    const dispose = window.termide.onTerminalData((message) => {
+      if (message.id !== sessionId) {
+        return
+      }
+
+      restartTimer()
+    })
+
+    signal.addEventListener('abort', onAbort, { once: true })
+    restartTimer()
+  })
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+function describeMacroStep(step: MacroDefinition['steps'][number]): string {
+  switch (step.type) {
+    case 'type':
+      return `Type: ${step.content.replace(/\s+/g, ' ').trim() || '(empty)'}`.slice(0, 96)
+    case 'key':
+      return `Press ${step.key}`
+    case 'secret':
+      return 'Insert secret'
+    case 'wait_time':
+      return `Wait ${Math.max(0, Math.round(step.durationMs / 100) / 10)}s`
+    case 'wait_inactivity':
+      return `Wait for inactivity ${Math.max(0, Math.round(step.durationMs / 100) / 10)}s`
+    case 'select_line':
+      return 'Select current line'
+    case 'paste':
+      return 'Paste clipboard'
+  }
+}
 
 type TerminalSwitcherItem = {
   panelId: string
@@ -56,8 +158,13 @@ type TerminalSwitcherItem = {
   color: string
 }
 
+type MacroRunController = {
+  abortController: AbortController
+  sessionId: string
+}
+
 const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProps>(
-  ({ isActive, isMac, macros, popoutUrl }, ref) => {
+  ({ isActive, isMac, macros, popoutUrl, project }, ref) => {
     const dockviewApiRef = useRef<DockviewApi | null>(null)
     const panelSessionMapRef = useRef<Map<string, string>>(new Map())
     const terminalCounterRef = useRef(0)
@@ -65,6 +172,8 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
     const workspaceRef = useRef<HTMLElement | null>(null)
     const [errorText, setErrorText] = useState<string | null>(null)
     const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null)
+    const [runningMacroRunsBySession, setRunningMacroRunsBySession] = useState<Record<string, TerminalTabMacroRun[]>>({})
+    const macroRunControllersRef = useRef<Map<string, MacroRunController>>(new Map())
 
     const [editingTerminalPanelId, setEditingTerminalPanelId] = useState<string | null>(null)
     const [editingTerminalTitle, setEditingTerminalTitle] = useState('')
@@ -101,6 +210,137 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
     const [isTerminalSwitcherOpen, setIsTerminalSwitcherOpen] = useState(false)
     const [terminalSwitcherIndex, setTerminalSwitcherIndex] = useState(0)
     const terminalSwitcherSelectionRef = useRef(0)
+
+    const updateMacroRun = useCallback(
+      (sessionId: string, runId: string, updater: (run: TerminalTabMacroRun) => TerminalTabMacroRun) => {
+        setRunningMacroRunsBySession((current) => {
+          const existingRuns = current[sessionId]
+          if (!existingRuns?.length) {
+            return current
+          }
+
+          let changed = false
+          const nextRuns = existingRuns.map((run) => {
+            if (run.id !== runId) {
+              return run
+            }
+
+            changed = true
+            return updater(run)
+          })
+
+          return changed
+            ? {
+                ...current,
+                [sessionId]: nextRuns,
+              }
+            : current
+        })
+      },
+      [],
+    )
+
+    const updateMacroRunStatus = useCallback((sessionId: string, runId: string, status: TerminalTabMacroRun['status']) => {
+      updateMacroRun(sessionId, runId, (run) => ({
+        ...run,
+        status,
+      }))
+    }, [updateMacroRun])
+
+    const updateMacroRunStepStatus = useCallback(
+      (
+        sessionId: string,
+        runId: string,
+        stepId: string,
+        status: 'pending' | 'running' | 'completed' | 'canceled' | 'failed',
+      ) => {
+        updateMacroRun(sessionId, runId, (run) => ({
+          ...run,
+          steps: run.steps.map((step) => (step.id === stepId ? { ...step, status } : step)),
+        }))
+      },
+      [updateMacroRun],
+    )
+
+    const clearMacroRunsForSession = useCallback((sessionId: string) => {
+      setRunningMacroRunsBySession((current) => {
+        if (!(sessionId in current)) {
+          return current
+        }
+
+        const { [sessionId]: _removed, ...rest } = current
+        return rest
+      })
+    }, [])
+
+    const clearFinishedMacroRunsForSession = useCallback((sessionId: string) => {
+      setRunningMacroRunsBySession((current) => {
+        const existingRuns = current[sessionId]
+        if (!existingRuns?.length) {
+          return current
+        }
+
+        const nextRuns = existingRuns.filter((run) => run.status === 'running' || run.status === 'canceling')
+        if (nextRuns.length === existingRuns.length) {
+          return current
+        }
+
+        if (nextRuns.length === 0) {
+          const { [sessionId]: _removed, ...rest } = current
+          return rest
+        }
+
+        return {
+          ...current,
+          [sessionId]: nextRuns,
+        }
+      })
+    }, [])
+
+    const clearMacroRunForSession = useCallback((sessionId: string, runId: string) => {
+      setRunningMacroRunsBySession((current) => {
+        const existingRuns = current[sessionId]
+        if (!existingRuns?.length) {
+          return current
+        }
+
+        const nextRuns = existingRuns.filter((run) => run.id !== runId)
+        if (nextRuns.length === existingRuns.length) {
+          return current
+        }
+
+        if (nextRuns.length === 0) {
+          const { [sessionId]: _removed, ...rest } = current
+          return rest
+        }
+
+        return {
+          ...current,
+          [sessionId]: nextRuns,
+        }
+      })
+    }, [])
+
+    const cancelMacroRun = useCallback((runId: string) => {
+      const controller = macroRunControllersRef.current.get(runId)
+      if (!controller) {
+        return
+      }
+
+      updateMacroRunStatus(controller.sessionId, runId, 'canceling')
+      controller.abortController.abort()
+    }, [updateMacroRunStatus])
+
+    const cancelMacroRunsForSession = useCallback((sessionId: string) => {
+      for (const [runId, controller] of macroRunControllersRef.current.entries()) {
+        if (controller.sessionId !== sessionId) {
+          continue
+        }
+
+        updateMacroRunStatus(sessionId, runId, 'canceling')
+        controller.abortController.abort()
+      }
+    }, [updateMacroRunStatus])
 
     const getOrderedTerminalSwitcherItems = useCallback((): TerminalSwitcherItem[] => {
       const api = dockviewApiRef.current
@@ -236,41 +476,164 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
       }
 
       return macros.filter((macro) => {
-        const fieldText = mergeMacroFieldsWithTemplate(macro)
+        const fieldText = macro.fields
           .map((field) => `${field.label} ${field.name}`)
+          .join(' ')
+          .toLowerCase()
+
+        const stepText = macro.steps
+          .map((step) => (step.type === 'type' ? step.content : ''))
           .join(' ')
           .toLowerCase()
 
         return (
           macro.title.toLowerCase().includes(normalizedQuery) ||
           macro.description.toLowerCase().includes(normalizedQuery) ||
-          macro.template.toLowerCase().includes(normalizedQuery) ||
+          stepText.includes(normalizedQuery) ||
           fieldText.includes(normalizedQuery)
         )
       })
     }, [macroQuery, macros])
 
-    const submitMacroToTerminal = useCallback(
-      (macro: MacroDefinition, values: Record<string, MacroFieldValue>) => {
+    const executeMacro = useCallback(
+      async (macro: MacroDefinition, values: Record<string, MacroFieldValue>) => {
         const sessionId = getActiveSessionId()
         if (!sessionId) {
           setErrorText('No active terminal is available to receive the macro.')
           return
         }
 
-        const rendered = renderMacroTemplate(macro.template, values) + getMacroSubmitSuffix(macro.submitMode)
-        window.termide.writeTerminal(sessionId, rendered)
         setErrorText(null)
         setMacroToRun(null)
         setMacroFieldValues({})
         setIsMacroLauncherOpen(false)
         setMacroQuery('')
         setSelectedMacroIndex(0)
-        window.requestAnimationFrame(() => {
-          focusActiveTerminal()
+
+        const runId = `${sessionId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const abortController = new AbortController()
+        const nextRun: TerminalTabMacroRun = {
+          id: runId,
+          startedAt: Date.now(),
+          status: 'running',
+          steps: macro.steps.map((step) => ({
+            id: step.id,
+            status: 'pending',
+            title: describeMacroStep(step),
+          })),
+          title: macro.title,
+        }
+
+        macroRunControllersRef.current.set(runId, {
+          abortController,
+          sessionId,
         })
+        setRunningMacroRunsBySession((current) => ({
+          ...current,
+          [sessionId]: [
+            nextRun,
+            ...(current[sessionId] ?? []),
+          ],
+        }))
+
+        try {
+          for (const step of macro.steps) {
+            throwIfAborted(abortController.signal)
+            updateMacroRunStepStatus(sessionId, runId, step.id, 'running')
+
+            switch (step.type) {
+              case 'type': {
+                const rendered = renderMacroTemplate(step.content, values)
+                window.termide.writeTerminal(sessionId, rendered)
+                break
+              }
+              case 'key':
+                // In this terminal app, we just write the key name for Enter if it's the only way,
+                // but usually we want to send \r for Enter.
+                if (step.key === 'Enter') {
+                  window.termide.writeTerminal(sessionId, '\r')
+                } else if (step.key === 'Tab') {
+                  window.termide.writeTerminal(sessionId, '\t')
+                } else if (step.key === 'Escape') {
+                  window.termide.writeTerminal(sessionId, '\x1b')
+                } else if (step.key === 'Backspace') {
+                  window.termide.writeTerminal(sessionId, '\x7f')
+                } else if (step.key === 'ArrowUp') {
+                  window.termide.writeTerminal(sessionId, '\x1b[A')
+                } else if (step.key === 'ArrowDown') {
+                  window.termide.writeTerminal(sessionId, '\x1b[B')
+                }
+                break
+              case 'secret':
+                try {
+                  const secretVal = await window.termide.getDecryptedSecret(step.secretId)
+                  throwIfAborted(abortController.signal)
+                  window.termide.writeTerminal(sessionId, secretVal)
+                } catch (error) {
+                  if (isAbortError(error)) {
+                    throw error
+                  }
+
+                  console.error('Failed to decrypt secret', error)
+                }
+                break
+              case 'wait_time':
+                await waitForDelay(step.durationMs, abortController.signal)
+                break
+              case 'wait_inactivity':
+                await waitForSessionInactivity(sessionId, step.durationMs, abortController.signal)
+                break
+              case 'select_line':
+                // Typical "select line" escape sequence for some terminals, or just a placeholder
+                // For now, let's just do nothing or a common one if known.
+                break
+              case 'paste':
+                try {
+                  const text = await navigator.clipboard.readText()
+                  throwIfAborted(abortController.signal)
+                  window.termide.writeTerminal(sessionId, text)
+                } catch (error) {
+                  if (isAbortError(error)) {
+                    throw error
+                  }
+
+                  console.error('Failed to paste from clipboard', error)
+                }
+                break
+            }
+
+            updateMacroRunStepStatus(sessionId, runId, step.id, 'completed')
+          }
+
+          updateMacroRunStatus(sessionId, runId, 'completed')
+          window.requestAnimationFrame(() => {
+            focusActiveTerminal()
+          })
+        } catch (error) {
+          if (isAbortError(error)) {
+            updateMacroRunStatus(sessionId, runId, 'canceled')
+            updateMacroRun(sessionId, runId, (run) => ({
+              ...run,
+              steps: run.steps.map((candidate) =>
+                candidate.status === 'running' ? { ...candidate, status: 'canceled' } : candidate,
+              ),
+            }))
+          } else {
+            updateMacroRunStatus(sessionId, runId, 'failed')
+            updateMacroRun(sessionId, runId, (run) => ({
+              ...run,
+              steps: run.steps.map((candidate) =>
+                candidate.status === 'running' ? { ...candidate, status: 'failed' } : candidate,
+              ),
+            }))
+            const message = error instanceof Error ? error.message : String(error)
+            setErrorText(message)
+          }
+        } finally {
+          macroRunControllersRef.current.delete(runId)
+        }
       },
-      [focusActiveTerminal, getActiveSessionId],
+      [focusActiveTerminal, getActiveSessionId, updateMacroRun, updateMacroRunStatus, updateMacroRunStepStatus],
     )
 
     const syncFocusedTerminalTabs = useCallback((sessionId: string | null) => {
@@ -294,11 +657,43 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
       }
     }, [])
 
+    const syncRunningMacroTabs = useCallback(() => {
+      const api = dockviewApiRef.current
+      if (!api) {
+        return
+      }
+
+      for (const [panelId, panelSessionId] of panelSessionMapRef.current.entries()) {
+        const panel = api.getPanel(panelId)
+        if (!panel) {
+          continue
+        }
+
+        panel.api.updateParameters({
+          macroRuns: runningMacroRunsBySession[panelSessionId] ?? [],
+          onClearFinishedMacroRuns: () => clearFinishedMacroRunsForSession(panelSessionId),
+          onClearMacroRun: (runId: string) => clearMacroRunForSession(panelSessionId, runId),
+          onCancelMacroRun: cancelMacroRun,
+        })
+      }
+    }, [cancelMacroRun, clearFinishedMacroRunsForSession, clearMacroRunForSession, runningMacroRunsBySession])
+
+    useEffect(() => {
+      for (const sessionId of panelSessionMapRef.current.values()) {
+        window.termide.updateTerminalRemoteMetadata(sessionId, {
+          projectId: project.id,
+          projectTitle: project.title,
+          projectEmoji: project.emoji,
+          projectColor: project.color,
+        })
+      }
+    }, [project.id, project.title, project.emoji, project.color])
+
     const runMacro = useCallback(
       (macro: MacroDefinition) => {
-        const effectiveFields = mergeMacroFieldsWithTemplate(macro)
+        const effectiveFields = macro.fields
         if (effectiveFields.length === 0) {
-          submitMacroToTerminal(macro, {})
+          executeMacro(macro, {})
           return
         }
 
@@ -311,11 +706,11 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
         )
         setIsMacroLauncherOpen(false)
       },
-      [submitMacroToTerminal],
+      [executeMacro],
     )
 
     const validateMacroValues = useCallback((macro: MacroDefinition, values: Record<string, MacroFieldValue>) => {
-      for (const field of mergeMacroFieldsWithTemplate(macro)) {
+      for (const field of macro.fields) {
         if (!field.required) {
           continue
         }
@@ -378,11 +773,24 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
             emoji: nextEmoji,
             color: nextColor,
           })
+
+          const sessionId = panel.params?.sessionId
+          if (sessionId) {
+            window.termide.updateTerminalRemoteMetadata(sessionId, {
+              color: nextColor,
+              emoji: nextEmoji,
+              title: nextTitle,
+              projectId: project.id,
+              projectTitle: project.title,
+              projectEmoji: project.emoji,
+              projectColor: project.color,
+            })
+          }
         }
 
         closeTerminalEditModal()
       },
-      [closeTerminalEditModal, editingTerminalColor, editingTerminalEmoji, editingTerminalPanelId, editingTerminalTitle],
+      [closeTerminalEditModal, editingTerminalColor, editingTerminalEmoji, editingTerminalPanelId, editingTerminalTitle, project.id, project.title, project.emoji, project.color],
     )
 
     const addTerminal = useCallback(async (options?: AddTerminalOptions) => {
@@ -406,7 +814,15 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
           title: `Terminal ${terminalCounterRef.current}`,
           component: 'terminal',
           tabComponent: 'terminalTab',
-          params: { sessionId, color: '#0a0a0a', isFocused: false },
+          params: {
+            color: '#0a0a0a',
+            isFocused: false,
+            macroRuns: [],
+            onClearFinishedMacroRuns: () => clearFinishedMacroRunsForSession(sessionId),
+            onClearMacroRun: (runId: string) => clearMacroRunForSession(sessionId, runId),
+            onCancelMacroRun: cancelMacroRun,
+            sessionId,
+          },
           position:
             options?.groupId && api.getGroup(options.groupId)
               ? {
@@ -422,6 +838,15 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
         })
 
         panelSessionMapRef.current.set(panel.id, sessionId)
+        window.termide.updateTerminalRemoteMetadata(sessionId, {
+          color: '#0a0a0a',
+          emoji: '',
+          title: `Terminal ${terminalCounterRef.current}`,
+          projectId: project.id,
+          projectTitle: project.title,
+          projectEmoji: project.emoji,
+          projectColor: project.color,
+        })
         panel.api.setActive()
         setFocusedSessionId(sessionId)
         setErrorText(null)
@@ -429,7 +854,7 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
         const message = error instanceof Error ? error.message : String(error)
         setErrorText(message)
       }
-    }, [])
+    }, [cancelMacroRun, clearFinishedMacroRunsForSession, clearMacroRunForSession, project.id, project.title, project.emoji, project.color])
 
     const closeActivePanel = useCallback(() => {
       dockviewApiRef.current?.activePanel?.api.close()
@@ -492,6 +917,10 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
       syncFocusedTerminalTabs(focusedSessionId)
     }, [focusedSessionId, syncFocusedTerminalTabs])
 
+    useEffect(() => {
+      syncRunningMacroTabs()
+    }, [syncRunningMacroTabs])
+
     const handleReady = useCallback(
       (event: DockviewReadyEvent) => {
         dockviewApiRef.current = event.api
@@ -504,6 +933,8 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
           }
 
           panelSessionMapRef.current.delete(panel.id)
+          cancelMacroRunsForSession(sessionId)
+          clearMacroRunsForSession(sessionId)
           setFocusedSessionId((current) =>
             current === sessionId ? event.api.activePanel?.params?.sessionId ?? null : current,
           )
@@ -512,7 +943,7 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
 
         void addTerminal({})
       },
-      [addTerminal],
+      [addTerminal, cancelMacroRunsForSession, clearMacroRunsForSession],
     )
 
     useEffect(() => {
@@ -526,6 +957,12 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
         window.removeEventListener('termide-terminal-focused', onTerminalFocused)
       }
     }, [])
+
+    useEffect(() => {
+      return window.termide.onTerminalExit((message) => {
+        cancelMacroRunsForSession(message.id)
+      })
+    }, [cancelMacroRunsForSession])
 
     useEffect(() => {
       const cleanupByWindow = new Map<Window, () => void>()
@@ -1136,7 +1573,7 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
                     >
                       <span className="macro-launcher-item-title">{macro.title}</span>
                       <span className="macro-launcher-item-description">
-                        {macro.description || macro.template}
+                        {macro.description || (macro.steps[0]?.type === 'type' ? macro.steps[0].content : 'Multi-step macro')}
                       </span>
                     </button>
                   ))
@@ -1192,7 +1629,7 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
                 if (!validateMacroValues(macroToRun, macroFieldValues)) {
                   return
                 }
-                submitMacroToTerminal(macroToRun, macroFieldValues)
+                executeMacro(macroToRun, macroFieldValues)
               }}
               onClick={(event) => event.stopPropagation()}
             >
@@ -1201,7 +1638,7 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
                 {macroToRun.description || 'Fill in the parameters to render the final macro output.'}
               </p>
 
-              {mergeMacroFieldsWithTemplate(macroToRun).map((field, index) => {
+              {macroToRun.fields.map((field, index) => {
                 const value = macroFieldValues[field.name]
                 const firstFieldRef =
                   index === 0
@@ -1397,7 +1834,13 @@ function App() {
   const [editingColor, setEditingColor] = useState('#4db5ff')
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false)
   const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null)
+  const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(null)
+  const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false)
+  const [isPairingModalOpen, setIsPairingModalOpen] = useState(false)
+  const [isLinkCopied, setIsLinkCopied] = useState(false)
   const emojiPickerContainerRef = useRef<HTMLDivElement | null>(null)
+  const remoteMenuRef = useRef<HTMLDivElement | null>(null)
+  const [isRemoteMenuOpen, setIsRemoteMenuOpen] = useState(false)
   const closeEditModal = useCallback(() => {
     setEditingProjectId(null)
     setIsEmojiPickerOpen(false)
@@ -1511,6 +1954,86 @@ function App() {
   }, [executeCommandOnActiveProject])
 
   useEffect(() => {
+    let isMounted = true
+
+    void window.termide.getRemoteAccessStatus().then((status) => {
+      if (isMounted) {
+        setRemoteStatus(status)
+      }
+    })
+
+    const unsubscribe = window.termide.onRemoteAccessStatusChanged((status) => {
+      setRemoteStatus(status)
+    })
+
+    return () => {
+      isMounted = false
+      unsubscribe()
+    }
+  }, [])
+
+  const toggleRemoteAccess = useCallback(async () => {
+    setIsTogglingRemoteAccess(true)
+    try {
+      if (remoteStatus?.configurationIssue) {
+        await window.termide.openSettingsWindow({ sectionId: 'remote-access-host' })
+        return
+      }
+
+      const nextStatus = await window.termide.toggleRemoteAccessServer()
+      setRemoteStatus(nextStatus)
+    } finally {
+      setIsTogglingRemoteAccess(false)
+    }
+  }, [remoteStatus?.configurationIssue])
+
+  const openPairingQr = useCallback(async () => {
+    if (remoteStatus?.configurationIssue) {
+      await window.termide.openSettingsWindow({ sectionId: 'remote-access-host' })
+      return
+    }
+
+    let nextStatus = remoteStatus
+
+    if (!nextStatus?.isRunning) {
+      setIsTogglingRemoteAccess(true)
+      try {
+        nextStatus = await window.termide.toggleRemoteAccessServer()
+        setRemoteStatus(nextStatus)
+      } finally {
+        setIsTogglingRemoteAccess(false)
+      }
+    }
+
+    if (nextStatus?.pairingQrCodeDataUrl) {
+      setIsPairingModalOpen(true)
+    }
+  }, [remoteStatus])
+
+  const remoteButtonTone = remoteStatus?.isRunning
+    ? 'remote-access-button--active'
+    : remoteStatus?.configurationIssue || remoteStatus?.errorMessage
+      ? 'remote-access-button--warning'
+      : ''
+
+  const remoteAddresses = remoteStatus?.availableAddresses ?? []
+  const preferredRemoteAddress = useMemo(() => {
+    if (!remoteStatus?.pairingUrl) return remoteAddresses[0] || null
+    try {
+      const url = new URL(remoteStatus.pairingUrl)
+      const origin = url.origin + url.pathname.replace(/\/$/, '')
+      return remoteAddresses.find(addr => addr.startsWith(origin)) || remoteAddresses[0] || null
+    } catch {
+      return remoteAddresses[0] || null
+    }
+  }, [remoteStatus?.pairingUrl, remoteAddresses])
+
+  const selectPairingAddress = useCallback(async (address: string) => {
+    const nextStatus = await window.termide.setRemoteAccessPairingAddress(address)
+    setRemoteStatus(nextStatus)
+  }, [])
+
+  useEffect(() => {
     if (!editingProjectId) {
       return
     }
@@ -1551,6 +2074,39 @@ function App() {
       window.removeEventListener('mousedown', onPointerDown)
     }
   }, [isEmojiPickerOpen])
+
+  useEffect(() => {
+    if (!isRemoteMenuOpen) {
+      return
+    }
+
+    const onPointerDown = (event: MouseEvent) => {
+      const container = remoteMenuRef.current
+      if (!container) {
+        return
+      }
+
+      const target = event.target as Node
+      if (container.contains(target)) {
+        return
+      }
+
+      setIsRemoteMenuOpen(false)
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsRemoteMenuOpen(false)
+      }
+    }
+
+    window.addEventListener('mousedown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [isRemoteMenuOpen])
 
   return (
     <div className={`app-shell${isMac ? ' app-shell--macos' : ''}`}>
@@ -1607,6 +2163,106 @@ function App() {
             <path d="M6 2V10M2 6H10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
+        <div
+          ref={remoteMenuRef}
+          className={`remote-access-status${remoteStatus?.isRunning ? ' remote-access-status--active' : ''}${isRemoteMenuOpen ? ' remote-access-status--open' : ''}`}
+        >
+          <button
+            type="button"
+            className={`remote-access-button ${remoteButtonTone}`.trim()}
+            onClick={() => setIsRemoteMenuOpen((current) => !current)}
+            title="Open remote access menu"
+            aria-label="Open remote access menu"
+            aria-haspopup="menu"
+            aria-expanded={isRemoteMenuOpen}
+          >
+            <span className="remote-access-button__label">Remote</span>
+            {remoteStatus?.isRunning ? (
+              <span className="remote-access-button__badge remote-access-button__badge--live" aria-hidden="true" />
+            ) : null}
+            {remoteStatus?.configurationIssue || remoteStatus?.errorMessage ? (
+              <span className="remote-access-button__badge remote-access-button__badge--warning" aria-hidden="true">
+                !
+              </span>
+            ) : null}
+            <span className="remote-access-button__chevron" aria-hidden="true">▾</span>
+          </button>
+          {isRemoteMenuOpen ? (
+            <div className="remote-access-menu" role="menu" aria-label="Remote access menu">
+              <button
+                type="button"
+                className="remote-access-menu__item"
+                onClick={() => void toggleRemoteAccess()}
+                disabled={isTogglingRemoteAccess}
+              >
+                <span>{isTogglingRemoteAccess ? 'Working...' : remoteStatus?.isRunning ? 'Stop Server' : 'Start Server'}</span>
+                <span className="remote-access-menu__meta">{remoteStatus?.isRunning ? 'Live' : 'Offline'}</span>
+              </button>
+              <button
+                type="button"
+                className="remote-access-menu__item"
+                onClick={() => void window.termide.openSettingsWindow({ sectionId: 'remote-access-host' })}
+              >
+                <span>Remote Access Settings</span>
+                <span className="remote-access-menu__meta">Open</span>
+              </button>
+              <button
+                type="button"
+                className="remote-access-menu__item"
+                onClick={() => void openPairingQr()}
+                disabled={isTogglingRemoteAccess}
+              >
+                <span>{remoteStatus?.isRunning ? 'Show Pairing QR' : 'Start Server & Show QR'}</span>
+                <span className="remote-access-menu__meta">{remoteStatus?.isRunning ? 'Scan' : 'Start'}</span>
+              </button>
+              <div className="remote-access-menu__section">
+                <div className="remote-access-menu__section-label">Connect To</div>
+                {remoteStatus?.availableAddresses.length ? (
+                  remoteStatus.availableAddresses.map((address) => (
+                    <button
+                      key={address}
+                      type="button"
+                      className={`remote-access-menu__address-btn${address === preferredRemoteAddress ? ' remote-access-menu__address-btn--active' : ''}`}
+                      onClick={() => void selectPairingAddress(address)}
+                      title={address === preferredRemoteAddress ? `Active: ${address}` : `Switch to: ${address}`}
+                    >
+                      <span className="remote-access-menu__address-text">{address}</span>
+                      {address === preferredRemoteAddress && (
+                        <span className="remote-access-menu__address-check" aria-hidden="true">✓</span>
+                      )}
+                    </button>
+                  ))
+                ) : (
+                  <div className="remote-access-menu__empty">No local addresses available yet.</div>
+                )}
+              </div>
+              <div className="remote-access-menu__section">
+                <div className="remote-access-menu__section-label">Active Connections</div>
+                {remoteStatus?.connections.length ? (
+                  remoteStatus.connections.map((connection) => (
+                    <div key={connection.connectionId} className="remote-access-menu__connection">
+                      <div className="remote-access-menu__connection-main">
+                        <span className="remote-access-menu__connection-device">{connection.deviceName}</span>
+                        <span className="remote-access-menu__connection-meta">
+                          {connection.attachedSessionCount} {connection.attachedSessionCount === 1 ? 'session' : 'sessions'}
+                        </span>
+                      </div>
+                      <div className="remote-access-menu__connection-id">{connection.connectionId}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="remote-access-menu__empty">No active browser connections.</div>
+                )}
+              </div>
+              {remoteStatus?.errorMessage ? (
+                <div className="remote-access-menu__section">
+                  <div className="remote-access-menu__section-label">Status</div>
+                  <div className="remote-access-menu__empty">{remoteStatus.errorMessage}</div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </header>
 
       <div className="workspace-stack">
@@ -1620,9 +2276,96 @@ function App() {
             isMac={isMac}
             macros={macros}
             popoutUrl={popoutUrl}
+            project={project}
           />
         ))}
       </div>
+
+      {isPairingModalOpen ? (
+        <div className="project-edit-modal-backdrop" onClick={() => setIsPairingModalOpen(false)}>
+          <div
+            className="project-edit-modal project-edit-modal--wide remote-pairing-modal"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Pair device"
+          >
+            <h2>Pair Device</h2>
+            <p className="remote-pairing-modal__copy">
+              Scan this QR code from your phone to pair it with this Termide host.
+            </p>
+            {remoteStatus?.pairingQrCodeDataUrl ? (
+              <div className="remote-pairing-modal__content">
+                <div className="remote-pairing-modal__qr-section">
+                  <div className="remote-pairing-modal__qr-card">
+                    <img className="remote-pairing-modal__qr" src={remoteStatus.pairingQrCodeDataUrl} alt="Pair device QR code" />
+                  </div>
+                  
+                  <div className="remote-pairing-modal__primary-link">
+                    <h3>Open this address in your browser</h3>
+                    <div className="remote-pairing-modal__address-box">
+                      <div className="remote-pairing-modal__address-text">
+                        {preferredRemoteAddress || 'No address available yet.'}
+                      </div>
+                      {remoteStatus.pairingUrl && (
+                        <button
+                          type="button"
+                          className="remote-pairing-modal__copy-btn"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(remoteStatus.pairingUrl!)
+                            setIsLinkCopied(true)
+                            setTimeout(() => setIsLinkCopied(false), 2000)
+                          }}
+                        >
+                          {isLinkCopied ? 'Copied!' : 'Copy Link'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="remote-pairing-modal__footer-details">
+                  <div className="remote-pairing-modal__additional-section">
+                    <h3>Available Addresses</h3>
+                    <div className="remote-pairing-modal__additional-list">
+                      {remoteAddresses.map((address) => (
+                        <button
+                          key={address}
+                          type="button"
+                          className={`remote-pairing-modal__address-row-btn${address === preferredRemoteAddress ? ' remote-pairing-modal__address-row-btn--active' : ''}`}
+                          onClick={() => void selectPairingAddress(address)}
+                          title={`Generate QR for ${address}`}
+                        >
+                          <span className="remote-pairing-modal__address-label">{address}</span>
+                          {address === preferredRemoteAddress && (
+                            <span className="remote-pairing-modal__address-active-badge">QR Active</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="remote-pairing-modal__status-info">
+                    <div className="remote-pairing-modal__tip">
+                      Best for mobile: Scan the QR code. Use the link for manual entry on desktop.
+                    </div>
+                    <p className="remote-pairing-modal__expires-text">
+                      Expires {remoteStatus.pairingExpiresAt ? new Date(remoteStatus.pairingExpiresAt).toLocaleString() : 'soon'}.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="remote-pairing-modal__copy">Start the remote server first to generate a pairing QR code.</p>
+            )}
+            <div className="project-edit-actions">
+              <button type="button" className="project-edit-cancel" onClick={() => setIsPairingModalOpen(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {editingProjectId ? (
         <div className="project-edit-modal-backdrop" onClick={closeEditModal}>

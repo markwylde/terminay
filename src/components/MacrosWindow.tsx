@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Reorder, useDragControls } from 'framer-motion'
 import {
   defaultMacros,
-  extractTemplatePlaceholders,
-  mergeMacroFieldsWithTemplate,
+  extractAllMacroPlaceholders,
+  mergeFieldsWithSteps,
   normalizeMacros,
-  renderMacroTemplate,
 } from '../macroSettings'
 import { useMacroSettings } from '../hooks/useMacroSettings'
-import type { MacroDefinition, MacroFieldDefinition, MacroFieldValue } from '../types/macros'
+import type { MacroDefinition, MacroFieldDefinition, MacroFieldValue, MacroStep, SecretDefinition } from '../types/macros'
 import '../settings.css'
 
 function createEmptyMacro(nextIndex: number): MacroDefinition {
@@ -16,8 +15,9 @@ function createEmptyMacro(nextIndex: number): MacroDefinition {
     id: `macro-${Date.now()}`,
     title: `Macro ${nextIndex}`,
     description: '',
-    template: '',
     submitMode: 'type-only',
+    template: '',
+    steps: [],
     fields: [],
   }
 }
@@ -33,6 +33,25 @@ function createEmptyField(nextIndex: number): MacroFieldDefinition {
     placeholder: '',
     defaultValue: '',
     options: [],
+  }
+}
+
+function createEmptyStep(type: MacroStep['type']): MacroStep {
+  const id = `step-${Date.now()}`
+  switch (type) {
+    case 'type':
+      return { id, type, content: '' }
+    case 'key':
+      return { id, type, key: 'Enter' }
+    case 'secret':
+      return { id, type, secretId: '' }
+    case 'wait_time':
+      return { id, type, durationMs: 1000 }
+    case 'wait_inactivity':
+      return { id, type, durationMs: 3000 }
+    case 'select_line':
+    case 'paste':
+      return { id, type }
   }
 }
 
@@ -86,6 +105,117 @@ function MacroItem({ macro, isActive, onClick }: { macro: MacroDefinition, isAct
         >
           {macro.title}
         </button>
+      </div>
+    </Reorder.Item>
+  )
+}
+
+function StepItem({
+  step,
+  secrets,
+  onUpdateStep,
+  onRemoveStep
+}: {
+  step: MacroStep,
+  secrets: SecretDefinition[],
+  onUpdateStep: (updater: (step: MacroStep) => MacroStep) => void,
+  onRemoveStep: () => void
+}) {
+  const controls = useDragControls()
+
+  return (
+    <Reorder.Item
+      value={step}
+      dragListener={false}
+      dragControls={controls}
+      className="settings-field-card"
+      style={{
+        background: 'var(--settings-bg)',
+        borderBottom: '1px solid var(--settings-border)',
+        padding: '12px 16px',
+        listStyle: 'none'
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, width: '100%' }}>
+        <div className="settings-field-drag-handle" style={{ padding: 0, marginTop: 4 }} onPointerDown={(e) => controls.start(e)}>
+          ⋮⋮
+        </div>
+
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <span className="settings-step-type-badge">
+              {step.type.replace('_', ' ')}
+            </span>
+
+            {step.type === 'type' && (
+              <input
+                className="settings-input-text"
+                type="text"
+                value={step.content}
+                style={{ flex: 1 }}
+                onChange={(e) => onUpdateStep(s => ({ ...s, content: e.target.value } as MacroStep))}
+                placeholder="Type text... use {{Variable}} for fields."
+              />
+            )}
+
+            {step.type === 'key' && (
+              <select
+                className="settings-select"
+                style={{ flex: 1 }}
+                value={step.key}
+                onChange={(e) => onUpdateStep(s => ({ ...s, key: e.target.value } as MacroStep))}
+              >
+                <option value="Enter">Enter</option>
+                <option value="Tab">Tab</option>
+                <option value="Escape">Escape</option>
+                <option value="Backspace">Backspace</option>
+                <option value="ArrowUp">Up Arrow</option>
+                <option value="ArrowDown">Down Arrow</option>
+              </select>
+            )}
+
+            {step.type === 'secret' && (
+              <select
+                className="settings-select"
+                style={{ flex: 1 }}
+                value={step.secretId}
+                onChange={(e) => onUpdateStep(s => ({ ...s, secretId: e.target.value } as MacroStep))}
+              >
+                <option value="">Select a secret...</option>
+                {secrets.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            )}
+
+            {(step.type === 'wait_time' || step.type === 'wait_inactivity') && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                <input
+                  className="settings-input-text"
+                  type="number"
+                  value={step.durationMs}
+                  style={{ width: 100 }}
+                  onChange={(e) => onUpdateStep(s => ({ ...s, durationMs: parseInt(e.target.value, 10) || 0 } as MacroStep))}
+                />
+                <span style={{ fontSize: 12, color: 'var(--settings-text-muted)' }}>ms</span>
+              </div>
+            )}
+
+            {(step.type === 'select_line' || step.type === 'paste') && (
+              <div style={{ flex: 1, fontSize: 12, color: 'var(--settings-text-muted)' }}>
+                {step.type === 'select_line' ? 'Selects current terminal line' : 'Pastes clipboard content'}
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="settings-danger-button settings-danger-button--quiet"
+              onClick={onRemoveStep}
+            >
+              Remove
+            </button>
+          </div>
+        </div>
       </div>
     </Reorder.Item>
   )
@@ -201,12 +331,106 @@ function FieldItem({
   )
 }
 
+function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], onRefresh: () => void }) {
+  const [newSecretName, setNewSecretName] = useState('')
+  const [newSecretValue, setNewSecretValue] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+
+  const handleSave = async () => {
+    if (!newSecretName || !newSecretValue) return
+    setIsSaving(true)
+    try {
+      await window.termide.saveSecret(newSecretName, newSecretValue)
+      setNewSecretName('')
+      setNewSecretValue('')
+      onRefresh()
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Delete this secret? This cannot be undone.')) return
+    await window.termide.deleteSecret(id)
+    onRefresh()
+  }
+
+  return (
+    <div className="settings-section">
+      <div className="settings-section-header">
+        <h3 className="settings-section-title">Encrypted Secrets</h3>
+        <p className="settings-status" style={{ margin: 0 }}>Stored securely using OS-level encryption.</p>
+      </div>
+
+      <div className="settings-group">
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <input
+              className="settings-input-text"
+              placeholder="Secret Name (e.g. Linux Password)"
+              value={newSecretName}
+              onChange={e => setNewSecretName(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <input
+              className="settings-input-text"
+              type="password"
+              placeholder="Value"
+              value={newSecretValue}
+              onChange={e => setNewSecretValue(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <button 
+              className="settings-primary-button" 
+              onClick={handleSave} 
+              disabled={isSaving || !newSecretName || !newSecretValue}
+            >
+              Add Secret
+            </button>
+          </div>
+
+          <div style={{ marginTop: 8 }}>
+            {secrets.length === 0 ? (
+              <p className="settings-empty-state">No secrets stored yet.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {secrets.map(s => (
+                  <div key={s.id} className="settings-secret-item">
+                    <span className="settings-secret-name">{s.name}</span>
+                    <button 
+                      className="settings-danger-button settings-danger-button--quiet"
+                      onClick={() => handleDelete(s.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function MacrosWindow() {
   const { macros: persistedMacros, isLoading } = useMacroSettings()
   const [draftMacros, setDraftMacros] = useState<MacroDefinition[]>(defaultMacros)
   const [selectedMacroId, setSelectedMacroId] = useState<string | null>(null)
+  const [secrets, setSecrets] = useState<SecretDefinition[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'macros' | 'secrets'>('macros')
+
+  const refreshSecrets = useCallback(async () => {
+    const list = await window.termide.getSecrets()
+    setSecrets(list)
+  }, [])
+
+  useEffect(() => {
+    refreshSecrets()
+  }, [refreshSecrets])
 
   useEffect(() => {
     const normalized = normalizeMacros(persistedMacros)
@@ -229,20 +453,8 @@ export function MacrosWindow() {
     [draftMacros, selectedMacroId],
   )
 
-  const selectedMacroPreview = useMemo(() => {
-    if (!selectedMacro) {
-      return ''
-    }
-
-    const values = Object.fromEntries(
-      mergeMacroFieldsWithTemplate(selectedMacro).map((field) => [field.name, field.defaultValue]),
-    )
-
-    return renderMacroTemplate(selectedMacro.template, values)
-  }, [selectedMacro])
-
   const selectedPlaceholders = useMemo(
-    () => (selectedMacro ? extractTemplatePlaceholders(selectedMacro.template) : []),
+    () => (selectedMacro ? extractAllMacroPlaceholders(selectedMacro) : []),
     [selectedMacro],
   )
 
@@ -261,10 +473,18 @@ export function MacrosWindow() {
     }))
   }
 
+  const updateSelectedStep = (stepId: string, updater: (step: MacroStep) => MacroStep) => {
+    updateSelectedMacro((macro) => ({
+      ...macro,
+      steps: macro.steps.map((step) => (step.id === stepId ? updater(step) : step)),
+    }))
+  }
+
   const addMacro = () => {
     const nextMacro = createEmptyMacro(draftMacros.length + 1)
     setDraftMacros((current) => [...current, nextMacro])
     setSelectedMacroId(nextMacro.id)
+    setActiveTab('macros')
   }
 
   const duplicateSelectedMacro = () => {
@@ -276,6 +496,7 @@ export function MacrosWindow() {
       ...selectedMacro,
       id: `macro-${Date.now()}`,
       title: `${selectedMacro.title} Copy`,
+      steps: selectedMacro.steps.map(s => ({ ...s, id: `step-${Date.now()}-${Math.random()}` })),
       fields: selectedMacro.fields.map((field, index) => ({
         ...field,
         id: `macro-field-${Date.now()}-${index + 1}`,
@@ -313,14 +534,23 @@ export function MacrosWindow() {
     }))
   }
 
-  const syncFieldsFromTemplate = () => {
+  const addStep = (type: MacroStep['type']) => {
+    if (!selectedMacro) return
+    const nextStep = createEmptyStep(type)
+    updateSelectedMacro(m => ({
+      ...m,
+      steps: [...m.steps, nextStep]
+    }))
+  }
+
+  const syncFieldsFromSteps = () => {
     if (!selectedMacro) {
       return
     }
 
     updateSelectedMacro((macro) => ({
       ...macro,
-      fields: mergeMacroFieldsWithTemplate(macro),
+      fields: mergeFieldsWithSteps(macro.steps, macro.fields),
     }))
   }
 
@@ -364,7 +594,7 @@ export function MacrosWindow() {
         <div className="settings-sidebar-header">
           <div className="settings-brand">
             <h1>Macros</h1>
-            <p className="settings-status">Build reusable prompts and actions.</p>
+            <p className="settings-status">Build reusable automation steps.</p>
           </div>
 
           <button type="button" className="settings-primary-button" onClick={addMacro}>
@@ -385,12 +615,32 @@ export function MacrosWindow() {
                 <MacroItem
                   key={macro.id}
                   macro={macro}
-                  isActive={macro.id === selectedMacroId}
-                  onClick={() => setSelectedMacroId(macro.id)}
+                  isActive={macro.id === selectedMacroId && activeTab === 'macros'}
+                  onClick={() => {
+                    setSelectedMacroId(macro.id)
+                    setActiveTab('macros')
+                  }}
                 />
               ))}
             </Reorder.Group>
             {!isLoading && draftMacros.length === 0 ? <p className="settings-empty-state">No macros yet.</p> : null}
+          </div>
+
+          <div className="settings-nav-group" style={{ marginTop: 'auto', borderTop: '1px solid var(--settings-border)', paddingTop: 16 }}>
+            <button 
+              className={`settings-tab-button ${activeTab === 'macros' ? 'settings-tab-button--active' : ''}`}
+              style={{ width: '100%', textAlign: 'left', marginBottom: 4 }}
+              onClick={() => setActiveTab('macros')}
+            >
+              ⌨️ Macro Library
+            </button>
+            <button 
+              className={`settings-tab-button ${activeTab === 'secrets' ? 'settings-tab-button--active' : ''}`}
+              style={{ width: '100%', textAlign: 'left' }}
+              onClick={() => setActiveTab('secrets')}
+            >
+              🔐 Secrets Manager
+            </button>
           </div>
         </div>
 
@@ -406,7 +656,9 @@ export function MacrosWindow() {
         <div className="macros-content">
           {errorText ? <div className="settings-error-banner">{errorText}</div> : null}
 
-          {!selectedMacro ? (
+          {activeTab === 'secrets' ? (
+            <SecretsManager secrets={secrets} onRefresh={refreshSecrets} />
+          ) : !selectedMacro ? (
             <div className="settings-empty-hero">
               <h2>Select a macro to edit</h2>
               <p>Choose from your library or create a new one.</p>
@@ -445,52 +697,64 @@ export function MacrosWindow() {
 
               <section className="settings-section">
                 <div className="settings-section-header">
-                  <h3 className="settings-section-title">Terminal Template</h3>
-                </div>
-
-                <div className="settings-group">
-                  <textarea
-                    className="settings-textarea settings-textarea--large"
-                    value={selectedMacro.template}
-                    onChange={(event) => updateSelectedMacro((macro) => ({ ...macro, template: event.target.value }))}
-                    placeholder="Use {{Placeholder}} tokens to collect params before typing."
-                    rows={4}
-                  />
-                  <div className="settings-group-footer">
-                    <div className="settings-group-footer-left">
-                      <select
+                  <h3 className="settings-section-title">Execution Steps</h3>
+                  <div className="settings-inline-actions">
+                    <div className="settings-dropdown-container">
+                      <select 
                         className="settings-select settings-select--small"
-                        value={selectedMacro.submitMode}
-                        onChange={(event) =>
-                          updateSelectedMacro((macro) => ({
-                            ...macro,
-                            submitMode: event.target.value as MacroDefinition['submitMode'],
-                          }))
-                        }
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            addStep(e.target.value as MacroStep['type'])
+                            e.target.value = ''
+                          }
+                        }}
                       >
-                        <option value="type-only">Type only</option>
-                        <option value="type-and-submit">Type and submit</option>
+                        <option value="">+ Add Step...</option>
+                        <option value="type">Type Text</option>
+                        <option value="key">Press Key</option>
+                        <option value="secret">Insert Secret</option>
+                        <option value="wait_time">Wait (Time)</option>
+                        <option value="wait_inactivity">Wait (Inactivity)</option>
+                        <option value="select_line">Select Line</option>
+                        <option value="paste">Paste Clipboard</option>
                       </select>
-                    </div>
-                    <div className="settings-group-footer-right">
-                      <div className="settings-chip-row">
-                        {selectedPlaceholders.map((placeholder) => (
-                          <span key={placeholder} className="settings-chip">
-                            {placeholder}
-                          </span>
-                        ))}
-                      </div>
                     </div>
                   </div>
                 </div>
+
+                <Reorder.Group
+                  axis="y"
+                  values={selectedMacro.steps}
+                  onReorder={(newSteps) => updateSelectedMacro(m => ({ ...m, steps: newSteps }))}
+                  className="settings-group"
+                  style={{ padding: 0 }}
+                >
+                  {selectedMacro.steps.length === 0 && (
+                    <div className="settings-empty-state">No steps defined yet. Start by adding one above.</div>
+                  )}
+                  {selectedMacro.steps.map((step) => (
+                    <StepItem
+                      key={step.id}
+                      step={step}
+                      secrets={secrets}
+                      onUpdateStep={(updater) => updateSelectedStep(step.id, updater)}
+                      onRemoveStep={() =>
+                        updateSelectedMacro((macro) => ({
+                          ...macro,
+                          steps: macro.steps.filter((s) => s.id !== step.id),
+                        }))
+                      }
+                    />
+                  ))}
+                </Reorder.Group>
               </section>
 
               <section className="settings-section">
                 <div className="settings-section-header">
-                  <h3 className="settings-section-title">Fields</h3>
+                  <h3 className="settings-section-title">Required Fields</h3>
                   <div className="settings-inline-actions">
-                    <button type="button" className="settings-secondary-button settings-secondary-button--small" onClick={syncFieldsFromTemplate}>
-                      Sync Missing
+                    <button type="button" className="settings-secondary-button settings-secondary-button--small" onClick={syncFieldsFromSteps}>
+                      Sync from Steps
                     </button>
                     <button type="button" className="settings-secondary-button settings-secondary-button--small" onClick={addField}>
                       Add Field
@@ -506,7 +770,7 @@ export function MacrosWindow() {
                   style={{ padding: 0 }}
                 >
                   {selectedMacro.fields.length === 0 && (
-                    <div className="settings-empty-state">No fields defined yet.</div>
+                    <div className="settings-empty-state">No fields defined yet. Fields are auto-detected from Type steps.</div>
                   )}
                   {selectedMacro.fields.map((field) => (
                     <FieldItem
@@ -522,15 +786,19 @@ export function MacrosWindow() {
                     />
                   ))}
                 </Reorder.Group>
-              </section>
-
-              <section className="settings-section">
-                <div className="settings-section-header">
-                  <h3 className="settings-section-title">Output Preview</h3>
-                </div>
-                <div className="settings-group">
-                  <pre className="settings-code-block">{selectedMacroPreview || 'Nothing to preview yet.'}</pre>
-                </div>
+                
+                {selectedPlaceholders.length > 0 && (
+                   <div className="settings-group-footer" style={{ marginTop: 8 }}>
+                      <div className="settings-chip-row">
+                        <span style={{ fontSize: 12, color: 'var(--settings-text-muted)' }}>Detected:</span>
+                        {selectedPlaceholders.map((placeholder) => (
+                          <span key={placeholder} className="settings-chip">
+                            {placeholder}
+                          </span>
+                        ))}
+                      </div>
+                   </div>
+                )}
               </section>
             </>
           )}
