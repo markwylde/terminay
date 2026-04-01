@@ -297,6 +297,64 @@
   outline: none;
 }
 
+.settings-dropdown-container {
+  position: relative;
+}
+
+.settings-step-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--settings-accent);
+  width: 90px;
+  flex-shrink: 0;
+  letter-spacing: 0.05em;
+}
+
+.settings-secret-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--settings-bg);
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  transition: border-color 0.1s ease;
+}
+
+.settings-secret-item:hover {
+  border-color: var(--settings-text-muted);
+}
+
+.settings-secret-name {
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.settings-tab-button {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--settings-text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.1s ease;
+}
+
+.settings-tab-button:hover {
+  background: var(--settings-nav-hover);
+  color: var(--settings-text);
+}
+
+.settings-tab-button--active {
+  background: var(--settings-nav-active-bg);
+  color: var(--settings-nav-active-text);
+}
+
 .settings-hero-actions {
   display: flex;
   gap: 8px;
@@ -670,6 +728,161 @@
   flex-shrink: 0;
 }
 
+.settings-remote-panel {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.settings-remote-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 8px;
+}
+
+.settings-remote-panel-header h4 {
+  margin: 6px 0 10px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.settings-remote-panel-header p {
+  margin: 0;
+  color: var(--settings-text-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.settings-remote-kicker {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--settings-accent);
+}
+
+.settings-remote-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.settings-remote-card {
+  border: 1px solid var(--settings-border);
+  border-radius: 12px;
+  padding: 20px;
+  background: var(--settings-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: var(--settings-card-shadow);
+}
+
+.settings-remote-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.settings-remote-copy-button {
+  appearance: none;
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  background: var(--settings-sidebar-bg);
+  color: var(--settings-accent);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.settings-remote-copy-button:hover {
+  background: var(--settings-bg-hover);
+  border-color: var(--settings-accent);
+}
+
+.settings-remote-card-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--settings-text-muted);
+}
+
+.settings-remote-qr {
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+  border-radius: 16px;
+  background: #fff;
+  padding: 20px;
+  border: 1px solid var(--settings-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.settings-remote-meta,
+.settings-remote-empty {
+  margin: 0;
+  color: var(--settings-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.settings-remote-empty {
+  text-align: left;
+}
+
+.settings-remote-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-remote-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--settings-card-bg);
+  border: 1px solid var(--settings-border);
+}
+
+.settings-remote-item strong {
+  display: block;
+  font-size: 13px;
+}
+
+.settings-remote-item p {
+  margin: 4px 0 0;
+  color: var(--settings-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.settings-remote-item--stacked {
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex-direction: column;
+}
+
+.settings-remote-empty-state {
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px dashed var(--settings-border);
+  color: var(--settings-text-muted);
+  background: var(--settings-bg);
+  font-size: 13px;
+}
+
 .settings-switch {
   position: relative;
   display: inline-block;
@@ -870,6 +1083,16 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 16px;
+  }
+
+  .settings-remote-panel-header,
+  .settings-remote-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .settings-remote-grid {
+    grid-template-columns: 1fr;
   }
 
   .settings-row-control,
