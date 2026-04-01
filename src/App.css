@@ -1193,6 +1193,11 @@
   flex: 1;
 }
 
+.emoji-picker-field {
+  position: relative;
+  display: flex;
+}
+
 .emoji-picker-trigger {
   width: 40px;
   height: 40px;
@@ -1217,6 +1222,12 @@
   z-index: 110;
   top: 50px;
   left: 0;
+}
+
+.emoji-picker-popover--hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
 }
 
 .project-edit-preview {
