@@ -10,12 +10,12 @@ import {
 } from 'react'
 import { AnimatePresence, Reorder } from 'framer-motion'
 import data from '@emoji-mart/data'
-import Picker from '@emoji-mart/react'
 import { DockviewReact, getPanelData } from 'dockview'
 import type { Direction, DockviewApi, DockviewReadyEvent } from 'dockview'
 import {
   renderMacroTemplate,
 } from './macroSettings'
+import { EmojiPicker } from './components/EmojiPicker'
 import type { MacroDefinition, MacroFieldValue } from './types/macros'
 import type { AppCommand, RemoteAccessStatus } from './types/termide'
 import { TerminalPanel } from './components/TerminalPanel'
@@ -1753,24 +1753,24 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
                     >
                       <span aria-hidden="true">{editingTerminalEmoji || '🖥️'}</span>
                     </button>
-                    {isTerminalEmojiPickerOpen ? (
-                      <div className="emoji-picker-popover">
-                        <Picker
-                          data={data}
-                          onEmojiSelect={(emoji: { native?: string }) => {
-                            if (!emoji.native) {
-                              return
-                            }
+                    <div
+                      className={`emoji-picker-popover${isTerminalEmojiPickerOpen ? '' : ' emoji-picker-popover--hidden'}`}
+                    >
+                      <EmojiPicker
+                        data={data}
+                        onEmojiSelect={(emoji: { native?: string }) => {
+                          if (!emoji.native) {
+                            return
+                          }
 
-                            setEditingTerminalEmoji(emoji.native)
-                            setIsTerminalEmojiPickerOpen(false)
-                          }}
-                          previewPosition="none"
-                          skinTonePosition="none"
-                          theme="dark"
-                        />
-                      </div>
-                    ) : null}
+                          setEditingTerminalEmoji(emoji.native)
+                          setIsTerminalEmojiPickerOpen(false)
+                        }}
+                        previewPosition="none"
+                        skinTonePosition="none"
+                        theme="dark"
+                      />
+                    </div>
                   </div>
                   <input
                     type="text"
@@ -2390,24 +2390,22 @@ function App() {
                   >
                     <span aria-hidden="true">{editingEmoji || '🖥️'}</span>
                   </button>
-                  {isEmojiPickerOpen ? (
-                    <div className="emoji-picker-popover">
-                      <Picker
-                        data={data}
-                        onEmojiSelect={(emoji: { native?: string }) => {
-                          if (!emoji.native) {
-                            return
-                          }
+                  <div className={`emoji-picker-popover${isEmojiPickerOpen ? '' : ' emoji-picker-popover--hidden'}`}>
+                    <EmojiPicker
+                      data={data}
+                      onEmojiSelect={(emoji: { native?: string }) => {
+                        if (!emoji.native) {
+                          return
+                        }
 
-                          setEditingEmoji(emoji.native)
-                          setIsEmojiPickerOpen(false)
-                        }}
-                        previewPosition="none"
-                        skinTonePosition="none"
-                        theme="dark"
-                      />
-                    </div>
-                  ) : null}
+                        setEditingEmoji(emoji.native)
+                        setIsEmojiPickerOpen(false)
+                      }}
+                      previewPosition="none"
+                      skinTonePosition="none"
+                      theme="dark"
+                    />
+                  </div>
                 </div>
                 <input
                   type="text"
