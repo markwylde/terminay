@@ -71,7 +71,7 @@ export const defaultTerminalSettings: TerminalSettings = {
   fontWeightBold: '700',
   ignoreBracketedPasteMode: false,
   letterSpacing: 0,
-  lineHeight: 1.25,
+  lineHeight: 1,
   macOptionIsMeta: false,
   macOptionClickForcesSelection: false,
   minimumContrastRatio: 1,

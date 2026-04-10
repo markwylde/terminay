@@ -105,6 +105,7 @@ export interface TermideApi {
   deleteSecret: (id: string) => Promise<void>
   getDecryptedSecret: (id: string) => Promise<string>
   waitForTerminalInactivity: (id: string, durationMs: number) => Promise<void>
+  smartPasteClipboard: () => Promise<string>
   openExternal: (url: string) => Promise<void>
   openSettingsWindow: (options?: { sectionId?: string }) => Promise<void>
   getRemoteAccessStatus: () => Promise<RemoteAccessStatus>
