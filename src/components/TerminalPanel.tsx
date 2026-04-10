@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import type { IDockviewPanelProps } from 'dockview'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -7,9 +8,11 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { buildTerminalOptions } from '../terminalSettings'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
+import { enablePreferredXtermRenderer } from '../xtermRenderer'
 import type { TerminalPanelParams } from './TerminalTab'
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'termide-open-terminal-switcher'
+const BRACKETED_PASTE_NEWLINE = '\x1b[200~\n\x1b[201~'
 
 const searchOptions = {
   incremental: true,
@@ -133,8 +136,31 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     )
     terminal.unicode.activeVersion = '11'
     terminal.open(root)
+    void enablePreferredXtermRenderer(terminal)
 
     terminal.attachCustomKeyEventHandler((event) => {
+      const isPasteShortcut =
+        (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 'v') ||
+        (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'v')
+
+      if (isPasteShortcut) {
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.type !== 'keydown') {
+          return false
+        }
+
+        void window.termide.smartPasteClipboard().then((pasted) => {
+          if (pasted.length === 0) {
+            return
+          }
+
+          window.termide.writeTerminal(sessionId, pasted)
+        })
+
+        return false
+      }
+
       if (event.altKey && !event.ctrlKey && !event.metaKey && event.key === 'Tab') {
         event.preventDefault()
         event.stopPropagation()
@@ -162,9 +188,25 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
       if (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        // Let the PTY remain the source of truth so every connected client
-        // converges on the same screen state.
-        window.termide.writeTerminal(sessionId, '\u000c')
+        if (event.type !== 'keydown') {
+          return false
+        }
+
+        // Clear the local xterm buffer immediately so the screen updates
+        // even while the attached process is still running.
+        terminal.clear()
+        return false
+      }
+
+      if (event.key === 'Enter' && (event.shiftKey || event.altKey)) {
+        event.preventDefault()
+        if (event.type !== 'keydown') {
+          return false
+        }
+
+        // Send the newline through bracketed paste so shells keep it in the
+        // current command buffer instead of accepting the line.
+        window.termide.writeTerminal(sessionId, BRACKETED_PASTE_NEWLINE)
         return false
       }
 
@@ -385,8 +427,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
   }
 
+  const terminalPanelStyle = {
+    '--terminal-panel-surface': settings.theme.background,
+  } as CSSProperties
+
   return (
-    <div className="terminal-panel" ref={containerRef}>
+    <div className="terminal-panel" ref={containerRef} style={terminalPanelStyle}>
       {isSearchOpen ? (
         <search className="terminal-search" aria-label="Search terminal output">
           <input
