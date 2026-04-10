@@ -11,6 +11,7 @@ import {
 } from './services/deviceKeys'
 import { parsePairingBootstrap } from './services/pairing'
 import { RemoteSocket } from './services/socket'
+import { enablePreferredXtermRenderer } from '../xtermRenderer'
 import '@xterm/xterm/css/xterm.css'
 import './index.css'
 
@@ -46,7 +47,7 @@ type BarcodeDetectorConstructor = new (options?: { formats?: string[] }) => Barc
 
 const DEFAULT_SETTINGS: RemoteSettings = {
   fontSize: 13,
-  lineHeight: 1.25,
+  lineHeight: 1,
   fontFamily: '"SF Mono", "Cascadia Code", Menlo, Monaco, monospace',
   cursorBlink: true,
   theme: 'dark'
@@ -447,6 +448,7 @@ export function RemoteApp() {
       scrollback: 5000,
     })
     terminal.open(container)
+    void enablePreferredXtermRenderer(terminal)
 
     terminalRef.current = terminal
     renderSessionBuffer(selectedSessionIdRef.current)

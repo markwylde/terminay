@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('termide', {
 
   waitForTerminalInactivity: (id: string, durationMs: number) =>
     ipcRenderer.invoke('terminal:wait-for-inactivity', { id, durationMs }),
+  smartPasteClipboard: () => ipcRenderer.invoke('clipboard:smart-paste') as Promise<string>,
 
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
   openSettingsWindow: (options?: { sectionId?: string }) => ipcRenderer.invoke('app:open-settings', options),

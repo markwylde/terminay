@@ -1574,7 +1574,7 @@
   position: relative;
   width: 100%;
   height: 100%;
-  background: #111316;
+  background: var(--terminal-panel-surface, #111316);
 }
 
 .terminal-panel-root,
@@ -1582,9 +1582,16 @@
   position: absolute;
   top: 2px;
   right: 2px;
-  bottom: 8px;
+  bottom: 2px;
   left: 2px;
   height: auto;
+}
+
+.terminal-panel .xterm .xterm-viewport,
+.terminal-panel .xterm .xterm-screen,
+.terminal-panel .xterm .xterm-helpers,
+.terminal-panel .xterm .composition-view {
+  background: var(--terminal-panel-surface, #111316);
 }
 
 .terminal-search {

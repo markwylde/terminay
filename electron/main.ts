@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, nativeImage, shell, webContents, safeStorage } from 'electron'
+import { app, BrowserWindow, Menu, clipboard, ipcMain, nativeImage, shell, webContents, safeStorage } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -223,6 +223,129 @@ function readSecrets(): SecretRecord[] {
 
 function writeSecrets(secrets: SecretRecord[]): void {
   writeFileSync(getSecretsPath(), JSON.stringify(secrets, null, 2))
+}
+
+function shellEscapePath(pathValue: string): string {
+  return `'${pathValue.replace(/'/g, `'\\''`)}'`
+}
+
+function expandClipboardFormatCandidates(format: string): string[] {
+  const candidates = new Set<string>([format])
+
+  if (format.includes('.') && !format.includes('/')) {
+    candidates.add(format.replace('.', '/'))
+  }
+
+  if (format.includes('/') && !format.includes('.')) {
+    candidates.add(format.replace('/', '.'))
+  }
+
+  return [...candidates]
+}
+
+function readClipboardFormatText(format: string): string | null {
+  for (const candidate of expandClipboardFormatCandidates(format)) {
+    try {
+      const text = clipboard.read(candidate)
+      if (text.length > 0) {
+        return text
+      }
+    } catch {
+      // Try the next candidate format.
+    }
+
+    try {
+      const data = clipboard.readBuffer(candidate)
+      if (data.length > 0) {
+        return data.toString('utf8')
+      }
+    } catch {
+      // Try the next candidate format.
+    }
+  }
+
+  return null
+}
+
+function parseClipboardFilePaths(rawValue: string): string[] {
+  return rawValue
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+    .map((value) => {
+      if (value.startsWith('file://')) {
+        try {
+          return fileURLToPath(value)
+        } catch {
+          return value
+        }
+      }
+
+      return value
+    })
+}
+
+function readClipboardFilePaths(): string[] {
+  const availableFormats = clipboard.availableFormats().map((format) => format.toLowerCase())
+  const fileUrlFormats = ['public.file-url', 'public/file-url', 'text/uri-list', 'nsfilenamespboardtype']
+
+  for (const format of fileUrlFormats) {
+    const normalizedFormat = format.toLowerCase()
+    if (!availableFormats.includes(normalizedFormat)) {
+      continue
+    }
+
+    const rawValue = readClipboardFormatText(format)
+    if (!rawValue) {
+      continue
+    }
+
+    const paths = parseClipboardFilePaths(rawValue)
+    if (paths.length > 0) {
+      return paths
+    }
+  }
+
+  return []
+}
+
+function readClipboardImagePath(): string | null {
+  const image = clipboard.readImage()
+  if (image.isEmpty()) {
+    return null
+  }
+
+  const imageBytes = image.toPNG()
+  if (imageBytes.length === 0) {
+    return null
+  }
+
+  const tempDir = path.join(app.getPath('temp'), 'termide-clipboard')
+  mkdirSync(tempDir, { recursive: true })
+  const filePath = path.join(tempDir, `clipboard-${randomUUID()}.png`)
+  writeFileSync(filePath, imageBytes)
+  return filePath
+}
+
+function smartPasteClipboardContents(): string {
+  // Match terminal-emulator behavior: prefer explicit file URLs, then plain text,
+  // and only fall back to image-to-temp-file conversion when there is no text.
+  const filePaths = readClipboardFilePaths()
+  if (filePaths.length > 0) {
+    return filePaths.map(shellEscapePath).join(' ')
+  }
+
+  const text = clipboard.readText()
+  if (text.length > 0) {
+    return text
+  }
+
+  const imagePath = readClipboardImagePath()
+  if (imagePath) {
+    return shellEscapePath(imagePath)
+  }
+
+  return ''
 }
 
 function broadcastTerminalSettings(settings: TerminalSettings): void {
@@ -988,6 +1111,10 @@ ipcMain.handle('app:quit', () => {
 
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
   await shell.openExternal(url)
+})
+
+ipcMain.handle('clipboard:smart-paste', () => {
+  return smartPasteClipboardContents()
 })
 
 ipcMain.handle('remote:get-status', () => {
