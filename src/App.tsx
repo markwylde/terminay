@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { AnimatePresence, Reorder } from 'framer-motion'
+import { AnimatePresence, Reorder, motion } from 'framer-motion'
 import data from '@emoji-mart/data'
 import { DockviewReact, getPanelData } from 'dockview'
 import type { Direction, DockviewApi, DockviewReadyEvent } from 'dockview'
@@ -1534,54 +1534,87 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
           />
         </main>
 
-        {isMacroLauncherOpen ? (
-          <div className="macro-launcher" role="dialog" aria-modal="true" aria-label="Macro launcher">
-            <div className="macro-launcher-panel">
-              <div className="macro-launcher-header">
-                <div>
-                  <p className="macro-launcher-kicker">Cmd+L</p>
-                  <h2>Run Macro</h2>
+        <AnimatePresence>
+          {isMacroLauncherOpen && (
+            <div className="macro-launcher-overlay" onClick={closeMacroLauncher}>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.98, y: -20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.98, y: -10 }}
+                transition={{ duration: 0.15, ease: 'easeOut' }}
+                className="macro-launcher"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Macro launcher"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="macro-launcher-search-container">
+                  <div className="macro-launcher-search-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="11" cy="11" r="8" />
+                      <path d="m21 21-4.3-4.3" />
+                    </svg>
+                  </div>
+                  <input
+                    ref={macroLauncherInputRef}
+                    type="text"
+                    className="macro-launcher-input"
+                    value={macroQuery}
+                    onChange={(event) => {
+                      setMacroQuery(event.target.value)
+                      setSelectedMacroIndex(0)
+                    }}
+                    placeholder="Search macros..."
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                  <div className="macro-launcher-shortcut">
+                    <span>ESC</span>
+                  </div>
                 </div>
-                <button type="button" className="macro-launcher-close" onClick={closeMacroLauncher} aria-label="Close macro launcher">
-                  Esc
-                </button>
-              </div>
 
-              <input
-                ref={macroLauncherInputRef}
-                type="text"
-                className="macro-launcher-input"
-                value={macroQuery}
-                onChange={(event) => {
-                  setMacroQuery(event.target.value)
-                  setSelectedMacroIndex(0)
-                }}
-                placeholder="Search macros"
-              />
+                <div className="macro-launcher-list">
+                  {filteredMacros.length === 0 ? (
+                    <div className="macro-launcher-empty">
+                      <p>No macros match your search.</p>
+                    </div>
+                  ) : (
+                    filteredMacros.map((macro, index) => (
+                      <button
+                        key={macro.id}
+                        type="button"
+                        className={`macro-launcher-item ${index === selectedMacroIndex ? 'macro-launcher-item--active' : ''}`}
+                        onMouseEnter={() => setSelectedMacroIndex(index)}
+                        onClick={() => runMacro(macro)}
+                      >
+                        <div className="macro-launcher-item-content">
+                          <span className="macro-launcher-item-title">{macro.title}</span>
+                          <span className="macro-launcher-item-description">
+                            {macro.description || (macro.steps[0]?.type === 'type' ? macro.steps[0].content : 'Multi-step macro')}
+                          </span>
+                        </div>
+                        {index === selectedMacroIndex && (
+                          <div className="macro-launcher-item-hint">
+                            <span>⏎</span>
+                          </div>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
 
-              <div className="macro-launcher-list">
-                {filteredMacros.length === 0 ? (
-                  <p className="macro-launcher-empty">No macros match this search.</p>
-                ) : (
-                  filteredMacros.map((macro, index) => (
-                    <button
-                      key={macro.id}
-                      type="button"
-                      className={`macro-launcher-item${index === selectedMacroIndex ? ' macro-launcher-item--active' : ''}`}
-                      onMouseEnter={() => setSelectedMacroIndex(index)}
-                      onClick={() => runMacro(macro)}
-                    >
-                      <span className="macro-launcher-item-title">{macro.title}</span>
-                      <span className="macro-launcher-item-description">
-                        {macro.description || (macro.steps[0]?.type === 'type' ? macro.steps[0].content : 'Multi-step macro')}
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
+                <div className="macro-launcher-footer">
+                  <div className="macro-launcher-footer-hint">
+                    <span className="macro-launcher-key">↑↓</span> to navigate
+                  </div>
+                  <div className="macro-launcher-footer-hint">
+                    <span className="macro-launcher-key">⏎</span> to run
+                  </div>
+                </div>
+              </motion.div>
             </div>
-          </div>
-        ) : null}
+          )}
+        </AnimatePresence>
 
         {isTerminalSwitcherOpen ? (
           <div className="terminal-switcher" role="dialog" aria-modal="true" aria-label="Terminal switcher">
