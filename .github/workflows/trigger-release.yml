@@ -105,9 +105,6 @@ jobs:
             script: npm run build:linux
             pattern: release/**/*.AppImage
 
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
-
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -120,6 +117,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Import Apple signing certificate
+        if: ${{ matrix.os == 'macos-latest' && secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
 
       - name: Sync package version to release tag
         env:
@@ -136,6 +140,11 @@ jobs:
           npm version "$TARGET_VERSION" --no-git-tag-version
 
       - name: Build packaged app
+        env:
+          APPLE_ID: ${{ matrix.os == 'macos-latest' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && secrets.APPLE_TEAM_ID || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
         run: ${{ matrix.script }}
 
       - name: Upload workflow artifact
