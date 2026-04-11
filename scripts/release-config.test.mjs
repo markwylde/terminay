@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
 import { getNextVersion, getReleaseType, incrementVersion } from './release-utils.mjs'
 
@@ -51,4 +53,16 @@ test('derives a patch first release from a 0.0.0 baseline', () => {
     }),
     '0.0.1',
   )
+})
+
+test('wires Apple signing secrets into the release workflow', () => {
+  const workflow = readFileSync(resolve('.github/workflows/trigger-release.yml'), 'utf8')
+
+  assert.match(workflow, /uses:\s+apple-actions\/import-codesign-certs@v3/)
+  assert.match(workflow, /MACOS_CERTIFICATE_P12/)
+  assert.match(workflow, /MACOS_CERTIFICATE_PASSWORD/)
+  assert.match(workflow, /APPLE_ID/)
+  assert.match(workflow, /APPLE_APP_SPECIFIC_PASSWORD/)
+  assert.match(workflow, /APPLE_TEAM_ID/)
+  assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY:\s+\$\{\{\s+matrix\.os\s*==\s*'macos-latest'\s*&&\s*'true'\s*\|\|\s*'false'\s+\}\}/)
 })
