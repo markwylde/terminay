@@ -40,6 +40,8 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     needs: smoke-test
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     outputs:
       tag: ${{ steps.release_tag.outputs.tag }}
       no_release: ${{ steps.release_tag.outputs.no_release }}
@@ -74,13 +76,11 @@ jobs:
           fi
 
       - name: Generate AI release notes
-        if: steps.release_tag.outputs.no_release != 'true' && secrets.OPENROUTER_API_KEY != ''
-        env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        if: steps.release_tag.outputs.no_release != 'true' && env.OPENROUTER_API_KEY != ''
         run: node scripts/generate-release-notes.mjs "${{ steps.release_tag.outputs.tag }}"
 
       - name: Skip AI release notes without API key
-        if: steps.release_tag.outputs.no_release != 'true' && secrets.OPENROUTER_API_KEY == ''
+        if: steps.release_tag.outputs.no_release != 'true' && env.OPENROUTER_API_KEY == ''
         run: |
           cat <<EOF > RELEASE.md
           ## Release Notes
