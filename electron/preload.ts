@@ -3,6 +3,7 @@ import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
 import type {
   AppCommand,
+  FileExplorerEntry,
   MacrosChangeMessage,
   RemoteAccessStatus,
   SettingsChangeMessage,
@@ -14,6 +15,8 @@ import type {
 type ElectronListener<T> = (_event: Electron.IpcRendererEvent, payload: T) => void
 
 contextBridge.exposeInMainWorld('termide', {
+  getHomePath: () => ipcRenderer.invoke('fs:get-home-path') as Promise<string>,
+  listDirectory: (dirPath: string) => ipcRenderer.invoke('fs:list-directory', { dirPath }) as Promise<FileExplorerEntry[]>,
   quitApp: () => ipcRenderer.invoke('app:quit'),
   createTerminal: (options?: { cwd?: string }) => ipcRenderer.invoke('terminal:create', options),
   getTerminalCwd: (id: string) => ipcRenderer.invoke('terminal:get-cwd', { id }),

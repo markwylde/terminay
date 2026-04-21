@@ -5,13 +5,14 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { lstat, readdir, stat } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import type { IPty } from 'node-pty'
 import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
+import type { FileExplorerEntry } from '../src/types/termide'
 import { RemoteAccessService } from './remote/service'
 
 const require = createRequire(import.meta.url)
@@ -265,6 +266,47 @@ function readClipboardFormatText(format: string): string | null {
   }
 
   return null
+}
+
+function resolveExplorerPath(rawPath: string): string {
+  const trimmedPath = rawPath.trim()
+  if (trimmedPath === '~') {
+    return app.getPath('home')
+  }
+
+  if (trimmedPath.startsWith('~/') || trimmedPath.startsWith('~\\')) {
+    return path.join(app.getPath('home'), trimmedPath.slice(2))
+  }
+
+  return trimmedPath
+}
+
+async function readDirectoryEntries(dirPath: string): Promise<FileExplorerEntry[]> {
+  const resolvedPath = resolveExplorerPath(dirPath)
+  const directoryEntries = await readdir(resolvedPath, { withFileTypes: true })
+  const items = await Promise.all(
+    directoryEntries.map(async (entry) => {
+      const entryPath = path.join(resolvedPath, entry.name)
+      const stats = await lstat(entryPath)
+
+      return {
+        isDirectory: stats.isDirectory(),
+        isSymbolicLink: stats.isSymbolicLink(),
+        name: entry.name,
+        path: entryPath,
+      } satisfies FileExplorerEntry
+    }),
+  )
+
+  items.sort((a, b) => {
+    if (a.isDirectory !== b.isDirectory) {
+      return a.isDirectory ? -1 : 1
+    }
+
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })
+  })
+
+  return items
 }
 
 function parseClipboardFilePaths(rawValue: string): string[] {
@@ -1069,6 +1111,14 @@ ipcMain.on(
 
 ipcMain.handle('terminal:get-zoom', () => {
   return terminalZoomLevel
+})
+
+ipcMain.handle('fs:get-home-path', () => {
+  return app.getPath('home')
+})
+
+ipcMain.handle('fs:list-directory', async (_event, payload: { dirPath: string }) => {
+  return readDirectoryEntries(payload.dirPath)
 })
 
 ipcMain.handle('settings:get-terminal', () => {
