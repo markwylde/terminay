@@ -25,7 +25,7 @@
   border-bottom: 1px solid var(--tab-border);
   -webkit-app-region: drag;
   font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  padding-right: 8px;
+  padding: 0 8px;
 }
 
 .app-shell--macos .project-tabbar {
@@ -568,6 +568,7 @@
 .project-tab-close,
 .terminal-tab-close,
 .project-tab-add,
+.project-tab-sidebar-toggle,
 .termide-add-tab-button {
   all: unset;
   display: inline-flex;
@@ -616,6 +617,33 @@
 .project-tab-add:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.1);
+}
+
+.project-tab-sidebar-toggle {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  margin: 4px 4px;
+  align-self: center;
+  color: rgba(220, 226, 240, 0.62);
+  background: rgba(255, 255, 255, 0.04);
+  -webkit-app-region: no-drag;
+}
+
+.project-tab-sidebar-toggle:hover:not(:disabled) {
+  color: #dce2f0;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.project-tab-sidebar-toggle--active {
+  color: #bfe7ff;
+  background: rgba(77, 181, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(77, 181, 255, 0.2);
+}
+
+.project-tab-sidebar-toggle:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 /* Dockview Overrides */
@@ -1145,6 +1173,7 @@
 .project-tab-close svg,
 .terminal-tab-close svg,
 .project-tab-add svg,
+.project-tab-sidebar-toggle svg,
 .termide-add-tab-button svg {
   display: block;
   stroke: currentColor;
@@ -1672,13 +1701,172 @@
   inset: 0;
   display: flex;
   flex-direction: column;
-  opacity: 0;
+  visibility: hidden;
   pointer-events: none;
+  z-index: 0;
 }
 
 .project-workspace--active {
-  opacity: 1;
+  visibility: visible;
   pointer-events: auto;
+  z-index: 1;
+}
+
+.project-workspace-body {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+}
+
+.file-explorer-sidebar {
+  position: relative;
+  flex-shrink: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--tab-border);
+  background: #0d1014;
+}
+
+.file-explorer-sidebar__body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.file-explorer-sidebar__resizer {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  transition: background 150ms ease;
+}
+
+.file-explorer-sidebar__resizer:hover,
+.file-explorer-sidebar__resizer:active {
+  background: rgba(87, 183, 255, 0.4);
+}
+
+.file-explorer-tree {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.file-explorer-tree-node,
+.file-explorer-tree-children {
+  display: flex;
+  flex-direction: column;
+}
+
+.file-explorer-tree-item {
+  all: unset;
+  box-sizing: border-box;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  color: rgba(220, 226, 240, 0.65);
+  cursor: grab;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 100ms ease;
+  user-select: none;
+}
+
+.file-explorer-tree-item:active {
+  cursor: grabbing;
+}
+
+.file-explorer-tree-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #eef5ff;
+}
+
+.file-explorer-tree-item--dragging {
+  opacity: 0.45;
+}
+
+.file-explorer-tree-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-explorer-tree-icon,
+.file-explorer-tree-chevron {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-explorer-tree-chevron {
+  width: 16px;
+  height: 16px;
+  color: rgba(220, 226, 240, 0.2);
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1), color 150ms ease;
+}
+
+.file-explorer-tree-item:hover .file-explorer-tree-chevron {
+  color: rgba(220, 226, 240, 0.5);
+}
+
+.file-explorer-tree-chevron--expanded {
+  transform: rotate(90deg);
+}
+
+.file-explorer-tree-icon {
+  width: 16px;
+  height: 16px;
+  color: rgba(220, 226, 240, 0.4);
+}
+
+.file-explorer-tree-item--directory .file-explorer-tree-icon {
+  color: #57b7ff;
+  opacity: 0.85;
+}
+
+.file-explorer-tree-item--directory .file-explorer-tree-name {
+  color: rgba(234, 242, 255, 0.9);
+}
+
+.file-explorer-tree-feedback {
+  padding: 6px 16px 6px 16px;
+  color: rgba(220, 226, 240, 0.3);
+  font-size: 11px;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.file-explorer-tree-feedback--error {
+  color: #ff8585;
+  font-style: normal;
+}
+
+.file-explorer-tree-drag-preview {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 6px 10px;
+  border: 1px solid rgba(87, 183, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(17, 23, 30, 0.92);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  color: #eef5ff;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .workspace {

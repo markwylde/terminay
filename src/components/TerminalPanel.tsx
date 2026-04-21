@@ -12,6 +12,7 @@ import { enablePreferredXtermRenderer } from '../xtermRenderer'
 import type { TerminalPanelParams } from './TerminalTab'
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'termide-open-terminal-switcher'
+const DROP_FILE_EXPLORER_PATH_EVENT = 'termide-drop-file-explorer-path'
 const BRACKETED_PASTE_NEWLINE = '\x1b[200~\n\x1b[201~'
 
 const searchOptions = {
@@ -35,19 +36,27 @@ function escapePathForShell(path: string): string {
 }
 
 function getDroppedFileText(dataTransfer: DataTransfer): string | null {
-  if (dataTransfer.files.length === 0) {
-    return null
+  const customPath = dataTransfer.getData('termide/path')
+  if (customPath) {
+    return escapePathForShell(customPath)
   }
 
-  const paths = Array.from(dataTransfer.files)
-    .map((file) => window.termide.getPathForFile(file))
-    .filter((path): path is string => typeof path === 'string' && path.length > 0)
-
-  if (paths.length === 0) {
-    return null
+  const textData = dataTransfer.getData('text/plain')
+  if (textData && (textData.startsWith('/') || textData.startsWith('~/') || textData.includes('\\'))) {
+    return escapePathForShell(textData)
   }
 
-  return paths.map(escapePathForShell).join(' ')
+  if (dataTransfer.files.length > 0) {
+    const paths = Array.from(dataTransfer.files)
+      .map((file) => window.termide.getPathForFile(file))
+      .filter((path): path is string => typeof path === 'string' && path.length > 0)
+
+    if (paths.length > 0) {
+      return paths.map(escapePathForShell).join(' ')
+    }
+  }
+
+  return null
 }
 
 export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
@@ -87,8 +96,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   }, [props.params.sessionId])
 
   useEffect(() => {
+    const container = containerRef.current
     const root = xtermRootRef.current
-    if (!root) {
+    if (!container || !root) {
       return
     }
 
@@ -293,6 +303,17 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       announceTerminalFocus()
     }
 
+    const handleExplorerPathDrop = (event: Event) => {
+      const customEvent = event as CustomEvent<{ path?: string; sessionId?: string }>
+      if (customEvent.detail?.sessionId !== sessionId || !customEvent.detail.path) {
+        return
+      }
+
+      window.termide.writeTerminal(sessionId, `${escapePathForShell(customEvent.detail.path)} `)
+      terminal.focus()
+      announceTerminalFocus()
+    }
+
     const resizeObserver = new ResizeObserver(() => {
       fitAndResize()
     })
@@ -305,20 +326,22 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
 
     const handleDragEnter = (event: DragEvent) => {
-      if (!event.dataTransfer || event.dataTransfer.files.length === 0) {
+      if (!event.dataTransfer) {
         return
       }
 
       event.preventDefault()
+      event.stopPropagation()
       event.dataTransfer.dropEffect = 'copy'
     }
 
     const handleDragOver = (event: DragEvent) => {
-      if (!event.dataTransfer || event.dataTransfer.files.length === 0) {
+      if (!event.dataTransfer) {
         return
       }
 
       event.preventDefault()
+      event.stopPropagation()
       event.dataTransfer.dropEffect = 'copy'
     }
 
@@ -327,35 +350,47 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return
       }
 
+      // We handle the event here so xterm doesn't get it
+      event.preventDefault()
+      event.stopPropagation()
+
       const droppedText = getDroppedFileText(event.dataTransfer)
       if (!droppedText) {
         return
       }
 
-      event.preventDefault()
-      event.stopPropagation()
-      window.termide.writeTerminal(sessionId, droppedText)
+      window.termide.writeTerminal(sessionId, `${droppedText} `)
       terminal.focus()
       announceTerminalFocus()
     }
 
+    const dragListenerOptions = { capture: true } as const
+
     resizeObserver.observe(root)
-    root.addEventListener('dragenter', handleDragEnter)
-    root.addEventListener('dragover', handleDragOver)
-    root.addEventListener('drop', handleDrop)
+    container.addEventListener('dragenter', handleDragEnter, dragListenerOptions)
+    container.addEventListener('dragover', handleDragOver, dragListenerOptions)
+    container.addEventListener('drop', handleDrop, dragListenerOptions)
+    root.addEventListener('dragenter', handleDragEnter, dragListenerOptions)
+    root.addEventListener('dragover', handleDragOver, dragListenerOptions)
+    root.addEventListener('drop', handleDrop, dragListenerOptions)
     root.addEventListener('pointerdown', announceTerminalFocus)
     window.addEventListener('termide-focus-terminal', focusTerminal)
+    window.addEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
     terminal.focus()
     announceTerminalFocus()
 
     return () => {
       searchResultsDisposer.dispose()
       resizeObserver.disconnect()
-      root.removeEventListener('dragenter', handleDragEnter)
-      root.removeEventListener('dragover', handleDragOver)
-      root.removeEventListener('drop', handleDrop)
+      container.removeEventListener('dragenter', handleDragEnter, dragListenerOptions)
+      container.removeEventListener('dragover', handleDragOver, dragListenerOptions)
+      container.removeEventListener('drop', handleDrop, dragListenerOptions)
+      root.removeEventListener('dragenter', handleDragEnter, dragListenerOptions)
+      root.removeEventListener('dragover', handleDragOver, dragListenerOptions)
+      root.removeEventListener('drop', handleDrop, dragListenerOptions)
       root.removeEventListener('pointerdown', announceTerminalFocus)
       window.removeEventListener('termide-focus-terminal', focusTerminal)
+      window.removeEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
       activeDisposer.dispose()
       if (activeFocusFrame !== null) {
         window.cancelAnimationFrame(activeFocusFrame)
@@ -432,7 +467,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   } as CSSProperties
 
   return (
-    <div className="terminal-panel" ref={containerRef} style={terminalPanelStyle}>
+    <div
+      className="terminal-panel"
+      data-termide-terminal-session-id={props.params.sessionId}
+      ref={containerRef}
+      style={terminalPanelStyle}
+    >
       {isSearchOpen ? (
         <search className="terminal-search" aria-label="Search terminal output">
           <input
