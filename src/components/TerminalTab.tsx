@@ -57,7 +57,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
 
   const style = useMemo(() => {
     return {
-      '--tab-color': color || '#4db5ff',
+      '--tab-color': color || '#717b85',
     } as React.CSSProperties
   }, [color])
 

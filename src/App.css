@@ -36,32 +36,33 @@
   margin-left: auto;
   display: flex;
   align-items: center;
-  padding: 0 10px 0 6px;
+  padding: 0 12px;
   -webkit-app-region: no-drag;
   position: relative;
+  height: 100%;
 }
 
 .remote-access-button {
   all: unset;
-  min-width: 92px;
-  height: 100%;
+  height: 26px;
   padding: 0 14px;
-  border-left: 1px solid var(--tab-border);
-  background: transparent;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
   color: var(--tab-text-active);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  transition: background-color 150ms ease, color 150ms ease;
+  transition: all 150ms ease;
+  align-self: center;
 }
 
 .remote-access-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.12);
   color: var(--tab-text-selected);
 }
 
@@ -73,10 +74,12 @@
 .remote-access-button--active,
 .remote-access-status--active .remote-access-button {
   color: #bfe7ff;
+  background: rgba(77, 181, 255, 0.15);
 }
 
 .remote-access-button--warning {
   color: #ffe7a6;
+  background: rgba(255, 231, 166, 0.12);
 }
 
 .remote-access-button__label {
@@ -487,52 +490,66 @@
   display: flex;
   align-items: center;
   position: relative;
-  background-color: transparent;
   color: var(--tab-text);
   height: 100%;
+  padding: 0;
   -webkit-app-region: no-drag;
   cursor: pointer;
   user-select: none;
-  transition: background-color 150ms ease, color 150ms ease;
-  border-right: 1px solid var(--tab-border);
-  min-width: 140px;
+  transition: color 150ms ease;
+  min-width: 120px;
   max-width: 240px;
+}
+
+.project-tab::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 4px;
+  right: 4px;
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--project-color) 15%, transparent);
+  transition: all 150ms ease;
+  z-index: 0;
 }
 
 .project-tab--dragging {
   cursor: grabbing;
   z-index: 50;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
-  background: var(--tab-bg-active);
-  border: 1px solid var(--tab-border);
-  border-radius: 4px;
 }
 
-.project-tab:hover:not(.project-tab--active) {
-  background-color: var(--tab-bg-hover);
-  color: var(--tab-text-active);
+.project-tab--dragging::before {
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+  background: var(--tab-bg-active);
+}
+
+.project-tab:hover:not(.project-tab--active)::before {
+  background-color: color-mix(in srgb, var(--project-color) 25%, transparent);
 }
 
 .project-tab--active {
-  background-color: var(--tab-bg-active);
   color: var(--tab-text-selected);
-  box-shadow: 
-    inset 0 -1px 0 var(--tab-bg-active),
-    inset 0 2px 0 var(--project-color);
-  margin-bottom: -1px;
+}
+
+.project-tab--active::before {
+  background-color: color-mix(in srgb, var(--project-color) 45%, var(--tab-bg-active));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .project-tab-main {
   flex: 1;
+  display: flex;
+  align-items: center;
   height: 100%;
   min-width: 0;
   padding: 0 8px 0 12px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: 0.01em;
-  display: inline-flex;
-  align-items: center;
   gap: 8px;
+  position: relative;
+  z-index: 1;
 }
 
 .project-tab-emoji {
@@ -558,26 +575,21 @@
   justify-content: center;
   cursor: pointer;
   box-sizing: border-box;
-  color: inherit;
-  transition: background-color 150ms ease, color 150ms ease, opacity 150ms ease;
-  background: transparent;
-  border: none;
-  padding: 0;
-  margin: 0;
+  transition: all 120ms ease;
+  flex-shrink: 0;
 }
 
 .project-tab-close {
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
   border-radius: 4px;
-  margin-right: 6px;
-  opacity: 0.25;
-  flex-shrink: 0;
+  margin: 0 8px 0 2px;
+  opacity: 0.3;
 }
 
 .project-tab--active .project-tab-close,
 .project-tab:hover .project-tab-close {
-  opacity: 0.8;
+  opacity: 0.6;
 }
 
 .project-tab-close:hover:not(:disabled) {
@@ -591,14 +603,19 @@
 }
 
 .project-tab-add {
-  width: 36px;
-  height: 100%;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  margin-left: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  opacity: 0.6;
   -webkit-app-region: no-drag;
+  align-self: center;
 }
 
 .project-tab-add:hover {
-  background: var(--tab-bg-hover);
-  color: var(--tab-text-active);
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* Dockview Overrides */
@@ -662,9 +679,13 @@
   background: transparent;
   color: var(--tab-text);
   border-right: 0;
-  transition: background-color 150ms ease, color 150ms ease;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
   min-width: 120px;
   max-width: 220px;
+}
+
+.terminal-tab-content[data-has-color='true'] {
+  background-color: color-mix(in srgb, var(--tab-color) 15%, transparent);
 }
 
 .terminal-tab-content:hover:not(.terminal-tab-content--active) {
@@ -672,18 +693,83 @@
   color: var(--tab-text-active);
 }
 
+.terminal-tab-content[data-has-color='true']:hover:not(.terminal-tab-content--active) {
+  background-color: color-mix(in srgb, var(--tab-color) 25%, transparent);
+}
+
 .terminal-tab-content--active {
   background: var(--terminal-tab-bg-active);
   color: var(--tab-text-selected);
   box-shadow:
     inset 1px 0 0 rgba(255, 255, 255, 0.06),
-    inset 0 -2px 0 var(--terminal-tab-active-accent);
+    inset 0 -3px 0 var(--terminal-tab-active-accent);
 }
 
 .terminal-tab-content--active[data-has-color='true'] {
+  background-color: color-mix(in srgb, var(--tab-color) 40%, var(--terminal-tab-bg-active));
   box-shadow:
     inset 1px 0 0 rgba(255, 255, 255, 0.06),
-    inset 0 -2px 0 var(--tab-color);
+    inset 0 -3px 0 var(--tab-color);
+}
+
+/* Hue Slider Styling */
+.hue-slider-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.hue-slider-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.hue-slider-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: rgba(220, 226, 240, 0.5);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.hue-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(
+    to right,
+    #ff0000 0%,
+    #ffff00 17%,
+    #00ff00 33%,
+    #00ffff 50%,
+    #0000ff 67%,
+    #ff00ff 83%,
+    #ff0000 100%
+  );
+  outline: none;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.hue-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #161c25;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: transform 100ms ease;
+}
+
+.hue-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
 }
 
 .terminal-tab-content--active .terminal-tab-title {
