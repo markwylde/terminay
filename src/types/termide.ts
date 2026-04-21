@@ -65,11 +65,20 @@ export type RemoteAccessStatus = {
   pairingUrl: string | null
 }
 
+export type FileExplorerEntry = {
+  isDirectory: boolean
+  isSymbolicLink: boolean
+  name: string
+  path: string
+}
+
 export type TerminalZoomMessage = {
   zoomLevel: number
 }
 
 export interface TermideApi {
+  getHomePath: () => Promise<string>
+  listDirectory: (dirPath: string) => Promise<FileExplorerEntry[]>
   quitApp: () => Promise<void>
   createTerminal: (options?: { cwd?: string }) => Promise<{ id: string }>
   getTerminalCwd: (id: string) => Promise<string | null>

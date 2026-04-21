@@ -1,6 +1,7 @@
 import {
   FormEvent,
   forwardRef,
+  type JSX,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -17,7 +18,7 @@ import {
 } from './macroSettings'
 import { EmojiPicker } from './components/EmojiPicker'
 import type { MacroDefinition, MacroFieldValue } from './types/macros'
-import type { AppCommand, RemoteAccessStatus } from './types/termide'
+import type { AppCommand, FileExplorerEntry, RemoteAccessStatus } from './types/termide'
 import { TerminalPanel } from './components/TerminalPanel'
 import { TerminalTab } from './components/TerminalTab'
 import type { TerminalPanelParams, TerminalTabMacroRun } from './components/TerminalTab'
@@ -35,6 +36,9 @@ type ProjectTab = {
   title: string
   color: string
   emoji: string
+  fileExplorerWidth: number
+  isFileExplorerOpen: boolean
+  rootFolder: string
 }
 
 type ProjectWorkspaceHandle = {
@@ -45,11 +49,299 @@ type ProjectWorkspaceProps = {
   isActive: boolean
   isMac: boolean
   macros: MacroDefinition[]
+  onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void
   popoutUrl: string
   project: ProjectTab
 }
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'termide-open-terminal-switcher'
+const DROP_FILE_EXPLORER_PATH_EVENT = 'termide-drop-file-explorer-path'
+const DEFAULT_FILE_EXPLORER_WIDTH = 280
+const MIN_FILE_EXPLORER_WIDTH = 180
+const MAX_FILE_EXPLORER_WIDTH = 520
+const FILE_EXPLORER_DRAG_THRESHOLD = 6
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
+
+function createProjectTab(index: number, homePath: string): ProjectTab {
+  return {
+    id: `project-${index}`,
+    title: `Project ${index}`,
+    color: '#717b85',
+    emoji: '🖥️',
+    fileExplorerWidth: DEFAULT_FILE_EXPLORER_WIDTH,
+    isFileExplorerOpen: false,
+    rootFolder: homePath,
+  }
+}
+
+function normalizeRootFolderInput(value: string, homePath: string): string {
+  const trimmedValue = value.trim()
+  if (!trimmedValue) {
+    return homePath
+  }
+
+  if (trimmedValue === '~') {
+    return homePath
+  }
+
+  if (trimmedValue.startsWith('~/') || trimmedValue.startsWith('~\\')) {
+    return `${homePath}${trimmedValue.slice(1)}`
+  }
+
+  return trimmedValue
+}
+
+type FileExplorerTreeProps = {
+  directoryChildren: Record<string, FileExplorerEntry[]>
+  directoryErrors: Record<string, string>
+  expandedPaths: Record<string, boolean>
+  loadingPaths: Record<string, boolean>
+  onToggleDirectory: (dirPath: string) => void
+  rootPath: string
+}
+
+function FileExplorerTree({
+  directoryChildren,
+  directoryErrors,
+  expandedPaths,
+  loadingPaths,
+  onToggleDirectory,
+  rootPath,
+}: FileExplorerTreeProps) {
+  const activeDragRef = useRef(false)
+  const pendingDragRef = useRef<{
+    name: string
+    path: string
+    pointerId: number
+    startX: number
+    startY: number
+    target: HTMLButtonElement
+  } | null>(null)
+  const suppressClickRef = useRef(false)
+  const [activeDrag, setActiveDrag] = useState<{ name: string; x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    const clearPendingDrag = () => {
+      const pendingDrag = pendingDragRef.current
+      if (pendingDrag) {
+        pendingDrag.target.classList.remove('file-explorer-tree-item--dragging')
+        if (pendingDrag.target.hasPointerCapture(pendingDrag.pointerId)) {
+          pendingDrag.target.releasePointerCapture(pendingDrag.pointerId)
+        }
+      }
+      pendingDragRef.current = null
+      activeDragRef.current = false
+      setActiveDrag(null)
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const pendingDrag = pendingDragRef.current
+      if (!pendingDrag || event.pointerId !== pendingDrag.pointerId) {
+        return
+      }
+
+      const distance = Math.hypot(event.clientX - pendingDrag.startX, event.clientY - pendingDrag.startY)
+      if (distance < FILE_EXPLORER_DRAG_THRESHOLD && !activeDragRef.current) {
+        return
+      }
+
+      event.preventDefault()
+
+      if (!activeDragRef.current) {
+        pendingDrag.target.classList.add('file-explorer-tree-item--dragging')
+      }
+
+      activeDragRef.current = true
+      setActiveDrag({
+        name: pendingDrag.name,
+        x: event.clientX,
+        y: event.clientY,
+      })
+    }
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const pendingDrag = pendingDragRef.current
+      if (!pendingDrag || event.pointerId !== pendingDrag.pointerId) {
+        return
+      }
+
+      const wasDragging = activeDragRef.current
+      const droppedPath = pendingDrag.path
+      clearPendingDrag()
+
+      if (!wasDragging) {
+        return
+      }
+
+      suppressClickRef.current = true
+      window.setTimeout(() => {
+        suppressClickRef.current = false
+      }, 0)
+
+      const dropTarget = document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest<HTMLElement>('[data-termide-terminal-session-id]')
+      const sessionId = dropTarget?.dataset.termideTerminalSessionId
+      if (!sessionId) {
+        return
+      }
+
+      window.dispatchEvent(
+        new CustomEvent(DROP_FILE_EXPLORER_PATH_EVENT, {
+          detail: {
+            path: droppedPath,
+            sessionId,
+          },
+        }),
+      )
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    window.addEventListener('pointercancel', clearPendingDrag)
+    window.addEventListener('blur', clearPendingDrag)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', clearPendingDrag)
+      window.removeEventListener('blur', clearPendingDrag)
+    }
+  }, [])
+
+  const renderBranch = useCallback(
+    (dirPath: string, depth: number): JSX.Element | null => {
+      if (!expandedPaths[dirPath]) {
+        return null
+      }
+
+      const entries = directoryChildren[dirPath] ?? []
+      const errorText = directoryErrors[dirPath]
+      const isLoading = loadingPaths[dirPath]
+
+      return (
+        <div className="file-explorer-tree-children">
+          {entries.map((entry) => {
+            const isExpanded = !!expandedPaths[entry.path]
+            const isDirectory = entry.isDirectory
+
+            return (
+              <div key={entry.path} className="file-explorer-tree-node">
+                <button
+                  type="button"
+                  className={`file-explorer-tree-item${isDirectory ? ' file-explorer-tree-item--directory' : ''}`}
+                  style={{ paddingLeft: `${depth * 12 + 8}px` }}
+                  onClick={() => {
+                    if (suppressClickRef.current) {
+                      return
+                    }
+                    if (isDirectory) {
+                      onToggleDirectory(entry.path)
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      if (isDirectory) {
+                        onToggleDirectory(entry.path)
+                      }
+                    }
+                  }}
+                  title={entry.path}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) {
+                      return
+                    }
+
+                    pendingDragRef.current = {
+                      name: entry.name,
+                      path: entry.path,
+                      pointerId: event.pointerId,
+                      startX: event.clientX,
+                      startY: event.clientY,
+                      target: event.currentTarget,
+                    }
+
+                    event.currentTarget.setPointerCapture(event.pointerId)
+                  }}
+                  onPointerUp={(event) => {
+                    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                      event.currentTarget.releasePointerCapture(event.pointerId)
+                    }
+                  }}
+                  aria-expanded={isDirectory ? isExpanded : undefined}
+                >
+                  <span className={`file-explorer-tree-chevron${isExpanded ? ' file-explorer-tree-chevron--expanded' : ''}`} aria-hidden="true">
+                    {isDirectory ? (
+                      <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
+                    ) : null}
+                  </span>
+                  <span className="file-explorer-tree-icon" aria-hidden="true">
+                    {isDirectory ? (
+                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                      </svg>
+                    ) : entry.isSymbolicLink ? (
+                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                        <path d="M9 14l3-3m0 0h-2.5m2.5 0v2.5" strokeWidth="2.5" />
+                      </svg>
+                    ) : (
+                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                        <polyline points="13 2 13 9 20 9" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className="file-explorer-tree-name">{entry.name}</span>
+                </button>
+                {isDirectory ? renderBranch(entry.path, depth + 1) : null}
+              </div>
+            )
+          })}
+
+          {isLoading ? (
+            <div className="file-explorer-tree-feedback" style={{ paddingLeft: `${depth * 12 + 32}px` }}>
+              Loading...
+            </div>
+          ) : null}
+          {errorText ? (
+            <div className="file-explorer-tree-feedback file-explorer-tree-feedback--error" style={{ paddingLeft: `${depth * 12 + 32}px` }}>
+              {errorText}
+            </div>
+          ) : null}
+          {!isLoading && !errorText && entries.length === 0 ? (
+            <div className="file-explorer-tree-feedback" style={{ paddingLeft: `${depth * 12 + 32}px` }}>
+              Empty folder
+            </div>
+          ) : null}
+        </div>
+      )
+    },
+    [directoryChildren, directoryErrors, expandedPaths, loadingPaths, onToggleDirectory],
+  )
+
+  return (
+    <div className="file-explorer-tree">
+      {renderBranch(rootPath, 0)}
+      {activeDrag ? (
+        <div
+          className="file-explorer-tree-drag-preview"
+          style={{
+            left: `${activeDrag.x + 14}px`,
+            top: `${activeDrag.y + 14}px`,
+          }}
+        >
+          {activeDrag.name}
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 function createAbortError(): Error {
   const error = new Error('Macro execution canceled.')
@@ -213,18 +505,25 @@ function hueToHex(h: number): string {
 }
 
 const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProps>(
-  ({ isActive, isMac, macros, popoutUrl, project }, ref) => {
+  ({ isActive, isMac, macros, onUpdateProject, popoutUrl, project }, ref) => {
     const dockviewApiRef = useRef<DockviewApi | null>(null)
+    const initialTerminalSeededRef = useRef(false)
     const panelSessionMapRef = useRef<Map<string, string>>(new Map())
     const terminalCounterRef = useRef(0)
     const draggingTransferRef = useRef<{ panelId?: string; groupId: string } | null>(null)
     const workspaceRef = useRef<HTMLElement | null>(null)
+    const explorerResizeStateRef = useRef<{ pointerId: number; startWidth: number; startX: number } | null>(null)
     const [errorText, setErrorText] = useState<string | null>(null)
     const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null)
+    const [directoryChildren, setDirectoryChildren] = useState<Record<string, FileExplorerEntry[]>>({})
+    const [directoryErrors, setDirectoryErrors] = useState<Record<string, string>>({})
+    const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({})
+    const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({})
     const [runningMacroRunsBySession, setRunningMacroRunsBySession] = useState<Record<string, TerminalTabMacroRun[]>>({})
     const macroRunControllersRef = useRef<Map<string, MacroRunController>>(new Map())
 
     const [editingTerminalPanelId, setEditingTerminalPanelId] = useState<string | null>(null)
+    const [isDockviewReady, setIsDockviewReady] = useState(false)
     const [editingTerminalTitle, setEditingTerminalTitle] = useState('')
     const [editingTerminalEmoji, setEditingTerminalEmoji] = useState('')
     const [editingTerminalColor, setEditingTerminalColor] = useState('#4db5ff')
@@ -259,6 +558,56 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
     const [isTerminalSwitcherOpen, setIsTerminalSwitcherOpen] = useState(false)
     const [terminalSwitcherIndex, setTerminalSwitcherIndex] = useState(0)
     const terminalSwitcherSelectionRef = useRef(0)
+
+    const loadDirectory = useCallback(async (dirPath: string) => {
+      setLoadingPaths((current) => ({ ...current, [dirPath]: true }))
+      setDirectoryErrors((current) => {
+        if (!(dirPath in current)) {
+          return current
+        }
+
+        const { [dirPath]: _removed, ...rest } = current
+        return rest
+      })
+
+      try {
+        const entries = await window.termide.listDirectory(dirPath)
+        setDirectoryChildren((current) => ({
+          ...current,
+          [dirPath]: entries,
+        }))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        setDirectoryErrors((current) => ({
+          ...current,
+          [dirPath]: message,
+        }))
+      } finally {
+        setLoadingPaths((current) => {
+          const { [dirPath]: _removed, ...rest } = current
+          return rest
+        })
+      }
+    }, [])
+
+    const toggleDirectory = useCallback(
+      (dirPath: string) => {
+        const shouldExpand = !expandedPaths[dirPath]
+        const shouldLoad = shouldExpand && !(dirPath in directoryChildren) && !(dirPath in loadingPaths)
+
+        setExpandedPaths((current) => {
+          return {
+            ...current,
+            [dirPath]: !current[dirPath],
+          }
+        })
+
+        if (shouldLoad) {
+          void loadDirectory(dirPath)
+        }
+      },
+      [directoryChildren, expandedPaths, loadDirectory, loadingPaths],
+    )
 
     const updateMacroRun = useCallback(
       (sessionId: string, runId: string, updater: (run: TerminalTabMacroRun) => TerminalTabMacroRun) => {
@@ -738,6 +1087,51 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
       }
     }, [project.id, project.title, project.emoji, project.color])
 
+    useEffect(() => {
+      setDirectoryChildren({})
+      setDirectoryErrors({})
+      setLoadingPaths({})
+      setExpandedPaths(project.rootFolder ? { [project.rootFolder]: true } : {})
+
+      if (project.rootFolder) {
+        void loadDirectory(project.rootFolder)
+      }
+    }, [loadDirectory, project.rootFolder])
+
+    useEffect(() => {
+      const onPointerMove = (event: PointerEvent) => {
+        const resizeState = explorerResizeStateRef.current
+        if (!resizeState || event.pointerId !== resizeState.pointerId) {
+          return
+        }
+
+        const nextWidth = clamp(
+          resizeState.startWidth + (event.clientX - resizeState.startX),
+          MIN_FILE_EXPLORER_WIDTH,
+          MAX_FILE_EXPLORER_WIDTH,
+        )
+        onUpdateProject(project.id, { fileExplorerWidth: nextWidth })
+      }
+
+      const onPointerUp = (event: PointerEvent) => {
+        const resizeState = explorerResizeStateRef.current
+        if (!resizeState || event.pointerId !== resizeState.pointerId) {
+          return
+        }
+
+        explorerResizeStateRef.current = null
+      }
+
+      window.addEventListener('pointermove', onPointerMove)
+      window.addEventListener('pointerup', onPointerUp)
+      window.addEventListener('pointercancel', onPointerUp)
+      return () => {
+        window.removeEventListener('pointermove', onPointerMove)
+        window.removeEventListener('pointerup', onPointerUp)
+        window.removeEventListener('pointercancel', onPointerUp)
+      }
+    }, [onUpdateProject, project.id])
+
     const runMacro = useCallback(
       (macro: MacroDefinition) => {
         const effectiveFields = macro.fields
@@ -973,6 +1367,8 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
     const handleReady = useCallback(
       (event: DockviewReadyEvent) => {
         dockviewApiRef.current = event.api
+        initialTerminalSeededRef.current = false
+        setIsDockviewReady(true)
 
         event.api.onDidRemovePanel((panel) => {
           const sessionId = panelSessionMapRef.current.get(panel.id)
@@ -989,11 +1385,29 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
           )
           window.termide.killTerminal(sessionId)
         })
-
-        void addTerminal({})
       },
-      [addTerminal, cancelMacroRunsForSession, clearMacroRunsForSession],
+      [cancelMacroRunsForSession, clearMacroRunsForSession],
     )
+
+    useEffect(() => {
+      if (!isDockviewReady) {
+        return
+      }
+
+      const api = dockviewApiRef.current
+      if (!api || initialTerminalSeededRef.current) {
+        return
+      }
+
+      const hasPanels = api.groups.some((group) => group.panels.length > 0)
+      if (hasPanels) {
+        initialTerminalSeededRef.current = true
+        return
+      }
+
+      initialTerminalSeededRef.current = true
+      void addTerminal({})
+    }, [addTerminal, isDockviewReady])
 
     useEffect(() => {
       const onTerminalFocused = (event: Event) => {
@@ -1344,6 +1758,28 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
     }, [editingTerminalPanelId, focusActiveTerminal, isActive, isMacroLauncherOpen, isTerminalSwitcherOpen, macroToRun])
 
     useEffect(() => {
+      if (!isActive) {
+        return
+      }
+
+      const sidebarWidth = project.fileExplorerWidth
+      const explorerIsOpen = project.isFileExplorerOpen
+      void sidebarWidth
+      void explorerIsOpen
+
+      const api = dockviewApiRef.current
+      const workspace = workspaceRef.current
+      if (!api || !workspace) {
+        return
+      }
+
+      const { clientWidth, clientHeight } = workspace
+      if (clientWidth > 0 && clientHeight > 0) {
+        api.layout(clientWidth, clientHeight)
+      }
+    }, [isActive, project.fileExplorerWidth, project.isFileExplorerOpen])
+
+    useEffect(() => {
       if (!editingTerminalPanelId) {
         return
       }
@@ -1568,20 +2004,52 @@ const ProjectWorkspace = forwardRef<ProjectWorkspaceHandle, ProjectWorkspaceProp
       >
         {errorText ? <div className="error-banner">Terminal error: {errorText}</div> : null}
 
-        <main
-          ref={(element) => {
-            workspaceRef.current = element
-          }}
-          className="workspace dockview-theme-dark"
-        >
-          <DockviewReact
-            components={{ terminal: TerminalPanel }}
-            tabComponents={{ terminalTab: TerminalTab }}
-            popoutUrl={popoutUrl}
-            onReady={handleReady}
-            floatingGroupBounds="boundedWithinViewport"
-          />
-        </main>
+        <div className="project-workspace-body">
+          {project.isFileExplorerOpen ? (
+            <aside
+              className="file-explorer-sidebar"
+              style={{ width: `${project.fileExplorerWidth}px` }}
+            >
+              <div className="file-explorer-sidebar__body">
+                <FileExplorerTree
+                  directoryChildren={directoryChildren}
+                  directoryErrors={directoryErrors}
+                  expandedPaths={expandedPaths}
+                  loadingPaths={loadingPaths}
+                  onToggleDirectory={toggleDirectory}
+                  rootPath={project.rootFolder}
+                />
+              </div>
+
+              <div
+                className="file-explorer-sidebar__resizer"
+                onPointerDown={(event) => {
+                  explorerResizeStateRef.current = {
+                    pointerId: event.pointerId,
+                    startWidth: project.fileExplorerWidth,
+                    startX: event.clientX,
+                  }
+                  ;(event.currentTarget as HTMLDivElement).setPointerCapture(event.pointerId)
+                }}
+              />
+            </aside>
+          ) : null}
+
+          <main
+            ref={(element) => {
+              workspaceRef.current = element
+            }}
+            className="workspace dockview-theme-dark"
+          >
+            <DockviewReact
+              components={{ terminal: TerminalPanel }}
+              tabComponents={{ terminalTab: TerminalTab }}
+              popoutUrl={popoutUrl}
+              onReady={handleReady}
+              floatingGroupBounds="boundedWithinViewport"
+            />
+          </main>
+        </div>
 
         <AnimatePresence>
           {isMacroLauncherOpen && (
@@ -1914,15 +2382,15 @@ function App() {
   const { macros } = useMacroSettings()
   const projectCounterRef = useRef(1)
   const workspaceRefs = useRef(new Map<string, ProjectWorkspaceHandle | null>())
+  const [homePath, setHomePath] = useState('')
 
-  const [projects, setProjects] = useState<ProjectTab[]>([
-    { id: 'project-1', title: 'Project 1', color: '#717b85', emoji: '🖥️' },
-  ])
+  const [projects, setProjects] = useState<ProjectTab[]>([createProjectTab(1, '')])
   const [activeProjectId, setActiveProjectId] = useState('project-1')
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const [editingEmoji, setEditingEmoji] = useState('')
   const [editingColor, setEditingColor] = useState('#717b85')
+  const [editingRootFolder, setEditingRootFolder] = useState('')
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false)
   const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null)
   const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(null)
@@ -1937,18 +2405,39 @@ function App() {
     setIsEmojiPickerOpen(false)
   }, [])
 
+  useEffect(() => {
+    let isMounted = true
+
+    void window.termide.getHomePath().then((resolvedHomePath) => {
+      if (!isMounted) {
+        return
+      }
+
+      setHomePath(resolvedHomePath)
+      setProjects((current) =>
+        current.map((project) =>
+          project.rootFolder.trim().length > 0
+            ? project
+            : {
+                ...project,
+                rootFolder: resolvedHomePath,
+              },
+        ),
+      )
+    })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
   const addProject = useCallback(() => {
     projectCounterRef.current += 1
-    const nextProject: ProjectTab = {
-      id: `project-${projectCounterRef.current}`,
-      title: `Project ${projectCounterRef.current}`,
-      color: '#717b85',
-      emoji: '🖥️',
-    }
+    const nextProject = createProjectTab(projectCounterRef.current, homePath)
 
     setProjects((current) => [...current, nextProject])
     setActiveProjectId(nextProject.id)
-  }, [])
+  }, [homePath])
 
   const closeProject = useCallback(
     (projectId: string) => {
@@ -1998,6 +2487,7 @@ function App() {
     setEditingTitle(project.title)
     setEditingEmoji(project.emoji)
     setEditingColor(project.color)
+    setEditingRootFolder(project.rootFolder)
     setIsEmojiPickerOpen(false)
   }, [projects])
 
@@ -2010,6 +2500,7 @@ function App() {
 
       const nextTitle = editingTitle.trim().length > 0 ? editingTitle.trim() : 'Untitled Project'
       const nextEmoji = editingEmoji.trim().length > 0 ? editingEmoji.trim() : '🖥️'
+      const nextRootFolder = normalizeRootFolderInput(editingRootFolder, homePath)
 
       setProjects((current) =>
         current.map((project) =>
@@ -2019,6 +2510,7 @@ function App() {
                 title: nextTitle,
                 emoji: nextEmoji,
                 color: editingColor,
+                rootFolder: nextRootFolder,
               }
             : project,
         ),
@@ -2026,8 +2518,27 @@ function App() {
 
       closeEditModal()
     },
-    [closeEditModal, editingColor, editingEmoji, editingProjectId, editingTitle],
+    [closeEditModal, editingColor, editingEmoji, editingProjectId, editingRootFolder, editingTitle, homePath],
   )
+
+  const updateProject = useCallback((projectId: string, updates: Partial<ProjectTab>) => {
+    setProjects((current) =>
+      current.map((project) => (project.id === projectId ? { ...project, ...updates } : project)),
+    )
+  }, [])
+
+  const toggleActiveProjectExplorer = useCallback(() => {
+    setProjects((current) =>
+      current.map((project) =>
+        project.id === activeProjectId
+          ? {
+              ...project,
+              isFileExplorerOpen: !project.isFileExplorerOpen,
+            }
+          : project,
+      ),
+    )
+  }, [activeProjectId])
 
   const executeCommandOnActiveProject = useCallback(
     (command: AppCommand) => {
@@ -2199,9 +2710,24 @@ function App() {
     }
   }, [isRemoteMenuOpen])
 
+  const activeProject = projects.find((project) => project.id === activeProjectId) ?? null
+
   return (
     <div className={`app-shell${isMac ? ' app-shell--macos' : ''}`}>
       <header className="project-tabbar">
+        <button
+          type="button"
+          className={`project-tab-sidebar-toggle${activeProject?.isFileExplorerOpen ? ' project-tab-sidebar-toggle--active' : ''}`}
+          onClick={toggleActiveProjectExplorer}
+          disabled={!activeProject || activeProject.rootFolder.trim().length === 0}
+          aria-label="Toggle file explorer"
+          title="Toggle file explorer"
+        >
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2.25 2.25H11.75V11.75H2.25V2.25Z" stroke="currentColor" strokeWidth="1.4"/>
+            <path d="M5 2.25V11.75" stroke="currentColor" strokeWidth="1.4"/>
+          </svg>
+        </button>
         <Reorder.Group
           axis="x"
           values={projects}
@@ -2366,6 +2892,7 @@ function App() {
             isActive={project.id === activeProjectId}
             isMac={isMac}
             macros={macros}
+            onUpdateProject={updateProject}
             popoutUrl={popoutUrl}
             project={project}
           />
@@ -2523,6 +3050,16 @@ function App() {
                   onChange={(event) => setEditingColor(hueToHex(Number(event.target.value)))}
                 />
               </div>
+            </label>
+
+            <label>
+              Root Folder
+              <input
+                type="text"
+                value={editingRootFolder}
+                onChange={(event) => setEditingRootFolder(event.target.value)}
+                placeholder={homePath || 'Enter folder path'}
+              />
             </label>
 
             <div
