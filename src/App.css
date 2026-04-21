@@ -509,7 +509,7 @@
   left: 4px;
   right: 4px;
   border-radius: 4px;
-  background-color: color-mix(in srgb, var(--project-color) 15%, transparent);
+  background-color: color-mix(in srgb, var(--project-color) 6%, transparent);
   transition: all 150ms ease;
   z-index: 0;
 }
@@ -525,7 +525,7 @@
 }
 
 .project-tab:hover:not(.project-tab--active)::before {
-  background-color: color-mix(in srgb, var(--project-color) 25%, transparent);
+  background-color: color-mix(in srgb, var(--project-color) 12%, transparent);
 }
 
 .project-tab--active {
@@ -685,7 +685,7 @@
 }
 
 .terminal-tab-content[data-has-color='true'] {
-  background-color: color-mix(in srgb, var(--tab-color) 15%, transparent);
+  background-color: color-mix(in srgb, var(--tab-color) 6%, transparent);
 }
 
 .terminal-tab-content:hover:not(.terminal-tab-content--active) {
@@ -694,7 +694,7 @@
 }
 
 .terminal-tab-content[data-has-color='true']:hover:not(.terminal-tab-content--active) {
-  background-color: color-mix(in srgb, var(--tab-color) 25%, transparent);
+  background-color: color-mix(in srgb, var(--tab-color) 12%, transparent);
 }
 
 .terminal-tab-content--active {
