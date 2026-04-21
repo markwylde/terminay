@@ -191,7 +191,7 @@ function hueToHex(h: number): string {
   const s = 0.65
   const l = 0.60
   
-  let r, g, b
+  let r: number, g: number, b: number
   if (s === 0) {
     r = g = b = l
   } else {
@@ -212,7 +212,7 @@ function hueToHex(h: number): string {
 
   const toHex = (x: number) => {
     const hex = Math.round(x * 255).toString(16)
-    return hex.length === 1 ? '0' + hex : hex
+    return hex.length === 1 ? `0${hex}` : hex
   }
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`
 }

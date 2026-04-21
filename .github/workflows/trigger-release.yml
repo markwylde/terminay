@@ -24,7 +24,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -53,7 +53,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -74,10 +74,20 @@ jobs:
           fi
 
       - name: Generate AI release notes
-        if: steps.release_tag.outputs.no_release != 'true'
+        if: steps.release_tag.outputs.no_release != 'true' && secrets.OPENROUTER_API_KEY != ''
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: node scripts/generate-release-notes.mjs "${{ steps.release_tag.outputs.tag }}"
+
+      - name: Skip AI release notes without API key
+        if: steps.release_tag.outputs.no_release != 'true' && secrets.OPENROUTER_API_KEY == ''
+        run: |
+          cat <<EOF > RELEASE.md
+          ## Release Notes
+
+          Release notes are not yet generated automatically.
+          This release was created successfully without AI-assisted release notes.
+          EOF
 
       - name: Upload release notes artifact
         if: steps.release_tag.outputs.no_release != 'true'
@@ -112,7 +122,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
