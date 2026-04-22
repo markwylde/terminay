@@ -1,4 +1,5 @@
 import { watch, type FSWatcher } from 'node:fs'
+import path from 'node:path'
 import { webContents } from 'electron'
 import type { FileViewerWatchEvent } from '../../src/types/termide'
 import type { FileBufferService } from './fileBufferService'
@@ -23,7 +24,13 @@ export class FileWatchService {
     let subscription = this.subscriptionsByPath.get(resolvedPath)
 
     if (!subscription) {
-      const watcher = watch(resolvedPath, { persistent: false }, (eventType) => {
+      const directoryPath = path.dirname(resolvedPath)
+      const fileName = path.basename(resolvedPath)
+      const watcher = watch(directoryPath, { persistent: false }, (eventType, changedFileName) => {
+        if (typeof changedFileName === 'string' && changedFileName.length > 0 && changedFileName !== fileName) {
+          return
+        }
+
         void this.handleWatchEvent(resolvedPath, eventType)
       })
       subscription = {
