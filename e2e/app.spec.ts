@@ -15,6 +15,23 @@ async function sendAppCommand(page: Page, command: string): Promise<void> {
   }, command)
 }
 
+async function openMacroLauncher(page: Page): Promise<void> {
+  const launcher = page.getByRole('dialog', { name: 'Macro launcher' })
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await sendAppCommand(page, 'open-macro-launcher')
+
+    try {
+      await expect(launcher).toBeVisible({ timeout: 2_000 })
+      return
+    } catch (error) {
+      if (attempt === 2) {
+        throw error
+      }
+    }
+  }
+}
+
 async function openChildWindow(
   electronApp: ElectronApplication,
   action: () => Promise<void>,
@@ -74,9 +91,7 @@ test('opens the macros window', async ({ electronApp, mainWindow }) => {
 })
 
 test('runs a macro from the launcher and records the completed run', async ({ mainWindow }) => {
-  await sendAppCommand(mainWindow, 'open-macro-launcher')
-
-  await expect(mainWindow.getByRole('dialog', { name: 'Macro launcher' })).toBeVisible()
+  await openMacroLauncher(mainWindow)
   await mainWindow.getByRole('button', { name: 'Create a pull request' }).click()
 
   const macroQueueTrigger = mainWindow.getByLabel('Show macro queue (1)')

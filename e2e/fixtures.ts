@@ -10,6 +10,7 @@ type ElectronFixtures = {
 }
 
 export const test = base.extend<ElectronFixtures>({
+  // biome-ignore lint/correctness/noEmptyPattern: Playwright fixture callbacks require an object pattern here.
   userDataDir: async ({}, use) => {
     const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'termide-e2e-'))
 
