@@ -182,7 +182,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   }, [engine, fileInfo, mode, showEngineChoice])
 
   useEffect(() => {
-    if (!fileInfo || isDirty) {
+    if (!fileInfo) {
       return
     }
 
