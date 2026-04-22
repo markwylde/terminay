@@ -167,20 +167,19 @@ function FileExplorerTree({
 		isDirectory: boolean;
 	} | null>(null);
 
-	const handleContextMenu = (
-		event: MouseEvent,
-		path: string,
-		isDirectory: boolean,
-	) => {
-		event.preventDefault();
-		event.stopPropagation();
-		setContextMenu({
-			x: event.clientX,
-			y: event.clientY,
-			path,
-			isDirectory,
-		});
-	};
+	const handleContextMenu = useCallback(
+		(event: MouseEvent, path: string, isDirectory: boolean) => {
+			event.preventDefault();
+			event.stopPropagation();
+			setContextMenu({
+				x: event.clientX,
+				y: event.clientY,
+				path,
+				isDirectory,
+			});
+		},
+		[],
+	);
 
 	useEffect(() => {
 		const clearPendingDrag = () => {
@@ -459,6 +458,7 @@ function FileExplorerTree({
 			directoryChildren,
 			directoryErrors,
 			expandedPaths,
+			handleContextMenu,
 			loadingPaths,
 			onOpenFile,
 			onOpenFolder,

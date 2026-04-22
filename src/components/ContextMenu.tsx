@@ -7,6 +7,7 @@ export type ContextMenuItem = {
 	icon?: ReactNode;
 	danger?: boolean;
 	separator?: boolean;
+	key?: string;
 };
 
 type ContextMenuProps = {
@@ -18,6 +19,20 @@ type ContextMenuProps = {
 
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
+
+	const getItemKey = (item: ContextMenuItem, index: number) => {
+		if (item.key) {
+			return item.key;
+		}
+
+		if (!item.separator) {
+			return item.label;
+		}
+
+		const previousLabel = items[index - 1]?.label ?? 'start';
+		const nextLabel = items[index + 1]?.label ?? 'end';
+		return `${previousLabel}-separator-${nextLabel}`;
+	};
 
 	useEffect(() => {
 		const handleClickOutside = (event: globalThis.MouseEvent) => {
@@ -58,7 +73,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
 			}}
 		>
 			{items.map((item, index) => (
-				<div key={index}>
+				<div key={getItemKey(item, index)}>
 					{item.separator ? (
 						<div className="context-menu__separator" />
 					) : (
