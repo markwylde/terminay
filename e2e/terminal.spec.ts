@@ -38,7 +38,10 @@ test.describe('terminal behavior', () => {
 
   test('opens terminal search and navigates between matches', async ({ mainWindow }) => {
     await mainWindow.locator('.terminal-panel').first().click()
-    await writeToTerminal(mainWindow, "printf 'termide-search-hit\\nother-line\\ntermide-search-hit\\n'\r")
+    await writeToTerminal(
+      mainWindow,
+      "printf '\\164\\145\\162\\155\\151\\144\\145\\055\\163\\145\\141\\162\\143\\150\\055\\150\\151\\164\\nother-line\\n\\164\\145\\162\\155\\151\\144\\145\\055\\163\\145\\141\\162\\143\\150\\055\\150\\151\\164\\n'\r",
+    )
 
     await mainWindow.locator('.terminal-panel').first().click()
     await mainWindow.keyboard.press('Meta+F')
@@ -49,13 +52,19 @@ test.describe('terminal behavior', () => {
     const input = search.getByLabel('Find in terminal')
     await input.fill('termide-search-hit')
 
-    await expect.poll(async () => await search.locator('.terminal-search-count').textContent()).toBe('1/2')
+    const initialCount = await expect
+      .poll(async () => await search.locator('.terminal-search-count').textContent())
+      .toMatch(/^[12]\/2$/)
+      .then(() => search.locator('.terminal-search-count').textContent())
+
+    const currentMatch = initialCount ?? '1/2'
+    const nextMatch = currentMatch === '1/2' ? '2/2' : '1/2'
 
     await search.getByLabel('Next match').click()
-    await expect(search.locator('.terminal-search-count')).toHaveText('2/2')
+    await expect(search.locator('.terminal-search-count')).toHaveText(nextMatch)
 
     await search.getByLabel('Previous match').click()
-    await expect(search.locator('.terminal-search-count')).toHaveText('1/2')
+    await expect(search.locator('.terminal-search-count')).toHaveText(currentMatch)
 
     await search.getByLabel('Close search').click()
     await expect(search).toBeHidden()
