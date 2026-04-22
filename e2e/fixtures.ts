@@ -1,11 +1,32 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron as electron, expect, type ElectronApplication, type Page, test as base } from '@playwright/test'
+import {
+  openChildWindow,
+  openMacroLauncher,
+  openMacrosWindow,
+  openSettingsWindow,
+  prepareWindow,
+  sendAppCommand,
+} from './support/app'
+import { createDialogController, type DialogController } from './support/dialogs'
+import { createFixtureWorkspace, type FixtureWorkspace, type WorkspaceOptions } from './support/workspace'
 
 type ElectronFixtures = {
+  appHarness: {
+    dialogs: (page?: Page) => Promise<DialogController>
+    openChildWindow: (action: () => Promise<void>) => Promise<Page>
+    openMacroLauncher: (page?: Page, options?: { attempts?: number }) => Promise<void>
+    openMacrosWindow: (page?: Page) => Promise<Page>
+    openSettingsWindow: (options?: { page?: Page; sectionId?: string }) => Promise<Page>
+    prepareWindow: (page: Page) => Promise<Page>
+    sendAppCommand: (command: import('../src/types/termide').AppCommand, page?: Page) => Promise<void>
+  }
+  createWorkspace: (options?: WorkspaceOptions) => Promise<FixtureWorkspace>
   electronApp: ElectronApplication
   mainWindow: Page
+  tempDir: string
   userDataDir: string
 }
 
@@ -21,14 +42,26 @@ export const test = base.extend<ElectronFixtures>({
     }
   },
 
-  electronApp: async ({ userDataDir }, use) => {
+  tempDir: async ({ userDataDir }, use) => {
+    const tempDir = path.join(userDataDir, 'temp')
+
+    await rm(tempDir, { recursive: true, force: true })
+    await mkdir(tempDir, { recursive: true })
+    await use(tempDir)
+  },
+
+  electronApp: async ({ tempDir, userDataDir }, use) => {
     const electronApp = await electron.launch({
       args: ['.'],
       env: {
         ...process.env,
         CI: '1',
+        TEMP: tempDir,
+        TERMIDE_E2E_TEMP_DIR: tempDir,
         TERMIDE_TEST: '1',
         TERMIDE_USER_DATA_DIR: userDataDir,
+        TMP: tempDir,
+        TMPDIR: tempDir,
       },
     })
 
@@ -40,11 +73,40 @@ export const test = base.extend<ElectronFixtures>({
   },
 
   mainWindow: async ({ electronApp }, use) => {
-    const mainWindow = await electronApp.firstWindow()
-    await mainWindow.waitForLoadState('domcontentloaded')
+    const mainWindow = await prepareWindow(await electronApp.firstWindow())
     await expect(mainWindow.locator('.project-tabbar')).toBeVisible()
     await use(mainWindow)
+  },
+
+  appHarness: async ({ electronApp, mainWindow }, use) => {
+    await use({
+      dialogs: async (page = mainWindow) => {
+        await prepareWindow(page)
+        return createDialogController(page)
+      },
+      openChildWindow: (action) => openChildWindow(electronApp, action),
+      openMacroLauncher: (page = mainWindow, options) => openMacroLauncher(page, options),
+      openMacrosWindow: (page = mainWindow) => openMacrosWindow(electronApp, page),
+      openSettingsWindow: (options) =>
+        openSettingsWindow(electronApp, options?.page ?? mainWindow, { sectionId: options?.sectionId }),
+      prepareWindow,
+      sendAppCommand: (command, page = mainWindow) => sendAppCommand(page, command),
+    })
+  },
+
+  createWorkspace: async ({ tempDir }, use) => {
+    await use((options?: WorkspaceOptions) => createFixtureWorkspace(tempDir, options))
   },
 })
 
 export { expect }
+export type { DialogCall, DialogController } from './support/dialogs'
+export type { FixtureWorkspace, WorkspaceOptions, WorkspaceSeed } from './support/workspace'
+export {
+  openChildWindow,
+  openMacroLauncher,
+  openMacrosWindow,
+  openSettingsWindow,
+  prepareWindow,
+  sendAppCommand,
+} from './support/app'
