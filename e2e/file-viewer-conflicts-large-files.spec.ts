@@ -1,6 +1,13 @@
-import { appendFile } from 'node:fs/promises'
+import { appendFile, rename, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { expect, test } from './fixtures'
 import { fileExplorerItem, openFileExplorer, setMonacoValue, setProjectRoot } from './support/ui'
+
+async function replaceFileAtomically(filePath: string, contents: string): Promise<void> {
+  const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.swap`)
+  await writeFile(tempPath, contents, 'utf8')
+  await rename(tempPath, filePath)
+}
 
 test('file viewer reloads clean files after external changes', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
@@ -20,6 +27,29 @@ test('file viewer reloads clean files after external changes', async ({ createWo
 
   await workspace.writeText('watched.txt', 'from disk v2\n')
   await expect(mainWindow.locator('.file-preview-text')).toContainText('from disk v2')
+})
+
+test('file viewer keeps reloading after repeated atomic saves', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'file-atomic-reload',
+    seed: {
+      files: {
+        'README.md': '# version 1\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  await fileExplorerItem(mainWindow, 'README.md').dblclick()
+  await expect(mainWindow.locator('.file-preview-markdown')).toContainText('version 1')
+
+  await replaceFileAtomically(workspace.path('README.md'), '# version 2\n')
+  await expect(mainWindow.locator('.file-preview-markdown')).toContainText('version 2')
+
+  await replaceFileAtomically(workspace.path('README.md'), '# version 3\n')
+  await expect(mainWindow.locator('.file-preview-markdown')).toContainText('version 3')
 })
 
 test('dirty file edits stay local until saved even after an external write', async ({ appHarness, createWorkspace, mainWindow }) => {
