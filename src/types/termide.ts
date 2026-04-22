@@ -1,10 +1,100 @@
 export type AppCommand =
   | 'new-terminal'
+  | 'save-active'
   | 'split-horizontal'
   | 'split-vertical'
   | 'popout-active'
   | 'close-active'
   | 'open-macro-launcher'
+
+export type FileViewerTextEncoding = 'utf8' | 'utf-8' | 'utf16le' | 'utf-16le' | 'latin1' | 'ascii'
+
+export type FileViewerFileInfo = {
+  birthtimeMs: number | null
+  ctimeMs: number | null
+  exists: boolean
+  extension: string
+  isDirectory: boolean
+  isFile: boolean
+  isSymbolicLink: boolean
+  mtimeMs: number | null
+  name: string
+  path: string
+  size: number
+}
+
+export type FileViewerByteRange = {
+  dataBase64: string
+  eof: boolean
+  length: number
+  path: string
+  start: number
+  totalSize: number
+}
+
+export type FileViewerTextRange = {
+  encoding: FileViewerTextEncoding
+  eof: boolean
+  length: number
+  path: string
+  start: number
+  text: string
+  totalSize: number
+}
+
+export type FileViewerSaveRequest =
+  | {
+      data: string
+      encoding?: FileViewerTextEncoding
+      kind: 'text'
+      path: string
+    }
+  | {
+      dataBase64: string
+      kind: 'base64'
+      path: string
+    }
+
+export type FileViewerSaveResult = {
+  byteLength: number
+  path: string
+  savedAt: string
+  size: number
+}
+
+export type FileViewerWatchEvent = {
+  event: 'changed' | 'deleted' | 'error' | 'renamed'
+  exists: boolean
+  info: FileViewerFileInfo | null
+  message?: string
+  path: string
+}
+
+export type FileViewerPreviewSource = {
+  mimeType: string | null
+  path: string
+  url: string
+}
+
+export type FileViewerGitRepoInfo = {
+  canDiff: boolean
+  gitAvailable: boolean
+  isTracked: boolean
+  path: string
+  relativePath: string | null
+  repoRoot: string | null
+}
+
+export type FileViewerGitDiff = {
+  compareTarget: 'HEAD'
+  gitAvailable: boolean
+  hasDiff: boolean
+  isBinary: boolean
+  path: string
+  patch: string
+  relativePath: string | null
+  repoRoot: string | null
+}
 
 export type TerminalDataMessage = {
   id: string
@@ -79,6 +169,23 @@ export type TerminalZoomMessage = {
 export interface TermideApi {
   getHomePath: () => Promise<string>
   listDirectory: (dirPath: string) => Promise<FileExplorerEntry[]>
+  getFileInfo: (filePath: string) => Promise<FileViewerFileInfo>
+  readFileBytes: (options: { path: string; start: number; length: number }) => Promise<FileViewerByteRange>
+  readFileText: (options: {
+    path: string
+    start: number
+    length: number
+    encoding?: FileViewerTextEncoding
+  }) => Promise<FileViewerTextRange>
+  saveFile: (payload: FileViewerSaveRequest) => Promise<FileViewerSaveResult>
+  renameEntry: (oldPath: string, newPath: string) => Promise<void>
+  deleteEntry: (path: string) => Promise<void>
+  mkdir: (path: string) => Promise<void>
+  watchFile: (filePath: string) => Promise<void>
+  unwatchFile: (filePath: string) => Promise<void>
+  getFilePreviewSource: (filePath: string) => Promise<FileViewerPreviewSource>
+  getGitRepoInfo: (filePath: string) => Promise<FileViewerGitRepoInfo>
+  getGitDiff: (filePath: string) => Promise<FileViewerGitDiff>
   quitApp: () => Promise<void>
   createTerminal: (options?: { cwd?: string }) => Promise<{ id: string }>
   getTerminalCwd: (id: string) => Promise<string | null>
@@ -122,12 +229,18 @@ export interface TermideApi {
   revokeRemoteAccessDevice: (deviceId: string) => Promise<RemoteAccessStatus>
   closeRemoteAccessConnection: (connectionId: string) => Promise<RemoteAccessStatus>
   setRemoteAccessPairingAddress: (address: string) => Promise<RemoteAccessStatus>
+  openMacrosWindow: () => Promise<void>
   onTerminalData: (listener: (message: TerminalDataMessage) => void) => () => void
   onTerminalExit: (listener: (message: TerminalExitMessage) => void) => () => void
   onAppCommand: (listener: (command: AppCommand) => void) => () => void
+  onFileWatchEvent: (listener: (message: FileViewerWatchEvent) => void) => () => void
   onTerminalSettingsChanged: (listener: (message: SettingsChangeMessage) => void) => () => void
   onMacrosChanged: (listener: (message: MacrosChangeMessage) => void) => () => void
   onRemoteAccessStatusChanged: (listener: (status: RemoteAccessStatus) => void) => () => void
   onTerminalZoomChanged: (listener: (message: TerminalZoomMessage) => void) => () => void
   onSettingsFocusSection: (listener: (message: { sectionId: string }) => void) => () => void
+}
+
+export interface TermideTestApi {
+  sendAppCommand: (command: AppCommand) => Promise<void>
 }
