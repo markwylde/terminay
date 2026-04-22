@@ -4,11 +4,22 @@ import type { TerminalSettings } from '../src/types/settings'
 import type {
   AppCommand,
   FileExplorerEntry,
+  FileViewerByteRange,
+  FileViewerFileInfo,
+  FileViewerGitDiff,
+  FileViewerGitRepoInfo,
+  FileViewerPreviewSource,
+  FileViewerSaveRequest,
+  FileViewerSaveResult,
+  FileViewerTextEncoding,
+  FileViewerTextRange,
+  FileViewerWatchEvent,
   MacrosChangeMessage,
   RemoteAccessStatus,
   SettingsChangeMessage,
   TerminalDataMessage,
   TerminalExitMessage,
+  TermideTestApi,
   TerminalZoomMessage,
 } from '../src/types/termide'
 
@@ -17,6 +28,22 @@ type ElectronListener<T> = (_event: Electron.IpcRendererEvent, payload: T) => vo
 contextBridge.exposeInMainWorld('termide', {
   getHomePath: () => ipcRenderer.invoke('fs:get-home-path') as Promise<string>,
   listDirectory: (dirPath: string) => ipcRenderer.invoke('fs:list-directory', { dirPath }) as Promise<FileExplorerEntry[]>,
+  getFileInfo: (filePath: string) => ipcRenderer.invoke('file:get-info', { path: filePath }) as Promise<FileViewerFileInfo>,
+  readFileBytes: (options: { path: string; start: number; length: number }) =>
+    ipcRenderer.invoke('file:read-bytes', options) as Promise<FileViewerByteRange>,
+  readFileText: (options: { path: string; start: number; length: number; encoding?: FileViewerTextEncoding }) =>
+    ipcRenderer.invoke('file:read-text', options) as Promise<FileViewerTextRange>,
+  saveFile: (payload: FileViewerSaveRequest) => ipcRenderer.invoke('file:save', payload) as Promise<FileViewerSaveResult>,
+  renameEntry: (oldPath: string, newPath: string) => ipcRenderer.invoke('fs:rename', { oldPath, newPath }),
+  deleteEntry: (path: string) => ipcRenderer.invoke('fs:delete', { path }),
+  mkdir: (path: string) => ipcRenderer.invoke('fs:mkdir', { path }),
+  watchFile: (filePath: string) => ipcRenderer.invoke('file:watch', { path: filePath }) as Promise<void>,
+  unwatchFile: (filePath: string) => ipcRenderer.invoke('file:unwatch', { path: filePath }) as Promise<void>,
+  getFilePreviewSource: (filePath: string) =>
+    ipcRenderer.invoke('file:get-preview-source', { path: filePath }) as Promise<FileViewerPreviewSource>,
+  getGitRepoInfo: (filePath: string) =>
+    ipcRenderer.invoke('file:get-git-repo-info', { path: filePath }) as Promise<FileViewerGitRepoInfo>,
+  getGitDiff: (filePath: string) => ipcRenderer.invoke('file:get-git-diff', { path: filePath }) as Promise<FileViewerGitDiff>,
   quitApp: () => ipcRenderer.invoke('app:quit'),
   createTerminal: (options?: { cwd?: string }) => ipcRenderer.invoke('terminal:create', options),
   getTerminalCwd: (id: string) => ipcRenderer.invoke('terminal:get-cwd', { id }),
@@ -60,6 +87,7 @@ contextBridge.exposeInMainWorld('termide', {
 
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
   openSettingsWindow: (options?: { sectionId?: string }) => ipcRenderer.invoke('app:open-settings', options),
+  openMacrosWindow: () => ipcRenderer.invoke('app:open-macros') as Promise<void>,
   getRemoteAccessStatus: () => ipcRenderer.invoke('remote:get-status'),
   toggleRemoteAccessServer: () => ipcRenderer.invoke('remote:toggle-server'),
   revokeRemoteAccessDevice: (deviceId: string) => ipcRenderer.invoke('remote:revoke-device', { deviceId }),
@@ -82,6 +110,11 @@ contextBridge.exposeInMainWorld('termide', {
     const wrapper: ElectronListener<AppCommand> = (_event, command) => listener(command)
     ipcRenderer.on('app:command', wrapper)
     return () => ipcRenderer.off('app:command', wrapper)
+  },
+  onFileWatchEvent: (listener: (message: FileViewerWatchEvent) => void) => {
+    const wrapper: ElectronListener<FileViewerWatchEvent> = (_event, message) => listener(message)
+    ipcRenderer.on('file:watch-event', wrapper)
+    return () => ipcRenderer.off('file:watch-event', wrapper)
   },
   onTerminalSettingsChanged: (listener: (message: SettingsChangeMessage) => void) => {
     const wrapper: ElectronListener<SettingsChangeMessage> = (_event, message) => listener(message)
@@ -109,3 +142,11 @@ contextBridge.exposeInMainWorld('termide', {
     return () => ipcRenderer.off('settings:focus-section', wrapper)
   },
 })
+
+if (process.env.TERMIDE_TEST === '1') {
+  const testApi: TermideTestApi = {
+    sendAppCommand: (command) => ipcRenderer.invoke('test:send-app-command', command) as Promise<void>,
+  }
+
+  contextBridge.exposeInMainWorld('termideTest', testApi)
+}

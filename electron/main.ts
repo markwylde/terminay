@@ -5,14 +5,18 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { lstat, readdir, stat } from 'node:fs/promises'
+import { lstat, readdir, stat, rename, rm, mkdir } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import type { IPty } from 'node-pty'
 import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
-import type { FileExplorerEntry } from '../src/types/termide'
+import type { AppCommand, FileExplorerEntry } from '../src/types/termide'
+import { FileBufferService } from './fileViewer/fileBufferService'
+import { FileWatchService } from './fileViewer/fileWatchService'
+import { GitDiffService } from './fileViewer/gitDiffService'
+import { registerFileViewerIpcHandlers } from './fileViewer/ipc'
 import { RemoteAccessService } from './remote/service'
 
 const require = createRequire(import.meta.url)
@@ -22,6 +26,11 @@ const execFileAsync = promisify(execFile)
 
 process.env.APP_ROOT = path.join(__dirname, '..')
 app.setName('Termide')
+
+const customUserDataPath = process.env.TERMIDE_USER_DATA_DIR?.trim()
+if (customUserDataPath) {
+  app.setPath('userData', customUserDataPath)
+}
 
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
@@ -57,14 +66,6 @@ function getWindowIconPath(): string | undefined {
 
   return getBrandAssetPath('termide.png') ?? getBrandAssetPath('termide.svg') ?? undefined
 }
-
-type AppCommand =
-  | 'new-terminal'
-  | 'split-horizontal'
-  | 'split-vertical'
-  | 'popout-active'
-  | 'close-active'
-  | 'open-macro-launcher'
 
 let terminalZoomLevel = 0
 
@@ -105,6 +106,9 @@ interface TerminalSession {
 const terminalSessions = new Map<string, TerminalSession>()
 let settingsWindow: BrowserWindow | null = null
 let macrosWindow: BrowserWindow | null = null
+const fileBufferService = new FileBufferService(() => app.getPath('home'))
+const fileWatchService = new FileWatchService(fileBufferService)
+const gitDiffService = new GitDiffService(fileBufferService)
 const remoteAccessService = new RemoteAccessService({
   app,
   getControllableSession: (sessionId) => {
@@ -776,6 +780,14 @@ function createAppMenu(): void {
           type: 'separator',
         },
         {
+          label: 'Save',
+          accelerator: 'CmdOrCtrl+S',
+          click: () => sendCommandToFocusedWindow('save-active'),
+        },
+        {
+          type: 'separator',
+        },
+        {
           label: 'Settings',
           accelerator: 'CmdOrCtrl+,',
           click: () => openSettingsWindow(),
@@ -1121,6 +1133,18 @@ ipcMain.handle('fs:list-directory', async (_event, payload: { dirPath: string })
   return readDirectoryEntries(payload.dirPath)
 })
 
+ipcMain.handle('fs:rename', async (_event, { oldPath, newPath }: { oldPath: string; newPath: string }) => {
+  await rename(oldPath, newPath)
+})
+
+ipcMain.handle('fs:delete', async (_event, { path }: { path: string }) => {
+  await rm(path, { recursive: true, force: true })
+})
+
+ipcMain.handle('fs:mkdir', async (_event, { path }: { path: string }) => {
+  await mkdir(path, { recursive: true })
+})
+
 ipcMain.handle('settings:get-terminal', () => {
   return readTerminalSettings()
 })
@@ -1191,6 +1215,16 @@ ipcMain.handle('app:open-settings', (_event, payload?: { sectionId?: string }) =
   openSettingsWindow(payload?.sectionId)
 })
 
+ipcMain.handle('app:open-macros', () => {
+  openMacrosWindow()
+})
+
+if (process.env.TERMIDE_TEST === '1') {
+  ipcMain.handle('test:send-app-command', (_event, command: AppCommand) => {
+    sendCommandToFocusedWindow(command)
+  })
+}
+
 ipcMain.handle('secrets:get', () => {
   const secrets = readSecrets()
   return secrets.map((s) => ({ id: s.id, name: s.name }))
@@ -1255,7 +1289,15 @@ ipcMain.handle('terminal:wait-for-inactivity', async (_event, { id, durationMs }
 app.on('web-contents-created', (_event, contents) => {
   contents.once('destroyed', () => {
     killSessionsForWebContents(contents.id)
+    fileWatchService.disposeSubscriber(contents.id)
   })
+})
+
+registerFileViewerIpcHandlers({
+  fileBufferService,
+  fileWatchService,
+  gitDiffService,
+  ipcMain,
 })
 
 app.on('window-all-closed', () => {

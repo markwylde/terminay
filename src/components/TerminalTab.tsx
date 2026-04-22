@@ -1,5 +1,5 @@
 import { IDockviewPanelHeaderProps } from 'dockview'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { CSSProperties, MouseEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   AlertCircle,
@@ -11,6 +11,7 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react'
+import { DockTabChrome } from './DockTabChrome'
 
 export type TerminalTabMacroRunStep = {
   id: string
@@ -58,7 +59,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
   const style = useMemo(() => {
     return {
       '--tab-color': color || '#717b85',
-    } as React.CSSProperties
+    } as CSSProperties
   }, [color])
 
   useEffect(() => {
@@ -114,7 +115,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
 
     updatePosition()
 
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node
       const container = macroMenuRef.current
       const popover = macroPopoverRef.current
@@ -144,12 +145,12 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
     }
   }, [isMacroMenuOpen, props.api])
 
-  const onClose = (event: React.MouseEvent) => {
+  const onClose = (event: MouseEvent) => {
     event.stopPropagation()
     props.api.close()
   }
 
-  const onDoubleClick = (event: React.MouseEvent) => {
+  const onDoubleClick = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
     const customEvent = new CustomEvent('termide-edit-terminal', {
@@ -159,7 +160,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
     event.currentTarget.dispatchEvent(customEvent)
   }
 
-  const onToggleMacroMenu = (event: React.MouseEvent) => {
+  const onToggleMacroMenu = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
     setIsMacroMenuOpen((current) => !current)
@@ -206,42 +207,47 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
     }
   }
 
-  return (
+  const macroTrigger = hasMacroHistory ? (
     <div
-      className={`terminal-tab-content${isFocused ? ' terminal-tab-content--active' : ''}`}
-      style={style}
-      data-panel-id={props.api.id}
-      data-has-color={hasCustomColor}
-      title="Double-click to edit tab"
-      onDoubleClick={onDoubleClick}
+      ref={macroMenuRef}
+      className={`terminal-tab-macro-menu${isMacroMenuOpen ? ' terminal-tab-macro-menu--open' : ''}`}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
     >
-      {emoji && <span className="terminal-tab-emoji">{emoji}</span>}
-      <span className="terminal-tab-title">{title}</span>
-      {hasMacroHistory ? (
-        <div
-          ref={macroMenuRef}
-          className={`terminal-tab-macro-menu${isMacroMenuOpen ? ' terminal-tab-macro-menu--open' : ''}`}
-          onClick={(event) => event.stopPropagation()}
-          onDoubleClick={(event) => event.stopPropagation()}
-        >
-          <button
-            ref={macroTriggerRef}
-            type="button"
-            className="terminal-tab-macro-trigger"
-            onClick={onToggleMacroMenu}
-            aria-label={`Show macro queue (${macroRuns.length})`}
-            aria-haspopup="menu"
-            aria-expanded={isMacroMenuOpen}
-            title={activeMacroCount > 0 ? `${activeMacroCount} running macro${activeMacroCount === 1 ? '' : 's'}` : `${macroRuns.length} recent macro run${macroRuns.length === 1 ? '' : 's'}`}
-          >
-            <span
-              className={`terminal-tab-macro-spinner${activeMacroCount === 0 ? ' terminal-tab-macro-spinner--idle' : ''}${macroRuns.some((run) => run.status === 'canceling') ? ' terminal-tab-macro-spinner--canceling' : ''}`}
-              aria-hidden="true"
-            />
-            <span className="terminal-tab-macro-count">{activeMacroCount}</span>
-          </button>
-        </div>
-      ) : null}
+      <button
+        ref={macroTriggerRef}
+        type="button"
+        className="terminal-tab-macro-trigger"
+        onClick={onToggleMacroMenu}
+        aria-label={`Show macro queue (${macroRuns.length})`}
+        aria-haspopup="menu"
+        aria-expanded={isMacroMenuOpen}
+        title={activeMacroCount > 0 ? `${activeMacroCount} running macro${activeMacroCount === 1 ? '' : 's'}` : `${macroRuns.length} recent macro run${macroRuns.length === 1 ? '' : 's'}`}
+      >
+        <span
+          className={`terminal-tab-macro-spinner${activeMacroCount === 0 ? ' terminal-tab-macro-spinner--idle' : ''}${macroRuns.some((run) => run.status === 'canceling') ? ' terminal-tab-macro-spinner--canceling' : ''}`}
+          aria-hidden="true"
+        />
+        <span className="terminal-tab-macro-count">{activeMacroCount}</span>
+      </button>
+    </div>
+  ) : null
+
+  return (
+    <>
+      <DockTabChrome
+        title={title}
+        panelId={props.api.id}
+        isActive={isFocused}
+        hasCustomColor={hasCustomColor}
+        titleAttribute="Double-click to edit tab"
+        style={style}
+        onDoubleClick={onDoubleClick}
+        closeAriaLabel="Close terminal"
+        onClose={onClose}
+        leading={emoji ? <span className="terminal-tab-emoji">{emoji}</span> : null}
+        afterTitle={macroTrigger}
+      />
       {isMacroMenuOpen && portalRoot && popoverPosition
         ? createPortal(
             <div
@@ -347,17 +353,6 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
             portalRoot,
           )
         : null}
-      <button
-        type="button"
-        className="terminal-tab-close"
-        onClick={onClose}
-        onDoubleClick={(event) => event.stopPropagation()}
-        aria-label="Close terminal"
-      >
-        <svg aria-hidden="true" width="10" height="10" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M9 3L3 9M3 3L9 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </button>
-    </div>
+    </>
   )
 }
