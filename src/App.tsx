@@ -40,6 +40,7 @@ import type {
 	AppCommand,
 	AppUpdateStatus,
 	FileExplorerEntry,
+	FileExplorerGitStatus,
 	RemoteAccessStatus,
 } from './types/termide';
 import './App.css';
@@ -418,6 +419,7 @@ type FileExplorerTreeProps = {
 	directoryChildren: Record<string, FileExplorerEntry[]>;
 	directoryErrors: Record<string, string>;
 	expandedPaths: Record<string, boolean>;
+	gitStatuses: Record<string, FileExplorerGitStatus>;
 	loadingPaths: Record<string, boolean>;
 	onOpenFile: (filePath: string) => void;
 	onOpenFolder: (folderPath: string) => void;
@@ -434,6 +436,7 @@ function FileExplorerTree({
 	directoryChildren,
 	directoryErrors,
 	expandedPaths,
+	gitStatuses,
 	loadingPaths,
 	onOpenFile,
 	onOpenFolder,
@@ -467,6 +470,28 @@ function FileExplorerTree({
 		path: string;
 		isDirectory: boolean;
 	} | null>(null);
+
+	const getDirectoryGitStatus = useCallback(
+		(dirPath: string): FileExplorerGitStatus | null => {
+			let hasNew = false;
+
+			for (const [entryPath, status] of Object.entries(gitStatuses)) {
+				if (
+					!entryPath.startsWith(`${dirPath}/`) &&
+					!entryPath.startsWith(`${dirPath}\\`)
+				) {
+					continue;
+				}
+				if (status === 'modified') {
+					return 'modified';
+				}
+				hasNew = true;
+			}
+
+			return hasNew ? 'new' : null;
+		},
+		[gitStatuses],
+	);
 
 	const handleContextMenu = useCallback(
 		(event: MouseEvent, path: string, isDirectory: boolean) => {
@@ -590,12 +615,23 @@ function FileExplorerTree({
 					{entries.map((entry) => {
 						const isExpanded = !!expandedPaths[entry.path];
 						const isDirectory = entry.isDirectory;
+						const gitStatus = isDirectory
+							? getDirectoryGitStatus(entry.path)
+							: gitStatuses[entry.path] ?? null;
 
 						return (
 							<div key={entry.path} className="file-explorer-tree-node">
 								<button
 									type="button"
-									className={`file-explorer-tree-item${isDirectory ? ' file-explorer-tree-item--directory' : ''}`}
+									className={[
+										'file-explorer-tree-item',
+										isDirectory ? 'file-explorer-tree-item--directory' : '',
+										gitStatus
+											? `file-explorer-tree-item--git-${gitStatus}`
+											: '',
+									]
+										.filter(Boolean)
+										.join(' ')}
 									style={{ paddingLeft: `${depth * 12 + 8}px` }}
 									onClick={() => {
 										if (suppressClickRef.current) {
@@ -759,6 +795,8 @@ function FileExplorerTree({
 			directoryChildren,
 			directoryErrors,
 			expandedPaths,
+			getDirectoryGitStatus,
+			gitStatuses,
 			handleContextMenu,
 			loadingPaths,
 			onOpenFile,
@@ -979,6 +1017,9 @@ const ProjectWorkspace = forwardRef<
 	const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>(
 		{},
 	);
+	const [gitStatuses, setGitStatuses] = useState<
+		Record<string, FileExplorerGitStatus>
+	>({});
 	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
 	const [runningMacroRunsBySession, setRunningMacroRunsBySession] = useState<
 		Record<string, TerminalTabMacroRun[]>
@@ -996,6 +1037,10 @@ const ProjectWorkspace = forwardRef<
 		Record<string, MacroFieldValue>
 	>({});
 	const macroLauncherInputRef = useRef<HTMLInputElement | null>(null);
+	const macroLauncherListRef = useRef<HTMLDivElement | null>(null);
+	const macroLauncherItemRefs = useRef(
+		new Map<string, HTMLButtonElement | null>(),
+	);
 	const firstMacroFieldRef = useRef<
 		HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
 	>(null);
@@ -1055,6 +1100,22 @@ const ProjectWorkspace = forwardRef<
 			});
 		}
 	}, []);
+
+	const refreshGitStatuses = useCallback(async () => {
+		if (!project.rootFolder) {
+			setGitStatuses({});
+			return;
+		}
+
+		try {
+			const nextStatuses = await window.termide.getFileExplorerGitStatuses(
+				project.rootFolder,
+			);
+			setGitStatuses(nextStatuses.statuses);
+		} catch {
+			setGitStatuses({});
+		}
+	}, [project.rootFolder]);
 
 	const toggleDirectory = useCallback(
 		(dirPath: string) => {
@@ -1402,11 +1463,12 @@ const ProjectWorkspace = forwardRef<
 				await window.termide.renameEntry(oldPath, newPath);
 				// Refresh parent directory
 				void loadDirectory(parentDir || project.rootFolder);
+				void refreshGitStatuses();
 			} catch (error) {
 				setErrorText(`Failed to rename: ${String(error)}`);
 			}
 		},
-		[loadDirectory, project.rootFolder],
+		[loadDirectory, project.rootFolder, refreshGitStatuses],
 	);
 
 	const handleDelete = useCallback(
@@ -1420,11 +1482,12 @@ const ProjectWorkspace = forwardRef<
 				await window.termide.deleteEntry(path);
 				const parentDir = path.substring(0, path.length - fileName.length - 1);
 				void loadDirectory(parentDir || project.rootFolder);
+				void refreshGitStatuses();
 			} catch (error) {
 				setErrorText(`Failed to delete: ${String(error)}`);
 			}
 		},
-		[loadDirectory, project.rootFolder],
+		[loadDirectory, project.rootFolder, refreshGitStatuses],
 	);
 
 	const handleNewFile = useCallback(
@@ -1442,12 +1505,13 @@ const ProjectWorkspace = forwardRef<
 					data: '',
 				});
 				void loadDirectory(dirPath);
+				void refreshGitStatuses();
 				openFile(filePath);
 			} catch (error) {
 				setErrorText(`Failed to create file: ${String(error)}`);
 			}
 		},
-		[loadDirectory, openFile],
+		[loadDirectory, openFile, refreshGitStatuses],
 	);
 
 	const handleNewFolder = useCallback(
@@ -1461,11 +1525,12 @@ const ProjectWorkspace = forwardRef<
 			try {
 				await window.termide.mkdir(newFolderPath);
 				void loadDirectory(dirPath);
+				void refreshGitStatuses();
 			} catch (error) {
 				setErrorText(`Failed to create folder: ${String(error)}`);
 			}
 		},
-		[loadDirectory],
+		[loadDirectory, refreshGitStatuses],
 	);
 
 	const handleOpenTerminalAt = useCallback(
@@ -1932,13 +1997,15 @@ const ProjectWorkspace = forwardRef<
 	useEffect(() => {
 		setDirectoryChildren({});
 		setDirectoryErrors({});
+		setGitStatuses({});
 		setLoadingPaths({});
 		setExpandedPaths(project.rootFolder ? { [project.rootFolder]: true } : {});
 
 		if (project.rootFolder) {
 			void loadDirectory(project.rootFolder);
+			void refreshGitStatuses();
 		}
-	}, [loadDirectory, project.rootFolder]);
+	}, [loadDirectory, project.rootFolder, refreshGitStatuses]);
 
 	useEffect(() => {
 		const onPointerMove = (event: PointerEvent) => {
@@ -2333,6 +2400,7 @@ const ProjectWorkspace = forwardRef<
 		setProjectRootFolderToWorkingDirectory,
 		toggleFileExplorerSidebar,
 	]);
+	const activeMacroId = filteredMacros[selectedMacroIndex]?.id ?? null;
 
 	const closeActivePanel = useCallback(() => {
 		dockviewApiRef.current?.activePanel?.api.close();
@@ -2346,12 +2414,15 @@ const ProjectWorkspace = forwardRef<
 		}
 
 		try {
-			await saveHandler();
+			const didSave = await saveHandler();
+			if (didSave) {
+				void refreshGitStatuses();
+			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			setErrorText(message);
 		}
-	}, []);
+	}, [refreshGitStatuses]);
 
 	const popoutActivePanel = useCallback(async () => {
 		const api = dockviewApiRef.current;
@@ -3115,6 +3186,34 @@ const ProjectWorkspace = forwardRef<
 	]);
 
 	useEffect(() => {
+		if (!isMacroLauncherOpen) {
+			return;
+		}
+
+		const list = macroLauncherListRef.current;
+		const activeItem = activeMacroId
+			? macroLauncherItemRefs.current.get(activeMacroId)
+			: null;
+		if (!list || !activeItem) {
+			return;
+		}
+
+		const animationFrameId = window.requestAnimationFrame(() => {
+			activeItem.scrollIntoView({
+				block: 'nearest',
+				inline: 'nearest',
+				behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+					? 'auto'
+					: 'smooth',
+			});
+		});
+
+		return () => {
+			window.cancelAnimationFrame(animationFrameId);
+		};
+	}, [activeMacroId, isMacroLauncherOpen]);
+
+	useEffect(() => {
 		if (!macroToRun) {
 			return;
 		}
@@ -3155,6 +3254,7 @@ const ProjectWorkspace = forwardRef<
 								directoryChildren={directoryChildren}
 								directoryErrors={directoryErrors}
 								expandedPaths={expandedPaths}
+								gitStatuses={gitStatuses}
 								loadingPaths={loadingPaths}
 								onOpenFile={openFile}
 								onOpenFolder={openFolder}
@@ -3260,7 +3360,10 @@ const ProjectWorkspace = forwardRef<
 								</div>
 							</div>
 
-							<div className="macro-launcher-list">
+								<div
+									ref={macroLauncherListRef}
+									className="macro-launcher-list"
+								>
 								{filteredMacros.length === 0 ? (
 									<div className="macro-launcher-empty">
 										<p>No commands match your search.</p>
@@ -3270,6 +3373,17 @@ const ProjectWorkspace = forwardRef<
 										<button
 											key={macro.id}
 											type="button"
+											ref={(element) => {
+												if (element) {
+													macroLauncherItemRefs.current.set(
+														macro.id,
+														element,
+													);
+													return;
+												}
+
+												macroLauncherItemRefs.current.delete(macro.id);
+											}}
 											className={`macro-launcher-item ${index === selectedMacroIndex ? 'macro-launcher-item--active' : ''}`}
 											onMouseEnter={() => setSelectedMacroIndex(index)}
 											onClick={() => macro.onSelect()}
