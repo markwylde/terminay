@@ -103,3 +103,13 @@ test('runs a macro from the launcher and records the completed run', async ({ ma
   await expect(macroQueue.locator('.terminal-tab-macro-run__title')).toHaveText('Create a pull request')
   await expect(macroQueue.locator('.terminal-tab-macro-run__status')).toHaveText('completed')
 })
+
+test('prioritizes direct title matches in command bar search', async ({ mainWindow }) => {
+  await openMacroLauncher(mainWindow)
+
+  await mainWindow.getByPlaceholder('Search commands...').fill('root')
+
+  const commandButtons = mainWindow.locator('.macro-launcher-list button')
+  await expect(commandButtons.first()).toContainText('Set project root folder to working directory')
+  await expect(commandButtons.nth(1)).toContainText('Edit project settings')
+})

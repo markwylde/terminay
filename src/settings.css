@@ -66,10 +66,19 @@
 }
 
 .settings-sidebar-header {
-  padding: 24px 16px 16px;
+  padding: 42px 16px 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  -webkit-app-region: drag;
+}
+
+.settings-brand {
+  -webkit-app-region: drag;
+}
+
+.settings-search-container {
+  -webkit-app-region: no-drag;
 }
 
 .settings-brand h1 {

@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
+import { sendAppCommand } from './support/app'
+import { cancelEditWindow, openTerminalEditWindow, submitEditWindow } from './support/ui'
 
 async function getActiveSessionId(page: Page): Promise<string> {
   const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-termide-terminal-session-id')
@@ -18,22 +20,74 @@ async function writeToTerminal(page: Page, data: string): Promise<void> {
   }, { nextData: data, nextSessionId: sessionId })
 }
 
+async function readCssVariableFromStyle(locator: ReturnType<Page['locator']>, variableName: string): Promise<string> {
+  const style = await locator.getAttribute('style')
+  const match = style?.match(new RegExp(`${variableName}:\\s*([^;]+)`))
+
+  if (!match?.[1]) {
+    throw new Error(`Missing ${variableName} in style attribute: ${style ?? '(none)'}`)
+  }
+
+  return match[1].trim()
+}
+
 test.describe('terminal behavior', () => {
+  test('new terminals inherit the active project tab color by default', async ({ mainWindow }) => {
+    const activeProjectTab = mainWindow.locator('.project-tab--active')
+    const terminalTabs = mainWindow.locator('.terminal-tab-content')
+    const initialTerminal = terminalTabs.first()
+
+    const projectColor = await readCssVariableFromStyle(activeProjectTab, '--project-color')
+    const initialTerminalColor = await readCssVariableFromStyle(initialTerminal, '--tab-color')
+
+    expect(initialTerminalColor).toBe(projectColor)
+
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(terminalTabs).toHaveCount(2)
+
+    const secondTerminalColor = await readCssVariableFromStyle(terminalTabs.nth(1), '--tab-color')
+    expect(secondTerminalColor).toBe(projectColor)
+  })
+
   test('edits the active terminal tab title and hue', async ({ mainWindow }) => {
-    const firstTab = mainWindow.locator('.terminal-tab-content').first()
+    const terminalTabs = mainWindow.locator('.terminal-tab-content')
+    const initialTabCount = await terminalTabs.count()
 
-    await firstTab.dblclick()
+    const editWindow = await openTerminalEditWindow(mainWindow)
+    await expect(editWindow.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
+    await expect(terminalTabs).toHaveCount(initialTabCount)
 
-    const editDialog = mainWindow.locator('.project-edit-modal')
-    await expect(editDialog.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
-
-    await editDialog.getByPlaceholder('Terminal name').fill('Build Shell')
-    await editDialog.locator('.hue-slider').fill('30')
-    await editDialog.getByRole('button', { name: 'Save' }).click()
+    await editWindow.getByPlaceholder('Terminal name').fill('Build Shell')
+    await editWindow.getByLabel('Tab icon').fill('B')
+    await editWindow.locator('.hue-slider').fill('30')
+    await submitEditWindow(editWindow)
 
     const updatedTab = mainWindow.locator('.terminal-tab-content').first()
     await expect(updatedTab.locator('.terminal-tab-title')).toHaveText('Build Shell')
+    await expect(updatedTab.locator('.terminal-tab-emoji')).toHaveText('B')
     await expect(updatedTab).toHaveAttribute('data-has-color', 'true')
+  })
+
+  test('terminal edit window keeps the icon input to one character and cancel leaves the tab unchanged', async ({ mainWindow }) => {
+    const firstTab = mainWindow.locator('.terminal-tab-content').first()
+    const originalTitle = (await firstTab.locator('.terminal-tab-title').textContent())?.trim() ?? 'Terminal 1'
+    const originalIcon = ((await firstTab.locator('.terminal-tab-emoji').textContent().catch(() => null)) ?? '').trim()
+
+    const editWindow = await openTerminalEditWindow(mainWindow)
+    const iconInput = editWindow.getByLabel('Tab icon')
+
+    await expect(editWindow.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
+    await iconInput.fill('ZZ')
+    await expect(iconInput).toHaveValue('Z')
+    await editWindow.getByPlaceholder('Terminal name').fill('Should Not Save')
+    await cancelEditWindow(editWindow)
+
+    await expect(firstTab.locator('.terminal-tab-title')).toHaveText(originalTitle)
+    if (originalIcon) {
+      await expect(firstTab.locator('.terminal-tab-emoji')).toHaveText(originalIcon)
+    } else {
+      await expect(firstTab.locator('.terminal-tab-emoji')).toHaveCount(0)
+    }
   })
 
   test('opens terminal search and navigates between matches', async ({ mainWindow }) => {

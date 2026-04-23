@@ -1,13 +1,52 @@
 import type { Page } from '@playwright/test'
 import { expect } from '../fixtures'
+import { prepareWindow } from './app'
+
+async function openChildWindowFromAction(page: Page, action: () => Promise<void>): Promise<Page> {
+  const nextPagePromise = page.context().waitForEvent('page')
+  await action()
+  const nextPage = await nextPagePromise
+  return prepareWindow(nextPage)
+}
+
+async function closeEditWindowWithButton(editWindow: Page, label: 'Save' | 'Cancel'): Promise<void> {
+  const closePromise = editWindow.waitForEvent('close')
+  try {
+    await editWindow.getByRole('button', { name: label }).dispatchEvent('click')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (!message.includes('Target page, context or browser has been closed')) {
+      throw error
+    }
+  }
+  await closePromise
+}
+
+export async function openProjectEditWindow(page: Page): Promise<Page> {
+  return openChildWindowFromAction(page, async () => {
+    await page.locator('.project-tab--active').dblclick()
+  })
+}
+
+export async function openTerminalEditWindow(page: Page): Promise<Page> {
+  return openChildWindowFromAction(page, async () => {
+    await page.locator('.terminal-tab-content').first().dblclick()
+  })
+}
 
 export async function setProjectRoot(page: Page, rootPath: string): Promise<void> {
-  await page.locator('.project-tab--active').dblclick()
-  const modal = page.locator('.project-edit-modal')
-  await expect(modal).toBeVisible()
-  await modal.locator('label', { hasText: 'Root Folder' }).locator('input').fill(rootPath)
-  await modal.getByRole('button', { name: 'Save' }).click()
-  await expect(modal).toHaveCount(0)
+  const editWindow = await openProjectEditWindow(page)
+  await expect(editWindow.getByRole('heading', { name: 'Edit Project Tab' })).toBeVisible()
+  await editWindow.getByPlaceholder('Enter folder path').fill(rootPath)
+  await closeEditWindowWithButton(editWindow, 'Save')
+}
+
+export async function submitEditWindow(editWindow: Page): Promise<void> {
+  await closeEditWindowWithButton(editWindow, 'Save')
+}
+
+export async function cancelEditWindow(editWindow: Page): Promise<void> {
+  await closeEditWindowWithButton(editWindow, 'Cancel')
 }
 
 export async function openFileExplorer(page: Page): Promise<void> {

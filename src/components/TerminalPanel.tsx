@@ -59,6 +59,14 @@ function getDroppedFileText(dataTransfer: DataTransfer): string | null {
   return null
 }
 
+function shouldInterceptTerminalDrop(dataTransfer: DataTransfer): boolean {
+  if (dataTransfer.types.includes('termide/path') || dataTransfer.types.includes('Files')) {
+    return true
+  }
+
+  return getDroppedFileText(dataTransfer) !== null
+}
+
 export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const xtermRootRef = useRef<HTMLDivElement | null>(null)
@@ -326,7 +334,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
 
     const handleDragEnter = (event: DragEvent) => {
-      if (!event.dataTransfer) {
+      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer)) {
         return
       }
 
@@ -336,7 +344,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
 
     const handleDragOver = (event: DragEvent) => {
-      if (!event.dataTransfer) {
+      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer)) {
         return
       }
 
@@ -350,14 +358,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return
       }
 
-      // We handle the event here so xterm doesn't get it
-      event.preventDefault()
-      event.stopPropagation()
-
       const droppedText = getDroppedFileText(event.dataTransfer)
       if (!droppedText) {
         return
       }
+
+      // We handle the event here so xterm doesn't get it
+      event.preventDefault()
+      event.stopPropagation()
 
       window.termide.writeTerminal(sessionId, `${droppedText} `)
       terminal.focus()

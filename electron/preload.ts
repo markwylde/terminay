@@ -14,10 +14,16 @@ import type {
   FileViewerTextEncoding,
   FileViewerTextRange,
   FileViewerWatchEvent,
+  EditWindowResult,
+  EditWindowState,
   MacrosChangeMessage,
+  ProjectEditWindowDraft,
+  ProjectEditWindowResult,
   RemoteAccessStatus,
   SettingsChangeMessage,
   TerminalDataMessage,
+  TerminalEditWindowDraft,
+  TerminalEditWindowResult,
   TerminalExitMessage,
   TermideTestApi,
   TerminalZoomMessage,
@@ -58,6 +64,7 @@ contextBridge.exposeInMainWorld('termide', {
       title?: string
       emoji?: string
       color?: string
+      inheritsProjectColor?: boolean
       viewportWidth?: number
       viewportHeight?: number
       projectId?: string
@@ -86,6 +93,12 @@ contextBridge.exposeInMainWorld('termide', {
   smartPasteClipboard: () => ipcRenderer.invoke('clipboard:smart-paste') as Promise<string>,
 
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+  openProjectEditWindow: (draft: ProjectEditWindowDraft) =>
+    ipcRenderer.invoke('app:open-project-edit', draft) as Promise<ProjectEditWindowResult | null>,
+  openTerminalEditWindow: (draft: TerminalEditWindowDraft) =>
+    ipcRenderer.invoke('app:open-terminal-edit', draft) as Promise<TerminalEditWindowResult | null>,
+  getEditWindowState: () => ipcRenderer.invoke('app:get-edit-window-state') as Promise<EditWindowState | null>,
+  submitEditWindowResult: (result: EditWindowResult) => ipcRenderer.invoke('app:submit-edit-window-result', result) as Promise<void>,
   openSettingsWindow: (options?: { sectionId?: string }) => ipcRenderer.invoke('app:open-settings', options),
   openMacrosWindow: () => ipcRenderer.invoke('app:open-macros') as Promise<void>,
   getRemoteAccessStatus: () => ipcRenderer.invoke('remote:get-status'),

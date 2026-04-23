@@ -29,8 +29,10 @@ jobs:
 
   e2e-test:
     name: E2E Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.E2E_RUNNER != '' && vars.E2E_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
+    env:
+      PLAYWRIGHT_WORKERS: ${{ vars.E2E_PLAYWRIGHT_WORKERS != '' && vars.E2E_PLAYWRIGHT_WORKERS || '1' }}
 
     steps:
       - name: Check out code

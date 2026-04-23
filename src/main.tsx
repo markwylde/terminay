@@ -2,6 +2,7 @@ import ReactDOM from 'react-dom/client'
 import 'dockview/dist/styles/dockview.css'
 import '@xterm/xterm/css/xterm.css'
 import App from './App.tsx'
+import { EditTabWindow } from './components/EditTabWindow.tsx'
 import { MacrosWindow } from './components/MacrosWindow.tsx'
 import { SettingsWindow } from './components/SettingsWindow.tsx'
 import './index.css'
@@ -15,6 +16,8 @@ const content = (() => {
       return <SettingsWindow />
     case 'macros':
       return <MacrosWindow />
+    case 'edit-tab':
+      return <EditTabWindow />
     default:
       return <App />
   }
