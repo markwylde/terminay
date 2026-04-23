@@ -16,10 +16,10 @@ async function sendAppCommand(page: Page, command: string): Promise<void> {
 }
 
 async function openMacroLauncher(page: Page): Promise<void> {
-  const launcher = page.getByRole('dialog', { name: 'Macro launcher' })
+  const launcher = page.getByRole('dialog', { name: 'Command bar' })
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    await sendAppCommand(page, 'open-macro-launcher')
+    await sendAppCommand(page, 'open-command-bar')
 
     try {
       await expect(launcher).toBeVisible({ timeout: 2_000 })

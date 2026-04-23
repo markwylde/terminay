@@ -68,6 +68,7 @@ type ProjectWorkspaceProps = {
 	isActive: boolean;
 	isMac: boolean;
 	macros: MacroDefinition[];
+	onEditProject: (projectId: string) => void;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
 	popoutUrl: string;
 	project: ProjectTab;
@@ -703,7 +704,7 @@ function hueToHex(h: number): string {
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
->(({ isActive, isMac, macros, onUpdateProject, popoutUrl, project }, ref) => {
+>(({ isActive, isMac, macros, onEditProject, onUpdateProject, popoutUrl, project }, ref) => {
 	const dockviewApiRef = useRef<DockviewApi | null>(null);
 	const initialTerminalSeededRef = useRef(false);
 	const panelSessionMapRef = useRef<Map<string, string>>(new Map());
@@ -1397,31 +1398,38 @@ const ProjectWorkspace = forwardRef<
 		});
 	}, [focusActiveTerminal]);
 
-	const filteredMacros = useMemo(() => {
-		const normalizedQuery = macroQuery.trim().toLowerCase();
-		if (!normalizedQuery) {
-			return macros;
+	const setProjectRootFolderToWorkingDirectory = useCallback(async () => {
+		const sessionId = getActiveSessionId();
+		if (!sessionId) {
+			setErrorText(
+				'Open a terminal before setting the project root to its working directory.',
+			);
+			return;
 		}
 
-		return macros.filter((macro) => {
-			const fieldText = macro.fields
-				.map((field) => `${field.label} ${field.name}`)
-				.join(' ')
-				.toLowerCase();
+		try {
+			const cwd = await window.termide.getTerminalCwd(sessionId);
+			if (!cwd) {
+				setErrorText('The active terminal does not have a working directory yet.');
+				return;
+			}
 
-			const stepText = macro.steps
-				.map((step) => (step.type === 'type' ? step.content : ''))
-				.join(' ')
-				.toLowerCase();
+			const nextRootFolder = cwd.trim();
 
-			return (
-				macro.title.toLowerCase().includes(normalizedQuery) ||
-				macro.description.toLowerCase().includes(normalizedQuery) ||
-				stepText.includes(normalizedQuery) ||
-				fieldText.includes(normalizedQuery)
-			);
-		});
-	}, [macroQuery, macros]);
+			if (!nextRootFolder) {
+				setErrorText('The active terminal does not have a working directory yet.');
+				return;
+			}
+
+			onUpdateProject(project.id, { rootFolder: nextRootFolder });
+			setErrorText(null);
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			setErrorText(`Unable to set the project root folder: ${message}`);
+		}
+	}, [getActiveSessionId, onUpdateProject, project.id]);
 
 	const executeMacro = useCallback(
 		async (macro: MacroDefinition, values: Record<string, MacroFieldValue>) => {
@@ -1755,6 +1763,149 @@ const ProjectWorkspace = forwardRef<
 		}
 	}, []);
 
+	const clearActiveTerminal = useCallback(() => {
+		const sessionId = getActiveSessionId();
+		if (!sessionId) {
+			setErrorText('Open a terminal before clearing it.');
+			return;
+		}
+
+		setErrorText(null);
+		window.termide.writeTerminal(sessionId, '\x1b[2J\x1b[3J\x1b[H');
+		setIsMacroLauncherOpen(false);
+		setMacroQuery('');
+	}, [getActiveSessionId]);
+
+	const openActiveTerminalSettings = useCallback(() => {
+		const activePanel = dockviewApiRef.current?.activePanel;
+		const sessionId = getActiveSessionId();
+		if (!activePanel || !sessionId) {
+			setErrorText('Open a terminal before editing its tab settings.');
+			return;
+		}
+
+		setErrorText(null);
+		setIsMacroLauncherOpen(false);
+		setMacroQuery('');
+		openTerminalEdit(activePanel.id);
+	}, [getActiveSessionId, openTerminalEdit]);
+
+	const openProjectSettings = useCallback(() => {
+		setErrorText(null);
+		setIsMacroLauncherOpen(false);
+		setMacroQuery('');
+		onEditProject(project.id);
+	}, [onEditProject, project.id]);
+
+	const toggleFileExplorerSidebar = useCallback(() => {
+		setErrorText(null);
+		setIsMacroLauncherOpen(false);
+		setMacroQuery('');
+		onUpdateProject(project.id, {
+			isFileExplorerOpen: !project.isFileExplorerOpen,
+		});
+	}, [onUpdateProject, project.id, project.isFileExplorerOpen]);
+
+	const filteredMacros = useMemo(() => {
+		const normalizedQuery = macroQuery.trim().toLowerCase();
+		const commandItems = [
+			{
+				id: 'clear-terminal',
+				title: 'Clear terminal',
+				description: 'Clear the active terminal viewport and scrollback.',
+				searchText: 'clear terminal cmd+k scrollback screen reset',
+				onSelect: () => {
+					clearActiveTerminal();
+				},
+			},
+			{
+				id: 'edit-tab-settings',
+				title: 'Edit tab settings',
+				description: 'Open settings for the active terminal tab.',
+				searchText: 'edit tab settings terminal tab rename emoji color',
+				onSelect: () => {
+					openActiveTerminalSettings();
+				},
+			},
+			{
+				id: 'edit-project-settings',
+				title: 'Edit project settings',
+				description: 'Open settings for the current project tab.',
+				searchText: 'edit project settings project tab root folder emoji color',
+				onSelect: () => {
+					openProjectSettings();
+				},
+			},
+			{
+				id: 'toggle-file-explorer-sidebar',
+				title: project.isFileExplorerOpen
+					? 'Hide file explorer sidebar'
+					: 'Show file explorer sidebar',
+				description: project.isFileExplorerOpen
+					? 'Hide the file explorer sidebar for this project.'
+					: 'Show the file explorer sidebar for this project.',
+				searchText:
+					'toggle file explorer sidebar show hide explorer sidebar project',
+				onSelect: () => {
+					toggleFileExplorerSidebar();
+				},
+			},
+			{
+				id: 'set-project-root-folder-to-working-directory',
+				title: 'Set project root folder to working directory',
+				description:
+					'Use the active terminal working directory as this project root folder.',
+				searchText:
+					'set project root folder working directory cwd active terminal root folder',
+				onSelect: () => {
+					void setProjectRootFolderToWorkingDirectory();
+				},
+			},
+			...macros.map((macro) => ({
+				id: macro.id,
+				title: macro.title,
+				description:
+					macro.description ||
+					(macro.steps[0]?.type === 'type'
+						? macro.steps[0].content
+						: 'Multi-step macro'),
+				searchText: [
+					macro.title,
+					macro.description,
+					...macro.fields.map((field) => `${field.label} ${field.name}`),
+					...macro.steps.map((step) =>
+						step.type === 'type' ? step.content : '',
+					),
+				]
+					.join(' ')
+					.toLowerCase(),
+				onSelect: () => runMacro(macro),
+			})),
+		];
+
+		if (!normalizedQuery) {
+			return commandItems;
+		}
+
+		return commandItems.filter((macro) => {
+			return (
+				macro.title.toLowerCase().includes(normalizedQuery) ||
+				macro.description.toLowerCase().includes(normalizedQuery) ||
+				macro.searchText.includes(normalizedQuery)
+			);
+		});
+	}, [
+		clearActiveTerminal,
+		macroQuery,
+		macros,
+		openActiveTerminalSettings,
+		openProjectSettings,
+		project.isFileExplorerOpen,
+		runMacro,
+		setProjectRootFolderToWorkingDirectory,
+		toggleFileExplorerSidebar,
+	]);
+
 	const saveTerminalEdits = useCallback(
 		(event: FormEvent<HTMLFormElement>) => {
 			event.preventDefault();
@@ -1940,12 +2091,7 @@ const ProjectWorkspace = forwardRef<
 					case 'close-active':
 						closeActivePanel();
 						break;
-					case 'open-macro-launcher':
-						if (!getActiveSessionId()) {
-							setErrorText('Open a terminal before launching a macro.');
-							break;
-						}
-
+					case 'open-command-bar':
 						setMacroQuery('');
 						setSelectedMacroIndex(0);
 						setIsMacroLauncherOpen(true);
@@ -2685,7 +2831,7 @@ const ProjectWorkspace = forwardRef<
 				event.preventDefault();
 				const macro = filteredMacros[selectedMacroIndex];
 				if (macro) {
-					runMacro(macro);
+					macro.onSelect();
 				}
 			}
 		};
@@ -2807,7 +2953,7 @@ const ProjectWorkspace = forwardRef<
 							className="macro-launcher"
 							role="dialog"
 							aria-modal="true"
-							aria-label="Macro launcher"
+							aria-label="Command bar"
 							onClick={(e) => e.stopPropagation()}
 						>
 							<div className="macro-launcher-search-container">
@@ -2838,7 +2984,7 @@ const ProjectWorkspace = forwardRef<
 										setMacroQuery(event.target.value);
 										setSelectedMacroIndex(0);
 									}}
-									placeholder="Search macros..."
+									placeholder="Search commands..."
 									spellCheck={false}
 									autoComplete="off"
 								/>
@@ -2850,7 +2996,7 @@ const ProjectWorkspace = forwardRef<
 							<div className="macro-launcher-list">
 								{filteredMacros.length === 0 ? (
 									<div className="macro-launcher-empty">
-										<p>No macros match your search.</p>
+										<p>No commands match your search.</p>
 									</div>
 								) : (
 									filteredMacros.map((macro, index) => (
@@ -2859,17 +3005,14 @@ const ProjectWorkspace = forwardRef<
 											type="button"
 											className={`macro-launcher-item ${index === selectedMacroIndex ? 'macro-launcher-item--active' : ''}`}
 											onMouseEnter={() => setSelectedMacroIndex(index)}
-											onClick={() => runMacro(macro)}
+											onClick={() => macro.onSelect()}
 										>
 											<div className="macro-launcher-item-content">
 												<span className="macro-launcher-item-title">
 													{macro.title}
 												</span>
 												<span className="macro-launcher-item-description">
-													{macro.description ||
-														(macro.steps[0]?.type === 'type'
-															? macro.steps[0].content
-															: 'Multi-step macro')}
+													{macro.description}
 												</span>
 											</div>
 											{index === selectedMacroIndex && (
@@ -3862,6 +4005,7 @@ function App() {
 						isActive={project.id === activeProjectId}
 						isMac={isMac}
 						macros={macros}
+						onEditProject={openEditProjectModal}
 						onUpdateProject={updateProject}
 						popoutUrl={popoutUrl}
 						project={project}
