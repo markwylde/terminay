@@ -12,7 +12,16 @@ import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
-import type { AppCommand, FileExplorerEntry } from '../src/types/termide'
+import type {
+  AppCommand,
+  EditWindowResult,
+  EditWindowState,
+  FileExplorerEntry,
+  ProjectEditWindowDraft,
+  ProjectEditWindowResult,
+  TerminalEditWindowDraft,
+  TerminalEditWindowResult,
+} from '../src/types/termide'
 import { FileBufferService } from './fileViewer/fileBufferService'
 import { FileWatchService } from './fileViewer/fileWatchService'
 import { GitDiffService } from './fileViewer/gitDiffService'
@@ -106,6 +115,15 @@ interface TerminalSession {
 const terminalSessions = new Map<string, TerminalSession>()
 let settingsWindow: BrowserWindow | null = null
 let macrosWindow: BrowserWindow | null = null
+const pendingEditWindows = new Map<
+  number,
+  {
+    resolve: (result: ProjectEditWindowResult | TerminalEditWindowResult | null) => void
+    settled: boolean
+    state: EditWindowState
+    window: BrowserWindow
+  }
+>()
 const fileBufferService = new FileBufferService(() => app.getPath('home'))
 const fileWatchService = new FileWatchService(fileBufferService)
 const gitDiffService = new GitDiffService(fileBufferService)
@@ -772,6 +790,19 @@ function createAppMenu(): void {
       label: 'File',
       submenu: [
         {
+          label: 'Create a new terminal tab',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => sendCommandToFocusedWindow('new-terminal'),
+        },
+        {
+          label: 'Create a new project',
+          accelerator: 'CmdOrCtrl+P',
+          click: () => sendCommandToFocusedWindow('new-project'),
+        },
+        {
+          type: 'separator',
+        },
+        {
           label: 'New Terminal',
           accelerator: 'CmdOrCtrl+T',
           click: () => sendCommandToFocusedWindow('new-terminal'),
@@ -926,6 +957,13 @@ function createWindow() {
         title: 'Termide',
         width: 1000,
         height: 700,
+        titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
+        trafficLightPosition: isMac
+          ? {
+              x: 14,
+              y: 12,
+            }
+          : undefined,
         autoHideMenuBar: true,
         webPreferences: {
           preload: preloadPath,
@@ -955,6 +993,9 @@ function openSettingsWindow(sectionId?: string): void {
     return
   }
 
+  const isMac = process.platform === 'darwin'
+  const usesOverlayTitlebar = process.platform === 'win32' || process.platform === 'linux'
+
   settingsWindow = new BrowserWindow({
     icon: windowIconPath,
     width: 1320,
@@ -962,6 +1003,20 @@ function openSettingsWindow(sectionId?: string): void {
     minWidth: 980,
     minHeight: 700,
     title: 'Termide Settings',
+    titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
+    titleBarOverlay: usesOverlayTitlebar
+      ? {
+          color: '#0d1117',
+          symbolColor: '#9bb0c8',
+          height: 38,
+        }
+      : false,
+    trafficLightPosition: isMac
+      ? {
+          x: 14,
+          y: 12,
+        }
+      : undefined,
     autoHideMenuBar: true,
     backgroundColor: '#0d1117',
     webPreferences: {
@@ -998,6 +1053,9 @@ function openMacrosWindow(): void {
     return
   }
 
+  const isMac = process.platform === 'darwin'
+  const usesOverlayTitlebar = process.platform === 'win32' || process.platform === 'linux'
+
   macrosWindow = new BrowserWindow({
     icon: windowIconPath,
     width: 1100,
@@ -1005,6 +1063,20 @@ function openMacrosWindow(): void {
     minWidth: 860,
     minHeight: 620,
     title: 'Termide Macros',
+    titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
+    titleBarOverlay: usesOverlayTitlebar
+      ? {
+          color: '#0d1117',
+          symbolColor: '#9bb0c8',
+          height: 38,
+        }
+      : false,
+    trafficLightPosition: isMac
+      ? {
+          x: 14,
+          y: 12,
+        }
+      : undefined,
     autoHideMenuBar: true,
     backgroundColor: '#0d1117',
     webPreferences: {
@@ -1025,6 +1097,97 @@ function openMacrosWindow(): void {
       query: { view: 'macros' },
     })
   }
+}
+
+function getEditWindowUrl(kind: EditWindowState['kind']): string {
+  if (VITE_DEV_SERVER_URL) {
+    const target = new URL(VITE_DEV_SERVER_URL)
+    target.searchParams.set('view', 'edit-tab')
+    target.searchParams.set('kind', kind)
+    return target.toString()
+  }
+
+  return path.join(RENDERER_DIST, 'index.html')
+}
+
+function openEditWindow(
+  parentWindow: BrowserWindow | null,
+  state: EditWindowState,
+): Promise<ProjectEditWindowResult | TerminalEditWindowResult | null> {
+  const preloadPath = path.join(__dirname, 'preload.mjs')
+  const windowIconPath = getWindowIconPath()
+  const height = state.kind === 'project' ? 700 : 640
+
+  return new Promise((resolve) => {
+    const editWindow = new BrowserWindow({
+      parent: parentWindow ?? undefined,
+      modal: true,
+      icon: windowIconPath,
+      useContentSize: true,
+      width: 500,
+      height,
+      minWidth: 500,
+      maxWidth: 500,
+      minHeight: height,
+      maxHeight: height,
+      title: state.kind === 'project' ? 'Edit Project Tab' : 'Edit Terminal Tab',
+      // On macOS, 'panel' prevents the window from becoming a "sheet"
+      // while modal: true is set, allowing for a native title bar.
+      type: process.platform === 'darwin' ? 'panel' : undefined,
+      titleBarStyle: 'default',
+      autoHideMenuBar: true,
+      backgroundColor: '#0d0f12',
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      resizable: true,
+      show: false,
+      webPreferences: {
+        preload: preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    })
+    const editWindowWebContentsId = editWindow.webContents.id
+
+    const settle = (result: ProjectEditWindowResult | TerminalEditWindowResult | null) => {
+      const pending = pendingEditWindows.get(editWindowWebContentsId)
+      if (!pending || pending.settled) {
+        return
+      }
+
+      pending.settled = true
+      pendingEditWindows.delete(editWindowWebContentsId)
+      resolve(result)
+    }
+
+    pendingEditWindows.set(editWindowWebContentsId, {
+      resolve: settle,
+      settled: false,
+      state,
+      window: editWindow,
+    })
+
+    editWindow.once('ready-to-show', () => {
+      editWindow.show()
+    })
+
+    editWindow.on('closed', () => {
+      settle(null)
+    })
+
+    if (VITE_DEV_SERVER_URL) {
+      void editWindow.loadURL(getEditWindowUrl(state.kind))
+      return
+    }
+
+    void editWindow.loadFile(getEditWindowUrl(state.kind), {
+      query: {
+        kind: state.kind,
+        view: 'edit-tab',
+      },
+    })
+  })
 }
 
 function setDockIcon(): void {
@@ -1109,6 +1272,7 @@ ipcMain.on(
       title?: string
       emoji?: string
       color?: string
+      inheritsProjectColor?: boolean
       viewportWidth?: number
       viewportHeight?: number
       projectId?: string
@@ -1189,6 +1353,55 @@ ipcMain.handle('shell:open-external', async (_event, url: string) => {
 
 ipcMain.handle('clipboard:smart-paste', () => {
   return smartPasteClipboardContents()
+})
+
+ipcMain.handle('app:open-project-edit', async (event, draft: ProjectEditWindowDraft) => {
+  const parentWindow = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? null
+  const result = await openEditWindow(parentWindow, {
+    draft,
+    kind: 'project',
+  })
+
+  if (!result) {
+    return null
+  }
+
+  return result as ProjectEditWindowResult
+})
+
+ipcMain.handle('app:open-terminal-edit', async (event, draft: TerminalEditWindowDraft) => {
+  const parentWindow = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? null
+  const result = await openEditWindow(parentWindow, {
+    draft,
+    kind: 'terminal',
+  })
+
+  if (!result) {
+    return null
+  }
+
+  return result as TerminalEditWindowResult
+})
+
+ipcMain.handle('app:get-edit-window-state', (event) => {
+  const pending = pendingEditWindows.get(event.sender.id)
+  return pending?.state ?? null
+})
+
+ipcMain.handle('app:submit-edit-window-result', async (event, result: EditWindowResult) => {
+  const pending = pendingEditWindows.get(event.sender.id)
+  if (!pending) {
+    return
+  }
+
+  if (pending.state.kind !== result.kind) {
+    throw new Error(`Mismatched edit window result kind: expected ${pending.state.kind}, received ${result.kind}.`)
+  }
+
+  pending.resolve(result.result)
+  if (!pending.window.isDestroyed()) {
+    pending.window.close()
+  }
 })
 
 ipcMain.handle('remote:get-status', () => {

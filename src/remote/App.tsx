@@ -609,7 +609,7 @@ export function RemoteApp() {
         map.set(pid, {
           id: pid,
           title: s.projectTitle || 'Default',
-          emoji: s.projectEmoji || '🖥️',
+          emoji: s.projectEmoji || '',
           color: s.projectColor || '#4db5ff',
           sessionIds: []
         })

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { termideFileGateway } from '../../../services/fileViewer'
 import { useResizeObserver } from '../../../hooks/useResizeObserver'
 
@@ -21,8 +21,11 @@ function toAscii(value: number): string {
 }
 
 export function HexViewer({ filePath, fileSize, onChangeByte }: HexViewerProps) {
-  const viewportRef = useRef<HTMLDivElement | null>(null)
-  const { height: viewportHeight, width: viewportWidth } = useResizeObserver(viewportRef.current)
+  const [viewportElement, setViewportElement] = useState<HTMLDivElement | null>(null)
+  const viewportRef = useCallback((element: HTMLDivElement | null) => {
+    setViewportElement(element)
+  }, [])
+  const { height: viewportHeight, width: viewportWidth } = useResizeObserver(viewportElement)
   const [scrollTop, setScrollTop] = useState(0)
   const [pages, setPages] = useState<Record<number, Uint8Array>>({})
   const [loadError, setLoadError] = useState<string | null>(null)

@@ -105,7 +105,7 @@ export class GitDiffService {
     }
 
     const relativePathResult = await execFileAsync('git', ['rev-parse', '--show-prefix'], { cwd: workingDirectory })
-    const prefix = relativePathResult.stdout
+    const prefix = relativePathResult.stdout.trim()
     const relativePath = info.isDirectory ? prefix.replace(/\/$/, '') || '.' : `${prefix}${info.name}`
     const repoRootPath = repoRoot as string
 

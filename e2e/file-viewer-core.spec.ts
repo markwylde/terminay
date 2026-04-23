@@ -34,6 +34,27 @@ test('file viewer edits and saves text files without duplicating tabs', async ({
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
 })
 
+test('preview syntax highlights tsx files', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'file-viewer-preview-highlight',
+    seed: {
+      files: {
+        'component.tsx': 'export function Example() {\n  return <div className="demo">hello</div>\n}\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  await fileExplorerItem(mainWindow, 'component.tsx').dblclick()
+  await expect(mainWindow.locator('.file-preview-text')).toContainText('export function Example()')
+  await expect(mainWindow.locator('.file-code-block__line-number').first()).toHaveText('1')
+  await expect(mainWindow.locator('.file-preview-text .file-token--keyword', { hasText: 'export' }).first()).toBeVisible()
+  await expect(mainWindow.locator('.file-preview-text .file-token--tag-name', { hasText: 'div' }).first()).toBeVisible()
+  await expect(mainWindow.locator('.file-preview-text .file-token--attribute-name', { hasText: 'className' }).first()).toBeVisible()
+})
+
 test('binary files fall back to hex when preview is unavailable', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'file-viewer-binary',
