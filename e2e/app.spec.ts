@@ -107,7 +107,7 @@ test('runs a macro from the launcher and records the completed run', async ({ ma
 test('prioritizes direct title matches in command bar search', async ({ mainWindow }) => {
   await openMacroLauncher(mainWindow)
 
-  await mainWindow.getByRole('searchbox', { name: 'Search commands' }).fill('root')
+  await mainWindow.getByPlaceholder('Search commands...').fill('root')
 
   const commandButtons = mainWindow.locator('.macro-launcher-list button')
   await expect(commandButtons.first()).toContainText('Set project root folder to working directory')
