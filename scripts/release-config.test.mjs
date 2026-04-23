@@ -66,3 +66,11 @@ test('wires Apple signing secrets into the release workflow', () => {
   assert.match(workflow, /APPLE_TEAM_ID/)
   assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY:\s+\$\{\{\s+matrix\.os\s*==\s*'macos-latest'\s*&&\s*'true'\s*\|\|\s*'false'\s+\}\}/)
 })
+
+test('syncs package metadata to the release tag before packaging', () => {
+  const workflow = readFileSync(resolve('.github/workflows/trigger-release.yml'), 'utf8')
+
+  assert.match(workflow, /name:\s+Sync package version to release tag/)
+  assert.match(workflow, /TARGET_VERSION="\$\{TAG#v\}"/)
+  assert.match(workflow, /node scripts\/sync-package-version\.mjs "\$TARGET_VERSION"/)
+})
