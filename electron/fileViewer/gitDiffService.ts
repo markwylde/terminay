@@ -1,6 +1,11 @@
 import { execFile } from 'node:child_process'
+import path from 'node:path'
 import { promisify } from 'node:util'
-import type { FileViewerGitDiff, FileViewerGitRepoInfo } from '../../src/types/termide'
+import type {
+  FileExplorerGitStatuses,
+  FileViewerGitDiff,
+  FileViewerGitRepoInfo,
+} from '../../src/types/termide'
 import { getGitWorkingDirectory } from './pathUtils'
 import type { FileBufferService } from './fileBufferService'
 
@@ -21,6 +26,52 @@ function isMissingGitError(error: unknown): boolean {
 
 export class GitDiffService {
   constructor(private readonly fileBufferService: FileBufferService) {}
+
+  async getExplorerStatuses(rawPath: string): Promise<FileExplorerGitStatuses> {
+    const info = await this.fileBufferService.getFileInfo(rawPath)
+    const workingDirectory = getGitWorkingDirectory(info.path, info.isDirectory)
+
+    let repoRoot: string | null = null
+
+    try {
+      const result = await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd: workingDirectory })
+      repoRoot = result.stdout.trim() || null
+    } catch (error) {
+      if (isMissingGitError(error)) {
+        return {
+          gitAvailable: false,
+          repoRoot: null,
+          statuses: {},
+        }
+      }
+
+      return {
+        gitAvailable: true,
+        repoRoot: null,
+        statuses: {},
+      }
+    }
+
+    if (!repoRoot) {
+      return {
+        gitAvailable: true,
+        repoRoot: null,
+        statuses: {},
+      }
+    }
+
+    const { stdout } = await execFileAsync(
+      'git',
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=no'],
+      { cwd: info.path },
+    )
+
+    return {
+      gitAvailable: true,
+      repoRoot,
+      statuses: parseExplorerStatuses(stdout, info.path),
+    }
+  }
 
   async getRepoInfo(rawPath: string): Promise<FileViewerGitRepoInfo> {
     const context = await this.getGitContext(rawPath)
@@ -128,4 +179,54 @@ export class GitDiffService {
       }
     }
   }
+}
+
+function parseExplorerStatuses(output: string, rootPath: string): Record<string, 'modified' | 'new'> {
+  const result: Record<string, 'modified' | 'new'> = {}
+  const entries = output.split('\0').filter((entry) => entry.length > 0)
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]
+    const code = entry.slice(0, 2)
+    const rawPath = entry.slice(3)
+    const nextPath =
+      code.startsWith('R') || code.startsWith('C')
+        ? entries[++index] ?? rawPath
+        : rawPath
+
+    const status = toExplorerStatus(code)
+    if (!status || nextPath.length === 0) {
+      continue
+    }
+
+    const absolutePath = path.resolve(rootPath, nextPath)
+    const currentStatus = result[absolutePath]
+    if (currentStatus === 'modified' || currentStatus === status) {
+      continue
+    }
+
+    result[absolutePath] = currentStatus === 'new' ? 'modified' : status
+  }
+
+  return result
+}
+
+function toExplorerStatus(code: string): 'modified' | 'new' | null {
+  if (code === '??') {
+    return 'new'
+  }
+
+  const [indexStatus, workTreeStatus] = code.split('')
+  const hasModification = [indexStatus, workTreeStatus].some((value) =>
+    ['M', 'T', 'D', 'R', 'C', 'U'].includes(value),
+  )
+  if (hasModification) {
+    return 'modified'
+  }
+
+  if (indexStatus === 'A') {
+    return 'new'
+  }
+
+  return null
 }

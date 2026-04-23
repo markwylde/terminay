@@ -32,6 +32,43 @@ async function openMacroLauncher(page: Page): Promise<void> {
   }
 }
 
+async function seedScrollTestMacros(page: Page, count = 20): Promise<void> {
+  await page.evaluate(async (macroCount) => {
+    const macros = await window.termide.getMacros()
+    const extraMacros = Array.from({ length: macroCount }, (_, index) => ({
+      id: `scroll-test-macro-${index + 1}`,
+      title: `Scroll test macro ${index + 1}`,
+      description: 'Used to verify command bar scrolling during keyboard navigation.',
+      template: `echo scroll test macro ${index + 1}`,
+      submitMode: 'type-only' as const,
+      steps: [
+        {
+          id: `scroll-test-step-${index + 1}`,
+          type: 'type' as const,
+          content: `echo scroll test macro ${index + 1}`,
+        },
+      ],
+      fields: [],
+    }))
+
+    await window.termide.updateMacros([...macros, ...extraMacros])
+  }, count)
+}
+
+
+async function navigateToCommand(page: Page, direction: 'ArrowDown' | 'ArrowUp', title: string, maxSteps = 80): Promise<void> {
+  for (let step = 0; step < maxSteps; step++) {
+    const activeText = await page.locator('.macro-launcher-item--active').textContent()
+    if (activeText?.includes(title)) {
+      return
+    }
+
+    await page.keyboard.press(direction)
+  }
+
+  throw new Error(`Failed to navigate to command: ${title}`)
+}
+
 async function openChildWindow(
   electronApp: ElectronApplication,
   action: () => Promise<void>,
@@ -112,4 +149,35 @@ test('prioritizes direct title matches in command bar search', async ({ mainWind
   const commandButtons = mainWindow.locator('.macro-launcher-list button')
   await expect(commandButtons.first()).toContainText('Set project root folder to working directory')
   await expect(commandButtons.nth(1)).toContainText('Edit project settings')
+})
+
+test('scrolls the active command into view during keyboard navigation', async ({ mainWindow }) => {
+  await seedScrollTestMacros(mainWindow)
+
+  await openMacroLauncher(mainWindow)
+
+  const commandList = mainWindow.locator('.macro-launcher-list')
+
+  expect(await commandList.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
+
+  await navigateToCommand(mainWindow, 'ArrowDown', 'Scroll test macro 20')
+
+  await expect(commandList.locator('.macro-launcher-item--active')).toContainText('Scroll test macro 20')
+  await expect.poll(async () => commandList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+})
+
+test('scrolls the active command into view when navigating upward', async ({ mainWindow }) => {
+  await seedScrollTestMacros(mainWindow)
+
+  await openMacroLauncher(mainWindow)
+
+  const commandList = mainWindow.locator('.macro-launcher-list')
+
+  await navigateToCommand(mainWindow, 'ArrowDown', 'Scroll test macro 20')
+
+
+  await navigateToCommand(mainWindow, 'ArrowUp', 'Scroll test macro 12')
+
+  await expect(commandList.locator('.macro-launcher-item--active')).toContainText('Scroll test macro 12')
+  await expect.poll(async () => commandList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
 })
