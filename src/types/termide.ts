@@ -167,6 +167,15 @@ export type TerminalZoomMessage = {
   zoomLevel: number
 }
 
+export type AppUpdateStatus = {
+  checkedAt: string | null
+  currentVersion: string
+  errorMessage: string | null
+  hasUpdate: boolean
+  latestVersion: string | null
+  releaseUrl: string | null
+}
+
 export type ProjectEditWindowDraft = {
   color: string
   emoji: string
@@ -264,6 +273,7 @@ export interface TermideApi {
   waitForTerminalInactivity: (id: string, durationMs: number) => Promise<void>
   smartPasteClipboard: () => Promise<string>
   openExternal: (url: string) => Promise<void>
+  getAppUpdateStatus: (options?: { force?: boolean }) => Promise<AppUpdateStatus>
   openProjectEditWindow: (draft: ProjectEditWindowDraft) => Promise<ProjectEditWindowResult | null>
   openTerminalEditWindow: (draft: TerminalEditWindowDraft) => Promise<TerminalEditWindowResult | null>
   getEditWindowState: () => Promise<EditWindowState | null>

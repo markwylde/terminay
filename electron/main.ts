@@ -14,6 +14,7 @@ import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
 import type {
   AppCommand,
+  AppUpdateStatus,
   EditWindowResult,
   EditWindowState,
   FileExplorerEntry,
@@ -32,6 +33,8 @@ const require = createRequire(import.meta.url)
 const pty = require('node-pty') as typeof import('node-pty')
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const execFileAsync = promisify(execFile)
+const RELEASES_LATEST_URL = 'https://github.com/markwylde/termide/releases/latest'
+const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
 
 process.env.APP_ROOT = path.join(__dirname, '..')
 app.setName('Termide')
@@ -127,6 +130,8 @@ const pendingEditWindows = new Map<
 const fileBufferService = new FileBufferService(() => app.getPath('home'))
 const fileWatchService = new FileWatchService(fileBufferService)
 const gitDiffService = new GitDiffService(fileBufferService)
+let cachedAppUpdateStatus: AppUpdateStatus | null = null
+let appUpdateFetchPromise: Promise<AppUpdateStatus> | null = null
 const remoteAccessService = new RemoteAccessService({
   app,
   getControllableSession: (sessionId) => {
@@ -164,6 +169,113 @@ const remoteAccessService = new RemoteAccessService({
     broadcastTerminalSettings(nextSettings)
   },
 })
+
+function normalizeVersion(value: string): string | null {
+  const match = /^v?(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$/.exec(value.trim())
+  if (!match?.groups) {
+    return null
+  }
+
+  return `${match.groups.major}.${match.groups.minor}.${match.groups.patch}`
+}
+
+function compareVersions(left: string, right: string): number {
+  const leftParts = left.split('.').map((part) => Number.parseInt(part, 10))
+  const rightParts = right.split('.').map((part) => Number.parseInt(part, 10))
+
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const leftPart = leftParts[index] ?? 0
+    const rightPart = rightParts[index] ?? 0
+    if (leftPart !== rightPart) {
+      return leftPart - rightPart
+    }
+  }
+
+  return 0
+}
+
+async function fetchAppUpdateStatus(): Promise<AppUpdateStatus> {
+  const currentVersion = normalizeVersion(app.getVersion()) ?? '0.0.0'
+
+  if (currentVersion === '0.0.0') {
+    return {
+      checkedAt: new Date().toISOString(),
+      currentVersion,
+      errorMessage: null,
+      hasUpdate: false,
+      latestVersion: null,
+      releaseUrl: null,
+    }
+  }
+
+  try {
+    const response = await fetch(RELEASES_LATEST_URL, {
+      headers: {
+        Accept: 'text/html',
+        'User-Agent': `Termide/${currentVersion}`,
+      },
+      redirect: 'follow',
+    })
+
+    if (!response.ok) {
+      throw new Error(`GitHub responded with ${response.status}`)
+    }
+
+    const releaseUrl = response.url
+    const latestTag = releaseUrl.match(/\/tag\/(v?\d+\.\d+\.\d+)\/?$/)?.[1] ?? null
+    const latestVersion = latestTag ? normalizeVersion(latestTag) : null
+
+    if (!latestVersion) {
+      throw new Error('Could not determine the latest version from the GitHub release URL.')
+    }
+
+    return {
+      checkedAt: new Date().toISOString(),
+      currentVersion,
+      errorMessage: null,
+      hasUpdate: compareVersions(latestVersion, currentVersion) > 0,
+      latestVersion,
+      releaseUrl,
+    }
+  } catch (error) {
+    return {
+      checkedAt: new Date().toISOString(),
+      currentVersion,
+      errorMessage: error instanceof Error ? error.message : 'Unable to check for updates.',
+      hasUpdate: false,
+      latestVersion: null,
+      releaseUrl: null,
+    }
+  }
+}
+
+async function getAppUpdateStatus(options?: { force?: boolean }): Promise<AppUpdateStatus> {
+  const force = options?.force === true
+  const checkedAtMs = cachedAppUpdateStatus?.checkedAt
+    ? Date.parse(cachedAppUpdateStatus.checkedAt)
+    : Number.NaN
+  const isCachedValueFresh =
+    cachedAppUpdateStatus !== null &&
+    Number.isFinite(checkedAtMs) &&
+    Date.now() - checkedAtMs < UPDATE_CHECK_INTERVAL_MS
+
+  if (!force && isCachedValueFresh && cachedAppUpdateStatus) {
+    return cachedAppUpdateStatus
+  }
+
+  if (!appUpdateFetchPromise) {
+    appUpdateFetchPromise = fetchAppUpdateStatus()
+      .then((status) => {
+        cachedAppUpdateStatus = status
+        return status
+      })
+      .finally(() => {
+        appUpdateFetchPromise = null
+      })
+  }
+
+  return appUpdateFetchPromise
+}
 
 function getTerminalSettingsPath(): string {
   return path.join(app.getPath('userData'), 'terminal-settings.json')
@@ -979,6 +1091,8 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(RENDERER_DIST, 'index.html'))
   }
+
+  void getAppUpdateStatus()
 }
 
 function openSettingsWindow(sectionId?: string): void {
@@ -1349,6 +1463,10 @@ ipcMain.handle('app:quit', () => {
 
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
   await shell.openExternal(url)
+})
+
+ipcMain.handle('app:get-update-status', async (_event, options?: { force?: boolean }) => {
+  return getAppUpdateStatus(options)
 })
 
 ipcMain.handle('clipboard:smart-paste', () => {
