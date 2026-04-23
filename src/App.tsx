@@ -3242,13 +3242,14 @@ const ProjectWorkspace = forwardRef<
 								</div>
 								<input
 									ref={macroLauncherInputRef}
-									type="text"
+									type="search"
 									className="macro-launcher-input"
 									value={macroQuery}
 									onChange={(event) => {
 										setMacroQuery(event.target.value);
 										setSelectedMacroIndex(0);
 									}}
+									aria-label="Search commands"
 									placeholder="Search commands..."
 									spellCheck={false}
 									autoComplete="off"
