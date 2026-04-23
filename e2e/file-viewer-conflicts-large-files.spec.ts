@@ -1,7 +1,7 @@
 import { appendFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from './fixtures'
-import { fileExplorerItem, openFileExplorer, setMonacoValue, setProjectRoot } from './support/ui'
+import { activateDockTab, fileExplorerItem, openFileExplorer, setMonacoValue, setProjectRoot } from './support/ui'
 
 async function replaceFileAtomically(filePath: string, contents: string): Promise<void> {
   const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.swap`)
@@ -88,7 +88,7 @@ test('dirty file edits stay local until saved even after an external write', asy
     )
     .toContain('local draft')
 
-  await mainWindow.locator('.terminal-tab-title').filter({ hasText: 'conflict.txt' }).click()
+  await activateDockTab(mainWindow, 'conflict.txt')
   await appHarness.sendAppCommand('save-active')
   await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced')
   await expect.poll(() => workspace.readText('conflict.txt')).toBe('local draft\n')
@@ -128,7 +128,7 @@ test('large text files prompt for engine choice, truncate in performant mode, an
   await expect(mainWindow.locator('.file-status-bar')).toContainText('Performant')
   await expect(mainWindow.locator('.file-text-viewer__textarea')).toHaveValue(/Large file truncated in Performant mode/)
 
-  await mainWindow.locator('.terminal-tab-title').filter({ hasText: 'large.txt' }).click()
+  await activateDockTab(mainWindow, 'large.txt')
   await appHarness.sendAppCommand('save-active')
   await expect(mainWindow.locator('.error-banner')).toContainText(
     'Switch to Monaco before saving this large file so the full file contents are loaded.',

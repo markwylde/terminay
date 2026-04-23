@@ -54,6 +54,13 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         : null,
     [engine, fileInfo, mode],
   )
+  const fileInfoRef = useRef<FileInfo | null>(fileInfo)
+  const sessionStoreRef = useRef(sessionStore)
+  const truncatedForPerformanceRef = useRef(truncatedForPerformance)
+
+  fileInfoRef.current = fileInfo
+  sessionStoreRef.current = sessionStore
+  truncatedForPerformanceRef.current = truncatedForPerformance
 
   useEffect(() => {
     let isMounted = true
@@ -228,25 +235,26 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
       isDirty,
       isFocused: props.containerApi.activePanel?.id === props.api.id,
       onSave: async () => {
-        if (!fileInfo) {
+        const currentFileInfo = fileInfoRef.current
+        if (!currentFileInfo) {
           return false
         }
 
-        if (truncatedForPerformance) {
+        if (truncatedForPerformanceRef.current) {
           throw new Error('Switch to Monaco before saving this large file so the full file contents are loaded.')
         }
 
-        const nextInfo = await termideFileGateway.saveFile(fileInfo.path, draftBufferRef.current.getPayload())
+        const nextInfo = await termideFileGateway.saveFile(currentFileInfo.path, draftBufferRef.current.getPayload())
         setFileInfo(nextInfo)
         setIsDirty(false)
-        sessionStore?.setDirty(false)
+        sessionStoreRef.current?.setDirty(false)
         setConflict(false)
-        sessionStore?.setConflict({ kind: 'none' })
+        sessionStoreRef.current?.setConflict({ kind: 'none' })
         return true
       },
       preferredEngine: engine,
     })
-  }, [engine, fileInfo, isDirty, props, sessionStore, truncatedForPerformance])
+  }, [engine, fileInfo, isDirty, props])
 
   if (!fileInfo) {
     return <div className="file-panel file-panel--loading">Loading file…</div>

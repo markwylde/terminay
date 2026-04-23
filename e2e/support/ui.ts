@@ -23,6 +23,16 @@ export function fileExplorerItem(page: Page, name: string) {
   return page.locator('.file-explorer-tree-item').filter({ hasText: name }).first()
 }
 
+export async function activateDockTab(page: Page, title: string): Promise<void> {
+  const tab = page
+    .locator('.terminal-tab-content')
+    .filter({ has: page.locator('.terminal-tab-title', { hasText: title }) })
+    .first()
+
+  await tab.click()
+  await expect(tab).toHaveClass(/terminal-tab-content--active/)
+}
+
 export function contextMenuItem(page: Page, name: string) {
   return page.locator('.context-menu__item').filter({ hasText: name }).first()
 }

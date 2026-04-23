@@ -1,5 +1,5 @@
 import { expect, test } from './fixtures'
-import { fileExplorerItem, openFileExplorer, setMonacoValue, setProjectRoot } from './support/ui'
+import { activateDockTab, fileExplorerItem, openFileExplorer, setMonacoValue, setProjectRoot } from './support/ui'
 
 test('file viewer edits and saves text files without duplicating tabs', async ({
   appHarness,
@@ -26,7 +26,7 @@ test('file viewer edits and saves text files without duplicating tabs', async ({
   await setMonacoValue(mainWindow, 'saved through viewer\n')
   await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
 
-  await mainWindow.locator('.terminal-tab-title').filter({ hasText: 'notes.txt' }).click()
+  await activateDockTab(mainWindow, 'notes.txt')
   await appHarness.sendAppCommand('save-active')
   await expect.poll(() => workspace.readText('notes.txt')).toBe('saved through viewer\n')
 

@@ -826,9 +826,9 @@ function createAppMenu(): void {
           click: () => sendCommandToFocusedWindow('popout-active'),
         },
         {
-          label: 'Open Macro Launcher',
+          label: 'Open Command Bar',
           accelerator: 'CmdOrCtrl+L',
-          click: () => sendCommandToFocusedWindow('open-macro-launcher'),
+          click: () => sendCommandToFocusedWindow('open-command-bar'),
         },
       ],
     },
@@ -1220,8 +1220,8 @@ ipcMain.handle('app:open-macros', () => {
 })
 
 if (process.env.TERMIDE_TEST === '1') {
-  ipcMain.handle('test:send-app-command', (_event, command: AppCommand) => {
-    sendCommandToFocusedWindow(command)
+  ipcMain.handle('test:send-app-command', (event, command: AppCommand) => {
+    event.sender.send('app:command', command)
   })
 }
 
