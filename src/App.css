@@ -14,7 +14,8 @@
   --tab-text-selected: #ffffff;
   --tab-border: rgba(255, 255, 255, 0.08);
   --terminal-tab-active-accent: #57b7ff;
-  --tab-height: 36px;
+  --tab-height: 40px;
+  --window-corner-radius: 10px;
 }
 
 .project-tabbar {
@@ -22,21 +23,42 @@
   display: flex;
   align-items: stretch;
   background: var(--tabbar-bg);
-  border-bottom: 1px solid var(--tab-border);
   -webkit-app-region: drag;
   font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  padding: 0 8px;
+  padding: 0;
 }
 
 .app-shell--macos .project-tabbar {
   padding-left: 86px;
 }
 
+.project-tabbar > :last-child > button {
+  border-top-right-radius: var(--window-corner-radius);
+}
+
+.project-tab-sidebar-toggle-box {
+  display: flex;
+  align-items: stretch;
+  padding: 5px 4px 5px 0;
+  -webkit-app-region: no-drag;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+.project-tab-add-box {
+  display: flex;
+  align-items: stretch;
+  padding: 5px 4px 5px 0;
+  -webkit-app-region: no-drag;
+  height: 100%;
+  flex-shrink: 0;
+}
+
 .remote-access-status {
   margin-left: auto;
   display: flex;
-  align-items: center;
-  padding: 0 12px;
+  align-items: stretch;
+  padding: 5px 4px 5px 12px;
   -webkit-app-region: no-drag;
   position: relative;
   height: 100%;
@@ -44,21 +66,19 @@
 
 .remote-access-button {
   all: unset;
-  height: 26px;
-  padding: 0 14px;
+  padding: 0 8px 0 10px;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 4px;
   color: var(--tab-text-active);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 7px;
+  gap: 6px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.01em;
   transition: all 150ms ease;
-  align-self: center;
+  min-width: 76px;
 }
 
 .remote-access-button:hover:not(:disabled) {
@@ -112,9 +132,9 @@
 }
 
 .remote-access-button__chevron {
-  font-size: 10px;
-  opacity: 0.55;
-  transform: translateY(1px);
+  opacity: 0.6;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .remote-access-status--open .remote-access-button {
@@ -273,16 +293,15 @@
 }
 
 .remote-pairing-modal {
-  width: min(540px, 100%);
   max-height: min(94vh, 920px);
-  padding: 32px;
   overflow: auto;
+  padding-top: 8px;
 }
 
 .remote-pairing-modal__copy {
-  margin: 0 0 32px;
-  color: rgba(220, 226, 240, 0.75);
-  font-size: 15px;
+  margin: 0 0 24px;
+  color: rgba(214, 227, 240, 0.65);
+  font-size: 14px;
   line-height: 1.6;
   text-align: center;
 }
@@ -291,7 +310,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 40px;
+  gap: 32px;
 }
 
 .remote-pairing-modal__qr-section {
@@ -299,19 +318,19 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 32px;
+  gap: 24px;
 }
 
 .remote-pairing-modal__qr-card {
-  width: 300px;
-  height: 300px;
-  border-radius: 24px;
+  width: 260px;
+  height: 260px;
+  border-radius: 16px;
   background: #ffffff;
-  padding: 24px;
+  padding: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .remote-pairing-modal__qr {
@@ -327,12 +346,12 @@
 }
 
 .remote-pairing-modal__primary-link h3 {
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(220, 226, 240, 0.45);
+  color: rgba(214, 227, 240, 0.4);
 }
 
 .remote-pairing-modal__address-box {
@@ -343,13 +362,13 @@
 }
 
 .remote-pairing-modal__address-text {
-  background: rgba(77, 181, 255, 0.06);
-  border: 1px solid rgba(77, 181, 255, 0.15);
-  border-radius: 12px;
-  padding: 14px 18px;
+  background: rgba(87, 183, 255, 0.08);
+  border: 1px solid rgba(87, 183, 255, 0.2);
+  border-radius: 10px;
+  padding: 12px 16px;
   color: #bfe7ff;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
   text-align: center;
   word-break: break-all;
@@ -358,41 +377,40 @@
 
 .remote-pairing-modal__copy-btn {
   appearance: none;
-  background: rgba(77, 181, 255, 0.12);
-  border: 1px solid rgba(77, 181, 255, 0.3);
-  border-radius: 10px;
+  background: rgba(87, 183, 255, 0.12);
+  border: 1px solid rgba(87, 183, 255, 0.25);
+  border-radius: 8px;
   color: #8dc8ff;
-  padding: 10px 20px;
-  font-size: 13px;
+  padding: 8px 16px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 150ms ease;
+  transition: all 120ms ease;
   width: fit-content;
   align-self: center;
 }
 
 .remote-pairing-modal__copy-btn:hover {
-  background: rgba(77, 181, 255, 0.2);
-  border-color: rgba(77, 181, 255, 0.5);
-  transform: translateY(-1px);
+  background: rgba(87, 183, 255, 0.2);
+  border-color: rgba(87, 183, 255, 0.4);
 }
 
 .remote-pairing-modal__footer-details {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 32px;
-  padding-top: 32px;
+  gap: 24px;
+  padding-top: 24px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .remote-pairing-modal__additional-section h3 {
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(220, 226, 240, 0.45);
+  color: rgba(214, 227, 240, 0.4);
   text-align: center;
 }
 
@@ -400,7 +418,7 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .remote-pairing-modal__address-row-btn {
@@ -411,29 +429,28 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 18px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
   cursor: pointer;
-  transition: all 150ms ease;
+  transition: all 120ms ease;
 }
 
 .remote-pairing-modal__address-row-btn:hover {
   background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .remote-pairing-modal__address-row-btn--active {
-  background: rgba(87, 183, 255, 0.08);
-  border-color: rgba(87, 183, 255, 0.4);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  background: rgba(87, 183, 255, 0.06);
+  border-color: rgba(87, 183, 255, 0.3);
 }
 
 .remote-pairing-modal__address-label {
-  color: rgba(220, 226, 240, 0.7);
+  color: rgba(214, 227, 240, 0.6);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
+  font-size: 12px;
   text-align: left;
   word-break: break-all;
   flex: 1;
@@ -445,35 +462,35 @@
 }
 
 .remote-pairing-modal__address-active-badge {
-  background: #57b7ff;
-  color: #000;
-  font-size: 10px;
+  background: #4db5ff;
+  color: #0d1117;
+  font-size: 9px;
   font-weight: 800;
   text-transform: uppercase;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 2px 6px;
+  border-radius: 4px;
   letter-spacing: 0.02em;
 }
 
 .remote-pairing-modal__status-info {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   text-align: center;
 }
 
 .remote-pairing-modal__tip {
-  color: rgba(220, 226, 240, 0.5);
-  font-size: 13px;
-  line-height: 1.6;
+  color: rgba(214, 227, 240, 0.45);
+  font-size: 12px;
+  line-height: 1.5;
   max-width: 400px;
   margin: 0 auto;
 }
 
 .remote-pairing-modal__expires-text {
   margin: 0;
-  color: rgba(220, 226, 240, 0.35);
-  font-size: 11px;
+  color: rgba(214, 227, 240, 0.3);
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -586,6 +603,9 @@
   border-radius: 4px;
   margin: 0 8px 0 2px;
   opacity: 0.3;
+  position: relative;
+  z-index: 1;
+  -webkit-app-region: no-drag;
 }
 
 .project-tab--active .project-tab-close,
@@ -604,14 +624,12 @@
 }
 
 .project-tab-add {
-  width: 24px;
-  height: 24px;
+  height: 100%;
+  aspect-ratio: 1;
   border-radius: 4px;
-  margin-left: 4px;
   background: rgba(255, 255, 255, 0.05);
   opacity: 0.6;
   -webkit-app-region: no-drag;
-  align-self: center;
 }
 
 .project-tab-add:hover {
@@ -620,11 +638,10 @@
 }
 
 .project-tab-sidebar-toggle {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  margin: 4px 4px;
-  align-self: center;
+  height: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border-radius: 4px;
   color: rgba(220, 226, 240, 0.62);
   background: rgba(255, 255, 255, 0.04);
   -webkit-app-region: no-drag;
@@ -652,6 +669,7 @@
   background: var(--tabbar-bg) !important;
   height: 34px !important;
   border-bottom: 1px solid var(--tab-border) !important;
+  margin-left: 4px;
 }
 
 .workspace .dv-tabs-container {
@@ -670,6 +688,8 @@
   height: 100% !important;
   overflow: hidden;
   position: relative;
+  border-top-left-radius: 8px !important;
+  border-top-right-radius: 8px !important;
   transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
 
@@ -707,6 +727,8 @@
   background: transparent;
   color: var(--tab-text);
   border-right: 0;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
   transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
   min-width: 120px;
   max-width: 220px;
@@ -1223,25 +1245,71 @@
 
 .project-edit-modal {
   width: min(420px, 100%);
-  border-radius: 12px;
-  border: 1px solid var(--tab-border);
-  background: #111316;
-  color: #dce2f0;
-  padding: 24px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #161b22;
+  color: #d6e3f0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.2),
+    0 12px 32px rgba(0, 0, 0, 0.5);
 }
 
 .project-edit-modal--wide {
   width: min(560px, 100%);
 }
 
-.project-edit-modal h2 {
+.project-edit-modal-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: move;
+  user-select: none;
+}
+
+.project-edit-modal-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 13px;
   font-weight: 600;
+  color: #f0f6fc;
+}
+
+.project-edit-modal-close {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  appearance: none;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(214, 227, 240, 0.45);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.project-edit-modal-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.project-edit-modal > :not(.project-edit-modal-titlebar) {
+  margin-left: 20px;
+  margin-right: 20px;
+}
+
+.project-edit-modal > :last-child {
+  margin-bottom: 20px;
 }
 
 .project-edit-modal label {
@@ -1308,53 +1376,17 @@
   flex: 1;
 }
 
-.emoji-picker-field {
-  position: relative;
-  display: flex;
-}
-
-.emoji-picker-trigger {
-  width: 40px;
-  height: 40px;
-  appearance: none;
-  border: 1px solid var(--tab-border);
-  border-radius: 6px;
-  background: #090b0e;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  cursor: pointer;
-}
-
-.emoji-picker-trigger:hover {
-  background: var(--tab-bg-hover);
-}
-
-.emoji-picker-popover {
-  position: absolute;
-  z-index: 110;
-  top: 50px;
-  left: 0;
-}
-
-.emoji-picker-popover--hidden {
-  opacity: 0;
-  pointer-events: none;
-  visibility: hidden;
-}
-
 .project-edit-preview {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 36px;
+  height: 38px;
   border-radius: 6px;
   background: #090b0e;
   padding: 0 12px;
   font-size: 13px;
   font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.05);
   border-top: 2px solid var(--project-color, transparent);
 }
 
@@ -1674,7 +1706,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 .project-edit-actions button {
@@ -1684,8 +1716,13 @@
 }
 
 .project-edit-actions button[type='submit'] {
-  background: #19416c;
-  border-color: #2b5988;
+  background: #316dca;
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.project-edit-actions button[type='submit']:hover {
+  background: #4c8eda;
 }
 
 /* Terminal & Workspace */

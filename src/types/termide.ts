@@ -1,5 +1,6 @@
 export type AppCommand =
   | 'new-terminal'
+  | 'new-project'
   | 'save-active'
   | 'split-horizontal'
   | 'split-vertical'
@@ -166,6 +167,45 @@ export type TerminalZoomMessage = {
   zoomLevel: number
 }
 
+export type ProjectEditWindowDraft = {
+  color: string
+  emoji: string
+  rootFolder: string
+  title: string
+}
+
+export type ProjectEditWindowResult = ProjectEditWindowDraft
+
+export type TerminalEditWindowDraft = {
+  color: string
+  emoji: string
+  inheritsProjectColor: boolean
+  projectColor: string
+  title: string
+}
+
+export type TerminalEditWindowResult = TerminalEditWindowDraft
+
+export type EditWindowState =
+  | {
+      draft: ProjectEditWindowDraft
+      kind: 'project'
+    }
+  | {
+      draft: TerminalEditWindowDraft
+      kind: 'terminal'
+    }
+
+export type EditWindowResult =
+  | {
+      result: ProjectEditWindowResult
+      kind: 'project'
+    }
+  | {
+      result: TerminalEditWindowResult
+      kind: 'terminal'
+    }
+
 export interface TermideApi {
   getHomePath: () => Promise<string>
   listDirectory: (dirPath: string) => Promise<FileExplorerEntry[]>
@@ -199,6 +239,7 @@ export interface TermideApi {
       title?: string
       emoji?: string
       color?: string
+      inheritsProjectColor?: boolean
       viewportWidth?: number
       viewportHeight?: number
       projectId?: string
@@ -223,6 +264,10 @@ export interface TermideApi {
   waitForTerminalInactivity: (id: string, durationMs: number) => Promise<void>
   smartPasteClipboard: () => Promise<string>
   openExternal: (url: string) => Promise<void>
+  openProjectEditWindow: (draft: ProjectEditWindowDraft) => Promise<ProjectEditWindowResult | null>
+  openTerminalEditWindow: (draft: TerminalEditWindowDraft) => Promise<TerminalEditWindowResult | null>
+  getEditWindowState: () => Promise<EditWindowState | null>
+  submitEditWindowResult: (result: EditWindowResult) => Promise<void>
   openSettingsWindow: (options?: { sectionId?: string }) => Promise<void>
   getRemoteAccessStatus: () => Promise<RemoteAccessStatus>
   toggleRemoteAccessServer: () => Promise<RemoteAccessStatus>

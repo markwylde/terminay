@@ -1,5 +1,6 @@
 import { detectPreviewKind } from '../../../services/fileViewer'
 import type { FileInfo } from '../../../types/fileViewer'
+import { languageFromFilePath, renderHighlightedCodeBlock } from '../codeHighlight'
 import { ImagePreview } from '../preview/ImagePreview'
 import { MarkdownPreview } from '../preview/MarkdownPreview'
 import { PdfPreview } from '../preview/PdfPreview'
@@ -14,6 +15,7 @@ export function PreviewViewer({ file, previewSourceUrl, text }: PreviewViewerPro
   const previewKind = detectPreviewKind(file)
   const fileUrl = previewSourceUrl ?? `file://${file.path}`
   const basePath = file.path.replace(/[/\\][^/\\]+$/, '')
+  const language = languageFromFilePath(file.path)
 
   switch (previewKind) {
     case 'image':
@@ -23,7 +25,11 @@ export function PreviewViewer({ file, previewSourceUrl, text }: PreviewViewerPro
     case 'pdf':
       return <PdfPreview src={fileUrl} />
     case 'text':
-      return <pre className="file-preview-text">{text}</pre>
+      return (
+        <pre className={`file-preview-text${language?.includes('javascript') || language?.includes('typescript') ? ' file-preview-text--highlighted' : ''}`}>
+          {renderHighlightedCodeBlock(text, file.path)}
+        </pre>
+      )
     case 'hex':
     case 'unsupported':
       return <div className="file-preview-unsupported">Preview is not available for this file.</div>

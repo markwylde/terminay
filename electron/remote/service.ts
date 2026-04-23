@@ -31,6 +31,7 @@ import { ensureTlsMaterial } from './tls'
 type TerminalRemoteMetadata = {
   color: string
   emoji: string
+  inheritsProjectColor?: boolean
   title: string
   viewportHeight?: number
   viewportWidth?: number
@@ -257,7 +258,7 @@ export class RemoteAccessService {
         exitCode: null,
         metadata: {
           color: '#4db5ff',
-          emoji: '🖥️',
+          emoji: '',
           title: 'Terminal',
           viewportHeight: 0,
           viewportWidth: 0,
