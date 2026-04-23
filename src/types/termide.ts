@@ -163,6 +163,14 @@ export type FileExplorerEntry = {
   path: string
 }
 
+export type FileExplorerGitStatus = 'modified' | 'new'
+
+export type FileExplorerGitStatuses = {
+  gitAvailable: boolean
+  repoRoot: string | null
+  statuses: Record<string, FileExplorerGitStatus>
+}
+
 export type TerminalZoomMessage = {
   zoomLevel: number
 }
@@ -218,6 +226,7 @@ export type EditWindowResult =
 export interface TermideApi {
   getHomePath: () => Promise<string>
   listDirectory: (dirPath: string) => Promise<FileExplorerEntry[]>
+  getFileExplorerGitStatuses: (dirPath: string) => Promise<FileExplorerGitStatuses>
   getFileInfo: (filePath: string) => Promise<FileViewerFileInfo>
   readFileBytes: (options: { path: string; start: number; length: number }) => Promise<FileViewerByteRange>
   readFileText: (options: {

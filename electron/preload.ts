@@ -4,6 +4,7 @@ import type { TerminalSettings } from '../src/types/settings'
 import type {
   AppCommand,
   FileExplorerEntry,
+  FileExplorerGitStatuses,
   FileViewerByteRange,
   FileViewerFileInfo,
   FileViewerGitDiff,
@@ -34,6 +35,8 @@ type ElectronListener<T> = (_event: Electron.IpcRendererEvent, payload: T) => vo
 contextBridge.exposeInMainWorld('termide', {
   getHomePath: () => ipcRenderer.invoke('fs:get-home-path') as Promise<string>,
   listDirectory: (dirPath: string) => ipcRenderer.invoke('fs:list-directory', { dirPath }) as Promise<FileExplorerEntry[]>,
+  getFileExplorerGitStatuses: (dirPath: string) =>
+    ipcRenderer.invoke('fs:get-git-statuses', { dirPath }) as Promise<FileExplorerGitStatuses>,
   getFileInfo: (filePath: string) => ipcRenderer.invoke('file:get-info', { path: filePath }) as Promise<FileViewerFileInfo>,
   readFileBytes: (options: { path: string; start: number; length: number }) =>
     ipcRenderer.invoke('file:read-bytes', options) as Promise<FileViewerByteRange>,
