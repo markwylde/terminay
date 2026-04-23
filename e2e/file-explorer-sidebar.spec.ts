@@ -1,5 +1,9 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
 import { contextMenuItem, fileExplorerItem, openFileExplorer, setProjectRoot } from './support/ui'
+
+const execFileAsync = promisify(execFile)
 
 test('file explorer can browse folders and open files', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
@@ -76,4 +80,40 @@ test('file explorer context menu supports create rename delete and open terminal
   await expect(contextMenuItem(mainWindow, 'Open terminal here')).toBeVisible()
   await contextMenuItem(mainWindow, 'Open terminal here').click()
   await expect(terminalCloses).toHaveCount(2)
+})
+
+test('file explorer colors git new and modified files like VS Code', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'sidebar-git-status',
+    seed: {
+      directories: ['src/components', 'docs'],
+      files: {
+        'README.md': 'initial readme\n',
+        'src/components/Button.tsx': 'export const Button = () => null\n',
+        'docs/guide.md': 'tracked guide\n',
+      },
+    },
+  })
+
+  await execFileAsync('git', ['init'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Termide E2E'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'termide@example.com'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
+
+  await workspace.writeText('README.md', 'initial readme\nwith edits\n')
+  await workspace.writeText('docs/guide.md', 'tracked guide\nupdated\n')
+  await workspace.writeText('src/components/NewBadge.tsx', 'export const NewBadge = () => null\n')
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const readme = fileExplorerItem(mainWindow, 'README.md')
+  const srcFolder = fileExplorerItem(mainWindow, 'src')
+  const docsFolder = fileExplorerItem(mainWindow, 'docs')
+
+  await expect(readme).toBeVisible()
+  await expect(readme.locator('.file-explorer-tree-name')).toHaveCSS('color', 'rgb(226, 192, 141)')
+  await expect(srcFolder.locator('.file-explorer-tree-name')).toHaveCSS('color', 'rgb(115, 201, 145)')
+  await expect(docsFolder.locator('.file-explorer-tree-name')).toHaveCSS('color', 'rgb(226, 192, 141)')
 })

@@ -1411,6 +1411,10 @@ ipcMain.handle('fs:list-directory', async (_event, payload: { dirPath: string })
   return readDirectoryEntries(payload.dirPath)
 })
 
+ipcMain.handle('fs:get-git-statuses', async (_event, payload: { dirPath: string }) => {
+  return gitDiffService.getExplorerStatuses(payload.dirPath)
+})
+
 ipcMain.handle('fs:rename', async (_event, { oldPath, newPath }: { oldPath: string; newPath: string }) => {
   await rename(oldPath, newPath)
 })
