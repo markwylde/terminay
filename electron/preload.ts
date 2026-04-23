@@ -93,6 +93,8 @@ contextBridge.exposeInMainWorld('termide', {
   smartPasteClipboard: () => ipcRenderer.invoke('clipboard:smart-paste') as Promise<string>,
 
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+  getAppUpdateStatus: (options?: { force?: boolean }) =>
+    ipcRenderer.invoke('app:get-update-status', options),
   openProjectEditWindow: (draft: ProjectEditWindowDraft) =>
     ipcRenderer.invoke('app:open-project-edit', draft) as Promise<ProjectEditWindowResult | null>,
   openTerminalEditWindow: (draft: TerminalEditWindowDraft) =>
