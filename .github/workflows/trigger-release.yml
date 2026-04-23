@@ -153,14 +153,7 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           TARGET_VERSION="${TAG#v}"
-          CURRENT_VERSION=$(node -p "require('./package.json').version")
-
-          if [ "$CURRENT_VERSION" = "$TARGET_VERSION" ]; then
-            echo "package.json already uses version $TARGET_VERSION"
-            exit 0
-          fi
-
-          npm version "$TARGET_VERSION" --no-git-tag-version
+          node scripts/sync-package-version.mjs "$TARGET_VERSION"
 
       - name: Build packaged app
         env:
