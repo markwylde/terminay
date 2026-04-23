@@ -21,11 +21,11 @@ export async function sendAppCommand(page: Page, command: AppCommand): Promise<v
 }
 
 export async function openMacroLauncher(page: Page, options?: { attempts?: number }): Promise<void> {
-  const launcher = page.getByRole('dialog', { name: 'Macro launcher' })
+  const launcher = page.getByRole('dialog', { name: 'Command bar' })
   const attempts = options?.attempts ?? 3
 
   for (let attempt = 0; attempt < attempts; attempt++) {
-    await sendAppCommand(page, 'open-macro-launcher')
+    await sendAppCommand(page, 'open-command-bar')
 
     try {
       await launcher.waitFor({ state: 'visible', timeout: 2_000 })

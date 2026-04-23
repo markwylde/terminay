@@ -5,7 +5,7 @@ export type AppCommand =
   | 'split-vertical'
   | 'popout-active'
   | 'close-active'
-  | 'open-macro-launcher'
+  | 'open-command-bar'
 
 export type FileViewerTextEncoding = 'utf8' | 'utf-8' | 'utf16le' | 'utf-16le' | 'latin1' | 'ascii'
 
