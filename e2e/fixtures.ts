@@ -30,6 +30,56 @@ type ElectronFixtures = {
   userDataDir: string
 }
 
+async function closeElectronAppGracefully(electronApp: ElectronApplication): Promise<void> {
+  const closeTimeoutMs = process.env.CI ? 15_000 : 5_000
+
+  const raceWithTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        setTimeout(() => reject(new Error(message)), timeoutMs)
+      }),
+    ])
+  }
+
+  try {
+    await raceWithTimeout(electronApp.close(), closeTimeoutMs, 'Timed out waiting for Electron to close gracefully.')
+    return
+  } catch {
+    // Fall through to a harder shutdown path to keep teardown deterministic in CI.
+  }
+
+  try {
+    await electronApp.evaluate(({ BrowserWindow, app }) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          window.destroy()
+        }
+      }
+
+      app.exit(0)
+    })
+  } catch {
+    // If the main process is already gone, the process kill fallback below will no-op.
+  }
+
+  if (electronApp.process().exitCode !== null) {
+    return
+  }
+
+  try {
+    await raceWithTimeout(
+      electronApp.waitForEvent('close', { timeout: closeTimeoutMs }),
+      closeTimeoutMs,
+      'Timed out waiting for Electron to exit after forcing shutdown.',
+    )
+  } catch {
+    if (electronApp.process().exitCode === null) {
+      electronApp.process().kill('SIGKILL')
+    }
+  }
+}
+
 export const test = base.extend<ElectronFixtures>({
   // biome-ignore lint/correctness/noEmptyPattern: Playwright fixture callbacks require an object pattern here.
   userDataDir: async ({}, use) => {
@@ -68,7 +118,7 @@ export const test = base.extend<ElectronFixtures>({
     try {
       await use(electronApp)
     } finally {
-      await electronApp.close()
+      await closeElectronAppGracefully(electronApp)
     }
   },
 
