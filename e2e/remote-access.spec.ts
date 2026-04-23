@@ -29,7 +29,7 @@ test('starts remote access from the host menu and shows a pairing qr modal', asy
   await expect(pairingDialog.getByText('Open this address in your browser')).toBeVisible()
   await expect(pairingDialog.getByText(/^Expires /)).toBeVisible()
 
-  await pairingDialog.getByRole('button', { name: 'Close' }).click()
+  await pairingDialog.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(pairingDialog).toHaveCount(0)
 
   await openRemoteMenu(mainWindow)
