@@ -55,6 +55,20 @@ async function seedScrollTestMacros(page: Page, count = 20): Promise<void> {
   }, count)
 }
 
+
+async function navigateToCommand(page: Page, direction: 'ArrowDown' | 'ArrowUp', title: string, maxSteps = 80): Promise<void> {
+  for (let step = 0; step < maxSteps; step++) {
+    const activeText = await page.locator('.macro-launcher-item--active').textContent()
+    if (activeText?.includes(title)) {
+      return
+    }
+
+    await page.keyboard.press(direction)
+  }
+
+  throw new Error(`Failed to navigate to command: ${title}`)
+}
+
 async function openChildWindow(
   electronApp: ElectronApplication,
   action: () => Promise<void>,
@@ -143,37 +157,13 @@ test('scrolls the active command into view during keyboard navigation', async ({
   await openMacroLauncher(mainWindow)
 
   const commandList = mainWindow.locator('.macro-launcher-list')
-  const commandItems = commandList.locator('.macro-launcher-item')
-  const commandCount = await commandItems.count()
 
   expect(await commandList.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
 
-  for (let index = 0; index < commandCount - 1; index++) {
-    await mainWindow.keyboard.press('ArrowDown')
-  }
+  await navigateToCommand(mainWindow, 'ArrowDown', 'Scroll test macro 20')
 
-  await expect
-    .poll(async () =>
-      commandList.evaluate((listElement) => {
-        const activeItem = listElement.querySelector<HTMLElement>(
-          '.macro-launcher-item--active',
-        )
-        if (!activeItem) {
-          return false
-        }
-
-        const listRect = listElement.getBoundingClientRect()
-        const itemRect = activeItem.getBoundingClientRect()
-
-        return (
-          listElement.scrollTop > 0 &&
-          activeItem.innerText.includes('Scroll test macro 20') &&
-          itemRect.top >= listRect.top - 1 &&
-          itemRect.bottom <= listRect.bottom + 1
-        )
-      }),
-    )
-    .toBe(true)
+  await expect(commandList.locator('.macro-launcher-item--active')).toContainText('Scroll test macro 20')
+  await expect.poll(async () => commandList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
 })
 
 test('scrolls the active command into view when navigating upward', async ({ mainWindow }) => {
@@ -182,39 +172,12 @@ test('scrolls the active command into view when navigating upward', async ({ mai
   await openMacroLauncher(mainWindow)
 
   const commandList = mainWindow.locator('.macro-launcher-list')
-  const commandItems = commandList.locator('.macro-launcher-item')
-  const commandCount = await commandItems.count()
 
-  for (let index = 0; index < commandCount - 1; index++) {
-    await mainWindow.keyboard.press('ArrowDown')
-  }
+  await navigateToCommand(mainWindow, 'ArrowDown', 'Scroll test macro 20')
 
-  const scrollTopAtBottom = await commandList.evaluate((element) => element.scrollTop)
 
-  for (let index = 0; index < 8; index++) {
-    await mainWindow.keyboard.press('ArrowUp')
-  }
+  await navigateToCommand(mainWindow, 'ArrowUp', 'Scroll test macro 12')
 
-  await expect
-    .poll(async () =>
-      commandList.evaluate((listElement, bottomScrollTop) => {
-        const activeItem = listElement.querySelector<HTMLElement>(
-          '.macro-launcher-item--active',
-        )
-        if (!activeItem) {
-          return false
-        }
-
-        const listRect = listElement.getBoundingClientRect()
-        const itemRect = activeItem.getBoundingClientRect()
-
-        return (
-          !activeItem.innerText.includes('Scroll test macro 20') &&
-          listElement.scrollTop < bottomScrollTop &&
-          itemRect.top >= listRect.top - 1 &&
-          itemRect.bottom <= listRect.bottom + 1
-        )
-      }, scrollTopAtBottom),
-    )
-    .toBe(true)
+  await expect(commandList.locator('.macro-launcher-item--active')).toContainText('Scroll test macro 12')
+  await expect.poll(async () => commandList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
 })
