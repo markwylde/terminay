@@ -1,5 +1,5 @@
 import type { IDockviewPanelProps } from 'dockview'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   LARGE_FILE_THRESHOLD_BYTES,
   createFileDraftBuffer,
@@ -8,6 +8,7 @@ import {
   termideFileGateway,
 } from '../../services/fileViewer'
 import type { FileInfo, FileViewerEngine, GitFileDiff } from '../../types/fileViewer'
+import type { FileViewerGitRepoInfo } from '../../types/termide'
 import { FileConflictBanner } from './FileConflictBanner'
 import { FileLargeFileChooser } from './FileLargeFileChooser'
 import { FileModeSwitcher } from './FileModeSwitcher'
@@ -36,6 +37,9 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const [engine, setEngine] = useState<FileViewerEngine>(preferredEngine)
   const [mode, setMode] = useState(initialMode ?? 'preview')
   const [diff, setDiff] = useState<GitFileDiff | null>(null)
+  const [diffError, setDiffError] = useState<string | null>(null)
+  const [diffStatus, setDiffStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [gitRepoInfo, setGitRepoInfo] = useState<FileViewerGitRepoInfo | null>(null)
   const [isDirty, setIsDirty] = useState(false)
   const [conflict, setConflict] = useState(false)
   const [showEngineChoice, setShowEngineChoice] = useState(false)
@@ -43,6 +47,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const [previewSourceUrl, setPreviewSourceUrl] = useState<string | null>(null)
   const previewObjectUrlRef = useRef<string | null>(null)
   const draftBufferRef = useRef(createFileDraftBuffer({ text: '' }))
+  const isMountedRef = useRef(true)
 
   const sessionStore = useMemo(
     () =>
@@ -61,6 +66,50 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   fileInfoRef.current = fileInfo
   sessionStoreRef.current = sessionStore
   truncatedForPerformanceRef.current = truncatedForPerformance
+
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
+  const refreshDiff = useCallback(
+    async (targetPath: string, options?: { keepPrevious?: boolean }) => {
+      if (!isMountedRef.current) {
+        return
+      }
+      if (!options?.keepPrevious) {
+        setDiff(null)
+      }
+      setDiffError(null)
+      setDiffStatus('loading')
+
+      try {
+        const [nextRepoInfo, nextDiff] = await Promise.all([
+          termideFileGateway.getGitRepoInfo(targetPath),
+          termideFileGateway.getFileDiff(targetPath),
+        ])
+        if (!isMountedRef.current) {
+          return
+        }
+        setGitRepoInfo(nextRepoInfo)
+        setDiff(nextDiff)
+        setDiffStatus('ready')
+      } catch (error) {
+        if (!isMountedRef.current) {
+          return
+        }
+        setGitRepoInfo(null)
+        if (!options?.keepPrevious) {
+          setDiff(null)
+        }
+        setDiffError(error instanceof Error ? error.message : String(error))
+        setDiffStatus('error')
+      }
+    },
+    [],
+  )
 
   useEffect(() => {
     let isMounted = true
@@ -109,15 +158,8 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         return
       }
 
-      try {
-        const nextDiff = await termideFileGateway.getFileDiff(filePath)
-        if (isMounted) {
-          setDiff(nextDiff)
-        }
-      } catch {
-        if (isMounted) {
-          setDiff(null)
-        }
+      if (isMounted) {
+        void refreshDiff(filePath)
       }
     }
 
@@ -130,7 +172,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         previewObjectUrlRef.current = null
       }
     }
-  }, [filePath, preferredEngine, props.api])
+  }, [filePath, preferredEngine, props.api, refreshDiff])
 
   useEffect(() => {
     if (!fileInfo) {
@@ -220,13 +262,15 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
       } else if (mode === 'hex') {
         setTruncatedForPerformance(false)
       }
+
+      void refreshDiff(nextInfo.path, { keepPrevious: true })
     })
 
     return () => {
       dispose()
       void termideFileGateway.unwatchFile(fileInfo.path)
     }
-  }, [fileInfo, isDirty, mode, sessionStore])
+  }, [fileInfo, isDirty, mode, refreshDiff, sessionStore])
 
   useEffect(() => {
     props.api.updateParameters({
@@ -250,21 +294,25 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         sessionStoreRef.current?.setDirty(false)
         setConflict(false)
         sessionStoreRef.current?.setConflict({ kind: 'none' })
+        await refreshDiff(nextInfo.path)
         return true
       },
       preferredEngine: engine,
     })
-  }, [engine, fileInfo, isDirty, props])
+  }, [engine, fileInfo, isDirty, props, refreshDiff])
 
   if (!fileInfo) {
     return <div className="file-panel file-panel--loading">Loading file…</div>
   }
 
   const capabilities = detectFileCapabilities(fileInfo)
+  const canDiff = gitRepoInfo?.canDiff === true || diffStatus === 'loading'
   const effectiveMode =
     mode === 'preview' && !capabilities.canPreview
       ? capabilities.fallbackMode
-      : mode
+      : mode === 'diff' && !canDiff
+        ? capabilities.fallbackMode
+        : mode
 
   return (
     <div className="file-panel">
@@ -292,7 +340,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         <FileModeSwitcher
           activeMode={mode}
           disabledModes={{
-            diff: !capabilities.canDiff,
+            diff: !canDiff,
             preview: !capabilities.canPreview,
             text: !capabilities.canEditText,
           }}
@@ -349,7 +397,15 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
             }}
           />
         ) : null}
-        {effectiveMode === 'diff' ? <DiffViewer diff={diff} layout={sessionStore?.getState().diffLayout ?? 'side-by-side'} /> : null}
+        {effectiveMode === 'diff' ? (
+          <DiffViewer
+            diff={diff}
+            error={diffError}
+            filePath={fileInfo.path}
+            isLoading={diffStatus === 'loading'}
+            layout={sessionStore?.getState().diffLayout ?? 'side-by-side'}
+          />
+        ) : null}
       </div>
 
       <FileStatusBar file={fileInfo} engine={engine} isDirty={isDirty} />

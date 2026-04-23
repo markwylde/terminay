@@ -31,11 +31,13 @@ export type TerminalPanelParams = {
   sessionId: string
   color?: string
   emoji?: string
+  inheritsProjectColor?: boolean
   isFocused?: boolean
   onCancelMacroRun?: (runId: string) => void
   onClearFinishedMacroRuns?: () => void
   onClearMacroRun?: (runId: string) => void
   macroRuns?: TerminalTabMacroRun[]
+  projectColor?: string
 }
 
 const DEFAULT_TERMINAL_TAB_COLOR = '#0a0a0a'

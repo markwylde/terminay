@@ -1,13 +1,12 @@
-import data from '@emoji-mart/data';
 import type { Direction, DockviewApi, DockviewReadyEvent } from 'dockview';
 import { DockviewReact, getPanelData } from 'dockview';
 import { AnimatePresence, motion, Reorder } from 'framer-motion';
 import {
 	CSSProperties,
-	FormEvent,
 	forwardRef,
 	type JSX,
 	type MouseEvent,
+	type ReactNode,
 	useCallback,
 	useEffect,
 	useImperativeHandle,
@@ -15,8 +14,8 @@ import {
 	useRef,
 	useState,
 } from 'react';
-import { EmojiPicker } from './components/EmojiPicker';
 import {
+	ChevronDown,
 	FileEdit,
 	FolderPlus,
 	PlusSquare,
@@ -68,7 +67,8 @@ type ProjectWorkspaceProps = {
 	isActive: boolean;
 	isMac: boolean;
 	macros: MacroDefinition[];
-	onEditProject: (projectId: string) => void;
+	onAddProject: () => void;
+	onEditProject: (projectId: string) => Promise<void>;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
 	popoutUrl: string;
 	project: ProjectTab;
@@ -80,17 +80,102 @@ const DEFAULT_FILE_EXPLORER_WIDTH = 280;
 const MIN_FILE_EXPLORER_WIDTH = 180;
 const MAX_FILE_EXPLORER_WIDTH = 520;
 const FILE_EXPLORER_DRAG_THRESHOLD = 6;
+const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
+
+function hueToProjectTabColor(hue: number): string {
+	const normalizedHue = ((hue % 360) + 360) % 360 / 360;
+	const saturation = 0.65;
+	const lightness = 0.6;
+
+	const hue2rgb = (p: number, q: number, t: number) => {
+		if (t < 0) {
+			t += 1;
+		}
+		if (t > 1) {
+			t -= 1;
+		}
+		if (t < 1 / 6) {
+			return p + (q - p) * 6 * t;
+		}
+		if (t < 1 / 2) {
+			return q;
+		}
+		if (t < 2 / 3) {
+			return p + (q - p) * (2 / 3 - t) * 6;
+		}
+
+		return p;
+	};
+
+	const q =
+		lightness < 0.5
+			? lightness * (1 + saturation)
+			: lightness + saturation - lightness * saturation;
+	const p = 2 * lightness - q;
+	const r = hue2rgb(p, q, normalizedHue + 1 / 3);
+	const g = hue2rgb(p, q, normalizedHue);
+	const b = hue2rgb(p, q, normalizedHue - 1 / 3);
+
+	const toHex = (value: number) => {
+		const hex = Math.round(value * 255).toString(16);
+		return hex.length === 1 ? `0${hex}` : hex;
+	};
+
+	return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+const DEFAULT_PROJECT_TAB_COLORS = Array.from(
+	{ length: PROJECT_TAB_COLOR_PALETTE_SIZE },
+	(_, index) =>
+		hueToProjectTabColor((360 / PROJECT_TAB_COLOR_PALETTE_SIZE) * index),
+) as readonly string[];
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.min(Math.max(value, min), max);
 }
 
-function createProjectTab(index: number, homePath: string): ProjectTab {
+function getRandomProjectTabColor(usedColors: Iterable<string> = []): string {
+	const normalizedUsedColors = new Set(
+		Array.from(usedColors, (color) => color.trim().toLowerCase()),
+	);
+	const availableColors = DEFAULT_PROJECT_TAB_COLORS.filter(
+		(color) => !normalizedUsedColors.has(color.toLowerCase()),
+	);
+
+	if (availableColors.length > 0) {
+		const index = Math.floor(Math.random() * availableColors.length);
+		return availableColors[index] ?? '#57b7ff';
+	}
+
+	return hueToProjectTabColor(Math.floor(Math.random() * 360));
+}
+
+function getEffectiveTerminalTabColor(
+	params:
+		| Pick<
+				TerminalPanelParams,
+				'color' | 'inheritsProjectColor' | 'projectColor'
+		  >
+		| undefined,
+	fallbackProjectColor: string,
+): string {
+	if (params?.inheritsProjectColor) {
+		return params.projectColor ?? fallbackProjectColor;
+	}
+
+	return params?.color ?? fallbackProjectColor;
+}
+
+function createProjectTab(
+	index: number,
+	homePath: string,
+	usedColors: Iterable<string> = [],
+): ProjectTab {
 	return {
 		id: `project-${index}`,
 		title: `Project ${index}`,
-		color: '#717b85',
-		emoji: '🖥️',
+		color: getRandomProjectTabColor(usedColors),
+		emoji: '',
 		fileExplorerWidth: DEFAULT_FILE_EXPLORER_WIDTH,
 		isFileExplorerOpen: false,
 		rootFolder: homePath,
@@ -112,6 +197,220 @@ function normalizeRootFolderInput(value: string, homePath: string): string {
 	}
 
 	return trimmedValue;
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getCommandSearchScore(
+	item: {
+		title: string;
+		description: string;
+		searchText: string;
+	},
+	query: string,
+): number {
+	const normalizedQuery = query.trim().toLowerCase();
+	if (!normalizedQuery) {
+		return 0;
+	}
+
+	const title = item.title.toLowerCase();
+	const description = item.description.toLowerCase();
+	const searchText = item.searchText.toLowerCase();
+	const boundaryQueryPattern = new RegExp(`\\b${escapeRegExp(normalizedQuery)}`);
+	const queryWords = normalizedQuery.split(/\s+/).filter(Boolean);
+	const titleWords = title.split(/[^a-z0-9]+/).filter(Boolean);
+	let score = 0;
+
+	if (title === normalizedQuery) {
+		score += 1_000;
+	}
+	if (title.startsWith(normalizedQuery)) {
+		score += 700;
+	}
+	if (boundaryQueryPattern.test(title)) {
+		score += 500;
+	}
+	if (title.includes(normalizedQuery)) {
+		score += 300;
+	}
+	if (
+		queryWords.length > 0 &&
+		queryWords.every((word) =>
+			titleWords.some((titleWord) => titleWord.startsWith(word)),
+		)
+	) {
+		score += 250;
+	}
+	if (boundaryQueryPattern.test(description)) {
+		score += 120;
+	}
+	if (description.includes(normalizedQuery)) {
+		score += 80;
+	}
+	if (boundaryQueryPattern.test(searchText)) {
+		score += 40;
+	}
+	if (searchText.includes(normalizedQuery)) {
+		score += 20;
+	}
+
+	return score;
+}
+
+function ModalBackdrop({
+	children,
+	onClose,
+}: {
+	children: ReactNode;
+	onClose: () => void;
+}) {
+	const pointerStartedOnBackdropRef = useRef(false);
+
+	return (
+		<div
+			className="project-edit-modal-backdrop"
+			onMouseDown={(event) => {
+				pointerStartedOnBackdropRef.current = event.target === event.currentTarget;
+			}}
+			onMouseUp={(event) => {
+				const shouldClose =
+					pointerStartedOnBackdropRef.current &&
+					event.target === event.currentTarget;
+				pointerStartedOnBackdropRef.current = false;
+
+				if (shouldClose) {
+					onClose();
+				}
+			}}
+		>
+			{children}
+		</div>
+	);
+}
+
+function ModalTitlebar({
+	title,
+	titleId,
+	onClose,
+	onMouseDown,
+}: {
+	title: string;
+	titleId: string;
+	onClose: () => void;
+	onMouseDown?: (event: MouseEvent<HTMLDivElement>) => void;
+}) {
+	return (
+		<div className="project-edit-modal-titlebar" onMouseDown={onMouseDown}>
+			<h2 id={titleId} className="project-edit-modal-title">
+				{title}
+			</h2>
+			<button
+				type="button"
+				className="project-edit-modal-close"
+				onClick={onClose}
+				aria-label={`Close ${title}`}
+				title={`Close ${title}`}
+			>
+				<svg
+					aria-hidden="true"
+					width="12"
+					height="12"
+					viewBox="0 0 12 12"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+				>
+					<path
+						d="M9 3L3 9M3 3L9 9"
+						stroke="currentColor"
+						strokeWidth="1.8"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					/>
+				</svg>
+			</button>
+		</div>
+	);
+}
+
+function useDraggableModal(isOpen: boolean) {
+	const modalRef = useRef<HTMLElement | null>(null);
+	const positionRef = useRef({ x: 0, y: 0 });
+	const [position, setPosition] = useState({ x: 0, y: 0 });
+
+	useEffect(() => {
+		if (!isOpen) {
+			return;
+		}
+
+		const resetPosition = { x: 0, y: 0 };
+		positionRef.current = resetPosition;
+		setPosition(resetPosition);
+	}, [isOpen]);
+
+	const handleTitlebarPointerDown = useCallback(
+		(event: MouseEvent<HTMLDivElement>) => {
+			const target = event.target as HTMLElement;
+			if (target.closest('button, input, select, textarea, a')) {
+				return;
+			}
+
+			const modal = modalRef.current;
+			if (!modal) {
+				return;
+			}
+
+			event.preventDefault();
+
+			const startPointerX = event.clientX;
+			const startPointerY = event.clientY;
+			const startPosition = positionRef.current;
+
+			const handlePointerMove = (moveEvent: globalThis.MouseEvent) => {
+				const rect = modal.getBoundingClientRect();
+				const centeredLeft = (window.innerWidth - rect.width) / 2;
+				const centeredTop = (window.innerHeight - rect.height) / 2;
+				const margin = 16;
+
+				const nextX = clamp(
+					startPosition.x + (moveEvent.clientX - startPointerX),
+					margin - centeredLeft,
+					window.innerWidth - margin - rect.width - centeredLeft,
+				);
+				const nextY = clamp(
+					startPosition.y + (moveEvent.clientY - startPointerY),
+					margin - centeredTop,
+					window.innerHeight - margin - rect.height - centeredTop,
+				);
+				const nextPosition = { x: nextX, y: nextY };
+
+				positionRef.current = nextPosition;
+				setPosition(nextPosition);
+			};
+
+			const handlePointerUp = () => {
+				window.removeEventListener('mousemove', handlePointerMove);
+				window.removeEventListener('mouseup', handlePointerUp);
+			};
+
+			window.addEventListener('mousemove', handlePointerMove);
+			window.addEventListener('mouseup', handlePointerUp);
+		},
+		[],
+	);
+
+	return {
+		handleTitlebarPointerDown,
+		modalRef,
+		modalStyle: {
+			transform:
+				position.x === 0 && position.y === 0
+					? undefined
+					: `translate(${position.x}px, ${position.y}px)`,
+		} as CSSProperties,
+	};
 }
 
 type FileExplorerTreeProps = {
@@ -646,65 +945,10 @@ type MacroRunController = {
 	sessionId: string;
 };
 
-function hexToHue(hex: string): number {
-	hex = hex.replace(/^#/, '');
-	const r = parseInt(hex.substring(0, 2), 16) / 255;
-	const g = parseInt(hex.substring(2, 4), 16) / 255;
-	const b = parseInt(hex.substring(4, 6), 16) / 255;
-
-	const max = Math.max(r, g, b);
-	const min = Math.min(r, g, b);
-	let h = 0;
-
-	if (max !== min) {
-		const d = max - min;
-		switch (max) {
-			case r:
-				h = (g - b) / d + (g < b ? 6 : 0);
-				break;
-			case g:
-				h = (b - r) / d + 2;
-				break;
-			case b:
-				h = (r - g) / d + 4;
-				break;
-		}
-		h /= 6;
-	}
-
-	return Math.round(h * 360);
-}
-
-function hueToHex(h: number): string {
-	h /= 360;
-	const s = 0.65;
-	const l = 0.6;
-
-	const hue2rgb = (p: number, q: number, t: number) => {
-		if (t < 0) t += 1;
-		if (t > 1) t -= 1;
-		if (t < 1 / 6) return p + (q - p) * 6 * t;
-		if (t < 1 / 2) return q;
-		if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-		return p;
-	};
-	const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-	const p = 2 * l - q;
-	const r = hue2rgb(p, q, h + 1 / 3);
-	const g = hue2rgb(p, q, h);
-	const b = hue2rgb(p, q, h - 1 / 3);
-
-	const toHex = (x: number) => {
-		const hex = Math.round(x * 255).toString(16);
-		return hex.length === 1 ? `0${hex}` : hex;
-	};
-	return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-}
-
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
->(({ isActive, isMac, macros, onEditProject, onUpdateProject, popoutUrl, project }, ref) => {
+>(({ isActive, isMac, macros, onAddProject, onEditProject, onUpdateProject, popoutUrl, project }, ref) => {
 	const dockviewApiRef = useRef<DockviewApi | null>(null);
 	const initialTerminalSeededRef = useRef(false);
 	const panelSessionMapRef = useRef<Map<string, string>>(new Map());
@@ -742,16 +986,7 @@ const ProjectWorkspace = forwardRef<
 		new Map(),
 	);
 
-	const [editingTerminalPanelId, setEditingTerminalPanelId] = useState<
-		string | null
-	>(null);
 	const [isDockviewReady, setIsDockviewReady] = useState(false);
-	const [editingTerminalTitle, setEditingTerminalTitle] = useState('');
-	const [editingTerminalEmoji, setEditingTerminalEmoji] = useState('');
-	const [editingTerminalColor, setEditingTerminalColor] = useState('#4db5ff');
-	const [isTerminalEmojiPickerOpen, setIsTerminalEmojiPickerOpen] =
-		useState(false);
-	const terminalEmojiPickerContainerRef = useRef<HTMLDivElement | null>(null);
 	const [isMacroLauncherOpen, setIsMacroLauncherOpen] = useState(false);
 	const [macroQuery, setMacroQuery] = useState('');
 	const [selectedMacroIndex, setSelectedMacroIndex] = useState(0);
@@ -763,6 +998,7 @@ const ProjectWorkspace = forwardRef<
 	const firstMacroFieldRef = useRef<
 		HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
 	>(null);
+	const macroParameterModal = useDraggableModal(macroToRun !== null);
 
 	const getActiveSessionId = useCallback(() => {
 		return dockviewApiRef.current?.activePanel?.params?.sessionId ?? null;
@@ -1261,7 +1497,8 @@ const ProjectWorkspace = forwardRef<
 					component: 'terminal',
 					tabComponent: 'terminalTab',
 					params: {
-						color: '#0a0a0a',
+						color: project.color,
+						inheritsProjectColor: true,
 						isFocused: false,
 						macroRuns: [],
 						onClearFinishedMacroRuns: () =>
@@ -1269,14 +1506,34 @@ const ProjectWorkspace = forwardRef<
 						onClearMacroRun: (runId: string) =>
 							clearMacroRunForSession(sessionId, runId),
 						onCancelMacroRun: cancelMacroRun,
+						projectColor: project.color,
 						sessionId,
 					},
+				});
+
+				window.termide.updateTerminalRemoteMetadata(sessionId, {
+					color: project.color,
+					emoji: '',
+					inheritsProjectColor: true,
+					title: `Terminal ${terminalCounterRef.current}`,
+					projectId: project.id,
+					projectTitle: project.title,
+					projectEmoji: project.emoji,
+					projectColor: project.color,
 				});
 			} catch (error) {
 				setErrorText(`Failed to open terminal: ${String(error)}`);
 			}
 		},
-		[cancelMacroRun, clearFinishedMacroRunsForSession, clearMacroRunForSession],
+		[
+			cancelMacroRun,
+			clearFinishedMacroRunsForSession,
+			clearMacroRunForSession,
+			project.emoji,
+			project.id,
+			project.title,
+			project.color,
+		],
 	);
 
 	const openFolder = useCallback(
@@ -1642,8 +1899,27 @@ const ProjectWorkspace = forwardRef<
 	]);
 
 	useEffect(() => {
-		for (const sessionId of panelSessionMapRef.current.values()) {
+		const api = dockviewApiRef.current;
+
+		for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
+			const panel = api?.getPanel(panelId);
+			const inheritsProjectColor =
+				panel?.params?.inheritsProjectColor === true;
+			const nextColor = getEffectiveTerminalTabColor(
+				panel?.params,
+				project.color,
+			);
+
+			if (panel) {
+				panel.api.updateParameters({
+					projectColor: project.color,
+					...(inheritsProjectColor ? { color: project.color } : {}),
+				});
+			}
+
 			window.termide.updateTerminalRemoteMetadata(sessionId, {
+				color: nextColor,
+				inheritsProjectColor,
 				projectId: project.id,
 				projectTitle: project.title,
 				projectEmoji: project.emoji,
@@ -1742,26 +2018,58 @@ const ProjectWorkspace = forwardRef<
 		[],
 	);
 
-	const closeTerminalEditModal = useCallback(() => {
-		setEditingTerminalPanelId(null);
-		setIsTerminalEmojiPickerOpen(false);
-	}, []);
-
-	const openTerminalEdit = useCallback((panelId: string) => {
+	const openTerminalEditWindow = useCallback(async (panelId: string) => {
 		const api = dockviewApiRef.current;
 		if (!api) {
 			return;
 		}
 
 		const panel = api.getPanel(panelId);
-		if (panel) {
-			setEditingTerminalPanelId(panelId);
-			setEditingTerminalTitle(panel.title ?? 'Terminal');
-			setEditingTerminalEmoji(panel.params?.emoji ?? '');
-			setEditingTerminalColor(panel.params?.color ?? '#0a0a0a');
-			setIsTerminalEmojiPickerOpen(false);
+		if (!panel) {
+			return;
 		}
-	}, []);
+
+		const result = await window.termide.openTerminalEditWindow({
+			color: getEffectiveTerminalTabColor(panel.params, project.color),
+			emoji: panel.params?.emoji ?? '',
+			inheritsProjectColor:
+				panel.params?.inheritsProjectColor ?? panel.params?.color === project.color,
+			projectColor: project.color,
+			title: panel.title ?? 'Terminal',
+		});
+		if (!result) {
+			return;
+		}
+
+		const nextTitle =
+			result.title.trim().length > 0
+				? result.title.trim()
+				: (panel.title ?? 'Terminal');
+		const nextEmoji = result.emoji.trim();
+		const nextColor = result.color;
+
+		panel.api.setTitle(nextTitle);
+		panel.api.updateParameters({
+			emoji: nextEmoji,
+			color: nextColor,
+			inheritsProjectColor: result.inheritsProjectColor,
+			projectColor: project.color,
+		});
+
+		const sessionId = panel.params?.sessionId;
+		if (sessionId) {
+			window.termide.updateTerminalRemoteMetadata(sessionId, {
+				color: nextColor,
+				emoji: nextEmoji,
+				inheritsProjectColor: result.inheritsProjectColor,
+				title: nextTitle,
+				projectId: project.id,
+				projectTitle: project.title,
+				projectEmoji: project.emoji,
+				projectColor: project.color,
+			});
+		}
+	}, [project.color, project.id, project.title, project.emoji]);
 
 	const clearActiveTerminal = useCallback(() => {
 		const sessionId = getActiveSessionId();
@@ -1787,15 +2095,22 @@ const ProjectWorkspace = forwardRef<
 		setErrorText(null);
 		setIsMacroLauncherOpen(false);
 		setMacroQuery('');
-		openTerminalEdit(activePanel.id);
-	}, [getActiveSessionId, openTerminalEdit]);
+		void openTerminalEditWindow(activePanel.id);
+	}, [getActiveSessionId, openTerminalEditWindow]);
 
 	const openProjectSettings = useCallback(() => {
 		setErrorText(null);
 		setIsMacroLauncherOpen(false);
 		setMacroQuery('');
-		onEditProject(project.id);
+		void onEditProject(project.id);
 	}, [onEditProject, project.id]);
+
+	const createProject = useCallback(() => {
+		setErrorText(null);
+		setIsMacroLauncherOpen(false);
+		setMacroQuery('');
+		onAddProject();
+	}, [onAddProject]);
 
 	const toggleFileExplorerSidebar = useCallback(() => {
 		setErrorText(null);
@@ -1806,9 +2121,111 @@ const ProjectWorkspace = forwardRef<
 		});
 	}, [onUpdateProject, project.id, project.isFileExplorerOpen]);
 
+	const addTerminal = useCallback(
+		async (options?: AddTerminalOptions) => {
+			const api = dockviewApiRef.current;
+			if (!api) {
+				return;
+			}
+
+			try {
+				const activeSessionId = api.activePanel?.params?.sessionId;
+				const inheritedCwd = activeSessionId
+					? await window.termide.getTerminalCwd(activeSessionId)
+					: null;
+				const { id: sessionId } = await window.termide.createTerminal(
+					inheritedCwd ? { cwd: inheritedCwd } : undefined,
+				);
+
+				terminalCounterRef.current += 1;
+				const panelId = `terminal-${terminalCounterRef.current}`;
+
+				const panel = api.addPanel<TerminalPanelParams>({
+					id: panelId,
+					title: `Terminal ${terminalCounterRef.current}`,
+					component: 'terminal',
+					tabComponent: 'terminalTab',
+					params: {
+						color: project.color,
+						inheritsProjectColor: true,
+						isFocused: false,
+						macroRuns: [],
+						onClearFinishedMacroRuns: () =>
+							clearFinishedMacroRunsForSession(sessionId),
+						onClearMacroRun: (runId: string) =>
+							clearMacroRunForSession(sessionId, runId),
+						onCancelMacroRun: cancelMacroRun,
+						projectColor: project.color,
+						sessionId,
+					},
+					position:
+						options?.groupId && api.getGroup(options.groupId)
+							? {
+									referenceGroup: options.groupId,
+									direction: 'within',
+								}
+							: options?.direction && api.activePanel
+								? {
+										referencePanel: api.activePanel,
+										direction: options.direction,
+									}
+								: undefined,
+				});
+
+				panelSessionMapRef.current.set(panel.id, sessionId);
+				window.termide.updateTerminalRemoteMetadata(sessionId, {
+					color: project.color,
+					emoji: '',
+					inheritsProjectColor: true,
+					title: `Terminal ${terminalCounterRef.current}`,
+					projectId: project.id,
+					projectTitle: project.title,
+					projectEmoji: project.emoji,
+					projectColor: project.color,
+				});
+				panel.api.setActive();
+				setFocusedSessionId(sessionId);
+				setErrorText(null);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setErrorText(message);
+			}
+		},
+		[
+			cancelMacroRun,
+			clearFinishedMacroRunsForSession,
+			clearMacroRunForSession,
+			project.id,
+			project.title,
+			project.emoji,
+			project.color,
+		],
+	);
+
 	const filteredMacros = useMemo(() => {
 		const normalizedQuery = macroQuery.trim().toLowerCase();
 		const commandItems = [
+			{
+				id: 'create-terminal-tab',
+				title: 'Create a new terminal tab',
+				description: 'Open a fresh terminal tab in the current project.',
+				searchText: 'create new terminal tab open fresh terminal cmd+n',
+				onSelect: () => {
+					setErrorText(null);
+					setIsMacroLauncherOpen(false);
+					setMacroQuery('');
+					void addTerminal({});
+				},
+			},
+			{
+				id: 'create-project',
+				title: 'Create a new project',
+				description: 'Add a new project tab and switch to it.',
+				searchText: 'create new project add project tab cmd+p',
+				onSelect: () => {
+					createProject();
+				},
+			},
 			{
 				id: 'clear-terminal',
 				title: 'Clear terminal',
@@ -1887,15 +2304,25 @@ const ProjectWorkspace = forwardRef<
 			return commandItems;
 		}
 
-		return commandItems.filter((macro) => {
-			return (
-				macro.title.toLowerCase().includes(normalizedQuery) ||
-				macro.description.toLowerCase().includes(normalizedQuery) ||
-				macro.searchText.includes(normalizedQuery)
-			);
-		});
+		return commandItems
+			.map((macro, index) => ({
+				macro,
+				index,
+				score: getCommandSearchScore(macro, normalizedQuery),
+			}))
+			.filter(({ score }) => score > 0)
+			.sort((left, right) => {
+				if (right.score !== left.score) {
+					return right.score - left.score;
+				}
+
+				return left.index - right.index;
+			})
+			.map(({ macro }) => macro);
 	}, [
+		addTerminal,
 		clearActiveTerminal,
+		createProject,
 		macroQuery,
 		macros,
 		openActiveTerminalSettings,
@@ -1905,136 +2332,6 @@ const ProjectWorkspace = forwardRef<
 		setProjectRootFolderToWorkingDirectory,
 		toggleFileExplorerSidebar,
 	]);
-
-	const saveTerminalEdits = useCallback(
-		(event: FormEvent<HTMLFormElement>) => {
-			event.preventDefault();
-			const api = dockviewApiRef.current;
-			if (!api || !editingTerminalPanelId) {
-				return;
-			}
-
-			const panel = api.getPanel(editingTerminalPanelId);
-			if (panel) {
-				const nextTitle =
-					editingTerminalTitle.trim().length > 0
-						? editingTerminalTitle.trim()
-						: (panel.title ?? 'Terminal');
-				const nextEmoji = editingTerminalEmoji.trim();
-				const nextColor = editingTerminalColor;
-
-				panel.api.setTitle(nextTitle);
-				panel.api.updateParameters({
-					emoji: nextEmoji,
-					color: nextColor,
-				});
-
-				const sessionId = panel.params?.sessionId;
-				if (sessionId) {
-					window.termide.updateTerminalRemoteMetadata(sessionId, {
-						color: nextColor,
-						emoji: nextEmoji,
-						title: nextTitle,
-						projectId: project.id,
-						projectTitle: project.title,
-						projectEmoji: project.emoji,
-						projectColor: project.color,
-					});
-				}
-			}
-
-			closeTerminalEditModal();
-		},
-		[
-			closeTerminalEditModal,
-			editingTerminalColor,
-			editingTerminalEmoji,
-			editingTerminalPanelId,
-			editingTerminalTitle,
-			project.id,
-			project.title,
-			project.emoji,
-			project.color,
-		],
-	);
-
-	const addTerminal = useCallback(
-		async (options?: AddTerminalOptions) => {
-			const api = dockviewApiRef.current;
-			if (!api) {
-				return;
-			}
-
-			try {
-				const activeSessionId = api.activePanel?.params?.sessionId;
-				const inheritedCwd = activeSessionId
-					? await window.termide.getTerminalCwd(activeSessionId)
-					: null;
-				const { id: sessionId } = await window.termide.createTerminal(
-					inheritedCwd ? { cwd: inheritedCwd } : undefined,
-				);
-
-				terminalCounterRef.current += 1;
-				const panelId = `terminal-${terminalCounterRef.current}`;
-
-				const panel = api.addPanel<TerminalPanelParams>({
-					id: panelId,
-					title: `Terminal ${terminalCounterRef.current}`,
-					component: 'terminal',
-					tabComponent: 'terminalTab',
-					params: {
-						color: '#0a0a0a',
-						isFocused: false,
-						macroRuns: [],
-						onClearFinishedMacroRuns: () =>
-							clearFinishedMacroRunsForSession(sessionId),
-						onClearMacroRun: (runId: string) =>
-							clearMacroRunForSession(sessionId, runId),
-						onCancelMacroRun: cancelMacroRun,
-						sessionId,
-					},
-					position:
-						options?.groupId && api.getGroup(options.groupId)
-							? {
-									referenceGroup: options.groupId,
-									direction: 'within',
-								}
-							: options?.direction && api.activePanel
-								? {
-										referencePanel: api.activePanel,
-										direction: options.direction,
-									}
-								: undefined,
-				});
-
-				panelSessionMapRef.current.set(panel.id, sessionId);
-				window.termide.updateTerminalRemoteMetadata(sessionId, {
-					color: '#0a0a0a',
-					emoji: '',
-					title: `Terminal ${terminalCounterRef.current}`,
-					projectId: project.id,
-					projectTitle: project.title,
-					projectEmoji: project.emoji,
-					projectColor: project.color,
-				});
-				panel.api.setActive();
-				setFocusedSessionId(sessionId);
-				setErrorText(null);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				setErrorText(message);
-			}
-		},
-		[
-			cancelMacroRun,
-			clearFinishedMacroRunsForSession,
-			clearMacroRunForSession,
-			project.id,
-			project.title,
-			project.emoji,
-			project.color,
-		],
-	);
 
 	const closeActivePanel = useCallback(() => {
 		dockviewApiRef.current?.activePanel?.api.close();
@@ -2076,6 +2373,9 @@ const ProjectWorkspace = forwardRef<
 					case 'new-terminal':
 						void addTerminal({});
 						break;
+					case 'new-project':
+						onAddProject();
+						break;
 					case 'split-horizontal':
 						void addTerminal({ direction: 'below' });
 						break;
@@ -2106,6 +2406,7 @@ const ProjectWorkspace = forwardRef<
 		[
 			addTerminal,
 			closeActivePanel,
+			onAddProject,
 			popoutActivePanel,
 			saveActivePanel,
 		],
@@ -2336,6 +2637,43 @@ const ProjectWorkspace = forwardRef<
 			void addTerminal({ groupId: group.id });
 		};
 
+		const isEmptyHeaderDoubleClick = (
+			targetWindow: Window,
+			target: HTMLElement | null,
+			point: { x: number; y: number },
+		): boolean => {
+			if (
+				target?.closest('.termide-add-tab-button') ||
+				target?.closest('.dv-tab') ||
+				target?.closest('.dv-right-actions-container')
+			) {
+				return false;
+			}
+
+			const hitElements = targetWindow.document.elementsFromPoint(
+				point.x,
+				point.y,
+			);
+			if (
+				hitElements.some(
+					(element) =>
+						element instanceof HTMLElement &&
+						(element.classList.contains('dv-tab') ||
+							element.closest('.dv-tab') ||
+							element.classList.contains('dv-right-actions-container') ||
+							element.closest('.dv-right-actions-container')),
+				)
+			) {
+				return false;
+			}
+
+			return hitElements.some(
+				(element) =>
+					element instanceof HTMLElement &&
+					element.classList.contains('dv-void-container'),
+			);
+		};
+
 		const ensureHeaderButtons = (targetWindow: Window) => {
 			const containers =
 				targetWindow.document.querySelectorAll<HTMLElement>(
@@ -2386,42 +2724,25 @@ const ProjectWorkspace = forwardRef<
 
 			const onDblClick = (event: globalThis.MouseEvent) => {
 				const target = event.target as HTMLElement | null;
-				const headerContainer = target?.closest(
-					'.dv-tabs-and-actions-container',
-				);
-				if (!headerContainer) {
+				if (!target?.closest('.dv-void-container')) {
 					return;
 				}
 
-				const isAddButtonClick = !!target?.closest('.termide-add-tab-button');
-				if (isAddButtonClick) {
-					return;
-				}
-
-				const isTabClick = !!target?.closest('.dv-tab');
-				if (isTabClick) {
-					const terminalTab = target?.closest(
-						'.terminal-tab-content',
-					) as HTMLElement | null;
-					if (terminalTab) {
-						const panelId = terminalTab.getAttribute('data-panel-id');
-						if (panelId) {
-							openTerminalEdit(panelId);
-						}
-					}
-					return;
-				}
-
-				addTerminalInHeaderSpace(targetWindow, target, {
+				const point = {
 					x: event.clientX,
 					y: event.clientY,
-				});
+				};
+				if (!isEmptyHeaderDoubleClick(targetWindow, target, point)) {
+					return;
+				}
+
+				addTerminalInHeaderSpace(targetWindow, target, point);
 			};
 
 			const onEditTerminal = (event: Event) => {
 				const customEvent = event as CustomEvent<{ panelId: string }>;
 				if (customEvent.detail?.panelId) {
-					openTerminalEdit(customEvent.detail.panelId);
+					void openTerminalEditWindow(customEvent.detail.panelId);
 				}
 			};
 
@@ -2556,7 +2877,7 @@ const ProjectWorkspace = forwardRef<
 			}
 			cleanupByWindow.clear();
 		};
-	}, [addTerminal, openTerminalEdit, popoutUrl]);
+	}, [addTerminal, openTerminalEditWindow, popoutUrl]);
 
 	useEffect(() => {
 		if (!isActive) {
@@ -2574,12 +2895,7 @@ const ProjectWorkspace = forwardRef<
 			api.layout(clientWidth, clientHeight);
 		}
 
-		if (
-			editingTerminalPanelId ||
-			isMacroLauncherOpen ||
-			macroToRun ||
-			isTerminalSwitcherOpen
-		) {
+		if (isMacroLauncherOpen || macroToRun || isTerminalSwitcherOpen) {
 			return;
 		}
 
@@ -2591,7 +2907,6 @@ const ProjectWorkspace = forwardRef<
 			window.cancelAnimationFrame(frame);
 		};
 	}, [
-		editingTerminalPanelId,
 		focusActiveTerminal,
 		isActive,
 		isMacroLauncherOpen,
@@ -2622,54 +2937,7 @@ const ProjectWorkspace = forwardRef<
 	}, [isActive, project.fileExplorerWidth, project.isFileExplorerOpen]);
 
 	useEffect(() => {
-		if (!editingTerminalPanelId) {
-			return;
-		}
-
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				closeTerminalEditModal();
-			}
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-		};
-	}, [closeTerminalEditModal, editingTerminalPanelId]);
-
-	useEffect(() => {
-		if (!isTerminalEmojiPickerOpen) {
-			return;
-		}
-
-			const onPointerDown = (event: globalThis.MouseEvent) => {
-				const container = terminalEmojiPickerContainerRef.current;
-			if (!container) {
-				return;
-			}
-
-			const target = event.target as Node;
-			if (container.contains(target)) {
-				return;
-			}
-
-			setIsTerminalEmojiPickerOpen(false);
-		};
-
-		window.addEventListener('mousedown', onPointerDown);
-		return () => {
-			window.removeEventListener('mousedown', onPointerDown);
-		};
-	}, [isTerminalEmojiPickerOpen]);
-
-	useEffect(() => {
-		if (
-			!isActive ||
-			editingTerminalPanelId ||
-			isMacroLauncherOpen ||
-			macroToRun
-		) {
+		if (!isActive || isMacroLauncherOpen || macroToRun) {
 			return;
 		}
 
@@ -2763,7 +3031,6 @@ const ProjectWorkspace = forwardRef<
 	}, [
 		closeTerminalSwitcher,
 		commitTerminalSwitcherSelection,
-		editingTerminalPanelId,
 		isActive,
 		isMacroLauncherOpen,
 		isTerminalSwitcherOpen,
@@ -3089,12 +3356,13 @@ const ProjectWorkspace = forwardRef<
 			) : null}
 
 			{macroToRun ? (
-				<div
-					className="project-edit-modal-backdrop"
-					onClick={closeMacroParameterModal}
-				>
+				<ModalBackdrop onClose={closeMacroParameterModal}>
 					<form
 						className="project-edit-modal project-edit-modal--wide"
+						ref={(element) => {
+							macroParameterModal.modalRef.current = element;
+						}}
+						style={macroParameterModal.modalStyle}
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!validateMacroValues(macroToRun, macroFieldValues)) {
@@ -3103,8 +3371,16 @@ const ProjectWorkspace = forwardRef<
 							executeMacro(macroToRun, macroFieldValues);
 						}}
 						onClick={(event) => event.stopPropagation()}
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="macro-parameter-modal-title"
 					>
-						<h2>{macroToRun.title}</h2>
+						<ModalTitlebar
+							title={macroToRun.title}
+							titleId="macro-parameter-modal-title"
+							onClose={closeMacroParameterModal}
+							onMouseDown={macroParameterModal.handleTitlebarPointerDown}
+						/>
 						<p className="macro-parameter-description">
 							{macroToRun.description ||
 								'Fill in the parameters to render the final macro output.'}
@@ -3208,118 +3484,9 @@ const ProjectWorkspace = forwardRef<
 							<button type="submit">Type Macro</button>
 						</div>
 					</form>
-				</div>
+				</ModalBackdrop>
 			) : null}
 
-			{editingTerminalPanelId ? (
-				<div
-					className="project-edit-modal-backdrop"
-					onClick={closeTerminalEditModal}
-				>
-					<form
-						className="project-edit-modal"
-						onSubmit={saveTerminalEdits}
-						onClick={(event) => event.stopPropagation()}
-					>
-						<h2>Edit Terminal Tab</h2>
-
-						<label>
-							Name
-							<div className="project-name-row">
-								<div
-									ref={(element) => {
-										terminalEmojiPickerContainerRef.current = element;
-									}}
-									className="emoji-picker-field"
-								>
-									<button
-										type="button"
-										className="emoji-picker-trigger"
-										onClick={() =>
-											setIsTerminalEmojiPickerOpen((current) => !current)
-										}
-										title="Pick emoji"
-										aria-label="Pick emoji"
-									>
-										<span aria-hidden="true">
-											{editingTerminalEmoji || '🖥️'}
-										</span>
-									</button>
-									<div
-										className={`emoji-picker-popover${isTerminalEmojiPickerOpen ? '' : ' emoji-picker-popover--hidden'}`}
-									>
-										<EmojiPicker
-											data={data}
-											onEmojiSelect={(emoji: { native?: string }) => {
-												if (!emoji.native) {
-													return;
-												}
-
-												setEditingTerminalEmoji(emoji.native);
-												setIsTerminalEmojiPickerOpen(false);
-											}}
-											previewPosition="none"
-											skinTonePosition="none"
-											theme="dark"
-										/>
-									</div>
-								</div>
-								<input
-									type="text"
-									value={editingTerminalTitle}
-									onChange={(event) =>
-										setEditingTerminalTitle(event.target.value)
-									}
-									placeholder="Terminal name"
-									autoFocus
-								/>
-							</div>
-						</label>
-
-						<label>
-							Tab Theme Hue
-							<div className="hue-slider-container">
-								<div className="hue-slider-label">
-									<span className="hue-slider-value">
-										{hexToHue(editingTerminalColor)}°
-									</span>
-								</div>
-								<input
-									type="range"
-									min="0"
-									max="360"
-									className="hue-slider"
-									value={hexToHue(editingTerminalColor)}
-									onChange={(event) =>
-										setEditingTerminalColor(
-											hueToHex(Number(event.target.value)),
-										)
-									}
-								/>
-							</div>
-						</label>
-
-						<div
-							className="project-edit-preview"
-							style={
-								{
-									'--project-color': editingTerminalColor,
-								} as CSSProperties
-							}
-						>
-							<span aria-hidden="true">{editingTerminalEmoji || '🖥️'}</span>
-							<span>{editingTerminalTitle.trim() || 'Untitled Terminal'}</span>
-						</div>
-
-						<div className="project-edit-actions">
-							<button type="button" onClick={closeTerminalEditModal}>
-								Cancel
-							</button>
-							<button type="submit">Save</button>
-						</div>
-					</form>
-				</div>
-			) : null}
 		</section>
 	);
 });
@@ -3343,12 +3510,6 @@ function App() {
 		createProjectTab(1, ''),
 	]);
 	const [activeProjectId, setActiveProjectId] = useState('project-1');
-	const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
-	const [editingTitle, setEditingTitle] = useState('');
-	const [editingEmoji, setEditingEmoji] = useState('');
-	const [editingColor, setEditingColor] = useState('#717b85');
-	const [editingRootFolder, setEditingRootFolder] = useState('');
-	const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
 	const [draggingProjectId, setDraggingProjectId] = useState<string | null>(
 		null,
 	);
@@ -3358,13 +3519,9 @@ function App() {
 	const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
 	const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
 	const [isLinkCopied, setIsLinkCopied] = useState(false);
-	const emojiPickerContainerRef = useRef<HTMLDivElement | null>(null);
+	const pairingModal = useDraggableModal(isPairingModalOpen);
 	const remoteMenuRef = useRef<HTMLDivElement | null>(null);
 	const [isRemoteMenuOpen, setIsRemoteMenuOpen] = useState(false);
-	const closeEditModal = useCallback(() => {
-		setEditingProjectId(null);
-		setIsEmojiPickerOpen(false);
-	}, []);
 
 	useEffect(() => {
 		let isMounted = true;
@@ -3394,10 +3551,17 @@ function App() {
 
 	const addProject = useCallback(() => {
 		projectCounterRef.current += 1;
-		const nextProject = createProjectTab(projectCounterRef.current, homePath);
+		const nextProjectId = `project-${projectCounterRef.current}`;
 
-		setProjects((current) => [...current, nextProject]);
-		setActiveProjectId(nextProject.id);
+		setProjects((current) => [
+			...current,
+			createProjectTab(
+				projectCounterRef.current,
+				homePath,
+				current.map((project) => project.color),
+			),
+		]);
+		setActiveProjectId(nextProjectId);
 	}, [homePath]);
 
 	const closeProject = useCallback(
@@ -3405,10 +3569,6 @@ function App() {
 			const isLastProject =
 				projects.length === 1 && projects[0]?.id === projectId;
 			if (isLastProject) {
-				if (editingProjectId === projectId) {
-					closeEditModal();
-				}
-
 				void window.termide.quitApp();
 				return;
 			}
@@ -3425,81 +3585,51 @@ function App() {
 					setActiveProjectId(next[fallbackIndex]?.id ?? next[0].id);
 				}
 
-				if (editingProjectId === projectId) {
-					closeEditModal();
-				}
-
 				return next;
 			});
 		},
-		[activeProjectId, closeEditModal, editingProjectId, projects],
+		[activeProjectId, projects],
 	);
 
 	const onReorder = (newOrder: ProjectTab[]) => {
 		setProjects(newOrder);
 	};
 
-	const openEditProjectModal = useCallback(
-		(projectId: string) => {
-			const project = projects.find((candidate) => candidate.id === projectId);
-			if (!project) {
-				return;
-			}
+	const openEditProjectWindow = useCallback(async (projectId: string) => {
+		const project = projects.find((candidate) => candidate.id === projectId);
+		if (!project) {
+			return;
+		}
 
-			setEditingProjectId(project.id);
-			setEditingTitle(project.title);
-			setEditingEmoji(project.emoji);
-			setEditingColor(project.color);
-			setEditingRootFolder(project.rootFolder);
-			setIsEmojiPickerOpen(false);
-		},
-		[projects],
-	);
+		const result = await window.termide.openProjectEditWindow({
+			color: project.color,
+			emoji: project.emoji,
+			rootFolder: project.rootFolder,
+			title: project.title,
+		});
+		if (!result) {
+			return;
+		}
 
-	const saveProjectEdits = useCallback(
-		(event: FormEvent<HTMLFormElement>) => {
-			event.preventDefault();
-			if (!editingProjectId) {
-				return;
-			}
+		const nextTitle =
+			result.title.trim().length > 0 ? result.title.trim() : 'Untitled Project';
+		const nextEmoji = result.emoji.trim();
+		const nextRootFolder = normalizeRootFolderInput(result.rootFolder, homePath);
 
-			const nextTitle =
-				editingTitle.trim().length > 0
-					? editingTitle.trim()
-					: 'Untitled Project';
-			const nextEmoji =
-				editingEmoji.trim().length > 0 ? editingEmoji.trim() : '🖥️';
-			const nextRootFolder = normalizeRootFolderInput(
-				editingRootFolder,
-				homePath,
-			);
-
-			setProjects((current) =>
-				current.map((project) =>
-					project.id === editingProjectId
-						? {
-								...project,
-								title: nextTitle,
-								emoji: nextEmoji,
-								color: editingColor,
-								rootFolder: nextRootFolder,
-							}
-						: project,
-				),
-			);
-
-			closeEditModal();
-		},
-		[
-			closeEditModal,
-			editingColor,
-			editingEmoji,
-			editingProjectId,
-			editingRootFolder,
-			editingTitle,
-			homePath,
-		],
-	);
+		setProjects((current) =>
+			current.map((candidate) =>
+				candidate.id === projectId
+					? {
+							...candidate,
+							title: nextTitle,
+							emoji: nextEmoji,
+							color: result.color,
+							rootFolder: nextRootFolder,
+						}
+					: candidate,
+			),
+		);
+	}, [homePath, projects]);
 
 	const updateProject = useCallback(
 		(projectId: string, updates: Partial<ProjectTab>) => {
@@ -3632,48 +3762,6 @@ function App() {
 	}, []);
 
 	useEffect(() => {
-		if (!editingProjectId) {
-			return;
-		}
-
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				closeEditModal();
-			}
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-		};
-	}, [closeEditModal, editingProjectId]);
-
-	useEffect(() => {
-		if (!isEmojiPickerOpen) {
-			return;
-		}
-
-		const onPointerDown = (event: globalThis.MouseEvent) => {
-			const container = emojiPickerContainerRef.current;
-			if (!container) {
-				return;
-			}
-
-			const target = event.target as Node;
-			if (container.contains(target)) {
-				return;
-			}
-
-			setIsEmojiPickerOpen(false);
-		};
-
-		window.addEventListener('mousedown', onPointerDown);
-		return () => {
-			window.removeEventListener('mousedown', onPointerDown);
-		};
-	}, [isEmojiPickerOpen]);
-
-	useEffect(() => {
 		if (!isRemoteMenuOpen) {
 			return;
 		}
@@ -3712,32 +3800,34 @@ function App() {
 	return (
 		<div className={`app-shell${isMac ? ' app-shell--macos' : ''}`}>
 			<header className="project-tabbar">
-				<button
-					type="button"
-					className={`project-tab-sidebar-toggle${activeProject?.isFileExplorerOpen ? ' project-tab-sidebar-toggle--active' : ''}`}
-					onClick={toggleActiveProjectExplorer}
-					disabled={
-						!activeProject || activeProject.rootFolder.trim().length === 0
-					}
-					aria-label="Toggle file explorer"
-					title="Toggle file explorer"
-				>
-					<svg
-						aria-hidden="true"
-						width="14"
-						height="14"
-						viewBox="0 0 14 14"
-						fill="none"
-						xmlns="http://www.w3.org/2000/svg"
+				<div className="project-tab-sidebar-toggle-box">
+					<button
+						type="button"
+						className={`project-tab-sidebar-toggle${activeProject?.isFileExplorerOpen ? ' project-tab-sidebar-toggle--active' : ''}`}
+						onClick={toggleActiveProjectExplorer}
+						disabled={
+							!activeProject || activeProject.rootFolder.trim().length === 0
+						}
+						aria-label="Toggle file explorer"
+						title="Toggle file explorer"
 					>
-						<path
-							d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
-							stroke="currentColor"
-							strokeWidth="1.4"
-						/>
-						<path d="M5 2.25V11.75" stroke="currentColor" strokeWidth="1.4" />
-					</svg>
-				</button>
+						<svg
+							aria-hidden="true"
+							width="14"
+							height="14"
+							viewBox="0 0 14 14"
+							fill="none"
+							xmlns="http://www.w3.org/2000/svg"
+						>
+							<path
+								d="M2.25 2.25H11.75V11.75H2.25V2.25Z"
+								stroke="currentColor"
+								strokeWidth="1.4"
+							/>
+							<path d="M5 2.25V11.75" stroke="currentColor" strokeWidth="1.4" />
+						</svg>
+					</button>
+				</div>
 				<Reorder.Group
 					axis="x"
 					values={projects}
@@ -3759,14 +3849,16 @@ function App() {
 								onDragStart={() => setDraggingProjectId(project.id)}
 								onDragEnd={() => setDraggingProjectId(null)}
 								onClick={() => setActiveProjectId(project.id)}
-								onDoubleClick={() => openEditProjectModal(project.id)}
+								onDoubleClick={() => void openEditProjectWindow(project.id)}
 								whileDrag={{ scale: 1.05, zIndex: 50 }}
 								title="Double-click to edit tab"
 							>
 								<span className="project-tab-main">
-									<span className="project-tab-emoji" aria-hidden="true">
-										{project.emoji}
-									</span>
+									{project.emoji ? (
+										<span className="project-tab-emoji" aria-hidden="true">
+											{project.emoji}
+										</span>
+									) : null}
 									<span className="project-tab-title">{project.title}</span>
 								</span>
 								<button
@@ -3804,30 +3896,32 @@ function App() {
 						))}
 					</AnimatePresence>
 				</Reorder.Group>
-				<button
-					type="button"
-					className="project-tab-add"
-					onClick={addProject}
-					aria-label="Add project tab"
-					title="Add project tab"
-				>
-					<svg
-						aria-hidden="true"
-						width="14"
-						height="14"
-						viewBox="0 0 12 12"
-						fill="none"
-						xmlns="http://www.w3.org/2000/svg"
+				<div className="project-tab-add-box">
+					<button
+						type="button"
+						className="project-tab-add"
+						onClick={addProject}
+						aria-label="Add project tab"
+						title="Add project tab"
 					>
-						<path
-							d="M6 2V10M2 6H10"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						/>
-					</svg>
-				</button>
+						<svg
+							aria-hidden="true"
+							width="14"
+							height="14"
+							viewBox="0 0 12 12"
+							fill="none"
+							xmlns="http://www.w3.org/2000/svg"
+						>
+							<path
+								d="M6 2V10M2 6H10"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							/>
+						</svg>
+					</button>
+				</div>
 				<div
 					ref={remoteMenuRef}
 					className={`remote-access-status${remoteStatus?.isRunning ? ' remote-access-status--active' : ''}${isRemoteMenuOpen ? ' remote-access-status--open' : ''}`}
@@ -3856,9 +3950,11 @@ function App() {
 								!
 							</span>
 						) : null}
-						<span className="remote-access-button__chevron" aria-hidden="true">
-							▾
-						</span>
+						<ChevronDown
+							className="remote-access-button__chevron"
+							size={12}
+							aria-hidden="true"
+						/>
 					</button>
 					{isRemoteMenuOpen ? (
 						<div
@@ -4003,7 +4099,8 @@ function App() {
 						isActive={project.id === activeProjectId}
 						isMac={isMac}
 						macros={macros}
-						onEditProject={openEditProjectModal}
+						onAddProject={addProject}
+						onEditProject={openEditProjectWindow}
 						onUpdateProject={updateProject}
 						popoutUrl={popoutUrl}
 						project={project}
@@ -4012,18 +4109,24 @@ function App() {
 			</div>
 
 			{isPairingModalOpen ? (
-				<div
-					className="project-edit-modal-backdrop"
-					onClick={() => setIsPairingModalOpen(false)}
-				>
+				<ModalBackdrop onClose={() => setIsPairingModalOpen(false)}>
 					<div
 						className="project-edit-modal project-edit-modal--wide remote-pairing-modal"
+						ref={(element) => {
+							pairingModal.modalRef.current = element;
+						}}
+						style={pairingModal.modalStyle}
 						onClick={(event) => event.stopPropagation()}
 						role="dialog"
 						aria-modal="true"
-						aria-label="Pair device"
+						aria-labelledby="pair-device-modal-title"
 					>
-						<h2>Pair Device</h2>
+						<ModalTitlebar
+							title="Pair Device"
+							titleId="pair-device-modal-title"
+							onClose={() => setIsPairingModalOpen(false)}
+							onMouseDown={pairingModal.handleTitlebarPointerDown}
+						/>
 						<p className="remote-pairing-modal__copy">
 							Scan this QR code from your phone to pair it with this Termide
 							host.
@@ -4121,117 +4224,9 @@ function App() {
 							</button>
 						</div>
 					</div>
-				</div>
+				</ModalBackdrop>
 			) : null}
 
-			{editingProjectId ? (
-				<div className="project-edit-modal-backdrop" onClick={closeEditModal}>
-					<form
-						className="project-edit-modal"
-						onSubmit={saveProjectEdits}
-						onClick={(event) => event.stopPropagation()}
-					>
-						<h2>Edit Project Tab</h2>
-
-						<label>
-							Name
-							<div className="project-name-row">
-								<div
-									ref={(element) => {
-										emojiPickerContainerRef.current = element;
-									}}
-									className="emoji-picker-field"
-								>
-									<button
-										type="button"
-										className="emoji-picker-trigger"
-										onClick={() => setIsEmojiPickerOpen((current) => !current)}
-										title="Pick emoji"
-										aria-label="Pick emoji"
-									>
-										<span aria-hidden="true">{editingEmoji || '🖥️'}</span>
-									</button>
-									<div
-										className={`emoji-picker-popover${isEmojiPickerOpen ? '' : ' emoji-picker-popover--hidden'}`}
-									>
-										<EmojiPicker
-											data={data}
-											onEmojiSelect={(emoji: { native?: string }) => {
-												if (!emoji.native) {
-													return;
-												}
-
-												setEditingEmoji(emoji.native);
-												setIsEmojiPickerOpen(false);
-											}}
-											previewPosition="none"
-											skinTonePosition="none"
-											theme="dark"
-										/>
-									</div>
-								</div>
-								<input
-									type="text"
-									value={editingTitle}
-									onChange={(event) => setEditingTitle(event.target.value)}
-									placeholder="Project name"
-									autoFocus
-								/>
-							</div>
-						</label>
-
-						<label>
-							Project Theme Hue
-							<div className="hue-slider-container">
-								<div className="hue-slider-label">
-									<span className="hue-slider-value">
-										{hexToHue(editingColor)}°
-									</span>
-								</div>
-								<input
-									type="range"
-									min="0"
-									max="360"
-									className="hue-slider"
-									value={hexToHue(editingColor)}
-									onChange={(event) =>
-										setEditingColor(hueToHex(Number(event.target.value)))
-									}
-								/>
-							</div>
-						</label>
-
-						<label>
-							Root Folder
-							<input
-								type="text"
-								value={editingRootFolder}
-								onChange={(event) => setEditingRootFolder(event.target.value)}
-								placeholder={homePath || 'Enter folder path'}
-							/>
-						</label>
-
-						<div
-							className="project-edit-preview"
-							style={
-								{
-									'--project-color': editingColor,
-								} as CSSProperties
-							}
-						>
-							<span aria-hidden="true">{editingEmoji || '🖥️'}</span>
-							<span>{editingTitle.trim() || 'Untitled Project'}</span>
-						</div>
-
-						<div className="project-edit-actions">
-							<button type="button" onClick={closeEditModal}>
-								Cancel
-							</button>
-							<button type="submit">Save</button>
-						</div>
-					</form>
-				</div>
-			) : null}
 		</div>
 	);
 }
