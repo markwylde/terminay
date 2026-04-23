@@ -38,6 +38,7 @@ import { renderMacroTemplate } from './macroSettings';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
 import type {
 	AppCommand,
+	AppUpdateStatus,
 	FileExplorerEntry,
 	RemoteAccessStatus,
 } from './types/termide';
@@ -3523,6 +3524,9 @@ function App() {
 	const pairingModal = useDraggableModal(isPairingModalOpen);
 	const remoteMenuRef = useRef<HTMLDivElement | null>(null);
 	const [isRemoteMenuOpen, setIsRemoteMenuOpen] = useState(false);
+	const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(
+		null,
+	);
 
 	useEffect(() => {
 		let isMounted = true;
@@ -3692,6 +3696,27 @@ function App() {
 		};
 	}, []);
 
+	useEffect(() => {
+		let isMounted = true;
+
+		const refreshUpdateStatus = async (force = false) => {
+			const status = await window.termide.getAppUpdateStatus({ force });
+			if (isMounted) {
+				setAppUpdateStatus(status);
+			}
+		};
+
+		void refreshUpdateStatus(true);
+		const intervalId = window.setInterval(() => {
+			void refreshUpdateStatus(true);
+		}, 60 * 60 * 1000);
+
+		return () => {
+			isMounted = false;
+			window.clearInterval(intervalId);
+		};
+	}, []);
+
 	const toggleRemoteAccess = useCallback(async () => {
 		setIsTogglingRemoteAccess(true);
 		try {
@@ -3797,6 +3822,12 @@ function App() {
 
 	const activeProject =
 		projects.find((project) => project.id === activeProjectId) ?? null;
+	const hasAppUpdate =
+		appUpdateStatus?.hasUpdate === true &&
+		typeof appUpdateStatus.releaseUrl === 'string';
+	const updateLabel = appUpdateStatus?.latestVersion
+		? `Update Now (${appUpdateStatus.latestVersion})`
+		: 'Update Now';
 
 	return (
 		<div className={`app-shell${isMac ? ' app-shell--macos' : ''}`}>
@@ -3923,46 +3954,64 @@ function App() {
 						</svg>
 					</button>
 				</div>
-				<div
-					ref={remoteMenuRef}
-					className={`remote-access-status${remoteStatus?.isRunning ? ' remote-access-status--active' : ''}${isRemoteMenuOpen ? ' remote-access-status--open' : ''}`}
-				>
-					<button
-						type="button"
-						className={`remote-access-button ${remoteButtonTone}`.trim()}
-						onClick={() => setIsRemoteMenuOpen((current) => !current)}
-						title="Open remote access menu"
-						aria-label="Open remote access menu"
-						aria-haspopup="menu"
-						aria-expanded={isRemoteMenuOpen}
+				<div className="header-actions">
+					{hasAppUpdate ? (
+						<div className="app-update-status">
+							<button
+								type="button"
+								className="app-update-button"
+								onClick={() =>
+									void window.termide.openExternal(
+										appUpdateStatus.releaseUrl as string,
+									)
+								}
+								title={`Open release page for v${appUpdateStatus?.latestVersion}`}
+							>
+								<span className="app-update-button__dot" aria-hidden="true" />
+								<span className="app-update-button__label">{updateLabel}</span>
+							</button>
+						</div>
+					) : null}
+					<div
+						ref={remoteMenuRef}
+						className={`remote-access-status${remoteStatus?.isRunning ? ' remote-access-status--active' : ''}${isRemoteMenuOpen ? ' remote-access-status--open' : ''}`}
 					>
-						<span className="remote-access-button__label">Remote</span>
-						{remoteStatus?.isRunning ? (
-							<span
-								className="remote-access-button__badge remote-access-button__badge--live"
+						<button
+							type="button"
+							className={`remote-access-button ${remoteButtonTone}`.trim()}
+							onClick={() => setIsRemoteMenuOpen((current) => !current)}
+							title="Open remote access menu"
+							aria-label="Open remote access menu"
+							aria-haspopup="menu"
+							aria-expanded={isRemoteMenuOpen}
+						>
+							<span className="remote-access-button__label">Remote</span>
+							{remoteStatus?.isRunning ? (
+								<span
+									className="remote-access-button__badge remote-access-button__badge--live"
+									aria-hidden="true"
+								/>
+							) : null}
+							{remoteStatus?.configurationIssue || remoteStatus?.errorMessage ? (
+								<span
+									className="remote-access-button__badge remote-access-button__badge--warning"
+									aria-hidden="true"
+								>
+									!
+								</span>
+							) : null}
+							<ChevronDown
+								className="remote-access-button__chevron"
+								size={12}
 								aria-hidden="true"
 							/>
-						) : null}
-						{remoteStatus?.configurationIssue || remoteStatus?.errorMessage ? (
-							<span
-								className="remote-access-button__badge remote-access-button__badge--warning"
-								aria-hidden="true"
+						</button>
+						{isRemoteMenuOpen ? (
+							<div
+								className="remote-access-menu"
+								role="menu"
+								aria-label="Remote access menu"
 							>
-								!
-							</span>
-						) : null}
-						<ChevronDown
-							className="remote-access-button__chevron"
-							size={12}
-							aria-hidden="true"
-						/>
-					</button>
-					{isRemoteMenuOpen ? (
-						<div
-							className="remote-access-menu"
-							role="menu"
-							aria-label="Remote access menu"
-						>
 							<button
 								type="button"
 								className="remote-access-menu__item"
@@ -4085,8 +4134,9 @@ function App() {
 									</div>
 								</div>
 							) : null}
-						</div>
-					) : null}
+							</div>
+						) : null}
+					</div>
 				</div>
 			</header>
 
