@@ -826,9 +826,9 @@ function createAppMenu(): void {
           click: () => sendCommandToFocusedWindow('popout-active'),
         },
         {
-          label: 'Open Macro Launcher',
+          label: 'Open Command Bar',
           accelerator: 'CmdOrCtrl+L',
-          click: () => sendCommandToFocusedWindow('open-macro-launcher'),
+          click: () => sendCommandToFocusedWindow('open-command-bar'),
         },
       ],
     },
