@@ -2106,7 +2106,6 @@ const ProjectWorkspace = forwardRef<
 		[
 			addTerminal,
 			closeActivePanel,
-			getActiveSessionId,
 			popoutActivePanel,
 			saveActivePanel,
 		],
@@ -2844,7 +2843,6 @@ const ProjectWorkspace = forwardRef<
 		closeMacroLauncher,
 		filteredMacros,
 		isMacroLauncherOpen,
-		runMacro,
 		selectedMacroIndex,
 	]);
 
