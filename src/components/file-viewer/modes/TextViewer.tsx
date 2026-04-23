@@ -1,5 +1,6 @@
 import Editor from '@monaco-editor/react'
 import { useMemo } from 'react'
+import { languageFromFilePath } from '../codeHighlight'
 import type { FileViewerEngine } from '../../../types/fileViewer'
 
 type TextViewerProps = {
@@ -8,33 +9,6 @@ type TextViewerProps = {
   language?: string
   onChangeText: (text: string) => void
   text: string
-}
-
-function languageFromFilePath(filePath: string): string | undefined {
-  const extension = filePath.toLowerCase().split('.').pop()
-  switch (extension) {
-    case 'ts':
-    case 'tsx':
-      return 'typescript'
-    case 'js':
-    case 'jsx':
-      return 'javascript'
-    case 'json':
-      return 'json'
-    case 'css':
-      return 'css'
-    case 'html':
-      return 'html'
-    case 'md':
-      return 'markdown'
-    case 'yml':
-    case 'yaml':
-      return 'yaml'
-    case 'sh':
-      return 'shell'
-    default:
-      return extension
-  }
 }
 
 export function TextViewer({ engine, filePath, language, onChangeText, text }: TextViewerProps) {

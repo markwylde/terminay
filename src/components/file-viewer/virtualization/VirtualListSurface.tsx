@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useMemo, useState } from 'react'
 import { useResizeObserver } from '../../../hooks/useResizeObserver'
 import { cx } from '../helpers'
 
@@ -30,8 +30,11 @@ export function VirtualListSurface<T>({
   renderItem,
   emptyState = null,
 }: VirtualListSurfaceProps<T>) {
-  const viewportRef = useRef<HTMLDivElement | null>(null)
-  const { height: viewportHeight } = useResizeObserver(viewportRef.current)
+  const [viewportElement, setViewportElement] = useState<HTMLDivElement | null>(null)
+  const viewportRef = useCallback((element: HTMLDivElement | null) => {
+    setViewportElement(element)
+  }, [])
+  const { height: viewportHeight } = useResizeObserver(viewportElement)
   const [scrollTop, setScrollTop] = useState(0)
 
   const measurements = useMemo(() => {
