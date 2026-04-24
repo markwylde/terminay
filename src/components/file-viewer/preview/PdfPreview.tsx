@@ -14,10 +14,13 @@ export function PdfPreview({ src }: PdfPreviewProps) {
 
   useEffect(() => {
     let disposed = false
+    let document: pdfjsLib.PDFDocumentProxy | null = null
+    let loadingTask: pdfjsLib.PDFDocumentLoadingTask | null = null
+    let renderTask: pdfjsLib.RenderTask | null = null
 
     const render = async () => {
-      const loadingTask = pdfjsLib.getDocument(src)
-      const document = await loadingTask.promise
+      loadingTask = pdfjsLib.getDocument(src)
+      document = await loadingTask.promise
       const page = await document.getPage(1)
       const viewport = page.getViewport({ scale: 1.2 })
       const canvas = canvasRef.current
@@ -33,17 +36,21 @@ export function PdfPreview({ src }: PdfPreviewProps) {
       canvas.width = viewport.width
       canvas.height = viewport.height
 
-      await page.render({
+      renderTask = page.render({
         canvas,
         canvasContext: context,
         viewport,
-      }).promise
+      })
+      await renderTask.promise
     }
 
-    void render()
+    void render().catch(() => undefined)
 
     return () => {
       disposed = true
+      renderTask?.cancel()
+      loadingTask?.destroy()
+      void document?.destroy()
     }
   }, [src])
 
