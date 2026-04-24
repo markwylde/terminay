@@ -8,6 +8,9 @@
 		"preview": "astro preview"
 	},
 	"dependencies": {
-		"astro": "^6.1.5"
+		"astro": "^6.1.9"
+	},
+	"overrides": {
+		"postcss": "8.5.10"
 	}
 }
