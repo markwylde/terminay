@@ -49,6 +49,11 @@
     "selfsigned": "^5.5.0",
     "ws": "^8.20.0"
   },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "3.4.1"
+    }
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.4.12",
     "@playwright/test": "^1.59.1",
