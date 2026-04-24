@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { CSSProperties, FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, FormEvent, KeyboardEvent } from 'react'
 import type {
   EditWindowState,
   ProjectEditWindowResult,
@@ -102,6 +102,7 @@ export function EditTabWindow() {
   const [rootFolder, setRootFolder] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const titleInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -133,10 +134,21 @@ export function EditTabWindow() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!state) {
+      return
+    }
+
+    window.requestAnimationFrame(() => {
+      titleInputRef.current?.focus()
+      titleInputRef.current?.select()
+    })
+  }, [state])
+
   const heading = state?.kind === 'project' ? 'Edit Project Tab' : 'Edit Terminal Tab'
   const previewColor = state?.kind === 'terminal' && inheritsProjectColor ? projectColor : color
   const hueValue = useMemo(() => hexToHue(previewColor), [previewColor])
-  const previewTitle = title.trim() || (state?.kind === 'project' ? 'Untitled Project' : 'Untitled Terminal')
+  const previewTitle = title.trim() || (state?.kind === 'project' ? 'Untitled Project' : 'Untitled Tab')
   const previewEmoji = emoji.trim()
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
@@ -180,9 +192,27 @@ export function EditTabWindow() {
     }
   }
 
+  const saveOnEnter = (event: KeyboardEvent<HTMLFormElement>) => {
+    const target = event.target
+    if (
+      event.key !== 'Enter' ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.shiftKey ||
+      !(target instanceof HTMLInputElement) ||
+      !['email', 'password', 'search', 'tel', 'text', 'url'].includes(target.type)
+    ) {
+      return
+    }
+
+    event.preventDefault()
+    event.currentTarget.requestSubmit()
+  }
+
   return (
     <div className="edit-window-shell">
-      <form className="edit-window-card" onSubmit={save}>
+      <form className="edit-window-card" onSubmit={save} onKeyDown={saveOnEnter}>
         <header className="edit-window-header">
           <div className="edit-window-header-content">
             <h1>{heading}</h1>
@@ -195,11 +225,11 @@ export function EditTabWindow() {
         <label className="edit-window-field">
           <span>Name</span>
           <input
+            ref={titleInputRef}
             type="text"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             placeholder={state?.kind === 'project' ? 'Project name' : 'Terminal name'}
-            autoFocus
             disabled={!state || isSaving}
           />
         </label>
