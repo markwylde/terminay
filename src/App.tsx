@@ -77,6 +77,7 @@ type ProjectWorkspaceProps = {
 	isMac: boolean;
 	macros: MacroDefinition[];
 	onAddProject: () => void;
+	onCloseProject: (projectId: string) => void;
 	onEditProject: (projectId: string) => Promise<void>;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
 	popoutUrl: string;
@@ -990,7 +991,7 @@ type MacroRunController = {
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
->(({ isActive, isMac, macros, onAddProject, onEditProject, onUpdateProject, popoutUrl, project }, ref) => {
+>(({ isActive, isMac, macros, onAddProject, onCloseProject, onEditProject, onUpdateProject, popoutUrl, project }, ref) => {
 	const dockviewApiRef = useRef<DockviewApi | null>(null);
 	const initialTerminalSeededRef = useRef(false);
 	const panelSessionMapRef = useRef<Map<string, string>>(new Map());
@@ -2559,6 +2560,16 @@ const ProjectWorkspace = forwardRef<
 
 			event.api.onDidRemovePanel((panel) => {
 				const sessionId = panelSessionMapRef.current.get(panel.id);
+				const closeProjectIfEmpty = () => {
+					window.requestAnimationFrame(() => {
+						const hasPanels = event.api.groups.some(
+							(group) => group.panels.length > 0,
+						);
+						if (!hasPanels) {
+							onCloseProject(project.id);
+						}
+					});
+				};
 
 				if (!sessionId) {
 					const fileEntry = [...filePathPanelMapRef.current.entries()].find(
@@ -2573,6 +2584,7 @@ const ProjectWorkspace = forwardRef<
 					if (folderEntry) {
 						folderPathPanelMapRef.current.delete(folderEntry[0]);
 					}
+					closeProjectIfEmpty();
 					return;
 				}
 
@@ -2585,12 +2597,19 @@ const ProjectWorkspace = forwardRef<
 						: current,
 				);
 				window.termide.killTerminal(sessionId);
+				closeProjectIfEmpty();
 			});
 			event.api.onDidActivePanelChange(() => {
 				syncPanelFocusState();
 			});
 		},
-		[cancelMacroRunsForSession, clearMacroRunsForSession, syncPanelFocusState],
+		[
+			cancelMacroRunsForSession,
+			clearMacroRunsForSession,
+			onCloseProject,
+			project.id,
+			syncPanelFocusState,
+		],
 	);
 
 	useEffect(() => {
@@ -4324,6 +4343,7 @@ function App() {
 						isMac={isMac}
 						macros={macros}
 						onAddProject={addProject}
+						onCloseProject={closeProject}
 						onEditProject={openEditProjectWindow}
 						onUpdateProject={updateProject}
 						popoutUrl={popoutUrl}

@@ -1,13 +1,11 @@
 import { app, BrowserWindow, Menu, clipboard, ipcMain, nativeImage, shell, webContents, safeStorage } from 'electron'
-import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { execFile } from 'node:child_process'
+import { execFile, fork, type ChildProcess } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { lstat, readdir, stat, rename, rm, mkdir } from 'node:fs/promises'
 import { promisify } from 'node:util'
-import type { IPty } from 'node-pty'
 import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
 import type { MacroDefinition } from '../src/types/macros'
@@ -29,8 +27,6 @@ import { GitDiffService } from './fileViewer/gitDiffService'
 import { registerFileViewerIpcHandlers } from './fileViewer/ipc'
 import { RemoteAccessService } from './remote/service'
 
-const require = createRequire(import.meta.url)
-const pty = require('node-pty') as typeof import('node-pty')
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const execFileAsync = promisify(execFile)
 const RELEASES_LATEST_URL = 'https://github.com/markwylde/termide/releases/latest'
@@ -112,8 +108,18 @@ function resetZoom(): void {
 interface TerminalSession {
   id: string
   ownerWebContentsId: number
-  process: IPty
+  host: ChildProcess
+  rootPid: number | null
+  exited: boolean
+  inactivityWaiters: Map<string, () => void>
 }
+
+type PtyHostMessage =
+  | { type: 'ready'; pid: number }
+  | { type: 'data'; data: string }
+  | { type: 'exit'; exitCode: number }
+  | { type: 'error'; message: string }
+  | { type: 'inactive'; requestId: string }
 
 const terminalSessions = new Map<string, TerminalSession>()
 let settingsWindow: BrowserWindow | null = null
@@ -139,8 +145,8 @@ const remoteAccessService = new RemoteAccessService({
     return session
       ? {
           close: () => killSession(sessionId),
-          resize: (cols: number, rows: number) => session.process.resize(cols, rows),
-          write: (data: string) => session.process.write(data),
+          resize: (cols: number, rows: number) => sendToPtyHost(session, { type: 'resize', cols, rows }),
+          write: (data: string) => sendToPtyHost(session, { type: 'write', data }),
         }
       : null
   },
@@ -766,7 +772,7 @@ async function resolveProcessCwd(pid: number): Promise<string | null> {
 
 async function resolveTerminalCwd(sessionId: string): Promise<string | null> {
   const session = terminalSessions.get(sessionId)
-  const rootPid = session?.process.pid
+  const rootPid = session?.rootPid
 
   if (!rootPid || rootPid <= 0) {
     return null
@@ -785,9 +791,48 @@ async function resolveTerminalCwd(sessionId: string): Promise<string | null> {
   return null
 }
 
-async function spawnWithFallbackShell(settings: TerminalSettings, cwd?: string): Promise<IPty> {
+function getPtyHostPath(): string {
+  return path.join(MAIN_DIST, 'ptyHost.js')
+}
+
+function sendToPtyHost(session: TerminalSession, message: Record<string, unknown>): void {
+  if (session.exited || !session.host.connected) {
+    return
+  }
+
+  try {
+    session.host.send(message)
+  } catch {
+    // The PTY host may have crashed or exited between the connected check and send.
+  }
+}
+
+function finalizeTerminalSession(session: TerminalSession, exitCode: number): void {
+  if (session.exited) {
+    return
+  }
+
+  session.exited = true
+  terminalSessions.delete(session.id)
+  remoteAccessService.markSessionExit(session.id, exitCode)
+  sendToSessionRenderer(session, 'terminal:exit', {
+    id: session.id,
+    exitCode,
+  })
+
+  for (const resolve of session.inactivityWaiters.values()) {
+    resolve()
+  }
+  session.inactivityWaiters.clear()
+}
+
+async function buildPtySpawnOptions(settings: TerminalSettings, cwd?: string): Promise<{
+  shellPath: string
+  args: string[]
+  cwd: string
+  env: NodeJS.ProcessEnv
+}> {
   const shells = getConfiguredShells(settings)
-  let lastError: unknown = null
   const spawnCwd = await normalizeSpawnCwd(cwd)
   const spawnEnv = getTerminalSpawnEnv()
   const extraArgs = parseCommandLineArgs(settings.shell.extraArgs)
@@ -797,37 +842,102 @@ async function spawnWithFallbackShell(settings: TerminalSettings, cwd?: string):
       continue
     }
 
-    try {
-      return pty.spawn(shellPath, [...getShellStartupArgs(shellPath, settings.shell.startupMode), ...extraArgs], {
-        name: 'xterm-256color',
-        cols: 80,
-        rows: 24,
-        cwd: spawnCwd,
-        env: spawnEnv,
-      })
-    } catch (error) {
-      lastError = error
+    return {
+      shellPath,
+      args: [...getShellStartupArgs(shellPath, settings.shell.startupMode), ...extraArgs],
+      cwd: spawnCwd,
+      env: spawnEnv,
     }
   }
 
-  throw new Error(
-    `Unable to start a terminal shell. Tried: ${shells.join(', ')}. Last error: ${String(lastError)}`,
-  )
+  throw new Error(`Unable to start a terminal shell. Tried: ${shells.join(', ')}`)
 }
 
 async function createPtySession(webContentsId: number, cwd?: string): Promise<TerminalSession> {
   const id = randomUUID()
-  const ptyProcess = await spawnWithFallbackShell(readTerminalSettings(), cwd)
+  const spawnOptions = await buildPtySpawnOptions(readTerminalSettings(), cwd)
+  const host = fork(getPtyHostPath(), {
+    env: {
+      ...process.env,
+      TERMIDE_PTY_HOST: '1',
+    },
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+  })
 
   const session: TerminalSession = {
     id,
     ownerWebContentsId: webContentsId,
-    process: ptyProcess,
+    host,
+    rootPid: null,
+    exited: false,
+    inactivityWaiters: new Map(),
   }
 
-  terminalSessions.set(id, session)
-  remoteAccessService.ensureSession(id)
-  return session
+  return new Promise<TerminalSession>((resolve, reject) => {
+    let settled = false
+
+    const fail = (error: Error) => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      try {
+        host.kill()
+      } catch {
+        // best-effort cleanup
+      }
+      reject(error)
+    }
+
+    const handleMessage = (message: PtyHostMessage) => {
+      switch (message.type) {
+        case 'ready':
+          session.rootPid = message.pid
+          terminalSessions.set(id, session)
+          remoteAccessService.ensureSession(id)
+          settled = true
+          resolve(session)
+          break
+        case 'data':
+          sendToSessionRenderer(session, 'terminal:data', { id: session.id, data: message.data })
+          remoteAccessService.appendSessionData(session.id, message.data)
+          break
+        case 'exit':
+          finalizeTerminalSession(session, message.exitCode)
+          break
+        case 'error':
+          if (!settled) {
+            fail(new Error(message.message))
+          }
+          break
+        case 'inactive':
+          session.inactivityWaiters.get(message.requestId)?.()
+          session.inactivityWaiters.delete(message.requestId)
+          break
+      }
+    }
+
+    host.on('message', handleMessage)
+    host.once('error', (error) => {
+      fail(error)
+    })
+    host.once('exit', (code, signal) => {
+      if (!settled) {
+        fail(new Error(`PTY host exited before startup (${signal ?? code ?? 'unknown'})`))
+        return
+      }
+
+      if (!session.exited) {
+        finalizeTerminalSession(session, typeof code === 'number' ? code : 1)
+      }
+    })
+
+    sendToPtyHost(session, {
+      type: 'create',
+      ...spawnOptions,
+    })
+  })
 }
 
 function killSession(id: string): void {
@@ -836,12 +946,7 @@ function killSession(id: string): void {
     return
   }
 
-  try {
-    session.process.kill()
-  } catch {
-    // session may already have ended
-  }
-
+  sendToPtyHost(session, { type: 'kill' })
   terminalSessions.delete(id)
   remoteAccessService.removeSession(id)
 }
@@ -1325,21 +1430,6 @@ function setDockIcon(): void {
 
 ipcMain.handle('terminal:create', async (event, payload?: { cwd?: string }) => {
   const session = await createPtySession(event.sender.id, payload?.cwd)
-
-  session.process.onData((data: string) => {
-    sendToSessionRenderer(session, 'terminal:data', { id: session.id, data })
-    remoteAccessService.appendSessionData(session.id, data)
-  })
-
-  session.process.onExit((exit: { exitCode: number; signal?: number }) => {
-    sendToSessionRenderer(session, 'terminal:exit', {
-      id: session.id,
-      exitCode: exit.exitCode ?? 0,
-    })
-    remoteAccessService.markSessionExit(session.id, exit.exitCode ?? 0)
-    terminalSessions.delete(session.id)
-  })
-
   return { id: session.id }
 })
 
@@ -1353,7 +1443,7 @@ ipcMain.on('terminal:write', (_event, payload: { id: string; data: string }) => 
     return
   }
 
-  session.process.write(payload.data)
+  sendToPtyHost(session, { type: 'write', data: payload.data })
 })
 
 ipcMain.on('terminal:resize', (_event, payload: { id: string; cols: number; rows: number }) => {
@@ -1366,7 +1456,7 @@ ipcMain.on('terminal:resize', (_event, payload: { id: string; cols: number; rows
   const rows = Math.max(1, Math.floor(payload.rows))
 
   try {
-    session.process.resize(cols, rows)
+    sendToPtyHost(session, { type: 'resize', cols, rows })
     remoteAccessService.updateSessionSize(payload.id, cols, rows)
   } catch {
     // can throw during teardown races
@@ -1606,18 +1696,9 @@ ipcMain.handle('terminal:wait-for-inactivity', async (_event, { id, durationMs }
   }
 
   return new Promise<void>((resolve) => {
-    let timeout = setTimeout(() => {
-      dataListener.dispose()
-      resolve()
-    }, durationMs)
-
-    const dataListener = session.process.onData(() => {
-      clearTimeout(timeout)
-      timeout = setTimeout(() => {
-        dataListener.dispose()
-        resolve()
-      }, durationMs)
-    })
+    const requestId = randomUUID()
+    session.inactivityWaiters.set(requestId, resolve)
+    sendToPtyHost(session, { type: 'waitForInactivity', requestId, durationMs })
   })
 })
 
