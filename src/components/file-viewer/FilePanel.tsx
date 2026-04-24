@@ -60,12 +60,17 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
     [engine, fileInfo, mode],
   )
   const fileInfoRef = useRef<FileInfo | null>(fileInfo)
+  const isDirtyRef = useRef(isDirty)
+  const modeRef = useRef(mode)
   const sessionStoreRef = useRef(sessionStore)
   const truncatedForPerformanceRef = useRef(truncatedForPerformance)
 
   fileInfoRef.current = fileInfo
+  isDirtyRef.current = isDirty
+  modeRef.current = mode
   sessionStoreRef.current = sessionStore
   truncatedForPerformanceRef.current = truncatedForPerformance
+  const watchedFilePath = fileInfo?.path ?? null
 
   useEffect(() => {
     isMountedRef.current = true
@@ -142,6 +147,8 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
           if (isMounted) {
             previewObjectUrlRef.current = objectUrl
             setPreviewSourceUrl(objectUrl)
+          } else {
+            URL.revokeObjectURL(objectUrl)
           }
         } catch {
           if (isMounted) {
@@ -231,46 +238,76 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   }, [engine, fileInfo, mode, showEngineChoice])
 
   useEffect(() => {
-    if (!fileInfo) {
+    if (!watchedFilePath) {
       return
     }
 
-    void termideFileGateway.watchFile(fileInfo.path)
+    const watchedPath = watchedFilePath
+    let debounceId: number | null = null
+    let refreshVersion = 0
+    let disposed = false
+
+    void termideFileGateway.watchFile(watchedPath)
     const dispose = termideFileGateway.onFileWatchEvent(async (event) => {
-      if (event.path !== fileInfo.path) {
+      if (event.path !== watchedPath) {
         return
       }
 
-      if (isDirty) {
+      if (isDirtyRef.current) {
         setConflict(true)
-        sessionStore?.setConflict({
+        sessionStoreRef.current?.setConflict({
           diskMtimeMs: event.mtimeMs ?? 0,
           kind: 'external-change',
         })
         return
       }
 
-      const nextInfo = await termideFileGateway.getFileInfo(fileInfo.path)
-      setFileInfo(nextInfo)
-      sessionStore?.setFile(nextInfo)
-
-      if (!nextInfo.isBinary) {
-        const text = await termideFileGateway.readFileText(nextInfo.path)
-        setDraftText(text)
-        draftBufferRef.current.replaceText(text)
-        setTruncatedForPerformance(false)
-      } else if (mode === 'hex') {
-        setTruncatedForPerformance(false)
+      if (debounceId !== null) {
+        window.clearTimeout(debounceId)
       }
 
-      void refreshDiff(nextInfo.path, { keepPrevious: true })
+      debounceId = window.setTimeout(() => {
+        debounceId = null
+        const requestVersion = ++refreshVersion
+
+        void (async () => {
+          const nextInfo = await termideFileGateway.getFileInfo(watchedPath)
+          if (disposed || requestVersion !== refreshVersion) {
+            return
+          }
+
+          setFileInfo(nextInfo)
+          sessionStoreRef.current?.setFile(nextInfo)
+
+          if (modeRef.current === 'hex') {
+            setTruncatedForPerformance(false)
+          }
+
+          if (modeRef.current === 'diff') {
+            void refreshDiff(nextInfo.path, { keepPrevious: true })
+          }
+        })()
+      }, 150)
     })
 
     return () => {
+      disposed = true
+      refreshVersion += 1
+      if (debounceId !== null) {
+        window.clearTimeout(debounceId)
+      }
       dispose()
-      void termideFileGateway.unwatchFile(fileInfo.path)
+      void termideFileGateway.unwatchFile(watchedPath)
     }
-  }, [fileInfo, isDirty, mode, refreshDiff, sessionStore])
+  }, [watchedFilePath, refreshDiff])
+
+  useEffect(() => {
+    if (mode !== 'diff' || !watchedFilePath) {
+      return
+    }
+
+    void refreshDiff(watchedFilePath, { keepPrevious: true })
+  }, [mode, refreshDiff, watchedFilePath])
 
   useEffect(() => {
     props.api.updateParameters({

@@ -5,11 +5,11 @@ import type { FileViewerWatchEvent } from '../../src/types/termide'
 import type { FileBufferService } from './fileBufferService'
 
 type WatchRegistration = {
-  paths: Set<string>
+  paths: Map<string, number>
 }
 
 type WatchSubscription = {
-  subscribers: Set<number>
+  subscribers: Map<number, number>
   watcher: FSWatcher
 }
 
@@ -34,7 +34,7 @@ export class FileWatchService {
         void this.handleWatchEvent(resolvedPath, eventType)
       })
       subscription = {
-        subscribers: new Set<number>(),
+        subscribers: new Map<number, number>(),
         watcher,
       }
       watcher.on('error', (error) => {
@@ -49,10 +49,10 @@ export class FileWatchService {
       this.subscriptionsByPath.set(resolvedPath, subscription)
     }
 
-    subscription.subscribers.add(ownerWebContentsId)
+    subscription.subscribers.set(ownerWebContentsId, (subscription.subscribers.get(ownerWebContentsId) ?? 0) + 1)
 
-    const registration = this.pathsBySubscriber.get(ownerWebContentsId) ?? { paths: new Set<string>() }
-    registration.paths.add(resolvedPath)
+    const registration = this.pathsBySubscriber.get(ownerWebContentsId) ?? { paths: new Map<string, number>() }
+    registration.paths.set(resolvedPath, (registration.paths.get(resolvedPath) ?? 0) + 1)
     this.pathsBySubscriber.set(ownerWebContentsId, registration)
   }
 
@@ -67,8 +67,10 @@ export class FileWatchService {
       return
     }
 
-    for (const watchedPath of registration.paths) {
-      this.removeSubscriberFromPath(ownerWebContentsId, watchedPath)
+    for (const [watchedPath, count] of Array.from(registration.paths.entries())) {
+      for (let index = 0; index < count; index += 1) {
+        this.removeSubscriberFromPath(ownerWebContentsId, watchedPath)
+      }
     }
   }
 
@@ -78,14 +80,25 @@ export class FileWatchService {
       return
     }
 
-    subscription.subscribers.delete(ownerWebContentsId)
+    const subscriberCount = subscription.subscribers.get(ownerWebContentsId) ?? 0
+    if (subscriberCount <= 1) {
+      subscription.subscribers.delete(ownerWebContentsId)
+    } else {
+      subscription.subscribers.set(ownerWebContentsId, subscriberCount - 1)
+    }
+
     if (subscription.subscribers.size === 0) {
       subscription.watcher.close()
       this.subscriptionsByPath.delete(resolvedPath)
     }
 
     const registration = this.pathsBySubscriber.get(ownerWebContentsId)
-    registration?.paths.delete(resolvedPath)
+    const registrationCount = registration?.paths.get(resolvedPath) ?? 0
+    if (registration && registrationCount <= 1) {
+      registration.paths.delete(resolvedPath)
+    } else if (registration) {
+      registration.paths.set(resolvedPath, registrationCount - 1)
+    }
     if (registration && registration.paths.size === 0) {
       this.pathsBySubscriber.delete(ownerWebContentsId)
     }
@@ -109,7 +122,7 @@ export class FileWatchService {
       return
     }
 
-    for (const subscriberId of subscription.subscribers) {
+    for (const subscriberId of Array.from(subscription.subscribers.keys())) {
       const target = webContents.fromId(subscriberId)
       if (!target || target.isDestroyed()) {
         this.disposeSubscriber(subscriberId)
