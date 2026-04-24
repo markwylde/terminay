@@ -45,6 +45,10 @@ export default defineConfig({
         vite: {
           build: {
             rollupOptions: {
+              input: {
+                main: path.join(__dirname, 'electron/main.ts'),
+                ptyHost: path.join(__dirname, 'electron/ptyHost.ts'),
+              },
               external: nodeBuiltins,
             },
           },
