@@ -145,7 +145,7 @@ export function EditTabWindow() {
     })
   }, [state])
 
-  const heading = state?.kind === 'project' ? 'Edit Project Tab' : 'Edit Tab'
+  const heading = state?.kind === 'project' ? 'Edit Project Tab' : 'Edit Terminal Tab'
   const previewColor = state?.kind === 'terminal' && inheritsProjectColor ? projectColor : color
   const hueValue = useMemo(() => hexToHue(previewColor), [previewColor])
   const previewTitle = title.trim() || (state?.kind === 'project' ? 'Untitled Project' : 'Untitled Tab')
@@ -229,7 +229,7 @@ export function EditTabWindow() {
             type="text"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
-            placeholder={state?.kind === 'project' ? 'Project name' : 'Tab name'}
+            placeholder={state?.kind === 'project' ? 'Project name' : 'Terminal name'}
             disabled={!state || isSaving}
           />
         </label>
