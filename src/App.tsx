@@ -51,6 +51,13 @@ type AddTerminalOptions = {
 	groupId?: string;
 };
 
+type DockPanelTabAppearance = {
+	color?: string;
+	emoji?: string;
+	inheritsProjectColor?: boolean;
+	projectColor?: string;
+};
+
 type ProjectTab = {
 	id: string;
 	title: string;
@@ -82,6 +89,7 @@ const DEFAULT_FILE_EXPLORER_WIDTH = 280;
 const MIN_FILE_EXPLORER_WIDTH = 180;
 const MAX_FILE_EXPLORER_WIDTH = 520;
 const FILE_EXPLORER_DRAG_THRESHOLD = 6;
+const FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS = 2500;
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
 
 function hueToProjectTabColor(hue: number): string {
@@ -153,12 +161,7 @@ function getRandomProjectTabColor(usedColors: Iterable<string> = []): string {
 }
 
 function getEffectiveTerminalTabColor(
-	params:
-		| Pick<
-				TerminalPanelParams,
-				'color' | 'inheritsProjectColor' | 'projectColor'
-		  >
-		| undefined,
+	params: DockPanelTabAppearance | undefined,
 	fallbackProjectColor: string,
 ): string {
 	if (params?.inheritsProjectColor) {
@@ -1027,6 +1030,7 @@ const ProjectWorkspace = forwardRef<
 	const macroRunControllersRef = useRef<Map<string, MacroRunController>>(
 		new Map(),
 	);
+	const isRefreshingGitStatusesRef = useRef(false);
 
 	const [isDockviewReady, setIsDockviewReady] = useState(false);
 	const [isMacroLauncherOpen, setIsMacroLauncherOpen] = useState(false);
@@ -1107,6 +1111,11 @@ const ProjectWorkspace = forwardRef<
 			return;
 		}
 
+		if (isRefreshingGitStatusesRef.current) {
+			return;
+		}
+
+		isRefreshingGitStatusesRef.current = true;
 		try {
 			const nextStatuses = await window.termide.getFileExplorerGitStatuses(
 				project.rootFolder,
@@ -1114,6 +1123,8 @@ const ProjectWorkspace = forwardRef<
 			setGitStatuses(nextStatuses.statuses);
 		} catch {
 			setGitStatuses({});
+		} finally {
+			isRefreshingGitStatusesRef.current = false;
 		}
 	}, [project.rootFolder]);
 
@@ -1426,10 +1437,13 @@ const ProjectWorkspace = forwardRef<
 				component: 'file',
 				id: panelId,
 				params: {
+					color: project.color,
 					filePath,
 					initialMode: 'preview',
+					inheritsProjectColor: true,
 					isFocused: false,
 					preferredEngine: 'auto',
+					projectColor: project.color,
 				},
 				position: api.activePanel
 					? {
@@ -1445,7 +1459,7 @@ const ProjectWorkspace = forwardRef<
 			panel.api.setActive();
 			syncPanelFocusState();
 		},
-		[syncPanelFocusState],
+		[project.color, syncPanelFocusState],
 	);
 
 	const handleRename = useCallback(
@@ -1634,13 +1648,16 @@ const ProjectWorkspace = forwardRef<
 				component: 'folder',
 				id: panelId,
 				params: {
+					color: project.color,
 					folderPath,
+					inheritsProjectColor: true,
 					isFocused: false,
 					onRename: handleRename,
 					onDelete: handleDelete,
 					onNewFile: handleNewFile,
 					onNewFolder: handleNewFolder,
 					onOpenTerminal: handleOpenTerminalAt,
+					projectColor: project.color,
 				},
 				position: api.activePanel
 					? {
@@ -1662,6 +1679,7 @@ const ProjectWorkspace = forwardRef<
 			handleNewFolder,
 			handleOpenTerminalAt,
 			handleRename,
+			project.color,
 			syncPanelFocusState,
 		],
 	);
@@ -1967,6 +1985,21 @@ const ProjectWorkspace = forwardRef<
 	useEffect(() => {
 		const api = dockviewApiRef.current;
 
+		for (const group of api?.groups ?? []) {
+			for (const panel of group.panels) {
+				const params = panel.params as DockPanelTabAppearance | undefined;
+				if (!params || !('inheritsProjectColor' in params)) {
+					continue;
+				}
+
+				const inheritsProjectColor = params.inheritsProjectColor === true;
+				panel.api.updateParameters({
+					projectColor: project.color,
+					...(inheritsProjectColor ? { color: project.color } : {}),
+				});
+			}
+		}
+
 		for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
 			const panel = api?.getPanel(panelId);
 			const inheritsProjectColor =
@@ -2006,6 +2039,33 @@ const ProjectWorkspace = forwardRef<
 			void refreshGitStatuses();
 		}
 	}, [loadDirectory, project.rootFolder, refreshGitStatuses]);
+
+	useEffect(() => {
+		if (!project.rootFolder || !project.isFileExplorerOpen) {
+			return;
+		}
+
+		void refreshGitStatuses();
+
+		const intervalId = window.setInterval(() => {
+			void refreshGitStatuses();
+		}, FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS);
+
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === 'visible') {
+				void refreshGitStatuses();
+			}
+		};
+
+		window.addEventListener('focus', refreshGitStatuses);
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+
+		return () => {
+			window.clearInterval(intervalId);
+			window.removeEventListener('focus', refreshGitStatuses);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+		};
+	}, [project.isFileExplorerOpen, project.rootFolder, refreshGitStatuses]);
 
 	useEffect(() => {
 		const onPointerMove = (event: PointerEvent) => {
@@ -2103,7 +2163,7 @@ const ProjectWorkspace = forwardRef<
 			inheritsProjectColor:
 				panel.params?.inheritsProjectColor ?? panel.params?.color === project.color,
 			projectColor: project.color,
-			title: panel.title ?? 'Terminal',
+			title: panel.title ?? 'Tab',
 		});
 		if (!result) {
 			return;
@@ -2112,7 +2172,7 @@ const ProjectWorkspace = forwardRef<
 		const nextTitle =
 			result.title.trim().length > 0
 				? result.title.trim()
-				: (panel.title ?? 'Terminal');
+				: (panel.title ?? 'Tab');
 		const nextEmoji = result.emoji.trim();
 		const nextColor = result.color;
 
@@ -2154,9 +2214,8 @@ const ProjectWorkspace = forwardRef<
 
 	const openActiveTerminalSettings = useCallback(() => {
 		const activePanel = dockviewApiRef.current?.activePanel;
-		const sessionId = getActiveSessionId();
-		if (!activePanel || !sessionId) {
-			setErrorText('Open a terminal before editing its tab settings.');
+		if (!activePanel) {
+			setErrorText('Open a tab before editing its settings.');
 			return;
 		}
 
@@ -2164,7 +2223,7 @@ const ProjectWorkspace = forwardRef<
 		setIsMacroLauncherOpen(false);
 		setMacroQuery('');
 		void openTerminalEditWindow(activePanel.id);
-	}, [getActiveSessionId, openTerminalEditWindow]);
+	}, [openTerminalEditWindow]);
 
 	const openProjectSettings = useCallback(() => {
 		setErrorText(null);
@@ -2306,8 +2365,8 @@ const ProjectWorkspace = forwardRef<
 			{
 				id: 'edit-tab-settings',
 				title: 'Edit tab settings',
-				description: 'Open settings for the active terminal tab.',
-				searchText: 'edit tab settings terminal tab rename emoji color',
+				description: 'Open settings for the active tab.',
+				searchText: 'edit tab settings rename emoji color file folder terminal',
 				onSelect: () => {
 					openActiveTerminalSettings();
 				},

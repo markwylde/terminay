@@ -68,6 +68,38 @@ test.describe('terminal behavior', () => {
     await expect(updatedTab).toHaveAttribute('data-has-color', 'true')
   })
 
+  test('terminal edit window focuses the title and saves it with Enter', async ({ mainWindow }) => {
+    const editWindow = await openTerminalEditWindow(mainWindow)
+    const titleInput = editWindow.getByPlaceholder('Terminal name')
+
+    await expect(editWindow.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
+    await expect(titleInput).toBeFocused()
+    await expect
+      .poll(async () =>
+        titleInput.evaluate((input) => {
+          const title = input as HTMLInputElement
+          return title.selectionStart === 0 && title.selectionEnd === title.value.length
+        }),
+      )
+      .toBe(true)
+
+    await titleInput.fill('Keyboard Shell')
+    const closePromise = editWindow.waitForEvent('close')
+    try {
+      await titleInput.press('Enter')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!message.includes('Target page, context or browser has been closed')) {
+        throw error
+      }
+    }
+    await closePromise
+
+    await expect(mainWindow.locator('.terminal-tab-content').first().locator('.terminal-tab-title')).toHaveText(
+      'Keyboard Shell',
+    )
+  })
+
   test('terminal edit window keeps the icon input to one character and cancel leaves the tab unchanged', async ({ mainWindow }) => {
     const firstTab = mainWindow.locator('.terminal-tab-content').first()
     const originalTitle = (await firstTab.locator('.terminal-tab-title').textContent())?.trim() ?? 'Terminal 1'

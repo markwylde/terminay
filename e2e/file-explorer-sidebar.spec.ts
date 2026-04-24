@@ -117,3 +117,31 @@ test('file explorer colors git new and modified files like VS Code', async ({ cr
   await expect(srcFolder.locator('.file-explorer-tree-name')).toHaveCSS('color', 'rgb(115, 201, 145)')
   await expect(docsFolder.locator('.file-explorer-tree-name')).toHaveCSS('color', 'rgb(226, 192, 141)')
 })
+
+test('file explorer refreshes git colors after external changes', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'sidebar-git-status-refresh',
+    seed: {
+      files: {
+        'README.md': 'initial readme\n',
+      },
+    },
+  })
+
+  await execFileAsync('git', ['init'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Termide E2E'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'termide@example.com'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const readmeName = fileExplorerItem(mainWindow, 'README.md').locator('.file-explorer-tree-name')
+  await expect(readmeName).toBeVisible()
+  await expect(readmeName).not.toHaveCSS('color', 'rgb(226, 192, 141)')
+
+  await workspace.writeText('README.md', 'initial readme\nwith external edits\n')
+
+  await expect(readmeName).toHaveCSS('color', 'rgb(226, 192, 141)', { timeout: 6000 })
+})

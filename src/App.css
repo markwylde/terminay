@@ -809,7 +809,16 @@
     inset 0 -3px 0 var(--terminal-tab-active-accent);
 }
 
-.terminal-tab-content--active[data-has-color='true'] {
+.workspace .dv-tab.dv-active-tab .terminal-tab-content:not(.terminal-tab-content--active) {
+  background: var(--terminal-tab-bg-active);
+  color: var(--tab-text-selected);
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.06),
+    inset 0 -3px 0 var(--terminal-tab-active-accent);
+}
+
+.terminal-tab-content--active[data-has-color='true'],
+.workspace .dv-tab.dv-active-tab .terminal-tab-content[data-has-color='true'] {
   background-color: color-mix(in srgb, var(--tab-color) 40%, var(--terminal-tab-bg-active));
   box-shadow:
     inset 1px 0 0 rgba(255, 255, 255, 0.06),
