@@ -1,6 +1,10 @@
 export type FolderPanelInstanceParams = {
+	color?: string;
+	emoji?: string;
 	folderPath: string;
+	inheritsProjectColor?: boolean;
 	isFocused?: boolean;
+	projectColor?: string;
 };
 
 export type FolderViewMode = 'tree' | 'list' | 'thumbnail' | 'gallery';
