@@ -1,0 +1,61 @@
+---
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsLayout from '../../layouts/DocsLayout.astro';
+---
+
+<DocsLayout
+  title="Installation - Termide"
+  description="Download Termide, run packaged builds, or build Termide from source."
+  current="installation"
+>
+  <h1 class="docs-title">Installation</h1>
+  <p class="docs-lead">
+    Download a packaged Termide build from GitHub Releases, or build a local copy when a package is not available for your platform.
+  </p>
+
+  <section class="docs-section">
+    <h2>Download Termide</h2>
+    <p>
+      Packaged builds are published on <a href="https://github.com/markwylde/termide/releases">GitHub Releases</a>.
+    </p>
+    <ul>
+      <li>macOS DMG installer: <code>Termide-Mac-&lt;version&gt;-Installer.dmg</code></li>
+      <li>Linux AppImage: <code>Termide-Linux-&lt;version&gt;.AppImage</code></li>
+    </ul>
+  </section>
+
+  <section class="docs-section">
+    <h2>Linux AppImage</h2>
+    <p>
+      On Linux, make the AppImage executable before opening it.
+    </p>
+    <pre><code>chmod +x Termide-Linux-&lt;version&gt;.AppImage
+./Termide-Linux-&lt;version&gt;.AppImage</code></pre>
+  </section>
+
+  <section class="docs-section">
+    <h2>Build From Source</h2>
+    <p>
+      If a packaged build is not available, build Termide locally with Node.js 22+ and npm 10+.
+    </p>
+    <pre><code>git clone https://github.com/markwylde/termide.git
+cd termide
+npm ci
+npm run build</code></pre>
+    <p>
+      Packaged output is written under <code>release/&lt;version&gt;/</code>. You can also build the documented platform packages directly.
+    </p>
+    <pre><code>npm run build:mac
+npm run build:linux</code></pre>
+  </section>
+
+  <section class="docs-section">
+    <h2>Notes</h2>
+    <p>
+      Release automation currently publishes macOS DMG and Linux AppImage assets. The app packaging config also defines a Windows installer, but the current release workflow does not publish one.
+    </p>
+    <p>
+      The source tree uses a placeholder package version. Release builds sync the app version from the Git tag before packaging, so local source builds may appear under <code>release/0.0.0/</code>.
+    </p>
+  </section>
+</DocsLayout>
