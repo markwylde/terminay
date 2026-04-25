@@ -202,7 +202,7 @@ function normalizeStep(input: unknown, index: number): MacroStep {
   }
 }
 
-export function extractTemplatePlaceholders(template: string): string[] {
+function extractTemplatePlaceholders(template: string): string[] {
   const matches = template.matchAll(placeholderPattern)
   const seen = new Set<string>()
   const placeholders: string[] = []
@@ -296,14 +296,6 @@ export function mergeFieldsWithSteps(steps: MacroStep[], fields: MacroFieldDefin
   return [...existingValidFields, ...missingFields]
 }
 
-export function mergeMacroFieldsWithTemplate(macro: MacroDefinition): MacroFieldDefinition[] {
-  return mergeFieldsWithSteps(macro.steps, macro.fields)
-}
-
-export function getMacroSubmitSuffix(submitMode: MacroDefinition['submitMode']): string {
-  return submitMode === 'type-and-submit' ? '\r' : ''
-}
-
 function deriveLegacyTemplate(steps: MacroStep[]): Pick<MacroDefinition, 'submitMode' | 'template'> {
   const lastStep = steps.length > 0 ? steps[steps.length - 1] : undefined
   const submitMode: MacroDefinition['submitMode'] =
@@ -338,7 +330,7 @@ function deriveLegacyTemplate(steps: MacroStep[]): Pick<MacroDefinition, 'submit
   }
 }
 
-export function normalizeMacro(input: unknown, index: number): MacroDefinition {
+function normalizeMacro(input: unknown, index: number): MacroDefinition {
   const record = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {}
   const explicitFields = Array.isArray(record.fields) ? record.fields.map(normalizeField) : []
 
