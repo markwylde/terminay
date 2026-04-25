@@ -9,6 +9,7 @@ type DockTabChromeProps = {
   closeAriaLabel: string
   style?: CSSProperties
   onClose: (event: MouseEvent<HTMLButtonElement>) => void
+  onClick?: (event: MouseEvent<HTMLDivElement>) => void
   onDoubleClick?: (event: MouseEvent<HTMLDivElement>) => void
   leading?: ReactNode
   beforeTitle?: ReactNode
@@ -24,6 +25,7 @@ export function DockTabChrome({
   closeAriaLabel,
   style,
   onClose,
+  onClick,
   onDoubleClick,
   leading,
   beforeTitle,
@@ -38,6 +40,7 @@ export function DockTabChrome({
       data-has-color={hasCustomColor}
       title={titleAttribute ?? resolvedTitle}
       style={style}
+      onClick={onClick}
       onDoubleClick={onDoubleClick}
     >
       {leading}

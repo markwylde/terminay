@@ -3,6 +3,7 @@ import { DockviewReact, getPanelData } from 'dockview';
 import { AnimatePresence, motion, Reorder } from 'framer-motion';
 import {
 	CSSProperties,
+	type FormEvent,
 	forwardRef,
 	type JSX,
 	type MouseEvent,
@@ -29,6 +30,7 @@ import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { TerminalPanel } from './components/TerminalPanel';
 import type {
+	TerminalActivityState,
 	TerminalPanelParams,
 	TerminalTabMacroRun,
 } from './components/TerminalTab';
@@ -43,12 +45,17 @@ import type {
 	FileExplorerGitStatus,
 	RemoteAccessStatus,
 } from './types/termide';
+import type { FileViewerMode } from './types/fileViewer';
 import './App.css';
 
 type SplitDirection = Extract<Direction, 'below' | 'right'>;
 type AddTerminalOptions = {
 	direction?: SplitDirection;
 	groupId?: string;
+};
+
+type OpenFileOptions = {
+	initialMode?: FileViewerMode;
 };
 
 type DockPanelTabAppearance = {
@@ -92,6 +99,7 @@ const MAX_FILE_EXPLORER_WIDTH = 520;
 const FILE_EXPLORER_DRAG_THRESHOLD = 6;
 const FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS = 2500;
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
+const TERMINAL_ACTIVITY_RECENT_MS = 1000;
 
 function hueToProjectTabColor(hue: number): string {
 	const normalizedHue = ((hue % 360) + 360) % 360 / 360;
@@ -473,6 +481,7 @@ function FileExplorerTree({
 		y: number;
 		path: string;
 		isDirectory: boolean;
+		isRootBlankSpace: boolean;
 	} | null>(null);
 
 	const getDirectoryGitStatus = useCallback(
@@ -498,7 +507,12 @@ function FileExplorerTree({
 	);
 
 	const handleContextMenu = useCallback(
-		(event: MouseEvent, path: string, isDirectory: boolean) => {
+		(
+			event: MouseEvent,
+			path: string,
+			isDirectory: boolean,
+			isRootBlankSpace = false,
+		) => {
 			event.preventDefault();
 			event.stopPropagation();
 			setContextMenu({
@@ -506,6 +520,7 @@ function FileExplorerTree({
 				y: event.clientY,
 				path,
 				isDirectory,
+				isRootBlankSpace,
 			});
 		},
 		[],
@@ -810,7 +825,10 @@ function FileExplorerTree({
 	);
 
 	return (
-		<div className="file-explorer-tree" onContextMenu={(e) => handleContextMenu(e, rootPath, true)}>
+		<div
+			className="file-explorer-tree"
+			onContextMenu={(e) => handleContextMenu(e, rootPath, true, true)}
+		>
 			{renderBranch(rootPath, 0)}
 			{activeDrag ? (
 				<div
@@ -833,30 +851,34 @@ function FileExplorerTree({
 						...(contextMenu.isDirectory
 							? [
 									{
-										label: 'New File',
+										label: 'Create new file',
 										icon: <PlusSquare size={14} />,
 										onClick: () => onNewFile(contextMenu.path),
 									},
 									{
-										label: 'New Folder',
+										label: 'Create new folder',
 										icon: <FolderPlus size={14} />,
 										onClick: () => onNewFolder(contextMenu.path),
 									},
 									{ separator: true },
 								]
 							: []),
-						{
-							label: 'Rename',
-							icon: <FileEdit size={14} />,
-							onClick: () => onRename(contextMenu.path),
-						},
-						{
-							label: 'Delete',
-							icon: <Trash2 size={14} />,
-							danger: true,
-							onClick: () => onDelete(contextMenu.path),
-						},
-						{ separator: true },
+						...(contextMenu.isRootBlankSpace
+							? []
+							: [
+									{
+										label: 'Rename',
+										icon: <FileEdit size={14} />,
+										onClick: () => onRename(contextMenu.path),
+									},
+									{
+										label: 'Delete',
+										icon: <Trash2 size={14} />,
+										danger: true,
+										onClick: () => onDelete(contextMenu.path),
+									},
+									{ separator: true },
+								]),
 						{
 							label: 'Open terminal here',
 							icon: <Terminal size={14} />,
@@ -988,6 +1010,119 @@ type MacroRunController = {
 	sessionId: string;
 };
 
+type FileExplorerNameDialogOptions = {
+	description?: string;
+	initialValue?: string;
+	label: string;
+	submitLabel: string;
+	title: string;
+};
+
+type FileExplorerNameDialogState = FileExplorerNameDialogOptions & {
+	id: number;
+	resolve: (value: string | null) => void;
+};
+
+function FileExplorerNameModal({
+	dialog,
+	modal,
+	onCancel,
+	onSubmit,
+}: {
+	dialog: FileExplorerNameDialogState;
+	modal: ReturnType<typeof useDraggableModal>;
+	onCancel: () => void;
+	onSubmit: (value: string) => void;
+}) {
+	const [value, setValue] = useState(dialog.initialValue ?? '');
+	const inputRef = useRef<HTMLInputElement | null>(null);
+	const titleId = `file-explorer-name-modal-title-${dialog.id}`;
+	const trimmedValue = value.trim();
+
+	useEffect(() => {
+		setValue(dialog.initialValue ?? '');
+		window.requestAnimationFrame(() => {
+			inputRef.current?.focus();
+			inputRef.current?.select();
+		});
+
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				onCancel();
+			}
+		};
+
+		window.addEventListener('keydown', onKeyDown);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown);
+		};
+	}, [dialog.initialValue, onCancel]);
+
+	const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!trimmedValue) {
+			return;
+		}
+		onSubmit(trimmedValue);
+	};
+
+	return (
+		<ModalBackdrop onClose={onCancel}>
+			<form
+				className="project-edit-modal"
+				ref={(element) => {
+					modal.modalRef.current = element;
+				}}
+				style={modal.modalStyle}
+				onSubmit={handleSubmit}
+				onClick={(event) => event.stopPropagation()}
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={titleId}
+			>
+				<ModalTitlebar
+					title={dialog.title}
+					titleId={titleId}
+					onClose={onCancel}
+					onMouseDown={modal.handleTitlebarPointerDown}
+				/>
+				{dialog.description ? (
+					<p className="file-explorer-name-modal-description">
+						{dialog.description}
+					</p>
+				) : null}
+				<label>
+					<span>{dialog.label}</span>
+					<input
+						ref={inputRef}
+						type="text"
+						value={value}
+						onChange={(event) => setValue(event.target.value)}
+						spellCheck={false}
+					/>
+				</label>
+				<div className="project-edit-actions">
+					<button type="button" onClick={onCancel}>
+						Cancel
+					</button>
+					<button type="submit" disabled={!trimmedValue}>
+						{dialog.submitLabel}
+					</button>
+				</div>
+			</form>
+		</ModalBackdrop>
+	);
+}
+
+function joinFileExplorerPath(dirPath: string, name: string): string {
+	if (dirPath.endsWith('/') || dirPath.endsWith('\\')) {
+		return `${dirPath}${name}`;
+	}
+
+	return `${dirPath}/${name}`;
+}
+
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
@@ -995,6 +1130,12 @@ const ProjectWorkspace = forwardRef<
 	const dockviewApiRef = useRef<DockviewApi | null>(null);
 	const initialTerminalSeededRef = useRef(false);
 	const panelSessionMapRef = useRef<Map<string, string>>(new Map());
+	const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
+	const terminalLastActivityAtRef = useRef<Map<string, number>>(new Map());
+	const terminalLastUserInputAtRef = useRef<Map<string, number>>(new Map());
+	const terminalSuppressActivityUntilRef = useRef<Map<string, number>>(new Map());
+	const terminalUnreadActivityRef = useRef<Set<string>>(new Set());
+	const focusedSessionIdRef = useRef<string | null>(null);
 	const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
 	const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
 	const terminalCounterRef = useRef(0);
@@ -1032,6 +1173,9 @@ const ProjectWorkspace = forwardRef<
 		new Map(),
 	);
 	const isRefreshingGitStatusesRef = useRef(false);
+	const fileExplorerNameDialogRequestIdRef = useRef(0);
+	const [fileExplorerNameDialog, setFileExplorerNameDialog] =
+		useState<FileExplorerNameDialogState | null>(null);
 
 	const [isDockviewReady, setIsDockviewReady] = useState(false);
 	const [isMacroLauncherOpen, setIsMacroLauncherOpen] = useState(false);
@@ -1050,15 +1194,158 @@ const ProjectWorkspace = forwardRef<
 		HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
 	>(null);
 	const macroParameterModal = useDraggableModal(macroToRun !== null);
+	const fileExplorerNameModal = useDraggableModal(
+		fileExplorerNameDialog !== null,
+	);
+
+	const requestFileExplorerName = useCallback(
+		(options: FileExplorerNameDialogOptions) => {
+			return new Promise<string | null>((resolve) => {
+				fileExplorerNameDialogRequestIdRef.current += 1;
+				setFileExplorerNameDialog({
+					...options,
+					id: fileExplorerNameDialogRequestIdRef.current,
+					resolve,
+				});
+			});
+		},
+		[],
+	);
+
+	const cancelFileExplorerNameDialog = useCallback(() => {
+		setFileExplorerNameDialog((current) => {
+			current?.resolve(null);
+			return null;
+		});
+	}, []);
+
+	const submitFileExplorerNameDialog = useCallback((value: string) => {
+		setFileExplorerNameDialog((current) => {
+			current?.resolve(value);
+			return null;
+		});
+	}, []);
 
 	const getActiveSessionId = useCallback(() => {
 		return dockviewApiRef.current?.activePanel?.params?.sessionId ?? null;
 	}, []);
 
+	const getPanelForSession = useCallback((sessionId: string) => {
+		const api = dockviewApiRef.current;
+		if (!api) {
+			return null;
+		}
+
+		for (const [panelId, panelSessionId] of panelSessionMapRef.current.entries()) {
+			if (panelSessionId !== sessionId) {
+				continue;
+			}
+
+			return api.getPanel(panelId) ?? null;
+		}
+
+		return null;
+	}, []);
+
+	const updateTerminalActivityState = useCallback(
+		(sessionId: string, terminalActivityState: TerminalActivityState) => {
+			const panel = getPanelForSession(sessionId);
+			if (!panel || panel.params?.terminalActivityState === terminalActivityState) {
+				return;
+			}
+
+			panel.api.updateParameters({ terminalActivityState });
+		},
+		[getPanelForSession],
+	);
+
+	const suppressInitialTerminalActivity = useCallback((sessionId: string) => {
+		const now = Date.now();
+		terminalSuppressActivityUntilRef.current.set(
+			sessionId,
+			now + TERMINAL_ACTIVITY_RECENT_MS,
+		);
+		terminalLastUserInputAtRef.current.set(sessionId, now);
+		terminalUnreadActivityRef.current.delete(sessionId);
+	}, []);
+
+	const evaluateTerminalActivityState = useCallback(
+		(sessionId: string, now = Date.now()) => {
+			const panel = getPanelForSession(sessionId);
+			if (!panel) {
+				return;
+			}
+
+			const lastActivityAt = terminalLastActivityAtRef.current.get(sessionId);
+			const lastUserInputAt = terminalLastUserInputAtRef.current.get(sessionId);
+			const isFocused = focusedSessionIdRef.current === sessionId;
+			const needsAcknowledgement = terminalUnreadActivityRef.current.has(sessionId);
+			const hasRecentActivity =
+				lastActivityAt !== undefined &&
+				now - lastActivityAt < TERMINAL_ACTIVITY_RECENT_MS;
+			const hasRecentUserInput =
+				lastUserInputAt !== undefined &&
+				now - lastUserInputAt < TERMINAL_ACTIVITY_RECENT_MS;
+
+			const nextActivityState: TerminalActivityState =
+				needsAcknowledgement && hasRecentActivity && !hasRecentUserInput
+					? 'recent'
+					: needsAcknowledgement && !hasRecentActivity
+						? 'unviewed'
+						: 'viewed';
+
+			updateTerminalActivityState(sessionId, nextActivityState);
+
+			const existingTimer = terminalActivityTimersRef.current.get(sessionId);
+			if (existingTimer !== undefined) {
+				window.clearTimeout(existingTimer);
+				terminalActivityTimersRef.current.delete(sessionId);
+			}
+
+			const nextDeadlines = [
+				lastActivityAt !== undefined
+					? lastActivityAt + TERMINAL_ACTIVITY_RECENT_MS
+					: null,
+				isFocused && lastUserInputAt !== undefined
+					? lastUserInputAt + TERMINAL_ACTIVITY_RECENT_MS
+					: null,
+			]
+				.filter((deadline): deadline is number => deadline !== null)
+				.filter((deadline) => deadline > now);
+
+			if (nextDeadlines.length === 0) {
+				return;
+			}
+
+			const nextDelay = Math.max(0, Math.min(...nextDeadlines) - now);
+			const nextTimer = window.setTimeout(() => {
+				terminalActivityTimersRef.current.delete(sessionId);
+				evaluateTerminalActivityState(sessionId);
+			}, nextDelay);
+
+			terminalActivityTimersRef.current.set(sessionId, nextTimer);
+		},
+		[getPanelForSession, updateTerminalActivityState],
+	);
+
+	const markTerminalActivityViewed = useCallback(
+		(sessionId: string | null) => {
+			if (!sessionId) {
+				return;
+			}
+
+			terminalUnreadActivityRef.current.delete(sessionId);
+			evaluateTerminalActivityState(sessionId);
+		},
+		[evaluateTerminalActivityState],
+	);
+
 	const focusActiveTerminal = useCallback(() => {
 		const sessionId = getActiveSessionId();
 		dockviewApiRef.current?.activePanel?.api.setActive();
+		focusedSessionIdRef.current = sessionId;
 		setFocusedSessionId(sessionId);
+		markTerminalActivityViewed(sessionId);
 		window.requestAnimationFrame(() => {
 			window.dispatchEvent(
 				new CustomEvent('termide-focus-terminal', {
@@ -1066,7 +1353,7 @@ const ProjectWorkspace = forwardRef<
 				}),
 			);
 		});
-	}, [getActiveSessionId]);
+	}, [getActiveSessionId, markTerminalActivityViewed]);
 
 	const [terminalSwitcherItems, setTerminalSwitcherItems] = useState<
 		TerminalSwitcherItem[]
@@ -1414,7 +1701,7 @@ const ProjectWorkspace = forwardRef<
 	}, []);
 
 	const openFile = useCallback(
-		async (filePath: string) => {
+		async (filePath: string, options?: OpenFileOptions) => {
 			const api = dockviewApiRef.current;
 			if (!api) {
 				return;
@@ -1440,7 +1727,7 @@ const ProjectWorkspace = forwardRef<
 				params: {
 					color: project.color,
 					filePath,
-					initialMode: 'preview',
+					initialMode: options?.initialMode ?? 'preview',
 					inheritsProjectColor: true,
 					isFocused: false,
 					preferredEngine: 'auto',
@@ -1466,7 +1753,12 @@ const ProjectWorkspace = forwardRef<
 	const handleRename = useCallback(
 		async (oldPath: string) => {
 			const fileName = oldPath.split(/[/\\]/).pop() || '';
-			const newName = window.prompt('Enter new name:', fileName);
+			const newName = await requestFileExplorerName({
+				initialValue: fileName,
+				label: 'Name',
+				submitLabel: 'Rename',
+				title: 'Rename',
+			});
 			if (!newName || newName === fileName) {
 				return;
 			}
@@ -1483,7 +1775,7 @@ const ProjectWorkspace = forwardRef<
 				setErrorText(`Failed to rename: ${String(error)}`);
 			}
 		},
-		[loadDirectory, project.rootFolder, refreshGitStatuses],
+		[loadDirectory, project.rootFolder, refreshGitStatuses, requestFileExplorerName],
 	);
 
 	const handleDelete = useCallback(
@@ -1507,12 +1799,16 @@ const ProjectWorkspace = forwardRef<
 
 	const handleNewFile = useCallback(
 		async (dirPath: string) => {
-			const fileName = window.prompt('Enter new file name:');
+			const fileName = await requestFileExplorerName({
+				label: 'File name',
+				submitLabel: 'Create File',
+				title: 'Create New File',
+			});
 			if (!fileName) {
 				return;
 			}
 
-			const filePath = `${dirPath}/${fileName}`;
+			const filePath = joinFileExplorerPath(dirPath, fileName);
 			try {
 				await window.termide.saveFile({
 					kind: 'text',
@@ -1521,22 +1817,26 @@ const ProjectWorkspace = forwardRef<
 				});
 				void loadDirectory(dirPath);
 				void refreshGitStatuses();
-				openFile(filePath);
+				openFile(filePath, { initialMode: 'text' });
 			} catch (error) {
 				setErrorText(`Failed to create file: ${String(error)}`);
 			}
 		},
-		[loadDirectory, openFile, refreshGitStatuses],
+		[loadDirectory, openFile, refreshGitStatuses, requestFileExplorerName],
 	);
 
 	const handleNewFolder = useCallback(
 		async (dirPath: string) => {
-			const folderName = window.prompt('Enter new folder name:');
+			const folderName = await requestFileExplorerName({
+				label: 'Folder name',
+				submitLabel: 'Create Folder',
+				title: 'Create New Folder',
+			});
 			if (!folderName) {
 				return;
 			}
 
-			const newFolderPath = `${dirPath}/${folderName}`;
+			const newFolderPath = joinFileExplorerPath(dirPath, folderName);
 			try {
 				await window.termide.mkdir(newFolderPath);
 				void loadDirectory(dirPath);
@@ -1545,7 +1845,7 @@ const ProjectWorkspace = forwardRef<
 				setErrorText(`Failed to create folder: ${String(error)}`);
 			}
 		},
-		[loadDirectory, refreshGitStatuses],
+		[loadDirectory, refreshGitStatuses, requestFileExplorerName],
 	);
 
 	const handleOpenTerminalAt = useCallback(
@@ -1568,11 +1868,12 @@ const ProjectWorkspace = forwardRef<
 
 			try {
 				const { id: sessionId } = await window.termide.createTerminal({ cwd });
+				suppressInitialTerminalActivity(sessionId);
 
 				terminalCounterRef.current += 1;
 				const panelId = `terminal-${terminalCounterRef.current}`;
 
-				api.addPanel<TerminalPanelParams>({
+				const panel = api.addPanel<TerminalPanelParams>({
 					id: panelId,
 					title: `Terminal ${terminalCounterRef.current}`,
 					component: 'terminal',
@@ -1589,9 +1890,11 @@ const ProjectWorkspace = forwardRef<
 						onCancelMacroRun: cancelMacroRun,
 						projectColor: project.color,
 						sessionId,
+						terminalActivityState: 'viewed',
 					},
 				});
 
+				panelSessionMapRef.current.set(panel.id, sessionId);
 				window.termide.updateTerminalRemoteMetadata(sessionId, {
 					color: project.color,
 					emoji: '',
@@ -1614,6 +1917,7 @@ const ProjectWorkspace = forwardRef<
 			project.id,
 			project.title,
 			project.color,
+			suppressInitialTerminalActivity,
 		],
 	);
 
@@ -2264,6 +2568,7 @@ const ProjectWorkspace = forwardRef<
 				const { id: sessionId } = await window.termide.createTerminal(
 					inheritedCwd ? { cwd: inheritedCwd } : undefined,
 				);
+				suppressInitialTerminalActivity(sessionId);
 
 				terminalCounterRef.current += 1;
 				const panelId = `terminal-${terminalCounterRef.current}`;
@@ -2285,6 +2590,7 @@ const ProjectWorkspace = forwardRef<
 						onCancelMacroRun: cancelMacroRun,
 						projectColor: project.color,
 						sessionId,
+						terminalActivityState: 'viewed',
 					},
 					position:
 						options?.groupId && api.getGroup(options.groupId)
@@ -2327,6 +2633,7 @@ const ProjectWorkspace = forwardRef<
 			project.title,
 			project.emoji,
 			project.color,
+			suppressInitialTerminalActivity,
 		],
 	);
 
@@ -2545,6 +2852,13 @@ const ProjectWorkspace = forwardRef<
 	);
 
 	useEffect(() => {
+		focusedSessionIdRef.current = focusedSessionId;
+		for (const sessionId of panelSessionMapRef.current.values()) {
+			evaluateTerminalActivityState(sessionId);
+		}
+	}, [evaluateTerminalActivityState, focusedSessionId]);
+
+	useEffect(() => {
 		syncFocusedTerminalTabs(focusedSessionId);
 	}, [focusedSessionId, syncFocusedTerminalTabs]);
 
@@ -2589,6 +2903,15 @@ const ProjectWorkspace = forwardRef<
 				}
 
 				panelSessionMapRef.current.delete(panel.id);
+				const activityTimer = terminalActivityTimersRef.current.get(sessionId);
+				if (activityTimer !== undefined) {
+					window.clearTimeout(activityTimer);
+					terminalActivityTimersRef.current.delete(sessionId);
+				}
+				terminalLastActivityAtRef.current.delete(sessionId);
+				terminalLastUserInputAtRef.current.delete(sessionId);
+				terminalSuppressActivityUntilRef.current.delete(sessionId);
+				terminalUnreadActivityRef.current.delete(sessionId);
 				cancelMacroRunsForSession(sessionId);
 				clearMacroRunsForSession(sessionId);
 				setFocusedSessionId((current) =>
@@ -2600,12 +2923,22 @@ const ProjectWorkspace = forwardRef<
 				closeProjectIfEmpty();
 			});
 			event.api.onDidActivePanelChange(() => {
+				const previousFocusedSessionId = focusedSessionIdRef.current;
+				const nextFocusedSessionId =
+					event.api.activePanel?.params?.sessionId ?? null;
+				if (
+					previousFocusedSessionId &&
+					previousFocusedSessionId !== nextFocusedSessionId
+				) {
+					markTerminalActivityViewed(previousFocusedSessionId);
+				}
 				syncPanelFocusState();
 			});
 		},
 		[
 			cancelMacroRunsForSession,
 			clearMacroRunsForSession,
+			markTerminalActivityViewed,
 			onCloseProject,
 			project.id,
 			syncPanelFocusState,
@@ -2651,12 +2984,83 @@ const ProjectWorkspace = forwardRef<
 	useEffect(() => {
 		const onTerminalFocused = (event: Event) => {
 			const customEvent = event as CustomEvent<{ sessionId?: string }>;
-			setFocusedSessionId(customEvent.detail?.sessionId ?? null);
+			const sessionId = customEvent.detail?.sessionId ?? null;
+			focusedSessionIdRef.current = sessionId;
+			setFocusedSessionId(sessionId);
+			markTerminalActivityViewed(sessionId);
 		};
 
 		window.addEventListener('termide-terminal-focused', onTerminalFocused);
 		return () => {
 			window.removeEventListener('termide-terminal-focused', onTerminalFocused);
+		};
+	}, [markTerminalActivityViewed]);
+
+	useEffect(() => {
+		return window.termide.onTerminalData((message) => {
+			if (!getPanelForSession(message.id)) {
+				return;
+			}
+
+			const now = Date.now();
+			terminalLastActivityAtRef.current.set(message.id, now);
+			const suppressActivityUntil =
+				terminalSuppressActivityUntilRef.current.get(message.id);
+			if (suppressActivityUntil !== undefined && now < suppressActivityUntil) {
+				terminalUnreadActivityRef.current.delete(message.id);
+				evaluateTerminalActivityState(message.id, now);
+				return;
+			}
+
+			if (suppressActivityUntil !== undefined) {
+				terminalSuppressActivityUntilRef.current.delete(message.id);
+			}
+
+			const lastUserInputAt = terminalLastUserInputAtRef.current.get(message.id);
+			if (
+				lastUserInputAt !== undefined &&
+				now - lastUserInputAt < TERMINAL_ACTIVITY_RECENT_MS
+			) {
+				terminalUnreadActivityRef.current.delete(message.id);
+				evaluateTerminalActivityState(message.id, now);
+				return;
+			}
+
+			terminalUnreadActivityRef.current.add(message.id);
+
+			evaluateTerminalActivityState(message.id, now);
+		});
+	}, [evaluateTerminalActivityState, getPanelForSession]);
+
+	useEffect(() => {
+		const onTerminalUserInput = (event: Event) => {
+			const customEvent = event as CustomEvent<{ sessionId?: string }>;
+			const sessionId = customEvent.detail?.sessionId;
+			if (!sessionId || !getPanelForSession(sessionId)) {
+				return;
+			}
+
+			terminalLastUserInputAtRef.current.set(sessionId, Date.now());
+			terminalUnreadActivityRef.current.delete(sessionId);
+			evaluateTerminalActivityState(sessionId);
+		};
+
+		window.addEventListener('termide-terminal-user-input', onTerminalUserInput);
+		return () => {
+			window.removeEventListener('termide-terminal-user-input', onTerminalUserInput);
+		};
+	}, [evaluateTerminalActivityState, getPanelForSession]);
+
+	useEffect(() => {
+		return () => {
+			for (const timer of terminalActivityTimersRef.current.values()) {
+				window.clearTimeout(timer);
+			}
+			terminalActivityTimersRef.current.clear();
+			terminalLastActivityAtRef.current.clear();
+			terminalLastUserInputAtRef.current.clear();
+			terminalSuppressActivityUntilRef.current.clear();
+			terminalUnreadActivityRef.current.clear();
 		};
 	}, []);
 
@@ -3547,6 +3951,15 @@ const ProjectWorkspace = forwardRef<
 						</div>
 					</div>
 				</div>
+			) : null}
+
+			{fileExplorerNameDialog ? (
+				<FileExplorerNameModal
+					dialog={fileExplorerNameDialog}
+					modal={fileExplorerNameModal}
+					onCancel={cancelFileExplorerNameDialog}
+					onSubmit={submitFileExplorerNameDialog}
+				/>
 			) : null}
 
 			{macroToRun ? (
