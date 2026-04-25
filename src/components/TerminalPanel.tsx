@@ -216,18 +216,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return false
       }
 
-      if (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        if (event.type !== 'keydown') {
-          return false
-        }
-
-        // Clear the local xterm buffer immediately so the screen updates
-        // even while the attached process is still running.
-        terminal.clear()
-        return false
-      }
-
       if (event.key === 'Enter' && (event.shiftKey || event.altKey)) {
         event.preventDefault()
         if (event.type !== 'keydown') {
@@ -264,6 +252,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     const terminalExitDisposer = window.termide.onTerminalExit((message) => {
       if (message.id !== sessionId) {
+        return
+      }
+
+      if (settings.autoCloseTerminalOnExitZero && message.exitCode === 0) {
         return
       }
 

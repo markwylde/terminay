@@ -80,6 +80,32 @@ async function openChildWindow(
   return nextWindow
 }
 
+async function getAppMenuItemAccelerator(electronApp: ElectronApplication, label: string): Promise<string | null> {
+  return electronApp.evaluate(({ Menu }, itemLabel) => {
+    const findItem = (items: Electron.MenuItem[]): Electron.MenuItem | null => {
+      for (const item of items) {
+        if (item.label === itemLabel) {
+          return item
+        }
+
+        const child = item.submenu ? findItem(item.submenu.items) : null
+        if (child) {
+          return child
+        }
+      }
+
+      return null
+    }
+
+    const item = Menu.getApplicationMenu() ? findItem(Menu.getApplicationMenu()!.items) : null
+    if (!item) {
+      throw new Error(`Unable to find menu item: ${itemLabel}`)
+    }
+
+    return item.accelerator ?? null
+  }, label)
+}
+
 test('opens and closes terminal tabs', async ({ mainWindow }) => {
   const closeButtons = mainWindow.getByLabel('Close terminal')
   await expect(closeButtons).toHaveCount(1)
@@ -113,6 +139,89 @@ test('opens the settings window', async ({ electronApp, mainWindow }) => {
 
   await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
   await expect(settingsWindow.getByPlaceholder('Search settings...')).toBeVisible()
+})
+
+test('captures and resets command shortcuts in settings', async ({ electronApp, mainWindow }) => {
+  const settingsWindow = await openChildWindow(electronApp, async () => {
+    await mainWindow.evaluate(async () => {
+      await window.termide.openSettingsWindow()
+    })
+  })
+
+  await settingsWindow.getByRole('button', { name: /Shortcuts/ }).click()
+
+  const isMac = await settingsWindow.evaluate(() => navigator.platform.toLowerCase().includes('mac'))
+  const terminalShortcutRow = settingsWindow.locator('.settings-row').filter({ hasText: 'Create a new terminal tab' })
+  const shortcutInput = terminalShortcutRow.locator('input')
+
+  await terminalShortcutRow.getByRole('button', { name: 'Listen' }).click()
+  await settingsWindow.keyboard.press(isMac ? 'Meta+Y' : 'Control+Y')
+  await expect(shortcutInput).toHaveValue('CmdOrCtrl+Y')
+
+  await terminalShortcutRow.getByRole('button', { name: 'Reset' }).click()
+  await expect(shortcutInput).toHaveValue('CmdOrCtrl+T')
+
+  await terminalShortcutRow.getByRole('button', { name: 'Clear' }).click()
+  await expect(shortcutInput).toHaveValue('')
+  await expect(terminalShortcutRow.locator('.settings-shortcut-chip')).toHaveText('Disabled')
+
+  await settingsWindow.getByRole('button', { name: 'Reset All' }).click()
+  await expect(shortcutInput).toHaveValue('CmdOrCtrl+T')
+
+  await terminalShortcutRow.getByRole('button', { name: 'Listen' }).click()
+  await expect(shortcutInput).toHaveValue('Listening...')
+  await settingsWindow.keyboard.press('Escape')
+  await expect(shortcutInput).toHaveValue('CmdOrCtrl+T')
+
+  const projectShortcutRow = settingsWindow.locator('.settings-row').filter({ hasText: 'Create a new project' })
+  await projectShortcutRow.getByRole('button', { name: 'Listen' }).click()
+  await settingsWindow.keyboard.press(isMac ? 'Meta+T' : 'Control+T')
+  await expect(projectShortcutRow.locator('input')).toHaveValue('CmdOrCtrl+T')
+  await expect(projectShortcutRow.locator('.settings-shortcut-warning')).toHaveText('Also used by new terminal')
+})
+
+test('updates menu accelerators when command shortcuts are cleared and reset', async ({ electronApp, mainWindow }) => {
+  const settingsWindow = await openChildWindow(electronApp, async () => {
+    await mainWindow.evaluate(async () => {
+      await window.termide.openSettingsWindow()
+    })
+  })
+
+  await settingsWindow.getByRole('button', { name: /Shortcuts/ }).click()
+
+  const terminalShortcutRow = settingsWindow.locator('.settings-row').filter({ hasText: 'Create a new terminal tab' })
+  const shortcutInput = terminalShortcutRow.locator('input')
+
+  await expect(getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).resolves.toBe('CmdOrCtrl+T')
+
+  await terminalShortcutRow.getByRole('button', { name: 'Clear' }).click()
+  await expect(shortcutInput).toHaveValue('')
+  await expect(getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).resolves.toBeNull()
+
+  await settingsWindow.getByRole('button', { name: 'Reset All' }).click()
+  await expect(shortcutInput).toHaveValue('CmdOrCtrl+T')
+  await expect(getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).resolves.toBe('CmdOrCtrl+T')
+})
+
+test('runs customized app shortcuts from the keyboard', async ({ mainWindow }) => {
+  const isMac = await mainWindow.evaluate(() => navigator.platform.toLowerCase().includes('mac'))
+
+  await mainWindow.evaluate(async () => {
+    const settings = await window.termide.getTerminalSettings()
+    await window.termide.updateTerminalSettings({
+      ...settings,
+      keyboardShortcuts: {
+        ...settings.keyboardShortcuts,
+        'new-terminal': 'CmdOrCtrl+Y',
+      },
+    })
+  })
+
+  await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(1)
+  await mainWindow.bringToFront()
+  await mainWindow.locator('.terminal-panel').first().click()
+  await mainWindow.keyboard.press(isMac ? 'Meta+Y' : 'Control+Y')
+  await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2)
 })
 
 test('opens the macros window', async ({ electronApp, mainWindow }) => {
@@ -149,6 +258,17 @@ test('prioritizes direct title matches in command bar search', async ({ mainWind
   const commandButtons = mainWindow.locator('.macro-launcher-list button')
   await expect(commandButtons.first()).toContainText('Set project root folder to working directory')
   await expect(commandButtons.nth(1)).toContainText('Edit project settings')
+})
+
+test('shows current key bindings in the command bar', async ({ mainWindow }) => {
+  await openMacroLauncher(mainWindow)
+
+  const isMac = await mainWindow.evaluate(() => navigator.platform.toLowerCase().includes('mac'))
+  const expectedTerminalShortcut = isMac ? '⌘T' : 'Ctrl+T'
+  const expectedClearShortcut = isMac ? '⌘K' : 'Ctrl+K'
+
+  await expect(mainWindow.getByRole('button', { name: /Create a new terminal tab/ })).toContainText(expectedTerminalShortcut)
+  await expect(mainWindow.getByRole('button', { name: /Clear terminal/ })).toContainText(expectedClearShortcut)
 })
 
 test('scrolls the active command into view during keyboard navigation', async ({ mainWindow }) => {

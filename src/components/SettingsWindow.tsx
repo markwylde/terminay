@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
@@ -10,8 +10,15 @@ import {
   terminalSettingsSections,
 } from '../terminalSettings'
 import type { SettingsFieldDefinition } from '../terminalSettings'
+import {
+  acceleratorFromKeyboardEvent,
+  defaultKeyboardShortcuts,
+  getCommandShortcutLabel,
+  normalizeAccelerator,
+} from '../keyboardShortcuts'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalSettings } from '../types/settings'
+import type { AppCommand } from '../types/termide'
 import type { RemoteAccessStatus } from '../types/termide'
 import { enablePreferredXtermRenderer } from '../xtermRenderer'
 import '../settings.css'
@@ -40,7 +47,7 @@ function setValueAtPath(settings: TerminalSettings, key: string, value: boolean 
   }
 
   const [root, leaf] = segments
-  if ((root !== 'theme' && root !== 'shell' && root !== 'remoteAccess') || !leaf) {
+  if ((root !== 'theme' && root !== 'shell' && root !== 'remoteAccess' && root !== 'keyboardShortcuts') || !leaf) {
     return settings
   }
 
@@ -128,6 +135,7 @@ function getCategoryIcon(id: CategoryId) {
     case 'appearance': return renderCategoryIcon('Appearance', <><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></>)
     case 'cursor': return renderCategoryIcon('Cursor', <path d="m4 4 7.07 17 2.51-7.39L21 11.07z"/>)
     case 'interaction': return renderCategoryIcon('Interaction', <><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></>)
+    case 'keyboard': return renderCategoryIcon('Shortcuts', <><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h.01M11 9h.01M15 9h.01M17 13h.01M13 13H7"/></>)
     case 'scrolling': return renderCategoryIcon('Scrolling', <><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></>)
     case 'accessibility': return renderCategoryIcon('Accessibility', <><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"/></>)
     case 'theme': return renderCategoryIcon('Theme', <><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></>)
@@ -158,6 +166,7 @@ export function SettingsWindow() {
   const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false)
   const [isLinkCopied, setIsLinkCopied] = useState(false)
   const [isUpdatingRemoteDevices, setIsUpdatingRemoteDevices] = useState(false)
+  const [listeningShortcutKey, setListeningShortcutKey] = useState<string | null>(null)
 
   const handleResizePointerDown = (e: React.PointerEvent) => {
     e.preventDefault()
@@ -341,6 +350,42 @@ export function SettingsWindow() {
     }
   }
 
+  const updateShortcut = useCallback(async (key: string, value: string) => {
+    const normalizedValue = value.trim().length === 0 ? '' : normalizeAccelerator(value)
+    const nextDraft = setValueAtPath(draft, key, normalizedValue)
+    setDraft(nextDraft)
+    setIsSaving(true)
+
+    try {
+      const saved = await window.termide.updateTerminalSettings(nextDraft)
+      setDraft(saved)
+    } finally {
+      setIsSaving(false)
+    }
+  }, [draft])
+
+  const resetShortcut = (field: SettingsFieldDefinition) => {
+    const command = field.key.replace('keyboardShortcuts.', '') as AppCommand
+    void updateShortcut(field.key, defaultKeyboardShortcuts[command] ?? '')
+  }
+
+  const resetAllShortcuts = async () => {
+    const nextDraft: TerminalSettings = {
+      ...draft,
+      keyboardShortcuts: defaultKeyboardShortcuts,
+    }
+    setDraft(nextDraft)
+    setListeningShortcutKey(null)
+    setIsSaving(true)
+
+    try {
+      const saved = await window.termide.updateTerminalSettings(nextDraft)
+      setDraft(saved)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   const resetAll = async () => {
     if (!confirm('Are you sure you want to reset all settings to default?')) return
     setIsSaving(true)
@@ -363,6 +408,71 @@ export function SettingsWindow() {
 
   const renderFieldControl = (field: SettingsFieldDefinition) => {
     const value = getValueAtPath(draft, field.key)
+
+    if (field.key.startsWith('keyboardShortcuts.')) {
+      const command = field.key.replace('keyboardShortcuts.', '') as AppCommand
+      const normalizedValue = normalizeAccelerator(String(value))
+      const isDefault = normalizedValue === defaultKeyboardShortcuts[command]
+      const displayValue = normalizedValue
+        ? getCommandShortcutLabel(draft.keyboardShortcuts, command, navigator.platform.toLowerCase().includes('mac'))
+        : 'Disabled'
+      const conflict = normalizedValue
+        ? Object.entries(draft.keyboardShortcuts).find(
+            ([otherCommand, otherValue]) =>
+              otherCommand !== command && normalizeAccelerator(otherValue) === normalizedValue,
+          )
+        : null
+
+      return (
+        <div className="settings-shortcut-editor">
+          <div className="settings-shortcut-value">
+            <input
+              className="settings-input-text settings-shortcut-input"
+              type="text"
+              value={listeningShortcutKey === field.key ? 'Listening...' : String(value)}
+              placeholder={field.placeholder}
+              onFocus={() => {
+                if (listeningShortcutKey !== field.key) {
+                  setListeningShortcutKey(field.key)
+                }
+              }}
+              onClick={() => setListeningShortcutKey(field.key)}
+              readOnly
+            />
+            <span className={`settings-shortcut-chip${normalizedValue ? '' : ' settings-shortcut-chip--muted'}`}>
+              {displayValue}
+            </span>
+          </div>
+          {conflict ? (
+            <span className="settings-shortcut-warning">Also used by {conflict[0].replace(/-/g, ' ')}</span>
+          ) : null}
+          <div className="settings-shortcut-actions">
+            <button
+              type="button"
+              className={`settings-secondary-button settings-secondary-button--small${listeningShortcutKey === field.key ? ' settings-shortcut-listen-button--active' : ''}`}
+              onClick={() => setListeningShortcutKey(field.key)}
+            >
+              {listeningShortcutKey === field.key ? 'Press keys' : 'Listen'}
+            </button>
+            <button
+              type="button"
+              className="settings-secondary-button settings-secondary-button--small"
+              onClick={() => void updateShortcut(field.key, '')}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="settings-secondary-button settings-secondary-button--small"
+              disabled={isDefault}
+              onClick={() => resetShortcut(field)}
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+      )
+    }
 
     switch (field.input) {
       case 'boolean':
@@ -431,6 +541,35 @@ export function SettingsWindow() {
         return null
     }
   }
+
+  useEffect(() => {
+    if (!listeningShortcutKey) {
+      return
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (event.key === 'Escape') {
+        setListeningShortcutKey(null)
+        return
+      }
+
+      const nextAccelerator = acceleratorFromKeyboardEvent(event, navigator.platform.toLowerCase().includes('mac'))
+      if (!nextAccelerator) {
+        return
+      }
+
+      void updateShortcut(listeningShortcutKey, nextAccelerator)
+      setListeningShortcutKey(null)
+    }
+
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+    }
+  }, [listeningShortcutKey, updateShortcut])
 
   const toggleRemoteAccess = async () => {
     setIsTogglingRemoteAccess(true)
@@ -687,7 +826,18 @@ export function SettingsWindow() {
                 {query && <h3 className="settings-section-title" style={{ marginTop: 24, marginBottom: 16 }}>{cat.label}</h3>}
                 {sections.map((section) => (
                   <section key={section.id} id={`section-${section.id}`} className="settings-section">
-                    <h3 className="settings-section-title">{section.title}</h3>
+                    <div className="settings-section-title-row">
+                      <h3 className="settings-section-title">{section.title}</h3>
+                      {section.id === 'keyboard-shortcuts' ? (
+                        <button
+                          type="button"
+                          className="settings-secondary-button settings-secondary-button--small"
+                          onClick={() => void resetAllShortcuts()}
+                        >
+                          Reset All
+                        </button>
+                      ) : null}
+                    </div>
                     <div className="settings-group">
                       {section.fields.map((field) => (
                         <div key={field.key} className="settings-row">
