@@ -17,9 +17,15 @@ import {
 } from 'react';
 import {
 	ChevronDown,
+	Eraser,
 	FileEdit,
 	FolderPlus,
+	FolderSync,
+	Play,
 	PlusSquare,
+	Search,
+	Settings,
+	Sidebar,
 	Terminal,
 	Trash2,
 } from 'lucide-react';
@@ -62,6 +68,24 @@ type AddTerminalOptions = {
 
 type OpenFileOptions = {
 	initialMode?: FileViewerMode;
+};
+
+type MacroLauncherGroup = 'Terminal' | 'Workspace' | 'Macros';
+
+type MacroLauncherItem = {
+	description: string;
+	group: MacroLauncherGroup;
+	icon: ReactNode;
+	id: string;
+	onSelect: () => void;
+	searchText: string;
+	shortcutLabel?: string;
+	title: string;
+};
+
+type MacroLauncherGroupedItem = {
+	index: number;
+	item: MacroLauncherItem;
 };
 
 type DockPanelTabAppearance = {
@@ -2646,8 +2670,10 @@ const ProjectWorkspace = forwardRef<
 
 	const filteredMacros = useMemo(() => {
 		const normalizedQuery = macroQuery.trim().toLowerCase();
-		const commandItems = [
+		const commandItems: MacroLauncherItem[] = [
 			{
+				group: 'Terminal',
+				icon: <Terminal size={18} strokeWidth={2.1} />,
 				id: 'create-terminal-tab',
 				title: 'Create a new terminal tab',
 				description: 'Open a fresh terminal tab in the current project.',
@@ -2665,6 +2691,8 @@ const ProjectWorkspace = forwardRef<
 				},
 			},
 			{
+				group: 'Workspace',
+				icon: <FolderPlus size={18} strokeWidth={2.1} />,
 				id: 'create-project',
 				title: 'Create a new project',
 				description: 'Add a new project tab and switch to it.',
@@ -2679,6 +2707,8 @@ const ProjectWorkspace = forwardRef<
 				},
 			},
 			{
+				group: 'Terminal',
+				icon: <Eraser size={18} strokeWidth={2.1} />,
 				id: 'clear-terminal',
 				title: 'Clear terminal',
 				description: 'Clear the active terminal viewport and scrollback.',
@@ -2693,6 +2723,8 @@ const ProjectWorkspace = forwardRef<
 				},
 			},
 			{
+				group: 'Terminal',
+				icon: <Settings size={18} strokeWidth={2.1} />,
 				id: 'edit-tab-settings',
 				title: 'Edit tab settings',
 				description: 'Open settings for the active tab.',
@@ -2702,6 +2734,8 @@ const ProjectWorkspace = forwardRef<
 				},
 			},
 			{
+				group: 'Workspace',
+				icon: <Settings size={18} strokeWidth={2.1} />,
 				id: 'edit-project-settings',
 				title: 'Edit project settings',
 				description: 'Open settings for the current project tab.',
@@ -2711,6 +2745,8 @@ const ProjectWorkspace = forwardRef<
 				},
 			},
 			{
+				group: 'Workspace',
+				icon: <Sidebar size={18} strokeWidth={2.1} />,
 				id: 'toggle-file-explorer-sidebar',
 				title: project.isFileExplorerOpen
 					? 'Hide file explorer sidebar'
@@ -2725,6 +2761,8 @@ const ProjectWorkspace = forwardRef<
 				},
 			},
 			{
+				group: 'Workspace',
+				icon: <FolderSync size={18} strokeWidth={2.1} />,
 				id: 'set-project-root-folder-to-working-directory',
 				title: 'Set project root folder to working directory',
 				description:
@@ -2740,7 +2778,9 @@ const ProjectWorkspace = forwardRef<
 					void setProjectRootFolderToWorkingDirectory();
 				},
 			},
-			...macros.map((macro) => ({
+			...macros.map((macro): MacroLauncherItem => ({
+				group: 'Macros',
+				icon: <Play size={18} strokeWidth={2.1} />,
 				id: macro.id,
 				title: macro.title,
 				description:
@@ -2798,6 +2838,22 @@ const ProjectWorkspace = forwardRef<
 		toggleFileExplorerSidebar,
 	]);
 	const activeMacroId = filteredMacros[selectedMacroIndex]?.id ?? null;
+	const macroLauncherGroups = useMemo(() => {
+		const groups = new Map<MacroLauncherGroup, MacroLauncherGroupedItem[]>();
+
+		filteredMacros.forEach((item, index) => {
+			const groupItems = groups.get(item.group) ?? [];
+			groupItems.push({ index, item });
+			groups.set(item.group, groupItems);
+		});
+
+		return (['Terminal', 'Workspace', 'Macros'] as const)
+			.map((group) => ({
+				group,
+				items: groups.get(group) ?? [],
+			}))
+			.filter(({ items }) => items.length > 0);
+	}, [filteredMacros]);
 
 	const closeActivePanel = useCallback(() => {
 		dockviewApiRef.current?.activePanel?.api.close();
@@ -3892,22 +3948,7 @@ const ProjectWorkspace = forwardRef<
 						>
 							<div className="macro-launcher-search-container">
 								<div className="macro-launcher-search-icon">
-									<svg
-										width="20"
-										height="20"
-										viewBox="0 0 24 24"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="2.5"
-										strokeLinecap="round"
-										strokeLinejoin="round"
-										aria-labelledby="macro-launcher-search-title"
-										role="img"
-									>
-										<title id="macro-launcher-search-title">Search</title>
-										<circle cx="11" cy="11" r="8" />
-										<path d="m21 21-4.3-4.3" />
-									</svg>
+									<Search size={20} strokeWidth={2.5} aria-hidden="true" />
 								</div>
 								<input
 									ref={macroLauncherInputRef}
@@ -3928,55 +3969,62 @@ const ProjectWorkspace = forwardRef<
 								</div>
 							</div>
 
-								<div
-									ref={macroLauncherListRef}
-									className="macro-launcher-list"
-								>
+							<div ref={macroLauncherListRef} className="macro-launcher-list">
 								{filteredMacros.length === 0 ? (
 									<div className="macro-launcher-empty">
 										<p>No commands match your search.</p>
 									</div>
 								) : (
-									filteredMacros.map((macro, index) => (
-										<button
-											key={macro.id}
-											type="button"
-											ref={(element) => {
-												if (element) {
-													macroLauncherItemRefs.current.set(
-														macro.id,
-														element,
-													);
-													return;
-												}
+									macroLauncherGroups.map(({ group, items }) => (
+										<section className="macro-launcher-group" key={group}>
+											<div className="macro-launcher-group-label">{group}</div>
+											<div className="macro-launcher-group-items">
+												{items.map(({ item: macro, index }) => (
+													<button
+														key={macro.id}
+														type="button"
+														ref={(element) => {
+															if (element) {
+																macroLauncherItemRefs.current.set(
+																	macro.id,
+																	element,
+																);
+																return;
+															}
 
-												macroLauncherItemRefs.current.delete(macro.id);
-											}}
-											className={`macro-launcher-item ${index === selectedMacroIndex ? 'macro-launcher-item--active' : ''}`}
-											onMouseEnter={() => setSelectedMacroIndex(index)}
-											onClick={() => macro.onSelect()}
-										>
-											<div className="macro-launcher-item-content">
-												<span className="macro-launcher-item-title">
-													{macro.title}
-												</span>
-												<span className="macro-launcher-item-description">
-													{macro.description}
-												</span>
+															macroLauncherItemRefs.current.delete(macro.id);
+														}}
+														className={`macro-launcher-item ${index === selectedMacroIndex ? 'macro-launcher-item--active' : ''}`}
+														onMouseEnter={() => setSelectedMacroIndex(index)}
+														onClick={() => macro.onSelect()}
+													>
+														<span className="macro-launcher-item-icon">
+															{macro.icon}
+														</span>
+														<div className="macro-launcher-item-content">
+															<span className="macro-launcher-item-title">
+																{macro.title}
+															</span>
+															<span className="macro-launcher-item-description">
+																{macro.description}
+															</span>
+														</div>
+														<div className="macro-launcher-item-actions">
+															{macro.shortcutLabel ? (
+																<span className="macro-launcher-command-shortcut">
+																	{macro.shortcutLabel}
+																</span>
+															) : null}
+															{index === selectedMacroIndex && (
+																<div className="macro-launcher-item-hint">
+																	<span>⏎</span>
+																</div>
+															)}
+														</div>
+													</button>
+												))}
 											</div>
-											<div className="macro-launcher-item-actions">
-												{'shortcutLabel' in macro && macro.shortcutLabel ? (
-													<span className="macro-launcher-command-shortcut">
-														{macro.shortcutLabel}
-													</span>
-												) : null}
-												{index === selectedMacroIndex && (
-													<div className="macro-launcher-item-hint">
-														<span>⏎</span>
-													</div>
-												)}
-											</div>
-										</button>
+										</section>
 									))
 								)}
 							</div>
