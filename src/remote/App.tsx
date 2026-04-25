@@ -11,7 +11,6 @@ import {
 } from './services/deviceKeys'
 import { parsePairingBootstrap } from './services/pairing'
 import { RemoteSocket } from './services/socket'
-import { enablePreferredXtermRenderer } from '../xtermRenderer'
 import '@xterm/xterm/css/xterm.css'
 import './index.css'
 
@@ -452,7 +451,6 @@ export function RemoteApp() {
       scrollback: 5000,
     })
     terminal.open(container)
-    void enablePreferredXtermRenderer(terminal)
 
     terminalRef.current = terminal
     renderSessionBuffer(selectedSessionIdRef.current)
