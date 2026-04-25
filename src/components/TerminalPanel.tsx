@@ -14,6 +14,7 @@ import type { TerminalSettings } from '../types/settings'
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'termide-open-terminal-switcher'
 const DROP_FILE_EXPLORER_PATH_EVENT = 'termide-drop-file-explorer-path'
+const CLEAR_TERMINAL_EVENT = 'termide-clear-terminal'
 const BRACKETED_PASTE_NEWLINE = '\x1b[200~\n\x1b[201~'
 
 const searchOptions = {
@@ -320,6 +321,17 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       announceTerminalFocus()
     }
 
+    const clearTerminal = (event: Event) => {
+      const customEvent = event as CustomEvent<{ sessionId?: string }>
+      if (customEvent.detail?.sessionId !== sessionId) {
+        return
+      }
+
+      terminal.clear()
+      terminal.focus()
+      announceTerminalFocus()
+    }
+
     const handleExplorerPathDrop = (event: Event) => {
       const customEvent = event as CustomEvent<{ path?: string; sessionId?: string }>
       if (customEvent.detail?.sessionId !== sessionId || !customEvent.detail.path) {
@@ -392,6 +404,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     root.addEventListener('drop', handleDrop, dragListenerOptions)
     root.addEventListener('pointerdown', announceTerminalFocus)
     window.addEventListener('termide-focus-terminal', focusTerminal)
+    window.addEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
     window.addEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
     terminal.focus()
     announceTerminalFocus()
@@ -407,6 +420,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       root.removeEventListener('drop', handleDrop, dragListenerOptions)
       root.removeEventListener('pointerdown', announceTerminalFocus)
       window.removeEventListener('termide-focus-terminal', focusTerminal)
+      window.removeEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
       window.removeEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
       activeDisposer.dispose()
       if (activeFocusFrame !== null) {
