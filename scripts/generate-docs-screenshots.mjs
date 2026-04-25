@@ -23,8 +23,22 @@ async function openChildWindow(electronApp, action) {
   await action()
   const nextWindow = await nextWindowPromise
   await nextWindow.waitForLoadState('domcontentloaded')
+  await enablePageDarkMode(nextWindow)
   await nextWindow.setViewportSize(windowSize)
   return nextWindow
+}
+
+async function enableAppDarkMode(electronApp) {
+  await electronApp.evaluate(({ nativeTheme }) => {
+    nativeTheme.themeSource = 'dark'
+  })
+}
+
+async function enablePageDarkMode(page) {
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.addStyleTag({
+    content: ':root { color-scheme: dark; }',
+  })
 }
 
 async function setBrowserWindowSize(electronApp, page, size = windowSize) {
@@ -372,8 +386,10 @@ async function main() {
       },
     })
 
+    await enableAppDarkMode(electronApp)
     const page = await electronApp.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    await enablePageDarkMode(page)
     await waitForVisible(page.locator('.project-tabbar'))
     await setBrowserWindowSize(electronApp, page)
 
