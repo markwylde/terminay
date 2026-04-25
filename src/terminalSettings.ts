@@ -1,4 +1,5 @@
 import type { FontWeight, ITerminalOptions } from '@xterm/xterm'
+import { appCommandMetadata, defaultKeyboardShortcuts, normalizeAccelerator } from './keyboardShortcuts'
 import type { TerminalSettings } from './types/settings'
 
 type SettingsInputKind = 'boolean' | 'number' | 'text' | 'select' | 'color'
@@ -9,6 +10,7 @@ type SettingsCategoryId =
   | 'appearance'
   | 'cursor'
   | 'interaction'
+  | 'keyboard'
   | 'scrolling'
   | 'accessibility'
   | 'theme'
@@ -48,6 +50,7 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
   { id: 'appearance', label: 'Appearance', description: 'Typography, rendering, and visual density.' },
   { id: 'cursor', label: 'Cursor', description: 'Cursor style, width, and focus behavior.' },
   { id: 'interaction', label: 'Interaction', description: 'Input, selection, and keyboard behavior.' },
+  { id: 'keyboard', label: 'Shortcuts', description: 'App command key bindings shown in the command bar.' },
   { id: 'scrolling', label: 'Scrolling', description: 'Scrollback depth and scroll feel.' },
   { id: 'accessibility', label: 'Accessibility', description: 'Contrast, assistive tech, and readability.' },
   { id: 'theme', label: 'Theme', description: 'Base colors, selection, and ANSI palette.' },
@@ -56,6 +59,7 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
 export const defaultTerminalSettings: TerminalSettings = {
   allowTransparency: false,
   altClickMovesCursor: true,
+  autoCloseTerminalOnExitZero: false,
   convertEol: true,
   cursorBlink: true,
   cursorStyle: 'block',
@@ -85,6 +89,7 @@ export const defaultTerminalSettings: TerminalSettings = {
   smoothScrollDuration: 0,
   tabStopWidth: 8,
   wordSeparator: ' ()[]{}\',"`',
+  keyboardShortcuts: defaultKeyboardShortcuts,
   remoteAccess: {
     bindAddress: '0.0.0.0',
     origin: 'https://localhost:9443',
@@ -226,6 +231,23 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         input: 'text',
         placeholder: '--no-rcs',
         keywords: ['args', 'arguments', 'flags', 'rc'],
+      }),
+    ],
+  },
+  {
+    id: 'shell-lifecycle',
+    categoryId: 'shell',
+    title: 'Lifecycle',
+    description: 'Choose what happens when a terminal process finishes.',
+    fields: [
+      makeField({
+        key: 'autoCloseTerminalOnExitZero',
+        label: 'Close tabs on successful exit',
+        description: 'Automatically close a terminal tab when its shell exits with code 0.',
+        sectionId: 'shell-lifecycle',
+        categoryId: 'shell',
+        input: 'boolean',
+        keywords: ['exit', 'close tab', 'process exited', 'successful exit', 'zero'],
       }),
     ],
   },
@@ -491,6 +513,24 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
     ],
   },
   {
+    id: 'keyboard-shortcuts',
+    categoryId: 'keyboard',
+    title: 'Command Shortcuts',
+    description: 'Customize command key bindings. Leave a field blank to disable that shortcut.',
+    fields: appCommandMetadata.map((command) =>
+      makeField({
+        key: `keyboardShortcuts.${command.command}`,
+        label: command.title,
+        description: command.description,
+        sectionId: 'keyboard-shortcuts',
+        categoryId: 'keyboard',
+        input: 'text',
+        placeholder: defaultKeyboardShortcuts[command.command],
+        keywords: ['shortcut', 'keyboard', 'key binding', 'accelerator', command.keywords],
+      }),
+    ),
+  },
+  {
     id: 'history',
     categoryId: 'scrolling',
     title: 'Scrollback',
@@ -693,10 +733,18 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
     typeof input.theme === 'object' && input.theme !== null
       ? (input.theme as Partial<TerminalSettings['theme']>)
       : {}
+  const keyboardShortcutsInput =
+    typeof input.keyboardShortcuts === 'object' && input.keyboardShortcuts !== null
+      ? (input.keyboardShortcuts as Partial<TerminalSettings['keyboardShortcuts']>)
+      : {}
 
   return {
     allowTransparency: typeof input.allowTransparency === 'boolean' ? input.allowTransparency : defaultTerminalSettings.allowTransparency,
     altClickMovesCursor: typeof input.altClickMovesCursor === 'boolean' ? input.altClickMovesCursor : defaultTerminalSettings.altClickMovesCursor,
+    autoCloseTerminalOnExitZero:
+      typeof input.autoCloseTerminalOnExitZero === 'boolean'
+        ? input.autoCloseTerminalOnExitZero
+        : defaultTerminalSettings.autoCloseTerminalOnExitZero,
     convertEol: typeof input.convertEol === 'boolean' ? input.convertEol : defaultTerminalSettings.convertEol,
     cursorBlink: typeof input.cursorBlink === 'boolean' ? input.cursorBlink : defaultTerminalSettings.cursorBlink,
     cursorStyle: input.cursorStyle === 'underline' || input.cursorStyle === 'bar' ? input.cursorStyle : defaultTerminalSettings.cursorStyle,
@@ -754,6 +802,17 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
     smoothScrollDuration: clampNumber(Number(input.smoothScrollDuration), defaultTerminalSettings.smoothScrollDuration, 0, 2000),
     tabStopWidth: clampNumber(Number(input.tabStopWidth), defaultTerminalSettings.tabStopWidth, 1, 16),
     wordSeparator: typeof input.wordSeparator === 'string' ? input.wordSeparator : defaultTerminalSettings.wordSeparator,
+    keyboardShortcuts: Object.fromEntries(
+      appCommandMetadata.map(({ command }) => {
+        const value = keyboardShortcutsInput[command]
+        if (typeof value !== 'string') {
+          return [command, defaultTerminalSettings.keyboardShortcuts[command]]
+        }
+
+        const trimmed = value.trim()
+        return [command, trimmed.length > 0 ? normalizeAccelerator(trimmed) || defaultTerminalSettings.keyboardShortcuts[command] : '']
+      }),
+    ) as TerminalSettings['keyboardShortcuts'],
     remoteAccess: {
       bindAddress:
         typeof remoteAccessInput.bindAddress === 'string' && remoteAccessInput.bindAddress.trim().length > 0
