@@ -91,6 +91,10 @@ type AccessoryAction =
   | { id: string; kind: 'scrollback'; label: string; mode: 'page-up' | 'page-down' | 'top' | 'bottom' }
   | { id: string; kind: 'send'; label: string; payload: string; useModifiers?: boolean }
 
+function getSessionProjectId(session: Pick<RemoteSessionSummary, 'projectId'>): string {
+  return session.projectId || 'default'
+}
+
 const ACCESSORY_ACTIONS: AccessoryAction[] = [
   { id: 'history-up', kind: 'scrollback', label: 'Hist↑', mode: 'page-up' },
   { id: 'history-down', kind: 'scrollback', label: 'Hist↓', mode: 'page-down' },
@@ -604,7 +608,7 @@ export function RemoteApp() {
   const projects = useMemo(() => {
     const map = new Map<string, ProjectState>()
     Object.values(sessions).forEach((s: SessionState) => {
-      const pid = s.projectId || 'default'
+      const pid = getSessionProjectId(s)
       if (!map.has(pid)) {
         map.set(pid, {
           id: pid,
@@ -629,8 +633,9 @@ export function RemoteApp() {
   useEffect(() => {
     if (selectedSessionId) {
       const session = sessions[selectedSessionId]
-      if (session?.projectId && session.projectId !== activeProjectId) {
-        setActiveProjectId(session.projectId)
+      const sessionProjectId = session ? getSessionProjectId(session) : null
+      if (sessionProjectId && sessionProjectId !== activeProjectId) {
+        setActiveProjectId(sessionProjectId)
       }
     } else if (activeProjectId) {
        const project = projects.find((projectState) => projectState.id === activeProjectId)
@@ -722,6 +727,20 @@ export function RemoteApp() {
     if (!project) return []
     return project.sessionIds.map((id: string) => sessions[id]).filter(Boolean) as SessionState[]
   }, [activeProjectId, projects, sessions])
+
+  const handleProjectSelect = useCallback((project: ProjectState) => {
+    setActiveProjectId(project.id)
+    setSelectedSessionId((currentSessionId) => {
+      if (currentSessionId) {
+        const currentSession = sessionsRef.current[currentSessionId]
+        if (currentSession && getSessionProjectId(currentSession) === project.id) {
+          return currentSessionId
+        }
+      }
+
+      return project.sessionIds[0] ?? null
+    })
+  }, [])
 
   const terminalSurfaceStyle = useMemo(() => {
     // Keep the browser terminal sized from its own rendered canvas instead of
@@ -877,7 +896,7 @@ export function RemoteApp() {
                  <div
                    key={project.id}
                    className={`project-tab ${project.id === activeProjectId ? 'active' : ''}`}
-                   onClick={() => setActiveProjectId(project.id)}
+                   onClick={() => handleProjectSelect(project)}
                    style={{ '--tab-color': project.color } as React.CSSProperties}
                  >
                     <span className="tab-icon">{project.emoji}</span>
