@@ -23,7 +23,7 @@ async function ensureParentDirectory(filePath: string): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true })
 }
 
-export async function seedWorkspace(rootDir: string, seed?: WorkspaceSeed): Promise<void> {
+async function seedWorkspace(rootDir: string, seed?: WorkspaceSeed): Promise<void> {
   for (const directory of seed?.directories ?? []) {
     await mkdir(path.join(rootDir, directory), { recursive: true })
   }
