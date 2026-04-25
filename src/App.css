@@ -580,7 +580,7 @@
   left: 4px;
   right: 4px;
   border-radius: 4px;
-  background-color: color-mix(in srgb, var(--project-color) 6%, transparent);
+  background-color: color-mix(in srgb, var(--project-color) 10%, transparent);
   transition: all 150ms ease;
   z-index: 0;
 }
@@ -596,7 +596,7 @@
 }
 
 .project-tab:hover:not(.project-tab--active)::before {
-  background-color: color-mix(in srgb, var(--project-color) 12%, transparent);
+  background-color: color-mix(in srgb, var(--project-color) 16%, transparent);
 }
 
 .project-tab--active {
