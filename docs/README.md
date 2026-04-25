@@ -4,13 +4,27 @@ This is the documentation and landing page for Termide, built with Astro.
 
 ## Adding Screenshots
 
-To add screenshots to the landing page:
+Landing page screenshots live in `public/screenshots/` and are referenced by name from `src/pages/index.astro`.
 
-1. Add landscape-oriented PNG images to `/public/screenshots/` folder
-2. Name them clearly, such as `screenshot1.png`, `screenshot2.png`, `screenshot3.png`, and `screenshot4.png`
-3. Update the `screenshots` array in `/src/pages/index.astro` if you add or rename files
+The current generated assets are:
 
-The hero section uses the first screenshot in the array as the main hero image.
+- `termide-hero-workspace.png`
+- `termide-workspace.png`
+- `termide-command-bar.png`
+- `termide-macros.png`
+- `termide-files.png`
+- `termide-folders.png`
+- `termide-settings.png`
+- `termide-shortcuts.png`
+- `termide-remote-access.png`
+
+From the repository root, regenerate them with:
+
+```bash
+npm run docs:screenshots
+```
+
+If you add or rename screenshots manually, update the `heroScreenshot` or `featureScreenshots` constants in `src/pages/index.astro`.
 
 ## Development
 
@@ -27,6 +41,6 @@ npm run build
 
 ## Deployment
 
-This site is configured for GitHub Pages deployment at `markwylde.com/termide`.
+This site is configured for GitHub Pages deployment at `https://markwylde.github.io/termide/`.
 
-The build output is in the `dist/` folder which can be deployed to GitHub Pages.
+The build output is in the `dist/` folder. The Pages workflow builds from `docs/` and deploys committed screenshot assets; the root `npm run docs:build` workflow regenerates screenshots before building.
