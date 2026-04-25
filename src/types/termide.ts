@@ -7,6 +7,8 @@ export type AppCommand =
   | 'popout-active'
   | 'close-active'
   | 'open-command-bar'
+  | 'clear-terminal'
+  | 'set-project-root-folder-to-working-directory'
 
 export type FileViewerTextEncoding = 'utf8' | 'utf-8' | 'utf16le' | 'utf-16le' | 'latin1' | 'ascii'
 

@@ -1,3 +1,7 @@
+import type { AppCommand } from './termide'
+
+export type KeyboardShortcutSettings = Record<AppCommand, string>
+
 export type TerminalThemeSettings = {
   foreground: string
   background: string
@@ -43,6 +47,7 @@ export type RemoteAccessSettings = {
 export type TerminalSettings = {
   allowTransparency: boolean
   altClickMovesCursor: boolean
+  autoCloseTerminalOnExitZero: boolean
   convertEol: boolean
   cursorBlink: boolean
   cursorStyle: 'block' | 'underline' | 'bar'
@@ -72,6 +77,7 @@ export type TerminalSettings = {
   smoothScrollDuration: number
   tabStopWidth: number
   wordSeparator: string
+  keyboardShortcuts: KeyboardShortcutSettings
   remoteAccess: RemoteAccessSettings
   shell: ShellSettings
   theme: TerminalThemeSettings
