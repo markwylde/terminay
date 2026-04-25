@@ -151,13 +151,3 @@ export const test = base.extend<ElectronFixtures>({
 })
 
 export { expect }
-export type { DialogCall, DialogController } from './support/dialogs'
-export type { FixtureWorkspace, WorkspaceOptions, WorkspaceSeed } from './support/workspace'
-export {
-  openChildWindow,
-  openMacroLauncher,
-  openMacrosWindow,
-  openSettingsWindow,
-  prepareWindow,
-  sendAppCommand,
-} from './support/app'

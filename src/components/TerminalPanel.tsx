@@ -8,7 +8,6 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { buildTerminalOptions } from '../terminalSettings'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
-import { enablePreferredXtermRenderer } from '../xtermRenderer'
 import type { TerminalPanelParams } from './TerminalTab'
 import type { TerminalSettings } from '../types/settings'
 
@@ -167,7 +166,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     )
     terminal.unicode.activeVersion = '11'
     terminal.open(root)
-    void enablePreferredXtermRenderer(terminal)
 
     terminal.attachCustomKeyEventHandler((event) => {
       const isPasteShortcut =

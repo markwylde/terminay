@@ -20,7 +20,6 @@ import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalSettings } from '../types/settings'
 import type { AppCommand } from '../types/termide'
 import type { RemoteAccessStatus } from '../types/termide'
-import { enablePreferredXtermRenderer } from '../xtermRenderer'
 import '../settings.css'
 
 type CategoryId = (typeof terminalSettingsCategories)[number]['id']
@@ -83,7 +82,6 @@ function TerminalPreview({ settings }: { settings: TerminalSettings }) {
     terminal.loadAddon(unicode11Addon)
     terminal.unicode.activeVersion = '11'
     terminal.open(root)
-    void enablePreferredXtermRenderer(terminal)
     fitAddon.fit()
 
     terminal.writeln('\x1b[1;36mTermide Settings Preview\x1b[0m')
