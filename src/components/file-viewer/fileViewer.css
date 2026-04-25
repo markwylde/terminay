@@ -534,6 +534,12 @@
   background: rgba(255, 192, 102, 0.1);
 }
 
+.file-hex-row__byte--invalid {
+  color: #ffcbc2;
+  background: rgba(192, 91, 91, 0.18);
+  outline: 1px solid rgba(255, 129, 112, 0.76);
+}
+
 .file-hex-row__ascii {
   color: rgba(220, 226, 240, 0.7);
   white-space: pre;
@@ -709,6 +715,7 @@
   align-items: center;
   color: #dce2f0;
   flex: 0 0 auto;
+  margin-left: 10px;
   margin-right: 8px;
   line-height: 1;
 }

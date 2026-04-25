@@ -4,9 +4,10 @@ type FileStatusBarProps = {
   engine: FileViewerEngine
   file: FileInfo
   isDirty: boolean
+  isValid?: boolean
 }
 
-export function FileStatusBar({ engine, file, isDirty }: FileStatusBarProps) {
+export function FileStatusBar({ engine, file, isDirty, isValid = true }: FileStatusBarProps) {
   return (
     <div className="file-status-bar">
       <div className="file-status-bar__primary">
@@ -20,6 +21,7 @@ export function FileStatusBar({ engine, file, isDirty }: FileStatusBarProps) {
         <span className={`file-status-bar__pill ${isDirty ? 'file-status-bar__pill--warning' : 'file-status-bar__pill--success'}`}>
           {isDirty ? 'Unsaved changes' : 'Synced'}
         </span>
+        {!isValid ? <span className="file-status-bar__pill file-status-bar__pill--danger">Invalid HEX</span> : null}
       </div>
     </div>
   )
