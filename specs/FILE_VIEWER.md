@@ -411,12 +411,9 @@ The implementation should favor these reusable abstractions:
 - `FileDraftBuffer`
 - `FileWatchService`
 - `GitDiffService`
-- `VirtualListSurface`
 - `ModeSwitcher`
 - `ConflictBanner`
 - `LargeFileChooser`
-
-`VirtualListSurface` is the intended shared direction. Text, HEX, PDF-page preview, and diff should share one virtualization foundation where practical, but the current implementation still has mode-specific rendering paths.
 
 ## Suggested File Layout
 
