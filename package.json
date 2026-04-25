@@ -18,6 +18,8 @@
     "build": "npm run build:app && electron-builder --publish never",
     "build:mac": "npm run build:app && electron-builder --mac dmg --publish never",
     "build:linux": "npm run build:app && electron-builder --linux AppImage --publish never",
+    "docs:screenshots": "npm run build:app && node scripts/generate-docs-screenshots.mjs",
+    "docs:build": "npm run docs:screenshots && npm --prefix docs run build",
     "lint": "biome lint .",
     "smoke": "npm run lint && npm run build:app",
     "release": "node scripts/create-release.mjs",

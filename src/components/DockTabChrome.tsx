@@ -5,6 +5,7 @@ type DockTabChromeProps = {
   panelId: string
   isActive: boolean
   hasCustomColor?: boolean
+  activityState?: 'viewed' | 'recent' | 'unviewed'
   titleAttribute?: string
   closeAriaLabel: string
   style?: CSSProperties
@@ -21,6 +22,7 @@ export function DockTabChrome({
   panelId,
   isActive,
   hasCustomColor = false,
+  activityState,
   titleAttribute,
   closeAriaLabel,
   style,
@@ -38,6 +40,7 @@ export function DockTabChrome({
       className={`terminal-tab-content${isActive ? ' terminal-tab-content--active' : ''}`}
       data-panel-id={panelId}
       data-has-color={hasCustomColor}
+      data-terminal-activity={activityState}
       title={titleAttribute ?? resolvedTitle}
       style={style}
       onClick={onClick}

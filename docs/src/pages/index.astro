@@ -6,147 +6,170 @@ const basePath = import.meta.env.BASE_URL.endsWith('/')
   ? import.meta.env.BASE_URL
   : `${import.meta.env.BASE_URL}/`;
 
-const screenshots = [
-  { src: `${basePath}screenshots/screenshot1.png`, alt: 'Termide workspace overview with docked terminal panels' },
-  { src: `${basePath}screenshots/screenshot2.png`, alt: 'Termide showing another workspace arrangement' },
-  { src: `${basePath}screenshots/screenshot3.png`, alt: 'Termide terminal layout with multiple panels visible' },
-  { src: `${basePath}screenshots/screenshot4.png`, alt: 'Termide interface showcasing additional terminal organization options' },
-];
+// biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
+const heroScreenshot = {
+  src: `${basePath}screenshots/termide-hero-workspace.png`,
+  alt: 'Termide showing five project tabs and a two by two terminal workspace',
+};
 
 // biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
-const hasScreenshots = screenshots.length > 0;
+const featureScreenshots = [
+  {
+    src: `${basePath}screenshots/termide-command-bar.png`,
+    alt: 'Termide Command bar searching project commands and macros',
+    title: 'Command Bar',
+    description: 'Search commands and macros from one keyboard-first launcher.',
+  },
+  {
+    src: `${basePath}screenshots/termide-files.png`,
+    alt: 'Termide file explorer and README preview beside terminal panes',
+    title: 'Files',
+    description: 'Open README files, previews, text buffers, diffs, PDFs, images, and folders beside terminals.',
+  },
+  {
+    src: `${basePath}screenshots/termide-settings.png`,
+    alt: 'Termide Settings window showing searchable keyboard shortcuts',
+    title: 'Settings',
+    description: 'Search settings, tune shortcuts, adjust the shell, and preview terminal appearance.',
+  },
+  {
+    src: `${basePath}screenshots/termide-remote-access.png`,
+    alt: 'Termide Remote Access settings with pairing and TLS options',
+    title: 'Remote Access',
+    description: 'Pair a browser, manage trusted devices, and review live remote access state.',
+  },
+];
 
 // biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
 const features = [
   {
-    icon: '🪟',
-    title: 'Dockable Layout',
-    description: 'Split terminals horizontally and vertically with a flexible, dockable tabbed interface.'
+    title: 'Command Bar',
+    description: 'Press Cmd/Ctrl+L to search workspace actions and reusable macros without leaving the keyboard.',
   },
   {
-    icon: '📱',
-    title: 'Pop-out Windows',
-    description: 'Drag panels into separate windows to organize your workflow across multiple screens.'
+    title: 'Colorful Project Tabs',
+    description: 'Give projects and terminals names, colors, and short icons so busy workspaces stay readable.',
   },
   {
-    icon: '🎨',
-    title: 'Customizable Tabs',
-    description: 'Rename tabs, add colors, and use emoji markers to keep your workspace organized.'
+    title: 'Remote Access',
+    description: 'Pair a browser with a QR code and reach your Termide sessions over the built-in HTTPS remote host.',
   },
   {
-    icon: '⚡',
-    title: 'Native Performance',
-    description: 'Built with Electron and node-pty for fast, native shell sessions.'
+    title: 'Settings That Travel',
+    description: 'Tune shell behavior, themes, cursor style, shortcuts, scrolling, accessibility, and remote host options.',
   },
   {
-    icon: '🔧',
-    title: 'Modern Stack',
-    description: 'Powered by React, Vite, xterm.js, and dockview for a smooth experience.'
+    title: 'Files Beside Shells',
+    description: 'Browse folders, open files, preview media and markdown, inspect diffs, and save edits next to terminals.',
   },
   {
-    icon: '🖥️',
-    title: 'Cross-Platform',
-    description: 'Available for macOS and Linux with automatic updates via GitHub Releases.'
-  }
+    title: 'Dockable Terminals',
+    description: 'Split horizontally or vertically, rearrange tabs, pop work into a new window, and keep each shell native.',
+  },
+];
+
+// biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
+const workflow = [
+  'Open the Command bar',
+  'Split a terminal or jump to a project',
+  'Run a macro',
+  'Pair remote access when you need it',
 ];
 ---
 
-<Layout title="Termide - A Modern Terminal Workspace">
+<Layout
+  title="Termide - A Terminal Workspace for Projects"
+  description="Termide is a desktop terminal workspace with dockable shells, file tools, macros, settings, colorful tabs, and browser-based remote access."
+>
   <section class="hero">
     <div class="hero-content">
-      <h1 class="hero-title">
-        Terminal
-        <span class="hero-subtitle">for modern workflows</span>
-      </h1>
+      <p class="eyebrow">Desktop terminal workspace</p>
+      <h1 class="hero-title">Termide</h1>
       <p class="hero-description">
-        Split terminals, rearrange them, and pop active work out into separate windows. 
-        Termide pairs native shell sessions with a dockable tabbed layout.
+        A focused terminal app for project work: native shells, dockable panes, file tools, macros, settings, colorful tabs, and remote access from a paired browser.
       </p>
       <div class="hero-cta">
         <a href="https://github.com/markwylde/termide/releases" class="btn btn-primary">
           Download
         </a>
-        <a href="/termide/docs" class="btn btn-secondary">
-          Documentation
+        <a href={`${basePath}docs`} class="btn btn-secondary">
+          Read the docs
         </a>
       </div>
     </div>
-    <div class="hero-screenshot">
-      <div class="screenshot-frame">
-        {hasScreenshots ? (
-          <img 
-            src={screenshots[0].src} 
-            alt={screenshots[0].alt}
-            class="hero-image"
-          />
-        ) : (
-          <div class="screenshot-placeholder">
-            <span class="screenshot-text">Screenshot coming soon</span>
-            <span class="screenshot-hint">Add images to <code>/docs/public/screenshots/</code></span>
-          </div>
-        )}
-      </div>
-    </div>
+    <figure class="screenshot-frame hero-screenshot">
+      <img src={heroScreenshot.src} alt={heroScreenshot.alt} class="window-image" />
+    </figure>
   </section>
 
-  <section class="features">
+  <section class="feature-band">
     <div class="container">
-      <h2 class="section-title">Features</h2>
+      <div class="section-heading">
+        <p class="eyebrow">What is new</p>
+        <h2>More than a terminal grid</h2>
+      </div>
       <div class="features-grid">
-        {features.map(feature => (
-          <div class="feature-card">
-            <span class="feature-icon">{feature.icon}</span>
-            <h3 class="feature-title">{feature.title}</h3>
-            <p class="feature-description">{feature.description}</p>
-          </div>
+        {features.map((feature) => (
+          <article class="feature-card">
+            <h3>{feature.title}</h3>
+            <p>{feature.description}</p>
+          </article>
         ))}
       </div>
     </div>
   </section>
 
-  {screenshots.length > 1 && (
-    <section class="screenshots">
-      <div class="container">
-        <h2 class="section-title">Screenshots</h2>
-        <div class="screenshots-grid">
-          {screenshots.slice(1).map((screenshot, i) => (
-            <div class="screenshot-card">
-              <img 
-                src={screenshot.src} 
-                alt={screenshot.alt}
-                class="screenshot-image"
-              />
-            </div>
-          ))}
-        </div>
+  <section class="screenshots-band">
+    <div class="container">
+      <div class="section-heading">
+        <p class="eyebrow">Screenshots</p>
+        <h2>The main surfaces, captured from the app</h2>
       </div>
-    </section>
-  )}
+      <div class="screenshots-grid">
+        {featureScreenshots.map((screenshot) => (
+          <article class="screenshot-card">
+            <figure class="screenshot-frame">
+              <img src={screenshot.src} alt={screenshot.alt} class="window-image" loading="lazy" />
+            </figure>
+            <h3>{screenshot.title}</h3>
+            <p>{screenshot.description}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
 
-  {!hasScreenshots && (
-    <section class="screenshots">
-      <div class="container">
-        <h2 class="section-title">Screenshots</h2>
-        <div class="screenshots-grid">
-          {[1, 2, 3, 4].map((i) => (
-            <div class="screenshot-card">
-              <div class="screenshot-placeholder-small">
-                <span class="screenshot-text">Screenshot {i}</span>
-                <span class="screenshot-hint">Add to <code>/docs/public/screenshots/</code></span>
-              </div>
-            </div>
-          ))}
-        </div>
+  <section class="workflow-band">
+    <div class="container workflow-layout">
+      <div>
+        <p class="eyebrow">Fast path</p>
+        <h2>Keep the useful actions close</h2>
+        <p>
+          The Command bar brings app commands and macros into one searchable surface. It is built for the repeated moves that happen all day in a terminal workspace.
+        </p>
       </div>
-    </section>
-  )}
+      <ol class="workflow-list">
+        {workflow.map((item) => <li>{item}</li>)}
+      </ol>
+    </div>
+  </section>
+
+  <section class="remote-band">
+    <div class="container remote-layout">
+      <div>
+        <p class="eyebrow">Remote access</p>
+        <h2>Pair a browser when the desktop is not enough</h2>
+      </div>
+      <p>
+        Termide can host an HTTPS remote endpoint, generate a pairing QR code, track paired devices, show live connections, and keep an audit trail in settings.
+      </p>
+    </div>
+  </section>
 
   <section class="cta">
     <div class="container">
-      <h2 class="cta-title">Ready to try Termide?</h2>
-      <p class="cta-description">
-        Download the latest release for macOS or Linux and start organizing your terminal workspace today.
-      </p>
+      <h2>Ready to try Termide?</h2>
+      <p>Download the latest release or build from source with the same scripts used by the automated docs screenshot workflow.</p>
       <div class="cta-buttons">
         <a href="https://github.com/markwylde/termide/releases" class="btn btn-primary btn-large">
           Get Termide
@@ -161,7 +184,7 @@ const features = [
 
 <style>
   .container {
-    max-width: 1200px;
+    max-width: 1160px;
     margin: 0 auto;
     padding: 0 2rem;
   }
@@ -169,12 +192,13 @@ const features = [
   .hero {
     position: relative;
     isolation: isolate;
-    padding: 6rem 2rem;
+    min-height: calc(100vh - 74px);
+    padding: 5rem 2rem 3rem;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+    grid-template-columns: minmax(260px, 0.82fr) minmax(0, 1.18fr);
     gap: 3rem;
     align-items: center;
-    max-width: 1400px;
+    max-width: 1320px;
     margin: 0 auto;
   }
 
@@ -185,36 +209,36 @@ const features = [
     left: 50%;
     width: 100vw;
     transform: translateX(-50%);
-    background: #262626;
+    background: #202124;
     z-index: -1;
   }
 
-  .hero-content {
-    max-width: 620px;
+  .eyebrow {
+    color: #5eead4;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.7rem;
   }
 
   .hero-title {
-    font-size: clamp(2.2rem, 4.2vw, 3.4rem);
-    font-weight: 700;
-    line-height: 1.08;
+    font-size: clamp(3rem, 8vw, 6.5rem);
+    font-weight: 800;
+    line-height: 0.95;
     margin-bottom: 1.25rem;
-    text-wrap: balance;
-  }
-
-  .hero-subtitle {
-    display: block;
-    color: var(--accent-primary);
-    margin-top: 0.5rem;
   }
 
   .hero-description {
-    font-size: 1.15rem;
+    font-size: 1.08rem;
     color: var(--text-secondary);
     margin-bottom: 2rem;
-    line-height: 1.65;
+    line-height: 1.7;
+    max-width: 620px;
   }
 
-  .hero-cta {
+  .hero-cta,
+  .cta-buttons {
     display: flex;
     gap: 1rem;
     flex-wrap: wrap;
@@ -224,17 +248,17 @@ const features = [
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.875rem 1.5rem;
+    padding: 0.82rem 1.25rem;
     border-radius: var(--radius-md);
-    font-weight: 600;
-    font-size: 1rem;
-    transition: all 0.2s;
+    font-weight: 700;
+    font-size: 0.98rem;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
     border: 1px solid transparent;
   }
 
   .btn-primary {
     background: var(--accent-primary);
-    color: #000;
+    color: #07110b;
   }
 
   .btn-primary:hover {
@@ -249,199 +273,194 @@ const features = [
   }
 
   .btn-secondary:hover {
-    border-color: var(--text-muted);
+    border-color: #5eead4;
     opacity: 1;
   }
 
   .btn-large {
-    padding: 1rem 2rem;
-    font-size: 1.125rem;
+    padding: 1rem 1.65rem;
+    font-size: 1.05rem;
   }
 
   .hero-screenshot {
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    margin: 0;
+    width: 100%;
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
   }
 
   .screenshot-frame {
-    max-width: 680px;
-    width: 100%;
+    border: 1px solid #44484f;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #111315;
   }
 
-  .hero-image {
+  .window-image {
     width: 100%;
-    height: auto;
     display: block;
   }
 
-  .screenshot-placeholder {
-    width: 100%;
-    aspect-ratio: 16 / 10;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-lg);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    border: 2px dashed var(--border-color);
-  }
-
-  .screenshot-text {
-    font-size: 1.125rem;
-    color: var(--text-secondary);
-    font-weight: 500;
-  }
-
-  .screenshot-hint {
-    font-size: 0.875rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-  }
-
-  .section-title {
-    font-size: 2.5rem;
-    font-weight: 700;
-    text-align: center;
-    margin-bottom: 3rem;
-  }
-
-  .features {
-    padding: 6rem 0;
+  .feature-band,
+  .remote-band {
+    padding: 5.5rem 0;
     background: var(--bg-secondary);
+  }
+
+  .workflow-band {
+    padding: 5.5rem 0;
+  }
+
+  .screenshots-band {
+    padding: 5.5rem 0;
+  }
+
+  .section-heading {
+    max-width: 620px;
+    margin-bottom: 2rem;
+  }
+
+  h2 {
+    font-size: clamp(2rem, 4vw, 3.2rem);
+    line-height: 1.05;
+    margin-bottom: 1rem;
   }
 
   .features-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 2rem;
-  }
-
-  .feature-card {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    padding: 2rem;
-    transition: transform 0.2s, border-color 0.2s;
-  }
-
-  .feature-card:hover {
-    transform: translateY(-4px);
-    border-color: var(--accent-primary);
-  }
-
-  .feature-icon {
-    font-size: 2rem;
-    margin-bottom: 1rem;
-    display: block;
-  }
-
-  .feature-title {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin-bottom: 0.75rem;
-  }
-
-  .feature-description {
-    color: var(--text-secondary);
-    line-height: 1.6;
-  }
-
-  .screenshots {
-    padding: 6rem 0;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
   }
 
   .screenshots-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1.5rem;
   }
 
-  .screenshot-card {
-    background: var(--bg-secondary);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
+  .feature-card {
+    background: #2c2f33;
     border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.35rem;
   }
 
-  .screenshot-image {
-    width: 100%;
-    height: auto;
-    display: block;
+  .feature-card h3 {
+    font-size: 1.05rem;
+    margin-bottom: 0.6rem;
   }
 
-  .screenshot-placeholder-small {
-    aspect-ratio: 16 / 10;
-    background: var(--bg-tertiary);
+  .screenshot-card h3 {
+    font-size: 1.1rem;
+    margin: 1rem 0 0.4rem;
+  }
+
+  .feature-card p,
+  .screenshot-card p,
+  .workflow-layout p,
+  .remote-layout p,
+  .cta p {
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+
+  .workflow-layout,
+  .remote-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
+    gap: 3rem;
+    align-items: start;
+  }
+
+  .workflow-list {
+    counter-reset: workflow;
+    list-style: none;
+    display: grid;
+    gap: 0.8rem;
+  }
+
+  .workflow-list li {
+    counter-increment: workflow;
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    background: #26292d;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+    color: var(--text-primary);
+    font-weight: 650;
+  }
+
+  .workflow-list li::before {
+    content: counter(workflow);
+    width: 2rem;
+    height: 2rem;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.5rem;
+    border-radius: 50%;
+    background: #5eead4;
+    color: #101414;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    flex: 0 0 auto;
+  }
+
+  .remote-layout {
+    align-items: center;
   }
 
   .cta {
-    padding: 6rem 2rem;
-    background: var(--bg-secondary);
+    padding: 5.5rem 2rem;
     text-align: center;
   }
 
-  .cta-title {
-    font-size: 2.5rem;
-    font-weight: 700;
+  .cta .container {
+    max-width: 760px;
+  }
+
+  .cta h2 {
     margin-bottom: 1rem;
   }
 
-  .cta-description {
-    font-size: 1.125rem;
-    color: var(--text-secondary);
-    max-width: 600px;
-    margin: 0 auto 2rem;
+  .cta p {
+    margin-bottom: 2rem;
   }
 
   .cta-buttons {
-    display: flex;
-    gap: 1rem;
     justify-content: center;
-    flex-wrap: wrap;
   }
 
-  @media (max-width: 968px) {
-    .hero {
+  @media (max-width: 940px) {
+    .hero,
+    .workflow-layout,
+    .remote-layout {
       grid-template-columns: 1fr;
-      text-align: center;
-      gap: 3rem;
     }
 
-    .hero-content {
-      max-width: 100%;
+    .hero {
+      min-height: auto;
+      padding-top: 4rem;
     }
 
-    .hero-cta {
-      justify-content: center;
+    .features-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .screenshot-frame {
-      width: 100%;
+    .screenshots-grid {
+      grid-template-columns: 1fr;
     }
   }
 
   @media (max-width: 640px) {
-    .container {
-      padding: 0 1rem;
-    }
-
+    .container,
     .hero {
-      padding: 4rem 1rem;
+      padding-left: 1rem;
+      padding-right: 1rem;
     }
 
     .features-grid {
       grid-template-columns: 1fr;
-    }
-
-    .section-title {
-      font-size: 2rem;
     }
   }
 </style>

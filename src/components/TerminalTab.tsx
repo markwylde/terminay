@@ -50,7 +50,6 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
   const params = props.params
   const { color, emoji, macroRuns = [], onCancelMacroRun, onClearFinishedMacroRuns, onClearMacroRun } = params || {}
   const terminalActivityState = params?.terminalActivityState ?? 'viewed'
-  const showTerminalActivity = terminalActivityState !== 'viewed'
   const isFocused = params?.isFocused === true
   const hasCustomColor = typeof color === 'string' && color !== DEFAULT_TERMINAL_TAB_COLOR
   const [isMacroMenuOpen, setIsMacroMenuOpen] = useState(false)
@@ -260,30 +259,15 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
         panelId={props.api.id}
         isActive={isFocused}
         hasCustomColor={hasCustomColor}
+        activityState={terminalActivityState}
         titleAttribute="Double-click to edit tab"
         style={style}
         onClick={onClick}
         onDoubleClick={onDoubleClick}
         closeAriaLabel="Close terminal"
         onClose={onClose}
-        leading={
-          <>
-            {showTerminalActivity ? (
-              <span
-                className="terminal-tab-activity-dot"
-                data-terminal-activity={terminalActivityState}
-                title={
-                  terminalActivityState === 'recent'
-                    ? 'Terminal changed in the last second'
-                    : 'Terminal changed since last viewed'
-                }
-                aria-hidden="true"
-              />
-            ) : null}
-            {emoji ? <span className="terminal-tab-emoji">{emoji}</span> : null}
-          </>
-        }
-        beforeTitle={macroTrigger}
+        leading={emoji ? <span className="terminal-tab-emoji">{emoji}</span> : null}
+        afterTitle={macroTrigger}
       />
       {isMacroMenuOpen && portalRoot && popoverPosition
         ? createPortal(
