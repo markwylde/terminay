@@ -81,6 +81,10 @@
   -webkit-app-region: no-drag;
 }
 
+.settings-sidebar-header button {
+  -webkit-app-region: no-drag;
+}
+
 .settings-brand h1 {
   font-size: 14px;
   font-weight: 600;
