@@ -108,8 +108,8 @@ export function createFileDraftBuffer(options: {
       if (!draftBytes) {
         draftBytes = new TextEncoder().encode(draftText ?? '')
         initialBytes = draftBytes.slice()
-      draftText = null
-      initialText = null
+        draftText = null
+        initialText = null
       }
 
       if (offset >= 0 && offset < draftBytes.length) {

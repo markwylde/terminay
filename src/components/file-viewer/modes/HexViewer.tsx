@@ -6,6 +6,7 @@ type HexViewerProps = {
   filePath: string
   fileSize: number
   onChangeByte: (offset: number, value: number) => void
+  onValidationChange: (isValid: boolean) => void
 }
 
 const ROW_HEIGHT = 34
@@ -20,7 +21,11 @@ function toAscii(value: number): string {
   return value >= 32 && value <= 126 ? String.fromCharCode(value) : '.'
 }
 
-export function HexViewer({ filePath, fileSize, onChangeByte }: HexViewerProps) {
+function isValidByteText(value: string): boolean {
+  return /^[0-9a-fA-F]{2}$/.test(value)
+}
+
+export function HexViewer({ filePath, fileSize, onChangeByte, onValidationChange }: HexViewerProps) {
   const [viewportElement, setViewportElement] = useState<HTMLDivElement | null>(null)
   const viewportRef = useCallback((element: HTMLDivElement | null) => {
     setViewportElement(element)
@@ -28,8 +33,14 @@ export function HexViewer({ filePath, fileSize, onChangeByte }: HexViewerProps) 
   const { height: viewportHeight, width: viewportWidth } = useResizeObserver(viewportElement)
   const [scrollTop, setScrollTop] = useState(0)
   const [pages, setPages] = useState<Record<number, Uint8Array>>({})
+  const [editedBytes, setEditedBytes] = useState<Map<number, number>>(() => new Map())
+  const [editedTexts, setEditedTexts] = useState<Map<number, string>>(() => new Map())
+  const [invalidOffsets, setInvalidOffsets] = useState<Set<number>>(() => new Set())
   const [loadError, setLoadError] = useState<string | null>(null)
   const failedOffsetsRef = useRef<Set<number>>(new Set())
+  const invalidOffsetsRef = useRef<Set<number>>(new Set())
+  const previousPageLayoutKeyRef = useRef<string | null>(null)
+  const previousFilePathRef = useRef<string | null>(null)
   const bytesPerRow = useMemo(() => {
     const availableWidth = Math.max(0, viewportWidth - 142) // 110px offset + 2 * 16px gaps
     const hexPaneWidth = availableWidth * 0.75
@@ -48,13 +59,85 @@ export function HexViewer({ filePath, fileSize, onChangeByte }: HexViewerProps) 
   }, [viewportWidth])
   const pageSize = bytesPerRow * 128
   const totalRows = Math.max(1, Math.ceil(fileSize / bytesPerRow))
+  const pageLayoutKey = `${filePath}:${bytesPerRow}`
 
   useEffect(() => {
+    if (previousPageLayoutKeyRef.current === pageLayoutKey) {
+      return
+    }
+
+    previousPageLayoutKeyRef.current = pageLayoutKey
     setPages({})
     setScrollTop(0)
     setLoadError(null)
     failedOffsetsRef.current = new Set()
-  }, [])
+  }, [pageLayoutKey])
+
+  useEffect(() => {
+    if (previousFilePathRef.current === filePath) {
+      return
+    }
+
+    previousFilePathRef.current = filePath
+    setEditedBytes(new Map())
+    setEditedTexts(new Map())
+    invalidOffsetsRef.current = new Set()
+    setInvalidOffsets(invalidOffsetsRef.current)
+    onValidationChange(true)
+  }, [filePath, onValidationChange])
+
+  const updateByte = useCallback(
+    (offset: number, text: string) => {
+      setEditedTexts((current) => {
+        const next = new Map(current)
+        next.set(offset, text)
+        return next
+      })
+
+      const isValid = isValidByteText(text)
+      const nextInvalidOffsets = new Set(invalidOffsetsRef.current)
+      if (isValid) {
+        nextInvalidOffsets.delete(offset)
+      } else {
+        nextInvalidOffsets.add(offset)
+      }
+      invalidOffsetsRef.current = nextInvalidOffsets
+      setInvalidOffsets(nextInvalidOffsets)
+      onValidationChange(nextInvalidOffsets.size === 0)
+
+      if (!isValid) {
+        return
+      }
+
+      const value = Number.parseInt(text, 16)
+      setPages((current) => {
+        const pageOffset = Math.floor(offset / pageSize) * pageSize
+        const page = current[pageOffset]
+        if (!page) {
+          return current
+        }
+
+        const pageIndex = offset - pageOffset
+        if (pageIndex < 0 || pageIndex >= page.length || page[pageIndex] === value) {
+          return current
+        }
+
+        const nextPage = page.slice()
+        nextPage[pageIndex] = value
+        return {
+          ...current,
+          [pageOffset]: nextPage,
+        }
+      })
+      setEditedBytes((current) => {
+        const next = new Map(current)
+        next.set(offset, value)
+        return next
+      })
+      onChangeByte(offset, value)
+    },
+    [onChangeByte, onValidationChange, pageSize],
+  )
 
   const visibleRange = useMemo(() => {
     const startRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 8)
@@ -137,7 +220,7 @@ export function HexViewer({ filePath, fileSize, onChangeByte }: HexViewerProps) 
         const pageOffset = Math.floor(byteOffset / pageSize) * pageSize
         const page = pages[pageOffset]
         const pageIndex = byteOffset - pageOffset
-        values.push(page ? page[pageIndex] ?? null : null)
+        values.push(editedBytes.get(byteOffset) ?? (page ? page[pageIndex] ?? null : null))
       }
 
       result.push({
@@ -148,7 +231,7 @@ export function HexViewer({ filePath, fileSize, onChangeByte }: HexViewerProps) 
     }
 
     return result
-  }, [bytesPerRow, fileSize, pageSize, pages, visibleRange.endRow, visibleRange.startRow])
+  }, [bytesPerRow, editedBytes, fileSize, pageSize, pages, visibleRange.endRow, visibleRange.startRow])
 
   return (
     <div className="file-hex-viewer">
@@ -187,15 +270,13 @@ export function HexViewer({ filePath, fileSize, onChangeByte }: HexViewerProps) 
                     ) : (
                       <input
                         key={byteOffset}
-                        className="file-hex-viewer__byte"
-                        value={toHex(value)}
+                        aria-label={`Byte ${byteOffset.toString(16).padStart(8, '0')}`}
+                        className={`file-hex-viewer__byte${editedBytes.has(byteOffset) ? ' file-hex-row__byte--changed' : ''}${invalidOffsets.has(byteOffset) ? ' file-hex-row__byte--invalid' : ''}`}
+                        value={editedTexts.get(byteOffset) ?? toHex(value)}
                         maxLength={2}
-                        onChange={(event) => {
-                          const nextValue = Number.parseInt(event.target.value, 16)
-                          if (!Number.isNaN(nextValue) && nextValue >= 0 && nextValue <= 255) {
-                            onChangeByte(byteOffset, nextValue)
-                          }
-                        }}
+                        pattern="[0-9a-fA-F]{1,2}"
+                        onFocus={(event) => event.currentTarget.select()}
+                        onChange={(event) => updateByte(byteOffset, event.target.value)}
                       />
                     )
                   })}

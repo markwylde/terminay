@@ -41,12 +41,14 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const [diffStatus, setDiffStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [gitRepoInfo, setGitRepoInfo] = useState<FileViewerGitRepoInfo | null>(null)
   const [isDirty, setIsDirty] = useState(false)
+  const [isHexValid, setIsHexValid] = useState(true)
   const [conflict, setConflict] = useState(false)
   const [showEngineChoice, setShowEngineChoice] = useState(false)
   const [truncatedForPerformance, setTruncatedForPerformance] = useState(false)
   const [previewSourceUrl, setPreviewSourceUrl] = useState<string | null>(null)
   const previewObjectUrlRef = useRef<string | null>(null)
   const draftBufferRef = useRef(createFileDraftBuffer({ text: '' }))
+  const currentTextGetterRef = useRef<(() => string) | null>(null)
   const isMountedRef = useRef(true)
 
   const sessionStore = useMemo(
@@ -61,16 +63,26 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   )
   const fileInfoRef = useRef<FileInfo | null>(fileInfo)
   const isDirtyRef = useRef(isDirty)
+  const isHexValidRef = useRef(isHexValid)
   const modeRef = useRef(mode)
   const sessionStoreRef = useRef(sessionStore)
   const truncatedForPerformanceRef = useRef(truncatedForPerformance)
 
   fileInfoRef.current = fileInfo
   isDirtyRef.current = isDirty
+  isHexValidRef.current = isHexValid
   modeRef.current = mode
   sessionStoreRef.current = sessionStore
   truncatedForPerformanceRef.current = truncatedForPerformance
   const watchedFilePath = fileInfo?.path ?? null
+
+  const handleHexValidationChange = useCallback((isValid: boolean) => {
+    setIsHexValid(isValid)
+  }, [])
+
+  const handleCurrentTextGetterChange = useCallback((getter: (() => string) | null) => {
+    currentTextGetterRef.current = getter
+  }, [])
 
   useEffect(() => {
     isMountedRef.current = true
@@ -226,6 +238,16 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         draftBufferRef.current.replaceText(text)
         setTruncatedForPerformance(false)
       } else if (mode === 'hex') {
+        if (fileInfo.size <= LARGE_FILE_THRESHOLD_BYTES) {
+          const response = await termideFileGateway.readFileBytes(fileInfo.path, {
+            length: fileInfo.size,
+            offset: 0,
+          })
+          if (!isMounted) {
+            return
+          }
+          draftBufferRef.current.replaceBytes(response.base64)
+        }
         setTruncatedForPerformance(false)
       }
     }
@@ -325,7 +347,39 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
           throw new Error('Switch to Monaco before saving this large file so the full file contents are loaded.')
         }
 
-        const nextInfo = await termideFileGateway.saveFile(currentFileInfo.path, draftBufferRef.current.getPayload())
+        if (modeRef.current === 'hex' && !isHexValidRef.current) {
+          throw new Error('Fix invalid HEX byte values before saving.')
+        }
+
+        if (modeRef.current === 'text') {
+          const currentText = currentTextGetterRef.current?.()
+          if (currentText !== undefined) {
+            setDraftText(currentText)
+            draftBufferRef.current.setText(currentText)
+          }
+        }
+
+        const payload = draftBufferRef.current.getPayload()
+        const nextInfo = await termideFileGateway.saveFile(currentFileInfo.path, payload)
+        if (payload.kind === 'text') {
+          const savedText = await termideFileGateway.readFileText(nextInfo.path)
+          if (savedText !== payload.text) {
+            throw new Error('Save failed: disk contents did not match the editor contents.')
+          }
+        } else {
+          const savedBytes = await termideFileGateway.readFileBytes(nextInfo.path, {
+            length: nextInfo.size,
+            offset: 0,
+          })
+          if (savedBytes.base64 !== payload.base64) {
+            throw new Error('Save failed: disk bytes did not match the editor contents.')
+          }
+        }
+        if (payload.kind === 'text') {
+          draftBufferRef.current.replaceText(payload.text)
+        } else {
+          draftBufferRef.current.replaceBytes(payload.base64)
+        }
         setFileInfo(nextInfo)
         setIsDirty(false)
         sessionStoreRef.current?.setDirty(false)
@@ -410,6 +464,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
               filePath={fileInfo.path}
               language={fileInfo.extension.replace(/^\./, '')}
               text={draftText}
+              onCurrentTextGetterChange={handleCurrentTextGetterChange}
               onChangeText={(text) => {
                 setDraftText(text)
                 draftBufferRef.current.setText(text)
@@ -426,6 +481,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
           <HexViewer
             filePath={fileInfo.path}
             fileSize={fileInfo.size}
+            onValidationChange={handleHexValidationChange}
             onChangeByte={(offset, value) => {
               draftBufferRef.current.setByte(offset, value)
               const dirty = draftBufferRef.current.isDirty()
@@ -445,7 +501,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         ) : null}
       </div>
 
-      <FileStatusBar file={fileInfo} engine={engine} isDirty={isDirty} />
+      <FileStatusBar file={fileInfo} engine={engine} isDirty={isDirty} isValid={effectiveMode !== 'hex' || isHexValid} />
     </div>
   )
 }
