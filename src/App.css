@@ -1473,6 +1473,13 @@
   line-height: 1.5;
 }
 
+.file-explorer-name-modal-description {
+  margin: 0;
+  color: rgba(214, 227, 240, 0.68);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .macro-parameter-field {
   display: flex;
   flex-direction: column;
@@ -1835,6 +1842,8 @@
 .file-explorer-sidebar__body {
   min-height: 0;
   flex: 1;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
   padding: 4px 0;
 }
@@ -1856,8 +1865,10 @@
 }
 
 .file-explorer-tree {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 100%;
   position: relative;
 }
 

@@ -3,6 +3,7 @@ import { DockviewReact, getPanelData } from 'dockview';
 import { AnimatePresence, motion, Reorder } from 'framer-motion';
 import {
 	CSSProperties,
+	type FormEvent,
 	forwardRef,
 	type JSX,
 	type MouseEvent,
@@ -43,12 +44,17 @@ import type {
 	FileExplorerGitStatus,
 	RemoteAccessStatus,
 } from './types/termide';
+import type { FileViewerMode } from './types/fileViewer';
 import './App.css';
 
 type SplitDirection = Extract<Direction, 'below' | 'right'>;
 type AddTerminalOptions = {
 	direction?: SplitDirection;
 	groupId?: string;
+};
+
+type OpenFileOptions = {
+	initialMode?: FileViewerMode;
 };
 
 type DockPanelTabAppearance = {
@@ -473,6 +479,7 @@ function FileExplorerTree({
 		y: number;
 		path: string;
 		isDirectory: boolean;
+		isRootBlankSpace: boolean;
 	} | null>(null);
 
 	const getDirectoryGitStatus = useCallback(
@@ -498,7 +505,12 @@ function FileExplorerTree({
 	);
 
 	const handleContextMenu = useCallback(
-		(event: MouseEvent, path: string, isDirectory: boolean) => {
+		(
+			event: MouseEvent,
+			path: string,
+			isDirectory: boolean,
+			isRootBlankSpace = false,
+		) => {
 			event.preventDefault();
 			event.stopPropagation();
 			setContextMenu({
@@ -506,6 +518,7 @@ function FileExplorerTree({
 				y: event.clientY,
 				path,
 				isDirectory,
+				isRootBlankSpace,
 			});
 		},
 		[],
@@ -810,7 +823,10 @@ function FileExplorerTree({
 	);
 
 	return (
-		<div className="file-explorer-tree" onContextMenu={(e) => handleContextMenu(e, rootPath, true)}>
+		<div
+			className="file-explorer-tree"
+			onContextMenu={(e) => handleContextMenu(e, rootPath, true, true)}
+		>
 			{renderBranch(rootPath, 0)}
 			{activeDrag ? (
 				<div
@@ -833,30 +849,34 @@ function FileExplorerTree({
 						...(contextMenu.isDirectory
 							? [
 									{
-										label: 'New File',
+										label: 'Create new file',
 										icon: <PlusSquare size={14} />,
 										onClick: () => onNewFile(contextMenu.path),
 									},
 									{
-										label: 'New Folder',
+										label: 'Create new folder',
 										icon: <FolderPlus size={14} />,
 										onClick: () => onNewFolder(contextMenu.path),
 									},
 									{ separator: true },
 								]
 							: []),
-						{
-							label: 'Rename',
-							icon: <FileEdit size={14} />,
-							onClick: () => onRename(contextMenu.path),
-						},
-						{
-							label: 'Delete',
-							icon: <Trash2 size={14} />,
-							danger: true,
-							onClick: () => onDelete(contextMenu.path),
-						},
-						{ separator: true },
+						...(contextMenu.isRootBlankSpace
+							? []
+							: [
+									{
+										label: 'Rename',
+										icon: <FileEdit size={14} />,
+										onClick: () => onRename(contextMenu.path),
+									},
+									{
+										label: 'Delete',
+										icon: <Trash2 size={14} />,
+										danger: true,
+										onClick: () => onDelete(contextMenu.path),
+									},
+									{ separator: true },
+								]),
 						{
 							label: 'Open terminal here',
 							icon: <Terminal size={14} />,
@@ -988,6 +1008,119 @@ type MacroRunController = {
 	sessionId: string;
 };
 
+type FileExplorerNameDialogOptions = {
+	description?: string;
+	initialValue?: string;
+	label: string;
+	submitLabel: string;
+	title: string;
+};
+
+type FileExplorerNameDialogState = FileExplorerNameDialogOptions & {
+	id: number;
+	resolve: (value: string | null) => void;
+};
+
+function FileExplorerNameModal({
+	dialog,
+	modal,
+	onCancel,
+	onSubmit,
+}: {
+	dialog: FileExplorerNameDialogState;
+	modal: ReturnType<typeof useDraggableModal>;
+	onCancel: () => void;
+	onSubmit: (value: string) => void;
+}) {
+	const [value, setValue] = useState(dialog.initialValue ?? '');
+	const inputRef = useRef<HTMLInputElement | null>(null);
+	const titleId = `file-explorer-name-modal-title-${dialog.id}`;
+	const trimmedValue = value.trim();
+
+	useEffect(() => {
+		setValue(dialog.initialValue ?? '');
+		window.requestAnimationFrame(() => {
+			inputRef.current?.focus();
+			inputRef.current?.select();
+		});
+
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				onCancel();
+			}
+		};
+
+		window.addEventListener('keydown', onKeyDown);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown);
+		};
+	}, [dialog.initialValue, onCancel]);
+
+	const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!trimmedValue) {
+			return;
+		}
+		onSubmit(trimmedValue);
+	};
+
+	return (
+		<ModalBackdrop onClose={onCancel}>
+			<form
+				className="project-edit-modal"
+				ref={(element) => {
+					modal.modalRef.current = element;
+				}}
+				style={modal.modalStyle}
+				onSubmit={handleSubmit}
+				onClick={(event) => event.stopPropagation()}
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={titleId}
+			>
+				<ModalTitlebar
+					title={dialog.title}
+					titleId={titleId}
+					onClose={onCancel}
+					onMouseDown={modal.handleTitlebarPointerDown}
+				/>
+				{dialog.description ? (
+					<p className="file-explorer-name-modal-description">
+						{dialog.description}
+					</p>
+				) : null}
+				<label>
+					<span>{dialog.label}</span>
+					<input
+						ref={inputRef}
+						type="text"
+						value={value}
+						onChange={(event) => setValue(event.target.value)}
+						spellCheck={false}
+					/>
+				</label>
+				<div className="project-edit-actions">
+					<button type="button" onClick={onCancel}>
+						Cancel
+					</button>
+					<button type="submit" disabled={!trimmedValue}>
+						{dialog.submitLabel}
+					</button>
+				</div>
+			</form>
+		</ModalBackdrop>
+	);
+}
+
+function joinFileExplorerPath(dirPath: string, name: string): string {
+	if (dirPath.endsWith('/') || dirPath.endsWith('\\')) {
+		return `${dirPath}${name}`;
+	}
+
+	return `${dirPath}/${name}`;
+}
+
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
@@ -1032,6 +1165,9 @@ const ProjectWorkspace = forwardRef<
 		new Map(),
 	);
 	const isRefreshingGitStatusesRef = useRef(false);
+	const fileExplorerNameDialogRequestIdRef = useRef(0);
+	const [fileExplorerNameDialog, setFileExplorerNameDialog] =
+		useState<FileExplorerNameDialogState | null>(null);
 
 	const [isDockviewReady, setIsDockviewReady] = useState(false);
 	const [isMacroLauncherOpen, setIsMacroLauncherOpen] = useState(false);
@@ -1050,6 +1186,37 @@ const ProjectWorkspace = forwardRef<
 		HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
 	>(null);
 	const macroParameterModal = useDraggableModal(macroToRun !== null);
+	const fileExplorerNameModal = useDraggableModal(
+		fileExplorerNameDialog !== null,
+	);
+
+	const requestFileExplorerName = useCallback(
+		(options: FileExplorerNameDialogOptions) => {
+			return new Promise<string | null>((resolve) => {
+				fileExplorerNameDialogRequestIdRef.current += 1;
+				setFileExplorerNameDialog({
+					...options,
+					id: fileExplorerNameDialogRequestIdRef.current,
+					resolve,
+				});
+			});
+		},
+		[],
+	);
+
+	const cancelFileExplorerNameDialog = useCallback(() => {
+		setFileExplorerNameDialog((current) => {
+			current?.resolve(null);
+			return null;
+		});
+	}, []);
+
+	const submitFileExplorerNameDialog = useCallback((value: string) => {
+		setFileExplorerNameDialog((current) => {
+			current?.resolve(value);
+			return null;
+		});
+	}, []);
 
 	const getActiveSessionId = useCallback(() => {
 		return dockviewApiRef.current?.activePanel?.params?.sessionId ?? null;
@@ -1414,7 +1581,7 @@ const ProjectWorkspace = forwardRef<
 	}, []);
 
 	const openFile = useCallback(
-		async (filePath: string) => {
+		async (filePath: string, options?: OpenFileOptions) => {
 			const api = dockviewApiRef.current;
 			if (!api) {
 				return;
@@ -1440,7 +1607,7 @@ const ProjectWorkspace = forwardRef<
 				params: {
 					color: project.color,
 					filePath,
-					initialMode: 'preview',
+					initialMode: options?.initialMode ?? 'preview',
 					inheritsProjectColor: true,
 					isFocused: false,
 					preferredEngine: 'auto',
@@ -1466,7 +1633,12 @@ const ProjectWorkspace = forwardRef<
 	const handleRename = useCallback(
 		async (oldPath: string) => {
 			const fileName = oldPath.split(/[/\\]/).pop() || '';
-			const newName = window.prompt('Enter new name:', fileName);
+			const newName = await requestFileExplorerName({
+				initialValue: fileName,
+				label: 'Name',
+				submitLabel: 'Rename',
+				title: 'Rename',
+			});
 			if (!newName || newName === fileName) {
 				return;
 			}
@@ -1483,7 +1655,7 @@ const ProjectWorkspace = forwardRef<
 				setErrorText(`Failed to rename: ${String(error)}`);
 			}
 		},
-		[loadDirectory, project.rootFolder, refreshGitStatuses],
+		[loadDirectory, project.rootFolder, refreshGitStatuses, requestFileExplorerName],
 	);
 
 	const handleDelete = useCallback(
@@ -1507,12 +1679,16 @@ const ProjectWorkspace = forwardRef<
 
 	const handleNewFile = useCallback(
 		async (dirPath: string) => {
-			const fileName = window.prompt('Enter new file name:');
+			const fileName = await requestFileExplorerName({
+				label: 'File name',
+				submitLabel: 'Create File',
+				title: 'Create New File',
+			});
 			if (!fileName) {
 				return;
 			}
 
-			const filePath = `${dirPath}/${fileName}`;
+			const filePath = joinFileExplorerPath(dirPath, fileName);
 			try {
 				await window.termide.saveFile({
 					kind: 'text',
@@ -1521,22 +1697,26 @@ const ProjectWorkspace = forwardRef<
 				});
 				void loadDirectory(dirPath);
 				void refreshGitStatuses();
-				openFile(filePath);
+				openFile(filePath, { initialMode: 'text' });
 			} catch (error) {
 				setErrorText(`Failed to create file: ${String(error)}`);
 			}
 		},
-		[loadDirectory, openFile, refreshGitStatuses],
+		[loadDirectory, openFile, refreshGitStatuses, requestFileExplorerName],
 	);
 
 	const handleNewFolder = useCallback(
 		async (dirPath: string) => {
-			const folderName = window.prompt('Enter new folder name:');
+			const folderName = await requestFileExplorerName({
+				label: 'Folder name',
+				submitLabel: 'Create Folder',
+				title: 'Create New Folder',
+			});
 			if (!folderName) {
 				return;
 			}
 
-			const newFolderPath = `${dirPath}/${folderName}`;
+			const newFolderPath = joinFileExplorerPath(dirPath, folderName);
 			try {
 				await window.termide.mkdir(newFolderPath);
 				void loadDirectory(dirPath);
@@ -1545,7 +1725,7 @@ const ProjectWorkspace = forwardRef<
 				setErrorText(`Failed to create folder: ${String(error)}`);
 			}
 		},
-		[loadDirectory, refreshGitStatuses],
+		[loadDirectory, refreshGitStatuses, requestFileExplorerName],
 	);
 
 	const handleOpenTerminalAt = useCallback(
@@ -3547,6 +3727,15 @@ const ProjectWorkspace = forwardRef<
 						</div>
 					</div>
 				</div>
+			) : null}
+
+			{fileExplorerNameDialog ? (
+				<FileExplorerNameModal
+					dialog={fileExplorerNameDialog}
+					modal={fileExplorerNameModal}
+					onCancel={cancelFileExplorerNameDialog}
+					onSubmit={submitFileExplorerNameDialog}
+				/>
 			) : null}
 
 			{macroToRun ? (
