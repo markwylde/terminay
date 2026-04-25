@@ -1,284 +1,40 @@
 ---
 // biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
-import Layout from '../layouts/Layout.astro';
+import DocsLayout from '../layouts/DocsLayout.astro';
+
+const basePath = import.meta.env.BASE_URL.endsWith('/')
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+
+const pages = [
+  ['installation', 'Installation', 'Download Termide, run packaged builds, or build a local copy when needed.'],
+  ['workspace', 'Workspace', 'Use project tabs, docked terminals, split panes, popouts, and per-project file explorer state.'],
+  ['command-bar', 'Command Bar', 'Search commands and macros from one keyboard-first launcher.'],
+  ['macros', 'Macros', 'Create reusable terminal automations with steps, fields, secrets, and progress tracking.'],
+  ['settings', 'Settings', 'Customize shell behavior, terminal appearance, shortcuts, themes, accessibility, and remote access.'],
+  ['remote-access', 'Remote Access', 'Pair a browser, connect to terminal sessions, and manage trusted devices.'],
+  ['files', 'Files', 'Open, preview, edit, save, diff, and resolve conflicts in project files.'],
+  ['folders', 'Folders', 'Browse directories as dockable tree, list, thumbnail, or gallery tabs.'],
+  ['shortcuts', 'Shortcuts', 'Learn the defaults and how to customize, disable, reset, and troubleshoot shortcuts.'],
+];
 ---
 
-<Layout
+<DocsLayout
   title="Documentation - Termide"
-  description="Install, configure, and use Termide features including the Command bar, settings, remote access, file tools, and dockable terminals."
+  description="Use Termide features including project workspaces, the Command bar, macros, settings, remote access, file tools, and dockable terminals."
+  current="overview"
 >
-  <div class="docs-container">
-    <aside class="docs-sidebar">
-      <nav class="docs-nav">
-        <h3>Documentation</h3>
-        <ul>
-          <li><a href="#installation">Installation</a></li>
-          <li><a href="#workspace">Workspace</a></li>
-          <li><a href="#command-bar">Command Bar</a></li>
-          <li><a href="#settings">Settings</a></li>
-          <li><a href="#remote-access">Remote Access</a></li>
-          <li><a href="#files">Files</a></li>
-          <li><a href="#shortcuts">Shortcuts</a></li>
-          <li><a href="#development">Development</a></li>
-        </ul>
-      </nav>
-    </aside>
+  <h1 class="docs-title">Termide Documentation</h1>
+  <p class="docs-lead">
+    Choose a topic to learn how to use Termide. These pages focus on the app itself: workspaces, terminal workflows, files, folders, macros, settings, remote access, and shortcuts.
+  </p>
 
-    <main class="docs-content">
-      <h1 class="docs-title">Termide Documentation</h1>
-
-      <section id="installation" class="docs-section">
-        <h2>Installation</h2>
-        <p>
-          Download a packaged build from <a href="https://github.com/markwylde/termide/releases">GitHub Releases</a>, or build from source when you want to work on the app.
-        </p>
-        <ul>
-          <li>macOS Apple Silicon and Intel builds</li>
-          <li>Linux AppImage builds</li>
-          <li>Node.js 24+ and npm 10+ for development</li>
-        </ul>
-        <pre><code>git clone https://github.com/markwylde/termide.git
-cd termide
-npm ci
-npm run dev
-npm run build</code></pre>
-      </section>
-
-      <section id="workspace" class="docs-section">
-        <h2>Workspace</h2>
-        <p>
-          Termide organizes work into project tabs. Each project can have a root folder, color, short icon, file explorer state, and its own docked terminal layout.
-        </p>
-        <ul>
-          <li>Create a terminal with <code>Cmd/Ctrl+T</code>.</li>
-          <li>Create a project with <code>Cmd/Ctrl+P</code>.</li>
-          <li>Split the active terminal horizontally or vertically from the Command bar or shortcuts.</li>
-          <li>Double-click project or terminal tabs to rename them and adjust color/icon styling.</li>
-          <li>Pop the active tab into another window with <code>Cmd/Ctrl+Shift+P</code>.</li>
-        </ul>
-      </section>
-
-      <section id="command-bar" class="docs-section">
-        <h2>Command Bar</h2>
-        <p>
-          The Command bar opens with <code>Cmd/Ctrl+L</code>. It searches built-in app commands and saved macros in one keyboard-first menu.
-        </p>
-        <ul>
-          <li>Search commands such as split terminal, clear terminal, save active tab, and set project root.</li>
-          <li>Run macros directly from the same launcher.</li>
-          <li>Use arrow keys to navigate and Enter to run the selected item.</li>
-          <li>Customize the shortcut in Settings under Shortcuts.</li>
-        </ul>
-      </section>
-
-      <section id="settings" class="docs-section">
-        <h2>Settings</h2>
-        <p>
-          Settings are grouped by appearance, shell, cursor, interaction, keyboard, scrolling, accessibility, theme, and remote access.
-        </p>
-        <ul>
-          <li>Preview terminal appearance while changing font, line height, cursor, and theme values.</li>
-          <li>Capture, clear, reset, and inspect shortcut conflicts.</li>
-          <li>Configure shell launch behavior and working-directory handling.</li>
-          <li>Manage remote access host, origin, TLS certificate, and key paths.</li>
-        </ul>
-      </section>
-
-      <section id="remote-access" class="docs-section">
-        <h2>Remote Access</h2>
-        <p>
-          Remote access lets a paired browser connect to Termide through the local HTTPS host. Start it from the remote access menu or the Remote Access settings section.
-        </p>
-        <ul>
-          <li>Generate a fresh pairing QR code for browser setup.</li>
-          <li>Use the default local origin <code>https://localhost:9443</code>, or configure a different HTTPS origin.</li>
-          <li>View paired devices, active connections, and recent audit events.</li>
-          <li>Revoke devices and close live connections from Settings.</li>
-        </ul>
-      </section>
-
-      <section id="files" class="docs-section">
-        <h2>Files</h2>
-        <p>
-          The file explorer sits beside your terminal layout and uses the active project root folder.
-        </p>
-        <ul>
-          <li>Browse folders and open files without leaving the project.</li>
-          <li>Edit text files with Monaco and save the active tab with <code>Cmd/Ctrl+S</code>.</li>
-          <li>Preview markdown, images, PDFs, large files, binary data, and Git diffs.</li>
-          <li>Create, rename, delete, refresh, and open terminal sessions from file and folder context menus.</li>
-        </ul>
-      </section>
-
-      <section id="shortcuts" class="docs-section">
-        <h2>Default Shortcuts</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Shortcut</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td><code>Cmd/Ctrl+L</code></td><td>Open Command bar</td></tr>
-            <tr><td><code>Cmd/Ctrl+T</code></td><td>Create a new terminal tab</td></tr>
-            <tr><td><code>Cmd/Ctrl+P</code></td><td>Create a new project</td></tr>
-            <tr><td><code>Cmd/Ctrl+K</code></td><td>Clear terminal</td></tr>
-            <tr><td><code>Cmd/Ctrl+S</code></td><td>Save active tab</td></tr>
-            <tr><td><code>Cmd/Ctrl+Shift+-</code></td><td>Split horizontally</td></tr>
-            <tr><td><code>Cmd/Ctrl+Shift+\</code></td><td>Split vertically</td></tr>
-            <tr><td><code>Cmd/Ctrl+Shift+P</code></td><td>Pop out active tab</td></tr>
-            <tr><td><code>Cmd/Ctrl+W</code></td><td>Close active tab</td></tr>
-            <tr><td><code>Cmd/Ctrl+R</code></td><td>Set project root to active terminal working directory</td></tr>
-          </tbody>
-        </table>
-      </section>
-
-      <section id="development" class="docs-section">
-        <h2>Development</h2>
-        <p>
-          The docs screenshots are automated through Electron Playwright. It rebuilds the app, launches Termide with isolated user data, stages a 1000x600 workspace, and writes the marketing images into the docs public folder.
-        </p>
-        <pre><code>npm run docs:screenshots
-npm run docs:build
-npm run test:e2e</code></pre>
-        <p>
-          The script lives at <code>scripts/generate-docs-screenshots.mjs</code>. It generates the hero workspace plus Command bar, files, settings, and remote access screenshots.
-        </p>
-      </section>
-    </main>
+  <div class="docs-grid">
+    {pages.map(([slug, title, description]) => (
+      <a class="docs-card" href={`${basePath}docs/${slug}`}>
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </a>
+    ))}
   </div>
-</Layout>
-
-<style>
-  .docs-container {
-    max-width: 1360px;
-    margin: 0 auto;
-    padding: 2.5rem 2rem 5rem;
-    display: grid;
-    grid-template-columns: 250px minmax(0, 1fr);
-    gap: 3rem;
-  }
-
-  .docs-sidebar {
-    position: sticky;
-    top: 96px;
-    height: fit-content;
-  }
-
-  .docs-nav h3 {
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-    margin-bottom: 1rem;
-  }
-
-  .docs-nav ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  .docs-nav a {
-    display: block;
-    padding: 0.48rem 0.75rem;
-    color: var(--text-secondary);
-    border-radius: 8px;
-    font-size: 0.94rem;
-  }
-
-  .docs-nav a:hover {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    opacity: 1;
-  }
-
-  .docs-content {
-    max-width: 820px;
-  }
-
-  .docs-title {
-    font-size: clamp(2.4rem, 5vw, 4rem);
-    line-height: 1;
-    margin-bottom: 3rem;
-  }
-
-  .docs-section {
-    margin-bottom: 3.5rem;
-    padding-bottom: 3.5rem;
-    border-bottom: 1px solid var(--border-color);
-  }
-
-  .docs-section:last-child {
-    border-bottom: none;
-  }
-
-  .docs-section h2 {
-    font-size: 1.8rem;
-    margin-bottom: 1rem;
-  }
-
-  .docs-section p,
-  .docs-section li,
-  .docs-section td {
-    color: var(--text-secondary);
-    line-height: 1.7;
-  }
-
-  .docs-section ul {
-    margin: 1rem 0;
-    padding-left: 1.25rem;
-  }
-
-  .docs-section li {
-    margin: 0.45rem 0;
-  }
-
-  .docs-section a {
-    text-decoration: underline;
-    text-underline-offset: 0.16em;
-  }
-
-  .docs-section pre {
-    margin: 1.4rem 0;
-  }
-
-  .docs-section table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 1.5rem 0;
-  }
-
-  .docs-section th,
-  .docs-section td {
-    padding: 0.72rem 0.85rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border-color);
-  }
-
-  .docs-section th {
-    color: var(--text-primary);
-    font-weight: 700;
-  }
-
-  @media (max-width: 900px) {
-    .docs-container {
-      grid-template-columns: 1fr;
-      gap: 2rem;
-      padding: 1.5rem 1rem 4rem;
-    }
-
-    .docs-sidebar {
-      position: relative;
-      top: 0;
-    }
-
-    .docs-nav ul {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.4rem;
-    }
-  }
-</style>
+</DocsLayout>

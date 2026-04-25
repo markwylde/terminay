@@ -1,0 +1,93 @@
+---
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsLayout from '../../layouts/DocsLayout.astro';
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsScreenshot from '../../components/DocsScreenshot.astro';
+---
+
+<DocsLayout
+  title="Shortcuts - Termide"
+  description="Learn Termide default shortcuts and how to customize them."
+  current="shortcuts"
+>
+  <h1 class="docs-title">Shortcuts</h1>
+  <p class="docs-lead">
+    Termide uses platform-aware shortcut labels. On macOS, <code>CmdOrCtrl</code> appears as Command; on Windows and Linux it appears as Ctrl.
+  </p>
+  <DocsScreenshot file="termide-shortcuts.png" alt="Termide Settings window showing searchable command shortcut controls" />
+
+  <section class="docs-section">
+    <h2>Default App Shortcuts</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Action</th>
+          <th>Shortcut</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Create a new terminal tab</td><td><code>Cmd/Ctrl+T</code></td></tr>
+        <tr><td>Create a new project</td><td><code>Cmd/Ctrl+P</code></td></tr>
+        <tr><td>Clear terminal</td><td><code>Cmd/Ctrl+K</code></td></tr>
+        <tr><td>Save active tab</td><td><code>Cmd/Ctrl+S</code></td></tr>
+        <tr><td>Split horizontally</td><td><code>Cmd/Ctrl+Shift+-</code></td></tr>
+        <tr><td>Split vertically</td><td><code>Cmd/Ctrl+Shift+\</code></td></tr>
+        <tr><td>Pop out active tab</td><td><code>Cmd/Ctrl+Shift+P</code></td></tr>
+        <tr><td>Close active tab</td><td><code>Cmd/Ctrl+W</code></td></tr>
+        <tr><td>Open Command Bar</td><td><code>Cmd/Ctrl+L</code></td></tr>
+        <tr><td>Set project root folder to working directory</td><td><code>Cmd/Ctrl+R</code></td></tr>
+      </tbody>
+    </table>
+    <p>
+      The app menu also includes <code>Cmd/Ctrl+,</code> for Settings, <code>Cmd/Ctrl+;</code> for Macros, and zoom controls with <code>Cmd/Ctrl+0</code>, <code>Cmd/Ctrl+=</code>, and <code>Cmd/Ctrl+-</code>.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Customize Shortcuts</h2>
+    <p>
+      Open <strong>Settings</strong>, then choose <strong>Shortcuts</strong>. Each command has a shortcut field plus <strong>Listen</strong>, <strong>Clear</strong>, and <strong>Reset</strong> controls.
+    </p>
+    <p>
+      To change a shortcut, click <strong>Listen</strong> or focus the shortcut field, then press the key combination you want. Press <code>Esc</code> while listening to cancel without changing it. Termide saves the new binding automatically and updates Command Bar labels and menu accelerators.
+    </p>
+    <p>
+      Click <strong>Clear</strong> to disable a command shortcut. A disabled shortcut shows as <strong>Disabled</strong> and is removed from the app menu accelerator. Click <strong>Reset</strong> to restore one command, or <strong>Reset All</strong> to restore every default shortcut.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Conflicts</h2>
+    <p>
+      Termide warns when two commands use the same shortcut, for example <strong>Also used by new terminal</strong>. Conflicts are allowed, but they can make a shortcut run a different command than expected, so use unique key combinations for commands you rely on.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Command Bar</h2>
+    <p>
+      Open the Command Bar with <code>Cmd/Ctrl+L</code>. It searches built-in commands and macros, and shows each command's current shortcut beside the result. Updated or disabled shortcuts are reflected there.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Terminal Shortcuts</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Action</th>
+          <th>Shortcut</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Smart paste clipboard</td><td><code>Cmd+V</code> on macOS, <code>Ctrl+Shift+V</code> elsewhere</td></tr>
+        <tr><td>Switch terminal tabs or panes</td><td><code>Alt+Tab</code>, or <code>Shift+Alt+Tab</code> backward</td></tr>
+        <tr><td>Open terminal search</td><td><code>Cmd+F</code> on macOS</td></tr>
+        <tr><td>Next search result</td><td><code>Enter</code> in the search field</td></tr>
+        <tr><td>Previous search result</td><td><code>Shift+Enter</code> in the search field</td></tr>
+        <tr><td>Close terminal search</td><td><code>Esc</code></td></tr>
+        <tr><td>Insert a newline without submitting</td><td><code>Shift+Enter</code> or <code>Alt+Enter</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+</DocsLayout>

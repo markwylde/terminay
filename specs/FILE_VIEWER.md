@@ -2,7 +2,7 @@
 
 ## Summary
 
-Termide will support opening files from the File Exploder into dockable file tabs. File tabs will live in the same Dockview workspace as terminal tabs, support splits/popouts, and provide four viewing modes:
+Termide opens files from the file explorer into dockable file tabs. File tabs live in the same Dockview workspace as terminal and folder tabs, support splits/popouts, and provide four viewing modes:
 
 - Preview
 - Text
@@ -11,13 +11,13 @@ Termide will support opening files from the File Exploder into dockable file tab
 
 The default mode is Preview.
 
-This feature must work well for both normal files and very large files. For files larger than 100 MB, Termide will ask the user whether to open the file in `Performant` mode or `Monaco` mode anywhere Monaco would otherwise be used.
+This feature must work well for both normal files and very large files. For files larger than 100 MB, Termide asks the user whether to open the file in `Performant` mode or `Monaco` mode anywhere Monaco would otherwise be used.
 
 The implementation should favor reusable, well-scoped components and services over a single monolithic file panel.
 
 ## Goals
 
-- Open files from the File Exploder by double-clicking a file.
+- Open files from the file explorer by double-clicking a file.
 - Reuse the existing Dockview workspace and tab behavior.
 - Provide rich editing and viewing for common file types.
 - Support large files without freezing the UI.
@@ -38,10 +38,10 @@ The implementation should favor reusable, well-scoped components and services ov
 
 ### Opening Behavior
 
-- Double-clicking a file in the File Exploder opens a file tab.
+- Double-clicking a file in the file explorer opens a file tab.
 - Double-clicking a directory continues to expand or collapse it.
 - If the same file is already open, Termide focuses the existing tab instead of opening a duplicate.
-- File tabs use Dockview like terminal tabs and support drag, split, reorder, and popout.
+- File tabs use Dockview like terminal and folder tabs and support drag, split, reorder, and popout.
 
 ### Modes
 
@@ -95,7 +95,7 @@ The implementation should favor reusable, well-scoped components and services ov
 
 ## Functional Requirements
 
-- Open a file tab from the File Exploder on double-click.
+- Open a file tab from the file explorer on double-click.
 - Close, focus, split, drag, and pop out file tabs using the same workspace behavior as terminals.
 - Show the active mode and allow mode switching.
 - Read file metadata and contents through Electron IPC.
@@ -135,7 +135,7 @@ Suggested responsibilities:
 - register a new `file` panel component
 - register a new `fileTab` header component
 - maintain open-file lookup by absolute path
-- route File Exploder double-click into file open requests
+- route file explorer double-click into file open requests
 - wire file tabs into active panel, close, popout, and menu command handling
 
 This layer should not parse markdown, compute diffs, or implement file IO directly.
@@ -416,7 +416,7 @@ The implementation should favor these reusable abstractions:
 - `ConflictBanner`
 - `LargeFileChooser`
 
-`VirtualListSurface` is especially important. Text, HEX, PDF-page preview, and diff should share one virtualization foundation where practical rather than each inventing its own scroll math.
+`VirtualListSurface` is the intended shared direction. Text, HEX, PDF-page preview, and diff should share one virtualization foundation where practical, but the current implementation still has mode-specific rendering paths.
 
 ## Suggested File Layout
 
@@ -441,7 +441,7 @@ Suggested areas:
 - [x] Register a Dockview `file` panel component
 - [x] Register a Dockview `fileTab` header component
 - [x] Add file tab open/focus-by-path behavior
-- [x] Add File Exploder double-click handling for files
+- [x] Add file explorer double-click handling for files
 - [x] Preserve existing directory toggle behavior
 - [x] Integrate file tabs with existing close, split, drag, and popout behavior
 
@@ -510,11 +510,11 @@ Suggested areas:
 ### Diff Mode
 
 - [x] Design normalized diff row data structures
-- [x] Build diff row virtualization
+- [ ] Build diff row virtualization
 - [x] Build side-by-side layout
-- [x] Build unified layout
-- [x] Add global default layout preference
-- [x] Add layout toggle UI
+- [ ] Build unified layout
+- [ ] Add global default layout preference
+- [ ] Add layout toggle UI
 - [x] Add git-backed diff loading
 - [x] Add unavailable states for non-diffable files
 

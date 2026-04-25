@@ -1,0 +1,253 @@
+---
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import Layout from './Layout.astro';
+
+interface Props {
+  title: string;
+  description: string;
+  current: string;
+}
+
+const { title, description, current } = Astro.props;
+const basePath = import.meta.env.BASE_URL.endsWith('/')
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+
+const navItems = [
+  { id: 'installation', label: 'Installation', href: `${basePath}docs/installation` },
+  { id: 'workspace', label: 'Workspace', href: `${basePath}docs/workspace` },
+  { id: 'command-bar', label: 'Command Bar', href: `${basePath}docs/command-bar` },
+  { id: 'macros', label: 'Macros', href: `${basePath}docs/macros` },
+  { id: 'settings', label: 'Settings', href: `${basePath}docs/settings` },
+  { id: 'remote-access', label: 'Remote Access', href: `${basePath}docs/remote-access` },
+  { id: 'files', label: 'Files', href: `${basePath}docs/files` },
+  { id: 'folders', label: 'Folders', href: `${basePath}docs/folders` },
+  { id: 'shortcuts', label: 'Shortcuts', href: `${basePath}docs/shortcuts` },
+];
+---
+
+<Layout title={title} description={description}>
+  <div class="docs-container">
+    <aside class="docs-sidebar">
+      <nav class="docs-nav" aria-label="Documentation">
+        <a class={`docs-home-link${current === 'overview' ? ' docs-home-link--active' : ''}`} href={`${basePath}docs`}>
+          Documentation
+        </a>
+        <ul>
+          {navItems.map((item) => (
+            <li>
+              <a class={current === item.id ? 'active' : ''} href={item.href}>{item.label}</a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    </aside>
+
+    <main class="docs-content">
+      <slot />
+    </main>
+  </div>
+</Layout>
+
+<style is:global>
+  .docs-container {
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 2.5rem 2rem 5rem;
+    display: grid;
+    grid-template-columns: 250px minmax(0, 1fr);
+    gap: 3rem;
+  }
+
+  .docs-sidebar {
+    position: sticky;
+    top: 96px;
+    height: fit-content;
+  }
+
+  .docs-nav ul {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0 0;
+  }
+
+  .docs-home-link,
+  .docs-nav a {
+    display: block;
+    padding: 0.48rem 0.75rem;
+    color: var(--text-secondary);
+    border-radius: 8px;
+    font-size: 0.94rem;
+  }
+
+  .docs-home-link {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .docs-home-link:hover,
+  .docs-nav a:hover,
+  .docs-nav a.active,
+  .docs-home-link--active {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    opacity: 1;
+  }
+
+  .docs-content {
+    max-width: 860px;
+  }
+
+  .docs-title {
+    font-size: clamp(2.4rem, 5vw, 4rem);
+    line-height: 1;
+    margin-bottom: 1rem;
+  }
+
+  .docs-lead {
+    color: var(--text-secondary);
+    font-size: 1.06rem;
+    line-height: 1.75;
+    margin-bottom: 2.5rem;
+  }
+
+  .docs-section {
+    scroll-margin-top: 110px;
+    margin-bottom: 3rem;
+    padding-bottom: 3rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .docs-section:last-child {
+    border-bottom: none;
+  }
+
+  .docs-section h2 {
+    font-size: 1.8rem;
+    margin-bottom: 1rem;
+  }
+
+  .docs-section h3 {
+    font-size: 1.22rem;
+    margin: 1.5rem 0 0.75rem;
+  }
+
+  .docs-section p,
+  .docs-section li,
+  .docs-section td {
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+
+  .docs-section p + p {
+    margin-top: 1rem;
+  }
+
+  .docs-section ul,
+  .docs-section ol {
+    margin: 1rem 0;
+    padding-left: 1.25rem;
+  }
+
+  .docs-section li {
+    margin: 0.45rem 0;
+  }
+
+  .docs-section a {
+    text-decoration: underline;
+    text-underline-offset: 0.16em;
+  }
+
+  .docs-section pre {
+    margin: 1.4rem 0;
+  }
+
+  .docs-section table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5rem 0;
+  }
+
+  .docs-screenshot {
+    margin: 0 0 2.5rem;
+    border: 1px solid #44484f;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #111315;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
+  }
+
+  .docs-screenshot img {
+    display: block;
+    width: 100%;
+  }
+
+  .docs-section th,
+  .docs-section td {
+    padding: 0.72rem 0.85rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .docs-section th {
+    color: var(--text-primary);
+    font-weight: 700;
+  }
+
+  .docs-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .docs-card {
+    display: block;
+    padding: 1.2rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+  }
+
+  .docs-card:hover {
+    border-color: var(--accent-primary);
+    opacity: 1;
+  }
+
+  .docs-card h2,
+  .docs-card h3 {
+    font-size: 1.08rem;
+    margin: 0 0 0.5rem;
+  }
+
+  .docs-card p {
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  @media (max-width: 900px) {
+    .docs-container {
+      grid-template-columns: 1fr;
+      gap: 2rem;
+      padding: 1.5rem 1rem 4rem;
+    }
+
+    .docs-sidebar {
+      position: relative;
+      top: 0;
+    }
+
+    .docs-nav ul {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    .docs-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
