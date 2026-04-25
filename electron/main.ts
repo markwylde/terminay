@@ -8,6 +8,7 @@ import { lstat, readdir, stat, rename, rm, mkdir } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
+import { findCommandForKeyboardEvent, getCommandShortcut } from '../src/keyboardShortcuts'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
 import type {
@@ -979,11 +980,51 @@ function sendToSessionRenderer(
 let mainWindow: BrowserWindow | null = null
 
 function sendCommandToFocusedWindow(command: AppCommand): void {
-  const focusedWindow = BrowserWindow.getFocusedWindow()
-  focusedWindow?.webContents.send('app:command', command)
+  const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
+  targetWindow?.webContents.send('app:command', command)
 }
 
-function createAppMenu(): void {
+function bindAppShortcuts(webContents: Electron.WebContents): void {
+  webContents.on('before-input-event', (event, input) => {
+    if (
+      settingsWindow?.webContents.id === webContents.id ||
+      macrosWindow?.webContents.id === webContents.id ||
+      pendingEditWindows.has(webContents.id)
+    ) {
+      return
+    }
+
+    if (input.type !== 'keyDown') {
+      return
+    }
+
+    const command = findCommandForKeyboardEvent(
+      {
+        altKey: input.alt,
+        ctrlKey: input.control,
+        key: input.key,
+        metaKey: input.meta,
+        shiftKey: input.shift,
+      },
+      readTerminalSettings().keyboardShortcuts,
+      process.platform === 'darwin',
+    )
+
+    if (!command) {
+      return
+    }
+
+    event.preventDefault()
+    webContents.send('app:command', command)
+  })
+}
+
+function getMenuShortcut(settings: TerminalSettings, command: AppCommand): string | undefined {
+  const shortcut = getCommandShortcut(settings.keyboardShortcuts, command)
+  return shortcut.length > 0 ? shortcut : undefined
+}
+
+function createAppMenu(settings: TerminalSettings = readTerminalSettings()): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin'
       ? [
@@ -1008,28 +1049,20 @@ function createAppMenu(): void {
       submenu: [
         {
           label: 'Create a new terminal tab',
-          accelerator: 'CmdOrCtrl+N',
+          accelerator: getMenuShortcut(settings, 'new-terminal'),
           click: () => sendCommandToFocusedWindow('new-terminal'),
         },
         {
           label: 'Create a new project',
-          accelerator: 'CmdOrCtrl+P',
+          accelerator: getMenuShortcut(settings, 'new-project'),
           click: () => sendCommandToFocusedWindow('new-project'),
         },
         {
           type: 'separator',
         },
         {
-          label: 'New Terminal',
-          accelerator: 'CmdOrCtrl+T',
-          click: () => sendCommandToFocusedWindow('new-terminal'),
-        },
-        {
-          type: 'separator',
-        },
-        {
           label: 'Save',
-          accelerator: 'CmdOrCtrl+S',
+          accelerator: getMenuShortcut(settings, 'save-active'),
           click: () => sendCommandToFocusedWindow('save-active'),
         },
         {
@@ -1050,7 +1083,7 @@ function createAppMenu(): void {
         },
         {
           label: 'Close Terminal',
-          accelerator: 'CmdOrCtrl+W',
+          accelerator: getMenuShortcut(settings, 'close-active'),
           click: () => sendCommandToFocusedWindow('close-active'),
         },
       ],
@@ -1060,23 +1093,28 @@ function createAppMenu(): void {
       submenu: [
         {
           label: 'Split Horizontally',
-          accelerator: 'CmdOrCtrl+Shift+-',
+          accelerator: getMenuShortcut(settings, 'split-horizontal'),
           click: () => sendCommandToFocusedWindow('split-horizontal'),
         },
         {
           label: 'Split Vertically',
-          accelerator: 'CmdOrCtrl+Shift+\\',
+          accelerator: getMenuShortcut(settings, 'split-vertical'),
           click: () => sendCommandToFocusedWindow('split-vertical'),
         },
         {
           label: 'Pop Out Active Terminal',
-          accelerator: 'CmdOrCtrl+Shift+P',
+          accelerator: getMenuShortcut(settings, 'popout-active'),
           click: () => sendCommandToFocusedWindow('popout-active'),
         },
         {
           label: 'Open Command Bar',
-          accelerator: 'CmdOrCtrl+L',
+          accelerator: getMenuShortcut(settings, 'open-command-bar'),
           click: () => sendCommandToFocusedWindow('open-command-bar'),
+        },
+        {
+          label: 'Clear Terminal',
+          accelerator: getMenuShortcut(settings, 'clear-terminal'),
+          click: () => sendCommandToFocusedWindow('clear-terminal'),
         },
       ],
     },
@@ -1111,7 +1149,11 @@ function createAppMenu(): void {
           click: () => zoomOut(),
         },
         { type: 'separator' },
-        { role: 'reload' },
+        {
+          label: 'Set Project Root to Working Directory',
+          accelerator: getMenuShortcut(settings, 'set-project-root-folder-to-working-directory'),
+          click: () => sendCommandToFocusedWindow('set-project-root-folder-to-working-directory'),
+        },
         { role: 'forceReload' },
         { role: 'toggleDevTools' },
       ],
@@ -1524,6 +1566,7 @@ ipcMain.handle('settings:get-terminal', () => {
 ipcMain.handle('settings:update-terminal', (_event, payload: TerminalSettings) => {
   const settings = writeTerminalSettings(payload)
   broadcastTerminalSettings(settings)
+  createAppMenu(settings)
   remoteAccessService.notifyStatusChanged()
   return settings
 })
@@ -1531,6 +1574,7 @@ ipcMain.handle('settings:update-terminal', (_event, payload: TerminalSettings) =
 ipcMain.handle('settings:reset-terminal', () => {
   const settings = writeTerminalSettings(defaultTerminalSettings)
   broadcastTerminalSettings(settings)
+  createAppMenu(settings)
   remoteAccessService.notifyStatusChanged()
   return settings
 })
@@ -1703,6 +1747,8 @@ ipcMain.handle('terminal:wait-for-inactivity', async (_event, { id, durationMs }
 })
 
 app.on('web-contents-created', (_event, contents) => {
+  bindAppShortcuts(contents)
+
   contents.once('destroyed', () => {
     killSessionsForWebContents(contents.id)
     fileWatchService.disposeSubscriber(contents.id)
