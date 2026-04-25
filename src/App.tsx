@@ -2543,7 +2543,11 @@ const ProjectWorkspace = forwardRef<
 		}
 
 		setErrorText(null);
-		window.termide.writeTerminal(sessionId, '\x1b[2J\x1b[3J\x1b[H');
+		window.dispatchEvent(
+			new CustomEvent('termide-clear-terminal', {
+				detail: { sessionId },
+			}),
+		);
 		setIsMacroLauncherOpen(false);
 		setMacroQuery('');
 	}, [getActiveSessionId]);
