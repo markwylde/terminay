@@ -1,0 +1,83 @@
+---
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsLayout from '../../layouts/DocsLayout.astro';
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsScreenshot from '../../components/DocsScreenshot.astro';
+---
+
+<DocsLayout
+  title="Remote Access - Termide"
+  description="Pair browsers with Termide and connect to terminal sessions over HTTPS."
+  current="remote-access"
+>
+  <h1 class="docs-title">Remote Access</h1>
+  <p class="docs-lead">
+    Remote Access lets you use Termide terminals from another browser on the same network or through the HTTPS origin you configure.
+  </p>
+  <DocsScreenshot file="termide-remote-access.png" alt="Termide Remote Access settings showing a pairing QR code and device management" />
+
+  <section class="docs-section">
+    <h2>Start And Stop</h2>
+    <p>
+      Open the <strong>Remote</strong> menu in the app header. Choose <strong>Start Server</strong> to turn Remote Access on, or <strong>Stop Server</strong> to turn it off. You can also open <strong>Remote Access Settings</strong> and use <strong>Pair Device</strong> or <strong>Stop Remote Access</strong>.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Pair A Browser</h2>
+    <p>
+      Choose <strong>Start Server &amp; Show QR</strong> or <strong>Show Pairing QR</strong>. Scan the QR code from your phone, or copy the pairing link and open it in another browser. Pairing links expire; show the QR again to generate a fresh one.
+    </p>
+    <p>
+      If Termide shows multiple addresses under <strong>Connect To</strong> or <strong>Available Addresses</strong>, choose the one your other device can reach. On many local networks that address begins with <code>192.</code> or <code>10.</code>.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Use The Remote Browser App</h2>
+    <p>
+      In the remote browser app, enter a device name, scan or paste the pairing link, then select <strong>Pair Device</strong>. After pairing, the browser remembers this host.
+    </p>
+    <p>
+      The remote app shows your projects and terminal sessions as tabs. Select a session to attach to it, type normally, and use <strong>Focus</strong>, <strong>Clear</strong>, <strong>Reset</strong>, <strong>Settings</strong>, or <strong>Disconnect</strong> from the top menu. On touch devices, Termide adds quick keys for Ctrl, Alt, Escape, Tab, arrows, paging, zoom, and common control shortcuts.
+    </p>
+    <p>
+      Remote sessions mirror active Termide terminals. If there are no terminals running, the browser app shows <strong>No active sessions</strong>. Closed sessions disappear, and exited sessions are marked as exited.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Manage Trust And Activity</h2>
+    <p>
+      Use <strong>Remote Access Settings</strong> to manage devices and connections.
+    </p>
+    <ul>
+      <li><strong>Paired Devices</strong> shows saved browsers, when they were added, and when they were last seen. Use <strong>Revoke</strong> to remove access.</li>
+      <li><strong>Active Connections</strong> shows connected browsers and how many sessions each has attached. Use <strong>Close</strong> to disconnect one.</li>
+      <li><strong>Recent Audit Log</strong> shows recent events such as pairing, authentication, connection open/close, device revocation, and connection revocation.</li>
+    </ul>
+  </section>
+
+  <section class="docs-section">
+    <h2>Origin, Binding, And TLS</h2>
+    <p>
+      Remote Access requires HTTPS. By default, Termide uses <code>https://localhost:9443</code>, binds to <code>0.0.0.0</code>, and generates a self-signed certificate if TLS paths are blank.
+    </p>
+    <p>
+      In <strong>Settings &gt; Remote Access &gt; Host &amp; Origin</strong>, set the exact HTTPS origin browsers should use, such as <code>https://termide.example.com</code>. The origin must start with <code>https://</code> and must not include a path, query, or fragment.
+    </p>
+    <p>
+      Set <strong>Bind address</strong> to the local interface Termide should listen on. In <strong>TLS</strong>, leave the certificate and key paths blank for an auto-generated self-signed certificate, or provide PEM certificate and private key paths.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Security And Troubleshooting</h2>
+    <p>
+      Only pair browsers you trust. Anyone with an active paired browser can interact with your terminal sessions. Revoke lost or shared devices, close suspicious active connections, and stop the server when you do not need remote access.
+    </p>
+    <p>
+      A self-signed certificate may show a browser warning. Use your own trusted certificate for a smoother remote setup. If pairing or authentication fails, check that the browser is opening the same HTTPS origin shown in Termide, that the QR/link has not expired, that the selected address is reachable, and that your firewall allows the configured port.
+    </p>
+  </section>
+</DocsLayout>
