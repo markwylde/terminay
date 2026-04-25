@@ -36,6 +36,12 @@ import type {
 } from './components/TerminalTab';
 import { TerminalTab } from './components/TerminalTab';
 import { useMacroSettings } from './hooks/useMacroSettings';
+import { useTerminalSettings } from './hooks/useTerminalSettings';
+import {
+	findCommandForKeyboardEvent,
+	getCommandShortcut,
+	getCommandShortcutLabel,
+} from './keyboardShortcuts';
 import { renderMacroTemplate } from './macroSettings';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
 import type {
@@ -1127,6 +1133,7 @@ const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
 >(({ isActive, isMac, macros, onAddProject, onCloseProject, onEditProject, onUpdateProject, popoutUrl, project }, ref) => {
+	const { settings } = useTerminalSettings();
 	const dockviewApiRef = useRef<DockviewApi | null>(null);
 	const initialTerminalSeededRef = useRef(false);
 	const panelSessionMapRef = useRef<Map<string, string>>(new Map());
@@ -2644,7 +2651,12 @@ const ProjectWorkspace = forwardRef<
 				id: 'create-terminal-tab',
 				title: 'Create a new terminal tab',
 				description: 'Open a fresh terminal tab in the current project.',
-				searchText: 'create new terminal tab open fresh terminal cmd+n',
+				searchText: `create new terminal tab open fresh terminal ${getCommandShortcut(settings.keyboardShortcuts, 'new-terminal')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'new-terminal',
+					isMac,
+				),
 				onSelect: () => {
 					setErrorText(null);
 					setIsMacroLauncherOpen(false);
@@ -2656,7 +2668,12 @@ const ProjectWorkspace = forwardRef<
 				id: 'create-project',
 				title: 'Create a new project',
 				description: 'Add a new project tab and switch to it.',
-				searchText: 'create new project add project tab cmd+p',
+				searchText: `create new project add project tab ${getCommandShortcut(settings.keyboardShortcuts, 'new-project')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'new-project',
+					isMac,
+				),
 				onSelect: () => {
 					createProject();
 				},
@@ -2665,7 +2682,12 @@ const ProjectWorkspace = forwardRef<
 				id: 'clear-terminal',
 				title: 'Clear terminal',
 				description: 'Clear the active terminal viewport and scrollback.',
-				searchText: 'clear terminal cmd+k scrollback screen reset',
+				searchText: `clear terminal scrollback screen reset ${getCommandShortcut(settings.keyboardShortcuts, 'clear-terminal')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'clear-terminal',
+					isMac,
+				),
 				onSelect: () => {
 					clearActiveTerminal();
 				},
@@ -2708,7 +2730,12 @@ const ProjectWorkspace = forwardRef<
 				description:
 					'Use the active terminal working directory as this project root folder.',
 				searchText:
-					'set project root folder working directory cwd active terminal root folder',
+					`set project root folder working directory cwd active terminal root folder ${getCommandShortcut(settings.keyboardShortcuts, 'set-project-root-folder-to-working-directory')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'set-project-root-folder-to-working-directory',
+					isMac,
+				),
 				onSelect: () => {
 					void setProjectRootFolderToWorkingDirectory();
 				},
@@ -2731,6 +2758,7 @@ const ProjectWorkspace = forwardRef<
 				]
 					.join(' ')
 					.toLowerCase(),
+				shortcutLabel: '',
 				onSelect: () => runMacro(macro),
 			})),
 		];
@@ -2758,12 +2786,14 @@ const ProjectWorkspace = forwardRef<
 		addTerminal,
 		clearActiveTerminal,
 		createProject,
+		isMac,
 		macroQuery,
 		macros,
 		openActiveTerminalSettings,
 		openProjectSettings,
 		project.isFileExplorerOpen,
 		runMacro,
+		settings.keyboardShortcuts,
 		setProjectRootFolderToWorkingDirectory,
 		toggleFileExplorerSidebar,
 	]);
@@ -2804,51 +2834,99 @@ const ProjectWorkspace = forwardRef<
 		});
 	}, [popoutUrl]);
 
-	useImperativeHandle(
-		ref,
-		() => ({
-			executeCommand(command: AppCommand) {
-				switch (command) {
-					case 'new-terminal':
-						void addTerminal({});
-						break;
-					case 'new-project':
-						onAddProject();
-						break;
-					case 'split-horizontal':
-						void addTerminal({ direction: 'below' });
-						break;
-					case 'split-vertical':
-						void addTerminal({ direction: 'right' });
-						break;
-					case 'save-active':
-						void saveActivePanel();
-						break;
-					case 'popout-active':
-						void popoutActivePanel();
-						break;
-					case 'close-active':
-						closeActivePanel();
-						break;
-					case 'open-command-bar':
-						setMacroQuery('');
-						setSelectedMacroIndex(0);
-						setIsMacroLauncherOpen(true);
-						setMacroToRun(null);
-						setMacroFieldValues({});
-						break;
-					default:
-						break;
-				}
-			},
-		}),
+	const executeAppCommand = useCallback(
+		(command: AppCommand) => {
+			switch (command) {
+				case 'new-terminal':
+					void addTerminal({});
+					break;
+				case 'new-project':
+					onAddProject();
+					break;
+				case 'split-horizontal':
+					void addTerminal({ direction: 'below' });
+					break;
+				case 'split-vertical':
+					void addTerminal({ direction: 'right' });
+					break;
+				case 'save-active':
+					void saveActivePanel();
+					break;
+				case 'popout-active':
+					void popoutActivePanel();
+					break;
+				case 'close-active':
+					closeActivePanel();
+					break;
+				case 'clear-terminal':
+					clearActiveTerminal();
+					break;
+				case 'open-command-bar':
+					setMacroQuery('');
+					setSelectedMacroIndex(0);
+					setIsMacroLauncherOpen(true);
+					setMacroToRun(null);
+					setMacroFieldValues({});
+					break;
+				case 'set-project-root-folder-to-working-directory':
+					void setProjectRootFolderToWorkingDirectory();
+					break;
+				default:
+					break;
+			}
+		},
 		[
 			addTerminal,
+			clearActiveTerminal,
 			closeActivePanel,
 			onAddProject,
 			popoutActivePanel,
 			saveActivePanel,
+			setProjectRootFolderToWorkingDirectory,
 		],
+	);
+
+	useEffect(() => {
+		if (!isActive) {
+			return;
+		}
+
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.defaultPrevented) {
+				return;
+			}
+
+			const command = findCommandForKeyboardEvent(
+				event,
+				settings.keyboardShortcuts,
+				isMac,
+			);
+			if (!command) {
+				return;
+			}
+
+			event.preventDefault();
+			event.stopPropagation();
+
+			if (!event.repeat) {
+				executeAppCommand(command);
+			}
+		};
+
+		window.addEventListener('keydown', onKeyDown, true);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown, true);
+		};
+	}, [executeAppCommand, isActive, isMac, settings.keyboardShortcuts]);
+
+	useImperativeHandle(
+		ref,
+		() => ({
+			executeCommand(command: AppCommand) {
+				executeAppCommand(command);
+			},
+		}),
+		[executeAppCommand],
 	);
 
 	useEffect(() => {
@@ -3067,8 +3145,16 @@ const ProjectWorkspace = forwardRef<
 	useEffect(() => {
 		return window.termide.onTerminalExit((message) => {
 			cancelMacroRunsForSession(message.id);
+
+			if (settings.autoCloseTerminalOnExitZero && message.exitCode === 0) {
+				getPanelForSession(message.id)?.api.close();
+			}
 		});
-	}, [cancelMacroRunsForSession]);
+	}, [
+		cancelMacroRunsForSession,
+		getPanelForSession,
+		settings.autoCloseTerminalOnExitZero,
+	]);
 
 	useEffect(() => {
 		const cleanupByWindow = new Map<Window, () => void>();
@@ -3878,11 +3964,18 @@ const ProjectWorkspace = forwardRef<
 													{macro.description}
 												</span>
 											</div>
-											{index === selectedMacroIndex && (
-												<div className="macro-launcher-item-hint">
-													<span>⏎</span>
-												</div>
-											)}
+											<div className="macro-launcher-item-actions">
+												{'shortcutLabel' in macro && macro.shortcutLabel ? (
+													<span className="macro-launcher-command-shortcut">
+														{macro.shortcutLabel}
+													</span>
+												) : null}
+												{index === selectedMacroIndex && (
+													<div className="macro-launcher-item-hint">
+														<span>⏎</span>
+													</div>
+												)}
+											</div>
 										</button>
 									))
 								)}

@@ -155,4 +155,21 @@ test.describe('terminal behavior', () => {
     await search.getByLabel('Close search').click()
     await expect(search).toBeHidden()
   })
+
+  test('auto-closes a terminal tab on successful exit when enabled', async ({ mainWindow }) => {
+    await mainWindow.evaluate(async () => {
+      const settings = await window.termide.getTerminalSettings()
+      await window.termide.updateTerminalSettings({
+        ...settings,
+        autoCloseTerminalOnExitZero: true,
+      })
+    })
+
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2)
+
+    await writeToTerminal(mainWindow, 'exit\r')
+
+    await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(1)
+  })
 })
