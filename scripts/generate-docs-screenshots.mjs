@@ -8,9 +8,13 @@ const outputDir = path.join(rootDir, 'docs', 'public', 'screenshots')
 const screenshotPaths = {
   commandBar: path.join(outputDir, 'termide-command-bar.png'),
   files: path.join(outputDir, 'termide-files.png'),
+  folders: path.join(outputDir, 'termide-folders.png'),
   hero: path.join(outputDir, 'termide-hero-workspace.png'),
+  macros: path.join(outputDir, 'termide-macros.png'),
   remoteAccess: path.join(outputDir, 'termide-remote-access.png'),
   settings: path.join(outputDir, 'termide-settings.png'),
+  shortcuts: path.join(outputDir, 'termide-shortcuts.png'),
+  workspace: path.join(outputDir, 'termide-workspace.png'),
 }
 const windowSize = { width: 1000, height: 600 }
 
@@ -182,6 +186,21 @@ async function sendAppCommand(page, command) {
   }, command)
 }
 
+async function closePanelsByTitle(page, titles) {
+  for (const title of titles) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const tab = page.locator('.dv-tab:visible').filter({ hasText: title }).first()
+      if (!(await tab.count())) {
+        break
+      }
+
+      await tab.click({ force: true, timeout: 2_000 })
+      await sendAppCommand(page, 'close-active')
+      await page.waitForTimeout(180)
+    }
+  }
+}
+
 async function seedWorkspace(tempDir) {
   const workspaceDir = path.join(tempDir, 'termide-docs-shot')
   await mkdir(path.join(workspaceDir, 'docs'), { recursive: true })
@@ -330,10 +349,37 @@ async function captureFiles(page) {
   await openFileExplorer(page)
   await page.locator('.file-explorer-tree-item').filter({ hasText: 'README.md' }).first().dblclick()
   await waitForVisible(page.locator('.file-panel'))
+  await closePanelsByTitle(page, ['Terminal 1', 'Terminal 2', 'Terminal 3', 'Terminal 4'])
+  await page.locator('.dv-tab').filter({ hasText: 'README.md' }).first().click()
   await capture(page, 'files')
 }
 
+async function captureFolders(page) {
+  await openFileExplorer(page)
+  await page.locator('.file-explorer-tree-item').filter({ hasText: 'docs' }).first().dblclick()
+  await waitForVisible(page.locator('.folder-viewer'))
+  await closePanelsByTitle(page, ['Terminal 1', 'Terminal 2', 'Terminal 3', 'Terminal 4', 'README.md'])
+  await page.locator('.dv-tab').filter({ hasText: 'docs' }).first().click()
+  await page.getByRole('button', { name: 'Gallery' }).click()
+  await waitForVisible(page.locator('.folder-viewer__grid--gallery'))
+  await capture(page, 'folders')
+}
+
 async function captureSettings(electronApp, page) {
+  const settingsWindow = await openChildWindow(electronApp, async () => {
+    await page.evaluate(async () => {
+      await window.termide.openSettingsWindow({ sectionId: 'typography' })
+    })
+  })
+  await setBrowserWindowSize(electronApp, settingsWindow)
+  await installScreenshotWindowControls(settingsWindow, 'floating')
+  await waitForVisible(settingsWindow.getByRole('heading', { name: 'Settings' }))
+  await settingsWindow.getByPlaceholder('Search settings...').fill('font')
+  await capture(settingsWindow, 'settings')
+  await settingsWindow.close()
+}
+
+async function captureShortcuts(electronApp, page) {
   const settingsWindow = await openChildWindow(electronApp, async () => {
     await page.evaluate(async () => {
       await window.termide.openSettingsWindow({ sectionId: 'keyboard-shortcuts' })
@@ -343,8 +389,24 @@ async function captureSettings(electronApp, page) {
   await installScreenshotWindowControls(settingsWindow, 'floating')
   await waitForVisible(settingsWindow.getByRole('heading', { name: 'Settings' }))
   await settingsWindow.getByPlaceholder('Search settings...').fill('command')
-  await capture(settingsWindow, 'settings')
+  await capture(settingsWindow, 'shortcuts')
   await settingsWindow.close()
+}
+
+async function captureMacros(electronApp, page) {
+  await seedCommandBar(page)
+  const macrosWindow = await openChildWindow(electronApp, async () => {
+    await page.evaluate(async () => {
+      await window.termide.openMacrosWindow()
+    })
+  })
+  await setBrowserWindowSize(electronApp, macrosWindow)
+  await installScreenshotWindowControls(macrosWindow, 'floating')
+  await waitForVisible(macrosWindow.getByRole('heading', { name: 'Macros' }))
+  await macrosWindow.getByText('Launch opencode').click()
+  await waitForVisible(macrosWindow.locator('.settings-hero-title-input'))
+  await capture(macrosWindow, 'macros')
+  await macrosWindow.close()
 }
 
 async function captureRemoteAccess(electronApp, page) {
@@ -409,10 +471,14 @@ async function main() {
     await createProjectTabs(electronApp, page, workspaceDir)
     await openFileExplorer(page)
     await createHeroTerminalGrid(page, workspaceDir)
+    await capture(page, 'workspace')
     await capture(page, 'hero')
     await captureCommandBar(page)
     await captureFiles(page)
+    await captureFolders(page)
+    await captureMacros(electronApp, page)
     await captureSettings(electronApp, page)
+    await captureShortcuts(electronApp, page)
     await captureRemoteAccess(electronApp, page)
   } finally {
     if (electronApp) {
