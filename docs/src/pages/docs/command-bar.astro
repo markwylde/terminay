@@ -1,0 +1,63 @@
+---
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsLayout from '../../layouts/DocsLayout.astro';
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsScreenshot from '../../components/DocsScreenshot.astro';
+---
+
+<DocsLayout
+  title="Command Bar - Termide"
+  description="Search Termide commands and macros from the Command Bar."
+  current="command-bar"
+>
+  <h1 class="docs-title">Command Bar</h1>
+  <p class="docs-lead">
+    Open the Command Bar with <code>Cmd/Ctrl+L</code> to search Termide commands and saved macros from one keyboard-first launcher.
+  </p>
+  <DocsScreenshot file="termide-command-bar.png" alt="Termide Command Bar searching commands and macros" />
+
+  <section class="docs-section">
+    <h2>Search And Run</h2>
+    <p>
+      Start typing to filter results. Direct title matches appear first, and search also considers descriptions, shortcut text, macro names, macro descriptions, macro fields, and typed macro steps.
+    </p>
+    <ul>
+      <li>Use the up and down arrow keys to move through results.</li>
+      <li>Press <code>Enter</code> to run the selected item.</li>
+      <li>Press <code>Esc</code> to close the Command Bar.</li>
+      <li>Click a result to run it with the mouse.</li>
+    </ul>
+    <p>
+      When a command has a shortcut, the current binding is shown beside it.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Built-In Commands</h2>
+    <p>
+      Built-in commands are grouped by family.
+    </p>
+    <ul>
+      <li><strong>Terminal:</strong> create a terminal tab, clear the active terminal, or edit the active tab.</li>
+      <li><strong>Workspace:</strong> create a project, edit project settings, show or hide the file explorer, and set the project root to the active terminal working directory.</li>
+      <li><strong>Macros:</strong> run any saved macro from the same launcher.</li>
+    </ul>
+  </section>
+
+  <section class="docs-section">
+    <h2>Macros In The Command Bar</h2>
+    <p>
+      Macros appear automatically after they are saved. Selecting a macro without fields runs it in the active terminal immediately. If a macro has fields, Termide opens a parameter form first, shows a rendered command preview, and runs it when you choose <strong>Type Macro</strong>.
+    </p>
+    <p>
+      Macro runs are tracked from the terminal tab's macro queue.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Shortcut Labels</h2>
+    <p>
+      Change command shortcuts in <strong>Settings &gt; Shortcuts</strong>. Updated or disabled shortcuts are reflected in the Command Bar and app menus.
+    </p>
+  </section>
+</DocsLayout>

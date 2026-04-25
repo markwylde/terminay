@@ -1,0 +1,69 @@
+---
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsLayout from '../../layouts/DocsLayout.astro';
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsScreenshot from '../../components/DocsScreenshot.astro';
+---
+
+<DocsLayout
+  title="Folders - Termide"
+  description="Browse folders as dockable tree, list, thumbnail, and gallery tabs."
+  current="folders"
+>
+  <h1 class="docs-title">Folders</h1>
+  <p class="docs-lead">
+    Use folders when you want to browse a project directory without leaving your workspace.
+  </p>
+  <DocsScreenshot file="termide-folders.png" alt="Termide folder viewer in gallery mode beside project tabs" />
+
+  <section class="docs-section">
+    <h2>Open Folder Tabs</h2>
+    <p>
+      Open the file explorer from the sidebar button, then double-click any folder to open it as a folder tab. If that folder is already open, Termide switches back to the existing tab.
+    </p>
+    <p>
+      A folder tab shows the folder name, full path, and a count of files and folders at the top.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Views</h2>
+    <ul>
+      <li><strong>Tree:</strong> browse nested folders inline. Expand a folder to load its contents, or double-click it to move the current folder tab into that folder.</li>
+      <li><strong>List:</strong> scan the current folder as rows with names and relative paths.</li>
+      <li><strong>Thumbnail:</strong> browse the current folder as compact cards.</li>
+      <li><strong>Gallery:</strong> browse the current folder as larger visual cards.</li>
+    </ul>
+  </section>
+
+  <section class="docs-section">
+    <h2>Navigation And Refresh</h2>
+    <p>
+      Double-click a file in any folder view to open it in a file tab. Double-click a folder in List, Thumbnail, or Gallery to navigate the same folder tab into that folder.
+    </p>
+    <p>
+      Use <strong>Refresh</strong> to rescan the current folder after files change outside Termide. If loading fails, use <strong>Retry</strong>.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Thumbnails</h2>
+    <p>
+      Image files show real thumbnails in Thumbnail and Gallery views. Supported image types include AVIF, BMP, GIF, HEIC/HEIF, JPEG, PNG, SVG, TIFF, and WebP. Non-image files show their extension, and folders show a folder icon.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Folder Actions</h2>
+    <p>
+      Right-click inside a folder tab to use folder actions. On folders, you can create a new file, create a new folder, rename, delete, or open a terminal there. On files, you can rename, delete, or open a terminal in the file's containing folder. New files open immediately in a file tab.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Sidebar Versus Folder Tabs</h2>
+    <p>
+      The file explorer sidebar is for quick project navigation. Click a folder once in the sidebar to expand or collapse it; double-click a folder to open it as a folder tab. The sidebar stays compact, while folder tabs give you richer views for one folder.
+    </p>
+  </section>
+</DocsLayout>

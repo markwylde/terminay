@@ -15,10 +15,22 @@ const heroScreenshot = {
 // biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
 const featureScreenshots = [
   {
+    src: `${basePath}screenshots/termide-workspace.png`,
+    alt: 'Termide workspace showing project tabs, file explorer, and split terminal panes',
+    title: 'Workspace',
+    description: 'Organize projects with colored tabs, root folders, file explorer state, and docked terminal layouts.',
+  },
+  {
     src: `${basePath}screenshots/termide-command-bar.png`,
     alt: 'Termide Command bar searching project commands and macros',
     title: 'Command Bar',
     description: 'Search commands and macros from one keyboard-first launcher.',
+  },
+  {
+    src: `${basePath}screenshots/termide-macros.png`,
+    alt: 'Termide Macros window showing a macro library and execution steps',
+    title: 'Macros',
+    description: 'Build reusable terminal automations with steps, prompts, waits, clipboard paste, and secrets.',
   },
   {
     src: `${basePath}screenshots/termide-files.png`,
@@ -27,10 +39,22 @@ const featureScreenshots = [
     description: 'Open README files, previews, text buffers, diffs, PDFs, images, and folders beside terminals.',
   },
   {
+    src: `${basePath}screenshots/termide-folders.png`,
+    alt: 'Termide folder viewer showing gallery mode for a project folder',
+    title: 'Folders',
+    description: 'Browse folders as dockable tree, list, thumbnail, or gallery tabs.',
+  },
+  {
     src: `${basePath}screenshots/termide-settings.png`,
-    alt: 'Termide Settings window showing searchable keyboard shortcuts',
+    alt: 'Termide Settings window showing searchable terminal appearance controls',
     title: 'Settings',
-    description: 'Search settings, tune shortcuts, adjust the shell, and preview terminal appearance.',
+    description: 'Search settings, adjust the shell, tune appearance, and preview terminal changes.',
+  },
+  {
+    src: `${basePath}screenshots/termide-shortcuts.png`,
+    alt: 'Termide Settings window showing searchable keyboard shortcuts',
+    title: 'Shortcuts',
+    description: 'Capture, clear, reset, and inspect command shortcut conflicts.',
   },
   {
     src: `${basePath}screenshots/termide-remote-access.png`,
@@ -44,27 +68,27 @@ const featureScreenshots = [
 const features = [
   {
     title: 'Command Bar',
-    description: 'Press Cmd/Ctrl+L to search workspace actions and reusable macros without leaving the keyboard.',
+    description: 'Press Cmd/Ctrl+L to search terminal actions, workspace commands, file commands, and reusable macros without leaving the keyboard.',
   },
   {
-    title: 'Colorful Project Tabs',
-    description: 'Give projects and terminals names, colors, and short icons so busy workspaces stay readable.',
+    title: 'Project Workspaces',
+    description: 'Give each project a root folder, file explorer state, color, and short icon so busy workspaces stay readable.',
   },
   {
-    title: 'Remote Access',
-    description: 'Pair a browser with a QR code and reach your Termide sessions over the built-in HTTPS remote host.',
+    title: 'Macro Automation',
+    description: 'Build multi-step macros with prompts, waits, clipboard paste, key presses, and encrypted secret insertion.',
   },
   {
     title: 'Settings That Travel',
-    description: 'Tune shell behavior, themes, cursor style, shortcuts, scrolling, accessibility, and remote host options.',
+    description: 'Tune shell behavior, themes, cursor style, shortcuts, scrolling, accessibility, and remote host options from one searchable settings window.',
   },
   {
     title: 'Files Beside Shells',
-    description: 'Browse folders, open files, preview media and markdown, inspect diffs, and save edits next to terminals.',
+    description: 'Browse folders, open file and folder tabs, preview media and markdown, inspect Git diffs, and save edits next to terminals.',
   },
   {
-    title: 'Dockable Terminals',
-    description: 'Split horizontally or vertically, rearrange tabs, pop work into a new window, and keep each shell native.',
+    title: 'Remote Access',
+    description: 'Pair a browser with a QR code, choose reachable addresses, and reach your sessions over the built-in HTTPS remote host.',
   },
 ];
 
@@ -72,8 +96,8 @@ const features = [
 const workflow = [
   'Open the Command bar',
   'Split a terminal or jump to a project',
-  'Run a macro',
-  'Pair remote access when you need it',
+  'Open files, folders, previews, or diffs',
+  'Run a macro or pair remote access',
 ];
 ---
 
@@ -145,7 +169,7 @@ const workflow = [
         <p class="eyebrow">Fast path</p>
         <h2>Keep the useful actions close</h2>
         <p>
-          The Command bar brings app commands and macros into one searchable surface. It is built for the repeated moves that happen all day in a terminal workspace.
+          The Command bar brings app commands and macros into one searchable surface. It covers terminal splits, file explorer actions, project-root changes, save commands, and the repeated moves that happen all day in a terminal workspace.
         </p>
       </div>
       <ol class="workflow-list">
@@ -161,7 +185,7 @@ const workflow = [
         <h2>Pair a browser when the desktop is not enough</h2>
       </div>
       <p>
-        Termide can host an HTTPS remote endpoint, generate a pairing QR code, track paired devices, show live connections, and keep an audit trail in settings.
+        Termide can host an HTTPS remote endpoint, generate a pairing QR code, expose available local addresses, track paired devices, show live connections, and keep an audit trail in settings.
       </p>
     </div>
   </section>

@@ -1,0 +1,71 @@
+---
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsLayout from '../../layouts/DocsLayout.astro';
+// biome-ignore lint/correctness/noUnusedImports: Used in the Astro template below.
+import DocsScreenshot from '../../components/DocsScreenshot.astro';
+---
+
+<DocsLayout
+  title="Workspace - Termide"
+  description="Use Termide project tabs, docked terminals, split panes, popouts, and file explorer state."
+  current="workspace"
+>
+  <h1 class="docs-title">Workspace</h1>
+  <p class="docs-lead">
+    Termide organizes work into project tabs. Each project keeps its own root folder, docked tab layout, file explorer state, color, and one-character icon.
+  </p>
+  <DocsScreenshot file="termide-workspace.png" alt="Termide workspace showing project tabs, file explorer, and split terminal panes" />
+
+  <section class="docs-section">
+    <h2>Projects</h2>
+    <p>
+      Use the plus button or <code>Cmd/Ctrl+P</code> to create a project. Click a project tab to switch to it, drag project tabs to reorder them, and double-click a project tab to rename it, set a color or icon, or change its root folder.
+    </p>
+    <p>
+      Closing a project removes that workspace. Closing the final project exits Termide.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Terminals And Tabs</h2>
+    <p>
+      Each project starts with a terminal tab. Create another terminal with <code>Cmd/Ctrl+T</code>. New terminals inherit the active terminal's current working directory when available; otherwise they start from your home folder.
+    </p>
+    <ul>
+      <li>Split the active terminal below with <code>Cmd/Ctrl+Shift+-</code>.</li>
+      <li>Split the active terminal to the right with <code>Cmd/Ctrl+Shift+\</code>.</li>
+      <li>Close the active terminal, file, or folder tab with <code>Cmd/Ctrl+W</code>.</li>
+      <li>Pop the active tab into its own window with <code>Cmd/Ctrl+Shift+P</code>.</li>
+    </ul>
+    <p>
+      Dock tabs can be moved, split, focused, and closed from either the main window or a popout.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Tab Styling</h2>
+    <p>
+      Double-click a terminal tab to edit its name, one-character icon, and color. Terminal tabs inherit the project color by default. Moving the hue slider gives the tab its own color, and the edit window can restore project-color inheritance.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>Project Roots</h2>
+    <p>
+      The project root controls the file explorer and file/folder workflows. Set it manually from the project edit window, or use <code>Cmd/Ctrl+R</code> to make the active terminal's current directory the project root.
+    </p>
+    <p>
+      Blank root folder values and <code>~</code> resolve to your home folder.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>File Explorer Sidebar</h2>
+    <p>
+      Use the sidebar button to show or hide the per-project file explorer. The sidebar opens at the project root, can be resized, shows Git new/modified coloring, expands folders, and opens files on double-click.
+    </p>
+    <p>
+      Right-click files or folders to create files and folders, rename, delete, open folders as tabs, or open a terminal at that location. When opening a terminal from a file, Termide uses the file's parent folder as the working directory.
+    </p>
+  </section>
+</DocsLayout>
