@@ -1264,9 +1264,29 @@
   stroke: currentColor;
 }
 
+.terminal-tab-activity-dot {
+  --terminal-tab-activity-color: #8a94a3;
+  width: 10px;
+  height: 10px;
+  margin-left: 10px;
+  border-radius: 999px;
+  background: var(--terminal-tab-activity-color);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--terminal-tab-activity-color) 55%, transparent);
+  flex-shrink: 0;
+}
+
+.terminal-tab-activity-dot[data-terminal-activity='recent'] {
+  --terminal-tab-activity-color: #f6c343;
+}
+
+.terminal-tab-activity-dot[data-terminal-activity='unviewed'] {
+  --terminal-tab-activity-color: #4fd17a;
+}
+
 .terminal-tab-emoji {
   font-size: 14px;
-  margin-left: 10px;
+  line-height: 1;
+  margin-left: 8px;
   flex-shrink: 0;
 }
 
