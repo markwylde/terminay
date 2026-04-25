@@ -76,6 +76,14 @@ export function contextMenuItem(page: Page, name: string) {
   return page.locator('.context-menu__item').filter({ hasText: name }).first()
 }
 
+export async function submitFileExplorerNameModal(page: Page, label: string, value: string): Promise<void> {
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('textbox', { name: label }).fill(value)
+  await dialog.getByRole('button', { name: /^(Create File|Create Folder|Rename)$/ }).click()
+  await expect(dialog).toHaveCount(0)
+}
+
 export async function setMonacoValue(page: Page, value: string): Promise<void> {
   await page.locator('.monaco-editor').click()
   await page.evaluate((nextValue) => {

@@ -1,7 +1,13 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
-import { contextMenuItem, fileExplorerItem, openFileExplorer, setProjectRoot } from './support/ui'
+import {
+  contextMenuItem,
+  fileExplorerItem,
+  openFileExplorer,
+  setProjectRoot,
+  submitFileExplorerNameModal,
+} from './support/ui'
 
 const execFileAsync = promisify(execFile)
 
@@ -48,24 +54,24 @@ test('file explorer context menu supports create rename delete and open terminal
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
 
-  await dialogs.queuePrompt('created.txt')
   await fileExplorerItem(mainWindow, 'target-dir').click({ button: 'right' })
   await expect(contextMenuItem(mainWindow, 'New File')).toBeVisible()
   await contextMenuItem(mainWindow, 'New File').click()
+  await submitFileExplorerNameModal(mainWindow, 'File name', 'created.txt')
   await fileExplorerItem(mainWindow, 'target-dir').click()
   await expect(fileExplorerItem(mainWindow, 'created.txt')).toBeVisible()
   await expect.poll(() => workspace.readText('target-dir/created.txt')).toBe('')
 
-  await dialogs.queuePrompt('created-folder')
   await fileExplorerItem(mainWindow, 'target-dir').click({ button: 'right' })
   await expect(contextMenuItem(mainWindow, 'New Folder')).toBeVisible()
   await contextMenuItem(mainWindow, 'New Folder').click()
+  await submitFileExplorerNameModal(mainWindow, 'Folder name', 'created-folder')
   await expect(fileExplorerItem(mainWindow, 'created-folder')).toBeVisible()
 
-  await dialogs.queuePrompt('renamed.txt')
   await fileExplorerItem(mainWindow, 'alpha.txt').click({ button: 'right' })
   await expect(contextMenuItem(mainWindow, 'Rename')).toBeVisible()
   await contextMenuItem(mainWindow, 'Rename').click()
+  await submitFileExplorerNameModal(mainWindow, 'Name', 'renamed.txt')
   await expect.poll(() => workspace.readText('target-dir/renamed.txt')).toBe('alpha\n')
 
   await dialogs.queueConfirm(true)

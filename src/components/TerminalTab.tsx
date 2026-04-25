@@ -27,8 +27,11 @@ export type TerminalTabMacroRun = {
   title: string
 }
 
+export type TerminalActivityState = 'viewed' | 'recent' | 'unviewed'
+
 export type TerminalPanelParams = {
   sessionId: string
+  terminalActivityState?: TerminalActivityState
   color?: string
   emoji?: string
   inheritsProjectColor?: boolean
@@ -46,6 +49,8 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
   const title = props.api.title
   const params = props.params
   const { color, emoji, macroRuns = [], onCancelMacroRun, onClearFinishedMacroRuns, onClearMacroRun } = params || {}
+  const terminalActivityState = params?.terminalActivityState ?? 'viewed'
+  const showTerminalActivity = terminalActivityState !== 'viewed'
   const isFocused = params?.isFocused === true
   const hasCustomColor = typeof color === 'string' && color !== DEFAULT_TERMINAL_TAB_COLOR
   const [isMacroMenuOpen, setIsMacroMenuOpen] = useState(false)
@@ -152,6 +157,19 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
     props.api.close()
   }
 
+  const onClick = () => {
+    const sessionId = params?.sessionId
+    if (!sessionId) {
+      return
+    }
+
+    window.dispatchEvent(
+      new CustomEvent('termide-terminal-user-input', {
+        detail: { sessionId },
+      }),
+    )
+  }
+
   const onDoubleClick = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
@@ -244,11 +262,28 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
         hasCustomColor={hasCustomColor}
         titleAttribute="Double-click to edit tab"
         style={style}
+        onClick={onClick}
         onDoubleClick={onDoubleClick}
         closeAriaLabel="Close terminal"
         onClose={onClose}
-        leading={emoji ? <span className="terminal-tab-emoji">{emoji}</span> : null}
-        afterTitle={macroTrigger}
+        leading={
+          <>
+            {showTerminalActivity ? (
+              <span
+                className="terminal-tab-activity-dot"
+                data-terminal-activity={terminalActivityState}
+                title={
+                  terminalActivityState === 'recent'
+                    ? 'Terminal changed in the last second'
+                    : 'Terminal changed since last viewed'
+                }
+                aria-hidden="true"
+              />
+            ) : null}
+            {emoji ? <span className="terminal-tab-emoji">{emoji}</span> : null}
+          </>
+        }
+        beforeTitle={macroTrigger}
       />
       {isMacroMenuOpen && portalRoot && popoverPosition
         ? createPortal(

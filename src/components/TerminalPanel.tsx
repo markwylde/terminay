@@ -10,6 +10,7 @@ import { buildTerminalOptions } from '../terminalSettings'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import { enablePreferredXtermRenderer } from '../xtermRenderer'
 import type { TerminalPanelParams } from './TerminalTab'
+import type { TerminalSettings } from '../types/settings'
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'termide-open-terminal-switcher'
 const DROP_FILE_EXPLORER_PATH_EVENT = 'termide-drop-file-explorer-path'
@@ -26,6 +27,13 @@ const searchOptions = {
     activeMatchColorOverviewRuler: '#ffb11a',
   },
 } as const
+
+function buildTerminalTheme(settings: TerminalSettings, tabColor?: string): TerminalSettings['theme'] {
+  return {
+    ...settings.theme,
+    cursor: tabColor || settings.theme.cursor,
+  }
+}
 
 function escapePathForShell(path: string): string {
   if (path.length === 0) {
@@ -73,6 +81,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
+  const tabColorRef = useRef(props.params.color)
   const { settings } = useTerminalSettings()
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -80,6 +89,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     index: 0,
     count: 0,
   })
+
+  tabColorRef.current = props.params.color
 
   const runSearchAction = useCallback((action: (searchAddon: SearchAddon) => void) => {
     const searchAddon = searchAddonRef.current
@@ -116,6 +127,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     const terminal = new Terminal({
       ...buildTerminalOptions(settings),
+      theme: buildTerminalTheme(settings, tabColorRef.current),
       allowProposedApi: true,
     })
     terminalRef.current = terminal
@@ -276,6 +288,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
 
     const dataDisposer = terminal.onData((data) => {
+      window.dispatchEvent(
+        new CustomEvent('termide-terminal-user-input', {
+          detail: { sessionId },
+        }),
+      )
       window.termide.writeTerminal(sessionId, data)
     })
 
@@ -413,6 +430,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminal.dispose()
     }
   }, [announceTerminalFocus, props.api, props.params.sessionId, settings])
+
+  useEffect(() => {
+    if (!terminalRef.current) {
+      return
+    }
+
+    terminalRef.current.options.theme = buildTerminalTheme(settings, props.params.color)
+  }, [props.params.color, settings])
 
   useEffect(() => {
     if (!isSearchOpen) {

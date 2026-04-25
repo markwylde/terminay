@@ -10,7 +10,7 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
     name: 'file-viewer-modes',
     seed: {
       files: {
-        'README.md': '# Markdown Title\n\nThis is **rendered**.\n',
+        'README.md': '# Markdown Title\n\nThis is **rendered**.\n\n* [] pending\n* [x] complete\n',
         'doc.pdf': Buffer.from(
           '%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R>>endobj\n4 0 obj<</Length 44>>stream\nBT /F1 18 Tf 50 120 Td (Hello PDF) Tj ET\nendstream\nendobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
           'utf8',
@@ -40,6 +40,9 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
 
   await fileExplorerItem(mainWindow, 'README.md').dblclick()
   await expect(mainWindow.locator('.file-preview-markdown')).toContainText('Markdown Title')
+  await expect(mainWindow.locator('.file-preview-markdown input[type="checkbox"]')).toHaveCount(2)
+  await expect(mainWindow.locator('.file-preview-markdown input[type="checkbox"]').first()).not.toBeChecked()
+  await expect(mainWindow.locator('.file-preview-markdown input[type="checkbox"]').nth(1)).toBeChecked()
 
   await fileExplorerItem(mainWindow, 'pixel.png').dblclick()
   await expect(mainWindow.locator('.file-preview-image__asset')).toBeVisible()
