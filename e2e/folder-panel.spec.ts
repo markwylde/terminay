@@ -1,6 +1,12 @@
 import { stat } from 'node:fs/promises'
 import { expect, test } from './fixtures'
-import { contextMenuItem, fileExplorerItem, openFileExplorer, setProjectRoot } from './support/ui'
+import {
+  contextMenuItem,
+  fileExplorerItem,
+  openFileExplorer,
+  setProjectRoot,
+  submitFileExplorerNameModal,
+} from './support/ui'
 
 function folderViewButton(page: Parameters<typeof test>[0]['mainWindow'], name: string) {
   return page.locator('.folder-viewer__view-button').filter({ hasText: name }).first()
@@ -51,7 +57,7 @@ test('folder panel supports view modes navigation and refresh', async ({ createW
   await expect(mainWindow.locator('.file-preview-text')).toContainText('after refresh')
 })
 
-test('folder panel context menu mirrors file operations', async ({ appHarness, createWorkspace, mainWindow }) => {
+test('folder panel context menu mirrors file operations', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'folder-panel-ops',
     seed: {
@@ -61,8 +67,6 @@ test('folder panel context menu mirrors file operations', async ({ appHarness, c
       },
     },
   })
-  const dialogs = await appHarness.dialogs()
-
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)
   await fileExplorerItem(mainWindow, 'ops-folder').dblclick()
@@ -71,23 +75,23 @@ test('folder panel context menu mirrors file operations', async ({ appHarness, c
   const refreshButton = mainWindow.locator('.folder-viewer__action').filter({ hasText: 'Refresh' }).first()
   await actionsDirSummary.click()
 
-  await dialogs.queuePrompt('panel-created.txt')
   await actionsDirSummary.click({ button: 'right' })
   await expect(contextMenuItem(mainWindow, 'New File')).toBeVisible()
   await contextMenuItem(mainWindow, 'New File').click()
+  await submitFileExplorerNameModal(mainWindow, 'File name', 'panel-created.txt')
   await expect.poll(() => workspace.readText('ops-folder/actions-dir/panel-created.txt')).toBe('')
   await mainWindow.getByLabel('Close file tab').click()
 
-  await dialogs.queuePrompt('panel-created-folder')
   await actionsDirSummary.click({ button: 'right' })
   await expect(contextMenuItem(mainWindow, 'New Folder')).toBeVisible()
   await contextMenuItem(mainWindow, 'New Folder').click()
+  await submitFileExplorerNameModal(mainWindow, 'Folder name', 'panel-created-folder')
   await expect.poll(async () => (await stat(workspace.path('ops-folder', 'actions-dir', 'panel-created-folder'))).isDirectory()).toBe(true)
 
-  await dialogs.queuePrompt('folder-file-renamed.txt')
   await mainWindow.locator('.folder-viewer__tree-file').filter({ hasText: 'folder-file.txt' }).click({ button: 'right' })
   await expect(contextMenuItem(mainWindow, 'Rename')).toBeVisible()
   await contextMenuItem(mainWindow, 'Rename').click()
+  await submitFileExplorerNameModal(mainWindow, 'Name', 'folder-file-renamed.txt')
   await expect.poll(() => workspace.readText('ops-folder/folder-file-renamed.txt')).toBe('folder file\n')
   await refreshButton.click()
   await expect(mainWindow.locator('.folder-viewer__tree-file').filter({ hasText: 'folder-file-renamed.txt' })).toBeVisible()
