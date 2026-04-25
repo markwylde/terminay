@@ -1582,7 +1582,7 @@
 .macro-launcher-list {
   max-height: 380px;
   overflow-y: auto;
-  padding: 8px;
+  padding: 10px;
   scroll-padding-block: 12px;
 }
 
@@ -1595,27 +1595,68 @@
   border-radius: 10px;
 }
 
+.macro-launcher-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.macro-launcher-group + .macro-launcher-group {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.macro-launcher-group-label {
+  padding: 0 8px;
+  color: rgba(255, 255, 255, 0.34);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.macro-launcher-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .macro-launcher-item {
   all: unset;
   box-sizing: border-box;
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
+  gap: 12px;
+  padding: 10px 12px;
   border-radius: 10px;
   cursor: pointer;
   transition: background-color 80ms ease;
-  margin-bottom: 2px;
   scroll-margin-block: 12px;
-}
-
-.macro-launcher-item:last-child {
-  margin-bottom: 0;
 }
 
 .macro-launcher-item--active {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.macro-launcher-item-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(127, 207, 255, 0.78);
+}
+
+.macro-launcher-item--active .macro-launcher-item-icon {
+  border-color: rgba(127, 207, 255, 0.28);
+  background: rgba(127, 207, 255, 0.12);
+  color: rgba(181, 229, 255, 0.95);
 }
 
 .macro-launcher-item-content {
@@ -1623,6 +1664,7 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .macro-launcher-item-title {
