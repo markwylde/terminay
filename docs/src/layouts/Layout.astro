@@ -8,6 +8,9 @@ interface Props {
 const title = Astro.props.title
 // biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
 const description = Astro.props.description ?? "A modern desktop terminal workspace built with Electron, React, and Vite"
+const basePath = import.meta.env.BASE_URL.endsWith('/')
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
 ---
 
 <!DOCTYPE html>
@@ -18,6 +21,7 @@ const description = Astro.props.description ?? "A modern desktop terminal worksp
   <meta name="description" content={description} />
   <meta name="theme-color" content="#1d1d1d" />
   <title>{title}</title>
+  <link rel="icon" type="image/svg+xml" href={`${basePath}termide.svg`} />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -25,12 +29,12 @@ const description = Astro.props.description ?? "A modern desktop terminal worksp
 <body>
   <header class="header">
     <nav class="nav">
-      <a href="/termide/" class="logo">
-        <span class="logo-icon">&gt;_</span>
+      <a href={basePath} class="logo">
+        <img class="logo-icon" src={`${basePath}termide.svg`} alt="" width="28" height="28" />
         <span class="logo-text">Termide</span>
       </a>
       <div class="nav-links">
-        <a href="/termide/docs">Documentation</a>
+        <a href={`${basePath}docs`}>Documentation</a>
         <a href="https://github.com/markwylde/termide" target="_blank" rel="noopener">GitHub</a>
       </div>
     </nav>
@@ -152,8 +156,10 @@ const description = Astro.props.description ?? "A modern desktop terminal worksp
   }
 
   .logo-icon {
-    color: var(--accent-primary);
-    font-family: var(--font-mono);
+    width: 1.75rem;
+    height: 1.75rem;
+    display: block;
+    flex: 0 0 auto;
   }
 
   .nav-links {
