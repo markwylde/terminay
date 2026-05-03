@@ -165,6 +165,12 @@ export type FileExplorerEntry = {
   path: string
 }
 
+export type FileSearchResult = {
+  isDirectory: boolean
+  path: string
+  relativePath: string
+}
+
 export type FileExplorerGitStatus = 'modified' | 'new'
 
 export type FileExplorerGitStatuses = {
@@ -228,6 +234,7 @@ export type EditWindowResult =
 export interface TermideApi {
   getHomePath: () => Promise<string>
   listDirectory: (dirPath: string) => Promise<FileExplorerEntry[]>
+  searchFiles: (options: { rootPath: string; query: string; limit?: number }) => Promise<FileSearchResult[]>
   getFileExplorerGitStatuses: (dirPath: string) => Promise<FileExplorerGitStatuses>
   getFileInfo: (filePath: string) => Promise<FileViewerFileInfo>
   readFileBytes: (options: { path: string; start: number; length: number }) => Promise<FileViewerByteRange>

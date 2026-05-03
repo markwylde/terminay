@@ -284,6 +284,7 @@ function FieldItem({
               <option value="number">Number</option>
               <option value="checkbox">Checkbox</option>
               <option value="emoji">Emoji</option>
+              <option value="file">File</option>
             </select>
             <input
               className="settings-input-text"
