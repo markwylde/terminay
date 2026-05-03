@@ -283,6 +283,7 @@ export interface TermideApi {
   getDecryptedSecret: (id: string) => Promise<string>
   waitForTerminalInactivity: (id: string, durationMs: number) => Promise<void>
   smartPasteClipboard: () => Promise<string>
+  writeClipboardText: (text: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
   getAppUpdateStatus: (options?: { force?: boolean }) => Promise<AppUpdateStatus>
   openProjectEditWindow: (draft: ProjectEditWindowDraft) => Promise<ProjectEditWindowResult | null>
@@ -304,6 +305,7 @@ export interface TermideApi {
   onMacrosChanged: (listener: (message: MacrosChangeMessage) => void) => () => void
   onRemoteAccessStatusChanged: (listener: (status: RemoteAccessStatus) => void) => () => void
   onTerminalZoomChanged: (listener: (message: TerminalZoomMessage) => void) => () => void
+  onTerminalCopyRequested: (listener: () => void) => () => void
   onSettingsFocusSection: (listener: (message: { sectionId: string }) => void) => () => void
 }
 

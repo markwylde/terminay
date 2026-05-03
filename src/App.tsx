@@ -2552,6 +2552,20 @@ const ProjectWorkspace = forwardRef<
 		setMacroQuery('');
 	}, [getActiveSessionId]);
 
+	const copyActiveTerminalSelection = useCallback(() => {
+		const sessionId = getActiveSessionId();
+		if (!sessionId) {
+			document.execCommand('copy');
+			return;
+		}
+
+		window.dispatchEvent(
+			new CustomEvent('termide-copy-terminal', {
+				detail: { sessionId },
+			}),
+		);
+	}, [getActiveSessionId]);
+
 	const openActiveTerminalSettings = useCallback(() => {
 		const activePanel = dockviewApiRef.current?.activePanel;
 		if (!activePanel) {
@@ -2945,6 +2959,20 @@ const ProjectWorkspace = forwardRef<
 			setProjectRootFolderToWorkingDirectory,
 		],
 	);
+
+	useEffect(() => {
+		if (!isActive) {
+			return;
+		}
+
+		const unsubscribeCopyRequest = window.termide.onTerminalCopyRequested(
+			copyActiveTerminalSelection,
+		);
+
+		return () => {
+			unsubscribeCopyRequest();
+		};
+	}, [copyActiveTerminalSelection, isActive]);
 
 	useEffect(() => {
 		if (!isActive) {
