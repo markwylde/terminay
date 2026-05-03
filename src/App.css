@@ -1508,6 +1508,63 @@
   color: rgba(214, 227, 240, 0.6);
 }
 
+.macro-parameter-modal {
+  overflow: visible;
+}
+
+.macro-file-field {
+  position: relative;
+}
+
+.macro-file-field input[type='text'] {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.macro-file-field-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid rgba(77, 181, 255, 0.35);
+  border-radius: 6px;
+  background: #10151c;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+
+.macro-file-field-option {
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(214, 227, 240, 0.84);
+  cursor: pointer;
+  display: block;
+  font-family: inherit;
+  font-size: 13px;
+  overflow: hidden;
+  padding: 7px 8px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macro-file-field-option--active,
+.macro-file-field-option:hover {
+  background: rgba(77, 181, 255, 0.15);
+  color: #fff;
+}
+
+.macro-file-field-empty {
+  color: rgba(214, 227, 240, 0.58);
+  font-size: 13px;
+  padding: 8px;
+}
+
 .macro-launcher-overlay {
   position: fixed;
   inset: 0;
