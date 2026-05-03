@@ -1024,6 +1024,16 @@ function getMenuShortcut(settings: TerminalSettings, command: AppCommand): strin
   return shortcut.length > 0 ? shortcut : undefined
 }
 
+function shouldAutoHideMenuBar(): boolean {
+  return process.platform !== 'linux'
+}
+
+function sendCopyRequestToFocusedWindow(browserWindow?: Electron.BaseWindow): void {
+  const target = browserWindow instanceof BrowserWindow ? browserWindow : BrowserWindow.getFocusedWindow()
+  target?.webContents.copy()
+  target?.webContents.send('terminal:copy-requested')
+}
+
 function createAppMenu(settings: TerminalSettings = readTerminalSettings()): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin'
@@ -1125,7 +1135,11 @@ function createAppMenu(settings: TerminalSettings = readTerminalSettings()): voi
         { role: 'redo' },
         { type: 'separator' },
         { role: 'cut' },
-        { role: 'copy' },
+        {
+          label: 'Copy',
+          accelerator: process.platform === 'darwin' ? 'CmdOrCtrl+C' : 'CmdOrCtrl+Shift+C',
+          click: (_menuItem, browserWindow) => sendCopyRequestToFocusedWindow(browserWindow ?? undefined),
+        },
         { role: 'paste' },
         { role: 'selectAll' },
       ],
@@ -1167,7 +1181,7 @@ function createAppMenu(settings: TerminalSettings = readTerminalSettings()): voi
 function createWindow() {
   const preloadPath = path.join(__dirname, 'preload.mjs')
   const isMac = process.platform === 'darwin'
-  const usesOverlayTitlebar = process.platform === 'win32' || process.platform === 'linux'
+  const usesOverlayTitlebar = process.platform === 'win32'
   const windowIconPath = getWindowIconPath()
 
   mainWindow = new BrowserWindow({
@@ -1223,7 +1237,7 @@ function createWindow() {
               y: 12,
             }
           : undefined,
-        autoHideMenuBar: true,
+        autoHideMenuBar: shouldAutoHideMenuBar(),
         webPreferences: {
           preload: preloadPath,
           contextIsolation: true,
@@ -1255,7 +1269,7 @@ function openSettingsWindow(sectionId?: string): void {
   }
 
   const isMac = process.platform === 'darwin'
-  const usesOverlayTitlebar = process.platform === 'win32' || process.platform === 'linux'
+  const usesOverlayTitlebar = process.platform === 'win32'
 
   settingsWindow = new BrowserWindow({
     icon: windowIconPath,
@@ -1278,7 +1292,7 @@ function openSettingsWindow(sectionId?: string): void {
           y: 12,
         }
       : undefined,
-    autoHideMenuBar: true,
+    autoHideMenuBar: shouldAutoHideMenuBar(),
     backgroundColor: '#0d1117',
     webPreferences: {
       preload: preloadPath,
@@ -1315,7 +1329,7 @@ function openMacrosWindow(): void {
   }
 
   const isMac = process.platform === 'darwin'
-  const usesOverlayTitlebar = process.platform === 'win32' || process.platform === 'linux'
+  const usesOverlayTitlebar = process.platform === 'win32'
 
   macrosWindow = new BrowserWindow({
     icon: windowIconPath,
@@ -1338,7 +1352,7 @@ function openMacrosWindow(): void {
           y: 12,
         }
       : undefined,
-    autoHideMenuBar: true,
+    autoHideMenuBar: shouldAutoHideMenuBar(),
     backgroundColor: '#0d1117',
     webPreferences: {
       preload: preloadPath,
@@ -1396,7 +1410,7 @@ function openEditWindow(
       // while modal: true is set, allowing for a native title bar.
       type: process.platform === 'darwin' ? 'panel' : undefined,
       titleBarStyle: 'default',
-      autoHideMenuBar: true,
+      autoHideMenuBar: shouldAutoHideMenuBar(),
       backgroundColor: '#0d0f12',
       minimizable: false,
       maximizable: false,
@@ -1609,6 +1623,10 @@ ipcMain.handle('app:get-update-status', async (_event, options?: { force?: boole
 
 ipcMain.handle('clipboard:smart-paste', () => {
   return smartPasteClipboardContents()
+})
+
+ipcMain.handle('clipboard:write-text', (_event, text: string) => {
+  clipboard.writeText(text)
 })
 
 ipcMain.handle('app:open-project-edit', async (event, draft: ProjectEditWindowDraft) => {

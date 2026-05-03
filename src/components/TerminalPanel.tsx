@@ -14,6 +14,7 @@ import type { TerminalSettings } from '../types/settings'
 const OPEN_TERMINAL_SWITCHER_EVENT = 'termide-open-terminal-switcher'
 const DROP_FILE_EXPLORER_PATH_EVENT = 'termide-drop-file-explorer-path'
 const CLEAR_TERMINAL_EVENT = 'termide-clear-terminal'
+const COPY_TERMINAL_EVENT = 'termide-copy-terminal'
 const BRACKETED_PASTE_NEWLINE = '\x1b[200~\n\x1b[201~'
 
 const searchOptions = {
@@ -167,10 +168,38 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     terminal.unicode.activeVersion = '11'
     terminal.open(root)
 
+    const copySelectionToClipboard = () => {
+      const selectedText = terminal.getSelection()
+      if (selectedText.length === 0) {
+        return false
+      }
+
+      void window.termide.writeClipboardText(selectedText)
+      return true
+    }
+
     terminal.attachCustomKeyEventHandler((event) => {
+      const key = event.key.toLowerCase()
+      const isCopyShortcut =
+        (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && key === 'c') ||
+        (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && key === 'c')
+
+      if (isCopyShortcut) {
+        if (terminal.hasSelection()) {
+          event.preventDefault()
+          event.stopPropagation()
+          if (event.type === 'keydown') {
+            copySelectionToClipboard()
+          }
+          return false
+        }
+
+        return true
+      }
+
       const isPasteShortcut =
-        (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 'v') ||
-        (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'v')
+        (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && key === 'v') ||
+        (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && key === 'v')
 
       if (isPasteShortcut) {
         event.preventDefault()
@@ -330,6 +359,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       announceTerminalFocus()
     }
 
+    const copyTerminal = (event: Event) => {
+      const customEvent = event as CustomEvent<{ sessionId?: string }>
+      if (customEvent.detail?.sessionId !== sessionId) {
+        return
+      }
+
+      copySelectionToClipboard()
+    }
+
     const handleExplorerPathDrop = (event: Event) => {
       const customEvent = event as CustomEvent<{ path?: string; sessionId?: string }>
       if (customEvent.detail?.sessionId !== sessionId || !customEvent.detail.path) {
@@ -403,6 +441,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     root.addEventListener('pointerdown', announceTerminalFocus)
     window.addEventListener('termide-focus-terminal', focusTerminal)
     window.addEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
+    window.addEventListener(COPY_TERMINAL_EVENT, copyTerminal)
     window.addEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
     terminal.focus()
     announceTerminalFocus()
@@ -419,6 +458,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       root.removeEventListener('pointerdown', announceTerminalFocus)
       window.removeEventListener('termide-focus-terminal', focusTerminal)
       window.removeEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
+      window.removeEventListener(COPY_TERMINAL_EVENT, copyTerminal)
       window.removeEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
       activeDisposer.dispose()
       if (activeFocusFrame !== null) {
