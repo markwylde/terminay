@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { execFile, fork, type ChildProcess } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, type Dirent } from 'node:fs'
 import { lstat, readdir, stat, rename, rm, mkdir } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { defaultMacros, normalizeMacros } from '../src/macroSettings'
@@ -17,6 +17,7 @@ import type {
   EditWindowResult,
   EditWindowState,
   FileExplorerEntry,
+  FileSearchResult,
   ProjectEditWindowDraft,
   ProjectEditWindowResult,
   TerminalEditWindowDraft,
@@ -448,6 +449,203 @@ async function readDirectoryEntries(dirPath: string): Promise<FileExplorerEntry[
   })
 
   return items
+}
+
+const FILE_SEARCH_IGNORED_DIRECTORIES = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  '.next',
+  '.turbo',
+  '.vite',
+  'coverage',
+  'dist',
+  'dist-electron',
+  'node_modules',
+  'release',
+])
+const FILE_SEARCH_SCAN_LIMIT = 25_000
+
+function normalizeFileSearchPath(value: string): string {
+  return value.replace(/\\/g, '/')
+}
+
+function getFileSearchContext(rootPath: string, query: string) {
+  const resolvedRoot = resolveExplorerPath(rootPath)
+  const normalizedQuery = normalizeFileSearchPath(query).trim()
+  const lastSeparatorIndex = normalizedQuery.lastIndexOf('/')
+  const prefix = lastSeparatorIndex >= 0 ? normalizedQuery.slice(0, lastSeparatorIndex + 1) : ''
+  const term = lastSeparatorIndex >= 0 ? normalizedQuery.slice(lastSeparatorIndex + 1) : normalizedQuery
+  const isAbsolute = normalizedQuery.startsWith('/') || path.isAbsolute(normalizedQuery)
+  const basePath = isAbsolute
+    ? path.resolve(prefix || path.parse(resolvedRoot).root)
+    : path.resolve(resolvedRoot, prefix || '.')
+
+  return {
+    basePath,
+    displayPrefix: prefix,
+    term,
+  }
+}
+
+function getFuzzyTokenScore(source: string, token: string): number {
+  let lastMatchIndex = -1
+  let score = 0
+
+  for (const character of token) {
+    const matchIndex = source.indexOf(character, lastMatchIndex + 1)
+    if (matchIndex === -1) {
+      return 0
+    }
+
+    score += matchIndex === lastMatchIndex + 1 ? 15 : 5
+    if (matchIndex === 0 || /[/._-]/.test(source[matchIndex - 1] ?? '')) {
+      score += 10
+    }
+    lastMatchIndex = matchIndex
+  }
+
+  return score
+}
+
+function getFileSearchScore(relativePath: string, query: string): number {
+  const normalizedQuery = normalizeFileSearchPath(query).trim().toLowerCase()
+  if (!normalizedQuery) {
+    return 1
+  }
+
+  const candidatePath = normalizeFileSearchPath(relativePath).toLowerCase()
+  const candidateName = path.posix.basename(candidatePath)
+  const queryTokens = normalizedQuery.split(/\s+/).filter(Boolean)
+  let score = 0
+
+  for (const token of queryTokens) {
+    if (candidatePath === token) {
+      score += 10_000
+      continue
+    }
+    if (candidateName === token) {
+      score += 9_000
+      continue
+    }
+    if (candidateName.startsWith(token)) {
+      score += 5_000 - candidateName.length
+      continue
+    }
+    if (candidatePath.startsWith(token)) {
+      score += 4_000 - candidatePath.length
+      continue
+    }
+
+    const nameSubstringIndex = candidateName.indexOf(token)
+    if (nameSubstringIndex !== -1) {
+      score += 3_000 - nameSubstringIndex
+      continue
+    }
+
+    const pathSubstringIndex = candidatePath.indexOf(token)
+    if (pathSubstringIndex !== -1) {
+      score += 2_000 - pathSubstringIndex
+      continue
+    }
+
+    const fuzzyScore = Math.max(
+      getFuzzyTokenScore(candidateName, token),
+      getFuzzyTokenScore(candidatePath, token),
+    )
+    if (fuzzyScore === 0) {
+      return 0
+    }
+
+    score += 1_000 + fuzzyScore
+  }
+
+  return score
+}
+
+async function searchFiles(rootPath: string, query: string, limit = 60): Promise<FileSearchResult[]> {
+  const trimmedQuery = query.trim()
+  if (!trimmedQuery) {
+    return []
+  }
+
+  const searchContext = getFileSearchContext(rootPath, trimmedQuery)
+  const rootStats = await stat(searchContext.basePath)
+  if (!rootStats.isDirectory()) {
+    return []
+  }
+
+  const requestedLimit = Number.isFinite(limit) ? Math.floor(limit) : 60
+  const boundedLimit = Math.max(1, Math.min(requestedLimit, 200))
+  const matches: Array<FileSearchResult & { score: number }> = []
+  const directories = ['']
+  let scannedFileCount = 0
+
+  while (directories.length > 0 && scannedFileCount < FILE_SEARCH_SCAN_LIMIT) {
+    const relativeDirectory = directories.shift() ?? ''
+    const absoluteDirectory = path.join(searchContext.basePath, relativeDirectory)
+    let entries: Dirent[]
+
+    try {
+      entries = await readdir(absoluteDirectory, { withFileTypes: true })
+    } catch {
+      continue
+    }
+
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) {
+        continue
+      }
+
+      const relativePath = path.join(relativeDirectory, entry.name)
+      if (entry.isDirectory()) {
+        if (!FILE_SEARCH_IGNORED_DIRECTORIES.has(entry.name)) {
+          const displayPath = normalizeFileSearchPath(relativePath)
+          const score = getFileSearchScore(displayPath, searchContext.term)
+          if (score > 0) {
+            matches.push({
+              isDirectory: true,
+              path: path.join(searchContext.basePath, relativePath),
+              relativePath: `${searchContext.displayPrefix}${displayPath}/`,
+              score: score + 50,
+            })
+          }
+
+          directories.push(relativePath)
+        }
+        continue
+      }
+
+      if (!entry.isFile()) {
+        continue
+      }
+
+      scannedFileCount += 1
+      const displayPath = normalizeFileSearchPath(relativePath)
+      const score = getFileSearchScore(displayPath, searchContext.term)
+      if (score <= 0) {
+        continue
+      }
+
+      matches.push({
+        isDirectory: false,
+        path: path.join(searchContext.basePath, relativePath),
+        relativePath: `${searchContext.displayPrefix}${displayPath}`,
+        score,
+      })
+    }
+  }
+
+  return matches
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score
+      }
+
+      return left.relativePath.localeCompare(right.relativePath, undefined, { sensitivity: 'base', numeric: true })
+    })
+    .slice(0, boundedLimit)
+    .map(({ score: _score, ...result }) => result)
 }
 
 function parseClipboardFilePaths(rawValue: string): string[] {
@@ -1555,6 +1753,10 @@ ipcMain.handle('fs:get-home-path', () => {
 
 ipcMain.handle('fs:list-directory', async (_event, payload: { dirPath: string }) => {
   return readDirectoryEntries(payload.dirPath)
+})
+
+ipcMain.handle('fs:search-files', async (_event, payload: { rootPath: string; query: string; limit?: number }) => {
+  return searchFiles(payload.rootPath, payload.query, payload.limit)
 })
 
 ipcMain.handle('fs:get-git-statuses', async (_event, payload: { dirPath: string }) => {
