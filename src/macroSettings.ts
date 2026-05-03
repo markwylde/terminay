@@ -97,6 +97,7 @@ function normalizeFieldType(value: unknown): MacroFieldType {
     case 'number':
     case 'checkbox':
     case 'emoji':
+    case 'file':
       return value
     default:
       return 'text'
