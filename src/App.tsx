@@ -7,6 +7,7 @@ import {
 	forwardRef,
 	type JSX,
 	type MouseEvent,
+	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
 	useCallback,
 	useEffect,
@@ -55,6 +56,7 @@ import type {
 	AppUpdateStatus,
 	FileExplorerEntry,
 	FileExplorerGitStatus,
+	FileSearchResult,
 	RemoteAccessStatus,
 } from './types/termide';
 import type { FileViewerMode } from './types/fileViewer';
@@ -378,6 +380,162 @@ function ModalTitlebar({
 		</div>
 	);
 }
+
+type MacroFileFieldInputProps = {
+	onChange: (value: string) => void;
+	placeholder: string;
+	rootPath: string;
+	value: string;
+};
+
+const MacroFileFieldInput = forwardRef<
+	HTMLInputElement,
+	MacroFileFieldInputProps
+>(({ onChange, placeholder, rootPath, value }, ref) => {
+	const [suggestions, setSuggestions] = useState<FileSearchResult[]>([]);
+	const [highlightedIndex, setHighlightedIndex] = useState(0);
+	const [isOpen, setIsOpen] = useState(false);
+	const [isLoading, setIsLoading] = useState(false);
+	const requestIdRef = useRef(0);
+	const normalizedValue = value.trim();
+
+	useEffect(() => {
+		requestIdRef.current += 1;
+		const requestId = requestIdRef.current;
+
+		if (!isOpen || normalizedValue.length === 0 || !rootPath.trim()) {
+			setSuggestions([]);
+			setIsLoading(false);
+			return;
+		}
+
+		setIsLoading(true);
+		const timeoutId = window.setTimeout(() => {
+			void window.termide
+				.searchFiles({ rootPath, query: normalizedValue, limit: 60 })
+				.then((results) => {
+					if (requestIdRef.current !== requestId) {
+						return;
+					}
+
+					setSuggestions(results);
+					setHighlightedIndex(0);
+				})
+				.catch(() => {
+					if (requestIdRef.current === requestId) {
+						setSuggestions([]);
+					}
+				})
+				.finally(() => {
+					if (requestIdRef.current === requestId) {
+						setIsLoading(false);
+					}
+				});
+		}, 120);
+
+		return () => {
+			window.clearTimeout(timeoutId);
+		};
+	}, [isOpen, normalizedValue, rootPath]);
+
+	const commitSuggestion = useCallback(
+		(result: FileSearchResult) => {
+			onChange(result.relativePath);
+			setSuggestions([]);
+			setHighlightedIndex(0);
+			setIsOpen(result.isDirectory);
+		},
+		[onChange],
+	);
+
+	const handleKeyDown = useCallback(
+		(event: ReactKeyboardEvent<HTMLInputElement>) => {
+			if (event.key === 'ArrowDown') {
+				event.preventDefault();
+				setIsOpen(true);
+				setHighlightedIndex((current) =>
+					suggestions.length === 0 ? 0 : (current + 1) % suggestions.length,
+				);
+				return;
+			}
+
+			if (event.key === 'ArrowUp') {
+				event.preventDefault();
+				setIsOpen(true);
+				setHighlightedIndex((current) =>
+					suggestions.length === 0
+						? 0
+						: (current - 1 + suggestions.length) % suggestions.length,
+				);
+				return;
+			}
+
+			if (
+				(event.key === 'Enter' || event.key === 'Tab') &&
+				isOpen &&
+				suggestions[highlightedIndex]
+			) {
+				event.preventDefault();
+				commitSuggestion(suggestions[highlightedIndex]);
+				return;
+			}
+
+			if (event.key === 'Escape' && isOpen) {
+				event.stopPropagation();
+				setIsOpen(false);
+			}
+		},
+		[commitSuggestion, highlightedIndex, isOpen, suggestions],
+	);
+
+	return (
+		<div className="macro-file-field">
+			<input
+				ref={ref}
+				type="text"
+				value={value}
+				placeholder={placeholder || 'Start typing a file path...'}
+				onChange={(event) => {
+					onChange(event.target.value);
+					setIsOpen(true);
+				}}
+				onFocus={() => setIsOpen(true)}
+				onBlur={() => {
+					window.setTimeout(() => setIsOpen(false), 100);
+				}}
+				onKeyDown={handleKeyDown}
+				spellCheck={false}
+				autoComplete="off"
+			/>
+			{isOpen && normalizedValue.length > 0 ? (
+				<div className="macro-file-field-menu" role="listbox">
+					{isLoading ? (
+						<div className="macro-file-field-empty">Searching files...</div>
+					) : suggestions.length === 0 ? (
+						<div className="macro-file-field-empty">No matching files</div>
+					) : (
+						suggestions.map((result, index) => (
+							<button
+								key={result.path}
+								type="button"
+								className={`macro-file-field-option${index === highlightedIndex ? ' macro-file-field-option--active' : ''}`}
+								onMouseDown={(event) => event.preventDefault()}
+								onMouseEnter={() => setHighlightedIndex(index)}
+								onClick={() => commitSuggestion(result)}
+								role="option"
+								aria-selected={index === highlightedIndex}
+							>
+								{result.relativePath}
+							</button>
+						))
+					)}
+				</div>
+			) : null}
+		</div>
+	);
+});
+
+MacroFileFieldInput.displayName = 'MacroFileFieldInput';
 
 function useDraggableModal(isOpen: boolean) {
 	const modalRef = useRef<HTMLElement | null>(null);
@@ -1216,6 +1374,7 @@ const ProjectWorkspace = forwardRef<
 	const [macroFieldValues, setMacroFieldValues] = useState<
 		Record<string, MacroFieldValue>
 	>({});
+	const [macroFileSearchRootPath, setMacroFileSearchRootPath] = useState('');
 	const macroLauncherInputRef = useRef<HTMLInputElement | null>(null);
 	const macroLauncherListRef = useRef<HTMLDivElement | null>(null);
 	const macroLauncherItemRefs = useRef(
@@ -2070,6 +2229,7 @@ const ProjectWorkspace = forwardRef<
 	const closeMacroParameterModal = useCallback(() => {
 		setMacroToRun(null);
 		setMacroFieldValues({});
+		setMacroFileSearchRootPath('');
 		window.requestAnimationFrame(() => {
 			focusActiveTerminal();
 		});
@@ -2119,6 +2279,7 @@ const ProjectWorkspace = forwardRef<
 			setErrorText(null);
 			setMacroToRun(null);
 			setMacroFieldValues({});
+			setMacroFileSearchRootPath('');
 			setIsMacroLauncherOpen(false);
 			setMacroQuery('');
 			setSelectedMacroIndex(0);
@@ -2438,14 +2599,27 @@ const ProjectWorkspace = forwardRef<
 	}, [onUpdateProject, project.id]);
 
 	const runMacro = useCallback(
-		(macro: MacroDefinition) => {
+		async (macro: MacroDefinition) => {
 			const effectiveFields = macro.fields;
 			if (effectiveFields.length === 0) {
 				executeMacro(macro, {});
 				return;
 			}
 
+			let searchRootPath = project.rootFolder;
+			const activeSessionId = getActiveSessionId();
+			if (activeSessionId) {
+				try {
+					searchRootPath =
+						(await window.termide.getTerminalCwd(activeSessionId)) ??
+						project.rootFolder;
+				} catch {
+					searchRootPath = project.rootFolder;
+				}
+			}
+
 			setMacroToRun(macro);
+			setMacroFileSearchRootPath(searchRootPath);
 			setMacroFieldValues(
 				Object.fromEntries(
 					effectiveFields.map((field) => [field.name, field.defaultValue]),
@@ -2453,7 +2627,7 @@ const ProjectWorkspace = forwardRef<
 			);
 			setIsMacroLauncherOpen(false);
 		},
-		[executeMacro],
+		[executeMacro, getActiveSessionId, project.rootFolder],
 	);
 
 	const validateMacroValues = useCallback(
@@ -4138,7 +4312,7 @@ const ProjectWorkspace = forwardRef<
 			{macroToRun ? (
 				<ModalBackdrop onClose={closeMacroParameterModal}>
 					<form
-						className="project-edit-modal project-edit-modal--wide"
+						className="project-edit-modal project-edit-modal--wide macro-parameter-modal"
 						ref={(element) => {
 							macroParameterModal.modalRef.current = element;
 						}}
@@ -4216,8 +4390,21 @@ const ProjectWorkspace = forwardRef<
 												>
 													{option.label}
 												</option>
-											))}
+												))}
 										</select>
+									) : field.type === 'file' ? (
+										<MacroFileFieldInput
+											ref={firstFieldRef}
+											rootPath={macroFileSearchRootPath || project.rootFolder}
+											value={String(value ?? '')}
+											placeholder={field.placeholder}
+											onChange={(nextValue) =>
+												setMacroFieldValues((current) => ({
+													...current,
+													[field.name]: nextValue,
+												}))
+											}
+										/>
 									) : field.type === 'checkbox' ? (
 										<input
 											ref={firstFieldRef}
