@@ -1,4 +1,4 @@
-export type MacroFieldType = 'text' | 'textarea' | 'select' | 'number' | 'checkbox' | 'emoji'
+export type MacroFieldType = 'text' | 'textarea' | 'select' | 'number' | 'checkbox' | 'emoji' | 'file'
 
 export type MacroFieldOption = {
   label: string
