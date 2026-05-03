@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('termide', {
   waitForTerminalInactivity: (id: string, durationMs: number) =>
     ipcRenderer.invoke('terminal:wait-for-inactivity', { id, durationMs }),
   smartPasteClipboard: () => ipcRenderer.invoke('clipboard:smart-paste') as Promise<string>,
+  writeClipboardText: (text: string) => ipcRenderer.invoke('clipboard:write-text', text) as Promise<void>,
 
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
   getAppUpdateStatus: (options?: { force?: boolean }) =>
@@ -153,6 +154,11 @@ contextBridge.exposeInMainWorld('termide', {
     const wrapper: ElectronListener<TerminalZoomMessage> = (_event, message) => listener(message)
     ipcRenderer.on('terminal:zoom-changed', wrapper)
     return () => ipcRenderer.off('terminal:zoom-changed', wrapper)
+  },
+  onTerminalCopyRequested: (listener: () => void) => {
+    const wrapper = () => listener()
+    ipcRenderer.on('terminal:copy-requested', wrapper)
+    return () => ipcRenderer.off('terminal:copy-requested', wrapper)
   },
   onSettingsFocusSection: (listener: (message: { sectionId: string }) => void) => {
     const wrapper: ElectronListener<{ sectionId: string }> = (_event, message) => listener(message)
