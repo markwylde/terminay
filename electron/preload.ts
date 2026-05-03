@@ -4,6 +4,7 @@ import type { TerminalSettings } from '../src/types/settings'
 import type {
   AppCommand,
   FileExplorerEntry,
+  FileSearchResult,
   FileExplorerGitStatuses,
   FileViewerByteRange,
   FileViewerFileInfo,
@@ -35,6 +36,8 @@ type ElectronListener<T> = (_event: Electron.IpcRendererEvent, payload: T) => vo
 contextBridge.exposeInMainWorld('termide', {
   getHomePath: () => ipcRenderer.invoke('fs:get-home-path') as Promise<string>,
   listDirectory: (dirPath: string) => ipcRenderer.invoke('fs:list-directory', { dirPath }) as Promise<FileExplorerEntry[]>,
+  searchFiles: (options: { rootPath: string; query: string; limit?: number }) =>
+    ipcRenderer.invoke('fs:search-files', options) as Promise<FileSearchResult[]>,
   getFileExplorerGitStatuses: (dirPath: string) =>
     ipcRenderer.invoke('fs:get-git-statuses', { dirPath }) as Promise<FileExplorerGitStatuses>,
   getFileInfo: (filePath: string) => ipcRenderer.invoke('file:get-info', { path: filePath }) as Promise<FileViewerFileInfo>,
