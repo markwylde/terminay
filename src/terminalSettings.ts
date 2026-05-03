@@ -69,7 +69,7 @@ export const defaultTerminalSettings: TerminalSettings = {
   disableStdin: false,
   drawBoldTextInBrightColors: true,
   fastScrollSensitivity: 5,
-  fontFamily: 'Menlo, Monaco, Consolas, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Liberation Mono", "Courier New", monospace',
+  fontFamily: 'ui-monospace, "Cascadia Mono", "Cascadia Code", "DejaVu Sans Mono", "Liberation Mono", Menlo, Monaco, Consolas, "Courier New", monospace, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"',
   fontSize: 13,
   fontWeight: '400',
   fontWeightBold: '700',
@@ -264,7 +264,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         sectionId: 'typography',
         categoryId: 'appearance',
         input: 'text',
-        placeholder: 'Menlo, Monaco, Consolas, "Apple Color Emoji", monospace',
+        placeholder: 'ui-monospace, "DejaVu Sans Mono", "Liberation Mono", monospace',
         keywords: ['typeface', 'font', 'mono'],
       }),
       makeField({

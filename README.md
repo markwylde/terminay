@@ -2,7 +2,7 @@
 
 Termide is a desktop terminal workspace built with Electron, React, and Vite. It pairs native shell sessions with dockable project tabs, file tools, macros, settings, and browser-based remote access so project work can stay in one focused desktop app.
 
-![Termide screenshot](./screenshot1.png)
+![Termide workspace screenshot](https://markwylde.com/termide/screenshots/termide-workspace.png)
 
 ## What it does
 
