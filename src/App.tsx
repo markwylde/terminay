@@ -118,8 +118,26 @@ type MovedTerminalTab = {
 	title: string;
 };
 
+type TerminalActivityOverviewState = Extract<
+	TerminalActivityState,
+	'recent' | 'unviewed'
+>;
+
+type TerminalActivityOverviewItem = {
+	color: string;
+	emoji: string;
+	panelId: string;
+	projectEmoji: string;
+	projectId: string;
+	projectTitle: string;
+	sessionId: string;
+	state: TerminalActivityOverviewState;
+	title: string;
+};
+
 type ProjectWorkspaceHandle = {
 	acceptMovedTerminal: (terminal: MovedTerminalTab) => void;
+	activateTerminal: (panelId: string, sessionId: string) => void;
 	executeCommand: (command: AppCommand) => void;
 	exportTerminalForMove: (panelId: string) => MovedTerminalTab | null;
 };
@@ -135,6 +153,10 @@ type ProjectWorkspaceProps = {
 		sourceProjectId: string,
 		panelId: string,
 		targetProjectId: string,
+	) => void;
+	onTerminalActivityOverviewChange: (
+		projectId: string,
+		items: TerminalActivityOverviewItem[],
 	) => void;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
 	popoutUrl: string;
@@ -1333,7 +1355,7 @@ function joinFileExplorerPath(dirPath: string, name: string): string {
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
->(({ isActive, isMac, macros, onAddProject, onCloseProject, onEditProject, onMoveTerminalToProject, onUpdateProject, popoutUrl, project, projects }, ref) => {
+>(({ isActive, isMac, macros, onAddProject, onCloseProject, onEditProject, onMoveTerminalToProject, onTerminalActivityOverviewChange, onUpdateProject, popoutUrl, project, projects }, ref) => {
 	const { settings } = useTerminalSettings();
 	const dockviewApiRef = useRef<DockviewApi | null>(null);
 	const initialTerminalSeededRef = useRef(false);
@@ -1467,6 +1489,46 @@ const ProjectWorkspace = forwardRef<
 		return null;
 	}, []);
 
+	const getActivityOverviewItems =
+		useCallback((): TerminalActivityOverviewItem[] => {
+			const api = dockviewApiRef.current;
+			if (!api) {
+				return [];
+			}
+
+			const items: TerminalActivityOverviewItem[] = [];
+			for (const group of api.groups) {
+				for (const panel of group.panels) {
+					const sessionId = panel.params?.sessionId;
+					const state = panel.params?.terminalActivityState;
+					if (
+						!sessionId ||
+						(state !== 'recent' && state !== 'unviewed')
+					) {
+						continue;
+					}
+
+					items.push({
+						color: getEffectiveTerminalTabColor(panel.params, project.color),
+						emoji: panel.params?.emoji ?? '',
+						panelId: panel.id,
+						projectEmoji: project.emoji,
+						projectId: project.id,
+						projectTitle: project.title,
+						sessionId,
+						state,
+						title: panel.title ?? 'Terminal',
+					});
+				}
+			}
+
+			return items;
+		}, [project.color, project.emoji, project.id, project.title]);
+
+	const publishTerminalActivityOverview = useCallback(() => {
+		onTerminalActivityOverviewChange(project.id, getActivityOverviewItems());
+	}, [getActivityOverviewItems, onTerminalActivityOverviewChange, project.id]);
+
 	const updateTerminalActivityState = useCallback(
 		(sessionId: string, terminalActivityState: TerminalActivityState) => {
 			const panel = getPanelForSession(sessionId);
@@ -1475,8 +1537,9 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			panel.api.updateParameters({ terminalActivityState });
+			window.requestAnimationFrame(publishTerminalActivityOverview);
 		},
-		[getPanelForSession],
+		[getPanelForSession, publishTerminalActivityOverview],
 	);
 
 	const suppressInitialTerminalActivity = useCallback((sessionId: string) => {
@@ -1574,6 +1637,29 @@ const ProjectWorkspace = forwardRef<
 			);
 		});
 	}, [getActiveSessionId, markTerminalActivityViewed]);
+
+	const activateTerminal = useCallback(
+		(panelId: string, sessionId: string) => {
+			const panel = dockviewApiRef.current?.getPanel(panelId);
+			if (!panel || panel.params?.sessionId !== sessionId) {
+				return;
+			}
+
+			panel.api.setActive();
+			focusedSessionIdRef.current = sessionId;
+			setFocusedSessionId(sessionId);
+			markTerminalActivityViewed(sessionId);
+			setErrorText(null);
+			window.requestAnimationFrame(() => {
+				window.dispatchEvent(
+					new CustomEvent('termide-focus-terminal', {
+						detail: { sessionId },
+					}),
+				);
+			});
+		},
+		[markTerminalActivityViewed],
+	);
 
 	const [terminalSwitcherItems, setTerminalSwitcherItems] = useState<
 		TerminalSwitcherItem[]
@@ -2128,6 +2214,7 @@ const ProjectWorkspace = forwardRef<
 					projectEmoji: project.emoji,
 					projectColor: project.color,
 				});
+				window.requestAnimationFrame(publishTerminalActivityOverview);
 			} catch (error) {
 				setErrorText(`Failed to open terminal: ${String(error)}`);
 			}
@@ -2142,6 +2229,7 @@ const ProjectWorkspace = forwardRef<
 			project.id,
 			project.title,
 			project.color,
+			publishTerminalActivityOverview,
 			suppressInitialTerminalActivity,
 		],
 	);
@@ -2563,7 +2651,14 @@ const ProjectWorkspace = forwardRef<
 				projectColor: project.color,
 			});
 		}
-	}, [project.id, project.title, project.emoji, project.color]);
+		window.requestAnimationFrame(publishTerminalActivityOverview);
+	}, [
+		project.id,
+		project.title,
+		project.emoji,
+		project.color,
+		publishTerminalActivityOverview,
+	]);
 
 	useEffect(() => {
 		setDirectoryChildren({});
@@ -2748,7 +2843,14 @@ const ProjectWorkspace = forwardRef<
 				projectColor: project.color,
 			});
 		}
-	}, [project.color, project.id, project.title, project.emoji]);
+		window.requestAnimationFrame(publishTerminalActivityOverview);
+	}, [
+		project.color,
+		project.id,
+		project.title,
+		project.emoji,
+		publishTerminalActivityOverview,
+	]);
 
 	const clearActiveTerminal = useCallback(() => {
 		const sessionId = getActiveSessionId();
@@ -2887,6 +2989,7 @@ const ProjectWorkspace = forwardRef<
 				panel.api.setActive();
 				setFocusedSessionId(sessionId);
 				setErrorText(null);
+				window.requestAnimationFrame(publishTerminalActivityOverview);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				setErrorText(message);
@@ -2902,6 +3005,7 @@ const ProjectWorkspace = forwardRef<
 			project.title,
 			project.emoji,
 			project.color,
+			publishTerminalActivityOverview,
 			suppressInitialTerminalActivity,
 		],
 	);
@@ -2998,6 +3102,7 @@ const ProjectWorkspace = forwardRef<
 			setFocusedSessionId(movedTerminal.sessionId);
 			setErrorText(null);
 			syncPanelFocusState();
+			window.requestAnimationFrame(publishTerminalActivityOverview);
 		},
 		[
 			cancelMacroRun,
@@ -3009,6 +3114,7 @@ const ProjectWorkspace = forwardRef<
 			project.emoji,
 			project.id,
 			project.title,
+			publishTerminalActivityOverview,
 			syncPanelFocusState,
 		],
 	);
@@ -3338,13 +3444,23 @@ const ProjectWorkspace = forwardRef<
 		ref,
 		() => ({
 			acceptMovedTerminal,
+			activateTerminal,
 			executeCommand(command: AppCommand) {
 				executeAppCommand(command);
 			},
 			exportTerminalForMove,
 		}),
-		[acceptMovedTerminal, executeAppCommand, exportTerminalForMove],
+		[
+			acceptMovedTerminal,
+			activateTerminal,
+			executeAppCommand,
+			exportTerminalForMove,
+		],
 	);
+
+	useEffect(() => {
+		publishTerminalActivityOverview();
+	}, [publishTerminalActivityOverview]);
 
 	useEffect(() => {
 		focusedSessionIdRef.current = focusedSessionId;
@@ -3416,10 +3532,12 @@ const ProjectWorkspace = forwardRef<
 						: current,
 				);
 				if (isMovingTerminal) {
+					window.requestAnimationFrame(publishTerminalActivityOverview);
 					return;
 				}
 				cancelMacroRunsForSession(sessionId);
 				window.termide.killTerminal(sessionId);
+				window.requestAnimationFrame(publishTerminalActivityOverview);
 				closeProjectIfEmpty();
 			});
 			event.api.onDidActivePanelChange(() => {
@@ -3441,6 +3559,7 @@ const ProjectWorkspace = forwardRef<
 			markTerminalActivityViewed,
 			onCloseProject,
 			project.id,
+			publishTerminalActivityOverview,
 			syncPanelFocusState,
 		],
 	);
@@ -3553,6 +3672,7 @@ const ProjectWorkspace = forwardRef<
 
 	useEffect(() => {
 		return () => {
+			onTerminalActivityOverviewChange(project.id, []);
 			for (const timer of terminalActivityTimersRef.current.values()) {
 				window.clearTimeout(timer);
 			}
@@ -3562,7 +3682,7 @@ const ProjectWorkspace = forwardRef<
 			terminalSuppressActivityUntilRef.current.clear();
 			terminalUnreadActivityRef.current.clear();
 		};
-	}, []);
+	}, [onTerminalActivityOverviewChange, project.id]);
 
 	useEffect(() => {
 		return window.termide.onTerminalExit((message) => {
@@ -4656,6 +4776,10 @@ function App() {
 	const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(
 		null,
 	);
+	const activityMenuRef = useRef<HTMLDivElement | null>(null);
+	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
+	const [terminalActivityItemsByProject, setTerminalActivityItemsByProject] =
+		useState<Record<string, TerminalActivityOverviewItem[]>>({});
 
 	useEffect(() => {
 		let isMounted = true;
@@ -4821,6 +4945,68 @@ function App() {
 		[activeProjectId],
 	);
 
+	const updateTerminalActivityOverview = useCallback(
+		(projectId: string, items: TerminalActivityOverviewItem[]) => {
+			setTerminalActivityItemsByProject((current) => {
+				if (items.length === 0) {
+					if (!(projectId in current)) {
+						return current;
+					}
+
+					const { [projectId]: _removed, ...next } = current;
+					void _removed;
+					return next;
+				}
+
+				return {
+					...current,
+					[projectId]: items,
+				};
+			});
+		},
+		[],
+	);
+
+	const terminalActivityItems = useMemo(() => {
+		const items = projects.flatMap(
+			(project) => terminalActivityItemsByProject[project.id] ?? [],
+		);
+
+		return items.sort((a, b) => {
+			if (a.state !== b.state) {
+				return a.state === 'recent' ? -1 : 1;
+			}
+
+			const projectComparison = a.projectTitle.localeCompare(b.projectTitle);
+			if (projectComparison !== 0) {
+				return projectComparison;
+			}
+
+			return a.title.localeCompare(b.title);
+		});
+	}, [projects, terminalActivityItemsByProject]);
+
+	const unviewedTerminalActivityCount = terminalActivityItems.filter(
+		(item) => item.state === 'unviewed',
+	).length;
+	const recentTerminalActivityCount = terminalActivityItems.filter(
+		(item) => item.state === 'recent',
+	).length;
+	const hasTerminalActivityOverview = terminalActivityItems.length > 0;
+
+	const activateTerminalFromOverview = useCallback(
+		(item: TerminalActivityOverviewItem) => {
+			setIsActivityMenuOpen(false);
+			setActiveProjectId(item.projectId);
+			window.requestAnimationFrame(() => {
+				workspaceRefs.current
+					.get(item.projectId)
+					?.activateTerminal(item.panelId, item.sessionId);
+			});
+		},
+		[],
+	);
+
 	useEffect(() => {
 		const unsubscribeCommand = window.termide.onAppCommand(
 			executeCommandOnActiveProject,
@@ -4974,6 +5160,45 @@ function App() {
 		};
 	}, [isRemoteMenuOpen]);
 
+	useEffect(() => {
+		if (!hasTerminalActivityOverview) {
+			setIsActivityMenuOpen(false);
+		}
+	}, [hasTerminalActivityOverview]);
+
+	useEffect(() => {
+		if (!isActivityMenuOpen) {
+			return;
+		}
+
+		const onPointerDown = (event: globalThis.MouseEvent) => {
+			const container = activityMenuRef.current;
+			if (!container) {
+				return;
+			}
+
+			const target = event.target as Node;
+			if (container.contains(target)) {
+				return;
+			}
+
+			setIsActivityMenuOpen(false);
+		};
+
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				setIsActivityMenuOpen(false);
+			}
+		};
+
+		window.addEventListener('mousedown', onPointerDown);
+		window.addEventListener('keydown', onKeyDown);
+		return () => {
+			window.removeEventListener('mousedown', onPointerDown);
+			window.removeEventListener('keydown', onKeyDown);
+		};
+	}, [isActivityMenuOpen]);
+
 	const activeProject =
 		projects.find((project) => project.id === activeProjectId) ?? null;
 	const hasAppUpdate =
@@ -5126,6 +5351,86 @@ function App() {
 							</button>
 						</div>
 					) : null}
+					{hasTerminalActivityOverview ? (
+						<div
+							ref={activityMenuRef}
+							className={`terminal-activity-status${isActivityMenuOpen ? ' terminal-activity-status--open' : ''}`}
+						>
+							<button
+								type="button"
+								className="terminal-activity-button"
+								onClick={() => {
+									setIsRemoteMenuOpen(false);
+									setIsActivityMenuOpen((current) => !current);
+								}}
+								title="Open terminal activity menu"
+								aria-label="Open terminal activity menu"
+								aria-haspopup="menu"
+								aria-expanded={isActivityMenuOpen}
+							>
+								{unviewedTerminalActivityCount > 0 ? (
+									<span className="terminal-activity-pill terminal-activity-pill--unviewed">
+										{unviewedTerminalActivityCount}
+									</span>
+								) : null}
+								{recentTerminalActivityCount > 0 ? (
+									<span className="terminal-activity-pill terminal-activity-pill--recent">
+										{recentTerminalActivityCount}
+									</span>
+								) : null}
+								<ChevronDown
+									className="terminal-activity-button__chevron"
+									size={12}
+									aria-hidden="true"
+								/>
+							</button>
+							{isActivityMenuOpen ? (
+								<div
+									className="terminal-activity-menu"
+									role="menu"
+									aria-label="Terminal activity menu"
+								>
+									<div className="terminal-activity-menu__section-label">
+										Terminal Activity
+									</div>
+									{terminalActivityItems.map((item) => (
+										<button
+											key={`${item.projectId}:${item.panelId}:${item.sessionId}`}
+											type="button"
+											className="terminal-activity-menu__item"
+											onClick={() => activateTerminalFromOverview(item)}
+										>
+											<span
+												className={`terminal-activity-menu__state terminal-activity-menu__state--${item.state}`}
+												aria-hidden="true"
+											/>
+											<span
+												className="terminal-activity-menu__preview"
+												style={{ '--tab-color': item.color } as CSSProperties}
+											>
+												<span className="terminal-activity-menu__dot" />
+												<span
+													className="terminal-activity-menu__emoji"
+													aria-hidden="true"
+												>
+													{item.emoji || item.projectEmoji || '>'}
+												</span>
+											</span>
+											<span className="terminal-activity-menu__text">
+												<span className="terminal-activity-menu__title">
+													{item.title}
+												</span>
+												<span className="terminal-activity-menu__project">
+													{item.projectEmoji ? `${item.projectEmoji} ` : ''}
+													{item.projectTitle}
+												</span>
+											</span>
+										</button>
+									))}
+								</div>
+							) : null}
+						</div>
+					) : null}
 					<div
 						ref={remoteMenuRef}
 						className={`remote-access-status${remoteStatus?.isRunning ? ' remote-access-status--active' : ''}${isRemoteMenuOpen ? ' remote-access-status--open' : ''}`}
@@ -5133,7 +5438,10 @@ function App() {
 						<button
 							type="button"
 							className={`remote-access-button ${remoteButtonTone}`.trim()}
-							onClick={() => setIsRemoteMenuOpen((current) => !current)}
+							onClick={() => {
+								setIsActivityMenuOpen(false);
+								setIsRemoteMenuOpen((current) => !current);
+							}}
 							title="Open remote access menu"
 							aria-label="Open remote access menu"
 							aria-haspopup="menu"
@@ -5308,6 +5616,7 @@ function App() {
 						onCloseProject={closeProject}
 						onEditProject={openEditProjectWindow}
 						onMoveTerminalToProject={moveTerminalToProject}
+						onTerminalActivityOverviewChange={updateTerminalActivityOverview}
 						onUpdateProject={updateProject}
 						popoutUrl={popoutUrl}
 						project={project}
