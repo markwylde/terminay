@@ -122,6 +122,39 @@ test.describe('terminal behavior', () => {
     }
   })
 
+  test('double-clicking a terminal tab opens one edit window for the active project tab', async ({
+    appHarness,
+    electronApp,
+    mainWindow,
+  }) => {
+    const firstProjectEditWindow = await openTerminalEditWindow(mainWindow)
+    await firstProjectEditWindow.getByPlaceholder('Terminal name').fill('Wrong Project Shell')
+    await submitEditWindow(firstProjectEditWindow)
+
+    await mainWindow.getByLabel('Add project tab').click()
+    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
+
+    const activeTerminalTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
+    await expect(activeTerminalTab.locator('.terminal-tab-title')).toHaveText('Terminal 1')
+
+    const windowCountBeforeEdit = await electronApp.evaluate(
+      ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+    )
+
+    const editWindow = await appHarness.openChildWindow(async () => {
+      await activeTerminalTab.dblclick()
+    })
+
+    await expect(editWindow.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
+    await expect(editWindow.getByPlaceholder('Terminal name')).toHaveValue('Terminal 1')
+    await mainWindow.waitForTimeout(500)
+    await expect
+      .poll(async () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length))
+      .toBe(windowCountBeforeEdit + 1)
+
+    await cancelEditWindow(editWindow)
+  })
+
   test('opens terminal search and navigates between matches', async ({ mainWindow }) => {
     await mainWindow.locator('.terminal-panel').first().click()
     await writeToTerminal(
