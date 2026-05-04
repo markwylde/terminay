@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 import { sendAppCommand } from './support/app'
-import { cancelEditWindow, openTerminalEditWindow, submitEditWindow } from './support/ui'
+import { cancelEditWindow, contextMenuItem, openTerminalEditWindow, submitEditWindow } from './support/ui'
 
 async function getActiveSessionId(page: Page): Promise<string> {
   const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-termide-terminal-session-id')
@@ -32,6 +32,58 @@ async function readCssVariableFromStyle(locator: ReturnType<Page['locator']>, va
 }
 
 test.describe('terminal behavior', () => {
+  test('terminal tab context menu closes the selected tab', async ({ mainWindow }) => {
+    await sendAppCommand(mainWindow, 'new-terminal')
+    const terminalTabs = mainWindow.locator('.project-workspace--active .terminal-tab-content')
+    await expect(terminalTabs).toHaveCount(2)
+
+    await terminalTabs.nth(1).click({ button: 'right' })
+    await expect(contextMenuItem(mainWindow, 'Close')).toBeVisible()
+    await expect(contextMenuItem(mainWindow, 'Open Settings')).toBeVisible()
+    await expect(contextMenuItem(mainWindow, 'Move to project')).toBeVisible()
+
+    await contextMenuItem(mainWindow, 'Close').click()
+    await expect(terminalTabs).toHaveCount(1)
+  })
+
+  test('terminal tab context menu opens settings and moves a tab to another project', async ({
+    appHarness,
+    mainWindow,
+  }) => {
+    const settingsWindow = await appHarness.openChildWindow(async () => {
+      await mainWindow.locator('.project-workspace--active .terminal-tab-content').first().click({ button: 'right' })
+      await contextMenuItem(mainWindow, 'Open Settings').click()
+    })
+
+    await expect(settingsWindow.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
+    await settingsWindow.getByPlaceholder('Terminal name').fill('Move Me')
+    await submitEditWindow(settingsWindow)
+    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-title')).toHaveText('Move Me')
+
+    await mainWindow.getByLabel('Add project tab').click()
+    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
+    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(1)
+
+    await mainWindow.locator('.project-tab').filter({ hasText: 'Project 1' }).click()
+    const tabToMove = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Move Me' })
+      .first()
+    await expect(tabToMove).toBeVisible()
+
+    await tabToMove.click({ button: 'right' })
+    await contextMenuItem(mainWindow, 'Move to project').click()
+    await expect(contextMenuItem(mainWindow, 'Project 2')).toBeVisible()
+    await contextMenuItem(mainWindow, 'Project 2').click()
+
+    await expect(mainWindow.locator('.project-tab')).toHaveCount(2)
+    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
+    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
+    await expect(
+      mainWindow.locator('.project-workspace--active .terminal-tab-content').filter({ hasText: 'Move Me' }),
+    ).toHaveCount(1)
+  })
+
   test('new terminals inherit the active project tab color by default', async ({ mainWindow }) => {
     const activeProjectTab = mainWindow.locator('.project-tab--active')
     const terminalTabs = mainWindow.locator('.terminal-tab-content')
