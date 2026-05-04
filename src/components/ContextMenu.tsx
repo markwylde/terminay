@@ -6,6 +6,7 @@ export type ContextMenuItem = {
 	onClick: () => void;
 	icon?: ReactNode;
 	danger?: boolean;
+	disabled?: boolean;
 	separator?: boolean;
 	key?: string;
 };
@@ -15,10 +16,12 @@ type ContextMenuProps = {
 	y: number;
 	items: ContextMenuItem[];
 	onClose: () => void;
+	portalContainer?: HTMLElement;
 };
 
-export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
+export function ContextMenu({ x, y, items, onClose, portalContainer }: ContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
+	const ownerWindow = portalContainer?.ownerDocument.defaultView ?? window;
 
 	const getItemKey = (item: ContextMenuItem, index: number) => {
 		if (item.key) {
@@ -47,19 +50,19 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
 			}
 		};
 
-		window.addEventListener('mousedown', handleClickOutside);
-		window.addEventListener('keydown', handleKeyDown);
+		ownerWindow.addEventListener('mousedown', handleClickOutside);
+		ownerWindow.addEventListener('keydown', handleKeyDown);
 		return () => {
-			window.removeEventListener('mousedown', handleClickOutside);
-			window.removeEventListener('keydown', handleKeyDown);
+			ownerWindow.removeEventListener('mousedown', handleClickOutside);
+			ownerWindow.removeEventListener('keydown', handleKeyDown);
 		};
-	}, [onClose]);
+	}, [onClose, ownerWindow]);
 
 	// Adjust position if it goes off-screen
 	const menuWidth = 200;
 	const menuHeight = items.length * 32;
-	const adjustedX = Math.min(x, window.innerWidth - menuWidth - 10);
-	const adjustedY = Math.min(y, window.innerHeight - menuHeight - 10);
+	const adjustedX = Math.min(x, ownerWindow.innerWidth - menuWidth - 10);
+	const adjustedY = Math.min(y, ownerWindow.innerHeight - menuHeight - 10);
 
 	return createPortal(
 		<div
@@ -80,7 +83,11 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
 						<button
 							type="button"
 							className={`context-menu__item${item.danger ? ' context-menu__item--danger' : ''}`}
+							disabled={item.disabled}
 							onClick={() => {
+								if (item.disabled) {
+									return;
+								}
 								item.onClick();
 								onClose();
 							}}
@@ -92,6 +99,6 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
 				</div>
 			))}
 		</div>,
-		document.body,
+		portalContainer ?? document.body,
 	);
 }
