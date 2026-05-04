@@ -7,10 +7,13 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  FolderSync,
   LoaderCircle,
+  Settings,
   Trash2,
   XCircle,
 } from 'lucide-react'
+import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { DockTabChrome } from './DockTabChrome'
 
 export type TerminalTabMacroRunStep = {
@@ -29,6 +32,12 @@ export type TerminalTabMacroRun = {
 
 export type TerminalActivityState = 'viewed' | 'recent' | 'unviewed'
 
+export type TerminalTabMoveProject = {
+  emoji: string
+  id: string
+  title: string
+}
+
 export type TerminalPanelParams = {
   sessionId: string
   terminalActivityState?: TerminalActivityState
@@ -40,6 +49,8 @@ export type TerminalPanelParams = {
   onClearFinishedMacroRuns?: () => void
   onClearMacroRun?: (runId: string) => void
   macroRuns?: TerminalTabMacroRun[]
+  onMoveToProject?: (projectId: string) => void
+  projectsForMove?: TerminalTabMoveProject[]
   projectColor?: string
 }
 
@@ -53,11 +64,14 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
   const isFocused = params?.isFocused === true
   const hasCustomColor = typeof color === 'string' && color !== DEFAULT_TERMINAL_TAB_COLOR
   const [isMacroMenuOpen, setIsMacroMenuOpen] = useState(false)
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ left: number; top: number } | null>(null)
+  const [moveMenuPosition, setMoveMenuPosition] = useState<{ left: number; top: number } | null>(null)
   const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
   const [expandedRunIds, setExpandedRunIds] = useState<Record<string, boolean>>({})
   const macroMenuRef = useRef<HTMLDivElement | null>(null)
   const macroTriggerRef = useRef<HTMLButtonElement | null>(null)
   const macroPopoverRef = useRef<HTMLDivElement | null>(null)
+  const contextMenuTargetRef = useRef<HTMLElement | null>(null)
   const activeMacroCount = macroRuns.filter((run) => run.status === 'running' || run.status === 'canceling').length
   const finishedMacroCount = macroRuns.filter((run) => run.status !== 'running' && run.status !== 'canceling').length
   const hasMacroHistory = macroRuns.length > 0
@@ -169,14 +183,27 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
     )
   }
 
-  const onDoubleClick = (event: MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
+  const dispatchEditTerminalEvent = (target: HTMLElement) => {
     const customEvent = new CustomEvent('termide-edit-terminal', {
       bubbles: true,
       detail: { panelId: props.api.id },
     })
-    event.currentTarget.dispatchEvent(customEvent)
+    target.dispatchEvent(customEvent)
+  }
+
+  const onDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    dispatchEditTerminalEvent(event.currentTarget)
+  }
+
+  const onContextMenu = (event: MouseEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setIsMacroMenuOpen(false)
+    setMoveMenuPosition(null)
+    contextMenuTargetRef.current = event.currentTarget
+    setContextMenuPosition({ left: event.clientX, top: event.clientY })
   }
 
   const onToggleMacroMenu = (event: MouseEvent) => {
@@ -203,6 +230,54 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
       return b.startedAt - a.startedAt
     })
   }, [macroRuns])
+
+  const moveProjects = params?.projectsForMove ?? []
+  const contextMenuItems: ContextMenuItem[] = [
+    {
+      label: 'Close',
+      icon: <XCircle size={14} />,
+      danger: true,
+      onClick: () => props.api.close(),
+    },
+    {
+      label: 'Open Settings',
+      icon: <Settings size={14} />,
+      onClick: () => {
+        dispatchEditTerminalEvent(contextMenuTargetRef.current ?? document.body)
+      },
+    },
+    {
+      separator: true,
+      label: '',
+      onClick: () => {},
+      key: 'move-separator',
+    },
+    {
+      label: 'Move to project',
+      icon: <FolderSync size={14} />,
+      disabled: moveProjects.length === 0,
+      onClick: () => {
+        if (!contextMenuPosition) {
+          return
+        }
+
+        setMoveMenuPosition({
+          left: contextMenuPosition.left + 16,
+          top: contextMenuPosition.top + 16,
+        })
+      },
+    },
+  ]
+
+  const moveMenuItems: ContextMenuItem[] = moveProjects.map((project) => ({
+    key: project.id,
+    label: `${project.emoji ? `${project.emoji} ` : ''}${project.title}`,
+    onClick: () => {
+      params?.onMoveToProject?.(project.id)
+      setMoveMenuPosition(null)
+      setContextMenuPosition(null)
+    },
+  }))
 
   let portalRoot: HTMLElement | null = null
   try {
@@ -264,11 +339,30 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
         style={style}
         onClick={onClick}
         onDoubleClick={onDoubleClick}
+        onContextMenu={onContextMenu}
         closeAriaLabel="Close terminal"
         onClose={onClose}
         leading={emoji ? <span className="terminal-tab-emoji">{emoji}</span> : null}
         afterTitle={macroTrigger}
       />
+      {contextMenuPosition ? (
+        <ContextMenu
+          x={contextMenuPosition.left}
+          y={contextMenuPosition.top}
+          items={contextMenuItems}
+          onClose={() => setContextMenuPosition(null)}
+          portalContainer={portalRoot ?? undefined}
+        />
+      ) : null}
+      {moveMenuPosition ? (
+        <ContextMenu
+          x={moveMenuPosition.left}
+          y={moveMenuPosition.top}
+          items={moveMenuItems}
+          onClose={() => setMoveMenuPosition(null)}
+          portalContainer={portalRoot ?? undefined}
+        />
+      ) : null}
       {isMacroMenuOpen && portalRoot && popoverPosition
         ? createPortal(
             <div

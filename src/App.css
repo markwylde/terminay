@@ -2281,6 +2281,17 @@
   color: #ffffff;
 }
 
+.context-menu__item:disabled {
+  color: #7f8794;
+  cursor: default;
+  opacity: 0.7;
+}
+
+.context-menu__item:disabled:hover {
+  background: transparent;
+  color: #7f8794;
+}
+
 .context-menu__item--danger {
   color: #ff8585;
 }
