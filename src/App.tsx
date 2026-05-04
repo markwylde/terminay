@@ -3419,6 +3419,10 @@ const ProjectWorkspace = forwardRef<
 	]);
 
 	useEffect(() => {
+		if (!isActive) {
+			return;
+		}
+
 		const cleanupByWindow = new Map<Window, () => void>();
 		const apiDisposables: Array<{ dispose: () => void }> = [];
 
@@ -3779,7 +3783,7 @@ const ProjectWorkspace = forwardRef<
 			}
 			cleanupByWindow.clear();
 		};
-	}, [addTerminal, openTerminalEditWindow, popoutUrl]);
+	}, [addTerminal, isActive, openTerminalEditWindow, popoutUrl]);
 
 	useEffect(() => {
 		if (!isActive) {
