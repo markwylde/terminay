@@ -11,6 +11,7 @@ type DockTabChromeProps = {
   style?: CSSProperties
   onClose: (event: MouseEvent<HTMLButtonElement>) => void
   onClick?: (event: MouseEvent<HTMLDivElement>) => void
+  onContextMenu?: (event: MouseEvent<HTMLDivElement>) => void
   onDoubleClick?: (event: MouseEvent<HTMLDivElement>) => void
   leading?: ReactNode
   beforeTitle?: ReactNode
@@ -28,6 +29,7 @@ export function DockTabChrome({
   style,
   onClose,
   onClick,
+  onContextMenu,
   onDoubleClick,
   leading,
   beforeTitle,
@@ -44,6 +46,7 @@ export function DockTabChrome({
       title={titleAttribute ?? resolvedTitle}
       style={style}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       onDoubleClick={onDoubleClick}
     >
       {leading}
