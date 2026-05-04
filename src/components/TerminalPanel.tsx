@@ -213,7 +213,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             return
           }
 
-          window.termide.writeTerminal(sessionId, pasted)
+          terminal.paste(pasted)
         })
 
         return false
