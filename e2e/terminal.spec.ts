@@ -15,6 +15,10 @@ async function getActiveSessionId(page: Page): Promise<string> {
 
 async function writeToTerminal(page: Page, data: string): Promise<void> {
   const sessionId = await getActiveSessionId(page)
+  await writeToTerminalSession(page, sessionId, data)
+}
+
+async function writeToTerminalSession(page: Page, sessionId: string, data: string): Promise<void> {
   await page.evaluate(({ nextData, nextSessionId }) => {
     window.termide.writeTerminal(nextSessionId, nextData)
   }, { nextData: data, nextSessionId: sessionId })
@@ -239,6 +243,50 @@ test.describe('terminal behavior', () => {
 
     await search.getByLabel('Close search').click()
     await expect(search).toBeHidden()
+  })
+
+  test('terminal activity overview jumps to inactive terminals across projects', async ({ mainWindow }) => {
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
+    const backgroundSessionId = await getActiveSessionId(mainWindow)
+
+    await mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 1' })
+      .click()
+
+    await mainWindow.getByLabel('Add project tab').click()
+    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
+    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(1)
+
+    await mainWindow.waitForTimeout(1_100)
+    await writeToTerminalSession(mainWindow, backgroundSessionId, "printf 'overview-activity-hit\\n'\r")
+
+    const activityButton = mainWindow.getByRole('button', { name: 'Open terminal activity menu' })
+    await expect(activityButton).toBeVisible()
+    await expect(mainWindow.locator('.terminal-activity-pill--recent')).toHaveText('1')
+
+    await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveText('1')
+    await expect(mainWindow.locator('.terminal-activity-pill--recent')).toHaveCount(0)
+
+    await activityButton.click()
+    const activityMenu = mainWindow.getByRole('menu', { name: 'Terminal activity menu' })
+    await expect(activityMenu).toBeVisible()
+
+    const backgroundItem = activityMenu.locator('.terminal-activity-menu__item').filter({
+      hasText: 'Terminal 2',
+    })
+    await expect(backgroundItem).toContainText('Project 1')
+    await expect(backgroundItem.locator('.terminal-activity-menu__state--unviewed')).toBeVisible()
+
+    await backgroundItem.click()
+
+    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 1')
+    await expect(
+      mainWindow.locator('.project-workspace--active .terminal-tab-content--active .terminal-tab-title'),
+    ).toHaveText('Terminal 2')
+    await expect(activityMenu).toHaveCount(0)
+    await expect(activityButton).toHaveCount(0)
   })
 
   test('auto-closes a terminal tab on successful exit when enabled', async ({ mainWindow }) => {
