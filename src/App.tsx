@@ -51,6 +51,10 @@ import {
 	getCommandShortcutLabel,
 } from './keyboardShortcuts';
 import { renderMacroTemplate } from './macroSettings';
+import {
+	TerminalActivityStore,
+	type TerminalActivityEvaluation,
+} from './terminalActivityStore';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
 import type {
 	AppCommand,
@@ -172,7 +176,6 @@ const MAX_FILE_EXPLORER_WIDTH = 520;
 const FILE_EXPLORER_DRAG_THRESHOLD = 6;
 const FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS = 2500;
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
-const TERMINAL_ACTIVITY_RECENT_MS = 1000;
 
 function hueToProjectTabColor(hue: number): string {
 	const normalizedHue = ((hue % 360) + 360) % 360 / 360;
@@ -1361,11 +1364,11 @@ const ProjectWorkspace = forwardRef<
 	const initialTerminalSeededRef = useRef(false);
 	const panelSessionMapRef = useRef<Map<string, string>>(new Map());
 	const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
+	const terminalActivityStoreRef = useRef(new TerminalActivityStore());
 	const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
-	const terminalLastActivityAtRef = useRef<Map<string, number>>(new Map());
-	const terminalLastUserInputAtRef = useRef<Map<string, number>>(new Map());
-	const terminalSuppressActivityUntilRef = useRef<Map<string, number>>(new Map());
-	const terminalUnreadActivityRef = useRef<Set<string>>(new Set());
+	const evaluateTerminalActivityStateRef = useRef<
+		(sessionId: string, now?: number) => void
+	>(() => {});
 	const focusedSessionIdRef = useRef<string | null>(null);
 	const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
 	const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
@@ -1529,27 +1532,43 @@ const ProjectWorkspace = forwardRef<
 		onTerminalActivityOverviewChange(project.id, getActivityOverviewItems());
 	}, [getActivityOverviewItems, onTerminalActivityOverviewChange, project.id]);
 
-	const updateTerminalActivityState = useCallback(
-		(sessionId: string, terminalActivityState: TerminalActivityState) => {
+	const applyTerminalActivityEvaluation = useCallback(
+		(sessionId: string, evaluation: TerminalActivityEvaluation) => {
 			const panel = getPanelForSession(sessionId);
-			if (!panel || panel.params?.terminalActivityState === terminalActivityState) {
+			if (!panel) {
 				return;
 			}
 
-			panel.api.updateParameters({ terminalActivityState });
+			if (panel.params?.terminalActivityState !== evaluation.state) {
+				panel.api.updateParameters({ terminalActivityState: evaluation.state });
+			}
+
+			const existingTimer = terminalActivityTimersRef.current.get(sessionId);
+			if (existingTimer !== undefined) {
+				window.clearTimeout(existingTimer);
+				terminalActivityTimersRef.current.delete(sessionId);
+			}
+
+			const now = Date.now();
+			if (
+				evaluation.nextDeadline !== null &&
+				evaluation.nextDeadline > now
+			) {
+				const nextTimer = window.setTimeout(() => {
+					terminalActivityTimersRef.current.delete(sessionId);
+					evaluateTerminalActivityStateRef.current(sessionId);
+				}, Math.max(0, evaluation.nextDeadline - now));
+
+				terminalActivityTimersRef.current.set(sessionId, nextTimer);
+			}
+
 			window.requestAnimationFrame(publishTerminalActivityOverview);
 		},
 		[getPanelForSession, publishTerminalActivityOverview],
 	);
 
 	const suppressInitialTerminalActivity = useCallback((sessionId: string) => {
-		const now = Date.now();
-		terminalSuppressActivityUntilRef.current.set(
-			sessionId,
-			now + TERMINAL_ACTIVITY_RECENT_MS,
-		);
-		terminalLastUserInputAtRef.current.set(sessionId, now);
-		terminalUnreadActivityRef.current.delete(sessionId);
+		terminalActivityStoreRef.current.recordInitialSuppression(sessionId);
 	}, []);
 
 	const evaluateTerminalActivityState = useCallback(
@@ -1559,57 +1578,14 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-			const lastActivityAt = terminalLastActivityAtRef.current.get(sessionId);
-			const lastUserInputAt = terminalLastUserInputAtRef.current.get(sessionId);
-			const isFocused = focusedSessionIdRef.current === sessionId;
-			const needsAcknowledgement = terminalUnreadActivityRef.current.has(sessionId);
-			const hasRecentActivity =
-				lastActivityAt !== undefined &&
-				now - lastActivityAt < TERMINAL_ACTIVITY_RECENT_MS;
-			const hasRecentUserInput =
-				lastUserInputAt !== undefined &&
-				now - lastUserInputAt < TERMINAL_ACTIVITY_RECENT_MS;
-
-			const nextActivityState: TerminalActivityState =
-				needsAcknowledgement && hasRecentActivity && !hasRecentUserInput
-					? 'recent'
-					: needsAcknowledgement && !hasRecentActivity
-						? 'unviewed'
-						: 'viewed';
-
-			updateTerminalActivityState(sessionId, nextActivityState);
-
-			const existingTimer = terminalActivityTimersRef.current.get(sessionId);
-			if (existingTimer !== undefined) {
-				window.clearTimeout(existingTimer);
-				terminalActivityTimersRef.current.delete(sessionId);
-			}
-
-			const nextDeadlines = [
-				lastActivityAt !== undefined
-					? lastActivityAt + TERMINAL_ACTIVITY_RECENT_MS
-					: null,
-				isFocused && lastUserInputAt !== undefined
-					? lastUserInputAt + TERMINAL_ACTIVITY_RECENT_MS
-					: null,
-			]
-				.filter((deadline): deadline is number => deadline !== null)
-				.filter((deadline) => deadline > now);
-
-			if (nextDeadlines.length === 0) {
-				return;
-			}
-
-			const nextDelay = Math.max(0, Math.min(...nextDeadlines) - now);
-			const nextTimer = window.setTimeout(() => {
-				terminalActivityTimersRef.current.delete(sessionId);
-				evaluateTerminalActivityState(sessionId);
-			}, nextDelay);
-
-			terminalActivityTimersRef.current.set(sessionId, nextTimer);
+			applyTerminalActivityEvaluation(
+				sessionId,
+				terminalActivityStoreRef.current.evaluate(sessionId, now),
+			);
 		},
-		[getPanelForSession, updateTerminalActivityState],
+		[applyTerminalActivityEvaluation, getPanelForSession],
 	);
+	evaluateTerminalActivityStateRef.current = evaluateTerminalActivityState;
 
 	const markTerminalActivityViewed = useCallback(
 		(sessionId: string | null) => {
@@ -1617,10 +1593,12 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-			terminalUnreadActivityRef.current.delete(sessionId);
-			evaluateTerminalActivityState(sessionId);
+			applyTerminalActivityEvaluation(
+				sessionId,
+				terminalActivityStoreRef.current.markViewed(sessionId),
+			);
 		},
-		[evaluateTerminalActivityState],
+		[applyTerminalActivityEvaluation],
 	);
 
 	const focusActiveTerminal = useCallback(() => {
@@ -3521,10 +3499,7 @@ const ProjectWorkspace = forwardRef<
 					window.clearTimeout(activityTimer);
 					terminalActivityTimersRef.current.delete(sessionId);
 				}
-				terminalLastActivityAtRef.current.delete(sessionId);
-				terminalLastUserInputAtRef.current.delete(sessionId);
-				terminalSuppressActivityUntilRef.current.delete(sessionId);
-				terminalUnreadActivityRef.current.delete(sessionId);
+				terminalActivityStoreRef.current.deleteSession(sessionId);
 				clearMacroRunsForSession(sessionId);
 				setFocusedSessionId((current) =>
 					current === sessionId
@@ -3622,34 +3597,15 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			const now = Date.now();
-			terminalLastActivityAtRef.current.set(message.id, now);
-			const suppressActivityUntil =
-				terminalSuppressActivityUntilRef.current.get(message.id);
-			if (suppressActivityUntil !== undefined && now < suppressActivityUntil) {
-				terminalUnreadActivityRef.current.delete(message.id);
-				evaluateTerminalActivityState(message.id, now);
-				return;
-			}
-
-			if (suppressActivityUntil !== undefined) {
-				terminalSuppressActivityUntilRef.current.delete(message.id);
-			}
-
-			const lastUserInputAt = terminalLastUserInputAtRef.current.get(message.id);
-			if (
-				lastUserInputAt !== undefined &&
-				now - lastUserInputAt < TERMINAL_ACTIVITY_RECENT_MS
-			) {
-				terminalUnreadActivityRef.current.delete(message.id);
-				evaluateTerminalActivityState(message.id, now);
-				return;
-			}
-
-			terminalUnreadActivityRef.current.add(message.id);
-
-			evaluateTerminalActivityState(message.id, now);
+			applyTerminalActivityEvaluation(
+				message.id,
+				terminalActivityStoreRef.current.recordTerminalActivity(
+					message.id,
+					now,
+				),
+			);
 		});
-	}, [evaluateTerminalActivityState, getPanelForSession]);
+	}, [applyTerminalActivityEvaluation, getPanelForSession]);
 
 	useEffect(() => {
 		const onTerminalUserInput = (event: Event) => {
@@ -3659,16 +3615,17 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-			terminalLastUserInputAtRef.current.set(sessionId, Date.now());
-			terminalUnreadActivityRef.current.delete(sessionId);
-			evaluateTerminalActivityState(sessionId);
+			applyTerminalActivityEvaluation(
+				sessionId,
+				terminalActivityStoreRef.current.recordUserInput(sessionId),
+			);
 		};
 
 		window.addEventListener('termide-terminal-user-input', onTerminalUserInput);
 		return () => {
 			window.removeEventListener('termide-terminal-user-input', onTerminalUserInput);
 		};
-	}, [evaluateTerminalActivityState, getPanelForSession]);
+	}, [applyTerminalActivityEvaluation, getPanelForSession]);
 
 	useEffect(() => {
 		return () => {
@@ -3677,10 +3634,7 @@ const ProjectWorkspace = forwardRef<
 				window.clearTimeout(timer);
 			}
 			terminalActivityTimersRef.current.clear();
-			terminalLastActivityAtRef.current.clear();
-			terminalLastUserInputAtRef.current.clear();
-			terminalSuppressActivityUntilRef.current.clear();
-			terminalUnreadActivityRef.current.clear();
+			terminalActivityStoreRef.current.clear();
 		};
 	}, [onTerminalActivityOverviewChange, project.id]);
 

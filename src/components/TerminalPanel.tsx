@@ -142,6 +142,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     terminal.loadAddon(unicode11Addon)
 
     const isMac = navigator.platform.toLowerCase().includes('mac')
+    const announceTerminalUserInput = () => {
+      window.dispatchEvent(
+        new CustomEvent('termide-terminal-user-input', {
+          detail: { sessionId },
+        }),
+      )
+    }
 
     const linkHandler = (event: MouseEvent, uri: string) => {
       const modifierKey = isMac ? event.metaKey : event.ctrlKey
@@ -213,6 +220,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             return
           }
 
+          announceTerminalUserInput()
           terminal.paste(pasted)
         })
 
@@ -252,6 +260,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
         // Send the newline through bracketed paste so shells keep it in the
         // current command buffer instead of accepting the line.
+        announceTerminalUserInput()
         window.termide.writeTerminal(sessionId, BRACKETED_PASTE_NEWLINE)
         return false
       }
@@ -307,12 +316,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       fitAndResize()
     })
 
+    const keyDisposer = terminal.onKey(() => {
+      announceTerminalUserInput()
+    })
+
     const dataDisposer = terminal.onData((data) => {
-      window.dispatchEvent(
-        new CustomEvent('termide-terminal-user-input', {
-          detail: { sessionId },
-        }),
-      )
       window.termide.writeTerminal(sessionId, data)
     })
 
@@ -438,7 +446,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     root.addEventListener('dragenter', handleDragEnter, dragListenerOptions)
     root.addEventListener('dragover', handleDragOver, dragListenerOptions)
     root.addEventListener('drop', handleDrop, dragListenerOptions)
+    root.addEventListener('paste', announceTerminalUserInput)
     root.addEventListener('pointerdown', announceTerminalFocus)
+    root.addEventListener('pointerdown', announceTerminalUserInput)
     window.addEventListener('termide-focus-terminal', focusTerminal)
     window.addEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
     window.addEventListener(COPY_TERMINAL_EVENT, copyTerminal)
@@ -455,7 +465,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       root.removeEventListener('dragenter', handleDragEnter, dragListenerOptions)
       root.removeEventListener('dragover', handleDragOver, dragListenerOptions)
       root.removeEventListener('drop', handleDrop, dragListenerOptions)
+      root.removeEventListener('paste', announceTerminalUserInput)
       root.removeEventListener('pointerdown', announceTerminalFocus)
+      root.removeEventListener('pointerdown', announceTerminalUserInput)
       window.removeEventListener('termide-focus-terminal', focusTerminal)
       window.removeEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
       window.removeEventListener(COPY_TERMINAL_EVENT, copyTerminal)
@@ -465,6 +477,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         window.cancelAnimationFrame(activeFocusFrame)
       }
       resizeDisposer.dispose()
+      keyDisposer.dispose()
       dataDisposer.dispose()
       terminalExitDisposer()
       terminalDataDisposer()
