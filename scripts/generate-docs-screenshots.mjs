@@ -489,7 +489,7 @@ async function main() {
     await mkdir(outputDir, { recursive: true })
 
     electronApp = await electron.launch({
-      args: ['.'],
+      args: ['.', '--force-device-scale-factor=2', '--high-dpi-support=1'],
       env: {
         ...process.env,
         CI: '1',
