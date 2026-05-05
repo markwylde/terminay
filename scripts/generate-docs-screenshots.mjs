@@ -255,13 +255,67 @@ async function openFileExplorer(page) {
   await waitForVisible(sidebar)
 }
 
+function escapeShellSingleQuoted(value) {
+  return value.replace(/'/g, "'\\''")
+}
+
+function terminalDemoCommand(body) {
+  const screen = `\\033[2J\\033[3J\\033[H${body.trimEnd()}\\n`.replace(/\n/g, '\\n')
+  return `export PS1='termide $ '; printf '%b' '${escapeShellSingleQuoted(screen)}'\r`
+}
+
 async function writeToTerminalPanels(page, workspaceDir) {
-  const escapedWorkspaceDir = workspaceDir.replace(/'/g, "'\\''")
   const commands = [
-    `cd '${escapedWorkspaceDir}' && cat README.md\r`,
-    `cd '${escapedWorkspaceDir}' && ls -la\r`,
-    `cd '${escapedWorkspaceDir}' && printf '\\033[36mplain bash\\033[0m\\n$ pwd\\n${workspaceDir}\\n$ echo ready\\nready\\n'\r`,
-    `cd '${escapedWorkspaceDir}' && printf '\\033[35mopencode\\033[0m\\nworkspace: termide\\nstatus: ready for a coding session\\n'\r`,
+    terminalDemoCommand(`
+\\033[36mTermide workspace\\033[0m
+
+$ cat README.md
+# Termide
+
+A focused terminal workspace for project work.
+
+- Command bar
+- Colorful tabs
+- Remote access
+
+$ git status --short
+ M docs/src/pages/docs/workspace.astro
+ M src/App.tsx
+`),
+    terminalDemoCommand(`
+\\033[32mplain bash\\033[0m
+
+$ pwd
+~/Projects/termide
+
+$ echo ready
+ready
+
+$ npm run docs:build
+[ok] screenshots captured
+[ok] docs built
+`),
+    terminalDemoCommand(`
+$ ls -la
+total 16
+drwxr-xr-x  docs
+drwxr-xr-x  src
+-rw-r--r--  README.md
+-rw-r--r--  package.json
+
+$ code docs/src/pages/docs/workspace.astro
+`),
+    terminalDemoCommand(`
+\\033[35mopencode\\033[0m
+
+workspace: termide
+status: ready for a coding session
+next: review docs screenshot polish
+
+$ npm run smoke
+[ok] lint
+[ok] build
+`),
   ]
 
   const sessions = await page.locator('.terminal-panel').evaluateAll((panels) =>
