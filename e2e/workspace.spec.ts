@@ -72,6 +72,22 @@ test.describe('workspace shell', () => {
     await expect(mainWindow.locator('.project-tab--active .project-tab-title')).toHaveText('Project 1')
   })
 
+  test('keeps the app open when closing the first project while another project exists', async ({
+    appHarness,
+    mainWindow,
+  }) => {
+    await appHarness.sendAppCommand('new-project')
+    await expect(mainWindow.locator('.project-tab-title')).toHaveText(['Project 1', 'Project 2'])
+
+    await mainWindow.locator('.project-tab').first().click()
+    await expect(mainWindow.locator('.project-tab--active .project-tab-title')).toHaveText('Project 1')
+
+    await appHarness.sendAppCommand('close-active')
+
+    await expect(mainWindow.locator('.project-tab-title')).toHaveText(['Project 2'])
+    await expect(mainWindow.locator('.project-tab--active .project-tab-title')).toHaveText('Project 2')
+  })
+
   test('splits the active terminal vertically', async ({ appHarness, mainWindow }) => {
     await mainWindow.locator('.terminal-panel').first().click()
     await appHarness.sendAppCommand('split-vertical')
