@@ -35,6 +35,12 @@ async function readCssVariableFromStyle(locator: ReturnType<Page['locator']>, va
   return match[1].trim()
 }
 
+async function readComputedStyle(locator: ReturnType<Page['locator']>, propertyName: string): Promise<string> {
+  return locator.evaluate((element, nextPropertyName) => {
+    return window.getComputedStyle(element).getPropertyValue(nextPropertyName)
+  }, propertyName)
+}
+
 test.describe('terminal behavior', () => {
   test('terminal tab context menu closes the selected tab', async ({ mainWindow }) => {
     await sendAppCommand(mainWindow, 'new-terminal')
@@ -287,6 +293,59 @@ test.describe('terminal behavior', () => {
     ).toHaveText('Terminal 2')
     await expect(activityMenu).toHaveCount(0)
     await expect(activityButton).toHaveCount(0)
+  })
+
+  test('terminal activity overview uses the same recent-input suppression as tab underlines', async ({
+    mainWindow,
+  }) => {
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
+
+    const quickTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 2' })
+    const firstTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 1' })
+
+    await quickTab.click()
+    const quickSessionId = await getActiveSessionId(mainWindow)
+    await mainWindow.evaluate((sessionId) => {
+      window.dispatchEvent(
+        new CustomEvent('termide-terminal-user-input', {
+          detail: { sessionId },
+        }),
+      )
+    }, quickSessionId)
+
+    await firstTab.click()
+    await writeToTerminalSession(mainWindow, quickSessionId, "printf 'quick-activity-suppressed\\n'\r")
+
+    await mainWindow.waitForTimeout(250)
+    await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
+
+    await mainWindow.waitForTimeout(1_100)
+    await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
+  })
+
+  test('active terminal tabs show the activity underline when delayed output completes', async ({ mainWindow }) => {
+    const activeTab = mainWindow.locator('.project-workspace--active .terminal-tab-content--active').first()
+
+    await mainWindow.locator('.terminal-panel').first().click()
+    await mainWindow.keyboard.type('sleep 2')
+    await mainWindow.keyboard.press('Enter')
+
+    await expect(activeTab).toHaveAttribute('data-terminal-activity', 'recent')
+    await expect
+      .poll(() => readComputedStyle(activeTab, 'box-shadow'))
+      .toContain('246, 195, 67')
+
+    await expect(activeTab).toHaveAttribute('data-terminal-activity', 'unviewed')
+    await expect
+      .poll(() => readComputedStyle(activeTab, 'box-shadow'))
+      .toContain('79, 209, 122')
   })
 
   test('auto-closes a terminal tab on successful exit when enabled', async ({ mainWindow }) => {
