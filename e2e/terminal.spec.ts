@@ -289,6 +289,41 @@ test.describe('terminal behavior', () => {
     await expect(activityButton).toHaveCount(0)
   })
 
+  test('terminal activity overview uses the same recent-input suppression as tab underlines', async ({
+    mainWindow,
+  }) => {
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
+
+    const quickTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 2' })
+    const firstTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 1' })
+
+    await quickTab.click()
+    const quickSessionId = await getActiveSessionId(mainWindow)
+    await mainWindow.evaluate((sessionId) => {
+      window.dispatchEvent(
+        new CustomEvent('termide-terminal-user-input', {
+          detail: { sessionId },
+        }),
+      )
+    }, quickSessionId)
+
+    await firstTab.click()
+    await writeToTerminalSession(mainWindow, quickSessionId, "printf 'quick-activity-suppressed\\n'\r")
+
+    await mainWindow.waitForTimeout(250)
+    await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
+
+    await mainWindow.waitForTimeout(1_100)
+    await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
+  })
+
   test('auto-closes a terminal tab on successful exit when enabled', async ({ mainWindow }) => {
     await mainWindow.evaluate(async () => {
       const settings = await window.termide.getTerminalSettings()
