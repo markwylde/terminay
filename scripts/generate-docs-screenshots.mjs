@@ -17,6 +17,7 @@ const screenshotPaths = {
   workspace: path.join(outputDir, 'termide-workspace.png'),
 }
 const windowSize = { width: 1000, height: 600 }
+const screenshotDeviceScaleFactor = 2
 
 async function waitForVisible(locator, timeout = 10_000) {
   await locator.waitFor({ state: 'visible', timeout })
@@ -45,6 +46,16 @@ async function enablePageDarkMode(page) {
   })
 }
 
+async function setScreenshotDeviceScaleFactor(page, size = windowSize) {
+  const cdpSession = await page.context().newCDPSession(page)
+  await cdpSession.send('Emulation.setDeviceMetricsOverride', {
+    width: size.width,
+    height: size.height,
+    deviceScaleFactor: screenshotDeviceScaleFactor,
+    mobile: false,
+  })
+}
+
 async function setBrowserWindowSize(electronApp, page, size = windowSize) {
   await electronApp.evaluate(({ BrowserWindow }, options) => {
     const window = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.getTitle() === options.title)
@@ -56,6 +67,7 @@ async function setBrowserWindowSize(electronApp, page, size = windowSize) {
     window.center()
   }, { size, title: await page.title() })
   await page.setViewportSize(size)
+  await setScreenshotDeviceScaleFactor(page, size)
 }
 
 async function installScreenshotWindowControls(page, placement = 'tabbar') {
@@ -374,10 +386,32 @@ async function createHeroTerminalGrid(page, workspaceDir) {
 }
 
 async function capture(page, name) {
+  const viewportSize = page.viewportSize() ?? windowSize
+  const scaledSize = {
+    width: viewportSize.width * screenshotDeviceScaleFactor,
+    height: viewportSize.height * screenshotDeviceScaleFactor,
+  }
+
+  await page.setViewportSize(scaledSize)
   await page.screenshot({
     path: screenshotPaths[name],
     animations: 'disabled',
+    scale: 'css',
+    style: `
+      html,
+      body {
+        width: ${viewportSize.width}px !important;
+        height: ${viewportSize.height}px !important;
+        overflow: hidden !important;
+      }
+
+      body {
+        zoom: ${screenshotDeviceScaleFactor};
+      }
+    `,
   })
+  await page.setViewportSize(viewportSize)
+  await setScreenshotDeviceScaleFactor(page, viewportSize)
   console.log(`Saved ${path.relative(rootDir, screenshotPaths[name])}`)
 }
 
@@ -489,7 +523,7 @@ async function main() {
     await mkdir(outputDir, { recursive: true })
 
     electronApp = await electron.launch({
-      args: ['.', '--force-device-scale-factor=2', '--high-dpi-support=1'],
+      args: ['--force-device-scale-factor=2', '--high-dpi-support=1', '.'],
       env: {
         ...process.env,
         CI: '1',
