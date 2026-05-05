@@ -4760,7 +4760,9 @@ function App() {
 	const [projects, setProjects] = useState<ProjectTab[]>([
 		createProjectTab(1, ''),
 	]);
+	const projectsRef = useRef(projects);
 	const [activeProjectId, setActiveProjectId] = useState('project-1');
+	const activeProjectIdRef = useRef(activeProjectId);
 	const [draggingProjectId, setDraggingProjectId] = useState<string | null>(
 		null,
 	);
@@ -4780,6 +4782,14 @@ function App() {
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
 	const [terminalActivityItemsByProject, setTerminalActivityItemsByProject] =
 		useState<Record<string, TerminalActivityOverviewItem[]>>({});
+
+	useEffect(() => {
+		projectsRef.current = projects;
+	}, [projects]);
+
+	useEffect(() => {
+		activeProjectIdRef.current = activeProjectId;
+	}, [activeProjectId]);
 
 	useEffect(() => {
 		let isMounted = true;
@@ -4824,29 +4834,36 @@ function App() {
 
 	const closeProject = useCallback(
 		(projectId: string) => {
+			const currentProjects = projectsRef.current;
+			const index = currentProjects.findIndex(
+				(project) => project.id === projectId,
+			);
+			if (index === -1) {
+				return;
+			}
+
 			const isLastProject =
-				projects.length === 1 && projects[0]?.id === projectId;
+				currentProjects.length === 1 && currentProjects[0]?.id === projectId;
 			if (isLastProject) {
 				void window.termide.quitApp();
 				return;
 			}
 
-			setProjects((current) => {
-				const index = current.findIndex((project) => project.id === projectId);
-				if (index === -1) {
-					return current;
-				}
+			const nextProjects = currentProjects.filter(
+				(project) => project.id !== projectId,
+			);
+			projectsRef.current = nextProjects;
+			setProjects(nextProjects);
 
-				const next = current.filter((project) => project.id !== projectId);
-				if (activeProjectId === projectId) {
-					const fallbackIndex = Math.max(0, index - 1);
-					setActiveProjectId(next[fallbackIndex]?.id ?? next[0].id);
-				}
-
-				return next;
-			});
+			if (activeProjectIdRef.current === projectId) {
+				const fallbackIndex = Math.max(0, index - 1);
+				const nextActiveProjectId =
+					nextProjects[fallbackIndex]?.id ?? nextProjects[0].id;
+				activeProjectIdRef.current = nextActiveProjectId;
+				setActiveProjectId(nextActiveProjectId);
+			}
 		},
-		[activeProjectId, projects],
+		[],
 	);
 
 	const onReorder = (newOrder: ProjectTab[]) => {
