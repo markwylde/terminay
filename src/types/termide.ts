@@ -202,6 +202,7 @@ export type ProjectEditWindowDraft = {
 export type ProjectEditWindowResult = ProjectEditWindowDraft
 
 export type TerminalEditWindowDraft = {
+  activityIndicatorsEnabled: boolean
   color: string
   emoji: string
   inheritsProjectColor: boolean
