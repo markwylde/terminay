@@ -93,6 +93,37 @@
   flex: 1;
 }
 
+.edit-window-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 16px;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  background: #0f172a;
+}
+
+.edit-window-setting-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.edit-window-setting-copy span {
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.edit-window-setting-copy p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 /* Hue Slider */
 .hue-slider-container {
   display: flex;
