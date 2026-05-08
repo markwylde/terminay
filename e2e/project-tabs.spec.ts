@@ -1,4 +1,4 @@
-import type { Locator } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect, test } from './fixtures'
 import { cancelEditWindow, openProjectEditWindow, submitEditWindow } from './support/ui'
 
@@ -11,6 +11,14 @@ async function readCssVariableFromStyle(locator: Locator, variableName: string):
   }
 
   return match[1].trim()
+}
+
+async function expectTerminalInputFocused(page: Page): Promise<void> {
+  await expect
+    .poll(async () =>
+      page.evaluate(() => document.activeElement?.classList.contains('xterm-helper-textarea') ?? false),
+    )
+    .toBe(true)
 }
 
 test.describe('project tabs', () => {
@@ -36,6 +44,7 @@ test.describe('project tabs', () => {
     await expect(updatedProjectTab).toContainText('Workspace QA')
     await expect(updatedProjectTab.locator('.project-tab-emoji')).toHaveText('W')
     await expect(updatedProjectTab).toHaveAttribute('style', /#57db57/i)
+    await expectTerminalInputFocused(mainWindow)
 
     await initialProjectTab.click()
     await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 1')

@@ -98,6 +98,7 @@ export function EditTabWindow() {
   const [emoji, setEmoji] = useState('')
   const [color, setColor] = useState('#717b85')
   const [inheritsProjectColor, setInheritsProjectColor] = useState(false)
+  const [activityIndicatorsEnabled, setActivityIndicatorsEnabled] = useState(true)
   const [projectColor, setProjectColor] = useState('#717b85')
   const [rootFolder, setRootFolder] = useState('')
   const [isSaving, setIsSaving] = useState(false)
@@ -124,6 +125,7 @@ export function EditTabWindow() {
       if (nextState.kind === 'project') {
         setRootFolder(nextState.draft.rootFolder)
       } else {
+        setActivityIndicatorsEnabled(nextState.draft.activityIndicatorsEnabled)
         setInheritsProjectColor(nextState.draft.inheritsProjectColor)
         setProjectColor(nextState.draft.projectColor)
       }
@@ -176,6 +178,7 @@ export function EditTabWindow() {
       }
 
       const result: TerminalEditWindowResult = {
+        activityIndicatorsEnabled,
         color,
         emoji: takeSingleCharacter(emoji),
         inheritsProjectColor,
@@ -302,6 +305,24 @@ export function EditTabWindow() {
               disabled={isSaving}
             />
           </label>
+        ) : null}
+
+        {state?.kind === 'terminal' ? (
+          <div className="edit-window-setting-row">
+            <div className="edit-window-setting-copy">
+              <span>Enable activity indicators</span>
+              <p>Show this tab in the top activity menu and color its activity underline.</p>
+            </div>
+            <label className="settings-switch" aria-label="Enable activity indicators">
+              <input
+                type="checkbox"
+                checked={activityIndicatorsEnabled}
+                onChange={(event) => setActivityIndicatorsEnabled(event.target.checked)}
+                disabled={isSaving}
+              />
+              <span className="settings-slider"></span>
+            </label>
+          </div>
         ) : null}
 
         <div className="edit-window-preview-section">
