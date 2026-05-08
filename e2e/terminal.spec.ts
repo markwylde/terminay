@@ -41,6 +41,14 @@ async function readComputedStyle(locator: ReturnType<Page['locator']>, propertyN
   }, propertyName)
 }
 
+async function expectTerminalInputFocused(page: Page): Promise<void> {
+  await expect
+    .poll(async () =>
+      page.evaluate(() => document.activeElement?.classList.contains('xterm-helper-textarea') ?? false),
+    )
+    .toBe(true)
+}
+
 test.describe('terminal behavior', () => {
   test('terminal tab context menu closes the selected tab', async ({ mainWindow }) => {
     await sendAppCommand(mainWindow, 'new-terminal')
@@ -54,6 +62,29 @@ test.describe('terminal behavior', () => {
 
     await contextMenuItem(mainWindow, 'Close').click()
     await expect(terminalTabs).toHaveCount(1)
+  })
+
+  test('terminal tab context menu adds an editable note above the terminal', async ({ mainWindow }) => {
+    const terminalTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
+    const terminalPanel = mainWindow.locator('.project-workspace--active .terminal-panel').first()
+    const note = terminalPanel.getByRole('textbox', { name: 'Terminal note' })
+
+    const tabColor = await readCssVariableFromStyle(terminalTab, '--tab-color')
+
+    await terminalTab.click({ button: 'right' })
+    await expect(contextMenuItem(mainWindow, 'Add Note')).toBeVisible()
+    await contextMenuItem(mainWindow, 'Add Note').click()
+
+    await expect(note).toBeVisible()
+    await expect(note).toBeFocused()
+    await expect(readCssVariableFromStyle(terminalPanel, '--terminal-note-color')).resolves.toBe(tabColor)
+
+    await note.fill('Running the long build\nWatch for package warnings')
+    await expect(note).toHaveValue('Running the long build\nWatch for package warnings')
+
+    await terminalTab.click({ button: 'right' })
+    await contextMenuItem(mainWindow, 'Remove Note').click()
+    await expect(note).toHaveCount(0)
   })
 
   test('terminal tab context menu opens settings and moves a tab to another project', async ({
@@ -128,6 +159,7 @@ test.describe('terminal behavior', () => {
     await expect(updatedTab.locator('.terminal-tab-title')).toHaveText('Build Shell')
     await expect(updatedTab.locator('.terminal-tab-emoji')).toHaveText('B')
     await expect(updatedTab).toHaveAttribute('data-has-color', 'true')
+    await expectTerminalInputFocused(mainWindow)
   })
 
   test('terminal edit window focuses the title and saves it with Enter', async ({ mainWindow }) => {
@@ -160,6 +192,7 @@ test.describe('terminal behavior', () => {
     await expect(mainWindow.locator('.terminal-tab-content').first().locator('.terminal-tab-title')).toHaveText(
       'Keyboard Shell',
     )
+    await expectTerminalInputFocused(mainWindow)
   })
 
   test('terminal edit window keeps the icon input to one character and cancel leaves the tab unchanged', async ({ mainWindow }) => {
@@ -327,6 +360,37 @@ test.describe('terminal behavior', () => {
 
     await mainWindow.waitForTimeout(1_100)
     await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
+  })
+
+  test('terminal tab settings can disable activity indicators for one tab', async ({ appHarness, mainWindow }) => {
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
+
+    const quietTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 2' })
+    const firstTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 1' })
+
+    await quietTab.click()
+    const quietSessionId = await getActiveSessionId(mainWindow)
+
+    const settingsWindow = await appHarness.openChildWindow(async () => {
+      await quietTab.click({ button: 'right' })
+      await contextMenuItem(mainWindow, 'Open Settings').click()
+    })
+    const activitySwitch = settingsWindow.getByLabel('Enable activity indicators')
+    await expect(activitySwitch).toBeChecked()
+    await activitySwitch.uncheck()
+    await submitEditWindow(settingsWindow)
+
+    await firstTab.click()
+    await mainWindow.waitForTimeout(1_100)
+    await writeToTerminalSession(mainWindow, quietSessionId, "printf 'quiet-activity-hidden\\n'\r")
+
+    await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed')
     await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
   })
 

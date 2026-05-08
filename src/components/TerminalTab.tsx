@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  FileEdit,
   FolderSync,
   LoaderCircle,
   Settings,
@@ -40,6 +41,7 @@ export type TerminalTabMoveProject = {
 
 export type TerminalPanelParams = {
   sessionId: string
+  activityIndicatorsEnabled?: boolean
   terminalActivityState?: TerminalActivityState
   color?: string
   emoji?: string
@@ -50,8 +52,10 @@ export type TerminalPanelParams = {
   onClearMacroRun?: (runId: string) => void
   macroRuns?: TerminalTabMacroRun[]
   onMoveToProject?: (projectId: string) => void
+  onUpdateNote?: (note: string | undefined) => void
   projectsForMove?: TerminalTabMoveProject[]
   projectColor?: string
+  terminalNote?: string
 }
 
 const DEFAULT_TERMINAL_TAB_COLOR = '#0a0a0a'
@@ -61,6 +65,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
   const params = props.params
   const { color, emoji, macroRuns = [], onCancelMacroRun, onClearFinishedMacroRuns, onClearMacroRun } = params || {}
   const terminalActivityState = params?.terminalActivityState ?? 'viewed'
+  const displayedActivityState = params?.activityIndicatorsEnabled === false ? 'viewed' : terminalActivityState
   const isFocused = params?.isFocused === true
   const hasCustomColor = typeof color === 'string' && color !== DEFAULT_TERMINAL_TAB_COLOR
   const [isMacroMenuOpen, setIsMacroMenuOpen] = useState(false)
@@ -206,6 +211,28 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
     setContextMenuPosition({ left: event.clientX, top: event.clientY })
   }
 
+  const dispatchFocusNoteEvent = () => {
+    const sessionId = params?.sessionId
+    if (!sessionId) {
+      return
+    }
+
+    let ownerWindow: Window
+    try {
+      ownerWindow = props.api.getWindow()
+    } catch {
+      ownerWindow = window
+    }
+
+    ownerWindow.requestAnimationFrame(() => {
+      ownerWindow.dispatchEvent(
+        new CustomEvent('termide-focus-terminal-note', {
+          detail: { sessionId },
+        }),
+      )
+    })
+  }
+
   const onToggleMacroMenu = (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
@@ -232,6 +259,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
   }, [macroRuns])
 
   const moveProjects = params?.projectsForMove ?? []
+  const hasTerminalNote = typeof params?.terminalNote === 'string'
   const contextMenuItems: ContextMenuItem[] = [
     {
       label: 'Close',
@@ -244,6 +272,19 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
       icon: <Settings size={14} />,
       onClick: () => {
         dispatchEditTerminalEvent(contextMenuTargetRef.current ?? document.body)
+      },
+    },
+    {
+      label: hasTerminalNote ? 'Remove Note' : 'Add Note',
+      icon: <FileEdit size={14} />,
+      onClick: () => {
+        if (hasTerminalNote) {
+          params?.onUpdateNote?.(undefined)
+          return
+        }
+
+        params?.onUpdateNote?.('')
+        dispatchFocusNoteEvent()
       },
     },
     {
@@ -334,7 +375,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
         panelId={props.api.id}
         isActive={isFocused}
         hasCustomColor={hasCustomColor}
-        activityState={terminalActivityState}
+        activityState={displayedActivityState}
         titleAttribute="Double-click to edit tab"
         style={style}
         onClick={onClick}

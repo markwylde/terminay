@@ -96,10 +96,12 @@ type MacroLauncherGroupedItem = {
 };
 
 type DockPanelTabAppearance = {
+	activityIndicatorsEnabled?: boolean;
 	color?: string;
 	emoji?: string;
 	inheritsProjectColor?: boolean;
 	projectColor?: string;
+	terminalNote?: string;
 };
 
 type ProjectTab = {
@@ -113,12 +115,14 @@ type ProjectTab = {
 };
 
 type MovedTerminalTab = {
+	activityIndicatorsEnabled?: boolean;
 	color?: string;
 	emoji?: string;
 	inheritsProjectColor?: boolean;
 	macroRuns?: TerminalTabMacroRun[];
 	sessionId: string;
 	terminalActivityState?: TerminalActivityState;
+	terminalNote?: string;
 	title: string;
 };
 
@@ -144,6 +148,7 @@ type ProjectWorkspaceHandle = {
 	activateTerminal: (panelId: string, sessionId: string) => void;
 	executeCommand: (command: AppCommand) => void;
 	exportTerminalForMove: (panelId: string) => MovedTerminalTab | null;
+	focusActiveTerminal: () => void;
 };
 
 type ProjectWorkspaceProps = {
@@ -254,6 +259,12 @@ function getEffectiveTerminalTabColor(
 	}
 
 	return params?.color ?? fallbackProjectColor;
+}
+
+function areTerminalActivityIndicatorsEnabled(
+	params: DockPanelTabAppearance | undefined,
+): boolean {
+	return params?.activityIndicatorsEnabled !== false;
 }
 
 function createProjectTab(
@@ -1506,6 +1517,7 @@ const ProjectWorkspace = forwardRef<
 					const state = panel.params?.terminalActivityState;
 					if (
 						!sessionId ||
+						!areTerminalActivityIndicatorsEnabled(panel.params) ||
 						(state !== 'recent' && state !== 'unviewed')
 					) {
 						continue;
@@ -1602,8 +1614,37 @@ const ProjectWorkspace = forwardRef<
 	);
 
 	const focusActiveTerminal = useCallback(() => {
-		const sessionId = getActiveSessionId();
-		dockviewApiRef.current?.activePanel?.api.setActive();
+		const api = dockviewApiRef.current;
+		let terminalPanel =
+			api?.activePanel?.params?.sessionId ? api.activePanel : null;
+
+		if (!terminalPanel && focusedSessionIdRef.current) {
+			terminalPanel = getPanelForSession(focusedSessionIdRef.current);
+		}
+
+		if (!terminalPanel && api) {
+			for (const group of api.groups) {
+				if (group.activePanel?.params?.sessionId) {
+					terminalPanel = group.activePanel;
+					break;
+				}
+
+				const panel = group.panels.find(
+					(candidate) => candidate.params?.sessionId,
+				);
+				if (panel) {
+					terminalPanel = panel;
+					break;
+				}
+			}
+		}
+
+		const sessionId = terminalPanel?.params?.sessionId ?? null;
+		if (!terminalPanel || !sessionId) {
+			return;
+		}
+
+		terminalPanel.api.setActive();
 		focusedSessionIdRef.current = sessionId;
 		setFocusedSessionId(sessionId);
 		markTerminalActivityViewed(sessionId);
@@ -1614,7 +1655,7 @@ const ProjectWorkspace = forwardRef<
 				}),
 			);
 		});
-	}, [getActiveSessionId, markTerminalActivityViewed]);
+	}, [getPanelForSession, markTerminalActivityViewed]);
 
 	const activateTerminal = useCallback(
 		(panelId: string, sessionId: string) => {
@@ -2163,6 +2204,7 @@ const ProjectWorkspace = forwardRef<
 					component: 'terminal',
 					tabComponent: 'terminalTab',
 					params: {
+						activityIndicatorsEnabled: true,
 						color: project.color,
 						inheritsProjectColor: true,
 						isFocused: false,
@@ -2174,6 +2216,10 @@ const ProjectWorkspace = forwardRef<
 						onCancelMacroRun: cancelMacroRun,
 						onMoveToProject: (targetProjectId: string) =>
 							onMoveTerminalToProject(project.id, panelId, targetProjectId),
+						onUpdateNote: (terminalNote: string | undefined) =>
+							dockviewApiRef.current
+								?.getPanel(panelId)
+								?.api.updateParameters({ terminalNote }),
 						projectColor: project.color,
 						projectsForMove: getProjectsForTerminalMove(),
 						sessionId,
@@ -2781,48 +2827,66 @@ const ProjectWorkspace = forwardRef<
 			return;
 		}
 
-		const result = await window.termide.openTerminalEditWindow({
-			color: getEffectiveTerminalTabColor(panel.params, project.color),
-			emoji: panel.params?.emoji ?? '',
-			inheritsProjectColor:
-				panel.params?.inheritsProjectColor ?? panel.params?.color === project.color,
-			projectColor: project.color,
-			title: panel.title ?? 'Tab',
-		});
-		if (!result) {
-			return;
-		}
+		const sessionId = panel.params?.sessionId ?? null;
 
-		const nextTitle =
-			result.title.trim().length > 0
-				? result.title.trim()
-				: (panel.title ?? 'Tab');
-		const nextEmoji = result.emoji.trim();
-		const nextColor = result.color;
+		try {
+			const result = await window.termide.openTerminalEditWindow({
+				activityIndicatorsEnabled: areTerminalActivityIndicatorsEnabled(
+					panel.params,
+				),
+				color: getEffectiveTerminalTabColor(panel.params, project.color),
+				emoji: panel.params?.emoji ?? '',
+				inheritsProjectColor:
+					panel.params?.inheritsProjectColor ?? panel.params?.color === project.color,
+				projectColor: project.color,
+				title: panel.title ?? 'Tab',
+			});
+			if (!result) {
+				return;
+			}
 
-		panel.api.setTitle(nextTitle);
-		panel.api.updateParameters({
-			emoji: nextEmoji,
-			color: nextColor,
-			inheritsProjectColor: result.inheritsProjectColor,
-			projectColor: project.color,
-		});
+			const nextTitle =
+				result.title.trim().length > 0
+					? result.title.trim()
+					: (panel.title ?? 'Tab');
+			const nextEmoji = result.emoji.trim();
+			const nextColor = result.color;
 
-		const sessionId = panel.params?.sessionId;
-		if (sessionId) {
-			window.termide.updateTerminalRemoteMetadata(sessionId, {
-				color: nextColor,
+			panel.api.setTitle(nextTitle);
+			panel.api.updateParameters({
+				activityIndicatorsEnabled: result.activityIndicatorsEnabled,
 				emoji: nextEmoji,
+				color: nextColor,
 				inheritsProjectColor: result.inheritsProjectColor,
-				title: nextTitle,
-				projectId: project.id,
-				projectTitle: project.title,
-				projectEmoji: project.emoji,
 				projectColor: project.color,
 			});
+
+			if (sessionId) {
+				window.termide.updateTerminalRemoteMetadata(sessionId, {
+					color: nextColor,
+					emoji: nextEmoji,
+					inheritsProjectColor: result.inheritsProjectColor,
+					title: nextTitle,
+					projectId: project.id,
+					projectTitle: project.title,
+					projectEmoji: project.emoji,
+					projectColor: project.color,
+				});
+			}
+			window.requestAnimationFrame(publishTerminalActivityOverview);
+		} finally {
+			window.requestAnimationFrame(() => {
+				if (sessionId) {
+					activateTerminal(panelId, sessionId);
+					return;
+				}
+
+				focusActiveTerminal();
+			});
 		}
-		window.requestAnimationFrame(publishTerminalActivityOverview);
 	}, [
+		activateTerminal,
+		focusActiveTerminal,
 		project.color,
 		project.id,
 		project.title,
@@ -2923,6 +2987,7 @@ const ProjectWorkspace = forwardRef<
 					component: 'terminal',
 					tabComponent: 'terminalTab',
 					params: {
+						activityIndicatorsEnabled: true,
 						color: project.color,
 						inheritsProjectColor: true,
 						isFocused: false,
@@ -2934,6 +2999,10 @@ const ProjectWorkspace = forwardRef<
 						onCancelMacroRun: cancelMacroRun,
 						onMoveToProject: (targetProjectId: string) =>
 							onMoveTerminalToProject(project.id, panelId, targetProjectId),
+						onUpdateNote: (terminalNote: string | undefined) =>
+							dockviewApiRef.current
+								?.getPanel(panelId)
+								?.api.updateParameters({ terminalNote }),
 						projectColor: project.color,
 						projectsForMove: getProjectsForTerminalMove(),
 						sessionId,
@@ -2999,11 +3068,13 @@ const ProjectWorkspace = forwardRef<
 
 			const movedTerminal: MovedTerminalTab = {
 				color: panel.params?.color,
+				activityIndicatorsEnabled: panel.params?.activityIndicatorsEnabled,
 				emoji: panel.params?.emoji,
 				inheritsProjectColor: panel.params?.inheritsProjectColor,
 				macroRuns: runningMacroRunsBySession[sessionId] ?? [],
 				sessionId,
 				terminalActivityState: panel.params?.terminalActivityState,
+				terminalNote: panel.params?.terminalNote,
 				title: panel.title ?? 'Terminal',
 			};
 
@@ -3040,6 +3111,8 @@ const ProjectWorkspace = forwardRef<
 				component: 'terminal',
 				tabComponent: 'terminalTab',
 				params: {
+					activityIndicatorsEnabled:
+						movedTerminal.activityIndicatorsEnabled !== false,
 					color: nextColor,
 					emoji: movedTerminal.emoji ?? '',
 					inheritsProjectColor,
@@ -3052,10 +3125,15 @@ const ProjectWorkspace = forwardRef<
 					onCancelMacroRun: cancelMacroRun,
 					onMoveToProject: (targetProjectId: string) =>
 						onMoveTerminalToProject(project.id, panelId, targetProjectId),
+					onUpdateNote: (terminalNote: string | undefined) =>
+						dockviewApiRef.current
+							?.getPanel(panelId)
+							?.api.updateParameters({ terminalNote }),
 					projectColor: project.color,
 					projectsForMove: getProjectsForTerminalMove(),
 					sessionId: movedTerminal.sessionId,
 					terminalActivityState: movedTerminal.terminalActivityState ?? 'viewed',
+					terminalNote: movedTerminal.terminalNote,
 				},
 			});
 
@@ -3427,12 +3505,14 @@ const ProjectWorkspace = forwardRef<
 				executeAppCommand(command);
 			},
 			exportTerminalForMove,
+			focusActiveTerminal,
 		}),
 		[
 			acceptMovedTerminal,
 			activateTerminal,
 			executeAppCommand,
 			exportTerminalForMove,
+			focusActiveTerminal,
 		],
 	);
 
@@ -4830,34 +4910,40 @@ function App() {
 			return;
 		}
 
-		const result = await window.termide.openProjectEditWindow({
-			color: project.color,
-			emoji: project.emoji,
-			rootFolder: project.rootFolder,
-			title: project.title,
-		});
-		if (!result) {
-			return;
+		try {
+			const result = await window.termide.openProjectEditWindow({
+				color: project.color,
+				emoji: project.emoji,
+				rootFolder: project.rootFolder,
+				title: project.title,
+			});
+			if (!result) {
+				return;
+			}
+
+			const nextTitle =
+				result.title.trim().length > 0 ? result.title.trim() : 'Untitled Project';
+			const nextEmoji = result.emoji.trim();
+			const nextRootFolder = normalizeRootFolderInput(result.rootFolder, homePath);
+
+			setProjects((current) =>
+				current.map((candidate) =>
+					candidate.id === projectId
+						? {
+								...candidate,
+								title: nextTitle,
+								emoji: nextEmoji,
+								color: result.color,
+								rootFolder: nextRootFolder,
+							}
+						: candidate,
+				),
+			);
+		} finally {
+			window.requestAnimationFrame(() => {
+				workspaceRefs.current.get(projectId)?.focusActiveTerminal();
+			});
 		}
-
-		const nextTitle =
-			result.title.trim().length > 0 ? result.title.trim() : 'Untitled Project';
-		const nextEmoji = result.emoji.trim();
-		const nextRootFolder = normalizeRootFolderInput(result.rootFolder, homePath);
-
-		setProjects((current) =>
-			current.map((candidate) =>
-				candidate.id === projectId
-					? {
-							...candidate,
-							title: nextTitle,
-							emoji: nextEmoji,
-							color: result.color,
-							rootFolder: nextRootFolder,
-						}
-					: candidate,
-			),
-		);
 	}, [homePath, projects]);
 
 	const updateProject = useCallback(
