@@ -2344,17 +2344,66 @@
   position: relative;
   width: 100%;
   height: 100%;
+  display: flex;
+  flex-direction: column;
   background: var(--terminal-panel-surface, #111316);
 }
 
-.terminal-panel-root,
+.terminal-panel-root {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 2px;
+  height: auto;
+}
+
+.terminal-panel--has-note .terminal-panel-root {
+  margin-top: 0;
+}
+
 .terminal-panel .xterm {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  bottom: 2px;
-  left: 2px;
+  inset: 0;
   height: auto;
+}
+
+.terminal-note-shell {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  margin-top: -1px;
+  padding: 2px 14px 3px;
+  background: color-mix(in srgb, var(--terminal-note-color) 42%, var(--terminal-panel-surface, #111316));
+}
+
+.terminal-note-editor {
+  box-sizing: border-box;
+  display: block;
+  min-height: 0;
+  max-height: min(38vh, 260px);
+  overflow-y: auto;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  color: #f4f7fb;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  font-size: 13px;
+  line-height: 1.35;
+  resize: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.terminal-note-editor:focus {
+  outline: none;
+}
+
+.terminal-note-editor::placeholder {
+  color: rgba(244, 247, 251, 0.52);
 }
 
 .terminal-panel .xterm .xterm-viewport,

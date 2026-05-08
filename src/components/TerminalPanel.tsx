@@ -78,6 +78,7 @@ function shouldInterceptTerminalDrop(dataTransfer: DataTransfer): boolean {
 
 export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const noteRef = useRef<HTMLTextAreaElement | null>(null)
   const xtermRootRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -90,6 +91,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     index: 0,
     count: 0,
   })
+  const hasTerminalNote = typeof props.params.terminalNote === 'string'
 
   tabColorRef.current = props.params.color
 
@@ -376,6 +378,21 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       copySelectionToClipboard()
     }
 
+    const focusTerminalNote = (event: Event) => {
+      const customEvent = event as CustomEvent<{ sessionId?: string }>
+      if (customEvent.detail?.sessionId !== sessionId) {
+        return
+      }
+
+      const note = noteRef.current
+      if (!note) {
+        return
+      }
+
+      note.focus()
+      note.setSelectionRange(note.value.length, note.value.length)
+    }
+
     const handleExplorerPathDrop = (event: Event) => {
       const customEvent = event as CustomEvent<{ path?: string; sessionId?: string }>
       if (customEvent.detail?.sessionId !== sessionId || !customEvent.detail.path) {
@@ -450,6 +467,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     root.addEventListener('pointerdown', announceTerminalFocus)
     root.addEventListener('pointerdown', announceTerminalUserInput)
     window.addEventListener('termide-focus-terminal', focusTerminal)
+    window.addEventListener('termide-focus-terminal-note', focusTerminalNote)
     window.addEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
     window.addEventListener(COPY_TERMINAL_EVENT, copyTerminal)
     window.addEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
@@ -469,6 +487,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       root.removeEventListener('pointerdown', announceTerminalFocus)
       root.removeEventListener('pointerdown', announceTerminalUserInput)
       window.removeEventListener('termide-focus-terminal', focusTerminal)
+      window.removeEventListener('termide-focus-terminal-note', focusTerminalNote)
       window.removeEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
       window.removeEventListener(COPY_TERMINAL_EVENT, copyTerminal)
       window.removeEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
@@ -487,6 +506,30 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminal.dispose()
     }
   }, [announceTerminalFocus, props.api, props.params.sessionId, settings])
+
+  useEffect(() => {
+    const note = noteRef.current
+    if (!note) {
+      return
+    }
+
+    const nextText = props.params.terminalNote ?? ''
+    if (note.value !== nextText && note.ownerDocument.activeElement !== note) {
+      note.value = nextText
+    }
+    note.style.height = '0px'
+    note.style.height = `${note.scrollHeight}px`
+  }, [props.params.terminalNote])
+
+  const resizeNote = () => {
+    const note = noteRef.current
+    if (!note) {
+      return
+    }
+
+    note.style.height = '0px'
+    note.style.height = `${note.scrollHeight}px`
+  }
 
   useEffect(() => {
     if (!terminalRef.current) {
@@ -554,15 +597,41 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
   const terminalPanelStyle = {
     '--terminal-panel-surface': settings.theme.background,
+    '--terminal-note-color': props.params.color || settings.theme.cursor,
   } as CSSProperties
 
   return (
     <div
-      className="terminal-panel"
+      className={`terminal-panel${hasTerminalNote ? ' terminal-panel--has-note' : ''}`}
       data-termide-terminal-session-id={props.params.sessionId}
       ref={containerRef}
       style={terminalPanelStyle}
     >
+      {hasTerminalNote ? (
+        <div className="terminal-note-shell">
+          <textarea
+            ref={noteRef}
+            className="terminal-note-editor"
+            aria-label="Terminal note"
+            placeholder="Add a note for this terminal..."
+            rows={1}
+            value={props.params.terminalNote ?? ''}
+            onChange={(event) => {
+              props.params.onUpdateNote?.(event.currentTarget.value)
+            }}
+            onInput={() => {
+              resizeNote()
+            }}
+            onPaste={() => {
+              window.requestAnimationFrame(resizeNote)
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              event.stopPropagation()
+            }}
+          />
+        </div>
+      ) : null}
       {isSearchOpen ? (
         <search className="terminal-search" aria-label="Search terminal output">
           <input
