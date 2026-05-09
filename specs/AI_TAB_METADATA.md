@@ -246,7 +246,7 @@ E2E tests should cover Settings UI visibility and Command bar behavior with mock
 - [x] Implement Codex title generation behind the provider service.
 - [x] Implement Codex note generation behind the provider service.
 - [x] Implement Claude Code model discovery behind the provider service.
-- [x] Load Claude Code models from OpenRouter's model catalog when available.
+- [x] Provide a small built-in Claude Code model list because the CLI does not expose model discovery.
 - [x] Implement Claude Code title generation behind the provider service.
 - [x] Implement Claude Code note generation behind the provider service.
 - [x] Normalize provider failures into user-readable errors.
