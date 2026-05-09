@@ -33,6 +33,12 @@ export type TerminalTabMacroRun = {
 
 export type TerminalActivityState = 'viewed' | 'recent' | 'unviewed'
 
+export type TerminalContextSnapshot = {
+  recentOutput: string
+}
+
+export type TerminalContextReader = () => TerminalContextSnapshot
+
 export type TerminalTabMoveProject = {
   emoji: string
   id: string
@@ -52,10 +58,12 @@ export type TerminalPanelParams = {
   onClearMacroRun?: (runId: string) => void
   macroRuns?: TerminalTabMacroRun[]
   onMoveToProject?: (projectId: string) => void
+  registerTerminalContextReader?: (sessionId: string, reader: TerminalContextReader) => () => void
   onUpdateNote?: (note: string | undefined) => void
   projectsForMove?: TerminalTabMoveProject[]
   projectColor?: string
   terminalNote?: string
+  titleUpdateNonce?: number
 }
 
 const DEFAULT_TERMINAL_TAB_COLOR = '#0a0a0a'

@@ -23,6 +23,7 @@ import type { RemoteAccessStatus } from '../types/termide'
 import '../settings.css'
 
 type CategoryId = (typeof terminalSettingsCategories)[number]['id']
+type AiModelOption = { id: string; label: string }
 
 function getValueAtPath(settings: TerminalSettings, key: string): boolean | number | string {
   const segments = key.split('.')
@@ -41,22 +42,34 @@ function getValueAtPath(settings: TerminalSettings, key: string): boolean | numb
 
 function setValueAtPath(settings: TerminalSettings, key: string, value: boolean | number | string): TerminalSettings {
   const segments = key.split('.')
-  if (segments.length === 1) {
-    return { ...settings, [segments[0]]: value } as TerminalSettings
-  }
+  const allowedRoots = new Set(['aiTabMetadata', 'keyboardShortcuts', 'remoteAccess', 'shell', 'theme'])
+  const [root] = segments
 
-  const [root, leaf] = segments
-  if ((root !== 'theme' && root !== 'shell' && root !== 'remoteAccess' && root !== 'keyboardShortcuts') || !leaf) {
+  if (!root || (segments.length > 1 && !allowedRoots.has(root))) {
     return settings
   }
 
-  return {
-    ...settings,
-    [root]: {
-      ...(settings[root] as Record<string, boolean | number | string>),
-      [leaf]: value,
-    },
+  const setNestedValue = (current: unknown, remainingSegments: string[]): unknown => {
+    const [segment, ...rest] = remainingSegments
+    if (!segment) {
+      return value
+    }
+
+    if (rest.length === 0) {
+      return {
+        ...(typeof current === 'object' && current !== null ? current : {}),
+        [segment]: value,
+      }
+    }
+
+    const currentObject = typeof current === 'object' && current !== null ? (current as Record<string, unknown>) : {}
+    return {
+      ...currentObject,
+      [segment]: setNestedValue(currentObject[segment], rest),
+    }
   }
+
+  return setNestedValue(settings, segments) as TerminalSettings
 }
 
 function TerminalPreview({ settings }: { settings: TerminalSettings }) {
@@ -129,6 +142,7 @@ function renderCategoryIcon(title: string, children: ReactNode) {
 function getCategoryIcon(id: CategoryId) {
   switch (id) {
     case 'remote': return renderCategoryIcon('Remote Access', <><path d="M5 12a7 7 0 0 1 14 0"/><path d="M8.5 12a3.5 3.5 0 0 1 7 0"/><circle cx="12" cy="16" r="1.4"/><path d="M12 17.5v2.5"/></>)
+    case 'ai': return renderCategoryIcon('AI', <><path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7z"/><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9z"/><path d="M5 14l.7 1.6L7 16l-1.3.4L5 18l-.7-1.6L3 16l1.3-.4z"/></>)
     case 'shell': return renderCategoryIcon('Shell', <><path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 7l3-3h10l3 3"/><path d="m9 12 2 2-2 2"/><line x1="13.5" y1="16" x2="16.5" y2="16"/></>)
     case 'appearance': return renderCategoryIcon('Appearance', <><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></>)
     case 'cursor': return renderCategoryIcon('Cursor', <path d="m4 4 7.07 17 2.51-7.39L21 11.07z"/>)
@@ -148,6 +162,7 @@ export function SettingsWindow() {
     terminalSettingsSections.find((section) => section.id === initialSectionFromUrl)?.categoryId ?? 'appearance'
   const { settings: persistedSettings, isLoading } = useTerminalSettings()
   const [draft, setDraft] = useState<TerminalSettings>(defaultTerminalSettings)
+  const draftRef = useRef<TerminalSettings>(defaultTerminalSettings)
   const [activeCategoryId, setActiveCategoryId] = useState<CategoryId>(initialCategoryFromUrl)
   const [activeSectionId, setActiveSectionId] = useState<string>(
     () =>
@@ -165,6 +180,9 @@ export function SettingsWindow() {
   const [isLinkCopied, setIsLinkCopied] = useState(false)
   const [isUpdatingRemoteDevices, setIsUpdatingRemoteDevices] = useState(false)
   const [listeningShortcutKey, setListeningShortcutKey] = useState<string | null>(null)
+  const [codexModels, setCodexModels] = useState<AiModelOption[]>([])
+  const [isLoadingCodexModels, setIsLoadingCodexModels] = useState(false)
+  const [codexModelsError, setCodexModelsError] = useState<string | null>(null)
 
   const handleResizePointerDown = (e: React.PointerEvent) => {
     e.preventDefault()
@@ -189,7 +207,12 @@ export function SettingsWindow() {
 
   useEffect(() => {
     setDraft(persistedSettings)
+    draftRef.current = persistedSettings
   }, [persistedSettings])
+
+  useEffect(() => {
+    draftRef.current = draft
+  }, [draft])
 
   useEffect(() => {
     let isMounted = true
@@ -335,32 +358,30 @@ export function SettingsWindow() {
     }
   }, [displayedCategories, filteredSections])
 
-  const updateField = async (field: SettingsFieldDefinition, rawValue: boolean | number | string) => {
-    const nextDraft = setValueAtPath(draft, field.key, rawValue)
+  const saveDraft = useCallback(async (nextDraft: TerminalSettings) => {
+    draftRef.current = nextDraft
     setDraft(nextDraft)
     setIsSaving(true)
 
     try {
       const saved = await window.termide.updateTerminalSettings(nextDraft)
+      draftRef.current = saved
       setDraft(saved)
     } finally {
       setIsSaving(false)
     }
+  }, [])
+
+  const updateField = async (field: SettingsFieldDefinition, rawValue: boolean | number | string) => {
+    const nextDraft = setValueAtPath(draftRef.current, field.key, rawValue)
+    await saveDraft(nextDraft)
   }
 
   const updateShortcut = useCallback(async (key: string, value: string) => {
     const normalizedValue = value.trim().length === 0 ? '' : normalizeAccelerator(value)
-    const nextDraft = setValueAtPath(draft, key, normalizedValue)
-    setDraft(nextDraft)
-    setIsSaving(true)
-
-    try {
-      const saved = await window.termide.updateTerminalSettings(nextDraft)
-      setDraft(saved)
-    } finally {
-      setIsSaving(false)
-    }
-  }, [draft])
+    const nextDraft = setValueAtPath(draftRef.current, key, normalizedValue)
+    await saveDraft(nextDraft)
+  }, [saveDraft])
 
   const resetShortcut = (field: SettingsFieldDefinition) => {
     const command = field.key.replace('keyboardShortcuts.', '') as AppCommand
@@ -369,15 +390,17 @@ export function SettingsWindow() {
 
   const resetAllShortcuts = async () => {
     const nextDraft: TerminalSettings = {
-      ...draft,
+      ...draftRef.current,
       keyboardShortcuts: defaultKeyboardShortcuts,
     }
+    draftRef.current = nextDraft
     setDraft(nextDraft)
     setListeningShortcutKey(null)
     setIsSaving(true)
 
     try {
       const saved = await window.termide.updateTerminalSettings(nextDraft)
+      draftRef.current = saved
       setDraft(saved)
     } finally {
       setIsSaving(false)
@@ -389,6 +412,7 @@ export function SettingsWindow() {
     setIsSaving(true)
     try {
       const saved = await window.termide.resetTerminalSettings()
+      draftRef.current = saved
       setDraft(saved)
       setQuery('')
     } finally {
@@ -396,12 +420,108 @@ export function SettingsWindow() {
     }
   }
 
+  useEffect(() => {
+    const shouldLoadCodexModels =
+      draft.aiTabMetadata.title.provider === 'codex' || draft.aiTabMetadata.note.provider === 'codex'
+
+    if (!shouldLoadCodexModels || codexModels.length > 0) {
+      return
+    }
+
+    let isCurrent = true
+    setIsLoadingCodexModels(true)
+    setCodexModelsError(null)
+
+    void window.termide.listAiTabMetadataModels('codex')
+      .then((models) => {
+        if (!isCurrent) {
+          return
+        }
+
+        setCodexModels(models)
+      })
+      .catch((error) => {
+        if (!isCurrent) {
+          return
+        }
+
+        setCodexModelsError(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => {
+        if (isCurrent) {
+          setIsLoadingCodexModels(false)
+        }
+      })
+
+    return () => {
+      isCurrent = false
+    }
+  }, [
+    codexModels.length,
+    draft.aiTabMetadata.note.provider,
+    draft.aiTabMetadata.title.provider,
+  ])
+
+  useEffect(() => {
+    const firstModel = codexModels[0]?.id
+    if (!firstModel) {
+      return
+    }
+
+    const current = draftRef.current
+    let nextDraft = current
+
+    if (current.aiTabMetadata.title.provider === 'codex' && current.aiTabMetadata.title.codexModel.length === 0) {
+      nextDraft = setValueAtPath(nextDraft, 'aiTabMetadata.title.codexModel', firstModel)
+    }
+
+    if (current.aiTabMetadata.note.provider === 'codex' && current.aiTabMetadata.note.codexModel.length === 0) {
+      nextDraft = setValueAtPath(nextDraft, 'aiTabMetadata.note.codexModel', firstModel)
+    }
+
+    if (nextDraft !== current) {
+      void saveDraft(nextDraft)
+    }
+  }, [codexModels, saveDraft])
+
 
   const scrollToSection = (id: string) => {
     const el = document.getElementById(`section-${id}`)
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
+  }
+
+  const isFieldVisible = (field: SettingsFieldDefinition) => {
+    if (!field.visibleWhen) {
+      return true
+    }
+
+    return getValueAtPath(draft, field.visibleWhen.key) === field.visibleWhen.value
+  }
+
+  const renderCodexModelControl = (field: SettingsFieldDefinition, value: boolean | number | string) => {
+    if (isLoadingCodexModels) {
+      return <span className="settings-row-description">Loading Codex models...</span>
+    }
+
+    if (codexModelsError) {
+      return <span className="settings-shortcut-warning">{codexModelsError}</span>
+    }
+
+    if (codexModels.length === 0) {
+      return <span className="settings-shortcut-warning">No Codex models are available.</span>
+    }
+
+    return (
+      <select className="settings-select" value={String(value)} onChange={(e) => void updateField(field, e.target.value)}>
+        {codexModels.map((model) => (
+          <option key={model.id} value={model.id}>
+            {model.label}
+          </option>
+        ))}
+      </select>
+    )
   }
 
   const renderFieldControl = (field: SettingsFieldDefinition) => {
@@ -470,6 +590,10 @@ export function SettingsWindow() {
           </div>
         </div>
       )
+    }
+
+    if (field.key === 'aiTabMetadata.title.codexModel' || field.key === 'aiTabMetadata.note.codexModel') {
+      return renderCodexModelControl(field, value)
     }
 
     switch (field.input) {
@@ -837,7 +961,7 @@ export function SettingsWindow() {
                       ) : null}
                     </div>
                     <div className="settings-group">
-                      {section.fields.map((field) => (
+                      {section.fields.filter(isFieldVisible).map((field) => (
                         <div key={field.key} className="settings-row">
                           <div className="settings-row-info">
                             <span className="settings-row-label">{field.label}</span>
