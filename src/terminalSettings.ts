@@ -63,10 +63,12 @@ export const defaultTerminalSettings: TerminalSettings = {
   aiTabMetadata: {
     title: {
       provider: 'disabled',
+      claudeCodeModel: '',
       codexModel: '',
     },
     note: {
       provider: 'disabled',
+      claudeCodeModel: '',
       codexModel: '',
     },
   },
@@ -165,8 +167,9 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         options: [
           { label: 'Disable', value: 'disabled' },
           { label: 'Codex', value: 'codex' },
+          { label: 'Claude Code', value: 'claudeCode' },
         ],
-        keywords: ['ai', 'codex', 'title', 'tab title', 'metadata', 'model'],
+        keywords: ['ai', 'codex', 'claude', 'claude code', 'title', 'tab title', 'metadata', 'model'],
       }),
       makeField({
         key: 'aiTabMetadata.title.codexModel',
@@ -179,6 +182,16 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         keywords: ['ai', 'codex', 'title', 'model'],
       }),
       makeField({
+        key: 'aiTabMetadata.title.claudeCodeModel',
+        label: 'Title model',
+        description: 'Claude Code model used for generated terminal tab titles.',
+        sectionId: 'ai-tab-metadata',
+        categoryId: 'ai',
+        input: 'select',
+        visibleWhen: { key: 'aiTabMetadata.title.provider', value: 'claudeCode' },
+        keywords: ['ai', 'claude', 'claude code', 'title', 'model'],
+      }),
+      makeField({
         key: 'aiTabMetadata.note.provider',
         label: 'Set note with AI',
         description: 'Provider used when the Command bar action generates a terminal note.',
@@ -188,8 +201,9 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         options: [
           { label: 'Disable', value: 'disabled' },
           { label: 'Codex', value: 'codex' },
+          { label: 'Claude Code', value: 'claudeCode' },
         ],
-        keywords: ['ai', 'codex', 'note', 'terminal note', 'metadata', 'model'],
+        keywords: ['ai', 'codex', 'claude', 'claude code', 'note', 'terminal note', 'metadata', 'model'],
       }),
       makeField({
         key: 'aiTabMetadata.note.codexModel',
@@ -200,6 +214,16 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         input: 'select',
         visibleWhen: { key: 'aiTabMetadata.note.provider', value: 'codex' },
         keywords: ['ai', 'codex', 'note', 'model'],
+      }),
+      makeField({
+        key: 'aiTabMetadata.note.claudeCodeModel',
+        label: 'Note model',
+        description: 'Claude Code model used for generated terminal notes.',
+        sectionId: 'ai-tab-metadata',
+        categoryId: 'ai',
+        input: 'select',
+        visibleWhen: { key: 'aiTabMetadata.note.provider', value: 'claudeCode' },
+        keywords: ['ai', 'claude', 'claude code', 'note', 'model'],
       }),
     ],
   },
@@ -820,14 +844,28 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
   return {
     aiTabMetadata: {
       title: {
-        provider: aiTitleInput.provider === 'codex' ? 'codex' : defaultTerminalSettings.aiTabMetadata.title.provider,
+        provider:
+          aiTitleInput.provider === 'codex' || aiTitleInput.provider === 'claudeCode'
+            ? aiTitleInput.provider
+            : defaultTerminalSettings.aiTabMetadata.title.provider,
+        claudeCodeModel:
+          typeof aiTitleInput.claudeCodeModel === 'string'
+            ? aiTitleInput.claudeCodeModel.trim()
+            : defaultTerminalSettings.aiTabMetadata.title.claudeCodeModel,
         codexModel:
           typeof aiTitleInput.codexModel === 'string'
             ? aiTitleInput.codexModel.trim()
             : defaultTerminalSettings.aiTabMetadata.title.codexModel,
       },
       note: {
-        provider: aiNoteInput.provider === 'codex' ? 'codex' : defaultTerminalSettings.aiTabMetadata.note.provider,
+        provider:
+          aiNoteInput.provider === 'codex' || aiNoteInput.provider === 'claudeCode'
+            ? aiNoteInput.provider
+            : defaultTerminalSettings.aiTabMetadata.note.provider,
+        claudeCodeModel:
+          typeof aiNoteInput.claudeCodeModel === 'string'
+            ? aiNoteInput.claudeCodeModel.trim()
+            : defaultTerminalSettings.aiTabMetadata.note.claudeCodeModel,
         codexModel:
           typeof aiNoteInput.codexModel === 'string'
             ? aiNoteInput.codexModel.trim()

@@ -1,8 +1,11 @@
 import { expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 import { normalizeTerminalSettings } from '../src/terminalSettings'
+import type { AiTabMetadataProvider } from '../src/types/termide'
 
 const isRealCodexRun = process.env.TERMIDE_TEST_USE_REAL_CODEX === '1'
+const isRealClaudeCodeRun = process.env.TERMIDE_TEST_USE_REAL_CLAUDE_CODE === '1'
+const isRealProviderRun = isRealCodexRun || isRealClaudeCodeRun
 
 function aiMetadataRows(page: Page) {
   return page.locator('#section-ai-tab-metadata .settings-row')
@@ -31,40 +34,42 @@ async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
   )
 }
 
-async function firstCodexModel(page: Page): Promise<string> {
-  return page.evaluate(async () => {
-    const models = await window.termide.listAiTabMetadataModels('codex')
+async function firstAiProviderModel(page: Page, provider: AiTabMetadataProvider): Promise<string> {
+  return page.evaluate(async (nextProvider) => {
+    const models = await window.termide.listAiTabMetadataModels(nextProvider)
     const model = models[0]?.id
     if (!model) {
-      throw new Error('No Codex model is available for AI tab metadata tests.')
+      throw new Error(`No ${nextProvider} model is available for AI tab metadata tests.`)
     }
 
     return model
-  })
+  }, provider)
 }
 
-async function configureAiTabMetadata(page: Page, model = 'codex-test-model') {
-  await page.evaluate(async (codexModel) => {
+async function configureAiTabMetadata(page: Page, provider: 'claudeCode' | 'codex' = 'codex', model = 'codex-test-model') {
+  await page.evaluate(async ({ nextModel, nextProvider }) => {
     const settings = await window.termide.getTerminalSettings()
     await window.termide.updateTerminalSettings({
       ...settings,
       aiTabMetadata: {
         title: {
-          provider: 'codex',
-          codexModel,
+          claudeCodeModel: nextProvider === 'claudeCode' ? nextModel : settings.aiTabMetadata.title.claudeCodeModel,
+          provider: nextProvider,
+          codexModel: nextProvider === 'codex' ? nextModel : settings.aiTabMetadata.title.codexModel,
         },
         note: {
-          provider: 'codex',
-          codexModel,
+          claudeCodeModel: nextProvider === 'claudeCode' ? nextModel : settings.aiTabMetadata.note.claudeCodeModel,
+          provider: nextProvider,
+          codexModel: nextProvider === 'codex' ? nextModel : settings.aiTabMetadata.note.codexModel,
         },
       },
     })
-  }, model)
+  }, { nextModel: model, nextProvider: provider })
   await page.waitForTimeout(100)
 }
 
 async function setAiMock(page: Page, options?: { error?: string | null }) {
-  if (isRealCodexRun) {
+  if (isRealProviderRun) {
     return
   }
 
@@ -78,6 +83,7 @@ async function setAiMock(page: Page, options?: { error?: string | null }) {
       models: [
         { id: 'codex-test-model', label: 'Codex Test Model' },
         { id: 'codex-alt-model', label: 'Codex Alt Model' },
+        { id: 'claude-test-model', label: 'Claude Test Model' },
       ],
       noteResult: 'Reviewing package warnings from the latest build.',
       titleResult: 'Build Warnings',
@@ -96,24 +102,28 @@ async function runCommandBarItem(page: Page, title: string) {
 }
 
 test.describe('AI tab metadata settings', () => {
-  test.skip(isRealCodexRun, 'Mocked settings coverage is skipped during the focused real Codex run.')
+  test.skip(isRealProviderRun, 'Mocked settings coverage is skipped during focused real provider runs.')
 
   test('normalizes defaults and invalid AI tab metadata settings', () => {
     expect(normalizeTerminalSettings({}).aiTabMetadata).toEqual({
-      title: { provider: 'disabled', codexModel: '' },
-      note: { provider: 'disabled', codexModel: '' },
+      title: { provider: 'disabled', claudeCodeModel: '', codexModel: '' },
+      note: { provider: 'disabled', claudeCodeModel: '', codexModel: '' },
     })
 
     expect(
       normalizeTerminalSettings({
         aiTabMetadata: {
           title: { provider: 'nonsense', codexModel: '  keep-title-model  ' },
-          note: { provider: 'codex', codexModel: '  keep-note-model  ' },
+          note: {
+            provider: 'claudeCode',
+            claudeCodeModel: '  keep-claude-model  ',
+            codexModel: '  keep-note-model  ',
+          },
         },
       }).aiTabMetadata,
     ).toEqual({
-      title: { provider: 'disabled', codexModel: 'keep-title-model' },
-      note: { provider: 'codex', codexModel: 'keep-note-model' },
+      title: { provider: 'disabled', claudeCodeModel: '', codexModel: 'keep-title-model' },
+      note: { provider: 'claudeCode', claudeCodeModel: 'keep-claude-model', codexModel: 'keep-note-model' },
     })
   })
 
@@ -129,6 +139,10 @@ test.describe('AI tab metadata settings', () => {
     await aiMetadataSelect(settingsWindow, 'Set title with AI').selectOption('codex')
     await expect(aiMetadataRows(settingsWindow).filter({ hasText: 'Title model' })).toBeVisible()
     await expect(aiMetadataSelect(settingsWindow, 'Title model')).toHaveValue('codex-test-model')
+
+    await aiMetadataSelect(settingsWindow, 'Set note with AI').selectOption('claudeCode')
+    await expect(aiMetadataRows(settingsWindow).filter({ hasText: 'Note model' })).toBeVisible()
+    await expect(aiMetadataSelect(settingsWindow, 'Note model')).toHaveValue('codex-test-model')
   })
 
   test('keeps provider selected when model loading fails', async ({ appHarness, mainWindow }) => {
@@ -151,7 +165,7 @@ test.describe('AI tab metadata settings', () => {
 })
 
 test.describe('AI tab metadata command bar actions', () => {
-  test.skip(isRealCodexRun, 'Mocked command coverage is skipped during the focused real Codex run.')
+  test.skip(isRealProviderRun, 'Mocked command coverage is skipped during focused real provider runs.')
 
   test('generates a terminal title and note from the Command bar', async ({ appHarness, mainWindow }) => {
     await setAiMock(mainWindow)
@@ -174,7 +188,7 @@ test.describe('AI tab metadata command bar actions', () => {
 
     await appHarness.openMacroLauncher(mainWindow)
     await runCommandBarItem(mainWindow, 'Set tab title with AI')
-    await expect(mainWindow.locator('.error-banner')).toContainText('Enable Codex')
+    await expect(mainWindow.locator('.error-banner')).toContainText('Enable an AI provider')
     await expect(title).toHaveText('Terminal 1')
 
     await configureAiTabMetadata(mainWindow)
@@ -190,8 +204,26 @@ test.describe('AI tab metadata real Codex integration', () => {
   test.skip(!isRealCodexRun, 'Real Codex integration is opt-in for CI and local provider smoke tests.')
 
   test('generates a terminal title and note with Codex @real-codex', async ({ appHarness, mainWindow }) => {
-    const model = await firstCodexModel(mainWindow)
-    await configureAiTabMetadata(mainWindow, model)
+    const model = await firstAiProviderModel(mainWindow, 'codex')
+    await configureAiTabMetadata(mainWindow, 'codex', model)
+    await runRealProviderGenerationAssertions(appHarness, mainWindow)
+  })
+})
+
+test.describe('AI tab metadata real Claude Code integration', () => {
+  test.skip(!isRealClaudeCodeRun, 'Real Claude Code integration is opt-in for CI and local provider smoke tests.')
+
+  test('generates a terminal title and note with Claude Code @real-claude-code', async ({ appHarness, mainWindow }) => {
+    const model = await firstAiProviderModel(mainWindow, 'claudeCode')
+    await configureAiTabMetadata(mainWindow, 'claudeCode', model)
+    await runRealProviderGenerationAssertions(appHarness, mainWindow)
+  })
+})
+
+async function runRealProviderGenerationAssertions(
+  appHarness: { openMacroLauncher: (page?: Page, options?: { attempts?: number }) => Promise<void> },
+  mainWindow: Page,
+) {
     await writeToActiveTerminal(
       mainWindow,
       "printf 'build completed successfully\\nunit tests passed\\ncoverage report generated\\n'\r",
@@ -215,5 +247,4 @@ test.describe('AI tab metadata real Codex integration', () => {
       .poll(async () => ((await note.inputValue()) ?? '').trim(), { timeout: 120_000 })
       .toMatch(/\S/)
     expect(((await note.inputValue()) ?? '').trim().length).toBeLessThanOrEqual(1200)
-  })
-})
+}
