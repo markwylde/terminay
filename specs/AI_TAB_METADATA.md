@@ -9,10 +9,10 @@ Termide should let the user generate terminal tab metadata from the Command bar.
 
 Both actions are controlled by Settings. Each action has a provider select box that starts disabled by default:
 
-- Set title with AI: `Disable`, `Codex`
-- Set note with AI: `Disable`, `Codex`
+- Set title with AI: `Disable`, `Codex`, `Claude Code`
+- Set note with AI: `Disable`, `Codex`, `Claude Code`
 
-When the user chooses `Codex`, Settings should ask Codex for the available models and then show a second model dropdown for that action. The settings shape should leave room for providers beyond Codex later.
+When the user chooses `Codex` or `Claude Code`, Settings should ask the provider service for available models and then show a second model dropdown for that action.
 
 ## What We Are Trying To Do
 
@@ -29,7 +29,7 @@ This feature should feel like a natural extension of Termide's existing workflow
 - Terminal notes already exist on terminal panels.
 - Settings already owns command-related preferences and persists them through Electron IPC.
 
-The implementation should not hard-code the product around Codex as the only possible provider. Codex is the first provider, but the settings and service interfaces should use provider concepts so future options can be added without reshaping the UI and persistence model.
+The implementation should not hard-code the product around one provider. Codex and Claude Code are provider implementations behind the same settings and service interfaces so future options can be added without reshaping the UI and persistence model.
 
 ## Current Codebase Shape
 
@@ -74,25 +74,30 @@ Renderer-to-main APIs are exposed through `electron/preload.ts` as `window.termi
 - The initial provider options are:
   - `disabled`
   - `codex`
+  - `claudeCode`
 - `disabled` is the default for both title and note.
 - When either provider is `codex`, show a model select box for that action:
   - `aiTabMetadata.title.codexModel`
   - `aiTabMetadata.note.codexModel`
-- The model dropdown should be populated from Codex's available model list.
+- When either provider is `claudeCode`, show a model select box for that action:
+  - `aiTabMetadata.title.claudeCodeModel`
+  - `aiTabMetadata.note.claudeCodeModel`
+- The model dropdown should be populated from the selected provider's available model list.
 - If model loading fails, keep the provider selected but show an actionable error near the model dropdown.
 - If no model has been selected yet, choose a sensible first available model only after the list loads successfully.
 
 ### Provider Shape
 
-The settings and runtime code should treat Codex as one provider implementation behind a provider interface.
+The settings and runtime code should treat Codex and Claude Code as provider implementations behind a provider interface.
 
 Suggested settings shape:
 
 ```ts
-type AiTabMetadataProvider = 'disabled' | 'codex'
+type AiTabMetadataProvider = 'disabled' | 'codex' | 'claudeCode'
 
 type AiTabMetadataTargetSettings = {
   provider: AiTabMetadataProvider
+  claudeCodeModel: string
   codexModel: string
 }
 
@@ -104,18 +109,18 @@ type AiTabMetadataSettings = {
 
 This shape intentionally keeps title and note configuration separate. A user might want fast or cheap title generation and a more capable note model later.
 
-### Codex Model Discovery
+### Model Discovery
 
 - Electron main should expose an IPC API for listing models for a provider.
-- The renderer should call that API from Settings when a Codex provider is selected.
+- The renderer should call that API from Settings when a Codex or Claude Code provider is selected.
 - Model discovery should be cached for the lifetime of the app process, with a refresh path available later.
 - The API should return normalized display data, not raw CLI output.
-- The UI should not assume Codex is the only provider even though it is the only initial provider.
+- The UI should not assume a single provider.
 
 Suggested renderer API:
 
 ```ts
-listAiTabMetadataModels(provider: 'codex'): Promise<Array<{ id: string; label: string }>>
+listAiTabMetadataModels(provider: 'codex' | 'claudeCode'): Promise<Array<{ id: string; label: string }>>
 ```
 
 ### Generation Behavior
@@ -218,6 +223,7 @@ E2E tests should cover Settings UI visibility and Command bar behavior with mock
 - [x] Add `AiTabMetadataProvider`, `AiTabMetadataTargetSettings`, and `AiTabMetadataSettings` types.
 - [x] Add `aiTabMetadata` to `TerminalSettings`.
 - [x] Add disabled defaults for title and note provider settings.
+- [x] Add Claude Code provider and model settings alongside Codex.
 - [x] Normalize missing, invalid, or legacy `aiTabMetadata` values in `normalizeTerminalSettings(...)`.
 - [x] Update the settings path setter so nested keys like `aiTabMetadata.title.provider` can be saved.
 
@@ -225,9 +231,11 @@ E2E tests should cover Settings UI visibility and Command bar behavior with mock
 
 - [x] Add provider select boxes for title and note generation.
 - [x] Add conditional Codex model select boxes for title and note generation.
+- [x] Add conditional Claude Code model select boxes for title and note generation.
 - [x] Load Codex models when either Codex provider is selected.
+- [x] Load Claude Code models when either Claude Code provider is selected.
 - [x] Show loading and error states for model dropdowns.
-- [x] Keep Settings searchable by AI, Codex, title, note, and model keywords.
+- [x] Keep Settings searchable by AI, Codex, Claude, title, note, and model keywords.
 
 ### IPC And Provider Service
 
@@ -237,6 +245,9 @@ E2E tests should cover Settings UI visibility and Command bar behavior with mock
 - [x] Implement Codex model discovery behind the provider service.
 - [x] Implement Codex title generation behind the provider service.
 - [x] Implement Codex note generation behind the provider service.
+- [x] Implement Claude Code model discovery behind the provider service.
+- [x] Implement Claude Code title generation behind the provider service.
+- [x] Implement Claude Code note generation behind the provider service.
 - [x] Normalize provider failures into user-readable errors.
 - [x] Cache model discovery results for the app process lifetime.
 
@@ -266,4 +277,8 @@ E2E tests should cover Settings UI visibility and Command bar behavior with mock
 - [x] Allow CI to provide a fixed Codex model for model discovery.
 - [x] Add a focused `test:e2e:ai-real` script for the real-provider smoke test.
 - [x] Add an opt-in real Codex e2e smoke test for title and note generation.
+- [x] Install Claude Code in CI when `OPENROUTER_API_KEY` is available.
+- [x] Configure Claude Code through OpenRouter environment variables.
+- [x] Add a focused `test:e2e:ai-real-claude` script for the real-provider smoke test.
+- [x] Add an opt-in real Claude Code e2e smoke test using `~anthropic/claude-haiku-latest`.
 - [x] Keep the default e2e suite mocked so forks and local runs do not require network credentials.
