@@ -44,7 +44,20 @@ export type RemoteAccessSettings = {
   tlsKeyPath: string
 }
 
+export type AiTabMetadataProvider = 'disabled' | 'codex'
+
+export type AiTabMetadataTargetSettings = {
+  provider: AiTabMetadataProvider
+  codexModel: string
+}
+
+export type AiTabMetadataSettings = {
+  title: AiTabMetadataTargetSettings
+  note: AiTabMetadataTargetSettings
+}
+
 export type TerminalSettings = {
+  aiTabMetadata: AiTabMetadataSettings
   allowTransparency: boolean
   altClickMovesCursor: boolean
   autoCloseTerminalOnExitZero: boolean
