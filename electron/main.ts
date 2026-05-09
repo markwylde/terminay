@@ -9,11 +9,14 @@ import { promisify } from 'node:util'
 import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
 import { findCommandForKeyboardEvent, getCommandShortcut } from '../src/keyboardShortcuts'
+import { registerAiTabMetadataIpcHandlers } from './aiTabMetadata/ipc'
+import { AiTabMetadataService } from './aiTabMetadata/service'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
 import type {
   AppCommand,
   AppUpdateStatus,
+  AiTabMetadataModel,
   EditWindowResult,
   EditWindowState,
   FileExplorerEntry,
@@ -138,6 +141,7 @@ const pendingEditWindows = new Map<
 const fileBufferService = new FileBufferService(() => app.getPath('home'))
 const fileWatchService = new FileWatchService(fileBufferService)
 const gitDiffService = new GitDiffService(fileBufferService)
+const aiTabMetadataService = new AiTabMetadataService(app.getPath('home'))
 let cachedAppUpdateStatus: AppUpdateStatus | null = null
 let appUpdateFetchPromise: Promise<AppUpdateStatus> | null = null
 const remoteAccessService = new RemoteAccessService({
@@ -1912,6 +1916,21 @@ if (process.env.TERMIDE_TEST === '1') {
   ipcMain.handle('test:send-app-command', (event, command: AppCommand) => {
     event.sender.send('app:command', command)
   })
+
+  ipcMain.handle(
+    'test:set-ai-tab-metadata-mock',
+    (
+      _event,
+      mock: {
+        error?: string | null
+        models?: AiTabMetadataModel[]
+        noteResult?: string
+        titleResult?: string
+      },
+    ) => {
+      aiTabMetadataService.setTestMock(mock)
+    },
+  )
 }
 
 ipcMain.handle('secrets:get', () => {
@@ -1979,6 +1998,11 @@ registerFileViewerIpcHandlers({
   fileBufferService,
   fileWatchService,
   gitDiffService,
+  ipcMain,
+})
+
+registerAiTabMetadataIpcHandlers({
+  aiTabMetadataService,
   ipcMain,
 })
 

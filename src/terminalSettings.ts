@@ -5,6 +5,7 @@ import type { TerminalSettings } from './types/settings'
 type SettingsInputKind = 'boolean' | 'number' | 'text' | 'select' | 'color'
 
 type SettingsCategoryId =
+  | 'ai'
   | 'remote'
   | 'shell'
   | 'appearance'
@@ -28,6 +29,7 @@ export type SettingsFieldDefinition = {
   options?: Array<{ label: string; value: string }>
   placeholder?: string
   keywords?: string[]
+  visibleWhen?: { key: string; value: boolean | number | string }
 }
 
 export type SettingsSectionDefinition = {
@@ -45,6 +47,7 @@ export type SettingsCategoryDefinition = {
 }
 
 export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
+  { id: 'ai', label: 'AI', description: 'AI providers and models for tab titles and notes.' },
   { id: 'remote', label: 'Remote Access', description: 'Remote host, local binding, and optional custom TLS files.' },
   { id: 'shell', label: 'Shell', description: 'Shell program, startup mode, and launch arguments.' },
   { id: 'appearance', label: 'Appearance', description: 'Typography, rendering, and visual density.' },
@@ -57,6 +60,16 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
 ]
 
 export const defaultTerminalSettings: TerminalSettings = {
+  aiTabMetadata: {
+    title: {
+      provider: 'disabled',
+      codexModel: '',
+    },
+    note: {
+      provider: 'disabled',
+      codexModel: '',
+    },
+  },
   allowTransparency: false,
   altClickMovesCursor: true,
   autoCloseTerminalOnExitZero: false,
@@ -136,6 +149,60 @@ function makeField(definition: Omit<SettingsFieldDefinition, 'keywords'> & { key
 }
 
 export const terminalSettingsSections: SettingsSectionDefinition[] = [
+  {
+    id: 'ai-tab-metadata',
+    categoryId: 'ai',
+    title: 'Tab Metadata',
+    description: 'Choose whether AI can generate terminal tab titles and notes from recent terminal context.',
+    fields: [
+      makeField({
+        key: 'aiTabMetadata.title.provider',
+        label: 'Set title with AI',
+        description: 'Provider used when the Command bar action generates a terminal tab title.',
+        sectionId: 'ai-tab-metadata',
+        categoryId: 'ai',
+        input: 'select',
+        options: [
+          { label: 'Disable', value: 'disabled' },
+          { label: 'Codex', value: 'codex' },
+        ],
+        keywords: ['ai', 'codex', 'title', 'tab title', 'metadata', 'model'],
+      }),
+      makeField({
+        key: 'aiTabMetadata.title.codexModel',
+        label: 'Title model',
+        description: 'Codex model used for generated terminal tab titles.',
+        sectionId: 'ai-tab-metadata',
+        categoryId: 'ai',
+        input: 'select',
+        visibleWhen: { key: 'aiTabMetadata.title.provider', value: 'codex' },
+        keywords: ['ai', 'codex', 'title', 'model'],
+      }),
+      makeField({
+        key: 'aiTabMetadata.note.provider',
+        label: 'Set note with AI',
+        description: 'Provider used when the Command bar action generates a terminal note.',
+        sectionId: 'ai-tab-metadata',
+        categoryId: 'ai',
+        input: 'select',
+        options: [
+          { label: 'Disable', value: 'disabled' },
+          { label: 'Codex', value: 'codex' },
+        ],
+        keywords: ['ai', 'codex', 'note', 'terminal note', 'metadata', 'model'],
+      }),
+      makeField({
+        key: 'aiTabMetadata.note.codexModel',
+        label: 'Note model',
+        description: 'Codex model used for generated terminal notes.',
+        sectionId: 'ai-tab-metadata',
+        categoryId: 'ai',
+        input: 'select',
+        visibleWhen: { key: 'aiTabMetadata.note.provider', value: 'codex' },
+        keywords: ['ai', 'codex', 'note', 'model'],
+      }),
+    ],
+  },
   {
     id: 'remote-access-host',
     categoryId: 'remote',
@@ -725,6 +792,18 @@ function clampNumber(value: number, fallback: number, min?: number, max?: number
 
 export function normalizeTerminalSettings(candidate: unknown): TerminalSettings {
   const input = typeof candidate === 'object' && candidate !== null ? (candidate as Partial<TerminalSettings>) : {}
+  const aiTabMetadataInput =
+    typeof input.aiTabMetadata === 'object' && input.aiTabMetadata !== null
+      ? input.aiTabMetadata
+      : defaultTerminalSettings.aiTabMetadata
+  const aiTitleInput =
+    typeof aiTabMetadataInput.title === 'object' && aiTabMetadataInput.title !== null
+      ? aiTabMetadataInput.title
+      : defaultTerminalSettings.aiTabMetadata.title
+  const aiNoteInput =
+    typeof aiTabMetadataInput.note === 'object' && aiTabMetadataInput.note !== null
+      ? aiTabMetadataInput.note
+      : defaultTerminalSettings.aiTabMetadata.note
   const remoteAccessInput =
     typeof input.remoteAccess === 'object' && input.remoteAccess !== null
       ? input.remoteAccess
@@ -739,6 +818,22 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
       : {}
 
   return {
+    aiTabMetadata: {
+      title: {
+        provider: aiTitleInput.provider === 'codex' ? 'codex' : defaultTerminalSettings.aiTabMetadata.title.provider,
+        codexModel:
+          typeof aiTitleInput.codexModel === 'string'
+            ? aiTitleInput.codexModel.trim()
+            : defaultTerminalSettings.aiTabMetadata.title.codexModel,
+      },
+      note: {
+        provider: aiNoteInput.provider === 'codex' ? 'codex' : defaultTerminalSettings.aiTabMetadata.note.provider,
+        codexModel:
+          typeof aiNoteInput.codexModel === 'string'
+            ? aiNoteInput.codexModel.trim()
+            : defaultTerminalSettings.aiTabMetadata.note.codexModel,
+      },
+    },
     allowTransparency: typeof input.allowTransparency === 'boolean' ? input.allowTransparency : defaultTerminalSettings.allowTransparency,
     altClickMovesCursor: typeof input.altClickMovesCursor === 'boolean' ? input.altClickMovesCursor : defaultTerminalSettings.altClickMovesCursor,
     autoCloseTerminalOnExitZero:
