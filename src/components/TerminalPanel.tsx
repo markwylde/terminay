@@ -16,6 +16,8 @@ const DROP_FILE_EXPLORER_PATH_EVENT = 'termide-drop-file-explorer-path'
 const CLEAR_TERMINAL_EVENT = 'termide-clear-terminal'
 const COPY_TERMINAL_EVENT = 'termide-copy-terminal'
 const BRACKETED_PASTE_NEWLINE = '\x1b[200~\n\x1b[201~'
+const TERMINAL_CONTEXT_MAX_LINES = 200
+const TERMINAL_CONTEXT_MAX_CHARS = 20_000
 
 const searchOptions = {
   incremental: true,
@@ -74,6 +76,21 @@ function shouldInterceptTerminalDrop(dataTransfer: DataTransfer): boolean {
   }
 
   return getDroppedFileText(dataTransfer) !== null
+}
+
+function getRecentTerminalOutput(terminal: Terminal): string {
+  const buffer = terminal.buffer.active
+  const startLine = Math.max(0, buffer.length - TERMINAL_CONTEXT_MAX_LINES)
+  const lines: string[] = []
+
+  for (let lineIndex = startLine; lineIndex < buffer.length; lineIndex += 1) {
+    const line = buffer.getLine(lineIndex)
+    if (line) {
+      lines.push(line.translateToString(true))
+    }
+  }
+
+  return lines.join('\n').trim().slice(-TERMINAL_CONTEXT_MAX_CHARS)
 }
 
 export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
@@ -455,6 +472,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
 
     const dragListenerOptions = { capture: true } as const
+    const contextReaderDisposer = props.params.registerTerminalContextReader?.(sessionId, () => ({
+      recentOutput: getRecentTerminalOutput(terminal),
+    }))
 
     resizeObserver.observe(root)
     container.addEventListener('dragenter', handleDragEnter, dragListenerOptions)
@@ -500,12 +520,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       dataDisposer.dispose()
       terminalExitDisposer()
       terminalDataDisposer()
+      contextReaderDisposer?.()
       zoomDisposer()
       searchAddonRef.current = null
       terminalRef.current = null
       terminal.dispose()
     }
-  }, [announceTerminalFocus, props.api, props.params.sessionId, settings])
+  }, [announceTerminalFocus, props.api, props.params.registerTerminalContextReader, props.params.sessionId, settings])
 
   useEffect(() => {
     const note = noteRef.current
