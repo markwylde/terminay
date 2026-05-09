@@ -55,6 +55,9 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
       Open <strong>AI</strong> to choose whether Command Bar actions can generate terminal tab titles or notes. Each target can be disabled or configured independently with Codex or Claude Code, then assigned a provider-specific model.
     </p>
     <p>
+      Codex models are discovered through the Codex CLI. Claude Code models are loaded from OpenRouter's Claude model catalog when available, with local fallback options for offline setups.
+    </p>
+    <p>
       AI generation uses recent terminal output as bounded context. If the selected provider cannot load models or generate text, Termide leaves the existing title or note unchanged.
     </p>
   </section>
