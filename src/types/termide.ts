@@ -192,7 +192,7 @@ export type AppUpdateStatus = {
   releaseUrl: string | null
 }
 
-export type AiTabMetadataProvider = 'codex'
+export type AiTabMetadataProvider = 'claudeCode' | 'codex'
 
 export type AiTabMetadataTarget = 'title' | 'note'
 
