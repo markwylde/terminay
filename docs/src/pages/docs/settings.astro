@@ -29,7 +29,7 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
   <section class="docs-section">
     <h2>Categories</h2>
     <ul>
-      <li><strong>AI:</strong> provider and model choices for Command Bar actions that generate terminal tab titles and notes.</li>
+      <li><strong>AI:</strong> provider and model choices for Command Bar actions that generate terminal tab titles and notes with Codex or Claude Code.</li>
       <li><strong>Remote Access:</strong> origin, bind address, TLS certificate/key paths, pairing, trusted devices, active connections, and recent audit events.</li>
       <li><strong>Shell:</strong> shell program, startup mode, extra launch arguments, and close-on-success behavior.</li>
       <li><strong>Appearance:</strong> font family, size, weight, line height, letter spacing, glyph rendering, bold color behavior, and transparency support.</li>
@@ -46,6 +46,16 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
     <h2>Live Preview</h2>
     <p>
       Appearance, cursor, and theme changes show a live terminal preview. The preview updates immediately, can be resized, and can be hidden or shown again.
+    </p>
+  </section>
+
+  <section class="docs-section">
+    <h2>AI Tab Metadata</h2>
+    <p>
+      Open <strong>AI</strong> to choose whether Command Bar actions can generate terminal tab titles or notes. Each target can be disabled or configured independently with Codex or Claude Code, then assigned a provider-specific model.
+    </p>
+    <p>
+      AI generation uses recent terminal output as bounded context. If the selected provider cannot load models or generate text, Termide leaves the existing title or note unchanged.
     </p>
   </section>
 
