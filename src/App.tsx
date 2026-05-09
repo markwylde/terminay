@@ -2980,15 +2980,18 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			const targetSettings = settings.aiTabMetadata[target];
-			if (targetSettings.provider !== 'codex') {
+			if (targetSettings.provider === 'disabled') {
 				setErrorText(
-					`Enable Codex for AI tab ${target === 'title' ? 'titles' : 'notes'} in Settings first.`,
+					`Enable an AI provider for tab ${target === 'title' ? 'titles' : 'notes'} in Settings first.`,
 				);
 				return;
 			}
 
-			if (!targetSettings.codexModel.trim()) {
-				setErrorText('Choose a Codex model in Settings before generating tab metadata.');
+			const provider = targetSettings.provider;
+			const providerLabel = provider === 'codex' ? 'Codex' : 'Claude Code';
+			const model = provider === 'codex' ? targetSettings.codexModel : targetSettings.claudeCodeModel;
+			if (!model.trim()) {
+				setErrorText(`Choose a ${providerLabel} model in Settings before generating tab metadata.`);
 				return;
 			}
 
@@ -3018,13 +3021,13 @@ const ProjectWorkspace = forwardRef<
 						recentOutput: terminalContext.recentOutput,
 						sessionId,
 					},
-					model: targetSettings.codexModel,
-					provider: 'codex',
+					model,
+					provider,
 					target,
 				});
 				const text = result.text.trim();
 				if (!text) {
-					throw new Error('Codex returned an empty result.');
+					throw new Error(`${providerLabel} returned an empty result.`);
 				}
 
 				if (target === 'title') {
