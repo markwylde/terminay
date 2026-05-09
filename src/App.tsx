@@ -27,6 +27,7 @@ import {
 	Search,
 	Settings,
 	Sidebar,
+	Sparkles,
 	Terminal,
 	Trash2,
 } from 'lucide-react';
@@ -38,6 +39,7 @@ import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { TerminalPanel } from './components/TerminalPanel';
 import type {
 	TerminalActivityState,
+	TerminalContextReader,
 	TerminalPanelParams,
 	TerminalTabMacroRun,
 	TerminalTabMoveProject,
@@ -57,6 +59,7 @@ import {
 } from './terminalActivityStore';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
 import type {
+	AiTabMetadataTarget,
 	AppCommand,
 	AppUpdateStatus,
 	FileExplorerEntry,
@@ -1374,6 +1377,10 @@ const ProjectWorkspace = forwardRef<
 	const dockviewApiRef = useRef<DockviewApi | null>(null);
 	const initialTerminalSeededRef = useRef(false);
 	const panelSessionMapRef = useRef<Map<string, string>>(new Map());
+	const terminalContextReadersRef = useRef<Map<string, TerminalContextReader>>(
+		new Map(),
+	);
+	const aiGenerationInFlightRef = useRef<Set<string>>(new Set());
 	const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
 	const terminalActivityStoreRef = useRef(new TerminalActivityStore());
 	const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
@@ -1543,6 +1550,19 @@ const ProjectWorkspace = forwardRef<
 	const publishTerminalActivityOverview = useCallback(() => {
 		onTerminalActivityOverviewChange(project.id, getActivityOverviewItems());
 	}, [getActivityOverviewItems, onTerminalActivityOverviewChange, project.id]);
+
+	const registerTerminalContextReader = useCallback(
+		(sessionId: string, reader: TerminalContextReader) => {
+			terminalContextReadersRef.current.set(sessionId, reader);
+
+			return () => {
+				if (terminalContextReadersRef.current.get(sessionId) === reader) {
+					terminalContextReadersRef.current.delete(sessionId);
+				}
+			};
+		},
+		[],
+	);
 
 	const applyTerminalActivityEvaluation = useCallback(
 		(sessionId: string, evaluation: TerminalActivityEvaluation) => {
@@ -2216,6 +2236,7 @@ const ProjectWorkspace = forwardRef<
 						onCancelMacroRun: cancelMacroRun,
 						onMoveToProject: (targetProjectId: string) =>
 							onMoveTerminalToProject(project.id, panelId, targetProjectId),
+						registerTerminalContextReader,
 						onUpdateNote: (terminalNote: string | undefined) =>
 							dockviewApiRef.current
 								?.getPanel(panelId)
@@ -2254,6 +2275,7 @@ const ProjectWorkspace = forwardRef<
 			project.title,
 			project.color,
 			publishTerminalActivityOverview,
+			registerTerminalContextReader,
 			suppressInitialTerminalActivity,
 		],
 	);
@@ -2945,6 +2967,107 @@ const ProjectWorkspace = forwardRef<
 		void onEditProject(project.id);
 	}, [onEditProject, project.id]);
 
+	const runAiTabMetadata = useCallback(
+		async (target: AiTabMetadataTarget) => {
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+
+			const activePanel = dockviewApiRef.current?.activePanel;
+			const sessionId = activePanel?.params?.sessionId;
+			if (!activePanel || !sessionId) {
+				setErrorText('Open a terminal before generating tab metadata.');
+				return;
+			}
+
+			const targetSettings = settings.aiTabMetadata[target];
+			if (targetSettings.provider !== 'codex') {
+				setErrorText(
+					`Enable Codex for AI tab ${target === 'title' ? 'titles' : 'notes'} in Settings first.`,
+				);
+				return;
+			}
+
+			if (!targetSettings.codexModel.trim()) {
+				setErrorText('Choose a Codex model in Settings before generating tab metadata.');
+				return;
+			}
+
+			const inFlightKey = `${sessionId}:${target}`;
+			if (aiGenerationInFlightRef.current.has(inFlightKey)) {
+				setErrorText(`Already generating a tab ${target} for this terminal.`);
+				return;
+			}
+
+			const reader = terminalContextReadersRef.current.get(sessionId);
+			const terminalContext = reader?.() ?? { recentOutput: '' };
+			const previousTitle = activePanel.title ?? 'Terminal';
+			aiGenerationInFlightRef.current.add(inFlightKey);
+			setErrorText(null);
+			if (target === 'title') {
+				activePanel.api.setTitle('Generating...');
+				activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
+			}
+
+			try {
+				const result = await window.termide.generateAiTabMetadata({
+					context: {
+						currentTitle: previousTitle,
+						existingNote: activePanel.params?.terminalNote,
+						projectRoot: project.rootFolder,
+						projectTitle: project.title,
+						recentOutput: terminalContext.recentOutput,
+						sessionId,
+					},
+					model: targetSettings.codexModel,
+					provider: 'codex',
+					target,
+				});
+				const text = result.text.trim();
+				if (!text) {
+					throw new Error('Codex returned an empty result.');
+				}
+
+				if (target === 'title') {
+					activePanel.api.setTitle(text);
+					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
+					window.termide.updateTerminalRemoteMetadata(sessionId, {
+						color: activePanel.params?.color ?? project.color,
+						emoji: activePanel.params?.emoji ?? '',
+						inheritsProjectColor: activePanel.params?.inheritsProjectColor,
+						title: text,
+						projectId: project.id,
+						projectTitle: project.title,
+						projectEmoji: project.emoji,
+						projectColor: project.color,
+					});
+					window.requestAnimationFrame(publishTerminalActivityOverview);
+				} else {
+					activePanel.api.updateParameters({ terminalNote: text });
+				}
+
+				setErrorText(null);
+			} catch (error) {
+				if (target === 'title') {
+					activePanel.api.setTitle(previousTitle);
+					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
+				}
+				const message = error instanceof Error ? error.message : String(error);
+				setErrorText(`Unable to generate tab ${target}: ${message}`);
+			} finally {
+				aiGenerationInFlightRef.current.delete(inFlightKey);
+			}
+		},
+		[
+			project.color,
+			project.emoji,
+			project.id,
+			project.rootFolder,
+			project.title,
+			publishTerminalActivityOverview,
+			settings.aiTabMetadata,
+		],
+	);
+
 	const createProject = useCallback(() => {
 		setErrorText(null);
 		setIsMacroLauncherOpen(false);
@@ -2999,6 +3122,7 @@ const ProjectWorkspace = forwardRef<
 						onCancelMacroRun: cancelMacroRun,
 						onMoveToProject: (targetProjectId: string) =>
 							onMoveTerminalToProject(project.id, panelId, targetProjectId),
+						registerTerminalContextReader,
 						onUpdateNote: (terminalNote: string | undefined) =>
 							dockviewApiRef.current
 								?.getPanel(panelId)
@@ -3053,6 +3177,7 @@ const ProjectWorkspace = forwardRef<
 			project.emoji,
 			project.color,
 			publishTerminalActivityOverview,
+			registerTerminalContextReader,
 			suppressInitialTerminalActivity,
 		],
 	);
@@ -3125,6 +3250,7 @@ const ProjectWorkspace = forwardRef<
 					onCancelMacroRun: cancelMacroRun,
 					onMoveToProject: (targetProjectId: string) =>
 						onMoveTerminalToProject(project.id, panelId, targetProjectId),
+					registerTerminalContextReader,
 					onUpdateNote: (terminalNote: string | undefined) =>
 						dockviewApiRef.current
 							?.getPanel(panelId)
@@ -3171,6 +3297,7 @@ const ProjectWorkspace = forwardRef<
 			project.id,
 			project.title,
 			publishTerminalActivityOverview,
+			registerTerminalContextReader,
 			syncPanelFocusState,
 		],
 	);
@@ -3227,6 +3354,28 @@ const ProjectWorkspace = forwardRef<
 				),
 				onSelect: () => {
 					clearActiveTerminal();
+				},
+			},
+			{
+				group: 'Terminal',
+				icon: <Sparkles size={18} strokeWidth={2.1} />,
+				id: 'set-tab-title-with-ai',
+				title: 'Set tab title with AI',
+				description: 'Generate a concise title for the active terminal tab.',
+				searchText: 'set tab title with ai codex rename generate terminal metadata',
+				onSelect: () => {
+					void runAiTabMetadata('title');
+				},
+			},
+			{
+				group: 'Terminal',
+				icon: <Sparkles size={18} strokeWidth={2.1} />,
+				id: 'set-tab-note-with-ai',
+				title: 'Set tab note with AI',
+				description: 'Generate a short note for the active terminal tab.',
+				searchText: 'set tab note with ai codex generate terminal note metadata',
+				onSelect: () => {
+					void runAiTabMetadata('note');
 				},
 			},
 			{
@@ -3339,6 +3488,7 @@ const ProjectWorkspace = forwardRef<
 		openActiveTerminalSettings,
 		openProjectSettings,
 		project.isFileExplorerOpen,
+		runAiTabMetadata,
 		runMacro,
 		settings.keyboardShortcuts,
 		setProjectRootFolderToWorkingDirectory,
