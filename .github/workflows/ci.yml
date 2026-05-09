@@ -61,6 +61,7 @@ jobs:
     env:
       PLAYWRIGHT_WORKERS: ${{ vars.E2E_PLAYWRIGHT_WORKERS != '' && vars.E2E_PLAYWRIGHT_WORKERS || '1' }}
       TERMIDE_CODEX_TEST_MODEL: ${{ vars.TERMIDE_CODEX_TEST_MODEL != '' && vars.TERMIDE_CODEX_TEST_MODEL || 'openai/gpt-5.1-codex-mini' }}
+      TERMIDE_CLAUDE_CODE_TEST_MODEL: ${{ vars.TERMIDE_CLAUDE_CODE_TEST_MODEL != '' && vars.TERMIDE_CLAUDE_CODE_TEST_MODEL || '~anthropic/claude-haiku-latest' }}
 
     steps:
       - name: Check out code
@@ -92,6 +93,19 @@ jobs:
           npm install -g @openai/codex
           node scripts/setup-codex-openrouter.mjs
           xvfb-run -a npm run test:e2e:ai-real
+
+      - name: Run AI tab metadata tests with real Claude Code
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TERMIDE_TEST_USE_REAL_CLAUDE_CODE: '1'
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "OPENROUTER_API_KEY is not set; skipping real Claude Code smoke test."
+            exit 0
+          fi
+
+          npm install -g @anthropic-ai/claude-code
+          xvfb-run -a npm run test:e2e:ai-real-claude
 
       - name: Upload Playwright artifacts
         if: always()
