@@ -14,6 +14,7 @@ import type {
 const execFileAsync = promisify(execFile)
 const PROVIDER_TIMEOUT_MS = 90_000
 const MODEL_LIST_TIMEOUT_MS = 15_000
+const OPENROUTER_MODEL_LIST_TIMEOUT_MS = 10_000
 const MAX_PROVIDER_BUFFER = 1024 * 1024 * 8
 const MAX_CONTEXT_CHARS = 20_000
 const MAX_TITLE_CHARS = 64
@@ -30,6 +31,13 @@ type CodexCatalog = {
     priority?: number
     slug?: string
     visibility?: string
+  }>
+}
+
+type OpenRouterCatalog = {
+  data?: Array<{
+    id?: string
+    name?: string
   }>
 }
 
@@ -111,6 +119,79 @@ function getConfiguredClaudeCodeModels(): AiTabMetadataModel[] {
     modelsJsonEnv: 'TERMIDE_CLAUDE_CODE_MODELS_JSON',
     singleModelEnv: 'TERMIDE_CLAUDE_CODE_TEST_MODEL',
   }) ?? DEFAULT_CLAUDE_CODE_MODELS
+}
+
+function getExplicitClaudeCodeModels(): AiTabMetadataModel[] | null {
+  return getConfiguredModels({
+    modelsJsonEnv: 'TERMIDE_CLAUDE_CODE_MODELS_JSON',
+    singleModelEnv: 'TERMIDE_CLAUDE_CODE_TEST_MODEL',
+  })
+}
+
+function sortClaudeCodeModels(models: AiTabMetadataModel[]): AiTabMetadataModel[] {
+  const score = (model: AiTabMetadataModel) => {
+    const id = model.id.toLowerCase()
+    if (id === '~anthropic/claude-haiku-latest') {
+      return 0
+    }
+    if (id.includes('haiku')) {
+      return 1
+    }
+    if (id.includes('sonnet')) {
+      return 2
+    }
+    if (id.includes('opus')) {
+      return 3
+    }
+    return 4
+  }
+
+  return [...models].sort((left, right) => {
+    const scoreDiff = score(left) - score(right)
+    return scoreDiff === 0 ? left.label.localeCompare(right.label) : scoreDiff
+  })
+}
+
+async function listOpenRouterClaudeCodeModels(): Promise<AiTabMetadataModel[]> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), OPENROUTER_MODEL_LIST_TIMEOUT_MS)
+
+  try {
+    const headers: Record<string, string> = {}
+    const openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim()
+    if (openRouterApiKey) {
+      headers.Authorization = `Bearer ${openRouterApiKey}`
+    }
+
+    const response = await fetch('https://openrouter.ai/api/v1/models', {
+      headers,
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      throw new Error(`OpenRouter returned ${response.status} while listing models.`)
+    }
+
+    const catalog = await response.json() as OpenRouterCatalog
+    const models = (catalog.data ?? [])
+      .filter((model) => typeof model.id === 'string' && model.id.trim().length > 0)
+      .filter((model) => {
+        const id = (model.id as string).toLowerCase()
+        const name = typeof model.name === 'string' ? model.name.toLowerCase() : ''
+        return (id.startsWith('anthropic/') || id.startsWith('~anthropic/')) && (id.includes('claude') || name.includes('claude'))
+      })
+      .map((model) => ({
+        id: model.id as string,
+        label: typeof model.name === 'string' && model.name.trim().length > 0 ? model.name : (model.id as string),
+      }))
+
+    if (models.length === 0) {
+      throw new Error('OpenRouter did not return any Claude models.')
+    }
+
+    return sortClaudeCodeModels(models)
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 function isExecError(error: unknown): error is NodeJS.ErrnoException & {
@@ -427,9 +508,21 @@ export class AiTabMetadataService {
         return this.claudeCodeModels
       }
 
-      const models = getConfiguredClaudeCodeModels()
-      this.claudeCodeModels = models
-      return models
+      const explicitModels = getExplicitClaudeCodeModels()
+      if (explicitModels) {
+        this.claudeCodeModels = explicitModels
+        return explicitModels
+      }
+
+      try {
+        const models = await listOpenRouterClaudeCodeModels()
+        this.claudeCodeModels = models
+        return models
+      } catch {
+        const fallbackModels = getConfiguredClaudeCodeModels()
+        this.claudeCodeModels = fallbackModels
+        return fallbackModels
+      }
     }
 
     const configuredModels = getConfiguredCodexModels()
