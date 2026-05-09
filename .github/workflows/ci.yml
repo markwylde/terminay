@@ -60,7 +60,6 @@ jobs:
     timeout-minutes: 25
     env:
       PLAYWRIGHT_WORKERS: ${{ vars.E2E_PLAYWRIGHT_WORKERS != '' && vars.E2E_PLAYWRIGHT_WORKERS || '1' }}
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       TERMIDE_CODEX_TEST_MODEL: ${{ vars.TERMIDE_CODEX_TEST_MODEL != '' && vars.TERMIDE_CODEX_TEST_MODEL || 'openai/gpt-5.1-codex-mini' }}
       CODEX_HOME: ${{ runner.temp }}/codex
 
@@ -80,19 +79,19 @@ jobs:
       - name: Run end-to-end tests
         run: xvfb-run -a npm run test:e2e
 
-      - name: Install Codex CLI
-        if: ${{ env.OPENROUTER_API_KEY != '' }}
-        run: npm install -g @openai/codex
-
-      - name: Configure Codex for OpenRouter
-        if: ${{ env.OPENROUTER_API_KEY != '' }}
-        run: node scripts/setup-codex-openrouter.mjs
-
       - name: Run AI tab metadata tests with real Codex
-        if: ${{ env.OPENROUTER_API_KEY != '' }}
         env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           TERMIDE_TEST_USE_REAL_CODEX: '1'
-        run: xvfb-run -a npm run test:e2e:ai-real
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "OPENROUTER_API_KEY is not set; skipping real Codex smoke test."
+            exit 0
+          fi
+
+          npm install -g @openai/codex
+          node scripts/setup-codex-openrouter.mjs
+          xvfb-run -a npm run test:e2e:ai-real
 
       - name: Upload Playwright artifacts
         if: always()
