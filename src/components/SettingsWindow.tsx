@@ -183,6 +183,9 @@ export function SettingsWindow() {
   const [codexModels, setCodexModels] = useState<AiModelOption[]>([])
   const [isLoadingCodexModels, setIsLoadingCodexModels] = useState(false)
   const [codexModelsError, setCodexModelsError] = useState<string | null>(null)
+  const [claudeCodeModels, setClaudeCodeModels] = useState<AiModelOption[]>([])
+  const [isLoadingClaudeCodeModels, setIsLoadingClaudeCodeModels] = useState(false)
+  const [claudeCodeModelsError, setClaudeCodeModelsError] = useState<string | null>(null)
 
   const handleResizePointerDown = (e: React.PointerEvent) => {
     e.preventDefault()
@@ -463,6 +466,48 @@ export function SettingsWindow() {
   ])
 
   useEffect(() => {
+    const shouldLoadClaudeCodeModels =
+      draft.aiTabMetadata.title.provider === 'claudeCode' || draft.aiTabMetadata.note.provider === 'claudeCode'
+
+    if (!shouldLoadClaudeCodeModels || claudeCodeModels.length > 0) {
+      return
+    }
+
+    let isCurrent = true
+    setIsLoadingClaudeCodeModels(true)
+    setClaudeCodeModelsError(null)
+
+    void window.termide.listAiTabMetadataModels('claudeCode')
+      .then((models) => {
+        if (!isCurrent) {
+          return
+        }
+
+        setClaudeCodeModels(models)
+      })
+      .catch((error) => {
+        if (!isCurrent) {
+          return
+        }
+
+        setClaudeCodeModelsError(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => {
+        if (isCurrent) {
+          setIsLoadingClaudeCodeModels(false)
+        }
+      })
+
+    return () => {
+      isCurrent = false
+    }
+  }, [
+    claudeCodeModels.length,
+    draft.aiTabMetadata.note.provider,
+    draft.aiTabMetadata.title.provider,
+  ])
+
+  useEffect(() => {
     const firstModel = codexModels[0]?.id
     if (!firstModel) {
       return
@@ -483,6 +528,34 @@ export function SettingsWindow() {
       void saveDraft(nextDraft)
     }
   }, [codexModels, saveDraft])
+
+  useEffect(() => {
+    const firstModel = claudeCodeModels[0]?.id
+    if (!firstModel) {
+      return
+    }
+
+    const current = draftRef.current
+    let nextDraft = current
+
+    if (
+      current.aiTabMetadata.title.provider === 'claudeCode' &&
+      current.aiTabMetadata.title.claudeCodeModel.length === 0
+    ) {
+      nextDraft = setValueAtPath(nextDraft, 'aiTabMetadata.title.claudeCodeModel', firstModel)
+    }
+
+    if (
+      current.aiTabMetadata.note.provider === 'claudeCode' &&
+      current.aiTabMetadata.note.claudeCodeModel.length === 0
+    ) {
+      nextDraft = setValueAtPath(nextDraft, 'aiTabMetadata.note.claudeCodeModel', firstModel)
+    }
+
+    if (nextDraft !== current) {
+      void saveDraft(nextDraft)
+    }
+  }, [claudeCodeModels, saveDraft])
 
 
   const scrollToSection = (id: string) => {
@@ -516,6 +589,30 @@ export function SettingsWindow() {
     return (
       <select className="settings-select" value={String(value)} onChange={(e) => void updateField(field, e.target.value)}>
         {codexModels.map((model) => (
+          <option key={model.id} value={model.id}>
+            {model.label}
+          </option>
+        ))}
+      </select>
+    )
+  }
+
+  const renderClaudeCodeModelControl = (field: SettingsFieldDefinition, value: boolean | number | string) => {
+    if (isLoadingClaudeCodeModels) {
+      return <span className="settings-row-description">Loading Claude Code models...</span>
+    }
+
+    if (claudeCodeModelsError) {
+      return <span className="settings-shortcut-warning">{claudeCodeModelsError}</span>
+    }
+
+    if (claudeCodeModels.length === 0) {
+      return <span className="settings-shortcut-warning">No Claude Code models are available.</span>
+    }
+
+    return (
+      <select className="settings-select" value={String(value)} onChange={(e) => void updateField(field, e.target.value)}>
+        {claudeCodeModels.map((model) => (
           <option key={model.id} value={model.id}>
             {model.label}
           </option>
@@ -594,6 +691,13 @@ export function SettingsWindow() {
 
     if (field.key === 'aiTabMetadata.title.codexModel' || field.key === 'aiTabMetadata.note.codexModel') {
       return renderCodexModelControl(field, value)
+    }
+
+    if (
+      field.key === 'aiTabMetadata.title.claudeCodeModel' ||
+      field.key === 'aiTabMetadata.note.claudeCodeModel'
+    ) {
+      return renderClaudeCodeModelControl(field, value)
     }
 
     switch (field.input) {

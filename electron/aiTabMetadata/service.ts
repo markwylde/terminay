@@ -12,12 +12,17 @@ import type {
 } from '../../src/types/termide'
 
 const execFileAsync = promisify(execFile)
-const CODEX_TIMEOUT_MS = 90_000
+const PROVIDER_TIMEOUT_MS = 90_000
 const MODEL_LIST_TIMEOUT_MS = 15_000
-const MAX_CODEX_BUFFER = 1024 * 1024 * 6
+const MAX_PROVIDER_BUFFER = 1024 * 1024 * 8
 const MAX_CONTEXT_CHARS = 20_000
 const MAX_TITLE_CHARS = 64
 const MAX_NOTE_CHARS = 1200
+const DEFAULT_CLAUDE_CODE_MODELS: AiTabMetadataModel[] = [
+  { id: '~anthropic/claude-haiku-latest', label: 'Claude Haiku Latest' },
+  { id: 'sonnet', label: 'Claude Sonnet' },
+  { id: 'opus', label: 'Claude Opus' },
+]
 
 type CodexCatalog = {
   models?: Array<{
@@ -39,18 +44,26 @@ function getCodexCommand(): string {
   return process.env.TERMIDE_CODEX_COMMAND?.trim() || 'codex'
 }
 
-function getConfiguredCodexModels(): AiTabMetadataModel[] | null {
-  const modelsJson = process.env.TERMIDE_CODEX_MODELS_JSON?.trim()
+function getClaudeCodeCommand(): string {
+  return process.env.TERMIDE_CLAUDE_CODE_COMMAND?.trim() || 'claude'
+}
+
+function getConfiguredModels(options: {
+  fallback?: AiTabMetadataModel[]
+  modelsJsonEnv: string
+  singleModelEnv: string
+}): AiTabMetadataModel[] | null {
+  const modelsJson = process.env[options.modelsJsonEnv]?.trim()
   if (modelsJson) {
     let parsed: unknown
     try {
       parsed = JSON.parse(modelsJson) as unknown
     } catch {
-      throw new Error('TERMIDE_CODEX_MODELS_JSON must contain valid JSON.')
+      throw new Error(`${options.modelsJsonEnv} must contain valid JSON.`)
     }
 
     if (!Array.isArray(parsed)) {
-      throw new Error('TERMIDE_CODEX_MODELS_JSON must be a JSON array.')
+      throw new Error(`${options.modelsJsonEnv} must be a JSON array.`)
     }
 
     const models = parsed
@@ -71,18 +84,33 @@ function getConfiguredCodexModels(): AiTabMetadataModel[] | null {
       .filter((model): model is AiTabMetadataModel => model !== null)
 
     if (models.length === 0) {
-      throw new Error('TERMIDE_CODEX_MODELS_JSON did not contain any usable models.')
+      throw new Error(`${options.modelsJsonEnv} did not contain any usable models.`)
     }
 
     return models
   }
 
-  const model = process.env.TERMIDE_CODEX_TEST_MODEL?.trim()
+  const model = process.env[options.singleModelEnv]?.trim()
   if (model) {
     return [{ id: model, label: model }]
   }
 
-  return null
+  return options.fallback ?? null
+}
+
+function getConfiguredCodexModels(): AiTabMetadataModel[] | null {
+  return getConfiguredModels({
+    modelsJsonEnv: 'TERMIDE_CODEX_MODELS_JSON',
+    singleModelEnv: 'TERMIDE_CODEX_TEST_MODEL',
+  })
+}
+
+function getConfiguredClaudeCodeModels(): AiTabMetadataModel[] {
+  return getConfiguredModels({
+    fallback: DEFAULT_CLAUDE_CODE_MODELS,
+    modelsJsonEnv: 'TERMIDE_CLAUDE_CODE_MODELS_JSON',
+    singleModelEnv: 'TERMIDE_CLAUDE_CODE_TEST_MODEL',
+  }) ?? DEFAULT_CLAUDE_CODE_MODELS
 }
 
 function isExecError(error: unknown): error is NodeJS.ErrnoException & {
@@ -94,14 +122,14 @@ function isExecError(error: unknown): error is NodeJS.ErrnoException & {
   return typeof error === 'object' && error !== null
 }
 
-function normalizeProviderError(error: unknown, fallback: string): Error {
+function normalizeProviderError(error: unknown, fallback: string, commandName = 'AI provider'): Error {
   if (isExecError(error)) {
     if (error.code === 'ENOENT') {
-      return new Error('Codex is not installed or is not available on PATH.')
+      return new Error(`${commandName} is not installed or is not available on PATH.`)
     }
 
     if (error.killed || error.signal === 'SIGTERM') {
-      return new Error('Codex timed out before returning a result.')
+      return new Error(`${commandName} timed out before returning a result.`)
     }
 
     const stderr = typeof error.stderr === 'string' ? error.stderr.trim() : ''
@@ -173,7 +201,7 @@ function runCodexExec(args: string[], options: { cwd: string; timeout: number })
 
     const appendOutput = (current: string, chunk: Buffer) => {
       const next = current + chunk.toString('utf8')
-      return next.length > MAX_CODEX_BUFFER ? next.slice(-MAX_CODEX_BUFFER) : next
+      return next.length > MAX_PROVIDER_BUFFER ? next.slice(-MAX_PROVIDER_BUFFER) : next
     }
 
     child.stdout.on('data', (chunk: Buffer) => {
@@ -222,7 +250,143 @@ function runCodexExec(args: string[], options: { cwd: string; timeout: number })
   })
 }
 
+function buildClaudeCodeEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env }
+  const openRouterApiKey = env.OPENROUTER_API_KEY?.trim()
+
+  if (openRouterApiKey) {
+    env.ANTHROPIC_AUTH_TOKEN = env.ANTHROPIC_AUTH_TOKEN?.trim() || openRouterApiKey
+    env.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL?.trim() || 'https://openrouter.ai/api'
+    env.ANTHROPIC_API_KEY = ''
+  }
+
+  return env
+}
+
+function extractClaudeCodeText(stdout: string): string {
+  let text = ''
+
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      continue
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        event?: { delta?: { text?: unknown; type?: unknown } }
+        message?: { content?: Array<{ text?: unknown; type?: unknown }> }
+        type?: unknown
+      }
+
+      const delta = parsed.event?.delta
+      if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+        text += delta.text
+        continue
+      }
+
+      if (parsed.type === 'assistant' && Array.isArray(parsed.message?.content)) {
+        const messageText = parsed.message.content
+          .filter((block) => block.type === 'text' && typeof block.text === 'string')
+          .map((block) => block.text as string)
+          .join('')
+
+        if (messageText) {
+          text = messageText
+        }
+      }
+    } catch {
+      // Ignore non-JSON output from Claude Code and rely on structured stream events.
+    }
+  }
+
+  return text
+}
+
+function runClaudeCodePrint(prompt: string, options: { cwd: string; model: string; timeout: number }): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      getClaudeCodeCommand(),
+      [
+        '--print',
+        '--verbose',
+        '--model',
+        options.model,
+        '--output-format',
+        'stream-json',
+        '--include-partial-messages',
+        '--no-session-persistence',
+        '--permission-mode',
+        'dontAsk',
+      ],
+      {
+        cwd: options.cwd,
+        env: buildClaudeCodeEnv(),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    )
+    let stdout = ''
+    let stderr = ''
+    let didSettle = false
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM')
+    }, options.timeout)
+
+    child.stdin.end(prompt)
+
+    const appendOutput = (current: string, chunk: Buffer) => {
+      const next = current + chunk.toString('utf8')
+      return next.length > MAX_PROVIDER_BUFFER ? next.slice(-MAX_PROVIDER_BUFFER) : next
+    }
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout = appendOutput(stdout, chunk)
+    })
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr = appendOutput(stderr, chunk)
+    })
+
+    child.on('error', (error) => {
+      if (didSettle) {
+        return
+      }
+
+      didSettle = true
+      clearTimeout(timeout)
+      reject(error)
+    })
+
+    child.on('close', (code, signal) => {
+      if (didSettle) {
+        return
+      }
+
+      didSettle = true
+      clearTimeout(timeout)
+
+      if (code === 0) {
+        resolve(extractClaudeCodeText(stdout))
+        return
+      }
+
+      const error = new Error(stderr.trim() || stdout.trim() || `Claude Code exited with code ${code ?? 'unknown'}.`) as Error & {
+        killed?: boolean
+        signal?: NodeJS.Signals | null
+        stderr?: string
+        stdout?: string
+      }
+      error.killed = signal === 'SIGTERM'
+      error.signal = signal
+      error.stderr = stderr
+      error.stdout = stdout
+      reject(error)
+    })
+  })
+}
+
 export class AiTabMetadataService {
+  private claudeCodeModels: AiTabMetadataModel[] | null = null
   private codexModels: AiTabMetadataModel[] | null = null
   private testMock: AiTabMetadataTestMock = {
     models: [{ id: 'codex-test-model', label: 'Codex Test Model' }],
@@ -239,17 +403,33 @@ export class AiTabMetadataService {
       error: mock.error ?? null,
     }
     if (mock.models) {
+      this.claudeCodeModels = mock.models
       this.codexModels = mock.models
     }
   }
 
   async listModels(provider: AiTabMetadataProvider): Promise<AiTabMetadataModel[]> {
-    if (provider !== 'codex') {
+    if (provider !== 'codex' && provider !== 'claudeCode') {
       throw new Error(`Unsupported AI provider: ${provider}`)
     }
 
-    if (process.env.TERMIDE_TEST === '1' && process.env.TERMIDE_TEST_USE_REAL_CODEX !== '1') {
+    const isUsingMock =
+      process.env.TERMIDE_TEST === '1' &&
+      ((provider === 'codex' && process.env.TERMIDE_TEST_USE_REAL_CODEX !== '1') ||
+        (provider === 'claudeCode' && process.env.TERMIDE_TEST_USE_REAL_CLAUDE_CODE !== '1'))
+
+    if (isUsingMock) {
       return this.testMock.models ?? []
+    }
+
+    if (provider === 'claudeCode') {
+      if (this.claudeCodeModels) {
+        return this.claudeCodeModels
+      }
+
+      const models = getConfiguredClaudeCodeModels()
+      this.claudeCodeModels = models
+      return models
     }
 
     const configuredModels = getConfiguredCodexModels()
@@ -265,7 +445,7 @@ export class AiTabMetadataService {
     try {
       const { stdout } = await execFileAsync(getCodexCommand(), ['debug', 'models'], {
         cwd: this.cwd,
-        maxBuffer: MAX_CODEX_BUFFER,
+        maxBuffer: MAX_PROVIDER_BUFFER,
         timeout: MODEL_LIST_TIMEOUT_MS,
       })
       const catalog = JSON.parse(stdout) as CodexCatalog
@@ -285,20 +465,25 @@ export class AiTabMetadataService {
       this.codexModels = models
       return models
     } catch (error) {
-      throw normalizeProviderError(error, 'Unable to list Codex models.')
+      throw normalizeProviderError(error, 'Unable to list Codex models.', 'Codex')
     }
   }
 
   async generate(request: AiTabMetadataGenerateRequest): Promise<AiTabMetadataGenerateResult> {
-    if (request.provider !== 'codex') {
+    if (request.provider !== 'codex' && request.provider !== 'claudeCode') {
       throw new Error(`Unsupported AI provider: ${request.provider}`)
     }
 
     if (!request.model.trim()) {
-      throw new Error('Choose a Codex model before generating tab metadata.')
+      throw new Error('Choose an AI model before generating tab metadata.')
     }
 
-    if (process.env.TERMIDE_TEST === '1' && process.env.TERMIDE_TEST_USE_REAL_CODEX !== '1') {
+    const isUsingMock =
+      process.env.TERMIDE_TEST === '1' &&
+      ((request.provider === 'codex' && process.env.TERMIDE_TEST_USE_REAL_CODEX !== '1') ||
+        (request.provider === 'claudeCode' && process.env.TERMIDE_TEST_USE_REAL_CLAUDE_CODE !== '1'))
+
+    if (isUsingMock) {
       if (this.testMock.error) {
         throw new Error(this.testMock.error)
       }
@@ -307,6 +492,24 @@ export class AiTabMetadataService {
         text: request.target === 'title'
           ? (this.testMock.titleResult ?? 'Generated Title')
           : (this.testMock.noteResult ?? 'Generated note from Codex'),
+      }
+    }
+
+    if (request.provider === 'claudeCode') {
+      try {
+        const rawText = await runClaudeCodePrint(buildPrompt(request), {
+          cwd: this.cwd,
+          model: request.model,
+          timeout: PROVIDER_TIMEOUT_MS,
+        })
+        const text = normalizeGeneratedText(request.target, rawText)
+        if (!text) {
+          throw new Error('Claude Code returned an empty result.')
+        }
+
+        return { text }
+      } catch (error) {
+        throw normalizeProviderError(error, 'Unable to generate tab metadata with Claude Code.', 'Claude Code')
       }
     }
 
@@ -336,7 +539,7 @@ export class AiTabMetadataService {
         ],
         {
           cwd: this.cwd,
-          timeout: CODEX_TIMEOUT_MS,
+          timeout: PROVIDER_TIMEOUT_MS,
         },
       )
 
@@ -348,7 +551,7 @@ export class AiTabMetadataService {
 
       return { text }
     } catch (error) {
-      throw normalizeProviderError(error, 'Unable to generate tab metadata with Codex.')
+      throw normalizeProviderError(error, 'Unable to generate tab metadata with Codex.', 'Codex')
     } finally {
       await rm(tempDir, { force: true, recursive: true })
     }
