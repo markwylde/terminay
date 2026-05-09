@@ -192,6 +192,35 @@ export type AppUpdateStatus = {
   releaseUrl: string | null
 }
 
+export type AiTabMetadataProvider = 'codex'
+
+export type AiTabMetadataTarget = 'title' | 'note'
+
+export type AiTabMetadataModel = {
+  id: string
+  label: string
+}
+
+export type AiTabMetadataContext = {
+  currentTitle: string
+  existingNote?: string
+  projectRoot: string
+  projectTitle: string
+  recentOutput: string
+  sessionId: string
+}
+
+export type AiTabMetadataGenerateRequest = {
+  context: AiTabMetadataContext
+  model: string
+  provider: AiTabMetadataProvider
+  target: AiTabMetadataTarget
+}
+
+export type AiTabMetadataGenerateResult = {
+  text: string
+}
+
 export type ProjectEditWindowDraft = {
   color: string
   emoji: string
@@ -282,6 +311,8 @@ export interface TermideApi {
     settings: import('./settings').TerminalSettings,
   ) => Promise<import('./settings').TerminalSettings>
   resetTerminalSettings: () => Promise<import('./settings').TerminalSettings>
+  listAiTabMetadataModels: (provider: AiTabMetadataProvider) => Promise<AiTabMetadataModel[]>
+  generateAiTabMetadata: (payload: AiTabMetadataGenerateRequest) => Promise<AiTabMetadataGenerateResult>
   getMacros: () => Promise<import('./macros').MacroDefinition[]>
   updateMacros: (macros: import('./macros').MacroDefinition[]) => Promise<import('./macros').MacroDefinition[]>
   resetMacros: () => Promise<import('./macros').MacroDefinition[]>
@@ -319,4 +350,10 @@ export interface TermideApi {
 
 export interface TermideTestApi {
   sendAppCommand: (command: AppCommand) => Promise<void>
+  setAiTabMetadataMock: (mock: {
+    error?: string | null
+    models?: AiTabMetadataModel[]
+    noteResult?: string
+    titleResult?: string
+  }) => Promise<void>
 }
