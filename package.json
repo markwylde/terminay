@@ -25,6 +25,7 @@
     "release": "node scripts/create-release.mjs",
     "test:e2e": "npm run build:app && playwright test",
     "test:e2e:ai-real": "playwright test e2e/ai-tab-metadata.spec.ts --grep @real-codex",
+    "test:e2e:ai-real-claude": "playwright test e2e/ai-tab-metadata.spec.ts --grep @real-claude-code",
     "test:e2e:headed": "npm run build:app && playwright test --headed",
     "test:release-config": "node --test scripts/release-config.test.mjs",
     "preview": "vite preview"
