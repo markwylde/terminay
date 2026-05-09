@@ -44,10 +44,11 @@ export type RemoteAccessSettings = {
   tlsKeyPath: string
 }
 
-export type AiTabMetadataProvider = 'disabled' | 'codex'
+export type AiTabMetadataProvider = 'disabled' | 'codex' | 'claudeCode'
 
 export type AiTabMetadataTargetSettings = {
   provider: AiTabMetadataProvider
+  claudeCodeModel: string
   codexModel: string
 }
 
