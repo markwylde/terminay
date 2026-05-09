@@ -3,6 +3,10 @@ import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
 import type {
   AppCommand,
+  AiTabMetadataGenerateRequest,
+  AiTabMetadataGenerateResult,
+  AiTabMetadataModel,
+  AiTabMetadataProvider,
   FileExplorerEntry,
   FileSearchResult,
   FileExplorerGitStatuses,
@@ -84,6 +88,10 @@ contextBridge.exposeInMainWorld('termide', {
   updateTerminalSettings: (settings: TerminalSettings) =>
     ipcRenderer.invoke('settings:update-terminal', settings) as Promise<TerminalSettings>,
   resetTerminalSettings: () => ipcRenderer.invoke('settings:reset-terminal') as Promise<TerminalSettings>,
+  listAiTabMetadataModels: (provider: AiTabMetadataProvider) =>
+    ipcRenderer.invoke('ai-tab-metadata:list-models', { provider }) as Promise<AiTabMetadataModel[]>,
+  generateAiTabMetadata: (payload: AiTabMetadataGenerateRequest) =>
+    ipcRenderer.invoke('ai-tab-metadata:generate', payload) as Promise<AiTabMetadataGenerateResult>,
 
   getMacros: () => ipcRenderer.invoke('macros:get') as Promise<MacroDefinition[]>,
   updateMacros: (macros: MacroDefinition[]) => ipcRenderer.invoke('macros:update', macros) as Promise<MacroDefinition[]>,
@@ -173,6 +181,7 @@ contextBridge.exposeInMainWorld('termide', {
 if (process.env.TERMIDE_TEST === '1') {
   const testApi: TermideTestApi = {
     sendAppCommand: (command) => ipcRenderer.invoke('test:send-app-command', command) as Promise<void>,
+    setAiTabMetadataMock: (mock) => ipcRenderer.invoke('test:set-ai-tab-metadata-mock', mock) as Promise<void>,
   }
 
   contextBridge.exposeInMainWorld('termideTest', testApi)
