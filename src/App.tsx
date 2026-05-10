@@ -6021,7 +6021,7 @@ function App() {
 										<img
 											className="remote-pairing-modal__qr"
 											src={selectedPairingQrCodeDataUrl}
-											alt="Pair device QR code"
+											alt="Remote pairing QR code"
 										/>
 									</div>
 
