@@ -56,7 +56,7 @@ async function createGitHubRelease(tag) {
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
-      'User-Agent': 'termide-release-script',
+      'User-Agent': 'terminay-release-script',
       'X-GitHub-Api-Version': '2022-11-28',
     },
     body: JSON.stringify({

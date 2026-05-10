@@ -1,8 +1,8 @@
-Generate the markdown changelog body for the provided Termide release version.
+Generate the markdown changelog body for the provided Terminay release version.
 
 Rules:
 - Read recent git history and inspect the relevant project files before writing.
-- Focus on changes that matter to Termide users and contributors: the terminal workspace, Electron app behavior, packaging, release automation, and developer workflow.
+- Focus on changes that matter to Terminay users and contributors: the terminal workspace, Electron app behavior, packaging, release automation, and developer workflow.
 - Do not include front matter, metadata, or a leading `---`.
 - Do not attempt to publish a release.
 - You may use read-only commands to inspect files and git history if available.

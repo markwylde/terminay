@@ -110,7 +110,7 @@ test('large text files prompt for engine choice, truncate in performant mode, an
     },
   })
   const chunk = '0123456789abcdef\n'.repeat(8192)
-  while ((await mainWindow.evaluate((filePath) => window.termide.getFileInfo(filePath).then((info) => info.size), workspace.path('large.txt'))) < 101 * 1024 * 1024) {
+  while ((await mainWindow.evaluate((filePath) => window.terminay.getFileInfo(filePath).then((info) => info.size), workspace.path('large.txt'))) < 101 * 1024 * 1024) {
     await appendFile(workspace.path('large.txt'), chunk, 'utf8')
   }
 

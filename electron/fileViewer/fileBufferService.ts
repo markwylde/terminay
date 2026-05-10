@@ -10,7 +10,7 @@ import type {
   FileViewerSaveResult,
   FileViewerTextEncoding,
   FileViewerTextRange,
-} from '../../src/types/termide'
+} from '../../src/types/terminay'
 import { getPathNameParts, normalizeFileViewerPath } from './pathUtils'
 
 const TEXT_ENCODINGS: Record<FileViewerTextEncoding, BufferEncoding> = {

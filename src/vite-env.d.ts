@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 
-import type { TermideApi, TermideTestApi } from './types/termide'
+import type { TerminayApi, TerminayTestApi } from './types/terminay'
 
 declare global {
   interface Window {
-    termide: TermideApi
-    termideTest?: TermideTestApi
+    terminay: TerminayApi
+    terminayTest?: TerminayTestApi
   }
 }
 

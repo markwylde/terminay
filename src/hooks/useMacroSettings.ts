@@ -9,7 +9,7 @@ export function useMacroSettings() {
   useEffect(() => {
     let mounted = true
 
-    void window.termide.getMacros().then((nextMacros) => {
+    void window.terminay.getMacros().then((nextMacros) => {
       if (!mounted) {
         return
       }
@@ -18,7 +18,7 @@ export function useMacroSettings() {
       setIsLoading(false)
     })
 
-    const unsubscribe = window.termide.onMacrosChanged((message) => {
+    const unsubscribe = window.terminay.onMacrosChanged((message) => {
       setMacros(message.macros)
       setIsLoading(false)
     })

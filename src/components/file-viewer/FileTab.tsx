@@ -23,7 +23,7 @@ export function FileTab(props: IDockviewPanelHeaderProps<FilePanelInstanceParams
   const onDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.stopPropagation()
-    const customEvent = new CustomEvent('termide-edit-terminal', {
+    const customEvent = new CustomEvent('terminay-edit-terminal', {
       bubbles: true,
       detail: { panelId: props.api.id },
     })

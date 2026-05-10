@@ -6,15 +6,15 @@ import { _electron as electron } from '@playwright/test'
 const rootDir = process.cwd()
 const outputDir = path.join(rootDir, 'docs', 'public', 'screenshots')
 const screenshotPaths = {
-  commandBar: path.join(outputDir, 'termide-command-bar.png'),
-  files: path.join(outputDir, 'termide-files.png'),
-  folders: path.join(outputDir, 'termide-folders.png'),
-  hero: path.join(outputDir, 'termide-hero-workspace.png'),
-  macros: path.join(outputDir, 'termide-macros.png'),
-  remoteAccess: path.join(outputDir, 'termide-remote-access.png'),
-  settings: path.join(outputDir, 'termide-settings.png'),
-  shortcuts: path.join(outputDir, 'termide-shortcuts.png'),
-  workspace: path.join(outputDir, 'termide-workspace.png'),
+  commandBar: path.join(outputDir, 'terminay-command-bar.png'),
+  files: path.join(outputDir, 'terminay-files.png'),
+  folders: path.join(outputDir, 'terminay-folders.png'),
+  hero: path.join(outputDir, 'terminay-hero-workspace.png'),
+  macros: path.join(outputDir, 'terminay-macros.png'),
+  remoteAccess: path.join(outputDir, 'terminay-remote-access.png'),
+  settings: path.join(outputDir, 'terminay-settings.png'),
+  shortcuts: path.join(outputDir, 'terminay-shortcuts.png'),
+  workspace: path.join(outputDir, 'terminay-workspace.png'),
 }
 const windowSize = { width: 1000, height: 600 }
 const screenshotDeviceScaleFactor = 2
@@ -148,7 +148,7 @@ async function submitEditWindowResult(editWindow, result) {
   const closePromise = editWindow.waitForEvent('close')
   try {
     await editWindow.evaluate(async (nextResult) => {
-      await window.termide.submitEditWindowResult(nextResult)
+      await window.terminay.submitEditWindowResult(nextResult)
     }, result)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -190,11 +190,11 @@ async function editActiveProject(electronApp, page, { title, icon, hue, rootFold
 
 async function sendAppCommand(page, command) {
   await page.evaluate(async (nextCommand) => {
-    if (!window.termideTest) {
-      throw new Error('termideTest bridge is unavailable')
+    if (!window.terminayTest) {
+      throw new Error('terminayTest bridge is unavailable')
     }
 
-    await window.termideTest.sendAppCommand(nextCommand)
+    await window.terminayTest.sendAppCommand(nextCommand)
   }, command)
 }
 
@@ -214,15 +214,15 @@ async function closePanelsByTitle(page, titles) {
 }
 
 async function seedWorkspace(tempDir) {
-  const workspaceDir = path.join(tempDir, 'termide-docs-shot')
+  const workspaceDir = path.join(tempDir, 'terminay-docs-shot')
   await mkdir(path.join(workspaceDir, 'docs'), { recursive: true })
   await mkdir(path.join(workspaceDir, 'src'), { recursive: true })
   await writeFile(
     path.join(workspaceDir, 'README.md'),
-    '# Termide\n\nA desktop terminal workspace for projects.\n\n- Command bar\n- Colorful tabs\n- Remote access\n',
+    '# Terminay\n\nA desktop terminal workspace for projects.\n\n- Command bar\n- Colorful tabs\n- Remote access\n',
   )
-  await writeFile(path.join(workspaceDir, 'docs', 'index.astro'), '<Layout title="Termide" />\n')
-  await writeFile(path.join(workspaceDir, 'src', 'App.tsx'), 'export function App() { return <main>Termide</main> }\n')
+  await writeFile(path.join(workspaceDir, 'docs', 'index.astro'), '<Layout title="Terminay" />\n')
+  await writeFile(path.join(workspaceDir, 'src', 'App.tsx'), 'export function App() { return <main>Terminay</main> }\n')
   await writeFile(path.join(workspaceDir, 'src', 'remote.ts'), 'export const remoteAccess = true\n')
   await writeFile(path.join(workspaceDir, 'package.json'), '{ "scripts": { "docs:screenshots": "playwright" } }\n')
   return workspaceDir
@@ -230,7 +230,7 @@ async function seedWorkspace(tempDir) {
 
 async function seedCommandBar(page) {
   await page.evaluate(async () => {
-    const macros = await window.termide.getMacros()
+    const macros = await window.terminay.getMacros()
     const docsMacros = [
       {
         id: 'docs-screenshot-open-readme',
@@ -252,7 +252,7 @@ async function seedCommandBar(page) {
       },
     ]
 
-    await window.termide.updateMacros([
+    await window.terminay.updateMacros([
       ...macros.filter((macro) => !docsMacros.some((docsMacro) => docsMacro.id === macro.id)),
       ...docsMacros,
     ])
@@ -273,16 +273,16 @@ function escapeShellSingleQuoted(value) {
 
 function terminalDemoCommand(body) {
   const screen = `\\033[2J\\033[3J\\033[H${body.trimEnd()}\\n`.replace(/\n/g, '\\n')
-  return `export PS1='termide $ '; printf '%b' '${escapeShellSingleQuoted(screen)}'\r`
+  return `export PS1='terminay $ '; printf '%b' '${escapeShellSingleQuoted(screen)}'\r`
 }
 
 async function writeToTerminalPanels(page, workspaceDir) {
   const commands = [
     terminalDemoCommand(`
-\\033[36mTermide workspace\\033[0m
+\\033[36mTerminay workspace\\033[0m
 
 $ cat README.md
-# Termide
+# Terminay
 
 A focused terminal workspace for project work.
 
@@ -298,7 +298,7 @@ $ git status --short
 \\033[32mplain bash\\033[0m
 
 $ pwd
-~/Projects/termide
+~/Projects/terminay
 
 $ echo ready
 ready
@@ -320,7 +320,7 @@ $ code docs/src/pages/docs/workspace.astro
     terminalDemoCommand(`
 \\033[35mopencode\\033[0m
 
-workspace: termide
+workspace: terminay
 status: ready for a coding session
 next: review docs screenshot polish
 
@@ -332,16 +332,16 @@ $ npm run smoke
 
   const sessions = await page.locator('.terminal-panel').evaluateAll((panels) =>
     panels
-      .map((panel) => panel.getAttribute('data-termide-terminal-session-id'))
+      .map((panel) => panel.getAttribute('data-terminay-terminal-session-id'))
       .filter(Boolean),
   )
 
   for (const [index, sessionId] of sessions.entries()) {
     await page.evaluate(
       ({ command, targetSessionId }) => {
-        window.termide.writeTerminal(targetSessionId, command)
+        window.terminay.writeTerminal(targetSessionId, command)
       },
-      { command: commands[index] ?? 'printf "Termide\\n"\\r', targetSessionId: sessionId },
+      { command: commands[index] ?? 'printf "Terminay\\n"\\r', targetSessionId: sessionId },
     )
   }
 
@@ -350,7 +350,7 @@ $ npm run smoke
 
 async function createProjectTabs(electronApp, page, workspaceDir) {
   const projects = [
-    { title: 'Termide', icon: 'T', hue: 205 },
+    { title: 'Terminay', icon: 'T', hue: 205 },
     { title: 'Docs', icon: 'D', hue: 145 },
     { title: 'Shells', icon: 'S', hue: 295 },
     { title: 'API', icon: 'A', hue: 30 },
@@ -366,8 +366,8 @@ async function createProjectTabs(electronApp, page, workspaceDir) {
     await editActiveProject(electronApp, page, { ...project, rootFolder: workspaceDir })
   }
 
-  await page.locator('.project-tab').filter({ hasText: 'Termide' }).click()
-  await waitForVisible(page.locator('.project-tab--active').filter({ hasText: 'Termide' }))
+  await page.locator('.project-tab').filter({ hasText: 'Terminay' }).click()
+  await waitForVisible(page.locator('.project-tab--active').filter({ hasText: 'Terminay' }))
 }
 
 async function createHeroTerminalGrid(page, workspaceDir) {
@@ -456,7 +456,7 @@ async function captureFolders(page) {
 async function captureSettings(electronApp, page) {
   const settingsWindow = await openChildWindow(electronApp, async () => {
     await page.evaluate(async () => {
-      await window.termide.openSettingsWindow({ sectionId: 'typography' })
+      await window.terminay.openSettingsWindow({ sectionId: 'typography' })
     })
   })
   await setBrowserWindowSize(electronApp, settingsWindow)
@@ -470,7 +470,7 @@ async function captureSettings(electronApp, page) {
 async function captureShortcuts(electronApp, page) {
   const settingsWindow = await openChildWindow(electronApp, async () => {
     await page.evaluate(async () => {
-      await window.termide.openSettingsWindow({ sectionId: 'keyboard-shortcuts' })
+      await window.terminay.openSettingsWindow({ sectionId: 'keyboard-shortcuts' })
     })
   })
   await setBrowserWindowSize(electronApp, settingsWindow)
@@ -485,7 +485,7 @@ async function captureMacros(electronApp, page) {
   await seedCommandBar(page)
   const macrosWindow = await openChildWindow(electronApp, async () => {
     await page.evaluate(async () => {
-      await window.termide.openMacrosWindow()
+      await window.terminay.openMacrosWindow()
     })
   })
   await setBrowserWindowSize(electronApp, macrosWindow)
@@ -500,7 +500,7 @@ async function captureMacros(electronApp, page) {
 async function captureRemoteAccess(electronApp, page) {
   const settingsWindow = await openChildWindow(electronApp, async () => {
     await page.evaluate(async () => {
-      await window.termide.openSettingsWindow({ sectionId: 'remote-access-host' })
+      await window.terminay.openSettingsWindow({ sectionId: 'remote-access-host' })
     })
   })
   await setBrowserWindowSize(electronApp, settingsWindow)
@@ -514,8 +514,8 @@ async function captureRemoteAccess(electronApp, page) {
 }
 
 async function main() {
-  const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'termide-docs-user-data-'))
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'termide-docs-shot-'))
+  const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-docs-user-data-'))
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-docs-shot-'))
   const workspaceDir = await seedWorkspace(tempDir)
   let electronApp
 
@@ -528,9 +528,9 @@ async function main() {
         ...process.env,
         CI: '1',
         TEMP: tempDir,
-        TERMIDE_E2E_TEMP_DIR: tempDir,
-        TERMIDE_TEST: '1',
-        TERMIDE_USER_DATA_DIR: userDataDir,
+        TERMINAY_E2E_TEMP_DIR: tempDir,
+        TERMINAY_TEST: '1',
+        TERMINAY_USER_DATA_DIR: userDataDir,
         TMP: tempDir,
         TMPDIR: tempDir,
       },
@@ -544,8 +544,8 @@ async function main() {
     await setBrowserWindowSize(electronApp, page)
 
     await page.evaluate(async () => {
-      const settings = await window.termide.getTerminalSettings()
-      await window.termide.updateTerminalSettings({
+      const settings = await window.terminay.getTerminalSettings()
+      await window.terminay.updateTerminalSettings({
         ...settings,
         fontSize: 11,
         lineHeight: 1.12,

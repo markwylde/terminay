@@ -42,16 +42,16 @@ function decodeBase64(base64: string): string {
   }
 }
 
-export const termideFileGateway: FileViewerGateway = {
+export const terminayFileGateway: FileViewerGateway = {
   async getFileDiff(path: string): Promise<GitFileDiff> {
     const [gitDiff, repoInfo] = await Promise.all([
-      window.termide.getGitDiff(path),
-      window.termide.getGitRepoInfo(path),
+      window.terminay.getGitDiff(path),
+      window.terminay.getGitRepoInfo(path),
     ])
     return parseGitDiff(gitDiff, repoInfo)
   },
   async getFileInfo(path: string): Promise<FileInfo> {
-    const fileInfo = toFileInfo(await window.termide.getFileInfo(path))
+    const fileInfo = toFileInfo(await window.terminay.getFileInfo(path))
     const mimeType = detectMimeType(path)
     const nextInfo: FileInfo = {
       ...fileInfo,
@@ -65,13 +65,13 @@ export const termideFileGateway: FileViewerGateway = {
     }
   },
   getGitRepoInfo(path: string) {
-    return window.termide.getGitRepoInfo(path)
+    return window.terminay.getGitRepoInfo(path)
   },
   getPreviewSource(path: string) {
-    return window.termide.getFilePreviewSource(path)
+    return window.terminay.getFilePreviewSource(path)
   },
   onFileWatchEvent(listener: (event: FileWatchEvent) => void) {
-    return window.termide.onFileWatchEvent((message) => {
+    return window.terminay.onFileWatchEvent((message) => {
       listener({
         exists: message.exists,
         mtimeMs: message.info?.mtimeMs ?? null,
@@ -85,7 +85,7 @@ export const termideFileGateway: FileViewerGateway = {
     })
   },
   readFileBytes(path: string, range: FileRangeRequest): Promise<FileReadResponse> {
-    return window.termide.readFileBytes({
+    return window.terminay.readFileBytes({
       length: range.length,
       path,
       start: range.offset,
@@ -95,12 +95,12 @@ export const termideFileGateway: FileViewerGateway = {
     }))
   },
   async readFileText(path: string): Promise<string> {
-    const info = await window.termide.getFileInfo(path)
+    const info = await window.terminay.getFileInfo(path)
     if (info.size === 0) {
       return ''
     }
 
-    const response = await window.termide.readFileText({
+    const response = await window.terminay.readFileText({
       length: info.size,
       path,
       start: 0,
@@ -109,7 +109,7 @@ export const termideFileGateway: FileViewerGateway = {
     return response.text.length > 0 ? response.text : decodeBase64((await this.readFileBytes(path, { length: info.size, offset: 0 })).base64)
   },
   saveFile(path: string, payload: FileSavePayload): Promise<FileInfo> {
-    return window.termide
+    return window.terminay
       .saveFile(
         payload.kind === 'text'
           ? {
@@ -126,9 +126,9 @@ export const termideFileGateway: FileViewerGateway = {
       .then(() => this.getFileInfo(path))
   },
   unwatchFile(path: string): Promise<void> {
-    return window.termide.unwatchFile(path)
+    return window.terminay.unwatchFile(path)
   },
   watchFile(path: string): Promise<void> {
-    return window.termide.watchFile(path)
+    return window.terminay.watchFile(path)
   },
 }

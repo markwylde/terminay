@@ -3,7 +3,7 @@ import type {
   FileViewerGitDiff,
   FileViewerGitRepoInfo,
   FileViewerPreviewSource,
-} from './termide'
+} from './terminay'
 
 export type FileViewerMode = 'preview' | 'text' | 'hex' | 'diff'
 

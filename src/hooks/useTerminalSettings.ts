@@ -9,7 +9,7 @@ export function useTerminalSettings() {
   useEffect(() => {
     let isMounted = true
 
-    void window.termide.getTerminalSettings().then((nextSettings) => {
+    void window.terminay.getTerminalSettings().then((nextSettings) => {
       if (!isMounted) {
         return
       }
@@ -18,7 +18,7 @@ export function useTerminalSettings() {
       setIsLoading(false)
     })
 
-    const unsubscribe = window.termide.onTerminalSettingsChanged((message) => {
+    const unsubscribe = window.terminay.onTerminalSettingsChanged((message) => {
       setSettings(message.settings)
       setIsLoading(false)
     })

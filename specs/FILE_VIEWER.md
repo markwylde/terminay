@@ -2,7 +2,7 @@
 
 ## Summary
 
-Termide opens files from the file explorer into dockable file tabs. File tabs live in the same Dockview workspace as terminal and folder tabs, support splits/popouts, and provide four viewing modes:
+Terminay opens files from the file explorer into dockable file tabs. File tabs live in the same Dockview workspace as terminal and folder tabs, support splits/popouts, and provide four viewing modes:
 
 - Preview
 - Text
@@ -11,7 +11,7 @@ Termide opens files from the file explorer into dockable file tabs. File tabs li
 
 The default mode is Preview.
 
-This feature must work well for both normal files and very large files. For files larger than 100 MB, Termide asks the user whether to open the file in `Performant` mode or `Monaco` mode anywhere Monaco would otherwise be used.
+This feature must work well for both normal files and very large files. For files larger than 100 MB, Terminay asks the user whether to open the file in `Performant` mode or `Monaco` mode anywhere Monaco would otherwise be used.
 
 The implementation should favor reusable, well-scoped components and services over a single monolithic file panel.
 
@@ -40,7 +40,7 @@ The implementation should favor reusable, well-scoped components and services ov
 
 - Double-clicking a file in the file explorer opens a file tab.
 - Double-clicking a directory continues to expand or collapse it.
-- If the same file is already open, Termide focuses the existing tab instead of opening a duplicate.
+- If the same file is already open, Terminay focuses the existing tab instead of opening a duplicate.
 - File tabs use Dockview like terminal and folder tabs and support drag, split, reorder, and popout.
 
 ### Modes
@@ -80,7 +80,7 @@ The implementation should favor reusable, well-scoped components and services ov
 - Diff should be implemented as a custom HTML-based diff renderer, not Monaco diff.
 - Diff should support side-by-side and unified layouts.
 - The default diff layout is a global user preference, not per-file.
-- When the user changes the diff layout, Termide should remember that preference globally for future diff tabs.
+- When the user changes the diff layout, Terminay should remember that preference globally for future diff tabs.
 - The diff renderer should be lazy and virtualized.
 
 ### Preview
