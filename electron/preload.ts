@@ -25,6 +25,7 @@ import type {
   MacrosChangeMessage,
   ProjectEditWindowDraft,
   ProjectEditWindowResult,
+  FileExplorerWatchEvent,
   RemoteAccessStatus,
   SettingsChangeMessage,
   TerminalDataMessage,
@@ -53,6 +54,8 @@ contextBridge.exposeInMainWorld('termide', {
   renameEntry: (oldPath: string, newPath: string) => ipcRenderer.invoke('fs:rename', { oldPath, newPath }),
   deleteEntry: (path: string) => ipcRenderer.invoke('fs:delete', { path }),
   mkdir: (path: string) => ipcRenderer.invoke('fs:mkdir', { path }),
+  watchDirectory: (dirPath: string) => ipcRenderer.invoke('fs:watch-directory', { path: dirPath }) as Promise<void>,
+  unwatchDirectory: (dirPath: string) => ipcRenderer.invoke('fs:unwatch-directory', { path: dirPath }) as Promise<void>,
   watchFile: (filePath: string) => ipcRenderer.invoke('file:watch', { path: filePath }) as Promise<void>,
   unwatchFile: (filePath: string) => ipcRenderer.invoke('file:unwatch', { path: filePath }) as Promise<void>,
   getFilePreviewSource: (filePath: string) =>
@@ -140,6 +143,11 @@ contextBridge.exposeInMainWorld('termide', {
     const wrapper: ElectronListener<AppCommand> = (_event, command) => listener(command)
     ipcRenderer.on('app:command', wrapper)
     return () => ipcRenderer.off('app:command', wrapper)
+  },
+  onFileExplorerWatchEvent: (listener: (message: FileExplorerWatchEvent) => void) => {
+    const wrapper: ElectronListener<FileExplorerWatchEvent> = (_event, message) => listener(message)
+    ipcRenderer.on('file-explorer:watch-event', wrapper)
+    return () => ipcRenderer.off('file-explorer:watch-event', wrapper)
   },
   onFileWatchEvent: (listener: (message: FileViewerWatchEvent) => void) => {
     const wrapper: ElectronListener<FileViewerWatchEvent> = (_event, message) => listener(message)
