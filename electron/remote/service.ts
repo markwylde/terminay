@@ -27,6 +27,7 @@ import { ConnectionStore } from './connectionStore'
 import { DeviceStore } from './deviceStore'
 import { PairingManager } from './pairing'
 import { ensureTlsMaterial } from './tls'
+import { WebRtcPairingManager } from './webrtc'
 
 type TerminalRemoteMetadata = {
   color: string
@@ -139,6 +140,13 @@ export class RemoteAccessService {
   private pairingUrl: string | null = null
   private rotatePairingTimer: NodeJS.Timeout | null = null
   private selectedPairingAddress: string | null = null
+  private readonly webRtcPairingManager = new WebRtcPairingManager()
+  private webRtcPairingExpiresAt: string | null = null
+  private webRtcPairingQrCodeDataUrl: string | null = null
+  private webRtcPairingUrl: string | null = null
+  private webRtcRelayJoinToken: string | null = null
+  private webRtcRoomId: string | null = null
+  private webRtcStatusMessage: string | null = null
   private readonly wsServer = new WebSocketServer({ noServer: true })
 
   constructor(options: RemoteAccessServiceOptions) {
@@ -156,6 +164,26 @@ export class RemoteAccessService {
 
   getStatus(): RemoteAccessStatus {
     const availableAddresses = this.httpsServer ? this.getAvailableAddresses() : []
+    const settings = this.getRemoteAccessSettings()
+    const pairingMode = settings.pairingMode === 'webrtc' ? 'webrtc' : 'lan'
+    const lanPairingExpiresAt =
+      this.pairingManager.getExpiresAt() === null
+        ? null
+        : new Date(this.pairingManager.getExpiresAt() ?? 0).toISOString()
+    const activePairing =
+      pairingMode === 'webrtc'
+        ? {
+            expiresAt: this.webRtcPairingExpiresAt,
+            qrCodeDataUrl: this.webRtcPairingQrCodeDataUrl,
+            qrCodePath: null,
+            url: this.webRtcPairingUrl,
+          }
+        : {
+            expiresAt: lanPairingExpiresAt,
+            qrCodeDataUrl: this.pairingQrCodeDataUrl,
+            qrCodePath: this.pairingQrCodePath,
+            url: this.pairingUrl,
+          }
 
     return {
       activeConnectionCount: this.connectionStore.count(),
@@ -174,6 +202,10 @@ export class RemoteAccessService {
       configurationPath: 'File > Settings > Remote Access',
       errorMessage: this.errorMessage,
       isRunning: this.httpsServer !== null,
+      lanPairingExpiresAt,
+      lanPairingQrCodeDataUrl: this.pairingQrCodeDataUrl,
+      lanPairingQrCodePath: this.pairingQrCodePath,
+      lanPairingUrl: this.pairingUrl,
       origin: this.config?.origin ?? null,
       pairedDeviceCount: this.deviceStore.listActive().length,
       pairedDevices: this.deviceStore.listActive().map((device) => ({
@@ -183,13 +215,22 @@ export class RemoteAccessService {
         name: device.name,
         origin: device.origin,
       })),
-      pairingExpiresAt:
-        this.pairingManager.getExpiresAt() === null
-          ? null
-          : new Date(this.pairingManager.getExpiresAt() ?? 0).toISOString(),
-      pairingQrCodeDataUrl: this.pairingQrCodeDataUrl,
-      pairingQrCodePath: this.pairingQrCodePath,
-      pairingUrl: this.pairingUrl,
+      pairingMode,
+      pairingExpiresAt: activePairing.expiresAt,
+      pairingQrCodeDataUrl: activePairing.qrCodeDataUrl,
+      pairingQrCodePath: activePairing.qrCodePath,
+      pairingUrl: activePairing.url,
+      webRtcPairingExpiresAt: this.webRtcPairingExpiresAt,
+      webRtcPairingQrCodeDataUrl: this.webRtcPairingQrCodeDataUrl,
+      webRtcPairingUrl: this.webRtcPairingUrl,
+      webRtcRelayJoinToken: this.webRtcRelayJoinToken,
+      webRtcRoomId: this.webRtcRoomId,
+      webRtcStatus: this.webRtcPairingUrl ? 'peer-handler-unavailable' : 'not-configured',
+      webRtcStatusMessage:
+        this.webRtcStatusMessage ??
+        (this.webRtcPairingUrl
+          ? 'WebRTC relay pairing is scaffolded; host peer connection handling is not active yet.'
+          : null),
     }
   }
 
@@ -493,6 +534,12 @@ export class RemoteAccessService {
     this.pairingQrCodeDataUrl = null
     this.pairingQrCodePath = null
     this.pairingUrl = null
+    this.webRtcPairingExpiresAt = null
+    this.webRtcPairingQrCodeDataUrl = null
+    this.webRtcPairingUrl = null
+    this.webRtcRelayJoinToken = null
+    this.webRtcRoomId = null
+    this.webRtcStatusMessage = null
     this.emitStatus()
   }
 
@@ -525,6 +572,7 @@ export class RemoteAccessService {
       margin: 2,
       width: 720,
     })
+    await this.rotateWebRtcPairingCode()
 
     if (this.rotatePairingTimer) {
       clearTimeout(this.rotatePairingTimer)
@@ -534,6 +582,31 @@ export class RemoteAccessService {
     this.rotatePairingTimer = setTimeout(() => {
       void this.rotatePairingCode().then(() => this.emitStatus())
     }, delay)
+  }
+
+  private async rotateWebRtcPairingCode(): Promise<void> {
+    const settings = this.getRemoteAccessSettings()
+
+    try {
+      const payload = this.webRtcPairingManager.create(settings.webRtcConnectUrl)
+      this.webRtcPairingExpiresAt = payload.expiresAt
+      this.webRtcPairingUrl = payload.pairingUrl
+      this.webRtcRelayJoinToken = payload.relayJoinToken
+      this.webRtcRoomId = payload.roomId
+      this.webRtcPairingQrCodeDataUrl = await QRCode.toDataURL(payload.pairingUrl, {
+        errorCorrectionLevel: 'H',
+        margin: 2,
+        width: 720,
+      })
+      this.webRtcStatusMessage = 'WebRTC relay pairing QR is ready, but host peer connection handling is not active yet.'
+    } catch (error) {
+      this.webRtcPairingExpiresAt = null
+      this.webRtcPairingUrl = null
+      this.webRtcRelayJoinToken = null
+      this.webRtcRoomId = null
+      this.webRtcPairingQrCodeDataUrl = null
+      this.webRtcStatusMessage = error instanceof Error ? error.message : 'Unable to generate WebRTC pairing QR.'
+    }
   }
 
   private async handleRequest(

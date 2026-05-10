@@ -40,8 +40,10 @@ export type ShellSettings = {
 export type RemoteAccessSettings = {
   bindAddress: string
   origin: string
+  pairingMode: 'lan' | 'webrtc'
   tlsCertPath: string
   tlsKeyPath: string
+  webRtcConnectUrl: string
 }
 
 export type AiTabMetadataProvider = 'disabled' | 'codex' | 'claudeCode'
