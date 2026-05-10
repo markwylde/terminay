@@ -927,7 +927,7 @@ export function SettingsWindow() {
                       </button>
                     ) : null}
                   </div>
-                  <img className="settings-remote-qr" src={selectedPairingQrCodeDataUrl} alt={`${selectedPairingLabel} code`} />
+                  <img className="settings-remote-qr" src={selectedPairingQrCodeDataUrl} alt="Remote pairing QR code" />
                   <p className="settings-remote-meta">
                     Expires {selectedPairingExpiresAt ? new Date(selectedPairingExpiresAt).toLocaleString() : 'soon'}
                   </p>
