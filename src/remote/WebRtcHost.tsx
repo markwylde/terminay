@@ -51,6 +51,17 @@ function bytesToBase64Url(bytes: ArrayBuffer): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
 
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(',')}]`
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
 function canonicalSignalPayload(message: Record<string, unknown>): string {
   const payload: Record<string, unknown> = {
     roomId: message.roomId,
@@ -58,7 +69,7 @@ function canonicalSignalPayload(message: Record<string, unknown>): string {
   }
   if ('candidate' in message) payload.candidate = message.candidate
   if ('sdp' in message) payload.sdp = message.sdp
-  return JSON.stringify(payload)
+  return stableJson(payload)
 }
 
 async function createSignalingAuthKey(token: string): Promise<CryptoKey> {
