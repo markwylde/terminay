@@ -30,6 +30,7 @@ import { FileBufferService } from './fileViewer/fileBufferService'
 import { FileWatchService } from './fileViewer/fileWatchService'
 import { GitDiffService } from './fileViewer/gitDiffService'
 import { registerFileViewerIpcHandlers } from './fileViewer/ipc'
+import { FileExplorerWatchService } from './fileExplorerWatchService'
 import { RemoteAccessService } from './remote/service'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -140,6 +141,7 @@ const pendingEditWindows = new Map<
 >()
 const fileBufferService = new FileBufferService(() => app.getPath('home'))
 const fileWatchService = new FileWatchService(fileBufferService)
+const fileExplorerWatchService = new FileExplorerWatchService(() => app.getPath('home'))
 const gitDiffService = new GitDiffService(fileBufferService)
 const aiTabMetadataService = new AiTabMetadataService(app.getPath('home'))
 let cachedAppUpdateStatus: AppUpdateStatus | null = null
@@ -1779,6 +1781,14 @@ ipcMain.handle('fs:mkdir', async (_event, { path }: { path: string }) => {
   await mkdir(path, { recursive: true })
 })
 
+ipcMain.handle('fs:watch-directory', async (event, { path }: { path: string }) => {
+  fileExplorerWatchService.watchDirectory(event.sender.id, path)
+})
+
+ipcMain.handle('fs:unwatch-directory', async (event, { path }: { path: string }) => {
+  fileExplorerWatchService.unwatchDirectory(event.sender.id, path)
+})
+
 ipcMain.handle('settings:get-terminal', () => {
   return readTerminalSettings()
 })
@@ -1990,6 +2000,7 @@ app.on('web-contents-created', (_event, contents) => {
 
   contents.once('destroyed', () => {
     killSessionsForWebContents(contents.id)
+    fileExplorerWatchService.disposeSubscriber(contents.id)
     fileWatchService.disposeSubscriber(contents.id)
   })
 })
