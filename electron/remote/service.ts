@@ -1,4 +1,4 @@
-import { constants, verify as verifySignature } from 'node:crypto'
+import { constants, createHash, verify as verifySignature } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import https from 'node:https'
 import os from 'node:os'
@@ -23,7 +23,7 @@ import {
   readRemoteAccessConfig,
   type ResolvedRemoteAccessConfig,
 } from './config'
-import { ConnectionStore } from './connectionStore'
+import { ConnectionStore, webSocketPeer, type RemoteConnectionPeer } from './connectionStore'
 import { DeviceStore } from './deviceStore'
 import { PairingManager } from './pairing'
 import { ensureTlsMaterial } from './tls'
@@ -52,6 +52,12 @@ type SessionRecord = {
 
 type RemoteAccessServiceOptions = {
   app: App
+  createWebRtcHostWindow: (ownerId: number) => {
+    close: () => void
+    sendConfig: (config: WebRtcHostConfig) => void
+    sendTerminalMessage: (channelId: string, message: string) => void
+    webContentsId: number
+  }
   getControllableSession: (
     sessionId: string,
   ) => { close: () => void; resize: (cols: number, rows: number) => void; write: (data: string) => void } | null
@@ -63,6 +69,19 @@ type RemoteAccessServiceOptions = {
 }
 
 type JsonResponse = Record<string, unknown>
+
+type WebRtcHostConfig = {
+  appOrigin: string
+  expiresAt: string
+  relayJoinTokenHash: string
+  roomId: string
+  signalingUrl: string
+}
+
+type WebRtcTerminalPeer = RemoteConnectionPeer & {
+  channelId: string
+  webContentsId: number
+}
 
 const MAX_BUFFER_LENGTH = 200_000
 
@@ -126,6 +145,7 @@ export class RemoteAccessService {
   private readonly auditStore: AuditStore
   private readonly challengeStore = new ChallengeStore()
   private readonly connectionStore = new ConnectionStore()
+  private readonly createWebRtcHostWindow: RemoteAccessServiceOptions['createWebRtcHostWindow']
   private readonly deviceStore: DeviceStore
   private readonly getControllableSession: RemoteAccessServiceOptions['getControllableSession']
   private readonly getRemoteAccessSettings: RemoteAccessServiceOptions['getRemoteAccessSettings']
@@ -151,11 +171,15 @@ export class RemoteAccessService {
   private webRtcRelayJoinToken: string | null = null
   private webRtcRoomId: string | null = null
   private webRtcSignalSocket: WebSocket | null = null
+  private webRtcHostWindow: ReturnType<RemoteAccessServiceOptions['createWebRtcHostWindow']> | null = null
+  private webRtcHostConfigByWebContentsId = new Map<number, WebRtcHostConfig>()
+  private readonly webRtcTerminalConnectionsByChannelId = new Map<string, string>()
   private webRtcStatusMessage: string | null = null
   private readonly wsServer = new WebSocketServer({ noServer: true })
 
   constructor(options: RemoteAccessServiceOptions) {
     this.app = options.app
+    this.createWebRtcHostWindow = options.createWebRtcHostWindow
     this.getControllableSession = options.getControllableSession
     this.getRemoteAccessSettings = options.getRemoteAccessSettings
     this.onStatusChanged = options.onStatusChanged
@@ -560,6 +584,7 @@ export class RemoteAccessService {
     this.webRtcRelayJoinToken = null
     this.webRtcRoomId = null
     this.closeWebRtcSignalSocket()
+    this.closeWebRtcHostWindow()
     this.webRtcStatusMessage = null
     this.emitStatus()
   }
@@ -618,12 +643,19 @@ export class RemoteAccessService {
       this.webRtcPairingUrl = payload.pairingUrl
       this.webRtcRelayJoinToken = payload.relayJoinToken
       this.webRtcRoomId = payload.roomId
+      this.pairingManager.adoptSession({
+        expiresAt: payload.pairing.expiresAt,
+        origin: this.createWebRtcPairingOrigin(payload.appOrigin),
+        pairingSessionId: payload.pairing.sessionId,
+        pairingToken: payload.pairing.token,
+      })
       this.webRtcPairingQrCodeDataUrl = await QRCode.toDataURL(payload.pairingUrl, {
         errorCorrectionLevel: 'H',
         margin: 2,
         width: 720,
       })
       this.openWebRtcSignalSocket({
+        appOrigin: payload.appOrigin,
         expiresAt: payload.expiresAt,
         relayJoinTokenHash: payload.relayJoinTokenHash,
         roomId: payload.roomId,
@@ -637,8 +669,13 @@ export class RemoteAccessService {
       this.webRtcRoomId = null
       this.webRtcPairingQrCodeDataUrl = null
       this.closeWebRtcSignalSocket()
+      this.closeWebRtcHostWindow()
       this.webRtcStatusMessage = error instanceof Error ? error.message : 'Unable to generate WebRTC pairing QR.'
     }
+  }
+
+  private createWebRtcPairingOrigin(appOrigin: string): string {
+    return `${appOrigin}#transport=webrtc:${appOrigin}`
   }
 
   private closeWebRtcSignalSocket(): void {
@@ -650,15 +687,27 @@ export class RemoteAccessService {
   }
 
   private openWebRtcSignalSocket(options: {
+    appOrigin: string
     expiresAt: string
     relayJoinTokenHash: string
     roomId: string
     signalingUrl: string
   }): void {
     this.closeWebRtcSignalSocket()
+    this.closeWebRtcHostWindow()
 
     const socket = new WebSocket(options.signalingUrl)
     this.webRtcSignalSocket = socket
+    this.webRtcHostWindow = this.createWebRtcHostWindow(0)
+    const hostConfig = {
+      appOrigin: options.appOrigin,
+      expiresAt: options.expiresAt,
+      relayJoinTokenHash: options.relayJoinTokenHash,
+      roomId: options.roomId,
+      signalingUrl: options.signalingUrl,
+    }
+    this.webRtcHostConfigByWebContentsId.set(this.webRtcHostWindow.webContentsId, hostConfig)
+    this.webRtcHostWindow.sendConfig(hostConfig)
 
     socket.on('open', () => {
       socket.send(
@@ -708,6 +757,15 @@ export class RemoteAccessService {
       this.webRtcSignalSocket = null
       this.emitStatus()
     })
+  }
+
+  private closeWebRtcHostWindow(): void {
+    const hostWindow = this.webRtcHostWindow
+    this.webRtcHostWindow = null
+    if (hostWindow) {
+      this.webRtcHostConfigByWebContentsId.delete(hostWindow.webContentsId)
+      hostWindow.close()
+    }
   }
 
   private async handleRequest(
@@ -893,6 +951,190 @@ export class RemoteAccessService {
     }
   }
 
+  getWebRtcHostConfig(webContentsId: number): WebRtcHostConfig | null {
+    return this.webRtcHostConfigByWebContentsId.get(webContentsId) ?? null
+  }
+
+  async getWebRtcAssetManifest(): Promise<{ assets: Array<{ contentType: string; hash: string; path: string; size: number }>; protocolVersion: string }> {
+    const assetPaths = await this.collectRemoteAppAssetPaths()
+    return {
+      assets: await Promise.all(assetPaths.map(async (assetPath) => {
+        const body = await this.readRemoteAppAssetBody(assetPath)
+        return {
+          contentType: getContentType(this.remoteAppAssetPathToFilePath(assetPath)),
+          hash: createHash('sha256').update(body).digest('base64url'),
+          path: assetPath,
+          size: body.byteLength,
+        }
+      })),
+      protocolVersion: '1',
+    }
+  }
+
+  async getWebRtcAsset(assetPath: string): Promise<{ bodyBase64: string; contentType: string; hash: string; path: string }> {
+    const body = await this.readRemoteAppAssetBody(assetPath)
+    return {
+      bodyBase64: body.toString('base64'),
+      contentType: getContentType(this.remoteAppAssetPathToFilePath(assetPath)),
+      hash: createHash('sha256').update(body).digest('base64url'),
+      path: assetPath,
+    }
+  }
+
+  async handleWebRtcApiRequest(pathname: string, body: Record<string, unknown>, appOrigin: string): Promise<unknown> {
+    const origin = this.createWebRtcPairingOrigin(appOrigin)
+
+    if (pathname === '/api/pairing/start') {
+      return this.pairingManager.startRegistration({
+        deviceName: String(body.deviceName ?? ''),
+        origin,
+        pairingSessionId: String(body.pairingSessionId ?? ''),
+        pairingToken: String(body.pairingToken ?? ''),
+        publicKeyPem: normalizePem(String(body.publicKeyPem ?? '')),
+      })
+    }
+
+    if (pathname === '/api/pairing/complete') {
+      const pending = this.pairingManager.consumeRegistration({
+        origin,
+        provisionalDeviceId: String(body.provisionalDeviceId ?? ''),
+      })
+      const device = await this.deviceStore.create({
+        name: pending.deviceName,
+        origin: pending.origin,
+        publicKeyPem: pending.publicKeyPem,
+      })
+      this.pairingManager.invalidateSession(pending.pairingSessionId)
+      await this.auditStore.append({
+        action: 'pairing-completed',
+        connectionId: null,
+        deviceId: device.id,
+        deviceName: device.name,
+      })
+      this.emitStatus()
+      return { deviceId: device.id, deviceName: device.name }
+    }
+
+    if (pathname === '/api/auth/options') {
+      const device = this.deviceStore.get(String(body.deviceId ?? ''))
+      if (!device) throw new Error('This device is not paired with this host.')
+      if (device.origin !== origin) throw new Error('This device is paired with a different origin.')
+      const challenge = await this.challengeStore.create({ deviceId: device.id, origin: device.origin })
+      return {
+        deviceChallenge: challenge.payload,
+        signingInput: challenge.signingInput,
+      }
+    }
+
+    if (pathname === '/api/auth/verify') {
+      const device = this.deviceStore.get(String(body.deviceId ?? ''))
+      if (!device) throw new Error('This device is no longer trusted.')
+      if (device.origin !== origin) throw new Error('This device is paired with a different origin.')
+      const challenge = this.challengeStore.consume(String(body.challengeId ?? ''), device.id, origin)
+      const verifiedDeviceSignature = verifySignature(
+        'sha256',
+        Buffer.from(serializeDeviceChallenge(challenge.payload)),
+        {
+          key: normalizePem(device.publicKeyPem),
+          padding: constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: 32,
+        },
+        Buffer.from(String(body.deviceSignature ?? ''), 'base64url'),
+      )
+      if (!verifiedDeviceSignature) throw new Error('The paired device key signature was invalid.')
+      await this.deviceStore.updateAuthentication(device.id)
+      await this.auditStore.append({
+        action: 'auth-verified',
+        connectionId: null,
+        deviceId: device.id,
+        deviceName: device.name,
+      })
+      const ticket = this.connectionStore.issueTicket(device.id)
+      this.emitStatus()
+      return { ticket }
+    }
+
+    throw new Error('Not found')
+  }
+
+  async attachWebRtcTerminal(webContentsId: number, channelId: string, ticket: string): Promise<void> {
+    const ticketInfo = this.connectionStore.consumeTicket(ticket)
+    const device = this.deviceStore.get(ticketInfo.deviceId)
+    if (!device) throw new Error('This device is no longer trusted.')
+    const peer: WebRtcTerminalPeer = {
+      channelId,
+      webContentsId,
+      close: () => {
+        this.webRtcTerminalConnectionsByChannelId.delete(channelId)
+      },
+      getReadyState: () => WebSocket.OPEN,
+      send: (message) => {
+        this.webRtcHostWindow?.sendTerminalMessage(channelId, message)
+      },
+    }
+    const connection = this.connectionStore.register(peer, ticketInfo.connectionId, ticketInfo.deviceId)
+    this.webRtcTerminalConnectionsByChannelId.set(channelId, connection.connectionId)
+    await this.auditStore.append({
+      action: 'connection-opened',
+      connectionId: connection.connectionId,
+      deviceId: connection.deviceId,
+      deviceName: this.deviceStore.get(connection.deviceId)?.name ?? null,
+    })
+    this.sendSessionList(connection.socket, connection.connectionId)
+    this.emitStatus()
+  }
+
+  handleWebRtcTerminalMessage(channelId: string, raw: string): void {
+    const connectionId = this.webRtcTerminalConnectionsByChannelId.get(channelId)
+    if (!connectionId) return
+    const parsed = parseRemoteClientMessage(raw)
+    if (!parsed) {
+      const connection = this.connectionStore.get(connectionId)
+      if (connection) this.send(connection.socket, { message: 'Invalid remote message.', type: 'error' })
+      return
+    }
+    this.handleClientMessage(connectionId, parsed)
+  }
+
+  closeWebRtcTerminal(channelId: string): void {
+    const connectionId = this.webRtcTerminalConnectionsByChannelId.get(channelId)
+    if (!connectionId) return
+    const connection = this.connectionStore.get(connectionId)
+    this.webRtcTerminalConnectionsByChannelId.delete(channelId)
+    this.connectionStore.unregister(connectionId)
+    void this.auditStore.append({
+      action: 'connection-closed',
+      connectionId,
+      deviceId: connection?.deviceId ?? null,
+      deviceName: connection ? (this.deviceStore.get(connection.deviceId)?.name ?? null) : null,
+    }).then(() => this.emitStatus())
+    this.emitStatus()
+  }
+
+  private async collectRemoteAppAssetPaths(): Promise<string[]> {
+    const files = await fs.readdir(this.rendererDistDir, { recursive: true })
+    return files
+      .filter((entry) => typeof entry === 'string' && !entry.endsWith('.map'))
+      .filter((entry) => entry === 'remote.html' || entry === 'remote.webmanifest' || entry === 'terminay.svg' || entry.startsWith('assets/'))
+      .map((entry) => `/remote-app/current/${entry}`)
+  }
+
+  private remoteAppAssetPathToFilePath(assetPath: string): string {
+    const prefix = '/remote-app/current/'
+    if (!assetPath.startsWith(prefix) || assetPath.includes('..')) {
+      throw new Error('Remote app asset path is invalid.')
+    }
+    return path.resolve(this.rendererDistDir, assetPath.slice(prefix.length))
+  }
+
+  private async readRemoteAppAssetBody(assetPath: string): Promise<Buffer> {
+    const filePath = this.remoteAppAssetPathToFilePath(assetPath)
+    if (!filePath.startsWith(path.resolve(this.rendererDistDir))) {
+      throw new Error('Remote app asset path is invalid.')
+    }
+    return fs.readFile(filePath)
+  }
+
   private async handleStaticRequest(
     pathname: string,
   ): Promise<{ body: Buffer; contentType: string; status: number } | null> {
@@ -960,7 +1202,7 @@ export class RemoteAccessService {
       this.assertOrigin(request, device.origin)
 
       this.wsServer.handleUpgrade(request, socket, head, (websocket) => {
-        const connection = this.connectionStore.register(websocket, ticketInfo.connectionId, ticketInfo.deviceId)
+        const connection = this.connectionStore.register(webSocketPeer(websocket), ticketInfo.connectionId, ticketInfo.deviceId)
         void this.auditStore
           .append({
             action: 'connection-opened',
@@ -988,7 +1230,7 @@ export class RemoteAccessService {
 
       const parsed = parseRemoteClientMessage(message.toString())
       if (!parsed) {
-        this.send(socket, { message: 'Invalid remote message.', type: 'error' })
+        this.send(webSocketPeer(socket), { message: 'Invalid remote message.', type: 'error' })
         return
       }
 
@@ -1076,7 +1318,7 @@ export class RemoteAccessService {
     }
   }
 
-  private sendSessionList(socket: WebSocket, connectionId: string): void {
+  private sendSessionList(socket: RemoteConnectionPeer, connectionId: string): void {
     this.send(socket, {
       connectionCount: this.connectionStore.count(),
       connectionId,
@@ -1120,8 +1362,8 @@ export class RemoteAccessService {
     }
   }
 
-  private send(socket: WebSocket, message: RemoteServerMessage): void {
-    if (socket.readyState !== socket.OPEN) {
+  private send(socket: RemoteConnectionPeer, message: RemoteServerMessage): void {
+    if (socket.getReadyState() !== WebSocket.OPEN) {
       return
     }
 
