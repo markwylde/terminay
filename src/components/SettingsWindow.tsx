@@ -176,6 +176,7 @@ export function SettingsWindow() {
   const [showPreview, setShowPreview] = useState(true)
   const [previewHeight, setPreviewHeight] = useState(240)
   const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(null)
+  const [selectedRemotePairingMode, setSelectedRemotePairingMode] = useState<'lan' | 'webrtc'>('lan')
   const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false)
   const [isLinkCopied, setIsLinkCopied] = useState(false)
   const [isUpdatingRemoteDevices, setIsUpdatingRemoteDevices] = useState(false)
@@ -235,6 +236,10 @@ export function SettingsWindow() {
       unsubscribe()
     }
   }, [])
+
+  useEffect(() => {
+    setSelectedRemotePairingMode(remoteStatus?.pairingMode ?? draft.remoteAccess.pairingMode)
+  }, [remoteStatus?.pairingMode, draft.remoteAccess.pairingMode])
 
   const normalizedQuery = query.trim().toLowerCase()
 
@@ -851,6 +856,16 @@ export function SettingsWindow() {
       : remoteStatus?.errorMessage
         ? `${remoteStatus.errorMessage} You can also add your own certificate files below later if you want.`
         : 'Terminay will use your Remote Access settings and generate a self-signed certificate automatically if you leave the TLS paths blank.'
+    const activePairingMode = selectedRemotePairingMode
+    const selectedPairingUrl = activePairingMode === 'webrtc' ? remoteStatus?.webRtcPairingUrl : remoteStatus?.lanPairingUrl
+    const selectedPairingQrCodeDataUrl =
+      activePairingMode === 'webrtc' ? remoteStatus?.webRtcPairingQrCodeDataUrl : remoteStatus?.lanPairingQrCodeDataUrl
+    const selectedPairingExpiresAt =
+      activePairingMode === 'webrtc' ? remoteStatus?.webRtcPairingExpiresAt : remoteStatus?.lanPairingExpiresAt
+    const selectedPairingLabel = activePairingMode === 'webrtc' ? 'WebRTC Relay QR' : 'Local Network QR'
+    const pairedDevices = remoteStatus?.pairedDevices ?? []
+    const activeConnections = remoteStatus?.connections ?? []
+    const auditEvents = remoteStatus?.auditEvents ?? []
 
     return (
       <section id="section-remote-access-management" className="settings-section">
@@ -873,17 +888,37 @@ export function SettingsWindow() {
               </button>
             </div>
 
-            {remoteStatus?.pairingQrCodeDataUrl ? (
+            <div className="settings-remote-card-header">
+              <span className="settings-remote-card-label">Pairing QR Type</span>
+              <div className="settings-shortcut-actions">
+                <button
+                  type="button"
+                  className={`settings-secondary-button settings-secondary-button--small${activePairingMode === 'lan' ? ' settings-shortcut-listen-button--active' : ''}`}
+                  onClick={() => setSelectedRemotePairingMode('lan')}
+                >
+                  Local Network
+                </button>
+                <button
+                  type="button"
+                  className={`settings-secondary-button settings-secondary-button--small${activePairingMode === 'webrtc' ? ' settings-shortcut-listen-button--active' : ''}`}
+                  onClick={() => setSelectedRemotePairingMode('webrtc')}
+                >
+                  WebRTC Relay
+                </button>
+              </div>
+            </div>
+
+            {selectedPairingQrCodeDataUrl ? (
               <div className="settings-remote-grid">
                 <div className="settings-remote-card">
                   <div className="settings-remote-card-header">
-                    <span className="settings-remote-card-label">Pairing QR</span>
-                    {remoteStatus.pairingUrl ? (
+                    <span className="settings-remote-card-label">{selectedPairingLabel}</span>
+                    {selectedPairingUrl ? (
                       <button
                         type="button"
                         className="settings-remote-copy-button"
                         onClick={() => {
-                          void navigator.clipboard.writeText(remoteStatus.pairingUrl!)
+                          void navigator.clipboard.writeText(selectedPairingUrl)
                           setIsLinkCopied(true)
                           setTimeout(() => setIsLinkCopied(false), 2000)
                         }}
@@ -892,19 +927,22 @@ export function SettingsWindow() {
                       </button>
                     ) : null}
                   </div>
-                  <img className="settings-remote-qr" src={remoteStatus.pairingQrCodeDataUrl} alt="Remote pairing QR code" />
+                  <img className="settings-remote-qr" src={selectedPairingQrCodeDataUrl} alt="Remote pairing QR code" />
                   <p className="settings-remote-meta">
-                    Expires {remoteStatus.pairingExpiresAt ? new Date(remoteStatus.pairingExpiresAt).toLocaleString() : 'soon'}
+                    Expires {selectedPairingExpiresAt ? new Date(selectedPairingExpiresAt).toLocaleString() : 'soon'}
                   </p>
+                  {activePairingMode === 'webrtc' && remoteStatus?.webRtcStatusMessage ? (
+                    <p className="settings-remote-meta">{remoteStatus.webRtcStatusMessage}</p>
+                  ) : null}
                 </div>
 
                 <div className="settings-remote-card">
                   <span className="settings-remote-card-label">Paired Devices</span>
                   <div className="settings-remote-list">
-                    {remoteStatus.pairedDevices.length === 0 ? (
+                    {pairedDevices.length === 0 ? (
                       <p className="settings-remote-empty">No paired browsers yet.</p>
                     ) : (
-                      remoteStatus.pairedDevices.map((device) => (
+                      pairedDevices.map((device) => (
                         <div key={device.deviceId} className="settings-remote-item">
                           <div>
                             <strong>{device.name}</strong>
@@ -930,10 +968,10 @@ export function SettingsWindow() {
                 <div className="settings-remote-card">
                   <span className="settings-remote-card-label">Active Connections</span>
                   <div className="settings-remote-list">
-                    {remoteStatus.connections.length === 0 ? (
+                    {activeConnections.length === 0 ? (
                       <p className="settings-remote-empty">No live remote connections.</p>
                     ) : (
-                      remoteStatus.connections.map((connection) => (
+                      activeConnections.map((connection) => (
                         <div key={connection.connectionId} className="settings-remote-item">
                           <div>
                             <strong>{connection.deviceName}</strong>
@@ -956,10 +994,10 @@ export function SettingsWindow() {
                 <div className="settings-remote-card">
                   <span className="settings-remote-card-label">Recent Audit Log</span>
                   <div className="settings-remote-list">
-                    {remoteStatus.auditEvents.length === 0 ? (
+                    {auditEvents.length === 0 ? (
                       <p className="settings-remote-empty">No remote access events yet.</p>
                     ) : (
-                      remoteStatus.auditEvents.map((event) => (
+                      auditEvents.map((event) => (
                         <div
                           key={`${event.occurredAt}-${event.action}-${event.connectionId ?? 'none'}-${event.deviceId ?? 'none'}`}
                           className="settings-remote-item settings-remote-item--stacked"

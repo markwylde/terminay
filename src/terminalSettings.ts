@@ -108,8 +108,10 @@ export const defaultTerminalSettings: TerminalSettings = {
   remoteAccess: {
     bindAddress: '0.0.0.0',
     origin: 'https://localhost:9443',
+    pairingMode: 'lan',
     tlsCertPath: '',
     tlsKeyPath: '',
+    webRtcConnectUrl: 'https://app.terminay.com/connect',
   },
   shell: {
     program: '',
@@ -234,6 +236,19 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
     description: 'Choose the HTTPS origin browsers will pair against and the local address Terminay binds.',
     fields: [
       makeField({
+        key: 'remoteAccess.pairingMode',
+        label: 'Pairing method',
+        description: 'Choose Local Network for the built-in LAN server or WebRTC Relay for the app.terminay.com relay pairing flow.',
+        sectionId: 'remote-access-host',
+        categoryId: 'remote',
+        input: 'select',
+        options: [
+          { label: 'Local Network', value: 'lan' },
+          { label: 'WebRTC Relay', value: 'webrtc' },
+        ],
+        keywords: ['remote', 'pairing', 'local network', 'lan', 'webrtc', 'relay', 'qr'],
+      }),
+      makeField({
         key: 'remoteAccess.origin',
         label: 'Remote origin',
         description: 'Exact HTTPS origin browsers use for pairing and remote terminal access. Defaults to https://localhost:9443 for local setup.',
@@ -252,6 +267,16 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         input: 'text',
         placeholder: '0.0.0.0',
         keywords: ['host', 'listen', 'bind', 'network', 'interface', '0.0.0.0'],
+      }),
+      makeField({
+        key: 'remoteAccess.webRtcConnectUrl',
+        label: 'WebRTC connect URL',
+        description: 'Relay connect page used for WebRTC pairing QR codes.',
+        sectionId: 'remote-access-host',
+        categoryId: 'remote',
+        input: 'text',
+        placeholder: 'https://app.terminay.com/connect',
+        keywords: ['webrtc', 'relay', 'connect', 'app.terminay.com', 'pairing'],
       }),
     ],
   },
@@ -952,6 +977,10 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
           ? remoteAccessInput.bindAddress
           : defaultTerminalSettings.remoteAccess.bindAddress,
       origin: typeof remoteAccessInput.origin === 'string' ? remoteAccessInput.origin : defaultTerminalSettings.remoteAccess.origin,
+      pairingMode:
+        remoteAccessInput.pairingMode === 'webrtc' || remoteAccessInput.pairingMode === 'lan'
+          ? remoteAccessInput.pairingMode
+          : defaultTerminalSettings.remoteAccess.pairingMode,
       tlsCertPath:
         typeof remoteAccessInput.tlsCertPath === 'string'
           ? remoteAccessInput.tlsCertPath
@@ -960,6 +989,10 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
         typeof remoteAccessInput.tlsKeyPath === 'string'
           ? remoteAccessInput.tlsKeyPath
           : defaultTerminalSettings.remoteAccess.tlsKeyPath,
+      webRtcConnectUrl:
+        typeof remoteAccessInput.webRtcConnectUrl === 'string' && remoteAccessInput.webRtcConnectUrl.trim().length > 0
+          ? remoteAccessInput.webRtcConnectUrl
+          : defaultTerminalSettings.remoteAccess.webRtcConnectUrl,
     },
     shell: {
       program:
