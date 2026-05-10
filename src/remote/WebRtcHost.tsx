@@ -5,6 +5,7 @@ type HostConfig = {
   expiresAt: string
   relayJoinTokenHash: string
   roomId: string
+  signalingAuthToken: string
   signalingUrl: string
 }
 
@@ -38,6 +39,53 @@ function parseJson(raw: unknown): Record<string, unknown> | null {
   }
 }
 
+function base64UrlToBytes(value: string): ArrayBuffer {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')
+  const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0))
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+}
+
+function bytesToBase64Url(bytes: ArrayBuffer): string {
+  const binary = Array.from(new Uint8Array(bytes), (byte) => String.fromCharCode(byte)).join('')
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function canonicalSignalPayload(message: Record<string, unknown>): string {
+  const payload: Record<string, unknown> = {
+    roomId: message.roomId,
+    type: message.type,
+  }
+  if ('candidate' in message) payload.candidate = message.candidate
+  if ('sdp' in message) payload.sdp = message.sdp
+  return JSON.stringify(payload)
+}
+
+async function createSignalingAuthKey(token: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'raw',
+    base64UrlToBytes(token),
+    { hash: 'SHA-256', name: 'HMAC' },
+    false,
+    ['sign', 'verify'],
+  )
+}
+
+async function signSignalMessage(authKey: CryptoKey, message: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const signature = await crypto.subtle.sign('HMAC', authKey, new TextEncoder().encode(canonicalSignalPayload(message)))
+  return { ...message, signature: bytesToBase64Url(signature) }
+}
+
+async function verifySignalMessage(authKey: CryptoKey, message: Record<string, unknown>): Promise<boolean> {
+  if (typeof message.signature !== 'string') return false
+  return crypto.subtle.verify(
+    'HMAC',
+    authKey,
+    base64UrlToBytes(message.signature),
+    new TextEncoder().encode(canonicalSignalPayload(message)),
+  )
+}
+
 function sendAssetResponse(channel: RTCDataChannel, id: string, response: unknown): void {
   const bodyBase64 = typeof response === 'object' && response !== null && 'bodyBase64' in response
     ? (response as { bodyBase64?: unknown }).bodyBase64
@@ -69,6 +117,7 @@ async function runHost(config: HostConfig): Promise<() => void> {
   if (!api) throw new Error('WebRTC host bridge is unavailable.')
 
   const socket = new WebSocket(config.signalingUrl)
+  const signalingAuthKey = await createSignalingAuthKey(config.signalingAuthToken)
   const peer = new RTCPeerConnection({
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
   })
@@ -81,11 +130,11 @@ async function runHost(config: HostConfig): Promise<() => void> {
 
   peer.addEventListener('icecandidate', (event) => {
     if (!event.candidate || socket.readyState !== WebSocket.OPEN) return
-    socket.send(JSON.stringify({
+    void signSignalMessage(signalingAuthKey, {
       candidate: event.candidate.toJSON(),
       roomId: config.roomId,
       type: 'ice',
-    }))
+    }).then((message) => socket.send(JSON.stringify(message)))
   })
 
   channels.asset.addEventListener('message', (event) => {
@@ -166,10 +215,13 @@ async function runHost(config: HostConfig): Promise<() => void> {
       if (message.type === 'client-join') {
         const offer = await peer.createOffer()
         await peer.setLocalDescription(offer)
-        socket.send(JSON.stringify({ roomId: config.roomId, sdp: offer, type: 'offer' }))
+        const signedOffer = await signSignalMessage(signalingAuthKey, { roomId: config.roomId, sdp: offer, type: 'offer' })
+        socket.send(JSON.stringify(signedOffer))
       } else if (message.type === 'answer' && message.sdp && typeof message.sdp === 'object') {
+        if (!await verifySignalMessage(signalingAuthKey, message)) return
         await peer.setRemoteDescription(message.sdp as RTCSessionDescriptionInit)
       } else if (message.type === 'ice' && message.candidate && typeof message.candidate === 'object') {
+        if (!await verifySignalMessage(signalingAuthKey, message)) return
         await peer.addIceCandidate(message.candidate as RTCIceCandidateInit)
       }
     })()
