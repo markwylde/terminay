@@ -9,7 +9,9 @@ export type WebRtcPairingPayload = {
   }
   pairingUrl: string
   relayJoinToken: string
+  relayJoinTokenHash: string
   roomId: string
+  signalingUrl: string
 }
 
 const WEBRTC_PAIRING_TTL_MS = 10 * 60 * 1000
@@ -26,6 +28,15 @@ function normalizeConnectUrl(connectUrl: string): string {
   return url.toString()
 }
 
+function createSignalingUrl(connectUrl: string): string {
+  const url = new URL(connectUrl)
+  url.protocol = 'wss:'
+  url.pathname = '/signal'
+  url.search = ''
+  url.hash = ''
+  return url.toString()
+}
+
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('base64url')
 }
@@ -35,19 +46,23 @@ export class WebRtcPairingManager {
     const sessionId = randomUUID()
     const pairingToken = randomBytes(32).toString('base64url')
     const relayJoinToken = randomBytes(32).toString('base64url')
+    const relayJoinTokenHash = hashToken(relayJoinToken)
     const roomId = randomUUID()
     const expiresAt = new Date(Date.now() + WEBRTC_PAIRING_TTL_MS).toISOString()
-    const url = new URL(normalizeConnectUrl(connectUrl))
+    const normalizedConnectUrl = normalizeConnectUrl(connectUrl)
+    const url = new URL(normalizedConnectUrl)
+    const signalingUrl = createSignalingUrl(normalizedConnectUrl)
 
     url.searchParams.set('mode', 'webrtc')
     url.searchParams.set('v', '1')
     url.searchParams.set('roomId', roomId)
     url.searchParams.set('relayJoinToken', relayJoinToken)
-    url.searchParams.set('relayJoinTokenHash', hashToken(relayJoinToken))
     url.searchParams.set('pairingSessionId', sessionId)
     url.searchParams.set('pairingToken', pairingToken)
-    url.searchParams.set('pairingTokenHash', hashToken(pairingToken))
     url.searchParams.set('pairingExpiresAt', expiresAt)
+    if (signalingUrl !== 'wss://app.terminay.com/signal') {
+      url.searchParams.set('signalingUrl', signalingUrl)
+    }
 
     return {
       expiresAt,
@@ -58,7 +73,9 @@ export class WebRtcPairingManager {
       },
       pairingUrl: url.toString(),
       relayJoinToken,
+      relayJoinTokenHash,
       roomId,
+      signalingUrl,
     }
   }
 }
