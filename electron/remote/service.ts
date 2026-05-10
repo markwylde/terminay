@@ -87,6 +87,10 @@ function jsonResponse(body: JsonResponse, status = 200): { body: Buffer; content
   }
 }
 
+function isAddressInUseError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'EADDRINUSE'
+}
+
 function getContentType(filePath: string): string {
   const extension = path.extname(filePath).toLowerCase()
   switch (extension) {
@@ -202,7 +206,7 @@ export class RemoteAccessService {
       configurationIssue: this.getConfigurationIssue(),
       configurationPath: 'File > Settings > Remote Access',
       errorMessage: this.errorMessage,
-      isRunning: this.httpsServer !== null,
+      isRunning: this.isRunning(),
       lanPairingExpiresAt,
       lanPairingQrCodeDataUrl: this.pairingQrCodeDataUrl,
       lanPairingQrCodePath: this.pairingQrCodePath,
@@ -240,7 +244,7 @@ export class RemoteAccessService {
   }
 
   async toggle(): Promise<RemoteAccessStatus> {
-    if (this.httpsServer) {
+    if (this.isRunning()) {
       await this.stop()
       return this.getStatus()
     }
@@ -466,6 +470,7 @@ export class RemoteAccessService {
 
     try {
       this.config = resolveRemoteAccessConfig(readRemoteAccessConfig(this.getRemoteAccessSettings()))
+      const settings = this.getRemoteAccessSettings()
       await this.deviceStore.load()
       await this.auditStore.load()
 
@@ -494,13 +499,27 @@ export class RemoteAccessService {
         void this.handleUpgrade(request, socket, head)
       })
 
-      await new Promise<void>((resolve, reject) => {
-        this.httpsServer?.once('error', reject)
-        this.httpsServer?.listen(this.config?.port, this.config?.bindAddress, () => {
-          this.httpsServer?.off('error', reject)
-          resolve()
+      try {
+        await new Promise<void>((resolve, reject) => {
+          this.httpsServer?.once('error', reject)
+          this.httpsServer?.listen(this.config?.port, this.config?.bindAddress, () => {
+            this.httpsServer?.off('error', reject)
+            resolve()
+          })
         })
-      })
+      } catch (error) {
+        if (settings.pairingMode !== 'webrtc' || !isAddressInUseError(error)) {
+          throw error
+        }
+
+        const failedServer = this.httpsServer
+        this.httpsServer = null
+        failedServer?.close()
+        this.pairingQrCodeDataUrl = null
+        this.pairingQrCodePath = null
+        this.pairingUrl = null
+        this.errorMessage = `Local Network server could not start because port ${this.config.port} is already in use. WebRTC relay pairing is still available.`
+      }
 
       this.emitStatus()
     } catch (error) {
@@ -547,6 +566,10 @@ export class RemoteAccessService {
 
   private emitStatus(): void {
     this.onStatusChanged(this.getStatus())
+  }
+
+  private isRunning(): boolean {
+    return this.httpsServer !== null || this.webRtcSignalSocket !== null
   }
 
   private async rotatePairingCode(): Promise<void> {
