@@ -143,6 +143,10 @@ export type RemoteAccessStatus = {
   configurationPath: string
   errorMessage: string | null
   isRunning: boolean
+  lanPairingExpiresAt: string | null
+  lanPairingQrCodeDataUrl: string | null
+  lanPairingQrCodePath: string | null
+  lanPairingUrl: string | null
   origin: string | null
   pairedDeviceCount: number
   pairedDevices: Array<{
@@ -152,10 +156,18 @@ export type RemoteAccessStatus = {
     name: string
     origin: string
   }>
+  pairingMode: 'lan' | 'webrtc'
   pairingExpiresAt: string | null
   pairingQrCodeDataUrl: string | null
   pairingQrCodePath: string | null
   pairingUrl: string | null
+  webRtcPairingExpiresAt: string | null
+  webRtcPairingQrCodeDataUrl: string | null
+  webRtcPairingUrl: string | null
+  webRtcRelayJoinToken: string | null
+  webRtcRoomId: string | null
+  webRtcStatus: 'not-configured' | 'pairing-ready' | 'peer-handler-unavailable'
+  webRtcStatusMessage: string | null
 }
 
 export type FileExplorerEntry = {

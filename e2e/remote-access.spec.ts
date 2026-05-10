@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test'
 import { openRemoteMenu } from './support/ui'
 
 function remoteOriginInput(page: Page) {
-  return page.locator('#section-remote-access-host .settings-row').nth(0).locator('input')
+  return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Remote origin' }).locator('input')
 }
 
 test('opens remote access settings from the host menu', async ({ appHarness, mainWindow }) => {
@@ -25,7 +25,7 @@ test('starts remote access from the host menu and shows a pairing qr modal', asy
   const pairingDialog = mainWindow.getByRole('dialog', { name: 'Pair device' })
   await expect(pairingDialog).toBeVisible()
   await expect(pairingDialog.getByRole('heading', { name: 'Pair Device' })).toBeVisible()
-  await expect(pairingDialog.getByAltText('Pair device QR code')).toBeVisible()
+  await expect(pairingDialog.getByAltText('Remote pairing QR code')).toBeVisible()
   await expect(pairingDialog.getByText('Open this address in your browser')).toBeVisible()
   await expect(pairingDialog.getByText(/^Expires /)).toBeVisible()
 
