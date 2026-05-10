@@ -9,7 +9,6 @@ node_modules/
 /out/
 /build/
 /docs/
-/artifacts/
 
 # Logs
 logs/

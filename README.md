@@ -71,12 +71,6 @@ npm run build:linux
 
 ## Docs
 
-The docs site lives in the private `terminay.com` repository. This app repo only keeps the screenshot generator that the docs deploy clones and runs.
-
-```bash
-npm run docs:screenshots
-```
-
-The screenshot generator launches the Electron app with Playwright and writes generated assets to `artifacts/docs-screenshots/` by default. The `terminay.com` pipeline sets `TERMINAY_DOCS_SCREENSHOT_DIR` so screenshots are written straight into its docs build workspace.
+The docs site and screenshot generation workflow live in the private `terminay.com` repository.
 
 Release packaging syncs `package.json` from the release tag during CI, so the source tree can use the placeholder version while published builds carry the tagged version.
