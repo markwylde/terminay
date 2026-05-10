@@ -149,6 +149,44 @@ let cachedAppUpdateStatus: AppUpdateStatus | null = null
 let appUpdateFetchPromise: Promise<AppUpdateStatus> | null = null
 const remoteAccessService = new RemoteAccessService({
   app,
+  createWebRtcHostWindow: () => {
+    const preloadPath = path.join(__dirname, 'preload.mjs')
+    const hostWindow = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        preload: preloadPath,
+        sandbox: false,
+      },
+    })
+    if (VITE_DEV_SERVER_URL) {
+      void hostWindow.loadURL(`${VITE_DEV_SERVER_URL}?view=webrtc-host`)
+    } else {
+      void hostWindow.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+        query: { view: 'webrtc-host' },
+      })
+    }
+    return {
+      close: () => {
+        if (!hostWindow.isDestroyed()) hostWindow.close()
+      },
+      sendConfig: (config) => {
+        if (hostWindow.isDestroyed()) return
+        if (hostWindow.webContents.isLoading()) {
+          hostWindow.webContents.once('did-finish-load', () => hostWindow.webContents.send('remote-webrtc-host:config', config))
+        } else {
+          hostWindow.webContents.send('remote-webrtc-host:config', config)
+        }
+      },
+      sendTerminalMessage: (channelId, message) => {
+        if (!hostWindow.isDestroyed()) {
+          hostWindow.webContents.send('remote-webrtc-host:terminal-message', { channelId, message })
+        }
+      },
+      webContentsId: hostWindow.webContents.id,
+    }
+  },
   getControllableSession: (sessionId) => {
     const session = terminalSessions.get(sessionId)
     return session
@@ -1897,6 +1935,37 @@ ipcMain.handle('app:submit-edit-window-result', async (event, result: EditWindow
 
 ipcMain.handle('remote:get-status', () => {
   return remoteAccessService.getStatus()
+})
+
+ipcMain.handle('remote-webrtc-host:get-config', (event) => {
+  return remoteAccessService.getWebRtcHostConfig(event.sender.id)
+})
+
+ipcMain.handle('remote-webrtc-host:get-asset-manifest', () => {
+  return remoteAccessService.getWebRtcAssetManifest()
+})
+
+ipcMain.handle('remote-webrtc-host:get-asset', (_event, payload: { path: string }) => {
+  return remoteAccessService.getWebRtcAsset(payload.path)
+})
+
+ipcMain.handle(
+  'remote-webrtc-host:api-request',
+  (_event, payload: { appOrigin: string; body: Record<string, unknown>; pathname: string }) => {
+    return remoteAccessService.handleWebRtcApiRequest(payload.pathname, payload.body, payload.appOrigin)
+  },
+)
+
+ipcMain.handle('remote-webrtc-host:terminal-auth', (event, payload: { channelId: string; ticket: string }) => {
+  return remoteAccessService.attachWebRtcTerminal(event.sender.id, payload.channelId, payload.ticket)
+})
+
+ipcMain.on('remote-webrtc-host:terminal-message', (_event, payload: { channelId: string; message: string }) => {
+  remoteAccessService.handleWebRtcTerminalMessage(payload.channelId, payload.message)
+})
+
+ipcMain.on('remote-webrtc-host:terminal-close', (_event, payload: { channelId: string }) => {
+  remoteAccessService.closeWebRtcTerminal(payload.channelId)
 })
 
 ipcMain.handle('remote:toggle-server', async () => {

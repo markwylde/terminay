@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 
 export type WebRtcPairingPayload = {
+  appOrigin: string
   expiresAt: string
   pairing: {
     expiresAt: string
@@ -37,6 +38,10 @@ function createSignalingUrl(connectUrl: string): string {
   return url.toString()
 }
 
+function createAppOrigin(connectUrl: string): string {
+  return new URL(connectUrl).origin
+}
+
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('base64url')
 }
@@ -52,6 +57,7 @@ export class WebRtcPairingManager {
     const normalizedConnectUrl = normalizeConnectUrl(connectUrl)
     const url = new URL(normalizedConnectUrl)
     const signalingUrl = createSignalingUrl(normalizedConnectUrl)
+    const appOrigin = createAppOrigin(normalizedConnectUrl)
 
     url.searchParams.set('mode', 'webrtc')
     url.searchParams.set('v', '1')
@@ -65,6 +71,7 @@ export class WebRtcPairingManager {
     }
 
     return {
+      appOrigin,
       expiresAt,
       pairing: {
         expiresAt,
