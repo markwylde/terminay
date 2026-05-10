@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { termideFileGateway } from '../../../services/fileViewer'
+import { terminayFileGateway } from '../../../services/fileViewer'
 import { useResizeObserver } from '../../../hooks/useResizeObserver'
 
 type HexViewerProps = {
@@ -162,7 +162,7 @@ export function HexViewer({ filePath, fileSize, onChangeByte, onValidationChange
 
     void Promise.all(
       missingPageOffsets.map(async (offset) => {
-        const response = await termideFileGateway.readFileBytes(filePath, {
+        const response = await terminayFileGateway.readFileBytes(filePath, {
           length: Math.min(pageSize, Math.max(0, fileSize - offset)),
           offset,
         })

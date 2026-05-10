@@ -191,7 +191,7 @@ async function listDirectoryNodes(
 	rootPath: string,
 	targetPath: string,
 ): Promise<FolderTreeNode[]> {
-	const entries = await window.termide.listDirectory(targetPath);
+	const entries = await window.terminay.listDirectory(targetPath);
 	entries.sort(sortEntriesByTypeAndName);
 
 	return entries.map((entry) => {
@@ -422,7 +422,7 @@ function FileGridCard({
 
 function dispatchOpenFile(path: string) {
 	window.dispatchEvent(
-		new CustomEvent<{ path: string }>('termide-open-file', {
+		new CustomEvent<{ path: string }>('terminay-open-file', {
 			detail: { path },
 		}),
 	);

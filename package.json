@@ -1,6 +1,6 @@
 {
-  "name": "termide",
-  "productName": "Termide",
+  "name": "terminay",
+  "productName": "Terminay",
   "private": true,
   "version": "0.0.0",
   "description": "A desktop terminal workspace built with Electron, React, and Vite.",
@@ -8,12 +8,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git@github.com:markwylde/termide.git"
+    "url": "git@github.com:markwylde/terminay.git"
   },
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:electron": "tsc && vite build && electron-builder --dir --mac --arm64 && open \"release/$npm_package_version/mac-arm64/Termide.app\"",
+    "dev:electron": "tsc && vite build && electron-builder --dir --mac --arm64 && open \"release/$npm_package_version/mac-arm64/Terminay.app\"",
     "build:app": "tsc && vite build",
     "build": "npm run build:app && electron-builder --publish never",
     "build:mac": "npm run build:app && electron-builder --mac dmg --publish never",

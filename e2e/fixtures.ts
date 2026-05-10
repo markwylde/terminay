@@ -21,7 +21,7 @@ type ElectronFixtures = {
     openMacrosWindow: (page?: Page) => Promise<Page>
     openSettingsWindow: (options?: { page?: Page; sectionId?: string }) => Promise<Page>
     prepareWindow: (page: Page) => Promise<Page>
-    sendAppCommand: (command: import('../src/types/termide').AppCommand, page?: Page) => Promise<void>
+    sendAppCommand: (command: import('../src/types/terminay').AppCommand, page?: Page) => Promise<void>
   }
   createWorkspace: (options?: WorkspaceOptions) => Promise<FixtureWorkspace>
   electronApp: ElectronApplication
@@ -83,7 +83,7 @@ async function closeElectronAppGracefully(electronApp: ElectronApplication): Pro
 export const test = base.extend<ElectronFixtures>({
   // biome-ignore lint/correctness/noEmptyPattern: Playwright fixture callbacks require an object pattern here.
   userDataDir: async ({}, use) => {
-    const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'termide-e2e-'))
+    const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-e2e-'))
 
     try {
       await use(userDataDir)
@@ -107,9 +107,9 @@ export const test = base.extend<ElectronFixtures>({
         ...process.env,
         CI: '1',
         TEMP: tempDir,
-        TERMIDE_E2E_TEMP_DIR: tempDir,
-        TERMIDE_TEST: '1',
-        TERMIDE_USER_DATA_DIR: userDataDir,
+        TERMINAY_E2E_TEMP_DIR: tempDir,
+        TERMINAY_TEST: '1',
+        TERMINAY_USER_DATA_DIR: userDataDir,
         TMP: tempDir,
         TMPDIR: tempDir,
       },

@@ -69,7 +69,7 @@ test('searches macro file fields relative to the project root', async ({ createW
   const search = async (query: string) => {
     return mainWindow.evaluate(
       async ({ query: nextQuery, rootDir }) => {
-        return window.termide.searchFiles({ rootPath: rootDir, query: nextQuery, limit: 20 })
+        return window.terminay.searchFiles({ rootPath: rootDir, query: nextQuery, limit: 20 })
       },
       { query, rootDir: workspace.rootDir },
     )

@@ -6,15 +6,15 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
 ---
 
 <DocsLayout
-  title="Macros - Termide"
-  description="Create and run reusable terminal automations in Termide."
+  title="Macros - Terminay"
+  description="Create and run reusable terminal automations in Terminay."
   current="macros"
 >
   <h1 class="docs-title">Macros</h1>
   <p class="docs-lead">
     Macros are saved terminal automations. Run them from the Command Bar, or manage them from the Macros window.
   </p>
-  <DocsScreenshot file="termide-macros.png" alt="Termide Macros window showing the macro library and execution steps" />
+  <DocsScreenshot file="terminay-macros.png" alt="Terminay Macros window showing the macro library and execution steps" />
 
   <section class="docs-section">
     <h2>Macro Library</h2>
@@ -54,17 +54,17 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
       Fields can be text, textarea, select, number, checkbox, or emoji. Each field has a variable name, display label, type, and default value. Select fields use one option per line in <code>Label|value</code> format.
     </p>
     <p>
-      When you run a macro with fields, Termide opens a form first. Required fields must be filled in before the macro can run. Macros with no fields run immediately.
+      When you run a macro with fields, Terminay opens a form first. Required fields must be filled in before the macro can run. Macros with no fields run immediately.
     </p>
   </section>
 
   <section class="docs-section">
     <h2>Secrets Manager</h2>
     <p>
-      Use the Secrets Manager tab to save named secrets. Enter a secret name and value, then choose <strong>Add Secret</strong>. Termide stores secret values with OS-level encryption and only shows secret names in the manager.
+      Use the Secrets Manager tab to save named secrets. Enter a secret name and value, then choose <strong>Add Secret</strong>. Terminay stores secret values with OS-level encryption and only shows secret names in the manager.
     </p>
     <p>
-      To use a secret, add an <strong>Insert Secret</strong> step and select the saved secret name. When the macro runs, Termide decrypts the value and writes it into the active terminal. Deleting a secret asks for confirmation and cannot be undone.
+      To use a secret, add an <strong>Insert Secret</strong> step and select the saved secret name. When the macro runs, Terminay decrypts the value and writes it into the active terminal. Deleting a secret asks for confirmation and cannot be undone.
     </p>
   </section>
 

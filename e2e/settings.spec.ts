@@ -26,7 +26,7 @@ test('opens settings focused to remote access and supports settings search', asy
 })
 
 test('persists settings edits across reopening the settings window', async ({ appHarness, mainWindow }) => {
-  const updatedOrigin = 'https://e2e-settings.termide.test:9443'
+  const updatedOrigin = 'https://e2e-settings.terminay.test:9443'
 
   const firstWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' })
 
@@ -45,7 +45,7 @@ test('resets settings back to defaults', async ({ appHarness, mainWindow }) => {
   const dialogs = await appHarness.dialogs(settingsWindow)
 
   const originInput = remoteOriginInput(settingsWindow)
-  await originInput.fill('https://reset-me.termide.test:9443')
+  await originInput.fill('https://reset-me.terminay.test:9443')
   await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
 
   await dialogs.queueConfirm(true)

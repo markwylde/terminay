@@ -2,7 +2,7 @@
 
 ## Summary
 
-Termide should let the user generate terminal tab metadata from the Command bar. Pressing `Cmd/Ctrl+L` opens the existing Command bar, where the user can choose:
+Terminay should let the user generate terminal tab metadata from the Command bar. Pressing `Cmd/Ctrl+L` opens the existing Command bar, where the user can choose:
 
 - Set tab title with AI
 - Set tab note with AI
@@ -16,12 +16,12 @@ When the user chooses `Codex` or `Claude Code`, Settings should ask the provider
 
 ## What We Are Trying To Do
 
-The goal is to make terminal tabs easier to understand after work has started. A user should be able to run a command from the Command bar and have Termide ask the configured AI provider to summarize the active terminal into either:
+The goal is to make terminal tabs easier to understand after work has started. A user should be able to run a command from the Command bar and have Terminay ask the configured AI provider to summarize the active terminal into either:
 
 - a concise tab title, replacing the current Dockview tab title
 - a short terminal note, filling the existing note area above the terminal
 
-This feature should feel like a natural extension of Termide's existing workflow:
+This feature should feel like a natural extension of Terminay's existing workflow:
 
 - `Cmd/Ctrl+L` already opens the Command bar.
 - The Command bar already mixes app commands and macros.
@@ -33,11 +33,11 @@ The implementation should not hard-code the product around one provider. Codex a
 
 ## Current Codebase Shape
 
-Termide is an Electron, React, Vite desktop app.
+Terminay is an Electron, React, Vite desktop app.
 
 The main app shell lives in `src/App.tsx`. It owns project tabs, Dockview panels, terminal creation, command execution, the Command bar, and most workspace-level state. Terminal, file, and folder tabs are all Dockview panels with custom tab headers.
 
-The Command bar is opened by the `open-command-bar` app command, which defaults to `CmdOrCtrl+L`. Built-in command metadata and default shortcuts live in `src/keyboardShortcuts.ts`, and the command union lives in `src/types/termide.ts`. `src/App.tsx` builds the visible Command bar items locally, grouping them into Terminal, Workspace, and Macros.
+The Command bar is opened by the `open-command-bar` app command, which defaults to `CmdOrCtrl+L`. Built-in command metadata and default shortcuts live in `src/keyboardShortcuts.ts`, and the command union lives in `src/types/terminay.ts`. `src/App.tsx` builds the visible Command bar items locally, grouping them into Terminal, Workspace, and Macros.
 
 Terminal tab metadata already exists:
 
@@ -46,11 +46,11 @@ Terminal tab metadata already exists:
 - Terminal notes are rendered by `src/components/TerminalPanel.tsx` when `terminalNote` is a string.
 - Terminal note edits flow through `onUpdateNote` into `panel.api.updateParameters({ terminalNote })`.
 - Manual title and appearance editing is handled through `openTerminalEditWindow(...)`.
-- Remote terminal metadata is kept in sync through `window.termide.updateTerminalRemoteMetadata(...)`.
+- Remote terminal metadata is kept in sync through `window.terminay.updateTerminalRemoteMetadata(...)`.
 
 Settings are modeled as `TerminalSettings` in `src/types/settings.ts`, defaulted and described in `src/terminalSettings.ts`, rendered by `src/components/SettingsWindow.tsx`, and persisted by Electron in `terminal-settings.json`. Settings normalization happens in `normalizeTerminalSettings(...)`, so any new nested settings must be defaulted and sanitized there. Settings changes are broadcast by Electron with `settings:terminal-changed`.
 
-Renderer-to-main APIs are exposed through `electron/preload.ts` as `window.termide.*`. Electron IPC handlers live primarily in `electron/main.ts`, with file-viewer functionality split into dedicated services under `electron/fileViewer/`. AI provider work should follow that split-service pattern rather than expanding `src/App.tsx` with process execution or model-fetching details.
+Renderer-to-main APIs are exposed through `electron/preload.ts` as `window.terminay.*`. Electron IPC handlers live primarily in `electron/main.ts`, with file-viewer functionality split into dedicated services under `electron/fileViewer/`. AI provider work should follow that split-service pattern rather than expanding `src/App.tsx` with process execution or model-fetching details.
 
 ## Product Decisions
 
@@ -149,7 +149,7 @@ listAiTabMetadataModels(provider: 'codex' | 'claudeCode'): Promise<Array<{ id: s
 - Success should update the tab title or note without opening the manual edit window.
 - Failure should leave the current title/note unchanged.
 - Settings should reveal model dropdowns only when the provider selection needs them.
-- Disabled settings should be explicit; users should not need an API key or Codex installation just to keep using Termide.
+- Disabled settings should be explicit; users should not need an API key or Codex installation just to keep using Terminay.
 
 ## Architecture
 
@@ -178,7 +178,7 @@ Create an Electron-side service that knows how to:
 - normalize provider errors
 - enforce output length and plain-text constraints
 
-The service should sit outside React and be reached through preload IPC. `src/App.tsx` should ask for generation through `window.termide`, not spawn Codex or parse model output directly.
+The service should sit outside React and be reached through preload IPC. `src/App.tsx` should ask for generation through `window.terminay`, not spawn Codex or parse model output directly.
 
 ### 4. Terminal Context Collection
 

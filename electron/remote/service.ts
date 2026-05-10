@@ -7,7 +7,7 @@ import type { App } from 'electron'
 import QRCode from 'qrcode'
 import { WebSocketServer } from 'ws'
 import type { WebSocket } from 'ws'
-import type { RemoteAccessStatus } from '../../src/types/termide'
+import type { RemoteAccessStatus } from '../../src/types/terminay'
 import type { RemoteAccessSettings } from '../../src/types/settings'
 import {
   parseRemoteClientMessage,

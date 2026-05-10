@@ -66,7 +66,7 @@ import type {
 	FileExplorerGitStatus,
 	FileSearchResult,
 	RemoteAccessStatus,
-} from './types/termide';
+} from './types/terminay';
 import type { FileViewerMode } from './types/fileViewer';
 import './App.css';
 
@@ -176,8 +176,8 @@ type ProjectWorkspaceProps = {
 	projects: ProjectTab[];
 };
 
-const OPEN_TERMINAL_SWITCHER_EVENT = 'termide-open-terminal-switcher';
-const DROP_FILE_EXPLORER_PATH_EVENT = 'termide-drop-file-explorer-path';
+const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher';
+const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path';
 const DEFAULT_FILE_EXPLORER_WIDTH = 280;
 const MIN_FILE_EXPLORER_WIDTH = 180;
 const MAX_FILE_EXPLORER_WIDTH = 520;
@@ -470,7 +470,7 @@ const MacroFileFieldInput = forwardRef<
 
 		setIsLoading(true);
 		const timeoutId = window.setTimeout(() => {
-			void window.termide
+			void window.terminay
 				.searchFiles({ rootPath, query: normalizedValue, limit: 60 })
 				.then((results) => {
 					if (requestIdRef.current !== requestId) {
@@ -838,8 +838,8 @@ function FileExplorerTree({
 
 			const dropTarget = document
 				.elementFromPoint(event.clientX, event.clientY)
-				?.closest<HTMLElement>('[data-termide-terminal-session-id]');
-			const sessionId = dropTarget?.dataset.termideTerminalSessionId;
+				?.closest<HTMLElement>('[data-terminay-terminal-session-id]');
+			const sessionId = dropTarget?.dataset.terminayTerminalSessionId;
 			if (!sessionId) {
 				return;
 			}
@@ -1205,7 +1205,7 @@ function waitForSessionInactivity(
 			timeout = window.setTimeout(finish, durationMs);
 		};
 
-		const dispose = window.termide.onTerminalData((message) => {
+		const dispose = window.terminay.onTerminalData((message) => {
 			if (message.id !== sessionId) {
 				return;
 			}
@@ -1672,7 +1672,7 @@ const ProjectWorkspace = forwardRef<
 		markTerminalActivityViewed(sessionId);
 		window.requestAnimationFrame(() => {
 			window.dispatchEvent(
-				new CustomEvent('termide-focus-terminal', {
+				new CustomEvent('terminay-focus-terminal', {
 					detail: { sessionId },
 				}),
 			);
@@ -1693,7 +1693,7 @@ const ProjectWorkspace = forwardRef<
 			setErrorText(null);
 			window.requestAnimationFrame(() => {
 				window.dispatchEvent(
-					new CustomEvent('termide-focus-terminal', {
+					new CustomEvent('terminay-focus-terminal', {
 						detail: { sessionId },
 					}),
 				);
@@ -1721,7 +1721,7 @@ const ProjectWorkspace = forwardRef<
 		});
 
 		try {
-			const entries = await window.termide.listDirectory(dirPath);
+			const entries = await window.terminay.listDirectory(dirPath);
 			setDirectoryChildren((current) => ({
 				...current,
 				[dirPath]: entries,
@@ -1752,7 +1752,7 @@ const ProjectWorkspace = forwardRef<
 
 		isRefreshingGitStatusesRef.current = true;
 		try {
-			const nextStatuses = await window.termide.getFileExplorerGitStatuses(
+			const nextStatuses = await window.terminay.getFileExplorerGitStatuses(
 				project.rootFolder,
 			);
 			setGitStatuses(nextStatuses.statuses);
@@ -2040,7 +2040,7 @@ const ProjectWorkspace = forwardRef<
 		setErrorText(null);
 		window.requestAnimationFrame(() => {
 			window.dispatchEvent(
-				new CustomEvent('termide-focus-terminal', {
+				new CustomEvent('terminay-focus-terminal', {
 					detail: { sessionId: selectedPanel.sessionId },
 				}),
 			);
@@ -2132,7 +2132,7 @@ const ProjectWorkspace = forwardRef<
 			const newPath = `${parentDir}${newName}`;
 
 			try {
-				await window.termide.renameEntry(oldPath, newPath);
+				await window.terminay.renameEntry(oldPath, newPath);
 				// Refresh parent directory
 				void loadDirectory(parentDir || project.rootFolder);
 				void refreshGitStatuses();
@@ -2151,7 +2151,7 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			try {
-				await window.termide.deleteEntry(path);
+				await window.terminay.deleteEntry(path);
 				const parentDir = path.substring(0, path.length - fileName.length - 1);
 				void loadDirectory(parentDir || project.rootFolder);
 				void refreshGitStatuses();
@@ -2175,7 +2175,7 @@ const ProjectWorkspace = forwardRef<
 
 			const filePath = joinFileExplorerPath(dirPath, fileName);
 			try {
-				await window.termide.saveFile({
+				await window.terminay.saveFile({
 					kind: 'text',
 					path: filePath,
 					data: '',
@@ -2203,7 +2203,7 @@ const ProjectWorkspace = forwardRef<
 
 			const newFolderPath = joinFileExplorerPath(dirPath, folderName);
 			try {
-				await window.termide.mkdir(newFolderPath);
+				await window.terminay.mkdir(newFolderPath);
 				void loadDirectory(dirPath);
 				void refreshGitStatuses();
 			} catch (error) {
@@ -2223,7 +2223,7 @@ const ProjectWorkspace = forwardRef<
 			// If it's a file, get the parent directory
 			let cwd = path;
 			try {
-				const info = await window.termide.getFileInfo(path);
+				const info = await window.terminay.getFileInfo(path);
 				if (!info.isDirectory) {
 					cwd = path.substring(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')));
 				}
@@ -2232,7 +2232,7 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			try {
-				const { id: sessionId } = await window.termide.createTerminal({ cwd });
+				const { id: sessionId } = await window.terminay.createTerminal({ cwd });
 				suppressInitialTerminalActivity(sessionId);
 
 				terminalCounterRef.current += 1;
@@ -2269,7 +2269,7 @@ const ProjectWorkspace = forwardRef<
 				});
 
 				panelSessionMapRef.current.set(panel.id, sessionId);
-				window.termide.updateTerminalRemoteMetadata(sessionId, {
+				window.terminay.updateTerminalRemoteMetadata(sessionId, {
 					color: project.color,
 					emoji: '',
 					inheritsProjectColor: true,
@@ -2434,7 +2434,7 @@ const ProjectWorkspace = forwardRef<
 		}
 
 		try {
-			const cwd = await window.termide.getTerminalCwd(sessionId);
+			const cwd = await window.terminay.getTerminalCwd(sessionId);
 			if (!cwd) {
 				setErrorText('The active terminal does not have a working directory yet.');
 				return;
@@ -2504,33 +2504,33 @@ const ProjectWorkspace = forwardRef<
 					switch (step.type) {
 						case 'type': {
 							const rendered = renderMacroTemplate(step.content, values);
-							window.termide.writeTerminal(sessionId, rendered);
+							window.terminay.writeTerminal(sessionId, rendered);
 							break;
 						}
 						case 'key':
 							// In this terminal app, we just write the key name for Enter if it's the only way,
 							// but usually we want to send \r for Enter.
 							if (step.key === 'Enter') {
-								window.termide.writeTerminal(sessionId, '\r');
+								window.terminay.writeTerminal(sessionId, '\r');
 							} else if (step.key === 'Tab') {
-								window.termide.writeTerminal(sessionId, '\t');
+								window.terminay.writeTerminal(sessionId, '\t');
 							} else if (step.key === 'Escape') {
-								window.termide.writeTerminal(sessionId, '\x1b');
+								window.terminay.writeTerminal(sessionId, '\x1b');
 							} else if (step.key === 'Backspace') {
-								window.termide.writeTerminal(sessionId, '\x7f');
+								window.terminay.writeTerminal(sessionId, '\x7f');
 							} else if (step.key === 'ArrowUp') {
-								window.termide.writeTerminal(sessionId, '\x1b[A');
+								window.terminay.writeTerminal(sessionId, '\x1b[A');
 							} else if (step.key === 'ArrowDown') {
-								window.termide.writeTerminal(sessionId, '\x1b[B');
+								window.terminay.writeTerminal(sessionId, '\x1b[B');
 							}
 							break;
 						case 'secret':
 							try {
-								const secretVal = await window.termide.getDecryptedSecret(
+								const secretVal = await window.terminay.getDecryptedSecret(
 									step.secretId,
 								);
 								throwIfAborted(abortController.signal);
-								window.termide.writeTerminal(sessionId, secretVal);
+								window.terminay.writeTerminal(sessionId, secretVal);
 							} catch (error) {
 								if (isAbortError(error)) {
 									throw error;
@@ -2557,7 +2557,7 @@ const ProjectWorkspace = forwardRef<
 							try {
 								const text = await navigator.clipboard.readText();
 								throwIfAborted(abortController.signal);
-								window.termide.writeTerminal(sessionId, text);
+								window.terminay.writeTerminal(sessionId, text);
 							} catch (error) {
 								if (isAbortError(error)) {
 									throw error;
@@ -2708,7 +2708,7 @@ const ProjectWorkspace = forwardRef<
 				});
 			}
 
-			window.termide.updateTerminalRemoteMetadata(sessionId, {
+			window.terminay.updateTerminalRemoteMetadata(sessionId, {
 				color: nextColor,
 				inheritsProjectColor,
 				projectId: project.id,
@@ -2767,7 +2767,7 @@ const ProjectWorkspace = forwardRef<
 		}
 
 		const watchedPathSet = new Set(watchedPaths);
-		const unsubscribe = window.termide.onFileExplorerWatchEvent((event) => {
+		const unsubscribe = window.terminay.onFileExplorerWatchEvent((event) => {
 			if (!watchedPathSet.has(event.path)) {
 				return;
 			}
@@ -2776,13 +2776,13 @@ const ProjectWorkspace = forwardRef<
 		});
 
 		for (const dirPath of watchedPaths) {
-			void window.termide.watchDirectory(dirPath);
+			void window.terminay.watchDirectory(dirPath);
 		}
 
 		return () => {
 			unsubscribe();
 			for (const dirPath of watchedPaths) {
-				void window.termide.unwatchDirectory(dirPath);
+				void window.terminay.unwatchDirectory(dirPath);
 			}
 		};
 	}, [
@@ -2866,7 +2866,7 @@ const ProjectWorkspace = forwardRef<
 			if (activeSessionId) {
 				try {
 					searchRootPath =
-						(await window.termide.getTerminalCwd(activeSessionId)) ??
+						(await window.terminay.getTerminalCwd(activeSessionId)) ??
 						project.rootFolder;
 				} catch {
 					searchRootPath = project.rootFolder;
@@ -2925,7 +2925,7 @@ const ProjectWorkspace = forwardRef<
 		const sessionId = panel.params?.sessionId ?? null;
 
 		try {
-			const result = await window.termide.openTerminalEditWindow({
+			const result = await window.terminay.openTerminalEditWindow({
 				activityIndicatorsEnabled: areTerminalActivityIndicatorsEnabled(
 					panel.params,
 				),
@@ -2957,7 +2957,7 @@ const ProjectWorkspace = forwardRef<
 			});
 
 			if (sessionId) {
-				window.termide.updateTerminalRemoteMetadata(sessionId, {
+				window.terminay.updateTerminalRemoteMetadata(sessionId, {
 					color: nextColor,
 					emoji: nextEmoji,
 					inheritsProjectColor: result.inheritsProjectColor,
@@ -2998,7 +2998,7 @@ const ProjectWorkspace = forwardRef<
 
 		setErrorText(null);
 		window.dispatchEvent(
-			new CustomEvent('termide-clear-terminal', {
+			new CustomEvent('terminay-clear-terminal', {
 				detail: { sessionId },
 			}),
 		);
@@ -3014,7 +3014,7 @@ const ProjectWorkspace = forwardRef<
 		}
 
 		window.dispatchEvent(
-			new CustomEvent('termide-copy-terminal', {
+			new CustomEvent('terminay-copy-terminal', {
 				detail: { sessionId },
 			}),
 		);
@@ -3085,7 +3085,7 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			try {
-				const result = await window.termide.generateAiTabMetadata({
+				const result = await window.terminay.generateAiTabMetadata({
 					context: {
 						currentTitle: previousTitle,
 						existingNote: activePanel.params?.terminalNote,
@@ -3106,7 +3106,7 @@ const ProjectWorkspace = forwardRef<
 				if (target === 'title') {
 					activePanel.api.setTitle(text);
 					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
-					window.termide.updateTerminalRemoteMetadata(sessionId, {
+					window.terminay.updateTerminalRemoteMetadata(sessionId, {
 						color: activePanel.params?.color ?? project.color,
 						emoji: activePanel.params?.emoji ?? '',
 						inheritsProjectColor: activePanel.params?.inheritsProjectColor,
@@ -3170,9 +3170,9 @@ const ProjectWorkspace = forwardRef<
 			try {
 				const activeSessionId = api.activePanel?.params?.sessionId;
 				const inheritedCwd = activeSessionId
-					? await window.termide.getTerminalCwd(activeSessionId)
+					? await window.terminay.getTerminalCwd(activeSessionId)
 					: null;
-				const { id: sessionId } = await window.termide.createTerminal(
+				const { id: sessionId } = await window.terminay.createTerminal(
 					inheritedCwd ? { cwd: inheritedCwd } : undefined,
 				);
 				suppressInitialTerminalActivity(sessionId);
@@ -3223,7 +3223,7 @@ const ProjectWorkspace = forwardRef<
 				});
 
 				panelSessionMapRef.current.set(panel.id, sessionId);
-				window.termide.updateTerminalRemoteMetadata(sessionId, {
+				window.terminay.updateTerminalRemoteMetadata(sessionId, {
 					color: project.color,
 					emoji: '',
 					inheritsProjectColor: true,
@@ -3346,7 +3346,7 @@ const ProjectWorkspace = forwardRef<
 					[movedTerminal.sessionId]: macroRuns,
 				}));
 			}
-			window.termide.updateTerminalRemoteMetadata(movedTerminal.sessionId, {
+			window.terminay.updateTerminalRemoteMetadata(movedTerminal.sessionId, {
 				color: nextColor,
 				emoji: movedTerminal.emoji ?? '',
 				inheritsProjectColor,
@@ -3680,7 +3680,7 @@ const ProjectWorkspace = forwardRef<
 			return;
 		}
 
-		const unsubscribeCopyRequest = window.termide.onTerminalCopyRequested(
+		const unsubscribeCopyRequest = window.terminay.onTerminalCopyRequested(
 			copyActiveTerminalSelection,
 		);
 
@@ -3817,7 +3817,7 @@ const ProjectWorkspace = forwardRef<
 					return;
 				}
 				cancelMacroRunsForSession(sessionId);
-				window.termide.killTerminal(sessionId);
+				window.terminay.killTerminal(sessionId);
 				window.requestAnimationFrame(publishTerminalActivityOverview);
 				closeProjectIfEmpty();
 			});
@@ -3875,9 +3875,9 @@ const ProjectWorkspace = forwardRef<
 			void openFile(filePath);
 		};
 
-		window.addEventListener('termide-open-file', onOpenFileEvent);
+		window.addEventListener('terminay-open-file', onOpenFileEvent);
 		return () => {
-			window.removeEventListener('termide-open-file', onOpenFileEvent);
+			window.removeEventListener('terminay-open-file', onOpenFileEvent);
 		};
 	}, [openFile]);
 
@@ -3890,14 +3890,14 @@ const ProjectWorkspace = forwardRef<
 			markTerminalActivityViewed(sessionId);
 		};
 
-		window.addEventListener('termide-terminal-focused', onTerminalFocused);
+		window.addEventListener('terminay-terminal-focused', onTerminalFocused);
 		return () => {
-			window.removeEventListener('termide-terminal-focused', onTerminalFocused);
+			window.removeEventListener('terminay-terminal-focused', onTerminalFocused);
 		};
 	}, [markTerminalActivityViewed]);
 
 	useEffect(() => {
-		return window.termide.onTerminalData((message) => {
+		return window.terminay.onTerminalData((message) => {
 			if (!getPanelForSession(message.id)) {
 				return;
 			}
@@ -3927,9 +3927,9 @@ const ProjectWorkspace = forwardRef<
 			);
 		};
 
-		window.addEventListener('termide-terminal-user-input', onTerminalUserInput);
+		window.addEventListener('terminay-terminal-user-input', onTerminalUserInput);
 		return () => {
-			window.removeEventListener('termide-terminal-user-input', onTerminalUserInput);
+			window.removeEventListener('terminay-terminal-user-input', onTerminalUserInput);
 		};
 	}, [applyTerminalActivityEvaluation, getPanelForSession]);
 
@@ -3945,7 +3945,7 @@ const ProjectWorkspace = forwardRef<
 	}, [onTerminalActivityOverviewChange, project.id]);
 
 	useEffect(() => {
-		return window.termide.onTerminalExit((message) => {
+		return window.terminay.onTerminalExit((message) => {
 			cancelMacroRunsForSession(message.id);
 
 			if (settings.autoCloseTerminalOnExitZero && message.exitCode === 0) {
@@ -4089,7 +4089,7 @@ const ProjectWorkspace = forwardRef<
 			point: { x: number; y: number },
 		): boolean => {
 			if (
-				target?.closest('.termide-add-tab-button') ||
+				target?.closest('.terminay-add-tab-button') ||
 				target?.closest('.dv-tab') ||
 				target?.closest('.dv-right-actions-container')
 			) {
@@ -4127,13 +4127,13 @@ const ProjectWorkspace = forwardRef<
 				);
 
 			for (const container of containers) {
-				if (container.querySelector('.termide-add-tab-button')) {
+				if (container.querySelector('.terminay-add-tab-button')) {
 					continue;
 				}
 
 				const button = targetWindow.document.createElement('button');
 				button.type = 'button';
-				button.className = 'termide-add-tab-button';
+				button.className = 'terminay-add-tab-button';
 				button.setAttribute('aria-label', 'New terminal tab');
 				button.title = 'New terminal tab';
 				button.innerHTML = `
@@ -4154,7 +4154,7 @@ const ProjectWorkspace = forwardRef<
 
 			const onClick = (event: PointerEvent) => {
 				const target = event.target as HTMLElement | null;
-				const addTabButton = target?.closest('.termide-add-tab-button');
+				const addTabButton = target?.closest('.terminay-add-tab-button');
 
 				if (!addTabButton) {
 					return;
@@ -4241,7 +4241,7 @@ const ProjectWorkspace = forwardRef<
 
 			targetWindow.addEventListener('click', onClick, true);
 			targetWindow.addEventListener('dblclick', onDblClick, true);
-			targetWindow.addEventListener('termide-edit-terminal', onEditTerminal);
+			targetWindow.addEventListener('terminay-edit-terminal', onEditTerminal);
 			targetWindow.addEventListener('dragstart', onDragStart, true);
 			targetWindow.addEventListener('dragend', onDragEnd, true);
 
@@ -4249,7 +4249,7 @@ const ProjectWorkspace = forwardRef<
 				targetWindow.removeEventListener('click', onClick, true);
 				targetWindow.removeEventListener('dblclick', onDblClick, true);
 				targetWindow.removeEventListener(
-					'termide-edit-terminal',
+					'terminay-edit-terminal',
 					onEditTerminal,
 				);
 				targetWindow.removeEventListener('dragstart', onDragStart, true);
@@ -5054,7 +5054,7 @@ function App() {
 	useEffect(() => {
 		let isMounted = true;
 
-		void window.termide.getHomePath().then((resolvedHomePath) => {
+		void window.terminay.getHomePath().then((resolvedHomePath) => {
 			if (!isMounted) {
 				return;
 			}
@@ -5105,7 +5105,7 @@ function App() {
 			const isLastProject =
 				currentProjects.length === 1 && currentProjects[0]?.id === projectId;
 			if (isLastProject) {
-				void window.termide.quitApp();
+				void window.terminay.quitApp();
 				return;
 			}
 
@@ -5137,7 +5137,7 @@ function App() {
 		}
 
 		try {
-			const result = await window.termide.openProjectEditWindow({
+			const result = await window.terminay.openProjectEditWindow({
 				color: project.color,
 				emoji: project.emoji,
 				rootFolder: project.rootFolder,
@@ -5291,7 +5291,7 @@ function App() {
 	);
 
 	useEffect(() => {
-		const unsubscribeCommand = window.termide.onAppCommand(
+		const unsubscribeCommand = window.terminay.onAppCommand(
 			executeCommandOnActiveProject,
 		);
 
@@ -5303,13 +5303,13 @@ function App() {
 	useEffect(() => {
 		let isMounted = true;
 
-		void window.termide.getRemoteAccessStatus().then((status) => {
+		void window.terminay.getRemoteAccessStatus().then((status) => {
 			if (isMounted) {
 				setRemoteStatus(status);
 			}
 		});
 
-		const unsubscribe = window.termide.onRemoteAccessStatusChanged((status) => {
+		const unsubscribe = window.terminay.onRemoteAccessStatusChanged((status) => {
 			setRemoteStatus(status);
 		});
 
@@ -5323,7 +5323,7 @@ function App() {
 		let isMounted = true;
 
 		const refreshUpdateStatus = async (force = false) => {
-			const status = await window.termide.getAppUpdateStatus({ force });
+			const status = await window.terminay.getAppUpdateStatus({ force });
 			if (isMounted) {
 				setAppUpdateStatus(status);
 			}
@@ -5344,13 +5344,13 @@ function App() {
 		setIsTogglingRemoteAccess(true);
 		try {
 			if (remoteStatus?.configurationIssue) {
-				await window.termide.openSettingsWindow({
+				await window.terminay.openSettingsWindow({
 					sectionId: 'remote-access-host',
 				});
 				return;
 			}
 
-			const nextStatus = await window.termide.toggleRemoteAccessServer();
+			const nextStatus = await window.terminay.toggleRemoteAccessServer();
 			setRemoteStatus(nextStatus);
 		} finally {
 			setIsTogglingRemoteAccess(false);
@@ -5359,7 +5359,7 @@ function App() {
 
 	const openPairingQr = useCallback(async () => {
 		if (remoteStatus?.configurationIssue) {
-			await window.termide.openSettingsWindow({
+			await window.terminay.openSettingsWindow({
 				sectionId: 'remote-access-host',
 			});
 			return;
@@ -5370,7 +5370,7 @@ function App() {
 		if (!nextStatus?.isRunning) {
 			setIsTogglingRemoteAccess(true);
 			try {
-				nextStatus = await window.termide.toggleRemoteAccessServer();
+				nextStatus = await window.terminay.toggleRemoteAccessServer();
 				setRemoteStatus(nextStatus);
 			} finally {
 				setIsTogglingRemoteAccess(false);
@@ -5406,7 +5406,7 @@ function App() {
 
 	const selectPairingAddress = useCallback(async (address: string) => {
 		const nextStatus =
-			await window.termide.setRemoteAccessPairingAddress(address);
+			await window.terminay.setRemoteAccessPairingAddress(address);
 		setRemoteStatus(nextStatus);
 	}, []);
 
@@ -5623,7 +5623,7 @@ function App() {
 								type="button"
 								className="app-update-button"
 								onClick={() =>
-									void window.termide.openExternal(
+									void window.terminay.openExternal(
 										appUpdateStatus.releaseUrl as string,
 									)
 								}
@@ -5778,7 +5778,7 @@ function App() {
 								type="button"
 								className="remote-access-menu__item"
 								onClick={() =>
-									void window.termide.openSettingsWindow({
+									void window.terminay.openSettingsWindow({
 										sectionId: 'remote-access-host',
 									})
 								}
@@ -5928,7 +5928,7 @@ function App() {
 							onMouseDown={pairingModal.handleTitlebarPointerDown}
 						/>
 						<p className="remote-pairing-modal__copy">
-							Scan this QR code from your phone to pair it with this Termide
+							Scan this QR code from your phone to pair it with this Terminay
 							host.
 						</p>
 						{remoteStatus?.pairingQrCodeDataUrl ? (

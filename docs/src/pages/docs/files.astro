@@ -6,15 +6,15 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
 ---
 
 <DocsLayout
-  title="Files - Termide"
-  description="Open, preview, edit, save, and diff files in Termide."
+  title="Files - Terminay"
+  description="Open, preview, edit, save, and diff files in Terminay."
   current="files"
 >
   <h1 class="docs-title">Files</h1>
   <p class="docs-lead">
     Use the file explorer sidebar to browse your project, then open files beside your terminals as dockable tabs.
   </p>
-  <DocsScreenshot file="termide-files.png" alt="Termide file explorer and file preview beside terminal panes" />
+  <DocsScreenshot file="terminay-files.png" alt="Terminay file explorer and file preview beside terminal panes" />
 
   <section class="docs-section">
     <h2>Open Files</h2>
@@ -42,14 +42,14 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
       The status bar shows the full file path, file size, active engine, and save state. <strong>Synced</strong> means the file matches disk. <strong>Unsaved changes</strong> means your current tab has local edits.
     </p>
     <p>
-      Save the active file with the app's Save command. After saving, Termide verifies the saved contents and refreshes Git diff/status.
+      Save the active file with the app's Save command. After saving, Terminay verifies the saved contents and refreshes Git diff/status.
     </p>
   </section>
 
   <section class="docs-section">
     <h2>External Changes And Conflicts</h2>
     <p>
-      If a file changes on disk while you have no local edits, Termide reloads it automatically. If it changes on disk while you have unsaved edits, Termide keeps your draft and shows a conflict banner.
+      If a file changes on disk while you have no local edits, Terminay reloads it automatically. If it changes on disk while you have unsaved edits, Terminay keeps your draft and shows a conflict banner.
     </p>
     <ul>
       <li><strong>Reload from disk</strong> discards your draft and loads the disk version.</li>
@@ -60,7 +60,7 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
   <section class="docs-section">
     <h2>Large Files</h2>
     <p>
-      For large text files over 100 MB, Termide asks how to open the file. <strong>Performant</strong> mode keeps the viewer lighter and shows a truncated text window. Switch to <strong>Monaco</strong> before saving the full file. Monaco opens the full editor but may use more memory.
+      For large text files over 100 MB, Terminay asks how to open the file. <strong>Performant</strong> mode keeps the viewer lighter and shows a truncated text window. Switch to <strong>Monaco</strong> before saving the full file. Monaco opens the full editor but may use more memory.
     </p>
   </section>
 

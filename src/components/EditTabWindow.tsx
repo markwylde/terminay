@@ -4,7 +4,7 @@ import type {
   EditWindowState,
   ProjectEditWindowResult,
   TerminalEditWindowResult,
-} from '../types/termide'
+} from '../types/terminay'
 import '../settings.css'
 import './editTabWindow.css'
 
@@ -108,7 +108,7 @@ export function EditTabWindow() {
   useEffect(() => {
     let isMounted = true
 
-    void window.termide.getEditWindowState().then((nextState) => {
+    void window.terminay.getEditWindowState().then((nextState) => {
       if (!isMounted) {
         return
       }
@@ -170,7 +170,7 @@ export function EditTabWindow() {
           title,
         }
 
-        await window.termide.submitEditWindowResult({
+        await window.terminay.submitEditWindowResult({
           kind: 'project',
           result,
         })
@@ -186,7 +186,7 @@ export function EditTabWindow() {
         title,
       }
 
-      await window.termide.submitEditWindowResult({
+      await window.terminay.submitEditWindowResult({
         kind: 'terminal',
         result,
       })

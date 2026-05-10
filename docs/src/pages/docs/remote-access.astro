@@ -6,15 +6,15 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
 ---
 
 <DocsLayout
-  title="Remote Access - Termide"
-  description="Pair browsers with Termide and connect to terminal sessions over HTTPS."
+  title="Remote Access - Terminay"
+  description="Pair browsers with Terminay and connect to terminal sessions over HTTPS."
   current="remote-access"
 >
   <h1 class="docs-title">Remote Access</h1>
   <p class="docs-lead">
-    Remote Access lets you use Termide terminals from another browser on the same network or through the HTTPS origin you configure.
+    Remote Access lets you use Terminay terminals from another browser on the same network or through the HTTPS origin you configure.
   </p>
-  <DocsScreenshot file="termide-remote-access.png" alt="Termide Remote Access settings showing a pairing QR code and device management" />
+  <DocsScreenshot file="terminay-remote-access.png" alt="Terminay Remote Access settings showing a pairing QR code and device management" />
 
   <section class="docs-section">
     <h2>Start And Stop</h2>
@@ -29,7 +29,7 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
       Choose <strong>Start Server &amp; Show QR</strong> or <strong>Show Pairing QR</strong>. Scan the QR code from your phone, or copy the pairing link and open it in another browser. Pairing links expire; show the QR again to generate a fresh one.
     </p>
     <p>
-      If Termide shows multiple addresses under <strong>Connect To</strong> or <strong>Available Addresses</strong>, choose the one your other device can reach. On many local networks that address begins with <code>192.</code> or <code>10.</code>.
+      If Terminay shows multiple addresses under <strong>Connect To</strong> or <strong>Available Addresses</strong>, choose the one your other device can reach. On many local networks that address begins with <code>192.</code> or <code>10.</code>.
     </p>
   </section>
 
@@ -39,10 +39,10 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
       In the remote browser app, enter a device name, scan or paste the pairing link, then select <strong>Pair Device</strong>. After pairing, the browser remembers this host.
     </p>
     <p>
-      The remote app shows your projects and terminal sessions as tabs. Select a session to attach to it, type normally, and use <strong>Focus</strong>, <strong>Clear</strong>, <strong>Reset</strong>, <strong>Settings</strong>, or <strong>Disconnect</strong> from the top menu. On touch devices, Termide adds quick keys for Ctrl, Alt, Escape, Tab, arrows, paging, zoom, and common control shortcuts.
+      The remote app shows your projects and terminal sessions as tabs. Select a session to attach to it, type normally, and use <strong>Focus</strong>, <strong>Clear</strong>, <strong>Reset</strong>, <strong>Settings</strong>, or <strong>Disconnect</strong> from the top menu. On touch devices, Terminay adds quick keys for Ctrl, Alt, Escape, Tab, arrows, paging, zoom, and common control shortcuts.
     </p>
     <p>
-      Remote sessions mirror active Termide terminals. If there are no terminals running, the browser app shows <strong>No active sessions</strong>. Closed sessions disappear, and exited sessions are marked as exited.
+      Remote sessions mirror active Terminay terminals. If there are no terminals running, the browser app shows <strong>No active sessions</strong>. Closed sessions disappear, and exited sessions are marked as exited.
     </p>
   </section>
 
@@ -61,13 +61,13 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
   <section class="docs-section">
     <h2>Origin, Binding, And TLS</h2>
     <p>
-      Remote Access requires HTTPS. By default, Termide uses <code>https://localhost:9443</code>, binds to <code>0.0.0.0</code>, and generates a self-signed certificate if TLS paths are blank.
+      Remote Access requires HTTPS. By default, Terminay uses <code>https://localhost:9443</code>, binds to <code>0.0.0.0</code>, and generates a self-signed certificate if TLS paths are blank.
     </p>
     <p>
-      In <strong>Settings &gt; Remote Access &gt; Host &amp; Origin</strong>, set the exact HTTPS origin browsers should use, such as <code>https://termide.example.com</code>. The origin must start with <code>https://</code> and must not include a path, query, or fragment.
+      In <strong>Settings &gt; Remote Access &gt; Host &amp; Origin</strong>, set the exact HTTPS origin browsers should use, such as <code>https://terminay.example.com</code>. The origin must start with <code>https://</code> and must not include a path, query, or fragment.
     </p>
     <p>
-      Set <strong>Bind address</strong> to the local interface Termide should listen on. In <strong>TLS</strong>, leave the certificate and key paths blank for an auto-generated self-signed certificate, or provide PEM certificate and private key paths.
+      Set <strong>Bind address</strong> to the local interface Terminay should listen on. In <strong>TLS</strong>, leave the certificate and key paths blank for an auto-generated self-signed certificate, or provide PEM certificate and private key paths.
     </p>
   </section>
 
@@ -77,7 +77,7 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
       Only pair browsers you trust. Anyone with an active paired browser can interact with your terminal sessions. Revoke lost or shared devices, close suspicious active connections, and stop the server when you do not need remote access.
     </p>
     <p>
-      A self-signed certificate may show a browser warning. Use your own trusted certificate for a smoother remote setup. If pairing or authentication fails, check that the browser is opening the same HTTPS origin shown in Termide, that the QR/link has not expired, that the selected address is reachable, and that your firewall allows the configured port.
+      A self-signed certificate may show a browser warning. Use your own trusted certificate for a smoother remote setup. If pairing or authentication fails, check that the browser is opening the same HTTPS origin shown in Terminay, that the QR/link has not expired, that the selected address is reachable, and that your firewall allows the configured port.
     </p>
   </section>
 </DocsLayout>

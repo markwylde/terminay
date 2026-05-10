@@ -6,15 +6,15 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
 ---
 
 <DocsLayout
-  title="Settings - Termide"
-  description="Customize Termide terminal behavior, appearance, shortcuts, themes, and remote access."
+  title="Settings - Terminay"
+  description="Customize Terminay terminal behavior, appearance, shortcuts, themes, and remote access."
   current="settings"
 >
   <h1 class="docs-title">Settings</h1>
   <p class="docs-lead">
-    Use Settings to customize Termide's terminal behavior, remote access, appearance, command shortcuts, themes, and accessibility.
+    Use Settings to customize Terminay's terminal behavior, remote access, appearance, command shortcuts, themes, and accessibility.
   </p>
-  <DocsScreenshot file="termide-settings.png" alt="Termide Settings window showing searchable terminal appearance settings and preview" />
+  <DocsScreenshot file="terminay-settings.png" alt="Terminay Settings window showing searchable terminal appearance settings and preview" />
 
   <section class="docs-section">
     <h2>Finding Settings</h2>
@@ -58,7 +58,7 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
       Codex models are discovered through the Codex CLI. Claude Code exposes a small built-in model list because its CLI does not currently provide model discovery.
     </p>
     <p>
-      AI generation uses recent terminal output as bounded context. If the selected provider cannot load models or generate text, Termide leaves the existing title or note unchanged.
+      AI generation uses recent terminal output as bounded context. If the selected provider cannot load models or generate text, Terminay leaves the existing title or note unchanged.
     </p>
   </section>
 
@@ -68,17 +68,17 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
       Leave <strong>Shell program</strong> blank to use the system default shell. Choose <strong>Auto</strong>, <strong>Login shell</strong>, or <strong>Non-login shell</strong> for startup mode. On macOS, Auto starts a login shell so login PATH setup is available.
     </p>
     <p>
-      Extra arguments are appended after Termide-managed shell flags. Enable <strong>Close tabs on successful exit</strong> to automatically close a terminal tab when its shell exits with code <code>0</code>.
+      Extra arguments are appended after Terminay-managed shell flags. Enable <strong>Close tabs on successful exit</strong> to automatically close a terminal tab when its shell exits with code <code>0</code>.
     </p>
   </section>
 
   <section class="docs-section">
     <h2>Remote Access Settings</h2>
     <p>
-      Set <strong>Remote origin</strong> to the HTTPS origin browsers use for pairing and remote terminal access. The default is <code>https://localhost:9443</code>. Set <strong>Bind address</strong> to the local interface Termide listens on; <code>0.0.0.0</code> listens on all interfaces.
+      Set <strong>Remote origin</strong> to the HTTPS origin browsers use for pairing and remote terminal access. The default is <code>https://localhost:9443</code>. Set <strong>Bind address</strong> to the local interface Terminay listens on; <code>0.0.0.0</code> listens on all interfaces.
     </p>
     <p>
-      Leave TLS certificate and key paths blank to let Termide generate a self-signed certificate. Provide absolute PEM paths to use your own certificate and private key.
+      Leave TLS certificate and key paths blank to let Terminay generate a self-signed certificate. Provide absolute PEM paths to use your own certificate and private key.
     </p>
   </section>
 
@@ -88,7 +88,7 @@ import DocsScreenshot from '../../components/DocsScreenshot.astro';
       Open <strong>Shortcuts</strong> to customize app command key bindings. Click <strong>Listen</strong> and press a key combination. Press <code>Esc</code> while listening to cancel. Use <strong>Clear</strong> to disable a shortcut, <strong>Reset</strong> to restore one shortcut, or <strong>Reset All</strong> to restore every default.
     </p>
     <p>
-      Termide normalizes shortcut names and shows platform labels. If two commands use the same shortcut, Settings shows a conflict warning.
+      Terminay normalizes shortcut names and shows platform labels. If two commands use the same shortcut, Settings shows a conflict warning.
     </p>
   </section>
 </DocsLayout>

@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const apiKey = process.env.OPENROUTER_API_KEY?.trim()
-const model = process.env.TERMIDE_CODEX_TEST_MODEL?.trim() || 'openai/gpt-5.1-codex-mini'
+const model = process.env.TERMINAY_CODEX_TEST_MODEL?.trim() || 'openai/gpt-5.1-codex-mini'
 const codexHome = process.env.CODEX_HOME?.trim() || path.join(os.homedir(), '.codex')
 
 if (!apiKey) {

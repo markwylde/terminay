@@ -5,10 +5,10 @@ import {
   createFileDraftBuffer,
   createFileSessionStore,
   detectFileCapabilities,
-  termideFileGateway,
+  terminayFileGateway,
 } from '../../services/fileViewer'
 import type { FileInfo, FileViewerEngine, GitFileDiff } from '../../types/fileViewer'
-import type { FileViewerGitRepoInfo } from '../../types/termide'
+import type { FileViewerGitRepoInfo } from '../../types/terminay'
 import { FileConflictBanner } from './FileConflictBanner'
 import { FileLargeFileChooser } from './FileLargeFileChooser'
 import { FileModeSwitcher } from './FileModeSwitcher'
@@ -104,8 +104,8 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 
       try {
         const [nextRepoInfo, nextDiff] = await Promise.all([
-          termideFileGateway.getGitRepoInfo(targetPath),
-          termideFileGateway.getFileDiff(targetPath),
+          terminayFileGateway.getGitRepoInfo(targetPath),
+          terminayFileGateway.getFileDiff(targetPath),
         ])
         if (!isMountedRef.current) {
           return
@@ -132,7 +132,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
     let isMounted = true
 
     const load = async () => {
-      const info = await termideFileGateway.getFileInfo(filePath)
+      const info = await terminayFileGateway.getFileInfo(filePath)
       if (!isMounted) {
         return
       }
@@ -146,7 +146,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
       }
       if (capabilities.previewKind === 'image' || capabilities.previewKind === 'pdf') {
         try {
-          const byteRange = await termideFileGateway.readFileBytes(filePath, {
+          const byteRange = await terminayFileGateway.readFileBytes(filePath, {
             length: info.size,
             offset: 0,
           })
@@ -215,7 +215,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 
       if (!fileInfo.isBinary) {
         if (engine === 'performant' && fileInfo.size > LARGE_FILE_THRESHOLD_BYTES) {
-          const response = await window.termide.readFileText({
+          const response = await window.terminay.readFileText({
             length: Math.min(fileInfo.size, MAX_PERFORMANT_TEXT_BYTES),
             path: fileInfo.path,
             start: 0,
@@ -230,7 +230,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
           return
         }
 
-        const text = await termideFileGateway.readFileText(fileInfo.path)
+        const text = await terminayFileGateway.readFileText(fileInfo.path)
         if (!isMounted) {
           return
         }
@@ -239,7 +239,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         setTruncatedForPerformance(false)
       } else if (mode === 'hex') {
         if (fileInfo.size <= LARGE_FILE_THRESHOLD_BYTES) {
-          const response = await termideFileGateway.readFileBytes(fileInfo.path, {
+          const response = await terminayFileGateway.readFileBytes(fileInfo.path, {
             length: fileInfo.size,
             offset: 0,
           })
@@ -269,8 +269,8 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
     let refreshVersion = 0
     let disposed = false
 
-    void termideFileGateway.watchFile(watchedPath)
-    const dispose = termideFileGateway.onFileWatchEvent(async (event) => {
+    void terminayFileGateway.watchFile(watchedPath)
+    const dispose = terminayFileGateway.onFileWatchEvent(async (event) => {
       if (event.path !== watchedPath) {
         return
       }
@@ -293,7 +293,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         const requestVersion = ++refreshVersion
 
         void (async () => {
-          const nextInfo = await termideFileGateway.getFileInfo(watchedPath)
+          const nextInfo = await terminayFileGateway.getFileInfo(watchedPath)
           if (disposed || requestVersion !== refreshVersion) {
             return
           }
@@ -319,7 +319,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         window.clearTimeout(debounceId)
       }
       dispose()
-      void termideFileGateway.unwatchFile(watchedPath)
+      void terminayFileGateway.unwatchFile(watchedPath)
     }
   }, [watchedFilePath, refreshDiff])
 
@@ -360,14 +360,14 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         }
 
         const payload = draftBufferRef.current.getPayload()
-        const nextInfo = await termideFileGateway.saveFile(currentFileInfo.path, payload)
+        const nextInfo = await terminayFileGateway.saveFile(currentFileInfo.path, payload)
         if (payload.kind === 'text') {
-          const savedText = await termideFileGateway.readFileText(nextInfo.path)
+          const savedText = await terminayFileGateway.readFileText(nextInfo.path)
           if (savedText !== payload.text) {
             throw new Error('Save failed: disk contents did not match the editor contents.')
           }
         } else {
-          const savedBytes = await termideFileGateway.readFileBytes(nextInfo.path, {
+          const savedBytes = await terminayFileGateway.readFileBytes(nextInfo.path, {
             length: nextInfo.size,
             offset: 0,
           })
@@ -414,10 +414,10 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
             sessionStore?.setConflict({ kind: 'none' })
           }}
           onReload={async () => {
-            const nextInfo = await termideFileGateway.getFileInfo(fileInfo.path)
+            const nextInfo = await terminayFileGateway.getFileInfo(fileInfo.path)
             setFileInfo(nextInfo)
             if (!nextInfo.isBinary) {
-              setDraftText(await termideFileGateway.readFileText(nextInfo.path))
+              setDraftText(await terminayFileGateway.readFileText(nextInfo.path))
             }
             setIsDirty(false)
             setConflict(false)

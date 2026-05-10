@@ -25,7 +25,7 @@ import type {
   ProjectEditWindowResult,
   TerminalEditWindowDraft,
   TerminalEditWindowResult,
-} from '../src/types/termide'
+} from '../src/types/terminay'
 import { FileBufferService } from './fileViewer/fileBufferService'
 import { FileWatchService } from './fileViewer/fileWatchService'
 import { GitDiffService } from './fileViewer/gitDiffService'
@@ -35,13 +35,13 @@ import { RemoteAccessService } from './remote/service'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const execFileAsync = promisify(execFile)
-const RELEASES_LATEST_URL = 'https://github.com/markwylde/termide/releases/latest'
+const RELEASES_LATEST_URL = 'https://github.com/markwylde/terminay/releases/latest'
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
 
 process.env.APP_ROOT = path.join(__dirname, '..')
-app.setName('Termide')
+app.setName('Terminay')
 
-const customUserDataPath = process.env.TERMIDE_USER_DATA_DIR?.trim()
+const customUserDataPath = process.env.TERMINAY_USER_DATA_DIR?.trim()
 if (customUserDataPath) {
   app.setPath('userData', customUserDataPath)
 }
@@ -71,14 +71,14 @@ function getBrandAssetPath(filename: string): string | null {
 
 function getWindowIconPath(): string | undefined {
   if (process.platform === 'win32') {
-    return getBrandAssetPath('icon.ico') ?? getBrandAssetPath('termide.png') ?? undefined
+    return getBrandAssetPath('icon.ico') ?? getBrandAssetPath('terminay.png') ?? undefined
   }
 
   if (process.platform === 'darwin') {
-    return getBrandAssetPath('icon.icns') ?? getBrandAssetPath('termide.png') ?? undefined
+    return getBrandAssetPath('icon.icns') ?? getBrandAssetPath('terminay.png') ?? undefined
   }
 
-  return getBrandAssetPath('termide.png') ?? getBrandAssetPath('termide.svg') ?? undefined
+  return getBrandAssetPath('terminay.png') ?? getBrandAssetPath('terminay.svg') ?? undefined
 }
 
 let terminalZoomLevel = 0
@@ -226,7 +226,7 @@ async function fetchAppUpdateStatus(): Promise<AppUpdateStatus> {
     const response = await fetch(RELEASES_LATEST_URL, {
       headers: {
         Accept: 'text/html',
-        'User-Agent': `Termide/${currentVersion}`,
+        'User-Agent': `Terminay/${currentVersion}`,
       },
       redirect: 'follow',
     })
@@ -707,7 +707,7 @@ function readClipboardImagePath(): string | null {
     return null
   }
 
-  const tempDir = path.join(app.getPath('temp'), 'termide-clipboard')
+  const tempDir = path.join(app.getPath('temp'), 'terminay-clipboard')
   mkdirSync(tempDir, { recursive: true })
   const filePath = path.join(tempDir, `clipboard-${randomUUID()}.png`)
   writeFileSync(filePath, imageBytes)
@@ -1064,7 +1064,7 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
   const host = fork(getPtyHostPath(), {
     env: {
       ...process.env,
-      TERMIDE_PTY_HOST: '1',
+      TERMINAY_PTY_HOST: '1',
     },
     stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
   })
@@ -1243,7 +1243,7 @@ function createAppMenu(settings: TerminalSettings = readTerminalSettings()): voi
     ...(process.platform === 'darwin'
       ? [
           {
-            label: 'Termide',
+            label: 'Terminay',
             submenu: [
               { role: 'about' },
               { type: 'separator' },
@@ -1392,7 +1392,7 @@ function createWindow() {
     icon: windowIconPath,
     width: 1400,
     height: 900,
-    title: 'Termide',
+    title: 'Terminay',
     titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
     titleBarOverlay: usesOverlayTitlebar
       ? {
@@ -1416,7 +1416,7 @@ function createWindow() {
 
   mainWindow.on('page-title-updated', (event) => {
     event.preventDefault()
-    mainWindow?.setTitle('Termide')
+    mainWindow?.setTitle('Terminay')
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -1431,7 +1431,7 @@ function createWindow() {
       action: 'allow',
       overrideBrowserWindowOptions: {
         icon: windowIconPath,
-        title: 'Termide',
+        title: 'Terminay',
         width: 1000,
         height: 700,
         titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
@@ -1481,7 +1481,7 @@ function openSettingsWindow(sectionId?: string): void {
     height: 860,
     minWidth: 980,
     minHeight: 700,
-    title: 'Termide Settings',
+    title: 'Terminay Settings',
     titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
     titleBarOverlay: usesOverlayTitlebar
       ? {
@@ -1541,7 +1541,7 @@ function openMacrosWindow(): void {
     height: 760,
     minWidth: 860,
     minHeight: 620,
-    title: 'Termide Macros',
+    title: 'Terminay Macros',
     titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
     titleBarOverlay: usesOverlayTitlebar
       ? {
@@ -1674,7 +1674,7 @@ function setDockIcon(): void {
     return
   }
 
-  const iconPath = getBrandAssetPath('icon.icns') ?? getBrandAssetPath('termide.png')
+  const iconPath = getBrandAssetPath('icon.icns') ?? getBrandAssetPath('terminay.png')
 
   if (!iconPath) {
     return
@@ -1922,7 +1922,7 @@ ipcMain.handle('app:open-macros', () => {
   openMacrosWindow()
 })
 
-if (process.env.TERMIDE_TEST === '1') {
+if (process.env.TERMINAY_TEST === '1') {
   ipcMain.handle('test:send-app-command', (event, command: AppCommand) => {
     event.sender.send('app:command', command)
   })
@@ -2031,8 +2031,8 @@ app.on('activate', () => {
 })
 
 app.whenReady().then(() => {
-  app.setName('Termide')
-  app.setAboutPanelOptions({ applicationName: 'Termide' })
+  app.setName('Terminay')
+  app.setAboutPanelOptions({ applicationName: 'Terminay' })
   ensureNodePtySpawnHelperIsExecutable()
   setDockIcon()
   createAppMenu()
