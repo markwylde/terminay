@@ -69,8 +69,4 @@ npm run build:mac
 npm run build:linux
 ```
 
-## Docs
-
-The docs site and screenshot generation workflow live in the private `terminay.com` repository.
-
 Release packaging syncs `package.json` from the release tag during CI, so the source tree can use the placeholder version while published builds carry the tagged version.
