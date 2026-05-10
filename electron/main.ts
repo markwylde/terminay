@@ -31,6 +31,7 @@ import { FileWatchService } from './fileViewer/fileWatchService'
 import { GitDiffService } from './fileViewer/gitDiffService'
 import { registerFileViewerIpcHandlers } from './fileViewer/ipc'
 import { FileExplorerWatchService } from './fileExplorerWatchService'
+import { createPairingPinHash } from './remote/pin'
 import { RemoteAccessService } from './remote/service'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -197,6 +198,17 @@ const remoteAccessService = new RemoteAccessService({
       : null
   },
   getRemoteAccessSettings: () => readTerminalSettings().remoteAccess,
+  notifyTerminalRemoteSizeOverride: (sessionId, override) => {
+    const session = terminalSessions.get(sessionId)
+    if (!session) {
+      return
+    }
+
+    sendToSessionRenderer(session, 'terminal:remote-size-override', {
+      id: sessionId,
+      ...override,
+    })
+  },
   onStatusChanged: (status) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (window.isDestroyed()) {
@@ -1204,8 +1216,12 @@ function killSessionsForWebContents(webContentsId: number): void {
 
 function sendToSessionRenderer(
   session: TerminalSession,
-  channel: 'terminal:data' | 'terminal:exit',
-  payload: { id: string; data: string } | { id: string; exitCode: number },
+  channel: 'terminal:data' | 'terminal:exit' | 'terminal:remote-size-override',
+  payload:
+    | { id: string; data: string }
+    | { id: string; exitCode: number }
+    | { id: string; active: false }
+    | { id: string; active: true; cols: number; rows: number },
 ): void {
   const target = webContents.fromId(session.ownerWebContentsId)
   if (!target || target.isDestroyed()) {
@@ -1981,6 +1997,21 @@ ipcMain.handle('remote:close-connection', async (_event, payload: { connectionId
 
 ipcMain.handle('remote:set-pairing-address', async (_event, payload: { address: string }) => {
   return remoteAccessService.setPairingAddress(payload.address)
+})
+
+ipcMain.handle('remote:set-pairing-pin', (_event, payload: { pin: string }) => {
+  const currentSettings = readTerminalSettings()
+  const settings = writeTerminalSettings({
+    ...currentSettings,
+    remoteAccess: {
+      ...currentSettings.remoteAccess,
+      pairingPinHash: createPairingPinHash(payload.pin),
+    },
+  })
+  broadcastTerminalSettings(settings)
+  createAppMenu(settings)
+  remoteAccessService.notifyStatusChanged()
+  return settings
 })
 
 ipcMain.handle('app:open-settings', (_event, payload?: { sectionId?: string }) => {

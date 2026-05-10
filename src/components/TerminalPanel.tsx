@@ -38,6 +38,68 @@ function buildTerminalTheme(settings: TerminalSettings, tabColor?: string): Term
   }
 }
 
+function applyTerminalSettings(terminal: Terminal, settings: TerminalSettings, tabColor?: string, zoomLevel = 0) {
+  Object.assign(terminal.options, {
+    ...buildTerminalOptions(settings),
+    fontSize: Math.max(6, (settings.fontSize ?? 13) + zoomLevel),
+    theme: buildTerminalTheme(settings, tabColor),
+  })
+}
+
+function updateRemoteViewportMetadata(sessionId: string, root: HTMLElement) {
+  window.terminay.updateTerminalRemoteMetadata(sessionId, {
+    viewportHeight: Math.max(0, Math.round(root.clientHeight)),
+    viewportWidth: Math.max(0, Math.round(root.clientWidth)),
+  })
+}
+
+function clearRemoteTerminalElementSize(terminal: Terminal) {
+  if (!terminal.element) {
+    return
+  }
+
+  terminal.element.style.height = ''
+  terminal.element.style.width = ''
+}
+
+function syncRemoteTerminalElementSize(root: HTMLElement, terminal: Terminal) {
+  const element = terminal.element
+  if (!element) {
+    return
+  }
+
+  const screen = root.querySelector<HTMLElement>('.xterm-screen')
+  const viewport = root.querySelector<HTMLElement>('.xterm-viewport')
+  const measuredWidth = screen?.getBoundingClientRect().width ?? viewport?.getBoundingClientRect().width ?? 0
+  const measuredHeight = screen?.getBoundingClientRect().height ?? viewport?.getBoundingClientRect().height ?? 0
+
+  if (measuredWidth > 0) {
+    element.style.width = `${Math.ceil(measuredWidth)}px`
+  }
+
+  if (measuredHeight > 0) {
+    element.style.height = `${Math.ceil(measuredHeight)}px`
+  }
+}
+
+function applyRemoteTerminalSize(
+  root: HTMLElement,
+  terminal: Terminal,
+  cols: number,
+  rows: number,
+  shouldSyncAfterFrame: () => boolean,
+) {
+  terminal.resize(cols, rows)
+  syncRemoteTerminalElementSize(root, terminal)
+  window.requestAnimationFrame(() => {
+    if (!shouldSyncAfterFrame()) {
+      return
+    }
+
+    syncRemoteTerminalElementSize(root, terminal)
+  })
+}
+
 function escapePathForShell(path: string): string {
   if (path.length === 0) {
     return "''"
@@ -99,10 +161,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const xtermRootRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const tabColorRef = useRef(props.params.color)
+  const zoomLevelRef = useRef(0)
+  const remoteSizeOverrideRef = useRef<{ cols: number; rows: number } | null>(null)
   const { settings } = useTerminalSettings()
+  const settingsRef = useRef(settings)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [isRemoteSizeOverrideActive, setIsRemoteSizeOverrideActive] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchSummary, setSearchSummary] = useState<{ index: number; count: number }>({
     index: 0,
@@ -146,8 +213,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     root.innerHTML = ''
 
     const terminal = new Terminal({
-      ...buildTerminalOptions(settings),
-      theme: buildTerminalTheme(settings, tabColorRef.current),
+      ...buildTerminalOptions(settingsRef.current),
+      theme: buildTerminalTheme(settingsRef.current, tabColorRef.current),
       allowProposedApi: true,
     })
     terminalRef.current = terminal
@@ -155,6 +222,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
     const unicode11Addon = new Unicode11Addon()
+    fitAddonRef.current = fitAddon
     searchAddonRef.current = searchAddon
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(searchAddon)
@@ -288,12 +356,24 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
 
     const fitAndResize = () => {
+      const remoteSizeOverride = remoteSizeOverrideRef.current
+      if (remoteSizeOverride) {
+        applyRemoteTerminalSize(root, terminal, remoteSizeOverride.cols, remoteSizeOverride.rows, () => {
+          const currentOverride = remoteSizeOverrideRef.current
+          return (
+            terminalRef.current === terminal &&
+            currentOverride?.cols === remoteSizeOverride.cols &&
+            currentOverride.rows === remoteSizeOverride.rows
+          )
+        })
+        updateRemoteViewportMetadata(sessionId, root)
+        return
+      }
+
+      clearRemoteTerminalElementSize(terminal)
       fitAddon.fit()
       window.terminay.resizeTerminal(sessionId, terminal.cols, terminal.rows)
-      window.terminay.updateTerminalRemoteMetadata(sessionId, {
-        viewportHeight: Math.max(0, Math.round(root.clientHeight)),
-        viewportWidth: Math.max(0, Math.round(root.clientWidth)),
-      })
+      updateRemoteViewportMetadata(sessionId, root)
     }
 
     fitAndResize()
@@ -311,7 +391,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return
       }
 
-      if (settings.autoCloseTerminalOnExitZero && message.exitCode === 0) {
+      if (settingsRef.current.autoCloseTerminalOnExitZero && message.exitCode === 0) {
         return
       }
 
@@ -319,11 +399,34 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
 
     const zoomDisposer = window.terminay.onTerminalZoomChanged((message) => {
-      const baseFontSize = settings.fontSize ?? 13
+      zoomLevelRef.current = message.zoomLevel
+      const baseFontSize = settingsRef.current.fontSize ?? 13
       const newFontSize = baseFontSize + message.zoomLevel
       terminal.options.fontSize = Math.max(6, newFontSize)
-      fitAddon.fit()
-      window.terminay.resizeTerminal(sessionId, terminal.cols, terminal.rows)
+      fitAndResize()
+    })
+
+    const remoteSizeOverrideDisposer = window.terminay.onTerminalRemoteSizeOverrideChanged((message) => {
+      if (message.id !== sessionId) {
+        return
+      }
+
+      if (!message.active) {
+        remoteSizeOverrideRef.current = null
+        setIsRemoteSizeOverrideActive(false)
+        fitAndResize()
+        return
+      }
+
+      const cols = Math.max(2, Math.floor(message.cols))
+      const rows = Math.max(1, Math.floor(message.rows))
+      remoteSizeOverrideRef.current = { cols, rows }
+      setIsRemoteSizeOverrideActive(true)
+      applyRemoteTerminalSize(root, terminal, cols, rows, () => {
+        const currentOverride = remoteSizeOverrideRef.current
+        return terminalRef.current === terminal && currentOverride?.cols === cols && currentOverride.rows === rows
+      })
+      updateRemoteViewportMetadata(sessionId, root)
     })
 
     void window.terminay.getTerminalZoom().then((zoomLevel) => {
@@ -331,7 +434,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return
       }
 
-      terminal.options.fontSize = Math.max(6, (settings.fontSize ?? 13) + zoomLevel)
+      terminal.options.fontSize = Math.max(6, (settingsRef.current.fontSize ?? 13) + zoomLevel)
+      zoomLevelRef.current = zoomLevel
       fitAndResize()
     })
 
@@ -522,11 +626,44 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminalDataDisposer()
       contextReaderDisposer?.()
       zoomDisposer()
+      remoteSizeOverrideDisposer()
       searchAddonRef.current = null
+      fitAddonRef.current = null
       terminalRef.current = null
       terminal.dispose()
     }
-  }, [announceTerminalFocus, props.api, props.params.registerTerminalContextReader, props.params.sessionId, settings])
+  }, [announceTerminalFocus, props.api, props.params.registerTerminalContextReader, props.params.sessionId])
+
+  useEffect(() => {
+    settingsRef.current = settings
+
+    const terminal = terminalRef.current
+    const fitAddon = fitAddonRef.current
+    const root = xtermRootRef.current
+    if (!terminal || !fitAddon || !root) {
+      return
+    }
+
+    applyTerminalSettings(terminal, settings, props.params.color, zoomLevelRef.current)
+    const remoteSizeOverride = remoteSizeOverrideRef.current
+    if (remoteSizeOverride) {
+      applyRemoteTerminalSize(root, terminal, remoteSizeOverride.cols, remoteSizeOverride.rows, () => {
+        const currentOverride = remoteSizeOverrideRef.current
+        return (
+          terminalRef.current === terminal &&
+          currentOverride?.cols === remoteSizeOverride.cols &&
+          currentOverride.rows === remoteSizeOverride.rows
+        )
+      })
+      updateRemoteViewportMetadata(props.params.sessionId, root)
+      return
+    }
+
+    clearRemoteTerminalElementSize(terminal)
+    fitAddon.fit()
+    window.terminay.resizeTerminal(props.params.sessionId, terminal.cols, terminal.rows)
+    updateRemoteViewportMetadata(props.params.sessionId, root)
+  }, [props.params.color, props.params.sessionId, settings])
 
   useEffect(() => {
     const note = noteRef.current
@@ -551,14 +688,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     note.style.height = '0px'
     note.style.height = `${note.scrollHeight}px`
   }
-
-  useEffect(() => {
-    if (!terminalRef.current) {
-      return
-    }
-
-    terminalRef.current.options.theme = buildTerminalTheme(settings, props.params.color)
-  }, [props.params.color, settings])
 
   useEffect(() => {
     if (!isSearchOpen) {
@@ -623,7 +752,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
   return (
     <div
-      className={`terminal-panel${hasTerminalNote ? ' terminal-panel--has-note' : ''}`}
+      className={`terminal-panel${hasTerminalNote ? ' terminal-panel--has-note' : ''}${
+        isRemoteSizeOverrideActive ? ' terminal-panel--remote-size-override' : ''
+      }`}
       data-terminay-terminal-session-id={props.params.sessionId}
       ref={containerRef}
       style={terminalPanelStyle}

@@ -6,6 +6,7 @@ export async function pairDevice(options: {
   api: RemoteApiTransport
   bootstrap: PairingBootstrap
   deviceName: string
+  pairingPin: string
   publicKeyPem: string
 }): Promise<{ deviceId: string; deviceName: string }> {
   const start = await options.api.postJson<{
@@ -13,6 +14,7 @@ export async function pairDevice(options: {
   }>('/api/pairing/start', {
     deviceName: options.deviceName,
     pairingExpiresAt: options.bootstrap.pairingExpiresAt,
+    pairingPin: options.pairingPin,
     pairingSessionId: options.bootstrap.pairingSessionId,
     pairingToken: options.bootstrap.pairingToken,
     publicKeyPem: options.publicKeyPem,

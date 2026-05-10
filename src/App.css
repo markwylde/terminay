@@ -1672,6 +1672,13 @@
   line-height: 1.5;
 }
 
+.remote-pin-modal__error {
+  margin: 0;
+  color: #ff7b72;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .macro-parameter-field {
   display: flex;
   flex-direction: column;
@@ -2355,6 +2362,7 @@
   min-height: 0;
   margin: 2px;
   height: auto;
+  overflow: hidden;
 }
 
 .terminal-panel--has-note .terminal-panel-root {
@@ -2365,6 +2373,18 @@
   position: absolute;
   inset: 0;
   height: auto;
+}
+
+.terminal-panel--remote-size-override .terminal-panel-root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.terminal-panel--remote-size-override .xterm {
+  position: relative;
+  inset: auto;
+  flex: 0 0 auto;
 }
 
 .terminal-note-shell {

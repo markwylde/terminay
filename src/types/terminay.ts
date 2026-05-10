@@ -202,6 +202,18 @@ export type TerminalZoomMessage = {
   zoomLevel: number
 }
 
+export type TerminalRemoteSizeOverrideMessage =
+  | {
+      active: false
+      id: string
+    }
+  | {
+      active: true
+      cols: number
+      id: string
+      rows: number
+    }
+
 export type AppUpdateStatus = {
   checkedAt: string | null
   currentVersion: string
@@ -356,6 +368,7 @@ export interface TerminayApi {
   revokeRemoteAccessDevice: (deviceId: string) => Promise<RemoteAccessStatus>
   closeRemoteAccessConnection: (connectionId: string) => Promise<RemoteAccessStatus>
   setRemoteAccessPairingAddress: (address: string) => Promise<RemoteAccessStatus>
+  setRemoteAccessPairingPin: (pin: string) => Promise<import('./settings').TerminalSettings>
   openMacrosWindow: () => Promise<void>
   onTerminalData: (listener: (message: TerminalDataMessage) => void) => () => void
   onTerminalExit: (listener: (message: TerminalExitMessage) => void) => () => void
@@ -366,6 +379,7 @@ export interface TerminayApi {
   onMacrosChanged: (listener: (message: MacrosChangeMessage) => void) => () => void
   onRemoteAccessStatusChanged: (listener: (status: RemoteAccessStatus) => void) => () => void
   onTerminalZoomChanged: (listener: (message: TerminalZoomMessage) => void) => () => void
+  onTerminalRemoteSizeOverrideChanged: (listener: (message: TerminalRemoteSizeOverrideMessage) => void) => () => void
   onTerminalCopyRequested: (listener: () => void) => () => void
   onSettingsFocusSection: (listener: (message: { sectionId: string }) => void) => () => void
 }
