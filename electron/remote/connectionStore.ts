@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import type { WebSocket } from 'ws'
 
+export type RemoteConnectionPeer = {
+  close(code?: number, reason?: string): void
+  getReadyState(): number
+  send(message: string): void
+}
+
 type PendingTicket = {
   deviceId: string
   expiresAt: number
@@ -11,7 +17,7 @@ export type ActiveConnection = {
   connectionId: string
   deviceId: string
   highestSeq: number
-  socket: WebSocket
+  socket: RemoteConnectionPeer
 }
 
 const TICKET_TTL_MS = 30 * 1000
@@ -43,7 +49,7 @@ export class ConnectionStore {
     }
   }
 
-  register(socket: WebSocket, connectionId: string, deviceId: string): ActiveConnection {
+  register(socket: RemoteConnectionPeer, connectionId: string, deviceId: string): ActiveConnection {
     const connection: ActiveConnection = {
       attachedSessionIds: new Set(),
       connectionId,
@@ -88,5 +94,13 @@ export class ConnectionStore {
 
     connection.socket.close(code, reason)
     return true
+  }
+}
+
+export function webSocketPeer(socket: WebSocket): RemoteConnectionPeer {
+  return {
+    close: (code?: number, reason?: string) => socket.close(code, reason),
+    getReadyState: () => socket.readyState,
+    send: (message: string) => socket.send(message),
   }
 }

@@ -186,6 +186,29 @@ contextBridge.exposeInMainWorld('terminay', {
   },
 })
 
+contextBridge.exposeInMainWorld('terminayWebRtcHost', {
+  getConfig: () => ipcRenderer.invoke('remote-webrtc-host:get-config'),
+  getAssetManifest: () => ipcRenderer.invoke('remote-webrtc-host:get-asset-manifest'),
+  getAsset: (path: string) => ipcRenderer.invoke('remote-webrtc-host:get-asset', { path }),
+  handleApiRequest: (pathname: string, body: Record<string, unknown>, appOrigin: string) =>
+    ipcRenderer.invoke('remote-webrtc-host:api-request', { appOrigin, body, pathname }),
+  attachTerminal: (channelId: string, ticket: string) =>
+    ipcRenderer.invoke('remote-webrtc-host:terminal-auth', { channelId, ticket }),
+  handleTerminalMessage: (channelId: string, message: string) =>
+    ipcRenderer.send('remote-webrtc-host:terminal-message', { channelId, message }),
+  closeTerminal: (channelId: string) => ipcRenderer.send('remote-webrtc-host:terminal-close', { channelId }),
+  onConfig: (listener: (config: unknown) => void) => {
+    const wrapper: ElectronListener<unknown> = (_event, config) => listener(config)
+    ipcRenderer.on('remote-webrtc-host:config', wrapper)
+    return () => ipcRenderer.off('remote-webrtc-host:config', wrapper)
+  },
+  onTerminalMessage: (listener: (message: { channelId: string; message: string }) => void) => {
+    const wrapper: ElectronListener<{ channelId: string; message: string }> = (_event, message) => listener(message)
+    ipcRenderer.on('remote-webrtc-host:terminal-message', wrapper)
+    return () => ipcRenderer.off('remote-webrtc-host:terminal-message', wrapper)
+  },
+})
+
 if (process.env.TERMINAY_TEST === '1') {
   const testApi: TerminayTestApi = {
     sendAppCommand: (command) => ipcRenderer.invoke('test:send-app-command', command) as Promise<void>,
