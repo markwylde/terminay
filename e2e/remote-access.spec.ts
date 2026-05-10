@@ -150,9 +150,14 @@ test('rejects pairing when the configured PIN is wrong', async ({ mainWindow }) 
   await openRemoteMenu(mainWindow)
   await mainWindow.getByRole('button', { name: 'Start Server & Show QR' }).click()
 
-  const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
-  expect(status.lanPairingUrl).toBeTruthy()
+  await expect
+    .poll(async () => {
+      const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
+      return status.lanPairingUrl
+    })
+    .toBeTruthy()
 
+  const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
   const pairingUrl = status.lanPairingUrl!
   const pairingParams = new URL(pairingUrl).searchParams
   const response = await postRemoteJson<{ provisionalDeviceId?: string }>(pairingUrl, '/api/pairing/start', {
