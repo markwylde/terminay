@@ -6,7 +6,7 @@ import path from 'node:path'
 import type { App } from 'electron'
 import QRCode from 'qrcode'
 import { WebSocketServer } from 'ws'
-import type { WebSocket } from 'ws'
+import WebSocket from 'ws'
 import type { RemoteAccessStatus } from '../../src/types/terminay'
 import type { RemoteAccessSettings } from '../../src/types/settings'
 import {
@@ -146,6 +146,7 @@ export class RemoteAccessService {
   private webRtcPairingUrl: string | null = null
   private webRtcRelayJoinToken: string | null = null
   private webRtcRoomId: string | null = null
+  private webRtcSignalSocket: WebSocket | null = null
   private webRtcStatusMessage: string | null = null
   private readonly wsServer = new WebSocketServer({ noServer: true })
 
@@ -225,7 +226,7 @@ export class RemoteAccessService {
       webRtcPairingUrl: this.webRtcPairingUrl,
       webRtcRelayJoinToken: this.webRtcRelayJoinToken,
       webRtcRoomId: this.webRtcRoomId,
-      webRtcStatus: this.webRtcPairingUrl ? 'peer-handler-unavailable' : 'not-configured',
+      webRtcStatus: this.webRtcSignalSocket?.readyState === WebSocket.OPEN ? 'pairing-ready' : this.webRtcPairingUrl ? 'peer-handler-unavailable' : 'not-configured',
       webRtcStatusMessage:
         this.webRtcStatusMessage ??
         (this.webRtcPairingUrl
@@ -539,6 +540,7 @@ export class RemoteAccessService {
     this.webRtcPairingUrl = null
     this.webRtcRelayJoinToken = null
     this.webRtcRoomId = null
+    this.closeWebRtcSignalSocket()
     this.webRtcStatusMessage = null
     this.emitStatus()
   }
@@ -598,15 +600,91 @@ export class RemoteAccessService {
         margin: 2,
         width: 720,
       })
-      this.webRtcStatusMessage = 'WebRTC relay pairing QR is ready, but host peer connection handling is not active yet.'
+      this.openWebRtcSignalSocket({
+        expiresAt: payload.expiresAt,
+        relayJoinTokenHash: payload.relayJoinTokenHash,
+        roomId: payload.roomId,
+        signalingUrl: payload.signalingUrl,
+      })
+      this.webRtcStatusMessage = 'WebRTC relay room is registering. Keep Terminay open while the browser connects.'
     } catch (error) {
       this.webRtcPairingExpiresAt = null
       this.webRtcPairingUrl = null
       this.webRtcRelayJoinToken = null
       this.webRtcRoomId = null
       this.webRtcPairingQrCodeDataUrl = null
+      this.closeWebRtcSignalSocket()
       this.webRtcStatusMessage = error instanceof Error ? error.message : 'Unable to generate WebRTC pairing QR.'
     }
+  }
+
+  private closeWebRtcSignalSocket(): void {
+    const socket = this.webRtcSignalSocket
+    this.webRtcSignalSocket = null
+    if (socket && socket.readyState !== WebSocket.CLOSING && socket.readyState !== WebSocket.CLOSED) {
+      socket.close(1000, 'Pairing rotated')
+    }
+  }
+
+  private openWebRtcSignalSocket(options: {
+    expiresAt: string
+    relayJoinTokenHash: string
+    roomId: string
+    signalingUrl: string
+  }): void {
+    this.closeWebRtcSignalSocket()
+
+    const socket = new WebSocket(options.signalingUrl)
+    this.webRtcSignalSocket = socket
+
+    socket.on('open', () => {
+      socket.send(
+        JSON.stringify({
+          expiresAt: options.expiresAt,
+          relayJoinTokenHash: options.relayJoinTokenHash,
+          roomId: options.roomId,
+          type: 'host-ready',
+        }),
+      )
+    })
+
+    socket.on('message', (raw) => {
+      let message: { message?: string; type?: string }
+      try {
+        message = JSON.parse(raw.toString()) as { message?: string; type?: string }
+      } catch {
+        return
+      }
+
+      if (message.type === 'host-registered') {
+        this.webRtcStatusMessage = 'WebRTC relay room is ready. Scan the QR code to continue.'
+        this.emitStatus()
+        return
+      }
+
+      if (message.type === 'client-join') {
+        this.webRtcStatusMessage = 'Browser joined the relay room. WebRTC peer handling is not active yet.'
+        this.emitStatus()
+        return
+      }
+
+      if (message.type === 'error') {
+        this.webRtcStatusMessage = message.message || 'The WebRTC relay rejected the pairing room.'
+        this.emitStatus()
+      }
+    })
+
+    socket.on('error', () => {
+      if (this.webRtcSignalSocket !== socket) return
+      this.webRtcStatusMessage = 'Could not reach the WebRTC signaling relay.'
+      this.emitStatus()
+    })
+
+    socket.on('close', () => {
+      if (this.webRtcSignalSocket !== socket) return
+      this.webRtcSignalSocket = null
+      this.emitStatus()
+    })
   }
 
   private async handleRequest(
