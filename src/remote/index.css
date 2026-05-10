@@ -386,30 +386,31 @@ body, html, #remote-root {
 .terminal-scroll-region {
   position: absolute;
   inset: 0;
-  overflow-x: auto;
-  overflow-y: auto;
+  overflow: hidden;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x pan-y;
+  touch-action: pan-y;
   padding: 0;
 }
 
 .terminal-zoom-shell {
   position: relative;
-  min-width: 100%;
-  min-height: 100%;
-  overflow: visible;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 .terminal-xterm-container {
   position: relative;
   transform-origin: top left;
-  display: inline-block;
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-/* Allow xterm to size its own element from its canvas; only constrain width. */
 .terminal-xterm-container .xterm {
   width: 100%;
+  height: 100%;
 }
 
 @media (pointer: coarse), (max-width: 900px) {

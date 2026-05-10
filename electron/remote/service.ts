@@ -26,6 +26,7 @@ import {
 import { ConnectionStore, webSocketPeer, type RemoteConnectionPeer } from './connectionStore'
 import { DeviceStore } from './deviceStore'
 import { PairingManager } from './pairing'
+import { verifyPairingPin } from './pin'
 import { ensureTlsMaterial } from './tls'
 import { WebRtcPairingManager } from './webrtc'
 
@@ -50,6 +51,14 @@ type SessionRecord = {
   rows: number
 }
 
+type RemoteSizeOverride =
+  | { active: false }
+  | {
+      active: true
+      cols: number
+      rows: number
+    }
+
 type RemoteAccessServiceOptions = {
   app: App
   createWebRtcHostWindow: (ownerId: number) => {
@@ -62,6 +71,7 @@ type RemoteAccessServiceOptions = {
     sessionId: string,
   ) => { close: () => void; resize: (cols: number, rows: number) => void; write: (data: string) => void } | null
   getRemoteAccessSettings: () => RemoteAccessSettings
+  notifyTerminalRemoteSizeOverride: (sessionId: string, override: RemoteSizeOverride) => void
   onStatusChanged: (status: RemoteAccessStatus) => void
   publicDir: string
   rendererDistDir: string
@@ -97,6 +107,13 @@ function appendToBuffer(current: string, chunk: string): string {
 
 function normalizePem(value: string): string {
   return value.replace(/\r\n/g, '\n').trim()
+}
+
+function assertPairingPin(settings: RemoteAccessSettings, pin: string | undefined): void {
+  if (!settings.pairingPinHash) return
+  if (!verifyPairingPin(settings.pairingPinHash, String(pin ?? ''))) {
+    throw new Error('The pairing PIN is incorrect.')
+  }
 }
 
 function jsonResponse(body: JsonResponse, status = 200): { body: Buffer; contentType: string; status: number } {
@@ -150,12 +167,14 @@ export class RemoteAccessService {
   private readonly deviceStore: DeviceStore
   private readonly getControllableSession: RemoteAccessServiceOptions['getControllableSession']
   private readonly getRemoteAccessSettings: RemoteAccessServiceOptions['getRemoteAccessSettings']
+  private readonly notifyTerminalRemoteSizeOverride: RemoteAccessServiceOptions['notifyTerminalRemoteSizeOverride']
   private readonly onStatusChanged: RemoteAccessServiceOptions['onStatusChanged']
   private readonly pairingManager = new PairingManager()
   private readonly publicDir: string
   private readonly remoteDir: string
   private readonly rendererDistDir: string
   private readonly saveGeneratedTlsPaths: RemoteAccessServiceOptions['saveGeneratedTlsPaths']
+  private readonly remoteSizeOverrideOwners = new Map<string, { cols: number; connectionId: string; rows: number }>()
   private readonly sessions = new Map<string, SessionRecord>()
   private config: ResolvedRemoteAccessConfig | null = null
   private errorMessage: string | null = null
@@ -183,6 +202,7 @@ export class RemoteAccessService {
     this.createWebRtcHostWindow = options.createWebRtcHostWindow
     this.getControllableSession = options.getControllableSession
     this.getRemoteAccessSettings = options.getRemoteAccessSettings
+    this.notifyTerminalRemoteSizeOverride = options.notifyTerminalRemoteSizeOverride
     this.onStatusChanged = options.onStatusChanged
     this.publicDir = options.publicDir
     this.rendererDistDir = options.rendererDistDir
@@ -286,6 +306,11 @@ export class RemoteAccessService {
   async revokeDevice(deviceId: string): Promise<RemoteAccessStatus> {
     const device = this.deviceStore.get(deviceId)
     await this.deviceStore.revoke(deviceId)
+    for (const connection of this.connectionStore.list()) {
+      if (connection.deviceId === deviceId) {
+        this.clearRemoteSizeOverridesForConnection(connection.connectionId)
+      }
+    }
     this.connectionStore.closeConnectionsForDevice(deviceId)
     await this.auditStore.append({
       action: 'device-revoked',
@@ -307,6 +332,7 @@ export class RemoteAccessService {
         deviceId: connection.deviceId,
         deviceName: device?.name ?? null,
       })
+      this.clearRemoteSizeOverridesForConnection(connectionId)
       this.connectionStore.closeConnection(connectionId, 4002, 'Connection closed by host')
     }
 
@@ -381,6 +407,7 @@ export class RemoteAccessService {
   }
 
   removeSession(id: string): void {
+    this.clearRemoteSizeOverride(id)
     this.sessions.delete(id)
     for (const connection of this.connectionStore.list()) {
       connection.attachedSessionIds.delete(id)
@@ -563,6 +590,7 @@ export class RemoteAccessService {
     for (const connection of this.connectionStore.list()) {
       connection.socket.close(1001, 'Remote access stopped')
     }
+    this.clearAllRemoteSizeOverrides()
 
     await new Promise<void>((resolve) => {
       this.wsServer.close(() => resolve())
@@ -804,10 +832,12 @@ export class RemoteAccessService {
         const requestOrigin = this.assertOrigin(request, requestUrl.origin)
         const body = await readJsonBody<{
           deviceName: string
+          pairingPin?: string
           pairingSessionId: string
           pairingToken: string
           publicKeyPem: string
         }>(request)
+        assertPairingPin(this.getRemoteAccessSettings(), body.pairingPin)
 
         const result = await this.pairingManager.startRegistration({
           deviceName: body.deviceName,
@@ -989,6 +1019,7 @@ export class RemoteAccessService {
     const origin = this.createWebRtcPairingOrigin(appOrigin)
 
     if (pathname === '/api/pairing/start') {
+      assertPairingPin(this.getRemoteAccessSettings(), String(body.pairingPin ?? ''))
       return this.pairingManager.startRegistration({
         deviceName: String(body.deviceName ?? ''),
         origin,
@@ -1106,6 +1137,7 @@ export class RemoteAccessService {
     if (!connectionId) return
     const connection = this.connectionStore.get(connectionId)
     this.webRtcTerminalConnectionsByChannelId.delete(channelId)
+    this.clearRemoteSizeOverridesForConnection(connectionId)
     this.connectionStore.unregister(connectionId)
     void this.auditStore.append({
       action: 'connection-closed',
@@ -1244,6 +1276,7 @@ export class RemoteAccessService {
 
     socket.on('close', () => {
       const connection = this.connectionStore.get(connectionId)
+      this.clearRemoteSizeOverridesForConnection(connectionId)
       this.connectionStore.unregister(connectionId)
       void this.auditStore
         .append({
@@ -1286,6 +1319,9 @@ export class RemoteAccessService {
           return
         }
 
+        if (this.remoteSizeOverrideOwners.get(message.sessionId)?.connectionId !== connection.connectionId) {
+          this.clearRemoteSizeOverridesForConnection(connection.connectionId)
+        }
         connection.attachedSessionIds.add(message.sessionId)
         this.send(connection.socket, {
           session: this.toSessionSnapshot(message.sessionId, session),
@@ -1295,6 +1331,7 @@ export class RemoteAccessService {
       }
       case 'detach-session':
         connection.attachedSessionIds.delete(message.sessionId)
+        this.clearRemoteSizeOverride(message.sessionId, connection.connectionId)
         return
       case 'write': {
         if (!connection.attachedSessionIds.has(message.sessionId)) {
@@ -1311,10 +1348,17 @@ export class RemoteAccessService {
           return
         }
 
-        this.getControllableSession(message.sessionId)?.resize(
-          Math.max(2, Math.floor(message.cols)),
-          Math.max(1, Math.floor(message.rows)),
-        )
+        const controllableSession = this.getControllableSession(message.sessionId)
+        if (!controllableSession) {
+          this.send(connection.socket, { message: 'That terminal session is no longer controllable.', type: 'error' })
+          return
+        }
+
+        const cols = Math.max(2, Math.floor(message.cols))
+        const rows = Math.max(1, Math.floor(message.rows))
+        controllableSession.resize(cols, rows)
+        this.updateSessionSize(message.sessionId, cols, rows)
+        this.setRemoteSizeOverrideOwner(message.sessionId, connection.connectionId, cols, rows)
         return
       }
       case 'ping':
@@ -1354,6 +1398,41 @@ export class RemoteAccessService {
     return {
       ...this.toSessionSummary(id, session),
       buffer: session.buffer,
+    }
+  }
+
+  private setRemoteSizeOverrideOwner(sessionId: string, connectionId: string, cols: number, rows: number): void {
+    this.remoteSizeOverrideOwners.set(sessionId, { cols, connectionId, rows })
+    this.notifyTerminalRemoteSizeOverride(sessionId, {
+      active: true,
+      cols,
+      rows,
+    })
+  }
+
+  private clearRemoteSizeOverride(sessionId: string, connectionId?: string): void {
+    const owner = this.remoteSizeOverrideOwners.get(sessionId)
+    if (!owner || (connectionId && owner.connectionId !== connectionId)) {
+      return
+    }
+
+    this.remoteSizeOverrideOwners.delete(sessionId)
+    this.notifyTerminalRemoteSizeOverride(sessionId, { active: false })
+  }
+
+  private clearRemoteSizeOverridesForConnection(connectionId: string): void {
+    for (const [sessionId, owner] of Array.from(this.remoteSizeOverrideOwners.entries())) {
+      if (owner.connectionId === connectionId) {
+        this.clearRemoteSizeOverride(sessionId, connectionId)
+      }
+    }
+  }
+
+  private clearAllRemoteSizeOverrides(): void {
+    const sessionIds = Array.from(this.remoteSizeOverrideOwners.keys())
+    this.remoteSizeOverrideOwners.clear()
+    for (const sessionId of sessionIds) {
+      this.notifyTerminalRemoteSizeOverride(sessionId, { active: false })
     }
   }
 
