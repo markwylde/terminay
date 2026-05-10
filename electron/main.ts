@@ -1966,8 +1966,18 @@ ipcMain.handle('remote-webrtc-host:get-asset', (_event, payload: { path: string 
 
 ipcMain.handle(
   'remote-webrtc-host:api-request',
-  (_event, payload: { appOrigin: string; body: Record<string, unknown>; pathname: string }) => {
-    return remoteAccessService.handleWebRtcApiRequest(payload.pathname, payload.body, payload.appOrigin)
+  async (_event, payload: { appOrigin: string; body: Record<string, unknown>; pathname: string }) => {
+    try {
+      return {
+        body: await remoteAccessService.handleWebRtcApiRequest(payload.pathname, payload.body, payload.appOrigin),
+        ok: true,
+      }
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : 'Request failed.',
+        ok: false,
+      }
+    }
   },
 )
 

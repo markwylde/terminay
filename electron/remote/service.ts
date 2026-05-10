@@ -1100,7 +1100,7 @@ export class RemoteAccessService {
       channelId,
       webContentsId,
       close: () => {
-        this.webRtcTerminalConnectionsByChannelId.delete(channelId)
+        this.closeWebRtcTerminal(channelId)
       },
       getReadyState: () => WebSocket.OPEN,
       send: (message) => {

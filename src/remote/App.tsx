@@ -62,9 +62,24 @@ const THEMES = {
 
 const defaultPairingInput = `${window.location.origin}?pairingSessionId=...`
 const PAIRING_QUERY_KEYS = ['pairingSessionId', 'pairingToken', 'pairingExpiresAt'] as const
+const UNPAIRED_AUTH_ERROR_MESSAGES = new Set([
+  'This device is not paired with this host.',
+  'This device is paired with a different origin.',
+])
 
 function getInitialPairingInput(): string {
   return window.location.href.includes('pairingToken=') ? window.location.href : ''
+}
+
+function hasPairingBootstrapInput(input: string): boolean {
+  if (!input.trim()) return false
+
+  try {
+    parsePairingBootstrap(input)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function scrubPairingQueryFromUrl(): void {
@@ -80,6 +95,10 @@ function scrubPairingQueryFromUrl(): void {
   })
   const nextUrl = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`
   window.history.replaceState({}, document.title, nextUrl || window.location.pathname)
+}
+
+function isUnpairedAuthError(error: unknown): boolean {
+  return error instanceof Error && UNPAIRED_AUTH_ERROR_MESSAGES.has(error.message)
 }
 
 type AccessoryAction =
@@ -550,6 +569,12 @@ export function RemoteApp() {
   useEffect(() => {
     void (async () => {
       try {
+        if (hasPairingBootstrapInput(pairingInput)) {
+          setPairingState('needs-pairing')
+          setStatusText('Pair this browser to your Terminay host.')
+          return
+        }
+
         const pairing = await loadPairing(transportRuntime.pairingOrigin)
         if (!pairing) {
           setPairingState('needs-pairing')
@@ -564,7 +589,7 @@ export function RemoteApp() {
         setErrorText(error instanceof Error ? error.message : 'Unable to initialize.')
       }
     })()
-  }, [transportRuntime.pairingOrigin])
+  }, [pairingInput, transportRuntime.pairingOrigin])
 
   const handleServerMessage = useCallback((message: RemoteServerMessage): void => {
     switch (message.type) {
@@ -635,7 +660,12 @@ export function RemoteApp() {
     void (async () => {
       try {
         const pairing = await loadPairing(transportRuntime.pairingOrigin)
-        if (!pairing || cancelled) return
+        if (!pairing) {
+          setPairingState('needs-pairing')
+          setStatusText('Pair this browser to your Terminay host.')
+          return
+        }
+        if (cancelled) return
         setConnectionState('connecting')
         setErrorText(null)
         const authenticated = await authenticateDevice({
@@ -652,6 +682,18 @@ export function RemoteApp() {
         await socket.connect()
       } catch (error) {
         setConnectionState('idle')
+        if (isUnpairedAuthError(error)) {
+          await removePairing(transportRuntime.pairingOrigin).catch(() => undefined)
+          if (cancelled) return
+          setSessions({})
+          setSelectedSessionId(null)
+          setActiveProjectId(null)
+          setPairingState('needs-pairing')
+          setStatusText('Pair this browser to your Terminay host.')
+          setErrorText('This browser is no longer paired with this Terminay host. Enter the PIN to pair it again.')
+          return
+        }
+
         setErrorText(error instanceof Error ? error.message : 'Auth failed.')
         if (!cancelled) scheduleReconnect()
       }
@@ -741,6 +783,7 @@ export function RemoteApp() {
   }, [])
 
   useEffect(() => {
+    void showAccessoryBar
     scheduleRemoteFitAndResize()
   }, [scheduleRemoteFitAndResize, showAccessoryBar])
 
