@@ -18,14 +18,14 @@ type DialogState = {
 }
 
 type DialogHostWindow = Window & {
-  __termideE2E?: {
+  __terminayE2E?: {
     dialogs?: DialogState
   }
 }
 
 function installDialogStubsInPage(): void {
   const hostWindow = window as DialogHostWindow
-  const existingState = hostWindow.__termideE2E?.dialogs
+  const existingState = hostWindow.__terminayE2E?.dialogs
 
   if (existingState) {
     return
@@ -39,8 +39,8 @@ function installDialogStubsInPage(): void {
     promptQueue: [],
   }
 
-  hostWindow.__termideE2E = {
-    ...hostWindow.__termideE2E,
+  hostWindow.__terminayE2E = {
+    ...hostWindow.__terminayE2E,
     dialogs: dialogState,
   }
 
@@ -91,7 +91,7 @@ async function updateDialogState(
     | { kind: 'set-prompt-default'; value: string | null },
 ): Promise<void> {
   await page.evaluate((nextUpdate) => {
-    const state = (window as DialogHostWindow).__termideE2E?.dialogs
+    const state = (window as DialogHostWindow).__terminayE2E?.dialogs
 
     if (!state) {
       throw new Error('Dialog stubs are unavailable for this page')
@@ -137,7 +137,7 @@ export function createDialogController(page: Page) {
 
     async getCalls(): Promise<DialogCall[]> {
       return page.evaluate(() => {
-        const state = (window as DialogHostWindow).__termideE2E?.dialogs
+        const state = (window as DialogHostWindow).__terminayE2E?.dialogs
 
         if (!state) {
           throw new Error('Dialog stubs are unavailable for this page')

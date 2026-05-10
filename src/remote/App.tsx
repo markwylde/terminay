@@ -151,14 +151,14 @@ function getDefaultDeviceName(): string {
   if (platform.includes('iPhone')) return 'iPhone Safari'
   if (platform.includes('iPad')) return 'iPad Safari'
   if (platform.includes('Mac')) return 'Mac Browser'
-  return 'Termide Remote Browser'
+  return 'Terminay Remote Browser'
 }
 
 export function RemoteApp() {
   // --- UI State ---
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<RemoteSettings>(() => {
-    const saved = localStorage.getItem('termide-remote-settings')
+    const saved = localStorage.getItem('terminay-remote-settings')
     return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS
   })
 
@@ -397,7 +397,7 @@ export function RemoteApp() {
 
   // Save settings
   useEffect(() => {
-    localStorage.setItem('termide-remote-settings', JSON.stringify(settings))
+    localStorage.setItem('terminay-remote-settings', JSON.stringify(settings))
     if (terminalRef.current) {
       terminalRef.current.options.fontSize = settings.fontSize
       terminalRef.current.options.lineHeight = settings.lineHeight
@@ -498,7 +498,7 @@ export function RemoteApp() {
         const pairing = await loadPairing(window.location.origin)
         if (!pairing) {
           setPairingState('needs-pairing')
-          setStatusText('Pair this browser to your Termide host.')
+          setStatusText('Pair this browser to your Terminay host.')
           return
         }
         setDeviceName(pairing.deviceName)
@@ -839,7 +839,7 @@ export function RemoteApp() {
             <video ref={qrVideoRef} className="qr-scanner-video" playsInline muted />
             <div className="qr-scanner-frame" />
           </div>
-          <p className="qr-scanner-hint">Point your camera at the QR code shown in Termide</p>
+          <p className="qr-scanner-hint">Point your camera at the QR code shown in Terminay</p>
         </div>
       )}
       {errorText && (
@@ -851,7 +851,7 @@ export function RemoteApp() {
       {pairingState !== 'paired' ? (
         <div className="pairing-screen">
           <div className="pairing-box">
-            <h1>Termide Remote</h1>
+            <h1>Terminay Remote</h1>
             <p className="status">{statusText}</p>
             <form className="pairing-form" onSubmit={handlePair}>
               <div className="form-group">

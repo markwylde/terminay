@@ -9,7 +9,7 @@ type PairingRecord = StoredPairing & {
   privateKey: CryptoKey
 }
 
-const DB_NAME = 'termide-remote'
+const DB_NAME = 'terminay-remote'
 const DB_VERSION = 1
 const PAIRINGS_STORE = 'pairings'
 

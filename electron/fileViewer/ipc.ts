@@ -1,5 +1,5 @@
 import type { IpcMain } from 'electron'
-import type { FileViewerSaveRequest, FileViewerTextEncoding } from '../../src/types/termide'
+import type { FileViewerSaveRequest, FileViewerTextEncoding } from '../../src/types/terminay'
 import type { FileBufferService } from './fileBufferService'
 import type { FileWatchService } from './fileWatchService'
 import type { GitDiffService } from './gitDiffService'

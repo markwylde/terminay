@@ -1,5 +1,5 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { AppCommand } from './types/termide'
+import type { AppCommand } from './types/terminay'
 import type { KeyboardShortcutSettings } from './types/settings'
 
 type KeyboardLikeEvent = Pick<

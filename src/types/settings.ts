@@ -1,4 +1,4 @@
-import type { AppCommand } from './termide'
+import type { AppCommand } from './terminay'
 
 export type KeyboardShortcutSettings = Record<AppCommand, string>
 

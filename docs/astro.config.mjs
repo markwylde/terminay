@@ -1,7 +1,6 @@
 import { defineConfig } from 'astro/config';
 
 export default defineConfig({
-	site: 'https://markwylde.github.io',
-	base: '/termide',
+	site: 'https://terminay.com',
 	output: 'static',
 });

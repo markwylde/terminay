@@ -19,7 +19,7 @@ const promptPath = resolve(
   '.github/prompts/github-create-release.md',
 )
 const message = [
-  'Generate the markdown changelog body for Termide release',
+  'Generate the markdown changelog body for Terminay release',
   tag,
   '.',
   'Write the markdown changelog body to RELEASE.md with no extra text.',

@@ -4,23 +4,23 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 ---
 
 <DocsLayout
-  title="Installation - Termide"
-  description="Download Termide, run packaged builds, or build Termide from source."
+  title="Installation - Terminay"
+  description="Download Terminay, run packaged builds, or build Terminay from source."
   current="installation"
 >
   <h1 class="docs-title">Installation</h1>
   <p class="docs-lead">
-    Download a packaged Termide build from GitHub Releases, or build a local copy when a package is not available for your platform.
+    Download a packaged Terminay build from GitHub Releases, or build a local copy when a package is not available for your platform.
   </p>
 
   <section class="docs-section">
-    <h2>Download Termide</h2>
+    <h2>Download Terminay</h2>
     <p>
-      Packaged builds are published on <a href="https://github.com/markwylde/termide/releases">GitHub Releases</a>.
+      Packaged builds are published on <a href="https://github.com/markwylde/terminay/releases">GitHub Releases</a>.
     </p>
     <ul>
-      <li>macOS DMG installer: <code>Termide-Mac-&lt;version&gt;-Installer.dmg</code></li>
-      <li>Linux AppImage: <code>Termide-Linux-&lt;version&gt;.AppImage</code></li>
+      <li>macOS DMG installer: <code>Terminay-Mac-&lt;version&gt;-Installer.dmg</code></li>
+      <li>Linux AppImage: <code>Terminay-Linux-&lt;version&gt;.AppImage</code></li>
     </ul>
   </section>
 
@@ -29,17 +29,17 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
     <p>
       On Linux, make the AppImage executable before opening it.
     </p>
-    <pre><code>chmod +x Termide-Linux-&lt;version&gt;.AppImage
-./Termide-Linux-&lt;version&gt;.AppImage</code></pre>
+    <pre><code>chmod +x Terminay-Linux-&lt;version&gt;.AppImage
+./Terminay-Linux-&lt;version&gt;.AppImage</code></pre>
   </section>
 
   <section class="docs-section">
     <h2>Build From Source</h2>
     <p>
-      If a packaged build is not available, build Termide locally with Node.js 22+ and npm 10+.
+      If a packaged build is not available, build Terminay locally with Node.js 22+ and npm 10+.
     </p>
-    <pre><code>git clone https://github.com/markwylde/termide.git
-cd termide
+    <pre><code>git clone https://github.com/markwylde/terminay.git
+cd terminay
 npm ci
 npm run build</code></pre>
     <p>

@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 import { webContents } from 'electron'
-import type { FileViewerWatchEvent } from '../../src/types/termide'
+import type { FileViewerWatchEvent } from '../../src/types/terminay'
 import type { FileBufferService } from './fileBufferService'
 
 type WatchRegistration = {
