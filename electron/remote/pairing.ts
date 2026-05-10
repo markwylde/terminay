@@ -37,6 +37,25 @@ export class PairingManager {
   private currentSession: PairingSession | null = null
   private readonly pendingRegistrations = new Map<string, PendingPairing>()
 
+  adoptSession(options: {
+    expiresAt: string
+    origin: string
+    pairingSessionId: string
+    pairingToken: string
+  }): void {
+    const expiresAt = Date.parse(options.expiresAt)
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      throw new Error('This pairing code has expired.')
+    }
+
+    this.currentSession = {
+      expiresAt,
+      id: options.pairingSessionId,
+      origin: options.origin,
+      tokenHash: hashToken(options.pairingToken),
+    }
+  }
+
   create(origin: string): PairingPayload {
     const token = randomBytes(32).toString('base64url')
     const sessionId = randomUUID()

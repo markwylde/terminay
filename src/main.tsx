@@ -5,6 +5,7 @@ import App from './App.tsx'
 import { EditTabWindow } from './components/EditTabWindow.tsx'
 import { MacrosWindow } from './components/MacrosWindow.tsx'
 import { SettingsWindow } from './components/SettingsWindow.tsx'
+import { WebRtcHost } from './remote/WebRtcHost.tsx'
 import './index.css'
 
 const searchParams = new URLSearchParams(window.location.search)
@@ -18,6 +19,8 @@ const content = (() => {
       return <MacrosWindow />
     case 'edit-tab':
       return <EditTabWindow />
+    case 'webrtc-host':
+      return <WebRtcHost />
     default:
       return <App />
   }
