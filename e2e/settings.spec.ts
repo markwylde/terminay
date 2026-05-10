@@ -2,11 +2,11 @@ import { expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 function remoteOriginInput(page: Page) {
-  return page.locator('#section-remote-access-host .settings-row').nth(0).locator('input')
+  return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Remote origin' }).locator('input')
 }
 
 function bindAddressInput(page: Page) {
-  return page.locator('#section-remote-access-host .settings-row').nth(1).locator('input')
+  return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Bind address' }).locator('input')
 }
 
 test('opens settings focused to remote access and supports settings search', async ({ appHarness, mainWindow }) => {
