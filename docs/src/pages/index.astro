@@ -8,57 +8,57 @@ const basePath = import.meta.env.BASE_URL.endsWith('/')
 
 // biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
 const heroScreenshot = {
-  src: `${basePath}screenshots/termide-hero-workspace.png`,
-  alt: 'Termide showing five project tabs and a two by two terminal workspace',
+  src: `${basePath}screenshots/terminay-hero-workspace.png`,
+  alt: 'Terminay showing five project tabs and a two by two terminal workspace',
 };
 
 // biome-ignore lint/correctness/noUnusedVariables: Used in the Astro template below.
 const featureScreenshots = [
   {
-    src: `${basePath}screenshots/termide-workspace.png`,
-    alt: 'Termide workspace showing project tabs, file explorer, and split terminal panes',
+    src: `${basePath}screenshots/terminay-workspace.png`,
+    alt: 'Terminay workspace showing project tabs, file explorer, and split terminal panes',
     title: 'Workspace',
     description: 'Organize projects with colored tabs, root folders, file explorer state, and docked terminal layouts.',
   },
   {
-    src: `${basePath}screenshots/termide-command-bar.png`,
-    alt: 'Termide Command bar searching project commands and macros',
+    src: `${basePath}screenshots/terminay-command-bar.png`,
+    alt: 'Terminay Command bar searching project commands and macros',
     title: 'Command Bar',
     description: 'Search commands and macros from one keyboard-first launcher.',
   },
   {
-    src: `${basePath}screenshots/termide-macros.png`,
-    alt: 'Termide Macros window showing a macro library and execution steps',
+    src: `${basePath}screenshots/terminay-macros.png`,
+    alt: 'Terminay Macros window showing a macro library and execution steps',
     title: 'Macros',
     description: 'Build reusable terminal automations with steps, prompts, waits, clipboard paste, and secrets.',
   },
   {
-    src: `${basePath}screenshots/termide-files.png`,
-    alt: 'Termide file explorer and README preview beside terminal panes',
+    src: `${basePath}screenshots/terminay-files.png`,
+    alt: 'Terminay file explorer and README preview beside terminal panes',
     title: 'Files',
     description: 'Open README files, previews, text buffers, diffs, PDFs, images, and folders beside terminals.',
   },
   {
-    src: `${basePath}screenshots/termide-folders.png`,
-    alt: 'Termide folder viewer showing gallery mode for a project folder',
+    src: `${basePath}screenshots/terminay-folders.png`,
+    alt: 'Terminay folder viewer showing gallery mode for a project folder',
     title: 'Folders',
     description: 'Browse folders as dockable tree, list, thumbnail, or gallery tabs.',
   },
   {
-    src: `${basePath}screenshots/termide-settings.png`,
-    alt: 'Termide Settings window showing searchable terminal appearance controls',
+    src: `${basePath}screenshots/terminay-settings.png`,
+    alt: 'Terminay Settings window showing searchable terminal appearance controls',
     title: 'Settings',
     description: 'Search settings, adjust the shell, tune appearance, and preview terminal changes.',
   },
   {
-    src: `${basePath}screenshots/termide-shortcuts.png`,
-    alt: 'Termide Settings window showing searchable keyboard shortcuts',
+    src: `${basePath}screenshots/terminay-shortcuts.png`,
+    alt: 'Terminay Settings window showing searchable keyboard shortcuts',
     title: 'Shortcuts',
     description: 'Capture, clear, reset, and inspect command shortcut conflicts.',
   },
   {
-    src: `${basePath}screenshots/termide-remote-access.png`,
-    alt: 'Termide Remote Access settings with pairing and TLS options',
+    src: `${basePath}screenshots/terminay-remote-access.png`,
+    alt: 'Terminay Remote Access settings with pairing and TLS options',
     title: 'Remote Access',
     description: 'Pair a browser, manage trusted devices, and review live remote access state.',
   },
@@ -102,18 +102,18 @@ const workflow = [
 ---
 
 <Layout
-  title="Termide - A Terminal Workspace for Projects"
-  description="Termide is a desktop terminal workspace with dockable shells, file tools, macros, settings, colorful tabs, and browser-based remote access."
+  title="Terminay - A Terminal Workspace for Projects"
+  description="Terminay is a desktop terminal workspace with dockable shells, file tools, macros, settings, colorful tabs, and browser-based remote access."
 >
   <section class="hero">
     <div class="hero-content">
       <p class="eyebrow">Desktop terminal workspace</p>
-      <h1 class="hero-title">Termide</h1>
+      <h1 class="hero-title">Terminay</h1>
       <p class="hero-description">
         A focused terminal app for project work: native shells, dockable panes, file tools, macros, settings, colorful tabs, and remote access from a paired browser.
       </p>
       <div class="hero-cta">
-        <a href="https://github.com/markwylde/termide/releases" class="btn btn-primary">
+        <a href="https://github.com/markwylde/terminay/releases" class="btn btn-primary">
           Download
         </a>
         <a href={`${basePath}docs`} class="btn btn-secondary">
@@ -185,20 +185,20 @@ const workflow = [
         <h2>Pair a browser when the desktop is not enough</h2>
       </div>
       <p>
-        Termide can host an HTTPS remote endpoint, generate a pairing QR code, expose available local addresses, track paired devices, show live connections, and keep an audit trail in settings.
+        Terminay can host an HTTPS remote endpoint, generate a pairing QR code, expose available local addresses, track paired devices, show live connections, and keep an audit trail in settings.
       </p>
     </div>
   </section>
 
   <section class="cta">
     <div class="container">
-      <h2>Ready to try Termide?</h2>
+      <h2>Ready to try Terminay?</h2>
       <p>Download the latest release or build from source with the same scripts used by the automated docs screenshot workflow.</p>
       <div class="cta-buttons">
-        <a href="https://github.com/markwylde/termide/releases" class="btn btn-primary btn-large">
-          Get Termide
+        <a href="https://github.com/markwylde/terminay/releases" class="btn btn-primary btn-large">
+          Get Terminay
         </a>
-        <a href="https://github.com/markwylde/termide" class="btn btn-secondary btn-large" target="_blank" rel="noopener">
+        <a href="https://github.com/markwylde/terminay" class="btn btn-secondary btn-large" target="_blank" rel="noopener">
           View on GitHub
         </a>
       </div>

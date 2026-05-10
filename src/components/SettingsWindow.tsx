@@ -18,8 +18,8 @@ import {
 } from '../keyboardShortcuts'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalSettings } from '../types/settings'
-import type { AppCommand } from '../types/termide'
-import type { RemoteAccessStatus } from '../types/termide'
+import type { AppCommand } from '../types/terminay'
+import type { RemoteAccessStatus } from '../types/terminay'
 import '../settings.css'
 
 type CategoryId = (typeof terminalSettingsCategories)[number]['id']
@@ -97,7 +97,7 @@ function TerminalPreview({ settings }: { settings: TerminalSettings }) {
     terminal.open(root)
     fitAddon.fit()
 
-    terminal.writeln('\x1b[1;36mTermide Settings Preview\x1b[0m')
+    terminal.writeln('\x1b[1;36mTerminay Settings Preview\x1b[0m')
     terminal.writeln('\x1b[90mPreview updates in real-time.\x1b[0m')
     terminal.writeln('')
     terminal.writeln(`$ echo "Font: ${settings.fontFamily}"`)
@@ -220,13 +220,13 @@ export function SettingsWindow() {
   useEffect(() => {
     let isMounted = true
 
-    void window.termide.getRemoteAccessStatus().then((status) => {
+    void window.terminay.getRemoteAccessStatus().then((status) => {
       if (isMounted) {
         setRemoteStatus(status)
       }
     })
 
-    const unsubscribe = window.termide.onRemoteAccessStatusChanged((status) => {
+    const unsubscribe = window.terminay.onRemoteAccessStatusChanged((status) => {
       setRemoteStatus(status)
     })
 
@@ -284,7 +284,7 @@ export function SettingsWindow() {
   }, [activeCategoryId, activeSectionId, filteredSections, normalizedQuery])
 
   useEffect(() => {
-    const unsubscribe = window.termide.onSettingsFocusSection(({ sectionId }) => {
+    const unsubscribe = window.terminay.onSettingsFocusSection(({ sectionId }) => {
       const section = terminalSettingsSections.find((candidate) => candidate.id === sectionId)
       if (!section) {
         return
@@ -367,7 +367,7 @@ export function SettingsWindow() {
     setIsSaving(true)
 
     try {
-      const saved = await window.termide.updateTerminalSettings(nextDraft)
+      const saved = await window.terminay.updateTerminalSettings(nextDraft)
       draftRef.current = saved
       setDraft(saved)
     } finally {
@@ -402,7 +402,7 @@ export function SettingsWindow() {
     setIsSaving(true)
 
     try {
-      const saved = await window.termide.updateTerminalSettings(nextDraft)
+      const saved = await window.terminay.updateTerminalSettings(nextDraft)
       draftRef.current = saved
       setDraft(saved)
     } finally {
@@ -414,7 +414,7 @@ export function SettingsWindow() {
     if (!confirm('Are you sure you want to reset all settings to default?')) return
     setIsSaving(true)
     try {
-      const saved = await window.termide.resetTerminalSettings()
+      const saved = await window.terminay.resetTerminalSettings()
       draftRef.current = saved
       setDraft(saved)
       setQuery('')
@@ -435,7 +435,7 @@ export function SettingsWindow() {
     setIsLoadingCodexModels(true)
     setCodexModelsError(null)
 
-    void window.termide.listAiTabMetadataModels('codex')
+    void window.terminay.listAiTabMetadataModels('codex')
       .then((models) => {
         if (!isCurrent) {
           return
@@ -477,7 +477,7 @@ export function SettingsWindow() {
     setIsLoadingClaudeCodeModels(true)
     setClaudeCodeModelsError(null)
 
-    void window.termide.listAiTabMetadataModels('claudeCode')
+    void window.terminay.listAiTabMetadataModels('claudeCode')
       .then((models) => {
         if (!isCurrent) {
           return
@@ -808,7 +808,7 @@ export function SettingsWindow() {
         return
       }
 
-      const nextStatus = await window.termide.toggleRemoteAccessServer()
+      const nextStatus = await window.terminay.toggleRemoteAccessServer()
       setRemoteStatus(nextStatus)
     } finally {
       setIsTogglingRemoteAccess(false)
@@ -818,7 +818,7 @@ export function SettingsWindow() {
   const revokeDevice = async (deviceId: string) => {
     setIsUpdatingRemoteDevices(true)
     try {
-      const nextStatus = await window.termide.revokeRemoteAccessDevice(deviceId)
+      const nextStatus = await window.terminay.revokeRemoteAccessDevice(deviceId)
       setRemoteStatus(nextStatus)
     } finally {
       setIsUpdatingRemoteDevices(false)
@@ -828,7 +828,7 @@ export function SettingsWindow() {
   const closeConnection = async (connectionId: string) => {
     setIsUpdatingRemoteDevices(true)
     try {
-      const nextStatus = await window.termide.closeRemoteAccessConnection(connectionId)
+      const nextStatus = await window.terminay.closeRemoteAccessConnection(connectionId)
       setRemoteStatus(nextStatus)
     } finally {
       setIsUpdatingRemoteDevices(false)
@@ -850,7 +850,7 @@ export function SettingsWindow() {
       ? 'Scan the QR code from a phone or browser, then manage trusted devices and live connections here.'
       : remoteStatus?.errorMessage
         ? `${remoteStatus.errorMessage} You can also add your own certificate files below later if you want.`
-        : 'Termide will use your Remote Access settings and generate a self-signed certificate automatically if you leave the TLS paths blank.'
+        : 'Terminay will use your Remote Access settings and generate a self-signed certificate automatically if you leave the TLS paths blank.'
 
     return (
       <section id="section-remote-access-management" className="settings-section">

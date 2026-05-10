@@ -4,7 +4,7 @@ import { expect, test } from './fixtures'
 import { openProjectEditWindow } from './support/ui'
 
 async function getActiveSessionId(page: Page): Promise<string> {
-  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-termide-terminal-session-id')
+  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
 
   if (!sessionId) {
     throw new Error('Active terminal session id is unavailable')
@@ -16,7 +16,7 @@ async function getActiveSessionId(page: Page): Promise<string> {
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
   const sessionId = await getActiveSessionId(page)
   await page.evaluate(({ nextData, nextSessionId }) => {
-    window.termide.writeTerminal(nextSessionId, nextData)
+    window.terminay.writeTerminal(nextSessionId, nextData)
   }, { nextData: data, nextSessionId: sessionId })
 }
 
@@ -128,7 +128,7 @@ test.describe('workspace shell', () => {
 
     await writeToActiveTerminal(mainWindow, `cd ${JSON.stringify(workspace.rootDir)}\r`)
     await expect
-      .poll(async () => mainWindow.evaluate((id) => window.termide.getTerminalCwd(id), sessionId))
+      .poll(async () => mainWindow.evaluate((id) => window.terminay.getTerminalCwd(id), sessionId))
       .toBe(expectedRoot)
 
     await mainWindow.bringToFront()

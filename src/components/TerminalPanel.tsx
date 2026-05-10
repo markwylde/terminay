@@ -11,10 +11,10 @@ import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalPanelParams } from './TerminalTab'
 import type { TerminalSettings } from '../types/settings'
 
-const OPEN_TERMINAL_SWITCHER_EVENT = 'termide-open-terminal-switcher'
-const DROP_FILE_EXPLORER_PATH_EVENT = 'termide-drop-file-explorer-path'
-const CLEAR_TERMINAL_EVENT = 'termide-clear-terminal'
-const COPY_TERMINAL_EVENT = 'termide-copy-terminal'
+const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher'
+const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path'
+const CLEAR_TERMINAL_EVENT = 'terminay-clear-terminal'
+const COPY_TERMINAL_EVENT = 'terminay-copy-terminal'
 const BRACKETED_PASTE_NEWLINE = '\x1b[200~\n\x1b[201~'
 const TERMINAL_CONTEXT_MAX_LINES = 200
 const TERMINAL_CONTEXT_MAX_CHARS = 20_000
@@ -47,7 +47,7 @@ function escapePathForShell(path: string): string {
 }
 
 function getDroppedFileText(dataTransfer: DataTransfer): string | null {
-  const customPath = dataTransfer.getData('termide/path')
+  const customPath = dataTransfer.getData('terminay/path')
   if (customPath) {
     return escapePathForShell(customPath)
   }
@@ -59,7 +59,7 @@ function getDroppedFileText(dataTransfer: DataTransfer): string | null {
 
   if (dataTransfer.files.length > 0) {
     const paths = Array.from(dataTransfer.files)
-      .map((file) => window.termide.getPathForFile(file))
+      .map((file) => window.terminay.getPathForFile(file))
       .filter((path): path is string => typeof path === 'string' && path.length > 0)
 
     if (paths.length > 0) {
@@ -71,7 +71,7 @@ function getDroppedFileText(dataTransfer: DataTransfer): string | null {
 }
 
 function shouldInterceptTerminalDrop(dataTransfer: DataTransfer): boolean {
-  if (dataTransfer.types.includes('termide/path') || dataTransfer.types.includes('Files')) {
+  if (dataTransfer.types.includes('terminay/path') || dataTransfer.types.includes('Files')) {
     return true
   }
 
@@ -128,7 +128,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
   const announceTerminalFocus = useCallback(() => {
     window.dispatchEvent(
-      new CustomEvent('termide-terminal-focused', {
+      new CustomEvent('terminay-terminal-focused', {
         detail: { sessionId: props.params.sessionId },
       }),
     )
@@ -163,7 +163,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     const isMac = navigator.platform.toLowerCase().includes('mac')
     const announceTerminalUserInput = () => {
       window.dispatchEvent(
-        new CustomEvent('termide-terminal-user-input', {
+        new CustomEvent('terminay-terminal-user-input', {
           detail: { sessionId },
         }),
       )
@@ -173,7 +173,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       const modifierKey = isMac ? event.metaKey : event.ctrlKey
       if (modifierKey) {
         event.preventDefault()
-        window.termide.openExternal(uri)
+        window.terminay.openExternal(uri)
       }
     }
 
@@ -200,7 +200,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return false
       }
 
-      void window.termide.writeClipboardText(selectedText)
+      void window.terminay.writeClipboardText(selectedText)
       return true
     }
 
@@ -234,7 +234,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           return false
         }
 
-        void window.termide.smartPasteClipboard().then((pasted) => {
+        void window.terminay.smartPasteClipboard().then((pasted) => {
           if (pasted.length === 0) {
             return
           }
@@ -280,7 +280,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         // Send the newline through bracketed paste so shells keep it in the
         // current command buffer instead of accepting the line.
         announceTerminalUserInput()
-        window.termide.writeTerminal(sessionId, BRACKETED_PASTE_NEWLINE)
+        window.terminay.writeTerminal(sessionId, BRACKETED_PASTE_NEWLINE)
         return false
       }
 
@@ -289,8 +289,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     const fitAndResize = () => {
       fitAddon.fit()
-      window.termide.resizeTerminal(sessionId, terminal.cols, terminal.rows)
-      window.termide.updateTerminalRemoteMetadata(sessionId, {
+      window.terminay.resizeTerminal(sessionId, terminal.cols, terminal.rows)
+      window.terminay.updateTerminalRemoteMetadata(sessionId, {
         viewportHeight: Math.max(0, Math.round(root.clientHeight)),
         viewportWidth: Math.max(0, Math.round(root.clientWidth)),
       })
@@ -298,7 +298,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     fitAndResize()
 
-    const terminalDataDisposer = window.termide.onTerminalData((message) => {
+    const terminalDataDisposer = window.terminay.onTerminalData((message) => {
       if (message.id !== sessionId) {
         return
       }
@@ -306,7 +306,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminal.write(message.data)
     })
 
-    const terminalExitDisposer = window.termide.onTerminalExit((message) => {
+    const terminalExitDisposer = window.terminay.onTerminalExit((message) => {
       if (message.id !== sessionId) {
         return
       }
@@ -318,15 +318,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminal.write(`\r\n\x1b[31m[process exited with code ${message.exitCode}]\x1b[0m\r\n`)
     })
 
-    const zoomDisposer = window.termide.onTerminalZoomChanged((message) => {
+    const zoomDisposer = window.terminay.onTerminalZoomChanged((message) => {
       const baseFontSize = settings.fontSize ?? 13
       const newFontSize = baseFontSize + message.zoomLevel
       terminal.options.fontSize = Math.max(6, newFontSize)
       fitAddon.fit()
-      window.termide.resizeTerminal(sessionId, terminal.cols, terminal.rows)
+      window.terminay.resizeTerminal(sessionId, terminal.cols, terminal.rows)
     })
 
-    void window.termide.getTerminalZoom().then((zoomLevel) => {
+    void window.terminay.getTerminalZoom().then((zoomLevel) => {
       if (terminalRef.current !== terminal) {
         return
       }
@@ -340,7 +340,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
 
     const dataDisposer = terminal.onData((data) => {
-      window.termide.writeTerminal(sessionId, data)
+      window.terminay.writeTerminal(sessionId, data)
     })
 
     const resizeDisposer = props.api.onDidDimensionsChange(() => {
@@ -416,7 +416,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return
       }
 
-      window.termide.writeTerminal(sessionId, `${escapePathForShell(customEvent.detail.path)} `)
+      window.terminay.writeTerminal(sessionId, `${escapePathForShell(customEvent.detail.path)} `)
       terminal.focus()
       announceTerminalFocus()
     }
@@ -466,7 +466,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       event.preventDefault()
       event.stopPropagation()
 
-      window.termide.writeTerminal(sessionId, `${droppedText} `)
+      window.terminay.writeTerminal(sessionId, `${droppedText} `)
       terminal.focus()
       announceTerminalFocus()
     }
@@ -486,8 +486,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     root.addEventListener('paste', announceTerminalUserInput)
     root.addEventListener('pointerdown', announceTerminalFocus)
     root.addEventListener('pointerdown', announceTerminalUserInput)
-    window.addEventListener('termide-focus-terminal', focusTerminal)
-    window.addEventListener('termide-focus-terminal-note', focusTerminalNote)
+    window.addEventListener('terminay-focus-terminal', focusTerminal)
+    window.addEventListener('terminay-focus-terminal-note', focusTerminalNote)
     window.addEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
     window.addEventListener(COPY_TERMINAL_EVENT, copyTerminal)
     window.addEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
@@ -506,8 +506,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       root.removeEventListener('paste', announceTerminalUserInput)
       root.removeEventListener('pointerdown', announceTerminalFocus)
       root.removeEventListener('pointerdown', announceTerminalUserInput)
-      window.removeEventListener('termide-focus-terminal', focusTerminal)
-      window.removeEventListener('termide-focus-terminal-note', focusTerminalNote)
+      window.removeEventListener('terminay-focus-terminal', focusTerminal)
+      window.removeEventListener('terminay-focus-terminal-note', focusTerminalNote)
       window.removeEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
       window.removeEventListener(COPY_TERMINAL_EVENT, copyTerminal)
       window.removeEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
@@ -624,7 +624,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   return (
     <div
       className={`terminal-panel${hasTerminalNote ? ' terminal-panel--has-note' : ''}`}
-      data-termide-terminal-session-id={props.params.sessionId}
+      data-terminay-terminal-session-id={props.params.sessionId}
       ref={containerRef}
       style={terminalPanelStyle}
     >

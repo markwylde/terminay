@@ -5,7 +5,7 @@ import type {
   FileExplorerGitStatuses,
   FileViewerGitDiff,
   FileViewerGitRepoInfo,
-} from '../../src/types/termide'
+} from '../../src/types/terminay'
 import { getGitWorkingDirectory } from './pathUtils'
 import type { FileBufferService } from './fileBufferService'
 

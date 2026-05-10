@@ -341,7 +341,7 @@ function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], o
     if (!newSecretName || !newSecretValue) return
     setIsSaving(true)
     try {
-      await window.termide.saveSecret(newSecretName, newSecretValue)
+      await window.terminay.saveSecret(newSecretName, newSecretValue)
       setNewSecretName('')
       setNewSecretValue('')
       onRefresh()
@@ -352,7 +352,7 @@ function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], o
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this secret? This cannot be undone.')) return
-    await window.termide.deleteSecret(id)
+    await window.terminay.deleteSecret(id)
     onRefresh()
   }
 
@@ -425,7 +425,7 @@ export function MacrosWindow() {
   const [activeTab, setActiveTab] = useState<'macros' | 'secrets'>('macros')
 
   const refreshSecrets = useCallback(async () => {
-    const list = await window.termide.getSecrets()
+    const list = await window.terminay.getSecrets()
     setSecrets(list)
   }, [])
 
@@ -560,7 +560,7 @@ export function MacrosWindow() {
     setErrorText(null)
 
     try {
-      const saved = await window.termide.updateMacros(normalizeMacros(draftMacros))
+      const saved = await window.terminay.updateMacros(normalizeMacros(draftMacros))
       setDraftMacros(saved)
       setSelectedMacroId((current) => (current && saved.some((macro) => macro.id === current) ? current : saved[0]?.id ?? null))
     } catch (error) {
@@ -579,7 +579,7 @@ export function MacrosWindow() {
     setErrorText(null)
 
     try {
-      const saved = await window.termide.resetMacros()
+      const saved = await window.terminay.resetMacros()
       setDraftMacros(saved)
       setSelectedMacroId(saved[0]?.id ?? null)
     } catch (error) {

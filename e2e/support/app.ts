@@ -1,5 +1,5 @@
 import type { ElectronApplication, Page } from '@playwright/test'
-import type { AppCommand } from '../../src/types/termide'
+import type { AppCommand } from '../../src/types/terminay'
 import { ensureDialogStubs } from './dialogs'
 
 export async function prepareWindow(page: Page): Promise<Page> {
@@ -10,10 +10,10 @@ export async function prepareWindow(page: Page): Promise<Page> {
 
 export async function sendAppCommand(page: Page, command: AppCommand): Promise<void> {
   await page.evaluate(async (nextCommand) => {
-    const bridge = window.termideTest
+    const bridge = window.terminayTest
 
     if (!bridge) {
-      throw new Error('termideTest bridge is unavailable')
+      throw new Error('terminayTest bridge is unavailable')
     }
 
     await bridge.sendAppCommand(nextCommand)
@@ -55,7 +55,7 @@ export async function openSettingsWindow(
 ): Promise<Page> {
   return openChildWindow(electronApp, async () => {
     await page.evaluate(async (nextOptions) => {
-      await window.termide.openSettingsWindow(nextOptions)
+      await window.terminay.openSettingsWindow(nextOptions)
     }, options ?? null)
   })
 }
@@ -66,7 +66,7 @@ export async function openMacrosWindow(
 ): Promise<Page> {
   return openChildWindow(electronApp, async () => {
     await page.evaluate(async () => {
-      await window.termide.openMacrosWindow()
+      await window.terminay.openMacrosWindow()
     })
   })
 }

@@ -202,8 +202,8 @@ jobs:
 
           ## Release Assets
 
-          - macOS installer: https://github.com/${REPOSITORY}/releases/download/${TAG}/Termide-Mac-${TAG#v}-Installer.dmg
-          - Linux AppImage: https://github.com/${REPOSITORY}/releases/download/${TAG}/Termide-Linux-${TAG#v}.AppImage
+          - macOS installer: https://github.com/${REPOSITORY}/releases/download/${TAG}/Terminay-Mac-${TAG#v}-Installer.dmg
+          - Linux AppImage: https://github.com/${REPOSITORY}/releases/download/${TAG}/Terminay-Linux-${TAG#v}.AppImage
           EOF
 
       - name: Update GitHub release notes

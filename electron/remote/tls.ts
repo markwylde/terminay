@@ -160,6 +160,6 @@ export async function ensureTlsMaterial(
       keyPath,
     }
   } catch {
-    throw new Error('Termide could not read the configured TLS certificate files.')
+    throw new Error('Terminay could not read the configured TLS certificate files.')
   }
 }

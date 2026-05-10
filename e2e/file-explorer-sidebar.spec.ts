@@ -129,8 +129,8 @@ test('file explorer colors git new and modified files like VS Code', async ({ cr
   })
 
   await execFileAsync('git', ['init'], { cwd: workspace.rootDir })
-  await execFileAsync('git', ['config', 'user.name', 'Termide E2E'], { cwd: workspace.rootDir })
-  await execFileAsync('git', ['config', 'user.email', 'termide@example.com'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['add', '.'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
 
@@ -162,8 +162,8 @@ test('file explorer refreshes git colors after external changes', async ({ creat
   })
 
   await execFileAsync('git', ['init'], { cwd: workspace.rootDir })
-  await execFileAsync('git', ['config', 'user.name', 'Termide E2E'], { cwd: workspace.rootDir })
-  await execFileAsync('git', ['config', 'user.email', 'termide@example.com'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['add', '.'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
 

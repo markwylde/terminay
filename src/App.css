@@ -817,7 +817,7 @@
 .terminal-tab-close,
 .project-tab-add,
 .project-tab-sidebar-toggle,
-.termide-add-tab-button {
+.terminay-add-tab-button {
   all: unset;
   display: inline-flex;
   align-items: center;
@@ -1436,12 +1436,12 @@
 
 /* Add terminal button in dockview void space */
 
-.termide-add-tab-button {
+.terminay-add-tab-button {
   width: 34px;
   height: 34px;
 }
 
-.termide-add-tab-button:hover {
+.terminay-add-tab-button:hover {
   background: var(--tab-bg-hover);
   color: var(--tab-text-active);
 }
@@ -1450,7 +1450,7 @@
 .terminal-tab-close svg,
 .project-tab-add svg,
 .project-tab-sidebar-toggle svg,
-.termide-add-tab-button svg {
+.terminay-add-tab-button svg {
   display: block;
   stroke: currentColor;
 }
@@ -2335,7 +2335,7 @@
 }
 
 .project-workspace--macos .workspace .dv-groupview > .dv-tabs-and-actions-container .dv-tab,
-.project-workspace--macos .workspace .dv-groupview > .dv-tabs-and-actions-container .termide-add-tab-button,
+.project-workspace--macos .workspace .dv-groupview > .dv-tabs-and-actions-container .terminay-add-tab-button,
 .project-workspace--macos .workspace .dv-groupview > .dv-tabs-and-actions-container button {
   -webkit-app-region: no-drag;
 }

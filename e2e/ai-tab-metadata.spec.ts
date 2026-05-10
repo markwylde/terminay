@@ -1,10 +1,10 @@
 import { expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 import { normalizeTerminalSettings } from '../src/terminalSettings'
-import type { AiTabMetadataProvider } from '../src/types/termide'
+import type { AiTabMetadataProvider } from '../src/types/terminay'
 
-const isRealCodexRun = process.env.TERMIDE_TEST_USE_REAL_CODEX === '1'
-const isRealClaudeCodeRun = process.env.TERMIDE_TEST_USE_REAL_CLAUDE_CODE === '1'
+const isRealCodexRun = process.env.TERMINAY_TEST_USE_REAL_CODEX === '1'
+const isRealClaudeCodeRun = process.env.TERMINAY_TEST_USE_REAL_CLAUDE_CODE === '1'
 const isRealProviderRun = isRealCodexRun || isRealClaudeCodeRun
 
 function aiMetadataRows(page: Page) {
@@ -16,7 +16,7 @@ function aiMetadataSelect(page: Page, label: string) {
 }
 
 async function getActiveTerminalSessionId(page: Page): Promise<string> {
-  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-termide-terminal-session-id')
+  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
   if (!sessionId) {
     throw new Error('Active terminal session id is unavailable')
   }
@@ -28,7 +28,7 @@ async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
   const sessionId = await getActiveTerminalSessionId(page)
   await page.evaluate(
     ({ nextSessionId, nextData }) => {
-      window.termide.writeTerminal(nextSessionId, nextData)
+      window.terminay.writeTerminal(nextSessionId, nextData)
     },
     { nextData: data, nextSessionId: sessionId },
   )
@@ -36,7 +36,7 @@ async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
 
 async function firstAiProviderModel(page: Page, provider: AiTabMetadataProvider): Promise<string> {
   return page.evaluate(async (nextProvider) => {
-    const models = await window.termide.listAiTabMetadataModels(nextProvider)
+    const models = await window.terminay.listAiTabMetadataModels(nextProvider)
     const model = models[0]?.id
     if (!model) {
       throw new Error(`No ${nextProvider} model is available for AI tab metadata tests.`)
@@ -48,8 +48,8 @@ async function firstAiProviderModel(page: Page, provider: AiTabMetadataProvider)
 
 async function configureAiTabMetadata(page: Page, provider: 'claudeCode' | 'codex' = 'codex', model = 'codex-test-model') {
   await page.evaluate(async ({ nextModel, nextProvider }) => {
-    const settings = await window.termide.getTerminalSettings()
-    await window.termide.updateTerminalSettings({
+    const settings = await window.terminay.getTerminalSettings()
+    await window.terminay.updateTerminalSettings({
       ...settings,
       aiTabMetadata: {
         title: {
@@ -74,11 +74,11 @@ async function setAiMock(page: Page, options?: { error?: string | null }) {
   }
 
   await page.evaluate(async (nextOptions) => {
-    if (!window.termideTest) {
-      throw new Error('termideTest bridge is unavailable')
+    if (!window.terminayTest) {
+      throw new Error('terminayTest bridge is unavailable')
     }
 
-    await window.termideTest.setAiTabMetadataMock({
+    await window.terminayTest.setAiTabMetadataMock({
       error: nextOptions?.error ?? null,
       models: [
         { id: 'codex-test-model', label: 'Codex Test Model' },
@@ -147,11 +147,11 @@ test.describe('AI tab metadata settings', () => {
 
   test('keeps provider selected when model loading fails', async ({ appHarness, mainWindow }) => {
     await mainWindow.evaluate(async () => {
-      if (!window.termideTest) {
-        throw new Error('termideTest bridge is unavailable')
+      if (!window.terminayTest) {
+        throw new Error('terminayTest bridge is unavailable')
       }
 
-      await window.termideTest.setAiTabMetadataMock({
+      await window.terminayTest.setAiTabMetadataMock({
         error: null,
         models: [],
       })

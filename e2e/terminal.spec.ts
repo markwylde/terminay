@@ -4,7 +4,7 @@ import { sendAppCommand } from './support/app'
 import { cancelEditWindow, contextMenuItem, openTerminalEditWindow, submitEditWindow } from './support/ui'
 
 async function getActiveSessionId(page: Page): Promise<string> {
-  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-termide-terminal-session-id')
+  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
 
   if (!sessionId) {
     throw new Error('Active terminal session id is unavailable')
@@ -20,7 +20,7 @@ async function writeToTerminal(page: Page, data: string): Promise<void> {
 
 async function writeToTerminalSession(page: Page, sessionId: string, data: string): Promise<void> {
   await page.evaluate(({ nextData, nextSessionId }) => {
-    window.termide.writeTerminal(nextSessionId, nextData)
+    window.terminay.writeTerminal(nextSessionId, nextData)
   }, { nextData: data, nextSessionId: sessionId })
 }
 
@@ -264,7 +264,7 @@ test.describe('terminal behavior', () => {
     await expect(search).toBeVisible()
 
     const input = search.getByLabel('Find in terminal')
-    await input.fill('termide-search-hit')
+    await input.fill('terminay-search-hit')
 
     const initialCount = await expect
       .poll(async () => await search.locator('.terminal-search-count').textContent())
@@ -345,7 +345,7 @@ test.describe('terminal behavior', () => {
     const quickSessionId = await getActiveSessionId(mainWindow)
     await mainWindow.evaluate((sessionId) => {
       window.dispatchEvent(
-        new CustomEvent('termide-terminal-user-input', {
+        new CustomEvent('terminay-terminal-user-input', {
           detail: { sessionId },
         }),
       )
@@ -414,8 +414,8 @@ test.describe('terminal behavior', () => {
 
   test('auto-closes a terminal tab on successful exit when enabled', async ({ mainWindow }) => {
     await mainWindow.evaluate(async () => {
-      const settings = await window.termide.getTerminalSettings()
-      await window.termide.updateTerminalSettings({
+      const settings = await window.terminay.getTerminalSettings()
+      await window.terminay.updateTerminalSettings({
         ...settings,
         autoCloseTerminalOnExitZero: true,
       })

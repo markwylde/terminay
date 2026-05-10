@@ -1,8 +1,8 @@
-# Termide
+# Terminay
 
-Termide is a desktop terminal workspace built with Electron, React, and Vite. It pairs native shell sessions with dockable project tabs, file tools, macros, settings, and browser-based remote access so project work can stay in one focused desktop app.
+Terminay is a desktop terminal workspace built with Electron, React, and Vite. It pairs native shell sessions with dockable project tabs, file tools, macros, settings, and browser-based remote access so project work can stay in one focused desktop app.
 
-![Termide workspace screenshot](https://markwylde.com/termide/screenshots/termide-workspace.png)
+![Terminay workspace screenshot](https://terminay.com/screenshots/terminay-workspace.png)
 
 ## What it does
 
