@@ -198,8 +198,17 @@ contextBridge.exposeInMainWorld('terminayWebRtcHost', {
   getConfig: () => ipcRenderer.invoke('remote-webrtc-host:get-config'),
   getAssetManifest: () => ipcRenderer.invoke('remote-webrtc-host:get-asset-manifest'),
   getAsset: (path: string) => ipcRenderer.invoke('remote-webrtc-host:get-asset', { path }),
-  handleApiRequest: (pathname: string, body: Record<string, unknown>, appOrigin: string) =>
-    ipcRenderer.invoke('remote-webrtc-host:api-request', { appOrigin, body, pathname }),
+  handleApiRequest: async (pathname: string, body: Record<string, unknown>, appOrigin: string) => {
+    const response = await ipcRenderer.invoke('remote-webrtc-host:api-request', { appOrigin, body, pathname }) as {
+      body?: unknown
+      error?: string
+      ok?: boolean
+    }
+    if (!response.ok) {
+      throw new Error(response.error ?? 'Request failed.')
+    }
+    return response.body
+  },
   attachTerminal: (channelId: string, ticket: string) =>
     ipcRenderer.invoke('remote-webrtc-host:terminal-auth', { channelId, ticket }),
   handleTerminalMessage: (channelId: string, message: string) =>
