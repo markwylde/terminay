@@ -138,6 +138,12 @@ async function runHost(config: HostConfig): Promise<() => void> {
     terminal: peer.createDataChannel('terminal'),
   }
   const terminalChannelId = crypto.randomUUID()
+  let terminalClosed = false
+  const closeTerminal = () => {
+    if (terminalClosed) return
+    terminalClosed = true
+    api.closeTerminal(terminalChannelId)
+  }
 
   peer.addEventListener('icecandidate', (event) => {
     if (!event.candidate || socket.readyState !== WebSocket.OPEN) return
@@ -203,7 +209,20 @@ async function runHost(config: HostConfig): Promise<() => void> {
       api.handleTerminalMessage(terminalChannelId, event.data)
     }
   })
-  channels.terminal.addEventListener('close', () => api.closeTerminal(terminalChannelId))
+  channels.terminal.addEventListener('close', closeTerminal)
+  channels.terminal.addEventListener('error', closeTerminal)
+
+  peer.addEventListener('connectionstatechange', () => {
+    if (peer.connectionState === 'closed' || peer.connectionState === 'disconnected' || peer.connectionState === 'failed') {
+      closeTerminal()
+    }
+  })
+
+  peer.addEventListener('iceconnectionstatechange', () => {
+    if (peer.iceConnectionState === 'closed' || peer.iceConnectionState === 'disconnected' || peer.iceConnectionState === 'failed') {
+      closeTerminal()
+    }
+  })
 
   const stopTerminalMessages = api.onTerminalMessage((message) => {
     if (message.channelId !== terminalChannelId || channels.terminal.readyState !== 'open') return
@@ -240,7 +259,7 @@ async function runHost(config: HostConfig): Promise<() => void> {
 
   return () => {
     stopTerminalMessages()
-    api.closeTerminal(terminalChannelId)
+    closeTerminal()
     socket.close()
     peer.close()
   }
