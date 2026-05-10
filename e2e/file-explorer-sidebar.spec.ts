@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { rm } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
 import {
@@ -33,6 +34,32 @@ test('file explorer can browse folders and open files', async ({ createWorkspace
   await fileExplorerItem(mainWindow, 'notes.txt').dblclick()
   await expect(mainWindow.locator('.file-preview-text')).toContainText('sidebar preview text')
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
+})
+
+test('file explorer refreshes after external filesystem changes', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'sidebar-external-refresh',
+    seed: {
+      directories: ['nested'],
+      files: {
+        'old.txt': 'old file\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  await expect(fileExplorerItem(mainWindow, 'old.txt')).toBeVisible()
+  await fileExplorerItem(mainWindow, 'nested').click()
+
+  await workspace.writeText('created.txt', 'created externally\n')
+  await workspace.writeText('nested/deep-created.txt', 'created externally\n')
+  await rm(workspace.path('old.txt'))
+
+  await expect(fileExplorerItem(mainWindow, 'created.txt')).toBeVisible()
+  await expect(fileExplorerItem(mainWindow, 'deep-created.txt')).toBeVisible()
+  await expect(fileExplorerItem(mainWindow, 'old.txt')).toHaveCount(0)
 })
 
 test('file explorer context menu supports create rename delete and open terminal here', async ({

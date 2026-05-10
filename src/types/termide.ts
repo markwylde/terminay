@@ -165,6 +165,13 @@ export type FileExplorerEntry = {
   path: string
 }
 
+export type FileExplorerWatchEvent = {
+  entryName?: string | null
+  event: 'changed' | 'error'
+  message?: string
+  path: string
+}
+
 export type FileSearchResult = {
   isDirectory: boolean
   path: string
@@ -278,6 +285,8 @@ export interface TermideApi {
   renameEntry: (oldPath: string, newPath: string) => Promise<void>
   deleteEntry: (path: string) => Promise<void>
   mkdir: (path: string) => Promise<void>
+  watchDirectory: (dirPath: string) => Promise<void>
+  unwatchDirectory: (dirPath: string) => Promise<void>
   watchFile: (filePath: string) => Promise<void>
   unwatchFile: (filePath: string) => Promise<void>
   getFilePreviewSource: (filePath: string) => Promise<FileViewerPreviewSource>
@@ -339,6 +348,7 @@ export interface TermideApi {
   onTerminalData: (listener: (message: TerminalDataMessage) => void) => () => void
   onTerminalExit: (listener: (message: TerminalExitMessage) => void) => () => void
   onAppCommand: (listener: (command: AppCommand) => void) => () => void
+  onFileExplorerWatchEvent: (listener: (message: FileExplorerWatchEvent) => void) => () => void
   onFileWatchEvent: (listener: (message: FileViewerWatchEvent) => void) => () => void
   onTerminalSettingsChanged: (listener: (message: SettingsChangeMessage) => void) => () => void
   onMacrosChanged: (listener: (message: MacrosChangeMessage) => void) => () => void
