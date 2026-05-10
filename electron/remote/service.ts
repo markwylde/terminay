@@ -1080,6 +1080,7 @@ export class RemoteAccessService {
       deviceId: connection.deviceId,
       deviceName: this.deviceStore.get(connection.deviceId)?.name ?? null,
     })
+    this.webRtcStatusMessage = 'Browser connected over WebRTC.'
     this.sendSessionList(connection.socket, connection.connectionId)
     this.emitStatus()
   }
