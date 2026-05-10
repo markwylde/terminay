@@ -182,6 +182,7 @@ const DEFAULT_FILE_EXPLORER_WIDTH = 280;
 const MIN_FILE_EXPLORER_WIDTH = 180;
 const MAX_FILE_EXPLORER_WIDTH = 520;
 const FILE_EXPLORER_DRAG_THRESHOLD = 6;
+const FILE_EXPLORER_WATCH_REFRESH_DELAY_MS = 120;
 const FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS = 2500;
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
 
@@ -1384,6 +1385,7 @@ const ProjectWorkspace = forwardRef<
 	const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
 	const terminalActivityStoreRef = useRef(new TerminalActivityStore());
 	const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
+	const fileExplorerRefreshTimersRef = useRef<Map<string, number>>(new Map());
 	const evaluateTerminalActivityStateRef = useRef<
 		(sessionId: string, now?: number) => void
 	>(() => {});
@@ -1760,6 +1762,24 @@ const ProjectWorkspace = forwardRef<
 			isRefreshingGitStatusesRef.current = false;
 		}
 	}, [project.rootFolder]);
+
+	const scheduleFileExplorerDirectoryRefresh = useCallback(
+		(dirPath: string) => {
+			const existingTimer = fileExplorerRefreshTimersRef.current.get(dirPath);
+			if (existingTimer !== undefined) {
+				window.clearTimeout(existingTimer);
+			}
+
+			const nextTimer = window.setTimeout(() => {
+				fileExplorerRefreshTimersRef.current.delete(dirPath);
+				void loadDirectory(dirPath);
+				void refreshGitStatuses();
+			}, FILE_EXPLORER_WATCH_REFRESH_DELAY_MS);
+
+			fileExplorerRefreshTimersRef.current.set(dirPath, nextTimer);
+		},
+		[loadDirectory, refreshGitStatuses],
+	);
 
 	const toggleDirectory = useCallback(
 		(dirPath: string) => {
@@ -2707,6 +2727,20 @@ const ProjectWorkspace = forwardRef<
 	]);
 
 	useEffect(() => {
+		return () => {
+			for (const timerId of fileExplorerRefreshTimersRef.current.values()) {
+				window.clearTimeout(timerId);
+			}
+			fileExplorerRefreshTimersRef.current.clear();
+		};
+	}, []);
+
+	useEffect(() => {
+		for (const timerId of fileExplorerRefreshTimersRef.current.values()) {
+			window.clearTimeout(timerId);
+		}
+		fileExplorerRefreshTimersRef.current.clear();
+
 		setDirectoryChildren({});
 		setDirectoryErrors({});
 		setGitStatuses({});
@@ -2718,6 +2752,45 @@ const ProjectWorkspace = forwardRef<
 			void refreshGitStatuses();
 		}
 	}, [loadDirectory, project.rootFolder, refreshGitStatuses]);
+
+	useEffect(() => {
+		if (!project.rootFolder || !project.isFileExplorerOpen) {
+			return;
+		}
+
+		const watchedPaths = Object.entries(expandedPaths)
+			.filter(([, isExpanded]) => isExpanded)
+			.map(([dirPath]) => dirPath);
+
+		if (watchedPaths.length === 0) {
+			return;
+		}
+
+		const watchedPathSet = new Set(watchedPaths);
+		const unsubscribe = window.termide.onFileExplorerWatchEvent((event) => {
+			if (!watchedPathSet.has(event.path)) {
+				return;
+			}
+
+			scheduleFileExplorerDirectoryRefresh(event.path);
+		});
+
+		for (const dirPath of watchedPaths) {
+			void window.termide.watchDirectory(dirPath);
+		}
+
+		return () => {
+			unsubscribe();
+			for (const dirPath of watchedPaths) {
+				void window.termide.unwatchDirectory(dirPath);
+			}
+		};
+	}, [
+		expandedPaths,
+		project.isFileExplorerOpen,
+		project.rootFolder,
+		scheduleFileExplorerDirectoryRefresh,
+	]);
 
 	useEffect(() => {
 		if (!project.rootFolder || !project.isFileExplorerOpen) {
