@@ -8,6 +8,8 @@ node_modules/
 /release/
 /out/
 /build/
+/docs/
+/artifacts/
 
 # Logs
 logs/
