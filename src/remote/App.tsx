@@ -10,7 +10,8 @@ import {
   savePairing,
 } from './services/deviceKeys'
 import { parsePairingBootstrap } from './services/pairing'
-import { RemoteSocket } from './services/socket'
+import type { RemoteMessageSocket } from './services/socket'
+import { createRemoteTransportRuntime } from './services/transport'
 import '@xterm/xterm/css/xterm.css'
 import './index.css'
 
@@ -155,6 +156,8 @@ function getDefaultDeviceName(): string {
 }
 
 export function RemoteApp() {
+  const [transportRuntime] = useState(() => createRemoteTransportRuntime())
+
   // --- UI State ---
   const [showSettings, setShowSettings] = useState(false)
   const [settings, setSettings] = useState<RemoteSettings>(() => {
@@ -182,7 +185,7 @@ export function RemoteApp() {
   const [terminalZoom, setTerminalZoom] = useState(1)
 
   // --- Refs ---
-  const socketRef = useRef<RemoteSocket | null>(null)
+  const socketRef = useRef<RemoteMessageSocket | null>(null)
   const scrollRegionRef = useRef<HTMLDivElement | null>(null)
   const xtermContainerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -495,7 +498,7 @@ export function RemoteApp() {
   useEffect(() => {
     void (async () => {
       try {
-        const pairing = await loadPairing(window.location.origin)
+        const pairing = await loadPairing(transportRuntime.pairingOrigin)
         if (!pairing) {
           setPairingState('needs-pairing')
           setStatusText('Pair this browser to your Terminay host.')
@@ -509,7 +512,7 @@ export function RemoteApp() {
         setErrorText(error instanceof Error ? error.message : 'Unable to initialize.')
       }
     })()
-  }, [])
+  }, [transportRuntime.pairingOrigin])
 
   const handleServerMessage = useCallback((message: RemoteServerMessage): void => {
     switch (message.type) {
@@ -581,16 +584,20 @@ export function RemoteApp() {
     clearReconnectTimer()
     void (async () => {
       try {
-        const pairing = await loadPairing(window.location.origin)
+        const pairing = await loadPairing(transportRuntime.pairingOrigin)
         if (!pairing || cancelled) return
         setConnectionState('connecting')
         setErrorText(null)
-        const authenticated = await authenticateDevice({ deviceId: pairing.deviceId, privateKey: pairing.privateKey })
+        const authenticated = await authenticateDevice({
+          api: transportRuntime.api,
+          deviceId: pairing.deviceId,
+          privateKey: pairing.privateKey,
+        })
         if (cancelled) return
-        const socket = new RemoteSocket(authenticated.websocketUrl, handleServerMessage, state => {
+        const socket = transportRuntime.terminal.createSocket(authenticated.ticket, handleServerMessage, state => {
           setConnectionState(state === 'closed' ? 'idle' : state)
           if (state === 'closed') { socketRef.current = null; if (!cancelled) scheduleReconnect() }
-        })
+        }, authenticated.websocketUrl)
         socketRef.current = socket
         await socket.connect()
       } catch (error) {
@@ -600,7 +607,7 @@ export function RemoteApp() {
       }
     })()
     return () => { cancelled = true; clearReconnectTimer(); socketRef.current?.close() }
-  }, [pairingState, reconnectNonce, handleServerMessage, clearReconnectTimer, scheduleReconnect])
+  }, [pairingState, reconnectNonce, handleServerMessage, clearReconnectTimer, scheduleReconnect, transportRuntime])
 
   // --- Grouping Logic ---
   const projects = useMemo(() => {
@@ -649,14 +656,25 @@ export function RemoteApp() {
     try {
       const bootstrap = parsePairingBootstrap(pairingInput)
       const keyPair = await generateDeviceKeyPair()
-      const paired = await pairDevice({ bootstrap, deviceName, publicKeyPem: keyPair.publicKeyPem })
-      await savePairing({ deviceId: paired.deviceId, deviceName: paired.deviceName, origin: window.location.origin, privateKey: keyPair.privateKey, publicKeyPem: keyPair.publicKeyPem })
+      const paired = await pairDevice({
+        api: transportRuntime.api,
+        bootstrap,
+        deviceName,
+        publicKeyPem: keyPair.publicKeyPem,
+      })
+      await savePairing({
+        deviceId: paired.deviceId,
+        deviceName: paired.deviceName,
+        origin: transportRuntime.pairingOrigin,
+        privateKey: keyPair.privateKey,
+        publicKeyPem: keyPair.publicKeyPem,
+      })
       setPairingState('paired'); window.history.replaceState({}, document.title, window.location.pathname)
     } catch (err) { setErrorText(err instanceof Error ? err.message : 'Pairing failed.') }
   }
 
   async function handleForget() {
-    clearReconnectTimer(); socketRef.current?.close(); await removePairing(window.location.origin)
+    clearReconnectTimer(); socketRef.current?.close(); await removePairing(transportRuntime.pairingOrigin)
     setSessions({}); setSelectedSessionId(null); setActiveProjectId(null); setPairingState('needs-pairing'); setConnectionState('idle')
   }
 
