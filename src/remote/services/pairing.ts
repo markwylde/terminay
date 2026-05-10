@@ -14,9 +14,10 @@ function normalizePairingInput(input: string): string {
 function parseFromUrl(candidate: string): PairingBootstrap | null {
   try {
     const url = new URL(candidate)
-    const pairingSessionId = url.searchParams.get('pairingSessionId')
-    const pairingToken = url.searchParams.get('pairingToken')
-    const pairingExpiresAt = url.searchParams.get('pairingExpiresAt')
+    const fragmentParams = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash)
+    const pairingSessionId = fragmentParams.get('pairingSessionId') || url.searchParams.get('pairingSessionId')
+    const pairingToken = fragmentParams.get('pairingToken') || url.searchParams.get('pairingToken')
+    const pairingExpiresAt = fragmentParams.get('pairingExpiresAt') || url.searchParams.get('pairingExpiresAt')
 
     if (!pairingSessionId || !pairingToken || !pairingExpiresAt) {
       return null
@@ -68,6 +69,19 @@ export function parsePairingBootstrap(input: string): PairingBootstrap {
       pairingExpiresAt: currentUrl.searchParams.get('pairingExpiresAt') ?? '',
       pairingSessionId: currentUrl.searchParams.get('pairingSessionId') ?? '',
       pairingToken: currentUrl.searchParams.get('pairingToken') ?? '',
+    }
+  }
+
+  const currentFragmentParams = new URLSearchParams(window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash)
+  if (
+    currentFragmentParams.has('pairingSessionId') &&
+    currentFragmentParams.has('pairingToken') &&
+    currentFragmentParams.has('pairingExpiresAt')
+  ) {
+    return {
+      pairingExpiresAt: currentFragmentParams.get('pairingExpiresAt') ?? '',
+      pairingSessionId: currentFragmentParams.get('pairingSessionId') ?? '',
+      pairingToken: currentFragmentParams.get('pairingToken') ?? '',
     }
   }
 

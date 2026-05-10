@@ -12,6 +12,7 @@ export type WebRtcPairingPayload = {
   relayJoinToken: string
   relayJoinTokenHash: string
   roomId: string
+  signalingAuthToken: string
   signalingUrl: string
 }
 
@@ -52,6 +53,7 @@ export class WebRtcPairingManager {
     const pairingToken = randomBytes(32).toString('base64url')
     const relayJoinToken = randomBytes(32).toString('base64url')
     const relayJoinTokenHash = hashToken(relayJoinToken)
+    const signalingAuthToken = randomBytes(32).toString('base64url')
     const roomId = randomUUID()
     const expiresAt = new Date(Date.now() + WEBRTC_PAIRING_TTL_MS).toISOString()
     const normalizedConnectUrl = normalizeConnectUrl(connectUrl)
@@ -62,13 +64,16 @@ export class WebRtcPairingManager {
     url.searchParams.set('mode', 'webrtc')
     url.searchParams.set('v', '1')
     url.searchParams.set('roomId', roomId)
-    url.searchParams.set('relayJoinToken', relayJoinToken)
-    url.searchParams.set('pairingSessionId', sessionId)
-    url.searchParams.set('pairingToken', pairingToken)
-    url.searchParams.set('pairingExpiresAt', expiresAt)
     if (signalingUrl !== 'wss://app.terminay.com/signal') {
       url.searchParams.set('signalingUrl', signalingUrl)
     }
+    const fragment = new URLSearchParams()
+    fragment.set('relayJoinToken', relayJoinToken)
+    fragment.set('pairingSessionId', sessionId)
+    fragment.set('pairingToken', pairingToken)
+    fragment.set('pairingExpiresAt', expiresAt)
+    fragment.set('signalingAuthToken', signalingAuthToken)
+    url.hash = fragment.toString()
 
     return {
       appOrigin,
@@ -82,6 +87,7 @@ export class WebRtcPairingManager {
       relayJoinToken,
       relayJoinTokenHash,
       roomId,
+      signalingAuthToken,
       signalingUrl,
     }
   }
