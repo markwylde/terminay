@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -18,6 +19,21 @@ const MAX_PROVIDER_BUFFER = 1024 * 1024 * 8
 const MAX_CONTEXT_CHARS = 20_000
 const MAX_TITLE_CHARS = 64
 const MAX_NOTE_CHARS = 1200
+const SHELL_ENV_TIMEOUT_MS = 5_000
+const SHELL_ENV_START_MARKER = '__TERMINAY_SHELL_ENV_START__'
+const SHELL_ENV_END_MARKER = '__TERMINAY_SHELL_ENV_END__'
+const COMMON_PROVIDER_PATH_DIRS = [
+  path.join(os.homedir(), '.local', 'bin'),
+  path.join(os.homedir(), 'bin'),
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/local/sbin',
+  '/usr/bin',
+  '/bin',
+  '/usr/sbin',
+  '/sbin',
+]
 const DEFAULT_CLAUDE_CODE_MODELS: AiTabMetadataModel[] = [
   { id: 'haiku', label: 'Claude Haiku' },
   { id: 'sonnet', label: 'Claude Sonnet' },
@@ -39,6 +55,10 @@ type AiTabMetadataTestMock = {
   noteResult?: string
   titleResult?: string
 }
+
+type ShellEnv = Record<string, string>
+
+let providerEnvPromise: Promise<NodeJS.ProcessEnv> | null = null
 
 function getCodexCommand(): string {
   return process.env.TERMINAY_CODEX_COMMAND?.trim() || 'codex'
@@ -122,6 +142,177 @@ function isExecError(error: unknown): error is NodeJS.ErrnoException & {
   return typeof error === 'object' && error !== null
 }
 
+function getCandidateShells(): string[] {
+  if (process.platform === 'win32') {
+    return []
+  }
+
+  return [
+    process.env.SHELL?.trim() || '',
+    '/bin/zsh',
+    '/bin/bash',
+    '/bin/sh',
+    '/opt/homebrew/bin/fish',
+    '/usr/local/bin/fish',
+    '/usr/bin/fish',
+  ].filter((value, index, list) => value.length > 0 && list.indexOf(value) === index)
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`
+}
+
+function buildEnvCaptureCommand(startupFiles: string[]): string {
+  const sourceCommands = startupFiles
+    .map((startupFile) => {
+      const quotedFile = shellSingleQuote(startupFile)
+      return `terminay_startup_file=${quotedFile}; if [ -r "$terminay_startup_file" ]; then . "$terminay_startup_file"; fi`
+    })
+    .join('\n')
+
+  return [
+    sourceCommands,
+    `printf '%s\\n' ${shellSingleQuote(SHELL_ENV_START_MARKER)}`,
+    'env',
+    `printf '%s\\n' ${shellSingleQuote(SHELL_ENV_END_MARKER)}`,
+  ]
+    .filter((line) => line.length > 0)
+    .join('\n')
+}
+
+function getShellStartupFiles(shellPath: string): string[] {
+  const shellName = path.basename(shellPath).toLowerCase()
+  const home = os.homedir()
+
+  if (shellName === 'zsh') {
+    return ['.zshenv', '.zprofile', '.zshrc', '.zlogin'].map((filename) => path.join(home, filename))
+  }
+
+  if (shellName === 'bash') {
+    return ['.bash_profile', '.bash_login', '.profile', '.bashrc'].map((filename) => path.join(home, filename))
+  }
+
+  if (shellName === 'sh' || shellName === 'ksh') {
+    return ['.profile'].map((filename) => path.join(home, filename))
+  }
+
+  return []
+}
+
+function getShellEnvArgs(shellPath: string): string[] {
+  const shellName = path.basename(shellPath).toLowerCase()
+  const startupFiles = getShellStartupFiles(shellPath)
+  const command = buildEnvCaptureCommand(startupFiles)
+
+  if (shellName === 'bash') {
+    return ['--noprofile', '--norc', '-ic', command]
+  }
+
+  if (shellName === 'zsh') {
+    return ['-f', '-ic', command]
+  }
+
+  if (shellName === 'fish') {
+    return [
+      '-lic',
+      [
+        `printf '%s\\n' ${shellSingleQuote(SHELL_ENV_START_MARKER)}`,
+        'env',
+        `printf '%s\\n' ${shellSingleQuote(SHELL_ENV_END_MARKER)}`,
+      ].join('; '),
+    ]
+  }
+
+  if (['sh', 'ksh'].includes(shellName)) {
+    return ['-lc', command]
+  }
+
+  return ['-lc', command]
+}
+
+function parseShellEnv(stdout: string): ShellEnv | null {
+  const lines = stdout.split(/\r?\n/)
+  const startIndex = lines.indexOf(SHELL_ENV_START_MARKER)
+  const endIndex = lines.indexOf(SHELL_ENV_END_MARKER)
+
+  if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex) {
+    return null
+  }
+
+  const env: ShellEnv = {}
+  for (const line of lines.slice(startIndex + 1, endIndex)) {
+    const separatorIndex = line.indexOf('=')
+    if (separatorIndex <= 0) {
+      continue
+    }
+
+    env[line.slice(0, separatorIndex)] = line.slice(separatorIndex + 1)
+  }
+
+  return Object.keys(env).length > 0 ? env : null
+}
+
+async function loadShellEnv(): Promise<ShellEnv> {
+  if (process.platform === 'win32') {
+    return {}
+  }
+
+  for (const shellPath of getCandidateShells()) {
+    if (shellPath.startsWith('/') && !existsSync(shellPath)) {
+      continue
+    }
+
+    try {
+      const { stdout } = await execFileAsync(shellPath, getShellEnvArgs(shellPath), {
+        cwd: os.homedir(),
+        env: process.env,
+        maxBuffer: MAX_PROVIDER_BUFFER,
+        timeout: SHELL_ENV_TIMEOUT_MS,
+      })
+      const shellEnv = parseShellEnv(stdout)
+      if (shellEnv) {
+        return shellEnv
+      }
+    } catch {
+      // Shell startup files can be noisy or interactive; fall back to the app environment.
+    }
+  }
+
+  return {}
+}
+
+async function getProviderEnv(): Promise<NodeJS.ProcessEnv> {
+  providerEnvPromise ??= loadShellEnv().then((shellEnv) => ({
+    ...process.env,
+    ...withCommonProviderPathDirs(shellEnv),
+  }))
+
+  return providerEnvPromise
+}
+
+function withCommonProviderPathDirs(env: ShellEnv): ShellEnv {
+  const pathEntries = (env.PATH || process.env.PATH || '')
+    .split(path.delimiter)
+    .filter((entry) => entry.length > 0)
+  const seen = new Set(pathEntries)
+
+  for (const dir of COMMON_PROVIDER_PATH_DIRS) {
+    if (!seen.has(dir) && existsSync(dir)) {
+      pathEntries.push(dir)
+      seen.add(dir)
+    }
+  }
+
+  return {
+    ...env,
+    PATH: pathEntries.join(path.delimiter),
+  }
+}
+
+export function warmAiTabMetadataProviderEnv(): void {
+  void getProviderEnv()
+}
+
 function normalizeProviderError(error: unknown, fallback: string, commandName = 'AI provider'): Error {
   if (isExecError(error)) {
     if (error.code === 'ENOENT') {
@@ -184,10 +375,11 @@ function buildPrompt(request: AiTabMetadataGenerateRequest): string {
   ].join('\n')
 }
 
-function runCodexExec(args: string[], options: { cwd: string; timeout: number }): Promise<void> {
+function runCodexExec(args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; timeout: number }): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(getCodexCommand(), args, {
       cwd: options.cwd,
+      env: options.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -250,8 +442,8 @@ function runCodexExec(args: string[], options: { cwd: string; timeout: number })
   })
 }
 
-function buildClaudeCodeEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env }
+function buildClaudeCodeEnv(providerEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...providerEnv }
   const openRouterApiKey = env.OPENROUTER_API_KEY?.trim()
 
   if (env.TERMINAY_TEST_USE_REAL_CLAUDE_CODE === '1' && openRouterApiKey) {
@@ -303,7 +495,10 @@ function extractClaudeCodeText(stdout: string): string {
   return text
 }
 
-function runClaudeCodePrint(prompt: string, options: { cwd: string; model: string; timeout: number }): Promise<string> {
+function runClaudeCodePrint(
+  prompt: string,
+  options: { cwd: string; env: NodeJS.ProcessEnv; model: string; timeout: number },
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       getClaudeCodeCommand(),
@@ -321,7 +516,7 @@ function runClaudeCodePrint(prompt: string, options: { cwd: string; model: strin
       ],
       {
         cwd: options.cwd,
-        env: buildClaudeCodeEnv(),
+        env: buildClaudeCodeEnv(options.env),
         stdio: ['pipe', 'pipe', 'pipe'],
       },
     )
@@ -443,8 +638,10 @@ export class AiTabMetadataService {
     }
 
     try {
+      const providerEnv = await getProviderEnv()
       const { stdout } = await execFileAsync(getCodexCommand(), ['debug', 'models'], {
         cwd: this.cwd,
+        env: providerEnv,
         maxBuffer: MAX_PROVIDER_BUFFER,
         timeout: MODEL_LIST_TIMEOUT_MS,
       })
@@ -497,8 +694,10 @@ export class AiTabMetadataService {
 
     if (request.provider === 'claudeCode') {
       try {
+        const providerEnv = await getProviderEnv()
         const rawText = await runClaudeCodePrint(buildPrompt(request), {
           cwd: this.cwd,
+          env: providerEnv,
           model: request.model,
           timeout: PROVIDER_TIMEOUT_MS,
         })
@@ -517,6 +716,7 @@ export class AiTabMetadataService {
     const outputPath = path.join(tempDir, 'last-message.txt')
 
     try {
+      const providerEnv = await getProviderEnv()
       await runCodexExec(
         [
           'exec',
@@ -539,6 +739,7 @@ export class AiTabMetadataService {
         ],
         {
           cwd: this.cwd,
+          env: providerEnv,
           timeout: PROVIDER_TIMEOUT_MS,
         },
       )
