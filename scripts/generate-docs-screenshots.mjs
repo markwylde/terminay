@@ -4,7 +4,9 @@ import path from 'node:path'
 import { _electron as electron } from '@playwright/test'
 
 const rootDir = process.cwd()
-const outputDir = path.join(rootDir, 'docs', 'public', 'screenshots')
+const outputDir = process.env.TERMINAY_DOCS_SCREENSHOT_DIR
+  ? path.resolve(process.env.TERMINAY_DOCS_SCREENSHOT_DIR)
+  : path.join(rootDir, 'artifacts', 'docs-screenshots')
 const screenshotPaths = {
   commandBar: path.join(outputDir, 'terminay-command-bar.png'),
   files: path.join(outputDir, 'terminay-files.png'),
@@ -276,7 +278,7 @@ function terminalDemoCommand(body) {
   return `export PS1='terminay $ '; printf '%b' '${escapeShellSingleQuoted(screen)}'\r`
 }
 
-async function writeToTerminalPanels(page, workspaceDir) {
+async function writeToTerminalPanels(page) {
   const commands = [
     terminalDemoCommand(`
 \\033[36mTerminay workspace\\033[0m
@@ -291,7 +293,7 @@ A focused terminal workspace for project work.
 - Remote access
 
 $ git status --short
- M docs/src/pages/docs/workspace.astro
+ M terminay.com/docs/src/pages/docs/workspace.astro
  M src/App.tsx
 `),
     terminalDemoCommand(`
@@ -303,9 +305,9 @@ $ pwd
 $ echo ready
 ready
 
-$ npm run docs:build
+$ npm run docs:screenshots
 [ok] screenshots captured
-[ok] docs built
+[ok] ready for terminay.com
 `),
     terminalDemoCommand(`
 $ ls -la
@@ -315,7 +317,7 @@ drwxr-xr-x  src
 -rw-r--r--  README.md
 -rw-r--r--  package.json
 
-$ code docs/src/pages/docs/workspace.astro
+$ code terminay.com/docs/src/pages/docs/workspace.astro
 `),
     terminalDemoCommand(`
 \\033[35mopencode\\033[0m
