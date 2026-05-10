@@ -109,6 +109,7 @@ export const defaultTerminalSettings: TerminalSettings = {
     bindAddress: '0.0.0.0',
     origin: 'https://localhost:9443',
     pairingMode: 'lan',
+    pairingPinHash: '',
     tlsCertPath: '',
     tlsKeyPath: '',
     webRtcConnectUrl: 'https://app.terminay.com/connect',
@@ -981,6 +982,10 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
         remoteAccessInput.pairingMode === 'webrtc' || remoteAccessInput.pairingMode === 'lan'
           ? remoteAccessInput.pairingMode
           : defaultTerminalSettings.remoteAccess.pairingMode,
+      pairingPinHash:
+        typeof remoteAccessInput.pairingPinHash === 'string'
+          ? remoteAccessInput.pairingPinHash
+          : defaultTerminalSettings.remoteAccess.pairingPinHash,
       tlsCertPath:
         typeof remoteAccessInput.tlsCertPath === 'string'
           ? remoteAccessInput.tlsCertPath

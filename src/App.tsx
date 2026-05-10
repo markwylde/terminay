@@ -54,6 +54,11 @@ import {
 } from './keyboardShortcuts';
 import { renderMacroTemplate } from './macroSettings';
 import {
+	isRemoteAccessPairingPinConfigured,
+	PAIRING_PIN_PATTERN,
+	saveRemoteAccessPairingPin,
+} from './remotePairingPin';
+import {
 	TerminalActivityStore,
 	type TerminalActivityEvaluation,
 } from './terminalActivityStore';
@@ -5029,8 +5034,15 @@ function App() {
 	const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(
 		null,
 	);
+	const [remoteActionError, setRemoteActionError] = useState<string | null>(
+		null,
+	);
 	const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
 	const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
+	const [isPairingPinModalOpen, setIsPairingPinModalOpen] = useState(false);
+	const [pairingPinInput, setPairingPinInput] = useState('');
+	const [pairingPinError, setPairingPinError] = useState<string | null>(null);
+	const [isSavingPairingPin, setIsSavingPairingPin] = useState(false);
 	const [selectedRemotePairingMode, setSelectedRemotePairingMode] = useState<
 		'lan' | 'webrtc'
 	>('lan');
@@ -5045,6 +5057,9 @@ function App() {
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
 	const [terminalActivityItemsByProject, setTerminalActivityItemsByProject] =
 		useState<Record<string, TerminalActivityOverviewItem[]>>({});
+	const pairingPinRequestRef = useRef<((configured: boolean) => void) | null>(
+		null,
+	);
 
 	useEffect(() => {
 		projectsRef.current = projects;
@@ -5328,6 +5343,88 @@ function App() {
 		}
 	}, [remoteStatus?.pairingMode]);
 
+	const selectRemotePairingMode = useCallback(async (mode: 'lan' | 'webrtc') => {
+		setSelectedRemotePairingMode(mode);
+		setRemoteActionError(null);
+
+		try {
+			const settings = await window.terminay.getTerminalSettings();
+			if (settings.remoteAccess.pairingMode !== mode) {
+				await window.terminay.updateTerminalSettings({
+					...settings,
+					remoteAccess: {
+						...settings.remoteAccess,
+						pairingMode: mode,
+					},
+				});
+			}
+
+			setRemoteStatus(await window.terminay.getRemoteAccessStatus());
+			return true;
+		} catch (error) {
+			setRemoteActionError(
+				error instanceof Error
+					? error.message
+					: 'Could not save the remote pairing mode.',
+			);
+			return false;
+		}
+	}, []);
+
+	const closePairingPinModal = useCallback((configured: boolean) => {
+		pairingPinRequestRef.current?.(configured);
+		pairingPinRequestRef.current = null;
+		setIsPairingPinModalOpen(false);
+		setPairingPinInput('');
+		setPairingPinError(null);
+		setIsSavingPairingPin(false);
+	}, []);
+
+	const ensureRemoteAccessPairingPin = useCallback(
+		async (mode: 'lan' | 'webrtc') => {
+			if (await isRemoteAccessPairingPinConfigured(mode)) {
+				return true;
+			}
+
+			setPairingPinInput('');
+			setPairingPinError(null);
+			setIsPairingPinModalOpen(true);
+
+			return new Promise<boolean>((resolve) => {
+				pairingPinRequestRef.current = resolve;
+			});
+		},
+		[],
+	);
+
+	const submitPairingPin = useCallback(
+		async (event: FormEvent<HTMLFormElement>) => {
+			event.preventDefault();
+			const pin = pairingPinInput.trim();
+
+			if (!PAIRING_PIN_PATTERN.test(pin)) {
+				setPairingPinError('Pairing PIN must be exactly 6 digits.');
+				return;
+			}
+
+			setIsSavingPairingPin(true);
+			setPairingPinError(null);
+
+			try {
+				await saveRemoteAccessPairingPin(pin);
+				closePairingPinModal(true);
+			} catch (error) {
+				setPairingPinError(
+					error instanceof Error
+						? error.message
+						: 'Could not save the pairing PIN.',
+				);
+				setIsSavingPairingPin(false);
+			}
+		},
+		[closePairingPinModal, pairingPinInput],
+	);
+
 	useEffect(() => {
 		let isMounted = true;
 
@@ -5351,6 +5448,7 @@ function App() {
 
 	const toggleRemoteAccess = useCallback(async () => {
 		setIsTogglingRemoteAccess(true);
+		setRemoteActionError(null);
 		try {
 			if (remoteStatus?.configurationIssue) {
 				await window.terminay.openSettingsWindow({
@@ -5359,46 +5457,96 @@ function App() {
 				return;
 			}
 
+			if (!remoteStatus?.isRunning) {
+				if (!(await selectRemotePairingMode(selectedRemotePairingMode))) {
+					return;
+				}
+			}
+
+			if (
+				!remoteStatus?.isRunning &&
+				!(await ensureRemoteAccessPairingPin(selectedRemotePairingMode))
+			) {
+				return;
+			}
+
 			const nextStatus = await window.terminay.toggleRemoteAccessServer();
 			setRemoteStatus(nextStatus);
+			setRemoteActionError(nextStatus.errorMessage);
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : 'Unable to start remote access.';
+			setRemoteActionError(message);
+			setRemoteStatus((current) =>
+				current ? { ...current, errorMessage: message } : current,
+			);
 		} finally {
 			setIsTogglingRemoteAccess(false);
 		}
-	}, [remoteStatus?.configurationIssue]);
+	}, [
+		remoteStatus?.configurationIssue,
+		remoteStatus?.isRunning,
+		ensureRemoteAccessPairingPin,
+		selectRemotePairingMode,
+		selectedRemotePairingMode,
+	]);
 
 	const openPairingQr = useCallback(async (mode: 'lan' | 'webrtc' = selectedRemotePairingMode) => {
-		if (remoteStatus?.configurationIssue) {
-			await window.terminay.openSettingsWindow({
-				sectionId: 'remote-access-host',
-			});
-			return;
-		}
-
-		setSelectedRemotePairingMode(mode);
-		let nextStatus = remoteStatus;
-
-		if (!nextStatus?.isRunning) {
-			setIsTogglingRemoteAccess(true);
-			try {
-				nextStatus = await window.terminay.toggleRemoteAccessServer();
-				setRemoteStatus(nextStatus);
-			} finally {
-				setIsTogglingRemoteAccess(false);
+		setRemoteActionError(null);
+		try {
+			if (remoteStatus?.configurationIssue) {
+				await window.terminay.openSettingsWindow({
+					sectionId: 'remote-access-host',
+				});
+				return;
 			}
-		}
 
-		const hasPairingQr =
-			mode === 'webrtc'
-				? nextStatus?.webRtcPairingQrCodeDataUrl
-				: nextStatus?.lanPairingQrCodeDataUrl ?? nextStatus?.pairingQrCodeDataUrl;
-		if (hasPairingQr) {
-			setIsPairingModalOpen(true);
+			if (!(await selectRemotePairingMode(mode))) {
+				return;
+			}
+			let nextStatus = remoteStatus;
+
+			if (!nextStatus?.isRunning) {
+				if (!(await ensureRemoteAccessPairingPin(mode))) {
+					return;
+				}
+
+				setIsTogglingRemoteAccess(true);
+				try {
+					nextStatus = await window.terminay.toggleRemoteAccessServer();
+					setRemoteStatus(nextStatus);
+					setRemoteActionError(nextStatus.errorMessage);
+				} finally {
+					setIsTogglingRemoteAccess(false);
+				}
+			}
+
+			const hasPairingQr =
+				mode === 'webrtc'
+					? nextStatus?.webRtcPairingQrCodeDataUrl
+					: nextStatus?.lanPairingQrCodeDataUrl ??
+						nextStatus?.pairingQrCodeDataUrl;
+			if (hasPairingQr) {
+				setIsPairingModalOpen(true);
+			}
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : 'Unable to start remote access.';
+			setRemoteActionError(message);
+			setRemoteStatus((current) =>
+				current ? { ...current, errorMessage: message } : current,
+			);
 		}
-	}, [remoteStatus, selectedRemotePairingMode]);
+	}, [
+		ensureRemoteAccessPairingPin,
+		remoteStatus,
+		selectRemotePairingMode,
+		selectedRemotePairingMode,
+	]);
 
 	const remoteButtonTone = remoteStatus?.isRunning
 		? 'remote-access-button--active'
-		: remoteStatus?.configurationIssue || remoteStatus?.errorMessage
+		: remoteStatus?.configurationIssue || remoteStatus?.errorMessage || remoteActionError
 			? 'remote-access-button--warning'
 			: '';
 
@@ -5437,6 +5585,12 @@ function App() {
 		selectedPairingUrl,
 		selectedRemotePairingMode,
 	]);
+	const remoteStatusMessage =
+		remoteActionError ??
+		remoteStatus?.errorMessage ??
+		(selectedRemotePairingMode === 'webrtc'
+			? remoteStatus?.webRtcStatusMessage
+			: null);
 
 	const selectPairingAddress = useCallback(async (address: string) => {
 		const nextStatus =
@@ -5844,7 +5998,7 @@ function App() {
 										key={mode}
 										type="button"
 										className={`remote-access-menu__address-btn${selectedRemotePairingMode === mode ? ' remote-access-menu__address-btn--active' : ''}`}
-										onClick={() => setSelectedRemotePairingMode(mode)}
+										onClick={() => void selectRemotePairingMode(mode)}
 									>
 										<span className="remote-access-menu__address-text">
 											{mode === 'lan' ? 'Local Network' : 'WebRTC Relay'}
@@ -5933,13 +6087,13 @@ function App() {
 									</div>
 								)}
 							</div>
-							{remoteStatus?.errorMessage ? (
+							{remoteStatusMessage ? (
 								<div className="remote-access-menu__section">
 									<div className="remote-access-menu__section-label">
 										Status
 									</div>
 									<div className="remote-access-menu__empty">
-										{remoteStatus.errorMessage}
+										{remoteStatusMessage}
 									</div>
 								</div>
 							) : null}
@@ -5972,6 +6126,63 @@ function App() {
 				))}
 			</div>
 
+			{isPairingPinModalOpen ? (
+				<ModalBackdrop onClose={() => closePairingPinModal(false)}>
+					<form
+						className="project-edit-modal remote-pin-modal"
+						onSubmit={submitPairingPin}
+						onClick={(event) => event.stopPropagation()}
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="remote-pin-modal-title"
+					>
+						<ModalTitlebar
+							title="Remote Pairing PIN"
+							titleId="remote-pin-modal-title"
+							onClose={() => closePairingPinModal(false)}
+						/>
+						<p className="file-explorer-name-modal-description">
+							Choose a 6-digit PIN. Your browser will ask for this after scanning
+							the WebRTC QR code.
+						</p>
+						<label>
+							<span>Pairing PIN</span>
+							<input
+								type="text"
+								value={pairingPinInput}
+								onChange={(event) => {
+									setPairingPinInput(event.target.value.replace(/\D/g, '').slice(0, 6));
+									setPairingPinError(null);
+								}}
+								inputMode="numeric"
+								pattern="[0-9]{6}"
+								autoComplete="off"
+								spellCheck={false}
+								autoFocus
+							/>
+						</label>
+						{pairingPinError ? (
+							<p className="remote-pin-modal__error">{pairingPinError}</p>
+						) : null}
+						<div className="project-edit-actions">
+							<button
+								type="button"
+								onClick={() => closePairingPinModal(false)}
+								disabled={isSavingPairingPin}
+							>
+								Cancel
+							</button>
+							<button
+								type="submit"
+								disabled={isSavingPairingPin || pairingPinInput.length !== 6}
+							>
+								{isSavingPairingPin ? 'Saving...' : 'Save PIN'}
+							</button>
+						</div>
+					</form>
+				</ModalBackdrop>
+			) : null}
+
 			{isPairingModalOpen ? (
 				<ModalBackdrop onClose={() => setIsPairingModalOpen(false)}>
 					<div
@@ -6001,7 +6212,7 @@ function App() {
 									key={mode}
 									type="button"
 									className={`remote-pairing-modal__address-row-btn${selectedRemotePairingMode === mode ? ' remote-pairing-modal__address-row-btn--active' : ''}`}
-									onClick={() => setSelectedRemotePairingMode(mode)}
+									onClick={() => void selectRemotePairingMode(mode)}
 								>
 									<span className="remote-pairing-modal__address-label">
 										{mode === 'lan' ? 'Local Network QR' : 'WebRTC Relay QR'}

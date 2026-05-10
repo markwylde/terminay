@@ -32,6 +32,7 @@ import type {
   TerminalEditWindowDraft,
   TerminalEditWindowResult,
   TerminalExitMessage,
+  TerminalRemoteSizeOverrideMessage,
   TerminayTestApi,
   TerminalZoomMessage,
 } from '../src/types/terminay'
@@ -128,6 +129,8 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.invoke('remote:close-connection', { connectionId }),
   setRemoteAccessPairingAddress: (address: string) =>
     ipcRenderer.invoke('remote:set-pairing-address', { address }),
+  setRemoteAccessPairingPin: (pin: string) =>
+    ipcRenderer.invoke('remote:set-pairing-pin', { pin }) as Promise<TerminalSettings>,
 
   onTerminalData: (listener: (message: TerminalDataMessage) => void) => {
     const wrapper: ElectronListener<TerminalDataMessage> = (_event, message) => listener(message)
@@ -173,6 +176,11 @@ contextBridge.exposeInMainWorld('terminay', {
     const wrapper: ElectronListener<TerminalZoomMessage> = (_event, message) => listener(message)
     ipcRenderer.on('terminal:zoom-changed', wrapper)
     return () => ipcRenderer.off('terminal:zoom-changed', wrapper)
+  },
+  onTerminalRemoteSizeOverrideChanged: (listener: (message: TerminalRemoteSizeOverrideMessage) => void) => {
+    const wrapper: ElectronListener<TerminalRemoteSizeOverrideMessage> = (_event, message) => listener(message)
+    ipcRenderer.on('terminal:remote-size-override', wrapper)
+    return () => ipcRenderer.off('terminal:remote-size-override', wrapper)
   },
   onTerminalCopyRequested: (listener: () => void) => {
     const wrapper = () => listener()

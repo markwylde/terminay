@@ -642,6 +642,85 @@
   font-size: 12px;
 }
 
+.settings-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(4px);
+}
+
+.settings-pin-modal {
+  width: min(420px, 100%);
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  background: var(--settings-card-bg);
+  color: var(--settings-text);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
+  padding: 0 20px 20px;
+}
+
+.settings-pin-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 -20px 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--settings-border);
+}
+
+.settings-pin-modal-header h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.settings-pin-modal-header button {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--settings-text-muted);
+  cursor: pointer;
+}
+
+.settings-pin-modal-header button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--settings-text);
+}
+
+.settings-pin-modal p {
+  margin: 0 0 16px;
+  color: var(--settings-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-pin-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--settings-text-muted);
+}
+
+.settings-pin-modal-error {
+  color: var(--settings-danger) !important;
+}
+
+.settings-pin-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
 .settings-code-block {
   margin: 0;
   padding: 16px;
