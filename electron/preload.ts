@@ -32,13 +32,13 @@ import type {
   TerminalEditWindowDraft,
   TerminalEditWindowResult,
   TerminalExitMessage,
-  TermideTestApi,
+  TerminayTestApi,
   TerminalZoomMessage,
-} from '../src/types/termide'
+} from '../src/types/terminay'
 
 type ElectronListener<T> = (_event: Electron.IpcRendererEvent, payload: T) => void
 
-contextBridge.exposeInMainWorld('termide', {
+contextBridge.exposeInMainWorld('terminay', {
   getHomePath: () => ipcRenderer.invoke('fs:get-home-path') as Promise<string>,
   listDirectory: (dirPath: string) => ipcRenderer.invoke('fs:list-directory', { dirPath }) as Promise<FileExplorerEntry[]>,
   searchFiles: (options: { rootPath: string; query: string; limit?: number }) =>
@@ -186,11 +186,11 @@ contextBridge.exposeInMainWorld('termide', {
   },
 })
 
-if (process.env.TERMIDE_TEST === '1') {
-  const testApi: TermideTestApi = {
+if (process.env.TERMINAY_TEST === '1') {
+  const testApi: TerminayTestApi = {
     sendAppCommand: (command) => ipcRenderer.invoke('test:send-app-command', command) as Promise<void>,
     setAiTabMetadataMock: (mock) => ipcRenderer.invoke('test:set-ai-tab-metadata-mock', mock) as Promise<void>,
   }
 
-  contextBridge.exposeInMainWorld('termideTest', testApi)
+  contextBridge.exposeInMainWorld('terminayTest', testApi)
 }

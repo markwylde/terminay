@@ -231,7 +231,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
     id: 'remote-access-host',
     categoryId: 'remote',
     title: 'Host & Origin',
-    description: 'Choose the HTTPS origin browsers will pair against and the local address Termide binds.',
+    description: 'Choose the HTTPS origin browsers will pair against and the local address Terminay binds.',
     fields: [
       makeField({
         key: 'remoteAccess.origin',
@@ -240,7 +240,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         sectionId: 'remote-access-host',
         categoryId: 'remote',
         input: 'text',
-        placeholder: 'https://termide.example.com',
+        placeholder: 'https://terminay.example.com',
         keywords: ['https', 'origin', 'hostname', 'domain', 'pairing', 'remote'],
       }),
       makeField({
@@ -259,7 +259,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
     id: 'remote-access-tls',
     categoryId: 'remote',
     title: 'TLS',
-    description: 'Leave these blank to let Termide generate a self-signed certificate automatically.',
+    description: 'Leave these blank to let Terminay generate a self-signed certificate automatically.',
     fields: [
       makeField({
         key: 'remoteAccess.tlsCertPath',
@@ -268,7 +268,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         sectionId: 'remote-access-tls',
         categoryId: 'remote',
         input: 'text',
-        placeholder: '/etc/letsencrypt/live/termide.example.com/fullchain.pem',
+        placeholder: '/etc/letsencrypt/live/terminay.example.com/fullchain.pem',
         keywords: ['certificate', 'cert', 'pem', 'fullchain', 'https'],
       }),
       makeField({
@@ -278,7 +278,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         sectionId: 'remote-access-tls',
         categoryId: 'remote',
         input: 'text',
-        placeholder: '/etc/letsencrypt/live/termide.example.com/privkey.pem',
+        placeholder: '/etc/letsencrypt/live/terminay.example.com/privkey.pem',
         keywords: ['private key', 'key', 'pem', 'tls', 'https'],
       }),
     ],
@@ -287,7 +287,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
     id: 'shell-launch',
     categoryId: 'shell',
     title: 'Launch',
-    description: 'Choose which shell to run and how Termide starts it.',
+    description: 'Choose which shell to run and how Terminay starts it.',
     fields: [
       makeField({
         key: 'shell.program',
@@ -316,7 +316,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
       makeField({
         key: 'shell.extraArgs',
         label: 'Extra arguments',
-        description: 'Optional arguments appended after Termide-managed shell flags.',
+        description: 'Optional arguments appended after Terminay-managed shell flags.',
         sectionId: 'shell-launch',
         categoryId: 'shell',
         input: 'text',

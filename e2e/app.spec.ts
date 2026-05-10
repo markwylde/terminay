@@ -4,11 +4,11 @@ import { expect, test } from './fixtures'
 async function sendAppCommand(page: Page, command: string): Promise<void> {
   await page.evaluate(async (nextCommand) => {
     const bridge = (window as Window & {
-      termideTest?: { sendAppCommand: (command: string) => Promise<void> }
-    }).termideTest
+      terminayTest?: { sendAppCommand: (command: string) => Promise<void> }
+    }).terminayTest
 
     if (!bridge) {
-      throw new Error('termideTest bridge is unavailable')
+      throw new Error('terminayTest bridge is unavailable')
     }
 
     await bridge.sendAppCommand(nextCommand)
@@ -34,7 +34,7 @@ async function openMacroLauncher(page: Page): Promise<void> {
 
 async function seedScrollTestMacros(page: Page, count = 20): Promise<void> {
   await page.evaluate(async (macroCount) => {
-    const macros = await window.termide.getMacros()
+    const macros = await window.terminay.getMacros()
     const extraMacros = Array.from({ length: macroCount }, (_, index) => ({
       id: `scroll-test-macro-${index + 1}`,
       title: `Scroll test macro ${index + 1}`,
@@ -51,7 +51,7 @@ async function seedScrollTestMacros(page: Page, count = 20): Promise<void> {
       fields: [],
     }))
 
-    await window.termide.updateMacros([...macros, ...extraMacros])
+    await window.terminay.updateMacros([...macros, ...extraMacros])
   }, count)
 }
 
@@ -110,8 +110,8 @@ test('opens and closes terminal tabs', async ({ mainWindow }) => {
   const closeButtons = mainWindow.getByLabel('Close terminal')
   await expect(closeButtons).toHaveCount(1)
 
-  await expect(mainWindow.locator('.termide-add-tab-button').first()).toBeVisible()
-  await mainWindow.locator('.termide-add-tab-button').first().click()
+  await expect(mainWindow.locator('.terminay-add-tab-button').first()).toBeVisible()
+  await mainWindow.locator('.terminay-add-tab-button').first().click()
   await expect(closeButtons).toHaveCount(2)
 
   await closeButtons.nth(1).click()
@@ -133,7 +133,7 @@ test('opens and closes the file explorer sidebar', async ({ mainWindow }) => {
 test('opens the settings window', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
     await mainWindow.evaluate(async () => {
-      await window.termide.openSettingsWindow()
+      await window.terminay.openSettingsWindow()
     })
   })
 
@@ -144,7 +144,7 @@ test('opens the settings window', async ({ electronApp, mainWindow }) => {
 test('captures and resets command shortcuts in settings', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
     await mainWindow.evaluate(async () => {
-      await window.termide.openSettingsWindow()
+      await window.terminay.openSettingsWindow()
     })
   })
 
@@ -183,7 +183,7 @@ test('captures and resets command shortcuts in settings', async ({ electronApp, 
 test('updates menu accelerators when command shortcuts are cleared and reset', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
     await mainWindow.evaluate(async () => {
-      await window.termide.openSettingsWindow()
+      await window.terminay.openSettingsWindow()
     })
   })
 
@@ -207,8 +207,8 @@ test('runs customized app shortcuts from the keyboard', async ({ mainWindow }) =
   const isMac = await mainWindow.evaluate(() => navigator.platform.toLowerCase().includes('mac'))
 
   await mainWindow.evaluate(async () => {
-    const settings = await window.termide.getTerminalSettings()
-    await window.termide.updateTerminalSettings({
+    const settings = await window.terminay.getTerminalSettings()
+    await window.terminay.updateTerminalSettings({
       ...settings,
       keyboardShortcuts: {
         ...settings.keyboardShortcuts,
@@ -227,7 +227,7 @@ test('runs customized app shortcuts from the keyboard', async ({ mainWindow }) =
 test('opens the macros window', async ({ electronApp, mainWindow }) => {
   const macrosWindow = await openChildWindow(electronApp, async () => {
     await mainWindow.evaluate(async () => {
-      await window.termide.openMacrosWindow()
+      await window.terminay.openMacrosWindow()
     })
   })
 

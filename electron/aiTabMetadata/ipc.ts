@@ -1,5 +1,5 @@
 import type { IpcMain } from 'electron'
-import type { AiTabMetadataGenerateRequest, AiTabMetadataProvider } from '../../src/types/termide'
+import type { AiTabMetadataGenerateRequest, AiTabMetadataProvider } from '../../src/types/terminay'
 import type { AiTabMetadataService } from './service'
 
 type RegisterAiTabMetadataIpcOptions = {

@@ -190,14 +190,14 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
     }
 
     window.dispatchEvent(
-      new CustomEvent('termide-terminal-user-input', {
+      new CustomEvent('terminay-terminal-user-input', {
         detail: { sessionId },
       }),
     )
   }
 
   const dispatchEditTerminalEvent = (target: HTMLElement) => {
-    const customEvent = new CustomEvent('termide-edit-terminal', {
+    const customEvent = new CustomEvent('terminay-edit-terminal', {
       bubbles: true,
       detail: { panelId: props.api.id },
     })
@@ -234,7 +234,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
 
     ownerWindow.requestAnimationFrame(() => {
       ownerWindow.dispatchEvent(
-        new CustomEvent('termide-focus-terminal-note', {
+        new CustomEvent('terminay-focus-terminal-note', {
           detail: { sessionId },
         }),
       )

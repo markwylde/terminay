@@ -9,7 +9,7 @@ import type {
   AiTabMetadataModel,
   AiTabMetadataProvider,
   AiTabMetadataTarget,
-} from '../../src/types/termide'
+} from '../../src/types/terminay'
 
 const execFileAsync = promisify(execFile)
 const PROVIDER_TIMEOUT_MS = 90_000
@@ -41,11 +41,11 @@ type AiTabMetadataTestMock = {
 }
 
 function getCodexCommand(): string {
-  return process.env.TERMIDE_CODEX_COMMAND?.trim() || 'codex'
+  return process.env.TERMINAY_CODEX_COMMAND?.trim() || 'codex'
 }
 
 function getClaudeCodeCommand(): string {
-  return process.env.TERMIDE_CLAUDE_CODE_COMMAND?.trim() || 'claude'
+  return process.env.TERMINAY_CLAUDE_CODE_COMMAND?.trim() || 'claude'
 }
 
 function getConfiguredModels(options: {
@@ -100,16 +100,16 @@ function getConfiguredModels(options: {
 
 function getConfiguredCodexModels(): AiTabMetadataModel[] | null {
   return getConfiguredModels({
-    modelsJsonEnv: 'TERMIDE_CODEX_MODELS_JSON',
-    singleModelEnv: 'TERMIDE_CODEX_TEST_MODEL',
+    modelsJsonEnv: 'TERMINAY_CODEX_MODELS_JSON',
+    singleModelEnv: 'TERMINAY_CODEX_TEST_MODEL',
   })
 }
 
 function getConfiguredClaudeCodeModels(): AiTabMetadataModel[] {
   return getConfiguredModels({
     fallback: DEFAULT_CLAUDE_CODE_MODELS,
-    modelsJsonEnv: 'TERMIDE_CLAUDE_CODE_MODELS_JSON',
-    singleModelEnv: 'TERMIDE_CLAUDE_CODE_TEST_MODEL',
+    modelsJsonEnv: 'TERMINAY_CLAUDE_CODE_MODELS_JSON',
+    singleModelEnv: 'TERMINAY_CLAUDE_CODE_TEST_MODEL',
   }) ?? DEFAULT_CLAUDE_CODE_MODELS
 }
 
@@ -170,7 +170,7 @@ function buildPrompt(request: AiTabMetadataGenerateRequest): string {
       : 'Return one direct sentence that explains what is going on in the terminal. Keep it short and practical. Prefer a few clear words over detail. Do not include the project name, current tab name, prefixes, labels, quotes, Markdown, or commentary.'
 
   return [
-    'You are helping Termide generate terminal tab metadata.',
+    'You are helping Terminay generate terminal tab metadata.',
     targetInstruction,
     'Do not include Markdown fences, labels, alternatives, or commentary. Return only the generated text.',
     '',
@@ -254,7 +254,7 @@ function buildClaudeCodeEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env }
   const openRouterApiKey = env.OPENROUTER_API_KEY?.trim()
 
-  if (env.TERMIDE_TEST_USE_REAL_CLAUDE_CODE === '1' && openRouterApiKey) {
+  if (env.TERMINAY_TEST_USE_REAL_CLAUDE_CODE === '1' && openRouterApiKey) {
     env.ANTHROPIC_AUTH_TOKEN = env.ANTHROPIC_AUTH_TOKEN?.trim() || openRouterApiKey
     env.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL?.trim() || 'https://openrouter.ai/api'
     env.ANTHROPIC_API_KEY = ''
@@ -414,9 +414,9 @@ export class AiTabMetadataService {
     }
 
     const isUsingMock =
-      process.env.TERMIDE_TEST === '1' &&
-      ((provider === 'codex' && process.env.TERMIDE_TEST_USE_REAL_CODEX !== '1') ||
-        (provider === 'claudeCode' && process.env.TERMIDE_TEST_USE_REAL_CLAUDE_CODE !== '1'))
+      process.env.TERMINAY_TEST === '1' &&
+      ((provider === 'codex' && process.env.TERMINAY_TEST_USE_REAL_CODEX !== '1') ||
+        (provider === 'claudeCode' && process.env.TERMINAY_TEST_USE_REAL_CLAUDE_CODE !== '1'))
 
     if (isUsingMock) {
       return this.testMock.models ?? []
@@ -479,9 +479,9 @@ export class AiTabMetadataService {
     }
 
     const isUsingMock =
-      process.env.TERMIDE_TEST === '1' &&
-      ((request.provider === 'codex' && process.env.TERMIDE_TEST_USE_REAL_CODEX !== '1') ||
-        (request.provider === 'claudeCode' && process.env.TERMIDE_TEST_USE_REAL_CLAUDE_CODE !== '1'))
+      process.env.TERMINAY_TEST === '1' &&
+      ((request.provider === 'codex' && process.env.TERMINAY_TEST_USE_REAL_CODEX !== '1') ||
+        (request.provider === 'claudeCode' && process.env.TERMINAY_TEST_USE_REAL_CLAUDE_CODE !== '1'))
 
     if (isUsingMock) {
       if (this.testMock.error) {
@@ -513,7 +513,7 @@ export class AiTabMetadataService {
       }
     }
 
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'termide-codex-'))
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-codex-'))
     const outputPath = path.join(tempDir, 'last-message.txt')
 
     try {

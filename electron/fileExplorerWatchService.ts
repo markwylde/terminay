@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from 'node:fs'
 import { webContents } from 'electron'
-import type { FileExplorerWatchEvent } from '../src/types/termide'
+import type { FileExplorerWatchEvent } from '../src/types/terminay'
 import { normalizeFileViewerPath } from './fileViewer/pathUtils'
 
 const INITIAL_RETRY_DELAY_MS = 500

@@ -268,7 +268,7 @@ export type EditWindowResult =
       kind: 'terminal'
     }
 
-export interface TermideApi {
+export interface TerminayApi {
   getHomePath: () => Promise<string>
   listDirectory: (dirPath: string) => Promise<FileExplorerEntry[]>
   searchFiles: (options: { rootPath: string; query: string; limit?: number }) => Promise<FileSearchResult[]>
@@ -358,7 +358,7 @@ export interface TermideApi {
   onSettingsFocusSection: (listener: (message: { sectionId: string }) => void) => () => void
 }
 
-export interface TermideTestApi {
+export interface TerminayTestApi {
   sendAppCommand: (command: AppCommand) => Promise<void>
   setAiTabMetadataMock: (mock: {
     error?: string | null
