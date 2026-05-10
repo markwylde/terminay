@@ -133,23 +133,29 @@ https://192.168.1.23:9443/?pairingSessionId=...&pairingToken=...&pairingExpiresA
 WebRTC QR payloads should target the hosted bootstrap origin:
 
 ```text
-https://app.terminay.com/connect?mode=webrtc&roomId=...&relayJoinToken=...&pairingSessionId=...&pairingToken=...&pairingExpiresAt=...
+https://app.terminay.com/connect?mode=webrtc&v=1&roomId=...#relayJoinToken=...&pairingSessionId=...&pairingToken=...&pairingExpiresAt=...&signalingAuthToken=...
 ```
 
-The payload should include:
+The URL query should include:
 
 - `mode=webrtc`
+- protocol version, such as `v=1`
 - `roomId`
+
+The URL fragment should include QR-only secrets:
+
 - `relayJoinToken`
 - `pairingSessionId`
 - `pairingToken`
 - `pairingExpiresAt`
+- `signalingAuthToken`
 - optional `hostName` or user-facing desktop label
-- optional protocol version, such as `v=1`
 
 The QR should not include SDP blobs. SDP payloads are too large and brittle for QR scanning. The QR should only identify a short-lived signaling room, carry a relay-only join token, and carry the same kind of desktop pairing secret the current flow already uses.
 
 `relayJoinToken` should be separate from `pairingToken`. The signaling relay can validate the relay token before forwarding messages, while the actual Terminay pairing token is only validated by the desktop app after the WebRTC data channel is open.
+
+The QR should not include the user's pairing PIN. The PIN is a local desktop setting used as a second human-authentication factor after the phone scans the QR.
 
 ## Signaling Relay
 
@@ -275,6 +281,10 @@ type RemoteDeviceOrigin =
 ```
 
 The pairing token still proves possession of the QR payload. The device key still proves the same browser/device on later connections. The WebRTC data channel should additionally verify that the remote app has completed the same pairing/auth flow before terminal messages are accepted.
+
+WebRTC Relay mode also requires a 6-digit pairing PIN once the user has configured one. The first WebRTC QR generation should prompt for a PIN if none is stored. Terminay stores only a salted `scrypt` hash of that PIN in local settings. After scanning the QR and establishing the signed WebRTC data channel, the phone asks for the PIN and sends it with `/api/pairing/start`; the desktop verifies the PIN before accepting the pairing token or creating a pending device registration.
+
+This PIN protects a different threat than the QR-only relay secrets. The relay token and signaling HMAC stop an untrusted relay from joining or rewriting the WebRTC handshake. The PIN protects against a nearby person scanning the QR code before the intended phone owner does. The PIN is not sent to the signaling relay, is not encoded in the QR, and is checked by the desktop as the final pairing gate.
 
 The desktop should treat WebRTC connections exactly like WebSocket connections after authentication:
 
@@ -484,12 +494,107 @@ For WebRTC, add a socket-like adapter around the terminal data channel so existi
 - Add clear failure messages for expired QR, relay unavailable, camera blocked, WebRTC failed, and app bundle load failed.
 - Document Local Network versus WebRTC setup.
 
+## Remote Terminal Sizing
+
+Mobile and desktop terminal screens usually have opposite shapes. Desktop terminals are often wide and short, while phones are narrow and tall. The remote app should not try to make the phone behave like a miniature desktop viewport.
+
+The active mobile remote tab should become the temporary size owner for its terminal session:
+
+1. When the mobile remote activates a terminal tab, that terminal session should resize to the mobile terminal area's calculated `cols` and `rows`.
+2. The desktop app should keep the Dockview panel and app window at their existing desktop size.
+3. The desktop xterm.js instance for that session should render at the mobile-owned `cols` and `rows`, centered inside the existing desktop terminal panel.
+4. The visible area around the centered xterm should use the project or terminal background color so the desktop panel still looks intentional.
+5. When the mobile remote switches to another tab, detaches, disconnects, or remote access stops, the previous desktop terminal should return to normal desktop-fit sizing.
+
+This makes the terminal PTY geometry match the currently used input surface. Because the mobile remote only shows one terminal at a time, the active remote tab is a good proxy for the user's current terminal. Desktop users still keep their window layout, split panes, and panel sizes unchanged.
+
+### Current Behavior To Replace
+
+The current remote app treats the desktop session dimensions as authoritative:
+
+- The desktop `TerminalPanel` fits to its Dockview panel and sends those `cols` and `rows` to Electron.
+- `RemoteAccessService` broadcasts those dimensions to remote clients.
+- The mobile remote resizes its xterm to the desktop `cols` and `rows`.
+- The mobile UI compensates with scroll wrappers, zoom, and desktop-canvas measurements.
+
+This causes awkward horizontal scrolling and brittle viewport matching on phones.
+
+### Desired Size Ownership Model
+
+Size ownership should be explicit and temporary:
+
+- **Desktop-owned**: default state. The desktop `TerminalPanel` fits its local Dockview panel and resizes the PTY.
+- **Remote-owned**: while a remote client has a session attached and active. The active remote xterm fits the phone terminal area and sends its calculated `cols` and `rows` to the host.
+
+Only one remote tab should be size owner for a session at a time. If multiple remote clients exist, the most recently attached or activated remote tab can own the session until it detaches or another remote tab becomes active. A later implementation may add stronger multi-client rules, but the first version should optimize for the normal phone-as-controller case.
+
+### Remote App Responsibilities
+
+The remote browser app should calculate terminal geometry from its own visible terminal area:
+
+- Use xterm.js sizing, likely through `FitAddon`, to calculate `cols` and `rows` from the mobile terminal container.
+- Send a terminal protocol `resize` message whenever the active remote tab changes, the remote terminal area changes size, orientation changes, font settings change, or the accessory bar changes height.
+- Attach to the selected session before sending input or resize messages.
+- Stop sizing the mobile terminal from desktop `viewportWidth`, `viewportHeight`, or desktop `cols` and `rows`.
+- Simplify the mobile scroll wrapper so normal terminal width and scrollback behavior can do most of the work.
+
+The remote app can still keep zoom controls if they are useful, but zoom should change the phone-owned terminal geometry rather than scaling a desktop-sized terminal surface.
+
+### Desktop Host Responsibilities
+
+`RemoteAccessService` should treat a remote resize from the active attached session as a remote size override:
+
+- Resize the PTY to the remote-provided `cols` and `rows`.
+- Update the remote session record so other remote UI state sees the active dimensions.
+- Notify the owning desktop renderer that a remote size override is active for that session.
+- Clear the override when the remote detaches, switches away, disconnects, or remote access stops.
+- Notify the owning desktop renderer when the override clears.
+
+The desktop renderer needs a new IPC event for these override changes. The event should include the session id, whether the override is active, and the remote-owned `cols` and `rows` when active.
+
+### Desktop Renderer Responsibilities
+
+The desktop `TerminalPanel` should support two sizing modes:
+
+- In normal mode, keep the existing `FitAddon.fit()` behavior and send desktop `cols` and `rows` to Electron.
+- In remote override mode, call `terminal.resize(remoteCols, remoteRows)` and avoid sending desktop-fit resize messages back to Electron.
+
+While remote override mode is active:
+
+- Do not resize the Dockview group, app window, or desktop panel.
+- Center the xterm element within the existing terminal panel.
+- Fill the surrounding panel area with the project or terminal background color.
+- Keep keyboard input, output rendering, search, copy, and terminal note UI working.
+
+When the override clears, the panel should run the normal desktop fit path once so the PTY returns to the desktop terminal dimensions.
+
+### Feedback Loop Avoidance
+
+The implementation must avoid resize ping-pong:
+
+- A remote-owned resize should not trigger the desktop `TerminalPanel` to immediately fit to desktop dimensions and overwrite it.
+- A desktop panel resize observer should not send PTY resize messages while remote override mode is active.
+- Remote clients should debounce or coalesce resize messages from viewport and layout changes.
+- Session updates caused by remote-owned resize should not make the remote app resize from stale desktop metadata.
+
+### Testing Requirements
+
+Remote terminal sizing tests should cover:
+
+- Mobile remote selecting a tab resizes the PTY to phone dimensions.
+- Desktop xterm renders those phone dimensions centered without changing Dockview layout.
+- Switching mobile tabs restores the previous desktop tab and applies remote sizing to the newly active tab.
+- Disconnecting, detaching, stopping remote access, or closing the phone restores desktop-fit sizing.
+- Phone rotation and remote font-size changes recompute mobile-owned dimensions.
+- Scrollback works naturally on the phone without requiring desktop-width horizontal panning.
+
 ## Testing
 
 Unit tests should cover:
 
 - WebRTC QR payload creation and parsing.
 - Pairing expiry and room expiry behavior.
+- Pairing PIN validation, salted hashing, and constant-time verification.
 - Transport selection in the remote app.
 - Asset manifest generation and path safety.
 - Origin binding for local versus WebRTC devices.
@@ -500,6 +605,8 @@ Integration tests should cover:
 - Hosted bootstrap can scan or accept a WebRTC QR payload.
 - WebRTC asset install writes files into Cache Storage.
 - The launched remote app uses WebRTC transports.
+- The desktop prompts for a first-use WebRTC pairing PIN before generating a QR and stores only the hash.
+- Pairing requests with an incorrect configured PIN are rejected before device registration.
 - Pairing, auth, session list, attach, write, resize, and output work over WebRTC.
 - Device revocation closes a WebRTC connection.
 
@@ -554,6 +661,7 @@ Manual QA should include:
 
 - [ ] Add WebRTC settings and defaults.
 - [ ] Add WebRTC status fields to `RemoteAccessStatus`.
+- [ ] Add 6-digit pairing PIN storage, hashing, prompting, and `/api/pairing/start` verification.
 - [ ] Add signaling relay client.
 - [ ] Add WebRTC pairing session creation.
 - [ ] Add WebRTC QR generation.
@@ -566,6 +674,25 @@ Manual QA should include:
 - [ ] Implement terminal protocol over data channel.
 - [ ] Reuse pairing, auth, tickets, connection registration, audit logging, and revocation.
 - [ ] Add connection close/error propagation to the UI.
+
+### Remote Terminal Sizing
+
+- [x] Add an explicit remote size ownership model to `RemoteAccessService`.
+- [x] Track the active remote-owned session per connection and clear ownership on detach, tab switch, disconnect, and remote access stop.
+- [x] Make remote `resize` update the PTY, update the session record, broadcast session dimensions, and notify the owning desktop renderer.
+- [x] Add a desktop renderer IPC event for terminal remote size override changes.
+- [x] Expose the IPC event through `electron/preload.ts` and `src/types/terminay.ts`.
+- [x] Update the remote app to calculate `cols` and `rows` from its visible mobile terminal area.
+- [x] Send remote resize messages when the active remote tab, viewport, orientation, font settings, zoom, or accessory bar size changes.
+- [x] Stop sizing the mobile xterm from desktop `cols`, `rows`, `viewportWidth`, or `viewportHeight`.
+- [x] Simplify the mobile terminal scroll wrapper so the phone terminal fits width naturally.
+- [x] Add remote override mode to desktop `TerminalPanel`.
+- [x] In remote override mode, resize the desktop xterm instance to the remote-owned `cols` and `rows`.
+- [x] In remote override mode, suppress desktop `FitAddon.fit()` PTY resize messages.
+- [x] Center the remote-sized desktop xterm inside the existing terminal panel without resizing Dockview or the app window.
+- [x] Fill the surrounding desktop panel area with the project or terminal background color.
+- [x] Restore normal desktop-fit sizing when the remote override clears.
+- [ ] Add tests for mobile tab activation, tab switching, disconnect, remote access stop, phone rotation, font-size changes, and natural phone scrollback.
 
 ### Docs And QA
 
