@@ -69,19 +69,4 @@ npm run build:mac
 npm run build:linux
 ```
 
-## Docs site
-
-The Astro docs site lives in `docs/`.
-
-```bash
-npm --prefix docs run dev
-npm --prefix docs run build
-```
-
-The release docs build regenerates app screenshots before building the site:
-
-```bash
-npm run docs:build
-```
-
 Release packaging syncs `package.json` from the release tag during CI, so the source tree can use the placeholder version while published builds carry the tagged version.
