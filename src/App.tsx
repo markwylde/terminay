@@ -5031,6 +5031,9 @@ function App() {
 	);
 	const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
 	const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
+	const [selectedRemotePairingMode, setSelectedRemotePairingMode] = useState<
+		'lan' | 'webrtc'
+	>('lan');
 	const [isLinkCopied, setIsLinkCopied] = useState(false);
 	const pairingModal = useDraggableModal(isPairingModalOpen);
 	const remoteMenuRef = useRef<HTMLDivElement | null>(null);
@@ -5320,6 +5323,12 @@ function App() {
 	}, []);
 
 	useEffect(() => {
+		if (remoteStatus?.pairingMode) {
+			setSelectedRemotePairingMode(remoteStatus.pairingMode);
+		}
+	}, [remoteStatus?.pairingMode]);
+
+	useEffect(() => {
 		let isMounted = true;
 
 		const refreshUpdateStatus = async (force = false) => {
@@ -5357,7 +5366,7 @@ function App() {
 		}
 	}, [remoteStatus?.configurationIssue]);
 
-	const openPairingQr = useCallback(async () => {
+	const openPairingQr = useCallback(async (mode: 'lan' | 'webrtc' = selectedRemotePairingMode) => {
 		if (remoteStatus?.configurationIssue) {
 			await window.terminay.openSettingsWindow({
 				sectionId: 'remote-access-host',
@@ -5365,6 +5374,7 @@ function App() {
 			return;
 		}
 
+		setSelectedRemotePairingMode(mode);
 		let nextStatus = remoteStatus;
 
 		if (!nextStatus?.isRunning) {
@@ -5377,10 +5387,14 @@ function App() {
 			}
 		}
 
-		if (nextStatus?.pairingQrCodeDataUrl) {
+		const hasPairingQr =
+			mode === 'webrtc'
+				? nextStatus?.webRtcPairingQrCodeDataUrl
+				: nextStatus?.lanPairingQrCodeDataUrl ?? nextStatus?.pairingQrCodeDataUrl;
+		if (hasPairingQr) {
 			setIsPairingModalOpen(true);
 		}
-	}, [remoteStatus]);
+	}, [remoteStatus, selectedRemotePairingMode]);
 
 	const remoteButtonTone = remoteStatus?.isRunning
 		? 'remote-access-button--active'
@@ -5389,10 +5403,25 @@ function App() {
 			: '';
 
 	const remoteAddresses = remoteStatus?.availableAddresses ?? [];
+	const selectedPairingUrl =
+		selectedRemotePairingMode === 'webrtc'
+			? remoteStatus?.webRtcPairingUrl
+			: remoteStatus?.lanPairingUrl ?? remoteStatus?.pairingUrl;
+	const selectedPairingQrCodeDataUrl =
+		selectedRemotePairingMode === 'webrtc'
+			? remoteStatus?.webRtcPairingQrCodeDataUrl
+			: remoteStatus?.lanPairingQrCodeDataUrl ?? remoteStatus?.pairingQrCodeDataUrl;
+	const selectedPairingExpiresAt =
+		selectedRemotePairingMode === 'webrtc'
+			? remoteStatus?.webRtcPairingExpiresAt
+			: remoteStatus?.lanPairingExpiresAt ?? remoteStatus?.pairingExpiresAt;
 	const preferredRemoteAddress = useMemo(() => {
-		if (!remoteStatus?.pairingUrl) return remoteAddresses[0] || null;
+		if (selectedRemotePairingMode === 'webrtc') {
+			return remoteStatus?.webRtcPairingUrl ?? null;
+		}
+		if (!selectedPairingUrl) return remoteAddresses[0] || null;
 		try {
-			const url = new URL(remoteStatus.pairingUrl);
+			const url = new URL(selectedPairingUrl);
 			const origin = url.origin + url.pathname.replace(/\/$/, '');
 			return (
 				remoteAddresses.find((addr) => addr.startsWith(origin)) ||
@@ -5402,7 +5431,12 @@ function App() {
 		} catch {
 			return remoteAddresses[0] || null;
 		}
-	}, [remoteStatus?.pairingUrl, remoteAddresses]);
+	}, [
+		remoteStatus?.webRtcPairingUrl,
+		remoteAddresses,
+		selectedPairingUrl,
+		selectedRemotePairingMode,
+	]);
 
 	const selectPairingAddress = useCallback(async (address: string) => {
 		const nextStatus =
@@ -5803,9 +5837,39 @@ function App() {
 							</button>
 							<div className="remote-access-menu__section">
 								<div className="remote-access-menu__section-label">
+									QR Type
+								</div>
+								{(['lan', 'webrtc'] as const).map((mode) => (
+									<button
+										key={mode}
+										type="button"
+										className={`remote-access-menu__address-btn${selectedRemotePairingMode === mode ? ' remote-access-menu__address-btn--active' : ''}`}
+										onClick={() => setSelectedRemotePairingMode(mode)}
+									>
+										<span className="remote-access-menu__address-text">
+											{mode === 'lan' ? 'Local Network' : 'WebRTC Relay'}
+										</span>
+										{selectedRemotePairingMode === mode && (
+											<span
+												className="remote-access-menu__address-check"
+												aria-hidden="true"
+											>
+												✓
+											</span>
+										)}
+									</button>
+								))}
+							</div>
+							<div className="remote-access-menu__section">
+								<div className="remote-access-menu__section-label">
 									Connect To
 								</div>
-								{remoteStatus?.availableAddresses.length ? (
+								{selectedRemotePairingMode === 'webrtc' ? (
+									<div className="remote-access-menu__empty">
+										{remoteStatus?.webRtcPairingUrl ??
+											'Start remote access to generate a relay pairing link.'}
+									</div>
+								) : remoteStatus?.availableAddresses.length ? (
 									remoteStatus.availableAddresses.map((address) => (
 										<button
 											key={address}
@@ -5931,30 +5995,53 @@ function App() {
 							Scan this QR code from your phone to pair it with this Terminay
 							host.
 						</p>
-						{remoteStatus?.pairingQrCodeDataUrl ? (
+						<div className="remote-pairing-modal__additional-list">
+							{(['lan', 'webrtc'] as const).map((mode) => (
+								<button
+									key={mode}
+									type="button"
+									className={`remote-pairing-modal__address-row-btn${selectedRemotePairingMode === mode ? ' remote-pairing-modal__address-row-btn--active' : ''}`}
+									onClick={() => setSelectedRemotePairingMode(mode)}
+								>
+									<span className="remote-pairing-modal__address-label">
+										{mode === 'lan' ? 'Local Network QR' : 'WebRTC Relay QR'}
+									</span>
+									{selectedRemotePairingMode === mode && (
+										<span className="remote-pairing-modal__address-active-badge">
+											Selected
+										</span>
+									)}
+								</button>
+							))}
+						</div>
+						{selectedPairingQrCodeDataUrl ? (
 							<div className="remote-pairing-modal__content">
 								<div className="remote-pairing-modal__qr-section">
 									<div className="remote-pairing-modal__qr-card">
 										<img
 											className="remote-pairing-modal__qr"
-											src={remoteStatus.pairingQrCodeDataUrl}
+											src={selectedPairingQrCodeDataUrl}
 											alt="Pair device QR code"
 										/>
 									</div>
 
 									<div className="remote-pairing-modal__primary-link">
-										<h3>Open this address in your browser</h3>
+										<h3>
+											{selectedRemotePairingMode === 'webrtc'
+												? 'Open this relay link in your browser'
+												: 'Open this address in your browser'}
+										</h3>
 										<div className="remote-pairing-modal__address-box">
 											<div className="remote-pairing-modal__address-text">
 												{preferredRemoteAddress || 'No address available yet.'}
 											</div>
-											{remoteStatus.pairingUrl && (
+											{selectedPairingUrl && (
 												<button
 													type="button"
 													className="remote-pairing-modal__copy-btn"
 													onClick={() => {
 														void navigator.clipboard.writeText(
-															remoteStatus.pairingUrl!,
+															selectedPairingUrl,
 														);
 														setIsLinkCopied(true);
 														setTimeout(() => setIsLinkCopied(false), 2000);
@@ -5968,7 +6055,8 @@ function App() {
 								</div>
 
 								<div className="remote-pairing-modal__footer-details">
-									<div className="remote-pairing-modal__additional-section">
+									{selectedRemotePairingMode === 'lan' ? (
+										<div className="remote-pairing-modal__additional-section">
 										<h3>Available Addresses</h3>
 										<div className="remote-pairing-modal__additional-list">
 											{remoteAddresses.map((address) => (
@@ -5990,18 +6078,21 @@ function App() {
 												</button>
 											))}
 										</div>
-									</div>
+										</div>
+									) : null}
 
 									<div className="remote-pairing-modal__status-info">
 										<div className="remote-pairing-modal__tip">
-											Best for mobile: Scan the QR code. Use the link for manual
-											entry on desktop.
+											{selectedRemotePairingMode === 'webrtc'
+												? remoteStatus?.webRtcStatusMessage ??
+													'WebRTC relay pairing is scaffolded for the host.'
+												: 'Best for mobile: Scan the QR code. Use the link for manual entry on desktop.'}
 										</div>
 										<p className="remote-pairing-modal__expires-text">
 											Expires{' '}
-											{remoteStatus.pairingExpiresAt
+											{selectedPairingExpiresAt
 												? new Date(
-														remoteStatus.pairingExpiresAt,
+														selectedPairingExpiresAt,
 													).toLocaleString()
 												: 'soon'}
 											.

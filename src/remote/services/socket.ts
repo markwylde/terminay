@@ -1,6 +1,6 @@
 import type { RemoteClientMessage, RemoteServerMessage } from '../protocol'
 
-type OutboundClientMessage =
+export type OutboundClientMessage =
   | Omit<Extract<RemoteClientMessage, { type: 'list-sessions' }>, 'connectionId' | 'seq'>
   | Omit<Extract<RemoteClientMessage, { type: 'attach-session' }>, 'connectionId' | 'seq'>
   | Omit<Extract<RemoteClientMessage, { type: 'detach-session' }>, 'connectionId' | 'seq'>
@@ -8,7 +8,15 @@ type OutboundClientMessage =
   | Omit<Extract<RemoteClientMessage, { type: 'resize' }>, 'connectionId' | 'seq'>
   | Omit<Extract<RemoteClientMessage, { type: 'ping' }>, 'connectionId' | 'seq'>
 
-export class RemoteSocket {
+export type RemoteSocketState = 'connecting' | 'live' | 'closed'
+
+export type RemoteMessageSocket = {
+  close(): void
+  connect(): Promise<void>
+  send(message: OutboundClientMessage): void
+}
+
+export class RemoteSocket implements RemoteMessageSocket {
   private connectionId = ''
   private sequence = 0
   private socket: WebSocket | null = null
@@ -17,7 +25,7 @@ export class RemoteSocket {
   constructor(
     private readonly websocketUrl: string,
     private readonly onMessage: (message: RemoteServerMessage) => void,
-    private readonly onStateChange: (state: 'connecting' | 'live' | 'closed') => void,
+    private readonly onStateChange: (state: RemoteSocketState) => void,
   ) {}
 
   async connect(): Promise<void> {
