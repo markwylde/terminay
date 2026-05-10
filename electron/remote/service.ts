@@ -75,6 +75,7 @@ type WebRtcHostConfig = {
   expiresAt: string
   relayJoinTokenHash: string
   roomId: string
+  signalingAuthToken: string
   signalingUrl: string
 }
 
@@ -659,6 +660,7 @@ export class RemoteAccessService {
         expiresAt: payload.expiresAt,
         relayJoinTokenHash: payload.relayJoinTokenHash,
         roomId: payload.roomId,
+        signalingAuthToken: payload.signalingAuthToken,
         signalingUrl: payload.signalingUrl,
       })
       this.webRtcStatusMessage = 'WebRTC relay room is registering. Keep Terminay open while the browser connects.'
@@ -691,6 +693,7 @@ export class RemoteAccessService {
     expiresAt: string
     relayJoinTokenHash: string
     roomId: string
+    signalingAuthToken: string
     signalingUrl: string
   }): void {
     this.closeWebRtcSignalSocket()
@@ -704,6 +707,7 @@ export class RemoteAccessService {
       expiresAt: options.expiresAt,
       relayJoinTokenHash: options.relayJoinTokenHash,
       roomId: options.roomId,
+      signalingAuthToken: options.signalingAuthToken,
       signalingUrl: options.signalingUrl,
     }
     this.webRtcHostConfigByWebContentsId.set(this.webRtcHostWindow.webContentsId, hostConfig)
