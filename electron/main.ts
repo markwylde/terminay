@@ -10,7 +10,7 @@ import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
 import { findCommandForKeyboardEvent, getCommandShortcut } from '../src/keyboardShortcuts'
 import { registerAiTabMetadataIpcHandlers } from './aiTabMetadata/ipc'
-import { AiTabMetadataService } from './aiTabMetadata/service'
+import { AiTabMetadataService, warmAiTabMetadataProviderEnv } from './aiTabMetadata/service'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
 import type {
@@ -144,6 +144,7 @@ const fileWatchService = new FileWatchService(fileBufferService)
 const fileExplorerWatchService = new FileExplorerWatchService(() => app.getPath('home'))
 const gitDiffService = new GitDiffService(fileBufferService)
 const aiTabMetadataService = new AiTabMetadataService(app.getPath('home'))
+warmAiTabMetadataProviderEnv()
 let cachedAppUpdateStatus: AppUpdateStatus | null = null
 let appUpdateFetchPromise: Promise<AppUpdateStatus> | null = null
 const remoteAccessService = new RemoteAccessService({
