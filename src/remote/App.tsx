@@ -1,6 +1,7 @@
 import { FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import jsQR from 'jsqr'
 import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
 import type { RemoteServerMessage, RemoteSessionSummary } from './protocol'
 import { authenticateDevice, pairDevice } from './services/auth'
 import {
@@ -79,11 +80,6 @@ function scrubPairingQueryFromUrl(): void {
   })
   const nextUrl = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`
   window.history.replaceState({}, document.title, nextUrl || window.location.pathname)
-}
-
-type TerminalSurfaceSize = {
-  width: number
-  height: number
 }
 
 type AccessoryAction =
@@ -167,6 +163,7 @@ export function RemoteApp() {
 
   // --- Connection State ---
   const [pairingInput, setPairingInput] = useState(() => getInitialPairingInput())
+  const [pairingPin, setPairingPin] = useState('')
   const [deviceName, setDeviceName] = useState(getDefaultDeviceName())
   const [pairingState, setPairingState] = useState<'checking' | 'needs-pairing' | 'paired'>('checking')
   const [statusText, setStatusText] = useState('Checking this browser…')
@@ -177,7 +174,6 @@ export function RemoteApp() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [reconnectNonce, setReconnectNonce] = useState(0)
-  const [terminalSurfaceSize, setTerminalSurfaceSize] = useState<TerminalSurfaceSize | null>(null)
   const [showQrScanner, setShowQrScanner] = useState(false)
   const [hasTouchAccessory, setHasTouchAccessory] = useState(false)
   const [pendingCtrl, setPendingCtrl] = useState(false)
@@ -189,6 +185,7 @@ export function RemoteApp() {
   const scrollRegionRef = useRef<HTMLDivElement | null>(null)
   const xtermContainerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
   const reconnectTimerRef = useRef<number | null>(null)
   const selectedSessionIdRef = useRef<string | null>(null)
   const sessionsRef = useRef<Record<string, SessionState>>({})
@@ -203,6 +200,8 @@ export function RemoteApp() {
     startScrollLeft: number
     startScrollTop: number
   } | null>(null)
+  const remoteResizeFrameRef = useRef<number | null>(null)
+  const lastSentRemoteSizeRef = useRef<{ cols: number; rows: number; sessionId: string } | null>(null)
 
   const setCtrlPending = useCallback((value: boolean) => {
     pendingCtrlRef.current = value
@@ -315,44 +314,45 @@ export function RemoteApp() {
     setShowQrScanner(true)
   }, [])
 
-  const syncTerminalSurfaceSize = useCallback(() => {
-    const container = xtermContainerRef.current
+  const scheduleRemoteFitAndResize = useCallback(() => {
     const terminal = terminalRef.current
-    if (!container || !terminal) return
+    const fitAddon = fitAddonRef.current
+    const container = xtermContainerRef.current
+    const sessionId = selectedSessionIdRef.current
+    if (!terminal || !fitAddon || !container || !sessionId) return
 
-    window.requestAnimationFrame(() => {
-      const canvasNodes = terminal.element?.querySelectorAll<HTMLCanvasElement>('.xterm-screen canvas') ?? []
-      const contentWidth = Array.from(canvasNodes).reduce((maxWidth, canvas) => Math.max(maxWidth, canvas.offsetWidth), 0)
-      const contentHeight = Array.from(canvasNodes).reduce((maxHeight, canvas) => Math.max(maxHeight, canvas.offsetHeight), 0)
-      // Use measured canvas dimensions directly so the container stays exactly the
-      // canvas size. Falling back to the current container size only when the
-      // canvas hasn't rendered yet (contentWidth/Height === 0).
-      const nextWidth = contentWidth || container.clientWidth
-      const nextHeight = contentHeight || container.clientHeight
+    if (remoteResizeFrameRef.current !== null) {
+      window.cancelAnimationFrame(remoteResizeFrameRef.current)
+    }
 
-      setTerminalSurfaceSize((current) => {
-        if (current && current.width === nextWidth && current.height === nextHeight) {
-          return current
-        }
-        return { width: nextWidth, height: nextHeight }
-      })
+    remoteResizeFrameRef.current = window.requestAnimationFrame(() => {
+      remoteResizeFrameRef.current = null
+      if (!container.clientWidth || !container.clientHeight) {
+        return
+      }
+
+      try {
+        fitAddon.fit()
+      } catch {
+        return
+      }
+
+      const cols = Math.max(2, Math.floor(terminal.cols))
+      const rows = Math.max(1, Math.floor(terminal.rows))
+      const lastSent = lastSentRemoteSizeRef.current
+      if (lastSent?.sessionId === sessionId && lastSent.cols === cols && lastSent.rows === rows) {
+        return
+      }
+
+      try {
+        socketRef.current?.send({ cols, rows, sessionId, type: 'resize' })
+        lastSentRemoteSizeRef.current = { cols, rows, sessionId }
+      } catch {
+        // The socket may still be handshaking or closing; the next layout or
+        // session event will retry the active remote size.
+      }
     })
   }, [])
-
-  const syncTerminalToSession = useCallback((sessionId: string | null) => {
-    const terminal = terminalRef.current
-    if (!terminal || !sessionId) return
-
-    const session = sessionsRef.current[sessionId]
-    if (!session) return
-
-    const cols = Math.max(2, Math.floor(session.cols))
-    const rows = Math.max(1, Math.floor(session.rows))
-    if (terminal.cols !== cols || terminal.rows !== rows) {
-      terminal.resize(cols, rows)
-    }
-    syncTerminalSurfaceSize()
-  }, [syncTerminalSurfaceSize])
 
   const renderSessionBuffer = useCallback((sessionId: string | null) => {
     const terminal = terminalRef.current
@@ -367,15 +367,12 @@ export function RemoteApp() {
       : session.buffer
 
     terminal.reset()
-    syncTerminalToSession(sessionId)
+    scheduleRemoteFitAndResize()
     terminal.write(buffer, () => {
-      syncTerminalSurfaceSize()
+      scheduleRemoteFitAndResize()
     })
-  }, [syncTerminalSurfaceSize, syncTerminalToSession])
+  }, [scheduleRemoteFitAndResize])
 
-  useEffect(() => {
-    selectedSessionIdRef.current = selectedSessionId
-  }, [selectedSessionId])
   useEffect(() => {
     sessionsRef.current = sessions
   }, [sessions])
@@ -398,24 +395,70 @@ export function RemoteApp() {
     }
   }, [])
 
+  useEffect(() => {
+    const handleViewportChange = () => {
+      scheduleRemoteFitAndResize()
+    }
+
+    window.addEventListener('resize', handleViewportChange)
+    window.addEventListener('orientationchange', handleViewportChange)
+    window.visualViewport?.addEventListener('resize', handleViewportChange)
+
+    return () => {
+      window.removeEventListener('resize', handleViewportChange)
+      window.removeEventListener('orientationchange', handleViewportChange)
+      window.visualViewport?.removeEventListener('resize', handleViewportChange)
+    }
+  }, [scheduleRemoteFitAndResize])
+
   // Save settings
   useEffect(() => {
     localStorage.setItem('terminay-remote-settings', JSON.stringify(settings))
     if (terminalRef.current) {
-      terminalRef.current.options.fontSize = settings.fontSize
+      terminalRef.current.options.fontSize = settings.fontSize * terminalZoom
       terminalRef.current.options.lineHeight = settings.lineHeight
       terminalRef.current.options.fontFamily = settings.fontFamily
       terminalRef.current.options.cursorBlink = settings.cursorBlink
       terminalRef.current.options.theme = THEMES[settings.theme]
-      syncTerminalToSession(selectedSessionIdRef.current)
+      scheduleRemoteFitAndResize()
     }
-  }, [settings, syncTerminalToSession])
+  }, [settings, scheduleRemoteFitAndResize, terminalZoom])
 
   const sendAttachForSession = useCallback((sessionId: string) => {
     const socket = socketRef.current
     if (!socket) return
     socket.send({ sessionId, type: 'attach-session' })
   }, [])
+
+  const sendDetachForSession = useCallback((sessionId: string) => {
+    const socket = socketRef.current
+    if (!socket) return
+    socket.send({ sessionId, type: 'detach-session' })
+  }, [])
+
+  useEffect(() => {
+    const previousSessionId = selectedSessionIdRef.current
+    if (previousSessionId === selectedSessionId) {
+      return
+    }
+
+    selectedSessionIdRef.current = selectedSessionId
+    lastSentRemoteSizeRef.current = null
+
+    try {
+      if (previousSessionId) {
+        sendDetachForSession(previousSessionId)
+      }
+      if (selectedSessionId) {
+        sendAttachForSession(selectedSessionId)
+      }
+    } catch {
+      // A reconnecting socket may not be ready yet. The session-list handler
+      // attaches the selected session again once the socket handshakes.
+    }
+
+    scheduleRemoteFitAndResize()
+  }, [scheduleRemoteFitAndResize, selectedSessionId, sendAttachForSession, sendDetachForSession])
 
   const sendTerminalPayload = useCallback((payload: string, usePendingModifiers = true) => {
     const socket = socketRef.current
@@ -447,17 +490,20 @@ export function RemoteApp() {
     const terminal = new Terminal({
       cursorBlink: settings.cursorBlink,
       fontFamily: settings.fontFamily,
-      fontSize: settings.fontSize,
+      fontSize: settings.fontSize * terminalZoom,
       lineHeight: settings.lineHeight,
       theme: THEMES[settings.theme],
       allowTransparency: true,
       scrollback: 5000,
     })
+    const fitAddon = new FitAddon()
+    terminal.loadAddon(fitAddon)
     terminal.open(container)
 
     terminalRef.current = terminal
+    fitAddonRef.current = fitAddon
     renderSessionBuffer(selectedSessionIdRef.current)
-    syncTerminalSurfaceSize()
+    scheduleRemoteFitAndResize()
 
     const dataDisposer = terminal.onData((data) => {
       sendTerminalPayload(data)
@@ -465,22 +511,28 @@ export function RemoteApp() {
 
     const resizeObserver = new ResizeObserver(() => {
       if (!container.clientWidth || !container.clientHeight) return
-      syncTerminalToSession(selectedSessionIdRef.current)
+      scheduleRemoteFitAndResize()
     })
     resizeObserver.observe(container)
 
     return () => {
+      if (remoteResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(remoteResizeFrameRef.current)
+        remoteResizeFrameRef.current = null
+      }
       dataDisposer.dispose()
       resizeObserver.disconnect()
+      fitAddonRef.current = null
       terminal.dispose()
       terminalRef.current = null
     }
-  }, [pairingState, renderSessionBuffer, sendTerminalPayload, settings, syncTerminalSurfaceSize, syncTerminalToSession])
+  }, [pairingState, renderSessionBuffer, scheduleRemoteFitAndResize, sendTerminalPayload, settings, terminalZoom])
 
   // Sync terminal content on session change
   useEffect(() => {
     renderSessionBuffer(selectedSessionId)
-  }, [renderSessionBuffer, selectedSessionId])
+    scheduleRemoteFitAndResize()
+  }, [renderSessionBuffer, scheduleRemoteFitAndResize, selectedSessionId])
 
   const clearReconnectTimer = useCallback(() => {
     if (reconnectTimerRef.current !== null) {
@@ -529,7 +581,7 @@ export function RemoteApp() {
         setConnectionCount(message.connectionCount)
         setSelectedSessionId(nextId)
         if (nextId) sendAttachForSession(nextId)
-        syncTerminalToSession(nextId)
+        scheduleRemoteFitAndResize()
         return
       }
       case 'session-opened': {
@@ -552,9 +604,7 @@ export function RemoteApp() {
             buffer: sessionsRef.current[message.session.id]?.buffer ?? '',
           },
         }
-        if (message.session.id === selectedSessionIdRef.current) {
-          syncTerminalToSession(message.session.id)
-        }
+        if (message.session.id === selectedSessionIdRef.current) scheduleRemoteFitAndResize()
         setSessions(current => ({ ...current, [message.session.id]: { ...current[message.session.id], ...message.session, buffer: current[message.session.id]?.buffer ?? '' } }))
         return
       }
@@ -575,7 +625,7 @@ export function RemoteApp() {
         return
       case 'error': setErrorText(message.message); return
     }
-  }, [renderSessionBuffer, sendAttachForSession, syncTerminalToSession])
+  }, [renderSessionBuffer, scheduleRemoteFitAndResize, sendAttachForSession])
 
   useEffect(() => {
     if (pairingState !== 'paired') return
@@ -660,6 +710,7 @@ export function RemoteApp() {
         api: transportRuntime.api,
         bootstrap,
         deviceName,
+        pairingPin,
         publicKeyPem: keyPair.publicKeyPem,
       })
       await savePairing({
@@ -688,6 +739,10 @@ export function RemoteApp() {
     })
     terminalRef.current?.focus()
   }, [])
+
+  useEffect(() => {
+    scheduleRemoteFitAndResize()
+  }, [scheduleRemoteFitAndResize, showAccessoryBar])
 
   const handleAccessoryAction = useCallback((action: AccessoryAction) => {
     terminalRef.current?.focus()
@@ -759,31 +814,24 @@ export function RemoteApp() {
   }, [])
 
   const terminalSurfaceStyle = useMemo(() => {
-    // Keep the browser terminal sized from its own rendered canvas instead of
-    // borrowing the host window's pixel dimensions, which can be much taller
-    // and trigger unwanted browser scrolling to xterm's hidden textarea.
-    const width = terminalSurfaceSize?.width || 0
-    const height = terminalSurfaceSize?.height || 0
     const visibility = Object.keys(sessions).length > 0 ? ('visible' as const) : ('hidden' as const)
 
     return {
-      height: height ? `${height}px` : '100%',
+      height: '100%',
       visibility,
-      width: width ? `${width}px` : '100%',
+      width: '100%',
     }
-  }, [sessions, terminalSurfaceSize])
+  }, [sessions])
 
   const terminalZoomShellStyle = useMemo(() => {
-    const width = terminalSurfaceSize?.width || 0
-    const height = terminalSurfaceSize?.height || 0
     const visibility = Object.keys(sessions).length > 0 ? ('visible' as const) : ('hidden' as const)
 
     return {
-      height: height ? `${height * terminalZoom}px` : '100%',
+      height: '100%',
       visibility,
-      width: width ? `${width * terminalZoom}px` : '100%',
+      width: '100%',
     }
-  }, [sessions, terminalSurfaceSize, terminalZoom])
+  }, [sessions])
 
   const terminalScrollRegionStyle = useMemo(() => {
     if (!showAccessoryBar) {
@@ -877,6 +925,19 @@ export function RemoteApp() {
                 <input id="device-name" value={deviceName} onChange={e => setDeviceName(e.target.value)} />
               </div>
               <div className="form-group">
+                <label htmlFor="pairing-pin">Pairing PIN</label>
+                <input
+                  id="pairing-pin"
+                  inputMode="numeric"
+                  maxLength={6}
+                  pattern="[0-9]{6}"
+                  placeholder="6 digits"
+                  type="password"
+                  value={pairingPin}
+                  onChange={e => setPairingPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                />
+              </div>
+              <div className="form-group">
                 <div className="form-label-row">
                   <label htmlFor="pairing-link">Pairing Link</label>
                   <div style={{ display: 'flex', gap: 8 }}>
@@ -949,7 +1010,7 @@ export function RemoteApp() {
                 <div
                   className="terminal-xterm-container"
                   ref={xtermContainerRef}
-                  style={{ ...terminalSurfaceStyle, zoom: terminalZoom }}
+                  style={terminalSurfaceStyle}
                 />
               </div>
             </div>

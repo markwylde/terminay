@@ -41,6 +41,7 @@ export type RemoteAccessSettings = {
   bindAddress: string
   origin: string
   pairingMode: 'lan' | 'webrtc'
+  pairingPinHash: string
   tlsCertPath: string
   tlsKeyPath: string
   webRtcConnectUrl: string
