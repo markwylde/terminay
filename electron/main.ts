@@ -157,7 +157,6 @@ const remoteAccessService = new RemoteAccessService({
         contextIsolation: true,
         nodeIntegration: false,
         preload: preloadPath,
-        sandbox: false,
       },
     })
     if (VITE_DEV_SERVER_URL) {

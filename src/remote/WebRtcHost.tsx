@@ -20,6 +20,8 @@ type HostApi = {
   onTerminalMessage(listener: (message: { channelId: string; message: string }) => void): () => void
 }
 
+const ASSET_CHUNK_BODY_CHARS = 64 * 1024
+
 declare global {
   interface Window {
     terminayWebRtcHost?: HostApi
@@ -33,6 +35,32 @@ function parseJson(raw: unknown): Record<string, unknown> | null {
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
   } catch {
     return null
+  }
+}
+
+function sendAssetResponse(channel: RTCDataChannel, id: string, response: unknown): void {
+  const bodyBase64 = typeof response === 'object' && response !== null && 'bodyBase64' in response
+    ? (response as { bodyBase64?: unknown }).bodyBase64
+    : null
+
+  if (typeof bodyBase64 !== 'string' || bodyBase64.length <= ASSET_CHUNK_BODY_CHARS) {
+    channel.send(JSON.stringify({ ...response as Record<string, unknown>, id }))
+    return
+  }
+
+  const total = Math.ceil(bodyBase64.length / ASSET_CHUNK_BODY_CHARS)
+  const metadata = { ...response as Record<string, unknown> }
+  delete metadata.bodyBase64
+
+  for (let index = 0; index < total; index += 1) {
+    channel.send(JSON.stringify({
+      ...metadata,
+      bodyBase64Chunk: bodyBase64.slice(index * ASSET_CHUNK_BODY_CHARS, (index + 1) * ASSET_CHUNK_BODY_CHARS),
+      id,
+      index,
+      total,
+      type: 'asset:chunk',
+    }))
   }
 }
 
@@ -68,7 +96,7 @@ async function runHost(config: HostConfig): Promise<() => void> {
         const response = request.type === 'asset:get-manifest'
           ? await api.getAssetManifest()
           : await api.getAsset(String(request.path ?? ''))
-        channels.asset.send(JSON.stringify({ ...response as Record<string, unknown>, id: request.id }))
+        sendAssetResponse(channels.asset, request.id, response)
       } catch (error) {
         channels.asset.send(JSON.stringify({
           error: error instanceof Error ? error.message : 'Asset request failed.',
