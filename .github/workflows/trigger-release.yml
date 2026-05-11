@@ -157,9 +157,9 @@ jobs:
 
       - name: Build packaged app
         env:
-          APPLE_ID: ${{ matrix.os == 'macos-latest' && secrets.APPLE_ID || '' }}
+          APPLE_ID: ${{ matrix.os == 'macos-latest' && vars.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && vars.APPLE_TEAM_ID || '' }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
         run: ${{ matrix.script }}
 
