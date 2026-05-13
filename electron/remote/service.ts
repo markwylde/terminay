@@ -95,6 +95,7 @@ type WebRtcTerminalPeer = RemoteConnectionPeer & {
 }
 
 const MAX_BUFFER_LENGTH = 200_000
+const MAX_SESSION_SNAPSHOT_BUFFER_LENGTH = 50_000
 
 function appendToBuffer(current: string, chunk: string): string {
   const next = current + chunk
@@ -1395,9 +1396,13 @@ export class RemoteAccessService {
   }
 
   private toSessionSnapshot(id: string, session: SessionRecord): RemoteSessionSnapshot {
+    const buffer = session.buffer.length > MAX_SESSION_SNAPSHOT_BUFFER_LENGTH
+      ? session.buffer.slice(-MAX_SESSION_SNAPSHOT_BUFFER_LENGTH)
+      : session.buffer
+
     return {
       ...this.toSessionSummary(id, session),
-      buffer: session.buffer,
+      buffer,
     }
   }
 

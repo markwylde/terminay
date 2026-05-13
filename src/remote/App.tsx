@@ -594,8 +594,9 @@ export function RemoteApp() {
   const handleServerMessage = useCallback((message: RemoteServerMessage): void => {
     switch (message.type) {
       case 'session-list': {
-        const nextId = (selectedSessionIdRef.current && message.sessions.some(s => s.id === selectedSessionIdRef.current))
-          ? selectedSessionIdRef.current
+        const currentSelectedSessionId = selectedSessionIdRef.current
+        const nextId = (currentSelectedSessionId && message.sessions.some(s => s.id === currentSelectedSessionId))
+          ? currentSelectedSessionId
           : (message.sessions[0]?.id ?? null)
 
         const nextSessions = Object.fromEntries(
@@ -605,7 +606,7 @@ export function RemoteApp() {
         setSessions(nextSessions)
         setConnectionCount(message.connectionCount)
         setSelectedSessionId(nextId)
-        if (nextId) sendAttachForSession(nextId)
+        if (nextId && nextId === currentSelectedSessionId) sendAttachForSession(nextId)
         scheduleRemoteFitAndResize()
         return
       }
