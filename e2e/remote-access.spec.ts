@@ -7,6 +7,12 @@ function remoteOriginInput(page: Page) {
   return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Remote origin' }).locator('input')
 }
 
+function toLoopbackPairingUrl(pairingUrl: string): string {
+  const url = new URL(pairingUrl)
+  url.hostname = 'localhost'
+  return url.toString()
+}
+
 async function postRemoteJson<TResponse>(
   pairingUrl: string,
   pathname: string,
@@ -159,8 +165,9 @@ test('rejects pairing when the configured PIN is wrong', async ({ mainWindow }) 
 
   const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
   const pairingUrl = status.lanPairingUrl!
+  const reachablePairingUrl = toLoopbackPairingUrl(pairingUrl)
   const pairingParams = new URL(pairingUrl).searchParams
-  const response = await postRemoteJson<{ provisionalDeviceId?: string }>(pairingUrl, '/api/pairing/start', {
+  const response = await postRemoteJson<{ provisionalDeviceId?: string }>(reachablePairingUrl, '/api/pairing/start', {
     deviceName: 'Wrong PIN Browser',
     pairingPin: '000000',
     pairingSessionId: pairingParams.get('pairingSessionId'),
