@@ -24,6 +24,11 @@ body, html, #remote-root {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
+button,
+input {
+  font: inherit;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -50,143 +55,113 @@ body, html, #remote-root {
   align-items: center;
   justify-content: center;
   height: 100vh;
-  background-color: var(--bg-secondary);
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 12%, rgba(95, 217, 178, 0.18), transparent 30rem),
+    linear-gradient(145deg, #111415 0%, #18211d 54%, #111415 100%);
 }
 
 .pairing-box {
-  background: var(--bg-tertiary);
-  padding: 32px;
-  border-radius: 12px;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+  display: grid;
+  justify-items: center;
+  background: rgba(15, 20, 18, 0.82);
+  padding: 40px 36px 36px;
+  border-radius: 8px;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.48);
   width: 100%;
-  max-width: 440px;
-  border: 1px solid var(--border);
+  max-width: 420px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  backdrop-filter: blur(20px);
+}
+
+.pairing-mark {
+  width: 54px;
+  height: 54px;
+  margin-bottom: 20px;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 12px 30px rgba(0, 0, 0, 0.28);
+}
+
+.pairing-kicker {
+  margin: 0 0 10px;
+  color: #95dac3;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .pairing-box h1 {
   margin: 0 0 8px 0;
-  font-size: 1.5rem;
-  font-weight: 600;
+  font-size: 2rem;
+  line-height: 1.1;
+  font-weight: 720;
   color: var(--fg-active);
+  text-align: center;
 }
 
 .pairing-box p.status {
-  margin: 0 0 24px 0;
-  font-size: 0.9rem;
+  margin: 0 0 28px 0;
+  max-width: 300px;
+  min-height: 42px;
+  font-size: 0.95rem;
   line-height: 1.5;
-  color: #888;
+  color: #b9c8c0;
+  text-align: center;
 }
 
 .pairing-form {
-  display: grid;
-  gap: 20px;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 8px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: #bbb;
-}
-
-.form-group input, .form-group textarea {
   width: 100%;
-  padding: 12px;
-  background: #3c3c3c;
-  border: 1px solid #555;
-  border-radius: 6px;
-  color: #fff;
-  font-size: 0.95rem;
-  transition: border-color 0.2s;
+  display: grid;
+  gap: 16px;
 }
 
-.form-group input:focus, .form-group textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.form-group textarea {
-  resize: none;
-  min-height: 100px;
+.pin-field input {
+  width: 100%;
+  height: 68px;
+  padding: 0 18px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  color: #f7faf8;
   font-family: var(--font-mono);
-  font-size: 0.8rem;
+  font-size: 1.85rem;
+  font-weight: 700;
+  text-align: center;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.pin-field input::placeholder {
+  color: rgba(247, 250, 248, 0.22);
+}
+
+.pin-field input:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.11);
+  border-color: #5fd9b2;
+  box-shadow: 0 0 0 4px rgba(95, 217, 178, 0.13);
 }
 
 .pair-button {
-  padding: 14px;
-  background: var(--accent);
-  color: white;
+  min-height: 48px;
+  padding: 0 16px;
+  background: #5fd9b2;
+  color: #08120f;
   border: none;
-  border-radius: 6px;
-  font-weight: 600;
+  border-radius: 8px;
+  font-weight: 700;
   font-size: 1rem;
   cursor: pointer;
-  transition: filter 0.2s;
+  transition: background 0.2s, opacity 0.2s, transform 0.2s;
 }
 
 .pair-button:hover:not(:disabled) {
-  filter: brightness(1.1);
+  background: #89e6c8;
+  transform: translateY(-1px);
 }
 
 .pair-button:disabled {
-  opacity: 0.5;
+  opacity: 0.42;
   cursor: not-allowed;
-}
-
-/* QR Scanner */
-.qr-scanner-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  background: #000;
-  display: flex;
-  flex-direction: column;
-}
-
-.qr-scanner-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  color: #fff;
-  font-weight: 600;
-  font-size: 1rem;
-  flex-shrink: 0;
-}
-
-.qr-scanner-viewport {
-  flex: 1;
-  position: relative;
-  overflow: hidden;
-}
-
-.qr-scanner-video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.qr-scanner-frame {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: min(70vw, 70vh);
-  height: min(70vw, 70vh);
-  border: 3px solid var(--accent);
-  border-radius: 12px;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
-  pointer-events: none;
-}
-
-.qr-scanner-hint {
-  flex-shrink: 0;
-  text-align: center;
-  color: #aaa;
-  font-size: 0.85rem;
-  padding: 16px 20px;
-  margin: 0;
 }
 
 /* App Container */
