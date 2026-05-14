@@ -9,7 +9,7 @@ function remoteOriginInput(page: Page) {
 
 function toLoopbackPairingUrl(pairingUrl: string): string {
   const url = new URL(pairingUrl)
-  url.hostname = 'localhost'
+  url.hostname = '127.0.0.1'
   return url.toString()
 }
 
