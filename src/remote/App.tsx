@@ -1,5 +1,4 @@
 import { FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import jsQR from 'jsqr'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { RemoteServerMessage, RemoteSessionSummary } from './protocol'
@@ -36,16 +35,6 @@ type ProjectState = {
   sessionIds: string[]
 }
 
-type BarcodeDetectorResult = {
-  rawValue?: string
-}
-
-type BarcodeDetectorInstance = {
-  detect: (source: CanvasImageSource) => Promise<BarcodeDetectorResult[]>
-}
-
-type BarcodeDetectorConstructor = new (options?: { formats?: string[] }) => BarcodeDetectorInstance
-
 const DEFAULT_SETTINGS: RemoteSettings = {
   fontSize: 13,
   lineHeight: 1,
@@ -60,7 +49,6 @@ const THEMES = {
   vscode: { background: '#1e1e1e', foreground: '#cccccc', cursor: '#ffffff' }
 }
 
-const defaultPairingInput = `${window.location.origin}?pairingSessionId=...`
 const PAIRING_QUERY_KEYS = ['pairingSessionId', 'pairingToken', 'pairingExpiresAt'] as const
 const UNPAIRED_AUTH_ERROR_MESSAGES = new Set([
   'This device is not paired with this host.',
@@ -68,7 +56,9 @@ const UNPAIRED_AUTH_ERROR_MESSAGES = new Set([
 ])
 
 function getInitialPairingInput(): string {
-  return window.location.href.includes('pairingToken=') ? window.location.href : ''
+  return PAIRING_QUERY_KEYS.some((key) => window.location.href.includes(`${key}=`))
+    ? window.location.href
+    : ''
 }
 
 function hasPairingBootstrapInput(input: string): boolean {
@@ -181,7 +171,7 @@ export function RemoteApp() {
   })
 
   // --- Connection State ---
-  const [pairingInput, setPairingInput] = useState(() => getInitialPairingInput())
+  const [pairingInput] = useState(() => getInitialPairingInput())
   const [pairingPin, setPairingPin] = useState('')
   const [deviceName, setDeviceName] = useState(getDefaultDeviceName())
   const [pairingState, setPairingState] = useState<'checking' | 'needs-pairing' | 'paired'>('checking')
@@ -193,7 +183,6 @@ export function RemoteApp() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [reconnectNonce, setReconnectNonce] = useState(0)
-  const [showQrScanner, setShowQrScanner] = useState(false)
   const [hasTouchAccessory, setHasTouchAccessory] = useState(false)
   const [pendingCtrl, setPendingCtrl] = useState(false)
   const [pendingAlt, setPendingAlt] = useState(false)
@@ -208,8 +197,6 @@ export function RemoteApp() {
   const reconnectTimerRef = useRef<number | null>(null)
   const selectedSessionIdRef = useRef<string | null>(null)
   const sessionsRef = useRef<Record<string, SessionState>>({})
-  const qrVideoRef = useRef<HTMLVideoElement | null>(null)
-  const qrScanRef = useRef<{ stream: MediaStream; frame: number } | null>(null)
   const pendingCtrlRef = useRef(false)
   const pendingAltRef = useRef(false)
   const pointerPanStateRef = useRef<{
@@ -236,102 +223,6 @@ export function RemoteApp() {
     setCtrlPending(false)
     setAltPending(false)
   }, [setAltPending, setCtrlPending])
-
-  const stopQrScanner = useCallback(() => {
-    if (qrScanRef.current) {
-      cancelAnimationFrame(qrScanRef.current.frame)
-      qrScanRef.current.stream.getTracks().forEach((track) => {
-        track.stop()
-      })
-      qrScanRef.current = null
-    }
-    setShowQrScanner(false)
-  }, [])
-
-  // Start the camera AFTER the overlay is rendered (so qrVideoRef.current is guaranteed non-null)
-  useEffect(() => {
-    if (!showQrScanner) return
-
-    let cancelled = false
-
-    const startCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
-        })
-        if (cancelled) {
-          stream.getTracks().forEach((track) => {
-            track.stop()
-          })
-          return
-        }
-        const video = qrVideoRef.current
-        if (!video) {
-          stream.getTracks().forEach((track) => {
-            track.stop()
-          })
-          return
-        }
-
-        video.srcObject = stream
-        await video.play()
-
-        const detectorCtor = 'BarcodeDetector' in window
-          ? (window as Window & { BarcodeDetector: BarcodeDetectorConstructor }).BarcodeDetector
-          : null
-        const detector = detectorCtor ? new detectorCtor({ formats: ['qr_code'] }) : null
-        const canvas = document.createElement('canvas')
-        const ctx = canvas.getContext('2d')
-
-        const tick = async () => {
-          if (!qrScanRef.current || !video.videoWidth) {
-            if (qrScanRef.current) qrScanRef.current = { stream, frame: requestAnimationFrame(tick) }
-            return
-          }
-          let result: string | null = null
-          try {
-            if (detector) {
-              const results = await detector.detect(video)
-              if (results.length > 0) result = results[0].rawValue ?? null
-            } else {
-              canvas.width = video.videoWidth
-              canvas.height = video.videoHeight
-              ctx?.drawImage(video, 0, 0)
-              const imageData = ctx?.getImageData(0, 0, canvas.width, canvas.height)
-              if (imageData) {
-                const code = jsQR(imageData.data, imageData.width, imageData.height)
-                if (code) result = code.data
-              }
-            }
-          } catch { /* frame not ready */ }
-
-          if (result) {
-            stopQrScanner()
-            setPairingInput(result)
-            return
-          }
-          if (qrScanRef.current) qrScanRef.current = { stream, frame: requestAnimationFrame(tick) }
-        }
-        qrScanRef.current = { stream, frame: requestAnimationFrame(tick) }
-      } catch (err) {
-        if (!cancelled) {
-          console.error('[QR] Camera error:', err)
-          stopQrScanner()
-          setErrorText('Could not access camera. Please grant camera permission and try again.')
-        }
-      }
-    }
-
-    startCamera()
-
-    return () => {
-      cancelled = true
-    }
-  }, [showQrScanner, stopQrScanner])
-
-  const startQrScanner = useCallback(() => {
-    setShowQrScanner(true)
-  }, [])
 
   const scheduleRemoteFitAndResize = useCallback(() => {
     const terminal = terminalRef.current
@@ -939,19 +830,6 @@ export function RemoteApp() {
 
   return (
     <>
-      {showQrScanner && (
-        <div className="qr-scanner-overlay">
-          <div className="qr-scanner-header">
-            <span>Scan Pairing QR Code</span>
-            <button className="button-ghost" onClick={stopQrScanner}>✕</button>
-          </div>
-          <div className="qr-scanner-viewport">
-            <video ref={qrVideoRef} className="qr-scanner-video" playsInline muted />
-            <div className="qr-scanner-frame" />
-          </div>
-          <p className="qr-scanner-hint">Point your camera at the QR code shown in Terminay</p>
-        </div>
-      )}
       {errorText && (
         <div className="error-banner">
           <span>{errorText}</span>
@@ -961,37 +839,27 @@ export function RemoteApp() {
       {pairingState !== 'paired' ? (
         <div className="pairing-screen">
           <div className="pairing-box">
-            <h1>Terminay Remote</h1>
-            <p className="status">{statusText}</p>
+            <img className="pairing-mark" src="/terminay.svg" alt="" aria-hidden="true" />
+            <p className="pairing-kicker">Terminay Remote</p>
+            <h1>Enter PIN</h1>
+            <p className="status">{pairingInput ? statusText : 'Open the pairing link from Terminay to continue.'}</p>
             <form className="pairing-form" onSubmit={handlePair}>
-              <div className="form-group">
-                <label htmlFor="device-name">Device Name</label>
-                <input id="device-name" value={deviceName} onChange={e => setDeviceName(e.target.value)} />
-              </div>
-              <div className="form-group">
-                <label htmlFor="pairing-pin">Pairing PIN</label>
+              <div className="pin-field">
                 <input
                   id="pairing-pin"
+                  aria-label="Pairing PIN"
+                  autoComplete="one-time-code"
+                  autoFocus
                   inputMode="numeric"
                   maxLength={6}
                   pattern="[0-9]{6}"
-                  placeholder="6 digits"
-                  type="password"
+                  placeholder="000000"
+                  type="text"
                   value={pairingPin}
                   onChange={e => setPairingPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 />
               </div>
-              <div className="form-group">
-                <div className="form-label-row">
-                  <label htmlFor="pairing-link">Pairing Link</label>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" className="text-button" onClick={startQrScanner}>📷 Scan QR</button>
-                    <button type="button" className="text-button" onClick={() => navigator.clipboard.readText().then(t => t.includes('pairingToken=') && setPairingInput(t)).catch(()=>{})}>Paste</button>
-                  </div>
-                </div>
-                <textarea id="pairing-link" value={pairingInput} onChange={e => setPairingInput(e.target.value)} placeholder={defaultPairingInput} />
-              </div>
-              <button type="submit" className="pair-button" disabled={!pairingInput.trim()}>Pair Device</button>
+              <button type="submit" className="pair-button" disabled={!pairingInput.trim() || pairingPin.length !== 6}>Pair Device</button>
             </form>
           </div>
         </div>
