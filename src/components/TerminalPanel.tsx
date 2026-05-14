@@ -18,6 +18,7 @@ const COPY_TERMINAL_EVENT = 'terminay-copy-terminal'
 const BRACKETED_PASTE_NEWLINE = '\x1b[200~\n\x1b[201~'
 const TERMINAL_CONTEXT_MAX_LINES = 200
 const TERMINAL_CONTEXT_MAX_CHARS = 20_000
+const REMOTE_TERMINAL_SCALE_PROPERTY = '--terminal-remote-scale'
 
 const searchOptions = {
   incremental: true,
@@ -53,7 +54,9 @@ function updateRemoteViewportMetadata(sessionId: string, root: HTMLElement) {
   })
 }
 
-function clearRemoteTerminalElementSize(terminal: Terminal) {
+function clearRemoteTerminalElementSize(root: HTMLElement, terminal: Terminal) {
+  root.style.removeProperty(REMOTE_TERMINAL_SCALE_PROPERTY)
+
   if (!terminal.element) {
     return
   }
@@ -70,8 +73,18 @@ function syncRemoteTerminalElementSize(root: HTMLElement, terminal: Terminal) {
 
   const screen = root.querySelector<HTMLElement>('.xterm-screen')
   const viewport = root.querySelector<HTMLElement>('.xterm-viewport')
-  const measuredWidth = screen?.getBoundingClientRect().width ?? viewport?.getBoundingClientRect().width ?? 0
-  const measuredHeight = screen?.getBoundingClientRect().height ?? viewport?.getBoundingClientRect().height ?? 0
+  const measuredWidth =
+    screen?.offsetWidth ??
+    viewport?.offsetWidth ??
+    screen?.getBoundingClientRect().width ??
+    viewport?.getBoundingClientRect().width ??
+    0
+  const measuredHeight =
+    screen?.offsetHeight ??
+    viewport?.offsetHeight ??
+    screen?.getBoundingClientRect().height ??
+    viewport?.getBoundingClientRect().height ??
+    0
 
   if (measuredWidth > 0) {
     element.style.width = `${Math.ceil(measuredWidth)}px`
@@ -80,6 +93,15 @@ function syncRemoteTerminalElementSize(root: HTMLElement, terminal: Terminal) {
   if (measuredHeight > 0) {
     element.style.height = `${Math.ceil(measuredHeight)}px`
   }
+
+  const availableWidth = root.clientWidth
+  const availableHeight = root.clientHeight
+  const scale =
+    measuredWidth > 0 && measuredHeight > 0 && availableWidth > 0 && availableHeight > 0
+      ? Math.min(1, availableWidth / measuredWidth, availableHeight / measuredHeight)
+      : 1
+
+  root.style.setProperty(REMOTE_TERMINAL_SCALE_PROPERTY, String(scale))
 }
 
 function applyRemoteTerminalSize(
@@ -370,7 +392,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return
       }
 
-      clearRemoteTerminalElementSize(terminal)
+      clearRemoteTerminalElementSize(root, terminal)
       fitAddon.fit()
       window.terminay.resizeTerminal(sessionId, terminal.cols, terminal.rows)
       updateRemoteViewportMetadata(sessionId, root)
@@ -659,7 +681,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       return
     }
 
-    clearRemoteTerminalElementSize(terminal)
+    clearRemoteTerminalElementSize(root, terminal)
     fitAddon.fit()
     window.terminay.resizeTerminal(props.params.sessionId, terminal.cols, terminal.rows)
     updateRemoteViewportMetadata(props.params.sessionId, root)

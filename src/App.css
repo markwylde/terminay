@@ -2385,6 +2385,8 @@
   position: relative;
   inset: auto;
   flex: 0 0 auto;
+  transform: scale(var(--terminal-remote-scale, 1));
+  transform-origin: center center;
 }
 
 .terminal-note-shell {
