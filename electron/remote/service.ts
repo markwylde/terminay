@@ -536,8 +536,6 @@ export class RemoteAccessService {
         this.config = resolveRemoteAccessConfig(readRemoteAccessConfig(this.getRemoteAccessSettings()))
       }
 
-      await this.rotatePairingCode()
-
       this.httpsServer = https.createServer(
         {
           cert: tlsMaterial.cert,
@@ -560,6 +558,7 @@ export class RemoteAccessService {
             resolve()
           })
         })
+        await this.rotatePairingCode()
       } catch (error) {
         if (settings.pairingMode !== 'webrtc' || !isAddressInUseError(error)) {
           throw error
@@ -572,6 +571,7 @@ export class RemoteAccessService {
         this.pairingQrCodePath = null
         this.pairingUrl = null
         this.errorMessage = `Local Network server could not start because port ${this.config.port} is already in use. WebRTC relay pairing is still available.`
+        await this.rotateWebRtcPairingCode()
       }
 
       this.emitStatus()
