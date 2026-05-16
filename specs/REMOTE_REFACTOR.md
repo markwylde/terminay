@@ -438,8 +438,8 @@ Production verification on 2026-05-16:
 - The same run failed because production is not yet serving the new hosted app behavior: wildcard `/versionz` returned non-JSON `Not found`, wildcard `/v1/` returned `404`, wildcard `/session/logout` returned `405`, and manager `/signal` still accepted WebSocket upgrade.
 - Local Docker artifact smoke on 2026-05-16 passed after rebuilding the hosted app image: `docker build -t terminay-app-remote-refactor:local .`, `docker compose up -d --build app`, and `npm run verify:remote-container`. The verifier checks manager `/healthz`, wildcard `/versionz`, wildcard `/v1/`, wildcard `/session/logout`, manager WebSocket `/signal` rejection, and session WebSocket `/signal` upgrade.
 - Final local verification on 2026-05-16 passed: hosted app tests, hosted docs build, hosted app build, verifier syntax checks, hosted `git diff --check`, hosted container smoke with cleanup, desktop remote unit tests, desktop TypeScript, desktop app build, desktop remote Playwright E2E, and desktop `git diff --check`.
-- Final production verification on 2026-05-16 still failed for the same deployment gap: production must be updated and `npm run verify:remote-production` must pass before this checklist is fully complete.
-- Do not check off canary enablement or production wildcard relay verification until the deployed hosted app has this refactor and the verifier passes end to end.
+- Final production verification on 2026-05-16 passed after updating the live infrastructure: Kubernetes now routes `*.terminay.com` to the hosted app service, Bunny forwards the current hostname to origin, Bunny varies cache by hostname, Bunny no longer strips cookies, and Bunny no longer overrides origin `Cache-Control`.
+- Keep `npm run verify:remote-production` as the release gate for future hosted app or edge changes.
 
 ## Cookie And Storage Allocation
 
@@ -773,7 +773,7 @@ Operational policy:
 - [x] Ship desktop `/v1/` QR generation as the sole WebRTC QR path.
 - [x] Delete old shared-origin QR generation, parser, settings, and tests before canary.
 - [x] Enable `/v1/` origin-isolated WebRTC for canary builds.
-- [ ] Verify production wildcard DNS/TLS/relay behavior.
+- [x] Verify production wildcard DNS/TLS/relay behavior.
 - [x] Enable `/v1/` origin-isolated WebRTC by default for packaged builds.
 - [x] Keep URL path versioning in place for future `/v2/` and later protocols.
 
