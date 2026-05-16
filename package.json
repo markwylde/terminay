@@ -22,6 +22,7 @@
     "smoke": "npm run lint && npm run build:app",
     "release": "node scripts/create-release.mjs",
     "test:e2e": "npm run build:app && playwright test",
+    "test:e2e:remote-real": "npm run build:app && playwright test e2e/webrtc-pairing-reconnect.spec.ts",
     "test:e2e:ai-real": "playwright test e2e/ai-tab-metadata.spec.ts --grep @real-codex",
     "test:e2e:ai-real-claude": "playwright test e2e/ai-tab-metadata.spec.ts --grep @real-claude-code",
     "test:e2e:headed": "npm run build:app && playwright test --headed",

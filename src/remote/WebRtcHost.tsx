@@ -353,23 +353,43 @@ export function WebRtcHost() {
     let cancelled = false
     const start = (config: HostConfig) => {
       const key = config.roomId
+      if (startVersions.has(key)) return
       const version = (startVersions.get(key) ?? 0) + 1
       startVersions.set(key, version)
-      void runHost(config).then((nextCleanup) => {
-        if (cancelled || startVersions.get(key) !== version) {
-          nextCleanup()
-        } else {
-          cleanups.get(key)?.()
-          cleanups.set(key, nextCleanup)
-        }
-      })
+      void runHost(config)
+        .then((nextCleanup) => {
+          if (cancelled || startVersions.get(key) !== version) {
+            nextCleanup()
+          } else {
+            cleanups.get(key)?.()
+            cleanups.set(key, nextCleanup)
+          }
+        })
+        .catch((error) => {
+          api?.updateStatus?.({
+            detail: error instanceof Error ? error.message : 'WebRTC host failed to start.',
+            type: 'error',
+          })
+        })
     }
 
     const api = window.terminayWebRtcHost
     const offConfig = api?.onConfig(start)
-    void api?.getConfig().then((config) => {
-      if (config) start(config)
-    })
+    let configPollAttempts = 0
+    const pollConfig = () => {
+      void api?.getConfig().then((config) => {
+        if (cancelled) return
+        if (config) {
+          start(config)
+          return
+        }
+        configPollAttempts += 1
+        if (configPollAttempts < 40) {
+          setTimeout(pollConfig, 50)
+        }
+      })
+    }
+    pollConfig()
 
     return () => {
       cancelled = true
