@@ -33,6 +33,11 @@ import type {
   TerminalEditWindowResult,
   TerminalExitMessage,
   TerminalRemoteSizeOverrideMessage,
+  TerminalRecordingCast,
+  TerminalRecordingChangeMessage,
+  TerminalRecordingListItem,
+  TerminalRecordingStartMetadata,
+  TerminalRecordingState,
   TerminayTestApi,
   TerminalZoomMessage,
 } from '../src/types/terminay'
@@ -88,6 +93,20 @@ contextBridge.exposeInMainWorld('terminay', {
     },
   ) => ipcRenderer.send('terminal:update-remote-metadata', { id, ...metadata }),
   getTerminalZoom: () => ipcRenderer.invoke('terminal:get-zoom'),
+  getTerminalRecordingState: (id: string) =>
+    ipcRenderer.invoke('terminal-recording:get-state', { id }) as Promise<TerminalRecordingState>,
+  startTerminalRecording: (id: string, metadata?: TerminalRecordingStartMetadata) =>
+    ipcRenderer.invoke('terminal-recording:start', { id, metadata }) as Promise<TerminalRecordingState>,
+  stopTerminalRecording: (id: string) =>
+    ipcRenderer.invoke('terminal-recording:stop', { id }) as Promise<TerminalRecordingState>,
+  listTerminalRecordings: () =>
+    ipcRenderer.invoke('terminal-recording:list') as Promise<TerminalRecordingListItem[]>,
+  readTerminalRecording: (castPath: string) =>
+    ipcRenderer.invoke('terminal-recording:read', { castPath }) as Promise<TerminalRecordingCast>,
+  deleteTerminalRecording: (castPath: string) =>
+    ipcRenderer.invoke('terminal-recording:delete', { castPath }) as Promise<void>,
+  revealTerminalRecording: (castPath: string) =>
+    ipcRenderer.invoke('terminal-recording:reveal', { castPath }) as Promise<void>,
   getTerminalSettings: () => ipcRenderer.invoke('settings:get-terminal') as Promise<TerminalSettings>,
   updateTerminalSettings: (settings: TerminalSettings) =>
     ipcRenderer.invoke('settings:update-terminal', settings) as Promise<TerminalSettings>,
@@ -122,6 +141,7 @@ contextBridge.exposeInMainWorld('terminay', {
   submitEditWindowResult: (result: EditWindowResult) => ipcRenderer.invoke('app:submit-edit-window-result', result) as Promise<void>,
   openSettingsWindow: (options?: { sectionId?: string }) => ipcRenderer.invoke('app:open-settings', options),
   openMacrosWindow: () => ipcRenderer.invoke('app:open-macros') as Promise<void>,
+  openRecordingsWindow: () => ipcRenderer.invoke('app:open-recordings') as Promise<void>,
   getRemoteAccessStatus: () => ipcRenderer.invoke('remote:get-status'),
   toggleRemoteAccessServer: () => ipcRenderer.invoke('remote:toggle-server'),
   revokeRemoteAccessDevice: (deviceId: string) => ipcRenderer.invoke('remote:revoke-device', { deviceId }),
@@ -181,6 +201,11 @@ contextBridge.exposeInMainWorld('terminay', {
     const wrapper: ElectronListener<TerminalRemoteSizeOverrideMessage> = (_event, message) => listener(message)
     ipcRenderer.on('terminal:remote-size-override', wrapper)
     return () => ipcRenderer.off('terminal:remote-size-override', wrapper)
+  },
+  onTerminalRecordingChanged: (listener: (message: TerminalRecordingChangeMessage) => void) => {
+    const wrapper: ElectronListener<TerminalRecordingChangeMessage> = (_event, message) => listener(message)
+    ipcRenderer.on('terminal-recording:changed', wrapper)
+    return () => ipcRenderer.off('terminal-recording:changed', wrapper)
   },
   onTerminalCopyRequested: (listener: () => void) => {
     const wrapper = () => listener()

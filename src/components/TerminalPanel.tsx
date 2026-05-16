@@ -6,7 +6,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { buildTerminalOptions } from '../terminalSettings'
+import { buildTerminalOptions, resolveTerminalTheme } from '../terminalSettings'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalPanelParams } from './TerminalTab'
 import type { TerminalSettings } from '../types/settings'
@@ -32,18 +32,11 @@ const searchOptions = {
   },
 } as const
 
-function buildTerminalTheme(settings: TerminalSettings, tabColor?: string): TerminalSettings['theme'] {
-  return {
-    ...settings.theme,
-    cursor: tabColor || settings.theme.cursor,
-  }
-}
-
 function applyTerminalSettings(terminal: Terminal, settings: TerminalSettings, tabColor?: string, zoomLevel = 0) {
   Object.assign(terminal.options, {
     ...buildTerminalOptions(settings),
     fontSize: Math.max(6, (settings.fontSize ?? 13) + zoomLevel),
-    theme: buildTerminalTheme(settings, tabColor),
+    theme: resolveTerminalTheme(settings, tabColor),
   })
 }
 
@@ -236,7 +229,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     const terminal = new Terminal({
       ...buildTerminalOptions(settingsRef.current),
-      theme: buildTerminalTheme(settingsRef.current, tabColorRef.current),
+      theme: resolveTerminalTheme(settingsRef.current, tabColorRef.current),
       allowProposedApi: true,
     })
     terminalRef.current = terminal

@@ -6,6 +6,8 @@ import { Terminal } from '@xterm/xterm'
 import {
   buildTerminalOptions,
   defaultTerminalSettings,
+  getTerminalThemeColorFallback,
+  TAB_THEME_HUE_COLOR_VALUE,
   terminalSettingsCategories,
   terminalSettingsSections,
 } from '../terminalSettings'
@@ -45,9 +47,13 @@ function getValueAtPath(settings: TerminalSettings, key: string): boolean | numb
   return typeof current === 'boolean' || typeof current === 'number' || typeof current === 'string' ? current : ''
 }
 
+function getDefaultValueAtPath(key: string): boolean | number | string {
+  return getValueAtPath(defaultTerminalSettings, key)
+}
+
 function setValueAtPath(settings: TerminalSettings, key: string, value: boolean | number | string): TerminalSettings {
   const segments = key.split('.')
-  const allowedRoots = new Set(['aiTabMetadata', 'keyboardShortcuts', 'remoteAccess', 'shell', 'theme'])
+  const allowedRoots = new Set(['aiTabMetadata', 'keyboardShortcuts', 'recording', 'remoteAccess', 'shell', 'theme'])
   const [root] = segments
 
   if (!root || (segments.length > 1 && !allowedRoots.has(root))) {
@@ -147,6 +153,7 @@ function renderCategoryIcon(title: string, children: ReactNode) {
 function getCategoryIcon(id: CategoryId) {
   switch (id) {
     case 'remote': return renderCategoryIcon('Remote Access', <><path d="M5 12a7 7 0 0 1 14 0"/><path d="M8.5 12a3.5 3.5 0 0 1 7 0"/><circle cx="12" cy="16" r="1.4"/><path d="M12 17.5v2.5"/></>)
+    case 'recording': return renderCategoryIcon('Recording', <><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M5 19l14-14"/></>)
     case 'ai': return renderCategoryIcon('AI', <><path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7z"/><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9z"/><path d="M5 14l.7 1.6L7 16l-1.3.4L5 18l-.7-1.6L3 16l1.3-.4z"/></>)
     case 'shell': return renderCategoryIcon('Shell', <><path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 7l3-3h10l3 3"/><path d="m9 12 2 2-2 2"/><line x1="13.5" y1="16" x2="16.5" y2="16"/></>)
     case 'appearance': return renderCategoryIcon('Appearance', <><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></>)
@@ -763,22 +770,56 @@ export function SettingsWindow() {
           />
         )
       case 'color':
-        return (
-          <div className="settings-color-container">
-            <input
-              className="settings-color-swatch"
-              type="color"
-              value={String(value)}
-              onChange={(e) => void updateField(field, e.target.value)}
-            />
-            <input
-              className="settings-input-text settings-color-text"
-              type="text"
-              value={String(value)}
-              onChange={(e) => void updateField(field, e.target.value)}
-            />
-          </div>
-        )
+        {
+          const stringValue = String(value)
+          const isTabThemeHue = stringValue === TAB_THEME_HUE_COLOR_VALUE
+          const defaultValue = String(getDefaultValueAtPath(field.key) || '#000000')
+          const fallbackValue =
+            defaultValue === TAB_THEME_HUE_COLOR_VALUE
+              ? getTerminalThemeColorFallback(field.key.replace(/^theme\./, ''))
+              : defaultValue
+          const colorValue = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(stringValue) ? stringValue : fallbackValue
+
+          return (
+            <div className="settings-color-container">
+              <select
+                className="settings-select settings-color-mode-select"
+                value={isTabThemeHue ? TAB_THEME_HUE_COLOR_VALUE : 'custom'}
+                onChange={(e) => {
+                  const nextValue =
+                    e.target.value === TAB_THEME_HUE_COLOR_VALUE
+                      ? TAB_THEME_HUE_COLOR_VALUE
+                      : colorValue
+                  void updateField(field, nextValue)
+                }}
+              >
+                <option value="custom">Custom colour</option>
+                <option value={TAB_THEME_HUE_COLOR_VALUE}>Tab Theme Hue</option>
+              </select>
+              {isTabThemeHue ? (
+                <span className="settings-tab-hue-chip">
+                  <span className="settings-tab-hue-chip-swatch" aria-hidden="true" />
+                  Tab Theme Hue
+                </span>
+              ) : (
+                <>
+                  <input
+                    className="settings-color-swatch"
+                    type="color"
+                    value={colorValue.slice(0, 7)}
+                    onChange={(e) => void updateField(field, e.target.value)}
+                  />
+                  <input
+                    className="settings-input-text settings-color-text"
+                    type="text"
+                    value={stringValue}
+                    onChange={(e) => void updateField(field, e.target.value)}
+                  />
+                </>
+              )}
+            </div>
+          )
+        }
       default:
         return null
     }
