@@ -177,6 +177,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		origin: 'https://localhost:9443',
 		pairingMode: 'lan',
 		pairingPinHash: '',
+		reconnectGrantLifetime: '24h',
 		tlsCertPath: '',
 		tlsKeyPath: '',
 		webRtcHostedDomain: 'terminay.com',
@@ -502,6 +503,30 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'text',
 				placeholder: 'stun:stun.l.google.com:19302',
 				keywords: ['webrtc', 'ice', 'stun', 'turn', 'nat', 'relay'],
+			}),
+			makeField({
+				key: 'remoteAccess.reconnectGrantLifetime',
+				label: 'Saved reconnect lifetime',
+				description:
+					'How long a WebRTC paired browser can reconnect without scanning a fresh QR code.',
+				sectionId: 'remote-access-host',
+				categoryId: 'remote',
+				input: 'select',
+				options: [
+					{ label: '1 hour', value: '1h' },
+					{ label: '24 hours', value: '24h' },
+					{ label: '7 days', value: '7d' },
+					{ label: 'Until revoked', value: 'until-revoked' },
+				],
+				keywords: [
+					'webrtc',
+					'reconnect',
+					'saved session',
+					'expiry',
+					'expiration',
+					'grant',
+					'revoke',
+				],
 			}),
 		],
 	},
@@ -1638,6 +1663,13 @@ export function normalizeTerminalSettings(
 				typeof remoteAccessInput.pairingPinHash === 'string'
 					? remoteAccessInput.pairingPinHash
 					: defaultTerminalSettings.remoteAccess.pairingPinHash,
+			reconnectGrantLifetime:
+				remoteAccessInput.reconnectGrantLifetime === '1h' ||
+				remoteAccessInput.reconnectGrantLifetime === '24h' ||
+				remoteAccessInput.reconnectGrantLifetime === '7d' ||
+				remoteAccessInput.reconnectGrantLifetime === 'until-revoked'
+					? remoteAccessInput.reconnectGrantLifetime
+					: defaultTerminalSettings.remoteAccess.reconnectGrantLifetime,
 			tlsCertPath:
 				typeof remoteAccessInput.tlsCertPath === 'string'
 					? remoteAccessInput.tlsCertPath
