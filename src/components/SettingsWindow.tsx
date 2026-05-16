@@ -53,7 +53,7 @@ function getDefaultValueAtPath(key: string): boolean | number | string {
 
 function setValueAtPath(settings: TerminalSettings, key: string, value: boolean | number | string): TerminalSettings {
   const segments = key.split('.')
-  const allowedRoots = new Set(['aiTabMetadata', 'keyboardShortcuts', 'remoteAccess', 'shell', 'theme'])
+  const allowedRoots = new Set(['aiTabMetadata', 'keyboardShortcuts', 'recording', 'remoteAccess', 'shell', 'theme'])
   const [root] = segments
 
   if (!root || (segments.length > 1 && !allowedRoots.has(root))) {
@@ -153,6 +153,7 @@ function renderCategoryIcon(title: string, children: ReactNode) {
 function getCategoryIcon(id: CategoryId) {
   switch (id) {
     case 'remote': return renderCategoryIcon('Remote Access', <><path d="M5 12a7 7 0 0 1 14 0"/><path d="M8.5 12a3.5 3.5 0 0 1 7 0"/><circle cx="12" cy="16" r="1.4"/><path d="M12 17.5v2.5"/></>)
+    case 'recording': return renderCategoryIcon('Recording', <><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M5 19l14-14"/></>)
     case 'ai': return renderCategoryIcon('AI', <><path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 16l-1.7-5L6 9.3l4.3-1.7z"/><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9z"/><path d="M5 14l.7 1.6L7 16l-1.3.4L5 18l-.7-1.6L3 16l1.3-.4z"/></>)
     case 'shell': return renderCategoryIcon('Shell', <><path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 7l3-3h10l3 3"/><path d="m9 12 2 2-2 2"/><line x1="13.5" y1="16" x2="16.5" y2="16"/></>)
     case 'appearance': return renderCategoryIcon('Appearance', <><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></>)

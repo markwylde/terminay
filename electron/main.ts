@@ -11,6 +11,7 @@ import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/termi
 import { findCommandForKeyboardEvent, getCommandShortcut } from '../src/keyboardShortcuts'
 import { registerAiTabMetadataIpcHandlers } from './aiTabMetadata/ipc'
 import { AiTabMetadataService, warmAiTabMetadataProviderEnv } from './aiTabMetadata/service'
+import { TerminalRecordingService } from './recording/service'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
 import type {
@@ -23,6 +24,8 @@ import type {
   FileSearchResult,
   ProjectEditWindowDraft,
   ProjectEditWindowResult,
+  TerminalRecordingStartMetadata,
+  TerminalRecordingState,
   TerminalEditWindowDraft,
   TerminalEditWindowResult,
 } from '../src/types/terminay'
@@ -131,6 +134,7 @@ type PtyHostMessage =
 const terminalSessions = new Map<string, TerminalSession>()
 let settingsWindow: BrowserWindow | null = null
 let macrosWindow: BrowserWindow | null = null
+let recordingsWindow: BrowserWindow | null = null
 const pendingEditWindows = new Map<
   number,
   {
@@ -232,6 +236,12 @@ const remoteAccessService = new RemoteAccessService({
     })
     broadcastTerminalSettings(nextSettings)
   },
+})
+
+const recordingService = new TerminalRecordingService({
+  getHomePath: () => app.getPath('home'),
+  getSettings: () => readTerminalSettings(),
+  onStateChanged: broadcastTerminalRecordingState,
 })
 
 function normalizeVersion(value: string): string | null {
@@ -807,6 +817,17 @@ function broadcastMacros(macros: MacroDefinition[]): void {
   }
 }
 
+function broadcastTerminalRecordingState(state: TerminalRecordingState): void {
+  const payload = { state }
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) {
+      continue
+    }
+
+    window.webContents.send('terminal-recording:changed', payload)
+  }
+}
+
 function ensureNodePtySpawnHelperIsExecutable(): void {
   if (process.platform === 'win32') {
     return
@@ -1070,6 +1091,7 @@ function finalizeTerminalSession(session: TerminalSession, exitCode: number): vo
   session.exited = true
   terminalSessions.delete(session.id)
   remoteAccessService.markSessionExit(session.id, exitCode)
+  recordingService.finalize(session.id, exitCode)
   sendToSessionRenderer(session, 'terminal:exit', {
     id: session.id,
     exitCode,
@@ -1155,6 +1177,7 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
           resolve(session)
           break
         case 'data':
+          recordingService.appendOutput(session.id, message.data)
           sendToSessionRenderer(session, 'terminal:data', { id: session.id, data: message.data })
           remoteAccessService.appendSessionData(session.id, message.data)
           break
@@ -1202,6 +1225,7 @@ function killSession(id: string): void {
   }
 
   sendToPtyHost(session, { type: 'kill' })
+  recordingService.finalize(id, null)
   terminalSessions.delete(id)
   remoteAccessService.removeSession(id)
 }
@@ -1247,6 +1271,7 @@ function bindAppShortcuts(webContents: Electron.WebContents): void {
     if (
       settingsWindow?.webContents.id === webContents.id ||
       macrosWindow?.webContents.id === webContents.id ||
+      recordingsWindow?.webContents.id === webContents.id ||
       pendingEditWindows.has(webContents.id)
     ) {
       return
@@ -1345,6 +1370,11 @@ function createAppMenu(settings: TerminalSettings = readTerminalSettings()): voi
           label: 'Macros',
           accelerator: 'CmdOrCtrl+;',
           click: () => openMacrosWindow(),
+        },
+        {
+          label: 'Recordings',
+          accelerator: getMenuShortcut(settings, 'open-recordings'),
+          click: () => openRecordingsWindow(),
         },
         {
           type: 'separator',
@@ -1632,6 +1662,61 @@ function openMacrosWindow(): void {
   }
 }
 
+function openRecordingsWindow(): void {
+  const preloadPath = path.join(__dirname, 'preload.mjs')
+  const windowIconPath = getWindowIconPath()
+
+  if (recordingsWindow && !recordingsWindow.isDestroyed()) {
+    recordingsWindow.focus()
+    return
+  }
+
+  const isMac = process.platform === 'darwin'
+  const usesOverlayTitlebar = process.platform === 'win32'
+
+  recordingsWindow = new BrowserWindow({
+    icon: windowIconPath,
+    width: 1180,
+    height: 780,
+    minWidth: 900,
+    minHeight: 640,
+    title: 'Terminay Recordings',
+    titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
+    titleBarOverlay: usesOverlayTitlebar
+      ? {
+          color: '#0d1117',
+          symbolColor: '#9bb0c8',
+          height: 38,
+        }
+      : false,
+    trafficLightPosition: isMac
+      ? {
+          x: 14,
+          y: 12,
+        }
+      : undefined,
+    autoHideMenuBar: shouldAutoHideMenuBar(),
+    backgroundColor: '#0d1117',
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+
+  recordingsWindow.on('closed', () => {
+    recordingsWindow = null
+  })
+
+  if (VITE_DEV_SERVER_URL) {
+    recordingsWindow.loadURL(`${VITE_DEV_SERVER_URL}?view=recordings`)
+  } else {
+    recordingsWindow.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+      query: { view: 'recordings' },
+    })
+  }
+}
+
 function getEditWindowUrl(kind: EditWindowState['kind']): string {
   if (VITE_DEV_SERVER_URL) {
     const target = new URL(VITE_DEV_SERVER_URL)
@@ -1742,6 +1827,35 @@ function setDockIcon(): void {
   app.dock?.setIcon(icon)
 }
 
+function readTerminalRecordingStartMetadata(value: unknown): TerminalRecordingStartMetadata {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  const input = value as Record<string, unknown>
+  const metadata: TerminalRecordingStartMetadata = {}
+  for (const key of [
+    'color',
+    'emoji',
+    'projectColor',
+    'projectEmoji',
+    'projectId',
+    'projectTitle',
+    'title',
+  ] as const) {
+    const field = input[key]
+    if (typeof field === 'string') {
+      metadata[key] = field
+    }
+  }
+
+  if (typeof input.inheritsProjectColor === 'boolean') {
+    metadata.inheritsProjectColor = input.inheritsProjectColor
+  }
+
+  return metadata
+}
+
 ipcMain.handle('terminal:create', async (event, payload?: { cwd?: string }) => {
   const session = await createPtySession(event.sender.id, payload?.cwd)
   return { id: session.id }
@@ -1757,6 +1871,7 @@ ipcMain.on('terminal:write', (_event, payload: { id: string; data: string }) => 
     return
   }
 
+  recordingService.appendInput(payload.id, payload.data)
   sendToPtyHost(session, { type: 'write', data: payload.data })
 })
 
@@ -1771,6 +1886,8 @@ ipcMain.on('terminal:resize', (_event, payload: { id: string; cols: number; rows
 
   try {
     sendToPtyHost(session, { type: 'resize', cols, rows })
+    recordingService.appendResize(payload.id, cols, rows)
+    recordingService.updateSessionMetadata(payload.id, { cols, rows })
     remoteAccessService.updateSessionSize(payload.id, cols, rows)
   } catch {
     // can throw during teardown races
@@ -1799,12 +1916,66 @@ ipcMain.on(
       projectColor?: string
     },
   ) => {
+    recordingService.updateSessionMetadata(payload.id, {
+      color: payload.color,
+      cwd: undefined,
+      emoji: payload.emoji,
+      projectColor: payload.projectColor,
+      projectEmoji: payload.projectEmoji,
+      projectId: payload.projectId,
+      projectTitle: payload.projectTitle,
+      title: payload.title,
+    })
     remoteAccessService.updateSessionMetadata(payload.id, payload)
   },
 )
 
 ipcMain.handle('terminal:get-zoom', () => {
   return terminalZoomLevel
+})
+
+ipcMain.handle('terminal-recording:get-state', (_event, payload: { id: string }) => {
+  return recordingService.getState(payload.id)
+})
+
+ipcMain.handle('terminal-recording:start', async (_event, payload: { id: string; metadata?: unknown }) => {
+  const session = terminalSessions.get(payload.id)
+  if (!session) {
+    throw new Error('That terminal session no longer exists.')
+  }
+
+  const cwd = await resolveTerminalCwd(payload.id)
+  const settings = readTerminalSettings()
+  return recordingService.start(payload.id, {
+    ...readTerminalRecordingStartMetadata(payload.metadata),
+    cwd,
+    shell: settings.shell.program || null,
+  })
+})
+
+ipcMain.handle('terminal-recording:stop', async (_event, payload: { id: string }) => {
+  const state = recordingService.finalize(payload.id, null)
+  if (readTerminalSettings().recording.openTimelineAfterSaving) {
+    openRecordingsWindow()
+  }
+  return state
+})
+
+ipcMain.handle('terminal-recording:list', () => {
+  return recordingService.listRecordings()
+})
+
+ipcMain.handle('terminal-recording:read', (_event, payload: { castPath: string }) => {
+  return recordingService.readRecording(payload.castPath)
+})
+
+ipcMain.handle('terminal-recording:delete', (_event, payload: { castPath: string }) => {
+  recordingService.deleteRecording(payload.castPath)
+})
+
+ipcMain.handle('terminal-recording:reveal', async (_event, payload: { castPath: string }) => {
+  const recording = await recordingService.readRecording(payload.castPath)
+  shell.showItemInFolder(recording.path)
 })
 
 ipcMain.handle('fs:get-home-path', () => {
@@ -2032,6 +2203,10 @@ ipcMain.handle('app:open-macros', () => {
   openMacrosWindow()
 })
 
+ipcMain.handle('app:open-recordings', () => {
+  openRecordingsWindow()
+})
+
 if (process.env.TERMINAY_TEST === '1') {
   ipcMain.handle('test:send-app-command', (event, command: AppCommand) => {
     event.sender.send('app:command', command)
@@ -2113,6 +2288,12 @@ app.on('web-contents-created', (_event, contents) => {
     fileExplorerWatchService.disposeSubscriber(contents.id)
     fileWatchService.disposeSubscriber(contents.id)
   })
+})
+
+app.on('before-quit', () => {
+  for (const session of terminalSessions.values()) {
+    recordingService.finalize(session.id, null)
+  }
 })
 
 registerFileViewerIpcHandlers({
