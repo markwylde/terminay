@@ -14,6 +14,7 @@ const TAB_THEME_HUE_COLOR_FALLBACKS: Partial<Record<TerminalThemeKey, string>> =
 
 type SettingsCategoryId =
   | 'ai'
+  | 'recording'
   | 'remote'
   | 'shell'
   | 'appearance'
@@ -56,6 +57,7 @@ export type SettingsCategoryDefinition = {
 
 export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
   { id: 'ai', label: 'AI', description: 'AI providers and models for tab titles and notes.' },
+  { id: 'recording', label: 'Recording', description: 'Local terminal session recording and replay.' },
   { id: 'remote', label: 'Remote Access', description: 'Remote host, local binding, and optional custom TLS files.' },
   { id: 'shell', label: 'Shell', description: 'Shell program, startup mode, and launch arguments.' },
   { id: 'appearance', label: 'Appearance', description: 'Typography, rendering, and visual density.' },
@@ -113,6 +115,13 @@ export const defaultTerminalSettings: TerminalSettings = {
   tabStopWidth: 8,
   wordSeparator: ' ()[]{}\',"`',
   keyboardShortcuts: defaultKeyboardShortcuts,
+  recording: {
+    captureInput: true,
+    directory: '~/Documents/TerminaySessions',
+    openTimelineAfterSaving: false,
+    recordNewTerminals: false,
+    sensitiveInputPolicy: 'drop',
+  },
   remoteAccess: {
     bindAddress: '0.0.0.0',
     origin: 'https://localhost:9443',
@@ -235,6 +244,65 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
         input: 'select',
         visibleWhen: { key: 'aiTabMetadata.note.provider', value: 'claudeCode' },
         keywords: ['ai', 'claude', 'claude code', 'note', 'model'],
+      }),
+    ],
+  },
+  {
+    id: 'recording-defaults',
+    categoryId: 'recording',
+    title: 'Session Recording',
+    description: 'Choose when terminals are recorded and where local asciicast files are stored.',
+    fields: [
+      makeField({
+        key: 'recording.recordNewTerminals',
+        label: 'Record new terminals',
+        description: 'Automatically start recording each terminal when it opens.',
+        sectionId: 'recording-defaults',
+        categoryId: 'recording',
+        input: 'boolean',
+        keywords: ['recording', 'terminal session', 'asciinema', 'cast', 'timeline', 'replay'],
+      }),
+      makeField({
+        key: 'recording.directory',
+        label: 'Recording directory',
+        description: 'Folder where recordings are saved. The default expands to your Documents folder.',
+        sectionId: 'recording-defaults',
+        categoryId: 'recording',
+        input: 'text',
+        placeholder: '~/Documents/TerminaySessions',
+        keywords: ['recording', 'folder', 'directory', 'path', 'asciinema', 'cast'],
+      }),
+      makeField({
+        key: 'recording.captureInput',
+        label: 'Capture input',
+        description: 'Record typed input events when Terminay does not consider the input sensitive.',
+        sectionId: 'recording-defaults',
+        categoryId: 'recording',
+        input: 'boolean',
+        keywords: ['recording', 'input', 'keys', 'stdin', 'privacy'],
+      }),
+      makeField({
+        key: 'recording.sensitiveInputPolicy',
+        label: 'Sensitive input',
+        description: 'Choose how likely passwords, tokens, and passphrases are handled in input events.',
+        sectionId: 'recording-defaults',
+        categoryId: 'recording',
+        input: 'select',
+        options: [
+          { label: 'Drop input', value: 'drop' },
+          { label: 'Mask with *', value: 'mask' },
+        ],
+        visibleWhen: { key: 'recording.captureInput', value: true },
+        keywords: ['recording', 'password', 'secret', 'token', 'mask', 'privacy'],
+      }),
+      makeField({
+        key: 'recording.openTimelineAfterSaving',
+        label: 'Open timeline after saving',
+        description: 'Open the recordings timeline when a manual recording is stopped.',
+        sectionId: 'recording-defaults',
+        categoryId: 'recording',
+        input: 'boolean',
+        keywords: ['recording', 'timeline', 'replay', 'open'],
       }),
     ],
   },
@@ -908,6 +976,10 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
     typeof input.remoteAccess === 'object' && input.remoteAccess !== null
       ? input.remoteAccess
       : defaultTerminalSettings.remoteAccess
+  const recordingInput =
+    typeof input.recording === 'object' && input.recording !== null
+      ? input.recording
+      : defaultTerminalSettings.recording
   const themeInput =
     typeof input.theme === 'object' && input.theme !== null
       ? (input.theme as Partial<TerminalSettings['theme']>)
@@ -1022,6 +1094,28 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
         return [command, trimmed.length > 0 ? normalizeAccelerator(trimmed) || defaultTerminalSettings.keyboardShortcuts[command] : '']
       }),
     ) as TerminalSettings['keyboardShortcuts'],
+    recording: {
+      captureInput:
+        typeof recordingInput.captureInput === 'boolean'
+          ? recordingInput.captureInput
+          : defaultTerminalSettings.recording.captureInput,
+      directory:
+        typeof recordingInput.directory === 'string' && recordingInput.directory.trim().length > 0
+          ? recordingInput.directory.trim()
+          : defaultTerminalSettings.recording.directory,
+      openTimelineAfterSaving:
+        typeof recordingInput.openTimelineAfterSaving === 'boolean'
+          ? recordingInput.openTimelineAfterSaving
+          : defaultTerminalSettings.recording.openTimelineAfterSaving,
+      recordNewTerminals:
+        typeof recordingInput.recordNewTerminals === 'boolean'
+          ? recordingInput.recordNewTerminals
+          : defaultTerminalSettings.recording.recordNewTerminals,
+      sensitiveInputPolicy:
+        recordingInput.sensitiveInputPolicy === 'mask'
+          ? recordingInput.sensitiveInputPolicy
+          : defaultTerminalSettings.recording.sensitiveInputPolicy,
+    },
     remoteAccess: {
       bindAddress:
         typeof remoteAccessInput.bindAddress === 'string' && remoteAccessInput.bindAddress.trim().length > 0

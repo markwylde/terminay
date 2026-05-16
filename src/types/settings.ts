@@ -47,6 +47,16 @@ export type RemoteAccessSettings = {
   webRtcConnectUrl: string
 }
 
+export type TerminalRecordingSensitiveInputPolicy = 'drop' | 'mask'
+
+export type TerminalRecordingSettings = {
+  captureInput: boolean
+  directory: string
+  openTimelineAfterSaving: boolean
+  recordNewTerminals: boolean
+  sensitiveInputPolicy: TerminalRecordingSensitiveInputPolicy
+}
+
 export type AiTabMetadataProvider = 'disabled' | 'codex' | 'claudeCode'
 
 export type AiTabMetadataTargetSettings = {
@@ -95,6 +105,7 @@ export type TerminalSettings = {
   tabStopWidth: number
   wordSeparator: string
   keyboardShortcuts: KeyboardShortcutSettings
+  recording: TerminalRecordingSettings
   remoteAccess: RemoteAccessSettings
   shell: ShellSettings
   theme: TerminalThemeSettings
