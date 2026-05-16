@@ -97,6 +97,18 @@ async function reconnectBrowser(context: BrowserContext, sessionOrigin: string):
   return page
 }
 
+async function reconnectBrowserWithPromptedPin(context: BrowserContext, sessionOrigin: string): Promise<Page> {
+  const page = await context.newPage()
+  await page.goto(`${sessionOrigin}/v1/`, { waitUntil: 'domcontentloaded' })
+  await expect(page.getByRole('textbox', { name: 'Pairing PIN' })).toBeVisible({ timeout: 45_000 })
+  await expect(page.getByRole('button', { name: 'Pair Device' })).toBeDisabled()
+  await page.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456')
+  await expect(page.getByRole('button', { name: 'Pair Device' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Pair Device' }).click()
+  await expect(page.locator('.app-container')).toBeVisible({ timeout: 45_000 })
+  return page
+}
+
 async function readSavedReconnectState(page: Page, sessionOrigin: string) {
   return page.evaluate((origin) => new Promise<{
     grant: { expiresAt: string | null; issuedAt: string; origin: string; protocolVersion: string; sessionId: string } | null
@@ -271,12 +283,25 @@ test('pairs through the local hosted WebRTC app and reconnects the saved session
       }, null, 2)}`)
     }
     await waitForHostConnectionCount(mainWindow, 1)
+    await expect(reconnectPage.getByRole('textbox', { name: 'Pairing PIN' })).toHaveCount(0)
 
     const reconnectSentinel = `saved-reconnect-${Date.now()}`
     await reconnectPage.locator('.terminal-area').click()
     await reconnectPage.keyboard.type(`printf "\\n${reconnectSentinel}\\n"`)
     await reconnectPage.keyboard.press('Enter')
     await expect(mainWindow.locator('.xterm-rows')).toContainText(reconnectSentinel, { timeout: 20_000 })
+
+    await reconnectPage.close()
+    await waitForHostConnectionCount(mainWindow, 0)
+    await browserContext.clearCookies()
+
+    const promptedReconnectPage = await reconnectBrowserWithPromptedPin(browserContext, sessionOrigin)
+    await waitForHostConnectionCount(mainWindow, 1)
+    const promptedReconnectSentinel = `prompted-reconnect-${Date.now()}`
+    await promptedReconnectPage.locator('.terminal-area').click()
+    await promptedReconnectPage.keyboard.type(`printf "\\n${promptedReconnectSentinel}\\n"`)
+    await promptedReconnectPage.keyboard.press('Enter')
+    await expect(mainWindow.locator('.xterm-rows')).toContainText(promptedReconnectSentinel, { timeout: 20_000 })
   } finally {
     await browserContext.close().catch(() => undefined)
     await mainWindow.evaluate(async () => {

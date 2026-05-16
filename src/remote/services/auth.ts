@@ -28,6 +28,7 @@ export async function pairDevice(options: {
 export async function authenticateDevice(options: {
   api: RemoteApiTransport
   deviceId: string
+  pairingPin?: string
   privateKey: CryptoKey
 }): Promise<{ ticket: string; websocketUrl?: string }> {
   const authOptions = await options.api.postJson<{
@@ -43,6 +44,7 @@ export async function authenticateDevice(options: {
     challengeId: authOptions.deviceChallenge.challengeId,
     deviceId: options.deviceId,
     deviceSignature,
+    pairingPin: options.pairingPin,
   })
 }
 

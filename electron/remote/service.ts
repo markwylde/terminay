@@ -1516,6 +1516,10 @@ export class RemoteAccessService {
         Buffer.from(String(body.deviceSignature ?? ''), 'base64url'),
       )
       if (!verifiedDeviceSignature) throw new Error('The paired device key signature was invalid.')
+      assertPairingPin(this.getRemoteAccessSettings(), String(body.pairingPin ?? ''), {
+        failureMessage: 'Remote PIN was missing or incorrect.',
+        requireConfigured: true,
+      })
       await this.deviceStore.updateAuthentication(device.id)
       await this.auditStore.append({
         action: 'auth-verified',
