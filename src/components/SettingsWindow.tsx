@@ -108,6 +108,35 @@ function formatReconnectGrantSummary(device: {
   return `Saved reconnect ${expiry}${lastUsed}`
 }
 
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return 'Never'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Unknown'
+  return date.toLocaleString()
+}
+
+function getRemoteOriginLabel(origin: string): string {
+  const [sessionOrigin] = origin.split('#')
+  try {
+    return new URL(sessionOrigin).host
+  } catch {
+    return sessionOrigin || origin
+  }
+}
+
+function getReconnectGrantLabel(status: 'none' | 'valid' | 'expired' | 'revoked' | undefined): string {
+  switch (status) {
+    case 'valid':
+      return 'Saved reconnect'
+    case 'expired':
+      return 'Expired'
+    case 'revoked':
+      return 'Revoked'
+    default:
+      return 'Pair only'
+  }
+}
+
 function TerminalPreview({ settings }: { settings: TerminalSettings }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
 
@@ -1032,6 +1061,12 @@ export function SettingsWindow() {
     const pairedDevices = remoteStatus?.pairedDevices ?? []
     const activeConnections = remoteStatus?.connections ?? []
     const auditEvents = remoteStatus?.auditEvents ?? []
+    const liveConnectionsByDevice = new Map<string, number>()
+    activeConnections.forEach((connection) => {
+      liveConnectionsByDevice.set(connection.deviceId, (liveConnectionsByDevice.get(connection.deviceId) ?? 0) + 1)
+    })
+    const reconnectableDeviceCount = pairedDevices.filter((device) => device.reconnectGrantStatus === 'valid').length
+    const staleDeviceCount = pairedDevices.filter((device) => device.reconnectGrantStatus !== 'valid').length
 
     return (
       <section id="section-remote-access-management" className="settings-section">
@@ -1052,6 +1087,25 @@ export function SettingsWindow() {
               >
                 {isTogglingRemoteAccess ? 'Working...' : remoteStatus?.isRunning ? 'Stop Remote Access' : 'Pair Device'}
               </button>
+            </div>
+
+            <div className="settings-remote-overview">
+              <div className="settings-remote-stat">
+                <span>Trusted browsers</span>
+                <strong>{pairedDevices.length}</strong>
+              </div>
+              <div className="settings-remote-stat">
+                <span>Saved reconnect</span>
+                <strong>{reconnectableDeviceCount}</strong>
+              </div>
+              <div className="settings-remote-stat">
+                <span>Needs cleanup</span>
+                <strong>{staleDeviceCount}</strong>
+              </div>
+              <div className="settings-remote-stat">
+                <span>Live now</span>
+                <strong>{activeConnections.length}</strong>
+              </div>
             </div>
 
             <div className="settings-remote-card-header">
@@ -1076,7 +1130,7 @@ export function SettingsWindow() {
 
             {selectedPairingQrCodeDataUrl ? (
               <div className="settings-remote-grid">
-                <div className="settings-remote-card">
+                <div className="settings-remote-card settings-remote-card--pairing">
                   <div className="settings-remote-card-header">
                     <span className="settings-remote-card-label">{selectedPairingLabel}</span>
                     {selectedPairingUrl ? (
@@ -1104,32 +1158,49 @@ export function SettingsWindow() {
                   ) : null}
                 </div>
 
-                <div className="settings-remote-card">
-                  <span className="settings-remote-card-label">Paired Devices</span>
+                <div className="settings-remote-card settings-remote-card--devices">
+                  <div className="settings-remote-card-header">
+                    <div>
+                      <span className="settings-remote-card-label">Trusted Browsers</span>
+                      <p className="settings-remote-card-subtitle">Revoke old browsers here. Revoke also invalidates saved reconnect grants.</p>
+                    </div>
+                  </div>
                   <div className="settings-remote-list">
                     {pairedDevices.length === 0 ? (
                       <p className="settings-remote-empty">No paired browsers yet.</p>
                     ) : (
                       pairedDevices.map((device) => (
-                        <div key={device.deviceId} className="settings-remote-item">
-                          <div>
-                            <strong>{device.name}</strong>
-                            <p>
-                              Added {new Date(device.addedAt).toLocaleString()}
-                              {device.lastSeenAt ? ` · Last seen ${new Date(device.lastSeenAt).toLocaleString()}` : ''}
-                            </p>
-                            <p>{formatReconnectGrantSummary(device)}</p>
-                            {device.origin.includes('#transport=webrtc') ? (
-                              <p>{device.origin.split('#')[0]}</p>
-                            ) : null}
+                        <div key={device.deviceId} className="settings-remote-device">
+                          <div className="settings-remote-device-main">
+                            <div className="settings-remote-device-title-row">
+                              <div>
+                                <strong>{device.name}</strong>
+                                <p>{getRemoteOriginLabel(device.origin)}</p>
+                              </div>
+                              <div className="settings-remote-device-badges">
+                                {liveConnectionsByDevice.has(device.deviceId) ? (
+                                  <span className="settings-remote-badge settings-remote-badge--live">
+                                    {liveConnectionsByDevice.get(device.deviceId)} live
+                                  </span>
+                                ) : null}
+                                <span className={`settings-remote-badge settings-remote-badge--${device.reconnectGrantStatus ?? 'none'}`}>
+                                  {getReconnectGrantLabel(device.reconnectGrantStatus)}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="settings-remote-device-details">
+                              <span>Added {formatDateTime(device.addedAt)}</span>
+                              <span>Last seen {formatDateTime(device.lastSeenAt)}</span>
+                              <span>{formatReconnectGrantSummary(device)}</span>
+                            </div>
                           </div>
                           <button
                             type="button"
-                            className="settings-danger-button settings-danger-button--quiet"
+                            className="settings-danger-button settings-remote-revoke-button"
                             disabled={isUpdatingRemoteDevices}
                             onClick={() => void revokeDevice(device.deviceId)}
                           >
-                            Revoke
+                            Revoke Browser
                           </button>
                         </div>
                       ))
