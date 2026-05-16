@@ -518,45 +518,105 @@
   text-overflow: ellipsis;
 }
 
-.remote-pairing-modal {
-  max-height: min(94vh, 920px);
-  overflow: auto;
-  padding-top: 8px;
+.project-edit-modal.remote-pairing-modal {
+  max-height: calc(100vh - 40px);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0;
+  background: #111418;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+
+.project-edit-modal.remote-pairing-modal > .project-edit-modal-titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #111418;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 16px 20px;
+}
+
+.remote-pairing-modal__container {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  align-items: center;
 }
 
 .remote-pairing-modal__copy {
-  margin: 0 0 24px;
-  color: rgba(214, 227, 240, 0.65);
-  font-size: 14px;
-  line-height: 1.6;
+  margin: 0;
+  color: rgba(214, 227, 240, 0.5);
+  font-size: 13px;
+  line-height: 1.5;
   text-align: center;
+  max-width: 320px;
+}
+
+.remote-pairing-modal__toggle {
+  display: flex;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 4px;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 340px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.remote-pairing-modal__toggle-btn {
+  all: unset;
+  flex: 1;
+  text-align: center;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(214, 227, 240, 0.4);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.remote-pairing-modal__toggle-btn:hover {
+  color: rgba(214, 227, 240, 0.8);
+}
+
+.remote-pairing-modal__toggle-btn--active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .remote-pairing-modal__content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 32px;
-}
-
-.remote-pairing-modal__qr-section {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
   gap: 24px;
+  width: 100%;
 }
 
 .remote-pairing-modal__qr-card {
-  width: 260px;
-  height: 260px;
-  border-radius: 16px;
+  width: min(240px, 50vh);
+  aspect-ratio: 1;
+  border-radius: 20px;
   background: #ffffff;
-  padding: 20px;
+  padding: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  position: relative;
+  overflow: hidden;
+}
+
+.remote-pairing-modal__qr-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+  pointer-events: none;
 }
 
 .remote-pairing-modal__qr {
@@ -566,77 +626,106 @@
   object-fit: contain;
 }
 
-.remote-pairing-modal__primary-link {
+.remote-pairing-modal__address-section {
   width: 100%;
-  text-align: center;
-}
-
-.remote-pairing-modal__primary-link h3 {
-  margin: 0 0 12px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: rgba(214, 227, 240, 0.4);
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .remote-pairing-modal__address-box {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: 100%;
+  align-items: center;
+  gap: 8px;
+  background: rgba(87, 183, 255, 0.06);
+  border: 1px solid rgba(87, 183, 255, 0.15);
+  border-radius: 12px;
+  padding: 4px 4px 4px 16px;
+  transition: border-color 150ms ease;
+}
+
+.remote-pairing-modal__address-box:focus-within {
+  border-color: rgba(87, 183, 255, 0.4);
 }
 
 .remote-pairing-modal__address-text {
-  background: rgba(87, 183, 255, 0.08);
-  border: 1px solid rgba(87, 183, 255, 0.2);
-  border-radius: 10px;
-  padding: 12px 16px;
+  flex: 1;
+  min-width: 0;
   color: #bfe7ff;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
-  line-height: 1.5;
-  text-align: center;
-  word-break: break-all;
-  white-space: pre-wrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .remote-pairing-modal__copy-btn {
   appearance: none;
-  background: rgba(87, 183, 255, 0.12);
-  border: 1px solid rgba(87, 183, 255, 0.25);
+  background: #4db5ff;
+  border: none;
   border-radius: 8px;
-  color: #8dc8ff;
+  color: #0d1117;
   padding: 8px 16px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   transition: all 120ms ease;
-  width: fit-content;
-  align-self: center;
+  white-space: nowrap;
 }
 
 .remote-pairing-modal__copy-btn:hover {
-  background: rgba(87, 183, 255, 0.2);
-  border-color: rgba(87, 183, 255, 0.4);
+  background: #70c4ff;
+  transform: translateY(-1px);
 }
 
-.remote-pairing-modal__footer-details {
+.remote-pairing-modal__copy-btn:active {
+  transform: translateY(0);
+}
+
+.remote-pairing-modal__advanced-toggle {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(214, 227, 240, 0.4);
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 150ms ease;
+  margin-top: 8px;
+}
+
+.remote-pairing-modal__advanced-toggle:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(214, 227, 240, 0.7);
+}
+
+.remote-pairing-modal__advanced-content {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  padding-top: 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 20px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  animation: remote-fade-in 200ms ease-out;
+}
+
+@keyframes remote-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .remote-pairing-modal__additional-section h3 {
   margin: 0 0 12px;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(214, 227, 240, 0.4);
+  color: rgba(214, 227, 240, 0.3);
   text-align: center;
 }
 
@@ -644,7 +733,7 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .remote-pairing-modal__address-row-btn {
@@ -654,10 +743,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   padding: 10px 14px;
   background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 10px;
   cursor: pointer;
   transition: all 120ms ease;
@@ -665,16 +754,17 @@
 
 .remote-pairing-modal__address-row-btn:hover {
   background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .remote-pairing-modal__address-row-btn--active {
-  background: rgba(87, 183, 255, 0.06);
+  background: rgba(87, 183, 255, 0.08);
   border-color: rgba(87, 183, 255, 0.3);
 }
 
 .remote-pairing-modal__address-label {
-  color: rgba(214, 227, 240, 0.6);
+  min-width: 0;
+  color: rgba(214, 227, 240, 0.5);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   text-align: left;
@@ -688,37 +778,43 @@
 }
 
 .remote-pairing-modal__address-active-badge {
-  background: #4db5ff;
-  color: #0d1117;
+  flex-shrink: 0;
+  background: rgba(87, 183, 255, 0.2);
+  color: #8dc8ff;
   font-size: 9px;
-  font-weight: 800;
+  font-weight: 700;
   text-transform: uppercase;
   padding: 2px 6px;
   border-radius: 4px;
   letter-spacing: 0.02em;
 }
 
-.remote-pairing-modal__status-info {
+.remote-pairing-modal__footer {
+  margin-top: 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   text-align: center;
 }
 
 .remote-pairing-modal__tip {
-  color: rgba(214, 227, 240, 0.45);
+  color: rgba(214, 227, 240, 0.4);
   font-size: 12px;
   line-height: 1.5;
-  max-width: 400px;
+  max-width: 340px;
   margin: 0 auto;
 }
 
 .remote-pairing-modal__expires-text {
   margin: 0;
-  color: rgba(214, 227, 240, 0.3);
+  color: rgba(214, 227, 240, 0.2);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.project-edit-modal.remote-pairing-modal > .project-edit-actions {
+  display: none;
 }
 
 .project-tabbar-list {
