@@ -6,6 +6,8 @@ import { Terminal } from '@xterm/xterm'
 import {
   buildTerminalOptions,
   defaultTerminalSettings,
+  getTerminalThemeColorFallback,
+  TAB_THEME_HUE_COLOR_VALUE,
   terminalSettingsCategories,
   terminalSettingsSections,
 } from '../terminalSettings'
@@ -43,6 +45,10 @@ function getValueAtPath(settings: TerminalSettings, key: string): boolean | numb
   }
 
   return typeof current === 'boolean' || typeof current === 'number' || typeof current === 'string' ? current : ''
+}
+
+function getDefaultValueAtPath(key: string): boolean | number | string {
+  return getValueAtPath(defaultTerminalSettings, key)
 }
 
 function setValueAtPath(settings: TerminalSettings, key: string, value: boolean | number | string): TerminalSettings {
@@ -763,22 +769,56 @@ export function SettingsWindow() {
           />
         )
       case 'color':
-        return (
-          <div className="settings-color-container">
-            <input
-              className="settings-color-swatch"
-              type="color"
-              value={String(value)}
-              onChange={(e) => void updateField(field, e.target.value)}
-            />
-            <input
-              className="settings-input-text settings-color-text"
-              type="text"
-              value={String(value)}
-              onChange={(e) => void updateField(field, e.target.value)}
-            />
-          </div>
-        )
+        {
+          const stringValue = String(value)
+          const isTabThemeHue = stringValue === TAB_THEME_HUE_COLOR_VALUE
+          const defaultValue = String(getDefaultValueAtPath(field.key) || '#000000')
+          const fallbackValue =
+            defaultValue === TAB_THEME_HUE_COLOR_VALUE
+              ? getTerminalThemeColorFallback(field.key.replace(/^theme\./, ''))
+              : defaultValue
+          const colorValue = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(stringValue) ? stringValue : fallbackValue
+
+          return (
+            <div className="settings-color-container">
+              <select
+                className="settings-select settings-color-mode-select"
+                value={isTabThemeHue ? TAB_THEME_HUE_COLOR_VALUE : 'custom'}
+                onChange={(e) => {
+                  const nextValue =
+                    e.target.value === TAB_THEME_HUE_COLOR_VALUE
+                      ? TAB_THEME_HUE_COLOR_VALUE
+                      : colorValue
+                  void updateField(field, nextValue)
+                }}
+              >
+                <option value="custom">Custom colour</option>
+                <option value={TAB_THEME_HUE_COLOR_VALUE}>Tab Theme Hue</option>
+              </select>
+              {isTabThemeHue ? (
+                <span className="settings-tab-hue-chip">
+                  <span className="settings-tab-hue-chip-swatch" aria-hidden="true" />
+                  Tab Theme Hue
+                </span>
+              ) : (
+                <>
+                  <input
+                    className="settings-color-swatch"
+                    type="color"
+                    value={colorValue.slice(0, 7)}
+                    onChange={(e) => void updateField(field, e.target.value)}
+                  />
+                  <input
+                    className="settings-input-text settings-color-text"
+                    type="text"
+                    value={stringValue}
+                    onChange={(e) => void updateField(field, e.target.value)}
+                  />
+                </>
+              )}
+            </div>
+          )
+        }
       default:
         return null
     }

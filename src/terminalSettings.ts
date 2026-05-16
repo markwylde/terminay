@@ -3,6 +3,14 @@ import { appCommandMetadata, defaultKeyboardShortcuts, normalizeAccelerator } fr
 import type { TerminalSettings } from './types/settings'
 
 type SettingsInputKind = 'boolean' | 'number' | 'text' | 'select' | 'color'
+type TerminalThemeKey = keyof TerminalSettings['theme']
+
+export const TAB_THEME_HUE_COLOR_VALUE = 'tabThemeHue'
+
+const TAB_THEME_HUE_COLOR_FALLBACKS: Partial<Record<TerminalThemeKey, string>> = {
+  cursor: '#6ac1ff',
+  selectionBackground: '#ffff00',
+}
 
 type SettingsCategoryId =
   | 'ai'
@@ -122,11 +130,11 @@ export const defaultTerminalSettings: TerminalSettings = {
   theme: {
     foreground: '#dce2f0',
     background: '#111316',
-    cursor: '#6ac1ff',
+    cursor: TAB_THEME_HUE_COLOR_VALUE,
     cursorAccent: '#111316',
-    selectionBackground: '#32536b80',
+    selectionBackground: TAB_THEME_HUE_COLOR_VALUE,
     selectionInactiveBackground: '#2b3d4b66',
-    selectionForeground: '#f8fbff',
+    selectionForeground: '#000000',
     scrollbarSliderBackground: '#dce2f033',
     scrollbarSliderHoverBackground: '#dce2f066',
     scrollbarSliderActiveBackground: '#dce2f080',
@@ -827,8 +835,32 @@ export function buildTerminalOptions(settings: TerminalSettings): ITerminalOptio
     smoothScrollDuration: settings.smoothScrollDuration,
     tabStopWidth: settings.tabStopWidth,
     wordSeparator: settings.wordSeparator,
-    theme: settings.theme,
+    theme: resolveTerminalTheme(settings),
   }
+}
+
+export function getTerminalThemeColorFallback(key: string): string {
+  if (!(key in defaultTerminalSettings.theme)) {
+    return '#000000'
+  }
+
+  const themeKey = key as TerminalThemeKey
+  const defaultValue = defaultTerminalSettings.theme[themeKey]
+  return defaultValue === TAB_THEME_HUE_COLOR_VALUE
+    ? TAB_THEME_HUE_COLOR_FALLBACKS[themeKey] ?? '#000000'
+    : defaultValue
+}
+
+export function resolveTerminalTheme(settings: TerminalSettings, tabColor?: string): TerminalSettings['theme'] {
+  const nextTheme = { ...settings.theme }
+
+  for (const key of Object.keys(nextTheme) as TerminalThemeKey[]) {
+    if (nextTheme[key] === TAB_THEME_HUE_COLOR_VALUE) {
+      nextTheme[key] = tabColor ?? getTerminalThemeColorFallback(key)
+    }
+  }
+
+  return nextTheme
 }
 
 function clampNumber(value: number, fallback: number, min?: number, max?: number): number {
@@ -838,6 +870,24 @@ function clampNumber(value: number, fallback: number, min?: number, max?: number
 
   const minApplied = min === undefined ? value : Math.max(min, value)
   return max === undefined ? minApplied : Math.min(max, minApplied)
+}
+
+function normalizeThemeColor(
+  input: Partial<TerminalSettings['theme']>,
+  key: TerminalThemeKey,
+  legacyDefaultValues: string[] = [],
+): string {
+  const value = input[key]
+
+  if (typeof value !== 'string') {
+    return defaultTerminalSettings.theme[key]
+  }
+
+  if (legacyDefaultValues.includes(value.toLowerCase())) {
+    return defaultTerminalSettings.theme[key]
+  }
+
+  return value
 }
 
 export function normalizeTerminalSettings(candidate: unknown): TerminalSettings {
@@ -1022,20 +1072,14 @@ export function normalizeTerminalSettings(candidate: unknown): TerminalSettings 
     theme: {
       foreground: typeof themeInput.foreground === 'string' ? themeInput.foreground : defaultTerminalSettings.theme.foreground,
       background: typeof themeInput.background === 'string' ? themeInput.background : defaultTerminalSettings.theme.background,
-      cursor: typeof themeInput.cursor === 'string' ? themeInput.cursor : defaultTerminalSettings.theme.cursor,
+      cursor: normalizeThemeColor(themeInput, 'cursor', ['#6ac1ff']),
       cursorAccent: typeof themeInput.cursorAccent === 'string' ? themeInput.cursorAccent : defaultTerminalSettings.theme.cursorAccent,
-      selectionBackground:
-        typeof themeInput.selectionBackground === 'string'
-          ? themeInput.selectionBackground
-          : defaultTerminalSettings.theme.selectionBackground,
+      selectionBackground: normalizeThemeColor(themeInput, 'selectionBackground', ['#32536b80', '#ffff00']),
       selectionInactiveBackground:
         typeof themeInput.selectionInactiveBackground === 'string'
           ? themeInput.selectionInactiveBackground
           : defaultTerminalSettings.theme.selectionInactiveBackground,
-      selectionForeground:
-        typeof themeInput.selectionForeground === 'string'
-          ? themeInput.selectionForeground
-          : defaultTerminalSettings.theme.selectionForeground,
+      selectionForeground: normalizeThemeColor(themeInput, 'selectionForeground', ['#f8fbff']),
       scrollbarSliderBackground:
         typeof themeInput.scrollbarSliderBackground === 'string'
           ? themeInput.scrollbarSliderBackground
