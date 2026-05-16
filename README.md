@@ -18,6 +18,7 @@ Terminay is a desktop terminal workspace built with Electron, React, and Vite. I
 - Open files beside terminals with preview, text, hex, and Git diff modes
 - Edit and save text/hex files, detect external changes, and resolve dirty-file conflicts
 - Preview Markdown, images, and PDFs, with large-file handling for heavy text buffers
+- Optionally record terminal sessions to local asciicast files and replay them from a timeline
 - Tune terminal appearance, shell launch behavior, shortcuts, accessibility, scrolling, themes, and remote host settings
 - Pair a browser over the built-in HTTPS remote host, manage devices, inspect live connections, and review audit events
 - Check for GitHub release updates from the app chrome
@@ -49,6 +50,12 @@ npm run smoke
 ```
 
 `smoke` runs Biome linting and the renderer/main TypeScript plus Vite build.
+
+## Terminal recordings
+
+Terminal recording is off by default. Enable **Record new terminals** in Settings, or right-click a terminal tab and choose **Start Recording** for one session. Recordings are local asciicast v3 `.cast` files saved under `~/Documents/TerminaySessions/YYYY-MM-DD/` by default, with Terminay metadata stored beside each cast file.
+
+Recording can capture terminal output, typed input, commands, file paths, tokens, and other sensitive text. Terminay uses a conservative best-effort filter for likely password or secret prompts, but terminal apps do not expose a perfect universal secure-input signal. Keep recordings local unless you deliberately share them.
 
 ### Run end-to-end tests
 
