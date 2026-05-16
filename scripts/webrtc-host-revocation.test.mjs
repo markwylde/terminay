@@ -12,7 +12,6 @@ test('WebRTC host closes the terminal data channel when the desktop revokes the 
   const terminalChannel = new MockDataChannel('terminal')
 
   globalThis.window = { terminayWebRtcHost: api }
-  globalThis.WebSocket = MockWebSocket
   globalThis.RTCPeerConnection = class extends MockPeerConnection {
     createDataChannel(label) {
       if (label === 'terminal') return terminalChannel
@@ -43,21 +42,13 @@ test('WebRTC host closes the terminal data channel when the desktop revokes the 
 
 test('WebRTC host owns relay registration and sends an offer after client join', async () => {
   const api = createHostApi()
-  const sockets = []
 
   globalThis.window = { terminayWebRtcHost: api }
-  globalThis.WebSocket = class extends MockWebSocket {
-    constructor(url) {
-      super(url)
-      sockets.push(this)
-    }
-  }
   globalThis.RTCPeerConnection = MockPeerConnection
 
-  const expiresAt = new Date(Date.now() + 60_000).toISOString()
   const cleanup = await runHost({
     appOrigin: 'https://room-a12345.terminay.com',
-    expiresAt,
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
     iceServers: [],
     relayJoinTokenHash: 'relay-token-hash',
     roomId: 'room-a12345',
@@ -65,23 +56,15 @@ test('WebRTC host owns relay registration and sends an offer after client join',
     signalingUrl: 'wss://room-a12345.terminay.com/signal',
   })
 
-  assert.equal(sockets.length, 1)
-  const socket = sockets[0]
-  socket.dispatchEvent(new Event('open'))
+  assert.equal(api.signalOpened, true)
 
-  assert.deepEqual(JSON.parse(socket.sent[0]), {
-    expiresAt,
-    relayJoinTokenHash: 'relay-token-hash',
-    roomId: 'room-a12345',
-    type: 'host-ready',
-  })
+  api.emitSignalMessage({ roomId: 'room-a12345', type: 'host-registered' })
+  api.emitSignalMessage({ roomId: 'room-a12345', type: 'client-join' })
+  await waitFor(() => api.signalMessages.some((message) => message.type === 'offer'))
 
-  socket.dispatchMessage(JSON.stringify({ roomId: 'room-a12345', type: 'host-registered' }))
-  socket.dispatchMessage(JSON.stringify({ roomId: 'room-a12345', type: 'client-join' }))
-  await waitFor(() => socket.sent.some((message) => JSON.parse(message).type === 'offer'))
-
+  assert.equal(api.signalMessages.some((message) => message.type === 'host-ready'), false)
   assert.deepEqual(api.statusMessages, [{ type: 'host-registered' }, { type: 'client-join' }])
-  const offerMessage = socket.sent.map((message) => JSON.parse(message)).find((message) => message.type === 'offer')
+  const offerMessage = api.signalMessages.find((message) => message.type === 'offer')
   assert.equal(offerMessage.roomId, 'room-a12345')
   assert.equal(offerMessage.sdp.type, 'offer')
   assert.equal(typeof offerMessage.signature, 'string')
@@ -105,9 +88,12 @@ function createHostApi() {
     attachResolve = resolve
   })
   const closeRequestListeners = new Set()
+  const signalListeners = new Set()
   return {
     attachedChannelId: null,
     closedTerminals: [],
+    signalMessages: [],
+    signalOpened: false,
     async attachTerminal(channelId) {
       this.attachedChannelId = channelId
       attachResolve()
@@ -118,12 +104,25 @@ function createHostApi() {
     emitTerminalCloseRequest(message) {
       for (const listener of closeRequestListeners) listener(message)
     },
+    emitSignalMessage(message) {
+      for (const listener of signalListeners) listener(message)
+    },
     getAsset: async () => ({}),
     getAssetManifest: async () => ({}),
     getConfig: async () => null,
     handleApiRequest: async () => ({}),
     handleTerminalMessage() {},
     onConfig: () => () => {},
+    openSignal() {
+      this.signalOpened = true
+    },
+    sendSignalMessage(message) {
+      this.signalMessages.push(message)
+    },
+    onSignalMessage(listener) {
+      signalListeners.add(listener)
+      return () => signalListeners.delete(listener)
+    },
     onTerminalCloseRequest(listener) {
       closeRequestListeners.add(listener)
       return () => closeRequestListeners.delete(listener)
@@ -192,29 +191,6 @@ class MockPeerConnection extends EventTarget {
   setRemoteDescription(description) {
     this.remoteDescription = description
     return Promise.resolve()
-  }
-}
-
-class MockWebSocket extends EventTarget {
-  static OPEN = 1
-
-  constructor(url) {
-    super()
-    this.readyState = MockWebSocket.OPEN
-    this.sent = []
-    this.url = url
-  }
-
-  close() {
-    this.readyState = 3
-  }
-
-  dispatchMessage(data) {
-    this.dispatchEvent(new MessageEvent('message', { data }))
-  }
-
-  send(message) {
-    this.sent.push(message)
   }
 }
 

@@ -19,8 +19,11 @@ type HostApi = {
   handleApiRequest(pathname: string, body: Record<string, unknown>, appOrigin: string): Promise<unknown>
   handleTerminalMessage(channelId: string, message: string): void
   updateStatus?(message: { detail?: string; type: string }): void
+  openSignal(): void
+  sendSignalMessage(message: unknown): void
   onTerminalCloseRequest(listener: (message: { channelId: string; reason?: string }) => void): () => void
   onConfig(listener: (config: HostConfig) => void): () => void
+  onSignalMessage(listener: (message: unknown) => void): () => void
   onTerminalMessage(listener: (message: { channelId: string; message: string }) => void): () => void
 }
 
@@ -135,7 +138,6 @@ export async function runHost(config: HostConfig): Promise<() => void> {
   const api = window.terminayWebRtcHost
   if (!api) throw new Error('WebRTC host bridge is unavailable.')
 
-  const socket = new WebSocket(config.signalingUrl)
   const signalingAuthKey = await createSignalingAuthKey(config.signalingAuthToken)
   const peer = new RTCPeerConnection({
     iceServers: config.iceServers?.length ? config.iceServers : [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -157,12 +159,12 @@ export async function runHost(config: HostConfig): Promise<() => void> {
   }
 
   peer.addEventListener('icecandidate', (event) => {
-    if (!event.candidate || socket.readyState !== WebSocket.OPEN) return
+    if (!event.candidate) return
     void signSignalMessage(signalingAuthKey, {
       candidate: event.candidate.toJSON(),
       roomId: config.roomId,
       type: 'ice',
-    }).then((message) => socket.send(JSON.stringify(message)))
+    }).then((message) => api.sendSignalMessage(message))
   })
 
   channels.asset.addEventListener('message', (event) => {
@@ -251,18 +253,9 @@ export async function runHost(config: HostConfig): Promise<() => void> {
     closeTerminal(reason)
   })
 
-  socket.addEventListener('open', () => {
-    socket.send(JSON.stringify({
-      expiresAt: config.expiresAt,
-      relayJoinTokenHash: config.relayJoinTokenHash,
-      roomId: config.roomId,
-      type: 'host-ready',
-    }))
-  })
-
-  socket.addEventListener('message', (event) => {
+  const stopSignalMessages = api.onSignalMessage((rawMessage) => {
     void (async () => {
-      const message = parseJson(event.data)
+      const message = rawMessage && typeof rawMessage === 'object' ? rawMessage as Record<string, unknown> : null
       if (!message) return
       if (message.type === 'host-registered') {
         api.updateStatus?.({ type: 'host-registered' })
@@ -271,7 +264,7 @@ export async function runHost(config: HostConfig): Promise<() => void> {
         const offer = await peer.createOffer()
         await peer.setLocalDescription(offer)
         const signedOffer = await signSignalMessage(signalingAuthKey, { roomId: config.roomId, sdp: offer, type: 'offer' })
-        socket.send(JSON.stringify(signedOffer))
+        api.sendSignalMessage(signedOffer)
       } else if (message.type === 'answer' && message.sdp && typeof message.sdp === 'object') {
         rejectSignalReplay(message, seenSignalNonces)
         if (!await verifySignalMessage(signalingAuthKey, message)) return
@@ -294,19 +287,13 @@ export async function runHost(config: HostConfig): Promise<() => void> {
     })
   })
 
-  socket.addEventListener('error', () => {
-    api.updateStatus?.({ detail: 'Could not reach the WebRTC signaling relay.', type: 'error' })
-  })
-
-  socket.addEventListener('close', () => {
-    api.updateStatus?.({ type: 'closed' })
-  })
+  api.openSignal()
 
   return () => {
+    stopSignalMessages()
     stopTerminalMessages()
     stopTerminalCloseRequests()
     closeTerminal('WebRTC host window stopped.')
-    socket.close()
     peer.close()
   }
 }

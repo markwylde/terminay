@@ -242,10 +242,19 @@ contextBridge.exposeInMainWorld('terminayWebRtcHost', {
     ipcRenderer.send('remote-webrtc-host:terminal-close', { channelId, reason }),
   updateStatus: (message: { detail?: string; type: string }) =>
     ipcRenderer.send('remote-webrtc-host:status', message),
+  openSignal: () =>
+    ipcRenderer.send('remote-webrtc-host:signal-ready'),
+  sendSignalMessage: (message: unknown) =>
+    ipcRenderer.send('remote-webrtc-host:signal-message', message),
   onConfig: (listener: (config: unknown) => void) => {
     const wrapper: ElectronListener<unknown> = (_event, config) => listener(config)
     ipcRenderer.on('remote-webrtc-host:config', wrapper)
     return () => ipcRenderer.off('remote-webrtc-host:config', wrapper)
+  },
+  onSignalMessage: (listener: (message: unknown) => void) => {
+    const wrapper: ElectronListener<unknown> = (_event, message) => listener(message)
+    ipcRenderer.on('remote-webrtc-host:signal-message', wrapper)
+    return () => ipcRenderer.off('remote-webrtc-host:signal-message', wrapper)
   },
   onTerminalMessage: (listener: (message: { channelId: string; message: string }) => void) => {
     const wrapper: ElectronListener<{ channelId: string; message: string }> = (_event, message) => listener(message)
