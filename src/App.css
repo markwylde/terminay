@@ -1150,6 +1150,25 @@
   line-height: 1;
 }
 
+.terminal-tab-recording-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+}
+
+.terminal-tab-recording-indicator--recording {
+  background: #ff5f57;
+  box-shadow: 0 0 0 2px rgba(255, 95, 87, 0.18), 0 0 10px rgba(255, 95, 87, 0.45);
+}
+
+.terminal-tab-recording-indicator--failed {
+  background: #ffd166;
+  box-shadow: 0 0 0 2px rgba(255, 209, 102, 0.18);
+}
+
 .terminal-tab-macro-popover {
   position: fixed;
   width: 320px;
