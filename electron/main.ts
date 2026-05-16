@@ -188,6 +188,11 @@ const remoteAccessService = new RemoteAccessService({
           hostWindow.webContents.send('remote-webrtc-host:config', config)
         }
       },
+      sendSignalMessage: (message) => {
+        if (!hostWindow.isDestroyed()) {
+          hostWindow.webContents.send('remote-webrtc-host:signal-message', message)
+        }
+      },
       sendTerminalMessage: (channelId, message) => {
         if (!hostWindow.isDestroyed()) {
           hostWindow.webContents.send('remote-webrtc-host:terminal-message', { channelId, message })
@@ -2171,6 +2176,14 @@ ipcMain.on('remote-webrtc-host:terminal-close', (_event, payload: { channelId: s
 
 ipcMain.on('remote-webrtc-host:status', (event, payload: { detail?: string; type?: string }) => {
   remoteAccessService.handleWebRtcHostStatus(event.sender.id, payload)
+})
+
+ipcMain.on('remote-webrtc-host:signal-ready', (event) => {
+  remoteAccessService.handleWebRtcHostSignalReady(event.sender.id)
+})
+
+ipcMain.on('remote-webrtc-host:signal-message', (event, payload: unknown) => {
+  remoteAccessService.handleWebRtcHostSignalMessage(event.sender.id, payload)
 })
 
 ipcMain.handle('remote:toggle-server', async () => {

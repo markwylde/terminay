@@ -65,6 +65,7 @@ type RemoteAccessServiceOptions = {
     close: () => void
     closeTerminal: (channelId: string, reason?: string) => void
     sendConfig: (config: WebRtcHostConfig) => void
+    sendSignalMessage: (message: unknown) => void
     sendTerminalMessage: (channelId: string, message: string) => void
     webContentsId: number
   }
@@ -204,6 +205,7 @@ export class RemoteAccessService {
   private webRtcPairingUrl: string | null = null
   private webRtcRoomId: string | null = null
   private webRtcHostReady = false
+  private webRtcSignalSocket: WebSocket | null = null
   private webRtcHostWindow: ReturnType<RemoteAccessServiceOptions['createWebRtcHostWindow']> | null = null
   private webRtcHostConfigByWebContentsId = new Map<number, WebRtcHostConfig>()
   private readonly webRtcTerminalConnectionsByChannelId = new Map<string, string>()
@@ -723,7 +725,16 @@ export class RemoteAccessService {
 
   private closeWebRtcPairingHost(): void {
     this.webRtcHostReady = false
+    this.closeWebRtcSignalSocket()
     this.closeWebRtcHostWindow()
+  }
+
+  private closeWebRtcSignalSocket(): void {
+    const socket = this.webRtcSignalSocket
+    this.webRtcSignalSocket = null
+    if (socket && socket.readyState !== WebSocket.CLOSING && socket.readyState !== WebSocket.CLOSED) {
+      socket.close(1000, 'Pairing rotated')
+    }
   }
 
   private openWebRtcPairingHost(options: {
@@ -749,6 +760,70 @@ export class RemoteAccessService {
     }
     this.webRtcHostConfigByWebContentsId.set(this.webRtcHostWindow.webContentsId, hostConfig)
     this.webRtcHostWindow.sendConfig(hostConfig)
+  }
+
+  handleWebRtcHostSignalReady(webContentsId: number): void {
+    const config = this.webRtcHostConfigByWebContentsId.get(webContentsId)
+    if (!config) return
+
+    this.closeWebRtcSignalSocket()
+    const socket = new WebSocket(config.signalingUrl)
+    this.webRtcSignalSocket = socket
+
+    socket.on('open', () => {
+      if (this.webRtcSignalSocket !== socket) return
+      socket.send(JSON.stringify({
+        expiresAt: config.expiresAt,
+        relayJoinTokenHash: config.relayJoinTokenHash,
+        roomId: config.roomId,
+        type: 'host-ready',
+      }))
+    })
+
+    socket.on('message', (raw) => {
+      if (this.webRtcSignalSocket !== socket) return
+      let message: unknown
+      try {
+        message = JSON.parse(raw.toString())
+      } catch {
+        return
+      }
+
+      if (message && typeof message === 'object' && 'type' in message) {
+        this.handleWebRtcHostStatus(webContentsId, {
+          detail: 'message' in message && typeof message.message === 'string' ? message.message : undefined,
+          type: typeof message.type === 'string' ? message.type : undefined,
+        })
+      }
+      this.webRtcHostWindow?.sendSignalMessage(message)
+    })
+
+    socket.on('error', () => {
+      if (this.webRtcSignalSocket !== socket) return
+      this.handleWebRtcHostStatus(webContentsId, {
+        detail: 'Could not reach the WebRTC signaling relay.',
+        type: 'error',
+      })
+    })
+
+    socket.on('close', () => {
+      if (this.webRtcSignalSocket !== socket) return
+      this.webRtcSignalSocket = null
+      this.handleWebRtcHostStatus(webContentsId, { type: 'closed' })
+    })
+  }
+
+  handleWebRtcHostSignalMessage(webContentsId: number, message: unknown): void {
+    if (!this.webRtcHostConfigByWebContentsId.has(webContentsId)) return
+    const socket = this.webRtcSignalSocket
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      this.handleWebRtcHostStatus(webContentsId, {
+        detail: 'The WebRTC signaling relay is not connected.',
+        type: 'error',
+      })
+      return
+    }
+    socket.send(JSON.stringify(message))
   }
 
   handleWebRtcHostStatus(webContentsId: number, message: { detail?: string; type?: string }): void {
