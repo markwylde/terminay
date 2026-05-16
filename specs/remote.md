@@ -1,5 +1,7 @@
 # Remote Access WebRTC Specification
 
+> Production origin-isolation, compact QR, cookie/session, and wildcard subdomain hardening work is tracked in `REMOTE_REFACTOR.md`. This document describes the original WebRTC remote access design and current baseline.
+
 ## Summary
 
 Terminay should keep the current local-network remote access flow and add a second WebRTC flow for phones that cannot directly reach, trust, or load the desktop app's local HTTPS origin.
@@ -7,15 +9,15 @@ Terminay should keep the current local-network remote access flow and add a seco
 The product should offer two pairing modes:
 
 - **Local Network**: Works as it does today. Terminay serves the remote HTML, CSS, JavaScript, APIs, and WebSocket from the desktop machine at a reachable address such as `https://192.168.1.23:9443`.
-- **WebRTC**: The user opens a hosted HTTPS page such as `https://app.terminay.com`, scans the QR code shown by Terminay, and the hosted page establishes a WebRTC connection to the desktop app. The hosted service stays deliberately thin. The desktop app still supplies the real remote app bundle and owns all terminal APIs.
+- **WebRTC**: The user opens a compact QR URL such as `https://<channel>.terminay.com/v1/#<qr-secret>`, and that per-session hosted page establishes a WebRTC connection to the desktop app. The `app.terminay.com` origin is only a manager/launcher and is not trusted with pairing secrets. The hosted service stays deliberately thin. The desktop app still supplies the real remote app bundle and owns all terminal APIs.
 
-The hosted page is a secure bootstrapper, scanner, signaling participant, and asset loader. It should not contain the full terminal UI, should not terminate terminal sessions, and should not persist remote terminal data.
+The hosted session page is a secure bootstrapper, signaling participant, and asset loader. It should not contain the full terminal UI, should not terminate terminal sessions, and should not persist remote terminal data. Any QR scanning is done by the phone's camera or OS before the browser opens the session URL.
 
 ## Goals
 
 - Preserve the current local IP QR flow unchanged.
 - Add a WebRTC QR flow that works from a public HTTPS origin.
-- Let the hosted origin provide camera access, service worker support, and WebRTC bootstrapping.
+- Let the hosted session origin provide service worker support and WebRTC bootstrapping.
 - Keep the desktop app as the authority for pairing, authentication, terminal sessions, static app assets, and audit state.
 - Keep the hosted server simple enough to run as static hosting plus a small signaling relay.
 - Reuse as much of the existing remote browser app and protocol as practical.
@@ -71,7 +73,7 @@ WebRTC mode adds a second pairing option:
 1. The user starts Remote Access and chooses the WebRTC option.
 2. Terminay creates a short-lived WebRTC pairing session and connects to the public signaling relay.
 3. Terminay shows a QR code for the hosted bootstrap page. The QR contains only the information needed to join the signaling room and prove possession of the pairing secret.
-4. The user opens `https://app.terminay.com` on the phone and scans the QR shown by Terminay.
+4. The user opens the QR URL on the phone, for example `https://<channel>.terminay.com/v1/#<qr-secret>`.
 5. The hosted bootstrap page joins the signaling room, exchanges WebRTC offer/answer/ICE messages, and opens a data channel to the desktop app.
 6. The bootstrap page requests the actual remote app bundle from the desktop over the data channel.
 7. The hosted page installs or updates those assets under its own origin, then launches the real remote app.
@@ -130,19 +132,25 @@ Local Network QR payloads remain full local pairing URLs:
 https://192.168.1.23:9443/?pairingSessionId=...&pairingToken=...&pairingExpiresAt=...
 ```
 
-WebRTC QR payloads should target the hosted bootstrap origin:
+Production WebRTC QR payloads are defined by `REMOTE_REFACTOR.md`. The old shared-origin draft below is obsolete and should not be implemented for production. The current production plan uses a per-session channel subdomain plus a path protocol version:
+
+```text
+https://<channel>.terminay.com/v1/#<qr-secret>
+```
+
+The previous shared-origin draft was:
 
 ```text
 https://app.terminay.com/connect?mode=webrtc&v=1&roomId=...#relayJoinToken=...&pairingSessionId=...&pairingToken=...&pairingExpiresAt=...&signalingAuthToken=...
 ```
 
-The URL query should include:
+That obsolete draft used query fields like:
 
 - `mode=webrtc`
 - protocol version, such as `v=1`
 - `roomId`
 
-The URL fragment should include QR-only secrets:
+And fragment fields like:
 
 - `relayJoinToken`
 - `pairingSessionId`
@@ -151,9 +159,9 @@ The URL fragment should include QR-only secrets:
 - `signalingAuthToken`
 - optional `hostName` or user-facing desktop label
 
-The QR should not include SDP blobs. SDP payloads are too large and brittle for QR scanning. The QR should only identify a short-lived signaling room, carry a relay-only join token, and carry the same kind of desktop pairing secret the current flow already uses.
+The QR should not include SDP blobs or individual protocol tokens. SDP payloads are too large and brittle for QR scanning, and individual tokens make the QR bigger than needed. The QR should identify a short-lived signaling room through the channel subdomain and carry one QR-only fragment secret that derives relay, pairing, signaling-HMAC, asset-install, and CSRF secrets.
 
-`relayJoinToken` should be separate from `pairingToken`. The signaling relay can validate the relay token before forwarding messages, while the actual Terminay pairing token is only validated by the desktop app after the WebRTC data channel is open.
+The derived `relayJoinToken` should be separate from the derived `pairingToken`. The signaling relay can validate the relay token before forwarding messages, while the actual Terminay pairing token is only validated by the desktop app after the WebRTC data channel is open.
 
 The QR should not include the user's pairing PIN. The PIN is a local desktop setting used as a second human-authentication factor after the phone scans the QR.
 
@@ -164,9 +172,10 @@ The signaling relay should be a small WSS service.
 Suggested endpoints:
 
 - `GET /` serves the bootstrap page.
-- `GET /connect` serves the same bootstrap page.
 - `GET /sw.js` serves the service worker.
 - `GET /healthz` returns server health.
+- `GET /versionz` returns build/runtime version details.
+- `GET /metrics` returns redacted operational metrics for the service.
 - `WSS /signal` handles room signaling.
 
 Suggested signaling messages:
@@ -265,19 +274,19 @@ This lets the remote React app keep the same pairing, authentication, and termin
 
 ## Pairing And Origin Security
 
-The current implementation binds devices to `window.location.origin`. In WebRTC mode the phone's origin is the hosted origin, for example `https://app.terminay.com`.
+The current implementation binds devices to `window.location.origin`. In WebRTC mode the phone's origin is the exact session subdomain, for example `https://<channel>.terminay.com`.
 
-That is acceptable, but it changes what the desktop stores:
+That keeps the manager isolated and changes what the desktop stores:
 
 - Local Network paired devices are bound to the selected local origin.
-- WebRTC paired devices are bound to the hosted origin plus a WebRTC transport marker.
+- WebRTC paired devices are bound to the exact session origin plus a WebRTC transport marker.
 
 Suggested stored identity fields:
 
 ```ts
 type RemoteDeviceOrigin =
   | { kind: 'local'; origin: string }
-  | { kind: 'webrtc'; origin: string; relayOrigin: string }
+  | { kind: 'webrtc'; origin: string; protocolVersion: 'v1' }
 ```
 
 The pairing token still proves possession of the QR payload. The device key still proves the same browser/device on later connections. The WebRTC data channel should additionally verify that the remote app has completed the same pairing/auth flow before terminal messages are accepted.
@@ -304,8 +313,7 @@ The hosted bootstrap CSP should allow only what the bootstrapper needs:
 
 - scripts from self
 - styles from self
-- images from self and data URLs for QR/scanner UI
-- camera access through browser permissions
+- images from self and data URLs for lightweight status UI
 - WebSocket connection to the signaling origin
 - WebRTC connections
 - service worker registration
@@ -341,7 +349,7 @@ The pairing modal should show:
 
 The WebRTC flow should show these states:
 
-- waiting for phone to scan
+- waiting for phone to open QR URL
 - phone connected, establishing secure channel
 - loading remote app from this computer
 - pairing or authenticating
@@ -350,7 +358,7 @@ The WebRTC flow should show these states:
 
 The hosted bootstrap page should be sparse:
 
-- scan QR
+- open QR URL
 - show connection progress
 - show a useful error
 - retry
@@ -366,8 +374,7 @@ type RemoteAccessMode = 'local' | 'webrtc'
 
 type RemoteWebRtcSettings = {
   enabled: boolean
-  hostedOrigin: string
-  signalingUrl: string
+  hostedDomain: string
   stunUrls: string[]
   turnUrl: string
   turnUsername: string
@@ -378,8 +385,7 @@ type RemoteWebRtcSettings = {
 Recommended defaults:
 
 - `enabled`: `true`
-- `hostedOrigin`: `https://app.terminay.com`
-- `signalingUrl`: `wss://app.terminay.com/signal`
+- `hostedDomain`: `terminay.com`
 - `stunUrls`: include one default STUN endpoint or leave configurable for packaged builds
 - TURN fields blank
 
@@ -415,7 +421,7 @@ Where possible, refactor `RemoteAccessService` so request handlers can be called
 
 Create a tiny separate build target for the hosted page:
 
-- scanner UI
+- compact QR URL parser
 - QR parser
 - signaling client
 - WebRTC client
@@ -445,7 +451,7 @@ Suggested options:
 
 - Add a bootstrap-injected config object before launching the remote app.
 - Store a short-lived WebRTC session id in IndexedDB.
-- Use a query parameter such as `?transport=webrtc&sessionId=...`.
+- Infer WebRTC mode from the exact session origin and versioned path, such as `https://<channel>.terminay.com/v1/`.
 
 Avoid storing pairing tokens in long-lived localStorage. Pairing tokens should stay in memory and expire quickly.
 
@@ -491,7 +497,7 @@ For WebRTC, add a socket-like adapter around the terminal data channel so existi
 
 - Add mode selection to the Remote menu and pairing modal.
 - Add WebRTC connection state to `RemoteAccessStatus`.
-- Add clear failure messages for expired QR, relay unavailable, camera blocked, WebRTC failed, and app bundle load failed.
+- Add clear failure messages for expired QR, relay unavailable, WebRTC failed, and app bundle load failed.
 - Document Local Network versus WebRTC setup.
 
 ## Remote Terminal Sizing
@@ -602,7 +608,7 @@ Unit tests should cover:
 Integration tests should cover:
 
 - Existing Local Network pairing still works.
-- Hosted bootstrap can scan or accept a WebRTC QR payload.
+- Hosted bootstrap accepts the current `/v1/` session-subdomain QR URL.
 - WebRTC asset install writes files into Cache Storage.
 - The launched remote app uses WebRTC transports.
 - The desktop prompts for a first-use WebRTC pairing PIN before generating a QR and stores only the hash.
@@ -628,8 +634,8 @@ Manual QA should include:
 
 - Should WebRTC mode be enabled by default in packaged builds or hidden behind an advanced setting until TURN support exists?
 - Who operates the signaling relay and possible TURN service?
-- Should a WebRTC paired device be allowed to reconnect later without scanning a new QR, or should WebRTC always require a fresh scan?
-- Should the hosted bootstrap support paste/manual entry for WebRTC payloads, or scan-only for the first version?
+- Should a WebRTC paired device be allowed to reconnect later without opening a new QR URL, or should WebRTC always require a fresh QR?
+- Should the manager support paste/manual entry for WebRTC URLs in addition to OS camera scanning?
 - How long should desktop-provided remote app assets remain cached under the hosted origin?
 
 ## Implementation Checklist
@@ -651,7 +657,7 @@ Manual QA should include:
 ### Hosted Bootstrap
 
 - [ ] Create the hosted bootstrap build target.
-- [ ] Implement scanner and QR parser for WebRTC payloads.
+- [ ] Implement `/v1/` session-subdomain QR parser for WebRTC payloads.
 - [ ] Implement WSS signaling client.
 - [ ] Implement WebRTC peer setup.
 - [ ] Implement service worker asset serving under `/remote-app/`.
@@ -697,6 +703,6 @@ Manual QA should include:
 ### Docs And QA
 
 - [ ] Update Remote Access docs with Local Network and WebRTC modes.
-- [ ] Add troubleshooting for camera permissions, relay failures, expired QR, NAT failures, and TURN limitations.
+- [ ] Add troubleshooting for relay failures, expired QR, NAT failures, and TURN limitations.
 - [ ] Add unit/integration/E2E coverage for both modes.
 - [ ] Manually verify on iOS Safari and Android Chrome.
