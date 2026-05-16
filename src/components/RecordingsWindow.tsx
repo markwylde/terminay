@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal } from '@xterm/xterm'
 import {
+  Check,
+  ChevronUp,
   ExternalLink,
-  Maximize2,
-  Minus,
   Pause,
+  Palette,
   Play,
-  Plus,
   RefreshCw,
   RotateCcw,
   Search,
@@ -35,12 +35,57 @@ type ParsedCast = {
   title: string
 }
 
+type ElementSize = {
+  height: number
+  width: number
+}
+
 type ReplayScaleMode = 'actual' | 'custom' | 'fit'
 type ReplayThemeMode = 'current' | 'recorded'
 
-const SCALE_STEP = 0.1
-const MIN_SCALE = 0.25
+const MIN_SCALE = 0.01
 const MAX_SCALE = 2
+const TERMINAL_STAGE_BORDER_SIZE = 2
+const ZOOM_PRESETS = [
+  { label: 'Fit', value: 'fit' },
+  { label: '50%', value: '50' },
+  { label: '75%', value: '75' },
+  { label: '100%', value: '100' },
+  { label: '125%', value: '125' },
+  { label: '150%', value: '150' },
+  { label: '200%', value: '200' },
+]
+
+function formatZoomScale(scale: number): string {
+  return `${Math.round(scale * 100)}%`
+}
+
+function parseZoomValue(value: string): number | 'fit' | null {
+  const trimmedValue = value.trim()
+  if (trimmedValue.length === 0) {
+    return null
+  }
+
+  if (/^fit$/i.test(trimmedValue)) {
+    return 'fit'
+  }
+
+  if (/x$/i.test(trimmedValue)) {
+    const multiplierValue = Number.parseFloat(trimmedValue.replace(/x$/i, ''))
+    if (!Number.isFinite(multiplierValue) || multiplierValue <= 0) {
+      return null
+    }
+
+    return Math.min(MAX_SCALE, Math.max(MIN_SCALE, multiplierValue))
+  }
+
+  const numericValue = Number.parseFloat(trimmedValue.replace(/%$/, ''))
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return null
+  }
+
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, numericValue / 100))
+}
 
 function parseAsciicast(content: string): ParsedCast {
   const lines = content.split(/\r?\n/).filter((line) => line.length > 0)
@@ -132,17 +177,281 @@ function getRecordingTabColor(recording: TerminalRecordingCast | TerminalRecordi
   return metadata?.color ?? metadata?.projectColor ?? undefined
 }
 
-function buildReplayTerminalOptions(
-  settings: TerminalSettings,
-  scale: number,
-  theme: TerminalThemeSettings,
-) {
+type SelectDropupOption = {
+  disabled?: boolean
+  label: string
+  title?: string
+  value: string
+}
+
+type SelectDropupProps = {
+  allowManualInput?: boolean
+  ariaLabel: string
+  className?: string
+  disabled: boolean
+  displayValue?: string
+  icon?: ReactNode
+  inputMode?: 'decimal' | 'numeric' | 'text'
+  menuLabel: string
+  onChange: (value: string) => void
+  onManualInputCommit?: (value: string) => string | null
+  options: SelectDropupOption[]
+  value: string
+}
+
+function SelectDropup({
+  allowManualInput = false,
+  ariaLabel,
+  className,
+  disabled,
+  displayValue: providedDisplayValue,
+  icon,
+  inputMode = 'text',
+  menuLabel,
+  onChange,
+  onManualInputCommit,
+  options,
+  value,
+}: SelectDropupProps) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [draftValue, setDraftValue] = useState('')
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const selectedOption = options.find((option) => option.value === value)
+  const displayValue = providedDisplayValue ?? selectedOption?.label ?? value
+
+  useEffect(() => {
+    setDraftValue(displayValue)
+  }, [displayValue])
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setIsOpen(false)
+        setDraftValue(displayValue)
+      }
+    }
+
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => window.removeEventListener('pointerdown', onPointerDown)
+  }, [displayValue, isOpen])
+
+  const commitManualValue = (nextValue = draftValue) => {
+    if (!allowManualInput) {
+      return
+    }
+
+    const nextDisplayValue = onManualInputCommit?.(nextValue) ?? displayValue
+    setDraftValue(nextDisplayValue)
+    setIsOpen(false)
+  }
+
+  const selectValue = (nextValue: string) => {
+    onChange(nextValue)
+    const nextOption = options.find((option) => option.value === nextValue)
+    setDraftValue(nextOption?.label ?? nextValue)
+    setIsOpen(false)
+  }
+
+  return (
+    <div className={`recordings-select${className ? ` ${className}` : ''}`} ref={rootRef}>
+      <div className="recordings-select-control">
+        {icon ? <span className="recordings-select-icon">{icon}</span> : null}
+        {allowManualInput ? (
+          <input
+            aria-label={ariaLabel}
+            className="recordings-select-input"
+            disabled={disabled}
+            inputMode={inputMode}
+            onBlur={(event) => commitManualValue(event.currentTarget.value)}
+            onChange={(event) => {
+              setDraftValue(event.target.value)
+              setIsOpen(true)
+            }}
+            onFocus={() => setIsOpen(true)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                commitManualValue(event.currentTarget.value)
+              } else if (event.key === 'Escape') {
+                setDraftValue(displayValue)
+                setIsOpen(false)
+                event.currentTarget.blur()
+              } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                setIsOpen(true)
+              }
+            }}
+            value={draftValue}
+          />
+        ) : (
+          <button
+            type="button"
+            aria-label={ariaLabel}
+            aria-expanded={isOpen}
+            className="recordings-select-value"
+            disabled={disabled}
+            onClick={() => setIsOpen((current) => !current)}
+            title={selectedOption?.title}
+          >
+            <span>{displayValue}</span>
+          </button>
+        )}
+        <button
+          type="button"
+          className="recordings-select-caret"
+          aria-label={menuLabel}
+          aria-expanded={isOpen}
+          disabled={disabled}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => setIsOpen((current) => !current)}
+        >
+          <ChevronUp size={14} />
+        </button>
+      </div>
+      {isOpen && !disabled ? (
+        <div className="recordings-select-menu" role="listbox" aria-label={menuLabel}>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className="recordings-select-option"
+              role="option"
+              aria-selected={option.value === value}
+              disabled={option.disabled}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => selectValue(option.value)}
+              title={option.title}
+            >
+              <span>{option.label}</span>
+              {option.value === value ? <Check size={14} /> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function buildReplayTerminalOptions(settings: TerminalSettings, theme: TerminalThemeSettings) {
   const options = buildTerminalOptions(settings)
   return {
     ...options,
-    fontSize: Math.max(1, settings.fontSize * scale),
-    letterSpacing: settings.letterSpacing * scale,
     theme,
+  }
+}
+
+type ReplayMouseEventCoordinates = {
+  clientX: number
+  clientY: number
+}
+
+type XtermMouseService = {
+  getCoords: (
+    event: ReplayMouseEventCoordinates,
+    element: HTMLElement,
+    colCount: number,
+    rowCount: number,
+    isSelection?: boolean,
+  ) => [number, number] | undefined
+  getMouseReportCoords?: (
+    event: ReplayMouseEventCoordinates,
+    element: HTMLElement,
+  ) => { col: number; row: number; x: number; y: number } | undefined
+}
+
+type XtermTerminalWithMouseService = Terminal & {
+  _core?: {
+    _mouseService?: XtermMouseService
+  }
+}
+
+function scaleReplayMouseEvent(
+  event: ReplayMouseEventCoordinates,
+  element: HTMLElement,
+  scale: number,
+): ReplayMouseEventCoordinates {
+  if (!Number.isFinite(scale) || Math.abs(scale - 1) < 0.001) {
+    return event
+  }
+
+  const rect = element.getBoundingClientRect()
+  return {
+    clientX: rect.left + (event.clientX - rect.left) / scale,
+    clientY: rect.top + (event.clientY - rect.top) / scale,
+  }
+}
+
+function patchReplayTerminalMouseCoordinates(terminal: Terminal, getScale: () => number): () => void {
+  const mouseService = (terminal as XtermTerminalWithMouseService)._core?._mouseService
+  if (!mouseService) {
+    return () => {}
+  }
+
+  const originalGetCoords = mouseService.getCoords.bind(mouseService)
+  const originalGetMouseReportCoords = mouseService.getMouseReportCoords?.bind(mouseService)
+
+  mouseService.getCoords = (event, element, colCount, rowCount, isSelection) =>
+    originalGetCoords(scaleReplayMouseEvent(event, element, getScale()), element, colCount, rowCount, isSelection)
+
+  if (originalGetMouseReportCoords) {
+    mouseService.getMouseReportCoords = (event, element) =>
+      originalGetMouseReportCoords(scaleReplayMouseEvent(event, element, getScale()), element)
+  }
+
+  return () => {
+    mouseService.getCoords = originalGetCoords
+    if (originalGetMouseReportCoords) {
+      mouseService.getMouseReportCoords = originalGetMouseReportCoords
+    }
+  }
+}
+
+function readPixels(value: string): number {
+  const pixels = Number.parseFloat(value)
+  return Number.isFinite(pixels) ? pixels : 0
+}
+
+function measureReplayTerminal(root: HTMLElement): ElementSize {
+  const rootStyle = window.getComputedStyle(root)
+  const horizontalPadding = readPixels(rootStyle.paddingLeft) + readPixels(rootStyle.paddingRight)
+  const verticalPadding = readPixels(rootStyle.paddingTop) + readPixels(rootStyle.paddingBottom)
+  const screen = root.querySelector<HTMLElement>('.xterm-screen')
+  const rows = root.querySelector<HTMLElement>('.xterm-rows')
+  const canvases = Array.from(root.querySelectorAll<HTMLCanvasElement>('.xterm-screen canvas'))
+  const canvasWidth = Math.max(
+    0,
+    ...canvases.map((canvas) => Math.max(canvas.offsetWidth, canvas.scrollWidth, readPixels(canvas.style.width))),
+  )
+  const canvasHeight = Math.max(
+    0,
+    ...canvases.map((canvas) => Math.max(canvas.offsetHeight, canvas.scrollHeight, readPixels(canvas.style.height))),
+  )
+
+  const contentWidth = Math.max(
+    1,
+    screen?.offsetWidth ?? 0,
+    screen?.scrollWidth ?? 0,
+    readPixels(screen?.style.width ?? ''),
+    rows?.offsetWidth ?? 0,
+    rows?.scrollWidth ?? 0,
+    canvasWidth,
+  )
+  const contentHeight = Math.max(
+    1,
+    screen?.offsetHeight ?? 0,
+    screen?.scrollHeight ?? 0,
+    readPixels(screen?.style.height ?? ''),
+    rows?.offsetHeight ?? 0,
+    rows?.scrollHeight ?? 0,
+    canvasHeight,
+  )
+
+  return {
+    height: Math.ceil(contentHeight + verticalPadding),
+    width: Math.ceil(contentWidth + horizontalPadding),
   }
 }
 
@@ -158,6 +467,7 @@ export function RecordingsWindow() {
   const parsedCastRef = useRef<ParsedCast | null>(null)
   const playheadRef = useRef(0)
   const displayScaleRef = useRef(1)
+  const measureFrameRef = useRef<number | null>(null)
   const [recordings, setRecordings] = useState<TerminalRecordingListItem[]>([])
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [loadedCast, setLoadedCast] = useState<TerminalRecordingCast | null>(null)
@@ -171,8 +481,8 @@ export function RecordingsWindow() {
   const [scaleMode, setScaleMode] = useState<ReplayScaleMode>('fit')
   const [themeMode, setThemeMode] = useState<ReplayThemeMode>('recorded')
   const [customScale, setCustomScale] = useState(1)
-  const [terminalSize, setTerminalSize] = useState({ height: 1, width: 1 })
-  const [viewportSize, setViewportSize] = useState({ height: 1, width: 1 })
+  const [terminalSize, setTerminalSize] = useState<ElementSize>({ height: 1, width: 1 })
+  const [viewportSize, setViewportSize] = useState<ElementSize>({ height: 1, width: 1 })
   const selectedRecording = recordings.find((recording) => recording.castPath === selectedPath) ?? null
 
   useEffect(() => {
@@ -180,19 +490,35 @@ export function RecordingsWindow() {
   }, [playhead])
 
   const measureTerminal = useCallback(() => {
-    window.requestAnimationFrame(() => {
+    if (measureFrameRef.current !== null) {
+      return
+    }
+
+    measureFrameRef.current = window.requestAnimationFrame(() => {
+      measureFrameRef.current = null
       const terminalElement = terminalRootRef.current
       if (!terminalElement) {
         return
       }
 
-      const scale = displayScaleRef.current || 1
-      const rect = terminalElement.getBoundingClientRect()
-      setTerminalSize({
-        height: Math.max(1, terminalElement.offsetHeight, rect.height) / scale,
-        width: Math.max(1, terminalElement.offsetWidth, rect.width) / scale,
+      const nextSize = measureReplayTerminal(terminalElement)
+
+      setTerminalSize((current) => {
+        if (current.height === nextSize.height && current.width === nextSize.width) {
+          return current
+        }
+
+        return nextSize
       })
     })
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (measureFrameRef.current !== null) {
+        window.cancelAnimationFrame(measureFrameRef.current)
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -202,9 +528,17 @@ export function RecordingsWindow() {
     }
 
     const updateViewportSize = () => {
-      setViewportSize({
+      const nextSize = {
         height: Math.max(1, viewport.clientHeight),
         width: Math.max(1, viewport.clientWidth),
+      }
+
+      setViewportSize((current) => {
+        if (current.height === nextSize.height && current.width === nextSize.width) {
+          return current
+        }
+
+        return nextSize
       })
     }
 
@@ -218,16 +552,40 @@ export function RecordingsWindow() {
   }, [])
 
   const fitScale = useMemo(() => {
-    const availableWidth = Math.max(1, viewportSize.width)
-    const availableHeight = Math.max(1, viewportSize.height)
+    const availableWidth = Math.max(1, viewportSize.width - TERMINAL_STAGE_BORDER_SIZE)
+    const availableHeight = Math.max(1, viewportSize.height - TERMINAL_STAGE_BORDER_SIZE)
     return Math.min(1, availableWidth / terminalSize.width, availableHeight / terminalSize.height)
   }, [terminalSize.height, terminalSize.width, viewportSize.height, viewportSize.width])
 
   const displayScale = scaleMode === 'fit' ? fitScale : scaleMode === 'actual' ? 1 : customScale
   displayScaleRef.current = displayScale
+  const renderedTerminalSize = useMemo(
+    () => ({
+      height: Math.max(1, Math.ceil(terminalSize.height * displayScale)),
+      width: Math.max(1, Math.ceil(terminalSize.width * displayScale)),
+    }),
+    [displayScale, terminalSize.height, terminalSize.width],
+  )
   const recordedTheme = loadedCast?.metadata?.theme ?? null
   const canUseRecordedTheme = recordedTheme !== null
   const replayThemeMode = themeMode === 'recorded' && canUseRecordedTheme ? 'recorded' : 'current'
+  const zoomValue = scaleMode === 'fit' ? 'fit' : String(Math.round(displayScale * 100))
+  const paletteOptions = useMemo<SelectDropupOption[]>(
+    () => [
+      {
+        disabled: !canUseRecordedTheme,
+        label: 'Recorded',
+        title: canUseRecordedTheme ? 'Use the theme saved with this recording' : 'This recording has no saved theme',
+        value: 'recorded',
+      },
+      {
+        label: 'Current',
+        title: 'Use your current settings theme',
+        value: 'current',
+      },
+    ],
+    [canUseRecordedTheme],
+  )
   const replayTheme = useMemo(() => {
     if (replayThemeMode === 'recorded' && recordedTheme) {
       return recordedTheme
@@ -292,7 +650,7 @@ export function RecordingsWindow() {
 
     root.innerHTML = ''
     const terminal = new Terminal({
-      ...buildReplayTerminalOptions(settings ?? defaultTerminalSettings, displayScaleRef.current, replayTheme),
+      ...buildReplayTerminalOptions(settings ?? defaultTerminalSettings, replayTheme),
       allowProposedApi: true,
       cols: parsedCastRef.current?.cols ?? 80,
       disableStdin: false,
@@ -301,9 +659,19 @@ export function RecordingsWindow() {
     terminal.loadAddon(new Unicode11Addon())
     terminal.unicode.activeVersion = '11'
     terminal.open(root)
+    const restoreMouseCoordinates = patchReplayTerminalMouseCoordinates(terminal, () => displayScaleRef.current)
     terminal.attachCustomKeyEventHandler(() => false)
     terminal.focus()
     terminalRef.current = terminal
+    const resizeObserver = new ResizeObserver(measureTerminal)
+    resizeObserver.observe(root)
+    if (terminal.element) {
+      resizeObserver.observe(terminal.element)
+    }
+    const screen = root.querySelector<HTMLElement>('.xterm-screen')
+    if (screen) {
+      resizeObserver.observe(screen)
+    }
     measureTerminal()
 
     window.requestAnimationFrame(() => {
@@ -315,6 +683,8 @@ export function RecordingsWindow() {
     })
 
     return () => {
+      resizeObserver.disconnect()
+      restoreMouseCoordinates()
       terminal.dispose()
       terminalRef.current = null
     }
@@ -326,7 +696,7 @@ export function RecordingsWindow() {
       return
     }
 
-    const options = buildReplayTerminalOptions(settings ?? defaultTerminalSettings, displayScale, replayTheme)
+    const options = buildReplayTerminalOptions(settings ?? defaultTerminalSettings, replayTheme)
     terminal.options.cursorBlink = options.cursorBlink
     terminal.options.cursorStyle = options.cursorStyle
     terminal.options.fontFamily = options.fontFamily
@@ -338,7 +708,7 @@ export function RecordingsWindow() {
     terminal.options.theme = options.theme
     terminal.refresh(0, terminal.rows - 1)
     measureTerminal()
-  }, [displayScale, measureTerminal, replayTheme, settings])
+  }, [measureTerminal, replayTheme, settings])
 
   useEffect(() => {
     if (!selectedPath) {
@@ -493,8 +863,38 @@ export function RecordingsWindow() {
   }
 
   const updateCustomScale = (nextScale: number) => {
-    setCustomScale(Math.min(MAX_SCALE, Math.max(MIN_SCALE, nextScale)))
+    const normalizedScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, nextScale))
+    setCustomScale(normalizedScale)
+    if (normalizedScale === 1) {
+      setScaleMode('actual')
+      return
+    }
+
     setScaleMode('custom')
+  }
+
+  const onZoomPresetChange = (value: string) => {
+    if (value === 'fit') {
+      setScaleMode('fit')
+      return
+    }
+
+    updateCustomScale(Number(value) / 100)
+  }
+
+  const onZoomManualInputCommit = (value: string): string => {
+    const parsedValue = parseZoomValue(value)
+    if (parsedValue === 'fit') {
+      setScaleMode('fit')
+      return 'Fit'
+    }
+
+    if (typeof parsedValue === 'number') {
+      updateCustomScale(parsedValue)
+      return formatZoomScale(parsedValue)
+    }
+
+    return scaleMode === 'fit' ? 'Fit' : formatZoomScale(displayScale)
   }
 
   const onToggleFitActual = () => {
@@ -598,107 +998,109 @@ export function RecordingsWindow() {
           className={`recordings-terminal-shell recordings-terminal-shell--${scaleMode}`}
           ref={terminalViewportRef}
           onDoubleClick={onToggleFitActual}
-          title={scaleMode === 'fit' ? 'Double-click for actual size' : 'Double-click to fit'}
         >
-          <div className="recordings-terminal-stage">
+          <div
+            className="recordings-terminal-stage"
+            style={{
+              height: renderedTerminalSize.height + TERMINAL_STAGE_BORDER_SIZE,
+              width: renderedTerminalSize.width + TERMINAL_STAGE_BORDER_SIZE,
+            }}
+          >
             <div
               className="recordings-terminal"
               ref={terminalRootRef}
               style={{
                 background: replayTheme.background,
+                height: terminalSize.height,
+                transform: `scale(${displayScale})`,
+                transformOrigin: 'top left',
+                width: terminalSize.width,
               }}
             />
           </div>
         </div>
-        <footer className="recordings-controls">
-          <button type="button" className="recordings-primary-button" onClick={onTogglePlay} disabled={!loadedCast || !parsedCast}>
-            {isPlaying ? <Pause size={16} /> : <Play size={16} />}
-            {isPlaying ? 'Pause' : 'Play'}
-          </button>
-          <button type="button" className="recordings-icon-button" onClick={onRestart} disabled={!parsedCast} aria-label="Restart replay">
-            <RotateCcw size={16} />
-          </button>
-          <span className="recordings-time">
-            {formatPlaybackTime(playhead)} / {formatPlaybackTime(parsedCast?.duration ?? 0)}
-          </span>
-          <input
-            className="recordings-range"
-            type="range"
-            min={0}
-            max={parsedCast?.duration ?? 0}
-            step={0.1}
-            value={Math.min(playhead, parsedCast?.duration ?? 0)}
-            onChange={(event) => onScrub(Number(event.target.value))}
-            disabled={!parsedCast}
-          />
-          <fieldset className="recordings-zoom-controls" aria-label="Replay zoom controls">
-            <button
-              type="button"
-              className="recordings-icon-button"
-              onClick={() => updateCustomScale(displayScaleRef.current - SCALE_STEP)}
+        <footer className="recordings-controls-container">
+          <div
+            className="recordings-timeline"
+            style={
+              {
+                '--progress': `${parsedCast?.duration ? (Math.min(playhead, parsedCast.duration) / parsedCast.duration) * 100 : 0}%`,
+              } as React.CSSProperties
+            }
+          >
+            <input
+              className="recordings-range"
+              type="range"
+              min={0}
+              max={parsedCast?.duration ?? 0}
+              step={0.1}
+              value={Math.min(playhead, parsedCast?.duration ?? 0)}
+              onChange={(event) => onScrub(Number(event.target.value))}
               disabled={!parsedCast}
-              aria-label="Zoom out"
-              title="Zoom out"
-            >
-              <Minus size={15} />
-            </button>
-            <button
-              type="button"
-              className={`recordings-scale-button${scaleMode === 'fit' ? ' recordings-scale-button--active' : ''}`}
-              onClick={() => setScaleMode('fit')}
-              disabled={!parsedCast}
-              title="Fit whole terminal"
-            >
-              <Maximize2 size={14} />
-              Fit
-            </button>
-            <button
-              type="button"
-              className={`recordings-scale-button${scaleMode === 'actual' ? ' recordings-scale-button--active' : ''}`}
-              onClick={() => setScaleMode('actual')}
-              disabled={!parsedCast}
-              title="Actual terminal size"
-            >
-              {Math.round(displayScale * 100)}%
-            </button>
-            <button
-              type="button"
-              className="recordings-icon-button"
-              onClick={() => updateCustomScale(displayScaleRef.current + SCALE_STEP)}
-              disabled={!parsedCast}
-              aria-label="Zoom in"
-              title="Zoom in"
-            >
-              <Plus size={15} />
-            </button>
-          </fieldset>
-          <fieldset className="recordings-theme-controls" aria-label="Replay theme controls">
-            <button
-              type="button"
-              className={`recordings-scale-button${replayThemeMode === 'recorded' ? ' recordings-scale-button--active' : ''}`}
-              onClick={() => setThemeMode('recorded')}
-              disabled={!parsedCast || !canUseRecordedTheme}
-              title={canUseRecordedTheme ? 'Use the theme saved with this recording' : 'This recording has no saved theme'}
-            >
-              Recorded
-            </button>
-            <button
-              type="button"
-              className={`recordings-scale-button${replayThemeMode === 'current' ? ' recordings-scale-button--active' : ''}`}
-              onClick={() => setThemeMode('current')}
-              disabled={!parsedCast}
-              title="Use your current settings theme"
-            >
-              Current
-            </button>
-          </fieldset>
-          <select className="recordings-speed" value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
-            <option value={0.5}>0.5x</option>
-            <option value={1}>1x</option>
-            <option value={1.5}>1.5x</option>
-            <option value={2}>2x</option>
-            <option value={4}>4x</option>
-          </select>
+            />
+          </div>
+          <div className="recordings-controls">
+            <div className="recordings-controls-left">
+              <button
+                type="button"
+                className="recordings-control-button"
+                onClick={onTogglePlay}
+                disabled={!loadedCast || !parsedCast}
+                aria-label={isPlaying ? 'Pause replay' : 'Play replay'}
+                title={isPlaying ? 'Pause' : 'Play'}
+              >
+                {isPlaying ? <Pause size={20} fill="currentColor" color="currentColor" /> : <Play size={20} className="recordings-play-icon" fill="currentColor" color="currentColor" />}
+              </button>
+              <button type="button" className="recordings-control-button" onClick={onRestart} disabled={!parsedCast} aria-label="Restart replay" title="Restart">
+                <RotateCcw size={16} />
+              </button>
+              <div className="recordings-time">
+                {formatPlaybackTime(playhead)} / {formatPlaybackTime(parsedCast?.duration ?? 0)}
+              </div>
+            </div>
+
+            <div className="recordings-controls-right">
+              <SelectDropup
+                allowManualInput
+                ariaLabel="Replay zoom"
+                className="recordings-select--zoom"
+                disabled={!parsedCast}
+                displayValue={scaleMode === 'fit' ? 'Fit' : formatZoomScale(displayScale)}
+                inputMode="decimal"
+                menuLabel="Zoom presets"
+                onChange={onZoomPresetChange}
+                onManualInputCommit={onZoomManualInputCommit}
+                options={ZOOM_PRESETS}
+                value={zoomValue}
+              />
+              <SelectDropup
+                ariaLabel="Replay palette"
+                className="recordings-select--palette"
+                disabled={!parsedCast}
+                icon={<Palette size={15} />}
+                menuLabel="Palette choices"
+                onChange={(value) => setThemeMode(value as ReplayThemeMode)}
+                options={paletteOptions}
+                value={replayThemeMode}
+              />
+              <SelectDropup
+                ariaLabel="Playback speed"
+                className="recordings-select--speed"
+                disabled={!parsedCast}
+                menuLabel="Speed choices"
+                onChange={(value) => setSpeed(Number(value))}
+                options={[
+                  { label: '0.5x', value: '0.5' },
+                  { label: '1x', value: '1' },
+                  { label: '1.5x', value: '1.5' },
+                  { label: '2x', value: '2' },
+                  { label: '4x', value: '4' },
+                ]}
+                value={String(speed)}
+                displayValue={`${speed}x`}
+              />
+            </div>
+          </div>
         </footer>
       </main>
     </div>
