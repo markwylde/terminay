@@ -6,6 +6,9 @@ declare global {
   interface Window {
     terminay: TerminayApi
     terminayTest?: TerminayTestApi
+    __TERMINAY_REMOTE_WEBRTC__?: {
+      managerUrl?: string
+    }
   }
 }
 

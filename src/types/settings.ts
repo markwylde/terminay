@@ -42,6 +42,7 @@ export type RemoteAccessSettings = {
 	origin: string;
 	pairingMode: 'lan' | 'webrtc';
 	pairingPinHash: string;
+	reconnectGrantLifetime?: '1h' | '24h' | '7d' | 'until-revoked';
 	tlsCertPath: string;
 	tlsKeyPath: string;
 	webRtcHostedDomain: string;
