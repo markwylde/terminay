@@ -236,7 +236,9 @@ test('manages remote access from the settings window host section', async ({ app
 
   await settingsWindow.getByRole('button', { name: 'Pair Device' }).click()
 
-  await expect(settingsWindow.getByText('Paired Devices')).toBeVisible()
+  await expect(settingsWindow.getByText('Trusted Browsers')).toBeVisible()
+  await expect(settingsWindow.getByText('Saved reconnect', { exact: true })).toBeVisible()
+  await expect(settingsWindow.getByText('Needs cleanup', { exact: true })).toBeVisible()
   await expect(settingsWindow.getByAltText('Remote pairing QR code')).toBeVisible()
   await expect(settingsWindow.getByText('No paired browsers yet.')).toBeVisible()
   await expect(settingsWindow.getByText('No live remote connections.')).toBeVisible()
