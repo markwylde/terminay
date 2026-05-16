@@ -72,10 +72,14 @@ test('starts remote access from the host menu and shows a pairing qr modal', asy
   await expect(pairingDialog).toBeVisible()
   await expect(pairingDialog.getByRole('heading', { name: 'Pair Device' })).toBeVisible()
   await expect(pairingDialog.getByAltText('Remote pairing QR code')).toBeVisible()
-  await expect(pairingDialog.getByText('Open this address in your browser')).toBeVisible()
-  await expect(pairingDialog.getByText(/^Expires /)).toBeVisible()
+  await expect(
+    pairingDialog.getByText('Scan this QR code from your phone or browser to pair it with this Terminay host.'),
+  ).toBeVisible()
+  await expect(pairingDialog.getByRole('button', { name: 'Local Network' })).toBeVisible()
+  await expect(pairingDialog.getByRole('button', { name: 'WebRTC Relay' })).toBeVisible()
+  await expect(pairingDialog.getByRole('button', { name: 'Copy Link' })).toBeVisible()
 
-  await pairingDialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await pairingDialog.getByRole('button', { name: 'Close Pair Device' }).click()
   await expect(pairingDialog).toHaveCount(0)
 
   await openRemoteMenu(mainWindow)
@@ -100,12 +104,40 @@ test('asks for a WebRTC pairing PIN before generating the QR code', async ({ mai
   const pairingDialog = mainWindow.getByRole('dialog', { name: 'Pair device' })
   await expect(pairingDialog).toBeVisible()
   await expect(pairingDialog.getByAltText('Remote pairing QR code')).toBeVisible()
+  const pairingDialogMetrics = await pairingDialog.evaluate((dialog) => {
+    const rect = dialog.getBoundingClientRect()
+    const copyButton = dialog.querySelector('.remote-pairing-modal__copy-btn')
+    const copyButtonRect = copyButton?.getBoundingClientRect()
+    const closeButton = dialog.querySelector('button.project-edit-modal-close')
+    const closeButtonRect = closeButton?.getBoundingClientRect()
+    const toggle = dialog.querySelector('.remote-pairing-modal__toggle')
+    const toggleRect = toggle?.getBoundingClientRect()
+    const style = window.getComputedStyle(dialog)
+
+    return {
+      bottom: rect.bottom,
+      closeButtonBottom: closeButtonRect?.bottom ?? 0,
+      closeButtonRight: closeButtonRect?.right ?? 0,
+      copyButtonRight: copyButtonRect?.right ?? 0,
+      overflowY: style.overflowY,
+      right: rect.right,
+      toggleRight: toggleRect?.right ?? 0,
+      viewportHeight: window.innerHeight,
+    }
+  })
+
+  expect(pairingDialogMetrics.overflowY).toBe('auto')
+  expect(pairingDialogMetrics.bottom).toBeLessThanOrEqual(pairingDialogMetrics.viewportHeight)
+  expect(pairingDialogMetrics.closeButtonBottom).toBeLessThanOrEqual(pairingDialogMetrics.viewportHeight)
+  expect(pairingDialogMetrics.closeButtonRight).toBeLessThanOrEqual(pairingDialogMetrics.right)
+  expect(pairingDialogMetrics.copyButtonRight).toBeLessThanOrEqual(pairingDialogMetrics.right)
+  expect(pairingDialogMetrics.toggleRight).toBeLessThanOrEqual(pairingDialogMetrics.right)
 
   const settings = await mainWindow.evaluate(() => window.terminay.getTerminalSettings())
   expect(settings.remoteAccess.pairingPinHash).toMatch(/^scrypt-v1:/)
   expect(settings.remoteAccess.pairingPinHash).not.toContain('123456')
 
-  await pairingDialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await pairingDialog.getByRole('button', { name: 'Close Pair Device' }).click()
   await expect(pairingDialog).toHaveCount(0)
 
   await openRemoteMenu(mainWindow)
@@ -117,7 +149,7 @@ test('asks for a WebRTC pairing PIN before generating the QR code', async ({ mai
   await expect(secondPairingDialog).toBeVisible()
   await expect(mainWindow.getByRole('dialog', { name: 'Remote Pairing PIN' })).toHaveCount(0)
 
-  await secondPairingDialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await secondPairingDialog.getByRole('button', { name: 'Close Pair Device' }).click()
   await openRemoteMenu(mainWindow)
   await mainWindow.getByRole('button', { name: 'Stop Server' }).click()
 })
@@ -178,7 +210,10 @@ test('rejects pairing when the configured PIN is wrong', async ({ mainWindow }) 
   expect(response.status).toBe(400)
   expect(response.body.error).toBe('The pairing PIN is incorrect.')
 
-  await mainWindow.getByRole('dialog', { name: 'Pair device' }).getByRole('button', { name: 'Close', exact: true }).click()
+  await mainWindow
+    .getByRole('dialog', { name: 'Pair device' })
+    .getByRole('button', { name: 'Close Pair Device' })
+    .click()
   await openRemoteMenu(mainWindow)
   await mainWindow.getByRole('button', { name: 'Stop Server' }).click()
 })
