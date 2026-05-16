@@ -56,6 +56,41 @@ test('persists settings edits across reopening the settings window', async ({ ap
   await expect(remoteOriginInput(secondWindow)).toHaveValue(updatedOrigin)
 })
 
+test('shows recording settings and saves recording defaults', async ({ appHarness, mainWindow, tempDir }) => {
+  const recordingDir = `${tempDir}/settings-recordings`
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'recording-defaults' })
+
+  await expect(settingsWindow.getByRole('heading', { name: 'Session Recording' })).toBeVisible()
+  await expect(settingsWindow.getByRole('button', { name: /Recording/ })).toBeVisible()
+
+  await settingsWindow.getByLabel('Record new terminals').check()
+  await settingsWindow
+    .locator('#section-recording-defaults .settings-row')
+    .filter({ hasText: 'Recording directory' })
+    .locator('input')
+    .fill(recordingDir)
+  await settingsWindow.getByLabel('Capture input').check()
+  await settingsWindow
+    .locator('#section-recording-defaults .settings-row')
+    .filter({ hasText: 'Sensitive input' })
+    .locator('select')
+    .selectOption('mask')
+  await settingsWindow.getByLabel('Open timeline after saving').check()
+  await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+
+  const savedRecordingSettings = await mainWindow.evaluate(async () => {
+    return (await window.terminay.getTerminalSettings()).recording
+  })
+
+  expect(savedRecordingSettings).toMatchObject({
+    captureInput: true,
+    directory: recordingDir,
+    openTimelineAfterSaving: true,
+    recordNewTerminals: true,
+    sensitiveInputPolicy: 'mask',
+  })
+})
+
 test('keeps the active terminal visible after changing settings and closing settings', async ({
   appHarness,
   mainWindow,

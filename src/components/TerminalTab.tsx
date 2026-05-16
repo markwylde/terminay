@@ -48,6 +48,8 @@ export type TerminalTabMoveProject = {
 export type TerminalPanelParams = {
   sessionId: string
   activityIndicatorsEnabled?: boolean
+  recordingError?: string | null
+  recordingStatus?: 'failed' | 'idle' | 'recording'
   terminalActivityState?: TerminalActivityState
   color?: string
   emoji?: string
@@ -58,6 +60,8 @@ export type TerminalPanelParams = {
   onClearMacroRun?: (runId: string) => void
   macroRuns?: TerminalTabMacroRun[]
   onMoveToProject?: (projectId: string) => void
+  onStartRecording?: () => void
+  onStopRecording?: () => void
   registerTerminalContextReader?: (sessionId: string, reader: TerminalContextReader) => () => void
   onUpdateNote?: (note: string | undefined) => void
   projectsForMove?: TerminalTabMoveProject[]
@@ -72,6 +76,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
   const title = props.api.title
   const params = props.params
   const { color, emoji, macroRuns = [], onCancelMacroRun, onClearFinishedMacroRuns, onClearMacroRun } = params || {}
+  const recordingStatus = params?.recordingStatus ?? 'idle'
   const terminalActivityState = params?.terminalActivityState ?? 'viewed'
   const displayedActivityState = params?.activityIndicatorsEnabled === false ? 'viewed' : terminalActivityState
   const isFocused = params?.isFocused === true
@@ -283,6 +288,19 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
       },
     },
     {
+      label: recordingStatus === 'recording' ? 'Stop Recording' : 'Start Recording',
+      icon: recordingStatus === 'recording' ? <XCircle size={14} /> : <Circle size={14} />,
+      disabled: recordingStatus === 'failed',
+      onClick: () => {
+        if (recordingStatus === 'recording') {
+          params?.onStopRecording?.()
+          return
+        }
+
+        params?.onStartRecording?.()
+      },
+    },
+    {
       label: hasTerminalNote ? 'Remove Note' : 'Add Note',
       icon: <FileEdit size={14} />,
       onClick: () => {
@@ -375,6 +393,15 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
       </button>
     </div>
   ) : null
+  const recordingIndicator =
+    recordingStatus === 'idle' ? null : (
+      <span
+        className={`terminal-tab-recording-indicator terminal-tab-recording-indicator--${recordingStatus}`}
+        title={recordingStatus === 'recording' ? 'Recording terminal session' : params?.recordingError ?? 'Recording failed'}
+        role="img"
+        aria-label={recordingStatus === 'recording' ? 'Recording terminal session' : 'Recording failed'}
+      />
+    )
 
   return (
     <>
@@ -392,7 +419,12 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
         closeAriaLabel="Close terminal"
         onClose={onClose}
         leading={emoji ? <span className="terminal-tab-emoji">{emoji}</span> : null}
-        afterTitle={macroTrigger}
+        afterTitle={
+          <>
+            {recordingIndicator}
+            {macroTrigger}
+          </>
+        }
       />
       {contextMenuPosition ? (
         <ContextMenu

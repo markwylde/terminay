@@ -22,6 +22,7 @@ import {
 	FileEdit,
 	FolderPlus,
 	FolderSync,
+	History,
 	Play,
 	PlusSquare,
 	Search,
@@ -71,6 +72,8 @@ import type {
 	FileExplorerGitStatus,
 	FileSearchResult,
 	RemoteAccessStatus,
+	TerminalRecordingStartMetadata,
+	TerminalRecordingState,
 } from './types/terminay';
 import type { FileViewerMode } from './types/fileViewer';
 import './App.css';
@@ -128,6 +131,8 @@ type MovedTerminalTab = {
 	emoji?: string;
 	inheritsProjectColor?: boolean;
 	macroRuns?: TerminalTabMacroRun[];
+	recordingError?: string | null;
+	recordingStatus?: 'failed' | 'idle' | 'recording';
 	sessionId: string;
 	terminalActivityState?: TerminalActivityState;
 	terminalNote?: string;
@@ -1517,6 +1522,91 @@ const ProjectWorkspace = forwardRef<
 		return null;
 	}, []);
 
+	const getRecordingStartMetadataForSession = useCallback(
+		(sessionId: string): TerminalRecordingStartMetadata => {
+			const panel = getPanelForSession(sessionId);
+			const params = panel?.params as TerminalPanelParams | undefined;
+			const title =
+				typeof panel?.title === 'string' && panel.title.trim().length > 0
+					? panel.title
+					: 'Terminal';
+
+			return {
+				color: typeof params?.color === 'string' ? params.color : project.color,
+				emoji: typeof params?.emoji === 'string' ? params.emoji : '',
+				inheritsProjectColor: params?.inheritsProjectColor === true,
+				projectColor: project.color,
+				projectEmoji: project.emoji,
+				projectId: project.id,
+				projectTitle: project.title,
+				title,
+			};
+		},
+		[
+			getPanelForSession,
+			project.color,
+			project.emoji,
+			project.id,
+			project.title,
+		],
+	);
+
+	const applyTerminalRecordingState = useCallback(
+		(state: TerminalRecordingState) => {
+			const panel = getPanelForSession(state.sessionId);
+			if (!panel) {
+				return;
+			}
+
+			panel.api.updateParameters({
+				recordingError: state.errorMessage,
+				recordingStatus: state.status,
+			});
+		},
+		[getPanelForSession],
+	);
+
+	const startRecordingForSession = useCallback(
+		async (sessionId: string) => {
+			try {
+				applyTerminalRecordingState(
+					await window.terminay.startTerminalRecording(
+						sessionId,
+						getRecordingStartMetadataForSession(sessionId),
+					),
+				);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setErrorText(`Unable to start recording: ${message}`);
+			}
+		},
+		[applyTerminalRecordingState, getRecordingStartMetadataForSession],
+	);
+
+	const stopRecordingForSession = useCallback(
+		async (sessionId: string) => {
+			try {
+				applyTerminalRecordingState(
+					await window.terminay.stopTerminalRecording(sessionId),
+				);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setErrorText(`Unable to stop recording: ${message}`);
+			}
+		},
+		[applyTerminalRecordingState],
+	);
+
+	const hydrateRecordingStateForSession = useCallback(
+		(sessionId: string) => {
+			void window.terminay.getTerminalRecordingState(sessionId).then(
+				applyTerminalRecordingState,
+				() => {},
+			);
+		},
+		[applyTerminalRecordingState],
+	);
+
 	const getActivityOverviewItems =
 		useCallback((): TerminalActivityOverviewItem[] => {
 			const api = dockviewApiRef.current;
@@ -2261,6 +2351,9 @@ const ProjectWorkspace = forwardRef<
 						onCancelMacroRun: cancelMacroRun,
 						onMoveToProject: (targetProjectId: string) =>
 							onMoveTerminalToProject(project.id, panelId, targetProjectId),
+						onStartRecording: () => void startRecordingForSession(sessionId),
+						onStopRecording: () => void stopRecordingForSession(sessionId),
+						recordingStatus: 'idle',
 						registerTerminalContextReader,
 						onUpdateNote: (terminalNote: string | undefined) =>
 							dockviewApiRef.current
@@ -2284,6 +2377,11 @@ const ProjectWorkspace = forwardRef<
 					projectEmoji: project.emoji,
 					projectColor: project.color,
 				});
+				if (settings.recording.recordNewTerminals) {
+					void startRecordingForSession(sessionId);
+				} else {
+					hydrateRecordingStateForSession(sessionId);
+				}
 				window.requestAnimationFrame(publishTerminalActivityOverview);
 			} catch (error) {
 				setErrorText(`Failed to open terminal: ${String(error)}`);
@@ -2301,6 +2399,10 @@ const ProjectWorkspace = forwardRef<
 			project.color,
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
+			hydrateRecordingStateForSession,
+			settings.recording.recordNewTerminals,
+			startRecordingForSession,
+			stopRecordingForSession,
 			suppressInitialTerminalActivity,
 		],
 	);
@@ -2720,6 +2822,7 @@ const ProjectWorkspace = forwardRef<
 				projectTitle: project.title,
 				projectEmoji: project.emoji,
 				projectColor: project.color,
+				title: panel?.title ?? 'Terminal',
 			});
 		}
 		window.requestAnimationFrame(publishTerminalActivityOverview);
@@ -3203,6 +3306,9 @@ const ProjectWorkspace = forwardRef<
 						onCancelMacroRun: cancelMacroRun,
 						onMoveToProject: (targetProjectId: string) =>
 							onMoveTerminalToProject(project.id, panelId, targetProjectId),
+						onStartRecording: () => void startRecordingForSession(sessionId),
+						onStopRecording: () => void stopRecordingForSession(sessionId),
+						recordingStatus: 'idle',
 						registerTerminalContextReader,
 						onUpdateNote: (terminalNote: string | undefined) =>
 							dockviewApiRef.current
@@ -3238,6 +3344,11 @@ const ProjectWorkspace = forwardRef<
 					projectEmoji: project.emoji,
 					projectColor: project.color,
 				});
+				if (settings.recording.recordNewTerminals) {
+					void startRecordingForSession(sessionId);
+				} else {
+					hydrateRecordingStateForSession(sessionId);
+				}
 				panel.api.setActive();
 				setFocusedSessionId(sessionId);
 				setErrorText(null);
@@ -3259,6 +3370,10 @@ const ProjectWorkspace = forwardRef<
 			project.color,
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
+			hydrateRecordingStateForSession,
+			settings.recording.recordNewTerminals,
+			startRecordingForSession,
+			stopRecordingForSession,
 			suppressInitialTerminalActivity,
 		],
 	);
@@ -3278,6 +3393,8 @@ const ProjectWorkspace = forwardRef<
 				emoji: panel.params?.emoji,
 				inheritsProjectColor: panel.params?.inheritsProjectColor,
 				macroRuns: runningMacroRunsBySession[sessionId] ?? [],
+				recordingError: panel.params?.recordingError,
+				recordingStatus: panel.params?.recordingStatus,
 				sessionId,
 				terminalActivityState: panel.params?.terminalActivityState,
 				terminalNote: panel.params?.terminalNote,
@@ -3331,6 +3448,12 @@ const ProjectWorkspace = forwardRef<
 					onCancelMacroRun: cancelMacroRun,
 					onMoveToProject: (targetProjectId: string) =>
 						onMoveTerminalToProject(project.id, panelId, targetProjectId),
+					onStartRecording: () =>
+						void startRecordingForSession(movedTerminal.sessionId),
+					onStopRecording: () =>
+						void stopRecordingForSession(movedTerminal.sessionId),
+					recordingError: movedTerminal.recordingError,
+					recordingStatus: movedTerminal.recordingStatus ?? 'idle',
 					registerTerminalContextReader,
 					onUpdateNote: (terminalNote: string | undefined) =>
 						dockviewApiRef.current
@@ -3361,6 +3484,7 @@ const ProjectWorkspace = forwardRef<
 				projectEmoji: project.emoji,
 				projectColor: project.color,
 			});
+			hydrateRecordingStateForSession(movedTerminal.sessionId);
 			panel.api.setActive();
 			setFocusedSessionId(movedTerminal.sessionId);
 			setErrorText(null);
@@ -3379,6 +3503,9 @@ const ProjectWorkspace = forwardRef<
 			project.title,
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
+			hydrateRecordingStateForSession,
+			startRecordingForSession,
+			stopRecordingForSession,
 			syncPanelFocusState,
 		],
 	);
@@ -3468,6 +3595,22 @@ const ProjectWorkspace = forwardRef<
 				searchText: 'edit tab settings rename emoji color file folder terminal',
 				onSelect: () => {
 					openActiveTerminalSettings();
+				},
+			},
+			{
+				group: 'Workspace',
+				icon: <History size={18} strokeWidth={2.1} />,
+				id: 'open-recordings',
+				title: 'Open recordings timeline',
+				description: 'Browse and replay saved terminal recordings.',
+				searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'open-recordings',
+					isMac,
+				),
+				onSelect: () => {
+					void window.terminay.openRecordingsWindow();
 				},
 			},
 			{
@@ -3661,6 +3804,9 @@ const ProjectWorkspace = forwardRef<
 					setIsMacroLauncherOpen(true);
 					setMacroToRun(null);
 					setMacroFieldValues({});
+					break;
+				case 'open-recordings':
+					void window.terminay.openRecordingsWindow();
 					break;
 				case 'set-project-root-folder-to-working-directory':
 					void setProjectRootFolderToWorkingDirectory();
@@ -3917,6 +4063,12 @@ const ProjectWorkspace = forwardRef<
 			);
 		});
 	}, [applyTerminalActivityEvaluation, getPanelForSession]);
+
+	useEffect(() => {
+		return window.terminay.onTerminalRecordingChanged(({ state }) => {
+			applyTerminalRecordingState(state);
+		});
+	}, [applyTerminalRecordingState]);
 
 	useEffect(() => {
 		const onTerminalUserInput = (event: Event) => {

@@ -2,6 +2,7 @@ export type AppCommand =
   | 'new-terminal'
   | 'new-project'
   | 'save-active'
+  | 'open-recordings'
   | 'split-horizontal'
   | 'split-vertical'
   | 'popout-active'
@@ -214,6 +215,72 @@ export type TerminalRemoteSizeOverrideMessage =
       rows: number
     }
 
+export type TerminalRecordingState = {
+  bytesWritten: number
+  castPath: string | null
+  errorMessage: string | null
+  eventCount: number
+  metadataPath: string | null
+  recordingId: string | null
+  sessionId: string
+  startedAt: string | null
+  status: 'idle' | 'recording' | 'failed'
+}
+
+export type TerminalRecordingStartMetadata = {
+  color?: string
+  emoji?: string
+  inheritsProjectColor?: boolean
+  projectColor?: string
+  projectEmoji?: string
+  projectId?: string
+  projectTitle?: string
+  title?: string
+}
+
+export type TerminalRecordingMetadata = {
+  version: 1
+  bytesWritten: number
+  capturedInput: boolean
+  castPath: string
+  color: string | null
+  cols: number
+  cwd: string | null
+  durationMs: number | null
+  endedAt: string | null
+  errorMessage?: string | null
+  eventCount: number
+  exitCode: number | null
+  inputPolicy: 'none' | 'record-with-sensitive-filter'
+  projectColor: string | null
+  projectEmoji: string | null
+  projectId: string | null
+  projectTitle: string | null
+  recordingId: string
+  recordingState: 'recording' | 'stopped' | 'failed'
+  rows: number
+  sensitiveInputPolicy: 'drop' | 'mask'
+  sessionId: string
+  shell: string | null
+  startedAt: string
+  theme: import('./settings').TerminalThemeSettings | null
+  title: string
+}
+
+export type TerminalRecordingListItem = TerminalRecordingMetadata & {
+  metadataPath: string | null
+}
+
+export type TerminalRecordingCast = {
+  content: string
+  metadata: TerminalRecordingMetadata | null
+  path: string
+}
+
+export type TerminalRecordingChangeMessage = {
+  state: TerminalRecordingState
+}
+
 export type AppUpdateStatus = {
   checkedAt: string | null
   currentVersion: string
@@ -339,6 +406,13 @@ export interface TerminayApi {
     },
   ) => void
   getTerminalZoom: () => Promise<number>
+  getTerminalRecordingState: (id: string) => Promise<TerminalRecordingState>
+  startTerminalRecording: (id: string, metadata?: TerminalRecordingStartMetadata) => Promise<TerminalRecordingState>
+  stopTerminalRecording: (id: string) => Promise<TerminalRecordingState>
+  listTerminalRecordings: () => Promise<TerminalRecordingListItem[]>
+  readTerminalRecording: (castPath: string) => Promise<TerminalRecordingCast>
+  deleteTerminalRecording: (castPath: string) => Promise<void>
+  revealTerminalRecording: (castPath: string) => Promise<void>
   getTerminalSettings: () => Promise<import('./settings').TerminalSettings>
   updateTerminalSettings: (
     settings: import('./settings').TerminalSettings,
@@ -363,6 +437,7 @@ export interface TerminayApi {
   getEditWindowState: () => Promise<EditWindowState | null>
   submitEditWindowResult: (result: EditWindowResult) => Promise<void>
   openSettingsWindow: (options?: { sectionId?: string }) => Promise<void>
+  openRecordingsWindow: () => Promise<void>
   getRemoteAccessStatus: () => Promise<RemoteAccessStatus>
   toggleRemoteAccessServer: () => Promise<RemoteAccessStatus>
   revokeRemoteAccessDevice: (deviceId: string) => Promise<RemoteAccessStatus>
@@ -380,6 +455,7 @@ export interface TerminayApi {
   onRemoteAccessStatusChanged: (listener: (status: RemoteAccessStatus) => void) => () => void
   onTerminalZoomChanged: (listener: (message: TerminalZoomMessage) => void) => () => void
   onTerminalRemoteSizeOverrideChanged: (listener: (message: TerminalRemoteSizeOverrideMessage) => void) => () => void
+  onTerminalRecordingChanged: (listener: (message: TerminalRecordingChangeMessage) => void) => () => void
   onTerminalCopyRequested: (listener: () => void) => () => void
   onSettingsFocusSection: (listener: (message: { sectionId: string }) => void) => () => void
 }
