@@ -132,6 +132,7 @@ export type RemoteAccessStatus = {
     deviceId: string | null
     deviceName: string | null
     occurredAt: string
+    reason?: string
   }>
   connections: Array<{
     attachedSessionCount: number
@@ -165,7 +166,6 @@ export type RemoteAccessStatus = {
   webRtcPairingExpiresAt: string | null
   webRtcPairingQrCodeDataUrl: string | null
   webRtcPairingUrl: string | null
-  webRtcRelayJoinToken: string | null
   webRtcRoomId: string | null
   webRtcStatus: 'not-configured' | 'pairing-ready' | 'peer-handler-unavailable'
   webRtcStatusMessage: string | null
