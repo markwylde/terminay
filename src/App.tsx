@@ -5688,7 +5688,8 @@ function App() {
 
 			const hasPairingQr =
 				mode === 'webrtc'
-					? nextStatus?.webRtcPairingQrCodeDataUrl
+					? nextStatus?.webRtcPairingUrl ??
+						nextStatus?.webRtcPairingQrCodeDataUrl
 					: nextStatus?.lanPairingQrCodeDataUrl ??
 						nextStatus?.pairingQrCodeDataUrl;
 			if (hasPairingQr) {
@@ -5728,6 +5729,12 @@ function App() {
 		selectedRemotePairingMode === 'webrtc'
 			? remoteStatus?.webRtcPairingExpiresAt
 			: remoteStatus?.lanPairingExpiresAt ?? remoteStatus?.pairingExpiresAt;
+	const isSelectedWebRtcPairingReady =
+		selectedRemotePairingMode !== 'webrtc' ||
+		remoteStatus?.webRtcStatus === 'pairing-ready';
+	const visiblePairingQrCodeDataUrl = isSelectedWebRtcPairingReady
+		? selectedPairingQrCodeDataUrl
+		: null;
 	const webRtcPairingDisplayUrl = useMemo(() => {
 		if (!remoteStatus?.webRtcPairingUrl) return null;
 		try {
@@ -6395,12 +6402,12 @@ function App() {
 									</button>
 								))}
 							</div>
-							{selectedPairingQrCodeDataUrl ? (
+							{visiblePairingQrCodeDataUrl ? (
 								<div className="remote-pairing-modal__content">
 									<div className="remote-pairing-modal__qr-card">
 										<img
 											className="remote-pairing-modal__qr"
-											src={selectedPairingQrCodeDataUrl}
+											src={visiblePairingQrCodeDataUrl}
 											alt="Remote pairing QR code"
 										/>
 									</div>
@@ -6490,6 +6497,12 @@ function App() {
 										)}
 									</div>
 								</div>
+							) : selectedRemotePairingMode === 'webrtc' &&
+								selectedPairingUrl ? (
+								<p className="remote-pairing-modal__copy">
+									{remoteStatus?.webRtcStatusMessage ??
+										'WebRTC relay room is registering. Keep Terminay open while the browser connects.'}
+								</p>
 							) : (
 								<p className="remote-pairing-modal__copy">
 									Start the remote server first to generate a pairing QR code.
