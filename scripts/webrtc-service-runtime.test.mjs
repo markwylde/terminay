@@ -4,6 +4,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { build } from 'esbuild'
+import { constants, generateKeyPairSync, scryptSync, sign } from 'node:crypto'
 
 const { RemoteAccessService } = await importRemoteAccessService()
 
@@ -84,6 +85,101 @@ test('RemoteAccessService rotates WebRTC QR rooms without closing existing host 
   assert.equal(service.getStatus().webRtcStatus, 'pairing-ready')
   assert.equal(statuses.at(-1).webRtcRoomId, secondConfig.roomId)
 })
+
+test('RemoteAccessService requires the desktop PIN before issuing a WebRTC terminal ticket', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-webrtc-auth-test-'))
+  const pairingPin = '123456'
+  const service = createTestService({
+    pairingPinHash: createTestPairingPinHash(pairingPin),
+    tempDir,
+  })
+  const appOrigin = 'https://session123.remote.example.com'
+  const deviceOrigin = `${appOrigin}#transport=webrtc:${appOrigin}`
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { format: 'pem', type: 'pkcs8' },
+    publicKeyEncoding: { format: 'pem', type: 'spki' },
+  })
+  const device = await service.deviceStore.create({
+    name: 'Test browser',
+    origin: deviceOrigin,
+    publicKeyPem: publicKey,
+  })
+
+  await assert.rejects(
+    verifyWebRtcAuth({ appOrigin, deviceId: device.id, pairingPin: '', privateKey, service }),
+    /Remote PIN was missing or incorrect/,
+  )
+  await assert.rejects(
+    verifyWebRtcAuth({ appOrigin, deviceId: device.id, pairingPin: '000000', privateKey, service }),
+    /Remote PIN was missing or incorrect/,
+  )
+
+  const verified = await verifyWebRtcAuth({
+    appOrigin,
+    deviceId: device.id,
+    pairingPin,
+    privateKey,
+    service,
+  })
+  assert.equal(typeof verified.ticket, 'string')
+  assert.ok(verified.ticket.length > 0)
+})
+
+function createTestService({ pairingPinHash, tempDir }) {
+  return new RemoteAccessService({
+    app: {
+      getPath: () => tempDir,
+    },
+    createWebRtcHostWindow: () => ({
+      close() {},
+      closeTerminal() {},
+      sendConfig() {},
+      sendSignalMessage() {},
+      sendTerminalMessage() {},
+      webContentsId: 1,
+    }),
+    getControllableSession: () => null,
+    getRemoteAccessSettings: () => ({
+      bindAddress: '127.0.0.1',
+      origin: 'https://127.0.0.1:9443',
+      pairingMode: 'webrtc',
+      pairingPinHash,
+      reconnectGrantLifetime: '24h',
+      tlsCertPath: '',
+      tlsKeyPath: '',
+      webRtcHostedDomain: 'remote.example.com',
+      webRtcIceServers: '',
+    }),
+    notifyTerminalRemoteSizeOverride: () => {},
+    onStatusChanged: () => {},
+    publicDir: tempDir,
+    rendererDistDir: tempDir,
+    saveGeneratedTlsPaths: () => {},
+  })
+}
+
+async function verifyWebRtcAuth({ appOrigin, deviceId, pairingPin, privateKey, service }) {
+  const options = await service.handleWebRtcApiRequest('/api/auth/options', { deviceId }, appOrigin)
+  const deviceSignature = sign('sha256', Buffer.from(options.signingInput), {
+    key: privateKey,
+    padding: constants.RSA_PKCS1_PSS_PADDING,
+    saltLength: 32,
+  }).toString('base64url')
+
+  return service.handleWebRtcApiRequest('/api/auth/verify', {
+    challengeId: options.deviceChallenge.challengeId,
+    deviceId,
+    deviceSignature,
+    pairingPin,
+  }, appOrigin)
+}
+
+function createTestPairingPinHash(pin) {
+  const salt = 'terminay-test-salt'
+  const key = scryptSync(pin, salt, 32).toString('base64url')
+  return `scrypt-v1:${salt}:${key}`
+}
 
 async function importRemoteAccessService() {
   const tempDir = await mkdtemp(join(tmpdir(), 'terminay-remote-service-test-'))

@@ -60,9 +60,15 @@ const THEMES = {
 }
 
 const PAIRING_QUERY_KEYS = ['pairingSessionId', 'pairingToken', 'pairingExpiresAt'] as const
+const PAIRING_PIN_COOKIE_NAME = '__Host-terminay_pin'
+const PAIRING_PIN_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 const UNPAIRED_AUTH_ERROR_MESSAGES = new Set([
   'This device is not paired with this host.',
   'This device is paired with a different origin.',
+])
+const PIN_AUTH_ERROR_MESSAGES = new Set([
+  'Remote PIN was missing or incorrect.',
+  'Pairing failed. Check the PIN and try a fresh QR code.',
 ])
 
 function getInitialPairingInput(): string {
@@ -129,6 +135,67 @@ function formatReconnectExpiry(expiresAt: string | null): string {
 
 function isUnpairedAuthError(error: unknown): boolean {
   return error instanceof Error && UNPAIRED_AUTH_ERROR_MESSAGES.has(error.message)
+}
+
+function isPinAuthError(error: unknown): boolean {
+  return error instanceof Error && PIN_AUTH_ERROR_MESSAGES.has(error.message)
+}
+
+function isSixDigitPin(value: string): boolean {
+  return /^\d{6}$/.test(value)
+}
+
+function readPairingPinCookie(): string {
+  const prefix = `${PAIRING_PIN_COOKIE_NAME}=`
+  const encoded = document.cookie
+    .split(';')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith(prefix))
+    ?.slice(prefix.length)
+  if (!encoded) return ''
+
+  try {
+    const value = decodeURIComponent(encoded)
+    return isSixDigitPin(value) ? value : ''
+  } catch {
+    return ''
+  }
+}
+
+function writePairingPinCookie(pin: string): void {
+  if (!isSixDigitPin(pin)) return
+  // biome-ignore lint/suspicious/noDocumentCookie: the spec requires a host-only cookie for session-subdomain PIN reuse.
+  document.cookie = `${PAIRING_PIN_COOKIE_NAME}=${encodeURIComponent(pin)}; Max-Age=${PAIRING_PIN_COOKIE_MAX_AGE_SECONDS}; Path=/; SameSite=Strict; Secure`
+}
+
+function clearPairingPinCookie(): void {
+  // biome-ignore lint/suspicious/noDocumentCookie: the spec requires clearing the host-only PIN cookie when auth rejects it.
+  document.cookie = `${PAIRING_PIN_COOKIE_NAME}=; Max-Age=0; Path=/; SameSite=Strict; Secure`
+}
+
+function getManagerListUrl(managerUrl: string): string {
+  if (managerUrl) {
+    try {
+      const url = new URL(managerUrl)
+      url.pathname = '/'
+      url.search = ''
+      url.hash = ''
+      return url.toString()
+    } catch {
+      return managerUrl
+    }
+  }
+
+  if (window.location.hostname.toLowerCase().endsWith('.terminay.com')) {
+    const url = new URL(window.location.href)
+    url.hostname = 'app.terminay.com'
+    url.pathname = '/'
+    url.search = ''
+    url.hash = ''
+    return url.toString()
+  }
+
+  return ''
 }
 
 type AccessoryAction =
@@ -216,6 +283,7 @@ export function RemoteApp() {
   const [pairingPin, setPairingPin] = useState('')
   const [deviceName, setDeviceName] = useState(getDefaultDeviceName())
   const [pairingState, setPairingState] = useState<'checking' | 'needs-pairing' | 'paired'>('checking')
+  const [hasStoredPairing, setHasStoredPairing] = useState(false)
   const [statusText, setStatusText] = useState('Checking this browser…')
   const [errorText, setErrorText] = useState<string | null>(null)
   const [reconnectGrant, setReconnectGrant] = useState<ReconnectGrantUiState | null>(null)
@@ -237,6 +305,7 @@ export function RemoteApp() {
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const reconnectTimerRef = useRef<number | null>(null)
+  const pendingAuthPinRef = useRef('')
   const selectedSessionIdRef = useRef<string | null>(null)
   const sessionsRef = useRef<Record<string, SessionState>>({})
   const pendingCtrlRef = useRef(false)
@@ -504,14 +573,16 @@ export function RemoteApp() {
       try {
         if (hasPairingBootstrapInput(pairingInput)) {
           setReconnectGrant(null)
+          setHasStoredPairing(false)
           setPairingState('needs-pairing')
-          setStatusText('Pair this browser to your Terminay host.')
+          setStatusText('Enter the PIN shown in Terminay to pair this browser.')
           return
         }
 
         const pairing = await loadPairing(transportRuntime.pairingOrigin)
         if (!pairing) {
           setReconnectGrant(null)
+          setHasStoredPairing(false)
           setPairingState('needs-pairing')
           setStatusText('Pair this browser to your Terminay host.')
           return
@@ -523,11 +594,13 @@ export function RemoteApp() {
           sessionId: grant.sessionId,
           status: getReconnectGrantStatus(grant.expiresAt),
         } : null)
+        setHasStoredPairing(true)
         setDeviceName(pairing.deviceName)
         setPairingState('paired')
         setStatusText(`Paired as ${pairing.deviceName}.`)
       } catch (error) {
         setReconnectGrant(null)
+        setHasStoredPairing(false)
         setPairingState('needs-pairing')
         setErrorText(error instanceof Error ? error.message : 'Unable to initialize.')
       }
@@ -615,9 +688,15 @@ export function RemoteApp() {
         const authenticated = await authenticateDevice({
           api: transportRuntime.api,
           deviceId: pairing.deviceId,
+          pairingPin: pendingAuthPinRef.current || readPairingPinCookie() || undefined,
           privateKey: pairing.privateKey,
         })
         if (cancelled) return
+        if (pendingAuthPinRef.current) {
+          writePairingPinCookie(pendingAuthPinRef.current)
+          pendingAuthPinRef.current = ''
+          setPairingPin('')
+        }
         if (managerAction === 'revoke') {
           setStatusText('Revoking this browser in Terminay...')
           try {
@@ -630,11 +709,14 @@ export function RemoteApp() {
               removeReconnectGrant(transportRuntime.pairingOrigin),
               'caches' in window ? window.caches.delete('terminay-remote-app') : Promise.resolve(false),
             ])
+            clearPairingPinCookie()
+            pendingAuthPinRef.current = ''
             if (cancelled) return
             setSessions({})
             setSelectedSessionId(null)
             setActiveProjectId(null)
             setReconnectGrant(null)
+            setHasStoredPairing(false)
             setPairingState('needs-pairing')
             setConnectionState('idle')
             setStatusText('This browser was revoked. Scan a fresh QR code to pair again.')
@@ -660,14 +742,27 @@ export function RemoteApp() {
         setConnectionState('idle')
         if (isUnpairedAuthError(error)) {
           await removePairing(transportRuntime.pairingOrigin).catch(() => undefined)
+          clearPairingPinCookie()
+          pendingAuthPinRef.current = ''
           if (cancelled) return
           setSessions({})
           setSelectedSessionId(null)
           setActiveProjectId(null)
           setReconnectGrant(null)
+          setHasStoredPairing(false)
           setPairingState('needs-pairing')
           setStatusText('Pair this browser to your Terminay host.')
           setErrorText('This browser is no longer paired with this Terminay host. Enter the PIN to pair it again.')
+          return
+        }
+        if (isPinAuthError(error)) {
+          pendingAuthPinRef.current = ''
+          clearPairingPinCookie()
+          if (cancelled) return
+          setPairingPin('')
+          setPairingState('needs-pairing')
+          setStatusText('Enter the PIN shown in Terminay to reconnect this saved session.')
+          setErrorText('Enter the Terminay PIN to reconnect this saved session.')
           return
         }
 
@@ -723,6 +818,24 @@ export function RemoteApp() {
   async function handlePair(e: FormEvent) {
     e.preventDefault(); setErrorText(null)
     try {
+      if (!isSixDigitPin(pairingPin)) {
+        throw new Error('Enter the six-digit PIN shown in Terminay.')
+      }
+
+      if (!hasPairingBootstrapInput(pairingInput)) {
+        const existingPairing = await loadPairing(transportRuntime.pairingOrigin)
+        if (!existingPairing) {
+          throw new Error('Scan a fresh QR code to pair this browser.')
+        }
+        pendingAuthPinRef.current = pairingPin
+        setHasStoredPairing(true)
+        setPairingState('paired')
+        setConnectionState('connecting')
+        setStatusText(`Paired as ${existingPairing.deviceName}.`)
+        setReconnectNonce(n => n + 1)
+        return
+      }
+
       const bootstrap = parsePairingBootstrap(pairingInput)
       const keyPair = await generateDeviceKeyPair()
       const paired = await pairDevice({
@@ -732,6 +845,7 @@ export function RemoteApp() {
         pairingPin,
         publicKeyPem: keyPair.publicKeyPem,
       })
+      writePairingPinCookie(pairingPin)
       await savePairing({
         deviceId: paired.deviceId,
         deviceName: paired.deviceName,
@@ -750,19 +864,24 @@ export function RemoteApp() {
       } else {
         setReconnectGrant(null)
       }
+      setHasStoredPairing(true)
+      setPairingPin('')
       setPairingState('paired'); window.history.replaceState({}, document.title, window.location.pathname)
     } catch (err) { setErrorText(err instanceof Error ? err.message : 'Pairing failed.') }
   }
 
-  async function handleForget() {
+  async function handleDisconnect() {
     clearReconnectTimer(); socketRef.current?.close()
-    await Promise.all([
-      removePairing(transportRuntime.pairingOrigin),
-      removeReconnectGrant(transportRuntime.pairingOrigin),
-      'caches' in window ? window.caches.delete('terminay-remote-app') : Promise.resolve(false),
-    ])
-    localStorage.removeItem('terminay-remote-settings')
-    setSessions({}); setSelectedSessionId(null); setActiveProjectId(null); setReconnectGrant(null); setPairingState('needs-pairing'); setConnectionState('idle')
+    const listUrl = getManagerListUrl(managerUrl)
+    if (listUrl) {
+      window.location.assign(listUrl)
+      return
+    }
+
+    setSessions({})
+    setSelectedSessionId(null)
+    setActiveProjectId(null)
+    setConnectionState('idle')
   }
 
   const handleClear = () => { terminalRef.current?.clear(); terminalRef.current?.focus() }
@@ -895,6 +1014,7 @@ export function RemoteApp() {
     }
   }, [managerUrl, reconnectGrant])
   const reconnectGrantLabel = reconnectGrant ? formatReconnectExpiry(reconnectGrant.expiresAt) : 'Reconnect not saved'
+  const canSubmitPairingPin = pairingPin.length === 6 && (hasPairingBootstrapInput(pairingInput) || hasStoredPairing)
 
   const clearPointerPan = useCallback(() => {
     pointerPanStateRef.current = null
@@ -960,7 +1080,7 @@ export function RemoteApp() {
             <img className="pairing-mark" src="/terminay.svg" alt="" aria-hidden="true" />
             <p className="pairing-kicker">Terminay Remote</p>
             <h1>Enter PIN</h1>
-            <p className="status">{pairingInput ? statusText : 'Open the pairing link from Terminay to continue.'}</p>
+            <p className="status">{statusText}</p>
             <form className="pairing-form" onSubmit={handlePair}>
               <div className="pin-field">
                 <input
@@ -977,7 +1097,7 @@ export function RemoteApp() {
                   onChange={e => setPairingPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 />
               </div>
-              <button type="submit" className="pair-button" disabled={!pairingInput.trim() || pairingPin.length !== 6}>Pair Device</button>
+              <button type="submit" className="pair-button" disabled={!canSubmitPairingPin}>Pair Device</button>
             </form>
           </div>
         </div>
@@ -999,7 +1119,7 @@ export function RemoteApp() {
               {saveManagerUrl ? (
                 <a className="menu-item" href={saveManagerUrl}>Save to Manager</a>
               ) : null}
-              <div className="menu-item" onClick={handleForget}>Disconnect</div>
+              <div className="menu-item" onClick={handleDisconnect}>Disconnect</div>
             </div>
           </div>
 
