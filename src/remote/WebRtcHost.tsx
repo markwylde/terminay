@@ -18,6 +18,7 @@ type HostApi = {
   getConfig(): Promise<HostConfig | null>
   handleApiRequest(pathname: string, body: Record<string, unknown>, appOrigin: string): Promise<unknown>
   handleTerminalMessage(channelId: string, message: string): void
+  updateStatus?(message: { detail?: string; type: string }): void
   onTerminalCloseRequest(listener: (message: { channelId: string; reason?: string }) => void): () => void
   onConfig(listener: (config: HostConfig) => void): () => void
   onTerminalMessage(listener: (message: { channelId: string; message: string }) => void): () => void
@@ -263,7 +264,10 @@ export async function runHost(config: HostConfig): Promise<() => void> {
     void (async () => {
       const message = parseJson(event.data)
       if (!message) return
-      if (message.type === 'client-join') {
+      if (message.type === 'host-registered') {
+        api.updateStatus?.({ type: 'host-registered' })
+      } else if (message.type === 'client-join') {
+        api.updateStatus?.({ type: 'client-join' })
         const offer = await peer.createOffer()
         await peer.setLocalDescription(offer)
         const signedOffer = await signSignalMessage(signalingAuthKey, { roomId: config.roomId, sdp: offer, type: 'offer' })
@@ -276,8 +280,26 @@ export async function runHost(config: HostConfig): Promise<() => void> {
         rejectSignalReplay(message, seenSignalNonces)
         if (!await verifySignalMessage(signalingAuthKey, message)) return
         await peer.addIceCandidate(message.candidate as RTCIceCandidateInit)
+      } else if (message.type === 'error') {
+        api.updateStatus?.({
+          detail: typeof message.message === 'string' ? message.message : undefined,
+          type: 'error',
+        })
       }
-    })()
+    })().catch((error) => {
+      api.updateStatus?.({
+        detail: error instanceof Error ? error.message : 'WebRTC host signaling failed.',
+        type: 'error',
+      })
+    })
+  })
+
+  socket.addEventListener('error', () => {
+    api.updateStatus?.({ detail: 'Could not reach the WebRTC signaling relay.', type: 'error' })
+  })
+
+  socket.addEventListener('close', () => {
+    api.updateStatus?.({ type: 'closed' })
   })
 
   return () => {

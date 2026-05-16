@@ -2169,6 +2169,10 @@ ipcMain.on('remote-webrtc-host:terminal-close', (_event, payload: { channelId: s
   remoteAccessService.closeWebRtcTerminal(payload.channelId, payload.reason)
 })
 
+ipcMain.on('remote-webrtc-host:status', (event, payload: { detail?: string; type?: string }) => {
+  remoteAccessService.handleWebRtcHostStatus(event.sender.id, payload)
+})
+
 ipcMain.handle('remote:toggle-server', async () => {
   return remoteAccessService.toggle()
 })
