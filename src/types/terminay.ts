@@ -157,6 +157,9 @@ export type RemoteAccessStatus = {
     lastSeenAt: string | null
     name: string
     origin: string
+    reconnectGrantExpiresAt: string | null
+    reconnectGrantLastUsedAt: string | null
+    reconnectGrantStatus: 'none' | 'valid' | 'expired' | 'revoked'
   }>
   pairingMode: 'lan' | 'webrtc'
   pairingExpiresAt: string | null

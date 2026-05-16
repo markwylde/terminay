@@ -8,7 +8,7 @@ export async function pairDevice(options: {
   deviceName: string
   pairingPin: string
   publicKeyPem: string
-}): Promise<{ deviceId: string; deviceName: string }> {
+}): Promise<{ deviceId: string; deviceName: string; reconnectGrant?: import('./deviceKeys').IssuedReconnectGrant }> {
   const start = await options.api.postJson<{
     provisionalDeviceId: string
   }>('/api/pairing/start', {
@@ -43,5 +43,14 @@ export async function authenticateDevice(options: {
     challengeId: authOptions.deviceChallenge.challengeId,
     deviceId: options.deviceId,
     deviceSignature,
+  })
+}
+
+export async function revokeCurrentDevice(options: {
+  api: RemoteApiTransport
+  deviceId: string
+}): Promise<void> {
+  await options.api.postJson('/api/devices/revoke-current', {
+    deviceId: options.deviceId,
   })
 }
