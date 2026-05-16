@@ -106,7 +106,7 @@ async function createReconnectProofKey(grant: string): Promise<CryptoKey> {
       salt: new Uint8Array(),
     },
     grantKey,
-    { hash: 'SHA-256', name: 'HMAC' },
+    { hash: 'SHA-256', length: 256, name: 'HMAC' },
     false,
     ['sign', 'verify'],
   )
