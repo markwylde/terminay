@@ -16,12 +16,13 @@ const pinFailureBuckets = new Map<string, PinFailureBucket>();
 export function assertPairingPin(
 	settings: RemoteAccessSettings,
 	pin: string | undefined,
-	options: { requireConfigured?: boolean; now?: number } = {},
+	options: { failureMessage?: string; requireConfigured?: boolean; now?: number } = {},
 ): void {
 	const pinHash = settings.pairingPinHash.trim();
+	const failureMessage = options.failureMessage ?? PAIRING_PIN_FAILURE_MESSAGE;
 	if (!pinHash) {
 		if (options.requireConfigured) {
-			throw new Error(PAIRING_PIN_FAILURE_MESSAGE);
+			throw new Error(failureMessage);
 		}
 		return;
 	}
@@ -30,7 +31,7 @@ export function assertPairingPin(
 	enforcePinFailureLimit(pinHash, now);
 	if (!verifyPairingPin(pinHash, String(pin ?? ''))) {
 		recordPinFailure(pinHash, now);
-		throw new Error(PAIRING_PIN_FAILURE_MESSAGE);
+		throw new Error(failureMessage);
 	}
 	pinFailureBuckets.delete(pinHash);
 }
