@@ -1,94 +1,126 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { createHash, hkdfSync, randomBytes } from 'node:crypto';
 
 export type WebRtcPairingPayload = {
-  appOrigin: string
-  expiresAt: string
-  pairing: {
-    expiresAt: string
-    sessionId: string
-    token: string
-  }
-  pairingUrl: string
-  relayJoinToken: string
-  relayJoinTokenHash: string
-  roomId: string
-  signalingAuthToken: string
-  signalingUrl: string
-}
+	appOrigin: string;
+	assetInstallKey: string;
+	csrfSeed: string;
+	expiresAt: string;
+	pairing: {
+		expiresAt: string;
+		sessionId: string;
+		token: string;
+	};
+	pairingUrl: string;
+	protocolVersion: 'v1';
+	qrSecret: string;
+	relayJoinToken: string;
+	relayJoinTokenHash: string;
+	roomId: string;
+	signalingAuthToken: string;
+	signalingUrl: string;
+};
 
-const WEBRTC_PAIRING_TTL_MS = 10 * 60 * 1000
-const DEFAULT_WEBRTC_CONNECT_URL = 'https://app.terminay.com/connect'
+const WEBRTC_PAIRING_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_HOSTED_DOMAIN = 'terminay.com';
+const DERIVED_SECRET_BYTES = 32;
+const PROTOCOL_VERSION = 'v1';
 
-function normalizeConnectUrl(connectUrl: string): string {
-  const url = new URL(connectUrl.trim() || DEFAULT_WEBRTC_CONNECT_URL)
-  if (url.protocol !== 'https:') {
-    throw new Error('WebRTC connect URL must use https://')
-  }
-
-  url.search = ''
-  url.hash = ''
-  return url.toString()
-}
-
-function createSignalingUrl(connectUrl: string): string {
-  const url = new URL(connectUrl)
-  url.protocol = 'wss:'
-  url.pathname = '/signal'
-  url.search = ''
-  url.hash = ''
-  return url.toString()
-}
-
-function createAppOrigin(connectUrl: string): string {
-  return new URL(connectUrl).origin
-}
+type WebRtcPairingCreateOptions = {
+	hostedDomain?: string;
+};
 
 function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('base64url')
+	return createHash('sha256').update(token).digest('base64url');
+}
+
+function createDnsSafeChannelId(): string {
+	return randomBytes(16).toString('hex');
+}
+
+function normalizeHostedDomain(value: string): string {
+	const normalized = value
+		.trim()
+		.toLowerCase()
+		.replace(/^https?:\/\//, '')
+		.replace(/\/.*$/, '');
+	if (
+		!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
+			normalized,
+		)
+	) {
+		throw new Error('WebRTC hosted domain is invalid.');
+	}
+	return normalized;
+}
+
+function createChannelUrl(channelId: string, hostedDomain?: string): URL {
+	const domain = normalizeHostedDomain(hostedDomain ?? DEFAULT_HOSTED_DOMAIN);
+	return new URL(`https://${channelId}.${domain}/${PROTOCOL_VERSION}/`);
+}
+
+function createSignalingUrl(appOrigin: string): string {
+	const url = new URL(appOrigin);
+	url.protocol = 'wss:';
+	url.pathname = '/signal';
+	url.search = '';
+	url.hash = '';
+	return url.toString();
+}
+
+function deriveSecret(qrSecret: Buffer, label: string): string {
+	return Buffer.from(
+		hkdfSync('sha256', qrSecret, Buffer.alloc(0), label, DERIVED_SECRET_BYTES),
+	).toString('base64url');
+}
+
+function deriveProtocolSecret(qrSecret: Buffer, purpose: string): string {
+	return deriveSecret(qrSecret, `terminay remote ${PROTOCOL_VERSION} ${purpose}`);
 }
 
 export class WebRtcPairingManager {
-  create(connectUrl: string): WebRtcPairingPayload {
-    const sessionId = randomUUID()
-    const pairingToken = randomBytes(32).toString('base64url')
-    const relayJoinToken = randomBytes(32).toString('base64url')
-    const relayJoinTokenHash = hashToken(relayJoinToken)
-    const signalingAuthToken = randomBytes(32).toString('base64url')
-    const roomId = randomUUID()
-    const expiresAt = new Date(Date.now() + WEBRTC_PAIRING_TTL_MS).toISOString()
-    const normalizedConnectUrl = normalizeConnectUrl(connectUrl)
-    const url = new URL(normalizedConnectUrl)
-    const signalingUrl = createSignalingUrl(normalizedConnectUrl)
-    const appOrigin = createAppOrigin(normalizedConnectUrl)
+	create(options: WebRtcPairingCreateOptions = {}): WebRtcPairingPayload {
+		const roomId = createDnsSafeChannelId();
+		const qrSecretBytes = randomBytes(32);
+		const qrSecret = qrSecretBytes.toString('base64url');
+		const relayJoinToken = deriveProtocolSecret(qrSecretBytes, 'relay join');
+		const relayJoinTokenHash = hashToken(relayJoinToken);
+		const pairingToken = deriveProtocolSecret(qrSecretBytes, 'pairing');
+		const signalingAuthToken = deriveProtocolSecret(
+			qrSecretBytes,
+			'signaling hmac',
+		);
+		const assetInstallKey = deriveProtocolSecret(
+			qrSecretBytes,
+			'asset install',
+		);
+		const csrfSeed = deriveProtocolSecret(qrSecretBytes, 'csrf seed');
+		const expiresAt = new Date(
+			Date.now() + WEBRTC_PAIRING_TTL_MS,
+		).toISOString();
+		const url = createChannelUrl(roomId, options.hostedDomain);
+		const appOrigin = url.origin;
+		const signalingUrl = createSignalingUrl(appOrigin);
 
-    url.searchParams.set('mode', 'webrtc')
-    url.searchParams.set('v', '1')
-    url.searchParams.set('roomId', roomId)
-    if (signalingUrl !== 'wss://app.terminay.com/signal') {
-      url.searchParams.set('signalingUrl', signalingUrl)
-    }
-    const fragment = new URLSearchParams()
-    fragment.set('relayJoinToken', relayJoinToken)
-    fragment.set('pairingSessionId', sessionId)
-    fragment.set('pairingToken', pairingToken)
-    fragment.set('pairingExpiresAt', expiresAt)
-    fragment.set('signalingAuthToken', signalingAuthToken)
-    url.hash = fragment.toString()
+		url.hash = qrSecret;
 
-    return {
-      appOrigin,
-      expiresAt,
-      pairing: {
-        expiresAt,
-        sessionId,
-        token: pairingToken,
-      },
-      pairingUrl: url.toString(),
-      relayJoinToken,
-      relayJoinTokenHash,
-      roomId,
-      signalingAuthToken,
-      signalingUrl,
-    }
-  }
+		return {
+			appOrigin,
+			assetInstallKey,
+			csrfSeed,
+			expiresAt,
+			pairing: {
+				expiresAt,
+				sessionId: roomId,
+				token: pairingToken,
+			},
+			pairingUrl: url.toString(),
+			protocolVersion: PROTOCOL_VERSION,
+			qrSecret,
+			relayJoinToken,
+			relayJoinTokenHash,
+			roomId,
+			signalingAuthToken,
+			signalingUrl,
+		};
+	}
 }
