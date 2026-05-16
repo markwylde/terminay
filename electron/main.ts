@@ -159,18 +159,31 @@ const remoteAccessService = new RemoteAccessService({
     const hostWindow = new BrowserWindow({
       show: false,
       webPreferences: {
+        backgroundThrottling: false,
         contextIsolation: true,
         nodeIntegration: false,
         preload: preloadPath,
       },
     })
-    if (VITE_DEV_SERVER_URL) {
-      void hostWindow.loadURL(`${VITE_DEV_SERVER_URL}?view=webrtc-host`)
-    } else {
-      void hostWindow.loadFile(path.join(RENDERER_DIST, 'index.html'), {
-        query: { view: 'webrtc-host' },
-      })
+    let pendingConfig: unknown = null
+    let webRtcHostLoaded = false
+    const sendPendingConfig = () => {
+      if (hostWindow.isDestroyed() || !pendingConfig) return
+      hostWindow.webContents.send('remote-webrtc-host:config', pendingConfig)
     }
+    hostWindow.webContents.on('did-finish-load', () => {
+      webRtcHostLoaded = true
+      sendPendingConfig()
+    })
+    const loadPromise = VITE_DEV_SERVER_URL
+      ? hostWindow.loadURL(`${VITE_DEV_SERVER_URL}?view=webrtc-host`)
+      : hostWindow.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+          query: { view: 'webrtc-host' },
+        })
+    void loadPromise.then(() => {
+      webRtcHostLoaded = true
+      sendPendingConfig()
+    })
     return {
       close: () => {
         if (!hostWindow.isDestroyed()) hostWindow.close()
@@ -182,10 +195,11 @@ const remoteAccessService = new RemoteAccessService({
       },
       sendConfig: (config) => {
         if (hostWindow.isDestroyed()) return
-        if (hostWindow.webContents.isLoading()) {
-          hostWindow.webContents.once('did-finish-load', () => hostWindow.webContents.send('remote-webrtc-host:config', config))
+        pendingConfig = config
+        if (hostWindow.webContents.isLoading() || !webRtcHostLoaded) {
+          return
         } else {
-          hostWindow.webContents.send('remote-webrtc-host:config', config)
+          sendPendingConfig()
         }
       },
       sendSignalMessage: (message) => {
