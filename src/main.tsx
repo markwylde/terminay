@@ -4,6 +4,7 @@ import '@xterm/xterm/css/xterm.css'
 import App from './App.tsx'
 import { EditTabWindow } from './components/EditTabWindow.tsx'
 import { MacrosWindow } from './components/MacrosWindow.tsx'
+import { RecordingsWindow } from './components/RecordingsWindow.tsx'
 import { SettingsWindow } from './components/SettingsWindow.tsx'
 import { WebRtcHost } from './remote/WebRtcHost.tsx'
 import './index.css'
@@ -17,6 +18,8 @@ const content = (() => {
       return <SettingsWindow />
     case 'macros':
       return <MacrosWindow />
+    case 'recordings':
+      return <RecordingsWindow />
     case 'edit-tab':
       return <EditTabWindow />
     case 'webrtc-host':
