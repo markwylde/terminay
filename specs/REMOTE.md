@@ -194,13 +194,21 @@ revoked/deleted and should not be reused.
    validates the proof, rejects replayed/expired attempt ids, and creates a fresh
    WebRTC peer connection.
 7. After the data channel opens, the remote app authenticates with the existing
-   RSA device-key challenge flow.
+   RSA device-key challenge flow and a desktop PIN. The PIN may be read from a
+   host-only cookie on the exact session subdomain. If the cookie is missing or
+   the desktop rejects it, the session page prompts for the PIN and retries auth.
 8. If auth succeeds, the desktop issues a fresh short-lived terminal connection
    ticket and may rotate or extend the reconnect grant according to policy.
 
 Reconnect must not require a fresh QR while the reconnect grant is valid. If the
 grant is expired, revoked, missing, or bound to a different session origin, the
 session page must say a fresh QR is needed.
+
+The session page must not fall back to the first-pairing QR form during saved
+session reconnect. A saved session with a valid device key and reconnect grant
+may require only the PIN. Submitting the PIN must retry desktop authentication,
+and the Pair Device button must be enabled whenever a six-digit PIN can satisfy
+the current reconnect-auth challenge.
 
 ### Saving To The Manager
 
@@ -469,10 +477,18 @@ Rules:
   opens.
 - The PIN is never in the QR, never stored by the hosted service, and never sent
   to the signaling relay.
-
-The desktop may optionally require the PIN again on reconnect, but the default
-should be: paired devices can reconnect without PIN until their reconnect grant
-expires or is revoked.
+- WebRTC terminal authentication requires both the paired device key and the
+  desktop PIN. The desktop must refuse a WebRTC terminal ticket when the PIN is
+  missing, wrong, or expired according to desktop policy.
+- The first successful PIN entry may be cached only on the exact session
+  subdomain so later saved-session reconnects can authenticate without asking
+  again.
+- If the cached PIN is rejected, the session origin must clear it and prompt the
+  user for a fresh PIN. A wrong or missing PIN must not delete the paired device
+  key or reconnect grant.
+- Disconnecting a live saved session is not revocation. It closes the current
+  terminal connection and returns the browser to the manager saved-session list.
+  Forget/revoke remain separate destructive actions.
 
 ## Cookies, Storage, CSRF, And CORS
 
@@ -494,6 +510,9 @@ Reconnect grants and reconnect-proof material must not be stored in cookies,
 including encrypted or sealed cookie blobs. A cookie may hold only one of these:
 
 - a non-secret local UI/session handle
+- the desktop PIN for the exact session subdomain, after successful pairing or
+  auth, when used as an auth factor alongside the IndexedDB device key and
+  reconnect grant
 - future HTTP session state that is not sufficient to reconnect, authenticate a
   device, or obtain a terminal ticket without the IndexedDB/WebCrypto grant and
   device-key flow
@@ -502,18 +521,24 @@ If cookies are used for session-subdomain features:
 
 ```http
 Set-Cookie: __Host-terminay_session=...; Secure; HttpOnly; Path=/; SameSite=Strict
+Set-Cookie: __Host-terminay_pin=...; Secure; Path=/; SameSite=Strict
 ```
 
 Rules:
 
 - Use the `__Host-` prefix for sensitive hosted session cookies.
-- Include `Secure`, `HttpOnly`, `Path=/`, and `SameSite=Strict`.
+- Include `Secure`, `Path=/`, and `SameSite=Strict`.
+- Include `HttpOnly` when browser JavaScript does not need to read the cookie.
+  The PIN cache is the one allowed non-HttpOnly sensitive cookie because the
+  remote app must submit it to the desktop over the authenticated data channel.
 - Omit the `Domain` attribute.
 - Never set sensitive cookies for `.terminay.com`.
 - Never use `app.terminay.com` cookies to authorize a session subdomain.
 - Never send a raw reconnect grant, device private key, terminal ticket, QR
   secret, pairing token, reconnect-proof key material, or signaling HMAC key as a
   cookie value.
+- Never set the PIN cookie before successful PIN verification by the desktop.
+- Clear the PIN cookie when the desktop rejects it.
 - Any cookie-authorized state-changing endpoint requires a CSRF token or
   equivalent proof scoped to the session subdomain.
 - Reject unexpected `Origin` and unsafe `Sec-Fetch-Site` values where supported.
@@ -731,8 +756,8 @@ grant, revoked device, camera permission denied, and Local Network fallback.
 - [x] Add expiry metadata and UI.
 - [x] Add sign out / forget this browser cleanup for grant, device key, cache,
   and preferences.
-- [x] Add optional host-only `__Host-` cookie support only if a hosted HTTP
-  feature needs it.
+- [x] Add host-only `__Host-terminay_pin` cookie support for exact
+  session-subdomain PIN reuse after successful desktop verification.
 
 ### Desktop Session And Grant Management
 
@@ -773,6 +798,8 @@ grant, revoked device, camera permission denied, and Local Network fallback.
 - [x] Reuse existing pairing, auth, tickets, terminal protocol, audit, and
   revocation paths.
 - [x] Add clear close/error propagation to both desktop and web UI.
+- [x] Require desktop PIN during WebRTC terminal auth, using the cached
+  session-subdomain PIN when present and prompting when missing or rejected.
 
 ### Security And Isolation
 
@@ -780,6 +807,8 @@ grant, revoked device, camera permission denied, and Local Network fallback.
 - [x] Reject old shared-origin WebRTC URLs.
 - [x] Keep `app.terminay.com` out of device-origin binding.
 - [x] Keep sensitive cookies host-only if cookies are introduced.
+- [x] Store cached PINs only in an exact-origin, host-only, `Secure`,
+  `SameSite=Strict`, `__Host-` cookie with no `Domain`.
 - [x] Forbid raw reconnect grants in cookies.
 - [x] Forbid encrypted/sealed reconnect grant blobs in cookies.
 - [x] Ensure relay-visible reconnect payloads contain no stable device id.
@@ -798,6 +827,10 @@ grant, revoked device, camera permission denied, and Local Network fallback.
 - [x] Expired/revoked states clearly tell the user when a fresh QR is needed.
 - [x] WebRTC failure states distinguish relay, NAT/TURN, desktop offline, and
   asset verification failures.
+- [x] Saved-session PIN prompt works without a QR fragment and enables submit
+  when a six-digit PIN is entered.
+- [x] Disconnect returns a saved WebRTC session to `app.terminay.com` instead of
+  showing the pairing/PIN screen.
 
 ### NAT, TURN, And Operations
 
@@ -824,3 +857,11 @@ grant, revoked device, camera permission denied, and Local Network fallback.
 - [x] E2E test QR pairing followed by manager save and reopen.
 - [x] E2E test fresh QR rotation does not break a live WebRTC session.
 - [x] E2E test Local Network mode remains unchanged.
+- [x] E2E test first saved-session reconnect uses the cached PIN cookie without
+  prompting.
+- [x] E2E test missing PIN cookie prompts for PIN and retries auth
+  without requiring a fresh QR.
+- [ ] E2E test rejected PIN cookie prompts for PIN and retries auth without
+  requiring a fresh QR.
+- [ ] E2E test disconnect from a saved WebRTC session returns to the manager
+  saved-session list.
