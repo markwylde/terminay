@@ -1228,6 +1228,15 @@ function waitForSessionInactivity(
 	});
 }
 
+function formatMacroTypeTextForTerminal(text: string): string {
+	if (!/[\r\n]/.test(text)) {
+		return text;
+	}
+
+	const normalizedNewlines = text.replace(/\r\n?/g, '\n');
+	return `\x1b[200~${normalizedNewlines}\x1b[201~`;
+}
+
 function isAbortError(error: unknown): boolean {
 	return error instanceof Error && error.name === 'AbortError';
 }
@@ -2611,7 +2620,10 @@ const ProjectWorkspace = forwardRef<
 					switch (step.type) {
 						case 'type': {
 							const rendered = renderMacroTemplate(step.content, values);
-							window.terminay.writeTerminal(sessionId, rendered);
+							window.terminay.writeTerminal(
+								sessionId,
+								formatMacroTypeTextForTerminal(rendered),
+							);
 							break;
 						}
 						case 'key':

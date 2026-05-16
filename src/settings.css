@@ -324,6 +324,127 @@
   letter-spacing: 0.05em;
 }
 
+.macro-type-input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.macro-type-input {
+  padding-right: 44px;
+}
+
+.macro-type-editor-button {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  width: 30px;
+  height: 24px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--settings-border);
+  border-radius: 4px;
+  background: var(--settings-card-bg);
+  color: var(--settings-accent);
+  cursor: pointer;
+  box-shadow: -8px 0 12px var(--settings-bg);
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.macro-type-editor-button:hover,
+.macro-type-editor-button:focus-visible {
+  background: var(--settings-nav-hover);
+  border-color: var(--settings-accent);
+  color: var(--settings-accent-hover);
+  outline: none;
+}
+
+.macro-text-modal {
+  width: min(820px, calc(100vw - 48px));
+  height: min(560px, calc(100vh - 64px));
+  min-width: min(520px, calc(100vw - 48px));
+  min-height: 360px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  resize: both;
+  overflow: hidden;
+  border: 1px solid var(--settings-border);
+  border-radius: 8px;
+  background: var(--settings-card-bg);
+  color: var(--settings-text);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
+}
+
+.macro-text-modal-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--settings-border);
+}
+
+.macro-text-modal-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.macro-text-modal-header button {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--settings-text-muted);
+  cursor: pointer;
+}
+
+.macro-text-modal-header button:hover,
+.macro-text-modal-header button:focus-visible {
+  background: var(--settings-nav-hover);
+  color: var(--settings-text);
+  outline: none;
+}
+
+.macro-text-modal-textarea {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  resize: none;
+  padding: 14px 16px;
+  border: none;
+  border-bottom: 1px solid var(--settings-border);
+  background: var(--settings-bg);
+  color: var(--settings-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  outline: none;
+}
+
+.macro-text-modal-textarea:focus {
+  box-shadow: inset 0 0 0 1px var(--settings-accent);
+}
+
+.macro-text-modal-footer {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
 .settings-secret-item {
   display: flex;
   justify-content: space-between;
