@@ -5728,9 +5728,18 @@ function App() {
 		selectedRemotePairingMode === 'webrtc'
 			? remoteStatus?.webRtcPairingExpiresAt
 			: remoteStatus?.lanPairingExpiresAt ?? remoteStatus?.pairingExpiresAt;
+	const webRtcPairingDisplayUrl = useMemo(() => {
+		if (!remoteStatus?.webRtcPairingUrl) return null;
+		try {
+			const url = new URL(remoteStatus.webRtcPairingUrl);
+			return url.origin;
+		} catch {
+			return 'WebRTC session link ready.';
+		}
+	}, [remoteStatus?.webRtcPairingUrl]);
 	const preferredRemoteAddress = useMemo(() => {
 		if (selectedRemotePairingMode === 'webrtc') {
-			return remoteStatus?.webRtcPairingUrl ?? null;
+			return webRtcPairingDisplayUrl;
 		}
 		if (!selectedPairingUrl) return remoteAddresses[0] || null;
 		try {
@@ -5745,10 +5754,10 @@ function App() {
 			return remoteAddresses[0] || null;
 		}
 	}, [
-		remoteStatus?.webRtcPairingUrl,
 		remoteAddresses,
 		selectedPairingUrl,
 		selectedRemotePairingMode,
+		webRtcPairingDisplayUrl,
 	]);
 	const remoteStatusMessage =
 		remoteActionError ??
@@ -6185,7 +6194,7 @@ function App() {
 								</div>
 								{selectedRemotePairingMode === 'webrtc' ? (
 									<div className="remote-access-menu__empty">
-										{remoteStatus?.webRtcPairingUrl ??
+										{webRtcPairingDisplayUrl ??
 											'Start remote access to generate a relay pairing link.'}
 									</div>
 								) : remoteStatus?.availableAddresses.length ? (
