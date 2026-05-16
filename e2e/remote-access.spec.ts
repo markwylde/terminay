@@ -174,7 +174,14 @@ test('starts WebRTC remote access from the host menu start button', async ({ mai
 
   const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
   expect(status.pairingMode).toBe('webrtc')
-  expect(status.webRtcPairingUrl).toContain('mode=webrtc')
+  const webRtcPairingUrl = new URL(status.webRtcPairingUrl!)
+  expect(webRtcPairingUrl.protocol).toBe('https:')
+  expect(webRtcPairingUrl.hostname).toMatch(/^[a-f0-9]{32}\.terminay\.com$/)
+  expect(webRtcPairingUrl.pathname).toBe('/v1/')
+  expect(webRtcPairingUrl.hash.length).toBeGreaterThan(20)
+  expect(webRtcPairingUrl.searchParams.has('relayJoinToken')).toBe(false)
+  expect(webRtcPairingUrl.searchParams.has('pairingToken')).toBe(false)
+  expect(webRtcPairingUrl.searchParams.has('signalingAuthToken')).toBe(false)
 
   await openRemoteMenu(mainWindow)
   await expect(mainWindow.locator('.remote-access-menu__item').filter({ hasText: /^Stop ServerLive$/ })).toBeVisible()
@@ -208,7 +215,7 @@ test('rejects pairing when the configured PIN is wrong', async ({ mainWindow }) 
   })
 
   expect(response.status).toBe(400)
-  expect(response.body.error).toBe('The pairing PIN is incorrect.')
+  expect(response.body.error).toBe('Pairing failed. Check the PIN and try a fresh QR code.')
 
   await mainWindow
     .getByRole('dialog', { name: 'Pair device' })
