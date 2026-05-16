@@ -203,7 +203,7 @@ export class RemoteAccessService {
   private webRtcPairingQrCodeDataUrl: string | null = null
   private webRtcPairingUrl: string | null = null
   private webRtcRoomId: string | null = null
-  private webRtcSignalSocket: WebSocket | null = null
+  private webRtcHostReady = false
   private webRtcHostWindow: ReturnType<RemoteAccessServiceOptions['createWebRtcHostWindow']> | null = null
   private webRtcHostConfigByWebContentsId = new Map<number, WebRtcHostConfig>()
   private readonly webRtcTerminalConnectionsByChannelId = new Map<string, string>()
@@ -287,7 +287,7 @@ export class RemoteAccessService {
       webRtcPairingQrCodeDataUrl: this.webRtcPairingQrCodeDataUrl,
       webRtcPairingUrl: this.webRtcPairingUrl,
       webRtcRoomId: this.webRtcRoomId,
-      webRtcStatus: this.webRtcSignalSocket?.readyState === WebSocket.OPEN ? 'pairing-ready' : this.webRtcPairingUrl ? 'peer-handler-unavailable' : 'not-configured',
+      webRtcStatus: this.webRtcHostReady ? 'pairing-ready' : this.webRtcPairingUrl ? 'peer-handler-unavailable' : 'not-configured',
       webRtcStatusMessage:
         this.webRtcStatusMessage ??
         (this.webRtcPairingUrl
@@ -623,8 +623,7 @@ export class RemoteAccessService {
     this.webRtcPairingQrCodeDataUrl = null
     this.webRtcPairingUrl = null
     this.webRtcRoomId = null
-    this.closeWebRtcSignalSocket()
-    this.closeWebRtcHostWindow()
+    this.closeWebRtcPairingHost()
     this.webRtcStatusMessage = null
     this.emitStatus()
   }
@@ -634,7 +633,7 @@ export class RemoteAccessService {
   }
 
   private isRunning(): boolean {
-    return this.httpsServer !== null || this.webRtcSignalSocket !== null
+    return this.httpsServer !== null || this.webRtcHostWindow !== null
   }
 
   private async rotatePairingCode(): Promise<void> {
@@ -698,7 +697,7 @@ export class RemoteAccessService {
         margin: 2,
         width: 720,
       })
-      this.openWebRtcSignalSocket({
+      this.openWebRtcPairingHost({
         appOrigin: payload.appOrigin,
         expiresAt: payload.expiresAt,
         iceServers: parseWebRtcIceServers(settings.webRtcIceServers),
@@ -713,8 +712,7 @@ export class RemoteAccessService {
       this.webRtcPairingUrl = null
       this.webRtcRoomId = null
       this.webRtcPairingQrCodeDataUrl = null
-      this.closeWebRtcSignalSocket()
-      this.closeWebRtcHostWindow()
+      this.closeWebRtcPairingHost()
       this.webRtcStatusMessage = error instanceof Error ? error.message : 'Unable to generate WebRTC pairing QR.'
     }
   }
@@ -723,15 +721,12 @@ export class RemoteAccessService {
     return `${appOrigin}#transport=webrtc:${appOrigin}`
   }
 
-  private closeWebRtcSignalSocket(): void {
-    const socket = this.webRtcSignalSocket
-    this.webRtcSignalSocket = null
-    if (socket && socket.readyState !== WebSocket.CLOSING && socket.readyState !== WebSocket.CLOSED) {
-      socket.close(1000, 'Pairing rotated')
-    }
+  private closeWebRtcPairingHost(): void {
+    this.webRtcHostReady = false
+    this.closeWebRtcHostWindow()
   }
 
-  private openWebRtcSignalSocket(options: {
+  private openWebRtcPairingHost(options: {
     appOrigin: string
     expiresAt: string
     iceServers: Array<{ urls: string | string[] }>
@@ -740,11 +735,8 @@ export class RemoteAccessService {
     signalingAuthToken: string
     signalingUrl: string
   }): void {
-    this.closeWebRtcSignalSocket()
-    this.closeWebRtcHostWindow()
+    this.closeWebRtcPairingHost()
 
-    const socket = new WebSocket(options.signalingUrl)
-    this.webRtcSignalSocket = socket
     this.webRtcHostWindow = this.createWebRtcHostWindow(0)
     const hostConfig = {
       appOrigin: options.appOrigin,
@@ -757,60 +749,41 @@ export class RemoteAccessService {
     }
     this.webRtcHostConfigByWebContentsId.set(this.webRtcHostWindow.webContentsId, hostConfig)
     this.webRtcHostWindow.sendConfig(hostConfig)
+  }
 
-    socket.on('open', () => {
-      socket.send(
-        JSON.stringify({
-          expiresAt: options.expiresAt,
-          relayJoinTokenHash: options.relayJoinTokenHash,
-          roomId: options.roomId,
-          type: 'host-ready',
-        }),
-      )
-    })
+  handleWebRtcHostStatus(webContentsId: number, message: { detail?: string; type?: string }): void {
+    if (!this.webRtcHostConfigByWebContentsId.has(webContentsId)) return
 
-    socket.on('message', (raw) => {
-      let message: { message?: string; type?: string }
-      try {
-        message = JSON.parse(raw.toString()) as { message?: string; type?: string }
-      } catch {
-        return
-      }
-
-      if (message.type === 'host-registered') {
-        this.webRtcStatusMessage = 'WebRTC relay room is ready. Scan the QR code to continue.'
-        this.emitStatus()
-        return
-      }
-
-      if (message.type === 'client-join') {
-        this.webRtcStatusMessage = 'Browser joined the relay room. WebRTC peer handling is not active yet.'
-        this.emitStatus()
-        return
-      }
-
-      if (message.type === 'error') {
-        this.webRtcStatusMessage = message.message || 'The WebRTC relay rejected the pairing room.'
-        this.emitStatus()
-      }
-    })
-
-    socket.on('error', () => {
-      if (this.webRtcSignalSocket !== socket) return
-      this.webRtcStatusMessage = 'Could not reach the WebRTC signaling relay.'
+    if (message.type === 'host-registered') {
+      this.webRtcHostReady = true
+      this.webRtcStatusMessage = 'WebRTC relay room is ready. Scan the QR code to continue.'
       this.emitStatus()
-    })
+      return
+    }
 
-    socket.on('close', () => {
-      if (this.webRtcSignalSocket !== socket) return
-      this.webRtcSignalSocket = null
+    if (message.type === 'client-join') {
+      this.webRtcStatusMessage = 'Browser joined the relay room. Establishing the secure WebRTC channel.'
       this.emitStatus()
-    })
+      return
+    }
+
+    if (message.type === 'error') {
+      this.webRtcHostReady = false
+      this.webRtcStatusMessage = message.detail || 'The WebRTC relay rejected the pairing room.'
+      this.emitStatus()
+      return
+    }
+
+    if (message.type === 'closed') {
+      this.webRtcHostReady = false
+      this.emitStatus()
+    }
   }
 
   private closeWebRtcHostWindow(): void {
     const hostWindow = this.webRtcHostWindow
     this.webRtcHostWindow = null
+    this.webRtcHostReady = false
     if (hostWindow) {
       this.webRtcHostConfigByWebContentsId.delete(hostWindow.webContentsId)
       hostWindow.close()

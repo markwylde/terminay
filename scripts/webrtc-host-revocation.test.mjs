@@ -41,6 +41,64 @@ test('WebRTC host closes the terminal data channel when the desktop revokes the 
   cleanup()
 })
 
+test('WebRTC host owns relay registration and sends an offer after client join', async () => {
+  const api = createHostApi()
+  const sockets = []
+
+  globalThis.window = { terminayWebRtcHost: api }
+  globalThis.WebSocket = class extends MockWebSocket {
+    constructor(url) {
+      super(url)
+      sockets.push(this)
+    }
+  }
+  globalThis.RTCPeerConnection = MockPeerConnection
+
+  const expiresAt = new Date(Date.now() + 60_000).toISOString()
+  const cleanup = await runHost({
+    appOrigin: 'https://room-a12345.terminay.com',
+    expiresAt,
+    iceServers: [],
+    relayJoinTokenHash: 'relay-token-hash',
+    roomId: 'room-a12345',
+    signalingAuthToken: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
+    signalingUrl: 'wss://room-a12345.terminay.com/signal',
+  })
+
+  assert.equal(sockets.length, 1)
+  const socket = sockets[0]
+  socket.dispatchEvent(new Event('open'))
+
+  assert.deepEqual(JSON.parse(socket.sent[0]), {
+    expiresAt,
+    relayJoinTokenHash: 'relay-token-hash',
+    roomId: 'room-a12345',
+    type: 'host-ready',
+  })
+
+  socket.dispatchMessage(JSON.stringify({ roomId: 'room-a12345', type: 'host-registered' }))
+  socket.dispatchMessage(JSON.stringify({ roomId: 'room-a12345', type: 'client-join' }))
+  await waitFor(() => socket.sent.some((message) => JSON.parse(message).type === 'offer'))
+
+  assert.deepEqual(api.statusMessages, [{ type: 'host-registered' }, { type: 'client-join' }])
+  const offerMessage = socket.sent.map((message) => JSON.parse(message)).find((message) => message.type === 'offer')
+  assert.equal(offerMessage.roomId, 'room-a12345')
+  assert.equal(offerMessage.sdp.type, 'offer')
+  assert.equal(typeof offerMessage.signature, 'string')
+  assert.equal(typeof offerMessage.nonce, 'string')
+
+  cleanup()
+})
+
+async function waitFor(predicate, timeoutMs = 1000) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('Timed out waiting for condition.')
+}
+
 function createHostApi() {
   let attachResolve
   const attachPromise = new Promise((resolve) => {
@@ -71,6 +129,10 @@ function createHostApi() {
       return () => closeRequestListeners.delete(listener)
     },
     onTerminalMessage: () => () => {},
+    statusMessages: [],
+    updateStatus(message) {
+      this.statusMessages.push(message)
+    },
     waitForAttach: () => attachPromise,
   }
 }
@@ -136,16 +198,24 @@ class MockPeerConnection extends EventTarget {
 class MockWebSocket extends EventTarget {
   static OPEN = 1
 
-  constructor() {
+  constructor(url) {
     super()
     this.readyState = MockWebSocket.OPEN
+    this.sent = []
+    this.url = url
   }
 
   close() {
     this.readyState = 3
   }
 
-  send() {}
+  dispatchMessage(data) {
+    this.dispatchEvent(new MessageEvent('message', { data }))
+  }
+
+  send(message) {
+    this.sent.push(message)
+  }
 }
 
 async function importWebRtcHost() {
