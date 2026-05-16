@@ -2,11 +2,14 @@ import { FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, u
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import type { RemoteServerMessage, RemoteSessionSummary } from './protocol'
-import { authenticateDevice, pairDevice } from './services/auth'
+import { authenticateDevice, pairDevice, revokeCurrentDevice } from './services/auth'
 import {
   generateDeviceKeyPair,
+  loadReconnectGrant,
   loadPairing,
+  removeReconnectGrant,
   removePairing,
+  saveReconnectGrant,
   savePairing,
 } from './services/deviceKeys'
 import { parsePairingBootstrap } from './services/pairing'
@@ -33,6 +36,13 @@ type ProjectState = {
   emoji: string
   color: string
   sessionIds: string[]
+}
+
+type ReconnectGrantUiState = {
+  expiresAt: string | null
+  issuedAt: string
+  sessionId: string
+  status: 'valid' | 'expired' | 'until-revoked'
 }
 
 const DEFAULT_SETTINGS: RemoteSettings = {
@@ -85,6 +95,36 @@ function scrubPairingQueryFromUrl(): void {
   })
   const nextUrl = `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`
   window.history.replaceState({}, document.title, nextUrl || window.location.pathname)
+}
+
+function getInitialManagerAction(): 'revoke' | null {
+  const bridgeAction = (window.__TERMINAY_REMOTE_WEBRTC__ as { managerAction?: string } | undefined)?.managerAction
+  if (bridgeAction === 'revoke') return 'revoke'
+
+  const currentUrl = new URL(window.location.href)
+  return currentUrl.searchParams.get('terminayManagerAction') === 'revoke' ? 'revoke' : null
+}
+
+function scrubManagerActionFromUrl(): void {
+  const currentUrl = new URL(window.location.href)
+  if (!currentUrl.searchParams.has('terminayManagerAction')) return
+
+  currentUrl.searchParams.delete('terminayManagerAction')
+  window.history.replaceState({}, document.title, `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`)
+}
+
+function getReconnectGrantStatus(expiresAt: string | null): ReconnectGrantUiState['status'] {
+  if (expiresAt === null) return 'until-revoked'
+  const parsed = Date.parse(expiresAt)
+  return Number.isFinite(parsed) && parsed > Date.now() ? 'valid' : 'expired'
+}
+
+function formatReconnectExpiry(expiresAt: string | null): string {
+  if (expiresAt === null) return 'Reconnect valid until revoked'
+  const parsed = Date.parse(expiresAt)
+  if (!Number.isFinite(parsed)) return 'Reconnect expiry unknown'
+  const formatted = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(parsed))
+  return parsed > Date.now() ? `Reconnect until ${formatted}` : `Reconnect expired ${formatted}`
 }
 
 function isUnpairedAuthError(error: unknown): boolean {
@@ -172,11 +212,13 @@ export function RemoteApp() {
 
   // --- Connection State ---
   const [pairingInput] = useState(() => getInitialPairingInput())
+  const [managerAction, setManagerAction] = useState<'revoke' | null>(() => getInitialManagerAction())
   const [pairingPin, setPairingPin] = useState('')
   const [deviceName, setDeviceName] = useState(getDefaultDeviceName())
   const [pairingState, setPairingState] = useState<'checking' | 'needs-pairing' | 'paired'>('checking')
   const [statusText, setStatusText] = useState('Checking this browser…')
   const [errorText, setErrorText] = useState<string | null>(null)
+  const [reconnectGrant, setReconnectGrant] = useState<ReconnectGrantUiState | null>(null)
   const [connectionState, setConnectionState] = useState<'idle' | 'connecting' | 'live'>('idle')
   const [connectionCount, setConnectionCount] = useState(0)
   const [sessions, setSessions] = useState<Record<string, SessionState>>({})
@@ -461,6 +503,7 @@ export function RemoteApp() {
     void (async () => {
       try {
         if (hasPairingBootstrapInput(pairingInput)) {
+          setReconnectGrant(null)
           setPairingState('needs-pairing')
           setStatusText('Pair this browser to your Terminay host.')
           return
@@ -468,14 +511,23 @@ export function RemoteApp() {
 
         const pairing = await loadPairing(transportRuntime.pairingOrigin)
         if (!pairing) {
+          setReconnectGrant(null)
           setPairingState('needs-pairing')
           setStatusText('Pair this browser to your Terminay host.')
           return
         }
+        const grant = await loadReconnectGrant(transportRuntime.pairingOrigin)
+        setReconnectGrant(grant ? {
+          expiresAt: grant.expiresAt,
+          issuedAt: grant.issuedAt,
+          sessionId: grant.sessionId,
+          status: getReconnectGrantStatus(grant.expiresAt),
+        } : null)
         setDeviceName(pairing.deviceName)
         setPairingState('paired')
         setStatusText(`Paired as ${pairing.deviceName}.`)
       } catch (error) {
+        setReconnectGrant(null)
         setPairingState('needs-pairing')
         setErrorText(error instanceof Error ? error.message : 'Unable to initialize.')
       }
@@ -566,6 +618,38 @@ export function RemoteApp() {
           privateKey: pairing.privateKey,
         })
         if (cancelled) return
+        if (managerAction === 'revoke') {
+          setStatusText('Revoking this browser in Terminay...')
+          try {
+            await revokeCurrentDevice({
+              api: transportRuntime.api,
+              deviceId: pairing.deviceId,
+            })
+            await Promise.all([
+              removePairing(transportRuntime.pairingOrigin),
+              removeReconnectGrant(transportRuntime.pairingOrigin),
+              'caches' in window ? window.caches.delete('terminay-remote-app') : Promise.resolve(false),
+            ])
+            if (cancelled) return
+            setSessions({})
+            setSelectedSessionId(null)
+            setActiveProjectId(null)
+            setReconnectGrant(null)
+            setPairingState('needs-pairing')
+            setConnectionState('idle')
+            setStatusText('This browser was revoked. Scan a fresh QR code to pair again.')
+            setManagerAction(null)
+            scrubManagerActionFromUrl()
+          } catch (error) {
+            if (cancelled) return
+            setConnectionState('idle')
+            setErrorText(error instanceof Error
+              ? `Terminay could not revoke this browser: ${error.message}`
+              : 'Terminay could not revoke this browser.')
+            setStatusText('Revocation needs Terminay to be reachable.')
+          }
+          return
+        }
         const socket = transportRuntime.terminal.createSocket(authenticated.ticket, handleServerMessage, state => {
           setConnectionState(state === 'closed' ? 'idle' : state)
           if (state === 'closed') { socketRef.current = null; if (!cancelled) scheduleReconnect() }
@@ -580,6 +664,7 @@ export function RemoteApp() {
           setSessions({})
           setSelectedSessionId(null)
           setActiveProjectId(null)
+          setReconnectGrant(null)
           setPairingState('needs-pairing')
           setStatusText('Pair this browser to your Terminay host.')
           setErrorText('This browser is no longer paired with this Terminay host. Enter the PIN to pair it again.')
@@ -591,7 +676,7 @@ export function RemoteApp() {
       }
     })()
     return () => { cancelled = true; clearReconnectTimer(); socketRef.current?.close() }
-  }, [pairingState, reconnectNonce, handleServerMessage, clearReconnectTimer, scheduleReconnect, transportRuntime])
+  }, [pairingState, reconnectNonce, handleServerMessage, clearReconnectTimer, managerAction, scheduleReconnect, transportRuntime])
 
   // --- Grouping Logic ---
   const projects = useMemo(() => {
@@ -654,13 +739,30 @@ export function RemoteApp() {
         privateKey: keyPair.privateKey,
         publicKeyPem: keyPair.publicKeyPem,
       })
+      if (paired.reconnectGrant) {
+        await saveReconnectGrant(paired.reconnectGrant)
+        setReconnectGrant({
+          expiresAt: paired.reconnectGrant.expiresAt,
+          issuedAt: paired.reconnectGrant.issuedAt,
+          sessionId: paired.reconnectGrant.sessionId,
+          status: getReconnectGrantStatus(paired.reconnectGrant.expiresAt),
+        })
+      } else {
+        setReconnectGrant(null)
+      }
       setPairingState('paired'); window.history.replaceState({}, document.title, window.location.pathname)
     } catch (err) { setErrorText(err instanceof Error ? err.message : 'Pairing failed.') }
   }
 
   async function handleForget() {
-    clearReconnectTimer(); socketRef.current?.close(); await removePairing(transportRuntime.pairingOrigin)
-    setSessions({}); setSelectedSessionId(null); setActiveProjectId(null); setPairingState('needs-pairing'); setConnectionState('idle')
+    clearReconnectTimer(); socketRef.current?.close()
+    await Promise.all([
+      removePairing(transportRuntime.pairingOrigin),
+      removeReconnectGrant(transportRuntime.pairingOrigin),
+      'caches' in window ? window.caches.delete('terminay-remote-app') : Promise.resolve(false),
+    ])
+    localStorage.removeItem('terminay-remote-settings')
+    setSessions({}); setSelectedSessionId(null); setActiveProjectId(null); setReconnectGrant(null); setPairingState('needs-pairing'); setConnectionState('idle')
   }
 
   const handleClear = () => { terminalRef.current?.clear(); terminalRef.current?.focus() }
@@ -777,6 +879,22 @@ export function RemoteApp() {
       bottom: 'calc(56px + env(safe-area-inset-bottom, 0px))',
     }
   }, [showAccessoryBar])
+  const managerUrl = typeof window.__TERMINAY_REMOTE_WEBRTC__?.managerUrl === 'string'
+    ? window.__TERMINAY_REMOTE_WEBRTC__.managerUrl
+    : ''
+  const saveManagerUrl = useMemo(() => {
+    if (!managerUrl) return ''
+    if (!reconnectGrant) return managerUrl
+    try {
+      const url = new URL(managerUrl)
+      url.searchParams.set('expiry', reconnectGrant.expiresAt ?? 'until-revoked')
+      url.searchParams.set('status', reconnectGrant.status === 'expired' ? 'stale' : 'known')
+      return url.toString()
+    } catch {
+      return managerUrl
+    }
+  }, [managerUrl, reconnectGrant])
+  const reconnectGrantLabel = reconnectGrant ? formatReconnectExpiry(reconnectGrant.expiresAt) : 'Reconnect not saved'
 
   const clearPointerPan = useCallback(() => {
     pointerPanStateRef.current = null
@@ -870,11 +988,17 @@ export function RemoteApp() {
               <div className={`status-dot ${connectionState === 'live' ? 'live' : connectionState === 'connecting' ? 'connecting' : ''}`} />
               <span>{connectionState === 'live' ? `${connectionCount} active` : connectionState}</span>
             </div>
+            <div className={`reconnect-expiry reconnect-expiry--${reconnectGrant?.status ?? 'none'}`} title={reconnectGrantLabel}>
+              {reconnectGrantLabel}
+            </div>
             <div className="app-menu">
               <div className="menu-item" onClick={() => terminalRef.current?.focus()}>Focus</div>
               <div className="menu-item" onClick={handleClear}>Clear</div>
               <div className="menu-item" onClick={handleReset}>Reset</div>
               <div className="menu-item" onClick={() => setShowSettings(true)}>Settings</div>
+              {saveManagerUrl ? (
+                <a className="menu-item" href={saveManagerUrl}>Save to Manager</a>
+              ) : null}
               <div className="menu-item" onClick={handleForget}>Disconnect</div>
             </div>
           </div>

@@ -73,6 +73,33 @@ test('WebRTC host owns relay registration and sends an offer after client join',
   cleanup()
 })
 
+test('WebRTC host ignores signaling messages for another room', async () => {
+  const api = createHostApi()
+
+  globalThis.window = { terminayWebRtcHost: api }
+  globalThis.RTCPeerConnection = MockPeerConnection
+
+  const cleanup = await runHost({
+    appOrigin: 'https://session-a.terminay.com',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    iceServers: [],
+    relayJoinTokenHash: 'relay-token-hash',
+    roomId: 'room-a12345',
+    sessionId: 'session-a',
+    signalingAuthToken: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
+    signalingUrl: 'wss://session-a.terminay.com/signal',
+  })
+
+  api.emitSignalMessage({ roomId: 'room-b67890', type: 'host-registered' })
+  api.emitSignalMessage({ roomId: 'room-b67890', type: 'client-join' })
+  await settle()
+
+  assert.deepEqual(api.statusMessages, [])
+  assert.equal(api.signalMessages.some((message) => message.type === 'offer'), false)
+
+  cleanup()
+})
+
 async function waitFor(predicate, timeoutMs = 1000) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
@@ -80,6 +107,10 @@ async function waitFor(predicate, timeoutMs = 1000) {
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
   throw new Error('Timed out waiting for condition.')
+}
+
+async function settle() {
+  await new Promise((resolve) => setTimeout(resolve, 20))
 }
 
 function createHostApi() {
