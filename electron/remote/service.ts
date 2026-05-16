@@ -27,6 +27,7 @@ import { ConnectionStore, webSocketPeer, type RemoteConnectionPeer } from './con
 import { DeviceStore } from './deviceStore'
 import { PairingManager } from './pairing'
 import { assertPairingPin } from './pinGuard'
+import { readJsonBody } from './jsonBody'
 import { ensureTlsMaterial } from './tls'
 import { WebRtcPairingManager } from './webrtc'
 
@@ -162,15 +163,6 @@ function getContentType(filePath: string): string {
     default:
       return 'application/octet-stream'
   }
-}
-
-async function readJsonBody<T>(request: import('node:http').IncomingMessage): Promise<T> {
-  const chunks: Buffer[] = []
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-  }
-
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T
 }
 
 export class RemoteAccessService {
