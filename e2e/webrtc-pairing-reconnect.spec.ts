@@ -134,7 +134,9 @@ test('pairs through the local hosted WebRTC app and reconnects the saved session
   const browserContext = await browser.newContext()
   await browserContext.addInitScript(() => {
     const originalWebSocket = window.WebSocket
-    const log = ((window as Window & { __terminayWsLog?: unknown[] }).__terminayWsLog = [])
+    const debugWindow = window as Window & { __terminayWsLog?: unknown[] }
+    debugWindow.__terminayWsLog = []
+    const log = debugWindow.__terminayWsLog
     window.WebSocket = class TerminayLoggedWebSocket extends originalWebSocket {
       constructor(url: string | URL, protocols?: string | string[]) {
         super(url, protocols)
