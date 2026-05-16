@@ -1031,17 +1031,17 @@ export function SettingsWindow() {
 
             <div className="settings-remote-card-header">
               <span className="settings-remote-card-label">Pairing QR Type</span>
-              <div className="settings-shortcut-actions">
+              <div className="settings-remote-toggle">
                 <button
                   type="button"
-                  className={`settings-secondary-button settings-secondary-button--small${activePairingMode === 'lan' ? ' settings-shortcut-listen-button--active' : ''}`}
+                  className={`settings-remote-toggle-btn${activePairingMode === 'lan' ? ' settings-remote-toggle-btn--active' : ''}`}
                   onClick={() => void selectRemotePairingMode('lan')}
                 >
                   Local Network
                 </button>
                 <button
                   type="button"
-                  className={`settings-secondary-button settings-secondary-button--small${activePairingMode === 'webrtc' ? ' settings-shortcut-listen-button--active' : ''}`}
+                  className={`settings-remote-toggle-btn${activePairingMode === 'webrtc' ? ' settings-remote-toggle-btn--active' : ''}`}
                   onClick={() => void selectRemotePairingMode('webrtc')}
                 >
                   WebRTC Relay
@@ -1068,7 +1068,9 @@ export function SettingsWindow() {
                       </button>
                     ) : null}
                   </div>
-                  <img className="settings-remote-qr" src={selectedPairingQrCodeDataUrl} alt="Remote pairing QR code" />
+                  <div className="settings-remote-qr-card">
+                    <img className="settings-remote-qr" src={selectedPairingQrCodeDataUrl} alt="Remote pairing QR code" />
+                  </div>
                   <p className="settings-remote-meta">
                     Expires {selectedPairingExpiresAt ? new Date(selectedPairingExpiresAt).toLocaleString() : 'soon'}
                   </p>
