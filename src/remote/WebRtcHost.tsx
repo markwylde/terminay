@@ -5,7 +5,15 @@ type HostConfig = {
   expiresAt: string
   iceServers?: RTCIceServer[]
   relayJoinTokenHash: string
+  reconnect?: {
+    attemptId: string
+    protocolVersion: 'v1'
+    reconnectHandle: string
+    savedSessionExpiresAt: string
+    sessionId: string
+  }
   roomId: string
+  sessionId?: string
   signalingAuthToken: string
   signalingUrl: string
 }
@@ -71,12 +79,16 @@ function stableJson(value: unknown): string {
 function canonicalSignalPayload(message: Record<string, unknown>): string {
   const payload: Record<string, unknown> = {
     nonce: message.nonce,
-    roomId: message.roomId,
+    roomId: message.roomId ?? message.sessionId,
     type: message.type,
   }
   if ('candidate' in message) payload.candidate = message.candidate
   if ('sdp' in message) payload.sdp = message.sdp
   return stableJson(payload)
+}
+
+function isSignalForRoom(message: Record<string, unknown>, roomId: string): boolean {
+  return !('roomId' in message) || message.roomId === roomId
 }
 
 async function createSignalingAuthKey(token: string): Promise<CryptoKey> {
@@ -96,6 +108,32 @@ async function signSignalMessage(authKey: CryptoKey, message: Record<string, unk
   }
   const signature = await crypto.subtle.sign('HMAC', authKey, new TextEncoder().encode(canonicalSignalPayload(signedMessage)))
   return { ...signedMessage, signature: bytesToBase64Url(signature) }
+}
+
+function createOutboundSignalPayload(config: HostConfig, message: Record<string, unknown>): Record<string, unknown> {
+  if (config.reconnect) {
+    const payload: Record<string, unknown> = {
+      ...message,
+      attemptId: config.reconnect.attemptId,
+      protocolVersion: config.reconnect.protocolVersion,
+      reconnectHandle: config.reconnect.reconnectHandle,
+      sessionId: config.reconnect.sessionId,
+      type: message.type === 'offer'
+        ? 'reconnect-offer'
+        : message.type === 'ice'
+          ? 'reconnect-ice'
+          : message.type,
+    }
+    if (config.reconnect.savedSessionExpiresAt) {
+      payload.savedSessionExpiresAt = config.reconnect.savedSessionExpiresAt
+    }
+    return payload
+  }
+
+  return {
+    ...message,
+    roomId: config.roomId,
+  }
 }
 
 async function verifySignalMessage(authKey: CryptoKey, message: Record<string, unknown>): Promise<boolean> {
@@ -160,11 +198,10 @@ export async function runHost(config: HostConfig): Promise<() => void> {
 
   peer.addEventListener('icecandidate', (event) => {
     if (!event.candidate) return
-    void signSignalMessage(signalingAuthKey, {
+    void signSignalMessage(signalingAuthKey, createOutboundSignalPayload(config, {
       candidate: event.candidate.toJSON(),
-      roomId: config.roomId,
       type: 'ice',
-    }).then((message) => api.sendSignalMessage(message))
+    })).then((message) => api.sendSignalMessage(message))
   })
 
   channels.asset.addEventListener('message', (event) => {
@@ -257,19 +294,20 @@ export async function runHost(config: HostConfig): Promise<() => void> {
     void (async () => {
       const message = rawMessage && typeof rawMessage === 'object' ? rawMessage as Record<string, unknown> : null
       if (!message) return
+      if (!isSignalForRoom(message, config.roomId)) return
       if (message.type === 'host-registered') {
         api.updateStatus?.({ type: 'host-registered' })
       } else if (message.type === 'client-join') {
         api.updateStatus?.({ type: 'client-join' })
         const offer = await peer.createOffer()
         await peer.setLocalDescription(offer)
-        const signedOffer = await signSignalMessage(signalingAuthKey, { roomId: config.roomId, sdp: offer, type: 'offer' })
+        const signedOffer = await signSignalMessage(signalingAuthKey, createOutboundSignalPayload(config, { sdp: offer, type: 'offer' }))
         api.sendSignalMessage(signedOffer)
-      } else if (message.type === 'answer' && message.sdp && typeof message.sdp === 'object') {
+      } else if ((message.type === 'answer' || message.type === 'reconnect-answer') && message.sdp && typeof message.sdp === 'object') {
         rejectSignalReplay(message, seenSignalNonces)
         if (!await verifySignalMessage(signalingAuthKey, message)) return
         await peer.setRemoteDescription(message.sdp as RTCSessionDescriptionInit)
-      } else if (message.type === 'ice' && message.candidate && typeof message.candidate === 'object') {
+      } else if ((message.type === 'ice' || message.type === 'reconnect-ice') && message.candidate && typeof message.candidate === 'object') {
         rejectSignalReplay(message, seenSignalNonces)
         if (!await verifySignalMessage(signalingAuthKey, message)) return
         await peer.addIceCandidate(message.candidate as RTCIceCandidateInit)
@@ -310,15 +348,19 @@ function rejectSignalReplay(message: Record<string, unknown>, seenSignalNonces: 
 
 export function WebRtcHost() {
   useEffect(() => {
-    let cleanup: (() => void) | null = null
+    const cleanups = new Map<string, () => void>()
+    const startVersions = new Map<string, number>()
     let cancelled = false
     const start = (config: HostConfig) => {
-      cleanup?.()
+      const key = config.roomId
+      const version = (startVersions.get(key) ?? 0) + 1
+      startVersions.set(key, version)
       void runHost(config).then((nextCleanup) => {
-        if (cancelled) {
+        if (cancelled || startVersions.get(key) !== version) {
           nextCleanup()
         } else {
-          cleanup = nextCleanup
+          cleanups.get(key)?.()
+          cleanups.set(key, nextCleanup)
         }
       })
     }
@@ -332,7 +374,10 @@ export function WebRtcHost() {
     return () => {
       cancelled = true
       offConfig?.()
-      cleanup?.()
+      for (const cleanup of cleanups.values()) {
+        cleanup()
+      }
+      cleanups.clear()
     }
   }, [])
 
