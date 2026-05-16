@@ -16,6 +16,7 @@ export type WebRtcPairingPayload = {
 	relayJoinToken: string;
 	relayJoinTokenHash: string;
 	roomId: string;
+	sessionId: string;
 	signalingAuthToken: string;
 	signalingUrl: string;
 };
@@ -27,6 +28,7 @@ const PROTOCOL_VERSION = 'v1';
 
 type WebRtcPairingCreateOptions = {
 	hostedDomain?: string;
+	sessionId?: string;
 };
 
 function hashToken(token: string): string {
@@ -35,6 +37,14 @@ function hashToken(token: string): string {
 
 function createDnsSafeChannelId(): string {
 	return randomBytes(16).toString('hex');
+}
+
+function normalizeSessionId(value: string): string {
+	const normalized = value.trim().toLowerCase();
+	if (!/^[a-f0-9]{32}$/.test(normalized)) {
+		throw new Error('WebRTC session id is invalid.');
+	}
+	return normalized;
 }
 
 function normalizeHostedDomain(value: string): string {
@@ -77,11 +87,18 @@ function deriveProtocolSecret(qrSecret: Buffer, purpose: string): string {
 	return deriveSecret(qrSecret, `terminay remote ${PROTOCOL_VERSION} ${purpose}`);
 }
 
+function derivePairingRoomId(qrSecret: Buffer): string {
+	return deriveProtocolSecret(qrSecret, 'pairing room');
+}
+
 export class WebRtcPairingManager {
 	create(options: WebRtcPairingCreateOptions = {}): WebRtcPairingPayload {
-		const roomId = createDnsSafeChannelId();
+		const sessionId = options.sessionId
+			? normalizeSessionId(options.sessionId)
+			: createDnsSafeChannelId();
 		const qrSecretBytes = randomBytes(32);
 		const qrSecret = qrSecretBytes.toString('base64url');
+		const roomId = derivePairingRoomId(qrSecretBytes);
 		const relayJoinToken = deriveProtocolSecret(qrSecretBytes, 'relay join');
 		const relayJoinTokenHash = hashToken(relayJoinToken);
 		const pairingToken = deriveProtocolSecret(qrSecretBytes, 'pairing');
@@ -97,7 +114,7 @@ export class WebRtcPairingManager {
 		const expiresAt = new Date(
 			Date.now() + WEBRTC_PAIRING_TTL_MS,
 		).toISOString();
-		const url = createChannelUrl(roomId, options.hostedDomain);
+		const url = createChannelUrl(sessionId, options.hostedDomain);
 		const appOrigin = url.origin;
 		const signalingUrl = createSignalingUrl(appOrigin);
 
@@ -119,6 +136,7 @@ export class WebRtcPairingManager {
 			relayJoinToken,
 			relayJoinTokenHash,
 			roomId,
+			sessionId,
 			signalingAuthToken,
 			signalingUrl,
 		};
