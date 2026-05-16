@@ -62,6 +62,30 @@ test('WebRtcPairingManager reuses a supplied session id while rotating rooms', (
   assert.equal(new URL(second.pairingUrl).hostname, `${first.sessionId}.remote.example.com`)
 })
 
+test('WebRtcPairingManager supports explicit localhost session origins for E2E', () => {
+  const payload = new WebRtcPairingManager().create({
+    hostedDomain: 'http://localhost:18080',
+  })
+  const url = new URL(payload.pairingUrl)
+
+  assert.equal(url.protocol, 'http:')
+  assert.equal(url.hostname, `${payload.sessionId}.localhost`)
+  assert.equal(url.port, '18080')
+  assert.equal(url.pathname, '/v1/')
+  assert.equal(payload.appOrigin, `http://${payload.sessionId}.localhost:18080`)
+  assert.equal(payload.signalingUrl, 'ws://localhost:18080/signal')
+})
+
+test('WebRtcPairingManager accepts normalized localhost origins from settings', () => {
+  const payload = new WebRtcPairingManager().create({
+    hostedDomain: 'localhost:18080',
+  })
+  const url = new URL(payload.pairingUrl)
+
+  assert.equal(url.origin, `http://${payload.sessionId}.localhost:18080`)
+  assert.equal(payload.signalingUrl, 'ws://localhost:18080/signal')
+})
+
 async function importWebRtcPairingManager() {
   const source = await readFile(new URL('../electron/remote/webrtc.ts', import.meta.url), 'utf8')
   const transformed = await transform(source, {
