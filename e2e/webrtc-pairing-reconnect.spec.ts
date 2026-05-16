@@ -97,6 +97,50 @@ async function reconnectBrowser(context: BrowserContext, sessionOrigin: string):
   return page
 }
 
+async function readSavedReconnectState(page: Page, sessionOrigin: string) {
+  return page.evaluate((origin) => new Promise<{
+    grant: { expiresAt: string | null; issuedAt: string; origin: string; protocolVersion: string; sessionId: string } | null
+    handle: { handle: string; origin: string; sessionId: string } | null
+  }>((resolve, reject) => {
+    const key = `${origin}#transport=webrtc:${origin}`
+    const request = indexedDB.open('terminay-remote', 2)
+    request.onerror = () => reject(request.error ?? new Error('Unable to open remote IndexedDB.'))
+    request.onsuccess = () => {
+      const database = request.result
+      const transaction = database.transaction(['reconnectGrants', 'reconnectHandles'], 'readonly')
+      const grantRequest = transaction.objectStore('reconnectGrants').get(key)
+      const handleRequest = transaction.objectStore('reconnectHandles').get(key)
+      transaction.onerror = () => {
+        database.close()
+        reject(transaction.error ?? new Error('Unable to read saved reconnect state.'))
+      }
+      transaction.oncomplete = () => {
+        const grant = grantRequest.result
+        const handle = handleRequest.result
+        database.close()
+        resolve({
+          grant: grant
+            ? {
+                expiresAt: grant.expiresAt ?? null,
+                issuedAt: String(grant.issuedAt ?? ''),
+                origin: String(grant.origin ?? ''),
+                protocolVersion: String(grant.protocolVersion ?? ''),
+                sessionId: String(grant.sessionId ?? ''),
+              }
+            : null,
+          handle: handle
+            ? {
+                handle: String(handle.handle ?? ''),
+                origin: String(handle.origin ?? ''),
+                sessionId: String(handle.sessionId ?? ''),
+              }
+            : null,
+        })
+      }
+    }
+  }), sessionOrigin)
+}
+
 async function waitForHostConnectionCount(page: Page, count: number) {
   await expect
     .poll(async () => {
@@ -186,6 +230,20 @@ test('pairs through the local hosted WebRTC app and reconnects the saved session
     await expect
       .poll(async () => readHostedMetrics(hostedServer.origin), { timeout: 10_000 })
       .toContain('terminay_signaling_reconnect_available_total 1')
+
+    const expectedSessionId = new URL(sessionOrigin).hostname.replace(/\.localhost$/, '')
+    const savedReconnectState = await readSavedReconnectState(firstRemotePage, sessionOrigin)
+    expect(savedReconnectState.grant).toMatchObject({
+      origin: `${sessionOrigin}#transport=webrtc:${sessionOrigin}`,
+      protocolVersion: 'v1',
+      sessionId: expectedSessionId,
+    })
+    expect(savedReconnectState.grant?.issuedAt).toBeTruthy()
+    expect(savedReconnectState.handle).toMatchObject({
+      origin: `${sessionOrigin}#transport=webrtc:${sessionOrigin}`,
+      sessionId: expectedSessionId,
+    })
+    expect(savedReconnectState.handle?.handle).toBeTruthy()
 
     const hostToBrowserSentinel = `host-to-browser-${Date.now()}`
     await writeHostTerminal(mainWindow, `printf "\\n${hostToBrowserSentinel}\\n"\n`)
