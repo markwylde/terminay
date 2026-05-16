@@ -1,130 +1,266 @@
-# Remote Access WebRTC Specification
+# Remote Access Specification
 
-> Production origin-isolation, compact QR, cookie/session, and wildcard subdomain hardening work is tracked in `REMOTE_REFACTOR.md`. This document describes the original WebRTC remote access design and current baseline.
+This is the canonical Terminay remote access spec. It replaces the older split
+between `remote.md` and `REMOTE_REFACTOR.md`.
 
 ## Summary
 
-Terminay should keep the current local-network remote access flow and add a second WebRTC flow for phones that cannot directly reach, trust, or load the desktop app's local HTTPS origin.
+Terminay has two remote access modes:
 
-The product should offer two pairing modes:
+- **Local Network**: the desktop app serves the remote app, pairing APIs, auth
+  APIs, and WebSocket terminal protocol from a local HTTPS origin such as
+  `https://192.168.1.23:9443`.
+- **WebRTC Relay**: the desktop app creates or reuses an isolated session origin
+  such as `https://<session>.terminay.com/v1/`. The hosted service provides only a
+  bootstrap app, a manager app, and a signaling relay. The desktop remains the
+  authority for pairing, auth, terminal APIs, assets, audit, revocation, and
+  live terminal traffic.
 
-- **Local Network**: Works as it does today. Terminay serves the remote HTML, CSS, JavaScript, APIs, and WebSocket from the desktop machine at a reachable address such as `https://192.168.1.23:9443`.
-- **WebRTC**: The user opens a compact QR URL such as `https://<channel>.terminay.com/v1/#<qr-secret>`, and that per-session hosted page establishes a WebRTC connection to the desktop app. The `app.terminay.com` origin is only a manager/launcher and is not trusted with pairing secrets. The hosted service stays deliberately thin. The desktop app still supplies the real remote app bundle and owns all terminal APIs.
+The production WebRTC model is:
 
-The hosted session page is a secure bootstrapper, signaling participant, and asset loader. It should not contain the full terminal UI, should not terminate terminal sessions, and should not persist remote terminal data. Any QR scanning is done by the phone's camera or OS before the browser opens the session URL.
+- `app.terminay.com` is a non-secret session manager.
+- `<session>.terminay.com` is the isolated remote session origin.
+- A QR code opens the session origin directly and carries a one-time QR secret
+  in the URL fragment.
+- A session origin is reusable. Fresh QR codes create one-time pairing rooms for
+  that session origin; they do not replace the origin and must not disturb live
+  peers already connected to it.
+- After pairing, the session origin can reconnect later without a fresh QR while
+  its desktop-issued reconnect grant is valid.
+- `app.terminay.com` never stores QR secrets, reconnect grants, device keys,
+  pairing tokens, signaling HMAC keys, PINs, terminal tickets, cookies from
+  session subdomains, terminal output, command history, cwd, or file names.
 
 ## Goals
 
-- Preserve the current local IP QR flow unchanged.
-- Add a WebRTC QR flow that works from a public HTTPS origin.
-- Let the hosted session origin provide service worker support and WebRTC bootstrapping.
-- Keep the desktop app as the authority for pairing, authentication, terminal sessions, static app assets, and audit state.
-- Keep the hosted server simple enough to run as static hosting plus a small signaling relay.
-- Reuse as much of the existing remote browser app and protocol as practical.
-- Keep paired-device security at least as strong as the existing RSA device-key and challenge flow.
+- Preserve Local Network mode unchanged.
+- Make WebRTC work from a public HTTPS origin when local HTTPS is unreachable.
+- Isolate every WebRTC remote session by browser origin.
+- Let a paired phone reconnect from a saved session link without rescanning a QR.
+- Keep the hosted service thin and untrusted for terminal data.
+- Keep terminal UI assets desktop-provided so forks and app versions remain
+  desktop-owned.
+- Keep paired-device security at least as strong as the existing RSA device-key
+  challenge flow.
+- Give users clear desktop and web UI for live sessions, saved sessions,
+  expiry, and revocation.
 
 ## Non-Goals
 
-- This spec does not require internet-wide remote access without the desktop app being online.
-- This spec does not require the hosted server to proxy terminal traffic.
-- This spec does not require the hosted server to store device keys, terminal data, command history, or session metadata.
-- This spec does not require replacing the existing HTTPS and WebSocket local server.
-- This spec does not require TURN hosting in the first implementation, though the design should leave room for it.
+- Do not make the hosted service a terminal proxy.
+- Do not store terminal output, command history, cwd, file names, device private
+  keys, PINs, pairing secrets, terminal tickets, or desktop audit data on hosted
+  infrastructure.
+- Do not trust `app.terminay.com` with session-subdomain secrets.
+- Do not replace Local Network mode.
+- Do not require TURN for the first reconnect-capable implementation, though
+  the protocol must leave room for TURN.
+- Do not support the obsolete shared-origin WebRTC URL shape
+  `https://app.terminay.com/connect?...`.
 
-## Current Codebase Shape
+## Origins
 
-Terminay already has a remote access split between Electron main and a browser client.
+### `app.terminay.com`
 
-Electron owns the host side in `electron/remote/`:
+The manager is a launcher and CRUD surface for remembered remote session
+origins.
 
-- `electron/remote/service.ts` starts an HTTPS server, serves static files, handles pairing/auth HTTP routes, upgrades `/ws`, and bridges terminal sessions to remote clients.
-- `electron/remote/config.ts` requires an `https://` origin and resolves bind address, host, port, and TLS paths.
-- `electron/remote/pairing.ts` creates short-lived pairing URLs with `pairingSessionId`, `pairingToken`, and `pairingExpiresAt`.
-- `electron/remote/deviceStore.ts`, `challengeStore.ts`, `connectionStore.ts`, and `auditStore.ts` own trust, authentication challenges, WebSocket tickets, live connections, and audit events.
+Allowed manager data:
 
-The browser remote app lives in `src/remote/`:
+- session origin, such as `https://<session>.terminay.com`
+- user label
+- desktop display name if the session origin explicitly shares it
+- created, opened, connected, expired, revoked, and archived timestamps
+- non-secret UI preferences
+- status such as `known`, `online`, `offline`, `expired`, `revoked`, `archived`,
+  or `unreachable`
 
-- `src/remote/App.tsx` renders pairing, QR scanning, terminal tabs, settings, and the xterm surface.
-- `src/remote/services/auth.ts` posts to `/api/pairing/start`, `/api/pairing/complete`, `/api/auth/options`, and `/api/auth/verify`.
-- `src/remote/services/socket.ts` connects to the host WebSocket URL returned by auth.
-- `src/remote/protocol.ts` defines the terminal control protocol for listing, attaching, writing, resizing, and receiving output.
+Forbidden manager data:
 
-The current remote status UI lives in `src/App.tsx` and exposes available LAN addresses, pairing QR codes, active connections, paired devices, and audit state.
+- QR fragments or QR secrets
+- full QR URLs that include fragments
+- relay join tokens
+- pairing tokens
+- signaling HMAC keys
+- reconnect grants or refresh tokens
+- device private keys
+- PINs or PIN hashes
+- terminal connection tickets
+- cookies, IndexedDB, localStorage, sessionStorage, Cache Storage, or service
+  worker state from a session subdomain
+- terminal output, command history, cwd, file names, or terminal session names
 
-## Product Model
+Manager actions navigate to session subdomains. The manager must not embed a
+session subdomain unless a separate `postMessage` protocol with strict origin
+checks is designed later.
 
-### Local Network Mode
+The manager must not parse, import, redirect through, or otherwise handle full QR
+URLs. QR URLs open the session origin directly. Saving to the manager happens
+only after the session origin has stripped all secrets and provides a non-secret
+manager import payload.
 
-Local Network mode remains the default and should keep its current behavior:
+### `<session>.terminay.com`
 
-1. The user starts Remote Access from Terminay.
-2. Terminay selects a reachable local HTTPS origin, usually a `192.168.*` or `10.*` address.
-3. Terminay generates a QR code containing the full pairing URL.
-4. The phone opens that URL directly.
-5. The desktop app serves `remote.html`, assets, pairing/auth APIs, and `/ws`.
-6. The phone pairs or authenticates and uses the existing WebSocket terminal protocol.
+Each WebRTC remote session gets a random, unguessable, DNS-safe subdomain. The
+first protocol version uses a 32-character lowercase hex label generated from
+128 bits of randomness.
 
-No WebRTC dependency should be introduced into this path.
+The session subdomain is the long-lived browser origin for a remote relationship
+between this browser and this desktop. A desktop may keep one active WebRTC
+session origin and rotate one-time pairing rooms within it, or create a new
+session origin when the user explicitly starts a separate saved remote session.
+Creating a new QR for an existing saved session should create a fresh pairing
+room under the existing session origin rather than replacing the origin.
 
-### WebRTC Mode
+Allowed session-origin responsibilities:
 
-WebRTC mode adds a second pairing option:
+- serve the hosted bootstrap app
+- register the remote service worker for this origin only
+- join the signaling relay for initial pairing and later reconnect attempts
+- verify and install desktop-provided remote app assets
+- run the desktop-provided remote app
+- store the device private key, reconnect grant, session expiry metadata, remote
+  app cache, and session-local UI preferences for this one session
+- pair, authenticate, enter PINs, reconnect, revoke, and attach terminal
+  sessions over WebRTC
 
-1. The user starts Remote Access and chooses the WebRTC option.
-2. Terminay creates a short-lived WebRTC pairing session and connects to the public signaling relay.
-3. Terminay shows a QR code for the hosted bootstrap page. The QR contains only the information needed to join the signaling room and prove possession of the pairing secret.
-4. The user opens the QR URL on the phone, for example `https://<channel>.terminay.com/v1/#<qr-secret>`.
-5. The hosted bootstrap page joins the signaling room, exchanges WebRTC offer/answer/ICE messages, and opens a data channel to the desktop app.
-6. The bootstrap page requests the actual remote app bundle from the desktop over the data channel.
-7. The hosted page installs or updates those assets under its own origin, then launches the real remote app.
-8. Pairing, auth, terminal session control, and terminal output all flow between the phone and desktop over WebRTC data channels.
+Forbidden session-origin responsibilities:
 
-From the user's point of view, the terminal should feel like the existing remote app after pairing completes.
+- read or mutate manager storage
+- access another session origin's storage, cookies, service worker, or cache
+- accept cross-session asset manifests or connection tickets
+- share service worker scope with another session
 
-## Hosted Server Responsibilities
+## User Flows
 
-The hosted service should be intentionally small.
+### Local Network Pairing
 
-Required hosted pieces:
+1. The user starts Remote Access in Terminay.
+2. Terminay chooses a reachable local HTTPS origin.
+3. Terminay shows a Local Network QR code containing the full local pairing URL.
+4. The phone opens the URL directly.
+5. The phone pairs with the PIN or authenticates with its stored device key.
+6. Terminal traffic uses the existing WebSocket protocol.
 
-- A static bootstrap HTML page.
-- A static bootstrap JavaScript bundle.
-- A static web manifest and icons if needed for installability.
-- A service worker that can serve desktop-provided assets from Cache Storage.
-- A minimal WSS signaling relay for short-lived WebRTC rooms.
+### First WebRTC Pairing
 
-The hosted service may provide:
+1. The user starts Remote Access and chooses WebRTC Relay.
+2. Terminay creates a new session id if this desktop has no reusable WebRTC
+   session origin, otherwise it reuses the existing session id.
+3. Terminay creates a fresh one-time QR secret and registers a one-time pairing
+   room with the relay for that session id.
+4. Terminay shows `https://<session>.terminay.com/v1/#<qr-secret>` as a QR.
+5. The phone opens the session subdomain, consumes the fragment in memory, and
+   removes the fragment from browser history.
+6. The bootstrap derives one-time relay, pairing, signaling, asset, and CSRF
+   secrets from the QR secret.
+7. The phone and desktop exchange signed WebRTC signaling through the relay.
+8. The phone downloads and verifies the desktop-provided remote app bundle over
+   the asset data channel.
+9. The remote app asks for the desktop PIN and completes device pairing.
+10. The desktop issues a reconnect grant scoped to this session origin and paired
+    device, with a default 24-hour expiry.
+11. The session origin saves the device private key and reconnect grant. The
+    manager may save only the session origin and display metadata.
+12. The relay room is completed and purged. The live WebRTC peer connection may
+    continue after relay room purge.
 
-- STUN server configuration.
-- TURN server configuration later, if NAT traversal needs it.
-- Very small health and version endpoints.
+### Adding Or Re-Adding Devices
 
-The hosted service must not:
+Generating a new WebRTC QR for an existing saved session creates a fresh
+one-time pairing room under the same session origin. It must not close or replace
+existing live WebRTC peers for that origin.
 
-- Host the full Terminay remote terminal app.
-- Serve terminal HTML, CSS, or JavaScript beyond the bootstrapper.
-- Proxy terminal input/output.
-- Store pairing tokens after room expiry.
-- Store terminal session names, output, keystrokes, device private keys, or audit logs.
-- Accept unauthenticated room joins.
+Use a new session origin only when the user explicitly chooses to create a
+separate saved remote session or when the previous session origin has been
+revoked/deleted and should not be reused.
 
-## Desktop App Responsibilities
+### Saved Session Reconnect
 
-The desktop app remains the real remote host.
+1. The user opens `app.terminay.com` and clicks a saved session, or opens the
+   saved session subdomain directly.
+2. The session subdomain checks its stored reconnect grant, expiry metadata, and
+   device key.
+3. If the grant is locally present and not known-expired, the session subdomain
+   opens a reconnect request for the same session id.
+4. The relay routes the reconnect request to the desktop instance that has
+   advertised availability for that session. The relay does not receive or learn
+   the raw reconnect grant.
+5. The desktop returns a fresh reconnect challenge through the relay. The
+   challenge includes session id, opaque reconnect handle, reconnect attempt id,
+   protocol version, issued-at time, expiry, and random nonce.
+6. The browser proves possession of the reconnect grant by signing or HMACing the
+   full desktop challenge plus the browser's own fresh nonce. The desktop
+   validates the proof, rejects replayed/expired attempt ids, and creates a fresh
+   WebRTC peer connection.
+7. After the data channel opens, the remote app authenticates with the existing
+   RSA device-key challenge flow.
+8. If auth succeeds, the desktop issues a fresh short-lived terminal connection
+   ticket and may rotate or extend the reconnect grant according to policy.
 
-It must provide:
+Reconnect must not require a fresh QR while the reconnect grant is valid. If the
+grant is expired, revoked, missing, or bound to a different session origin, the
+session page must say a fresh QR is needed.
 
-- The existing local HTTPS mode.
-- WebRTC pairing session creation and QR generation.
-- A signaling client that connects to the hosted relay only while WebRTC pairing is active.
-- WebRTC peer connection creation, ICE handling, and data channel lifecycle.
-- A virtual asset server over the WebRTC data channel.
-- A virtual API and terminal transport over WebRTC.
-- Device pairing, device authentication, audit logging, revocation, and connection management.
+### Saving To The Manager
 
-The desktop app should serve the same built remote bundle it already serves locally. The WebRTC path should not require maintaining a separate terminal UI implementation.
+The manager and session origin are cross-origin, so saving is explicit:
 
-## QR Payloads
+- The manager must not import QR URLs. QR URLs may contain fragment secrets, and
+  `app.terminay.com` JavaScript must never receive them.
+- If the QR was scanned directly by the phone camera, the session page should
+  show a Save action after successful pairing. That action navigates to
+  `app.terminay.com` with only the session origin or a non-secret manager import
+  payload.
+- The non-secret manager import payload may include session origin, label,
+  desktop display name if explicitly shared, expiry/status metadata, and a
+  one-time UI import nonce. It must not include QR fragments, reconnect grants,
+  device ids, device keys, pairing tokens, signaling keys, terminal tickets,
+  terminal data, or cookies.
+- The manager stores only non-secret metadata and navigates back to the session
+  origin when the user opens it.
+
+### Revocation
+
+The desktop app is authoritative for revocation.
+
+- Revoking a device in the desktop app closes any live WebRTC data channels for
+  that device, deletes or marks the reconnect grant revoked, and prevents future
+  auth challenges for that device.
+- Revoking a saved session in the desktop app can revoke every device/grant bound
+  to that session origin.
+- A session-origin Revocation action can ask the desktop to revoke the current
+  device if it can reconnect/authenticate.
+- A manager Revocation action navigates to the session origin to perform the
+  action. If the desktop is unreachable, the manager may mark the local record
+  revoked, but this is only local manager state.
+
+## Session Lifetime
+
+Default WebRTC saved-session lifetime is **24 hours**.
+
+The desktop should let the user choose a lifetime when pairing or in Remote
+Access settings:
+
+- 1 hour
+- 24 hours, default
+- 7 days
+- Until revoked, optional advanced setting
+
+The desktop stores the authoritative expiry for each reconnect grant. The session
+origin may store a local copy for UI, but the desktop decision wins.
+
+Recommended policy:
+
+- Pairing rooms expire after 10 minutes or earlier when connected.
+- Pairing tokens are one-use and invalidated after successful pairing.
+- Terminal connection tickets are one-use and short-lived.
+- Reconnect grants expire after the selected lifetime, rotate on successful
+  reconnect when practical, and are deleted on revoke.
+- The desktop should expose a global maximum lifetime setting for stricter
+  environments.
+
+## QR And Secret Derivation
 
 Local Network QR payloads remain full local pairing URLs:
 
@@ -132,577 +268,559 @@ Local Network QR payloads remain full local pairing URLs:
 https://192.168.1.23:9443/?pairingSessionId=...&pairingToken=...&pairingExpiresAt=...
 ```
 
-Production WebRTC QR payloads are defined by `REMOTE_REFACTOR.md`. The old shared-origin draft below is obsolete and should not be implemented for production. The current production plan uses a per-session channel subdomain plus a path protocol version:
+Production WebRTC QR payloads use the session subdomain and a fragment secret:
 
 ```text
-https://<channel>.terminay.com/v1/#<qr-secret>
+https://<session>.terminay.com/v1/#<qr-secret>
 ```
 
-The previous shared-origin draft was:
+Rules:
+
+- `<session>` is the public high-entropy session id.
+- `/v1/` is the first production WebRTC protocol.
+- Future incompatible protocols use `/v2/`, `/v3/`, and so on.
+- `qr-secret` is at least 32 random bytes encoded as base64url without padding.
+- Secrets stay out of query parameters.
+- The QR must not include SDP, ICE, JWTs, terminal tickets, PINs, cookies, device
+  keys, reconnect grants, or terminal data.
+- The fragment is consumed in memory and removed with `history.replaceState`
+  before pairing continues.
+- The bootstrap rejects unknown protocol versions and the old shared-origin
+  multi-token fragment format.
+
+The desktop and browser derive one-time secrets from the QR secret with
+HKDF-SHA256 and protocol-versioned labels:
 
 ```text
-https://app.terminay.com/connect?mode=webrtc&v=1&roomId=...#relayJoinToken=...&pairingSessionId=...&pairingToken=...&pairingExpiresAt=...&signalingAuthToken=...
+relayJoinToken     = HKDF(qrSecret, "terminay remote v1 relay join")
+pairingToken       = HKDF(qrSecret, "terminay remote v1 pairing")
+signalingAuthToken = HKDF(qrSecret, "terminay remote v1 signaling hmac")
+assetInstallKey    = HKDF(qrSecret, "terminay remote v1 asset install")
+csrfSeed           = HKDF(qrSecret, "terminay remote v1 csrf seed")
 ```
 
-That obsolete draft used query fields like:
+The reconnect grant is not derived from the QR secret. It is issued by the
+desktop only after successful pairing and PIN verification.
 
-- `mode=webrtc`
-- protocol version, such as `v=1`
-- `roomId`
+## Reconnect Grant Model
 
-And fragment fields like:
+The reconnect grant is the session-origin secret that enables QR-free reconnect.
 
-- `relayJoinToken`
-- `pairingSessionId`
-- `pairingToken`
-- `pairingExpiresAt`
-- `signalingAuthToken`
-- optional `hostName` or user-facing desktop label
+Stored by the desktop:
 
-The QR should not include SDP blobs or individual protocol tokens. SDP payloads are too large and brittle for QR scanning, and individual tokens make the QR bigger than needed. The QR should identify a short-lived signaling room through the channel subdomain and carry one QR-only fragment secret that derives relay, pairing, signaling-HMAC, asset-install, and CSRF secrets.
+- session origin
+- device id
+- opaque reconnect handle
+- reconnect grant hash or public verifier
+- expiry
+- created, last used, and revoked timestamps
+- optional display label and user-selected lifetime
 
-The derived `relayJoinToken` should be separate from the derived `pairingToken`. The signaling relay can validate the relay token before forwarding messages, while the actual Terminay pairing token is only validated by the desktop app after the WebRTC data channel is open.
+Stored by the session subdomain:
 
-The QR should not include the user's pairing PIN. The PIN is a local desktop setting used as a second human-authentication factor after the phone scans the QR.
+- reconnect grant secret in IndexedDB, protected with WebCrypto where possible
+- opaque reconnect handle paired with that grant
+- device private key, scoped to the exact session origin
+- grant expiry metadata for UI
+- desktop/session display metadata if explicitly provided
+
+Not stored by `app.terminay.com`:
+
+- the reconnect grant or any verifier
+- device private key
+- cookies or storage from the session origin
+
+Reconnect proof:
+
+- The desktop advertises availability for a session id while Remote Access is
+  running and that session has at least one valid grant.
+- The browser sends an unauthenticated reconnect intent containing only session
+  id, opaque reconnect handle, protocol version, and client nonce. It must not
+  include the device id unless a later design proves the privacy tradeoff is
+  necessary.
+- The opaque reconnect handle is random, non-secret, scoped to one session
+  origin, not useful without the reconnect grant, and rotated whenever the grant
+  rotates.
+- The desktop maps the reconnect handle to the candidate grant/device record and
+  replies with a reconnect challenge containing session id, reconnect handle,
+  reconnect attempt id, protocol version, issued-at time, expiry, and a fresh
+  desktop nonce.
+- The browser signs or HMACs the canonical reconnect challenge and its client
+  nonce with the reconnect grant.
+- The desktop verifies the proof, checks the challenge expiry, checks that the
+  attempt id has not been used before, and rejects proofs for a different
+  session id, reconnect handle, origin, or protocol version.
+- The relay may route reconnect messages by session id but must not receive a
+  raw long-lived reconnect grant or any bearer token that would allow it to
+  reconnect on its own.
+- The desktop verifies the proof before creating a fresh WebRTC offer.
+- The normal RSA device-key auth still runs after the data channel opens. The
+  device id is proven inside that authenticated data-channel flow, not exposed to
+  the relay during reconnect routing.
+
+The reconnect grant should rotate after successful reconnect when both sides can
+confirm receipt. If rotation cannot be made atomic in the first implementation,
+the grant may stay stable until expiry, but revocation must still work.
+
+Reconnect proof material must be domain-separated from QR pairing secrets,
+terminal tickets, device-key signatures, and signaling HMACs.
 
 ## Signaling Relay
 
-The signaling relay should be a small WSS service.
+The relay forwards signaling only.
 
-Suggested endpoints:
+Allowed relay state:
 
-- `GET /` serves the bootstrap page.
-- `GET /sw.js` serves the service worker.
-- `GET /healthz` returns server health.
-- `GET /versionz` returns build/runtime version details.
-- `GET /metrics` returns redacted operational metrics for the service.
-- `WSS /signal` handles room signaling.
+- session id or room id
+- relay join token hash for one-time pairing rooms
+- host instance id
+- expiry
+- signaling events
+- optional non-secret availability state for reconnectable sessions
+- operational metadata needed for rate limits and metrics
 
-Suggested signaling messages:
+Forbidden relay state:
 
-```ts
-type SignalMessage =
-  | { type: 'host-ready'; roomId: string; relayJoinTokenHash: string; expiresAt: string }
-  | { type: 'client-join'; roomId: string; relayJoinToken: string }
-  | { type: 'client-accepted'; roomId: string }
-  | { type: 'offer'; roomId: string; sdp: RTCSessionDescriptionInit }
-  | { type: 'answer'; roomId: string; sdp: RTCSessionDescriptionInit }
-  | { type: 'ice'; candidate: RTCIceCandidateInit; roomId: string }
-  | { type: 'error'; message: string }
-```
+- raw QR secret
+- raw pairing token
+- raw signaling HMAC key
+- raw reconnect grant
+- PINs
+- device private keys
+- WebRTC data channel payloads
+- terminal messages
+- terminal session names
 
-Room behavior:
+Pairing room behavior:
 
-- Rooms are created by the desktop app.
-- Rooms expire at the pairing expiry time, with a hard maximum such as 10 minutes.
-- A room accepts one active client during pairing.
-- The relay validates that the client knows the relay join token before forwarding signaling messages.
-- The relay deletes room state when the peer connection is established, the host disconnects, or the room expires.
+- Rooms are created only by the desktop.
+- Rooms expire quickly, with a default/hard maximum of 10 minutes.
+- A room accepts one active client during initial pairing.
+- Additional clients are rejected after the first accepted client.
+- Events are deleted when the room completes, the host disconnects, or the room
+  expires.
+- Host or client sends `room-complete` once the peer connection is established.
 
-The relay should forward signaling only. It should not inspect or proxy application data channels.
+Reconnect behavior:
+
+- Desktop instances advertise availability for existing session ids while Remote
+  Access is running.
+- Browser reconnect starts with an intent/challenge/proof exchange. Proofs are
+  bound to a desktop-issued challenge and cannot be replayed as new attempts.
+- Reconnect requests are rate-limited by session id and client address.
+- The relay routes reconnect signaling to the desktop but does not authorize
+  terminal access.
+- The desktop validates reconnect proof and device auth.
+- Reconnect signaling events are purged once the fresh peer connection is
+  established.
+
+Signaling messages that carry SDP or ICE must be signed with the appropriate
+signaling HMAC. For initial QR pairing that HMAC is derived from the QR secret.
+For reconnect it is derived from a fresh secret established by the
+challenge/proof handshake and is scoped to one reconnect attempt. It must not be
+derived from manager state or reused across reconnect attempts.
 
 ## WebRTC Data Channels
 
-Use separate data channels so the terminal protocol cannot be blocked by large asset transfers.
+Use separate data channels so asset transfer cannot block terminal traffic:
 
-Suggested channels:
+- `control`: lifecycle, reconnect, version negotiation, pings, errors
+- `asset`: virtual static file requests and responses
+- `api`: pairing and auth request/response messages
+- `terminal`: the existing remote terminal protocol currently carried over
+  WebSocket
 
-- `control`: lifecycle messages, pings, version negotiation, and errors.
-- `asset`: virtual static file requests and responses.
-- `api`: pairing and auth request/response messages.
-- `terminal`: the existing remote terminal protocol currently carried over WebSocket.
+The desktop must ignore API and terminal messages until pairing/auth completes.
 
-In the first implementation, `api` and `terminal` may share one reliable ordered channel if that simplifies the client adapter. Assets should remain separate because cached bundle downloads can be larger.
+## Remote App Assets
 
-## Serving The Remote App Bundle Over WebRTC
+The hosted bootstrap does not contain the full terminal app. The desktop supplies
+the remote app bundle over WebRTC.
 
-The hosted bootstrap page should not include the real terminal app bundle. Instead:
+Asset install rules:
 
-1. The hosted bootstrap page opens WebRTC.
-2. It requests an asset manifest from the desktop app over the `asset` channel.
-3. The desktop returns a manifest describing the built `remote.html`, JavaScript, CSS, manifest, icons, and any hashed Vite assets.
-4. The bootstrap page downloads those files over WebRTC.
-5. The bootstrap page writes them into Cache Storage under paths such as `/remote-app/current/remote.html` and `/remote-app/current/assets/...`.
-6. The service worker serves those cached files as same-origin resources.
-7. The bootstrap page navigates to `/remote-app/current/remote.html`.
+- The bootstrap requests an asset manifest over the `asset` channel.
+- The manifest includes bundle id, protocol version, path, content type, byte
+  length, and SHA-256 hash.
+- Every asset body is size-checked and hash-verified before `cache.put`.
+- Asset paths are scoped under `/remote-app/<bundle-id>/`.
+- Avoid shared mutable paths such as `/remote-app/current/*` for production.
+- Cache entries from old bundles are pruned after successful install or after a
+  short retention window.
+- The remote app is not launched if any asset fails validation.
+- The service worker is registered only on session subdomains, never on
+  `app.terminay.com`.
 
-This keeps the hosted app server basic while still letting browser security treat the launched app as a secure same-origin application.
+## Device Pairing And Auth
 
-The service worker should:
+The existing RSA device-key challenge model remains.
 
-- Only serve assets that came from an authenticated WebRTC desktop session.
-- Keep assets scoped under a reserved path such as `/remote-app/`.
-- Evict stale desktop-provided bundles after a successful update or after a short retention window.
-- Fall back to the bootstrap page if no bundle is cached.
+Rules:
 
-The desktop asset manifest should include:
+- Device keys are scoped to the exact session origin.
+- The desktop stores WebRTC devices as exact session-origin devices or a
+  structured equivalent such as `{ kind: 'webrtc', origin, protocolVersion }`.
+- A paired device for one session origin cannot authenticate to another session
+  origin.
+- `app.terminay.com` is not a valid device-pairing origin.
+- Device revocation closes live WebRTC connections and invalidates future
+  challenges and reconnect grants.
+- PIN verification happens on the desktop after the first WebRTC data channel
+  opens.
+- The PIN is never in the QR, never stored by the hosted service, and never sent
+  to the signaling relay.
 
-- asset path
-- content type
-- byte length
-- content hash
-- cache policy
-- remote app protocol version
+The desktop may optionally require the PIN again on reconnect, but the default
+should be: paired devices can reconnect without PIN until their reconnect grant
+expires or is revoked.
 
-## API Transport Adapter
+## Cookies, Storage, CSRF, And CORS
 
-The existing `src/remote/services/auth.ts` assumes HTTP `fetch` to same-origin endpoints. The WebRTC version should introduce a transport abstraction rather than duplicating the app.
+Preferred storage allocation:
 
-Suggested shape:
+- Device private keys: IndexedDB on the exact session subdomain.
+- Reconnect grants: IndexedDB on the exact session subdomain by default,
+  protected with WebCrypto where possible.
+- Opaque reconnect handles: IndexedDB or localStorage on the exact session
+  subdomain. They are non-secret, but still must not be stored by the manager.
+- Remote app assets: Cache Storage on the exact session subdomain.
+- Remote app UI preferences: localStorage or IndexedDB on the exact session
+  subdomain.
+- Bootstrap QR material: memory only.
+- Terminal tickets: memory only.
+- Manager session list: manager-local storage with non-secret metadata only.
 
-```ts
-type RemoteApiTransport = {
-  postJson<TResponse>(pathname: string, body: unknown): Promise<TResponse>
-}
+Reconnect grants and reconnect-proof material must not be stored in cookies,
+including encrypted or sealed cookie blobs. A cookie may hold only one of these:
 
-type RemoteTerminalTransport = {
-  connect(ticket: string): Promise<RemoteMessageSocket>
-}
+- a non-secret local UI/session handle
+- future HTTP session state that is not sufficient to reconnect, authenticate a
+  device, or obtain a terminal ticket without the IndexedDB/WebCrypto grant and
+  device-key flow
+
+If cookies are used for session-subdomain features:
+
+```http
+Set-Cookie: __Host-terminay_session=...; Secure; HttpOnly; Path=/; SameSite=Strict
 ```
 
-Local Network mode implements these with `fetch` and `WebSocket`.
-
-WebRTC mode implements these with request/response messages over WebRTC data channels. The virtual paths should match existing paths:
-
-- `/api/pairing/start`
-- `/api/pairing/complete`
-- `/api/auth/options`
-- `/api/auth/verify`
-- `/ws` equivalent for terminal messages
-
-This lets the remote React app keep the same pairing, authentication, and terminal UI logic while swapping the transport underneath it.
-
-## Pairing And Origin Security
-
-The current implementation binds devices to `window.location.origin`. In WebRTC mode the phone's origin is the exact session subdomain, for example `https://<channel>.terminay.com`.
-
-That keeps the manager isolated and changes what the desktop stores:
-
-- Local Network paired devices are bound to the selected local origin.
-- WebRTC paired devices are bound to the exact session origin plus a WebRTC transport marker.
-
-Suggested stored identity fields:
-
-```ts
-type RemoteDeviceOrigin =
-  | { kind: 'local'; origin: string }
-  | { kind: 'webrtc'; origin: string; protocolVersion: 'v1' }
-```
-
-The pairing token still proves possession of the QR payload. The device key still proves the same browser/device on later connections. The WebRTC data channel should additionally verify that the remote app has completed the same pairing/auth flow before terminal messages are accepted.
-
-WebRTC Relay mode also requires a 6-digit pairing PIN once the user has configured one. The first WebRTC QR generation should prompt for a PIN if none is stored. Terminay stores only a salted `scrypt` hash of that PIN in local settings. After scanning the QR and establishing the signed WebRTC data channel, the phone asks for the PIN and sends it with `/api/pairing/start`; the desktop verifies the PIN before accepting the pairing token or creating a pending device registration.
-
-This PIN protects a different threat than the QR-only relay secrets. The relay token and signaling HMAC stop an untrusted relay from joining or rewriting the WebRTC handshake. The PIN protects against a nearby person scanning the QR code before the intended phone owner does. The PIN is not sent to the signaling relay, is not encoded in the QR, and is checked by the desktop as the final pairing gate.
-
-The desktop should treat WebRTC connections exactly like WebSocket connections after authentication:
-
-- issue a short-lived connection ticket
-- register a connection id
-- enforce monotonically increasing `seq`
-- require attach before write/resize
-- audit connection opened/closed
-- support connection close from Settings
-- support device revocation
-
-## Content Security Policy
-
-Local Network mode can keep its current strict CSP.
-
-The hosted bootstrap CSP should allow only what the bootstrapper needs:
-
-- scripts from self
-- styles from self
-- images from self and data URLs for lightweight status UI
-- WebSocket connection to the signaling origin
-- WebRTC connections
-- service worker registration
-
-The launched remote app should use the same or stricter CSP as the current local app. If module assets are served from Cache Storage under the hosted origin, they can remain same-origin and avoid broad script exceptions.
-
-## NAT Traversal
-
-Initial WebRTC mode should use public STUN servers or a configurable STUN list.
-
-TURN should be planned as a follow-up capability:
-
-- Add hosted or third-party TURN credentials.
-- Keep TURN credentials short-lived.
-- Surface a clear UI state when direct WebRTC connection fails and TURN is unavailable.
-
-Without TURN, some networks will fail. The UI should say WebRTC could not connect and suggest Local Network mode when available.
-
-## UX Requirements
-
-Remote Access settings and the Remote menu should expose two clear connect options:
-
-- **Local Network QR**
-- **WebRTC QR**
-
-The pairing modal should show:
-
-- the selected mode
-- a QR code
-- expiry time
-- connection state
-- a short hint for when to choose the other mode
-
-The WebRTC flow should show these states:
-
-- waiting for phone to open QR URL
-- phone connected, establishing secure channel
-- loading remote app from this computer
-- pairing or authenticating
-- connected
-- failed, with retry and local-network fallback
-
-The hosted bootstrap page should be sparse:
-
-- open QR URL
-- show connection progress
-- show a useful error
-- retry
-
-It should not look like a separate product surface.
-
-## Settings
-
-Add remote access settings for WebRTC:
-
-```ts
-type RemoteAccessMode = 'local' | 'webrtc'
-
-type RemoteWebRtcSettings = {
-  enabled: boolean
-  hostedDomain: string
-  stunUrls: string[]
-  turnUrl: string
-  turnUsername: string
-  turnCredential: string
-}
-```
-
-Recommended defaults:
-
-- `enabled`: `true`
-- `hostedDomain`: `terminay.com`
-- `stunUrls`: include one default STUN endpoint or leave configurable for packaged builds
-- TURN fields blank
-
-The existing `remoteAccess.origin`, `bindAddress`, and TLS fields remain local-network settings.
-
-## Architecture
-
-### 1. Remote Transport Boundary
-
-Introduce transport interfaces shared by the remote browser app:
-
-- API transport for JSON request/response.
-- Terminal transport for the existing protocol.
-- Asset transport for WebRTC bootstrap only.
-
-This keeps Local Network and WebRTC modes from forking the UI.
-
-### 2. Desktop WebRTC Host Service
-
-Add an Electron-side service, likely under `electron/remote/webrtcHost.ts`, responsible for:
-
-- creating WebRTC pairing sessions
-- joining signaling rooms as host
-- creating peer connections
-- opening data channels
-- serving asset requests
-- forwarding virtual API requests into the existing pairing/auth handlers
-- forwarding terminal channel messages into the existing connection handling path
-
-Where possible, refactor `RemoteAccessService` so request handlers can be called by both HTTP and WebRTC transports instead of copying the pairing/auth logic.
-
-### 3. Hosted Bootstrap App
-
-Create a tiny separate build target for the hosted page:
-
-- compact QR URL parser
-- QR parser
-- signaling client
-- WebRTC client
-- asset downloader
-- service worker installer
-- launcher for cached desktop-provided app
-
-This can live in the same repository if Terminay owns deployment, but it should be built as a separate artifact from the desktop-bundled remote app.
-
-### 4. Asset Virtualization
-
-Add a desktop-side virtual static file service that can read the same files currently served by `handleStaticRequest`.
-
-It should expose:
-
-- `GET_MANIFEST`
-- `GET_ASSET`
-- optional chunked asset transfer for larger files
-
-The manifest should be generated from the packaged remote build output and public assets.
-
-### 5. Remote Client Boot Mode
-
-The launched remote app needs to know which transport to use.
-
-Suggested options:
-
-- Add a bootstrap-injected config object before launching the remote app.
-- Store a short-lived WebRTC session id in IndexedDB.
-- Infer WebRTC mode from the exact session origin and versioned path, such as `https://<channel>.terminay.com/v1/`.
-
-Avoid storing pairing tokens in long-lived localStorage. Pairing tokens should stay in memory and expire quickly.
-
-### 6. Connection Model
-
-The existing `ConnectionStore` should remain the source of truth for live remote connections.
-
-For WebRTC, add a socket-like adapter around the terminal data channel so existing connection registration and message handling can be reused. If direct reuse is awkward because `ConnectionStore` currently stores `ws` sockets, introduce a small `RemoteConnectionPeer` interface with `send`, `close`, and state callbacks, then adapt both WebSocket and WebRTC peers to it.
-
-## Implementation Plan
-
-### Phase 1: Refactor Existing Remote Transport
-
-- Extract API route logic from `handleRequest` into reusable methods.
-- Extract terminal connection logic from WebSocket-specific code into peer-agnostic helpers.
-- Add transport interfaces in `src/remote/services/`.
-- Keep Local Network behavior and tests passing.
-
-### Phase 2: Hosted Bootstrap Prototype
-
-- Add a minimal hosted bootstrap app.
-- Add QR parsing for WebRTC payloads.
-- Add signaling client.
-- Add service worker and Cache Storage asset install flow.
-- Add a local development harness for the hosted origin.
-
-### Phase 3: Desktop WebRTC Host
-
-- Add WebRTC settings and status fields.
-- Add signaling relay client.
-- Add WebRTC host peer connection and data channels.
-- Add WebRTC QR generation.
-- Add asset manifest and asset channel serving.
-
-### Phase 4: Virtual API And Terminal Transport
-
-- Implement WebRTC API request/response routing.
-- Implement WebRTC terminal protocol routing.
-- Reuse pairing, auth, tickets, session attach/write/resize, audit, revocation, and status updates.
-- Add reconnection behavior or explicitly mark WebRTC sessions as one-shot for the first release.
-
-### Phase 5: Product Polish And Failure States
-
-- Add mode selection to the Remote menu and pairing modal.
-- Add WebRTC connection state to `RemoteAccessStatus`.
-- Add clear failure messages for expired QR, relay unavailable, WebRTC failed, and app bundle load failed.
-- Document Local Network versus WebRTC setup.
+Rules:
+
+- Use the `__Host-` prefix for sensitive hosted session cookies.
+- Include `Secure`, `HttpOnly`, `Path=/`, and `SameSite=Strict`.
+- Omit the `Domain` attribute.
+- Never set sensitive cookies for `.terminay.com`.
+- Never use `app.terminay.com` cookies to authorize a session subdomain.
+- Never send a raw reconnect grant, device private key, terminal ticket, QR
+  secret, pairing token, reconnect-proof key material, or signaling HMAC key as a
+  cookie value.
+- Any cookie-authorized state-changing endpoint requires a CSRF token or
+  equivalent proof scoped to the session subdomain.
+- Reject unexpected `Origin` and unsafe `Sec-Fetch-Site` values where supported.
+- Do not enable credentialed wildcard CORS.
+- Avoid credentialed CORS between manager and session origins.
+
+## Security Headers
+
+The hosted bootstrap and manager should use strict headers:
+
+- CSP allowing scripts and styles from self only where practical
+- `object-src 'none'`
+- `base-uri 'none'`
+- `frame-ancestors 'none'` unless embedding is deliberately designed later
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy: no-referrer` or `strict-origin-when-cross-origin`
+- `Permissions-Policy` limiting camera, microphone, geolocation, and other
+  powerful APIs
+
+Remote app assets must be served only from session subdomains and must not be
+served from `app.terminay.com`.
+
+## Desktop UX
+
+Remote Access in the desktop app should show:
+
+- mode selector: Local Network QR or WebRTC Relay
+- QR code and expiry
+- current relay/signaling state
+- live connections
+- paired devices
+- saved WebRTC session origins
+- reconnect grant expiry for each device/session
+- actions to revoke device, revoke session, rotate QR, copy/open link, and stop
+  Remote Access
+
+The desktop should make the distinction clear:
+
+- QR pairing is for adding or re-adding a device.
+- Saved session reconnect is for already paired devices.
+- Revocation and expiry are enforced by the desktop.
+- If a user generates a fresh QR, it must not break existing live WebRTC
+  sessions.
+
+## Web App UX
+
+### Manager App
+
+`app.terminay.com` should provide:
+
+- saved session list
+- empty state that explains saving happens after pairing or import
+- open, rename, archive, restore, forget, and revoke actions
+- status labels for online, offline, expired, revoked, archived, and unreachable
+- last opened and last connected timestamps
+- no visible copy suggesting the manager itself holds terminal access
+
+Opening a session navigates to its session origin. Revoking navigates to the
+session origin or marks the local manager record revoked when the desktop cannot
+be reached.
+
+### Session App
+
+`<session>.terminay.com` should provide:
+
+- first-pairing progress from QR scan through PIN, asset load, and connected
+- reconnect progress when opened without a QR fragment
+- clear states for expired grant, revoked grant, desktop offline, relay
+  unavailable, WebRTC failed, TURN unavailable, and asset verification failed
+- Save to Manager action after successful pairing if the manager did not already
+  import the session
+- sign out / forget this browser action that deletes local grant, device key,
+  cached app assets, and session-local preferences after confirmation
+
+The hosted bootstrap should be sparse and utilitarian. It should not look like a
+separate product surface from Terminay.
+
+## NAT, STUN, TURN, And Reliability
+
+Initial WebRTC can use configurable STUN with no bundled TURN provider. Some
+networks will fail without TURN, so the UI must distinguish relay failure,
+direct WebRTC failure, and TURN unavailable.
+
+Production TURN should use either a managed TURN service with regional points of
+presence or a Terminay-owned coturn cluster. TURN credentials must be short-lived
+and must not reuse QR secrets, pairing tokens, reconnect grants, terminal
+tickets, or device keys.
+
+Mobile background behavior is best effort. If the browser suspends the page and
+the data channel dies, reopening the saved session should use the reconnect
+flow, not the old purged relay room.
 
 ## Remote Terminal Sizing
 
-Mobile and desktop terminal screens usually have opposite shapes. Desktop terminals are often wide and short, while phones are narrow and tall. The remote app should not try to make the phone behave like a miniature desktop viewport.
+Remote clients can temporarily own terminal size.
 
-The active mobile remote tab should become the temporary size owner for its terminal session:
+- Desktop-owned is the default: the desktop xterm fits its Dockview panel and
+  resizes the PTY.
+- Remote-owned applies while a remote client has a terminal session attached and
+  active: the phone calculates `cols` and `rows` from its visible terminal area
+  and sends resize messages.
+- Only one remote tab should own a session size at a time. The most recently
+  attached or activated remote tab wins until it detaches, switches away,
+  disconnects, or Remote Access stops.
+- While remote-owned sizing is active, the desktop renderer resizes its xterm to
+  the remote dimensions, suppresses desktop-fit PTY resize messages, centers the
+  xterm in the existing panel, and restores normal fit when the override clears.
 
-1. When the mobile remote activates a terminal tab, that terminal session should resize to the mobile terminal area's calculated `cols` and `rows`.
-2. The desktop app should keep the Dockview panel and app window at their existing desktop size.
-3. The desktop xterm.js instance for that session should render at the mobile-owned `cols` and `rows`, centered inside the existing desktop terminal panel.
-4. The visible area around the centered xterm should use the project or terminal background color so the desktop panel still looks intentional.
-5. When the mobile remote switches to another tab, detaches, disconnects, or remote access stops, the previous desktop terminal should return to normal desktop-fit sizing.
+## Deployment
 
-This makes the terminal PTY geometry match the currently used input surface. Because the mobile remote only shows one terminal at a time, the active remote tab is a good proxy for the user's current terminal. Desktop users still keep their window layout, split panes, and panel sizes unchanged.
+Production requirements:
 
-### Current Behavior To Replace
+- `app.terminay.com` and `*.terminay.com` point at the hosted app service.
+- TLS covers both manager and wildcard session hosts.
+- The edge preserves the original `Host` header.
+- `/signal` upgrades only on valid session hosts and local development hosts,
+  never on `app.terminay.com`.
+- HTML is `no-store`; hashed bootstrap assets may be immutable.
+- Remote app assets are served from per-session service worker cache.
+- `/healthz`, `/versionz`, and `/metrics` expose no secrets or active room data.
+- Relay database migrations are deployed before app instances that need them.
+- Expired rooms/events are cleaned by the relay loop and a defense-in-depth
+  database cleanup job.
+- Logs redact URL fragments and fields named like secret, token, key, pin,
+  pairing, relay, signaling, ticket, or grant.
+- `terminay.com` production verification must pass before release.
 
-The current remote app treats the desktop session dimensions as authoritative:
+Incident procedure for compromised hosted bootstrap assets:
 
-- The desktop `TerminalPanel` fits to its Dockview panel and sends those `cols` and `rows` to Electron.
-- `RemoteAccessService` broadcasts those dimensions to remote clients.
-- The mobile remote resizes its xterm to the desktop `cols` and `rows`.
-- The mobile UI compensates with scroll wrappers, zoom, and desktop-canvas measurements.
-
-This causes awkward horizontal scrolling and brittle viewport matching on phones.
-
-### Desired Size Ownership Model
-
-Size ownership should be explicit and temporary:
-
-- **Desktop-owned**: default state. The desktop `TerminalPanel` fits its local Dockview panel and resizes the PTY.
-- **Remote-owned**: while a remote client has a session attached and active. The active remote xterm fits the phone terminal area and sends its calculated `cols` and `rows` to the host.
-
-Only one remote tab should be size owner for a session at a time. If multiple remote clients exist, the most recently attached or activated remote tab can own the session until it detaches or another remote tab becomes active. A later implementation may add stronger multi-client rules, but the first version should optimize for the normal phone-as-controller case.
-
-### Remote App Responsibilities
-
-The remote browser app should calculate terminal geometry from its own visible terminal area:
-
-- Use xterm.js sizing, likely through `FitAddon`, to calculate `cols` and `rows` from the mobile terminal container.
-- Send a terminal protocol `resize` message whenever the active remote tab changes, the remote terminal area changes size, orientation changes, font settings change, or the accessory bar changes height.
-- Attach to the selected session before sending input or resize messages.
-- Stop sizing the mobile terminal from desktop `viewportWidth`, `viewportHeight`, or desktop `cols` and `rows`.
-- Simplify the mobile scroll wrapper so normal terminal width and scrollback behavior can do most of the work.
-
-The remote app can still keep zoom controls if they are useful, but zoom should change the phone-owned terminal geometry rather than scaling a desktop-sized terminal surface.
-
-### Desktop Host Responsibilities
-
-`RemoteAccessService` should treat a remote resize from the active attached session as a remote size override:
-
-- Resize the PTY to the remote-provided `cols` and `rows`.
-- Update the remote session record so other remote UI state sees the active dimensions.
-- Notify the owning desktop renderer that a remote size override is active for that session.
-- Clear the override when the remote detaches, switches away, disconnects, or remote access stops.
-- Notify the owning desktop renderer when the override clears.
-
-The desktop renderer needs a new IPC event for these override changes. The event should include the session id, whether the override is active, and the remote-owned `cols` and `rows` when active.
-
-### Desktop Renderer Responsibilities
-
-The desktop `TerminalPanel` should support two sizing modes:
-
-- In normal mode, keep the existing `FitAddon.fit()` behavior and send desktop `cols` and `rows` to Electron.
-- In remote override mode, call `terminal.resize(remoteCols, remoteRows)` and avoid sending desktop-fit resize messages back to Electron.
-
-While remote override mode is active:
-
-- Do not resize the Dockview group, app window, or desktop panel.
-- Center the xterm element within the existing terminal panel.
-- Fill the surrounding panel area with the project or terminal background color.
-- Keep keyboard input, output rendering, search, copy, and terminal note UI working.
-
-When the override clears, the panel should run the normal desktop fit path once so the PTY returns to the desktop terminal dimensions.
-
-### Feedback Loop Avoidance
-
-The implementation must avoid resize ping-pong:
-
-- A remote-owned resize should not trigger the desktop `TerminalPanel` to immediately fit to desktop dimensions and overwrite it.
-- A desktop panel resize observer should not send PTY resize messages while remote override mode is active.
-- Remote clients should debounce or coalesce resize messages from viewport and layout changes.
-- Session updates caused by remote-owned resize should not make the remote app resize from stale desktop metadata.
-
-### Testing Requirements
-
-Remote terminal sizing tests should cover:
-
-- Mobile remote selecting a tab resizes the PTY to phone dimensions.
-- Desktop xterm renders those phone dimensions centered without changing Dockview layout.
-- Switching mobile tabs restores the previous desktop tab and applies remote sizing to the newly active tab.
-- Disconnecting, detaching, stopping remote access, or closing the phone restores desktop-fit sizing.
-- Phone rotation and remote font-size changes recompute mobile-owned dimensions.
-- Scrollback works naturally on the phone without requiring desktop-width horizontal panning.
+1. Stop deploys and revoke the affected hosted bundle by removing it from the
+   asset manifest and edge cache.
+2. Deploy a clean bootstrap with a new bundle id, force `no-store` HTML, and
+   purge CDN cache for `/v1/`, `/remote-app/current/`, `/sw.js`, and affected
+   versioned asset paths.
+3. Rotate relay signing/runtime credentials and invalidate reconnect
+   availability rows and pending signaling events.
+4. Publish user guidance to revoke paired browsers, generate fresh QR codes, and
+   clear saved session cache if the affected window included successful pairing.
+5. Run production verification, asset hash checks, and log review before
+   resuming deploys.
 
 ## Testing
 
 Unit tests should cover:
 
-- WebRTC QR payload creation and parsing.
-- Pairing expiry and room expiry behavior.
-- Pairing PIN validation, salted hashing, and constant-time verification.
-- Transport selection in the remote app.
-- Asset manifest generation and path safety.
-- Origin binding for local versus WebRTC devices.
+- Local Network pairing URL creation and parsing.
+- WebRTC `/v1/` QR creation and parsing.
+- old shared-origin QR rejection.
+- unsupported future protocol rejection.
+- HKDF derivation compatibility.
+- relay token hash validation.
+- HMAC signing, replay protection, and tamper rejection.
+- reconnect grant proof validation.
+- reconnect grant expiry, rotation, and revocation.
+- exact session-origin device binding.
+- asset manifest and path validation.
+- asset hash and byte-length verification.
+- manager storage rejecting secret-like fields.
 
-Integration tests should cover:
+Integration and E2E tests should cover:
 
-- Existing Local Network pairing still works.
-- Hosted bootstrap accepts the current `/v1/` session-subdomain QR URL.
-- WebRTC asset install writes files into Cache Storage.
-- The launched remote app uses WebRTC transports.
-- The desktop prompts for a first-use WebRTC pairing PIN before generating a QR and stores only the hash.
-- Pairing requests with an incorrect configured PIN are rejected before device registration.
-- Pairing, auth, session list, attach, write, resize, and output work over WebRTC.
-- Device revocation closes a WebRTC connection.
+- Local Network pairing still works.
+- first WebRTC QR pair/auth/connect flow.
+- saved session reconnect without QR.
+- expired grant requires a fresh QR.
+- revoked grant cannot reconnect.
+- second client is rejected for the same one-time pairing room.
+- generating a fresh QR does not break existing live WebRTC sessions.
+- manager cannot read session cookies, IndexedDB, Cache Storage, or service
+  worker state.
+- two session subdomains cannot read each other's storage or cookies.
+- service worker scope is per-session.
+- tampered SDP/ICE fails before WebRTC descriptions or candidates are applied.
+- tampered assets fail install.
+- device revocation closes live WebRTC terminal data channels.
+- mobile background/resume uses reconnect flow.
 
-E2E tests should mock the signaling relay and WebRTC primitives where possible so CI does not need real phones or public network infrastructure.
-
-Manual QA should include:
-
-- iOS Safari.
-- Android Chrome.
-- Desktop Chrome.
-- Same-LAN WebRTC.
-- Phone on cellular with desktop on home Wi-Fi.
-- Relay unavailable.
-- Expired QR.
-- Camera permission denied.
-- Local Network mode after WebRTC failure.
-
-## Open Questions
-
-- Should WebRTC mode be enabled by default in packaged builds or hidden behind an advanced setting until TURN support exists?
-- Who operates the signaling relay and possible TURN service?
-- Should a WebRTC paired device be allowed to reconnect later without opening a new QR URL, or should WebRTC always require a fresh QR?
-- Should the manager support paste/manual entry for WebRTC URLs in addition to OS camera scanning?
-- How long should desktop-provided remote app assets remain cached under the hosted origin?
+Manual QA should include iOS Safari, Android Chrome, desktop Chrome, same-LAN
+WebRTC, phone on cellular with desktop on home Wi-Fi, restrictive guest Wi-Fi,
+VPN/proxy environments, relay unavailable, TURN unavailable, expired QR, expired
+grant, revoked device, camera permission denied, and Local Network fallback.
 
 ## Implementation Checklist
 
-### Existing Local Network Mode
+### Documentation And Cleanup
 
-- [ ] Preserve the current local HTTPS server and pairing QR flow.
-- [ ] Preserve existing available-address selection.
-- [ ] Preserve existing pairing/auth/WebSocket protocol behavior.
-- [ ] Add regression tests before touching transport internals.
+- [x] Merge the old remote access specs into this canonical `REMOTE.md`.
+- [x] Delete stale `remote.md` and `REMOTE_REFACTOR.md` from `terminay/specs/`.
+- [x] Update repository references to point at `terminay/specs/REMOTE.md`.
+- [x] Update user-facing docs to explain manager versus session subdomain,
+  QR pairing versus saved reconnect, and the 24-hour default expiry.
 
-### Shared Remote Transport
+### Manager App
 
-- [ ] Define API and terminal transport interfaces for the remote browser app.
-- [ ] Implement Local Network transport with `fetch` and `WebSocket`.
-- [ ] Refactor auth and socket services to use the transport boundary.
-- [ ] Keep the current remote UI behavior unchanged in Local Network mode.
+- [x] Remove any manager flow that accepts full QR URLs or QR fragments.
+- [x] Import only non-secret session-origin payloads produced by the session
+  origin after QR secrets have been stripped.
+- [x] Add Save to Manager after successful direct QR pairing.
+- [x] Show empty, online, offline, expired, revoked, archived, and unreachable
+  states.
+- [x] Add open, rename, archive, restore, forget, and revoke actions.
+- [x] Ensure revoke navigates to the session origin for real desktop revocation.
+- [x] Keep manager records free of secret-like fields.
+- [x] Add tests proving manager cannot read session-origin storage or cookies.
 
-### Hosted Bootstrap
+### Session Origin Persistence
 
-- [ ] Create the hosted bootstrap build target.
-- [ ] Implement `/v1/` session-subdomain QR parser for WebRTC payloads.
-- [ ] Implement WSS signaling client.
-- [ ] Implement WebRTC peer setup.
-- [ ] Implement service worker asset serving under `/remote-app/`.
-- [ ] Implement Cache Storage install/update for desktop-provided assets.
+- [x] Define reconnect grant record shape and storage API.
+- [x] Store device private keys under the exact session origin.
+- [x] Store reconnect grants under the exact session origin.
+- [x] Store reconnect grants in IndexedDB/WebCrypto by default, not raw cookies.
+- [x] Store opaque reconnect handles separately from grant secrets.
+- [x] Never store reconnect grants, reconnect-proof material, or encrypted grant
+  blobs in cookies.
+- [x] Add expiry metadata and UI.
+- [x] Add sign out / forget this browser cleanup for grant, device key, cache,
+  and preferences.
+- [x] Add optional host-only `__Host-` cookie support only if a hosted HTTP
+  feature needs it.
 
-### Desktop WebRTC Host
+### Desktop Session And Grant Management
 
-- [ ] Add WebRTC settings and defaults.
-- [ ] Add WebRTC status fields to `RemoteAccessStatus`.
-- [ ] Add 6-digit pairing PIN storage, hashing, prompting, and `/api/pairing/start` verification.
-- [ ] Add signaling relay client.
-- [ ] Add WebRTC pairing session creation.
-- [ ] Add WebRTC QR generation.
-- [ ] Add WebRTC peer connection and data channels.
-- [ ] Add virtual asset manifest and file-serving logic.
+- [x] Extend desktop device/session store with reconnect grant hashes,
+  expiries, labels, created/last-used/revoked timestamps, and origin binding.
+- [x] Issue reconnect grants after successful WebRTC pairing.
+- [x] Default reconnect grant lifetime to 24 hours.
+- [x] Add lifetime choices: 1 hour, 24 hours, 7 days, and optional until revoked.
+- [x] Rotate or extend grants on successful reconnect.
+- [x] Revoke grants when devices or session origins are revoked.
+- [x] Close live WebRTC connections when their device/session is revoked.
+- [x] Surface saved session origins and grant expiry in desktop Remote Access UI.
 
-### WebRTC Remote Runtime
+### Reconnect Signaling Protocol
 
-- [ ] Implement virtual API request/response over data channel.
-- [ ] Implement terminal protocol over data channel.
-- [ ] Reuse pairing, auth, tickets, connection registration, audit logging, and revocation.
-- [ ] Add connection close/error propagation to the UI.
+- [x] Add desktop availability registration for reconnectable session ids.
+- [x] Add browser reconnect request without QR fragment.
+- [x] Use an opaque reconnect handle in relay-visible reconnect messages instead
+  of exposing device id.
+- [x] Add desktop-issued reconnect challenge with attempt id, nonce, issued-at,
+  expiry, session id, reconnect handle, origin, and protocol version.
+- [x] Add browser reconnect proof bound to the full desktop challenge and client
+  nonce.
+- [x] Reject replayed, expired, wrong-origin, wrong-handle, wrong-device, or
+  wrong-protocol reconnect attempts.
+- [x] Ensure the relay never receives raw long-lived reconnect grants.
+- [x] Route reconnect signaling to the correct desktop instance.
+- [x] Derive fresh reconnect signaling auth for offer, answer, and ICE.
+- [x] Purge reconnect signaling events after connection.
+- [x] Rate-limit reconnect attempts by session id and client address.
 
-### Remote Terminal Sizing
+### WebRTC Host Runtime
 
-- [x] Add an explicit remote size ownership model to `RemoteAccessService`.
-- [x] Track the active remote-owned session per connection and clear ownership on detach, tab switch, disconnect, and remote access stop.
-- [x] Make remote `resize` update the PTY, update the session record, broadcast session dimensions, and notify the owning desktop renderer.
-- [x] Add a desktop renderer IPC event for terminal remote size override changes.
-- [x] Expose the IPC event through `electron/preload.ts` and `src/types/terminay.ts`.
-- [x] Update the remote app to calculate `cols` and `rows` from its visible mobile terminal area.
-- [x] Send remote resize messages when the active remote tab, viewport, orientation, font settings, zoom, or accessory bar size changes.
-- [x] Stop sizing the mobile xterm from desktop `cols`, `rows`, `viewportWidth`, or `viewportHeight`.
-- [x] Simplify the mobile terminal scroll wrapper so the phone terminal fits width naturally.
-- [x] Add remote override mode to desktop `TerminalPanel`.
-- [x] In remote override mode, resize the desktop xterm instance to the remote-owned `cols` and `rows`.
-- [x] In remote override mode, suppress desktop `FitAddon.fit()` PTY resize messages.
-- [x] Center the remote-sized desktop xterm inside the existing terminal panel without resizing Dockview or the app window.
-- [x] Fill the surrounding desktop panel area with the project or terminal background color.
-- [x] Restore normal desktop-fit sizing when the remote override clears.
-- [ ] Add tests for mobile tab activation, tab switching, disconnect, remote access stop, phone rotation, font-size changes, and natural phone scrollback.
+- [x] Support multiple live WebRTC peers per desktop Remote Access run.
+- [x] Ensure generating or rotating a fresh QR does not close existing peers.
+- [x] Keep one-time pairing rooms single-client.
+- [x] Keep live peer connections running after relay room purge.
+- [x] Reuse existing pairing, auth, tickets, terminal protocol, audit, and
+  revocation paths.
+- [x] Add clear close/error propagation to both desktop and web UI.
 
-### Docs And QA
+### Security And Isolation
 
-- [ ] Update Remote Access docs with Local Network and WebRTC modes.
-- [ ] Add troubleshooting for relay failures, expired QR, NAT failures, and TURN limitations.
-- [ ] Add unit/integration/E2E coverage for both modes.
-- [ ] Manually verify on iOS Safari and Android Chrome.
+- [x] Keep QR secrets in fragments and remove them from history.
+- [x] Reject old shared-origin WebRTC URLs.
+- [x] Keep `app.terminay.com` out of device-origin binding.
+- [x] Keep sensitive cookies host-only if cookies are introduced.
+- [x] Forbid raw reconnect grants in cookies.
+- [x] Forbid encrypted/sealed reconnect grant blobs in cookies.
+- [x] Ensure relay-visible reconnect payloads contain no stable device id.
+- [x] Add CSRF protection before any cookie-backed state-changing endpoint.
+- [x] Keep credentialed CORS disabled between manager and session origins.
+- [x] Keep asset hash/size/path verification before cache install.
+- [x] Add log redaction for reconnect grant fields.
+
+### UX Polish
+
+- [x] Desktop pairing modal explains QR is for adding devices.
+- [x] Desktop Remote Access panel shows live connections, paired devices, saved
+  sessions, expiry, and revoke controls.
+- [x] Session web app shows reconnect progress and precise failure states.
+- [x] Manager web app copy avoids implying it stores terminal access.
+- [x] Expired/revoked states clearly tell the user when a fresh QR is needed.
+- [x] WebRTC failure states distinguish relay, NAT/TURN, desktop offline, and
+  asset verification failures.
+
+### NAT, TURN, And Operations
+
+- [x] Keep configurable STUN list.
+- [x] Decide TURN provider or self-hosted coturn plan.
+- [x] Deliver short-lived TURN credentials without reusing terminal secrets.
+- [x] Add relay metrics for pairing rooms, reconnect attempts, failures,
+  expiries, revocations, and rate limits.
+- [x] Keep production verification as a release gate.
+- [x] Add incident procedure for compromised hosted bootstrap assets.
+
+### Tests
+
+- [x] Unit test reconnect grant issue, proof, expiry, rotation, and revocation.
+- [x] Unit test reconnect handles are opaque, non-secret, rotated with grants,
+  and not sufficient to reconnect alone.
+- [x] Unit test manager secret-field filtering.
+- [x] Unit test exact origin binding for device and reconnect grants.
+- [x] Integration test saved session reconnect without QR.
+- [x] Integration test manager never receives QR fragments during save/import.
+- [x] Integration test relay-visible reconnect messages do not contain device id.
+- [x] Integration test expired grant requires fresh QR.
+- [x] Integration test revoked session cannot reconnect.
+- [x] E2E test QR pairing followed by manager save and reopen.
+- [x] E2E test fresh QR rotation does not break a live WebRTC session.
+- [x] E2E test Local Network mode remains unchanged.
