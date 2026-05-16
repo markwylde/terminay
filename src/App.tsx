@@ -6386,8 +6386,9 @@ function App() {
 
 						<div className="remote-pairing-modal__container">
 							<p className="remote-pairing-modal__copy">
-								Scan this QR code from your phone or browser to pair it with
-								this Terminay host.
+								Scan this QR code to add or re-add a browser to this
+								Terminay host. Saved WebRTC sessions can reconnect later
+								while their grant is valid.
 							</p>
 
 							<div className="remote-pairing-modal__toggle">
