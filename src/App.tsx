@@ -5198,6 +5198,7 @@ function App() {
 	const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(
 		null,
 	);
+	const [isRemoteAdvancedOpen, setIsRemoteAdvancedOpen] = useState(false);
 	const [remoteActionError, setRemoteActionError] = useState<string | null>(
 		null,
 	);
@@ -6366,32 +6367,27 @@ function App() {
 							onClose={() => setIsPairingModalOpen(false)}
 							onMouseDown={pairingModal.handleTitlebarPointerDown}
 						/>
-						<p className="remote-pairing-modal__copy">
-							Scan this QR code from your phone to pair it with this Terminay
-							host.
-						</p>
-						<div className="remote-pairing-modal__additional-list">
-							{(['lan', 'webrtc'] as const).map((mode) => (
-								<button
-									key={mode}
-									type="button"
-									className={`remote-pairing-modal__address-row-btn${selectedRemotePairingMode === mode ? ' remote-pairing-modal__address-row-btn--active' : ''}`}
-									onClick={() => void selectRemotePairingMode(mode)}
-								>
-									<span className="remote-pairing-modal__address-label">
-										{mode === 'lan' ? 'Local Network QR' : 'WebRTC Relay QR'}
-									</span>
-									{selectedRemotePairingMode === mode && (
-										<span className="remote-pairing-modal__address-active-badge">
-											Selected
-										</span>
-									)}
-								</button>
-							))}
-						</div>
-						{selectedPairingQrCodeDataUrl ? (
-							<div className="remote-pairing-modal__content">
-								<div className="remote-pairing-modal__qr-section">
+
+						<div className="remote-pairing-modal__container">
+							<p className="remote-pairing-modal__copy">
+								Scan this QR code from your phone or browser to pair it with
+								this Terminay host.
+							</p>
+
+							<div className="remote-pairing-modal__toggle">
+								{(['lan', 'webrtc'] as const).map((mode) => (
+									<button
+										key={mode}
+										type="button"
+										className={`remote-pairing-modal__toggle-btn${selectedRemotePairingMode === mode ? ' remote-pairing-modal__toggle-btn--active' : ''}`}
+										onClick={() => void selectRemotePairingMode(mode)}
+									>
+										{mode === 'lan' ? 'Local Network' : 'WebRTC Relay'}
+									</button>
+								))}
+							</div>
+							{selectedPairingQrCodeDataUrl ? (
+								<div className="remote-pairing-modal__content">
 									<div className="remote-pairing-modal__qr-card">
 										<img
 											className="remote-pairing-modal__qr"
@@ -6400,12 +6396,7 @@ function App() {
 										/>
 									</div>
 
-									<div className="remote-pairing-modal__primary-link">
-										<h3>
-											{selectedRemotePairingMode === 'webrtc'
-												? 'Open this relay link in your browser'
-												: 'Open this address in your browser'}
-										</h3>
+									<div className="remote-pairing-modal__address-section">
 										<div className="remote-pairing-modal__address-box">
 											<div className="remote-pairing-modal__address-text">
 												{preferredRemoteAddress || 'No address available yet.'}
@@ -6422,72 +6413,79 @@ function App() {
 														setTimeout(() => setIsLinkCopied(false), 2000);
 													}}
 												>
-													{isLinkCopied ? 'Copied!' : 'Copy Link'}
+													{isLinkCopied ? 'Copied' : 'Copy Link'}
 												</button>
 											)}
 										</div>
-									</div>
-								</div>
 
-								<div className="remote-pairing-modal__footer-details">
-									{selectedRemotePairingMode === 'lan' ? (
-										<div className="remote-pairing-modal__additional-section">
-										<h3>Available Addresses</h3>
-										<div className="remote-pairing-modal__additional-list">
-											{remoteAddresses.map((address) => (
-												<button
-													key={address}
-													type="button"
-													className={`remote-pairing-modal__address-row-btn${address === preferredRemoteAddress ? ' remote-pairing-modal__address-row-btn--active' : ''}`}
-													onClick={() => void selectPairingAddress(address)}
-													title={`Generate QR for ${address}`}
-												>
-													<span className="remote-pairing-modal__address-label">
-														{address}
-													</span>
-													{address === preferredRemoteAddress && (
-														<span className="remote-pairing-modal__address-active-badge">
-															QR Active
-														</span>
+										<button
+											type="button"
+											className="remote-pairing-modal__advanced-toggle"
+											onClick={() =>
+												setIsRemoteAdvancedOpen(!isRemoteAdvancedOpen)
+											}
+										>
+											{isRemoteAdvancedOpen
+												? 'Hide Advanced Options'
+												: 'Show Advanced Options'}
+										</button>
+
+										{isRemoteAdvancedOpen && (
+											<div className="remote-pairing-modal__advanced-content">
+												{selectedRemotePairingMode === 'lan' && (
+													<div className="remote-pairing-modal__additional-section">
+														<h3>Available Addresses</h3>
+														<div className="remote-pairing-modal__additional-list">
+															{remoteAddresses.map((address) => (
+																<button
+																	key={address}
+																	type="button"
+																	className={`remote-pairing-modal__address-row-btn${address === preferredRemoteAddress ? ' remote-pairing-modal__address-row-btn--active' : ''}`}
+																	onClick={() =>
+																		void selectPairingAddress(address)
+																	}
+																	title={`Generate QR for ${address}`}
+																>
+																	<span className="remote-pairing-modal__address-label">
+																		{address}
+																	</span>
+																	{address === preferredRemoteAddress && (
+																		<span className="remote-pairing-modal__address-active-badge">
+																			Active
+																		</span>
+																	)}
+																</button>
+															))}
+														</div>
+													</div>
+												)}
+
+												<div className="remote-pairing-modal__footer">
+													<div className="remote-pairing-modal__tip">
+														{selectedRemotePairingMode === 'webrtc'
+															? remoteStatus?.webRtcStatusMessage ??
+																'WebRTC relay pairing is scaffolded for the host.'
+															: 'Best for mobile: Scan the QR code. Use the link for manual entry on desktop.'}
+													</div>
+													{selectedPairingExpiresAt && (
+														<p className="remote-pairing-modal__expires-text">
+															Expires{' '}
+															{new Date(
+																selectedPairingExpiresAt,
+															).toLocaleString()}
+															.
+														</p>
 													)}
-												</button>
-											))}
-										</div>
-										</div>
-									) : null}
-
-									<div className="remote-pairing-modal__status-info">
-										<div className="remote-pairing-modal__tip">
-											{selectedRemotePairingMode === 'webrtc'
-												? remoteStatus?.webRtcStatusMessage ??
-													'WebRTC relay pairing is scaffolded for the host.'
-												: 'Best for mobile: Scan the QR code. Use the link for manual entry on desktop.'}
-										</div>
-										<p className="remote-pairing-modal__expires-text">
-											Expires{' '}
-											{selectedPairingExpiresAt
-												? new Date(
-														selectedPairingExpiresAt,
-													).toLocaleString()
-												: 'soon'}
-											.
-										</p>
+												</div>
+											</div>
+										)}
 									</div>
 								</div>
-							</div>
-						) : (
-							<p className="remote-pairing-modal__copy">
-								Start the remote server first to generate a pairing QR code.
-							</p>
-						)}
-						<div className="project-edit-actions">
-							<button
-								type="button"
-								className="project-edit-cancel"
-								onClick={() => setIsPairingModalOpen(false)}
-							>
-								Close
-							</button>
+							) : (
+								<p className="remote-pairing-modal__copy">
+									Start the remote server first to generate a pairing QR code.
+								</p>
+							)}
 						</div>
 					</div>
 				</ModalBackdrop>
