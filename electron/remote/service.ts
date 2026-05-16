@@ -868,6 +868,11 @@ export class RemoteAccessService {
         origin: attempt.origin,
         proof: String(message.proof ?? ''),
       })
+      socket.send(JSON.stringify({
+        iceServers: attempt.iceServers,
+        signalingAuthToken: String(message.proof ?? ''),
+        type: 'reconnect-accepted',
+      }))
       attempt.webContentsId = this.openWebRtcReconnectHost({
         appOrigin: attempt.appOrigin,
         attemptId,
