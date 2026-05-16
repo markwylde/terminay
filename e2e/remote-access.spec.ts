@@ -100,6 +100,28 @@ test('asks for a WebRTC pairing PIN before generating the QR code', async ({ mai
   const pairingDialog = mainWindow.getByRole('dialog', { name: 'Pair device' })
   await expect(pairingDialog).toBeVisible()
   await expect(pairingDialog.getByAltText('Remote pairing QR code')).toBeVisible()
+  const pairingDialogMetrics = await pairingDialog.evaluate((dialog) => {
+    const rect = dialog.getBoundingClientRect()
+    const selectedBadge = dialog.querySelector('.remote-pairing-modal__address-active-badge')
+    const selectedBadgeRect = selectedBadge?.getBoundingClientRect()
+    const closeButton = dialog.querySelector('button.project-edit-cancel')
+    const closeButtonRect = closeButton?.getBoundingClientRect()
+    const style = window.getComputedStyle(dialog)
+
+    return {
+      bottom: rect.bottom,
+      closeButtonBottom: closeButtonRect?.bottom ?? 0,
+      overflowY: style.overflowY,
+      right: rect.right,
+      selectedBadgeRight: selectedBadgeRect?.right ?? 0,
+      viewportHeight: window.innerHeight,
+    }
+  })
+
+  expect(pairingDialogMetrics.overflowY).toBe('auto')
+  expect(pairingDialogMetrics.bottom).toBeLessThanOrEqual(pairingDialogMetrics.viewportHeight)
+  expect(pairingDialogMetrics.closeButtonBottom).toBeLessThanOrEqual(pairingDialogMetrics.viewportHeight)
+  expect(pairingDialogMetrics.selectedBadgeRight).toBeLessThanOrEqual(pairingDialogMetrics.right)
 
   const settings = await mainWindow.evaluate(() => window.terminay.getTerminalSettings())
   expect(settings.remoteAccess.pairingPinHash).toMatch(/^scrypt-v1:/)

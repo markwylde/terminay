@@ -1121,15 +1121,51 @@
   color: var(--settings-text-muted);
 }
 
-.settings-remote-qr {
-  width: 100%;
-  max-width: 320px;
-  margin: 0 auto;
+.settings-remote-toggle {
+  display: flex;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  width: fit-content;
+}
+
+.settings-remote-toggle-btn {
+  all: unset;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--settings-text-muted);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.settings-remote-toggle-btn:hover {
+  color: var(--settings-text);
+}
+
+.settings-remote-toggle-btn--active {
+  background: var(--settings-accent);
+  color: #0d1117;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.settings-remote-qr-card {
+  background: #ffffff;
+  padding: 16px;
   border-radius: 16px;
-  background: #fff;
-  padding: 20px;
-  border: 1px solid var(--settings-border);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  margin: 0 auto;
+  width: fit-content;
+}
+
+.settings-remote-qr {
+  display: block;
+  width: 100%;
+  max-width: 200px;
+  height: auto;
+  object-fit: contain;
 }
 
 .settings-remote-meta,
