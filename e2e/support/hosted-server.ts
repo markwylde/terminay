@@ -92,16 +92,26 @@ async function waitForHostPort(port: number): Promise<void> {
 }
 
 export function hasHostedServerSource(): boolean {
-  return existsSync(path.resolve(process.cwd(), '../terminay.com/server/index.js'))
+  const repoDir = path.resolve(process.cwd(), '../terminay.com')
+  return existsSync(path.join(repoDir, 'server/index.js')) &&
+    existsSync(path.join(repoDir, 'scripts/build-app.mjs'))
 }
 
 export async function startHostedServer(): Promise<HostedServer> {
   const repoDir = path.resolve(process.cwd(), '../terminay.com')
+  const staticDir = path.join(repoDir, 'app/dist')
   const pgPort = await getFreePort()
   const port = await getFreePort()
   const containerName = `terminay-e2e-postgres-${Date.now()}-${Math.random().toString(16).slice(2)}`
   let serverProcess: ChildProcessWithoutNullStreams | null = null
   const logs: string[] = []
+
+  await execFileAsync('npm', ['run', 'build:app'], { cwd: repoDir })
+  for (const file of ['index.html', 'main.js', 'protocol.js']) {
+    if (!existsSync(path.join(staticDir, file))) {
+      throw new Error(`Terminay hosted app build did not create app/dist/${file}.`)
+    }
+  }
 
   await execFileAsync('docker', [
     'run',
@@ -130,7 +140,7 @@ export async function startHostedServer(): Promise<HostedServer> {
         ...process.env,
         DATABASE_URL: `postgres://terminay:terminay@127.0.0.1:${pgPort}/terminay_app`,
         PORT: String(port),
-        STATIC_DIR: path.join(repoDir, 'app/src'),
+        STATIC_DIR: staticDir,
         TERMINAY_HOSTED_DOMAIN: 'localhost',
         TERMINAY_MANAGER_HOST: 'app.localhost',
       },
