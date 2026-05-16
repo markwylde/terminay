@@ -1171,6 +1171,10 @@
   gap: 8px;
 }
 
+.settings-color-mode-select {
+  width: 150px;
+}
+
 .settings-color-swatch {
   width: 32px;
   height: 32px;
@@ -1193,6 +1197,28 @@
 .settings-color-text {
   width: 80px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.settings-tab-hue-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--settings-border);
+  border-radius: 6px;
+  color: var(--settings-text);
+  background: var(--settings-bg);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.settings-tab-hue-chip-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--settings-border);
+  background: linear-gradient(90deg, #ff5f57, #ffbd2e, #28c840, #0a84ff, #bf5af2);
 }
 
 .settings-right-pane {
@@ -1288,6 +1314,7 @@
 
   .settings-input-range,
   .settings-input-number,
+  .settings-color-mode-select,
   .settings-color-text {
     width: 100%;
   }
