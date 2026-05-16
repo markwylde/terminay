@@ -238,7 +238,8 @@ contextBridge.exposeInMainWorld('terminayWebRtcHost', {
     ipcRenderer.invoke('remote-webrtc-host:terminal-auth', { channelId, ticket }),
   handleTerminalMessage: (channelId: string, message: string) =>
     ipcRenderer.send('remote-webrtc-host:terminal-message', { channelId, message }),
-  closeTerminal: (channelId: string) => ipcRenderer.send('remote-webrtc-host:terminal-close', { channelId }),
+  closeTerminal: (channelId: string, reason?: string) =>
+    ipcRenderer.send('remote-webrtc-host:terminal-close', { channelId, reason }),
   onConfig: (listener: (config: unknown) => void) => {
     const wrapper: ElectronListener<unknown> = (_event, config) => listener(config)
     ipcRenderer.on('remote-webrtc-host:config', wrapper)
@@ -248,6 +249,11 @@ contextBridge.exposeInMainWorld('terminayWebRtcHost', {
     const wrapper: ElectronListener<{ channelId: string; message: string }> = (_event, message) => listener(message)
     ipcRenderer.on('remote-webrtc-host:terminal-message', wrapper)
     return () => ipcRenderer.off('remote-webrtc-host:terminal-message', wrapper)
+  },
+  onTerminalCloseRequest: (listener: (message: { channelId: string; reason?: string }) => void) => {
+    const wrapper: ElectronListener<{ channelId: string; reason?: string }> = (_event, message) => listener(message)
+    ipcRenderer.on('remote-webrtc-host:terminal-close-request', wrapper)
+    return () => ipcRenderer.off('remote-webrtc-host:terminal-close-request', wrapper)
   },
 })
 

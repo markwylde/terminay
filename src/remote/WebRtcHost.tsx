@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 type HostConfig = {
   appOrigin: string
   expiresAt: string
+  iceServers?: RTCIceServer[]
   relayJoinTokenHash: string
   roomId: string
   signalingAuthToken: string
@@ -11,12 +12,13 @@ type HostConfig = {
 
 type HostApi = {
   attachTerminal(channelId: string, ticket: string): Promise<void>
-  closeTerminal(channelId: string): void
+  closeTerminal(channelId: string, reason?: string): void
   getAsset(path: string): Promise<unknown>
   getAssetManifest(): Promise<unknown>
   getConfig(): Promise<HostConfig | null>
   handleApiRequest(pathname: string, body: Record<string, unknown>, appOrigin: string): Promise<unknown>
   handleTerminalMessage(channelId: string, message: string): void
+  onTerminalCloseRequest(listener: (message: { channelId: string; reason?: string }) => void): () => void
   onConfig(listener: (config: HostConfig) => void): () => void
   onTerminalMessage(listener: (message: { channelId: string; message: string }) => void): () => void
 }
@@ -64,6 +66,7 @@ function stableJson(value: unknown): string {
 
 function canonicalSignalPayload(message: Record<string, unknown>): string {
   const payload: Record<string, unknown> = {
+    nonce: message.nonce,
     roomId: message.roomId,
     type: message.type,
   }
@@ -83,8 +86,12 @@ async function createSignalingAuthKey(token: string): Promise<CryptoKey> {
 }
 
 async function signSignalMessage(authKey: CryptoKey, message: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const signature = await crypto.subtle.sign('HMAC', authKey, new TextEncoder().encode(canonicalSignalPayload(message)))
-  return { ...message, signature: bytesToBase64Url(signature) }
+  const signedMessage = {
+    ...message,
+    nonce: typeof message.nonce === 'string' && message.nonce ? message.nonce : crypto.randomUUID(),
+  }
+  const signature = await crypto.subtle.sign('HMAC', authKey, new TextEncoder().encode(canonicalSignalPayload(signedMessage)))
+  return { ...signedMessage, signature: bytesToBase64Url(signature) }
 }
 
 async function verifySignalMessage(authKey: CryptoKey, message: Record<string, unknown>): Promise<boolean> {
@@ -123,14 +130,14 @@ function sendAssetResponse(channel: RTCDataChannel, id: string, response: unknow
   }
 }
 
-async function runHost(config: HostConfig): Promise<() => void> {
+export async function runHost(config: HostConfig): Promise<() => void> {
   const api = window.terminayWebRtcHost
   if (!api) throw new Error('WebRTC host bridge is unavailable.')
 
   const socket = new WebSocket(config.signalingUrl)
   const signalingAuthKey = await createSignalingAuthKey(config.signalingAuthToken)
   const peer = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    iceServers: config.iceServers?.length ? config.iceServers : [{ urls: 'stun:stun.l.google.com:19302' }],
   })
   const channels = {
     api: peer.createDataChannel('api'),
@@ -139,10 +146,13 @@ async function runHost(config: HostConfig): Promise<() => void> {
   }
   const terminalChannelId = crypto.randomUUID()
   let terminalClosed = false
-  const closeTerminal = () => {
+  let terminalCloseReason = 'WebRTC terminal channel closed.'
+  let terminalAuthenticated = false
+  const seenSignalNonces = new Set<string>()
+  const closeTerminal = (reason = 'WebRTC terminal channel closed.') => {
     if (terminalClosed) return
     terminalClosed = true
-    api.closeTerminal(terminalChannelId)
+    api.closeTerminal(terminalChannelId, reason)
   }
 
   peer.addEventListener('icecandidate', (event) => {
@@ -197,7 +207,9 @@ async function runHost(config: HostConfig): Promise<() => void> {
   channels.terminal.addEventListener('message', (event) => {
     const request = parseJson(event.data)
     if (request?.type === 'terminal-auth' && typeof request.ticket === 'string') {
-      void api.attachTerminal(terminalChannelId, request.ticket).catch((error) => {
+      void api.attachTerminal(terminalChannelId, request.ticket).then(() => {
+        terminalAuthenticated = true
+      }).catch((error) => {
         channels.terminal.send(JSON.stringify({
           message: error instanceof Error ? error.message : 'Terminal authentication failed.',
           type: 'error',
@@ -205,28 +217,37 @@ async function runHost(config: HostConfig): Promise<() => void> {
       })
       return
     }
-    if (typeof event.data === 'string') {
+    if (terminalAuthenticated && typeof event.data === 'string') {
       api.handleTerminalMessage(terminalChannelId, event.data)
     }
   })
-  channels.terminal.addEventListener('close', closeTerminal)
-  channels.terminal.addEventListener('error', closeTerminal)
+  channels.terminal.addEventListener('close', () => closeTerminal(terminalCloseReason))
+  channels.terminal.addEventListener('error', () => closeTerminal('WebRTC terminal channel failed.'))
 
   peer.addEventListener('connectionstatechange', () => {
     if (peer.connectionState === 'closed' || peer.connectionState === 'disconnected' || peer.connectionState === 'failed') {
-      closeTerminal()
+      closeTerminal(`WebRTC peer connection ${peer.connectionState}.`)
     }
   })
 
   peer.addEventListener('iceconnectionstatechange', () => {
     if (peer.iceConnectionState === 'closed' || peer.iceConnectionState === 'disconnected' || peer.iceConnectionState === 'failed') {
-      closeTerminal()
+      closeTerminal(`WebRTC ICE connection ${peer.iceConnectionState}.`)
     }
   })
 
   const stopTerminalMessages = api.onTerminalMessage((message) => {
     if (message.channelId !== terminalChannelId || channels.terminal.readyState !== 'open') return
     channels.terminal.send(message.message)
+  })
+  const stopTerminalCloseRequests = api.onTerminalCloseRequest((message) => {
+    if (message.channelId !== terminalChannelId) return
+    const reason = message.reason || 'Remote connection closed by Terminay.'
+    terminalCloseReason = reason
+    if (channels.terminal.readyState === 'open' || channels.terminal.readyState === 'connecting') {
+      channels.terminal.close()
+    }
+    closeTerminal(reason)
   })
 
   socket.addEventListener('open', () => {
@@ -248,9 +269,11 @@ async function runHost(config: HostConfig): Promise<() => void> {
         const signedOffer = await signSignalMessage(signalingAuthKey, { roomId: config.roomId, sdp: offer, type: 'offer' })
         socket.send(JSON.stringify(signedOffer))
       } else if (message.type === 'answer' && message.sdp && typeof message.sdp === 'object') {
+        rejectSignalReplay(message, seenSignalNonces)
         if (!await verifySignalMessage(signalingAuthKey, message)) return
         await peer.setRemoteDescription(message.sdp as RTCSessionDescriptionInit)
       } else if (message.type === 'ice' && message.candidate && typeof message.candidate === 'object') {
+        rejectSignalReplay(message, seenSignalNonces)
         if (!await verifySignalMessage(signalingAuthKey, message)) return
         await peer.addIceCandidate(message.candidate as RTCIceCandidateInit)
       }
@@ -259,10 +282,21 @@ async function runHost(config: HostConfig): Promise<() => void> {
 
   return () => {
     stopTerminalMessages()
-    closeTerminal()
+    stopTerminalCloseRequests()
+    closeTerminal('WebRTC host window stopped.')
     socket.close()
     peer.close()
   }
+}
+
+function rejectSignalReplay(message: Record<string, unknown>, seenSignalNonces: Set<string>): void {
+  if (typeof message.nonce !== 'string' || !message.nonce) {
+    throw new Error('WebRTC signaling message was missing replay protection.')
+  }
+  if (seenSignalNonces.has(message.nonce)) {
+    throw new Error('WebRTC signaling message was replayed.')
+  }
+  seenSignalNonces.add(message.nonce)
 }
 
 export function WebRtcHost() {
