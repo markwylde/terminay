@@ -40,6 +40,12 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'save active file tab write changes',
   },
   {
+    command: 'open-recordings',
+    title: 'Open recordings timeline',
+    description: 'Browse and replay saved terminal recordings.',
+    keywords: 'open recordings timeline terminal session replay asciinema cast history',
+  },
+  {
     command: 'split-horizontal',
     title: 'Split horizontally',
     description: 'Open a new terminal below the active tab.',
@@ -81,6 +87,7 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'new-terminal': 'CmdOrCtrl+T',
   'new-project': 'CmdOrCtrl+P',
   'clear-terminal': 'CmdOrCtrl+K',
+  'open-recordings': '',
   'save-active': 'CmdOrCtrl+S',
   'split-horizontal': 'CmdOrCtrl+Shift+-',
   'split-vertical': 'CmdOrCtrl+Shift+\\',
