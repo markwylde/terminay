@@ -13,6 +13,7 @@ export type RemoteAuditEvent = {
   deviceId: string | null
   deviceName: string | null
   occurredAt: string
+  reason?: string
 }
 
 const MAX_EVENTS = 200
