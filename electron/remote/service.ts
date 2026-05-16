@@ -28,7 +28,7 @@ import { DeviceStore } from './deviceStore'
 import { PairingManager } from './pairing'
 import { assertPairingPin } from './pinGuard'
 import { readJsonBody } from './jsonBody'
-import { ReconnectGrantStore, resolveReconnectGrantLifetime } from './reconnectGrantStore'
+import { ReconnectGrantStore, resolveReconnectGrantLifetime, type ReconnectGrantRecord } from './reconnectGrantStore'
 import { ensureTlsMaterial } from './tls'
 import { WebRtcPairingManager } from './webrtc'
 
@@ -124,6 +124,14 @@ type PendingWebRtcReconnect = {
   signalingUrl: string
   socket: WebSocket
   webContentsId: number | null
+}
+
+type WebRtcReconnectAvailabilityRuntime = {
+  appOrigin: string
+  iceServers: Array<{ urls: string | string[] }>
+  sessionId: string
+  signalingUrl: string
+  socket: WebSocket
 }
 
 const MAX_BUFFER_LENGTH = 200_000
@@ -229,6 +237,7 @@ export class RemoteAccessService {
   private webRtcActivePairingWebContentsId: number | null = null
   private webRtcHostConfigByWebContentsId = new Map<number, WebRtcHostConfig>()
   private readonly webRtcHostRuntimesByWebContentsId = new Map<number, WebRtcHostRuntime>()
+  private readonly webRtcReconnectAvailabilityBySessionId = new Map<string, WebRtcReconnectAvailabilityRuntime>()
   private readonly webRtcReconnectAttemptsById = new Map<string, PendingWebRtcReconnect>()
   private readonly webRtcTerminalConnectionsByChannelId = new Map<string, string>()
   private webRtcStatusMessage: string | null = null
@@ -352,6 +361,7 @@ export class RemoteAccessService {
     const device = this.deviceStore.get(deviceId)
     await this.deviceStore.revoke(deviceId)
     await this.reconnectGrantStore.revokeForDevice(deviceId)
+    this.syncWebRtcReconnectAvailability()
     for (const connection of this.connectionStore.list()) {
       if (connection.deviceId === deviceId) {
         this.clearRemoteSizeOverridesForConnection(connection.connectionId)
@@ -620,6 +630,7 @@ export class RemoteAccessService {
         await this.rotateWebRtcPairingCode()
       }
 
+      this.syncWebRtcReconnectAvailability()
       this.emitStatus()
     } catch (error) {
       this.errorMessage = error instanceof Error ? error.message : 'Unable to start remote access.'
@@ -660,6 +671,7 @@ export class RemoteAccessService {
     this.webRtcRoomId = null
     this.webRtcActivePairingWebContentsId = null
     this.closeWebRtcPairingHost()
+    this.closeWebRtcReconnectAvailability()
     this.webRtcStatusMessage = null
     this.emitStatus()
   }
@@ -796,28 +808,6 @@ export class RemoteAccessService {
     return this.webRtcHostRuntimesByWebContentsId.get(webContentsId) ?? null
   }
 
-  private announceReconnectAvailability(socket: WebSocket): void {
-    if (socket.readyState !== WebSocket.OPEN) return
-
-    const sessionIds = Array.from(new Set(this.reconnectGrantStore.listActive().map((grant) => grant.sessionId)))
-    if (sessionIds.length === 0) return
-
-    socket.send(JSON.stringify({
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-      sessionIds,
-      type: 'reconnect-host-ready',
-    }))
-  }
-
-  private announceReconnectAvailabilityToOpenSockets(): void {
-    for (const runtime of this.webRtcHostRuntimesByWebContentsId.values()) {
-      const socket = runtime.signalSocket
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        this.announceReconnectAvailability(socket)
-      }
-    }
-  }
-
   private isReconnectRelayMessage(message: unknown): message is Record<string, unknown> {
     return Boolean(
       message &&
@@ -897,6 +887,122 @@ export class RemoteAccessService {
       const webContentsId = attempt?.webContentsId
       if (!webContentsId) return
       this.getWebRtcHostRuntime(webContentsId)?.hostWindow.sendSignalMessage(message)
+    }
+  }
+
+  private getWebRtcGrantAppOrigin(grant: ReconnectGrantRecord): string {
+    return new URL(grant.origin).origin
+  }
+
+  private createWebRtcSignalingUrl(appOrigin: string): string {
+    const url = new URL(appOrigin)
+    url.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:'
+    if (url.hostname.endsWith('.localhost')) {
+      url.hostname = 'localhost'
+    }
+    url.pathname = '/signal'
+    url.search = ''
+    url.hash = ''
+    return url.toString()
+  }
+
+  private closeWebRtcReconnectAvailability(sessionId?: string): void {
+    const entries = sessionId
+      ? [[sessionId, this.webRtcReconnectAvailabilityBySessionId.get(sessionId)] as const]
+      : Array.from(this.webRtcReconnectAvailabilityBySessionId.entries())
+
+    for (const [entrySessionId, runtime] of entries) {
+      if (!runtime) continue
+      this.webRtcReconnectAvailabilityBySessionId.delete(entrySessionId)
+      if (runtime.socket.readyState !== WebSocket.CLOSING && runtime.socket.readyState !== WebSocket.CLOSED) {
+        runtime.socket.close(1000, 'Reconnect availability stopped')
+      }
+    }
+  }
+
+  private syncWebRtcReconnectAvailability(): void {
+    const settings = this.getRemoteAccessSettings()
+    const grantsBySessionId = new Map<string, ReconnectGrantRecord>()
+
+    for (const grant of this.reconnectGrantStore.listActive()) {
+      if (!grantsBySessionId.has(grant.sessionId)) {
+        grantsBySessionId.set(grant.sessionId, grant)
+      }
+    }
+
+    for (const sessionId of Array.from(this.webRtcReconnectAvailabilityBySessionId.keys())) {
+      if (!grantsBySessionId.has(sessionId)) {
+        this.closeWebRtcReconnectAvailability(sessionId)
+      }
+    }
+
+    for (const [sessionId, grant] of grantsBySessionId) {
+      const existing = this.webRtcReconnectAvailabilityBySessionId.get(sessionId)
+      if (existing && existing.socket.readyState !== WebSocket.CLOSED && existing.socket.readyState !== WebSocket.CLOSING) {
+        continue
+      }
+
+      const appOrigin = this.getWebRtcGrantAppOrigin(grant)
+      const signalingUrl = this.createWebRtcSignalingUrl(appOrigin)
+      const socket = new WebSocket(signalingUrl)
+      const runtime: WebRtcReconnectAvailabilityRuntime = {
+        appOrigin,
+        iceServers: parseWebRtcIceServers(settings.webRtcIceServers),
+        sessionId,
+        signalingUrl,
+        socket,
+      }
+      this.webRtcReconnectAvailabilityBySessionId.set(sessionId, runtime)
+
+      socket.on('open', () => {
+        if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !== socket) return
+        socket.send(JSON.stringify({
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          sessionIds: [sessionId],
+          type: 'reconnect-host-ready',
+        }))
+      })
+
+      socket.on('message', (raw) => {
+        if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !== socket) return
+        let message: unknown
+        try {
+          message = JSON.parse(raw.toString())
+        } catch {
+          return
+        }
+        if (!this.isReconnectRelayMessage(message)) {
+          return
+        }
+
+        const config: WebRtcHostConfig = {
+          appOrigin: runtime.appOrigin,
+          expiresAt: '',
+          iceServers: runtime.iceServers,
+          relayJoinTokenHash: '',
+          roomId: runtime.sessionId,
+          sessionId: runtime.sessionId,
+          signalingAuthToken: '',
+          signalingUrl: runtime.signalingUrl,
+        }
+        void this.handleWebRtcReconnectRelayMessage(config, socket, message)
+          .catch((error) => {
+            this.webRtcStatusMessage = error instanceof Error ? error.message : 'Saved-session reconnect failed.'
+            this.emitStatus()
+          })
+      })
+
+      socket.on('close', () => {
+        if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket === socket) {
+          this.webRtcReconnectAvailabilityBySessionId.delete(sessionId)
+        }
+      })
+
+      socket.on('error', () => {
+        if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !== socket) return
+        this.webRtcStatusMessage = 'Could not advertise saved-session reconnect availability.'
+        this.emitStatus()
+      })
     }
   }
 
@@ -995,7 +1101,6 @@ export class RemoteAccessService {
         roomId: config.roomId,
         type: 'host-ready',
       }))
-      this.announceReconnectAvailability(socket)
     })
 
     socket.on('message', (raw) => {
@@ -1078,7 +1183,8 @@ export class RemoteAccessService {
 
     if (message.type === 'error') {
       runtime.ready = false
-      if (this.webRtcActivePairingWebContentsId === webContentsId) {
+      const config = this.webRtcHostConfigByWebContentsId.get(webContentsId)
+      if (this.webRtcActivePairingWebContentsId === webContentsId || config?.reconnect) {
         this.webRtcStatusMessage = message.detail || 'The WebRTC relay rejected the pairing room.'
         this.emitStatus()
       }
@@ -1372,8 +1478,9 @@ export class RemoteAccessService {
         deviceId: device.id,
         deviceName: device.name,
       })
+      await this.rotateWebRtcPairingCode()
+      this.syncWebRtcReconnectAvailability()
       this.emitStatus()
-      this.announceReconnectAvailabilityToOpenSockets()
       return { deviceId: device.id, deviceName: device.name, reconnectGrant }
     }
 
@@ -1477,7 +1584,6 @@ export class RemoteAccessService {
       deviceName: connection ? (this.deviceStore.get(connection.deviceId)?.name ?? null) : null,
       reason,
     }).then(() => this.emitStatus())
-    this.webRtcStatusMessage = reason
     this.emitStatus()
   }
 
