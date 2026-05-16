@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Reorder, useDragControls } from 'framer-motion'
+import { FileText, X } from 'lucide-react'
 import {
   defaultMacros,
   extractAllMacroPlaceholders,
@@ -84,6 +85,70 @@ function coerceDefaultValue(field: MacroFieldDefinition, value: string): MacroFi
   }
 }
 
+function MacroTextEditorModal({
+  initialValue,
+  onCancel,
+  onSave,
+}: {
+  initialValue: string,
+  onCancel: () => void,
+  onSave: (value: string) => void,
+}) {
+  const [draftValue, setDraftValue] = useState(initialValue)
+
+  const saveDraft = () => {
+    onSave(draftValue)
+  }
+
+  return (
+    <div className="settings-modal-backdrop" onMouseDown={onCancel}>
+      <div
+        className="macro-text-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="macro-text-modal-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="macro-text-modal-header">
+          <h2 id="macro-text-modal-title">Edit Text Step</h2>
+          <button type="button" aria-label="Close text editor" onClick={onCancel}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+
+        <textarea
+          className="macro-text-modal-textarea"
+          value={draftValue}
+          autoFocus
+          spellCheck={false}
+          onChange={(event) => setDraftValue(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+              event.preventDefault()
+              saveDraft()
+            }
+
+            if (event.key === 'Escape') {
+              event.preventDefault()
+              onCancel()
+            }
+          }}
+          placeholder="Type text... use {{Variable}} for fields."
+        />
+
+        <div className="macro-text-modal-footer">
+          <button type="button" className="settings-secondary-button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="settings-primary-button" onClick={saveDraft}>
+            Apply Text
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function MacroItem({ macro, isActive, onClick }: { macro: MacroDefinition, isActive: boolean, onClick: () => void }) {
   const controls = useDragControls()
 
@@ -122,6 +187,7 @@ function StepItem({
   onRemoveStep: () => void
 }) {
   const controls = useDragControls()
+  const [isTextEditorOpen, setIsTextEditorOpen] = useState(false)
 
   return (
     <Reorder.Item
@@ -148,14 +214,34 @@ function StepItem({
             </span>
 
             {step.type === 'type' && (
-              <input
-                className="settings-input-text"
-                type="text"
-                value={step.content}
-                style={{ flex: 1 }}
-                onChange={(e) => onUpdateStep(s => ({ ...s, content: e.target.value } as MacroStep))}
-                placeholder="Type text... use {{Variable}} for fields."
-              />
+              <div className="macro-type-input-wrap">
+                <input
+                  className="settings-input-text macro-type-input"
+                  type="text"
+                  value={step.content}
+                  onChange={(e) => onUpdateStep(s => ({ ...s, content: e.target.value } as MacroStep))}
+                  placeholder="Type text... use {{Variable}} for fields."
+                />
+                <button
+                  type="button"
+                  className="macro-type-editor-button"
+                  aria-label="Open multiline text editor"
+                  title="Open multiline text editor"
+                  onClick={() => setIsTextEditorOpen(true)}
+                >
+                  <FileText size={15} aria-hidden="true" />
+                </button>
+                {isTextEditorOpen ? (
+                  <MacroTextEditorModal
+                    initialValue={step.content}
+                    onCancel={() => setIsTextEditorOpen(false)}
+                    onSave={(value) => {
+                      onUpdateStep(s => ({ ...s, content: value } as MacroStep))
+                      setIsTextEditorOpen(false)
+                    }}
+                  />
+                ) : null}
+              </div>
             )}
 
             {step.type === 'key' && (
