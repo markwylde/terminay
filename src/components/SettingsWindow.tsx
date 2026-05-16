@@ -83,6 +83,31 @@ function setValueAtPath(settings: TerminalSettings, key: string, value: boolean 
   return setNestedValue(settings, segments) as TerminalSettings
 }
 
+function formatReconnectGrantSummary(device: {
+  reconnectGrantExpiresAt?: string | null
+  reconnectGrantLastUsedAt?: string | null
+  reconnectGrantStatus?: 'none' | 'valid' | 'expired' | 'revoked'
+}): string {
+  const status = device.reconnectGrantStatus ?? 'none'
+  if (status === 'none') {
+    return 'Saved reconnect not issued'
+  }
+  if (status === 'revoked') {
+    return 'Saved reconnect revoked'
+  }
+  if (status === 'expired') {
+    return 'Saved reconnect expired'
+  }
+
+  const expiry = device.reconnectGrantExpiresAt
+    ? `expires ${new Date(device.reconnectGrantExpiresAt).toLocaleString()}`
+    : 'valid until revoked'
+  const lastUsed = device.reconnectGrantLastUsedAt
+    ? ` · Last reconnect ${new Date(device.reconnectGrantLastUsedAt).toLocaleString()}`
+    : ''
+  return `Saved reconnect ${expiry}${lastUsed}`
+}
+
 function TerminalPreview({ settings }: { settings: TerminalSettings }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
 
@@ -1093,6 +1118,10 @@ export function SettingsWindow() {
                               Added {new Date(device.addedAt).toLocaleString()}
                               {device.lastSeenAt ? ` · Last seen ${new Date(device.lastSeenAt).toLocaleString()}` : ''}
                             </p>
+                            <p>{formatReconnectGrantSummary(device)}</p>
+                            {device.origin.includes('#transport=webrtc') ? (
+                              <p>{device.origin.split('#')[0]}</p>
+                            ) : null}
                           </div>
                           <button
                             type="button"

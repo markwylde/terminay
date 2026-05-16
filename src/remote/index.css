@@ -318,6 +318,7 @@ input {
   cursor: pointer;
   font-size: 0.75rem;
   color: #888;
+  text-decoration: none;
   transition: background 0.2s, color 0.2s;
 }
 
@@ -343,6 +344,27 @@ input {
 }
 .status-dot.live { background: #4caf50; }
 .status-dot.connecting { background: #ff9800; animation: blink 1s infinite; }
+
+.reconnect-expiry {
+  min-width: 0;
+  max-width: 34vw;
+  overflow: hidden;
+  padding: 0 8px;
+  color: #777;
+  font-size: 0.7rem;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reconnect-expiry--valid,
+.reconnect-expiry--until-revoked {
+  color: #87c7b0;
+}
+
+.reconnect-expiry--expired {
+  color: #ffb86b;
+}
 
 @keyframes blink {
   0% { opacity: 1; }
@@ -576,6 +598,7 @@ input {
   .project-tab { padding: 0 12px; }
   .tab { min-width: 60px; }
   .status-indicator span { display: none; }
+  .reconnect-expiry { display: none; }
 }
 
 .error-banner {

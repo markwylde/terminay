@@ -73,7 +73,10 @@ test('starts remote access from the host menu and shows a pairing qr modal', asy
   await expect(pairingDialog.getByRole('heading', { name: 'Pair Device' })).toBeVisible()
   await expect(pairingDialog.getByAltText('Remote pairing QR code')).toBeVisible()
   await expect(
-    pairingDialog.getByText('Scan this QR code from your phone or browser to pair it with this Terminay host.'),
+    pairingDialog.getByText('Scan this QR code to add or re-add a browser to this Terminay host.'),
+  ).toBeVisible()
+  await expect(
+    pairingDialog.getByText(/Saved WebRTC sessions can reconnect later while their grant is valid\./),
   ).toBeVisible()
   await expect(pairingDialog.getByRole('button', { name: 'Local Network' })).toBeVisible()
   await expect(pairingDialog.getByRole('button', { name: 'WebRTC Relay' })).toBeVisible()
