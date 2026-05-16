@@ -26,7 +26,7 @@ import {
 import { ConnectionStore, webSocketPeer, type RemoteConnectionPeer } from './connectionStore'
 import { DeviceStore } from './deviceStore'
 import { PairingManager } from './pairing'
-import { verifyPairingPin } from './pin'
+import { assertPairingPin } from './pinGuard'
 import { ensureTlsMaterial } from './tls'
 import { WebRtcPairingManager } from './webrtc'
 
@@ -63,6 +63,7 @@ type RemoteAccessServiceOptions = {
   app: App
   createWebRtcHostWindow: (ownerId: number) => {
     close: () => void
+    closeTerminal: (channelId: string, reason?: string) => void
     sendConfig: (config: WebRtcHostConfig) => void
     sendTerminalMessage: (channelId: string, message: string) => void
     webContentsId: number
@@ -83,6 +84,7 @@ type JsonResponse = Record<string, unknown>
 type WebRtcHostConfig = {
   appOrigin: string
   expiresAt: string
+  iceServers: Array<{ urls: string | string[] }>
   relayJoinTokenHash: string
   roomId: string
   signalingAuthToken: string
@@ -110,11 +112,13 @@ function normalizePem(value: string): string {
   return value.replace(/\r\n/g, '\n').trim()
 }
 
-function assertPairingPin(settings: RemoteAccessSettings, pin: string | undefined): void {
-  if (!settings.pairingPinHash) return
-  if (!verifyPairingPin(settings.pairingPinHash, String(pin ?? ''))) {
-    throw new Error('The pairing PIN is incorrect.')
-  }
+function parseWebRtcIceServers(value: string): Array<{ urls: string | string[] }> {
+  const urls = String(value ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .filter((entry) => /^(stun|stuns|turn|turns):/i.test(entry))
+  return urls.length > 0 ? urls.map((url) => ({ urls: url })) : [{ urls: 'stun:stun.l.google.com:19302' }]
 }
 
 function jsonResponse(body: JsonResponse, status = 200): { body: Buffer; contentType: string; status: number } {
@@ -127,6 +131,15 @@ function jsonResponse(body: JsonResponse, status = 200): { body: Buffer; content
 
 function isAddressInUseError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'EADDRINUSE'
+}
+
+function isRemoteAppAssetEntry(entry: string): boolean {
+  return entry === 'remote.html' || entry === 'remote.webmanifest' || entry === 'terminay.svg' || entry.startsWith('assets/')
+}
+
+function isPathInside(candidate: string, directory: string): boolean {
+  const relative = path.relative(path.resolve(directory), candidate)
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
 }
 
 function getContentType(filePath: string): string {
@@ -189,7 +202,6 @@ export class RemoteAccessService {
   private webRtcPairingExpiresAt: string | null = null
   private webRtcPairingQrCodeDataUrl: string | null = null
   private webRtcPairingUrl: string | null = null
-  private webRtcRelayJoinToken: string | null = null
   private webRtcRoomId: string | null = null
   private webRtcSignalSocket: WebSocket | null = null
   private webRtcHostWindow: ReturnType<RemoteAccessServiceOptions['createWebRtcHostWindow']> | null = null
@@ -274,7 +286,6 @@ export class RemoteAccessService {
       webRtcPairingExpiresAt: this.webRtcPairingExpiresAt,
       webRtcPairingQrCodeDataUrl: this.webRtcPairingQrCodeDataUrl,
       webRtcPairingUrl: this.webRtcPairingUrl,
-      webRtcRelayJoinToken: this.webRtcRelayJoinToken,
       webRtcRoomId: this.webRtcRoomId,
       webRtcStatus: this.webRtcSignalSocket?.readyState === WebSocket.OPEN ? 'pairing-ready' : this.webRtcPairingUrl ? 'peer-handler-unavailable' : 'not-configured',
       webRtcStatusMessage:
@@ -611,7 +622,6 @@ export class RemoteAccessService {
     this.webRtcPairingExpiresAt = null
     this.webRtcPairingQrCodeDataUrl = null
     this.webRtcPairingUrl = null
-    this.webRtcRelayJoinToken = null
     this.webRtcRoomId = null
     this.closeWebRtcSignalSocket()
     this.closeWebRtcHostWindow()
@@ -668,10 +678,14 @@ export class RemoteAccessService {
     const settings = this.getRemoteAccessSettings()
 
     try {
-      const payload = this.webRtcPairingManager.create(settings.webRtcConnectUrl)
+      if (!settings.pairingPinHash.trim()) {
+        throw new Error('Set a Remote Access PIN before generating a WebRTC QR code.')
+      }
+      const payload = this.webRtcPairingManager.create({
+        hostedDomain: settings.webRtcHostedDomain,
+      })
       this.webRtcPairingExpiresAt = payload.expiresAt
       this.webRtcPairingUrl = payload.pairingUrl
-      this.webRtcRelayJoinToken = payload.relayJoinToken
       this.webRtcRoomId = payload.roomId
       this.pairingManager.adoptSession({
         expiresAt: payload.pairing.expiresAt,
@@ -687,6 +701,7 @@ export class RemoteAccessService {
       this.openWebRtcSignalSocket({
         appOrigin: payload.appOrigin,
         expiresAt: payload.expiresAt,
+        iceServers: parseWebRtcIceServers(settings.webRtcIceServers),
         relayJoinTokenHash: payload.relayJoinTokenHash,
         roomId: payload.roomId,
         signalingAuthToken: payload.signalingAuthToken,
@@ -696,7 +711,6 @@ export class RemoteAccessService {
     } catch (error) {
       this.webRtcPairingExpiresAt = null
       this.webRtcPairingUrl = null
-      this.webRtcRelayJoinToken = null
       this.webRtcRoomId = null
       this.webRtcPairingQrCodeDataUrl = null
       this.closeWebRtcSignalSocket()
@@ -720,6 +734,7 @@ export class RemoteAccessService {
   private openWebRtcSignalSocket(options: {
     appOrigin: string
     expiresAt: string
+    iceServers: Array<{ urls: string | string[] }>
     relayJoinTokenHash: string
     roomId: string
     signalingAuthToken: string
@@ -734,6 +749,7 @@ export class RemoteAccessService {
     const hostConfig = {
       appOrigin: options.appOrigin,
       expiresAt: options.expiresAt,
+      iceServers: options.iceServers,
       relayJoinTokenHash: options.relayJoinTokenHash,
       roomId: options.roomId,
       signalingAuthToken: options.signalingAuthToken,
@@ -990,19 +1006,32 @@ export class RemoteAccessService {
     return this.webRtcHostConfigByWebContentsId.get(webContentsId) ?? null
   }
 
-  async getWebRtcAssetManifest(): Promise<{ assets: Array<{ contentType: string; hash: string; path: string; size: number }>; protocolVersion: string }> {
-    const assetPaths = await this.collectRemoteAppAssetPaths()
+  async getWebRtcAssetManifest(): Promise<{ assets: Array<{ contentType: string; hash: string; path: string; size: number }>; bundleId: string; entryPath: string; protocolVersion: string }> {
+    const assetEntries = await this.collectRemoteAppAssetEntries()
+    const assetRecords = await Promise.all(assetEntries.map(async (entry) => {
+      const body = await fs.readFile(path.resolve(this.rendererDistDir, entry))
+      return {
+        contentType: getContentType(path.resolve(this.rendererDistDir, entry)),
+        entry,
+        hash: createHash('sha256').update(body).digest('base64url'),
+        size: body.byteLength,
+      }
+    }))
+    const bundleId = createHash('sha256')
+      .update(assetRecords.map((record) => `${record.entry}:${record.hash}`).sort().join('\n'))
+      .digest('base64url')
+      .slice(0, 32)
+
     return {
-      assets: await Promise.all(assetPaths.map(async (assetPath) => {
-        const body = await this.readRemoteAppAssetBody(assetPath)
-        return {
-          contentType: getContentType(this.remoteAppAssetPathToFilePath(assetPath)),
-          hash: createHash('sha256').update(body).digest('base64url'),
-          path: assetPath,
-          size: body.byteLength,
-        }
+      assets: assetRecords.map((record) => ({
+        contentType: record.contentType,
+        hash: record.hash,
+        path: `/remote-app/${bundleId}/${record.entry}`,
+        size: record.size,
       })),
-      protocolVersion: '1',
+      bundleId,
+      entryPath: `/remote-app/${bundleId}/remote.html`,
+      protocolVersion: '2',
     }
   }
 
@@ -1020,7 +1049,7 @@ export class RemoteAccessService {
     const origin = this.createWebRtcPairingOrigin(appOrigin)
 
     if (pathname === '/api/pairing/start') {
-      assertPairingPin(this.getRemoteAccessSettings(), String(body.pairingPin ?? ''))
+      assertPairingPin(this.getRemoteAccessSettings(), String(body.pairingPin ?? ''), { requireConfigured: true })
       return this.pairingManager.startRegistration({
         deviceName: String(body.deviceName ?? ''),
         origin,
@@ -1100,8 +1129,10 @@ export class RemoteAccessService {
     const peer: WebRtcTerminalPeer = {
       channelId,
       webContentsId,
-      close: () => {
-        this.closeWebRtcTerminal(channelId)
+      close: (_code?: number, reason?: string) => {
+        const closeReason = reason || 'Remote connection closed by Terminay.'
+        this.webRtcHostWindow?.closeTerminal(channelId, closeReason)
+        this.closeWebRtcTerminal(channelId, closeReason)
       },
       getReadyState: () => WebSocket.OPEN,
       send: (message) => {
@@ -1133,7 +1164,7 @@ export class RemoteAccessService {
     this.handleClientMessage(connectionId, parsed)
   }
 
-  closeWebRtcTerminal(channelId: string): void {
+  closeWebRtcTerminal(channelId: string, reason = 'WebRTC terminal channel closed.'): void {
     const connectionId = this.webRtcTerminalConnectionsByChannelId.get(channelId)
     if (!connectionId) return
     const connection = this.connectionStore.get(connectionId)
@@ -1145,29 +1176,30 @@ export class RemoteAccessService {
       connectionId,
       deviceId: connection?.deviceId ?? null,
       deviceName: connection ? (this.deviceStore.get(connection.deviceId)?.name ?? null) : null,
+      reason,
     }).then(() => this.emitStatus())
+    this.webRtcStatusMessage = reason
     this.emitStatus()
   }
 
-  private async collectRemoteAppAssetPaths(): Promise<string[]> {
+  private async collectRemoteAppAssetEntries(): Promise<string[]> {
     const files = await fs.readdir(this.rendererDistDir, { recursive: true })
     return files
       .filter((entry) => typeof entry === 'string' && !entry.endsWith('.map'))
-      .filter((entry) => entry === 'remote.html' || entry === 'remote.webmanifest' || entry === 'terminay.svg' || entry.startsWith('assets/'))
-      .map((entry) => `/remote-app/current/${entry}`)
+      .filter(isRemoteAppAssetEntry)
   }
 
   private remoteAppAssetPathToFilePath(assetPath: string): string {
-    const prefix = '/remote-app/current/'
-    if (!assetPath.startsWith(prefix) || assetPath.includes('..')) {
+    const match = assetPath.match(/^\/remote-app\/(?:current|[a-zA-Z0-9_-]{8,128})\/(.+)$/)
+    if (!match || assetPath.includes('..') || !isRemoteAppAssetEntry(match[1])) {
       throw new Error('Remote app asset path is invalid.')
     }
-    return path.resolve(this.rendererDistDir, assetPath.slice(prefix.length))
+    return path.resolve(this.rendererDistDir, match[1])
   }
 
   private async readRemoteAppAssetBody(assetPath: string): Promise<Buffer> {
     const filePath = this.remoteAppAssetPathToFilePath(assetPath)
-    if (!filePath.startsWith(path.resolve(this.rendererDistDir))) {
+    if (!isPathInside(filePath, this.rendererDistDir)) {
       throw new Error('Remote app asset path is invalid.')
     }
     return fs.readFile(filePath)
