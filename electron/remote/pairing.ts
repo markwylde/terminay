@@ -34,7 +34,9 @@ function hashToken(token: string): Buffer {
 }
 
 export class PairingManager {
-  private currentSession: PairingSession | null = null
+  private currentAdoptedSessionId: string | null = null
+  private currentCreatedSessionId: string | null = null
+  private readonly sessions = new Map<string, PairingSession>()
   private readonly pendingRegistrations = new Map<string, PendingPairing>()
 
   adoptSession(options: {
@@ -48,12 +50,17 @@ export class PairingManager {
       throw new Error('This pairing code has expired.')
     }
 
-    this.currentSession = {
+    if (this.currentAdoptedSessionId) {
+      this.sessions.delete(this.currentAdoptedSessionId)
+    }
+
+    this.sessions.set(options.pairingSessionId, {
       expiresAt,
       id: options.pairingSessionId,
       origin: options.origin,
       tokenHash: hashToken(options.pairingToken),
-    }
+    })
+    this.currentAdoptedSessionId = options.pairingSessionId
   }
 
   create(origin: string): PairingPayload {
@@ -61,12 +68,17 @@ export class PairingManager {
     const sessionId = randomUUID()
     const expiresAt = Date.now() + PAIRING_TTL_MS
 
-    this.currentSession = {
+    if (this.currentCreatedSessionId) {
+      this.sessions.delete(this.currentCreatedSessionId)
+    }
+
+    this.sessions.set(sessionId, {
       expiresAt,
       id: sessionId,
       origin,
       tokenHash: hashToken(token),
-    }
+    })
+    this.currentCreatedSessionId = sessionId
 
     const pairingUrl = new URL(origin)
     pairingUrl.searchParams.set('pairingSessionId', sessionId)
@@ -83,7 +95,9 @@ export class PairingManager {
   }
 
   getExpiresAt(): number | null {
-    return this.currentSession?.expiresAt ?? null
+    return this.currentCreatedSessionId
+      ? this.sessions.get(this.currentCreatedSessionId)?.expiresAt ?? null
+      : null
   }
 
   startRegistration(options: {
@@ -132,14 +146,18 @@ export class PairingManager {
   }
 
   invalidateSession(pairingSessionId: string): void {
-    if (this.currentSession?.id === pairingSessionId) {
-      this.currentSession = null
+    this.sessions.delete(pairingSessionId)
+    if (this.currentCreatedSessionId === pairingSessionId) {
+      this.currentCreatedSessionId = null
+    }
+    if (this.currentAdoptedSessionId === pairingSessionId) {
+      this.currentAdoptedSessionId = null
     }
   }
 
   private assertValidSession(pairingSessionId: string, pairingToken: string, origin: string): PairingSession {
-    const session = this.currentSession
-    if (!session || session.id !== pairingSessionId) {
+    const session = this.sessions.get(pairingSessionId)
+    if (!session) {
       throw new Error('This pairing code is no longer valid.')
     }
 

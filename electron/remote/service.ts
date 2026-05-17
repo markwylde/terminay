@@ -26,7 +26,7 @@ import {
 import { ConnectionStore, webSocketPeer, type RemoteConnectionPeer } from './connectionStore'
 import { DeviceStore } from './deviceStore'
 import { PairingManager } from './pairing'
-import { assertPairingPin } from './pinGuard'
+import { assertPairingPin, PairingPinFailureLimitError } from './pinGuard'
 import { readJsonBody } from './jsonBody'
 import { ReconnectGrantStore, resolveReconnectGrantLifetime, type ReconnectGrantRecord } from './reconnectGrantStore'
 import { ensureTlsMaterial } from './tls'
@@ -579,6 +579,9 @@ export class RemoteAccessService {
     try {
       this.config = resolveRemoteAccessConfig(readRemoteAccessConfig(this.getRemoteAccessSettings()))
       const settings = this.getRemoteAccessSettings()
+      if (!settings.pairingPinHash.trim()) {
+        throw new Error('Set a Remote Access PIN before starting Remote Access.')
+      }
       await this.deviceStore.load()
       await this.reconnectGrantStore.load()
       await this.auditStore.load()
@@ -1217,6 +1220,63 @@ export class RemoteAccessService {
     runtime.hostWindow.close()
   }
 
+  private getPinFailureLimit(): number {
+    const value = this.getRemoteAccessSettings().pinFailureLimit
+    return typeof value === 'number' && Number.isFinite(value)
+      ? Math.min(10, Math.max(1, Math.floor(value)))
+      : 3
+  }
+
+  private async assertPairingPinForSession(options: {
+    mode: 'lan' | 'webrtc'
+    origin: string
+    pairingPin: string | undefined
+    pairingSessionId: string
+  }): Promise<void> {
+    try {
+      assertPairingPin(this.getRemoteAccessSettings(), options.pairingPin, {
+        contextKey: `pairing:${options.origin}:${options.pairingSessionId}`,
+        failureLimit: this.getPinFailureLimit(),
+        requireConfigured: true,
+      })
+    } catch (error) {
+      if (!(error instanceof PairingPinFailureLimitError)) {
+        throw error
+      }
+
+      this.pairingManager.invalidateSession(options.pairingSessionId)
+      if (options.mode === 'webrtc') {
+        await this.rotateWebRtcPairingCode()
+      } else {
+        await this.rotatePairingCode()
+      }
+      this.emitStatus()
+      throw new Error('Too many incorrect PIN attempts. Scan a fresh QR code to pair again.')
+    }
+  }
+
+  private async assertPairingPinForDevice(options: {
+    deviceId: string
+    failureMessage?: string
+    pairingPin: string | undefined
+  }): Promise<void> {
+    try {
+      assertPairingPin(this.getRemoteAccessSettings(), options.pairingPin, {
+        contextKey: `device:${options.deviceId}`,
+        failureLimit: this.getPinFailureLimit(),
+        failureMessage: options.failureMessage,
+        requireConfigured: true,
+      })
+    } catch (error) {
+      if (!(error instanceof PairingPinFailureLimitError)) {
+        throw error
+      }
+
+      await this.revokeDevice(options.deviceId)
+      throw new Error('Too many incorrect PIN attempts. This browser was revoked. Scan a fresh QR code to pair again.')
+    }
+  }
+
   private async handleRequest(
     request: import('node:http').IncomingMessage,
     response: import('node:http').ServerResponse,
@@ -1254,7 +1314,12 @@ export class RemoteAccessService {
           pairingToken: string
           publicKeyPem: string
         }>(request)
-        assertPairingPin(this.getRemoteAccessSettings(), body.pairingPin)
+        await this.assertPairingPinForSession({
+          mode: 'lan',
+          origin: requestOrigin,
+          pairingPin: body.pairingPin,
+          pairingSessionId: body.pairingSessionId,
+        })
 
         const result = await this.pairingManager.startRegistration({
           deviceName: body.deviceName,
@@ -1341,6 +1406,7 @@ export class RemoteAccessService {
           challengeId: string
           deviceId: string
           deviceSignature: string
+          pairingPin?: string
         }>(request)
 
         const device = this.deviceStore.get(body.deviceId)
@@ -1366,6 +1432,12 @@ export class RemoteAccessService {
         if (!verifiedDeviceSignature) {
           throw new Error('The paired device key signature was invalid.')
         }
+
+        await this.assertPairingPinForDevice({
+          deviceId: device.id,
+          failureMessage: 'Remote PIN was missing or incorrect.',
+          pairingPin: body.pairingPin,
+        })
 
         await this.deviceStore.updateAuthentication(device.id)
         await this.auditStore.append({
@@ -1449,7 +1521,12 @@ export class RemoteAccessService {
     const origin = this.createWebRtcPairingOrigin(appOrigin)
 
     if (pathname === '/api/pairing/start') {
-      assertPairingPin(this.getRemoteAccessSettings(), String(body.pairingPin ?? ''), { requireConfigured: true })
+      await this.assertPairingPinForSession({
+        mode: 'webrtc',
+        origin,
+        pairingPin: String(body.pairingPin ?? ''),
+        pairingSessionId: String(body.pairingSessionId ?? ''),
+      })
       return this.pairingManager.startRegistration({
         deviceName: String(body.deviceName ?? ''),
         origin,
@@ -1516,9 +1593,10 @@ export class RemoteAccessService {
         Buffer.from(String(body.deviceSignature ?? ''), 'base64url'),
       )
       if (!verifiedDeviceSignature) throw new Error('The paired device key signature was invalid.')
-      assertPairingPin(this.getRemoteAccessSettings(), String(body.pairingPin ?? ''), {
+      await this.assertPairingPinForDevice({
+        deviceId: device.id,
         failureMessage: 'Remote PIN was missing or incorrect.',
-        requireConfigured: true,
+        pairingPin: String(body.pairingPin ?? ''),
       })
       await this.deviceStore.updateAuthentication(device.id)
       await this.auditStore.append({
