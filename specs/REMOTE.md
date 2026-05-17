@@ -33,7 +33,8 @@ The production WebRTC model is:
 
 ## Goals
 
-- Preserve Local Network mode unchanged.
+- Preserve Local Network transport while aligning its pairing and auth security
+  requirements with WebRTC.
 - Make WebRTC work from a public HTTPS origin when local HTTPS is unreachable.
 - Isolate every WebRTC remote session by browser origin.
 - Let a paired phone reconnect from a saved session link without rescanning a QR.
@@ -139,8 +140,11 @@ Forbidden session-origin responsibilities:
 2. Terminay chooses a reachable local HTTPS origin.
 3. Terminay shows a Local Network QR code containing the full local pairing URL.
 4. The phone opens the URL directly.
-5. The phone pairs with the PIN or authenticates with its stored device key.
-6. Terminal traffic uses the existing WebSocket protocol.
+5. The phone pairs with the QR token and the desktop PIN.
+6. Later connections authenticate with the stored device key and the desktop PIN.
+   The browser may reuse a locally saved PIN, but the desktop must verify a PIN
+   before issuing every terminal connection ticket.
+7. Terminal traffic uses the existing WebSocket protocol.
 
 ### First WebRTC Pairing
 
@@ -209,6 +213,28 @@ session reconnect. A saved session with a valid device key and reconnect grant
 may require only the PIN. Submitting the PIN must retry desktop authentication,
 and the Pair Device button must be enabled whenever a six-digit PIN can satisfy
 the current reconnect-auth challenge.
+
+### PIN Auth Policy
+
+The desktop PIN is mandatory for both Local Network and WebRTC modes.
+
+- Remote Access cannot start in either mode until a desktop PIN is configured.
+- Pairing requires the fresh QR-derived pairing secret and the desktop PIN. The
+  QR secret is not sufficient on its own.
+- Every terminal connection ticket requires fresh desktop-side PIN verification
+  in addition to the paired device-key challenge. The browser may cache the PIN
+  locally after successful verification so the user does not have to type it each
+  time, but the cached value is still submitted to and verified by the desktop.
+- The PIN is the fallback factor if a QR code is seen or photographed by someone
+  else. A leaked QR must not be enough to pair or connect.
+- Incorrect PIN attempts are counted by remote trust context, not globally. The
+  default limit is 3 incorrect attempts, and the user may configure the limit in
+  Remote Access settings.
+- When the incorrect PIN limit is reached, the desktop revokes the relevant
+  remote session rather than only throttling. For first-time pairing, it
+  invalidates the active QR/pairing session and requires a fresh QR. For an
+  already paired browser, it revokes that device, closes its live connections,
+  and invalidates any reconnect grant for that device/session.
 
 ### Saving To The Manager
 
@@ -465,27 +491,30 @@ The existing RSA device-key challenge model remains.
 
 Rules:
 
-- Device keys are scoped to the exact session origin.
-- The desktop stores WebRTC devices as exact session-origin devices or a
-  structured equivalent such as `{ kind: 'webrtc', origin, protocolVersion }`.
-- A paired device for one session origin cannot authenticate to another session
+- Device keys are scoped to the exact remote origin.
+- The desktop stores remote devices as exact-origin devices or a structured
+  equivalent such as `{ kind: 'webrtc', origin, protocolVersion }`.
+- A paired device for one remote origin cannot authenticate to another remote
   origin.
 - `app.terminay.com` is not a valid device-pairing origin.
-- Device revocation closes live WebRTC connections and invalidates future
+- Device revocation closes live remote connections and invalidates future
   challenges and reconnect grants.
-- PIN verification happens on the desktop after the first WebRTC data channel
-  opens.
+- PIN verification happens on the desktop during pairing and before every
+  terminal connection ticket is issued. Local Network verifies the PIN over the
+  local HTTPS API; WebRTC verifies it after the first data channel opens.
 - The PIN is never in the QR, never stored by the hosted service, and never sent
   to the signaling relay.
-- WebRTC terminal authentication requires both the paired device key and the
-  desktop PIN. The desktop must refuse a WebRTC terminal ticket when the PIN is
-  missing, wrong, or expired according to desktop policy.
-- The first successful PIN entry may be cached only on the exact session
-  subdomain so later saved-session reconnects can authenticate without asking
-  again.
-- If the cached PIN is rejected, the session origin must clear it and prompt the
-  user for a fresh PIN. A wrong or missing PIN must not delete the paired device
-  key or reconnect grant.
+- Terminal authentication in both Local Network and WebRTC modes requires both
+  the paired device key and the desktop PIN. The desktop must refuse a terminal
+  ticket when the PIN is missing, wrong, or expired according to desktop policy.
+- The first successful PIN entry may be cached only by the exact remote origin
+  so later connections can authenticate without asking again. For WebRTC this is
+  the exact session subdomain; for Local Network this is the exact local HTTPS
+  origin.
+- If the cached PIN is rejected, the remote app must clear it and prompt the user
+  for a fresh PIN. A wrong or missing PIN below the configured failure limit must
+  not delete the paired device key or reconnect grant; reaching the failure
+  limit revokes the relevant device/session as defined in the PIN auth policy.
 - Disconnecting a live saved session is not revocation. It closes the current
   terminal connection and returns the browser to the manager saved-session list.
   Forget/revoke remain separate destructive actions.
@@ -510,9 +539,9 @@ Reconnect grants and reconnect-proof material must not be stored in cookies,
 including encrypted or sealed cookie blobs. A cookie may hold only one of these:
 
 - a non-secret local UI/session handle
-- the desktop PIN for the exact session subdomain, after successful pairing or
-  auth, when used as an auth factor alongside the IndexedDB device key and
-  reconnect grant
+- the desktop PIN for the exact remote origin, after successful pairing or auth,
+  when used as an auth factor alongside the IndexedDB device key and any
+  applicable reconnect grant
 - future HTTP session state that is not sufficient to reconnect, authenticate a
   device, or obtain a terminal ticket without the IndexedDB/WebCrypto grant and
   device-key flow
@@ -798,8 +827,12 @@ grant, revoked device, camera permission denied, and Local Network fallback.
 - [x] Reuse existing pairing, auth, tickets, terminal protocol, audit, and
   revocation paths.
 - [x] Add clear close/error propagation to both desktop and web UI.
-- [x] Require desktop PIN during WebRTC terminal auth, using the cached
-  session-subdomain PIN when present and prompting when missing or rejected.
+- [x] Require desktop PIN during Local Network and WebRTC terminal auth, using a
+  cached browser PIN when present and prompting when missing or rejected.
+- [x] Require a configured desktop PIN before Local Network or WebRTC Remote
+  Access can start.
+- [x] Revoke the relevant pairing session or paired browser after the configured
+  incorrect PIN limit is reached, defaulting to 3 attempts.
 
 ### Security And Isolation
 
@@ -856,7 +889,8 @@ grant, revoked device, camera permission denied, and Local Network fallback.
 - [x] Integration test revoked session cannot reconnect.
 - [x] E2E test QR pairing followed by manager save and reopen.
 - [x] E2E test fresh QR rotation does not break a live WebRTC session.
-- [x] E2E test Local Network mode remains unchanged.
+- [x] E2E test Local Network pairing and reconnect both require desktop PIN
+  verification.
 - [x] E2E test first saved-session reconnect uses the cached PIN cookie without
   prompting.
 - [x] E2E test missing PIN cookie prompts for PIN and retries auth
