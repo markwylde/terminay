@@ -251,6 +251,10 @@ export function SettingsWindow() {
   const [isSavingPairingPin, setIsSavingPairingPin] = useState(false)
   const [isLinkCopied, setIsLinkCopied] = useState(false)
   const [isUpdatingRemoteDevices, setIsUpdatingRemoteDevices] = useState(false)
+  const [selectedDevicesToRevoke, setSelectedDevicesToRevoke] = useState<Set<string>>(new Set())
+  const [isRevokingSelected, setIsRevokingSelected] = useState(false)
+  const [selectedRemoteTab, setSelectedRemoteTab] = useState<'all' | 'lan' | 'webrtc'>('all')
+  const [isPairingQrModalOpen, setIsPairingQrModalOpen] = useState(false)
   const [listeningShortcutKey, setListeningShortcutKey] = useState<string | null>(null)
   const [codexModels, setCodexModels] = useState<AiModelOption[]>([])
   const [isLoadingCodexModels, setIsLoadingCodexModels] = useState(false)
@@ -1068,202 +1072,341 @@ export function SettingsWindow() {
     const reconnectableDeviceCount = pairedDevices.filter((device) => device.reconnectGrantStatus === 'valid').length
     const staleDeviceCount = pairedDevices.filter((device) => device.reconnectGrantStatus !== 'valid').length
 
+    const toggleDeviceSelection = (deviceId: string) => {
+      setSelectedDevicesToRevoke((prev) => {
+        const next = new Set(prev)
+        if (next.has(deviceId)) next.delete(deviceId)
+        else next.add(deviceId)
+        return next
+      })
+    }
+
+    const selectAllDevices = () => {
+      if (selectedDevicesToRevoke.size === pairedDevices.length) {
+        setSelectedDevicesToRevoke(new Set())
+      } else {
+        setSelectedDevicesToRevoke(new Set(pairedDevices.map((d) => d.deviceId)))
+      }
+    }
+
+    const revokeSelectedDevices = async () => {
+      setIsRevokingSelected(true)
+      try {
+        for (const deviceId of selectedDevicesToRevoke) {
+          await window.terminay.revokeRemoteAccessDevice(deviceId)
+        }
+        setSelectedDevicesToRevoke(new Set())
+        setRemoteStatus(await window.terminay.getRemoteAccessStatus())
+      } finally {
+        setIsRevokingSelected(false)
+      }
+    }
+
+    const updateGrantLifetime = async (val: string) => {
+      const nextSettings = { ...draftRef.current, remoteAccess: { ...draftRef.current.remoteAccess, reconnectGrantLifetime: val as '1h' | '24h' | '7d' | 'until-revoked' } };
+      setDraft(nextSettings);
+      await window.terminay.updateTerminalSettings(nextSettings);
+    }
+
+    const renderTabButton = (id: 'all' | 'lan' | 'webrtc', label: string) => (
+      <button
+        type="button"
+        className={`settings-remote-toggle-btn${selectedRemoteTab === id ? ' settings-remote-toggle-btn--active' : ''}`}
+        onClick={() => setSelectedRemoteTab(id)}
+        style={{
+          color: selectedRemoteTab === id ? '#fff' : undefined,
+          background: selectedRemoteTab === id ? 'var(--settings-accent)' : 'transparent',
+          boxShadow: selectedRemoteTab === id ? '0 2px 4px rgba(0,0,0,0.2)' : 'none'
+        }}
+      >
+        {label}
+      </button>
+    )
+
     return (
       <section id="section-remote-access-management" className="settings-section">
-        <h3 className="settings-section-title">Pair Device & Live Access</h3>
-        <div className="settings-group">
-          <div className="settings-remote-panel">
-            <div className="settings-remote-panel-header">
-              <div>
-                <p className="settings-remote-kicker">Remote Access</p>
-                <h4>{remoteSummary}</h4>
-                <p>{remoteDescription}</p>
-              </div>
-              <button
-                type="button"
-                className="settings-primary-button"
-                onClick={() => void toggleRemoteAccess()}
-                disabled={isTogglingRemoteAccess}
-              >
-                {isTogglingRemoteAccess ? 'Working...' : remoteStatus?.isRunning ? 'Stop Remote Access' : 'Pair Device'}
-              </button>
-            </div>
+        <header className="settings-remote-panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'nowrap', marginBottom: '24px', gap: '16px' }}>
+          <div style={{ minWidth: 0 }}>
+            <p className="settings-remote-kicker" style={{ color: remoteStatus?.isRunning ? 'var(--settings-success)' : 'var(--settings-accent)', marginBottom: '4px' }}>
+              Remote Access: {remoteStatus?.isRunning ? 'Active' : 'Stopped'}
+            </p>
+            <h4 style={{ margin: 0, fontSize: '18px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{remoteSummary}</h4>
+            <p style={{ margin: '6px 0 0', maxWidth: 720 }}>{remoteDescription}</p>
+          </div>
+          <button
+            type="button"
+            className="settings-primary-button"
+            style={{ flexShrink: 0, background: remoteStatus?.isRunning ? 'var(--settings-danger)' : undefined, border: remoteStatus?.isRunning ? 'none' : undefined }}
+            onClick={() => void toggleRemoteAccess()}
+            disabled={isTogglingRemoteAccess}
+          >
+            {isTogglingRemoteAccess ? 'Working...' : remoteStatus?.isRunning ? 'Stop Remote Access' : 'Start Remote Access'}
+          </button>
+        </header>
 
-            <div className="settings-remote-overview">
-              <div className="settings-remote-stat">
-                <span>Trusted browsers</span>
+        <div className="settings-remote-tab-bar" style={{ display: 'flex', background: 'var(--settings-sidebar-bg)', padding: '4px', borderRadius: '10px', marginBottom: '32px', width: 'fit-content', border: '1px solid var(--settings-border)' }}>
+          {renderTabButton('all', 'Overview')}
+          {renderTabButton('lan', 'Local Network')}
+          {renderTabButton('webrtc', 'WebRTC Relay')}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+
+          {(selectedRemoteTab === 'lan' || selectedRemoteTab === 'webrtc') && (
+            <div className="settings-remote-card" style={{ padding: '24px', background: 'var(--settings-sidebar-bg)', borderRadius: '12px', border: '1px solid var(--settings-border)', boxShadow: 'none' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', gap: '24px' }}>
+                <div style={{ flex: 1 }}>
+                  <h5 style={{ margin: '0 0 8px', fontSize: '15px', fontWeight: 600 }}>{selectedRemoteTab === 'webrtc' ? 'WebRTC Relay Mode' : 'Local Network Mode'}</h5>
+                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--settings-text-muted)', lineHeight: 1.6 }}>
+                    {selectedRemoteTab === 'webrtc'
+                      ? 'Secure, encrypted peer-to-peer connection via Terminay Relay. Works over the internet without any firewall or router configuration.'
+                      : 'Direct connection via your local network. Fast and private, but requires devices to be on the same Wi-Fi or LAN.'}
+                  </p>
+                </div>
+                {remoteStatus?.isRunning && (
+                  <button
+                    type="button"
+                    className="settings-primary-button"
+                    style={{ fontSize: '12px', padding: '8px 16px', flexShrink: 0 }}
+                    onClick={() => {
+                      setSelectedRemotePairingMode(selectedRemoteTab === 'webrtc' ? 'webrtc' : 'lan')
+                      setIsPairingQrModalOpen(true)
+                    }}
+                  >
+                    Show QR Code
+                  </button>
+                )}
+              </div>
+
+              <div className="settings-row" style={{ padding: '16px 0 0', borderTop: '1px solid var(--settings-border)', borderBottom: 'none', background: 'transparent' }}>
+                <div className="settings-row-info">
+                  <label htmlFor="pairing-grant-lifetime" className="settings-row-label">Trust Duration</label>
+                  <span className="settings-row-description">Set how long browsers remain authorized before requiring a re-pair.</span>
+                </div>
+                <div className="settings-row-control">
+                  <select
+                    id="pairing-grant-lifetime"
+                    className="settings-input-text"
+                    style={{ width: '160px', height: '32px' }}
+                    value={draft.remoteAccess.reconnectGrantLifetime ?? 'until-revoked'}
+                    onChange={(e) => void updateGrantLifetime(e.target.value)}
+                  >
+                    <option value="1h">1 Hour</option>
+                    <option value="24h">24 Hours</option>
+                    <option value="7d">7 Days</option>
+                    <option value="until-revoked">Until Revoked</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {selectedRemoteTab === 'all' && (
+            <div className="settings-remote-overview" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+              <div className="settings-remote-stat" style={{ textAlign: 'center', background: 'var(--settings-card-bg)' }}>
+                <span>Browsers</span>
                 <strong>{pairedDevices.length}</strong>
               </div>
-              <div className="settings-remote-stat">
-                <span>Saved reconnect</span>
+              <div className="settings-remote-stat" style={{ textAlign: 'center', background: 'var(--settings-card-bg)' }}>
+                <span>Reconnects</span>
                 <strong>{reconnectableDeviceCount}</strong>
               </div>
-              <div className="settings-remote-stat">
-                <span>Needs cleanup</span>
+              <div className="settings-remote-stat" style={{ textAlign: 'center', background: 'var(--settings-card-bg)' }}>
+                <span>Cleanup</span>
                 <strong>{staleDeviceCount}</strong>
               </div>
-              <div className="settings-remote-stat">
-                <span>Live now</span>
-                <strong>{activeConnections.length}</strong>
+              <div className="settings-remote-stat" style={{ textAlign: 'center', background: 'var(--settings-card-bg)', borderColor: 'var(--settings-accent)' }}>
+                <span style={{ color: 'var(--settings-accent)' }}>Live Now</span>
+                <strong style={{ color: 'var(--settings-accent)' }}>{activeConnections.length}</strong>
               </div>
             </div>
+          )}
 
-            <div className="settings-remote-card-header">
-              <span className="settings-remote-card-label">Pairing QR Type</span>
-              <div className="settings-remote-toggle">
-                <button
-                  type="button"
-                  className={`settings-remote-toggle-btn${activePairingMode === 'lan' ? ' settings-remote-toggle-btn--active' : ''}`}
-                  onClick={() => void selectRemotePairingMode('lan')}
-                >
-                  Local Network
-                </button>
-                <button
-                  type="button"
-                  className={`settings-remote-toggle-btn${activePairingMode === 'webrtc' ? ' settings-remote-toggle-btn--active' : ''}`}
-                  onClick={() => void selectRemotePairingMode('webrtc')}
-                >
-                  WebRTC Relay
-                </button>
+          <div className="settings-remote-card" style={{ width: '100%', padding: 0, overflow: 'hidden' }}>
+            <div className="settings-remote-card-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--settings-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--settings-sidebar-bg)' }}>
+              <div>
+                <span className="settings-remote-card-label" style={{ color: 'var(--settings-text)', fontSize: '13px' }}>Trusted Browsers</span>
+                <p className="settings-remote-card-subtitle" style={{ marginTop: '2px', fontSize: '12px' }}>Authorized devices that can initiate remote sessions.</p>
               </div>
+              {pairedDevices.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <button
+                    type="button"
+                    className="settings-secondary-button"
+                    style={{ border: 'none', color: 'var(--settings-accent)', padding: '4px 8px', background: 'transparent' }}
+                    onClick={selectAllDevices}
+                  >
+                    {selectedDevicesToRevoke.size === pairedDevices.length ? 'Deselect All' : 'Select All'}
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-danger-button"
+                    style={{ fontSize: '12px', padding: '6px 14px', whiteSpace: 'nowrap' }}
+                    onClick={() => void revokeSelectedDevices()}
+                    disabled={selectedDevicesToRevoke.size === 0 || isRevokingSelected}
+                  >
+                    {isRevokingSelected ? 'Revoking...' : `Revoke Selected (${selectedDevicesToRevoke.size})`}
+                  </button>
+                </div>
+              )}
             </div>
-
-            {selectedPairingQrCodeDataUrl ? (
-              <div className="settings-remote-grid">
-                <div className="settings-remote-card settings-remote-card--pairing">
-                  <div className="settings-remote-card-header">
-                    <span className="settings-remote-card-label">{selectedPairingLabel}</span>
-                    {selectedPairingUrl ? (
-                      <button
-                        type="button"
-                        className="settings-remote-copy-button"
-                        onClick={() => {
-                          void navigator.clipboard.writeText(selectedPairingUrl)
-                          setIsLinkCopied(true)
-                          setTimeout(() => setIsLinkCopied(false), 2000)
-                        }}
-                      >
-                        {isLinkCopied ? 'Copied' : 'Copy Link'}
-                      </button>
-                    ) : null}
+            <div className="settings-remote-list" style={{ gap: 0 }}>
+              {pairedDevices.length === 0 ? (
+                <p className="settings-remote-empty" style={{ padding: '48px 24px', textAlign: 'center', opacity: 0.5 }}>No trusted browsers found.</p>
+              ) : (
+                pairedDevices.map((device) => (
+                  <div key={device.deviceId} className="settings-remote-device" style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '16px 20px', borderBottom: '1px solid var(--settings-border)', borderRadius: 0, borderLeft: 'none', borderRight: 'none', background: selectedDevicesToRevoke.has(device.deviceId) ? 'var(--settings-nav-hover)' : 'var(--settings-card-bg)' }}>
+                    <input
+                      type="checkbox"
+                      style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: 'var(--settings-danger)' }}
+                      checked={selectedDevicesToRevoke.has(device.deviceId)}
+                      onChange={() => toggleDeviceSelection(device.deviceId)}
+                    />
+                    <div className="settings-remote-device-main" style={{ flex: 1, minWidth: 0 }}>
+                      <div className="settings-remote-device-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <strong style={{ fontSize: '14px' }}>{device.name}</strong>
+                          <p style={{ margin: '2px 0 0', fontSize: '11px', opacity: 0.6, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis' }}>{getRemoteOriginLabel(device.origin)}</p>
+                        </div>
+                        <div className="settings-remote-device-badges" style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                          {liveConnectionsByDevice.has(device.deviceId) ? (
+                            <span className="settings-remote-badge" style={{ color: 'var(--settings-success)', borderColor: 'var(--settings-success)', background: 'transparent' }}>
+                              {liveConnectionsByDevice.get(device.deviceId)} live
+                            </span>
+                          ) : null}
+                          <span className={`settings-remote-badge settings-remote-badge--${device.reconnectGrantStatus ?? 'none'}`}>
+                            {getReconnectGrantLabel(device.reconnectGrantStatus)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="settings-remote-device-details" style={{ marginTop: '8px', fontSize: '12px', color: 'var(--settings-text-muted)', display: 'flex', gap: '16px' }}>
+                        <span>Added {formatDateTime(device.addedAt)}</span>
+                        <span>Last seen {formatDateTime(device.lastSeenAt)}</span>
+                        <span>{formatReconnectGrantSummary(device)}</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="settings-danger-button"
+                      style={{ padding: '6px 14px', fontSize: '12px', whiteSpace: 'nowrap', background: 'transparent' }}
+                      disabled={isUpdatingRemoteDevices}
+                      onClick={() => void revokeDevice(device.deviceId)}
+                    >
+                      Revoke
+                    </button>
                   </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="settings-remote-card" style={{ width: '100%', padding: 0, overflow: 'hidden' }}>
+            <div className="settings-remote-card-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--settings-border)', background: 'var(--settings-sidebar-bg)' }}>
+              <span className="settings-remote-card-label" style={{ color: 'var(--settings-text)', fontSize: '13px' }}>Active Connections</span>
+              <p className="settings-remote-card-subtitle" style={{ marginTop: '2px', fontSize: '12px' }}>Live terminal sessions currently streaming to remote clients.</p>
+            </div>
+            <div className="settings-remote-list" style={{ gap: 0 }}>
+              {activeConnections.length === 0 ? (
+                <p className="settings-remote-empty" style={{ padding: '48px 24px', textAlign: 'center', opacity: 0.5 }}>No active remote connections.</p>
+              ) : (
+                activeConnections.map((connection) => (
+                  <div key={connection.connectionId} className="settings-remote-item" style={{ padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--settings-border)', borderLeft: 'none', borderRight: 'none', borderRadius: 0, background: 'var(--settings-card-bg)' }}>
+                    <div>
+                      <strong style={{ fontSize: '14px' }}>{connection.deviceName}</strong>
+                      <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--settings-text-muted)' }}>{connection.attachedSessionCount} attached session{connection.attachedSessionCount === 1 ? '' : 's'}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="settings-secondary-button"
+                      style={{ fontSize: '12px', padding: '6px 14px' }}
+                      disabled={isUpdatingRemoteDevices}
+                      onClick={() => void closeConnection(connection.connectionId)}
+                    >
+                      Close Connection
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="settings-remote-card" style={{ width: '100%', padding: 0, overflow: 'hidden' }}>
+            <div className="settings-remote-card-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--settings-border)', background: 'var(--settings-sidebar-bg)' }}>
+              <span className="settings-remote-card-label" style={{ color: 'var(--settings-text)', fontSize: '13px' }}>Recent Audit Log</span>
+              <p className="settings-remote-card-subtitle" style={{ marginTop: '2px', fontSize: '12px' }}>Security events related to remote access and pairing.</p>
+            </div>
+            <div className="settings-remote-list" style={{ gap: 0 }}>
+              {auditEvents.length === 0 ? (
+                <p className="settings-remote-empty" style={{ padding: '48px 24px', textAlign: 'center', opacity: 0.5 }}>No recent activity logged.</p>
+              ) : (
+                auditEvents.slice(0, 10).map((event) => (
+                  <div
+                    key={`${event.occurredAt}-${event.action}-${event.connectionId ?? 'none'}-${event.deviceId ?? 'none'}`}
+                    className="settings-remote-item"
+                    style={{ padding: '14px 20px', borderBottom: '1px solid var(--settings-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderLeft: 'none', borderRight: 'none', borderRadius: 0, background: 'var(--settings-card-bg)' }}
+                  >
+                    <div>
+                      <strong style={{ fontSize: '13px', textTransform: 'capitalize' }}>{event.action.replace(/-/g, ' ')}</strong>
+                      <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--settings-text-muted)' }}>
+                        {event.deviceName ? `${event.deviceName} · ` : ''}
+                        {event.connectionId ? `ID: ${event.connectionId.slice(0, 8)}` : ''}
+                      </p>
+                    </div>
+                    <span style={{ fontSize: '11px', opacity: 0.5 }}>{new Date(event.occurredAt).toLocaleString()}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+        {isPairingQrModalOpen ? (
+          <div className="settings-modal-backdrop" onMouseDown={() => setIsPairingQrModalOpen(false)}>
+            <div
+              className="settings-pin-modal"
+              onMouseDown={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="settings-qr-modal-title"
+            >
+              <div className="settings-pin-modal-header">
+                <h2 id="settings-qr-modal-title">{selectedPairingLabel}</h2>
+                <button type="button" onClick={() => setIsPairingQrModalOpen(false)} aria-label="Close Remote Pairing QR">
+                  x
+                </button>
+              </div>
+              {selectedPairingQrCodeDataUrl ? (
+                <>
                   <div className="settings-remote-qr-card">
                     <img className="settings-remote-qr" src={selectedPairingQrCodeDataUrl} alt="Remote pairing QR code" />
                   </div>
                   <p className="settings-remote-meta">
                     Expires {selectedPairingExpiresAt ? new Date(selectedPairingExpiresAt).toLocaleString() : 'soon'}
                   </p>
+                  {selectedPairingUrl ? (
+                    <button
+                      type="button"
+                      className="settings-remote-copy-button"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(selectedPairingUrl)
+                        setIsLinkCopied(true)
+                        setTimeout(() => setIsLinkCopied(false), 2000)
+                      }}
+                    >
+                      {isLinkCopied ? 'Copied' : 'Copy Link'}
+                    </button>
+                  ) : null}
                   {activePairingMode === 'webrtc' && remoteStatus?.webRtcStatusMessage ? (
                     <p className="settings-remote-meta">{remoteStatus.webRtcStatusMessage}</p>
                   ) : null}
-                </div>
-
-                <div className="settings-remote-card settings-remote-card--devices">
-                  <div className="settings-remote-card-header">
-                    <div>
-                      <span className="settings-remote-card-label">Trusted Browsers</span>
-                      <p className="settings-remote-card-subtitle">Revoke old browsers here. Revoke also invalidates saved reconnect grants.</p>
-                    </div>
-                  </div>
-                  <div className="settings-remote-list">
-                    {pairedDevices.length === 0 ? (
-                      <p className="settings-remote-empty">No paired browsers yet.</p>
-                    ) : (
-                      pairedDevices.map((device) => (
-                        <div key={device.deviceId} className="settings-remote-device">
-                          <div className="settings-remote-device-main">
-                            <div className="settings-remote-device-title-row">
-                              <div>
-                                <strong>{device.name}</strong>
-                                <p>{getRemoteOriginLabel(device.origin)}</p>
-                              </div>
-                              <div className="settings-remote-device-badges">
-                                {liveConnectionsByDevice.has(device.deviceId) ? (
-                                  <span className="settings-remote-badge settings-remote-badge--live">
-                                    {liveConnectionsByDevice.get(device.deviceId)} live
-                                  </span>
-                                ) : null}
-                                <span className={`settings-remote-badge settings-remote-badge--${device.reconnectGrantStatus ?? 'none'}`}>
-                                  {getReconnectGrantLabel(device.reconnectGrantStatus)}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="settings-remote-device-details">
-                              <span>Added {formatDateTime(device.addedAt)}</span>
-                              <span>Last seen {formatDateTime(device.lastSeenAt)}</span>
-                              <span>{formatReconnectGrantSummary(device)}</span>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            className="settings-danger-button settings-remote-revoke-button"
-                            disabled={isUpdatingRemoteDevices}
-                            onClick={() => void revokeDevice(device.deviceId)}
-                          >
-                            Revoke Browser
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="settings-remote-card">
-                  <span className="settings-remote-card-label">Active Connections</span>
-                  <div className="settings-remote-list">
-                    {activeConnections.length === 0 ? (
-                      <p className="settings-remote-empty">No live remote connections.</p>
-                    ) : (
-                      activeConnections.map((connection) => (
-                        <div key={connection.connectionId} className="settings-remote-item">
-                          <div>
-                            <strong>{connection.deviceName}</strong>
-                            <p>{connection.attachedSessionCount} attached session{connection.attachedSessionCount === 1 ? '' : 's'}</p>
-                          </div>
-                          <button
-                            type="button"
-                            className="settings-secondary-button settings-secondary-button--small"
-                            disabled={isUpdatingRemoteDevices}
-                            onClick={() => void closeConnection(connection.connectionId)}
-                          >
-                            Close
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="settings-remote-card">
-                  <span className="settings-remote-card-label">Recent Audit Log</span>
-                  <div className="settings-remote-list">
-                    {auditEvents.length === 0 ? (
-                      <p className="settings-remote-empty">No remote access events yet.</p>
-                    ) : (
-                      auditEvents.map((event) => (
-                        <div
-                          key={`${event.occurredAt}-${event.action}-${event.connectionId ?? 'none'}-${event.deviceId ?? 'none'}`}
-                          className="settings-remote-item settings-remote-item--stacked"
-                        >
-                          <strong>{event.action.replace(/-/g, ' ')}</strong>
-                          <p>
-                            {new Date(event.occurredAt).toLocaleString()}
-                            {event.deviceName ? ` · ${event.deviceName}` : ''}
-                            {event.connectionId ? ` · ${event.connectionId.slice(0, 8)}` : ''}
-                          </p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="settings-remote-empty-state">
-                Click Pair Device to start remote access and generate a fresh pairing QR code for browsers.
-              </div>
-            )}
+                </>
+              ) : (
+                <p className="settings-remote-empty">
+                  Start remote access to generate a fresh pairing QR code for browsers.
+                </p>
+              )}
+            </div>
           </div>
-        </div>
+        ) : null}
       </section>
     )
   }
