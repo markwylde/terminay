@@ -176,6 +176,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		bindAddress: '0.0.0.0',
 		origin: 'https://localhost:9443',
 		pairingMode: 'lan',
+		pinFailureLimit: 3,
 		pairingPinHash: '',
 		reconnectGrantLifetime: '24h',
 		tlsCertPath: '',
@@ -444,6 +445,27 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'webrtc',
 					'relay',
 					'qr',
+				],
+			}),
+			makeField({
+				key: 'remoteAccess.pinFailureLimit',
+				label: 'Incorrect PIN limit',
+				description:
+					'Number of wrong PIN attempts before Terminay revokes the remote pairing or browser.',
+				sectionId: 'remote-access-host',
+				categoryId: 'remote',
+				input: 'number',
+				min: 1,
+				max: 10,
+				step: 1,
+				keywords: [
+					'remote',
+					'pin',
+					'failures',
+					'attempts',
+					'limit',
+					'revoke',
+					'security',
 				],
 			}),
 			makeField({
@@ -1659,6 +1681,11 @@ export function normalizeTerminalSettings(
 				remoteAccessInput.pairingMode === 'lan'
 					? remoteAccessInput.pairingMode
 					: defaultTerminalSettings.remoteAccess.pairingMode,
+			pinFailureLimit:
+				typeof remoteAccessInput.pinFailureLimit === 'number' &&
+				Number.isFinite(remoteAccessInput.pinFailureLimit)
+					? Math.min(10, Math.max(1, Math.floor(remoteAccessInput.pinFailureLimit)))
+					: defaultTerminalSettings.remoteAccess.pinFailureLimit,
 			pairingPinHash:
 				typeof remoteAccessInput.pairingPinHash === 'string'
 					? remoteAccessInput.pairingPinHash
