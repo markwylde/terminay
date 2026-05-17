@@ -6323,8 +6323,8 @@ function App() {
 							onClose={() => closePairingPinModal(false)}
 						/>
 						<p className="file-explorer-name-modal-description">
-							Choose a 6-digit PIN. Your browser will ask for this after scanning
-							the WebRTC QR code.
+							Choose a 6-digit PIN. Your browser will use this after scanning a
+							Remote Access QR code.
 						</p>
 						<label>
 							<span>Pairing PIN</span>

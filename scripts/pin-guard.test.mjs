@@ -8,6 +8,7 @@ import { build, transform } from 'esbuild'
 const { createPairingPinHash } = await importTransformed('../electron/remote/pin.ts')
 const {
   assertPairingPin,
+  PairingPinFailureLimitError,
   resetPairingPinFailuresForTests,
 } = await importTransformed('../electron/remote/pinGuard.ts')
 
@@ -30,23 +31,45 @@ test('PIN guard requires configured PIN for WebRTC without revealing session val
   )
 })
 
-test('PIN guard rate-limits repeated failures', () => {
+test('PIN guard raises the failure-limit error after the configured default failures', () => {
   resetPairingPinFailuresForTests()
   const settings = createSettings(createPairingPinHash('123456'))
-  const now = Date.now()
 
-  for (let index = 0; index < 5; index += 1) {
-    assert.throws(() => assertPairingPin(settings, '000000', { now }), /Pairing failed/)
-  }
-  assert.throws(() => assertPairingPin(settings, '123456', { now }), /Pairing failed/)
-  assert.doesNotThrow(() => assertPairingPin(settings, '123456', { now: now + 61000 }))
+  assert.throws(() => assertPairingPin(settings, '000000'), /Pairing failed/)
+  assert.throws(() => assertPairingPin(settings, '000000'), /Pairing failed/)
+  assert.throws(
+    () => assertPairingPin(settings, '000000'),
+    PairingPinFailureLimitError,
+  )
+  assert.throws(
+    () => assertPairingPin(settings, '123456'),
+    PairingPinFailureLimitError,
+  )
 })
 
-function createSettings(pairingPinHash) {
+test('PIN guard supports custom failure limits per context', () => {
+  resetPairingPinFailuresForTests()
+  const settings = createSettings(createPairingPinHash('123456'), 2)
+
+  assert.throws(
+    () => assertPairingPin(settings, '000000', { contextKey: 'device:one' }),
+    /Pairing failed/,
+  )
+  assert.throws(
+    () => assertPairingPin(settings, '000000', { contextKey: 'device:one' }),
+    PairingPinFailureLimitError,
+  )
+  assert.doesNotThrow(
+    () => assertPairingPin(settings, '123456', { contextKey: 'device:two' }),
+  )
+})
+
+function createSettings(pairingPinHash, pinFailureLimit = 3) {
   return {
     bindAddress: '0.0.0.0',
     origin: 'https://localhost:9443',
     pairingMode: 'webrtc',
+    pinFailureLimit,
     pairingPinHash,
     tlsCertPath: '',
     tlsKeyPath: '',
