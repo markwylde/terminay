@@ -1563,7 +1563,7 @@ export function SettingsWindow() {
               x
             </button>
           </div>
-          <p>Choose a 6-digit PIN. Your browser will ask for this after scanning the WebRTC QR code.</p>
+          <p>Choose a 6-digit PIN. Your browser will use this after scanning a Remote Access QR code.</p>
           <label className="settings-pin-modal-field">
             <span>Pairing PIN</span>
             <input
