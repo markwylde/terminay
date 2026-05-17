@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { createServer, connect } from 'node:net'
 import { build } from 'esbuild'
 import { constants, generateKeyPairSync, scryptSync, sign } from 'node:crypto'
 
@@ -85,6 +86,129 @@ test('RemoteAccessService rotates WebRTC QR rooms without closing existing host 
   service.handleWebRtcHostStatus(secondWindow.webContentsId, { type: 'host-registered' })
   assert.equal(service.getStatus().webRtcStatus, 'pairing-ready')
   assert.equal(statuses.at(-1).webRtcRoomId, secondConfig.roomId)
+})
+
+test('RemoteAccessService does not bind the Local Network server in WebRTC mode', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-webrtc-no-lan-test-'))
+  const port = await getUnusedPort()
+  const hostWindows = []
+  let nextWebContentsId = 1
+
+  const service = new RemoteAccessService({
+    app: {
+      getPath: () => tempDir,
+    },
+    createWebRtcHostWindow: () => {
+      const hostWindow = {
+        closed: false,
+        configs: [],
+        sentSignalMessages: [],
+        sentTerminalMessages: [],
+        webContentsId: nextWebContentsId,
+        close() {
+          this.closed = true
+        },
+        closeTerminal() {},
+        sendConfig(config) {
+          this.configs.push(config)
+        },
+        sendSignalMessage(message) {
+          this.sentSignalMessages.push(message)
+        },
+        sendTerminalMessage(channelId, message) {
+          this.sentTerminalMessages.push({ channelId, message })
+        },
+      }
+      nextWebContentsId += 1
+      hostWindows.push(hostWindow)
+      return hostWindow
+    },
+    getControllableSession: () => null,
+    getRemoteAccessSettings: () => ({
+      bindAddress: '127.0.0.1',
+      origin: `https://127.0.0.1:${port}`,
+      pairingMode: 'webrtc',
+      pinFailureLimit: 3,
+      pairingPinHash: 'configured-pin-hash',
+      reconnectGrantLifetime: '24h',
+      tlsCertPath: '',
+      tlsKeyPath: '',
+      webRtcHostedDomain: 'remote.example.com',
+      webRtcIceServers: '',
+    }),
+    notifyTerminalRemoteSizeOverride: () => {},
+    onStatusChanged: () => {},
+    publicDir: tempDir,
+    rendererDistDir: tempDir,
+    saveGeneratedTlsPaths: () => {},
+  })
+
+  const status = await service.toggle()
+
+  assert.equal(status.isRunning, true)
+  assert.equal(status.pairingMode, 'webrtc')
+  assert.equal(status.lanPairingUrl, null)
+  assert.equal(status.lanPairingQrCodeDataUrl, null)
+  assert.deepEqual(status.availableAddresses, [])
+  assert.equal(status.webRtcPairingUrl.startsWith('https://'), true)
+  assert.equal(hostWindows.length, 1)
+  assert.equal(await canConnect(port), false)
+
+  await service.toggle()
+})
+
+test('RemoteAccessService does not create WebRTC pairing state in Local Network mode', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-lan-no-webrtc-test-'))
+  const port = await getUnusedPort()
+  const hostWindows = []
+
+  const service = new RemoteAccessService({
+    app: {
+      getPath: () => tempDir,
+    },
+    createWebRtcHostWindow: () => {
+      const hostWindow = {
+        close() {},
+        closeTerminal() {},
+        sendConfig() {},
+        sendSignalMessage() {},
+        sendTerminalMessage() {},
+        webContentsId: 1,
+      }
+      hostWindows.push(hostWindow)
+      return hostWindow
+    },
+    getControllableSession: () => null,
+    getRemoteAccessSettings: () => ({
+      bindAddress: '127.0.0.1',
+      origin: `https://127.0.0.1:${port}`,
+      pairingMode: 'lan',
+      pinFailureLimit: 3,
+      pairingPinHash: 'configured-pin-hash',
+      reconnectGrantLifetime: '24h',
+      tlsCertPath: '',
+      tlsKeyPath: '',
+      webRtcHostedDomain: 'remote.example.com',
+      webRtcIceServers: '',
+    }),
+    notifyTerminalRemoteSizeOverride: () => {},
+    onStatusChanged: () => {},
+    publicDir: tempDir,
+    rendererDistDir: tempDir,
+    saveGeneratedTlsPaths: () => {},
+  })
+
+  const status = await service.toggle()
+
+  assert.equal(status.isRunning, true)
+  assert.equal(status.pairingMode, 'lan')
+  assert.equal(typeof status.lanPairingUrl, 'string')
+  assert.equal(status.webRtcPairingUrl, null)
+  assert.equal(status.webRtcPairingQrCodeDataUrl, null)
+  assert.equal(hostWindows.length, 0)
+  assert.equal(await canConnect(port), true)
+
+  await service.toggle()
 })
 
 test('RemoteAccessService requires the desktop PIN before issuing a WebRTC terminal ticket', async () => {
@@ -244,6 +368,39 @@ function createTestPairingPinHash(pin) {
   const salt = 'terminay-test-salt'
   const key = scryptSync(pin, salt, 32).toString('base64url')
   return `scrypt-v1:${salt}:${key}`
+}
+
+function getUnusedPort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      server.close((error) => {
+        if (error) {
+          reject(error)
+        } else {
+          resolve(port)
+        }
+      })
+    })
+  })
+}
+
+function canConnect(port) {
+  return new Promise((resolve) => {
+    const socket = connect(port, '127.0.0.1')
+    socket.once('connect', () => {
+      socket.destroy()
+      resolve(true)
+    })
+    socket.once('error', () => resolve(false))
+    socket.setTimeout(500, () => {
+      socket.destroy()
+      resolve(false)
+    })
+  })
 }
 
 async function importRemoteAccessService() {
