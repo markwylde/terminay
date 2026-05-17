@@ -48,6 +48,7 @@ test('RemoteAccessService rotates WebRTC QR rooms without closing existing host 
       bindAddress: '127.0.0.1',
       origin: 'https://127.0.0.1:9443',
       pairingMode: 'webrtc',
+      pinFailureLimit: 3,
       pairingPinHash: 'configured-pin-hash',
       tlsCertPath: '',
       tlsKeyPath: '',
@@ -126,7 +127,70 @@ test('RemoteAccessService requires the desktop PIN before issuing a WebRTC termi
   assert.ok(verified.ticket.length > 0)
 })
 
-function createTestService({ pairingPinHash, tempDir }) {
+test('RemoteAccessService revokes a WebRTC device after repeated wrong PIN attempts', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-webrtc-pin-revoke-test-'))
+  const pairingPin = '123456'
+  const service = createTestService({
+    pairingPinHash: createTestPairingPinHash(pairingPin),
+    pinFailureLimit: 3,
+    tempDir,
+  })
+  const appOrigin = 'https://session123.remote.example.com'
+  const deviceOrigin = `${appOrigin}#transport=webrtc:${appOrigin}`
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { format: 'pem', type: 'pkcs8' },
+    publicKeyEncoding: { format: 'pem', type: 'spki' },
+  })
+  const device = await service.deviceStore.create({
+    name: 'Wrong PIN browser',
+    origin: deviceOrigin,
+    publicKeyPem: publicKey,
+  })
+
+  await assert.rejects(
+    verifyWebRtcAuth({ appOrigin, deviceId: device.id, pairingPin: '000000', privateKey, service }),
+    /Remote PIN was missing or incorrect/,
+  )
+  await assert.rejects(
+    verifyWebRtcAuth({ appOrigin, deviceId: device.id, pairingPin: '000000', privateKey, service }),
+    /Remote PIN was missing or incorrect/,
+  )
+  await assert.rejects(
+    verifyWebRtcAuth({ appOrigin, deviceId: device.id, pairingPin: '000000', privateKey, service }),
+    /Too many incorrect PIN attempts/,
+  )
+
+  assert.equal(service.deviceStore.get(device.id), null)
+  await assert.rejects(
+    verifyWebRtcAuth({ appOrigin, deviceId: device.id, pairingPin, privateKey, service }),
+    /This device is not paired with this host/,
+  )
+})
+
+test('RemoteAccessService refuses WebRTC terminal tickets when no desktop PIN is configured', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-webrtc-no-pin-test-'))
+  const service = createTestService({ pairingPinHash: '', tempDir })
+  const appOrigin = 'https://session123.remote.example.com'
+  const deviceOrigin = `${appOrigin}#transport=webrtc:${appOrigin}`
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { format: 'pem', type: 'pkcs8' },
+    publicKeyEncoding: { format: 'pem', type: 'spki' },
+  })
+  const device = await service.deviceStore.create({
+    name: 'No PIN browser',
+    origin: deviceOrigin,
+    publicKeyPem: publicKey,
+  })
+
+  await assert.rejects(
+    verifyWebRtcAuth({ appOrigin, deviceId: device.id, pairingPin: '123456', privateKey, service }),
+    /Remote PIN was missing or incorrect/,
+  )
+})
+
+function createTestService({ pairingPinHash, pinFailureLimit = 3, tempDir }) {
   return new RemoteAccessService({
     app: {
       getPath: () => tempDir,
@@ -144,6 +208,7 @@ function createTestService({ pairingPinHash, tempDir }) {
       bindAddress: '127.0.0.1',
       origin: 'https://127.0.0.1:9443',
       pairingMode: 'webrtc',
+      pinFailureLimit,
       pairingPinHash,
       reconnectGrantLifetime: '24h',
       tlsCertPath: '',
