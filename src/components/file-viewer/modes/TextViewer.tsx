@@ -2,6 +2,7 @@ import Editor from '@monaco-editor/react'
 import { useEffect, useMemo, useRef } from 'react'
 import { languageFromFilePath } from '../codeHighlight'
 import type { FileViewerEngine } from '../../../types/fileViewer'
+import { configureFileViewerMonaco, FILE_VIEWER_THEME } from '../monacoSetup'
 
 type TextViewerProps = {
   engine: FileViewerEngine
@@ -13,7 +14,7 @@ type TextViewerProps = {
 }
 
 export function TextViewer({ engine, filePath, language, onChangeText, onCurrentTextGetterChange, text }: TextViewerProps) {
-  const monacoLanguage = useMemo(() => language ?? languageFromFilePath(filePath ?? ''), [filePath, language])
+  const monacoLanguage = useMemo(() => languageFromFilePath(filePath ?? '') ?? language, [filePath, language])
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
@@ -46,8 +47,15 @@ export function TextViewer({ engine, filePath, language, onChangeText, onCurrent
         height="100%"
         language={monacoLanguage}
         value={text}
-        theme="vs-dark"
-        onMount={(editor) => {
+        theme={FILE_VIEWER_THEME}
+        beforeMount={configureFileViewerMonaco}
+        onMount={(editor, monaco) => {
+          configureFileViewerMonaco(monaco)
+          const model = editor.getModel()
+          if (model && monacoLanguage) {
+            monaco.editor.setModelLanguage(model, monacoLanguage)
+          }
+          monaco.editor.setTheme(FILE_VIEWER_THEME)
           onCurrentTextGetterChange?.(() => editor.getValue())
         }}
         onChange={(value) => onChangeText(value ?? '')}
