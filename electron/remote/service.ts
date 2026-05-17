@@ -577,7 +577,6 @@ export class RemoteAccessService {
     this.errorMessage = null
 
     try {
-      this.config = resolveRemoteAccessConfig(readRemoteAccessConfig(this.getRemoteAccessSettings()))
       const settings = this.getRemoteAccessSettings()
       if (!settings.pairingPinHash.trim()) {
         throw new Error('Set a Remote Access PIN before starting Remote Access.')
@@ -586,6 +585,18 @@ export class RemoteAccessService {
       await this.reconnectGrantStore.load()
       await this.auditStore.load()
 
+      if (settings.pairingMode === 'webrtc') {
+        this.config = null
+        this.pairingQrCodeDataUrl = null
+        this.pairingQrCodePath = null
+        this.pairingUrl = null
+        await this.rotateWebRtcPairingCode()
+        this.syncWebRtcReconnectAvailability()
+        this.emitStatus()
+        return
+      }
+
+      this.config = resolveRemoteAccessConfig(readRemoteAccessConfig(settings))
       const tlsMaterial = await ensureTlsMaterial(this.config, this.remoteDir)
       if (tlsMaterial.isSelfSigned) {
         await this.saveGeneratedTlsPaths({
@@ -619,21 +630,12 @@ export class RemoteAccessService {
         })
         await this.rotatePairingCode()
       } catch (error) {
-        if (settings.pairingMode !== 'webrtc' || !isAddressInUseError(error)) {
-          throw error
+        if (isAddressInUseError(error)) {
+          this.errorMessage = `Local Network server could not start because port ${this.config.port} is already in use.`
         }
-
-        const failedServer = this.httpsServer
-        this.httpsServer = null
-        failedServer?.close()
-        this.pairingQrCodeDataUrl = null
-        this.pairingQrCodePath = null
-        this.pairingUrl = null
-        this.errorMessage = `Local Network server could not start because port ${this.config.port} is already in use. WebRTC relay pairing is still available.`
-        await this.rotateWebRtcPairingCode()
+        throw error
       }
 
-      this.syncWebRtcReconnectAvailability()
       this.emitStatus()
     } catch (error) {
       this.errorMessage = error instanceof Error ? error.message : 'Unable to start remote access.'
@@ -718,7 +720,6 @@ export class RemoteAccessService {
       margin: 2,
       width: 720,
     })
-    await this.rotateWebRtcPairingCode()
 
     if (this.rotatePairingTimer) {
       clearTimeout(this.rotatePairingTimer)

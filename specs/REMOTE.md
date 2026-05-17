@@ -16,6 +16,13 @@ Terminay has two remote access modes:
   authority for pairing, auth, terminal APIs, assets, audit, revocation, and
   live terminal traffic.
 
+The active mode is exclusive. Starting Remote Access in WebRTC Relay mode must
+not bind or advertise the Local Network HTTPS server, even on localhost. Starting
+Remote Access in Local Network mode must not create or advertise WebRTC pairing
+rooms unless a future UX explicitly starts a second mode. Switching modes while
+Remote Access is running should require a stop/start or an equivalent restart so
+the listening surface matches the selected mode.
+
 The production WebRTC model is:
 
 - `app.terminay.com` is a non-secret session manager.
@@ -149,24 +156,26 @@ Forbidden session-origin responsibilities:
 ### First WebRTC Pairing
 
 1. The user starts Remote Access and chooses WebRTC Relay.
-2. Terminay creates a new session id if this desktop has no reusable WebRTC
+2. Terminay does not start the Local Network HTTPS listener, does not generate a
+   Local Network QR, and does not advertise local bind addresses for this run.
+3. Terminay creates a new session id if this desktop has no reusable WebRTC
    session origin, otherwise it reuses the existing session id.
-3. Terminay creates a fresh one-time QR secret and registers a one-time pairing
+4. Terminay creates a fresh one-time QR secret and registers a one-time pairing
    room with the relay for that session id.
-4. Terminay shows `https://<session>.terminay.com/v1/#<qr-secret>` as a QR.
-5. The phone opens the session subdomain, consumes the fragment in memory, and
+5. Terminay shows `https://<session>.terminay.com/v1/#<qr-secret>` as a QR.
+6. The phone opens the session subdomain, consumes the fragment in memory, and
    removes the fragment from browser history.
-6. The bootstrap derives one-time relay, pairing, signaling, asset, and CSRF
+7. The bootstrap derives one-time relay, pairing, signaling, asset, and CSRF
    secrets from the QR secret.
-7. The phone and desktop exchange signed WebRTC signaling through the relay.
-8. The phone downloads and verifies the desktop-provided remote app bundle over
+8. The phone and desktop exchange signed WebRTC signaling through the relay.
+9. The phone downloads and verifies the desktop-provided remote app bundle over
    the asset data channel.
-9. The remote app asks for the desktop PIN and completes device pairing.
-10. The desktop issues a reconnect grant scoped to this session origin and paired
+10. The remote app asks for the desktop PIN and completes device pairing.
+11. The desktop issues a reconnect grant scoped to this session origin and paired
     device, with a default 24-hour expiry.
-11. The session origin saves the device private key and reconnect grant. The
+12. The session origin saves the device private key and reconnect grant. The
     manager may save only the session origin and display metadata.
-12. The relay room is completed and purged. The live WebRTC peer connection may
+13. The relay room is completed and purged. The live WebRTC peer connection may
     continue after relay room purge.
 
 ### Adding Or Re-Adding Devices
