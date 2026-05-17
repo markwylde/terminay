@@ -65,6 +65,7 @@ const PAIRING_PIN_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 const UNPAIRED_AUTH_ERROR_MESSAGES = new Set([
   'This device is not paired with this host.',
   'This device is paired with a different origin.',
+  'Too many incorrect PIN attempts. This browser was revoked. Scan a fresh QR code to pair again.',
 ])
 const PIN_AUTH_ERROR_MESSAGES = new Set([
   'Remote PIN was missing or incorrect.',
