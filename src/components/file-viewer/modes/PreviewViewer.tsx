@@ -1,6 +1,6 @@
 import { detectPreviewKind } from '../../../services/fileViewer'
 import type { FileInfo } from '../../../types/fileViewer'
-import { languageFromFilePath, renderHighlightedCodeBlock } from '../codeHighlight'
+import { isHighlightedCodeLanguage, languageFromFilePath, renderHighlightedCodeBlock } from '../codeHighlight'
 import { ImagePreview } from '../preview/ImagePreview'
 import { MarkdownPreview } from '../preview/MarkdownPreview'
 import { PdfPreview } from '../preview/PdfPreview'
@@ -26,7 +26,7 @@ export function PreviewViewer({ file, previewSourceUrl, text }: PreviewViewerPro
       return <PdfPreview src={fileUrl} />
     case 'text':
       return (
-        <pre className={`file-preview-text${language?.includes('javascript') || language?.includes('typescript') ? ' file-preview-text--highlighted' : ''}`}>
+        <pre className={`file-preview-text${isHighlightedCodeLanguage(language) ? ' file-preview-text--highlighted' : ''}`}>
           {renderHighlightedCodeBlock(text, file.path)}
         </pre>
       )
