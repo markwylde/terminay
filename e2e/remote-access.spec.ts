@@ -1,4 +1,5 @@
 import { request as httpsRequest } from 'node:https'
+import { constants, generateKeyPairSync, sign } from 'node:crypto'
 import { expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 import { openRemoteMenu } from './support/ui'
@@ -17,9 +18,9 @@ async function postRemoteJson<TResponse>(
   pairingUrl: string,
   pathname: string,
   body: Record<string, unknown>,
+  headerOrigin = new URL(pairingUrl).origin,
 ): Promise<{ body: TResponse & { error?: string }; status: number }> {
   const url = new URL(pathname, pairingUrl)
-  const origin = new URL(pairingUrl).origin
   const payload = JSON.stringify(body)
 
   return new Promise((resolve, reject) => {
@@ -29,7 +30,8 @@ async function postRemoteJson<TResponse>(
         headers: {
           'content-length': Buffer.byteLength(payload),
           'content-type': 'application/json',
-          origin,
+          host: new URL(headerOrigin).host,
+          origin: headerOrigin,
         },
         method: 'POST',
         rejectUnauthorized: false,
@@ -68,6 +70,12 @@ test('starts remote access from the host menu and shows a pairing qr modal', asy
   await openRemoteMenu(mainWindow)
   await mainWindow.getByRole('button', { name: 'Start Server & Show QR' }).click()
 
+  const pinDialog = mainWindow.getByRole('dialog', { name: 'Remote Pairing PIN' })
+  await expect(pinDialog).toBeVisible()
+  await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456')
+  await pinDialog.getByRole('button', { name: 'Save PIN' }).click()
+  await expect(pinDialog).toHaveCount(0)
+
   const pairingDialog = mainWindow.getByRole('dialog', { name: 'Pair device' })
   await expect(pairingDialog).toBeVisible()
   await expect(pairingDialog.getByRole('heading', { name: 'Pair Device' })).toBeVisible()
@@ -93,7 +101,7 @@ test('starts remote access from the host menu and shows a pairing qr modal', asy
   await expect(mainWindow.locator('.remote-access-menu__item').filter({ hasText: 'Start Server' }).first()).toBeVisible()
 })
 
-test('asks for a WebRTC pairing PIN before generating the QR code', async ({ mainWindow }) => {
+test('asks for a Remote Access PIN before generating the QR code', async ({ mainWindow }) => {
   await openRemoteMenu(mainWindow)
   await mainWindow.getByRole('button', { name: 'WebRTC Relay' }).click()
   await mainWindow.getByRole('button', { name: 'Start Server & Show QR' }).click()
@@ -209,16 +217,115 @@ test('rejects pairing when the configured PIN is wrong', async ({ mainWindow }) 
   const pairingUrl = status.lanPairingUrl!
   const reachablePairingUrl = toLoopbackPairingUrl(pairingUrl)
   const pairingParams = new URL(pairingUrl).searchParams
-  const response = await postRemoteJson<{ provisionalDeviceId?: string }>(reachablePairingUrl, '/api/pairing/start', {
+  const pairingStartBody = {
     deviceName: 'Wrong PIN Browser',
-    pairingPin: '000000',
     pairingSessionId: pairingParams.get('pairingSessionId'),
     pairingToken: pairingParams.get('pairingToken'),
     publicKeyPem: '-----BEGIN PUBLIC KEY-----\ninvalid-for-pin-test\n-----END PUBLIC KEY-----',
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await postRemoteJson<{ provisionalDeviceId?: string }>(reachablePairingUrl, '/api/pairing/start', {
+      ...pairingStartBody,
+      pairingPin: '000000',
+    })
+
+    expect(response.status).toBe(400)
+    expect(response.body.error).toBe('Pairing failed. Check the PIN and try a fresh QR code.')
+  }
+
+  const limitResponse = await postRemoteJson<{ provisionalDeviceId?: string }>(reachablePairingUrl, '/api/pairing/start', {
+    ...pairingStartBody,
+    pairingPin: '000000',
+  })
+  expect(limitResponse.status).toBe(400)
+  expect(limitResponse.body.error).toBe('Too many incorrect PIN attempts. Scan a fresh QR code to pair again.')
+
+  const oldQrResponse = await postRemoteJson<{ provisionalDeviceId?: string }>(reachablePairingUrl, '/api/pairing/start', {
+    ...pairingStartBody,
+    pairingPin: '654321',
+  })
+  expect(oldQrResponse.status).toBe(400)
+  expect(oldQrResponse.body.error).toBe('Too many incorrect PIN attempts. Scan a fresh QR code to pair again.')
+
+  await mainWindow.evaluate(() => window.terminay.toggleRemoteAccessServer())
+})
+
+test('requires the configured PIN for Local Network auth tickets', async ({ mainWindow }) => {
+  await mainWindow.evaluate(() => window.terminay.setRemoteAccessPairingPin('123456'))
+
+  await openRemoteMenu(mainWindow)
+  await mainWindow.getByRole('button', { name: 'Start Server & Show QR' }).click()
+
+  await expect
+    .poll(async () => {
+      const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
+      return status.lanPairingUrl
+    })
+    .toBeTruthy()
+
+  const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
+  const pairingUrl = status.lanPairingUrl!
+  const reachablePairingUrl = toLoopbackPairingUrl(pairingUrl)
+  const pairingOrigin = new URL(pairingUrl).origin
+  const pairingParams = new URL(pairingUrl).searchParams
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { format: 'pem', type: 'pkcs8' },
+    publicKeyEncoding: { format: 'pem', type: 'spki' },
   })
 
-  expect(response.status).toBe(400)
-  expect(response.body.error).toBe('Pairing failed. Check the PIN and try a fresh QR code.')
+  const startResponse = await postRemoteJson<{ provisionalDeviceId: string }>(reachablePairingUrl, '/api/pairing/start', {
+    deviceName: 'LAN PIN Browser',
+    pairingPin: '123456',
+    pairingSessionId: pairingParams.get('pairingSessionId'),
+    pairingToken: pairingParams.get('pairingToken'),
+    publicKeyPem: publicKey,
+  }, pairingOrigin)
+  expect(startResponse.status).toBe(200)
+
+  const completeResponse = await postRemoteJson<{ deviceId: string }>(reachablePairingUrl, '/api/pairing/complete', {
+    provisionalDeviceId: startResponse.body.provisionalDeviceId,
+  }, pairingOrigin)
+  expect(completeResponse.status).toBe(200)
+
+  async function createAuthSignature() {
+    const optionsResponse = await postRemoteJson<{
+      deviceChallenge: { challengeId: string }
+      signingInput: string
+    }>(reachablePairingUrl, '/api/auth/options', {
+      deviceId: completeResponse.body.deviceId,
+    }, pairingOrigin)
+    expect(optionsResponse.status).toBe(200)
+
+    return {
+      challengeId: optionsResponse.body.deviceChallenge.challengeId,
+      deviceSignature: sign('sha256', Buffer.from(optionsResponse.body.signingInput), {
+        key: privateKey,
+        padding: constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: 32,
+      }).toString('base64url'),
+    }
+  }
+
+  const missingPinAuth = await createAuthSignature()
+  const missingPinResponse = await postRemoteJson<{ ticket?: string }>(reachablePairingUrl, '/api/auth/verify', {
+    challengeId: missingPinAuth.challengeId,
+    deviceId: completeResponse.body.deviceId,
+    deviceSignature: missingPinAuth.deviceSignature,
+  }, pairingOrigin)
+  expect(missingPinResponse.status).toBe(400)
+  expect(missingPinResponse.body.error).toBe('Remote PIN was missing or incorrect.')
+
+  const correctPinAuth = await createAuthSignature()
+  const correctPinResponse = await postRemoteJson<{ ticket?: string }>(reachablePairingUrl, '/api/auth/verify', {
+    challengeId: correctPinAuth.challengeId,
+    deviceId: completeResponse.body.deviceId,
+    deviceSignature: correctPinAuth.deviceSignature,
+    pairingPin: '123456',
+  }, pairingOrigin)
+  expect(correctPinResponse.status).toBe(200)
+  expect(correctPinResponse.body.ticket).toBeTruthy()
 
   await mainWindow
     .getByRole('dialog', { name: 'Pair device' })
@@ -235,6 +342,11 @@ test('manages remote access from the settings window host section', async ({ app
   await expect(settingsWindow.getByText('Terminay will use your Remote Access settings')).toBeVisible()
 
   await settingsWindow.getByRole('button', { name: 'Start Remote Access' }).click()
+  const pinDialog = settingsWindow.getByRole('dialog', { name: 'Remote Pairing PIN' })
+  await expect(pinDialog).toBeVisible()
+  await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456')
+  await pinDialog.getByRole('button', { name: 'Save PIN' }).click()
+  await expect(pinDialog).toHaveCount(0)
   await expect(settingsWindow.getByRole('button', { name: 'Stop Remote Access' })).toBeVisible()
 
   await expect(settingsWindow.getByText('Trusted Browsers', { exact: true })).toBeVisible()
