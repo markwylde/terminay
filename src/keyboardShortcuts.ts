@@ -191,6 +191,10 @@ export function acceleratorFromKeyboardEvent(event: KeyboardLikeEvent, isMac: bo
     return ''
   }
 
+  if (isReservedSystemKeyboardEvent(event, isMac)) {
+    return ''
+  }
+
   const parts: string[] = []
   if (isMac ? event.metaKey : event.ctrlKey) {
     parts.push('CmdOrCtrl')
@@ -249,6 +253,10 @@ export function eventMatchesAccelerator(event: KeyboardLikeEvent, accelerator: s
     return false
   }
 
+  if (isReservedSystemAccelerator(shortcut, isMac)) {
+    return false
+  }
+
   const parts = shortcut.split('+')
   const key = parts[parts.length - 1]
   if (!key) {
@@ -270,6 +278,18 @@ export function eventMatchesAccelerator(event: KeyboardLikeEvent, accelerator: s
 
   const eventKey = event.key === ' ' ? 'Space' : event.key
   return eventKey.toLowerCase() === key.toLowerCase()
+}
+
+export function isReservedSystemAccelerator(accelerator: string, isMac: boolean): boolean {
+  if (!isMac) {
+    return false
+  }
+
+  return normalizeAccelerator(accelerator) === 'CmdOrCtrl+Q'
+}
+
+function isReservedSystemKeyboardEvent(event: KeyboardLikeEvent, isMac: boolean): boolean {
+  return isMac && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'q'
 }
 
 export function findCommandForKeyboardEvent(

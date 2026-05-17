@@ -8,7 +8,7 @@ import { lstat, readdir, stat, rename, rm, mkdir } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
-import { findCommandForKeyboardEvent, getCommandShortcut } from '../src/keyboardShortcuts'
+import { findCommandForKeyboardEvent, getCommandShortcut, isReservedSystemAccelerator } from '../src/keyboardShortcuts'
 import { registerAiTabMetadataIpcHandlers } from './aiTabMetadata/ipc'
 import { AiTabMetadataService, warmAiTabMetadataProviderEnv } from './aiTabMetadata/service'
 import { TerminalRecordingService } from './recording/service'
@@ -1284,14 +1284,41 @@ function sendToSessionRenderer(
 }
 
 let mainWindow: BrowserWindow | null = null
+let isQuitting = false
 
 function sendCommandToFocusedWindow(command: AppCommand): void {
+  if (isQuitting) {
+    return
+  }
+
   const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
-  targetWindow?.webContents.send('app:command', command)
+  if (!targetWindow || targetWindow.isDestroyed()) {
+    return
+  }
+
+  targetWindow.webContents.send('app:command', command)
+}
+
+function isMacQuitInput(input: Electron.Input): boolean {
+  return (
+    process.platform === 'darwin' &&
+    input.meta &&
+    !input.control &&
+    !input.alt &&
+    !input.shift &&
+    input.key.toLowerCase() === 'q'
+  )
 }
 
 function bindAppShortcuts(webContents: Electron.WebContents): void {
   webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && isMacQuitInput(input)) {
+      event.preventDefault()
+      isQuitting = true
+      app.quit()
+      return
+    }
+
     if (
       settingsWindow?.webContents.id === webContents.id ||
       macrosWindow?.webContents.id === webContents.id ||
@@ -1328,6 +1355,10 @@ function bindAppShortcuts(webContents: Electron.WebContents): void {
 
 function getMenuShortcut(settings: TerminalSettings, command: AppCommand): string | undefined {
   const shortcut = getCommandShortcut(settings.keyboardShortcuts, command)
+  if (isReservedSystemAccelerator(shortcut, process.platform === 'darwin')) {
+    return undefined
+  }
+
   return shortcut.length > 0 ? shortcut : undefined
 }
 
@@ -1491,12 +1522,16 @@ function createAppMenu(settings: TerminalSettings = readTerminalSettings()): voi
 }
 
 function createWindow() {
+  if (isQuitting) {
+    return
+  }
+
   const preloadPath = path.join(__dirname, 'preload.mjs')
   const isMac = process.platform === 'darwin'
   const usesOverlayTitlebar = process.platform === 'win32'
   const windowIconPath = getWindowIconPath()
 
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     icon: windowIconPath,
     width: 1400,
     height: 900,
@@ -1521,13 +1556,20 @@ function createWindow() {
       nodeIntegration: false,
     },
   })
+  mainWindow = window
 
-  mainWindow.on('page-title-updated', (event) => {
+  window.on('closed', () => {
+    if (mainWindow === window) {
+      mainWindow = null
+    }
+  })
+
+  window.on('page-title-updated', (event) => {
     event.preventDefault()
     mainWindow?.setTitle('Terminay')
   })
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  window.webContents.setWindowOpenHandler(({ url }) => {
     const isPopout = url.includes('popout.html')
 
     if (!isPopout) {
@@ -1560,9 +1602,9 @@ function createWindow() {
   })
 
   if (VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(VITE_DEV_SERVER_URL)
+    window.loadURL(VITE_DEV_SERVER_URL)
   } else {
-    mainWindow.loadFile(path.join(RENDERER_DIST, 'index.html'))
+    window.loadFile(path.join(RENDERER_DIST, 'index.html'))
   }
 
   void getAppUpdateStatus()
@@ -2075,6 +2117,7 @@ ipcMain.handle('macros:reset', () => {
 })
 
 ipcMain.handle('app:quit', () => {
+  isQuitting = true
   app.quit()
 })
 
@@ -2327,6 +2370,7 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 app.on('before-quit', () => {
+  isQuitting = true
   for (const session of terminalSessions.values()) {
     recordingService.finalize(session.id, null)
   }
@@ -2345,14 +2389,14 @@ registerAiTabMetadataIpcHandlers({
 })
 
 app.on('window-all-closed', () => {
+  mainWindow = null
   if (process.platform !== 'darwin') {
     app.quit()
-    mainWindow = null
   }
 })
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (!isQuitting && BrowserWindow.getAllWindows().length === 0) {
     createWindow()
   }
 })
