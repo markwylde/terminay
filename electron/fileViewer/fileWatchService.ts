@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 import { webContents } from 'electron'
-import type { FileViewerWatchEvent } from '../../src/types/terminay'
+import type { FileViewerFileInfo, FileViewerWatchEvent } from '../../src/types/terminay'
 import type { FileBufferService } from './fileBufferService'
 
 type WatchRegistration = {
@@ -9,8 +9,40 @@ type WatchRegistration = {
 }
 
 type WatchSubscription = {
+  lastSnapshot: FileSnapshot
   subscribers: Map<number, number>
   watcher: FSWatcher
+}
+
+type FileSnapshot = {
+  exists: boolean
+  isDirectory: boolean
+  isFile: boolean
+  isSymbolicLink: boolean
+  mtimeMs: number | null
+  size: number
+}
+
+function toFileSnapshot(info: FileViewerFileInfo): FileSnapshot {
+  return {
+    exists: info.exists,
+    isDirectory: info.isDirectory,
+    isFile: info.isFile,
+    isSymbolicLink: info.isSymbolicLink,
+    mtimeMs: info.mtimeMs,
+    size: info.size,
+  }
+}
+
+function snapshotsAreEqual(left: FileSnapshot, right: FileSnapshot): boolean {
+  return (
+    left.exists === right.exists &&
+    left.isDirectory === right.isDirectory &&
+    left.isFile === right.isFile &&
+    left.isSymbolicLink === right.isSymbolicLink &&
+    left.mtimeMs === right.mtimeMs &&
+    left.size === right.size
+  )
 }
 
 export class FileWatchService {
@@ -24,6 +56,7 @@ export class FileWatchService {
     let subscription = this.subscriptionsByPath.get(resolvedPath)
 
     if (!subscription) {
+      const initialInfo = await this.fileBufferService.getFileInfo(resolvedPath)
       const directoryPath = path.dirname(resolvedPath)
       const fileName = path.basename(resolvedPath)
       const watcher = watch(directoryPath, { persistent: false }, (eventType, changedFileName) => {
@@ -34,6 +67,7 @@ export class FileWatchService {
         void this.handleWatchEvent(resolvedPath, eventType)
       })
       subscription = {
+        lastSnapshot: toFileSnapshot(initialInfo),
         subscribers: new Map<number, number>(),
         watcher,
       }
@@ -51,7 +85,9 @@ export class FileWatchService {
 
     subscription.subscribers.set(ownerWebContentsId, (subscription.subscribers.get(ownerWebContentsId) ?? 0) + 1)
 
-    const registration = this.pathsBySubscriber.get(ownerWebContentsId) ?? { paths: new Map<string, number>() }
+    const registration = this.pathsBySubscriber.get(ownerWebContentsId) ?? {
+      paths: new Map<string, number>(),
+    }
     registration.paths.set(resolvedPath, (registration.paths.get(resolvedPath) ?? 0) + 1)
     this.pathsBySubscriber.set(ownerWebContentsId, registration)
   }
@@ -105,7 +141,18 @@ export class FileWatchService {
   }
 
   private async handleWatchEvent(resolvedPath: string, eventType: 'change' | 'rename'): Promise<void> {
+    const subscription = this.subscriptionsByPath.get(resolvedPath)
+    if (!subscription) {
+      return
+    }
+
     const info = await this.fileBufferService.getFileInfo(resolvedPath)
+    const nextSnapshot = toFileSnapshot(info)
+    if (snapshotsAreEqual(subscription.lastSnapshot, nextSnapshot)) {
+      return
+    }
+
+    subscription.lastSnapshot = nextSnapshot
     const payload: FileViewerWatchEvent = {
       event: eventType === 'change' ? 'changed' : info.exists ? 'renamed' : 'deleted',
       exists: info.exists,
