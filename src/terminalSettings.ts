@@ -22,6 +22,7 @@ type SettingsCategoryId =
 	| 'recording'
 	| 'remote'
 	| 'shell'
+	| 'files'
 	| 'appearance'
 	| 'cursor'
 	| 'interaction'
@@ -80,6 +81,11 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
 		id: 'shell',
 		label: 'Shell',
 		description: 'Shell program, startup mode, and launch arguments.',
+	},
+	{
+		id: 'files',
+		label: 'Files',
+		description: 'File explorer and file viewer refresh behavior.',
 	},
 	{
 		id: 'appearance',
@@ -164,6 +170,9 @@ export const defaultTerminalSettings: TerminalSettings = {
 	smoothScrollDuration: 0,
 	tabStopWidth: 8,
 	wordSeparator: ' ()[]{}\',"`',
+	fileViewer: {
+		refreshIntervalSeconds: 5,
+	},
 	keyboardShortcuts: defaultKeyboardShortcuts,
 	recording: {
 		captureInput: true,
@@ -655,6 +664,35 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'process exited',
 					'successful exit',
 					'zero',
+				],
+			}),
+		],
+	},
+	{
+		id: 'file-viewer-refresh',
+		categoryId: 'files',
+		title: 'File Viewer',
+		description: 'Control how watched file changes refresh open file tabs.',
+		fields: [
+			makeField({
+				key: 'fileViewer.refreshIntervalSeconds',
+				label: 'Refresh interval',
+				description:
+					'Minimum seconds between automatic reloads after watched file changes.',
+				sectionId: 'file-viewer-refresh',
+				categoryId: 'files',
+				input: 'number',
+				min: 1,
+				max: 60,
+				step: 1,
+				keywords: [
+					'file',
+					'file viewer',
+					'refresh',
+					'reload',
+					'watch',
+					'debounce',
+					'throttle',
 				],
 			}),
 		],
@@ -1429,6 +1467,10 @@ export function normalizeTerminalSettings(
 		typeof input.recording === 'object' && input.recording !== null
 			? input.recording
 			: defaultTerminalSettings.recording;
+	const fileViewerInput =
+		typeof input.fileViewer === 'object' && input.fileViewer !== null
+			? input.fileViewer
+			: defaultTerminalSettings.fileViewer;
 	const themeInput =
 		typeof input.theme === 'object' && input.theme !== null
 			? (input.theme as Partial<TerminalSettings['theme']>)
@@ -1626,6 +1668,14 @@ export function normalizeTerminalSettings(
 			typeof input.wordSeparator === 'string'
 				? input.wordSeparator
 				: defaultTerminalSettings.wordSeparator,
+		fileViewer: {
+			refreshIntervalSeconds: clampNumber(
+				Number(fileViewerInput.refreshIntervalSeconds),
+				defaultTerminalSettings.fileViewer.refreshIntervalSeconds,
+				1,
+				60,
+			),
+		},
 		keyboardShortcuts: Object.fromEntries(
 			appCommandMetadata.map(({ command }) => {
 				const value = keyboardShortcutsInput[command];
