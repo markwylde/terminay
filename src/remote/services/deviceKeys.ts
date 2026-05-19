@@ -70,6 +70,14 @@ function transactionRequest<T>(request: IDBRequest<T>): Promise<T> {
   })
 }
 
+function transactionComplete(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB transaction aborted.'))
+    transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB transaction failed.'))
+    transaction.oncomplete = () => resolve()
+  })
+}
+
 function arrayBufferToBase64(arrayBuffer: ArrayBuffer): string {
   const bytes = new Uint8Array(arrayBuffer)
   let binary = ''
@@ -142,17 +150,21 @@ export async function generateDeviceKeyPair(): Promise<{
 
 export async function savePairing(pairing: PairingRecord): Promise<void> {
   const database = await openDatabase()
-  const transaction = database.transaction(PAIRINGS_STORE, 'readwrite')
-  await transactionRequest(
-    transaction.objectStore(PAIRINGS_STORE).put({
+  try {
+    const transaction = database.transaction(PAIRINGS_STORE, 'readwrite')
+    const complete = transactionComplete(transaction)
+    const request = transaction.objectStore(PAIRINGS_STORE).put({
       deviceId: pairing.deviceId,
       deviceName: pairing.deviceName,
       origin: pairing.origin,
       privateKey: pairing.privateKey,
       publicKeyPem: pairing.publicKeyPem,
-    }),
-  )
-  database.close()
+    })
+    await transactionRequest(request)
+    await complete
+  } finally {
+    database.close()
+  }
 }
 
 export async function loadPairing(origin: string): Promise<PairingRecord | null> {
@@ -167,32 +179,44 @@ export async function loadPairing(origin: string): Promise<PairingRecord | null>
 
 export async function removePairing(origin: string): Promise<void> {
   const database = await openDatabase()
-  const transaction = database.transaction(PAIRINGS_STORE, 'readwrite')
-  await transactionRequest(transaction.objectStore(PAIRINGS_STORE).delete(origin))
-  database.close()
+  try {
+    const transaction = database.transaction(PAIRINGS_STORE, 'readwrite')
+    const complete = transactionComplete(transaction)
+    const request = transaction.objectStore(PAIRINGS_STORE).delete(origin)
+    await transactionRequest(request)
+    await complete
+  } finally {
+    database.close()
+  }
 }
 
 export async function saveReconnectGrant(issued: IssuedReconnectGrant): Promise<void> {
+  const proofKey = await createReconnectProofKey(issued.grant)
   const database = await openDatabase()
-  const transaction = database.transaction([RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
-  await transactionRequest(
-    transaction.objectStore(RECONNECT_GRANTS_STORE).put({
+  try {
+    const transaction = database.transaction([RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
+    const complete = transactionComplete(transaction)
+    const grantRequest = transaction.objectStore(RECONNECT_GRANTS_STORE).put({
       expiresAt: issued.expiresAt,
       issuedAt: issued.issuedAt,
       origin: issued.origin,
-      proofKey: await createReconnectProofKey(issued.grant),
+      proofKey,
       protocolVersion: issued.protocolVersion,
       sessionId: issued.sessionId,
-    }),
-  )
-  await transactionRequest(
-    transaction.objectStore(RECONNECT_HANDLES_STORE).put({
+    })
+    const handleRequest = transaction.objectStore(RECONNECT_HANDLES_STORE).put({
       handle: issued.handle,
       origin: issued.origin,
       sessionId: issued.sessionId,
-    }),
-  )
-  database.close()
+    })
+    await Promise.all([
+      transactionRequest(grantRequest),
+      transactionRequest(handleRequest),
+      complete,
+    ])
+  } finally {
+    database.close()
+  }
 }
 
 export async function loadReconnectGrant(origin: string): Promise<ReconnectGrantRecord | null> {
@@ -217,10 +241,19 @@ export async function loadReconnectHandle(origin: string): Promise<StoredReconne
 
 export async function removeReconnectGrant(origin: string): Promise<void> {
   const database = await openDatabase()
-  const transaction = database.transaction([RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
-  await transactionRequest(transaction.objectStore(RECONNECT_GRANTS_STORE).delete(origin))
-  await transactionRequest(transaction.objectStore(RECONNECT_HANDLES_STORE).delete(origin))
-  database.close()
+  try {
+    const transaction = database.transaction([RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
+    const complete = transactionComplete(transaction)
+    const grantRequest = transaction.objectStore(RECONNECT_GRANTS_STORE).delete(origin)
+    const handleRequest = transaction.objectStore(RECONNECT_HANDLES_STORE).delete(origin)
+    await Promise.all([
+      transactionRequest(grantRequest),
+      transactionRequest(handleRequest),
+      complete,
+    ])
+  } finally {
+    database.close()
+  }
 }
 
 export async function signDeviceChallenge(privateKey: CryptoKey, signingInput: string): Promise<string> {
