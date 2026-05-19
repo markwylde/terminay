@@ -195,6 +195,69 @@ const FILE_EXPLORER_DRAG_THRESHOLD = 6;
 const FILE_EXPLORER_WATCH_REFRESH_DELAY_MS = 120;
 const FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS = 2500;
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
+const DOCKVIEW_TAB_BAR_DROP_TARGET_SELECTOR = '.workspace .dv-tabs-and-actions-container';
+const DOCKVIEW_TAB_DROP_GHOST_MAX_WIDTH = 180;
+const DOCKVIEW_TAB_DROP_GHOST_MIN_WIDTH = 96;
+
+type DockviewTabDropGhost = {
+	height: number;
+	label: string;
+	left: number;
+	top: number;
+	width: number;
+};
+
+function isPointInDockviewTabBar(clientX: number, clientY: number): boolean {
+	return Array.from(
+		document.querySelectorAll<HTMLElement>(DOCKVIEW_TAB_BAR_DROP_TARGET_SELECTOR),
+	).some((element) => {
+		const rect = element.getBoundingClientRect();
+		return (
+			clientX >= rect.left &&
+			clientX <= rect.right &&
+			clientY >= rect.top &&
+			clientY <= rect.bottom
+		);
+	});
+}
+
+function getDockviewTabDropGhost(clientX: number, clientY: number, label: string): DockviewTabDropGhost | null {
+	const tabBars = Array.from(document.querySelectorAll<HTMLElement>(DOCKVIEW_TAB_BAR_DROP_TARGET_SELECTOR));
+	const elementAtPoint = document.elementFromPoint(clientX, clientY);
+	const tabBarFromPoint = elementAtPoint?.closest<HTMLElement>(DOCKVIEW_TAB_BAR_DROP_TARGET_SELECTOR) ?? null;
+	const tabBar =
+		tabBarFromPoint ??
+		tabBars.find((element) => {
+			const rect = element.getBoundingClientRect();
+			return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+		}) ??
+		tabBars.find((element) => {
+			const rect = element.getBoundingClientRect();
+			return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top - 12 && clientY <= rect.bottom + 18;
+		});
+	if (!tabBar) {
+		return null;
+	}
+
+	const tabBarRect = tabBar.getBoundingClientRect();
+	const tabRects = Array.from(tabBar.querySelectorAll<HTMLElement>('.dv-tab'))
+		.map((tab) => tab.getBoundingClientRect())
+		.filter((rect) => rect.width > 0 && rect.height > 0);
+	const addTabButtonRect = tabBar.querySelector<HTMLElement>('.terminay-add-tab-button')?.getBoundingClientRect();
+	const rightmostTabEdge = tabRects.reduce((right, rect) => Math.max(right, rect.right), tabBarRect.left);
+	const width = Math.min(DOCKVIEW_TAB_DROP_GHOST_MAX_WIDTH, Math.max(DOCKVIEW_TAB_DROP_GHOST_MIN_WIDTH, label.length * 8 + 42));
+	const left = addTabButtonRect
+		? Math.min(addTabButtonRect.left, tabBarRect.right - width - 8)
+		: Math.min(Math.max(rightmostTabEdge + 4, tabBarRect.left + 6), tabBarRect.right - width - 8);
+
+	return {
+		height: addTabButtonRect ? addTabButtonRect.height : Math.max(22, tabBarRect.height - 8),
+		label,
+		left,
+		top: addTabButtonRect ? addTabButtonRect.top : tabBarRect.top + 4,
+		width,
+	};
+}
 
 function hueToProjectTabColor(hue: number): string {
 	const normalizedHue = ((hue % 360) + 360) % 360 / 360;
@@ -721,6 +784,7 @@ function FileExplorerTree({
 	const pendingDragRef = useRef<{
 		name: string;
 		path: string;
+		isDirectory: boolean;
 		pointerId: number;
 		startX: number;
 		startY: number;
@@ -732,6 +796,7 @@ function FileExplorerTree({
 		x: number;
 		y: number;
 	} | null>(null);
+	const [tabDropGhost, setTabDropGhost] = useState<DockviewTabDropGhost | null>(null);
 
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
@@ -797,6 +862,7 @@ function FileExplorerTree({
 			pendingDragRef.current = null;
 			activeDragRef.current = false;
 			setActiveDrag(null);
+			setTabDropGhost(null);
 		};
 
 		const handlePointerMove = (event: PointerEvent) => {
@@ -825,6 +891,7 @@ function FileExplorerTree({
 				x: event.clientX,
 				y: event.clientY,
 			});
+			setTabDropGhost(getDockviewTabDropGhost(event.clientX, event.clientY, pendingDrag.name));
 		};
 
 		const handlePointerUp = (event: PointerEvent) => {
@@ -834,6 +901,7 @@ function FileExplorerTree({
 			}
 
 			const wasDragging = activeDragRef.current;
+			const droppedIsDirectory = pendingDrag.isDirectory;
 			const droppedPath = pendingDrag.path;
 			clearPendingDrag();
 
@@ -851,6 +919,13 @@ function FileExplorerTree({
 				?.closest<HTMLElement>('[data-terminay-terminal-session-id]');
 			const sessionId = dropTarget?.dataset.terminayTerminalSessionId;
 			if (!sessionId) {
+				if (isPointInDockviewTabBar(event.clientX, event.clientY)) {
+					if (droppedIsDirectory) {
+						onOpenFolder(droppedPath);
+					} else {
+						onOpenFile(droppedPath);
+					}
+				}
 				return;
 			}
 
@@ -874,7 +949,7 @@ function FileExplorerTree({
 			window.removeEventListener('pointercancel', clearPendingDrag);
 			window.removeEventListener('blur', clearPendingDrag);
 		};
-	}, []);
+	}, [onOpenFile, onOpenFolder]);
 
 	const renderBranch = useCallback(
 		(dirPath: string, depth: number): JSX.Element | null => {
@@ -944,6 +1019,7 @@ function FileExplorerTree({
 										pendingDragRef.current = {
 											name: entry.name,
 											path: entry.path,
+											isDirectory,
 											pointerId: event.pointerId,
 											startX: event.clientX,
 											startY: event.clientY,
@@ -1096,6 +1172,19 @@ function FileExplorerTree({
 					}}
 				>
 					{activeDrag.name}
+				</div>
+			) : null}
+			{tabDropGhost ? (
+				<div
+					className="file-explorer-tab-drop-ghost"
+					style={{
+						height: `${tabDropGhost.height}px`,
+						left: `${tabDropGhost.left}px`,
+						top: `${tabDropGhost.top}px`,
+						width: `${tabDropGhost.width}px`,
+					}}
+				>
+					<span className="file-explorer-tab-drop-ghost__label">{tabDropGhost.label}</span>
 				</div>
 			) : null}
 

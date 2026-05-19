@@ -7,6 +7,7 @@ import {
   detectFileCapabilities,
   terminayFileGateway,
 } from '../../services/fileViewer'
+import { useTerminalSettings } from '../../hooks/useTerminalSettings'
 import type { FileInfo, FileViewerEngine, GitFileDiff } from '../../types/fileViewer'
 import type { FileViewerGitRepoInfo } from '../../types/terminay'
 import { FileConflictBanner } from './FileConflictBanner'
@@ -22,6 +23,37 @@ import './fileViewer.css'
 
 const MAX_PERFORMANT_TEXT_BYTES = 1024 * 1024
 
+function hasFileInfoChanged(currentInfo: FileInfo | null, nextInfo: FileInfo): boolean {
+  return (
+    currentInfo === null ||
+    currentInfo.exists !== nextInfo.exists ||
+    currentInfo.isBinary !== nextInfo.isBinary ||
+    currentInfo.isDirectory !== nextInfo.isDirectory ||
+    currentInfo.isFile !== nextInfo.isFile ||
+    currentInfo.isSymbolicLink !== nextInfo.isSymbolicLink ||
+    currentInfo.mtimeMs !== nextInfo.mtimeMs ||
+    currentInfo.size !== nextInfo.size
+  )
+}
+
+function hasWatchEventChangedFileInfo(
+  currentInfo: FileInfo | null,
+  event: {
+    exists: boolean
+    mtimeMs: number | null
+    size: number
+    type: string
+  },
+): boolean {
+  return (
+    currentInfo === null ||
+    event.type === 'error' ||
+    currentInfo.exists !== event.exists ||
+    currentInfo.mtimeMs !== event.mtimeMs ||
+    currentInfo.size !== event.size
+  )
+}
+
 function decodeBase64ToUint8Array(base64: string): Uint8Array {
   return Uint8Array.from(window.atob(base64), (character) => character.charCodeAt(0))
 }
@@ -32,6 +64,7 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 
 export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const { filePath, initialMode, preferredEngine = 'auto' } = props.params
+  const { settings } = useTerminalSettings()
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(props.params.fileInfo ?? null)
   const [draftText, setDraftText] = useState('')
   const [engine, setEngine] = useState<FileViewerEngine>(preferredEngine)
@@ -75,6 +108,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   sessionStoreRef.current = sessionStore
   truncatedForPerformanceRef.current = truncatedForPerformance
   const watchedFilePath = fileInfo?.path ?? null
+  const fileWatchRefreshIntervalMs = Math.max(1, settings.fileViewer.refreshIntervalSeconds) * 1000
 
   const handleHexValidationChange = useCallback((isValid: boolean) => {
     setIsHexValid(isValid)
@@ -265,13 +299,55 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
     }
 
     const watchedPath = watchedFilePath
-    let debounceId: number | null = null
+    let refreshTimeoutId: number | null = null
     let refreshVersion = 0
     let disposed = false
+    let lastRefreshAt = 0
+
+    const runRefresh = () => {
+      refreshTimeoutId = null
+      lastRefreshAt = Date.now()
+      const requestVersion = ++refreshVersion
+
+      void (async () => {
+        const nextInfo = await terminayFileGateway.getFileInfo(watchedPath)
+        if (disposed || requestVersion !== refreshVersion || !hasFileInfoChanged(fileInfoRef.current, nextInfo)) {
+          return
+        }
+
+        setFileInfo(nextInfo)
+        sessionStoreRef.current?.setFile(nextInfo)
+
+        if (modeRef.current === 'hex') {
+          setTruncatedForPerformance(false)
+        }
+
+        if (modeRef.current === 'diff') {
+          void refreshDiff(nextInfo.path, { keepPrevious: true })
+        }
+      })()
+    }
+
+    const scheduleRefresh = () => {
+      if (refreshTimeoutId !== null) {
+        return
+      }
+
+      const elapsedSinceLastRefresh = Date.now() - lastRefreshAt
+      const delay =
+        elapsedSinceLastRefresh >= fileWatchRefreshIntervalMs
+          ? 0
+          : fileWatchRefreshIntervalMs - elapsedSinceLastRefresh
+      refreshTimeoutId = window.setTimeout(runRefresh, delay)
+    }
 
     void terminayFileGateway.watchFile(watchedPath)
     const dispose = terminayFileGateway.onFileWatchEvent(async (event) => {
       if (event.path !== watchedPath) {
+        return
+      }
+
+      if (!hasWatchEventChangedFileInfo(fileInfoRef.current, event)) {
         return
       }
 
@@ -284,44 +360,19 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         return
       }
 
-      if (debounceId !== null) {
-        window.clearTimeout(debounceId)
-      }
-
-      debounceId = window.setTimeout(() => {
-        debounceId = null
-        const requestVersion = ++refreshVersion
-
-        void (async () => {
-          const nextInfo = await terminayFileGateway.getFileInfo(watchedPath)
-          if (disposed || requestVersion !== refreshVersion) {
-            return
-          }
-
-          setFileInfo(nextInfo)
-          sessionStoreRef.current?.setFile(nextInfo)
-
-          if (modeRef.current === 'hex') {
-            setTruncatedForPerformance(false)
-          }
-
-          if (modeRef.current === 'diff') {
-            void refreshDiff(nextInfo.path, { keepPrevious: true })
-          }
-        })()
-      }, 150)
+      scheduleRefresh()
     })
 
     return () => {
       disposed = true
       refreshVersion += 1
-      if (debounceId !== null) {
-        window.clearTimeout(debounceId)
+      if (refreshTimeoutId !== null) {
+        window.clearTimeout(refreshTimeoutId)
       }
       dispose()
       void terminayFileGateway.unwatchFile(watchedPath)
     }
-  }, [watchedFilePath, refreshDiff])
+  }, [fileWatchRefreshIntervalMs, watchedFilePath, refreshDiff])
 
   useEffect(() => {
     if (mode !== 'diff' || !watchedFilePath) {
