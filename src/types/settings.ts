@@ -60,6 +60,10 @@ export type TerminalRecordingSettings = {
 	sensitiveInputPolicy: TerminalRecordingSensitiveInputPolicy;
 };
 
+export type FileViewerSettings = {
+	refreshIntervalSeconds: number;
+};
+
 export type AiTabMetadataProvider = 'disabled' | 'codex' | 'claudeCode';
 
 export type AiTabMetadataTargetSettings = {
@@ -107,6 +111,7 @@ export type TerminalSettings = {
 	smoothScrollDuration: number;
 	tabStopWidth: number;
 	wordSeparator: string;
+	fileViewer: FileViewerSettings;
 	keyboardShortcuts: KeyboardShortcutSettings;
 	recording: TerminalRecordingSettings;
 	remoteAccess: RemoteAccessSettings;
