@@ -30,6 +30,7 @@
     "test:e2e:headed": "npm run build:app && playwright test --headed",
     "test:release-config": "node --test scripts/release-config.test.mjs",
     "test:remote-pin": "node --test scripts/pin-guard.test.mjs",
+    "test:remote-device-keys": "node --test scripts/device-keys-indexeddb.test.mjs",
     "test:remote-transport": "node --test scripts/remote-transport-runtime.test.mjs",
     "test:remote-webrtc-service": "node --test scripts/webrtc-service-runtime.test.mjs",
     "test:remote-webrtc-host": "node --test scripts/webrtc-host-revocation.test.mjs",
