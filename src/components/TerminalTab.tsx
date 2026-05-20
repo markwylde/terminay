@@ -48,6 +48,8 @@ export type TerminalTabMoveProject = {
 export type TerminalPanelParams = {
   sessionId: string
   activityIndicatorsEnabled?: boolean
+  showActiveTabActivityIndicator?: boolean
+  showFinishedTabActivityIndicator?: boolean
   recordingError?: string | null
   recordingStatus?: 'failed' | 'idle' | 'recording'
   terminalActivityState?: TerminalActivityState
@@ -78,7 +80,12 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
   const { color, emoji, macroRuns = [], onCancelMacroRun, onClearFinishedMacroRuns, onClearMacroRun } = params || {}
   const recordingStatus = params?.recordingStatus ?? 'idle'
   const terminalActivityState = params?.terminalActivityState ?? 'viewed'
-  const displayedActivityState = params?.activityIndicatorsEnabled === false ? 'viewed' : terminalActivityState
+  const displayedActivityState =
+    params?.activityIndicatorsEnabled === false ||
+    (terminalActivityState === 'recent' && params?.showActiveTabActivityIndicator !== true) ||
+    (terminalActivityState === 'unviewed' && params?.showFinishedTabActivityIndicator === false)
+      ? 'viewed'
+      : terminalActivityState
   const isFocused = params?.isFocused === true
   const hasCustomColor = typeof color === 'string' && color !== DEFAULT_TERMINAL_TAB_COLOR
   const [isMacroMenuOpen, setIsMacroMenuOpen] = useState(false)
