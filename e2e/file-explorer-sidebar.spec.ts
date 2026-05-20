@@ -71,6 +71,43 @@ test('file explorer opens dragged files on the dock tab bar', async ({ createWor
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
 })
 
+test('file explorer opens dragged folders on the dock tab bar', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'sidebar-drag-folder-tabbar',
+    seed: {
+      directories: ['drag-folder'],
+      files: {
+        'drag-folder/inside.txt': 'opened from a dragged folder\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const folderItem = fileExplorerItem(mainWindow, 'drag-folder')
+  const tabBar = mainWindow.locator('.project-workspace--active .dv-tabs-and-actions-container').first()
+  await expect(folderItem).toBeVisible()
+  await expect(tabBar).toBeVisible()
+
+  const sourceBox = await folderItem.boundingBox()
+  const targetBox = await tabBar.boundingBox()
+  if (!sourceBox || !targetBox) {
+    throw new Error('Expected file explorer folder and dock tab bar to have layout boxes')
+  }
+
+  await mainWindow.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2)
+  await mainWindow.mouse.down()
+  await mainWindow.mouse.move(sourceBox.x + sourceBox.width / 2 + 18, sourceBox.y + sourceBox.height / 2 + 18)
+  await mainWindow.mouse.move(targetBox.x + targetBox.width - 24, targetBox.y + targetBox.height / 2)
+  await expect(mainWindow.locator('.file-explorer-tab-drop-ghost')).toContainText('drag-folder')
+  await mainWindow.mouse.up()
+
+  await expect(mainWindow.locator('.folder-viewer__title')).toHaveText('drag-folder')
+  await expect(mainWindow.getByLabel('Close folder tab')).toHaveCount(1)
+  await expect(mainWindow.locator('.folder-viewer__tree-file').filter({ hasText: 'inside.txt' })).toBeVisible()
+})
+
 test('file explorer refreshes after external filesystem changes', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'sidebar-external-refresh',
