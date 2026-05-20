@@ -77,6 +77,7 @@ export type FilePreviewCapabilities = {
   canEditText: boolean
   canPreview: boolean
   canUseMonaco: boolean
+  defaultMode: FileViewerMode
   fallbackMode: FileViewerMode
   previewKind: FilePreviewKind
   shouldPromptForEngineChoice: boolean

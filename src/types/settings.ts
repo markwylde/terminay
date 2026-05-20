@@ -61,7 +61,15 @@ export type TerminalRecordingSettings = {
 };
 
 export type FileViewerSettings = {
+	customFileExtensions: FileViewerCustomExtensionDefault[];
 	refreshIntervalSeconds: number;
+};
+
+export type FileViewerDefaultMode = 'preview' | 'text' | 'hex';
+
+export type FileViewerCustomExtensionDefault = {
+	extension: string;
+	defaultMode: FileViewerDefaultMode;
 };
 
 export type AiTabMetadataProvider = 'disabled' | 'codex' | 'claudeCode';
