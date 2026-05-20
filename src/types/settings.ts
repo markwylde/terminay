@@ -129,6 +129,9 @@ export type TerminalSettings = {
 };
 
 export type TerminalActivityIndicatorSettings = {
+	amberDelaySeconds: number;
+	greenDelaySeconds: number;
 	showActiveTabs: boolean;
 	showFinishedTabs: boolean;
+	tabSwitchSuppressionSeconds: number;
 };

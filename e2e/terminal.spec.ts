@@ -355,6 +355,29 @@ test.describe('terminal behavior', () => {
     await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
   })
 
+  test('terminal activity ignores output immediately after leaving a tab', async ({ mainWindow }) => {
+    await sendAppCommand(mainWindow, 'new-terminal')
+    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
+
+    const quietTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 2' })
+    const firstTab = mainWindow
+      .locator('.project-workspace--active .terminal-tab-content')
+      .filter({ hasText: 'Terminal 1' })
+
+    await quietTab.click()
+    const quietSessionId = await getActiveSessionId(mainWindow)
+    await mainWindow.waitForTimeout(1_100)
+
+    await firstTab.click()
+    await writeToTerminalSession(mainWindow, quietSessionId, "printf 'focus-change-noise\\n'\r")
+
+    await mainWindow.waitForTimeout(250)
+    await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed')
+    await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
+  })
+
   test('terminal tab settings can disable activity indicators for one tab', async ({ appHarness, mainWindow }) => {
     await sendAppCommand(mainWindow, 'new-terminal')
     await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
