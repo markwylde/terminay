@@ -89,6 +89,7 @@ export type TerminalSettings = {
 	aiTabMetadata: AiTabMetadataSettings;
 	allowTransparency: boolean;
 	altClickMovesCursor: boolean;
+	activityIndicators: TerminalActivityIndicatorSettings;
 	autoCloseTerminalOnExitZero: boolean;
 	convertEol: boolean;
 	cursorBlink: boolean;
@@ -125,4 +126,9 @@ export type TerminalSettings = {
 	remoteAccess: RemoteAccessSettings;
 	shell: ShellSettings;
 	theme: TerminalThemeSettings;
+};
+
+export type TerminalActivityIndicatorSettings = {
+	showActiveTabs: boolean;
+	showFinishedTabs: boolean;
 };
