@@ -24,7 +24,7 @@ import {
   saveRemoteAccessPairingPin,
 } from '../remotePairingPin'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
-import type { TerminalSettings } from '../types/settings'
+import type { FileViewerDefaultMode, TerminalSettings } from '../types/settings'
 import type { AppCommand } from '../types/terminay'
 import type { RemoteAccessStatus } from '../types/terminay'
 import '../settings.css'
@@ -53,7 +53,16 @@ function getDefaultValueAtPath(key: string): boolean | number | string {
 
 function setValueAtPath(settings: TerminalSettings, key: string, value: boolean | number | string): TerminalSettings {
   const segments = key.split('.')
-  const allowedRoots = new Set(['aiTabMetadata', 'fileViewer', 'keyboardShortcuts', 'recording', 'remoteAccess', 'shell', 'theme'])
+  const allowedRoots = new Set([
+    'activityIndicators',
+    'aiTabMetadata',
+    'fileViewer',
+    'keyboardShortcuts',
+    'recording',
+    'remoteAccess',
+    'shell',
+    'theme',
+  ])
   const [root] = segments
 
   if (!root || (segments.length > 1 && !allowedRoots.has(root))) {
@@ -81,6 +90,15 @@ function setValueAtPath(settings: TerminalSettings, key: string, value: boolean 
   }
 
   return setNestedValue(settings, segments) as TerminalSettings
+}
+
+function normalizeCustomExtension(value: string): string {
+  const trimmed = value.trim().toLowerCase()
+  if (!trimmed) {
+    return ''
+  }
+
+  return `.${trimmed.replace(/^\.+/, '')}`
 }
 
 function formatReconnectGrantSummary(device: {
@@ -192,6 +210,70 @@ function Switch({ checked, onChange, label }: { checked: boolean; onChange: (val
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
       <span className="settings-slider"></span>
     </label>
+  )
+}
+
+function CustomFileExtensionRow({
+  defaultMode,
+  extension,
+  index,
+  onRemove,
+  onUpdate,
+}: {
+  defaultMode: FileViewerDefaultMode
+  extension: string
+  index: number
+  onRemove: (index: number) => void
+  onUpdate: (index: number, patch: { defaultMode?: FileViewerDefaultMode; extension?: string }) => void
+}) {
+  const [extensionDraft, setExtensionDraft] = useState(extension)
+
+  useEffect(() => {
+    setExtensionDraft(extension)
+  }, [extension])
+
+  const saveExtension = () => {
+    onUpdate(index, { extension: extensionDraft })
+  }
+
+  return (
+    <div className="settings-custom-extensions__item">
+      <input
+        className="settings-input-text settings-custom-extensions__extension"
+        type="text"
+        value={extensionDraft}
+        placeholder=".log"
+        aria-label="File extension"
+        onBlur={saveExtension}
+        onChange={(event) => setExtensionDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.currentTarget.blur()
+          }
+        }}
+      />
+      <select
+        className="settings-select settings-custom-extensions__mode"
+        value={defaultMode}
+        aria-label="Default file viewer tab"
+        onChange={(event) =>
+          onUpdate(index, {
+            defaultMode: event.target.value as FileViewerDefaultMode,
+          })
+        }
+      >
+        <option value="preview">Preview</option>
+        <option value="text">Text</option>
+        <option value="hex">HEX</option>
+      </select>
+      <button
+        type="button"
+        className="settings-danger-button settings-danger-button--quiet"
+        onClick={() => onRemove(index)}
+      >
+        Remove
+      </button>
+    </div>
   )
 }
 
@@ -468,6 +550,60 @@ export function SettingsWindow() {
     await saveDraft(nextDraft)
   }, [saveDraft])
 
+  const updateCustomFileExtension = useCallback(
+    async (index: number, patch: { defaultMode?: FileViewerDefaultMode; extension?: string }) => {
+      const currentEntries = draftRef.current.fileViewer.customFileExtensions
+      const nextEntries = currentEntries
+        .map((entry, entryIndex) => {
+          if (entryIndex !== index) {
+            return entry
+          }
+
+          return {
+            ...entry,
+            ...patch,
+            extension: patch.extension !== undefined ? normalizeCustomExtension(patch.extension) : entry.extension,
+          }
+        })
+        .filter((entry) => entry.extension.length > 1)
+
+      await saveDraft({
+        ...draftRef.current,
+        fileViewer: {
+          ...draftRef.current.fileViewer,
+          customFileExtensions: nextEntries,
+        },
+      })
+    },
+    [saveDraft],
+  )
+
+  const addCustomFileExtension = useCallback(async () => {
+    await saveDraft({
+      ...draftRef.current,
+      fileViewer: {
+        ...draftRef.current.fileViewer,
+        customFileExtensions: [
+          ...draftRef.current.fileViewer.customFileExtensions,
+          { defaultMode: 'text', extension: '.txt' },
+        ],
+      },
+    })
+  }, [saveDraft])
+
+  const removeCustomFileExtension = useCallback(
+    async (index: number) => {
+      await saveDraft({
+        ...draftRef.current,
+        fileViewer: {
+          ...draftRef.current.fileViewer,
+          customFileExtensions: draftRef.current.fileViewer.customFileExtensions.filter((_, entryIndex) => entryIndex !== index),
+        },
+      })
+    },
+    [saveDraft],
+  )
+
   const resetShortcut = (field: SettingsFieldDefinition) => {
     const command = field.key.replace('keyboardShortcuts.', '') as AppCommand
     void updateShortcut(field.key, defaultKeyboardShortcuts[command] ?? '')
@@ -702,6 +838,40 @@ export function SettingsWindow() {
       </select>
     )
   }
+
+  const renderCustomFileExtensionDefaults = () => (
+    <div className="settings-custom-extensions">
+      <div className="settings-custom-extensions__header">
+        <div>
+          <span className="settings-row-label">Custom extension defaults</span>
+          <span className="settings-row-description">Choose which tab opens first for specific file extensions.</span>
+        </div>
+        <button
+          type="button"
+          className="settings-secondary-button settings-secondary-button--small"
+          onClick={() => void addCustomFileExtension()}
+        >
+          Add Extension
+        </button>
+      </div>
+      {draft.fileViewer.customFileExtensions.length === 0 ? (
+        <p className="settings-empty-state settings-custom-extensions__empty">No custom extension defaults.</p>
+      ) : (
+        <div className="settings-custom-extensions__list">
+          {draft.fileViewer.customFileExtensions.map((entry, index) => (
+            <CustomFileExtensionRow
+              key={entry.extension}
+              defaultMode={entry.defaultMode}
+              extension={entry.extension}
+              index={index}
+              onRemove={(entryIndex) => void removeCustomFileExtension(entryIndex)}
+              onUpdate={(entryIndex, patch) => void updateCustomFileExtension(entryIndex, patch)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
 
   const renderFieldControl = (field: SettingsFieldDefinition) => {
     const value = getValueAtPath(draft, field.key)
@@ -1500,6 +1670,11 @@ export function SettingsWindow() {
                           <div className="settings-row-control">{renderFieldControl(field)}</div>
                         </div>
                       ))}
+                      {section.id === 'file-viewer-refresh' ? (
+                        <div className="settings-row settings-row--stacked">
+                          {renderCustomFileExtensionDefaults()}
+                        </div>
+                      ) : null}
                     </div>
                   </section>
                 ))}
