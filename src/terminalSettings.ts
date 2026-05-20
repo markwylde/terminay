@@ -139,6 +139,10 @@ export const defaultTerminalSettings: TerminalSettings = {
 	},
 	allowTransparency: false,
 	altClickMovesCursor: true,
+	activityIndicators: {
+		showActiveTabs: false,
+		showFinishedTabs: true,
+	},
 	autoCloseTerminalOnExitZero: false,
 	convertEol: true,
 	cursorBlink: true,
@@ -698,6 +702,34 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'extension',
 					'default tab',
 				],
+			}),
+		],
+	},
+	{
+		id: 'tab-indicators',
+		categoryId: 'appearance',
+		title: 'Tab Indicators',
+		description: 'Choose which terminal activity indicators appear on tabs.',
+		fields: [
+			makeField({
+				key: 'activityIndicators.showActiveTabs',
+				label: 'Show indicator for active tabs',
+				description:
+					'Show a yellow indicator for tabs that had activity within the last few seconds.',
+				sectionId: 'tab-indicators',
+				categoryId: 'appearance',
+				input: 'boolean',
+				keywords: ['activity', 'indicator', 'tab', 'active', 'recent', 'yellow'],
+			}),
+			makeField({
+				key: 'activityIndicators.showFinishedTabs',
+				label: 'Show indicator for finished tabs',
+				description:
+					'Show a green indicator for tabs that had activity and then went quiet.',
+				sectionId: 'tab-indicators',
+				categoryId: 'appearance',
+				input: 'boolean',
+				keywords: ['activity', 'indicator', 'tab', 'finished', 'quiet', 'green'],
 			}),
 		],
 	},
@@ -1463,6 +1495,11 @@ export function normalizeTerminalSettings(
 		aiTabMetadataInput.note !== null
 			? aiTabMetadataInput.note
 			: defaultTerminalSettings.aiTabMetadata.note;
+	const activityIndicatorsInput =
+		typeof input.activityIndicators === 'object' &&
+		input.activityIndicators !== null
+			? input.activityIndicators
+			: defaultTerminalSettings.activityIndicators;
 	const remoteAccessInput =
 		typeof input.remoteAccess === 'object' && input.remoteAccess !== null
 			? input.remoteAccess
@@ -1528,6 +1565,16 @@ export function normalizeTerminalSettings(
 			typeof input.altClickMovesCursor === 'boolean'
 				? input.altClickMovesCursor
 				: defaultTerminalSettings.altClickMovesCursor,
+		activityIndicators: {
+			showActiveTabs:
+				typeof activityIndicatorsInput.showActiveTabs === 'boolean'
+					? activityIndicatorsInput.showActiveTabs
+					: defaultTerminalSettings.activityIndicators.showActiveTabs,
+			showFinishedTabs:
+				typeof activityIndicatorsInput.showFinishedTabs === 'boolean'
+					? activityIndicatorsInput.showFinishedTabs
+					: defaultTerminalSettings.activityIndicators.showFinishedTabs,
+		},
 		autoCloseTerminalOnExitZero:
 			typeof input.autoCloseTerminalOnExitZero === 'boolean'
 				? input.autoCloseTerminalOnExitZero
