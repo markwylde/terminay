@@ -1,6 +1,14 @@
 import type { TerminalActivityState } from './components/TerminalTab';
 
 export const TERMINAL_ACTIVITY_RECENT_MS = 1000;
+export const TERMINAL_ACTIVITY_AMBER_DELAY_MS = 0;
+export const TERMINAL_ACTIVITY_TAB_SWITCH_SUPPRESSION_MS = 1000;
+
+type TerminalActivityTimings = {
+	amberDelayMs: number;
+	greenDelayMs: number;
+	tabSwitchSuppressionMs: number;
+};
 
 type TerminalActivityRecord = {
 	lastActivityAt?: number;
@@ -16,8 +24,15 @@ export type TerminalActivityEvaluation = {
 
 export class TerminalActivityStore {
 	private readonly records = new Map<string, TerminalActivityRecord>();
+	private timings: TerminalActivityTimings;
 
-	constructor(private readonly recentMs = TERMINAL_ACTIVITY_RECENT_MS) {}
+	constructor(timings?: Partial<TerminalActivityTimings>) {
+		this.timings = this.normalizeTimings(timings);
+	}
+
+	configure(timings: Partial<TerminalActivityTimings>) {
+		this.timings = this.normalizeTimings(timings);
+	}
 
 	clear() {
 		this.records.clear();
@@ -44,7 +59,19 @@ export class TerminalActivityStore {
 		const record = this.getRecord(sessionId);
 		record.lastUserInputAt = now;
 		record.needsAcknowledgement = false;
-		record.suppressActivityUntil = now + this.recentMs;
+		record.suppressActivityUntil = now + this.timings.greenDelayMs;
+		return this.evaluateRecord(record, now);
+	}
+
+	suppressTerminalActivity(
+		sessionId: string,
+		now = Date.now(),
+	): TerminalActivityEvaluation {
+		const record = this.getRecord(sessionId);
+		record.suppressActivityUntil = Math.max(
+			record.suppressActivityUntil ?? 0,
+			now + this.timings.tabSwitchSuppressionMs,
+		);
 		return this.evaluateRecord(record, now);
 	}
 
@@ -53,19 +80,19 @@ export class TerminalActivityStore {
 		now = Date.now(),
 	): TerminalActivityEvaluation {
 		const record = this.getRecord(sessionId);
-		record.lastActivityAt = now;
 
 		if (
 			record.suppressActivityUntil !== undefined &&
 			now < record.suppressActivityUntil
 		) {
-			record.needsAcknowledgement = false;
 			return this.evaluateRecord(record, now);
 		}
 
 		if (record.suppressActivityUntil !== undefined) {
 			record.suppressActivityUntil = undefined;
 		}
+
+		record.lastActivityAt = now;
 
 		if (this.hasRecentUserInput(record, now)) {
 			record.needsAcknowledgement = false;
@@ -87,19 +114,21 @@ export class TerminalActivityStore {
 		record: TerminalActivityRecord,
 		now: number,
 	): TerminalActivityEvaluation {
-		const hasRecentActivity =
-			record.lastActivityAt !== undefined &&
-			now - record.lastActivityAt < this.recentMs;
-		const state: TerminalActivityState =
-			record.needsAcknowledgement && hasRecentActivity
-				? 'recent'
-				: record.needsAcknowledgement
-					? 'unviewed'
-					: 'viewed';
-		const nextDeadline =
-			state === 'recent' && record.lastActivityAt !== undefined
-				? record.lastActivityAt + this.recentMs
-				: null;
+		if (!record.needsAcknowledgement || record.lastActivityAt === undefined) {
+			return { nextDeadline: null, state: 'viewed' };
+		}
+
+		const amberAt = record.lastActivityAt + this.timings.amberDelayMs;
+		const greenAt =
+			record.lastActivityAt +
+			Math.max(this.timings.amberDelayMs, this.timings.greenDelayMs);
+
+		if (now < amberAt) {
+			return { nextDeadline: amberAt, state: 'viewed' };
+		}
+
+		const state: TerminalActivityState = now < greenAt ? 'recent' : 'unviewed';
+		const nextDeadline = state === 'recent' ? greenAt : null;
 
 		return { nextDeadline, state };
 	}
@@ -116,7 +145,32 @@ export class TerminalActivityStore {
 	private hasRecentUserInput(record: TerminalActivityRecord, now: number): boolean {
 		return (
 			record.lastUserInputAt !== undefined &&
-			now - record.lastUserInputAt < this.recentMs
+			now - record.lastUserInputAt < this.timings.greenDelayMs
 		);
+	}
+
+	private normalizeTimings(
+		timings: Partial<TerminalActivityTimings> = {},
+	): TerminalActivityTimings {
+		return {
+			amberDelayMs: this.normalizeMs(
+				timings.amberDelayMs,
+				TERMINAL_ACTIVITY_AMBER_DELAY_MS,
+			),
+			greenDelayMs: this.normalizeMs(
+				timings.greenDelayMs,
+				TERMINAL_ACTIVITY_RECENT_MS,
+			),
+			tabSwitchSuppressionMs: this.normalizeMs(
+				timings.tabSwitchSuppressionMs,
+				TERMINAL_ACTIVITY_TAB_SWITCH_SUPPRESSION_MS,
+			),
+		};
+	}
+
+	private normalizeMs(value: number | undefined, fallback: number): number {
+		return typeof value === 'number' && Number.isFinite(value)
+			? Math.max(0, value)
+			: fallback;
 	}
 }

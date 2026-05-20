@@ -1584,6 +1584,24 @@ const ProjectWorkspace = forwardRef<
 		fileExplorerNameDialog !== null,
 	);
 
+	useEffect(() => {
+		terminalActivityStoreRef.current.configure({
+			amberDelayMs: settings.activityIndicators.amberDelaySeconds * 1000,
+			greenDelayMs: settings.activityIndicators.greenDelaySeconds * 1000,
+			tabSwitchSuppressionMs:
+				settings.activityIndicators.tabSwitchSuppressionSeconds * 1000,
+		});
+
+		const now = Date.now();
+		for (const sessionId of panelSessionMapRef.current.values()) {
+			evaluateTerminalActivityStateRef.current(sessionId, now);
+		}
+	}, [
+		settings.activityIndicators.amberDelaySeconds,
+		settings.activityIndicators.greenDelaySeconds,
+		settings.activityIndicators.tabSwitchSuppressionSeconds,
+	]);
+
 	const requestFileExplorerName = useCallback(
 		(options: FileExplorerNameDialogOptions) => {
 			return new Promise<string | null>((resolve) => {
@@ -4210,6 +4228,19 @@ const ProjectWorkspace = forwardRef<
 		const onTerminalFocused = (event: Event) => {
 			const customEvent = event as CustomEvent<{ sessionId?: string }>;
 			const sessionId = customEvent.detail?.sessionId ?? null;
+			const previousSessionId = focusedSessionIdRef.current;
+			if (
+				previousSessionId &&
+				previousSessionId !== sessionId &&
+				getPanelForSession(previousSessionId)
+			) {
+				applyTerminalActivityEvaluation(
+					previousSessionId,
+					terminalActivityStoreRef.current.suppressTerminalActivity(
+						previousSessionId,
+					),
+				);
+			}
 			focusedSessionIdRef.current = sessionId;
 			setFocusedSessionId(sessionId);
 			markTerminalActivityViewed(sessionId);
@@ -4219,7 +4250,11 @@ const ProjectWorkspace = forwardRef<
 		return () => {
 			window.removeEventListener('terminay-terminal-focused', onTerminalFocused);
 		};
-	}, [markTerminalActivityViewed]);
+	}, [
+		applyTerminalActivityEvaluation,
+		getPanelForSession,
+		markTerminalActivityViewed,
+	]);
 
 	useEffect(() => {
 		return window.terminay.onTerminalData((message) => {
