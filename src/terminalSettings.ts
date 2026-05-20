@@ -140,8 +140,11 @@ export const defaultTerminalSettings: TerminalSettings = {
 	allowTransparency: false,
 	altClickMovesCursor: true,
 	activityIndicators: {
+		amberDelaySeconds: 0,
+		greenDelaySeconds: 1,
 		showActiveTabs: false,
 		showFinishedTabs: true,
+		tabSwitchSuppressionSeconds: 1,
 	},
 	autoCloseTerminalOnExitZero: false,
 	convertEol: true,
@@ -730,6 +733,73 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				categoryId: 'appearance',
 				input: 'boolean',
 				keywords: ['activity', 'indicator', 'tab', 'finished', 'quiet', 'green'],
+			}),
+			makeField({
+				key: 'activityIndicators.amberDelaySeconds',
+				label: 'Show amber after',
+				description:
+					'Seconds of unseen terminal activity before the active activity indicator appears.',
+				sectionId: 'tab-indicators',
+				categoryId: 'appearance',
+				input: 'number',
+				min: 0,
+				max: 60,
+				step: 0.25,
+				keywords: [
+					'activity',
+					'indicator',
+					'tab',
+					'active',
+					'recent',
+					'yellow',
+					'amber',
+					'delay',
+					'seconds',
+				],
+			}),
+			makeField({
+				key: 'activityIndicators.greenDelaySeconds',
+				label: 'Show green after',
+				description:
+					'Seconds after unseen activity before the finished activity indicator appears.',
+				sectionId: 'tab-indicators',
+				categoryId: 'appearance',
+				input: 'number',
+				min: 0,
+				max: 300,
+				step: 0.25,
+				keywords: [
+					'activity',
+					'indicator',
+					'tab',
+					'finished',
+					'quiet',
+					'green',
+					'delay',
+					'seconds',
+				],
+			}),
+			makeField({
+				key: 'activityIndicators.tabSwitchSuppressionSeconds',
+				label: 'Ignore after tab switch',
+				description:
+					'Seconds of output to ignore from the tab you just left.',
+				sectionId: 'tab-indicators',
+				categoryId: 'appearance',
+				input: 'number',
+				min: 0,
+				max: 60,
+				step: 0.25,
+				keywords: [
+					'activity',
+					'indicator',
+					'tab',
+					'focus',
+					'switch',
+					'claude',
+					'delay',
+					'seconds',
+				],
 			}),
 		],
 	},
@@ -1566,6 +1636,18 @@ export function normalizeTerminalSettings(
 				? input.altClickMovesCursor
 				: defaultTerminalSettings.altClickMovesCursor,
 		activityIndicators: {
+			amberDelaySeconds: clampNumber(
+				Number(activityIndicatorsInput.amberDelaySeconds),
+				defaultTerminalSettings.activityIndicators.amberDelaySeconds,
+				0,
+				60,
+			),
+			greenDelaySeconds: clampNumber(
+				Number(activityIndicatorsInput.greenDelaySeconds),
+				defaultTerminalSettings.activityIndicators.greenDelaySeconds,
+				0,
+				300,
+			),
 			showActiveTabs:
 				typeof activityIndicatorsInput.showActiveTabs === 'boolean'
 					? activityIndicatorsInput.showActiveTabs
@@ -1574,6 +1656,13 @@ export function normalizeTerminalSettings(
 				typeof activityIndicatorsInput.showFinishedTabs === 'boolean'
 					? activityIndicatorsInput.showFinishedTabs
 					: defaultTerminalSettings.activityIndicators.showFinishedTabs,
+			tabSwitchSuppressionSeconds: clampNumber(
+				Number(activityIndicatorsInput.tabSwitchSuppressionSeconds),
+				defaultTerminalSettings.activityIndicators
+					.tabSwitchSuppressionSeconds,
+				0,
+				60,
+			),
 		},
 		autoCloseTerminalOnExitZero:
 			typeof input.autoCloseTerminalOnExitZero === 'boolean'
