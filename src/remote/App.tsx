@@ -312,11 +312,9 @@ export function RemoteApp() {
   const pendingCtrlRef = useRef(false)
   const pendingAltRef = useRef(false)
   const pointerPanStateRef = useRef<{
+    accumulatedY: number
+    lastY: number
     pointerId: number
-    startX: number
-    startY: number
-    startScrollLeft: number
-    startScrollTop: number
   } | null>(null)
   const remoteResizeFrameRef = useRef<number | null>(null)
   const lastSentRemoteSizeRef = useRef<{ cols: number; rows: number; sessionId: string } | null>(null)
@@ -1029,16 +1027,14 @@ export function RemoteApp() {
     }
 
     const scrollRegion = scrollRegionRef.current
-    if (!scrollRegion) {
+    if (!scrollRegion || !terminalRef.current) {
       return
     }
 
     pointerPanStateRef.current = {
+      accumulatedY: 0,
+      lastY: event.clientY,
       pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      startScrollLeft: scrollRegion.scrollLeft,
-      startScrollTop: scrollRegion.scrollTop,
     }
 
     scrollRegion.setPointerCapture(event.pointerId)
@@ -1052,10 +1048,27 @@ export function RemoteApp() {
       return
     }
 
-    scrollRegion.scrollLeft = panState.startScrollLeft - (event.clientX - panState.startX)
-    scrollRegion.scrollTop = panState.startScrollTop - (event.clientY - panState.startY)
+    const terminal = terminalRef.current
+    if (!terminal) {
+      clearPointerPan()
+      return
+    }
+
+    const terminalHeight = terminal.element?.getBoundingClientRect().height ?? 0
+    const rowHeight = terminal.rows > 0 && terminalHeight > 0
+      ? terminalHeight / terminal.rows
+      : settings.fontSize * settings.lineHeight * terminalZoom
+    panState.accumulatedY += panState.lastY - event.clientY
+    panState.lastY = event.clientY
+
+    const lines = Math.trunc(panState.accumulatedY / Math.max(1, rowHeight))
+    if (lines !== 0) {
+      terminal.scrollLines(lines)
+      panState.accumulatedY -= lines * rowHeight
+    }
+
     event.preventDefault()
-  }, [])
+  }, [clearPointerPan, settings.fontSize, settings.lineHeight, terminalZoom])
 
   const handleTerminalPointerUpCapture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const scrollRegion = scrollRegionRef.current
