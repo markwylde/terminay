@@ -112,6 +112,8 @@ type DockPanelTabAppearance = {
 	emoji?: string;
 	inheritsProjectColor?: boolean;
 	projectColor?: string;
+	showActiveTabActivityIndicator?: boolean;
+	showFinishedTabActivityIndicator?: boolean;
 	terminalNote?: string;
 };
 
@@ -134,6 +136,8 @@ type MovedTerminalTab = {
 	recordingError?: string | null;
 	recordingStatus?: 'failed' | 'idle' | 'recording';
 	sessionId: string;
+	showActiveTabActivityIndicator?: boolean;
+	showFinishedTabActivityIndicator?: boolean;
 	terminalActivityState?: TerminalActivityState;
 	terminalNote?: string;
 	title: string;
@@ -342,6 +346,25 @@ function areTerminalActivityIndicatorsEnabled(
 	params: DockPanelTabAppearance | undefined,
 ): boolean {
 	return params?.activityIndicatorsEnabled !== false;
+}
+
+function isTerminalActivityIndicatorStateVisible(
+	state: TerminalActivityState | undefined,
+	params: DockPanelTabAppearance | undefined,
+): state is TerminalActivityOverviewState {
+	if (!areTerminalActivityIndicatorsEnabled(params)) {
+		return false;
+	}
+
+	if (state === 'recent') {
+		return params?.showActiveTabActivityIndicator === true;
+	}
+
+	if (state === 'unviewed') {
+		return params?.showFinishedTabActivityIndicator !== false;
+	}
+
+	return false;
 }
 
 function createProjectTab(
@@ -1719,8 +1742,7 @@ const ProjectWorkspace = forwardRef<
 					const state = panel.params?.terminalActivityState;
 					if (
 						!sessionId ||
-						!areTerminalActivityIndicatorsEnabled(panel.params) ||
-						(state !== 'recent' && state !== 'unviewed')
+						!isTerminalActivityIndicatorStateVisible(state, panel.params)
 					) {
 						continue;
 					}
@@ -2460,6 +2482,10 @@ const ProjectWorkspace = forwardRef<
 						projectColor: project.color,
 						projectsForMove: getProjectsForTerminalMove(),
 						sessionId,
+						showActiveTabActivityIndicator:
+							settings.activityIndicators.showActiveTabs,
+						showFinishedTabActivityIndicator:
+							settings.activityIndicators.showFinishedTabs,
 						terminalActivityState: 'viewed',
 					},
 				});
@@ -2498,6 +2524,8 @@ const ProjectWorkspace = forwardRef<
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
 			hydrateRecordingStateForSession,
+			settings.activityIndicators.showActiveTabs,
+			settings.activityIndicators.showFinishedTabs,
 			settings.recording.recordNewTerminals,
 			startRecordingForSession,
 			stopRecordingForSession,
@@ -2933,6 +2961,33 @@ const ProjectWorkspace = forwardRef<
 		project.emoji,
 		project.color,
 		publishTerminalActivityOverview,
+	]);
+
+	useEffect(() => {
+		const api = dockviewApiRef.current;
+		if (!api) {
+			return;
+		}
+
+		for (const [panelId] of panelSessionMapRef.current.entries()) {
+			const panel = api.getPanel(panelId);
+			if (!panel) {
+				continue;
+			}
+
+			panel.api.updateParameters({
+				showActiveTabActivityIndicator:
+					settings.activityIndicators.showActiveTabs,
+				showFinishedTabActivityIndicator:
+					settings.activityIndicators.showFinishedTabs,
+			});
+		}
+
+		window.requestAnimationFrame(publishTerminalActivityOverview);
+	}, [
+		publishTerminalActivityOverview,
+		settings.activityIndicators.showActiveTabs,
+		settings.activityIndicators.showFinishedTabs,
 	]);
 
 	useEffect(() => {
@@ -3418,6 +3473,10 @@ const ProjectWorkspace = forwardRef<
 						projectColor: project.color,
 						projectsForMove: getProjectsForTerminalMove(),
 						sessionId,
+						showActiveTabActivityIndicator:
+							settings.activityIndicators.showActiveTabs,
+						showFinishedTabActivityIndicator:
+							settings.activityIndicators.showFinishedTabs,
 						terminalActivityState: 'viewed',
 					},
 					position:
@@ -3472,6 +3531,8 @@ const ProjectWorkspace = forwardRef<
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
 			hydrateRecordingStateForSession,
+			settings.activityIndicators.showActiveTabs,
+			settings.activityIndicators.showFinishedTabs,
 			settings.recording.recordNewTerminals,
 			startRecordingForSession,
 			stopRecordingForSession,
@@ -3497,6 +3558,10 @@ const ProjectWorkspace = forwardRef<
 				recordingError: panel.params?.recordingError,
 				recordingStatus: panel.params?.recordingStatus,
 				sessionId,
+				showActiveTabActivityIndicator:
+					panel.params?.showActiveTabActivityIndicator,
+				showFinishedTabActivityIndicator:
+					panel.params?.showFinishedTabActivityIndicator,
 				terminalActivityState: panel.params?.terminalActivityState,
 				terminalNote: panel.params?.terminalNote,
 				title: panel.title ?? 'Terminal',
@@ -3563,6 +3628,12 @@ const ProjectWorkspace = forwardRef<
 					projectColor: project.color,
 					projectsForMove: getProjectsForTerminalMove(),
 					sessionId: movedTerminal.sessionId,
+					showActiveTabActivityIndicator:
+						movedTerminal.showActiveTabActivityIndicator ??
+						settings.activityIndicators.showActiveTabs,
+					showFinishedTabActivityIndicator:
+						movedTerminal.showFinishedTabActivityIndicator ??
+						settings.activityIndicators.showFinishedTabs,
 					terminalActivityState: movedTerminal.terminalActivityState ?? 'viewed',
 					terminalNote: movedTerminal.terminalNote,
 				},
@@ -3605,6 +3676,8 @@ const ProjectWorkspace = forwardRef<
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
 			hydrateRecordingStateForSession,
+			settings.activityIndicators.showActiveTabs,
+			settings.activityIndicators.showFinishedTabs,
 			startRecordingForSession,
 			stopRecordingForSession,
 			syncPanelFocusState,

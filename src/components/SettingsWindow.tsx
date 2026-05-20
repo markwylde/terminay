@@ -53,7 +53,16 @@ function getDefaultValueAtPath(key: string): boolean | number | string {
 
 function setValueAtPath(settings: TerminalSettings, key: string, value: boolean | number | string): TerminalSettings {
   const segments = key.split('.')
-  const allowedRoots = new Set(['aiTabMetadata', 'fileViewer', 'keyboardShortcuts', 'recording', 'remoteAccess', 'shell', 'theme'])
+  const allowedRoots = new Set([
+    'activityIndicators',
+    'aiTabMetadata',
+    'fileViewer',
+    'keyboardShortcuts',
+    'recording',
+    'remoteAccess',
+    'shell',
+    'theme',
+  ])
   const [root] = segments
 
   if (!root || (segments.length > 1 && !allowedRoots.has(root))) {
