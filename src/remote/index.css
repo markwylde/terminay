@@ -410,7 +410,7 @@ input {
   height: 100%;
 }
 
-@media (pointer: coarse), (max-width: 900px) {
+@media (pointer: coarse) {
   .terminal-scroll-region,
   .terminal-xterm-container,
   .terminal-xterm-container * {
@@ -418,7 +418,6 @@ input {
   }
 
   .terminal-xterm-container .xterm .xterm-viewport {
-    overflow: hidden !important;
     scrollbar-width: none;
   }
 
