@@ -1,5 +1,6 @@
 import { expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
+import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
 
 function remoteOriginInput(page: Page) {
   return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Remote origin' }).locator('input')
@@ -7,6 +8,10 @@ function remoteOriginInput(page: Page) {
 
 function bindAddressInput(page: Page) {
   return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Bind address' }).locator('input')
+}
+
+function customExtensionRows(page: Page) {
+  return page.locator('#section-file-viewer-refresh .settings-custom-extensions__item')
 }
 
 async function getActiveTerminalSessionId(page: Page): Promise<string> {
@@ -88,6 +93,54 @@ test('shows recording settings and saves recording defaults', async ({ appHarnes
     openTimelineAfterSaving: true,
     recordNewTerminals: true,
     sensitiveInputPolicy: 'mask',
+  })
+})
+
+test('normalizes custom file viewer extension defaults', () => {
+  expect(normalizeTerminalSettings({}).fileViewer).toEqual(defaultTerminalSettings.fileViewer)
+
+  expect(
+    normalizeTerminalSettings({
+      fileViewer: {
+        customFileExtensions: [
+          { extension: '  demo ', defaultMode: 'text' },
+          { extension: '.bin', defaultMode: 'hex' },
+          { extension: '.demo', defaultMode: 'preview' },
+          { extension: '.', defaultMode: 'hex' },
+          { extension: '.bad', defaultMode: 'nonsense' },
+        ],
+        refreshIntervalSeconds: 9,
+      },
+    }).fileViewer,
+  ).toEqual({
+    customFileExtensions: [
+      { extension: '.demo', defaultMode: 'text' },
+      { extension: '.bin', defaultMode: 'hex' },
+      { extension: '.bad', defaultMode: 'preview' },
+    ],
+    refreshIntervalSeconds: 9,
+  })
+})
+
+test('saves custom file extension default tabs in settings', async ({ appHarness, mainWindow }) => {
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'file-viewer-refresh' })
+
+  await expect(settingsWindow.getByRole('heading', { name: 'File Viewer' })).toBeVisible()
+  await settingsWindow.getByRole('button', { name: 'Add Extension' }).click()
+
+  const row = customExtensionRows(settingsWindow).first()
+  await row.getByLabel('File extension').fill('.e2eunknown')
+  await row.getByLabel('File extension').press('Enter')
+  await row.getByLabel('Default file viewer tab').selectOption('text')
+  await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+
+  const savedFileViewerSettings = await mainWindow.evaluate(async () => {
+    return (await window.terminay.getTerminalSettings()).fileViewer
+  })
+
+  expect(savedFileViewerSettings.customFileExtensions).toContainEqual({
+    defaultMode: 'text',
+    extension: '.e2eunknown',
   })
 })
 
