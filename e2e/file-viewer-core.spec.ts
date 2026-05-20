@@ -102,6 +102,71 @@ test('binary files fall back to hex when preview is unavailable', async ({ creat
   await expect(mainWindow.locator('.file-hex-viewer__header')).toContainText('Offset')
 })
 
+test('unknown extensions keep the default mode but allow preview text and hex tabs', async ({
+  createWorkspace,
+  mainWindow,
+}) => {
+  const workspace = await createWorkspace({
+    name: 'file-viewer-unknown-extension',
+    seed: {
+      files: {
+        'notes.customunknown': 'this extension is still text\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  await fileExplorerItem(mainWindow, 'notes.customunknown').dblclick()
+  await expect(mainWindow.locator('.file-hex-viewer')).toBeVisible()
+
+  await expect(mainWindow.getByRole('tab', { name: 'Preview' })).toBeEnabled()
+  await expect(mainWindow.getByRole('tab', { name: 'Text' })).toBeEnabled()
+  await expect(mainWindow.getByRole('tab', { name: 'HEX' })).toBeEnabled()
+
+  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
+  await expect.poll(() => getActiveMonacoText(mainWindow)).toContain('this extension is still text')
+
+  await mainWindow.getByRole('tab', { name: 'Preview' }).click()
+  await expect(mainWindow.locator('.file-preview-unsupported')).toContainText('Preview is not available')
+
+  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
+  await expect(mainWindow.locator('.file-hex-viewer')).toBeVisible()
+})
+
+test('custom extension defaults choose the first file viewer tab', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'file-viewer-custom-extension-default',
+    seed: {
+      files: {
+        'notes.e2etext': 'open me in text mode\n',
+      },
+    },
+  })
+
+  await mainWindow.evaluate(async () => {
+    const settings = await window.terminay.getTerminalSettings()
+    await window.terminay.updateTerminalSettings({
+      ...settings,
+      fileViewer: {
+        ...settings.fileViewer,
+        customFileExtensions: [{ defaultMode: 'text', extension: '.e2etext' }],
+      },
+    })
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  await fileExplorerItem(mainWindow, 'notes.e2etext').dblclick()
+  await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
+  await expect.poll(() => getActiveMonacoText(mainWindow)).toContain('open me in text mode')
+  await expect(mainWindow.getByRole('tab', { name: 'Preview' })).toBeEnabled()
+  await expect(mainWindow.getByRole('tab', { name: 'HEX' })).toBeEnabled()
+})
+
 async function getActiveMonacoLanguage(page: Parameters<typeof setProjectRoot>[0]) {
   return page.evaluate(() => {
     const monacoApi = (window as Window & {
@@ -113,6 +178,20 @@ async function getActiveMonacoLanguage(page: Parameters<typeof setProjectRoot>[0
     }).monaco
 
     return monacoApi?.editor?.getModels()?.at(-1)?.getLanguageId() ?? ''
+  })
+}
+
+async function getActiveMonacoText(page: Parameters<typeof setProjectRoot>[0]) {
+  return page.evaluate(() => {
+    const monacoApi = (window as Window & {
+      monaco?: {
+        editor?: {
+          getModels: () => Array<{ getValue: () => string }>
+        }
+      }
+    }).monaco
+
+    return monacoApi?.editor?.getModels()?.at(-1)?.getValue() ?? ''
   })
 }
 
