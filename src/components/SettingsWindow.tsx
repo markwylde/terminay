@@ -860,7 +860,7 @@ export function SettingsWindow() {
         <div className="settings-custom-extensions__list">
           {draft.fileViewer.customFileExtensions.map((entry, index) => (
             <CustomFileExtensionRow
-              key={`${entry.extension}-${index}`}
+              key={entry.extension}
               defaultMode={entry.defaultMode}
               extension={entry.extension}
               index={index}
