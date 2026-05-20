@@ -2285,7 +2285,7 @@ const ProjectWorkspace = forwardRef<
 				params: {
 					color: project.color,
 					filePath,
-					initialMode: options?.initialMode ?? 'preview',
+					initialMode: options?.initialMode,
 					inheritsProjectColor: true,
 					isFocused: false,
 					preferredEngine: 'auto',

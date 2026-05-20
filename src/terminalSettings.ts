@@ -171,6 +171,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	tabStopWidth: 8,
 	wordSeparator: ' ()[]{}\',"`',
 	fileViewer: {
+		customFileExtensions: [],
 		refreshIntervalSeconds: 5,
 	},
 	keyboardShortcuts: defaultKeyboardShortcuts,
@@ -672,7 +673,8 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		id: 'file-viewer-refresh',
 		categoryId: 'files',
 		title: 'File Viewer',
-		description: 'Control how watched file changes refresh open file tabs.',
+		description:
+			'Control watched file refreshes and custom extension default tabs.',
 		fields: [
 			makeField({
 				key: 'fileViewer.refreshIntervalSeconds',
@@ -693,6 +695,8 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'watch',
 					'debounce',
 					'throttle',
+					'extension',
+					'default tab',
 				],
 			}),
 		],
@@ -1669,6 +1673,35 @@ export function normalizeTerminalSettings(
 				? input.wordSeparator
 				: defaultTerminalSettings.wordSeparator,
 		fileViewer: {
+			customFileExtensions: Array.isArray(fileViewerInput.customFileExtensions)
+				? fileViewerInput.customFileExtensions
+						.map((entry) => {
+							if (typeof entry !== 'object' || entry === null) {
+								return null;
+							}
+
+							const extension =
+								typeof entry.extension === 'string'
+									? `.${entry.extension.trim().toLowerCase().replace(/^\.+/, '')}`
+									: '';
+							const defaultMode: TerminalSettings['fileViewer']['customFileExtensions'][number]['defaultMode'] =
+								entry.defaultMode === 'text' || entry.defaultMode === 'hex'
+									? entry.defaultMode
+									: 'preview';
+
+							return extension.length > 1
+								? { extension, defaultMode }
+								: null;
+						})
+						.filter(
+							(entry): entry is NonNullable<typeof entry> => entry !== null,
+						)
+						.filter((entry, index, entries) =>
+							entries.findIndex(
+								(candidate) => candidate.extension === entry.extension,
+							) === index,
+						)
+				: defaultTerminalSettings.fileViewer.customFileExtensions,
 			refreshIntervalSeconds: clampNumber(
 				Number(fileViewerInput.refreshIntervalSeconds),
 				defaultTerminalSettings.fileViewer.refreshIntervalSeconds,

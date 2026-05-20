@@ -90,14 +90,14 @@ export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities 
   const previewKind = detectPreviewKind(file)
   const canPreview = previewKind !== 'unsupported'
   const textLike = isTextLikeFile(file)
-  const canUseMonaco = textLike
-  const canEditText = textLike
+  const canUseMonaco = !file.isDirectory
+  const canEditText = !file.isDirectory
   const canEditHex = !file.isDirectory
   const canDiff = !file.isDirectory
 
-  const fallbackMode: FileViewerMode = canPreview
+  const defaultMode: FileViewerMode = canPreview
     ? 'preview'
-    : canEditText
+    : textLike
       ? 'text'
       : 'hex'
 
@@ -107,7 +107,8 @@ export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities 
     canEditText,
     canPreview,
     canUseMonaco,
-    fallbackMode,
+    defaultMode,
+    fallbackMode: canEditHex ? 'hex' : defaultMode,
     previewKind,
     shouldPromptForEngineChoice: file.size > LARGE_FILE_THRESHOLD_BYTES && canUseMonaco,
   }
