@@ -61,7 +61,15 @@ export type TerminalRecordingSettings = {
 };
 
 export type FileViewerSettings = {
+	customFileExtensions: FileViewerCustomExtensionDefault[];
 	refreshIntervalSeconds: number;
+};
+
+export type FileViewerDefaultMode = 'preview' | 'text' | 'hex';
+
+export type FileViewerCustomExtensionDefault = {
+	extension: string;
+	defaultMode: FileViewerDefaultMode;
 };
 
 export type AiTabMetadataProvider = 'disabled' | 'codex' | 'claudeCode';
@@ -81,6 +89,7 @@ export type TerminalSettings = {
 	aiTabMetadata: AiTabMetadataSettings;
 	allowTransparency: boolean;
 	altClickMovesCursor: boolean;
+	activityIndicators: TerminalActivityIndicatorSettings;
 	autoCloseTerminalOnExitZero: boolean;
 	convertEol: boolean;
 	cursorBlink: boolean;
@@ -117,4 +126,9 @@ export type TerminalSettings = {
 	remoteAccess: RemoteAccessSettings;
 	shell: ShellSettings;
 	theme: TerminalThemeSettings;
+};
+
+export type TerminalActivityIndicatorSettings = {
+	showActiveTabs: boolean;
+	showFinishedTabs: boolean;
 };

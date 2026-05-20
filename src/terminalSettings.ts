@@ -139,6 +139,10 @@ export const defaultTerminalSettings: TerminalSettings = {
 	},
 	allowTransparency: false,
 	altClickMovesCursor: true,
+	activityIndicators: {
+		showActiveTabs: false,
+		showFinishedTabs: true,
+	},
 	autoCloseTerminalOnExitZero: false,
 	convertEol: true,
 	cursorBlink: true,
@@ -171,6 +175,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	tabStopWidth: 8,
 	wordSeparator: ' ()[]{}\',"`',
 	fileViewer: {
+		customFileExtensions: [],
 		refreshIntervalSeconds: 5,
 	},
 	keyboardShortcuts: defaultKeyboardShortcuts,
@@ -672,7 +677,8 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		id: 'file-viewer-refresh',
 		categoryId: 'files',
 		title: 'File Viewer',
-		description: 'Control how watched file changes refresh open file tabs.',
+		description:
+			'Control watched file refreshes and custom extension default tabs.',
 		fields: [
 			makeField({
 				key: 'fileViewer.refreshIntervalSeconds',
@@ -693,7 +699,37 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'watch',
 					'debounce',
 					'throttle',
+					'extension',
+					'default tab',
 				],
+			}),
+		],
+	},
+	{
+		id: 'tab-indicators',
+		categoryId: 'appearance',
+		title: 'Tab Indicators',
+		description: 'Choose which terminal activity indicators appear on tabs.',
+		fields: [
+			makeField({
+				key: 'activityIndicators.showActiveTabs',
+				label: 'Show indicator for active tabs',
+				description:
+					'Show a yellow indicator for tabs that had activity within the last few seconds.',
+				sectionId: 'tab-indicators',
+				categoryId: 'appearance',
+				input: 'boolean',
+				keywords: ['activity', 'indicator', 'tab', 'active', 'recent', 'yellow'],
+			}),
+			makeField({
+				key: 'activityIndicators.showFinishedTabs',
+				label: 'Show indicator for finished tabs',
+				description:
+					'Show a green indicator for tabs that had activity and then went quiet.',
+				sectionId: 'tab-indicators',
+				categoryId: 'appearance',
+				input: 'boolean',
+				keywords: ['activity', 'indicator', 'tab', 'finished', 'quiet', 'green'],
 			}),
 		],
 	},
@@ -1459,6 +1495,11 @@ export function normalizeTerminalSettings(
 		aiTabMetadataInput.note !== null
 			? aiTabMetadataInput.note
 			: defaultTerminalSettings.aiTabMetadata.note;
+	const activityIndicatorsInput =
+		typeof input.activityIndicators === 'object' &&
+		input.activityIndicators !== null
+			? input.activityIndicators
+			: defaultTerminalSettings.activityIndicators;
 	const remoteAccessInput =
 		typeof input.remoteAccess === 'object' && input.remoteAccess !== null
 			? input.remoteAccess
@@ -1524,6 +1565,16 @@ export function normalizeTerminalSettings(
 			typeof input.altClickMovesCursor === 'boolean'
 				? input.altClickMovesCursor
 				: defaultTerminalSettings.altClickMovesCursor,
+		activityIndicators: {
+			showActiveTabs:
+				typeof activityIndicatorsInput.showActiveTabs === 'boolean'
+					? activityIndicatorsInput.showActiveTabs
+					: defaultTerminalSettings.activityIndicators.showActiveTabs,
+			showFinishedTabs:
+				typeof activityIndicatorsInput.showFinishedTabs === 'boolean'
+					? activityIndicatorsInput.showFinishedTabs
+					: defaultTerminalSettings.activityIndicators.showFinishedTabs,
+		},
 		autoCloseTerminalOnExitZero:
 			typeof input.autoCloseTerminalOnExitZero === 'boolean'
 				? input.autoCloseTerminalOnExitZero
@@ -1669,6 +1720,35 @@ export function normalizeTerminalSettings(
 				? input.wordSeparator
 				: defaultTerminalSettings.wordSeparator,
 		fileViewer: {
+			customFileExtensions: Array.isArray(fileViewerInput.customFileExtensions)
+				? fileViewerInput.customFileExtensions
+						.map((entry) => {
+							if (typeof entry !== 'object' || entry === null) {
+								return null;
+							}
+
+							const extension =
+								typeof entry.extension === 'string'
+									? `.${entry.extension.trim().toLowerCase().replace(/^\.+/, '')}`
+									: '';
+							const defaultMode: TerminalSettings['fileViewer']['customFileExtensions'][number]['defaultMode'] =
+								entry.defaultMode === 'text' || entry.defaultMode === 'hex'
+									? entry.defaultMode
+									: 'preview';
+
+							return extension.length > 1
+								? { extension, defaultMode }
+								: null;
+						})
+						.filter(
+							(entry): entry is NonNullable<typeof entry> => entry !== null,
+						)
+						.filter((entry, index, entries) =>
+							entries.findIndex(
+								(candidate) => candidate.extension === entry.extension,
+							) === index,
+						)
+				: defaultTerminalSettings.fileViewer.customFileExtensions,
 			refreshIntervalSeconds: clampNumber(
 				Number(fileViewerInput.refreshIntervalSeconds),
 				defaultTerminalSettings.fileViewer.refreshIntervalSeconds,

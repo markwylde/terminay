@@ -9,6 +9,7 @@ import {
 } from '../../services/fileViewer'
 import { useTerminalSettings } from '../../hooks/useTerminalSettings'
 import type { FileInfo, FileViewerEngine, GitFileDiff } from '../../types/fileViewer'
+import type { FileViewerDefaultMode } from '../../types/settings'
 import type { FileViewerGitRepoInfo } from '../../types/terminay'
 import { FileConflictBanner } from './FileConflictBanner'
 import { FileLargeFileChooser } from './FileLargeFileChooser'
@@ -62,9 +63,13 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 
+function getCustomDefaultMode(file: FileInfo, customExtensions: { defaultMode: FileViewerDefaultMode; extension: string }[]) {
+  return customExtensions.find((entry) => entry.extension === file.extension)?.defaultMode
+}
+
 export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const { filePath, initialMode, preferredEngine = 'auto' } = props.params
-  const { settings } = useTerminalSettings()
+  const { isLoading: isLoadingSettings, settings } = useTerminalSettings()
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(props.params.fileInfo ?? null)
   const [draftText, setDraftText] = useState('')
   const [engine, setEngine] = useState<FileViewerEngine>(preferredEngine)
@@ -82,6 +87,8 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const previewObjectUrlRef = useRef<string | null>(null)
   const draftBufferRef = useRef(createFileDraftBuffer({ text: '' }))
   const currentTextGetterRef = useRef<(() => string) | null>(null)
+  const hasAppliedDefaultModeRef = useRef(initialMode !== undefined)
+  const hasSelectedModeRef = useRef(initialMode !== undefined)
   const isMountedRef = useRef(true)
 
   const sessionStore = useMemo(
@@ -174,6 +181,11 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
       setFileInfo(info)
       props.api.setTitle(info.name)
       const capabilities = detectFileCapabilities(info)
+      if (!isLoadingSettings && !hasAppliedDefaultModeRef.current) {
+        const defaultMode = getCustomDefaultMode(info, settings.fileViewer.customFileExtensions) ?? capabilities.defaultMode
+        hasAppliedDefaultModeRef.current = true
+        setMode(defaultMode)
+      }
       if (previewObjectUrlRef.current) {
         URL.revokeObjectURL(previewObjectUrlRef.current)
         previewObjectUrlRef.current = null
@@ -225,7 +237,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         previewObjectUrlRef.current = null
       }
     }
-  }, [filePath, preferredEngine, props.api, refreshDiff])
+  }, [filePath, isLoadingSettings, preferredEngine, props.api, refreshDiff, settings.fileViewer.customFileExtensions])
 
   useEffect(() => {
     if (!fileInfo) {
@@ -247,7 +259,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         return
       }
 
-      if (!fileInfo.isBinary) {
+      if (!fileInfo.isBinary || mode === 'text') {
         if (engine === 'performant' && fileInfo.size > LARGE_FILE_THRESHOLD_BYTES) {
           const response = await window.terminay.readFileText({
             length: Math.min(fileInfo.size, MAX_PERFORMANT_TEXT_BYTES),
@@ -450,8 +462,8 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const capabilities = detectFileCapabilities(fileInfo)
   const canDiff = gitRepoInfo?.canDiff === true || diffStatus === 'loading'
   const effectiveMode =
-    mode === 'preview' && !capabilities.canPreview
-      ? capabilities.fallbackMode
+    mode === 'preview' && !capabilities.canPreview && !hasSelectedModeRef.current
+      ? capabilities.defaultMode
       : mode === 'diff' && !canDiff
         ? capabilities.fallbackMode
         : mode
@@ -483,10 +495,13 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
           activeMode={mode}
           disabledModes={{
             diff: !canDiff,
-            preview: !capabilities.canPreview,
-            text: !capabilities.canEditText,
           }}
-          onChangeMode={setMode}
+          onChangeMode={(nextMode) => {
+            hasSelectedModeRef.current = true
+            hasAppliedDefaultModeRef.current = true
+            setMode(nextMode)
+            sessionStore?.setMode(nextMode)
+          }}
         />
         {capabilities.shouldPromptForEngineChoice && showEngineChoice ? (
           <FileLargeFileChooser
@@ -509,7 +524,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
       <div className="file-panel__body">
         {effectiveMode === 'preview' ? <PreviewViewer file={fileInfo} previewSourceUrl={previewSourceUrl} text={draftText} /> : null}
         {effectiveMode === 'text' ? (
-          capabilities.canEditText ? (
+          !fileInfo.isDirectory ? (
             <TextViewer
               engine={engine}
               filePath={fileInfo.path}

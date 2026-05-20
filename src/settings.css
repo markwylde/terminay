@@ -930,6 +930,10 @@
   border-bottom: 1px solid var(--settings-border);
 }
 
+.settings-row--stacked {
+  display: block;
+}
+
 .settings-row:last-child {
   border-bottom: none;
 }
@@ -956,6 +960,49 @@
 
 .settings-row-control {
   flex-shrink: 0;
+}
+
+.settings-custom-extensions {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-custom-extensions__header,
+.settings-custom-extensions__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-custom-extensions__header {
+  justify-content: space-between;
+}
+
+.settings-custom-extensions__list {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-custom-extensions__item {
+  padding: 10px;
+  border: 1px solid var(--settings-border);
+  border-radius: 6px;
+  background: var(--settings-input-bg);
+}
+
+.settings-custom-extensions__extension {
+  width: 160px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.settings-custom-extensions__mode {
+  width: 140px;
+}
+
+.settings-custom-extensions__empty {
+  margin: 0;
+  padding: 12px;
+  text-align: left;
 }
 
 .settings-shortcut-editor {
