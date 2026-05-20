@@ -519,11 +519,14 @@ async function readDirectoryEntries(dirPath: string): Promise<FileExplorerEntry[
   const items = await Promise.all(
     directoryEntries.map(async (entry) => {
       const entryPath = path.join(resolvedPath, entry.name)
-      const stats = await lstat(entryPath)
+      const linkStats = await lstat(entryPath)
+      const stats = linkStats.isSymbolicLink()
+        ? await stat(entryPath).catch(() => linkStats)
+        : linkStats
 
       return {
         isDirectory: stats.isDirectory(),
-        isSymbolicLink: stats.isSymbolicLink(),
+        isSymbolicLink: linkStats.isSymbolicLink(),
         name: entry.name,
         path: entryPath,
       } satisfies FileExplorerEntry
