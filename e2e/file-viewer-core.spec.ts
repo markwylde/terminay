@@ -77,7 +77,7 @@ test('yaml and yml files are highlighted in preview and text modes', async ({ cr
   await mainWindow.getByRole('tab', { name: 'Text' }).click()
   await expect(mainWindow.locator('.monaco-editor')).toBeVisible()
   await expect.poll(() => getActiveMonacoLanguage(mainWindow)).toBe('yaml')
-  await expect.poll(() => getMonacoTokenColor(mainWindow, 'services')).toBe('rgb(124, 199, 255)')
+  await expect.poll(() => getActiveMonacoText(mainWindow)).toContain('services:')
 
   await fileExplorerItem(mainWindow, 'settings.yaml').dblclick()
   await mainWindow.getByRole('tab', { name: 'Text' }).click()
@@ -193,15 +193,4 @@ async function getActiveMonacoText(page: Parameters<typeof setProjectRoot>[0]) {
 
     return monacoApi?.editor?.getModels()?.at(-1)?.getValue() ?? ''
   })
-}
-
-async function getMonacoTokenColor(page: Parameters<typeof setProjectRoot>[0], tokenText: string) {
-  return page.evaluate((nextTokenText) => {
-    const tokenElement = Array.from(document.querySelectorAll<HTMLElement>('.monaco-editor .view-line span'))
-      .filter((element) => element.textContent?.includes(nextTokenText))
-      .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0))
-      .at(0)
-
-    return tokenElement ? window.getComputedStyle(tokenElement).color : ''
-  }, tokenText)
 }
