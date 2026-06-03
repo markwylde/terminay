@@ -56,6 +56,22 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
+function openInBrowser(url: string): void {
+  try {
+    const parsedUrl = new URL(url)
+    if (!['http:', 'https:', 'mailto:', 'tel:', 'file:'].includes(parsedUrl.protocol)) {
+      return
+    }
+  } catch {
+    return
+  }
+
+  void shell.openExternal(url).catch((error) => {
+    console.error(`Failed to open link: ${url}`)
+    console.error(error)
+  })
+}
+
 function getBrandAssetPath(filename: string): string | null {
   const candidates = [
     path.join(process.env.VITE_PUBLIC, filename),
@@ -1576,7 +1592,7 @@ function createWindow() {
     const isPopout = url.includes('popout.html')
 
     if (!isPopout) {
-      shell.openExternal(url)
+      openInBrowser(url)
       return { action: 'deny' }
     }
 
@@ -2125,7 +2141,7 @@ ipcMain.handle('app:quit', () => {
 })
 
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
-  await shell.openExternal(url)
+  openInBrowser(url)
 })
 
 ipcMain.handle('app:get-update-status', async (_event, options?: { force?: boolean }) => {

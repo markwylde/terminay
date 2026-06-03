@@ -117,7 +117,7 @@ function resolveRecordingTheme(settings: TerminalSettings, metadata: RecordingSe
 
 function parseRecordingMetadata(value: string, metadataPath: string | null): TerminalRecordingListItem | null {
   const parsed = parseJsonObject(value)
-  if (!parsed || parsed.version !== 1 || typeof parsed.castPath !== 'string') {
+  if (parsed?.version !== 1 || typeof parsed.castPath !== 'string') {
     return null
   }
 
