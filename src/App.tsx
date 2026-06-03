@@ -199,6 +199,7 @@ const FILE_EXPLORER_DRAG_THRESHOLD = 6;
 const FILE_EXPLORER_WATCH_REFRESH_DELAY_MS = 120;
 const FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS = 2500;
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
+const DOCKVIEW_SASH_ACTIVITY_DEFER_MS = 300;
 const DOCKVIEW_TAB_BAR_DROP_TARGET_SELECTOR = '.workspace .dv-tabs-and-actions-container';
 const DOCKVIEW_TAB_DROP_GHOST_MAX_WIDTH = 180;
 const DOCKVIEW_TAB_DROP_GHOST_MIN_WIDTH = 96;
@@ -1531,6 +1532,9 @@ const ProjectWorkspace = forwardRef<
 		groupId: string;
 	} | null>(null);
 	const workspaceRef = useRef<HTMLElement | null>(null);
+	const isDockviewSashDraggingRef = useRef(false);
+	const deferredTerminalActivitySessionIdsRef = useRef<Set<string>>(new Set());
+	const deferredTerminalActivityFlushTimerRef = useRef<number | null>(null);
 	const explorerResizeStateRef = useRef<{
 		pointerId: number;
 		startWidth: number;
@@ -1806,7 +1810,9 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-			if (panel.params?.terminalActivityState !== evaluation.state) {
+			const didActivityStateChange =
+				panel.params?.terminalActivityState !== evaluation.state;
+			if (didActivityStateChange) {
 				panel.api.updateParameters({ terminalActivityState: evaluation.state });
 			}
 
@@ -1829,7 +1835,9 @@ const ProjectWorkspace = forwardRef<
 				terminalActivityTimersRef.current.set(sessionId, nextTimer);
 			}
 
-			window.requestAnimationFrame(publishTerminalActivityOverview);
+			if (didActivityStateChange) {
+				window.requestAnimationFrame(publishTerminalActivityOverview);
+			}
 		},
 		[getPanelForSession, publishTerminalActivityOverview],
 	);
@@ -1853,6 +1861,38 @@ const ProjectWorkspace = forwardRef<
 		[applyTerminalActivityEvaluation, getPanelForSession],
 	);
 	evaluateTerminalActivityStateRef.current = evaluateTerminalActivityState;
+
+	const clearDeferredTerminalActivityFlushTimer = useCallback(() => {
+		const flushTimer = deferredTerminalActivityFlushTimerRef.current;
+		if (flushTimer === null) {
+			return;
+		}
+
+		window.clearTimeout(flushTimer);
+		deferredTerminalActivityFlushTimerRef.current = null;
+	}, []);
+
+	const flushDeferredTerminalActivity = useCallback(() => {
+		if (isDockviewSashDraggingRef.current) {
+			return;
+		}
+
+		clearDeferredTerminalActivityFlushTimer();
+		const sessionIds = Array.from(deferredTerminalActivitySessionIdsRef.current);
+		deferredTerminalActivitySessionIdsRef.current.clear();
+
+		for (const sessionId of sessionIds) {
+			evaluateTerminalActivityStateRef.current(sessionId);
+		}
+	}, [clearDeferredTerminalActivityFlushTimer]);
+
+	const scheduleDeferredTerminalActivityFlush = useCallback(() => {
+		clearDeferredTerminalActivityFlushTimer();
+		deferredTerminalActivityFlushTimerRef.current = window.setTimeout(
+			flushDeferredTerminalActivity,
+			DOCKVIEW_SASH_ACTIVITY_DEFER_MS,
+		);
+	}, [clearDeferredTerminalActivityFlushTimer, flushDeferredTerminalActivity]);
 
 	const markTerminalActivityViewed = useCallback(
 		(sessionId: string | null) => {
@@ -4225,6 +4265,58 @@ const ProjectWorkspace = forwardRef<
 	}, [openFile]);
 
 	useEffect(() => {
+		const handlePointerDown = (event: PointerEvent) => {
+			const target = event.target;
+			const workspace = workspaceRef.current;
+			if (
+				!(target instanceof Element) ||
+				!workspace?.contains(target) ||
+				!target.closest('.dv-sash') ||
+				isDockviewSashDraggingRef.current
+			) {
+				return;
+			}
+
+			isDockviewSashDraggingRef.current = true;
+			clearDeferredTerminalActivityFlushTimer();
+
+			const ownerWindow = target.ownerDocument.defaultView ?? window;
+			const ownerDocument = target.ownerDocument;
+			let didEnd = false;
+
+			const endSashDrag = () => {
+				if (didEnd) {
+					return;
+				}
+
+				didEnd = true;
+				isDockviewSashDraggingRef.current = false;
+				ownerDocument.removeEventListener('pointerup', endSashDrag, true);
+				ownerDocument.removeEventListener('pointercancel', endSashDrag, true);
+				ownerDocument.removeEventListener('contextmenu', endSashDrag, true);
+				ownerWindow.removeEventListener('blur', endSashDrag);
+				scheduleDeferredTerminalActivityFlush();
+			};
+
+			ownerDocument.addEventListener('pointerup', endSashDrag, true);
+			ownerDocument.addEventListener('pointercancel', endSashDrag, true);
+			ownerDocument.addEventListener('contextmenu', endSashDrag, true);
+			ownerWindow.addEventListener('blur', endSashDrag);
+		};
+
+		window.addEventListener('pointerdown', handlePointerDown, true);
+		return () => {
+			window.removeEventListener('pointerdown', handlePointerDown, true);
+			isDockviewSashDraggingRef.current = false;
+			clearDeferredTerminalActivityFlushTimer();
+			deferredTerminalActivitySessionIdsRef.current.clear();
+		};
+	}, [
+		clearDeferredTerminalActivityFlushTimer,
+		scheduleDeferredTerminalActivityFlush,
+	]);
+
+	useEffect(() => {
 		const onTerminalFocused = (event: Event) => {
 			const customEvent = event as CustomEvent<{ sessionId?: string }>;
 			const sessionId = customEvent.detail?.sessionId ?? null;
@@ -4263,15 +4355,26 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			const now = Date.now();
+			terminalActivityStoreRef.current.recordTerminalActivity(message.id, now);
+			if (
+				isDockviewSashDraggingRef.current ||
+				deferredTerminalActivityFlushTimerRef.current !== null
+			) {
+				deferredTerminalActivitySessionIdsRef.current.add(message.id);
+				scheduleDeferredTerminalActivityFlush();
+				return;
+			}
+
 			applyTerminalActivityEvaluation(
 				message.id,
-				terminalActivityStoreRef.current.recordTerminalActivity(
-					message.id,
-					now,
-				),
+				terminalActivityStoreRef.current.evaluate(message.id, now),
 			);
 		});
-	}, [applyTerminalActivityEvaluation, getPanelForSession]);
+	}, [
+		applyTerminalActivityEvaluation,
+		getPanelForSession,
+		scheduleDeferredTerminalActivityFlush,
+	]);
 
 	useEffect(() => {
 		return window.terminay.onTerminalRecordingChanged(({ state }) => {
