@@ -225,7 +225,7 @@ export async function runHost(config: HostConfig): Promise<() => void> {
   channels.api.addEventListener('message', (event) => {
     void (async () => {
       const request = parseJson(event.data)
-      if (!request || request.type !== 'api-request' || typeof request.id !== 'string') return
+      if (request?.type !== 'api-request' || typeof request.id !== 'string') return
       try {
         const body = await api.handleApiRequest(
           String(request.pathname ?? ''),
