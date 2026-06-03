@@ -109,7 +109,7 @@ test.describe('workspace shell', () => {
   test('pops out the active terminal panel into a new window', async ({ appHarness, mainWindow }) => {
     await mainWindow.locator('.terminal-panel').first().click()
     const popoutWindow = await appHarness.openChildWindow(async () => {
-      await appHarness.sendAppCommand('popout-active')
+      await mainWindow.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+P' : 'Control+Shift+P')
     })
 
     await expect(popoutWindow.locator('.terminal-tab-title')).toContainText('Terminal 1')
