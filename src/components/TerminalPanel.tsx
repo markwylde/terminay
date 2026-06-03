@@ -19,6 +19,7 @@ const BRACKETED_PASTE_NEWLINE = '\x1b[200~\n\x1b[201~'
 const TERMINAL_CONTEXT_MAX_LINES = 200
 const TERMINAL_CONTEXT_MAX_CHARS = 20_000
 const REMOTE_TERMINAL_SCALE_PROPERTY = '--terminal-remote-scale'
+const EMPTY_TERMINAL_ROOT_SIZE = { height: 0, width: 0 }
 
 const searchOptions = {
   incremental: true,
@@ -113,6 +114,13 @@ function applyRemoteTerminalSize(
 
     syncRemoteTerminalElementSize(root, terminal)
   })
+}
+
+function getTerminalRootSize(root: HTMLElement) {
+  return {
+    height: Math.round(root.clientHeight),
+    width: Math.round(root.clientWidth),
+  }
 }
 
 function escapePathForShell(path: string): string {
@@ -370,7 +378,26 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       return true
     })
 
-    const fitAndResize = () => {
+    let pendingResizeForce = false
+    let resizeFrame: number | null = null
+    let lastFitSize = EMPTY_TERMINAL_ROOT_SIZE
+    let lastSentSize = { cols: 0, rows: 0 }
+
+    const fitAndResizeNow = (force = false) => {
+      resizeFrame = null
+
+      const nextRootSize = getTerminalRootSize(root)
+      if (
+        !force &&
+        nextRootSize.width === lastFitSize.width &&
+        nextRootSize.height === lastFitSize.height
+      ) {
+        updateRemoteViewportMetadata(sessionId, root)
+        return
+      }
+
+      lastFitSize = nextRootSize
+
       const remoteSizeOverride = remoteSizeOverrideRef.current
       if (remoteSizeOverride) {
         applyRemoteTerminalSize(root, terminal, remoteSizeOverride.cols, remoteSizeOverride.rows, () => {
@@ -387,11 +414,27 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
       clearRemoteTerminalElementSize(root, terminal)
       fitAddon.fit()
-      window.terminay.resizeTerminal(sessionId, terminal.cols, terminal.rows)
+      if (terminal.cols !== lastSentSize.cols || terminal.rows !== lastSentSize.rows) {
+        lastSentSize = { cols: terminal.cols, rows: terminal.rows }
+        window.terminay.resizeTerminal(sessionId, terminal.cols, terminal.rows)
+      }
       updateRemoteViewportMetadata(sessionId, root)
     }
 
-    fitAndResize()
+    const fitAndResize = (force = false) => {
+      pendingResizeForce = pendingResizeForce || force
+      if (resizeFrame !== null) {
+        return
+      }
+
+      resizeFrame = window.requestAnimationFrame(() => {
+        const shouldForce = pendingResizeForce
+        pendingResizeForce = false
+        fitAndResizeNow(shouldForce)
+      })
+    }
+
+    fitAndResize(true)
 
     const terminalDataDisposer = window.terminay.onTerminalData((message) => {
       if (message.id !== sessionId) {
@@ -418,7 +461,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       const baseFontSize = settingsRef.current.fontSize ?? 13
       const newFontSize = baseFontSize + message.zoomLevel
       terminal.options.fontSize = Math.max(6, newFontSize)
-      fitAndResize()
+      fitAndResize(true)
     })
 
     const remoteSizeOverrideDisposer = window.terminay.onTerminalRemoteSizeOverrideChanged((message) => {
@@ -429,7 +472,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       if (!message.active) {
         remoteSizeOverrideRef.current = null
         setIsRemoteSizeOverrideActive(false)
-        fitAndResize()
+        fitAndResize(true)
         return
       }
 
@@ -451,7 +494,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
       terminal.options.fontSize = Math.max(6, (settingsRef.current.fontSize ?? 13) + zoomLevel)
       zoomLevelRef.current = zoomLevel
-      fitAndResize()
+      fitAndResize(true)
     })
 
     const keyDisposer = terminal.onKey(() => {
@@ -633,6 +676,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       activeDisposer.dispose()
       if (activeFocusFrame !== null) {
         window.cancelAnimationFrame(activeFocusFrame)
+      }
+      if (resizeFrame !== null) {
+        window.cancelAnimationFrame(resizeFrame)
       }
       resizeDisposer.dispose()
       keyDisposer.dispose()
