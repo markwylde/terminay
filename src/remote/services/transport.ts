@@ -437,8 +437,7 @@ class WebRtcTerminalSocket implements RemoteMessageSocket {
 
 	send(message: OutboundClientMessage): void {
 		if (
-			!this.channel ||
-			this.channel.readyState !== 'open' ||
+			this.channel?.readyState !== 'open' ||
 			!this.hasHandshake ||
 			!this.connectionId
 		) {
