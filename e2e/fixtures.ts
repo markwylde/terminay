@@ -1,4 +1,6 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { createServer, type Server } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron as electron, expect, type ElectronApplication, type Page, test as base } from '@playwright/test'
@@ -28,6 +30,80 @@ type ElectronFixtures = {
   mainWindow: Page
   tempDir: string
   userDataDir: string
+}
+
+const contentTypes: Record<string, string> = {
+  '.css': 'text/css',
+  '.html': 'text/html',
+  '.ico': 'image/x-icon',
+  '.js': 'text/javascript',
+  '.json': 'application/json',
+  '.mjs': 'text/javascript',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+}
+
+async function createStaticServer(): Promise<{ close: () => Promise<void>; url: string }> {
+  const distRoot = path.resolve('dist')
+  const publicRoot = path.resolve('public')
+
+  const server: Server = createServer(async (request, response) => {
+    try {
+      const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1')
+      const pathname = requestUrl.pathname === '/' ? '/index.html' : requestUrl.pathname
+      const relativePath = decodeURIComponent(pathname).replace(/^\/+/, '')
+      let filePath: string | null = null
+
+      for (const root of [distRoot, publicRoot]) {
+        const candidate = path.resolve(root, relativePath)
+        if (!candidate.startsWith(root)) {
+          continue
+        }
+
+        const candidateStat = await stat(candidate).catch(() => null)
+        if (candidateStat?.isFile()) {
+          filePath = candidate
+          break
+        }
+      }
+
+      if (!filePath) {
+        response.writeHead(404)
+        response.end('Not found')
+        return
+      }
+
+      response.writeHead(200, {
+        'content-type': contentTypes[path.extname(filePath)] ?? 'application/octet-stream',
+      })
+      createReadStream(filePath).pipe(response)
+    } catch {
+      response.writeHead(500)
+      response.end('Internal server error')
+    }
+  })
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject)
+      resolve()
+    })
+  })
+
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to start E2E static server.')
+  }
+
+  return {
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()))
+      }),
+    url: `http://127.0.0.1:${address.port}/`,
+  }
 }
 
 async function closeElectronAppGracefully(electronApp: ElectronApplication): Promise<void> {
@@ -101,6 +177,7 @@ export const test = base.extend<ElectronFixtures>({
   },
 
   electronApp: async ({ tempDir, userDataDir }, use) => {
+    const staticServer = await createStaticServer()
     const electronApp = await electron.launch({
       args: ['.'],
       env: {
@@ -112,6 +189,7 @@ export const test = base.extend<ElectronFixtures>({
         TERMINAY_USER_DATA_DIR: userDataDir,
         TMP: tempDir,
         TMPDIR: tempDir,
+        VITE_DEV_SERVER_URL: staticServer.url,
       },
     })
 
@@ -119,6 +197,7 @@ export const test = base.extend<ElectronFixtures>({
       await use(electronApp)
     } finally {
       await closeElectronAppGracefully(electronApp)
+      await staticServer.close()
     }
   },
 
