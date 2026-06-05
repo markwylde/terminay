@@ -72,6 +72,27 @@ function openInBrowser(url: string): void {
   })
 }
 
+function isAppNavigation(url: string): boolean {
+  try {
+    const parsedUrl = new URL(url)
+
+    if (VITE_DEV_SERVER_URL) {
+      return parsedUrl.origin === new URL(VITE_DEV_SERVER_URL).origin
+    }
+
+    if (parsedUrl.protocol !== 'file:') {
+      return false
+    }
+
+    const filePath = fileURLToPath(parsedUrl)
+    const relativePath = path.relative(RENDERER_DIST, filePath)
+
+    return relativePath.length > 0 && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
+  } catch {
+    return false
+  }
+}
+
 function getBrandAssetPath(filename: string): string | null {
   const candidates = [
     path.join(process.env.VITE_PUBLIC, filename),
@@ -1618,6 +1639,15 @@ function createWindow() {
         },
       },
     }
+  })
+
+  window.webContents.on('will-navigate', (event) => {
+    if (isAppNavigation(event.url)) {
+      return
+    }
+
+    event.preventDefault()
+    openInBrowser(event.url)
   })
 
   if (VITE_DEV_SERVER_URL) {
