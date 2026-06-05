@@ -278,6 +278,90 @@ test.describe('terminal behavior', () => {
     await expect(search).toBeHidden()
   })
 
+  test('terminal links only open on modifier click', async ({ electronApp, mainWindow }) => {
+    const sessionId = await getActiveSessionId(mainWindow)
+    const linkUrl = 'https://example.com/terminay-link-test'
+    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+
+    await electronApp.evaluate(({ ipcMain }) => {
+      const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
+      state.__terminayOpenedExternalLinks = []
+      ipcMain.removeHandler('shell:open-external')
+      ipcMain.handle('shell:open-external', (_event, url: string) => {
+        state.__terminayOpenedExternalLinks?.push(url)
+      })
+    })
+
+    await electronApp.evaluate(
+      ({ BrowserWindow }, payload) => {
+        const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed())
+        window?.webContents.send('terminal:data', payload)
+      },
+      { data: `\r\n${linkUrl}\r\n`, id: sessionId },
+    )
+
+    const link = mainWindow.locator('.xterm-rows').getByText(linkUrl)
+    await expect(link).toBeVisible()
+    const linkBox = await link.boundingBox()
+    if (!linkBox) {
+      throw new Error('Terminal link location is unavailable')
+    }
+    const linkCenter = {
+      x: linkBox.x + linkBox.width / 2,
+      y: linkBox.y + linkBox.height / 2,
+    }
+
+    await mainWindow.mouse.click(linkCenter.x, linkCenter.y)
+    await expect
+      .poll(async () =>
+        electronApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
+          return state.__terminayOpenedExternalLinks ?? []
+        }),
+      )
+      .toEqual([])
+
+    await mainWindow.keyboard.down(modifier)
+    await mainWindow.mouse.click(linkCenter.x, linkCenter.y)
+    await mainWindow.keyboard.up(modifier)
+    await expect
+      .poll(async () =>
+        electronApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
+          return state.__terminayOpenedExternalLinks ?? []
+        }),
+      )
+      .toEqual([linkUrl])
+  })
+
+  test('external renderer navigations open outside the app', async ({ electronApp, mainWindow }) => {
+    const linkUrl = 'https://example.com/terminay-navigation-test'
+
+    await electronApp.evaluate(({ shell }) => {
+      const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
+      state.__terminayOpenedExternalLinks = []
+      shell.openExternal = ((url: string) => {
+        state.__terminayOpenedExternalLinks?.push(url)
+        return Promise.resolve()
+      }) as typeof shell.openExternal
+    })
+
+    const initialUrl = mainWindow.url()
+    await mainWindow.evaluate((url) => {
+      window.location.href = url
+    }, linkUrl)
+
+    await expect
+      .poll(async () =>
+        electronApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
+          return state.__terminayOpenedExternalLinks ?? []
+        }),
+      )
+      .toEqual([linkUrl])
+    await expect.poll(async () => mainWindow.url()).toBe(initialUrl)
+  })
+
   test('terminal activity overview jumps to inactive terminals across projects', async ({ mainWindow }) => {
     await sendAppCommand(mainWindow, 'new-terminal')
     await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
