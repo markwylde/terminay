@@ -264,7 +264,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       const modifierKey = isMac ? event.metaKey : event.ctrlKey
       if (modifierKey) {
         event.preventDefault()
-        window.terminay.openExternal(uri)
+        void window.terminay.openExternal(uri)
       }
     }
 
