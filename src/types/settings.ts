@@ -60,6 +60,18 @@ export type TerminalRecordingSettings = {
 	sensitiveInputPolicy: TerminalRecordingSensitiveInputPolicy;
 };
 
+export type GitPanelViewMode = 'list' | 'tree';
+
+export type SidebarPaneState = 'expanded' | 'collapsed';
+
+export type SidebarSettings = {
+	gitPanelViewMode: GitPanelViewMode;
+	defaultExplorerState: SidebarPaneState;
+	defaultGitState: SidebarPaneState;
+	defaultWidth: number;
+	defaultExplorerPaneHeight: number;
+};
+
 export type FileViewerSettings = {
 	customFileExtensions: FileViewerCustomExtensionDefault[];
 	refreshIntervalSeconds: number;
@@ -125,6 +137,7 @@ export type TerminalSettings = {
 	recording: TerminalRecordingSettings;
 	remoteAccess: RemoteAccessSettings;
 	shell: ShellSettings;
+	sidebar: SidebarSettings;
 	theme: TerminalThemeSettings;
 };
 

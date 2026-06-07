@@ -202,6 +202,37 @@ export type FileExplorerGitStatuses = {
   statuses: Record<string, FileExplorerGitStatus>
 }
 
+export type GitFileState =
+  | 'added'
+  | 'modified'
+  | 'deleted'
+  | 'renamed'
+  | 'copied'
+  | 'untracked'
+  | 'conflicted'
+
+export type GitChangeEntry = {
+  /** Absolute path to the changed file. */
+  path: string
+  /** Path relative to the repository root, using forward slashes. */
+  relativePath: string
+  state: GitFileState
+  /** True when the change is in the index (staged), false when in the working tree. */
+  staged: boolean
+  /** Absolute path of the original file for renames/copies. */
+  originalPath?: string
+  /** Original path relative to the repository root for renames/copies. */
+  originalRelativePath?: string
+}
+
+export type GitPanelStatus = {
+  gitAvailable: boolean
+  repoRoot: string | null
+  /** Current branch name, or a short detached-HEAD label, or null when unknown. */
+  branch: string | null
+  entries: GitChangeEntry[]
+}
+
 export type TerminalZoomMessage = {
   zoomLevel: number
 }
@@ -367,6 +398,7 @@ export interface TerminayApi {
   listDirectory: (dirPath: string) => Promise<FileExplorerEntry[]>
   searchFiles: (options: { rootPath: string; query: string; limit?: number }) => Promise<FileSearchResult[]>
   getFileExplorerGitStatuses: (dirPath: string) => Promise<FileExplorerGitStatuses>
+  getGitPanelStatus: (dirPath: string) => Promise<GitPanelStatus>
   getFileInfo: (filePath: string) => Promise<FileViewerFileInfo>
   readFileBytes: (options: { path: string; start: number; length: number }) => Promise<FileViewerByteRange>
   readFileText: (options: {
