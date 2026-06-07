@@ -20,6 +20,7 @@ import type {
   FileViewerTextEncoding,
   FileViewerTextRange,
   FileViewerWatchEvent,
+  GitPanelStatus,
   EditWindowResult,
   EditWindowState,
   MacrosChangeMessage,
@@ -51,6 +52,8 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.invoke('fs:search-files', options) as Promise<FileSearchResult[]>,
   getFileExplorerGitStatuses: (dirPath: string) =>
     ipcRenderer.invoke('fs:get-git-statuses', { dirPath }) as Promise<FileExplorerGitStatuses>,
+  getGitPanelStatus: (dirPath: string) =>
+    ipcRenderer.invoke('fs:get-git-panel-status', { dirPath }) as Promise<GitPanelStatus>,
   getFileInfo: (filePath: string) => ipcRenderer.invoke('file:get-info', { path: filePath }) as Promise<FileViewerFileInfo>,
   readFileBytes: (options: { path: string; start: number; length: number }) =>
     ipcRenderer.invoke('file:read-bytes', options) as Promise<FileViewerByteRange>,
