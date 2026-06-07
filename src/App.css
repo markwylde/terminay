@@ -2292,6 +2292,11 @@
   padding: 4px 0;
 }
 
+.file-explorer-sidebar > .sidebar-split {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .file-explorer-sidebar__resizer {
   position: absolute;
   top: 0;

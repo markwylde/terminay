@@ -22,7 +22,9 @@ import {
 	FileEdit,
 	FolderPlus,
 	FolderSync,
+	FolderTree,
 	History,
+	List,
 	Play,
 	PlusSquare,
 	Search,
@@ -37,6 +39,9 @@ import type { FilePanelInstanceParams } from './components/file-viewer';
 import { FilePanel, FileTab } from './components/file-viewer';
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
+import { GitPanel } from './components/git-panel/GitPanel';
+import { SidebarPane } from './components/sidebar/SidebarPane';
+import { SidebarSplit } from './components/sidebar/SidebarSplit';
 import { TerminalPanel } from './components/TerminalPanel';
 import type {
 	TerminalActivityState,
@@ -48,6 +53,8 @@ import type {
 import { TerminalTab } from './components/TerminalTab';
 import { useMacroSettings } from './hooks/useMacroSettings';
 import { useTerminalSettings } from './hooks/useTerminalSettings';
+import { defaultTerminalSettings } from './terminalSettings';
+import type { GitPanelViewMode, SidebarSettings } from './types/settings';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -71,6 +78,8 @@ import type {
 	FileExplorerEntry,
 	FileExplorerGitStatus,
 	FileSearchResult,
+	GitChangeEntry,
+	GitPanelStatus,
 	RemoteAccessStatus,
 	TerminalRecordingStartMetadata,
 	TerminalRecordingState,
@@ -124,6 +133,9 @@ type ProjectTab = {
 	emoji: string;
 	fileExplorerWidth: number;
 	isFileExplorerOpen: boolean;
+	isExplorerPaneCollapsed: boolean;
+	isGitPaneCollapsed: boolean;
+	sidebarExplorerHeight: number;
 	rootFolder: string;
 };
 
@@ -192,9 +204,9 @@ type ProjectWorkspaceProps = {
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher';
 const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path';
-const DEFAULT_FILE_EXPLORER_WIDTH = 280;
 const MIN_FILE_EXPLORER_WIDTH = 180;
 const MAX_FILE_EXPLORER_WIDTH = 520;
+const MIN_SIDEBAR_PANE_HEIGHT = 80;
 const FILE_EXPLORER_DRAG_THRESHOLD = 6;
 const FILE_EXPLORER_WATCH_REFRESH_DELAY_MS = 120;
 const FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS = 2500;
@@ -372,14 +384,18 @@ function createProjectTab(
 	index: number,
 	homePath: string,
 	usedColors: Iterable<string> = [],
+	sidebarDefaults: SidebarSettings = defaultTerminalSettings.sidebar,
 ): ProjectTab {
 	return {
 		id: `project-${index}`,
 		title: `Project ${index}`,
 		color: getRandomProjectTabColor(usedColors),
 		emoji: '',
-		fileExplorerWidth: DEFAULT_FILE_EXPLORER_WIDTH,
+		fileExplorerWidth: sidebarDefaults.defaultWidth,
 		isFileExplorerOpen: false,
+		isExplorerPaneCollapsed: sidebarDefaults.defaultExplorerState === 'collapsed',
+		isGitPaneCollapsed: sidebarDefaults.defaultGitState === 'collapsed',
+		sidebarExplorerHeight: sidebarDefaults.defaultExplorerPaneHeight,
 		rootFolder: homePath,
 	};
 }
@@ -1507,6 +1523,10 @@ const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceProps
 >(({ isActive, isMac, macros, onAddProject, onCloseProject, onEditProject, onMoveTerminalToProject, onTerminalActivityOverviewChange, onUpdateProject, popoutUrl, project, projects }, ref) => {
 	const { settings } = useTerminalSettings();
+	const settingsRef = useRef(settings);
+	useEffect(() => {
+		settingsRef.current = settings;
+	}, [settings]);
 	const dockviewApiRef = useRef<DockviewApi | null>(null);
 	const initialTerminalSeededRef = useRef(false);
 	const panelSessionMapRef = useRef<Map<string, string>>(new Map());
@@ -1539,6 +1559,7 @@ const ProjectWorkspace = forwardRef<
 		pointerId: number;
 		startWidth: number;
 		startX: number;
+		latestWidth: number;
 	} | null>(null);
 	const [errorText, setErrorText] = useState<string | null>(null);
 	const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
@@ -1554,6 +1575,9 @@ const ProjectWorkspace = forwardRef<
 	const [gitStatuses, setGitStatuses] = useState<
 		Record<string, FileExplorerGitStatus>
 	>({});
+	const [gitPanelStatus, setGitPanelStatus] = useState<GitPanelStatus | null>(
+		null,
+	);
 	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
 	const [runningMacroRunsBySession, setRunningMacroRunsBySession] = useState<
 		Record<string, TerminalTabMacroRun[]>
@@ -2016,6 +2040,7 @@ const ProjectWorkspace = forwardRef<
 	const refreshGitStatuses = useCallback(async () => {
 		if (!project.rootFolder) {
 			setGitStatuses({});
+			setGitPanelStatus(null);
 			return;
 		}
 
@@ -2025,12 +2050,15 @@ const ProjectWorkspace = forwardRef<
 
 		isRefreshingGitStatusesRef.current = true;
 		try {
-			const nextStatuses = await window.terminay.getFileExplorerGitStatuses(
-				project.rootFolder,
-			);
+			const [nextStatuses, nextPanel] = await Promise.all([
+				window.terminay.getFileExplorerGitStatuses(project.rootFolder),
+				window.terminay.getGitPanelStatus(project.rootFolder),
+			]);
 			setGitStatuses(nextStatuses.statuses);
+			setGitPanelStatus(nextPanel);
 		} catch {
 			setGitStatuses({});
+			setGitPanelStatus(null);
 		} finally {
 			isRefreshingGitStatusesRef.current = false;
 		}
@@ -2589,6 +2617,38 @@ const ProjectWorkspace = forwardRef<
 			stopRecordingForSession,
 			suppressInitialTerminalActivity,
 		],
+	);
+
+	const handleOpenGitEntry = useCallback(
+		(entry: GitChangeEntry) => {
+			// Untracked files have no diff to show; open them directly. Everything
+			// else opens straight into the file viewer's diff mode.
+			if (entry.state === 'untracked') {
+				void openFile(entry.path);
+				return;
+			}
+
+			void openFile(entry.path, { initialMode: 'diff' });
+		},
+		[openFile],
+	);
+
+	const updateSidebarSettings = useCallback(
+		(patch: Partial<SidebarSettings>) => {
+			const current = settingsRef.current;
+			void window.terminay.updateTerminalSettings({
+				...current,
+				sidebar: { ...current.sidebar, ...patch },
+			});
+		},
+		[],
+	);
+
+	const setGitPanelViewMode = useCallback(
+		(mode: GitPanelViewMode) => {
+			updateSidebarSettings({ gitPanelViewMode: mode });
+		},
+		[updateSidebarSettings],
 	);
 
 	const openFolder = useCallback(
@@ -3153,6 +3213,7 @@ const ProjectWorkspace = forwardRef<
 				MIN_FILE_EXPLORER_WIDTH,
 				MAX_FILE_EXPLORER_WIDTH,
 			);
+			resizeState.latestWidth = nextWidth;
 			onUpdateProject(project.id, { fileExplorerWidth: nextWidth });
 		};
 
@@ -3163,6 +3224,7 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			explorerResizeStateRef.current = null;
+			updateSidebarSettings({ defaultWidth: resizeState.latestWidth });
 		};
 
 		window.addEventListener('pointermove', onPointerMove);
@@ -3173,7 +3235,7 @@ const ProjectWorkspace = forwardRef<
 			window.removeEventListener('pointerup', onPointerUp);
 			window.removeEventListener('pointercancel', onPointerUp);
 		};
-	}, [onUpdateProject, project.id]);
+	}, [onUpdateProject, project.id, updateSidebarSettings]);
 
 	const runMacro = useCallback(
 		async (macro: MacroDefinition) => {
@@ -3363,11 +3425,14 @@ const ProjectWorkspace = forwardRef<
 	}, [onEditProject, project.id]);
 
 	const runAiTabMetadata = useCallback(
-		async (target: AiTabMetadataTarget) => {
+		async (target: AiTabMetadataTarget, targetPanelId?: string) => {
 			setIsMacroLauncherOpen(false);
 			setMacroQuery('');
 
-			const activePanel = dockviewApiRef.current?.activePanel;
+			const api = dockviewApiRef.current;
+			const activePanel = targetPanelId
+				? api?.getPanel(targetPanelId)
+				: api?.activePanel;
 			const sessionId = activePanel?.params?.sessionId;
 			if (!activePanel || !sessionId) {
 				setErrorText('Open a terminal before generating tab metadata.');
@@ -3465,6 +3530,9 @@ const ProjectWorkspace = forwardRef<
 			settings.aiTabMetadata,
 		],
 	);
+
+	const runAiTabMetadataRef = useRef(runAiTabMetadata);
+	runAiTabMetadataRef.current = runAiTabMetadata;
 
 	const createProject = useCallback(() => {
 		setErrorText(null);
@@ -4661,6 +4729,13 @@ const ProjectWorkspace = forwardRef<
 				}
 			};
 
+			const onGenerateTabTitle = (event: Event) => {
+				const customEvent = event as CustomEvent<{ panelId: string }>;
+				if (customEvent.detail?.panelId) {
+					void runAiTabMetadataRef.current('title', customEvent.detail.panelId);
+				}
+			};
+
 			const onDragStart = () => {
 				targetWindow.requestAnimationFrame(() => {
 					const data = getPanelData();
@@ -4711,6 +4786,10 @@ const ProjectWorkspace = forwardRef<
 			targetWindow.addEventListener('click', onClick, true);
 			targetWindow.addEventListener('dblclick', onDblClick, true);
 			targetWindow.addEventListener('terminay-edit-terminal', onEditTerminal);
+			targetWindow.addEventListener(
+				'terminay-generate-tab-title',
+				onGenerateTabTitle,
+			);
 			targetWindow.addEventListener('dragstart', onDragStart, true);
 			targetWindow.addEventListener('dragend', onDragEnd, true);
 
@@ -4720,6 +4799,10 @@ const ProjectWorkspace = forwardRef<
 				targetWindow.removeEventListener(
 					'terminay-edit-terminal',
 					onEditTerminal,
+				);
+				targetWindow.removeEventListener(
+					'terminay-generate-tab-title',
+					onGenerateTabTitle,
 				);
 				targetWindow.removeEventListener('dragstart', onDragStart, true);
 				targetWindow.removeEventListener('dragend', onDragEnd, true);
@@ -5092,24 +5175,117 @@ const ProjectWorkspace = forwardRef<
 						className="file-explorer-sidebar"
 						style={{ width: `${project.fileExplorerWidth}px` }}
 					>
-						<div className="file-explorer-sidebar__body">
-							<FileExplorerTree
-								directoryChildren={directoryChildren}
-								directoryErrors={directoryErrors}
-								expandedPaths={expandedPaths}
-								gitStatuses={gitStatuses}
-								loadingPaths={loadingPaths}
-								onOpenFile={openFile}
-								onOpenFolder={openFolder}
-								onToggleDirectory={toggleDirectory}
-								onRename={handleRename}
-								onDelete={handleDelete}
-								onNewFile={handleNewFile}
-								onNewFolder={handleNewFolder}
-								onOpenTerminal={handleOpenTerminalAt}
-								rootPath={project.rootFolder}
-							/>
-						</div>
+						<SidebarSplit
+							topCollapsed={project.isExplorerPaneCollapsed}
+							bottomCollapsed={project.isGitPaneCollapsed}
+							topHeight={project.sidebarExplorerHeight}
+							minPaneHeight={MIN_SIDEBAR_PANE_HEIGHT}
+							onTopHeightChange={(height) => {
+								onUpdateProject(project.id, {
+									sidebarExplorerHeight: height,
+								});
+							}}
+							onTopHeightCommit={(height) => {
+								updateSidebarSettings({
+									defaultExplorerPaneHeight: height,
+								});
+							}}
+							top={
+								<SidebarPane
+									title="Explorer"
+									collapsed={project.isExplorerPaneCollapsed}
+									onToggleCollapsed={() => {
+										const next = !project.isExplorerPaneCollapsed;
+										onUpdateProject(project.id, {
+											isExplorerPaneCollapsed: next,
+										});
+										updateSidebarSettings({
+											defaultExplorerState: next
+												? 'collapsed'
+												: 'expanded',
+										});
+									}}
+								>
+									<FileExplorerTree
+										directoryChildren={directoryChildren}
+										directoryErrors={directoryErrors}
+										expandedPaths={expandedPaths}
+										gitStatuses={gitStatuses}
+										loadingPaths={loadingPaths}
+										onOpenFile={openFile}
+										onOpenFolder={openFolder}
+										onToggleDirectory={toggleDirectory}
+										onRename={handleRename}
+										onDelete={handleDelete}
+										onNewFile={handleNewFile}
+										onNewFolder={handleNewFolder}
+										onOpenTerminal={handleOpenTerminalAt}
+										rootPath={project.rootFolder}
+									/>
+								</SidebarPane>
+							}
+							bottom={
+								<SidebarPane
+									title="Git"
+									collapsed={project.isGitPaneCollapsed}
+									onToggleCollapsed={() => {
+										const next = !project.isGitPaneCollapsed;
+										onUpdateProject(project.id, {
+											isGitPaneCollapsed: next,
+										});
+										updateSidebarSettings({
+											defaultGitState: next ? 'collapsed' : 'expanded',
+										});
+									}}
+									count={gitPanelStatus?.entries.length}
+									accessory={
+										gitPanelStatus?.branch ? (
+											<span className="sidebar-pane__branch">
+												{gitPanelStatus.branch}
+											</span>
+										) : null
+									}
+									actions={
+										project.isGitPaneCollapsed ? undefined : (
+											<>
+												<button
+													type="button"
+													className={`sidebar-pane__action-button${
+														settings.sidebar.gitPanelViewMode === 'list'
+															? ' sidebar-pane__action-button--active'
+															: ''
+													}`}
+													onClick={() => setGitPanelViewMode('list')}
+													aria-label="Show git changes as a list"
+													title="View as list"
+												>
+													<List size={14} aria-hidden="true" />
+												</button>
+												<button
+													type="button"
+													className={`sidebar-pane__action-button${
+														settings.sidebar.gitPanelViewMode === 'tree'
+															? ' sidebar-pane__action-button--active'
+															: ''
+													}`}
+													onClick={() => setGitPanelViewMode('tree')}
+													aria-label="Show git changes as a tree"
+													title="View as tree"
+												>
+													<FolderTree size={14} aria-hidden="true" />
+												</button>
+											</>
+										)
+									}
+								>
+									<GitPanel
+										status={gitPanelStatus}
+										viewMode={settings.sidebar.gitPanelViewMode}
+										onOpenEntry={handleOpenGitEntry}
+									/>
+								</SidebarPane>
+							}
+						/>
 
 						<div
 							className="file-explorer-sidebar__resizer"
@@ -5118,6 +5294,7 @@ const ProjectWorkspace = forwardRef<
 									pointerId: event.pointerId,
 									startWidth: project.fileExplorerWidth,
 									startX: event.clientX,
+									latestWidth: project.fileExplorerWidth,
 								};
 								(event.currentTarget as HTMLDivElement).setPointerCapture(
 									event.pointerId,
@@ -5480,6 +5657,11 @@ function App() {
 		[],
 	);
 	const { macros } = useMacroSettings();
+	const { settings } = useTerminalSettings();
+	const sidebarDefaultsRef = useRef(settings.sidebar);
+	useEffect(() => {
+		sidebarDefaultsRef.current = settings.sidebar;
+	}, [settings.sidebar]);
 	const projectCounterRef = useRef(1);
 	const workspaceRefs = useRef(
 		new Map<string, ProjectWorkspaceHandle | null>(),
@@ -5570,6 +5752,7 @@ function App() {
 				projectCounterRef.current,
 				homePath,
 				current.map((project) => project.color),
+				sidebarDefaultsRef.current,
 			),
 		]);
 		setActiveProjectId(nextProjectId);
