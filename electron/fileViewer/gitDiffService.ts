@@ -5,6 +5,9 @@ import type {
   FileExplorerGitStatuses,
   FileViewerGitDiff,
   FileViewerGitRepoInfo,
+  GitChangeEntry,
+  GitFileState,
+  GitPanelStatus,
 } from '../../src/types/terminay'
 import { getGitWorkingDirectory } from './pathUtils'
 import type { FileBufferService } from './fileBufferService'
@@ -70,6 +73,68 @@ export class GitDiffService {
       gitAvailable: true,
       repoRoot,
       statuses: parseExplorerStatuses(stdout, info.path),
+    }
+  }
+
+  async getPanelStatus(rawPath: string): Promise<GitPanelStatus> {
+    const info = await this.fileBufferService.getFileInfo(rawPath)
+    const workingDirectory = getGitWorkingDirectory(info.path, info.isDirectory)
+
+    let repoRoot: string | null = null
+
+    try {
+      const result = await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd: workingDirectory })
+      repoRoot = result.stdout.trim() || null
+    } catch (error) {
+      if (isMissingGitError(error)) {
+        return {
+          gitAvailable: false,
+          repoRoot: null,
+          branch: null,
+          entries: [],
+        }
+      }
+
+      return {
+        gitAvailable: true,
+        repoRoot: null,
+        branch: null,
+        entries: [],
+      }
+    }
+
+    if (!repoRoot) {
+      return {
+        gitAvailable: true,
+        repoRoot: null,
+        branch: null,
+        entries: [],
+      }
+    }
+
+    const { stdout } = await execFileAsync(
+      'git',
+      ['status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all', '--ignored=no'],
+      { cwd: info.path },
+    )
+
+    const { branch, entries } = parsePanelEntries(stdout, repoRoot)
+    const resolvedBranch = branch === null ? await this.resolveDetachedBranch(info.path) : branch
+
+    return {
+      gitAvailable: true,
+      repoRoot,
+      branch: resolvedBranch,
+      entries,
+    }
+  }
+
+  private async resolveDetachedBranch(cwd: string): Promise<string> {
+    try {
+      const result = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd })
+      return result.stdout.trim() || 'HEAD'
+    } catch {
+      return 'HEAD'
     }
   }
 
@@ -209,6 +274,145 @@ function parseExplorerStatuses(output: string, rootPath: string): Record<string,
   }
 
   return result
+}
+
+function parsePanelEntries(
+  output: string,
+  repoRoot: string,
+): { branch: string | null; entries: GitChangeEntry[] } {
+  const records = output.split('\0')
+  const entries: GitChangeEntry[] = []
+  let branch: string | null = null
+
+  let index = 0
+
+  // The first record (when --branch is used) is the branch header line.
+  if (records.length > 0 && records[0].startsWith('## ')) {
+    branch = parseBranchHeader(records[0])
+    index = 1
+  }
+
+  for (; index < records.length; index += 1) {
+    const record = records[index]
+    if (record.length === 0) {
+      continue
+    }
+
+    const code = record.slice(0, 2)
+    if (record.length < 3 || record[2] !== ' ') {
+      // Malformed porcelain line; skip rather than crash.
+      continue
+    }
+
+    const porcelainPath = record.slice(3)
+    if (porcelainPath.length === 0) {
+      continue
+    }
+
+    const indexChar = code[0]
+    const workTreeChar = code[1]
+
+    // Renames/copies emit a second NUL record holding the original path.
+    let originalPorcelainPath: string | null = null
+    if (indexChar === 'R' || indexChar === 'C' || workTreeChar === 'R' || workTreeChar === 'C') {
+      const next = records[index + 1]
+      if (next !== undefined && next.length > 0) {
+        originalPorcelainPath = next
+        index += 1
+      }
+    }
+
+    if (code === '??') {
+      entries.push(buildPanelEntry(repoRoot, porcelainPath, 'untracked', false, null))
+      continue
+    }
+
+    if (isConflictCode(indexChar, workTreeChar)) {
+      entries.push(buildPanelEntry(repoRoot, porcelainPath, 'conflicted', false, originalPorcelainPath))
+      continue
+    }
+
+    const stagedState = mapPorcelainStateChar(indexChar)
+    if (stagedState) {
+      entries.push(buildPanelEntry(repoRoot, porcelainPath, stagedState, true, originalPorcelainPath))
+    }
+
+    const unstagedState = mapPorcelainStateChar(workTreeChar)
+    if (unstagedState) {
+      entries.push(buildPanelEntry(repoRoot, porcelainPath, unstagedState, false, originalPorcelainPath))
+    }
+  }
+
+  return { branch, entries }
+}
+
+function parseBranchHeader(record: string): string | null {
+  const value = record.slice(3).trim()
+
+  if (value.startsWith('HEAD (no branch)')) {
+    // Detached HEAD; signal the caller to resolve a short sha label.
+    return null
+  }
+
+  const name = value.split('...')[0].split(' ')[0].split('(')[0]
+  return name.length > 0 ? name : null
+}
+
+function isConflictCode(indexChar: string, workTreeChar: string): boolean {
+  if (indexChar === 'U' || workTreeChar === 'U') {
+    return true
+  }
+  if (indexChar === 'A' && workTreeChar === 'A') {
+    return true
+  }
+  if (indexChar === 'D' && workTreeChar === 'D') {
+    return true
+  }
+  return false
+}
+
+function mapPorcelainStateChar(char: string): GitFileState | null {
+  switch (char) {
+    case 'A':
+      return 'added'
+    case 'M':
+      return 'modified'
+    case 'T':
+      return 'modified'
+    case 'D':
+      return 'deleted'
+    case 'R':
+      return 'renamed'
+    case 'C':
+      return 'copied'
+    case 'U':
+      return 'conflicted'
+    default:
+      return null
+  }
+}
+
+function buildPanelEntry(
+  repoRoot: string,
+  porcelainPath: string,
+  state: GitFileState,
+  staged: boolean,
+  originalPorcelainPath: string | null,
+): GitChangeEntry {
+  const relativePath = porcelainPath.replace(/\\/g, '/')
+  const entry: GitChangeEntry = {
+    path: path.resolve(repoRoot, porcelainPath),
+    relativePath,
+    state,
+    staged,
+  }
+
+  if (originalPorcelainPath && originalPorcelainPath.length > 0) {
+    entry.originalRelativePath = originalPorcelainPath.replace(/\\/g, '/')
+    entry.originalPath = path.resolve(repoRoot, originalPorcelainPath)
+  }
+
+  return entry
 }
 
 function toExplorerStatus(code: string): 'modified' | 'new' | null {
