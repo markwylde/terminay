@@ -61,6 +61,7 @@ function setValueAtPath(settings: TerminalSettings, key: string, value: boolean 
     'recording',
     'remoteAccess',
     'shell',
+    'sidebar',
     'theme',
   ])
   const [root] = segments

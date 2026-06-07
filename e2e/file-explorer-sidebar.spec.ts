@@ -223,6 +223,224 @@ test('file explorer colors git new and modified files like VS Code', async ({ cr
   await expect(docsFolder.locator('.file-explorer-tree-name')).toHaveCSS('color', 'rgb(226, 192, 141)')
 })
 
+test('git sidebar pane lists grouped working tree changes and opens a diff', async ({
+  createWorkspace,
+  mainWindow,
+}) => {
+  const workspace = await createWorkspace({
+    name: 'git-pane-changes',
+    seed: {
+      directories: ['docs'],
+      files: {
+        'README.md': 'initial readme\n',
+        'docs/guide.md': 'tracked guide\n',
+      },
+    },
+  })
+
+  await execFileAsync('git', ['init'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
+
+  // A staged new file, an unstaged modification, and an untracked file.
+  await workspace.writeText('staged-new.txt', 'staged\n')
+  await execFileAsync('git', ['add', 'staged-new.txt'], { cwd: workspace.rootDir })
+  await workspace.writeText('README.md', 'initial readme\nwith edits\n')
+  await workspace.writeText('untracked.txt', 'brand new\n')
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+
+  // The Staged Changes group lists the added file with an "A" badge.
+  const stagedGroup = gitPane.locator('.git-panel__group').filter({ hasText: 'Staged Changes' })
+  const stagedRow = stagedGroup.locator('.git-panel__row').filter({ hasText: 'staged-new.txt' })
+  await expect(stagedRow).toBeVisible({ timeout: 6000 })
+  await expect(stagedRow.locator('.git-panel__badge')).toHaveText('A')
+
+  // The Changes group lists the modified and untracked files.
+  const changesGroup = gitPane.locator('.git-panel__group').filter({ hasText: /^Changes/ })
+  const modifiedRow = changesGroup.locator('.git-panel__row').filter({ hasText: 'README.md' })
+  const untrackedRow = changesGroup.locator('.git-panel__row').filter({ hasText: 'untracked.txt' })
+  await expect(modifiedRow.locator('.git-panel__badge')).toHaveText('M')
+  await expect(untrackedRow.locator('.git-panel__badge')).toHaveText('U')
+
+  // Modified files are colour-coded amber, matching the file tree.
+  await expect(modifiedRow.locator('.git-panel__icon')).toHaveCSS('color', 'rgb(226, 192, 141)')
+
+  // The pane header shows the branch name and a total change count of 3.
+  await expect(gitPane.locator('.sidebar-pane__count')).toHaveText('3')
+  await expect(gitPane.locator('.sidebar-pane__branch')).toHaveText(/^(main|master)$/)
+
+  // Clicking a tracked change opens it in the file viewer.
+  await modifiedRow.click()
+  await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
+
+  // Collapsing the Git pane hides the change list.
+  await gitPane.locator('.sidebar-pane__header').click()
+  await expect(gitPane.locator('.git-panel__row')).toHaveCount(0)
+})
+
+test('git sidebar pane shows no changes for a clean repository', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'git-pane-clean',
+    seed: {
+      files: {
+        'README.md': 'initial readme\n',
+      },
+    },
+  })
+
+  await execFileAsync('git', ['init'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+
+  await expect(gitPane.locator('.git-panel__message')).toHaveText('No changes', { timeout: 6000 })
+  await expect(gitPane.locator('.git-panel__row')).toHaveCount(0)
+})
+
+test('git sidebar pane renders a nested tree and toggles to a flat list', async ({
+  createWorkspace,
+  mainWindow,
+}) => {
+  const workspace = await createWorkspace({
+    name: 'git-pane-tree',
+    seed: {
+      directories: ['src/lib'],
+      files: {
+        'src/lib/util.ts': 'export const x = 1\n',
+      },
+    },
+  })
+
+  await execFileAsync('git', ['init'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
+
+  await workspace.writeText('src/lib/util.ts', 'export const x = 2\n')
+  await workspace.writeText('src/lib/new.ts', 'export const y = 3\n')
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+
+  // Tree is the default view: nested folder rows are rendered.
+  const utilRow = gitPane.locator('.git-panel__row').filter({ hasText: 'util.ts' })
+  await expect(utilRow).toBeVisible({ timeout: 6000 })
+  // A single section has no redundant group header (the "Git" pane header covers it).
+  await expect(gitPane.locator('.git-panel__group-header')).toHaveCount(0)
+  await expect(gitPane.locator('.git-panel__folder-name').filter({ hasText: 'src' })).toBeVisible()
+  await expect(gitPane.locator('.git-panel__folder-name').filter({ hasText: 'lib' })).toBeVisible()
+  // In tree mode the row does not repeat the directory path.
+  await expect(utilRow.locator('.git-panel__dir')).toHaveCount(0)
+
+  // Collapsing the "lib" folder hides its files.
+  await gitPane.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
+  await expect(utilRow).toHaveCount(0)
+  // Re-expand.
+  await gitPane.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
+  await expect(utilRow).toBeVisible()
+
+  // Switching to list view removes the folder rows and shows the directory path.
+  await gitPane.getByLabel('Show git changes as a list').click()
+  await expect(gitPane.locator('.git-panel__folder')).toHaveCount(0)
+  await expect(utilRow.locator('.git-panel__dir')).toHaveText('src/lib')
+
+  // Switching back to tree view restores the folder rows.
+  await gitPane.getByLabel('Show git changes as a tree').click()
+  await expect(gitPane.locator('.git-panel__folder-name').filter({ hasText: 'src' })).toBeVisible()
+})
+
+test('collapsing a pane seeds new projects but leaves open projects untouched', async ({
+  createWorkspace,
+  mainWindow,
+}) => {
+  const workspace = await createWorkspace({
+    name: 'sidebar-default-state',
+    seed: {
+      files: {
+        'README.md': 'initial\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  // The Git pane lives in whichever project workspace is currently active.
+  const activeGitPane = () =>
+    mainWindow
+      .locator('.project-workspace--active .sidebar-pane')
+      .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+
+  // Collapse the Git pane in project 1.
+  const gitPane1 = activeGitPane()
+  await expect(gitPane1).toBeVisible()
+  await expect(gitPane1).not.toHaveClass(/sidebar-pane--collapsed/)
+  await gitPane1.locator('.sidebar-pane__header').click()
+  await expect(gitPane1).toHaveClass(/sidebar-pane--collapsed/)
+  // Let the updated default-state setting persist/broadcast before creating a project.
+  await mainWindow.waitForTimeout(400)
+
+  // A newly created project inherits the collapsed-by-default Git pane.
+  await mainWindow.getByLabel('Add project tab').click()
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await mainWindow.getByLabel('Toggle file explorer').click()
+  const gitPane2 = activeGitPane()
+  await expect(gitPane2).toBeVisible()
+  await expect(gitPane2).toHaveClass(/sidebar-pane--collapsed/)
+
+  // Expanding Git in project 2 flips the default back to expanded...
+  await gitPane2.locator('.sidebar-pane__header').click()
+  await expect(gitPane2).not.toHaveClass(/sidebar-pane--collapsed/)
+
+  // ...but project 1, already open, keeps its own collapsed Git pane.
+  await mainWindow.locator('.project-tab').first().click()
+  await expect(activeGitPane()).toHaveClass(/sidebar-pane--collapsed/)
+})
+
+test('git sidebar pane reports when the folder is not a git repository', async ({
+  createWorkspace,
+  mainWindow,
+}) => {
+  const workspace = await createWorkspace({
+    name: 'git-pane-non-repo',
+    seed: {
+      files: {
+        'README.md': 'no git here\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+
+  await expect(gitPane.locator('.git-panel__message')).toHaveText('Not a git repository', { timeout: 6000 })
+})
+
 test('file explorer refreshes git colors after external changes', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'sidebar-git-status-refresh',
