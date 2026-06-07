@@ -206,6 +206,13 @@ export const defaultTerminalSettings: TerminalSettings = {
 		startupMode: 'auto',
 		extraArgs: '',
 	},
+	sidebar: {
+		gitPanelViewMode: 'tree',
+		defaultExplorerState: 'expanded',
+		defaultGitState: 'expanded',
+		defaultWidth: 280,
+		defaultExplorerPaneHeight: 320,
+	},
 	theme: {
 		foreground: '#dce2f0',
 		background: '#111316',
@@ -704,6 +711,89 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'throttle',
 					'extension',
 					'default tab',
+				],
+			}),
+		],
+	},
+	{
+		id: 'sidebar',
+		categoryId: 'files',
+		title: 'Sidebar',
+		description:
+			'Default layout for the Explorer and Git panes in the project sidebar.',
+		fields: [
+			makeField({
+				key: 'sidebar.gitPanelViewMode',
+				label: 'Git changes view',
+				description: 'Show changed files as a nested tree or a flat list.',
+				sectionId: 'sidebar',
+				categoryId: 'files',
+				input: 'select',
+				options: [
+					{ label: 'Tree', value: 'tree' },
+					{ label: 'List', value: 'list' },
+				],
+				keywords: ['git', 'sidebar', 'tree', 'list', 'changes', 'view'],
+			}),
+			makeField({
+				key: 'sidebar.defaultExplorerState',
+				label: 'Default Explorer state',
+				description:
+					'Whether the Explorer pane starts expanded or collapsed in new projects.',
+				sectionId: 'sidebar',
+				categoryId: 'files',
+				input: 'select',
+				options: [
+					{ label: 'Expanded', value: 'expanded' },
+					{ label: 'Collapsed', value: 'collapsed' },
+				],
+				keywords: ['sidebar', 'explorer', 'collapse', 'expand', 'default'],
+			}),
+			makeField({
+				key: 'sidebar.defaultGitState',
+				label: 'Default Git state',
+				description:
+					'Whether the Git pane starts expanded or collapsed in new projects.',
+				sectionId: 'sidebar',
+				categoryId: 'files',
+				input: 'select',
+				options: [
+					{ label: 'Expanded', value: 'expanded' },
+					{ label: 'Collapsed', value: 'collapsed' },
+				],
+				keywords: ['sidebar', 'git', 'collapse', 'expand', 'default'],
+			}),
+			makeField({
+				key: 'sidebar.defaultWidth',
+				label: 'Default sidebar width',
+				description: 'Initial sidebar width in pixels for new projects.',
+				sectionId: 'sidebar',
+				categoryId: 'files',
+				input: 'number',
+				min: 180,
+				max: 520,
+				step: 10,
+				keywords: ['sidebar', 'width', 'size', 'default'],
+			}),
+			makeField({
+				key: 'sidebar.defaultExplorerPaneHeight',
+				label: 'Default Explorer pane height',
+				description:
+					'Initial height in pixels of the Explorer pane above the Git pane in new projects.',
+				sectionId: 'sidebar',
+				categoryId: 'files',
+				input: 'number',
+				min: 80,
+				max: 1000,
+				step: 10,
+				keywords: [
+					'sidebar',
+					'explorer',
+					'git',
+					'height',
+					'splitter',
+					'divider',
+					'default',
 				],
 			}),
 		],
@@ -1582,6 +1672,10 @@ export function normalizeTerminalSettings(
 		typeof input.fileViewer === 'object' && input.fileViewer !== null
 			? input.fileViewer
 			: defaultTerminalSettings.fileViewer;
+	const sidebarInput =
+		typeof input.sidebar === 'object' && input.sidebar !== null
+			? input.sidebar
+			: defaultTerminalSettings.sidebar;
 	const themeInput =
 		typeof input.theme === 'object' && input.theme !== null
 			? (input.theme as Partial<TerminalSettings['theme']>)
@@ -1960,6 +2054,35 @@ export function normalizeTerminalSettings(
 				typeof input.shell.extraArgs === 'string'
 					? input.shell.extraArgs
 					: defaultTerminalSettings.shell.extraArgs,
+		},
+		sidebar: {
+			gitPanelViewMode:
+				sidebarInput.gitPanelViewMode === 'list' ||
+				sidebarInput.gitPanelViewMode === 'tree'
+					? sidebarInput.gitPanelViewMode
+					: defaultTerminalSettings.sidebar.gitPanelViewMode,
+			defaultExplorerState:
+				sidebarInput.defaultExplorerState === 'collapsed' ||
+				sidebarInput.defaultExplorerState === 'expanded'
+					? sidebarInput.defaultExplorerState
+					: defaultTerminalSettings.sidebar.defaultExplorerState,
+			defaultGitState:
+				sidebarInput.defaultGitState === 'collapsed' ||
+				sidebarInput.defaultGitState === 'expanded'
+					? sidebarInput.defaultGitState
+					: defaultTerminalSettings.sidebar.defaultGitState,
+			defaultWidth: clampNumber(
+				Number(sidebarInput.defaultWidth),
+				defaultTerminalSettings.sidebar.defaultWidth,
+				180,
+				520,
+			),
+			defaultExplorerPaneHeight: clampNumber(
+				Number(sidebarInput.defaultExplorerPaneHeight),
+				defaultTerminalSettings.sidebar.defaultExplorerPaneHeight,
+				80,
+				2000,
+			),
 		},
 		theme: {
 			foreground:
