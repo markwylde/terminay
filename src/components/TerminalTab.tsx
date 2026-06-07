@@ -11,6 +11,7 @@ import {
   FolderSync,
   LoaderCircle,
   Settings,
+  Sparkles,
   Trash2,
   XCircle,
 } from 'lucide-react'
@@ -216,6 +217,14 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
     target.dispatchEvent(customEvent)
   }
 
+  const dispatchGenerateTitleEvent = (target: HTMLElement) => {
+    const customEvent = new CustomEvent('terminay-generate-tab-title', {
+      bubbles: true,
+      detail: { panelId: props.api.id },
+    })
+    target.dispatchEvent(customEvent)
+  }
+
   const onDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -292,6 +301,13 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
       icon: <Settings size={14} />,
       onClick: () => {
         dispatchEditTerminalEvent(contextMenuTargetRef.current ?? document.body)
+      },
+    },
+    {
+      label: 'Set tab title with AI',
+      icon: <Sparkles size={14} />,
+      onClick: () => {
+        dispatchGenerateTitleEvent(contextMenuTargetRef.current ?? document.body)
       },
     },
     {
