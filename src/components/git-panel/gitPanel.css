@@ -1,0 +1,220 @@
+.git-panel {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	width: 100%;
+	overflow-y: auto;
+	background: #0d1014;
+	color: #ffffff;
+	font-size: 13px;
+	padding: 4px 0;
+}
+
+.git-panel::-webkit-scrollbar {
+	width: 10px;
+}
+
+.git-panel::-webkit-scrollbar-thumb {
+	background: rgba(255, 255, 255, 0.12);
+	border-radius: 6px;
+	border: 2px solid transparent;
+	background-clip: padding-box;
+}
+
+.git-panel::-webkit-scrollbar-thumb:hover {
+	background: rgba(255, 255, 255, 0.2);
+	background-clip: padding-box;
+}
+
+.git-panel__message {
+	padding: 8px 12px;
+	color: rgba(220, 226, 240, 0.4);
+	font-size: 12px;
+}
+
+.git-panel__group {
+	display: flex;
+	flex-direction: column;
+}
+
+.git-panel__group-header {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 12px 4px;
+	background: #0d1014;
+	color: rgba(220, 226, 240, 0.45);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	user-select: none;
+}
+
+.git-panel__group-count {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 5px;
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.08);
+	color: rgba(220, 226, 240, 0.6);
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+}
+
+.git-panel__row {
+	all: unset;
+	box-sizing: border-box;
+	min-height: 24px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 12px;
+	color: #ffffff;
+	cursor: pointer;
+	font-size: 13px;
+	transition: background 100ms ease;
+	user-select: none;
+}
+
+.git-panel__row:hover {
+	background: rgba(255, 255, 255, 0.05);
+}
+
+.git-panel__row:focus-visible {
+	background: rgba(255, 255, 255, 0.08);
+	outline: 1px solid rgba(87, 183, 255, 0.5);
+	outline-offset: -1px;
+}
+
+.git-panel__folder {
+	all: unset;
+	box-sizing: border-box;
+	min-height: 24px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 12px;
+	color: #ffffff;
+	cursor: pointer;
+	font-size: 13px;
+	transition: background 100ms ease;
+	user-select: none;
+}
+
+.git-panel__folder:hover {
+	background: rgba(255, 255, 255, 0.05);
+}
+
+.git-panel__folder:focus-visible {
+	background: rgba(255, 255, 255, 0.08);
+	outline: 1px solid rgba(87, 183, 255, 0.5);
+	outline-offset: -1px;
+}
+
+.git-panel__folder-chevron {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	color: rgba(220, 226, 240, 0.6);
+	transition: transform 150ms ease;
+}
+
+.git-panel__folder-chevron--collapsed {
+	transform: rotate(-90deg);
+}
+
+.git-panel__folder-name {
+	flex-shrink: 1;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: rgba(220, 226, 240, 0.75);
+}
+
+.git-panel__icon {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+}
+
+.git-panel__name {
+	flex-shrink: 1;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.git-panel__dir {
+	flex-shrink: 1000000;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: rgba(220, 226, 240, 0.35);
+	font-size: 12px;
+}
+
+.git-panel__badge {
+	flex-shrink: 0;
+	margin-left: auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	font-size: 12px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+.git-panel__icon--added,
+.git-panel__badge--added {
+	color: #73c991;
+}
+
+.git-panel__icon--untracked,
+.git-panel__badge--untracked {
+	color: #73c991;
+}
+
+.git-panel__icon--modified,
+.git-panel__badge--modified {
+	color: #e2c08d;
+}
+
+.git-panel__icon--deleted,
+.git-panel__badge--deleted {
+	color: #f14c4c;
+}
+
+.git-panel__icon--renamed,
+.git-panel__badge--renamed {
+	color: #57b7ff;
+}
+
+.git-panel__icon--copied,
+.git-panel__badge--copied {
+	color: #57b7ff;
+}
+
+.git-panel__icon--conflicted,
+.git-panel__badge--conflicted {
+	color: #e2a03f;
+}
