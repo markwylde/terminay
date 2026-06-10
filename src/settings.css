@@ -688,8 +688,30 @@
 
 .settings-input-text:focus,
 .settings-select:focus,
-.settings-textarea:focus {
+.settings-textarea:focus,
+.settings-input-textarea:focus {
   border-color: var(--settings-accent);
+}
+
+.settings-input-textarea {
+  background: var(--settings-bg);
+  border: 1px solid var(--settings-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--settings-text);
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  outline: none;
+}
+
+.settings-row--stacked .settings-row-control {
+  margin-top: 12px;
+  width: 100%;
 }
 
 .settings-select {

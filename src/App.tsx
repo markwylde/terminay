@@ -22,9 +22,10 @@ import {
 	FileEdit,
 	FolderPlus,
 	FolderSync,
-	FolderTree,
+	GitBranch,
+	GitBranchPlus,
+	GitPullRequestArrow,
 	History,
-	List,
 	Play,
 	PlusSquare,
 	Search,
@@ -33,6 +34,7 @@ import {
 	Sparkles,
 	Terminal,
 	Trash2,
+	Upload,
 } from 'lucide-react';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import type { FilePanelInstanceParams } from './components/file-viewer';
@@ -54,7 +56,7 @@ import { TerminalTab } from './components/TerminalTab';
 import { useMacroSettings } from './hooks/useMacroSettings';
 import { useTerminalSettings } from './hooks/useTerminalSettings';
 import { defaultTerminalSettings } from './terminalSettings';
-import type { GitPanelViewMode, SidebarSettings } from './types/settings';
+import type { SidebarSettings } from './types/settings';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -91,7 +93,66 @@ type SplitDirection = Extract<Direction, 'below' | 'right'>;
 type AddTerminalOptions = {
 	direction?: SplitDirection;
 	groupId?: string;
+	/** Working directory for the new terminal. Overrides the inherited cwd. */
+	cwd?: string | null;
+	/** Tab title for the new terminal. */
+	title?: string;
+	/** Text written to the terminal once the shell is ready (e.g. to launch an agent). */
+	initialInput?: string;
 };
+
+type GitPushAgentAction = 'current' | 'current-pr' | 'new' | 'new-pr';
+
+const GIT_PUSH_AGENT_ACTIONS: Array<{
+	action: GitPushAgentAction;
+	label: string;
+	task: string;
+}> = [
+	{
+		action: 'current',
+		label: 'Push to current branch',
+		task: 'Commit all of my current changes and push them to the current branch.',
+	},
+	{
+		action: 'current-pr',
+		label: 'Push to current branch + PR',
+		task: 'Commit all of my current changes, push them to the current branch, and open a pull request.',
+	},
+	{
+		action: 'new',
+		label: 'Push to new branch',
+		task: 'Commit all of my current changes onto a new, descriptively named branch and push it.',
+	},
+	{
+		action: 'new-pr',
+		label: 'Push to new branch + PR',
+		task: 'Commit all of my current changes onto a new, descriptively named branch, push it, and open a pull request.',
+	},
+];
+
+function buildGitPushAgentPrompt(
+	template: string,
+	task: string,
+	branch: string | null | undefined,
+): string {
+	const safeBranch = branch?.trim() ? branch.trim() : 'the current branch';
+	const withTask = template.includes('{{task}}')
+		? template.replace(/\{\{task\}\}/g, () => task)
+		: `${template.trim()}\n\nTask: ${task}`;
+	return withTask.replace(/\{\{branch\}\}/g, () => safeBranch);
+}
+
+function buildGitPushAgentCommand(
+	provider: 'codex' | 'claudeCode',
+	model: string,
+	prompt: string,
+): string {
+	const binary = provider === 'claudeCode' ? 'claude' : 'codex';
+	const trimmedModel = model.trim();
+	const modelFlag = trimmedModel ? ` --model ${trimmedModel}` : '';
+	const quotedPrompt = `'${prompt.replace(/'/g, "'\\''")}'`;
+	return `${binary}${modelFlag} ${quotedPrompt}`;
+}
 
 type OpenFileOptions = {
 	initialMode?: FileViewerMode;
@@ -1582,6 +1643,10 @@ const ProjectWorkspace = forwardRef<
 	const [gitPanelStatus, setGitPanelStatus] = useState<GitPanelStatus | null>(
 		null,
 	);
+	const [gitPushMenuPosition, setGitPushMenuPosition] = useState<{
+		x: number;
+		y: number;
+	} | null>(null);
 	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
 	const [runningMacroRunsBySession, setRunningMacroRunsBySession] = useState<
 		Record<string, TerminalTabMacroRun[]>
@@ -2652,13 +2717,6 @@ const ProjectWorkspace = forwardRef<
 		[],
 	);
 
-	const setGitPanelViewMode = useCallback(
-		(mode: GitPanelViewMode) => {
-			updateSidebarSettings({ gitPanelViewMode: mode });
-		},
-		[updateSidebarSettings],
-	);
-
 	const openFolder = useCallback(
 		(folderPath: string) => {
 			const api = dockviewApiRef.current;
@@ -3570,17 +3628,19 @@ const ProjectWorkspace = forwardRef<
 				const inheritedCwd = activeSessionId
 					? await window.terminay.getTerminalCwd(activeSessionId)
 					: null;
+				const targetCwd = options?.cwd ?? inheritedCwd;
 				const { id: sessionId } = await window.terminay.createTerminal(
-					inheritedCwd ? { cwd: inheritedCwd } : undefined,
+					targetCwd ? { cwd: targetCwd } : undefined,
 				);
 				suppressInitialTerminalActivity(sessionId);
 
 				terminalCounterRef.current += 1;
 				const panelId = `terminal-${terminalCounterRef.current}`;
+				const tabTitle = options?.title ?? `Terminal ${terminalCounterRef.current}`;
 
 				const panel = api.addPanel<TerminalPanelParams>({
 					id: panelId,
-					title: `Terminal ${terminalCounterRef.current}`,
+					title: tabTitle,
 					component: 'terminal',
 					tabComponent: 'terminalTab',
 					params: {
@@ -3632,12 +3692,24 @@ const ProjectWorkspace = forwardRef<
 					color: project.color,
 					emoji: '',
 					inheritsProjectColor: true,
-					title: `Terminal ${terminalCounterRef.current}`,
+					title: tabTitle,
 					projectId: project.id,
 					projectTitle: project.title,
 					projectEmoji: project.emoji,
 					projectColor: project.color,
 				});
+				if (options?.initialInput) {
+					const initialInput = options.initialInput;
+					// Give the freshly spawned shell a moment to print its prompt and
+					// enable bracketed paste before we type the launch command into it.
+					window.setTimeout(() => {
+						window.terminay.writeTerminal(
+							sessionId,
+							formatMacroTypeTextForTerminal(initialInput),
+						);
+						window.terminay.writeTerminal(sessionId, '\r');
+					}, 900);
+				}
 				if (settings.recording.recordNewTerminals) {
 					void startRecordingForSession(sessionId);
 				} else {
@@ -3671,6 +3743,57 @@ const ProjectWorkspace = forwardRef<
 			startRecordingForSession,
 			stopRecordingForSession,
 			suppressInitialTerminalActivity,
+		],
+	);
+
+	const launchGitPushAgent = useCallback(
+		(action: GitPushAgentAction) => {
+			setGitPushMenuPosition(null);
+
+			const config = settings.gitPushAgent;
+			if (config.provider === 'disabled') {
+				setErrorText(
+					'Choose a Git Push agent in Settings → AI → Git Push Agent first.',
+				);
+				void window.terminay.openSettingsWindow({
+					sectionId: 'git-push-agent',
+				});
+				return;
+			}
+
+			const actionMeta = GIT_PUSH_AGENT_ACTIONS.find(
+				(entry) => entry.action === action,
+			);
+			if (!actionMeta) {
+				return;
+			}
+
+			const model =
+				config.provider === 'claudeCode'
+					? config.claudeCodeModel
+					: config.codexModel;
+			const prompt = buildGitPushAgentPrompt(
+				config.prompt,
+				actionMeta.task,
+				gitPanelStatus?.branch,
+			);
+			const command = buildGitPushAgentCommand(
+				config.provider,
+				model,
+				prompt,
+			);
+
+			void addTerminal({
+				cwd: project.rootFolder,
+				title: 'Push agent',
+				initialInput: command,
+			});
+		},
+		[
+			addTerminal,
+			gitPanelStatus?.branch,
+			project.rootFolder,
+			settings.gitPushAgent,
 		],
 	);
 
@@ -5274,34 +5397,29 @@ const ProjectWorkspace = forwardRef<
 									}
 									actions={
 										project.isGitPaneCollapsed ? undefined : (
-											<>
-												<button
-													type="button"
-													className={`sidebar-pane__action-button${
-														settings.sidebar.gitPanelViewMode === 'list'
-															? ' sidebar-pane__action-button--active'
-															: ''
-													}`}
-													onClick={() => setGitPanelViewMode('list')}
-													aria-label="Show git changes as a list"
-													title="View as list"
-												>
-													<List size={14} aria-hidden="true" />
-												</button>
-												<button
-													type="button"
-													className={`sidebar-pane__action-button${
-														settings.sidebar.gitPanelViewMode === 'tree'
-															? ' sidebar-pane__action-button--active'
-															: ''
-													}`}
-													onClick={() => setGitPanelViewMode('tree')}
-													aria-label="Show git changes as a tree"
-													title="View as tree"
-												>
-													<FolderTree size={14} aria-hidden="true" />
-												</button>
-											</>
+											<button
+												type="button"
+												className={`sidebar-pane__action-button${
+													gitPushMenuPosition
+														? ' sidebar-pane__action-button--active'
+														: ''
+												}`}
+												onClick={(event) => {
+													const rect =
+														event.currentTarget.getBoundingClientRect();
+													setGitPushMenuPosition((current) =>
+														current
+															? null
+															: { x: rect.left, y: rect.bottom + 4 },
+													);
+												}}
+												aria-label="Commit and push with an AI agent"
+												aria-haspopup="menu"
+												aria-expanded={!!gitPushMenuPosition}
+												title="Commit & push with AI"
+											>
+												<Upload size={14} aria-hidden="true" />
+											</button>
 										)
 									}
 								>
@@ -5313,6 +5431,28 @@ const ProjectWorkspace = forwardRef<
 								</SidebarPane>
 							}
 						/>
+
+						{gitPushMenuPosition ? (
+							<ContextMenu
+								x={gitPushMenuPosition.x}
+								y={gitPushMenuPosition.y}
+								onClose={() => setGitPushMenuPosition(null)}
+								items={GIT_PUSH_AGENT_ACTIONS.map((entry) => ({
+									key: entry.action,
+									label: entry.label,
+									separator: false,
+									icon:
+										entry.action === 'current' ? (
+											<GitBranch size={14} aria-hidden="true" />
+										) : entry.action === 'new' ? (
+											<GitBranchPlus size={14} aria-hidden="true" />
+										) : (
+											<GitPullRequestArrow size={14} aria-hidden="true" />
+										),
+									onClick: () => launchGitPushAgent(entry.action),
+								}))}
+							/>
+						) : null}
 
 						<div
 							className="file-explorer-sidebar__resizer"

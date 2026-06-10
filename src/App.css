@@ -2731,6 +2731,10 @@
   opacity: 0.7;
 }
 
+.context-menu__label {
+  white-space: nowrap;
+}
+
 .context-menu__separator {
   height: 1px;
   background: rgba(255, 255, 255, 0.06);

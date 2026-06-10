@@ -57,6 +57,7 @@ function setValueAtPath(settings: TerminalSettings, key: string, value: boolean 
     'activityIndicators',
     'aiTabMetadata',
     'fileViewer',
+    'gitPushAgent',
     'keyboardShortcuts',
     'recording',
     'remoteAccess',
@@ -644,7 +645,9 @@ export function SettingsWindow() {
 
   useEffect(() => {
     const shouldLoadCodexModels =
-      draft.aiTabMetadata.title.provider === 'codex' || draft.aiTabMetadata.note.provider === 'codex'
+      draft.aiTabMetadata.title.provider === 'codex' ||
+      draft.aiTabMetadata.note.provider === 'codex' ||
+      draft.gitPushAgent.provider === 'codex'
 
     if (!shouldLoadCodexModels || codexModels.length > 0) {
       return
@@ -682,11 +685,14 @@ export function SettingsWindow() {
     codexModels.length,
     draft.aiTabMetadata.note.provider,
     draft.aiTabMetadata.title.provider,
+    draft.gitPushAgent.provider,
   ])
 
   useEffect(() => {
     const shouldLoadClaudeCodeModels =
-      draft.aiTabMetadata.title.provider === 'claudeCode' || draft.aiTabMetadata.note.provider === 'claudeCode'
+      draft.aiTabMetadata.title.provider === 'claudeCode' ||
+      draft.aiTabMetadata.note.provider === 'claudeCode' ||
+      draft.gitPushAgent.provider === 'claudeCode'
 
     if (!shouldLoadClaudeCodeModels || claudeCodeModels.length > 0) {
       return
@@ -724,6 +730,7 @@ export function SettingsWindow() {
     claudeCodeModels.length,
     draft.aiTabMetadata.note.provider,
     draft.aiTabMetadata.title.provider,
+    draft.gitPushAgent.provider,
   ])
 
   useEffect(() => {
@@ -741,6 +748,10 @@ export function SettingsWindow() {
 
     if (current.aiTabMetadata.note.provider === 'codex' && current.aiTabMetadata.note.codexModel.length === 0) {
       nextDraft = setValueAtPath(nextDraft, 'aiTabMetadata.note.codexModel', firstModel)
+    }
+
+    if (current.gitPushAgent.provider === 'codex' && current.gitPushAgent.codexModel.length === 0) {
+      nextDraft = setValueAtPath(nextDraft, 'gitPushAgent.codexModel', firstModel)
     }
 
     if (nextDraft !== current) {
@@ -769,6 +780,13 @@ export function SettingsWindow() {
       current.aiTabMetadata.note.claudeCodeModel.length === 0
     ) {
       nextDraft = setValueAtPath(nextDraft, 'aiTabMetadata.note.claudeCodeModel', firstModel)
+    }
+
+    if (
+      current.gitPushAgent.provider === 'claudeCode' &&
+      current.gitPushAgent.claudeCodeModel.length === 0
+    ) {
+      nextDraft = setValueAtPath(nextDraft, 'gitPushAgent.claudeCodeModel', firstModel)
     }
 
     if (nextDraft !== current) {
@@ -942,13 +960,18 @@ export function SettingsWindow() {
       )
     }
 
-    if (field.key === 'aiTabMetadata.title.codexModel' || field.key === 'aiTabMetadata.note.codexModel') {
+    if (
+      field.key === 'aiTabMetadata.title.codexModel' ||
+      field.key === 'aiTabMetadata.note.codexModel' ||
+      field.key === 'gitPushAgent.codexModel'
+    ) {
       return renderCodexModelControl(field, value)
     }
 
     if (
       field.key === 'aiTabMetadata.title.claudeCodeModel' ||
-      field.key === 'aiTabMetadata.note.claudeCodeModel'
+      field.key === 'aiTabMetadata.note.claudeCodeModel' ||
+      field.key === 'gitPushAgent.claudeCodeModel'
     ) {
       return renderClaudeCodeModelControl(field, value)
     }
@@ -996,6 +1019,17 @@ export function SettingsWindow() {
             type="text"
             value={String(value)}
             placeholder={field.placeholder}
+            onChange={(e) => void updateField(field, e.target.value)}
+          />
+        )
+      case 'textarea':
+        return (
+          <textarea
+            className="settings-input-textarea"
+            value={String(value)}
+            placeholder={field.placeholder}
+            rows={10}
+            spellCheck={false}
             onChange={(e) => void updateField(field, e.target.value)}
           />
         )
@@ -1663,7 +1697,10 @@ export function SettingsWindow() {
                     </div>
                     <div className="settings-group">
                       {section.fields.filter(isFieldVisible).map((field) => (
-                        <div key={field.key} className="settings-row">
+                        <div
+                          key={field.key}
+                          className={`settings-row${field.input === 'textarea' ? ' settings-row--stacked' : ''}`}
+                        >
                           <div className="settings-row-info">
                             <span className="settings-row-label">{field.label}</span>
                             <span className="settings-row-description">{field.description}</span>
