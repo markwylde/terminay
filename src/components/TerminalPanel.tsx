@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { IDockviewPanelProps } from 'dockview'
 import { Terminal } from '@xterm/xterm'
+import type { ILinkHandler } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
@@ -235,10 +236,37 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     root.innerHTML = ''
 
+    const isMac = navigator.platform.toLowerCase().includes('mac')
+    const openTerminalLink = (event: MouseEvent, uri: string) => {
+      const modifierKey = isMac ? event.metaKey : event.ctrlKey
+      if (!modifierKey) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+      void window.terminay.openExternal(uri)
+    }
+
+    const linkHover = () => {
+      document.body.style.cursor = 'pointer'
+    }
+
+    const linkLeave = () => {
+      document.body.style.cursor = ''
+    }
+
+    const oscLinkHandler: ILinkHandler = {
+      activate: openTerminalLink,
+      hover: linkHover,
+      leave: linkLeave,
+    }
+
     const terminal = new Terminal({
       ...buildTerminalOptions(settingsRef.current),
       theme: resolveTerminalTheme(settingsRef.current, tabColorRef.current),
       allowProposedApi: true,
+      linkHandler: oscLinkHandler,
     })
     terminalRef.current = terminal
 
@@ -251,7 +279,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     terminal.loadAddon(searchAddon)
     terminal.loadAddon(unicode11Addon)
 
-    const isMac = navigator.platform.toLowerCase().includes('mac')
     const announceTerminalUserInput = () => {
       window.dispatchEvent(
         new CustomEvent('terminay-terminal-user-input', {
@@ -260,24 +287,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       )
     }
 
-    const linkHandler = (event: MouseEvent, uri: string) => {
-      const modifierKey = isMac ? event.metaKey : event.ctrlKey
-      if (modifierKey) {
-        event.preventDefault()
-        void window.terminay.openExternal(uri)
-      }
-    }
-
-    const linkHover = () => {
-      document.body.style.cursor = 'pointer'
-    }
-
-    const linkLeave = () => {
-      document.body.style.cursor = ''
-    }
-
     terminal.loadAddon(
-      new WebLinksAddon(linkHandler, {
+      new WebLinksAddon(openTerminalLink, {
         hover: linkHover,
         leave: linkLeave,
       }),
