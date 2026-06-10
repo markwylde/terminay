@@ -14,6 +14,7 @@ import { AiTabMetadataService, warmAiTabMetadataProviderEnv } from './aiTabMetad
 import { TerminalRecordingService } from './recording/service'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
+import type { SemanticActivity } from '../src/types/terminalSignals'
 import type {
   AppCommand,
   AppUpdateStatus,
@@ -164,6 +165,7 @@ interface TerminalSession {
 type PtyHostMessage =
   | { type: 'ready'; pid: number }
   | { type: 'data'; data: string }
+  | { type: 'activity'; activity: SemanticActivity }
   | { type: 'exit'; exitCode: number }
   | { type: 'error'; message: string }
   | { type: 'inactive'; requestId: string }
@@ -1196,7 +1198,9 @@ async function buildPtySpawnOptions(settings: TerminalSettings, cwd?: string): P
 
 async function createPtySession(webContentsId: number, cwd?: string): Promise<TerminalSession> {
   const id = randomUUID()
-  const spawnOptions = await buildPtySpawnOptions(readTerminalSettings(), cwd)
+  const settings = readTerminalSettings()
+  const spawnOptions = await buildPtySpawnOptions(settings, cwd)
+  const progressStaleMs = Math.round(settings.activityIndicators.progressStaleSeconds * 1000)
   const host = fork(getPtyHostPath(), {
     env: {
       ...process.env,
@@ -1245,6 +1249,9 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
           sendToSessionRenderer(session, 'terminal:data', { id: session.id, data: message.data })
           remoteAccessService.appendSessionData(session.id, message.data)
           break
+        case 'activity':
+          sendToSessionRenderer(session, 'terminal:activity', { id: session.id, activity: message.activity })
+          break
         case 'exit':
           finalizeTerminalSession(session, message.exitCode)
           break
@@ -1278,6 +1285,7 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
     sendToPtyHost(session, {
       type: 'create',
       ...spawnOptions,
+      progressStaleMs,
     })
   })
 }
@@ -1304,9 +1312,10 @@ function killSessionsForWebContents(webContentsId: number): void {
 
 function sendToSessionRenderer(
   session: TerminalSession,
-  channel: 'terminal:data' | 'terminal:exit' | 'terminal:remote-size-override',
+  channel: 'terminal:data' | 'terminal:activity' | 'terminal:exit' | 'terminal:remote-size-override',
   payload:
     | { id: string; data: string }
+    | { id: string; activity: SemanticActivity }
     | { id: string; exitCode: number }
     | { id: string; active: false }
     | { id: string; active: true; cols: number; rows: number },
