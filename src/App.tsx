@@ -157,7 +157,7 @@ type MovedTerminalTab = {
 
 type TerminalActivityOverviewState = Extract<
 	TerminalActivityState,
-	'recent' | 'unviewed'
+	'recent' | 'unviewed' | 'attention'
 >;
 
 type TerminalActivityOverviewItem = {
@@ -367,6 +367,10 @@ function isTerminalActivityIndicatorStateVisible(
 ): state is TerminalActivityOverviewState {
 	if (!areTerminalActivityIndicatorsEnabled(params)) {
 		return false;
+	}
+
+	if (state === 'attention') {
+		return true;
 	}
 
 	if (state === 'recent') {
@@ -1613,12 +1617,15 @@ const ProjectWorkspace = forwardRef<
 	);
 
 	useEffect(() => {
-		terminalActivityStoreRef.current.configure({
-			amberDelayMs: settings.activityIndicators.amberDelaySeconds * 1000,
-			greenDelayMs: settings.activityIndicators.greenDelaySeconds * 1000,
-			tabSwitchSuppressionMs:
-				settings.activityIndicators.tabSwitchSuppressionSeconds * 1000,
-		});
+		terminalActivityStoreRef.current.configure(
+			{
+				amberDelayMs: settings.activityIndicators.amberDelaySeconds * 1000,
+				greenDelayMs: settings.activityIndicators.greenDelaySeconds * 1000,
+				tabSwitchSuppressionMs:
+					settings.activityIndicators.tabSwitchSuppressionSeconds * 1000,
+			},
+			{ signalDetectionEnabled: settings.activityIndicators.signalDetection },
+		);
 
 		const now = Date.now();
 		for (const sessionId of panelSessionMapRef.current.values()) {
@@ -1628,6 +1635,7 @@ const ProjectWorkspace = forwardRef<
 		settings.activityIndicators.amberDelaySeconds,
 		settings.activityIndicators.greenDelaySeconds,
 		settings.activityIndicators.tabSwitchSuppressionSeconds,
+		settings.activityIndicators.signalDetection,
 	]);
 
 	const requestFileExplorerName = useCallback(
@@ -4445,6 +4453,25 @@ const ProjectWorkspace = forwardRef<
 	]);
 
 	useEffect(() => {
+		return window.terminay.onTerminalActivity((message) => {
+			if (!getPanelForSession(message.id)) {
+				return;
+			}
+
+			const now = Date.now();
+			applyTerminalActivityEvaluation(
+				message.id,
+				terminalActivityStoreRef.current.recordActivitySignal(
+					message.id,
+					message.activity,
+					now,
+					{ focused: message.id === focusedSessionIdRef.current },
+				),
+			);
+		});
+	}, [applyTerminalActivityEvaluation, getPanelForSession]);
+
+	useEffect(() => {
 		return window.terminay.onTerminalRecordingChanged(({ state }) => {
 			applyTerminalRecordingState(state);
 		});
@@ -5941,6 +5968,9 @@ function App() {
 	const recentTerminalActivityCount = terminalActivityItems.filter(
 		(item) => item.state === 'recent',
 	).length;
+	const attentionTerminalActivityCount = terminalActivityItems.filter(
+		(item) => item.state === 'attention',
+	).length;
 	const hasTerminalActivityOverview = terminalActivityItems.length > 0;
 
 	const activateTerminalFromOverview = useCallback(
@@ -6503,6 +6533,11 @@ function App() {
 								aria-haspopup="menu"
 								aria-expanded={isActivityMenuOpen}
 							>
+								{attentionTerminalActivityCount > 0 ? (
+									<span className="terminal-activity-pill terminal-activity-pill--attention">
+										{attentionTerminalActivityCount}
+									</span>
+								) : null}
 								{unviewedTerminalActivityCount > 0 ? (
 									<span className="terminal-activity-pill terminal-activity-pill--unviewed">
 										{unviewedTerminalActivityCount}
