@@ -165,6 +165,11 @@
   box-shadow: 0 0 0 3px rgba(246, 195, 67, 0.12);
 }
 
+.terminal-activity-pill--attention {
+  background: #ff6b5e;
+  box-shadow: 0 0 0 3px rgba(255, 107, 94, 0.16);
+}
+
 .terminal-activity-button__chevron {
   opacity: 0.6;
   flex-shrink: 0;
@@ -228,6 +233,11 @@
 .terminal-activity-menu__state--recent {
   background: #f6c343;
   box-shadow: 0 0 0 3px rgba(246, 195, 67, 0.12);
+}
+
+.terminal-activity-menu__state--attention {
+  background: #ff6b5e;
+  box-shadow: 0 0 0 3px rgba(255, 107, 94, 0.16);
 }
 
 .terminal-activity-menu__preview {
@@ -1110,6 +1120,10 @@
 
 .terminal-tab-content[data-terminal-activity='unviewed'] {
   --terminal-tab-activity-accent: #4fd17a;
+}
+
+.terminal-tab-content[data-terminal-activity='attention'] {
+  --terminal-tab-activity-accent: #ff6b5e;
 }
 
 .terminal-tab-activity-indicator {
