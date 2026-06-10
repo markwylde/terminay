@@ -144,6 +144,8 @@ export const defaultTerminalSettings: TerminalSettings = {
 		greenDelaySeconds: 1,
 		showActiveTabs: false,
 		showFinishedTabs: true,
+		signalDetection: true,
+		progressStaleSeconds: 15,
 		tabSwitchSuppressionSeconds: 1,
 	},
 	autoCloseTerminalOnExitZero: false,
@@ -823,6 +825,51 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				categoryId: 'appearance',
 				input: 'boolean',
 				keywords: ['activity', 'indicator', 'tab', 'finished', 'quiet', 'green'],
+			}),
+			makeField({
+				key: 'activityIndicators.signalDetection',
+				label: 'Use terminal signals for activity',
+				description:
+					'Detect activity from escape sequences that agents and shells emit (OSC 9;4 progress, OSC 133/633 commands, bell), instead of guessing from raw output. Fixes flickering on Claude Code and Codex tabs.',
+				sectionId: 'tab-indicators',
+				categoryId: 'appearance',
+				input: 'boolean',
+				keywords: [
+					'activity',
+					'indicator',
+					'tab',
+					'signal',
+					'escape',
+					'sequence',
+					'osc',
+					'claude',
+					'codex',
+					'agent',
+					'progress',
+					'attention',
+				],
+			}),
+			makeField({
+				key: 'activityIndicators.progressStaleSeconds',
+				label: 'Progress signal timeout',
+				description:
+					'Seconds without a progress update before a busy tab is treated as finished, so a crashed program cannot pin a tab busy forever.',
+				sectionId: 'tab-indicators',
+				categoryId: 'appearance',
+				input: 'number',
+				min: 1,
+				max: 120,
+				step: 1,
+				keywords: [
+					'activity',
+					'indicator',
+					'tab',
+					'progress',
+					'signal',
+					'stale',
+					'timeout',
+					'seconds',
+				],
 			}),
 			makeField({
 				key: 'activityIndicators.amberDelaySeconds',
@@ -1750,6 +1797,16 @@ export function normalizeTerminalSettings(
 				typeof activityIndicatorsInput.showFinishedTabs === 'boolean'
 					? activityIndicatorsInput.showFinishedTabs
 					: defaultTerminalSettings.activityIndicators.showFinishedTabs,
+			signalDetection:
+				typeof activityIndicatorsInput.signalDetection === 'boolean'
+					? activityIndicatorsInput.signalDetection
+					: defaultTerminalSettings.activityIndicators.signalDetection,
+			progressStaleSeconds: clampNumber(
+				Number(activityIndicatorsInput.progressStaleSeconds),
+				defaultTerminalSettings.activityIndicators.progressStaleSeconds,
+				1,
+				120,
+			),
 			tabSwitchSuppressionSeconds: clampNumber(
 				Number(activityIndicatorsInput.tabSwitchSuppressionSeconds),
 				defaultTerminalSettings.activityIndicators

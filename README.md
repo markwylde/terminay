@@ -9,6 +9,7 @@ Terminay is a desktop terminal workspace built with Electron, React, and Vite. I
 - Open multiple native shell sessions in project workspaces
 - Split terminal, file, and folder tabs horizontally or vertically with Dockview
 - Reorder tabs, pop active panels into separate windows, and close the active tab from shortcuts or menus
+- See tab activity at a glance with working, finished, and attention indicators driven by terminal signals from shells and AI agents
 - Create project tabs with root folders, per-project file explorer state, colors, and short icons
 - Rename project and terminal tabs, set tab colors, and inherit project styling
 - Use the Command bar to search app commands and run saved macros
@@ -56,6 +57,19 @@ npm run smoke
 Terminal recording is off by default. Enable **Record new terminals** in Settings, or right-click a terminal tab and choose **Start Recording** for one session. Recordings are local asciicast v3 `.cast` files saved under `~/Documents/TerminaySessions/YYYY-MM-DD/` by default, with Terminay metadata stored beside each cast file.
 
 Recording can capture terminal output, typed input, commands, file paths, tokens, and other sensitive text. Terminay uses a conservative best-effort filter for likely password or secret prompts, but terminal apps do not expose a perfect universal secure-input signal. Keep recordings local unless you deliberately share them.
+
+## Tab activity indicators
+
+Terminal tabs show a colored dot when work happens on a tab you are not looking at: amber while a tab is working, green when it finished and you have not viewed it, and a red **attention** dot when an agent finishes a turn or asks for permission or input. Configure the indicators under **Appearance → Tab Indicators** in Settings.
+
+With **Use terminal signals for activity** enabled (the default), Terminay consumes the escape sequences that shells and AI agents such as Claude Code and Codex CLI already emit, instead of guessing from raw output, which fixes spinner-driven flickering on agent tabs. The consumed sequences are:
+
+- `OSC 9;4` progress (ConEmu/Windows Terminal) — drives the working dot, cleared when progress ends.
+- `OSC 133` and `OSC 633` command markers (FinalTerm/VS Code shell integration, subcommands `A`/`B`/`C`/`D`) — track command start and finish.
+- `OSC 777;notify;<title>;<body>` and `OSC 9;<message>` (iTerm2-style) notifications — raise the attention dot.
+- Terminal `BEL` — raises the attention dot.
+
+**Progress signal timeout** (default 15 seconds) sets how long without a progress update before a busy tab is treated as finished, so a crashed program cannot pin a tab busy forever. Sequences are consumed for state only and still pass through to the terminal unchanged.
 
 ### Run end-to-end tests
 
