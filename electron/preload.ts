@@ -29,6 +29,7 @@ import type {
   FileExplorerWatchEvent,
   RemoteAccessStatus,
   SettingsChangeMessage,
+  TerminalActivityMessage,
   TerminalDataMessage,
   TerminalEditWindowDraft,
   TerminalEditWindowResult,
@@ -159,6 +160,11 @@ contextBridge.exposeInMainWorld('terminay', {
     const wrapper: ElectronListener<TerminalDataMessage> = (_event, message) => listener(message)
     ipcRenderer.on('terminal:data', wrapper)
     return () => ipcRenderer.off('terminal:data', wrapper)
+  },
+  onTerminalActivity: (listener: (message: TerminalActivityMessage) => void) => {
+    const wrapper: ElectronListener<TerminalActivityMessage> = (_event, message) => listener(message)
+    ipcRenderer.on('terminal:activity', wrapper)
+    return () => ipcRenderer.off('terminal:activity', wrapper)
   },
   onTerminalExit: (listener: (message: TerminalExitMessage) => void) => {
     const wrapper: ElectronListener<TerminalExitMessage> = (_event, message) => listener(message)
