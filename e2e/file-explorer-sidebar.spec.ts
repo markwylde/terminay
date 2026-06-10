@@ -313,7 +313,7 @@ test('git sidebar pane shows no changes for a clean repository', async ({ create
   await expect(gitPane.locator('.git-panel__row')).toHaveCount(0)
 })
 
-test('git sidebar pane renders a nested tree and toggles to a flat list', async ({
+test('git sidebar pane renders a nested tree and offers a push menu', async ({
   createWorkspace,
   mainWindow,
 }) => {
@@ -360,14 +360,20 @@ test('git sidebar pane renders a nested tree and toggles to a flat list', async 
   await gitPane.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
   await expect(utilRow).toBeVisible()
 
-  // Switching to list view removes the folder rows and shows the directory path.
-  await gitPane.getByLabel('Show git changes as a list').click()
-  await expect(gitPane.locator('.git-panel__folder')).toHaveCount(0)
-  await expect(utilRow.locator('.git-panel__dir')).toHaveText('src/lib')
+  // The sidebar header exposes a push-agent menu (replacing the old
+  // tree/list toggle) offering the four commit-and-push actions.
+  const pushButton = gitPane.getByLabel('Commit and push with an AI agent')
+  await expect(pushButton).toBeVisible()
+  await pushButton.click()
 
-  // Switching back to tree view restores the folder rows.
-  await gitPane.getByLabel('Show git changes as a tree').click()
-  await expect(gitPane.locator('.git-panel__folder-name').filter({ hasText: 'src' })).toBeVisible()
+  const pushMenu = mainWindow.locator('.context-menu')
+  await expect(pushMenu.getByText('Push to current branch', { exact: true })).toBeVisible()
+  await expect(pushMenu.getByText('Push to current branch + PR')).toBeVisible()
+  await expect(pushMenu.getByText('Push to new branch', { exact: true })).toBeVisible()
+  await expect(pushMenu.getByText('Push to new branch + PR')).toBeVisible()
+
+  await mainWindow.keyboard.press('Escape')
+  await expect(pushMenu).toHaveCount(0)
 })
 
 test('collapsing a pane seeds new projects but leaves open projects untouched', async ({
