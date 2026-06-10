@@ -5,7 +5,7 @@ type DockTabChromeProps = {
   panelId: string
   isActive: boolean
   hasCustomColor?: boolean
-  activityState?: 'viewed' | 'recent' | 'unviewed'
+  activityState?: 'viewed' | 'recent' | 'unviewed' | 'attention'
   titleAttribute?: string
   closeAriaLabel: string
   style?: CSSProperties
@@ -53,7 +53,9 @@ export function DockTabChrome({
       {beforeTitle}
       <span className="terminal-tab-title">{resolvedTitle}</span>
       {afterTitle}
-      {activityState === 'recent' || activityState === 'unviewed' ? (
+      {activityState === 'recent' ||
+      activityState === 'unviewed' ||
+      activityState === 'attention' ? (
         <span className="terminal-tab-activity-indicator" aria-hidden="true" />
       ) : null}
       <button
