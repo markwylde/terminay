@@ -6,7 +6,13 @@ import {
 } from './keyboardShortcuts';
 import type { TerminalSettings } from './types/settings';
 
-type SettingsInputKind = 'boolean' | 'number' | 'text' | 'select' | 'color';
+type SettingsInputKind =
+	| 'boolean'
+	| 'number'
+	| 'text'
+	| 'textarea'
+	| 'select'
+	| 'color';
 type TerminalThemeKey = keyof TerminalSettings['theme'];
 
 export const TAB_THEME_HUE_COLOR_VALUE = 'tabThemeHue';
@@ -124,6 +130,20 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
 	},
 ];
 
+export const DEFAULT_GIT_PUSH_AGENT_PROMPT = `You are helping me commit and push my work from the terminal.
+
+Task: {{task}}
+
+Current branch: {{branch}}
+
+Please:
+1. Run \`git status\` and \`git diff\` to understand what has changed.
+2. Stage all of the changes.
+3. Write a clear, concise commit message that follows this repository's existing commit style (look at recent commits with \`git log\`).
+4. Carry out the task above end to end. When a pull request is requested, use the \`gh\` CLI and target the repository's default branch.
+
+Work autonomously and do not ask me to confirm individual steps.`;
+
 export const defaultTerminalSettings: TerminalSettings = {
 	aiTabMetadata: {
 		title: {
@@ -136,6 +156,12 @@ export const defaultTerminalSettings: TerminalSettings = {
 			claudeCodeModel: '',
 			codexModel: '',
 		},
+	},
+	gitPushAgent: {
+		provider: 'disabled',
+		claudeCodeModel: '',
+		codexModel: '',
+		prompt: DEFAULT_GIT_PUSH_AGENT_PROMPT,
 	},
 	allowTransparency: false,
 	altClickMovesCursor: true,
@@ -355,6 +381,72 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					value: 'claudeCode',
 				},
 				keywords: ['ai', 'claude', 'claude code', 'note', 'model'],
+			}),
+		],
+	},
+	{
+		id: 'git-push-agent',
+		categoryId: 'ai',
+		title: 'Git Push Agent',
+		description:
+			'Choose the AI agent launched from the Git sidebar push menu to commit, push, and open pull requests for you.',
+		fields: [
+			makeField({
+				key: 'gitPushAgent.provider',
+				label: 'Push with AI agent',
+				description:
+					'Agent launched in a new terminal tab when you use the push menu in the Git sidebar.',
+				sectionId: 'git-push-agent',
+				categoryId: 'ai',
+				input: 'select',
+				options: [
+					{ label: 'Disable', value: 'disabled' },
+					{ label: 'Codex', value: 'codex' },
+					{ label: 'Claude Code', value: 'claudeCode' },
+				],
+				keywords: [
+					'ai',
+					'git',
+					'push',
+					'commit',
+					'pull request',
+					'pr',
+					'codex',
+					'claude',
+					'claude code',
+					'agent',
+				],
+			}),
+			makeField({
+				key: 'gitPushAgent.codexModel',
+				label: 'Agent model',
+				description: 'Codex model used by the git push agent.',
+				sectionId: 'git-push-agent',
+				categoryId: 'ai',
+				input: 'select',
+				visibleWhen: { key: 'gitPushAgent.provider', value: 'codex' },
+				keywords: ['ai', 'git', 'push', 'codex', 'model'],
+			}),
+			makeField({
+				key: 'gitPushAgent.claudeCodeModel',
+				label: 'Agent model',
+				description: 'Claude Code model used by the git push agent.',
+				sectionId: 'git-push-agent',
+				categoryId: 'ai',
+				input: 'select',
+				visibleWhen: { key: 'gitPushAgent.provider', value: 'claudeCode' },
+				keywords: ['ai', 'git', 'push', 'claude', 'claude code', 'model'],
+			}),
+			makeField({
+				key: 'gitPushAgent.prompt',
+				label: 'Agent prompt',
+				description:
+					'Prompt sent to the agent. Use {{task}} for the chosen push action and {{branch}} for the current branch.',
+				sectionId: 'git-push-agent',
+				categoryId: 'ai',
+				input: 'textarea',
+				placeholder: DEFAULT_GIT_PUSH_AGENT_PROMPT,
+				keywords: ['ai', 'git', 'push', 'prompt', 'template'],
 			}),
 		],
 	},
@@ -1702,6 +1794,10 @@ export function normalizeTerminalSettings(
 		aiTabMetadataInput.note !== null
 			? aiTabMetadataInput.note
 			: defaultTerminalSettings.aiTabMetadata.note;
+	const gitPushAgentInput =
+		typeof input.gitPushAgent === 'object' && input.gitPushAgent !== null
+			? input.gitPushAgent
+			: defaultTerminalSettings.gitPushAgent;
 	const activityIndicatorsInput =
 		typeof input.activityIndicators === 'object' &&
 		input.activityIndicators !== null
@@ -1767,6 +1863,25 @@ export function normalizeTerminalSettings(
 						? aiNoteInput.codexModel.trim()
 						: defaultTerminalSettings.aiTabMetadata.note.codexModel,
 			},
+		},
+		gitPushAgent: {
+			provider:
+				gitPushAgentInput.provider === 'codex' ||
+				gitPushAgentInput.provider === 'claudeCode'
+					? gitPushAgentInput.provider
+					: defaultTerminalSettings.gitPushAgent.provider,
+			claudeCodeModel:
+				typeof gitPushAgentInput.claudeCodeModel === 'string'
+					? gitPushAgentInput.claudeCodeModel.trim()
+					: defaultTerminalSettings.gitPushAgent.claudeCodeModel,
+			codexModel:
+				typeof gitPushAgentInput.codexModel === 'string'
+					? gitPushAgentInput.codexModel.trim()
+					: defaultTerminalSettings.gitPushAgent.codexModel,
+			prompt:
+				typeof gitPushAgentInput.prompt === 'string'
+					? gitPushAgentInput.prompt
+					: defaultTerminalSettings.gitPushAgent.prompt,
 		},
 		allowTransparency:
 			typeof input.allowTransparency === 'boolean'
