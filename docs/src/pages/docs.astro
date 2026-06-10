@@ -82,6 +82,19 @@ npm run build</code></pre>
           <li>Configure shell launch behavior and working-directory handling.</li>
           <li>Manage remote access host, origin, TLS certificate, and key paths.</li>
         </ul>
+        <h3>Tab activity indicators</h3>
+        <p>
+          Terminal tabs show a colored dot when work happens off-screen: amber while a tab is working, green when it has finished and you have not viewed it, and red when an agent needs your attention. Tune these under Appearance &rarr; Tab Indicators.
+        </p>
+        <ul>
+          <li><strong>Show indicator for active tabs</strong> and <strong>Show indicator for finished tabs</strong> toggle the amber and green dots.</li>
+          <li><strong>Use terminal signals for activity</strong> (on by default) detects activity from escape sequences that agents and shells emit instead of guessing from raw output. It fixes flickering on Claude Code and Codex tabs.</li>
+          <li><strong>Progress signal timeout</strong> (default 15 seconds) is how long without a progress update before a busy tab is treated as finished, so a crashed program cannot pin a tab busy forever.</li>
+          <li><strong>Show amber after</strong>, <strong>Show green after</strong>, and <strong>Ignore after tab switch</strong> tune the raw-output fallback timing used when no signals are present.</li>
+        </ul>
+        <p>
+          With signal detection on, Termide consumes the standard escape sequences that shells and AI agents already emit, so no setup is needed: OSC 9;4 progress (ConEmu/Windows Terminal), OSC 133 and OSC 633 command markers (FinalTerm/VS Code shell integration, A/B/C/D), OSC 777 (<code>notify;title;body</code>), OSC 9 (iTerm2-style notification), and the terminal bell. Progress and command markers drive the working and finished dots; bells and notifications raise the red attention dot when an agent finishes a turn or asks for permission or input on a tab you are not viewing. Sequences are consumed for state only and still pass through to the terminal unchanged.
+        </p>
       </section>
 
       <section id="remote-access" class="docs-section">
