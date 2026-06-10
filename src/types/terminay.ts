@@ -105,6 +105,8 @@ export type TerminalDataMessage = {
   data: string
 }
 
+export type { TerminalActivityMessage, SemanticActivity } from './terminalSignals'
+
 export type TerminalExitMessage = {
   id: string
   exitCode: number
@@ -481,6 +483,9 @@ export interface TerminayApi {
   setRemoteAccessPairingPin: (pin: string) => Promise<import('./settings').TerminalSettings>
   openMacrosWindow: () => Promise<void>
   onTerminalData: (listener: (message: TerminalDataMessage) => void) => () => void
+  onTerminalActivity: (
+    listener: (message: import('./terminalSignals').TerminalActivityMessage) => void,
+  ) => () => void
   onTerminalExit: (listener: (message: TerminalExitMessage) => void) => () => void
   onAppCommand: (listener: (command: AppCommand) => void) => () => void
   onFileExplorerWatchEvent: (listener: (message: FileExplorerWatchEvent) => void) => () => void

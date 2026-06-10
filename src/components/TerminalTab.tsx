@@ -32,7 +32,7 @@ export type TerminalTabMacroRun = {
   title: string
 }
 
-export type TerminalActivityState = 'viewed' | 'recent' | 'unviewed'
+export type TerminalActivityState = 'viewed' | 'recent' | 'unviewed' | 'attention'
 
 export type TerminalContextSnapshot = {
   recentOutput: string
