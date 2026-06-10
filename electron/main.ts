@@ -1576,6 +1576,11 @@ function createWindow() {
     width: 1400,
     height: 900,
     title: 'Terminay',
+    // Deliver the first click on an inactive window to the web contents instead of
+    // letting macOS swallow it purely to activate the window (electron/electron#212).
+    // Without this, clicking a background tab focuses the window but the click never
+    // reaches that tab, so keystrokes go to the previously active terminal.
+    acceptFirstMouse: true,
     titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
     titleBarOverlay: usesOverlayTitlebar
       ? {
