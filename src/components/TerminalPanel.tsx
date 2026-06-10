@@ -527,42 +527,51 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       })
     })
 
-    // When the window is unfocused and you click a terminal, Chromium restores DOM
-    // focus to the previously focused terminal as the window regains focus, which
-    // races with (and usually beats) the click. That sends keystrokes to the wrong
-    // tab. Detect the refocusing click and force the clicked terminal to win.
-    let recentlyRefocused = false
-    let refocusResetTimer: number | null = null
-    let refocusFocusFrame: number | null = null
+    // Clicking a background tab while the whole window is unfocused is a two-part
+    // macOS interaction: `acceptFirstMouse` (set on the BrowserWindow) delivers the
+    // activating mousedown to this terminal, but Chromium then *restores* keyboard
+    // focus to the previously focused terminal as the window activates
+    // (electron/electron#212, #5900). That restore runs after the pointerdown, so
+    // the clicked tab loses and keystrokes go to the old tab. The window 'focus'
+    // event fires after the restore, so we re-assert focus there — but only for the
+    // panel whose terminal actually received the activating click.
+    let pointerDownInsideAt = 0
+    let refocusFrame: number | null = null
+    let refocusTimer: number | null = null
 
-    const handleWindowRefocus = () => {
-      recentlyRefocused = true
-      if (refocusResetTimer !== null) {
-        window.clearTimeout(refocusResetTimer)
-      }
-      refocusResetTimer = window.setTimeout(() => {
-        recentlyRefocused = false
-        refocusResetTimer = null
-      }, 1500)
+    const markPointerDownInside = () => {
+      pointerDownInsideAt = Date.now()
     }
 
-    const handleRefocusPointerDown = () => {
-      // Only intervene on the click that brings the window back into focus. The
-      // window-focus event may fire before or after this pointerdown depending on
-      // platform, so cover both: recently refocused, or not yet focused.
-      if (!recentlyRefocused && document.hasFocus()) {
+    const reassertTerminalFocus = () => {
+      props.api.setActive()
+      terminal.focus()
+      announceTerminalFocus()
+    }
+
+    const handleWindowRefocus = () => {
+      // macOS delivers the activating pointerdown just before this focus event, so
+      // a fresh timestamp means this panel is the one under the click.
+      if (Date.now() - pointerDownInsideAt > 600) {
         return
       }
-      props.api.setActive()
-      if (refocusFocusFrame !== null) {
-        window.cancelAnimationFrame(refocusFocusFrame)
+      // Re-assert immediately and across the next frame/tick to beat the
+      // focus-restore regardless of exactly when Chromium runs it.
+      reassertTerminalFocus()
+      if (refocusFrame !== null) {
+        window.cancelAnimationFrame(refocusFrame)
       }
-      // Run after the synchronous focus-restore so the clicked terminal wins.
-      refocusFocusFrame = window.requestAnimationFrame(() => {
-        refocusFocusFrame = null
-        terminal.focus()
-        announceTerminalFocus()
+      refocusFrame = window.requestAnimationFrame(() => {
+        refocusFrame = null
+        reassertTerminalFocus()
       })
+      if (refocusTimer !== null) {
+        window.clearTimeout(refocusTimer)
+      }
+      refocusTimer = window.setTimeout(() => {
+        refocusTimer = null
+        reassertTerminalFocus()
+      }, 0)
     }
 
     const focusTerminal = (event: Event) => {
@@ -686,7 +695,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     root.addEventListener('paste', announceTerminalUserInput)
     root.addEventListener('pointerdown', announceTerminalFocus)
     root.addEventListener('pointerdown', announceTerminalUserInput)
-    root.addEventListener('pointerdown', handleRefocusPointerDown)
+    root.addEventListener('pointerdown', markPointerDownInside)
     window.addEventListener('focus', handleWindowRefocus)
     window.addEventListener('terminay-focus-terminal', focusTerminal)
     window.addEventListener('terminay-focus-terminal-note', focusTerminalNote)
@@ -708,13 +717,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       root.removeEventListener('paste', announceTerminalUserInput)
       root.removeEventListener('pointerdown', announceTerminalFocus)
       root.removeEventListener('pointerdown', announceTerminalUserInput)
-      root.removeEventListener('pointerdown', handleRefocusPointerDown)
+      root.removeEventListener('pointerdown', markPointerDownInside)
       window.removeEventListener('focus', handleWindowRefocus)
-      if (refocusResetTimer !== null) {
-        window.clearTimeout(refocusResetTimer)
+      if (refocusFrame !== null) {
+        window.cancelAnimationFrame(refocusFrame)
       }
-      if (refocusFocusFrame !== null) {
-        window.cancelAnimationFrame(refocusFocusFrame)
+      if (refocusTimer !== null) {
+        window.clearTimeout(refocusTimer)
       }
       window.removeEventListener('terminay-focus-terminal', focusTerminal)
       window.removeEventListener('terminay-focus-terminal-note', focusTerminalNote)
