@@ -97,8 +97,18 @@ export type AiTabMetadataSettings = {
 	note: AiTabMetadataTargetSettings;
 };
 
+export type GitPushAgentProvider = 'disabled' | 'codex' | 'claudeCode';
+
+export type GitPushAgentSettings = {
+	provider: GitPushAgentProvider;
+	claudeCodeModel: string;
+	codexModel: string;
+	prompt: string;
+};
+
 export type TerminalSettings = {
 	aiTabMetadata: AiTabMetadataSettings;
+	gitPushAgent: GitPushAgentSettings;
 	allowTransparency: boolean;
 	altClickMovesCursor: boolean;
 	activityIndicators: TerminalActivityIndicatorSettings;
