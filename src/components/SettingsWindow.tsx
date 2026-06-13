@@ -63,6 +63,7 @@ function setValueAtPath(settings: TerminalSettings, key: string, value: boolean 
     'remoteAccess',
     'shell',
     'sidebar',
+    'terminayMcp',
     'theme',
   ])
   const [root] = segments

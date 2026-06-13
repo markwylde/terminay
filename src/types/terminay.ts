@@ -395,6 +395,44 @@ export type EditWindowResult =
       kind: 'terminal'
     }
 
+export type McpAgentId = 'claudeCode' | 'codex'
+
+export interface McpAgentInstallState {
+  id: McpAgentId
+  label: string
+  /** Whether a `terminay` MCP server entry is present in the agent's config. */
+  installed: boolean
+  /** Absolute path to the agent config file we read/write. */
+  configPath: string
+}
+
+export interface McpInstallStatus {
+  agents: McpAgentInstallState[]
+}
+
+export interface McpInstallActionResult {
+  ok: boolean
+  installed: boolean
+  message?: string
+  error?: string
+}
+
+/** main -> renderer control request, scoped to a single terminal's project. */
+export interface ControlRendererRequestMessage {
+  requestId: string
+  scopeSessionId: string
+  op: string
+  params: unknown
+}
+
+/** renderer -> main control response. */
+export interface ControlRendererResponseMessage {
+  requestId: string
+  ok: boolean
+  result?: unknown
+  error?: { code: string; message: string; candidates?: string[] }
+}
+
 export interface TerminayApi {
   getHomePath: () => Promise<string>
   listDirectory: (dirPath: string) => Promise<FileExplorerEntry[]>
@@ -498,6 +536,11 @@ export interface TerminayApi {
   onTerminalRecordingChanged: (listener: (message: TerminalRecordingChangeMessage) => void) => () => void
   onTerminalCopyRequested: (listener: () => void) => () => void
   onSettingsFocusSection: (listener: (message: { sectionId: string }) => void) => () => void
+  getMcpInstallStatus: () => Promise<McpInstallStatus>
+  installMcpAgent: (agent: McpAgentId) => Promise<McpInstallActionResult>
+  uninstallMcpAgent: (agent: McpAgentId) => Promise<McpInstallActionResult>
+  onControlRequest: (listener: (message: ControlRendererRequestMessage) => void) => () => void
+  sendControlResponse: (message: ControlRendererResponseMessage) => void
 }
 
 export interface TerminayTestApi {
