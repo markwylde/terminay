@@ -27,6 +27,7 @@ import {
 	GitPullRequestArrow,
 	History,
 	Play,
+	Plug,
 	PlusSquare,
 	Search,
 	Settings,
@@ -44,6 +45,7 @@ import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { GitPanel } from './components/git-panel/GitPanel';
 import { SidebarPane } from './components/sidebar/SidebarPane';
 import { SidebarSplit } from './components/sidebar/SidebarSplit';
+import { McpInstallModal } from './components/McpInstallModal';
 import { TerminalPanel } from './components/TerminalPanel';
 import type {
 	TerminalActivityState,
@@ -233,12 +235,24 @@ type TerminalActivityOverviewItem = {
 	title: string;
 };
 
+type ControlHandlerResult =
+	| { ok: true; result: unknown }
+	| { ok: false; error: { code: string; message: string; candidates?: string[] } };
+
 type ProjectWorkspaceHandle = {
 	acceptMovedTerminal: (terminal: MovedTerminalTab) => void;
 	activateTerminal: (panelId: string, sessionId: string) => void;
 	executeCommand: (command: AppCommand) => void;
 	exportTerminalForMove: (panelId: string) => MovedTerminalTab | null;
 	focusActiveTerminal: () => void;
+	/** True when the given terminal session lives in this workspace's project. */
+	ownsControlSession: (sessionId: string) => boolean;
+	/** Handle an MCP control request scoped to a terminal in this project. */
+	handleControlRequest: (
+		op: string,
+		params: unknown,
+		scopeSessionId: string,
+	) => Promise<ControlHandlerResult>;
 };
 
 type ProjectWorkspaceProps = {
@@ -1600,6 +1614,19 @@ const ProjectWorkspace = forwardRef<
 	);
 	const aiGenerationInFlightRef = useRef<Set<string>>(new Set());
 	const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
+	// MCP control surface: latest semantic activity, exit codes, and one-shot
+	// waiters (wait_for_command / wait_for_attention) keyed by session id.
+	const controlActivityRef = useRef<
+		Map<string, { status: 'working' | 'idle'; attention: boolean; exitCode: number | null; at: number }>
+	>(new Map());
+	const controlExitRef = useRef<Map<string, number>>(new Map());
+	const controlCommandWaitersRef = useRef<
+		Map<string, Set<(exitCode: number | null) => void>>
+	>(new Map());
+	const controlAttentionWaitersRef = useRef<Map<string, Set<() => void>>>(
+		new Map(),
+	);
+	const [isMcpInstallModalOpen, setIsMcpInstallModalOpen] = useState(false);
 	const terminalActivityStoreRef = useRef(new TerminalActivityStore());
 	const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
 	const fileExplorerRefreshTimersRef = useRef<Map<string, number>>(new Map());
@@ -3620,7 +3647,7 @@ const ProjectWorkspace = forwardRef<
 		async (options?: AddTerminalOptions) => {
 			const api = dockviewApiRef.current;
 			if (!api) {
-				return;
+				return null;
 			}
 
 			try {
@@ -3719,9 +3746,11 @@ const ProjectWorkspace = forwardRef<
 				setFocusedSessionId(sessionId);
 				setErrorText(null);
 				window.requestAnimationFrame(publishTerminalActivityOverview);
+				return { sessionId, panelId, title: tabTitle };
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				setErrorText(message);
+				return null;
 			}
 		},
 		[
@@ -4046,6 +4075,20 @@ const ProjectWorkspace = forwardRef<
 			},
 			{
 				group: 'Workspace',
+				icon: <Plug size={18} strokeWidth={2.1} />,
+				id: 'install-terminay-mcp',
+				title: 'Install Terminay MCP',
+				description: 'Let AI agents (Claude Code, Codex) control the terminals in this window.',
+				searchText:
+					'install terminay mcp model context protocol agent claude code codex control server',
+				onSelect: () => {
+					setIsMacroLauncherOpen(false);
+					setMacroQuery('');
+					setIsMcpInstallModalOpen(true);
+				},
+			},
+			{
+				group: 'Workspace',
 				icon: <Settings size={18} strokeWidth={2.1} />,
 				id: 'edit-project-settings',
 				title: 'Edit project settings',
@@ -4304,6 +4347,419 @@ const ProjectWorkspace = forwardRef<
 		};
 	}, [executeAppCommand, isActive, isMac, settings.keyboardShortcuts]);
 
+	const ownsControlSession = useCallback(
+		(sessionId: string) => getPanelForSession(sessionId) !== null,
+		[getPanelForSession],
+	);
+
+	const handleControlRequest = useCallback(
+		async (
+			op: string,
+			params: unknown,
+			scopeSessionId: string,
+		): Promise<ControlHandlerResult> => {
+			const api = dockviewApiRef.current;
+			const p = (params ?? {}) as Record<string, unknown>;
+			const asString = (value: unknown): string | undefined =>
+				typeof value === 'string' ? value : undefined;
+			const asNumber = (value: unknown): number | undefined =>
+				typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+			// The workspace only splits along two axes, so map the four requested
+			// directions onto the supported pair (horizontal -> right, vertical -> below).
+			const asDirection = (value: unknown): AddTerminalOptions['direction'] | undefined => {
+				if (value === 'right' || value === 'left') {
+					return 'right';
+				}
+				if (value === 'below' || value === 'above') {
+					return 'below';
+				}
+				return undefined;
+			};
+
+			type ControlTerminal = { panelId: string; sessionId: string; title: string };
+
+			const enumerate = (): ControlTerminal[] => {
+				const out: ControlTerminal[] = [];
+				if (!api) {
+					return out;
+				}
+				for (const group of api.groups) {
+					for (const panel of group.panels) {
+						const sessionId = (panel.params as TerminalPanelParams | undefined)
+							?.sessionId;
+						if (!sessionId) {
+							continue;
+						}
+						const title =
+							typeof panel.title === 'string' && panel.title.trim().length > 0
+								? panel.title
+								: 'Terminal';
+						out.push({ panelId: panel.id, sessionId, title });
+					}
+				}
+				return out;
+			};
+
+			// Resolve a terminal reference (name or id) within this project's tabs.
+			const matchTerminal = (
+				value: unknown,
+			):
+				| { found: ControlTerminal }
+				| { error: { code: string; message: string; candidates?: string[] } } => {
+				const ref = asString(value);
+				if (!ref || ref.trim().length === 0) {
+					return { error: { code: 'bad_request', message: 'A terminal name or id is required.' } };
+				}
+				const terminals = enumerate();
+				const byId = terminals.find((terminal) => terminal.sessionId === ref);
+				if (byId) {
+					return { found: byId };
+				}
+				const tiers: ControlTerminal[][] = [
+					terminals.filter((terminal) => terminal.title === ref),
+					terminals.filter(
+						(terminal) => terminal.title.toLowerCase() === ref.toLowerCase(),
+					),
+					terminals.filter((terminal) =>
+						terminal.title.toLowerCase().includes(ref.toLowerCase()),
+					),
+				];
+				for (const tier of tiers) {
+					if (tier.length === 1) {
+						return { found: tier[0] };
+					}
+					if (tier.length > 1) {
+						return {
+							error: {
+								code: 'ambiguous_terminal',
+								message: `More than one terminal matches "${ref}".`,
+								candidates: tier.map((terminal) => terminal.title),
+							},
+						};
+					}
+				}
+				return {
+					error: {
+						code: 'terminal_not_found',
+						message: `No terminal matches "${ref}" in this window.`,
+					},
+				};
+			};
+
+			const buildInfo = async (terminal: ControlTerminal) => {
+				const activity = controlActivityRef.current.get(terminal.sessionId);
+				const exited = controlExitRef.current.get(terminal.sessionId);
+				let cwd: string | null = null;
+				try {
+					cwd = await window.terminay.getTerminalCwd(terminal.sessionId);
+				} catch {
+					cwd = null;
+				}
+				return {
+					id: terminal.sessionId,
+					name: terminal.title,
+					busy: activity?.status === 'working',
+					attention: activity?.attention ?? false,
+					cwd,
+					lastActivityAgoMs: activity ? Math.max(0, Date.now() - activity.at) : null,
+					exitCode: exited ?? activity?.exitCode ?? null,
+					isSelf: terminal.sessionId === scopeSessionId,
+				};
+			};
+
+			const waitOnce = (
+				register: (resolve: () => void) => () => void,
+				timeoutSeconds: number | undefined,
+				onTimeout: () => void,
+				onResolve: () => void,
+			): Promise<void> => {
+				return new Promise<void>((resolve) => {
+					let settled = false;
+					let timer: number | undefined;
+					const finish = (timedOut: boolean) => {
+						if (settled) {
+							return;
+						}
+						settled = true;
+						cleanup();
+						if (timer !== undefined) {
+							window.clearTimeout(timer);
+						}
+						if (timedOut) {
+							onTimeout();
+						} else {
+							onResolve();
+						}
+						resolve();
+					};
+					const cleanup = register(() => finish(false));
+					if (timeoutSeconds && timeoutSeconds > 0) {
+						timer = window.setTimeout(() => finish(true), timeoutSeconds * 1000);
+					}
+				});
+			};
+
+			try {
+				switch (op) {
+					case 'list_terminals': {
+						const terminals = await Promise.all(enumerate().map(buildInfo));
+						return { ok: true, result: { terminals } };
+					}
+					case 'read_terminal': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						const reader = terminalContextReadersRef.current.get(
+							match.found.sessionId,
+						);
+						let output = reader ? reader().recentOutput : '';
+						const lines = asNumber(p.lines);
+						if (lines && lines > 0) {
+							output = output.split('\n').slice(-lines).join('\n');
+						}
+						return {
+							ok: true,
+							result: { id: match.found.sessionId, name: match.found.title, output },
+						};
+					}
+					case 'get_terminal_status': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						const activity = controlActivityRef.current.get(match.found.sessionId);
+						const exited = controlExitRef.current.get(match.found.sessionId);
+						const status =
+							exited !== undefined
+								? 'exited'
+								: activity?.status === 'working'
+									? 'working'
+									: 'idle';
+						return {
+							ok: true,
+							result: {
+								id: match.found.sessionId,
+								name: match.found.title,
+								status,
+								attention: activity?.attention ?? false,
+								exitCode: exited ?? activity?.exitCode ?? null,
+								lastActivityAgoMs: activity
+									? Math.max(0, Date.now() - activity.at)
+									: null,
+							},
+						};
+					}
+					case 'open_terminal': {
+						const split = asDirection(p.split);
+						if (split) {
+							const caller = enumerate().find(
+								(terminal) => terminal.sessionId === scopeSessionId,
+							);
+							if (caller) {
+								api?.getPanel(caller.panelId)?.api.setActive();
+							}
+						}
+						const created = await addTerminal({
+							title: asString(p.name),
+							cwd: asString(p.cwd) ?? undefined,
+							direction: split,
+						});
+						if (!created) {
+							return {
+								ok: false,
+								error: { code: 'internal', message: 'Failed to open a new terminal.' },
+							};
+						}
+						return {
+							ok: true,
+							result: { id: created.sessionId, name: created.title },
+						};
+					}
+					case 'write_terminal': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						const text = asString(p.text) ?? '';
+						window.terminay.writeTerminal(match.found.sessionId, text);
+						if (p.submit === true) {
+							window.terminay.writeTerminal(match.found.sessionId, '\r');
+						}
+						return { ok: true, result: { ok: true } };
+					}
+					case 'run_command': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						const command = asString(p.command) ?? '';
+						window.terminay.writeTerminal(match.found.sessionId, command);
+						window.terminay.writeTerminal(match.found.sessionId, '\r');
+						return { ok: true, result: { ok: true } };
+					}
+					case 'close_terminal': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						api?.getPanel(match.found.panelId)?.api.close();
+						return { ok: true, result: { ok: true } };
+					}
+					case 'focus_terminal': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						api?.getPanel(match.found.panelId)?.api.setActive();
+						return { ok: true, result: { ok: true } };
+					}
+					case 'rename_terminal': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						const name = asString(p.name);
+						if (!name || name.trim().length === 0) {
+							return {
+								ok: false,
+								error: { code: 'bad_request', message: 'A new name is required.' },
+							};
+						}
+						api?.getPanel(match.found.panelId)?.api.setTitle(name);
+						window.terminay.updateTerminalRemoteMetadata(match.found.sessionId, {
+							title: name,
+						});
+						return { ok: true, result: { ok: true } };
+					}
+					case 'split_terminal': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						const direction = asDirection(p.direction) ?? 'right';
+						api?.getPanel(match.found.panelId)?.api.setActive();
+						const created = await addTerminal({ direction });
+						if (!created) {
+							return {
+								ok: false,
+								error: { code: 'internal', message: 'Failed to split the terminal.' },
+							};
+						}
+						return {
+							ok: true,
+							result: { id: created.sessionId, name: created.title },
+						};
+					}
+					case 'wait_for_idle': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						const seconds = asNumber(p.seconds) ?? 0;
+						const timeout = asNumber(p.timeout);
+						const idlePromise = window.terminay
+							.waitForTerminalInactivity(
+								match.found.sessionId,
+								Math.max(0, seconds * 1000),
+							)
+							.then(() => false);
+						let timedOut = false;
+						if (timeout && timeout > 0) {
+							timedOut = await Promise.race([
+								idlePromise,
+								new Promise<boolean>((resolve) =>
+									window.setTimeout(() => resolve(true), timeout * 1000),
+								),
+							]);
+						} else {
+							await idlePromise;
+						}
+						return { ok: true, result: { idle: true, timedOut } };
+					}
+					case 'wait_for_command': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						const sessionId = match.found.sessionId;
+						const timeout = asNumber(p.timeout);
+						let exitCode: number | null = null;
+						let timedOut = false;
+						await waitOnce(
+							(resolve) => {
+								const waiter = (code: number | null) => {
+									exitCode = code;
+									resolve();
+								};
+								let set = controlCommandWaitersRef.current.get(sessionId);
+								if (!set) {
+									set = new Set();
+									controlCommandWaitersRef.current.set(sessionId, set);
+								}
+								set.add(waiter);
+								return () => {
+									controlCommandWaitersRef.current.get(sessionId)?.delete(waiter);
+								};
+							},
+							timeout,
+							() => {
+								timedOut = true;
+							},
+							() => {},
+						);
+						return { ok: true, result: { exitCode, timedOut } };
+					}
+					case 'wait_for_attention': {
+						const match = matchTerminal(p.terminal);
+						if ('error' in match) {
+							return { ok: false, error: match.error };
+						}
+						const sessionId = match.found.sessionId;
+						const timeout = asNumber(p.timeout);
+						let timedOut = false;
+						await waitOnce(
+							(resolve) => {
+								const waiter = () => resolve();
+								let set = controlAttentionWaitersRef.current.get(sessionId);
+								if (!set) {
+									set = new Set();
+									controlAttentionWaitersRef.current.set(sessionId, set);
+								}
+								set.add(waiter);
+								return () => {
+									controlAttentionWaitersRef.current
+										.get(sessionId)
+										?.delete(waiter);
+								};
+							},
+							timeout,
+							() => {
+								timedOut = true;
+							},
+							() => {},
+						);
+						return { ok: true, result: { attention: true, timedOut } };
+					}
+					default:
+						return {
+							ok: false,
+							error: { code: 'unsupported_op', message: `Unknown operation: ${op}` },
+						};
+				}
+			} catch (error) {
+				return {
+					ok: false,
+					error: {
+						code: 'internal',
+						message: error instanceof Error ? error.message : String(error),
+					},
+				};
+			}
+		},
+		[addTerminal],
+	);
+
 	useImperativeHandle(
 		ref,
 		() => ({
@@ -4314,6 +4770,8 @@ const ProjectWorkspace = forwardRef<
 			},
 			exportTerminalForMove,
 			focusActiveTerminal,
+			ownsControlSession,
+			handleControlRequest,
 		}),
 		[
 			acceptMovedTerminal,
@@ -4321,6 +4779,8 @@ const ProjectWorkspace = forwardRef<
 			executeAppCommand,
 			exportTerminalForMove,
 			focusActiveTerminal,
+			ownsControlSession,
+			handleControlRequest,
 		],
 	);
 
@@ -4591,6 +5051,39 @@ const ProjectWorkspace = forwardRef<
 					{ focused: message.id === focusedSessionIdRef.current },
 				),
 			);
+
+			// MCP control surface: track latest activity and fire pending waiters.
+			const activity = message.activity;
+			const exitCode =
+				typeof activity.exitCode === 'number' ? activity.exitCode : null;
+			const previous = controlActivityRef.current.get(message.id);
+			controlActivityRef.current.set(message.id, {
+				status: activity.status === 'working' ? 'working' : 'idle',
+				attention: activity.attention === true,
+				exitCode,
+				at: now,
+			});
+			// Resolve wait_for_command only on a genuine completion: a
+			// working -> finished transition, or a changed exit code.
+			if (
+				exitCode !== null &&
+				(previous?.status === 'working' || previous?.exitCode !== exitCode)
+			) {
+				const waiters = controlCommandWaitersRef.current.get(message.id);
+				if (waiters && waiters.size > 0) {
+					for (const waiter of Array.from(waiters)) {
+						waiter(exitCode);
+					}
+				}
+			}
+			if (activity.attention === true) {
+				const waiters = controlAttentionWaitersRef.current.get(message.id);
+				if (waiters && waiters.size > 0) {
+					for (const waiter of Array.from(waiters)) {
+						waiter();
+					}
+				}
+			}
 		});
 	}, [applyTerminalActivityEvaluation, getPanelForSession]);
 
@@ -4634,6 +5127,15 @@ const ProjectWorkspace = forwardRef<
 	useEffect(() => {
 		return window.terminay.onTerminalExit((message) => {
 			cancelMacroRunsForSession(message.id);
+
+			// MCP control surface: record the exit code and release waiters.
+			controlExitRef.current.set(message.id, message.exitCode);
+			const commandWaiters = controlCommandWaitersRef.current.get(message.id);
+			if (commandWaiters && commandWaiters.size > 0) {
+				for (const waiter of Array.from(commandWaiters)) {
+					waiter(message.exitCode);
+				}
+			}
 
 			if (settings.autoCloseTerminalOnExitZero && message.exitCode === 0) {
 				getPanelForSession(message.id)?.api.close();
@@ -5495,6 +5997,10 @@ const ProjectWorkspace = forwardRef<
 				</main>
 			</div>
 
+			<McpInstallModal
+				open={isMcpInstallModalOpen}
+				onClose={() => setIsMcpInstallModalOpen(false)}
+			/>
 			<AnimatePresence>
 				{isMacroLauncherOpen && (
 					<div className="macro-launcher-overlay" onClick={closeMacroLauncher}>
@@ -5833,6 +6339,66 @@ function App() {
 	const workspaceRefs = useRef(
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
+
+	// Bridge MCP control requests from the main process to the workspace that
+	// owns the calling terminal, then send the response back over IPC.
+	useEffect(() => {
+		return window.terminay.onControlRequest((request) => {
+			const respond = (response: ControlHandlerResult) => {
+				if (response.ok) {
+					window.terminay.sendControlResponse({
+						requestId: request.requestId,
+						ok: true,
+						result: response.result,
+					});
+				} else {
+					window.terminay.sendControlResponse({
+						requestId: request.requestId,
+						ok: false,
+						error: response.error,
+					});
+				}
+			};
+
+			void (async () => {
+				try {
+					let handler: ProjectWorkspaceHandle | null = null;
+					for (const candidate of workspaceRefs.current.values()) {
+						if (candidate?.ownsControlSession(request.scopeSessionId)) {
+							handler = candidate;
+							break;
+						}
+					}
+					if (!handler) {
+						respond({
+							ok: false,
+							error: {
+								code: 'terminal_not_found',
+								message: 'The calling terminal is no longer available.',
+							},
+						});
+						return;
+					}
+					respond(
+						await handler.handleControlRequest(
+							request.op,
+							request.params,
+							request.scopeSessionId,
+						),
+					);
+				} catch (error) {
+					respond({
+						ok: false,
+						error: {
+							code: 'internal',
+							message: error instanceof Error ? error.message : String(error),
+						},
+					});
+				}
+			})();
+		});
+	}, []);
+
 	const [homePath, setHomePath] = useState('');
 
 	const [projects, setProjects] = useState<ProjectTab[]>([
