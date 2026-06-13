@@ -35,6 +35,12 @@ async function readCssVariableFromStyle(locator: ReturnType<Page['locator']>, va
   return match[1].trim()
 }
 
+async function readComputedStyle(locator: ReturnType<Page['locator']>, propertyName: string): Promise<string> {
+  return locator.evaluate((element, nextPropertyName) => {
+    return window.getComputedStyle(element).getPropertyValue(nextPropertyName)
+  }, propertyName)
+}
+
 async function expectTerminalInputFocused(page: Page): Promise<void> {
   await expect
     .poll(async () =>
@@ -470,7 +476,7 @@ test.describe('terminal behavior', () => {
     await expect(activityButton).toHaveCount(0)
   })
 
-  test('terminal activity overview uses the same recent-input suppression as tab indicators', async ({
+  test('terminal activity overview uses the same recent-input suppression as tab underlines', async ({
     mainWindow,
   }) => {
     await sendAppCommand(mainWindow, 'new-terminal')
@@ -559,7 +565,7 @@ test.describe('terminal behavior', () => {
     await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
   })
 
-  test('active terminal tabs show only the finished activity indicator by default', async ({ mainWindow }) => {
+  test('active terminal tabs show only the finished activity underline by default', async ({ mainWindow }) => {
     const activeTab = mainWindow.locator('.project-workspace--active .terminal-tab-content--active').first()
 
     await mainWindow.locator('.terminal-panel').first().click()
@@ -567,10 +573,14 @@ test.describe('terminal behavior', () => {
     await mainWindow.keyboard.press('Enter')
 
     await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed')
-    await expect(activeTab.locator('.terminal-tab-activity-indicator')).toHaveCount(0)
+    await expect
+      .poll(() => readComputedStyle(activeTab, 'box-shadow'))
+      .not.toContain('79, 209, 122')
 
     await expect(activeTab).toHaveAttribute('data-terminal-activity', 'unviewed')
-    await expect(activeTab.locator('.terminal-tab-activity-indicator')).toBeVisible()
+    await expect
+      .poll(() => readComputedStyle(activeTab, 'box-shadow'))
+      .toContain('79, 209, 122')
   })
 
   test('auto-closes a terminal tab on successful exit when enabled', async ({ mainWindow }) => {
