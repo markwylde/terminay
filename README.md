@@ -60,14 +60,14 @@ Recording can capture terminal output, typed input, commands, file paths, tokens
 
 ## Tab activity indicators
 
-Terminal tabs show a colored dot when work happens on a tab you are not looking at: amber while a tab is working, green when it finished and you have not viewed it, and a red **attention** dot when an agent finishes a turn or asks for permission or input. Configure the indicators under **Appearance → Tab Indicators** in Settings.
+Terminal tabs show a colored underline when work happens on a tab you are not looking at: amber while a tab is working, green when it finished and you have not viewed it, and a red **attention** underline when an agent finishes a turn or asks for permission or input. Configure the indicators under **Appearance → Tab Indicators** in Settings.
 
 With **Use terminal signals for activity** enabled (the default), Terminay consumes the escape sequences that shells and AI agents such as Claude Code and Codex CLI already emit, instead of guessing from raw output, which fixes spinner-driven flickering on agent tabs. The consumed sequences are:
 
-- `OSC 9;4` progress (ConEmu/Windows Terminal) — drives the working dot, cleared when progress ends.
+- `OSC 9;4` progress (ConEmu/Windows Terminal) — drives the working underline, cleared when progress ends.
 - `OSC 133` and `OSC 633` command markers (FinalTerm/VS Code shell integration, subcommands `A`/`B`/`C`/`D`) — track command start and finish.
-- `OSC 777;notify;<title>;<body>` and `OSC 9;<message>` (iTerm2-style) notifications — raise the attention dot.
-- Terminal `BEL` — raises the attention dot.
+- `OSC 777;notify;<title>;<body>` and `OSC 9;<message>` (iTerm2-style) notifications — raise the attention underline.
+- Terminal `BEL` — raises the attention underline.
 
 **Progress signal timeout** (default 15 seconds) sets how long without a progress update before a busy tab is treated as finished, so a crashed program cannot pin a tab busy forever. Sequences are consumed for state only and still pass through to the terminal unchanged.
 
