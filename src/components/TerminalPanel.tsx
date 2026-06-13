@@ -244,7 +244,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       }
 
       event.preventDefault()
-      event.stopPropagation()
       void window.terminay.openExternal(uri)
     }
 
