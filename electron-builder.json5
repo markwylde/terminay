@@ -3,6 +3,12 @@
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "com.terminay.app",
   "asar": true,
+  // mcpEntry.js is launched via Electron's Node mode (ELECTRON_RUN_AS_NODE=1),
+  // which cannot load scripts from inside app.asar. Unpack the built electron
+  // dir so the headless MCP entry and any shared chunks resolve on disk.
+  "asarUnpack": [
+    "dist-electron/**"
+  ],
   "productName": "Terminay",
   "directories": {
     "output": "release/${version}"

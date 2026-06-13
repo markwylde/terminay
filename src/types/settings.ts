@@ -106,9 +106,12 @@ export type GitPushAgentSettings = {
 	prompt: string;
 };
 
+export type TerminayMcpSettings = { enabled: boolean };
+
 export type TerminalSettings = {
 	aiTabMetadata: AiTabMetadataSettings;
 	gitPushAgent: GitPushAgentSettings;
+	terminayMcp: TerminayMcpSettings;
 	allowTransparency: boolean;
 	altClickMovesCursor: boolean;
 	activityIndicators: TerminalActivityIndicatorSettings;
