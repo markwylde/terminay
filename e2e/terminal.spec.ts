@@ -43,6 +43,10 @@ async function expectTerminalInputFocused(page: Page): Promise<void> {
     .toBe(true)
 }
 
+async function expectNoRenderedTerminalSelection(page: Page): Promise<void> {
+  await expect.poll(async () => page.locator('.terminal-panel .xterm-selection > div').count()).toBe(0)
+}
+
 test.describe('terminal behavior', () => {
   test('terminal tab context menu closes the selected tab', async ({ mainWindow }) => {
     await sendAppCommand(mainWindow, 'new-terminal')
@@ -332,6 +336,68 @@ test.describe('terminal behavior', () => {
         }),
       )
       .toEqual([linkUrl])
+  })
+
+  test('modifier-clicking OSC links does not leave terminal selection armed', async ({ electronApp, mainWindow }) => {
+    const sessionId = await getActiveSessionId(mainWindow)
+    const linkUrl = 'https://example.com/terminay-osc-link-test'
+    const linkText = 'terminay osc link'
+    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+
+    await electronApp.evaluate(({ ipcMain }) => {
+      const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
+      state.__terminayOpenedExternalLinks = []
+      ipcMain.removeHandler('shell:open-external')
+      ipcMain.handle('shell:open-external', (_event, url: string) => {
+        state.__terminayOpenedExternalLinks?.push(url)
+      })
+    })
+
+    await electronApp.evaluate(
+      ({ BrowserWindow }, payload) => {
+        const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed())
+        window?.webContents.send('terminal:data', payload)
+      },
+      {
+        data: `\r\n\x1b]8;;${linkUrl}\x07${linkText}\x1b]8;;\x07\r\nplain text after osc link\r\n`,
+        id: sessionId,
+      },
+    )
+
+    const link = mainWindow.locator('.xterm-rows').getByText(linkText)
+    await expect(link).toBeVisible()
+    const linkBox = await link.boundingBox()
+    const terminalBox = await mainWindow.locator('.terminal-panel').first().boundingBox()
+    if (!linkBox || !terminalBox) {
+      throw new Error('Terminal OSC link location is unavailable')
+    }
+
+    const linkCenter = {
+      x: linkBox.x + linkBox.width / 2,
+      y: linkBox.y + linkBox.height / 2,
+    }
+    const moveTarget = {
+      x: Math.min(terminalBox.x + terminalBox.width - 20, linkCenter.x + 240),
+      y: Math.min(terminalBox.y + terminalBox.height - 20, linkCenter.y + 60),
+    }
+
+    await mainWindow.keyboard.down(modifier)
+    await mainWindow.mouse.click(linkCenter.x, linkCenter.y)
+    await mainWindow.keyboard.up(modifier)
+    await expect
+      .poll(async () =>
+        electronApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
+          return state.__terminayOpenedExternalLinks ?? []
+        }),
+      )
+      .toEqual([linkUrl])
+
+    await mainWindow.mouse.move(moveTarget.x, moveTarget.y)
+    await mainWindow.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    )
+    await expectNoRenderedTerminalSelection(mainWindow)
   })
 
   test('external renderer navigations open outside the app', async ({ electronApp, mainWindow }) => {
