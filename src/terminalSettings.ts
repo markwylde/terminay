@@ -163,6 +163,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		codexModel: '',
 		prompt: DEFAULT_GIT_PUSH_AGENT_PROMPT,
 	},
+	terminayMcp: { enabled: true },
 	allowTransparency: false,
 	altClickMovesCursor: true,
 	activityIndicators: {
@@ -447,6 +448,33 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'textarea',
 				placeholder: DEFAULT_GIT_PUSH_AGENT_PROMPT,
 				keywords: ['ai', 'git', 'push', 'prompt', 'template'],
+			}),
+		],
+	},
+	{
+		id: 'terminay-mcp',
+		categoryId: 'ai',
+		title: 'Terminay MCP',
+		description:
+			'Let AI agents running in a terminal control the other terminals in this window via the Model Context Protocol.',
+		fields: [
+			makeField({
+				key: 'terminayMcp.enabled',
+				label: 'Allow agents to control terminals',
+				description:
+					'When enabled, terminals expose a local control socket so in-terminal agents can read and drive the other terminals in this window.',
+				sectionId: 'terminay-mcp',
+				categoryId: 'ai',
+				input: 'boolean',
+				keywords: [
+					'mcp',
+					'model context protocol',
+					'agent',
+					'claude',
+					'codex',
+					'control',
+					'terminal',
+				],
 			}),
 		],
 	},
@@ -1798,6 +1826,10 @@ export function normalizeTerminalSettings(
 		typeof input.gitPushAgent === 'object' && input.gitPushAgent !== null
 			? input.gitPushAgent
 			: defaultTerminalSettings.gitPushAgent;
+	const terminayMcpInput =
+		typeof input.terminayMcp === 'object' && input.terminayMcp !== null
+			? input.terminayMcp
+			: defaultTerminalSettings.terminayMcp;
 	const activityIndicatorsInput =
 		typeof input.activityIndicators === 'object' &&
 		input.activityIndicators !== null
@@ -1882,6 +1914,12 @@ export function normalizeTerminalSettings(
 				typeof gitPushAgentInput.prompt === 'string'
 					? gitPushAgentInput.prompt
 					: defaultTerminalSettings.gitPushAgent.prompt,
+		},
+		terminayMcp: {
+			enabled:
+				typeof terminayMcpInput.enabled === 'boolean'
+					? terminayMcpInput.enabled
+					: defaultTerminalSettings.terminayMcp.enabled,
 		},
 		allowTransparency:
 			typeof input.allowTransparency === 'boolean'
