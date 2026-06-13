@@ -48,6 +48,7 @@ export default defineConfig({
               input: {
                 main: path.join(__dirname, 'electron/main.ts'),
                 ptyHost: path.join(__dirname, 'electron/ptyHost.ts'),
+                mcpEntry: path.join(__dirname, 'electron/mcpEntry.ts'),
               },
               external: nodeBuiltins,
             },
