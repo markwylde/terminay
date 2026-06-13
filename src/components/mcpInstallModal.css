@@ -1,0 +1,143 @@
+.mcp-install-title-icon {
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: #4db5ff;
+}
+
+.project-edit-modal-title:has(.mcp-install-title-icon) {
+  display: inline-flex;
+  align-items: center;
+}
+
+.mcp-install-description {
+  margin: 0;
+  color: rgba(214, 227, 240, 0.68);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mcp-install-load-error {
+  border-radius: 6px;
+  border: 1px solid rgba(255, 123, 114, 0.25);
+  background: rgba(255, 123, 114, 0.1);
+  color: #ff7b72;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.mcp-install-loading {
+  color: rgba(214, 227, 240, 0.6);
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.mcp-install-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mcp-install-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #090b0e;
+}
+
+.mcp-install-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mcp-install-status-icon {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.02);
+  color: #2ea043;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mcp-install-status-icon--installed {
+  border-color: rgba(46, 160, 67, 0.5);
+  background: rgba(46, 160, 67, 0.12);
+}
+
+.mcp-install-row-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mcp-install-row-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f0f6fc;
+}
+
+.mcp-install-row-state {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(214, 227, 240, 0.7);
+}
+
+.mcp-install-row-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: rgba(214, 227, 240, 0.45);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.mcp-install-row-error {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #ff7b72;
+  line-height: 1.4;
+}
+
+.mcp-install-action {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  background: #316dca;
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.mcp-install-action:hover:not(:disabled) {
+  background: #4c8eda;
+}
+
+.mcp-install-action--uninstall {
+  background: transparent;
+  border-color: #2f4158;
+  color: #dce2f0;
+}
+
+.mcp-install-action--uninstall:hover:not(:disabled) {
+  background: #243246;
+}
+
+.mcp-install-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
