@@ -37,6 +37,18 @@ import { registerFileViewerIpcHandlers } from './fileViewer/ipc'
 import { FileExplorerWatchService } from './fileExplorerWatchService'
 import { createPairingPinHash } from './remote/pin'
 import { RemoteAccessService } from './remote/service'
+import { createControlServer, type ControlForwardResult, type ControlServer, type ControlServerScope } from './control/server'
+import {
+  CONTROL_REQUEST_CHANNEL,
+  CONTROL_RESPONSE_CHANNEL,
+  CONTROL_SOCKET_ENV,
+  CONTROL_SOCKET_FILENAME,
+  CONTROL_TOKEN_ENV,
+  type ControlOp,
+  type ControlRendererResponse,
+} from './control/protocol'
+import { getMcpInstallStatus, installMcpAgent, uninstallMcpAgent, type McpServerCommand } from './mcpInstall'
+import type { McpAgentId } from '../src/types/terminay'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const execFileAsync = promisify(execFile)
@@ -171,6 +183,21 @@ type PtyHostMessage =
   | { type: 'inactive'; requestId: string }
 
 const terminalSessions = new Map<string, TerminalSession>()
+
+// --- MCP control surface state -------------------------------------------
+// Each terminal gets a unique capability token injected into its shell env.
+// The token both authorizes the local control socket and anchors scope (the
+// session, hence the project, the calling agent lives in).
+interface ControlTokenRecord {
+  token: string
+  sessionId: string
+  webContentsId: number
+}
+const controlTokensByToken = new Map<string, ControlTokenRecord>()
+const controlTokensBySession = new Map<string, string>()
+let controlServer: ControlServer | null = null
+const pendingControlRequests = new Map<string, (response: ControlForwardResult) => void>()
+
 let settingsWindow: BrowserWindow | null = null
 let macrosWindow: BrowserWindow | null = null
 let recordingsWindow: BrowserWindow | null = null
@@ -1016,12 +1043,19 @@ function parseCommandLineArgs(value: string): string[] {
   return args
 }
 
-function getTerminalSpawnEnv(): NodeJS.ProcessEnv {
+function getTerminalSpawnEnv(controlEnv?: { socketPath: string; token: string }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
 
   // xterm.js renders true color, but many CLI tools only enable 24-bit output
   // when COLORTERM explicitly advertises it.
   env.COLORTERM = 'truecolor'
+
+  // Inject the per-terminal MCP control socket + capability token so an agent
+  // running in this shell (and its `terminay mcp` child) can control siblings.
+  if (controlEnv) {
+    env[CONTROL_SOCKET_ENV] = controlEnv.socketPath
+    env[CONTROL_TOKEN_ENV] = controlEnv.token
+  }
 
   if (process.platform !== 'darwin') {
     return env
@@ -1137,6 +1171,187 @@ function getPtyHostPath(): string {
   return path.join(MAIN_DIST, 'ptyHost.js')
 }
 
+function getControlSocketPath(): string {
+  if (process.platform === 'win32') {
+    return '\\\\.\\pipe\\terminay-control'
+  }
+  return path.join(app.getPath('userData'), CONTROL_SOCKET_FILENAME)
+}
+
+function getMcpEntryPath(): string {
+  // mcpEntry.js is asar-unpacked because it runs under ELECTRON_RUN_AS_NODE.
+  const entry = path.join(MAIN_DIST, 'mcpEntry.js')
+  return entry.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`)
+}
+
+function getMcpServerCommand(): McpServerCommand {
+  return {
+    command: process.execPath,
+    args: [getMcpEntryPath()],
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+  }
+}
+
+function registerControlToken(sessionId: string, webContentsId: number): string {
+  const token = randomUUID()
+  controlTokensByToken.set(token, { token, sessionId, webContentsId })
+  controlTokensBySession.set(sessionId, token)
+  return token
+}
+
+function removeControlToken(sessionId: string): void {
+  const token = controlTokensBySession.get(sessionId)
+  if (token) {
+    controlTokensByToken.delete(token)
+    controlTokensBySession.delete(sessionId)
+  }
+}
+
+async function getParentPid(pid: number): Promise<number | null> {
+  if (process.platform === 'win32') {
+    return null
+  }
+  try {
+    const { stdout } = await execFileAsync('ps', ['-o', 'ppid=', '-p', String(pid)])
+    const ppid = Number.parseInt(stdout.trim(), 10)
+    return Number.isInteger(ppid) && ppid > 0 ? ppid : null
+  } catch {
+    return null
+  }
+}
+
+// Resolve the terminal a control client belongs to by walking its process
+// ancestry until we hit a known terminal's shell (rootPid). This is how scope
+// works when an MCP client did not forward the capability token env var.
+async function resolveScopeByPid(pid: number): Promise<ControlServerScope | null> {
+  const scopeByRootPid = new Map<number, ControlServerScope>()
+  for (const session of terminalSessions.values()) {
+    if (session.rootPid && session.rootPid > 0) {
+      scopeByRootPid.set(session.rootPid, {
+        sessionId: session.id,
+        webContentsId: session.ownerWebContentsId,
+      })
+    }
+  }
+  if (scopeByRootPid.size === 0) {
+    return null
+  }
+
+  let current: number | null = pid
+  for (let depth = 0; depth < 40 && current && current > 1; depth += 1) {
+    const scope = scopeByRootPid.get(current)
+    if (scope) {
+      return scope
+    }
+    current = await getParentPid(current)
+  }
+  return null
+}
+
+async function resolveControlScope(
+  token: string | undefined,
+  pid: number | undefined,
+): Promise<ControlServerScope | null> {
+  if (token) {
+    const record = controlTokensByToken.get(token)
+    if (record) {
+      return { sessionId: record.sessionId, webContentsId: record.webContentsId }
+    }
+  }
+  if (typeof pid === 'number' && pid > 0) {
+    return resolveScopeByPid(pid)
+  }
+  return null
+}
+
+function forwardControlRequest(
+  scope: ControlServerScope,
+  op: ControlOp,
+  params: unknown,
+): Promise<ControlForwardResult> {
+  return new Promise((resolve) => {
+    const target = webContents.fromId(scope.webContentsId)
+    if (!target || target.isDestroyed()) {
+      resolve({
+        ok: false,
+        error: { code: 'renderer_unavailable', message: 'The Terminay window for this terminal is no longer available.' },
+      })
+      return
+    }
+
+    const requestId = randomUUID()
+    pendingControlRequests.set(requestId, resolve)
+
+    const handleGone = () => {
+      if (pendingControlRequests.delete(requestId)) {
+        resolve({
+          ok: false,
+          error: { code: 'renderer_unavailable', message: 'The Terminay window closed before responding.' },
+        })
+      }
+    }
+    target.once('destroyed', handleGone)
+
+    try {
+      target.send(CONTROL_REQUEST_CHANNEL, { requestId, scopeSessionId: scope.sessionId, op, params })
+    } catch {
+      target.off('destroyed', handleGone)
+      if (pendingControlRequests.delete(requestId)) {
+        resolve({
+          ok: false,
+          error: { code: 'renderer_unavailable', message: 'Failed to reach the Terminay window.' },
+        })
+      }
+    }
+  })
+}
+
+async function startControlServer(): Promise<void> {
+  if (controlServer) {
+    return
+  }
+
+  const server = createControlServer({
+    socketPath: getControlSocketPath(),
+    resolveScope: resolveControlScope,
+    forward: forwardControlRequest,
+    onError: (error) => {
+      console.error('[control] server error', error)
+    },
+  })
+  controlServer = server
+
+  try {
+    await server.start()
+  } catch (error) {
+    console.error('[control] failed to start control server', error)
+    if (controlServer === server) {
+      controlServer = null
+    }
+  }
+}
+
+async function stopControlServer(): Promise<void> {
+  const server = controlServer
+  if (!server) {
+    return
+  }
+  controlServer = null
+  try {
+    await server.stop()
+  } catch (error) {
+    console.error('[control] failed to stop control server', error)
+  }
+}
+
+function applyControlServerSetting(): void {
+  if (readTerminalSettings().terminayMcp.enabled) {
+    void startControlServer()
+  } else {
+    void stopControlServer()
+  }
+}
+
 function sendToPtyHost(session: TerminalSession, message: Record<string, unknown>): void {
   if (session.exited || !session.host.connected) {
     return
@@ -1167,9 +1382,14 @@ function finalizeTerminalSession(session: TerminalSession, exitCode: number): vo
     resolve()
   }
   session.inactivityWaiters.clear()
+  removeControlToken(session.id)
 }
 
-async function buildPtySpawnOptions(settings: TerminalSettings, cwd?: string): Promise<{
+async function buildPtySpawnOptions(
+  settings: TerminalSettings,
+  cwd?: string,
+  controlEnv?: { socketPath: string; token: string },
+): Promise<{
   shellPath: string
   args: string[]
   cwd: string
@@ -1177,7 +1397,7 @@ async function buildPtySpawnOptions(settings: TerminalSettings, cwd?: string): P
 }> {
   const shells = getConfiguredShells(settings)
   const spawnCwd = await normalizeSpawnCwd(cwd)
-  const spawnEnv = getTerminalSpawnEnv()
+  const spawnEnv = getTerminalSpawnEnv(controlEnv)
   const extraArgs = parseCommandLineArgs(settings.shell.extraArgs)
 
   for (const shellPath of shells) {
@@ -1199,7 +1419,12 @@ async function buildPtySpawnOptions(settings: TerminalSettings, cwd?: string): P
 async function createPtySession(webContentsId: number, cwd?: string): Promise<TerminalSession> {
   const id = randomUUID()
   const settings = readTerminalSettings()
-  const spawnOptions = await buildPtySpawnOptions(settings, cwd)
+  let controlEnv: { socketPath: string; token: string } | undefined
+  if (settings.terminayMcp.enabled) {
+    const token = registerControlToken(id, webContentsId)
+    controlEnv = { socketPath: getControlSocketPath(), token }
+  }
+  const spawnOptions = await buildPtySpawnOptions(settings, cwd, controlEnv)
   const progressStaleMs = Math.round(settings.activityIndicators.progressStaleSeconds * 1000)
   const host = fork(getPtyHostPath(), {
     env: {
@@ -1227,6 +1452,7 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
       }
 
       settled = true
+      removeControlToken(id)
       try {
         host.kill()
       } catch {
@@ -1300,6 +1526,7 @@ function killSession(id: string): void {
   recordingService.finalize(id, null)
   terminalSessions.delete(id)
   remoteAccessService.removeSession(id)
+  removeControlToken(id)
 }
 
 function killSessionsForWebContents(webContentsId: number): void {
@@ -2156,6 +2383,7 @@ ipcMain.handle('settings:update-terminal', (_event, payload: TerminalSettings) =
   broadcastTerminalSettings(settings)
   createAppMenu(settings)
   remoteAccessService.notifyStatusChanged()
+  applyControlServerSetting()
   return settings
 })
 
@@ -2164,6 +2392,7 @@ ipcMain.handle('settings:reset-terminal', () => {
   broadcastTerminalSettings(settings)
   createAppMenu(settings)
   remoteAccessService.notifyStatusChanged()
+  applyControlServerSetting()
   return settings
 })
 
@@ -2426,6 +2655,29 @@ ipcMain.handle('terminal:wait-for-inactivity', async (_event, { id, durationMs }
   })
 })
 
+ipcMain.on(CONTROL_RESPONSE_CHANNEL, (_event, message: ControlRendererResponse) => {
+  const resolver = pendingControlRequests.get(message.requestId)
+  if (!resolver) {
+    return
+  }
+  pendingControlRequests.delete(message.requestId)
+  if (message.ok) {
+    resolver({ ok: true, result: message.result })
+  } else {
+    resolver({ ok: false, error: message.error })
+  }
+})
+
+ipcMain.handle('mcp-install:get-status', () => getMcpInstallStatus())
+
+ipcMain.handle('mcp-install:install', (_event, payload: { agent: McpAgentId }) =>
+  installMcpAgent(payload.agent, getMcpServerCommand()),
+)
+
+ipcMain.handle('mcp-install:uninstall', (_event, payload: { agent: McpAgentId }) =>
+  uninstallMcpAgent(payload.agent),
+)
+
 app.on('web-contents-created', (_event, contents) => {
   bindAppShortcuts(contents)
 
@@ -2441,6 +2693,7 @@ app.on('before-quit', () => {
   for (const session of terminalSessions.values()) {
     recordingService.finalize(session.id, null)
   }
+  void stopControlServer()
 })
 
 registerFileViewerIpcHandlers({
@@ -2475,4 +2728,5 @@ app.whenReady().then(() => {
   setDockIcon()
   createAppMenu()
   createWindow()
+  applyControlServerSetting()
 })

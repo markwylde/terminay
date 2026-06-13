@@ -24,6 +24,11 @@ import type {
   EditWindowResult,
   EditWindowState,
   MacrosChangeMessage,
+  McpAgentId,
+  McpInstallActionResult,
+  McpInstallStatus,
+  ControlRendererRequestMessage,
+  ControlRendererResponseMessage,
   ProjectEditWindowDraft,
   ProjectEditWindowResult,
   FileExplorerWatchEvent,
@@ -226,6 +231,18 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.on('settings:focus-section', wrapper)
     return () => ipcRenderer.off('settings:focus-section', wrapper)
   },
+  getMcpInstallStatus: () => ipcRenderer.invoke('mcp-install:get-status') as Promise<McpInstallStatus>,
+  installMcpAgent: (agent: McpAgentId) =>
+    ipcRenderer.invoke('mcp-install:install', { agent }) as Promise<McpInstallActionResult>,
+  uninstallMcpAgent: (agent: McpAgentId) =>
+    ipcRenderer.invoke('mcp-install:uninstall', { agent }) as Promise<McpInstallActionResult>,
+  onControlRequest: (listener: (message: ControlRendererRequestMessage) => void) => {
+    const wrapper: ElectronListener<ControlRendererRequestMessage> = (_event, message) => listener(message)
+    ipcRenderer.on('control:request', wrapper)
+    return () => ipcRenderer.off('control:request', wrapper)
+  },
+  sendControlResponse: (message: ControlRendererResponseMessage) =>
+    ipcRenderer.send('control:response', message),
 })
 
 contextBridge.exposeInMainWorld('terminayWebRtcHost', {
