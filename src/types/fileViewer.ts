@@ -5,7 +5,7 @@ import type {
   FileViewerPreviewSource,
 } from './terminay'
 
-export type FileViewerMode = 'preview' | 'text' | 'hex' | 'diff'
+export type FileViewerMode = 'preview' | 'tasks' | 'text' | 'hex' | 'diff'
 
 export type FileViewerEngine = 'auto' | 'performant' | 'monaco'
 
@@ -76,6 +76,7 @@ export type FilePreviewCapabilities = {
   canEditHex: boolean
   canEditText: boolean
   canPreview: boolean
+  canTasks: boolean
   canUseMonaco: boolean
   defaultMode: FileViewerMode
   fallbackMode: FileViewerMode
