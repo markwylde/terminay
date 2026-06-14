@@ -57,6 +57,34 @@ export function TextViewer({ engine, filePath, language, onChangeText, onCurrent
           }
           monaco.editor.setTheme(FILE_VIEWER_THEME)
           onCurrentTextGetterChange?.(() => editor.getValue())
+          // Monaco often mounts before its container has a measured size (the file
+          // tab lives inside a dockview panel that may not be laid out yet). When
+          // that happens the first paint has no visible lines, so the tokenization
+          // pass that completes while the viewport is empty repaints nothing and
+          // syntax highlighting only appears once a scroll forces a fresh render.
+          // Once the container actually gains a size, force re-tokenization (by
+          // re-applying the language) plus a layout + full re-render so the
+          // initially-visible lines colorize immediately without a scroll.
+          const node = editor.getDomNode()
+          if (node) {
+            const colorizeWhenVisible = () => {
+              if (node.clientWidth === 0 || node.clientHeight === 0) return
+              const model = editor.getModel()
+              if (model) {
+                const languageId = model.getLanguageId()
+                // Toggle the language to force a fresh tokenization pass now that
+                // the viewport is non-empty; a same-value set would be a no-op.
+                monaco.editor.setModelLanguage(model, 'plaintext')
+                monaco.editor.setModelLanguage(model, languageId)
+              }
+              editor.layout()
+              editor.render(true)
+              observer.disconnect()
+            }
+            const observer = new ResizeObserver(colorizeWhenVisible)
+            observer.observe(node)
+            editor.onDidDispose(() => observer.disconnect())
+          }
         }}
         onChange={(value) => onChangeText(value ?? '')}
         options={{
