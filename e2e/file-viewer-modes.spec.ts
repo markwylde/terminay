@@ -71,3 +71,26 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   await expect(mainWindow.locator('.file-diff-viewer')).toContainText('const label = "again"')
   await expect(mainWindow.locator('.file-diff-viewer .file-token--tag-name', { hasText: 'section' }).first()).toBeVisible()
 })
+
+test('text mode colorizes syntax on open without needing a scroll', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'file-viewer-text-colorize',
+    seed: {
+      files: {
+        'spec.md': '# Heading\n\nThis is **bold** text with a [link](https://example.com).\n\n- one\n- two\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  await fileExplorerItem(mainWindow, 'spec.md').dblclick()
+  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+
+  // Monaco renders every token as a span.mtk<N>; plaintext is entirely mtk1.
+  // If markdown tokenization painted, there must be visible non-mtk1 tokens
+  // straight away — without the user scrolling to force a re-render.
+  await expect(mainWindow.locator('.file-text-viewer .monaco-editor .view-line').first()).toBeVisible()
+  await expect(mainWindow.locator('.file-text-viewer .monaco-editor .view-line span:not(.mtk1)').first()).toBeVisible()
+})
