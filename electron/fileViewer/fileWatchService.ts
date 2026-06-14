@@ -9,7 +9,9 @@ type WatchRegistration = {
 }
 
 type WatchSubscription = {
+  debounceTimer: NodeJS.Timeout | null
   lastSnapshot: FileSnapshot
+  pendingEventType: 'change' | 'rename' | null
   subscribers: Map<number, number>
   watcher: FSWatcher
 }
@@ -45,6 +47,8 @@ function snapshotsAreEqual(left: FileSnapshot, right: FileSnapshot): boolean {
   )
 }
 
+const FILE_WATCH_DEBOUNCE_MS = 1000
+
 export class FileWatchService {
   private readonly subscriptionsByPath = new Map<string, WatchSubscription>()
   private readonly pathsBySubscriber = new Map<number, WatchRegistration>()
@@ -64,10 +68,12 @@ export class FileWatchService {
           return
         }
 
-        void this.handleWatchEvent(resolvedPath, eventType)
+        this.queueWatchEvent(resolvedPath, eventType)
       })
       subscription = {
+        debounceTimer: null,
         lastSnapshot: toFileSnapshot(initialInfo),
+        pendingEventType: null,
         subscribers: new Map<number, number>(),
         watcher,
       }
@@ -124,6 +130,10 @@ export class FileWatchService {
     }
 
     if (subscription.subscribers.size === 0) {
+      if (subscription.debounceTimer) {
+        clearTimeout(subscription.debounceTimer)
+        subscription.debounceTimer = null
+      }
       subscription.watcher.close()
       this.subscriptionsByPath.delete(resolvedPath)
     }
@@ -138,6 +148,31 @@ export class FileWatchService {
     if (registration && registration.paths.size === 0) {
       this.pathsBySubscriber.delete(ownerWebContentsId)
     }
+  }
+
+  private queueWatchEvent(resolvedPath: string, eventType: 'change' | 'rename'): void {
+    const subscription = this.subscriptionsByPath.get(resolvedPath)
+    if (!subscription) {
+      return
+    }
+
+    subscription.pendingEventType = eventType === 'rename' ? 'rename' : (subscription.pendingEventType ?? eventType)
+
+    if (subscription.debounceTimer) {
+      clearTimeout(subscription.debounceTimer)
+    }
+
+    subscription.debounceTimer = setTimeout(() => {
+      const activeSubscription = this.subscriptionsByPath.get(resolvedPath)
+      if (!activeSubscription) {
+        return
+      }
+
+      activeSubscription.debounceTimer = null
+      const pendingEventType = activeSubscription.pendingEventType ?? 'change'
+      activeSubscription.pendingEventType = null
+      void this.handleWatchEvent(resolvedPath, pendingEventType)
+    }, FILE_WATCH_DEBOUNCE_MS)
   }
 
   private async handleWatchEvent(resolvedPath: string, eventType: 'change' | 'rename'): Promise<void> {
