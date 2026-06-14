@@ -3,9 +3,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background:
-    radial-gradient(circle at top right, rgba(88, 148, 208, 0.12), transparent 28%),
-    linear-gradient(180deg, #10151d 0%, #0c1016 100%);
+  background: #0c1016;
   color: #dce2f0;
 }
 
