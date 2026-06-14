@@ -89,6 +89,7 @@ export function isTextLikeFile(file: FileInfo): boolean {
 export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities {
   const previewKind = detectPreviewKind(file)
   const canPreview = previewKind !== 'unsupported'
+  const canTasks = previewKind === 'markdown'
   const textLike = isTextLikeFile(file)
   const canUseMonaco = !file.isDirectory
   const canEditText = !file.isDirectory
@@ -106,6 +107,7 @@ export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities 
     canEditHex,
     canEditText,
     canPreview,
+    canTasks,
     canUseMonaco,
     defaultMode,
     fallbackMode: canEditHex ? 'hex' : defaultMode,
