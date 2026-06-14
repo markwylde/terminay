@@ -8,7 +8,7 @@ import {
   terminayFileGateway,
 } from '../../services/fileViewer'
 import { useTerminalSettings } from '../../hooks/useTerminalSettings'
-import type { FileInfo, FileViewerEngine, GitFileDiff } from '../../types/fileViewer'
+import type { FileInfo, FileViewerEngine, FileViewerMode, GitFileDiff } from '../../types/fileViewer'
 import type { FileViewerDefaultMode } from '../../types/settings'
 import type { FileViewerGitRepoInfo } from '../../types/terminay'
 import { FileConflictBanner } from './FileConflictBanner'
@@ -18,6 +18,7 @@ import { FileStatusBar } from './FileStatusBar'
 import { DiffViewer } from './modes/DiffViewer'
 import { HexViewer } from './modes/HexViewer'
 import { PreviewViewer } from './modes/PreviewViewer'
+import { TasksViewer } from './modes/TasksViewer'
 import { TextViewer } from './modes/TextViewer'
 import type { FilePanelInstanceParams } from './types'
 import './fileViewer.css'
@@ -69,6 +70,9 @@ function getCustomDefaultMode(file: FileInfo, customExtensions: { defaultMode: F
 
 export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const { filePath, initialMode, preferredEngine = 'auto' } = props.params
+  const baseParamsRef = useRef(props.params)
+  const panelApiRef = useRef(props.api)
+  const containerApiRef = useRef(props.containerApi)
   const { isLoading: isLoadingSettings, settings } = useTerminalSettings()
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(props.params.fileInfo ?? null)
   const [draftText, setDraftText] = useState('')
@@ -334,7 +338,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
           setTruncatedForPerformance(false)
         }
 
-        if (modeRef.current === 'diff') {
+        if (modeRef.current === 'diff' || modeRef.current === 'tasks') {
           void refreshDiff(nextInfo.path, { keepPrevious: true })
         }
       })()
@@ -387,7 +391,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   }, [fileWatchRefreshIntervalMs, watchedFilePath, refreshDiff])
 
   useEffect(() => {
-    if (mode !== 'diff' || !watchedFilePath) {
+    if ((mode !== 'diff' && mode !== 'tasks') || !watchedFilePath) {
       return
     }
 
@@ -395,11 +399,13 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   }, [mode, refreshDiff, watchedFilePath])
 
   useEffect(() => {
-    props.api.updateParameters({
-      ...props.params,
+    const panelApi = panelApiRef.current
+    const containerApi = containerApiRef.current
+    panelApi.updateParameters({
+      ...baseParamsRef.current,
       fileInfo: fileInfo ?? undefined,
       isDirty,
-      isFocused: props.containerApi.activePanel?.id === props.api.id,
+      isFocused: containerApi.activePanel?.id === panelApi.id,
       onSave: async () => {
         const currentFileInfo = fileInfoRef.current
         if (!currentFileInfo) {
@@ -453,7 +459,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
       },
       preferredEngine: engine,
     })
-  }, [engine, fileInfo, isDirty, props, refreshDiff])
+  }, [engine, fileInfo, isDirty, refreshDiff])
 
   if (!fileInfo) {
     return <div className="file-panel file-panel--loading">Loading file…</div>
@@ -461,12 +467,17 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 
   const capabilities = detectFileCapabilities(fileInfo)
   const canDiff = gitRepoInfo?.canDiff === true || diffStatus === 'loading'
+  const availableModes: FileViewerMode[] = capabilities.canTasks
+    ? ['preview', 'tasks', 'text', 'hex', 'diff']
+    : ['preview', 'text', 'hex', 'diff']
   const effectiveMode =
     mode === 'preview' && !capabilities.canPreview && !hasSelectedModeRef.current
       ? capabilities.defaultMode
-      : mode === 'diff' && !canDiff
-        ? capabilities.fallbackMode
-        : mode
+      : mode === 'tasks' && !capabilities.canTasks
+        ? capabilities.defaultMode
+        : mode === 'diff' && !canDiff
+          ? capabilities.fallbackMode
+          : mode
 
   return (
     <div className="file-panel">
@@ -493,6 +504,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
       <div className="file-panel__toolbar">
         <FileModeSwitcher
           activeMode={mode}
+          modes={availableModes}
           disabledModes={{
             diff: !canDiff,
           }}
@@ -523,6 +535,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 
       <div className="file-panel__body">
         {effectiveMode === 'preview' ? <PreviewViewer file={fileInfo} previewSourceUrl={previewSourceUrl} text={draftText} /> : null}
+        {effectiveMode === 'tasks' ? <TasksViewer text={draftText} diff={diff} /> : null}
         {effectiveMode === 'text' ? (
           !fileInfo.isDirectory ? (
             <TextViewer
