@@ -66,22 +66,25 @@ test('markdown files expose a Tasks tab with grouped stats and diff progress', a
   await expect(mainWindow.locator('.file-tasks__summary')).toContainText('1 done')
   await expect(mainWindow.locator('.file-tasks__summary')).toContainText('3 remaining')
 
-  // Grouped under headings with per-group counts.
-  const phase1 = mainWindow.locator('.file-tasks__section', { hasText: 'Phase 1' }).first()
-  await expect(phase1.locator('.file-tasks__badge-count').first()).toHaveText('1/3')
+  // Grouped under headings with per-group counts. Target the section header (its
+  // text is just the title) so "Phase 1" doesn't also match the enclosing H1 section.
+  const phase1Badge = mainWindow
+    .locator('.file-tasks__section-header', { hasText: 'Phase 1' })
+    .locator('.file-tasks__badge-count')
+  await expect(phase1Badge).toHaveText('1/3')
   await expect(mainWindow.locator('.file-tasks__item')).toHaveCount(4)
 
   // Completing a task in the working tree surfaces a diff badge.
   await workspace.writeText('plan.md', PROGRESSED_PLAN)
   await expect(mainWindow.locator('.file-tasks__summary')).toContainText('2 done')
   await expect(mainWindow.locator('.file-tasks__chip--diff')).toContainText('+1 in diff')
-  await expect(phase1.locator('.file-tasks__badge-count').first()).toHaveText('2/3')
+  await expect(phase1Badge).toHaveText('2/3')
 
   // Filtering to "Remaining" hides completed tasks but keeps the real group counts.
   await mainWindow.getByRole('tab', { name: 'Remaining' }).click()
   await expect(mainWindow.locator('.file-tasks__item')).toHaveCount(2)
   await expect(mainWindow.locator('.file-tasks__item--checked')).toHaveCount(0)
-  await expect(phase1.locator('.file-tasks__badge-count').first()).toHaveText('2/3')
+  await expect(phase1Badge).toHaveText('2/3')
 
   // "Done" shows the two completed items.
   await mainWindow.getByRole('tab', { name: 'Done' }).click()
