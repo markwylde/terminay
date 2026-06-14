@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it'
+import { useMemo } from 'react'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 import type Token from 'markdown-it/lib/token.mjs'
 
@@ -68,7 +69,10 @@ function normalizeTaskListMarkers(text: string): string {
 }
 
 export function MarkdownPreview({ basePath, text }: MarkdownPreviewProps) {
-  const html = normalizeRelativeUrls(markdown.render(normalizeTaskListMarkers(text)), basePath)
+  const html = useMemo(() => {
+    return normalizeRelativeUrls(markdown.render(normalizeTaskListMarkers(text)), basePath)
+  }, [basePath, text])
+
   // biome-ignore lint/security/noDangerouslySetInnerHtml: We render markdown which produces HTML
   return <article className="file-preview-markdown" dangerouslySetInnerHTML={{ __html: html }} />
 }

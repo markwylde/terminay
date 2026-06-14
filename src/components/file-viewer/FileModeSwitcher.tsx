@@ -3,15 +3,24 @@ import type { FileViewerMode } from '../../types/fileViewer'
 type FileModeSwitcherProps = {
   activeMode: FileViewerMode
   disabledModes?: Partial<Record<FileViewerMode, boolean>>
+  modes?: FileViewerMode[]
   onChangeMode: (mode: FileViewerMode) => void
 }
 
-const MODES: FileViewerMode[] = ['preview', 'text', 'hex', 'diff']
+const DEFAULT_MODES: FileViewerMode[] = ['preview', 'text', 'hex', 'diff']
 
-export function FileModeSwitcher({ activeMode, disabledModes, onChangeMode }: FileModeSwitcherProps) {
+const MODE_LABELS: Record<FileViewerMode, string> = {
+  diff: 'Diff',
+  hex: 'HEX',
+  preview: 'Preview',
+  tasks: 'Tasks',
+  text: 'Text',
+}
+
+export function FileModeSwitcher({ activeMode, disabledModes, modes = DEFAULT_MODES, onChangeMode }: FileModeSwitcherProps) {
   return (
     <div className="file-mode-switcher" role="tablist" aria-label="File view mode">
-      {MODES.map((mode) => (
+      {modes.map((mode) => (
         <button
           key={mode}
           type="button"
@@ -21,7 +30,7 @@ export function FileModeSwitcher({ activeMode, disabledModes, onChangeMode }: Fi
           role="tab"
           aria-selected={activeMode === mode}
         >
-          {mode === 'hex' ? 'HEX' : mode[0].toUpperCase() + mode.slice(1)}
+          {MODE_LABELS[mode]}
         </button>
       ))}
     </div>
