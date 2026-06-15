@@ -403,6 +403,16 @@ export function SettingsWindow() {
     setSelectedRemotePairingMode(remoteStatus?.pairingMode ?? draft.remoteAccess.pairingMode)
   }, [remoteStatus?.pairingMode, draft.remoteAccess.pairingMode])
 
+  const prevActiveConnectionCountRef = useRef<number | null>(null)
+  useEffect(() => {
+    const current = remoteStatus?.activeConnectionCount ?? null
+    const prev = prevActiveConnectionCountRef.current
+    if (prev !== null && current !== null && current > prev && isPairingQrModalOpen) {
+      setIsPairingQrModalOpen(false)
+    }
+    prevActiveConnectionCountRef.current = current
+  }, [remoteStatus?.activeConnectionCount, isPairingQrModalOpen])
+
   const normalizedQuery = query.trim().toLowerCase()
 
   const filteredSections = useMemo(() => {
