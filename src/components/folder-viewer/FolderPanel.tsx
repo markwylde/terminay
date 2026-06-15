@@ -1,5 +1,6 @@
 import {
 	FileEdit,
+	FolderOpen,
 	FolderPlus,
 	PlusSquare,
 	Terminal,
@@ -798,6 +799,11 @@ export function FolderPanel(
 							label: 'Open terminal here',
 							icon: <Terminal size={14} />,
 							onClick: () => onOpenTerminal?.(contextMenu.path),
+						},
+						{
+							label: 'Reveal in OS',
+							icon: <FolderOpen size={14} />,
+							onClick: () => void window.terminay.revealInOS(contextMenu.path),
 						},
 					].filter(Boolean) as ContextMenuItem[]}
 				/>

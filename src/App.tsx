@@ -20,6 +20,7 @@ import {
 	ChevronDown,
 	Eraser,
 	FileEdit,
+	FolderOpen,
 	FolderPlus,
 	FolderSync,
 	GitBranch,
@@ -1348,6 +1349,11 @@ function FileExplorerTree({
 							label: 'Open terminal here',
 							icon: <Terminal size={14} />,
 							onClick: () => onOpenTerminal(contextMenu.path),
+						},
+						{
+							label: 'Reveal in OS',
+							icon: <FolderOpen size={14} />,
+							onClick: () => void window.terminay.revealInOS(contextMenu.path),
 						},
 					].filter(Boolean) as ContextMenuItem[]}
 				/>
