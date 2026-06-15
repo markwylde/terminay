@@ -506,6 +506,7 @@ export interface TerminayApi {
   smartPasteClipboard: () => Promise<string>
   writeClipboardText: (text: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
+  revealInOS: (path: string) => Promise<void>
   getAppUpdateStatus: (options?: { force?: boolean }) => Promise<AppUpdateStatus>
   openProjectEditWindow: (draft: ProjectEditWindowDraft) => Promise<ProjectEditWindowResult | null>
   openTerminalEditWindow: (draft: TerminalEditWindowDraft) => Promise<TerminalEditWindowResult | null>

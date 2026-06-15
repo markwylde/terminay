@@ -2421,6 +2421,10 @@ ipcMain.handle('shell:open-external', async (_event, url: string) => {
   openInBrowser(url)
 })
 
+ipcMain.handle('shell:reveal-in-os', (_event, payload: { path: string }) => {
+  shell.showItemInFolder(payload.path)
+})
+
 ipcMain.handle('app:get-update-status', async (_event, options?: { force?: boolean }) => {
   return getAppUpdateStatus(options)
 })
