@@ -376,7 +376,11 @@ export function RemoteApp() {
 
   const renderSessionBuffer = useCallback((sessionId: string | null) => {
     const terminal = terminalRef.current
-    if (!terminal || !sessionId) return
+    if (!terminal) return
+    if (!sessionId) {
+      terminal.reset()
+      return
+    }
 
     const session = sessionsRef.current[sessionId]
     if (!session) return
@@ -662,7 +666,11 @@ export function RemoteApp() {
         return
       case 'exit':
         if (message.sessionId === selectedSessionIdRef.current) terminalRef.current?.write(`\r\n\x1b[31m[process exited with code ${message.exitCode}]\x1b[0m\r\n`)
-        setSessions(current => ({ ...current, [message.sessionId]: { ...current[message.sessionId], exitCode: message.exitCode } }))
+        setSessions(current => {
+          const session = current[message.sessionId]
+          if (!session) return current
+          return { ...current, [message.sessionId]: { ...session, exitCode: message.exitCode } }
+        })
         return
       case 'error': setErrorText(message.message); return
     }
@@ -793,7 +801,14 @@ export function RemoteApp() {
 
   // Keep activeProjectId and selectedSessionId in sync
   useEffect(() => {
-    if (projects.length > 0 && !activeProjectId) {
+    if (projects.length === 0) {
+      if (activeProjectId) {
+        setActiveProjectId(null)
+      }
+      return
+    }
+
+    if (!activeProjectId || !projects.some((project) => project.id === activeProjectId)) {
       setActiveProjectId(projects[0].id)
     }
   }, [projects, activeProjectId])
@@ -801,6 +816,10 @@ export function RemoteApp() {
   useEffect(() => {
     if (selectedSessionId) {
       const session = sessions[selectedSessionId]
+      if (!session) {
+        setSelectedSessionId(null)
+        return
+      }
       const sessionProjectId = session ? getSessionProjectId(session) : null
       if (sessionProjectId && sessionProjectId !== activeProjectId) {
         setActiveProjectId(sessionProjectId)
@@ -1159,7 +1178,6 @@ export function RemoteApp() {
                 <div key={s.id} className={`tab ${s.id === selectedSessionId ? 'active' : ''}`} onClick={() => setSelectedSessionId(s.id)}>
                   <span className="tab-icon">{s.emoji}</span>
                   <span className="tab-title">{s.title}</span>
-                  {s.exitCode !== null && <span className="tab-status">Exited</span>}
                 </div>
               ))}
             </div>
