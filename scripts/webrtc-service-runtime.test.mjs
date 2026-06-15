@@ -314,6 +314,33 @@ test('RemoteAccessService refuses WebRTC terminal tickets when no desktop PIN is
   )
 })
 
+test('RemoteAccessService removes remote sessions when their PTY exits', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-remote-exit-test-'))
+  const service = createTestService({ pairingPinHash: '', tempDir })
+  const sentMessages = []
+  const socket = {
+    close() {},
+    getReadyState: () => 1,
+    send(message) {
+      sentMessages.push(JSON.parse(message))
+    },
+  }
+  const connection = service.connectionStore.register(socket, 'connection-1', 'device-1')
+
+  service.ensureSession('terminal-1')
+  connection.attachedSessionIds.add('terminal-1')
+  sentMessages.length = 0
+
+  service.markSessionExit('terminal-1', 0)
+
+  assert.deepEqual(sentMessages.map((message) => message.type), ['exit', 'session-closed'])
+  assert.equal(sentMessages[0].sessionId, 'terminal-1')
+  assert.equal(sentMessages[0].exitCode, 0)
+  assert.equal(sentMessages[1].id, 'terminal-1')
+  assert.equal(connection.attachedSessionIds.has('terminal-1'), false)
+  assert.equal(service.sessions.has('terminal-1'), false)
+})
+
 function createTestService({ pairingPinHash, pinFailureLimit = 3, tempDir }) {
   return new RemoteAccessService({
     app: {
