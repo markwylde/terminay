@@ -21,6 +21,7 @@ const TERMINAL_CONTEXT_MAX_LINES = 200
 const TERMINAL_CONTEXT_MAX_CHARS = 20_000
 const REMOTE_TERMINAL_SCALE_PROPERTY = '--terminal-remote-scale'
 const EMPTY_TERMINAL_ROOT_SIZE = { height: 0, width: 0 }
+const LINK_OPEN_DEDUPE_WINDOW_MS = 500
 
 const searchOptions = {
   incremental: true,
@@ -237,6 +238,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     root.innerHTML = ''
 
     const isMac = navigator.platform.toLowerCase().includes('mac')
+    let lastOpenedLink: { uri: string; openedAt: number } | undefined
     const openTerminalLink = (event: MouseEvent, uri: string) => {
       const modifierKey = isMac ? event.metaKey : event.ctrlKey
       if (!modifierKey) {
@@ -244,6 +246,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       }
 
       event.preventDefault()
+
+      const now = performance.now()
+      if (lastOpenedLink?.uri === uri && now - lastOpenedLink.openedAt < LINK_OPEN_DEDUPE_WINDOW_MS) {
+        return
+      }
+
+      lastOpenedLink = { uri, openedAt: now }
       void window.terminay.openExternal(uri)
     }
 
@@ -294,6 +303,17 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     )
     terminal.unicode.activeVersion = '11'
     terminal.open(root)
+    const screenElement = terminal.element?.querySelector<HTMLElement>('.xterm-screen')
+    const preventModifierLinkSelection = (event: MouseEvent) => {
+      const modifierKey = isMac ? event.metaKey : event.ctrlKey
+      if (!modifierKey || !screenElement?.classList.contains('xterm-cursor-pointer')) {
+        return
+      }
+
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    screenElement?.addEventListener('mousedown', preventModifierLinkSelection)
 
     const copySelectionToClipboard = () => {
       const selectedText = terminal.getSelection()
@@ -755,6 +775,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       contextReaderDisposer?.()
       zoomDisposer()
       remoteSizeOverrideDisposer()
+      screenElement?.removeEventListener('mousedown', preventModifierLinkSelection)
       searchAddonRef.current = null
       fitAddonRef.current = null
       terminalRef.current = null
