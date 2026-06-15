@@ -20,6 +20,7 @@ import {
 	ChevronDown,
 	Eraser,
 	FileEdit,
+	FolderOpen,
 	FolderPlus,
 	FolderSync,
 	GitBranch,
@@ -1348,6 +1349,11 @@ function FileExplorerTree({
 							label: 'Open terminal here',
 							icon: <Terminal size={14} />,
 							onClick: () => onOpenTerminal(contextMenu.path),
+						},
+						{
+							label: 'Reveal in OS',
+							icon: <FolderOpen size={14} />,
+							onClick: () => void window.terminay.revealInOS(contextMenu.path),
 						},
 					].filter(Boolean) as ContextMenuItem[]}
 				/>
@@ -6726,6 +6732,16 @@ function App() {
 			setSelectedRemotePairingMode(remoteStatus.pairingMode);
 		}
 	}, [remoteStatus?.pairingMode]);
+
+	const prevActiveConnectionCountRef = useRef<number | null>(null);
+	useEffect(() => {
+		const current = remoteStatus?.activeConnectionCount ?? null;
+		const prev = prevActiveConnectionCountRef.current;
+		if (prev !== null && current !== null && current > prev && isPairingModalOpen) {
+			setIsPairingModalOpen(false);
+		}
+		prevActiveConnectionCountRef.current = current;
+	}, [remoteStatus?.activeConnectionCount, isPairingModalOpen]);
 
 	const selectRemotePairingMode = useCallback(async (mode: 'lan' | 'webrtc') => {
 		setSelectedRemotePairingMode(mode);
