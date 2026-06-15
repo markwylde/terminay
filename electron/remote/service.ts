@@ -456,10 +456,7 @@ export class RemoteAccessService {
       sessionId: id,
       type: 'exit',
     })
-    this.broadcast({
-      session: this.toSessionSummary(id, session),
-      type: 'session-updated',
-    })
+    this.removeSession(id)
   }
 
   removeSession(id: string): void {
