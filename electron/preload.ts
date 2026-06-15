@@ -140,6 +140,7 @@ contextBridge.exposeInMainWorld('terminay', {
   writeClipboardText: (text: string) => ipcRenderer.invoke('clipboard:write-text', text) as Promise<void>,
 
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+  revealInOS: (path: string) => ipcRenderer.invoke('shell:reveal-in-os', { path }) as Promise<void>,
   getAppUpdateStatus: (options?: { force?: boolean }) =>
     ipcRenderer.invoke('app:get-update-status', options),
   openProjectEditWindow: (draft: ProjectEditWindowDraft) =>
