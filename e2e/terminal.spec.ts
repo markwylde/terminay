@@ -313,12 +313,17 @@ test.describe('terminal behavior', () => {
     const link = mainWindow.locator('.xterm-rows').getByText(linkUrl)
     await expect(link).toBeVisible()
     const linkBox = await link.boundingBox()
-    if (!linkBox) {
+    const terminalBox = await mainWindow.locator('.terminal-panel').first().boundingBox()
+    if (!linkBox || !terminalBox) {
       throw new Error('Terminal link location is unavailable')
     }
     const linkCenter = {
       x: linkBox.x + linkBox.width / 2,
       y: linkBox.y + linkBox.height / 2,
+    }
+    const moveTarget = {
+      x: Math.min(terminalBox.x + terminalBox.width - 20, linkCenter.x + 240),
+      y: Math.min(terminalBox.y + terminalBox.height - 20, linkCenter.y + 60),
     }
 
     await mainWindow.mouse.click(linkCenter.x, linkCenter.y)
@@ -342,12 +347,18 @@ test.describe('terminal behavior', () => {
         }),
       )
       .toEqual([linkUrl])
+
+    await mainWindow.mouse.move(moveTarget.x, moveTarget.y)
+    await mainWindow.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    )
+    await expectNoRenderedTerminalSelection(mainWindow)
   })
 
   test('modifier-clicking OSC links does not leave terminal selection armed', async ({ electronApp, mainWindow }) => {
     const sessionId = await getActiveSessionId(mainWindow)
     const linkUrl = 'https://example.com/terminay-osc-link-test'
-    const linkText = 'terminay osc link'
+    const linkText = linkUrl
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
 
     await electronApp.evaluate(({ ipcMain }) => {
