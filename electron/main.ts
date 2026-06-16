@@ -926,23 +926,23 @@ function ensureNodePtySpawnHelperIsExecutable(): void {
     return
   }
 
-  const helperPath = path.join(
-    process.cwd(),
-    'node_modules',
-    'node-pty',
-    'prebuilds',
-    `${process.platform}-${process.arch}`,
-    'spawn-helper',
-  )
+  const nodePtyRoot = path.join(process.cwd(), 'node_modules', 'node-pty')
+  const helperPaths = [
+    path.join(nodePtyRoot, 'build', 'Release', 'spawn-helper'),
+    path.join(nodePtyRoot, 'build', 'Debug', 'spawn-helper'),
+    path.join(nodePtyRoot, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+  ]
 
-  if (!existsSync(helperPath)) {
-    return
-  }
+  for (const helperPath of helperPaths) {
+    if (!existsSync(helperPath)) {
+      continue
+    }
 
-  try {
-    chmodSync(helperPath, 0o755)
-  } catch {
-    // If chmod fails we continue and let the normal spawn error surface.
+    try {
+      chmodSync(helperPath, 0o755)
+    } catch {
+      // If chmod fails we continue and let the normal spawn error surface.
+    }
   }
 }
 
@@ -1429,9 +1429,17 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
   const host = fork(getPtyHostPath(), {
     env: {
       ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
       TERMINAY_PTY_HOST: '1',
     },
-    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  })
+  let startupOutput = ''
+  host.stdout?.on('data', (chunk: Buffer) => {
+    startupOutput += chunk.toString()
+  })
+  host.stderr?.on('data', (chunk: Buffer) => {
+    startupOutput += chunk.toString()
   })
 
   const session: TerminalSession = {
@@ -1499,7 +1507,8 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
     })
     host.once('exit', (code, signal) => {
       if (!settled) {
-        fail(new Error(`PTY host exited before startup (${signal ?? code ?? 'unknown'})`))
+        const detail = startupOutput.trim()
+        fail(new Error(`PTY host exited before startup (${signal ?? code ?? 'unknown'})${detail ? `: ${detail}` : ''}`))
         return
       }
 

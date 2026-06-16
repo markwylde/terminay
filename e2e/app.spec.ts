@@ -261,6 +261,52 @@ test('prioritizes direct title matches in command bar search', async ({ mainWind
   await expect(commandButtons.nth(1)).toContainText('Edit project settings')
 })
 
+test('preserves macro library order in command bar search', async ({ mainWindow }) => {
+  await mainWindow.evaluate(async () => {
+    const macros = await window.terminay.getMacros()
+    const otherMacros = macros.filter((macro) => !['pull-from-main', 'create-pull-request'].includes(macro.id))
+    const pullFromMain = {
+      id: 'pull-from-main',
+      title: 'Pull in from main',
+      description: 'git stash && git checkout main && git pull origin main && git stash apply',
+      template: 'git stash && git checkout main && git pull origin main && git stash apply',
+      submitMode: 'type-only' as const,
+      steps: [
+        {
+          id: 'pull-from-main-step-1',
+          type: 'type' as const,
+          content: 'git stash && git checkout main && git pull origin main && git stash apply',
+        },
+      ],
+      fields: [],
+    }
+    const createPullRequest = {
+      id: 'create-pull-request',
+      title: 'Create a pull request',
+      description: 'Ask the agent to branch, commit, push, and open a pull request with gh.',
+      template: 'Create a branch and commit all the unstaged changes into that branch, then push up and create a pull request using the gh cli tool.',
+      submitMode: 'type-only' as const,
+      steps: [
+        {
+          id: 'create-pull-request-step-1',
+          type: 'type' as const,
+          content: 'Create a branch and commit all the unstaged changes into that branch, then push up and create a pull request using the gh cli tool.',
+        },
+      ],
+      fields: [],
+    }
+
+    await window.terminay.updateMacros([pullFromMain, createPullRequest, ...otherMacros])
+  })
+
+  await openMacroLauncher(mainWindow)
+  await mainWindow.getByPlaceholder('Search commands...').fill('pull')
+
+  const macroButtons = mainWindow.locator('.macro-launcher-group', { hasText: 'Macros' }).locator('.macro-launcher-item')
+  await expect(macroButtons.first()).toContainText('Pull in from main')
+  await expect(macroButtons.nth(1)).toContainText('Create a pull request')
+})
+
 test('shows current key bindings in the command bar', async ({ mainWindow }) => {
   await openMacroLauncher(mainWindow)
 
