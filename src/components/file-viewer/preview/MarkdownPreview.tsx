@@ -73,6 +73,5 @@ export function MarkdownPreview({ basePath, text }: MarkdownPreviewProps) {
     return normalizeRelativeUrls(markdown.render(normalizeTaskListMarkers(text)), basePath)
   }, [basePath, text])
 
-  // biome-ignore lint/security/noDangerouslySetInnerHtml: We render markdown which produces HTML
   return <article className="file-preview-markdown" dangerouslySetInnerHTML={{ __html: html }} />
 }
