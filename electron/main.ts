@@ -1787,6 +1787,11 @@ function createAppMenu(settings: TerminalSettings = readTerminalSettings()): voi
           accelerator: getMenuShortcut(settings, 'set-project-root-folder-to-working-directory'),
           click: () => sendCommandToFocusedWindow('set-project-root-folder-to-working-directory'),
         },
+        {
+          label: 'Toggle File Explorer Sidebar',
+          accelerator: getMenuShortcut(settings, 'toggle-file-explorer-sidebar'),
+          click: () => sendCommandToFocusedWindow('toggle-file-explorer-sidebar'),
+        },
         { role: 'forceReload' },
         { role: 'toggleDevTools' },
       ],
