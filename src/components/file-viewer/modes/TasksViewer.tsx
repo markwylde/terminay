@@ -88,7 +88,6 @@ function TaskRow({ task }: { task: TaskItem }) {
       style={task.depth > 0 ? { marginLeft: `${task.depth * 18}px` } : undefined}
     >
       <input className="file-tasks__checkbox" type="checkbox" checked={task.checked} disabled readOnly />
-      {/* biome-ignore lint/security/noDangerouslySetInnerHtml: rendered from inline markdown with html disabled */}
       <span className="file-tasks__label" dangerouslySetInnerHTML={renderLabel(task.label)} />
     </li>
   )

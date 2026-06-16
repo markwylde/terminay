@@ -4180,6 +4180,10 @@ const ProjectWorkspace = forwardRef<
 			}))
 			.filter(({ score }) => score > 0)
 			.sort((left, right) => {
+				if (left.macro.group === 'Macros' && right.macro.group === 'Macros') {
+					return left.index - right.index;
+				}
+
 				if (right.score !== left.score) {
 					return right.score - left.score;
 				}

@@ -1,7 +1,7 @@
-import { request as httpsRequest } from 'node:https'
 import { constants, generateKeyPairSync, sign } from 'node:crypto'
-import { expect, test } from './fixtures'
+import { request as httpsRequest } from 'node:https'
 import type { Page } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { openRemoteMenu } from './support/ui'
 
 function remoteOriginInput(page: Page) {
@@ -12,6 +12,19 @@ function toLoopbackPairingUrl(pairingUrl: string): string {
   const url = new URL(pairingUrl)
   url.hostname = '127.0.0.1'
   return url.toString()
+}
+
+async function configureWebRtcHostedDomain(page: Page, hostedDomain: string): Promise<void> {
+  await page.evaluate(async (nextHostedDomain) => {
+    const settings = await window.terminay.getTerminalSettings()
+    await window.terminay.updateTerminalSettings({
+      ...settings,
+      remoteAccess: {
+        ...settings.remoteAccess,
+        webRtcHostedDomain: nextHostedDomain,
+      },
+    })
+  }, hostedDomain)
 }
 
 async function postRemoteJson<TResponse>(
@@ -103,7 +116,6 @@ test('starts remote access from the host menu and shows a pairing qr modal', asy
 
 test('asks for a Remote Access PIN before generating the QR code', async ({ mainWindow }) => {
   await openRemoteMenu(mainWindow)
-  await mainWindow.getByRole('button', { name: 'WebRTC Relay' }).click()
   await mainWindow.getByRole('button', { name: 'Start Server & Show QR' }).click()
 
   const pinDialog = mainWindow.getByRole('dialog', { name: 'Remote Pairing PIN' })
@@ -166,38 +178,49 @@ test('asks for a Remote Access PIN before generating the QR code', async ({ main
 })
 
 test('starts WebRTC remote access from the host menu start button', async ({ mainWindow }) => {
+  await configureWebRtcHostedDomain(mainWindow, 'http://localhost:9')
+
   await openRemoteMenu(mainWindow)
   await mainWindow.getByRole('button', { name: 'WebRTC Relay' }).click()
   await mainWindow.locator('.remote-access-menu__item').filter({ hasText: /^Start ServerOffline$/ }).click()
 
-  const pinDialog = mainWindow.getByRole('dialog', { name: 'Remote Pairing PIN' })
-  await expect(pinDialog).toBeVisible()
-  await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456')
-  await pinDialog.getByRole('button', { name: 'Save PIN' }).click()
-  await expect(pinDialog).toHaveCount(0)
+  try {
+    const pinDialog = mainWindow.getByRole('dialog', { name: 'Remote Pairing PIN' })
+    await expect(pinDialog).toBeVisible()
+    await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456')
+    await pinDialog.getByRole('button', { name: 'Save PIN' }).click()
+    await expect(pinDialog).toHaveCount(0)
 
-  await expect
-    .poll(async () => {
-      const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
-      return status.isRunning && status.pairingMode === 'webrtc' && Boolean(status.webRtcPairingUrl)
+    await expect
+      .poll(async () => {
+        const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
+        return status.isRunning && status.pairingMode === 'webrtc' && Boolean(status.webRtcPairingUrl)
+      })
+      .toBe(true)
+
+    const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
+    expect(status.pairingMode).toBe('webrtc')
+    const webRtcPairingUrl = new URL(status.webRtcPairingUrl!)
+    expect(webRtcPairingUrl.protocol).toBe('http:')
+    expect(webRtcPairingUrl.hostname).toMatch(/^[a-f0-9]{32}\.localhost$/)
+    expect(webRtcPairingUrl.port).toBe('9')
+    expect(webRtcPairingUrl.pathname).toBe('/v1/')
+    expect(webRtcPairingUrl.hash.length).toBeGreaterThan(20)
+    expect(webRtcPairingUrl.searchParams.has('relayJoinToken')).toBe(false)
+    expect(webRtcPairingUrl.searchParams.has('pairingToken')).toBe(false)
+    expect(webRtcPairingUrl.searchParams.has('signalingAuthToken')).toBe(false)
+
+    await openRemoteMenu(mainWindow)
+    await expect(mainWindow.locator('.remote-access-menu__item').filter({ hasText: /^Stop ServerLive$/ })).toBeVisible()
+    await expect(mainWindow.getByText('Start remote access to generate a relay pairing link.')).toHaveCount(0)
+  } finally {
+    await mainWindow.evaluate(async () => {
+      const status = await window.terminay.getRemoteAccessStatus()
+      if (status.isRunning) {
+        await window.terminay.toggleRemoteAccessServer()
+      }
     })
-    .toBe(true)
-
-  const status = await mainWindow.evaluate(() => window.terminay.getRemoteAccessStatus())
-  expect(status.pairingMode).toBe('webrtc')
-  const webRtcPairingUrl = new URL(status.webRtcPairingUrl!)
-  expect(webRtcPairingUrl.protocol).toBe('https:')
-  expect(webRtcPairingUrl.hostname).toMatch(/^[a-f0-9]{32}\.terminay\.com$/)
-  expect(webRtcPairingUrl.pathname).toBe('/v1/')
-  expect(webRtcPairingUrl.hash.length).toBeGreaterThan(20)
-  expect(webRtcPairingUrl.searchParams.has('relayJoinToken')).toBe(false)
-  expect(webRtcPairingUrl.searchParams.has('pairingToken')).toBe(false)
-  expect(webRtcPairingUrl.searchParams.has('signalingAuthToken')).toBe(false)
-
-  await openRemoteMenu(mainWindow)
-  await expect(mainWindow.locator('.remote-access-menu__item').filter({ hasText: /^Stop ServerLive$/ })).toBeVisible()
-  await expect(mainWindow.getByText('Start remote access to generate a relay pairing link.')).toHaveCount(0)
-  await mainWindow.locator('.remote-access-menu__item').filter({ hasText: /^Stop ServerLive$/ }).click()
+  }
 })
 
 test('rejects pairing when the configured PIN is wrong', async ({ mainWindow }) => {

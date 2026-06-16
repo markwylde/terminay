@@ -28,13 +28,24 @@ const nodeBuiltins = [
   'ws',
 ]
 
+const appInput = {
+  main: path.join(__dirname, 'index.html'),
+  remote: path.join(__dirname, 'remote.html'),
+}
+
+const electronInput = {
+  main: path.join(__dirname, 'electron/main.ts'),
+  ptyHost: path.join(__dirname, 'electron/ptyHost.ts'),
+  mcpEntry: path.join(__dirname, 'electron/mcpEntry.ts'),
+}
+
 export default defineConfig({
   build: {
     rollupOptions: {
-      input: {
-        main: path.join(__dirname, 'index.html'),
-        remote: path.join(__dirname, 'remote.html'),
-      },
+      input: appInput,
+    },
+    rolldownOptions: {
+      input: appInput,
     },
   },
   plugins: [
@@ -43,13 +54,18 @@ export default defineConfig({
       main: {
         entry: 'electron/main.ts',
         vite: {
+          resolve: {
+            alias: {
+              tslib: path.join(__dirname, 'node_modules/tslib/tslib.es6.mjs'),
+            },
+          },
           build: {
+            rolldownOptions: {
+              input: electronInput,
+              external: nodeBuiltins,
+            },
             rollupOptions: {
-              input: {
-                main: path.join(__dirname, 'electron/main.ts'),
-                ptyHost: path.join(__dirname, 'electron/ptyHost.ts'),
-                mcpEntry: path.join(__dirname, 'electron/mcpEntry.ts'),
-              },
+              input: electronInput,
               external: nodeBuiltins,
             },
           },
