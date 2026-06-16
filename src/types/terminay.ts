@@ -9,6 +9,7 @@ export type AppCommand =
   | 'close-active'
   | 'open-command-bar'
   | 'clear-terminal'
+  | 'toggle-file-explorer-sidebar'
   | 'set-project-root-folder-to-working-directory'
 
 export type FileViewerTextEncoding = 'utf8' | 'utf-8' | 'utf16le' | 'utf-16le' | 'latin1' | 'ascii'
