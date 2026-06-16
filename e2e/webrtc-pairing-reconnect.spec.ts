@@ -5,6 +5,8 @@ import { hasHostedServerSource, startHostedServer } from './support/hosted-serve
 
 test.skip(!hasHostedServerSource(), 'requires sibling terminay.com checkout for real hosted WebRTC E2E')
 
+const PAIRING_PIN_COOKIE_NAME = '__Host-terminay_pin'
+
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -293,7 +295,7 @@ test('pairs through the local hosted WebRTC app and reconnects the saved session
 
     await reconnectPage.close()
     await waitForHostConnectionCount(mainWindow, 0)
-    await browserContext.clearCookies()
+    await browserContext.clearCookies({ name: PAIRING_PIN_COOKIE_NAME, url: `${sessionOrigin}/` })
 
     const promptedReconnectPage = await reconnectBrowserWithPromptedPin(browserContext, sessionOrigin)
     await waitForHostConnectionCount(mainWindow, 1)
