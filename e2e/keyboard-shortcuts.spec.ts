@@ -44,6 +44,7 @@ test.describe('keyboard shortcut utilities', () => {
   test('formats shortcut labels for mac and non-mac platforms', () => {
     expect(getCommandShortcutLabel(undefined, 'new-terminal', true)).toBe('⌘T')
     expect(getCommandShortcutLabel(undefined, 'new-terminal', false)).toBe('Ctrl+T')
+    expect(getCommandShortcutLabel(undefined, 'toggle-file-explorer-sidebar', true)).toBe('⌘O')
     expect(getCommandShortcutLabel({ 'new-terminal': 'Ctrl+Alt+Space' }, 'new-terminal', true)).toBe('⌃⌥Space')
     expect(getCommandShortcutLabel({ 'new-terminal': '' }, 'new-terminal', false)).toBe('')
   })

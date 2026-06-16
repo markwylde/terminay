@@ -119,6 +119,7 @@ test('opens and closes terminal tabs', async ({ mainWindow }) => {
 })
 
 test('opens and closes the file explorer sidebar', async ({ mainWindow }) => {
+  const isMac = await mainWindow.evaluate(() => navigator.platform.toLowerCase().includes('mac'))
   const toggleButton = mainWindow.getByLabel('Toggle file explorer')
   const sidebar = mainWindow.locator('.file-explorer-sidebar')
 
@@ -126,7 +127,7 @@ test('opens and closes the file explorer sidebar', async ({ mainWindow }) => {
   await toggleButton.click()
   await expect(sidebar).toBeVisible()
 
-  await toggleButton.click()
+  await mainWindow.keyboard.press(isMac ? 'Meta+O' : 'Control+O')
   await expect(sidebar).toHaveCount(0)
 })
 

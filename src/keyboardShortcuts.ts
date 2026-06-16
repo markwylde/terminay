@@ -76,6 +76,12 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'open command bar launcher palette search commands macros',
   },
   {
+    command: 'toggle-file-explorer-sidebar',
+    title: 'Toggle file explorer sidebar',
+    description: 'Show or hide the file explorer sidebar for this project.',
+    keywords: 'toggle file explorer sidebar show hide project',
+  },
+  {
     command: 'set-project-root-folder-to-working-directory',
     title: 'Set project root folder to working directory',
     description: 'Use the active terminal working directory as this project root folder.',
@@ -94,6 +100,7 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'popout-active': 'CmdOrCtrl+Shift+P',
   'close-active': 'CmdOrCtrl+W',
   'open-command-bar': 'CmdOrCtrl+L',
+  'toggle-file-explorer-sidebar': 'CmdOrCtrl+O',
   'set-project-root-folder-to-working-directory': 'CmdOrCtrl+R',
 }
 
