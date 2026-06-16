@@ -4115,7 +4115,12 @@ const ProjectWorkspace = forwardRef<
 					? 'Hide the file explorer sidebar for this project.'
 					: 'Show the file explorer sidebar for this project.',
 				searchText:
-					'toggle file explorer sidebar show hide explorer sidebar project',
+					`toggle file explorer sidebar show hide explorer sidebar project ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-file-explorer-sidebar')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'toggle-file-explorer-sidebar',
+					isMac,
+				),
 				onSelect: () => {
 					toggleFileExplorerSidebar();
 				},
@@ -4288,6 +4293,9 @@ const ProjectWorkspace = forwardRef<
 				case 'open-recordings':
 					void window.terminay.openRecordingsWindow();
 					break;
+				case 'toggle-file-explorer-sidebar':
+					toggleFileExplorerSidebar();
+					break;
 				case 'set-project-root-folder-to-working-directory':
 					void setProjectRootFolderToWorkingDirectory();
 					break;
@@ -4303,6 +4311,7 @@ const ProjectWorkspace = forwardRef<
 			popoutActivePanel,
 			saveActivePanel,
 			setProjectRootFolderToWorkingDirectory,
+			toggleFileExplorerSidebar,
 		],
 	);
 
