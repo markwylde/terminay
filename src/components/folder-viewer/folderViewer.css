@@ -363,6 +363,141 @@
 	text-overflow: ellipsis;
 }
 
+.folder-tasks {
+	height: 100%;
+}
+
+.folder-tasks__scan-meta {
+	margin-top: 0;
+	font-size: 12px;
+	color: rgba(255, 255, 255, 0.5);
+}
+
+.folder-tasks__scan-error {
+	margin-top: 6px;
+	font-size: 12px;
+	color: #f87171;
+}
+
+.folder-tasks__actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.folder-tasks__file {
+	margin-bottom: 10px;
+	border: 1px solid rgba(255, 255, 255, 0.07);
+	border-radius: 12px;
+	background: rgba(255, 255, 255, 0.018);
+	overflow: hidden;
+}
+
+.folder-tasks__file--complete {
+	border-color: rgba(64, 200, 132, 0.22);
+	background: rgba(64, 200, 132, 0.04);
+}
+
+.folder-tasks__file-header {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	border: 0;
+	background: transparent;
+	color: #ffffff;
+	text-align: left;
+	padding: 11px 14px;
+	cursor: pointer;
+}
+
+.folder-tasks__file-header:hover {
+	background: rgba(255, 255, 255, 0.03);
+}
+
+.folder-tasks__file-header .file-tasks__badge {
+	margin-left: 0;
+}
+
+.folder-tasks__file-icon {
+	flex: none;
+	display: flex;
+	color: rgba(196, 206, 224, 0.55);
+}
+
+.folder-tasks__file-icon--complete {
+	color: #7fe0ab;
+}
+
+.folder-tasks__file-main {
+	min-width: 0;
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.folder-tasks__file-name {
+	font-size: 13px;
+	font-weight: 700;
+	color: #ffffff;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.folder-tasks__file-path {
+	font-size: 11px;
+	color: rgba(255, 255, 255, 0.42);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.folder-tasks__file-pct {
+	flex: none;
+	font-size: 12px;
+	font-weight: 700;
+	color: rgba(196, 206, 224, 0.6);
+	font-variant-numeric: tabular-nums;
+}
+
+.folder-tasks__file-done {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	font-size: 10.5px;
+	font-weight: 800;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: #9ff0c4;
+	background: rgba(64, 200, 132, 0.14);
+	border: 1px solid rgba(64, 200, 132, 0.26);
+	padding: 2px 9px;
+	border-radius: 999px;
+}
+
+.folder-tasks__file-body {
+	padding: 0 14px 10px;
+}
+
+.folder-tasks__task-link {
+	min-width: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	padding: 0;
+	text-align: left;
+	cursor: pointer;
+}
+
+.folder-tasks__task-link:hover .file-tasks__label {
+	color: #ffffff;
+	text-decoration: underline;
+	text-decoration-color: rgba(255, 255, 255, 0.35);
+	text-underline-offset: 2px;
+}
+
 @media (max-width: 600px) {
 	.folder-viewer__toolbar-left {
 		flex-direction: column;

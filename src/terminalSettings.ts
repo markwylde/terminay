@@ -144,6 +144,26 @@ Please:
 
 Work autonomously and do not ask me to confirm individual steps.`;
 
+export const DEFAULT_FOLDER_TASK_IGNORED_DIRECTORIES = [
+	'.git',
+	'.hg',
+	'.svn',
+	'node_modules',
+	'bower_components',
+	'dist',
+	'build',
+	'out',
+	'.next',
+	'.nuxt',
+	'.cache',
+	'coverage',
+	'target',
+	'vendor',
+	'.venv',
+	'venv',
+	'__pycache__',
+].join('\n');
+
 export const defaultTerminalSettings: TerminalSettings = {
 	aiTabMetadata: {
 		title: {
@@ -208,6 +228,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	wordSeparator: ' ()[]{}\',"`',
 	fileViewer: {
 		customFileExtensions: [],
+		folderTaskIgnoredDirectories: DEFAULT_FOLDER_TASK_IGNORED_DIRECTORIES,
 		refreshIntervalSeconds: 5,
 	},
 	keyboardShortcuts: defaultKeyboardShortcuts,
@@ -833,6 +854,25 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'throttle',
 					'extension',
 					'default tab',
+				],
+			}),
+			makeField({
+				key: 'fileViewer.folderTaskIgnoredDirectories',
+				label: 'Folder Tasks ignored folders',
+				description:
+					'Folder names or relative paths to skip when recursively scanning markdown tasks.',
+				sectionId: 'file-viewer-refresh',
+				categoryId: 'files',
+				input: 'textarea',
+				placeholder: DEFAULT_FOLDER_TASK_IGNORED_DIRECTORIES,
+				keywords: [
+					'folder',
+					'tasks',
+					'markdown',
+					'ignore',
+					'exclude',
+					'node_modules',
+					'dist',
 				],
 			}),
 		],
@@ -2142,6 +2182,10 @@ export function normalizeTerminalSettings(
 							) === index,
 						)
 				: defaultTerminalSettings.fileViewer.customFileExtensions,
+			folderTaskIgnoredDirectories:
+				typeof fileViewerInput.folderTaskIgnoredDirectories === 'string'
+					? fileViewerInput.folderTaskIgnoredDirectories
+					: defaultTerminalSettings.fileViewer.folderTaskIgnoredDirectories,
 			refreshIntervalSeconds: clampNumber(
 				Number(fileViewerInput.refreshIntervalSeconds),
 				defaultTerminalSettings.fileViewer.refreshIntervalSeconds,

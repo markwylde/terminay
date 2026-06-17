@@ -57,6 +57,50 @@ test('folder panel supports view modes navigation and refresh', async ({ createW
   await expect(mainWindow.locator('.file-preview-text')).toContainText('after refresh')
 })
 
+test('folder panel aggregates markdown tasks recursively', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'folder-panel-tasks',
+    seed: {
+      directories: ['work/nested', 'work/dist'],
+      files: {
+        'work/plan.md': ['# Plan', '', '- [x] Root done', '- [ ] Root todo', ''].join('\n'),
+        'work/nested/roadmap.md': [
+          '# Roadmap',
+          '',
+          '## Phase 1',
+          '',
+          '- [ ] Nested todo',
+          '- [x] Nested done',
+          '',
+        ].join('\n'),
+        'work/dist/ignored.md': ['# Build output', '', '- [ ] Ignored todo', ''].join('\n'),
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  await fileExplorerItem(mainWindow, 'work').dblclick()
+  await folderViewButton(mainWindow, 'Tasks').click()
+
+  await expect(mainWindow.locator('.file-tasks__summary')).toContainText('2 done')
+  await expect(mainWindow.locator('.file-tasks__summary')).toContainText('2 remaining')
+  await expect(mainWindow.locator('.file-tasks__summary')).toContainText('2 files')
+  await expect(mainWindow.locator('.folder-tasks__file-header').filter({ hasText: 'plan.md' })).toContainText('.')
+  await expect(mainWindow.locator('.folder-tasks__file-header').filter({ hasText: 'roadmap.md' })).toContainText('nested')
+  await expect(mainWindow.locator('.folder-tasks')).not.toContainText('Ignored todo')
+
+  await workspace.writeText('work/nested/fresh.md', ['# Fresh', '', '- [ ] Watched nested task', ''].join('\n'))
+  await expect(mainWindow.locator('.file-tasks__summary')).toContainText('3 remaining')
+  await expect(mainWindow.locator('.folder-tasks__file-header').filter({ hasText: 'fresh.md' })).toBeVisible()
+
+  await mainWindow.locator('.folder-tasks__file-header').filter({ hasText: 'roadmap.md' }).dblclick()
+  await expect(mainWindow.locator('.file-mode-switcher__button--active')).toHaveText('Tasks')
+  await expect(mainWindow.locator('.file-tasks__summary')).toContainText('1 done')
+  await expect(mainWindow.locator('.file-tasks__summary')).toContainText('1 remaining')
+})
+
 test('folder panel context menu mirrors file operations', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'folder-panel-ops',

@@ -74,6 +74,7 @@ export type SidebarSettings = {
 
 export type FileViewerSettings = {
 	customFileExtensions: FileViewerCustomExtensionDefault[];
+	folderTaskIgnoredDirectories: string;
 	refreshIntervalSeconds: number;
 };
 
