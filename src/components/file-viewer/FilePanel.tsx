@@ -136,6 +136,25 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
     }
   }, [])
 
+  useEffect(() => {
+    const onModeRequest = (event: Event) => {
+      const customEvent = event as CustomEvent<{ mode?: FileViewerMode; path?: string }>
+      if (customEvent.detail?.path !== filePath || !customEvent.detail.mode) {
+        return
+      }
+
+      hasSelectedModeRef.current = true
+      hasAppliedDefaultModeRef.current = true
+      setMode(customEvent.detail.mode)
+      sessionStoreRef.current?.setMode(customEvent.detail.mode)
+    }
+
+    window.addEventListener('terminay-file-mode-request', onModeRequest)
+    return () => {
+      window.removeEventListener('terminay-file-mode-request', onModeRequest)
+    }
+  }, [filePath])
+
   const refreshDiff = useCallback(
     async (targetPath: string, options?: { keepPrevious?: boolean }) => {
       if (!isMountedRef.current) {

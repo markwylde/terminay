@@ -54,6 +54,7 @@
     "@xterm/xterm": "^6.0.0",
     "dockview": "^6.6.1",
     "framer-motion": "^12.40.0",
+    "highlight.js": "^11.11.1",
     "lucide-react": "^1.17.0",
     "markdown-it": "^14.2.0",
     "monaco-editor": "^0.55.1",

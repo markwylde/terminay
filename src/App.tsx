@@ -2483,8 +2483,26 @@ const ProjectWorkspace = forwardRef<
 			if (existingPanelId) {
 				const existingPanel = api.getPanel(existingPanelId);
 				if (existingPanel) {
+					if (options?.initialMode) {
+						existingPanel.api.updateParameters({
+							...existingPanel.params,
+							initialMode: options.initialMode,
+						});
+					}
 					existingPanel.api.setActive();
 					syncPanelFocusState();
+					if (options?.initialMode) {
+						window.requestAnimationFrame(() => {
+							window.dispatchEvent(
+								new CustomEvent('terminay-file-mode-request', {
+									detail: {
+										mode: options.initialMode,
+										path: filePath,
+									},
+								}),
+							);
+						});
+					}
 					return;
 				}
 			}
@@ -4928,12 +4946,15 @@ const ProjectWorkspace = forwardRef<
 
 	useEffect(() => {
 		const onOpenFileEvent = (event: Event) => {
-			const customEvent = event as CustomEvent<{ path?: string }>;
+			const customEvent = event as CustomEvent<{
+				initialMode?: FileViewerMode;
+				path?: string;
+			}>;
 			const filePath = customEvent.detail?.path;
 			if (!filePath) {
 				return;
 			}
-			void openFile(filePath);
+			void openFile(filePath, { initialMode: customEvent.detail.initialMode });
 		};
 
 		window.addEventListener('terminay-open-file', onOpenFileEvent);
