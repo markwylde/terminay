@@ -675,7 +675,7 @@
 }
 
 .file-tasks__ring-fill {
-  stroke: url(#taskRingGradient);
+  stroke: var(--tab-color, #717b85);
   transition: stroke-dashoffset 0.45s ease;
 }
 
@@ -845,7 +845,7 @@
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #40c884, #57b7ff);
+  background: var(--tab-color, #717b85);
   transition: width 0.25s ease;
 }
 
@@ -1102,7 +1102,7 @@
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #40c884, #57b7ff);
+  background: var(--tab-color, #717b85);
 }
 
 .file-tasks__badge-count {
@@ -1273,7 +1273,6 @@
   border-radius: 11px;
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-left: 3px solid rgba(255, 255, 255, 0.14);
 }
 
 button.file-kanban__card {
@@ -1285,18 +1284,6 @@ button.file-kanban__card {
 
 button.file-kanban__card:hover {
   background: rgba(255, 255, 255, 0.06);
-}
-
-.file-kanban__card--notStarted {
-  border-left-color: rgba(154, 166, 189, 0.5);
-}
-
-.file-kanban__card--started {
-  border-left-color: rgba(255, 200, 130, 0.75);
-}
-
-.file-kanban__card--finished {
-  border-left-color: rgba(64, 200, 132, 0.75);
 }
 
 .file-kanban__card-crumbs {
