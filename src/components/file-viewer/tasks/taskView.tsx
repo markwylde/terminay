@@ -91,12 +91,6 @@ export function ProgressRing({ value, complete }: { value: number; complete: boo
   return (
     <div className={`file-tasks__ring${complete ? ' file-tasks__ring--complete' : ''}`} role="img" aria-label={`${value}% complete`}>
       <svg aria-hidden="true" width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <defs>
-          <linearGradient id="taskRingGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#40c884" />
-            <stop offset="100%" stopColor="#57b7ff" />
-          </linearGradient>
-        </defs>
         <circle className="file-tasks__ring-track" cx={size / 2} cy={size / 2} r={radius} strokeWidth={stroke} fill="none" />
         <circle
           className="file-tasks__ring-fill"
