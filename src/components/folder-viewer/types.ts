@@ -7,7 +7,7 @@ export type FolderPanelInstanceParams = {
 	projectColor?: string;
 };
 
-export type FolderViewMode = 'tree' | 'list' | 'thumbnail' | 'gallery';
+export type FolderViewMode = 'tree' | 'tasks' | 'list' | 'thumbnail' | 'gallery';
 
 export type FolderFileNode = {
 	kind: 'file';
