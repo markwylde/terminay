@@ -2040,8 +2040,17 @@ const ProjectWorkspace = forwardRef<
 
 	const focusActiveTerminal = useCallback(() => {
 		const api = dockviewApiRef.current;
-		let terminalPanel =
-			api?.activePanel?.params?.sessionId ? api.activePanel : null;
+
+		// If a non-terminal panel (file or folder viewer) is intentionally
+		// active, leave it focused instead of stealing focus into an unrelated
+		// terminal. Without this guard, restoring focus after closing the
+		// edit-project/edit-tab windows would activate an arbitrary terminal.
+		const activePanel = api?.activePanel ?? null;
+		if (activePanel && !activePanel.params?.sessionId) {
+			return;
+		}
+
+		let terminalPanel = activePanel?.params?.sessionId ? activePanel : null;
 
 		if (!terminalPanel && focusedSessionIdRef.current) {
 			terminalPanel = getPanelForSession(focusedSessionIdRef.current);
