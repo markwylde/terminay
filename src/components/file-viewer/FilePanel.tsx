@@ -1,5 +1,5 @@
 import type { IDockviewPanelProps } from 'dockview'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   LARGE_FILE_THRESHOLD_BYTES,
   createFileDraftBuffer,
@@ -499,7 +499,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
           : mode
 
   return (
-    <div className="file-panel">
+    <div className="file-panel" style={{ '--tab-color': props.params.color ?? props.params.projectColor ?? '#717b85' } as CSSProperties}>
       {conflict ? (
         <FileConflictBanner
           onKeepLocal={() => {
