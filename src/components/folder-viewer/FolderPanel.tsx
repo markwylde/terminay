@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { ContextMenu, type ContextMenuItem } from '../ContextMenu';
 import type { IDockviewPanelProps } from 'dockview';
-import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTerminalSettings } from '../../hooks/useTerminalSettings';
 import { terminayFileGateway } from '../../services/fileViewer';
 import type { FileViewerMode } from '../../types/fileViewer';
@@ -570,6 +570,8 @@ export function FolderPanel(
 ) {
 	const {
 		folderPath,
+		color,
+		projectColor,
 		onRename,
 		onDelete,
 		onNewFile,
@@ -986,7 +988,10 @@ export function FolderPanel(
 	};
 
 	return (
-		<div className="folder-viewer">
+		<div
+			className="folder-viewer"
+			style={{ '--tab-color': color ?? projectColor ?? '#717b85' } as CSSProperties}
+		>
 			<div className="folder-viewer__toolbar">
 				<div className="folder-viewer__toolbar-left">
 					<div className="folder-viewer__title">{folderTitle}</div>
