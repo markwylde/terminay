@@ -11,6 +11,8 @@ import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/termi
 import { findCommandForKeyboardEvent, getCommandShortcut, isReservedSystemAccelerator } from '../src/keyboardShortcuts'
 import { registerAiTabMetadataIpcHandlers } from './aiTabMetadata/ipc'
 import { AiTabMetadataService, warmAiTabMetadataProviderEnv } from './aiTabMetadata/service'
+import { registerQuickPushIpcHandlers } from './quickPush/ipc'
+import { QuickPushService } from './quickPush/service'
 import { TerminalRecordingService } from './recording/service'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
@@ -215,6 +217,7 @@ const fileWatchService = new FileWatchService(fileBufferService)
 const fileExplorerWatchService = new FileExplorerWatchService(() => app.getPath('home'))
 const gitDiffService = new GitDiffService(fileBufferService)
 const aiTabMetadataService = new AiTabMetadataService(app.getPath('home'))
+const quickPushService = new QuickPushService(aiTabMetadataService)
 warmAiTabMetadataProviderEnv()
 let cachedAppUpdateStatus: AppUpdateStatus | null = null
 let appUpdateFetchPromise: Promise<AppUpdateStatus> | null = null
@@ -2723,6 +2726,11 @@ registerFileViewerIpcHandlers({
 
 registerAiTabMetadataIpcHandlers({
   aiTabMetadataService,
+  ipcMain,
+})
+
+registerQuickPushIpcHandlers({
+  quickPushService,
   ipcMain,
 })
 
