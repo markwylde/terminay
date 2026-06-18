@@ -54,6 +54,7 @@ type AiTabMetadataTestMock = {
   models?: AiTabMetadataModel[]
   noteResult?: string
   titleResult?: string
+  promptResult?: string
 }
 
 type ShellEnv = Record<string, string>
@@ -753,6 +754,87 @@ export class AiTabMetadataService {
       return { text }
     } catch (error) {
       throw normalizeProviderError(error, 'Unable to generate tab metadata with Codex.', 'Codex')
+    } finally {
+      await rm(tempDir, { force: true, recursive: true })
+    }
+  }
+
+  /**
+   * Run a single non-interactive prompt and return the raw model text. Unlike
+   * {@link generate}, this does not shape the prompt or post-process the result,
+   * so callers (e.g. Quick Push) can ask the model for structured output.
+   */
+  async runPrompt(request: { provider: AiTabMetadataProvider; model: string; prompt: string; cwd: string }): Promise<string> {
+    if (request.provider !== 'codex' && request.provider !== 'claudeCode') {
+      throw new Error(`Unsupported AI provider: ${request.provider}`)
+    }
+
+    if (!request.model.trim()) {
+      throw new Error('Choose an AI model before running the AI provider.')
+    }
+
+    const isUsingMock =
+      process.env.TERMINAY_TEST === '1' &&
+      ((request.provider === 'codex' && process.env.TERMINAY_TEST_USE_REAL_CODEX !== '1') ||
+        (request.provider === 'claudeCode' && process.env.TERMINAY_TEST_USE_REAL_CLAUDE_CODE !== '1'))
+
+    if (isUsingMock) {
+      if (this.testMock.error) {
+        throw new Error(this.testMock.error)
+      }
+
+      return this.testMock.promptResult ?? '{}'
+    }
+
+    if (request.provider === 'claudeCode') {
+      try {
+        const providerEnv = await getProviderEnv()
+        return await runClaudeCodePrint(request.prompt, {
+          cwd: request.cwd,
+          env: providerEnv,
+          model: request.model,
+          timeout: PROVIDER_TIMEOUT_MS,
+        })
+      } catch (error) {
+        throw normalizeProviderError(error, 'Unable to run Claude Code.', 'Claude Code')
+      }
+    }
+
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-codex-'))
+    const outputPath = path.join(tempDir, 'last-message.txt')
+
+    try {
+      const providerEnv = await getProviderEnv()
+      await runCodexExec(
+        [
+          'exec',
+          '--model',
+          request.model,
+          '-c',
+          'model_reasoning_effort="low"',
+          '--sandbox',
+          'read-only',
+          '--skip-git-repo-check',
+          '--ephemeral',
+          '--ignore-rules',
+          '--color',
+          'never',
+          '--cd',
+          request.cwd,
+          '-o',
+          outputPath,
+          request.prompt,
+        ],
+        {
+          cwd: request.cwd,
+          env: providerEnv,
+          timeout: PROVIDER_TIMEOUT_MS,
+        },
+      )
+
+      return await readFile(outputPath, 'utf8')
+    } catch (error) {
+      throw normalizeProviderError(error, 'Unable to run Codex.', 'Codex')
     } finally {
       await rm(tempDir, { force: true, recursive: true })
     }
