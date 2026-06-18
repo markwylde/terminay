@@ -37,6 +37,7 @@ import {
 	Terminal,
 	Trash2,
 	Upload,
+	Zap,
 } from 'lucide-react';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import type { FilePanelInstanceParams } from './components/file-viewer';
@@ -47,6 +48,7 @@ import { GitPanel } from './components/git-panel/GitPanel';
 import { SidebarPane } from './components/sidebar/SidebarPane';
 import { SidebarSplit } from './components/sidebar/SidebarSplit';
 import { McpInstallModal } from './components/McpInstallModal';
+import { QuickPushModal } from './components/QuickPushModal';
 import { TerminalPanel } from './components/TerminalPanel';
 import type {
 	TerminalActivityState,
@@ -1680,6 +1682,7 @@ const ProjectWorkspace = forwardRef<
 		x: number;
 		y: number;
 	} | null>(null);
+	const [quickPushAction, setQuickPushAction] = useState<GitPushAgentAction | null>(null);
 	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
 	const [runningMacroRunsBySession, setRunningMacroRunsBySession] = useState<
 		Record<string, TerminalTabMacroRun[]>
@@ -3859,6 +3862,25 @@ const ProjectWorkspace = forwardRef<
 		],
 	);
 
+	const launchQuickPush = useCallback(
+		(action: GitPushAgentAction) => {
+			setGitPushMenuPosition(null);
+
+			if (settings.gitPushAgent.provider === 'disabled') {
+				setErrorText(
+					'Choose a Git Push agent in Settings → AI → Git Push Agent first.',
+				);
+				void window.terminay.openSettingsWindow({
+					sectionId: 'git-push-agent',
+				});
+				return;
+			}
+
+			setQuickPushAction(action);
+		},
+		[settings.gitPushAgent.provider],
+	);
+
 	const exportTerminalForMove = useCallback(
 		(panelId: string): MovedTerminalTab | null => {
 			const api = dockviewApiRef.current;
@@ -6001,6 +6023,11 @@ const ProjectWorkspace = forwardRef<
 											<GitPullRequestArrow size={14} aria-hidden="true" />
 										),
 									onClick: () => launchGitPushAgent(entry.action),
+									trailingAction: {
+										icon: <Zap size={14} aria-hidden="true" />,
+										label: `${entry.label} (quick mode)`,
+										onClick: () => launchQuickPush(entry.action),
+									},
 								}))}
 							/>
 						) : null}
@@ -6050,6 +6077,19 @@ const ProjectWorkspace = forwardRef<
 				open={isMcpInstallModalOpen}
 				onClose={() => setIsMcpInstallModalOpen(false)}
 			/>
+			{quickPushAction && settings.gitPushAgent.provider !== 'disabled' ? (
+				<QuickPushModal
+					action={quickPushAction}
+					provider={settings.gitPushAgent.provider}
+					model={
+						settings.gitPushAgent.provider === 'claudeCode'
+							? settings.gitPushAgent.claudeCodeModel
+							: settings.gitPushAgent.codexModel
+					}
+					cwd={project.rootFolder}
+					onClose={() => setQuickPushAction(null)}
+				/>
+			) : null}
 			<AnimatePresence>
 				{isMacroLauncherOpen && (
 					<div className="macro-launcher-overlay" onClick={closeMacroLauncher}>
