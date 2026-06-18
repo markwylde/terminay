@@ -1,6 +1,13 @@
 import { type ReactNode, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
+export type ContextMenuTrailingAction = {
+	icon: ReactNode;
+	label: string;
+	onClick: () => void;
+	disabled?: boolean;
+};
+
 export type ContextMenuItem = {
 	label: string;
 	onClick: () => void;
@@ -9,6 +16,8 @@ export type ContextMenuItem = {
 	disabled?: boolean;
 	separator?: boolean;
 	key?: string;
+	/** Optional secondary action rendered as a button on the right edge of the row. */
+	trailingAction?: ContextMenuTrailingAction;
 };
 
 type ContextMenuProps = {
@@ -80,21 +89,44 @@ export function ContextMenu({ x, y, items, onClose, portalContainer }: ContextMe
 					{item.separator ? (
 						<div className="context-menu__separator" />
 					) : (
-						<button
-							type="button"
-							className={`context-menu__item${item.danger ? ' context-menu__item--danger' : ''}`}
-							disabled={item.disabled}
-							onClick={() => {
-								if (item.disabled) {
-									return;
-								}
-								item.onClick();
-								onClose();
-							}}
+						<div
+							className={`context-menu__row${item.trailingAction ? ' context-menu__row--has-trailing' : ''}`}
 						>
-							{item.icon && <span className="context-menu__icon">{item.icon}</span>}
-							<span className="context-menu__label">{item.label}</span>
-						</button>
+							<button
+								type="button"
+								className={`context-menu__item${item.danger ? ' context-menu__item--danger' : ''}`}
+								disabled={item.disabled}
+								onClick={() => {
+									if (item.disabled) {
+										return;
+									}
+									item.onClick();
+									onClose();
+								}}
+							>
+								{item.icon && <span className="context-menu__icon">{item.icon}</span>}
+								<span className="context-menu__label">{item.label}</span>
+							</button>
+							{item.trailingAction && (
+								<button
+									type="button"
+									className="context-menu__trailing"
+									disabled={item.trailingAction.disabled}
+									aria-label={item.trailingAction.label}
+									title={item.trailingAction.label}
+									onClick={(event) => {
+										event.stopPropagation();
+										if (item.trailingAction?.disabled) {
+											return;
+										}
+										item.trailingAction?.onClick();
+										onClose();
+									}}
+								>
+									{item.trailingAction.icon}
+								</button>
+							)}
+						</div>
 					)}
 				</div>
 			))}
