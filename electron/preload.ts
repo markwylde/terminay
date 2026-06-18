@@ -31,6 +31,10 @@ import type {
   ControlRendererResponseMessage,
   ProjectEditWindowDraft,
   ProjectEditWindowResult,
+  QuickPushApplyRequest,
+  QuickPushApplyResult,
+  QuickPushGenerateRequest,
+  QuickPushPlan,
   FileExplorerWatchEvent,
   RemoteAccessStatus,
   SettingsChangeMessage,
@@ -124,6 +128,10 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.invoke('ai-tab-metadata:list-models', { provider }) as Promise<AiTabMetadataModel[]>,
   generateAiTabMetadata: (payload: AiTabMetadataGenerateRequest) =>
     ipcRenderer.invoke('ai-tab-metadata:generate', payload) as Promise<AiTabMetadataGenerateResult>,
+  generateQuickPushPlan: (payload: QuickPushGenerateRequest) =>
+    ipcRenderer.invoke('quick-push:generate-plan', payload) as Promise<QuickPushPlan>,
+  applyQuickPush: (payload: QuickPushApplyRequest) =>
+    ipcRenderer.invoke('quick-push:apply', payload) as Promise<QuickPushApplyResult>,
 
   getMacros: () => ipcRenderer.invoke('macros:get') as Promise<MacroDefinition[]>,
   updateMacros: (macros: MacroDefinition[]) => ipcRenderer.invoke('macros:update', macros) as Promise<MacroDefinition[]>,

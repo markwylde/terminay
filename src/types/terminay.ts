@@ -356,6 +356,59 @@ export type AiTabMetadataGenerateResult = {
   text: string
 }
 
+export type QuickPushAction = 'current' | 'current-pr' | 'new' | 'new-pr'
+
+export type QuickPushCommit = {
+  message: string
+  files: string[]
+}
+
+export type QuickPushPullRequest = {
+  title: string
+  body: string
+}
+
+export type QuickPushPlan = {
+  branchName: string | null
+  pullRequest: QuickPushPullRequest | null
+  commits: QuickPushCommit[]
+  /** Changed files that the model did not assign to any commit. */
+  uncoveredFiles: string[]
+  /** Non-fatal notes to surface to the user (e.g. unknown files, truncated context). */
+  warnings: string[]
+}
+
+export type QuickPushGenerateRequest = {
+  provider: AiTabMetadataProvider
+  model: string
+  action: QuickPushAction
+  cwd: string
+}
+
+export type QuickPushApplyRequest = {
+  cwd: string
+  action: QuickPushAction
+  branchName: string | null
+  pullRequest: QuickPushPullRequest | null
+  commits: QuickPushCommit[]
+}
+
+export type QuickPushApplyStep = {
+  label: string
+  ok: boolean
+  output?: string
+}
+
+export type QuickPushApplyResult = {
+  ok: boolean
+  steps: QuickPushApplyStep[]
+  /** Branch the commits ultimately landed on. */
+  branch: string | null
+  pushed: boolean
+  pullRequestUrl: string | null
+  error: string | null
+}
+
 export type ProjectEditWindowDraft = {
   color: string
   emoji: string
@@ -459,6 +512,8 @@ export interface TerminayApi {
   getFilePreviewSource: (filePath: string) => Promise<FileViewerPreviewSource>
   getGitRepoInfo: (filePath: string) => Promise<FileViewerGitRepoInfo>
   getGitDiff: (filePath: string) => Promise<FileViewerGitDiff>
+  generateQuickPushPlan: (request: QuickPushGenerateRequest) => Promise<QuickPushPlan>
+  applyQuickPush: (request: QuickPushApplyRequest) => Promise<QuickPushApplyResult>
   quitApp: () => Promise<void>
   createTerminal: (options?: { cwd?: string }) => Promise<{ id: string }>
   getTerminalCwd: (id: string) => Promise<string | null>
