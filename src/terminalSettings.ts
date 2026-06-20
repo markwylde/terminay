@@ -260,8 +260,10 @@ export const defaultTerminalSettings: TerminalSettings = {
 		gitPanelViewMode: 'tree',
 		defaultExplorerState: 'expanded',
 		defaultGitState: 'expanded',
+		defaultWorktreesState: 'expanded',
 		defaultWidth: 280,
 		defaultExplorerPaneHeight: 320,
+		defaultGitPaneHeight: 180,
 	},
 	theme: {
 		foreground: '#dce2f0',
@@ -926,6 +928,20 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				keywords: ['sidebar', 'git', 'collapse', 'expand', 'default'],
 			}),
 			makeField({
+				key: 'sidebar.defaultWorktreesState',
+				label: 'Default Worktrees state',
+				description:
+					'Whether the Worktrees pane starts expanded or collapsed in new projects.',
+				sectionId: 'sidebar',
+				categoryId: 'files',
+				input: 'select',
+				options: [
+					{ label: 'Expanded', value: 'expanded' },
+					{ label: 'Collapsed', value: 'collapsed' },
+				],
+				keywords: ['sidebar', 'worktrees', 'collapse', 'expand', 'default'],
+			}),
+			makeField({
 				key: 'sidebar.defaultWidth',
 				label: 'Default sidebar width',
 				description: 'Initial sidebar width in pixels for new projects.',
@@ -957,6 +973,19 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'divider',
 					'default',
 				],
+			}),
+			makeField({
+				key: 'sidebar.defaultGitPaneHeight',
+				label: 'Default Git pane height',
+				description:
+					'Initial height in pixels of the Git pane above the Worktrees pane in new projects.',
+				sectionId: 'sidebar',
+				categoryId: 'files',
+				input: 'number',
+				min: 80,
+				max: 1000,
+				step: 10,
+				keywords: ['sidebar', 'git', 'worktrees', 'height', 'size', 'default'],
 			}),
 		],
 	},
@@ -2325,6 +2354,11 @@ export function normalizeTerminalSettings(
 				sidebarInput.defaultGitState === 'expanded'
 					? sidebarInput.defaultGitState
 					: defaultTerminalSettings.sidebar.defaultGitState,
+			defaultWorktreesState:
+				sidebarInput.defaultWorktreesState === 'collapsed' ||
+				sidebarInput.defaultWorktreesState === 'expanded'
+					? sidebarInput.defaultWorktreesState
+					: defaultTerminalSettings.sidebar.defaultWorktreesState,
 			defaultWidth: clampNumber(
 				Number(sidebarInput.defaultWidth),
 				defaultTerminalSettings.sidebar.defaultWidth,
@@ -2334,6 +2368,12 @@ export function normalizeTerminalSettings(
 			defaultExplorerPaneHeight: clampNumber(
 				Number(sidebarInput.defaultExplorerPaneHeight),
 				defaultTerminalSettings.sidebar.defaultExplorerPaneHeight,
+				80,
+				2000,
+			),
+			defaultGitPaneHeight: clampNumber(
+				Number(sidebarInput.defaultGitPaneHeight),
+				defaultTerminalSettings.sidebar.defaultGitPaneHeight,
 				80,
 				2000,
 			),
