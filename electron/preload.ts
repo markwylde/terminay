@@ -51,6 +51,7 @@ import type {
   TerminalRecordingState,
   TerminayTestApi,
   TerminalZoomMessage,
+  WorktreePanelStatus,
 } from '../src/types/terminay'
 
 type ElectronListener<T> = (_event: Electron.IpcRendererEvent, payload: T) => void
@@ -64,6 +65,12 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.invoke('fs:get-git-statuses', { dirPath }) as Promise<FileExplorerGitStatuses>,
   getGitPanelStatus: (dirPath: string) =>
     ipcRenderer.invoke('fs:get-git-panel-status', { dirPath }) as Promise<GitPanelStatus>,
+  getWorktreePanelStatus: (dirPath: string) =>
+    ipcRenderer.invoke('fs:get-worktree-panel-status', { dirPath }) as Promise<WorktreePanelStatus>,
+  moveGitWorktree: (payload: { repoPath: string; worktreePath: string; newPath: string }) =>
+    ipcRenderer.invoke('fs:move-git-worktree', payload) as Promise<void>,
+  removeGitWorktree: (payload: { force?: boolean; repoPath: string; worktreePath: string }) =>
+    ipcRenderer.invoke('fs:remove-git-worktree', payload) as Promise<void>,
   getFileInfo: (filePath: string) => ipcRenderer.invoke('file:get-info', { path: filePath }) as Promise<FileViewerFileInfo>,
   readFileBytes: (options: { path: string; start: number; length: number }) =>
     ipcRenderer.invoke('file:read-bytes', options) as Promise<FileViewerByteRange>,
