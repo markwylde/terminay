@@ -8,6 +8,8 @@ import type {
   GitChangeEntry,
   GitFileState,
   GitPanelStatus,
+  GitWorktreeStatus,
+  WorktreePanelStatus,
 } from '../../src/types/terminay'
 import { getGitWorkingDirectory } from './pathUtils'
 import type { FileBufferService } from './fileBufferService'
@@ -25,6 +27,13 @@ type GitContext = {
 function isMissingGitError(error: unknown): boolean {
   const candidate = error as NodeJS.ErrnoException | undefined
   return candidate?.code === 'ENOENT'
+}
+
+function isNotWorkingTreeError(error: unknown): boolean {
+  const candidate = error as { stderr?: unknown; message?: unknown }
+  const stderr = typeof candidate.stderr === 'string' ? candidate.stderr : ''
+  const message = typeof candidate.message === 'string' ? candidate.message : ''
+  return `${stderr}\n${message}`.includes('is not a working tree')
 }
 
 export class GitDiffService {
@@ -129,12 +138,241 @@ export class GitDiffService {
     }
   }
 
+  async getWorktreePanelStatus(rawPath: string): Promise<WorktreePanelStatus> {
+    const info = await this.fileBufferService.getFileInfo(rawPath)
+    const workingDirectory = getGitWorkingDirectory(info.path, info.isDirectory)
+
+    let repoRoot: string | null = null
+
+    try {
+      const result = await execFileAsync('git', ['rev-parse', '--show-toplevel'], { cwd: workingDirectory })
+      repoRoot = result.stdout.trim() || null
+    } catch (error) {
+      if (isMissingGitError(error)) {
+        return {
+          gitAvailable: false,
+          repoRoot: null,
+          worktrees: [],
+        }
+      }
+
+      return {
+        gitAvailable: true,
+        repoRoot: null,
+        worktrees: [],
+      }
+    }
+
+    if (!repoRoot) {
+      return {
+        gitAvailable: true,
+        repoRoot: null,
+        worktrees: [],
+      }
+    }
+
+    const { stdout } = await execFileAsync('git', ['worktree', 'list', '--porcelain'], {
+      cwd: workingDirectory,
+    })
+
+    const worktrees = parseWorktreeList(stdout, repoRoot)
+
+    const withEntries = await Promise.all(
+      worktrees.map(async (worktree): Promise<GitWorktreeStatus> => {
+        if (worktree.isBare || worktree.isPrunable) {
+          return worktree
+        }
+
+        const worktreeInfo = await this.fileBufferService.getFileInfo(worktree.path)
+        if (!worktreeInfo.exists || !worktreeInfo.isDirectory) {
+          return {
+            ...worktree,
+            isPrunable: true,
+            errorMessage: 'Worktree path no longer exists.',
+            entries: [],
+          }
+        }
+
+        try {
+          const { stdout: statusOutput } = await execFileAsync(
+            'git',
+            ['status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all', '--ignored=no'],
+            { cwd: worktree.path },
+          )
+          const { branch, entries } = parsePanelEntries(statusOutput, worktree.path)
+          const resolvedBranch =
+            branch === null
+              ? await this.resolveDetachedBranch(worktree.path)
+              : branch || worktree.branch
+          const [aheadOfMainCount, lineDelta, lastChangedAt] = await Promise.all([
+            this.getAheadOfMainCount(worktree.path),
+            this.getWorktreeLineDelta(worktree.path),
+            this.getLastChangedAt(worktree.path, entries),
+          ])
+
+          return {
+            ...worktree,
+            aheadOfMainCount,
+            branch: resolvedBranch,
+            entries,
+            isDirtyBranch: aheadOfMainCount !== null && aheadOfMainCount > 0,
+            lastChangedAt,
+            lineAdditions: lineDelta.additions,
+            lineDeletions: lineDelta.deletions,
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          return {
+            ...worktree,
+            errorMessage: message,
+            entries: [],
+          }
+        }
+      }),
+    )
+
+    return {
+      gitAvailable: true,
+      repoRoot,
+      worktrees: withEntries,
+    }
+  }
+
+  async moveWorktree(rawRepoPath: string, rawWorktreePath: string, rawNewPath: string): Promise<void> {
+    const cwd = await this.resolveGitCommandCwd(rawRepoPath)
+    const worktreePath = this.fileBufferService.normalizePath(rawWorktreePath)
+    const newPath = this.fileBufferService.normalizePath(rawNewPath)
+
+    await execFileAsync('git', ['worktree', 'move', worktreePath, newPath], { cwd })
+  }
+
+  async removeWorktree(rawRepoPath: string, rawWorktreePath: string, force: boolean): Promise<void> {
+    const cwd = await this.resolveGitCommandCwd(rawRepoPath)
+    const worktreePath = this.fileBufferService.normalizePath(rawWorktreePath)
+    const args = force
+      ? ['worktree', 'remove', '--force', worktreePath]
+      : ['worktree', 'remove', worktreePath]
+
+    try {
+      await execFileAsync('git', args, { cwd })
+    } catch (error) {
+      if (!isNotWorkingTreeError(error)) {
+        throw error
+      }
+
+      await execFileAsync('git', ['worktree', 'prune'], { cwd })
+    }
+  }
+
+  private async resolveGitCommandCwd(rawPath: string): Promise<string> {
+    const info = await this.fileBufferService.getFileInfo(rawPath)
+    return getGitWorkingDirectory(info.path, info.isDirectory)
+  }
+
   private async resolveDetachedBranch(cwd: string): Promise<string> {
     try {
       const result = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd })
       return result.stdout.trim() || 'HEAD'
     } catch {
       return 'HEAD'
+    }
+  }
+
+  private async getAheadOfMainCount(cwd: string): Promise<number | null> {
+    try {
+      const result = await execFileAsync('git', ['rev-list', '--count', 'main..HEAD'], { cwd })
+      const count = Number.parseInt(result.stdout.trim(), 10)
+      return Number.isFinite(count) ? count : null
+    } catch {
+      return null
+    }
+  }
+
+  private async getWorktreeLineDelta(cwd: string): Promise<{ additions: number | null; deletions: number | null }> {
+    const [branchDelta, workingTreeDelta] = await Promise.all([
+      this.getNumstatDelta(cwd, ['diff', '--numstat', 'main...HEAD']),
+      this.getNumstatDelta(cwd, ['diff', '--numstat', 'HEAD']),
+    ])
+
+    if (!branchDelta && !workingTreeDelta) {
+      return { additions: null, deletions: null }
+    }
+
+    return {
+      additions: (branchDelta?.additions ?? 0) + (workingTreeDelta?.additions ?? 0),
+      deletions: (branchDelta?.deletions ?? 0) + (workingTreeDelta?.deletions ?? 0),
+    }
+  }
+
+  private async getNumstatDelta(
+    cwd: string,
+    args: string[],
+  ): Promise<{ additions: number; deletions: number } | null> {
+    try {
+      const result = await execFileAsync('git', args, { cwd })
+      let additions = 0
+      let deletions = 0
+
+      for (const line of result.stdout.split(/\r?\n/)) {
+        if (!line.trim()) {
+          continue
+        }
+
+        const [rawAdditions, rawDeletions] = line.split('\t')
+        const nextAdditions = Number.parseInt(rawAdditions ?? '', 10)
+        const nextDeletions = Number.parseInt(rawDeletions ?? '', 10)
+
+        if (Number.isFinite(nextAdditions)) {
+          additions += nextAdditions
+        }
+        if (Number.isFinite(nextDeletions)) {
+          deletions += nextDeletions
+        }
+      }
+
+      return { additions, deletions }
+    } catch {
+      return null
+    }
+  }
+
+  private async getLastChangedAt(cwd: string, entries: GitChangeEntry[]): Promise<string | null> {
+    const latestEntryMtime = await this.getLatestEntryMtime(entries)
+    const latestCommitTime = await this.getLatestCommitTime(cwd)
+
+    if (latestEntryMtime === null) {
+      return latestCommitTime
+    }
+
+    if (latestCommitTime === null) {
+      return new Date(latestEntryMtime).toISOString()
+    }
+
+    return new Date(Math.max(latestEntryMtime, Date.parse(latestCommitTime))).toISOString()
+  }
+
+  private async getLatestEntryMtime(entries: GitChangeEntry[]): Promise<number | null> {
+    const mtimes = await Promise.all(
+      entries.map(async (entry) => {
+        const info = await this.fileBufferService.getFileInfo(entry.path)
+        return info.exists ? info.mtimeMs : null
+      }),
+    )
+
+    return mtimes.reduce<number | null>((latest, mtime) => {
+      if (mtime === null) {
+        return latest
+      }
+      return latest === null ? mtime : Math.max(latest, mtime)
+    }, null)
+  }
+
+  private async getLatestCommitTime(cwd: string): Promise<string | null> {
+    try {
+      const result = await execFileAsync('git', ['log', '-1', '--format=%cI', 'HEAD'], { cwd })
+      return result.stdout.trim() || null
+    } catch {
+      return null
     }
   }
 
@@ -244,6 +482,84 @@ export class GitDiffService {
       }
     }
   }
+}
+
+function parseWorktreeList(output: string, currentRepoRoot: string): GitWorktreeStatus[] {
+  const sections = output
+    .split(/\r?\n\r?\n/)
+    .map((section) => section.trim())
+    .filter((section) => section.length > 0)
+  const normalizedCurrentRepoRoot = path.resolve(currentRepoRoot)
+
+  return sections.flatMap((section, sectionIndex) => {
+    const lines = section.split(/\r?\n/)
+    let worktreePath: string | null = null
+    let branch: string | null = null
+    let head: string | null = null
+    let isBare = false
+    let isDetached = false
+    let isLocked = false
+    let isPrunable = false
+
+    for (const line of lines) {
+      if (line.startsWith('worktree ')) {
+        worktreePath = line.slice('worktree '.length)
+      } else if (line.startsWith('HEAD ')) {
+        head = line.slice('HEAD '.length).trim() || null
+      } else if (line.startsWith('branch ')) {
+        branch = normalizeWorktreeBranch(line.slice('branch '.length))
+      } else if (line === 'bare') {
+        isBare = true
+      } else if (line === 'detached') {
+        isDetached = true
+      } else if (line.startsWith('locked')) {
+        isLocked = true
+      } else if (line.startsWith('prunable')) {
+        isPrunable = true
+      }
+    }
+
+    if (!worktreePath) {
+      return []
+    }
+
+    const resolvedPath = path.resolve(worktreePath)
+
+    return [
+      {
+        path: resolvedPath,
+        name: path.basename(resolvedPath) || resolvedPath,
+        branch,
+        head,
+        aheadOfMainCount: null,
+        lineAdditions: null,
+        lineDeletions: null,
+        lastChangedAt: null,
+        isCurrent: resolvedPath === normalizedCurrentRepoRoot,
+        isDirtyBranch: false,
+        isMain: sectionIndex === 0,
+        isBare,
+        isDetached,
+        isLocked,
+        isPrunable,
+        entries: [],
+      },
+    ]
+  })
+}
+
+function normalizeWorktreeBranch(refName: string): string | null {
+  const trimmed = refName.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  const headsPrefix = 'refs/heads/'
+  if (trimmed.startsWith(headsPrefix)) {
+    return trimmed.slice(headsPrefix.length)
+  }
+
+  return trimmed
 }
 
 function parseExplorerStatuses(output: string, rootPath: string): Record<string, 'modified' | 'new'> {

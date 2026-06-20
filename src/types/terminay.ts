@@ -236,6 +236,33 @@ export type GitPanelStatus = {
   entries: GitChangeEntry[]
 }
 
+export type GitWorktreeStatus = {
+  path: string
+  name: string
+  /** Branch name, or a short detached-HEAD label, or null when unknown. */
+  branch: string | null
+  head: string | null
+  aheadOfMainCount: number | null
+  lineAdditions: number | null
+  lineDeletions: number | null
+  lastChangedAt: string | null
+  isDirtyBranch: boolean
+  isCurrent: boolean
+  isMain: boolean
+  isBare: boolean
+  isDetached: boolean
+  isLocked: boolean
+  isPrunable: boolean
+  errorMessage?: string
+  entries: GitChangeEntry[]
+}
+
+export type WorktreePanelStatus = {
+  gitAvailable: boolean
+  repoRoot: string | null
+  worktrees: GitWorktreeStatus[]
+}
+
 export type TerminalZoomMessage = {
   zoomLevel: number
 }
@@ -493,6 +520,9 @@ export interface TerminayApi {
   searchFiles: (options: { rootPath: string; query: string; limit?: number }) => Promise<FileSearchResult[]>
   getFileExplorerGitStatuses: (dirPath: string) => Promise<FileExplorerGitStatuses>
   getGitPanelStatus: (dirPath: string) => Promise<GitPanelStatus>
+  getWorktreePanelStatus: (dirPath: string) => Promise<WorktreePanelStatus>
+  moveGitWorktree: (payload: { repoPath: string; worktreePath: string; newPath: string }) => Promise<void>
+  removeGitWorktree: (payload: { force?: boolean; repoPath: string; worktreePath: string }) => Promise<void>
   getFileInfo: (filePath: string) => Promise<FileViewerFileInfo>
   readFileBytes: (options: { path: string; start: number; length: number }) => Promise<FileViewerByteRange>
   readFileText: (options: {
