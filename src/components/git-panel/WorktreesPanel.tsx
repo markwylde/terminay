@@ -227,18 +227,18 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 							>
 								<ChevronDown size={14} aria-hidden />
 							</span>
-							<span
-								className={`worktrees-panel__worktree-icon${
-									hasUnmergedOrUncommittedWork
-										? ' worktrees-panel__worktree-icon--dirty'
-										: ''
-								}`}
-								aria-hidden="true"
-							>
-								<WorktreeIcon size={14} aria-hidden />
-							</span>
 							<span className="worktrees-panel__worktree-main">
 								<span className="worktrees-panel__worktree-topline">
+									<span
+										className={`worktrees-panel__worktree-icon${
+											hasUnmergedOrUncommittedWork
+												? ' worktrees-panel__worktree-icon--dirty'
+												: ''
+										}`}
+										aria-hidden="true"
+									>
+										<WorktreeIcon size={14} aria-hidden />
+									</span>
 									<span className="worktrees-panel__worktree-name">
 										{worktree.name}
 									</span>

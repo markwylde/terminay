@@ -263,7 +263,7 @@
 	box-sizing: border-box;
 	min-height: 48px;
 	display: flex;
-	align-items: stretch;
+	align-items: center;
 	gap: 6px;
 	padding: 4px 8px 4px 12px;
 	color: #ffffff;
@@ -297,7 +297,7 @@
 	align-items: center;
 	justify-content: center;
 	width: 16px;
-	align-self: stretch;
+	height: 16px;
 	color: rgba(220, 226, 240, 0.3);
 }
 
