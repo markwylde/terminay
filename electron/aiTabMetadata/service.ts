@@ -282,7 +282,7 @@ async function loadShellEnv(): Promise<ShellEnv> {
   return {}
 }
 
-async function getProviderEnv(): Promise<NodeJS.ProcessEnv> {
+export async function getProviderEnv(): Promise<NodeJS.ProcessEnv> {
   providerEnvPromise ??= loadShellEnv().then((shellEnv) => ({
     ...process.env,
     ...withCommonProviderPathDirs(shellEnv),
