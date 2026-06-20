@@ -12,7 +12,7 @@ import type {
   QuickPushPlan,
   QuickPushPullRequest,
 } from '../../src/types/terminay'
-import type { AiTabMetadataService } from '../aiTabMetadata/service'
+import { getProviderEnv, type AiTabMetadataService } from '../aiTabMetadata/service'
 
 const execFileAsync = promisify(execFile)
 
@@ -76,8 +76,10 @@ function looksBinary(buffer: Buffer): boolean {
 }
 
 async function runGit(args: string[], cwd: string): Promise<string> {
+  const env = await getProviderEnv()
   const { stdout } = await execFileAsync('git', args, {
     cwd,
+    env,
     maxBuffer: MAX_BUFFER,
     timeout: GIT_TIMEOUT_MS,
   })
@@ -466,8 +468,10 @@ export class QuickPushService {
 
     const run = async (label: string, args: string[]): Promise<string> => {
       try {
+        const env = await getProviderEnv()
         const { stdout, stderr } = await execFileAsync('git', args, {
           cwd: repoRoot,
+          env,
           maxBuffer: MAX_BUFFER,
           timeout: GIT_TIMEOUT_MS,
         })
@@ -521,7 +525,12 @@ export class QuickPushService {
           const { stdout, stderr } = await execFileAsync(
             'gh',
             ['pr', 'create', '--title', pr.title, '--body', pr.body ?? ''],
-            { cwd: repoRoot, maxBuffer: MAX_BUFFER, timeout: GIT_TIMEOUT_MS },
+            {
+              cwd: repoRoot,
+              env: await getProviderEnv(),
+              maxBuffer: MAX_BUFFER,
+              timeout: GIT_TIMEOUT_MS,
+            },
           )
           const output = `${stdout}${stderr}`.trim()
           pullRequestUrl = extractUrl(`${stdout}\n${stderr}`)
