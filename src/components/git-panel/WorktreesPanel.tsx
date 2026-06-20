@@ -234,6 +234,10 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 											hasUnmergedOrUncommittedWork
 												? ' worktrees-panel__worktree-icon--dirty'
 												: ''
+										}${
+											worktree.isCurrent
+												? ' worktrees-panel__worktree-icon--current'
+												: ''
 										}`}
 										aria-hidden="true"
 									>

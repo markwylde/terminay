@@ -305,6 +305,14 @@
 	color: #e2c08d;
 }
 
+.worktrees-panel__worktree-icon--current {
+	color: rgba(220, 226, 240, 0.9);
+}
+
+.worktrees-panel__worktree-icon--current.worktrees-panel__worktree-icon--dirty {
+	color: #e2c08d;
+}
+
 .worktrees-panel__worktree-main {
 	flex: 1 1 auto;
 	min-width: 0;
