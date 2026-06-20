@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
-import { rm } from 'node:fs/promises'
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
 import {
@@ -11,6 +12,31 @@ import {
 } from './support/ui'
 
 const execFileAsync = promisify(execFile)
+
+async function initializeMainGitRepository(rootDir: string): Promise<void> {
+  await execFileAsync('git', ['init'], { cwd: rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: rootDir })
+  await execFileAsync('git', ['branch', '-M', 'main'], { cwd: rootDir })
+}
+
+async function removeGitWorktree(repoRoot: string, worktreePath: string): Promise<void> {
+  await execFileAsync('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot }).catch(() => {})
+  await execFileAsync('git', ['worktree', 'prune'], { cwd: repoRoot }).catch(() => {})
+  await rm(worktreePath, { recursive: true, force: true })
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  return stat(filePath)
+    .then(() => true)
+    .catch(() => false)
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 test('file explorer can browse folders and open files', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
@@ -374,6 +400,133 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
 
   await mainWindow.keyboard.press('Escape')
   await expect(pushMenu).toHaveCount(0)
+})
+
+test('worktrees sidebar pane shows clean and dirty worktrees', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'worktrees-pane-status',
+    seed: {
+      files: {
+        'README.md': 'initial readme\n',
+      },
+    },
+  })
+  const cleanWorktreePath = `${workspace.rootDir}-clean`
+  const dirtyWorktreePath = `${workspace.rootDir}-dirty`
+
+  await rm(cleanWorktreePath, { recursive: true, force: true })
+  await rm(dirtyWorktreePath, { recursive: true, force: true })
+
+  try {
+    await initializeMainGitRepository(workspace.rootDir)
+    await execFileAsync('git', ['worktree', 'add', '-b', 'clean/worktree', cleanWorktreePath, 'main'], {
+      cwd: workspace.rootDir,
+    })
+    await execFileAsync('git', ['worktree', 'add', '-b', 'feature/worktrees-panel', dirtyWorktreePath, 'main'], {
+      cwd: workspace.rootDir,
+    })
+    await mkdir(path.join(dirtyWorktreePath, 'src'), { recursive: true })
+    await writeFile(path.join(dirtyWorktreePath, 'src', 'feature.ts'), 'export const enabled = true\n')
+    await execFileAsync('git', ['add', 'src/feature.ts'], { cwd: dirtyWorktreePath })
+    await execFileAsync('git', ['commit', '-m', 'feature worktree change'], { cwd: dirtyWorktreePath })
+    await writeFile(path.join(dirtyWorktreePath, 'src', 'feature.ts'), 'export const enabled = false\n')
+
+    await setProjectRoot(mainWindow, workspace.rootDir)
+    await openFileExplorer(mainWindow)
+
+    const worktreesPane = mainWindow
+      .locator('.sidebar-pane')
+      .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Worktrees' }) })
+    const mainName = path.basename(workspace.rootDir)
+    const cleanName = path.basename(cleanWorktreePath)
+    const dirtyName = path.basename(dirtyWorktreePath)
+    const worktreeHeader = (name: string) =>
+      worktreesPane.locator('.worktrees-panel__worktree-header').filter({
+        has: mainWindow.locator('.worktrees-panel__worktree-name', {
+          hasText: new RegExp(`^${escapeRegExp(name)}$`),
+        }),
+      })
+    const mainHeader = worktreeHeader(mainName)
+    const cleanHeader = worktreeHeader(cleanName)
+    const dirtyHeader = worktreeHeader(dirtyName)
+    const dirtySection = dirtyHeader.locator('xpath=ancestor::section[contains(@class, "worktrees-panel__worktree")]')
+
+    await expect(worktreesPane.locator('.sidebar-pane__count')).toHaveText('3', { timeout: 6000 })
+    await expect(mainHeader.locator('.worktrees-panel__worktree-name')).toHaveText(mainName)
+    await expect(mainHeader.locator('.worktrees-panel__branch')).toHaveText('main')
+    await expect(mainHeader.locator('.worktrees-panel__clean')).toHaveText('clean')
+    await expect(mainHeader.locator('.worktrees-panel__worktree-name')).toHaveCSS('font-weight', '700')
+    await expect(mainHeader.locator('.worktrees-panel__worktree-name')).toHaveCSS('text-decoration-line', 'underline')
+    await expect(mainHeader.locator('.worktrees-panel__worktree-icon')).toHaveCSS('color', 'rgba(220, 226, 240, 0.9)')
+    await expect(worktreesPane.locator('.worktrees-panel__pill')).toHaveCount(0)
+
+    await expect(cleanHeader.locator('.worktrees-panel__branch')).toHaveText('clean/worktree')
+    await expect(cleanHeader.locator('.worktrees-panel__clean')).toHaveText('clean')
+    await expect(cleanHeader.locator('.worktrees-panel__worktree-icon')).toHaveCSS('color', 'rgba(220, 226, 240, 0.3)')
+
+    await expect(dirtyHeader.locator('.worktrees-panel__branch')).toHaveText('feature/worktrees-panel')
+    await expect(dirtyHeader.locator('.worktrees-panel__worktree-name')).toHaveCSS('color', 'rgb(226, 192, 141)')
+    await expect(dirtyHeader.locator('.worktrees-panel__worktree-icon')).toHaveCSS('color', 'rgb(226, 192, 141)')
+    await expect(dirtyHeader.locator('.worktrees-panel__delta--additions')).toHaveText('+2')
+    await expect(dirtyHeader.locator('.worktrees-panel__delta--deletions')).toHaveText('-1')
+
+    await expect(dirtySection.locator('.worktrees-panel__changes')).toHaveCount(0)
+    await dirtyHeader.click()
+    await expect(dirtySection.locator('.git-panel__folder-name').filter({ hasText: 'src' })).toBeVisible()
+    await expect(dirtySection.locator('.git-panel__row').filter({ hasText: 'feature.ts' })).toBeVisible()
+  } finally {
+    await removeGitWorktree(workspace.rootDir, cleanWorktreePath)
+    await removeGitWorktree(workspace.rootDir, dirtyWorktreePath)
+  }
+})
+
+test('worktrees sidebar context menu force deletes dirty linked worktrees', async ({
+  appHarness,
+  createWorkspace,
+  mainWindow,
+}) => {
+  const workspace = await createWorkspace({
+    name: 'worktrees-pane-delete',
+    seed: {
+      files: {
+        'README.md': 'initial readme\n',
+      },
+    },
+  })
+  const deleteWorktreePath = `${workspace.rootDir}-delete`
+
+  await rm(deleteWorktreePath, { recursive: true, force: true })
+
+  try {
+    await initializeMainGitRepository(workspace.rootDir)
+    await execFileAsync('git', ['worktree', 'add', '-b', 'delete/worktree', deleteWorktreePath, 'main'], {
+      cwd: workspace.rootDir,
+    })
+    await writeFile(path.join(deleteWorktreePath, 'untracked.txt'), 'delete me\n')
+
+    await setProjectRoot(mainWindow, workspace.rootDir)
+    await openFileExplorer(mainWindow)
+
+    const dialogs = await appHarness.dialogs()
+    const worktreesPane = mainWindow
+      .locator('.sidebar-pane')
+      .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Worktrees' }) })
+    const deleteName = path.basename(deleteWorktreePath)
+    const deleteHeader = worktreesPane.locator('.worktrees-panel__worktree-header').filter({ hasText: deleteName })
+
+    await expect(worktreesPane.locator('.sidebar-pane__count')).toHaveText('2', { timeout: 6000 })
+    await dialogs.queueConfirm(true)
+    await deleteHeader.click({ button: 'right' })
+    await expect(contextMenuItem(mainWindow, 'Delete worktree')).toBeVisible()
+    await contextMenuItem(mainWindow, 'Delete worktree').click()
+
+    await expect(worktreesPane.locator('.worktrees-panel__worktree-header').filter({ hasText: deleteName })).toHaveCount(0, {
+      timeout: 6000,
+    })
+    await expect.poll(() => pathExists(deleteWorktreePath)).toBe(false)
+  } finally {
+    await removeGitWorktree(workspace.rootDir, deleteWorktreePath)
+  }
 })
 
 test('collapsing a pane seeds new projects but leaves open projects untouched', async ({
