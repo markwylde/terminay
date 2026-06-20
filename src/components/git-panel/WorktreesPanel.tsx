@@ -187,6 +187,9 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 				const branchLabel = worktree.branch ?? (worktree.isDetached ? 'HEAD' : '');
 				const hasUnmergedOrUncommittedWork =
 					worktree.isDirtyBranch || worktree.entries.length > 0;
+				const hasLineChanges =
+					(worktree.lineAdditions ?? 0) > 0 ||
+					(worktree.lineDeletions ?? 0) > 0;
 				const WorktreeIcon = worktree.isMain ? FolderGit : GitBranch;
 				const worktreeStatus = {
 					gitAvailable: status.gitAvailable,
@@ -224,18 +227,18 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 							>
 								<ChevronDown size={14} aria-hidden />
 							</span>
+							<span
+								className={`worktrees-panel__worktree-icon${
+									hasUnmergedOrUncommittedWork
+										? ' worktrees-panel__worktree-icon--dirty'
+										: ''
+								}`}
+								aria-hidden="true"
+							>
+								<WorktreeIcon size={14} aria-hidden />
+							</span>
 							<span className="worktrees-panel__worktree-main">
 								<span className="worktrees-panel__worktree-topline">
-									<span
-										className={`worktrees-panel__worktree-icon${
-											hasUnmergedOrUncommittedWork
-												? ' worktrees-panel__worktree-icon--dirty'
-												: ''
-										}`}
-										aria-hidden="true"
-									>
-										<WorktreeIcon size={14} aria-hidden />
-									</span>
 									<span className="worktrees-panel__worktree-name">
 										{worktree.name}
 									</span>
@@ -248,18 +251,20 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 									) : null}
 								</span>
 								<span className="worktrees-panel__worktree-meta">
-									<span className="worktrees-panel__delta worktrees-panel__delta--additions">
-										+{worktree.lineAdditions ?? 0}
-									</span>
-									<span className="worktrees-panel__delta worktrees-panel__delta--deletions">
-										-{worktree.lineDeletions ?? 0}
-									</span>
+									{hasLineChanges ? (
+										<>
+											<span className="worktrees-panel__delta worktrees-panel__delta--additions">
+												+{worktree.lineAdditions ?? 0}
+											</span>
+											<span className="worktrees-panel__delta worktrees-panel__delta--deletions">
+												-{worktree.lineDeletions ?? 0}
+											</span>
+										</>
+									) : (
+										<span className="worktrees-panel__clean">clean</span>
+									)}
 									<span className="worktrees-panel__date">
 										{formatWorktreeDate(worktree.lastChangedAt)}
-									</span>
-									<span className="worktrees-panel__spacer" />
-									<span className="worktrees-panel__count">
-										{worktree.entries.length}
 									</span>
 								</span>
 							</span>

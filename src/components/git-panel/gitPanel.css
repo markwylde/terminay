@@ -263,7 +263,7 @@
 	box-sizing: border-box;
 	min-height: 48px;
 	display: flex;
-	align-items: center;
+	align-items: stretch;
 	gap: 6px;
 	padding: 4px 8px 4px 12px;
 	color: #ffffff;
@@ -297,7 +297,7 @@
 	align-items: center;
 	justify-content: center;
 	width: 16px;
-	height: 16px;
+	align-self: stretch;
 	color: rgba(220, 226, 240, 0.3);
 }
 
@@ -348,8 +348,7 @@
 }
 
 .worktrees-panel__branch,
-.worktrees-panel__pill,
-.worktrees-panel__count {
+.worktrees-panel__pill {
 	flex: 0 0 auto;
 	display: inline-flex;
 	align-items: center;
@@ -391,10 +390,10 @@
 	color: rgba(220, 226, 240, 0.45);
 }
 
-.worktrees-panel__count {
-	width: 18px;
-	padding: 0;
-	color: rgba(220, 226, 240, 0.62);
+.worktrees-panel__clean {
+	flex: 0 0 auto;
+	color: rgba(220, 226, 240, 0.5);
+	font-weight: 600;
 }
 
 .worktrees-panel__changes {
