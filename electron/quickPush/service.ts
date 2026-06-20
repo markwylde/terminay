@@ -18,8 +18,8 @@ const execFileAsync = promisify(execFile)
 
 const MAX_BUFFER = 1024 * 1024 * 16
 const MAX_DIFF_CHARS = 60_000
-const MAX_UNTRACKED_TOTAL_CHARS = 20_000
-const MAX_UNTRACKED_FILE_CHARS = 8_000
+const MAX_FILE_CONTEXT_TOTAL_CHARS = 120_000
+const MAX_FILE_CONTEXT_CHARS = 30_000
 const GIT_TIMEOUT_MS = 30_000
 
 type PorcelainEntry = {
@@ -34,7 +34,7 @@ type QuickPushContext = {
   changedFiles: string[]
   statusText: string
   diffText: string
-  untrackedText: string
+  fileContextText: string
   warnings: string[]
 }
 
@@ -331,9 +331,55 @@ function buildPrompt(context: QuickPushContext, action: QuickPushAction): string
     '=== git diff (tracked changes) ===',
     context.diffText.trim() || '(no tracked diff)',
     '',
-    '=== new (untracked) files ===',
-    context.untrackedText.trim() || '(none)',
+    '=== changed file contents ===',
+    context.fileContextText.trim() || '(no readable file contents)',
   ].join('\n')
+}
+
+async function buildChangedFileContext(
+  repoRoot: string,
+  entries: PorcelainEntry[],
+  warnings: string[],
+): Promise<string> {
+  const sections: string[] = []
+  let remainingBudget = MAX_FILE_CONTEXT_TOTAL_CHARS
+
+  for (const entry of entries) {
+    if (remainingBudget <= 0) {
+      sections.push(`--- ${entry.path} (omitted: file context budget exhausted) ---`)
+      continue
+    }
+
+    const isDeleted = entry.x === 'D' || entry.y === 'D'
+    const absolute = path.join(repoRoot, entry.path)
+
+    try {
+      const stats = await stat(absolute)
+      if (!stats.isFile()) {
+        sections.push(`--- ${entry.path} (not a regular file, omitted) ---`)
+        continue
+      }
+
+      const buffer = await readFile(absolute)
+      if (looksBinary(buffer)) {
+        sections.push(`--- ${entry.path} (binary, omitted) ---`)
+        continue
+      }
+
+      const fileBudget = Math.min(MAX_FILE_CONTEXT_CHARS, remainingBudget)
+      const text = truncate(buffer.toString('utf8'), fileBudget)
+      remainingBudget -= text.length
+      sections.push(`--- ${entry.path} ---\n${text}`)
+    } catch {
+      if (isDeleted) {
+        sections.push(`--- ${entry.path} (deleted) ---`)
+      } else {
+        warnings.push(`Could not read changed file "${entry.path}".`)
+      }
+    }
+  }
+
+  return sections.join('\n\n')
 }
 
 async function gatherContext(cwd: string): Promise<QuickPushContext> {
@@ -380,33 +426,7 @@ async function gatherContext(cwd: string): Promise<QuickPushContext> {
   }
   const diffText = truncate(diffParts.join('\n\n'), MAX_DIFF_CHARS)
 
-  const untrackedEntries = entries.filter((entry) => entry.x === '?' && entry.y === '?')
-  const untrackedSections: string[] = []
-  let untrackedBudget = MAX_UNTRACKED_TOTAL_CHARS
-  for (const entry of untrackedEntries) {
-    if (untrackedBudget <= 0) {
-      untrackedSections.push(`--- ${entry.path} (omitted: untracked context budget exhausted) ---`)
-      continue
-    }
-
-    const absolute = path.join(repoRoot, entry.path)
-    try {
-      const stats = await stat(absolute)
-      if (!stats.isFile()) {
-        continue
-      }
-      const buffer = await readFile(absolute)
-      if (looksBinary(buffer)) {
-        untrackedSections.push(`--- ${entry.path} (binary, omitted) ---`)
-        continue
-      }
-      const clipped = truncate(buffer.toString('utf8'), Math.min(MAX_UNTRACKED_FILE_CHARS, untrackedBudget))
-      untrackedBudget -= clipped.length
-      untrackedSections.push(`--- ${entry.path} ---\n${clipped}`)
-    } catch {
-      warnings.push(`Could not read untracked file "${entry.path}".`)
-    }
-  }
+  const fileContextText = await buildChangedFileContext(repoRoot, entries, warnings)
 
   return {
     repoRoot,
@@ -414,7 +434,7 @@ async function gatherContext(cwd: string): Promise<QuickPushContext> {
     changedFiles,
     statusText: statusTextRaw,
     diffText,
-    untrackedText: untrackedSections.join('\n\n'),
+    fileContextText,
     warnings,
   }
 }
