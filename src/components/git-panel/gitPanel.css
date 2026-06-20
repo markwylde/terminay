@@ -288,7 +288,7 @@
 }
 
 .worktrees-panel__worktree-header--current .worktrees-panel__worktree-name {
-	color: #73c991;
+	font-weight: 700;
 }
 
 .worktrees-panel__worktree-icon {
@@ -303,10 +303,6 @@
 
 .worktrees-panel__worktree-icon--dirty {
 	color: #e2c08d;
-}
-
-.worktrees-panel__worktree-icon--current {
-	color: #73c991;
 }
 
 .worktrees-panel__worktree-main {
