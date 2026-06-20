@@ -2371,6 +2371,24 @@ ipcMain.handle('fs:get-git-panel-status', async (_event, payload: { dirPath: str
   return gitDiffService.getPanelStatus(payload.dirPath)
 })
 
+ipcMain.handle('fs:get-worktree-panel-status', async (_event, payload: { dirPath: string }) => {
+  return gitDiffService.getWorktreePanelStatus(payload.dirPath)
+})
+
+ipcMain.handle(
+  'fs:move-git-worktree',
+  async (_event, payload: { repoPath: string; worktreePath: string; newPath: string }) => {
+    await gitDiffService.moveWorktree(payload.repoPath, payload.worktreePath, payload.newPath)
+  },
+)
+
+ipcMain.handle(
+  'fs:remove-git-worktree',
+  async (_event, payload: { force?: boolean; repoPath: string; worktreePath: string }) => {
+    await gitDiffService.removeWorktree(payload.repoPath, payload.worktreePath, payload.force === true)
+  },
+)
+
 ipcMain.handle('fs:rename', async (_event, { oldPath, newPath }: { oldPath: string; newPath: string }) => {
   await rename(oldPath, newPath)
 })
