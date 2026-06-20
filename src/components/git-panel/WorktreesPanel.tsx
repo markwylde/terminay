@@ -247,9 +247,6 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 										{worktree.name}
 									</span>
 									<span className="worktrees-panel__spacer" />
-									{worktree.isCurrent ? (
-										<span className="worktrees-panel__pill">current</span>
-									) : null}
 									{branchLabel ? (
 										<span className="worktrees-panel__branch">{branchLabel}</span>
 									) : null}
