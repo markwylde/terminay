@@ -204,7 +204,11 @@ export class GitDiffService {
             branch === null
               ? await this.resolveDetachedBranch(worktree.path)
               : branch || worktree.branch
-          const aheadOfMainCount = await this.getAheadOfMainCount(worktree.path)
+          const [aheadOfMainCount, lineDelta, lastChangedAt] = await Promise.all([
+            this.getAheadOfMainCount(worktree.path),
+            this.getWorktreeLineDelta(worktree.path),
+            this.getLastChangedAt(worktree.path, entries),
+          ])
 
           return {
             ...worktree,
@@ -212,6 +216,9 @@ export class GitDiffService {
             branch: resolvedBranch,
             entries,
             isDirtyBranch: aheadOfMainCount !== null && aheadOfMainCount > 0,
+            lastChangedAt,
+            lineAdditions: lineDelta.additions,
+            lineDeletions: lineDelta.deletions,
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -276,6 +283,94 @@ export class GitDiffService {
       const result = await execFileAsync('git', ['rev-list', '--count', 'main..HEAD'], { cwd })
       const count = Number.parseInt(result.stdout.trim(), 10)
       return Number.isFinite(count) ? count : null
+    } catch {
+      return null
+    }
+  }
+
+  private async getWorktreeLineDelta(cwd: string): Promise<{ additions: number | null; deletions: number | null }> {
+    const [branchDelta, workingTreeDelta] = await Promise.all([
+      this.getNumstatDelta(cwd, ['diff', '--numstat', 'main...HEAD']),
+      this.getNumstatDelta(cwd, ['diff', '--numstat', 'HEAD']),
+    ])
+
+    if (!branchDelta && !workingTreeDelta) {
+      return { additions: null, deletions: null }
+    }
+
+    return {
+      additions: (branchDelta?.additions ?? 0) + (workingTreeDelta?.additions ?? 0),
+      deletions: (branchDelta?.deletions ?? 0) + (workingTreeDelta?.deletions ?? 0),
+    }
+  }
+
+  private async getNumstatDelta(
+    cwd: string,
+    args: string[],
+  ): Promise<{ additions: number; deletions: number } | null> {
+    try {
+      const result = await execFileAsync('git', args, { cwd })
+      let additions = 0
+      let deletions = 0
+
+      for (const line of result.stdout.split(/\r?\n/)) {
+        if (!line.trim()) {
+          continue
+        }
+
+        const [rawAdditions, rawDeletions] = line.split('\t')
+        const nextAdditions = Number.parseInt(rawAdditions ?? '', 10)
+        const nextDeletions = Number.parseInt(rawDeletions ?? '', 10)
+
+        if (Number.isFinite(nextAdditions)) {
+          additions += nextAdditions
+        }
+        if (Number.isFinite(nextDeletions)) {
+          deletions += nextDeletions
+        }
+      }
+
+      return { additions, deletions }
+    } catch {
+      return null
+    }
+  }
+
+  private async getLastChangedAt(cwd: string, entries: GitChangeEntry[]): Promise<string | null> {
+    const latestEntryMtime = await this.getLatestEntryMtime(entries)
+    const latestCommitTime = await this.getLatestCommitTime(cwd)
+
+    if (latestEntryMtime === null) {
+      return latestCommitTime
+    }
+
+    if (latestCommitTime === null) {
+      return new Date(latestEntryMtime).toISOString()
+    }
+
+    return new Date(Math.max(latestEntryMtime, Date.parse(latestCommitTime))).toISOString()
+  }
+
+  private async getLatestEntryMtime(entries: GitChangeEntry[]): Promise<number | null> {
+    const mtimes = await Promise.all(
+      entries.map(async (entry) => {
+        const info = await this.fileBufferService.getFileInfo(entry.path)
+        return info.exists ? info.mtimeMs : null
+      }),
+    )
+
+    return mtimes.reduce<number | null>((latest, mtime) => {
+      if (mtime === null) {
+        return latest
+      }
+      return latest === null ? mtime : Math.max(latest, mtime)
+    }, null)
+  }
+
+  private async getLatestCommitTime(cwd: string): Promise<string | null> {
+    try {
+      const result = await execFileAsync('git', ['log', '-1', '--format=%cI', 'HEAD'], { cwd })
+      return result.stdout.trim() || null
     } catch {
       return null
     }
@@ -437,6 +532,9 @@ function parseWorktreeList(output: string, currentRepoRoot: string): GitWorktree
         branch,
         head,
         aheadOfMainCount: null,
+        lineAdditions: null,
+        lineDeletions: null,
+        lastChangedAt: null,
         isCurrent: resolvedPath === normalizedCurrentRepoRoot,
         isDirtyBranch: false,
         isMain: sectionIndex === 0,

@@ -243,6 +243,9 @@ export type GitWorktreeStatus = {
   branch: string | null
   head: string | null
   aheadOfMainCount: number | null
+  lineAdditions: number | null
+  lineDeletions: number | null
+  lastChangedAt: string | null
   isDirtyBranch: boolean
   isCurrent: boolean
   isMain: boolean

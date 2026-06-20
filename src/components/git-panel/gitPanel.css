@@ -261,11 +261,11 @@
 .worktrees-panel__worktree-header {
 	all: unset;
 	box-sizing: border-box;
-	min-height: 28px;
+	min-height: 48px;
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	padding: 2px 8px 2px 12px;
+	padding: 4px 8px 4px 12px;
 	color: #ffffff;
 	cursor: pointer;
 	font-size: 13px;
@@ -310,26 +310,41 @@
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
-	gap: 1px;
+	gap: 2px;
+}
+
+.worktrees-panel__worktree-topline,
+.worktrees-panel__worktree-meta {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	gap: 6px;
+}
+
+.worktrees-panel__worktree-name,
+.worktrees-panel__date {
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .worktrees-panel__worktree-name {
-	min-width: 0;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
 	color: rgba(220, 226, 240, 0.9);
-	line-height: 16px;
+	font-size: 13px;
+	line-height: 18px;
 }
 
-.worktrees-panel__worktree-path {
-	min-width: 0;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
+.worktrees-panel__worktree-meta {
 	color: rgba(220, 226, 240, 0.34);
 	font-size: 11px;
-	line-height: 13px;
+	line-height: 16px;
+	padding-left: 22px;
+}
+
+.worktrees-panel__spacer {
+	flex: 1 1 auto;
+	min-width: 0;
 }
 
 .worktrees-panel__branch,
@@ -356,6 +371,24 @@
 
 .worktrees-panel__pill {
 	color: #57b7ff;
+}
+
+.worktrees-panel__delta {
+	flex: 0 0 auto;
+	font-variant-numeric: tabular-nums;
+	font-weight: 600;
+}
+
+.worktrees-panel__delta--additions {
+	color: #73c991;
+}
+
+.worktrees-panel__delta--deletions {
+	color: #f14c4c;
+}
+
+.worktrees-panel__date {
+	color: rgba(220, 226, 240, 0.45);
 }
 
 .worktrees-panel__count {
