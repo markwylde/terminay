@@ -13,6 +13,7 @@ import type {
   QuickPushPullRequest,
 } from '../../src/types/terminay'
 import { getProviderEnv, type AiTabMetadataService } from '../aiTabMetadata/service'
+import { isGithubRemote, parseRemoteWebInfo } from './pullRequest'
 
 const execFileAsync = promisify(execFile)
 
@@ -458,6 +459,49 @@ function extractUrl(text: string): string | null {
   return matches[matches.length - 1].replace(/[).,]+$/, '')
 }
 
+async function runCommand(command: string, args: string[], cwd: string): Promise<string> {
+  const { stdout, stderr } = await execFileAsync(command, args, {
+    cwd,
+    env: await getProviderEnv(),
+    maxBuffer: MAX_BUFFER,
+    timeout: GIT_TIMEOUT_MS,
+  })
+  return `${stdout}${stderr}`.trim()
+}
+
+function commandErrorMessage(error: unknown, missingMessage: string): string {
+  const err = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string }
+  if (err.code === 'ENOENT') {
+    return missingMessage
+  }
+  return err.stderr?.trim() || err.stdout?.trim() || (error instanceof Error ? error.message : String(error))
+}
+
+function buildManualPullRequestMessage(remoteUrl: string, branch: string | null, reason?: string): string | null {
+  const webUrl = parseRemoteWebInfo(remoteUrl).webUrl
+  if (!webUrl) {
+    return null
+  }
+
+  const branchText = branch && branch !== 'HEAD' ? ` from branch "${branch}"` : ''
+  const reasonText = reason ? `Could not create the pull request automatically: ${reason}\n\n` : ''
+  return `${reasonText}Create a pull request manually${branchText} at ${webUrl}`
+}
+
+async function hasTeaLoginForRemote(remoteUrl: string, cwd: string): Promise<boolean> {
+  const host = parseRemoteWebInfo(remoteUrl).host?.toLowerCase()
+  if (!host) {
+    return false
+  }
+
+  try {
+    const output = await runCommand('tea', ['logins', 'list'], cwd)
+    return output.toLowerCase().includes(host)
+  } catch {
+    return false
+  }
+}
+
 export class QuickPushService {
   constructor(private readonly aiTabMetadataService: AiTabMetadataService) {}
 
@@ -482,6 +526,7 @@ export class QuickPushService {
     const steps: QuickPushApplyStep[] = []
     let pushed = false
     let pullRequestUrl: string | null = null
+    let pullRequestUrlLabel: string | null = null
     let branch: string | null = null
 
     const repoRoot = (await runGit(['rev-parse', '--show-toplevel'], request.cwd)).trim()
@@ -541,35 +586,76 @@ export class QuickPushService {
         if (!pr?.title.trim()) {
           throw new Error('Pull request details are missing.')
         }
-        try {
-          const { stdout, stderr } = await execFileAsync(
-            'gh',
-            ['pr', 'create', '--title', pr.title, '--body', pr.body ?? ''],
-            {
-              cwd: repoRoot,
-              env: await getProviderEnv(),
-              maxBuffer: MAX_BUFFER,
-              timeout: GIT_TIMEOUT_MS,
-            },
-          )
-          const output = `${stdout}${stderr}`.trim()
-          pullRequestUrl = extractUrl(`${stdout}\n${stderr}`)
-          steps.push({ label: 'Open pull request', ok: true, output: output || undefined })
-        } catch (error) {
-          const err = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string }
-          const message =
-            err.code === 'ENOENT'
-              ? 'GitHub CLI (gh) is not installed or not on PATH.'
-              : (err.stderr?.trim() || err.stdout?.trim() || (error instanceof Error ? error.message : String(error)))
-          steps.push({ label: 'Open pull request', ok: false, output: message })
-          throw new Error(message)
+        const remoteUrl = (await runGit(['remote', 'get-url', remote], repoRoot)).trim()
+
+        if (isGithubRemote(remoteUrl)) {
+          try {
+            const output = await runCommand(
+              'gh',
+              ['pr', 'create', '--title', pr.title, '--body', pr.body ?? '', '--head', pushTarget],
+              repoRoot,
+            )
+            pullRequestUrl = extractUrl(output)
+            pullRequestUrlLabel = 'View pull request'
+            steps.push({ label: 'Open pull request with gh', ok: true, output: output || undefined })
+          } catch (error) {
+            const message = commandErrorMessage(error, 'GitHub CLI (gh) is not installed or not on PATH.')
+            const fallback = buildManualPullRequestMessage(remoteUrl, pushTarget, message)
+            if (!fallback) {
+              steps.push({ label: 'Open pull request with gh', ok: false, output: message })
+              throw new Error(message)
+            }
+            pullRequestUrl = parseRemoteWebInfo(remoteUrl).webUrl
+            pullRequestUrlLabel = 'Create pull request'
+            steps.push({ label: 'Create pull request manually', ok: true, output: fallback })
+          }
+        } else if (await hasTeaLoginForRemote(remoteUrl, repoRoot)) {
+          try {
+            const output = await runCommand(
+              'tea',
+              [
+                'pulls',
+                'create',
+                '--remote',
+                remote,
+                '--head',
+                pushTarget,
+                '--title',
+                pr.title,
+                '--description',
+                pr.body ?? '',
+              ],
+              repoRoot,
+            )
+            pullRequestUrl = extractUrl(output)
+            pullRequestUrlLabel = 'View pull request'
+            steps.push({ label: 'Open pull request with tea', ok: true, output: output || undefined })
+          } catch (error) {
+            const message = commandErrorMessage(error, 'Gitea CLI (tea) is not installed or not on PATH.')
+            const fallback = buildManualPullRequestMessage(remoteUrl, pushTarget, message)
+            if (!fallback) {
+              steps.push({ label: 'Open pull request with tea', ok: false, output: message })
+              throw new Error(message)
+            }
+            pullRequestUrl = parseRemoteWebInfo(remoteUrl).webUrl
+            pullRequestUrlLabel = 'Create pull request'
+            steps.push({ label: 'Create pull request manually', ok: true, output: fallback })
+          }
+        } else {
+          const fallback = buildManualPullRequestMessage(remoteUrl, pushTarget)
+          if (!fallback) {
+            throw new Error('The git remote is not GitHub and does not have a usable web URL for a pull request.')
+          }
+          pullRequestUrl = parseRemoteWebInfo(remoteUrl).webUrl
+          pullRequestUrlLabel = 'Create pull request'
+          steps.push({ label: 'Create pull request manually', ok: true, output: fallback })
         }
       }
 
-      return { ok: true, steps, branch, pushed, pullRequestUrl, error: null }
+      return { ok: true, steps, branch, pushed, pullRequestUrl, pullRequestUrlLabel, error: null }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      return { ok: false, steps, branch, pushed, pullRequestUrl, error: message }
+      return { ok: false, steps, branch, pushed, pullRequestUrl, pullRequestUrlLabel, error: message }
     }
   }
 }

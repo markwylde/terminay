@@ -29,15 +29,15 @@ export const defaultMacros: MacroDefinition[] = [
   {
     id: 'create-pull-request',
     title: 'Create a pull request',
-    description: 'Ask the agent to branch, commit, push, and open a pull request with gh.',
+    description: 'Ask the agent to branch, commit, push, and open a pull request.',
     template:
-      'Create a branch and commit all the unstaged changes into that branch, then push up and create a pull request using the gh cli tool.',
+      'Create a branch and commit all the unstaged changes into that branch, then push it and create a pull request. Use gh for GitHub remotes, tea for Gitea remotes, or provide the remote URL if neither CLI applies.',
     submitMode: 'type-only',
     steps: [
       {
         id: 'step-1',
         type: 'type',
-        content: 'Create a branch and commit all the unstaged changes into that branch, then push up and create a pull request using the gh cli tool.',
+        content: 'Create a branch and commit all the unstaged changes into that branch, then push it and create a pull request. Use gh for GitHub remotes, tea for Gitea remotes, or provide the remote URL if neither CLI applies.',
       },
     ],
     fields: [],
