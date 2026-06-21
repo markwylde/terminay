@@ -325,7 +325,7 @@ function QuickPushResult({ result }: { result: QuickPushApplyResult }): JSX.Elem
 					onClick={() => void window.terminay.openExternal(result.pullRequestUrl as string)}
 				>
 					<ExternalLink size={14} aria-hidden="true" />
-					View pull request
+					{result.pullRequestUrlLabel ?? 'View pull request'}
 				</button>
 			) : result.ok && result.pushed ? (
 				<div className="quick-push-success">

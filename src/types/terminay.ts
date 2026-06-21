@@ -433,6 +433,7 @@ export type QuickPushApplyResult = {
   branch: string | null
   pushed: boolean
   pullRequestUrl: string | null
+  pullRequestUrlLabel?: string | null
   error: string | null
 }
 
