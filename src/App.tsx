@@ -1708,6 +1708,7 @@ const ProjectWorkspace = forwardRef<
 		y: number;
 	} | null>(null);
 	const [quickPushAction, setQuickPushAction] = useState<GitPushAgentAction | null>(null);
+	const [quickPushCwd, setQuickPushCwd] = useState<string | null>(null);
 	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
 	const [runningMacroRunsBySession, setRunningMacroRunsBySession] = useState<
 		Record<string, TerminalTabMacroRun[]>
@@ -3981,7 +3982,7 @@ const ProjectWorkspace = forwardRef<
 	);
 
 	const launchQuickPush = useCallback(
-		(action: GitPushAgentAction) => {
+		async (action: GitPushAgentAction) => {
 			setGitPushMenuPosition(null);
 
 			if (settings.gitPushAgent.provider === 'disabled') {
@@ -3994,9 +3995,25 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
+			// Operate on the active terminal's working directory so Quick Push
+			// targets the branch the user is actually on (e.g. a worktree),
+			// falling back to the project root.
+			let cwd = project.rootFolder;
+			const activeSessionId = getActiveSessionId();
+			if (activeSessionId) {
+				try {
+					cwd =
+						(await window.terminay.getTerminalCwd(activeSessionId)) ??
+						project.rootFolder;
+				} catch {
+					cwd = project.rootFolder;
+				}
+			}
+
+			setQuickPushCwd(cwd);
 			setQuickPushAction(action);
 		},
-		[settings.gitPushAgent.provider],
+		[settings.gitPushAgent.provider, project.rootFolder, getActiveSessionId],
 	);
 
 	const exportTerminalForMove = useCallback(
@@ -6200,7 +6217,7 @@ const ProjectWorkspace = forwardRef<
 									trailingAction: {
 										icon: <Zap size={14} aria-hidden="true" />,
 										label: `${entry.label} (quick mode)`,
-										onClick: () => launchQuickPush(entry.action),
+										onClick: () => void launchQuickPush(entry.action),
 									},
 								}))}
 							/>
@@ -6260,8 +6277,11 @@ const ProjectWorkspace = forwardRef<
 							? settings.gitPushAgent.claudeCodeModel
 							: settings.gitPushAgent.codexModel
 					}
-					cwd={project.rootFolder}
-					onClose={() => setQuickPushAction(null)}
+					cwd={quickPushCwd ?? project.rootFolder}
+					onClose={() => {
+						setQuickPushAction(null);
+						setQuickPushCwd(null);
+					}}
 				/>
 			) : null}
 			<AnimatePresence>
