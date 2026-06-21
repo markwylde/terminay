@@ -11,12 +11,12 @@ import { buildTerminalOptions, resolveTerminalTheme } from '../terminalSettings'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalPanelParams } from './TerminalTab'
 import type { TerminalSettings } from '../types/settings'
+import { formatBracketedPaste } from '../terminalInput'
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher'
 const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path'
 const CLEAR_TERMINAL_EVENT = 'terminay-clear-terminal'
 const COPY_TERMINAL_EVENT = 'terminay-copy-terminal'
-const BRACKETED_PASTE_NEWLINE = '\x1b[200~\n\x1b[201~'
 const TERMINAL_CONTEXT_MAX_LINES = 200
 const TERMINAL_CONTEXT_MAX_CHARS = 20_000
 const REMOTE_TERMINAL_SCALE_PROPERTY = '--terminal-remote-scale'
@@ -401,7 +401,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         // Send the newline through bracketed paste so shells keep it in the
         // current command buffer instead of accepting the line.
         announceTerminalUserInput()
-        window.terminay.writeTerminal(sessionId, BRACKETED_PASTE_NEWLINE)
+        window.terminay.writeTerminal(sessionId, formatBracketedPaste('\n'))
         return false
       }
 

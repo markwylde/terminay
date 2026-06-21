@@ -78,6 +78,7 @@ import {
 	TerminalActivityStore,
 	type TerminalActivityEvaluation,
 } from './terminalActivityStore';
+import { formatRunCommandInput } from './terminalInput';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
 import type {
 	AiTabMetadataTarget,
@@ -4779,7 +4780,10 @@ const ProjectWorkspace = forwardRef<
 							return { ok: false, error: match.error };
 						}
 						const command = asString(p.command) ?? '';
-						window.terminay.writeTerminal(match.found.sessionId, command);
+						window.terminay.writeTerminal(
+							match.found.sessionId,
+							formatRunCommandInput(command),
+						);
 						window.terminay.writeTerminal(match.found.sessionId, '\r');
 						return { ok: true, result: { ok: true } };
 					}
