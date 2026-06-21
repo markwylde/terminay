@@ -1,19 +1,33 @@
+/* The title bar holds an icon, the name, and a subtitle on one row. */
+.quick-push-modal .project-edit-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .quick-push-title-icon {
+  flex: 0 0 auto;
   color: #f5c451;
 }
 
 .quick-push-subtitle {
-  margin-left: 8px;
+  margin-left: 4px;
   font-size: 12px;
   font-weight: 400;
   color: #8b93a5;
 }
 
+/*
+ * The modal already insets every child by 20px horizontally
+ * (.project-edit-modal > :not(.project-edit-modal-titlebar)), so quick-push
+ * sections only add vertical padding — adding horizontal padding here would
+ * double the gutter.
+ */
 .quick-push-status {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 28px 20px;
+  padding: 24px 0;
   color: #c7cedd;
   font-size: 13px;
 }
@@ -37,7 +51,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 4px 20px 8px;
+  padding: 4px 0 8px;
   max-height: 52vh;
   overflow-y: auto;
 }
@@ -194,7 +208,7 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin: 4px 20px;
+  margin: 4px 0;
   padding: 10px 12px;
   border-radius: 6px;
   background: rgba(255, 68, 68, 0.12);
