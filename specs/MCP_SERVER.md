@@ -229,8 +229,10 @@ name races). All tools operate strictly within the agent's own window/project.
 **Act**
 
 - `open_terminal({ name?, cwd?, split? })` → new tab in the agent's window
-- `write_terminal({ terminal, text, submit? })` → type text, optionally press Enter
-- `run_command({ terminal, command })` → write + Enter convenience
+- `write_terminal({ terminal, text, submit? })` → raw terminal input, optionally
+  press Enter
+- `run_command({ terminal, command })` → write + Enter convenience; multiline
+  commands are inserted with bracketed paste and submitted once
 - `close_terminal({ terminal })`
 - `focus_terminal({ terminal })`
 - `rename_terminal({ terminal, name })`

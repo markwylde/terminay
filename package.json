@@ -31,6 +31,7 @@
     "test:release-config": "node --test scripts/release-config.test.mjs",
     "test:control-protocol": "node --test scripts/control-protocol.test.mjs",
     "test:control-server": "node --test scripts/control-server.test.mjs",
+    "test:terminal-input": "node --test scripts/terminal-input.test.mjs",
     "test:mcp-install": "node --test scripts/mcp-install-codex.test.mjs",
     "test:signal-parser": "node --test scripts/terminal-signal-parser.test.mjs",
     "test:signal-interpreters": "node --test scripts/signal-interpreters.test.mjs",
