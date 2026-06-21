@@ -139,7 +139,8 @@ export async function runMcpServer(): Promise<void> {
   server.registerTool(
     'run_command',
     {
-      description: 'Run a command in a terminal (types it and presses Enter).',
+      description:
+        'Run a command in a terminal (types it and presses Enter). Multiline commands are inserted as bracketed paste, then submitted once.',
       inputSchema: {
         terminal: z.string(),
         command: z.string(),
