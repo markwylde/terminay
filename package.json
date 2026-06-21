@@ -36,6 +36,7 @@
     "test:signal-parser": "node --test scripts/terminal-signal-parser.test.mjs",
     "test:signal-interpreters": "node --test scripts/signal-interpreters.test.mjs",
     "test:activity-store": "node --test scripts/terminal-activity-store.test.mjs",
+    "test:quick-push-pr": "node --test scripts/quick-push-pr.test.mjs",
     "test:remote-pin": "node --test scripts/pin-guard.test.mjs",
     "test:remote-device-keys": "node --test scripts/device-keys-indexeddb.test.mjs",
     "test:remote-transport": "node --test scripts/remote-transport-runtime.test.mjs",

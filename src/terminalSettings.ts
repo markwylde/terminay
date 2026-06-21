@@ -140,7 +140,7 @@ Please:
 1. Run \`git status\` and \`git diff\` to understand what has changed.
 2. Stage all of the changes.
 3. Write a clear, concise commit message that follows this repository's existing commit style (look at recent commits with \`git log\`).
-4. Carry out the task above end to end. When a pull request is requested, use the \`gh\` CLI and target the repository's default branch.
+4. Carry out the task above end to end. When a pull request is requested, detect the git remote first: use \`gh\` for GitHub remotes, use \`tea\` for Gitea remotes, and otherwise provide the remote URL so I can create the pull request manually.
 
 Work autonomously and do not ask me to confirm individual steps.`;
 
