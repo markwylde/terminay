@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { JSX } from 'react';
 import {
 	AlertTriangle,
@@ -48,7 +48,6 @@ export function QuickPushModal({
 	const [result, setResult] = useState<QuickPushApplyResult | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [expanded, setExpanded] = useState<Set<number>>(new Set());
-	const pointerStartedOnBackdropRef = useRef(false);
 
 	useEffect(() => {
 		let isMounted = true;
@@ -78,21 +77,6 @@ export function QuickPushModal({
 			isMounted = false;
 		};
 	}, [action, provider, model, cwd]);
-
-	useEffect(() => {
-		const onKeyDown = (event: KeyboardEvent) => {
-			// Don't let Escape close the modal mid-push.
-			if (event.key === 'Escape' && phase !== 'applying') {
-				event.preventDefault();
-				onClose();
-			}
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-		};
-	}, [onClose, phase]);
 
 	const toggleExpanded = (index: number) => {
 		setExpanded((previous) => {
@@ -137,25 +121,9 @@ export function QuickPushModal({
 	const canClose = phase !== 'applying';
 
 	return (
-		<div
-			className="project-edit-modal-backdrop"
-			onMouseDown={(event) => {
-				pointerStartedOnBackdropRef.current = event.target === event.currentTarget;
-			}}
-			onMouseUp={(event) => {
-				const shouldClose =
-					canClose &&
-					pointerStartedOnBackdropRef.current &&
-					event.target === event.currentTarget;
-				pointerStartedOnBackdropRef.current = false;
-				if (shouldClose) {
-					onClose();
-				}
-			}}
-		>
+		<div className="project-edit-modal-backdrop">
 			<div
 				className="project-edit-modal project-edit-modal--wide quick-push-modal"
-				onClick={(event) => event.stopPropagation()}
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby={titleId}
