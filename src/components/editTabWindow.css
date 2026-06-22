@@ -343,11 +343,17 @@
 
 /* Actions */
 .edit-window-actions {
+  position: sticky;
+  bottom: 0;
   margin-top: auto;
+  margin-left: -32px;
+  margin-right: -32px;
+  margin-bottom: -32px;
   display: flex;
   justify-content: flex-end;
   gap: 12px;
-  padding-top: 16px;
+  padding: 16px 32px;
+  background: #0d0f12;
   border-top: 1px solid #1e293b;
 }
 
