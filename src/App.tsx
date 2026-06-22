@@ -6126,34 +6126,32 @@ const ProjectWorkspace = forwardRef<
 												) : null
 											}
 											actions={
-												project.isGitPaneCollapsed ? undefined : (
-													<button
-														type="button"
-														className={`sidebar-pane__action-button${
-															gitPushMenuPosition
-																? ' sidebar-pane__action-button--active'
-																: ''
-														}`}
-														onClick={(event) => {
-															const rect =
-																event.currentTarget.getBoundingClientRect();
-															setGitPushMenuPosition((current) =>
-																current
-																	? null
-																	: {
-																			x: rect.left,
-																			y: rect.bottom + 4,
-																		},
-															);
-														}}
-														aria-label="Commit and push with an AI agent"
-														aria-haspopup="menu"
-														aria-expanded={!!gitPushMenuPosition}
-														title="Commit & push with AI"
-													>
-														<Upload size={14} aria-hidden="true" />
-													</button>
-												)
+												<button
+													type="button"
+													className={`sidebar-pane__action-button${
+														gitPushMenuPosition
+															? ' sidebar-pane__action-button--active'
+															: ''
+													}`}
+													onClick={(event) => {
+														const rect =
+															event.currentTarget.getBoundingClientRect();
+														setGitPushMenuPosition((current) =>
+															current
+																? null
+																: {
+																		x: rect.left,
+																		y: rect.bottom + 4,
+																	},
+														);
+													}}
+													aria-label="Commit and push with an AI agent"
+													aria-haspopup="menu"
+													aria-expanded={!!gitPushMenuPosition}
+													title="Commit & push with AI"
+												>
+													<Upload size={14} aria-hidden="true" />
+												</button>
 											}
 										>
 											<GitPanel
