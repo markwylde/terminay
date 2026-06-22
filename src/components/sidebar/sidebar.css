@@ -84,9 +84,15 @@
 	display: flex;
 	align-items: center;
 	gap: 2px;
-	flex: 0 0 auto;
+	flex: 1 1 auto;
 	min-width: 0;
 	padding-right: 6px;
+}
+
+/* When a header has an aside (e.g. the Git pane's branch + actions), let the
+   title hug its content so the branch can grow into the remaining space. */
+.sidebar-pane__header-row:has(.sidebar-pane__header-aside) .sidebar-pane__header {
+	flex: 0 1 auto;
 }
 
 .sidebar-pane__actions {
@@ -154,7 +160,7 @@
 }
 
 .sidebar-pane__accessory {
-	flex-shrink: 1;
+	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -164,12 +170,10 @@
 }
 
 .sidebar-pane__branch {
-	display: inline-block;
-	max-width: 140px;
+	display: block;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	vertical-align: bottom;
 }
 
 .sidebar-pane__body {
