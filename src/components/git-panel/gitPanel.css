@@ -352,18 +352,12 @@
 	padding-left: 22px;
 }
 
-.worktrees-panel__spacer {
-	flex: 1 1 auto;
-	min-width: 0;
-}
-
 .worktrees-panel__branch,
 .worktrees-panel__pill {
-	flex: 0 0 auto;
+	flex: 0 1 auto;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	max-width: 88px;
 	min-width: 0;
 	height: 18px;
 	padding: 0 6px;
