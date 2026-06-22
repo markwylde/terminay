@@ -289,7 +289,6 @@ type ProjectWorkspaceProps = {
 const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher';
 const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path';
 const MIN_FILE_EXPLORER_WIDTH = 180;
-const MAX_FILE_EXPLORER_WIDTH = 520;
 const MIN_SIDEBAR_PANE_HEIGHT = 80;
 const FILE_EXPLORER_DRAG_THRESHOLD = 6;
 const FILE_EXPLORER_WATCH_REFRESH_DELAY_MS = 120;
@@ -3459,7 +3458,7 @@ const ProjectWorkspace = forwardRef<
 			const nextWidth = clamp(
 				resizeState.startWidth + (event.clientX - resizeState.startX),
 				MIN_FILE_EXPLORER_WIDTH,
-				MAX_FILE_EXPLORER_WIDTH,
+				Math.max(MIN_FILE_EXPLORER_WIDTH, window.innerWidth * 0.8),
 			);
 			resizeState.latestWidth = nextWidth;
 			onUpdateProject(project.id, { fileExplorerWidth: nextWidth });
