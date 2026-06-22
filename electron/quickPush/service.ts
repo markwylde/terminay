@@ -488,18 +488,64 @@ function buildManualPullRequestMessage(remoteUrl: string, branch: string | null,
   return `${reasonText}Create a pull request manually${branchText} at ${webUrl}`
 }
 
-async function hasTeaLoginForRemote(remoteUrl: string, cwd: string): Promise<boolean> {
+async function isCliInstalled(command: string, cwd: string): Promise<boolean> {
+  try {
+    await runCommand(command, ['--version'], cwd)
+    return true
+  } catch (error) {
+    // ENOENT means the binary isn't on PATH. Any other failure (e.g. a
+    // non-zero exit from `--version`) still implies the CLI is present.
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT'
+  }
+}
+
+// Ask gh whether it considers the current repo a GitHub repo. This also
+// covers GitHub Enterprise hosts that a hostname check would miss.
+async function ghRecognizesRepo(cwd: string): Promise<boolean> {
+  try {
+    await runCommand('gh', ['repo', 'view', '--json', 'url'], cwd)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Ask tea whether it has a login configured for the remote's host. We request
+// CSV output because tea's default table output truncates long URLs/hosts,
+// which made a plain substring match miss legitimate Gitea remotes.
+async function teaRecognizesRepo(remoteUrl: string, cwd: string): Promise<boolean> {
   const host = parseRemoteWebInfo(remoteUrl).host?.toLowerCase()
   if (!host) {
     return false
   }
 
   try {
-    const output = await runCommand('tea', ['logins', 'list'], cwd)
+    const output = await runCommand('tea', ['logins', 'list', '--output', 'csv'], cwd)
     return output.toLowerCase().includes(host)
   } catch {
     return false
   }
+}
+
+type PullRequestProvider = 'gh' | 'tea'
+
+// Decide which CLI (if any) can open a pull request for this remote. We only
+// consider tools that are installed, then test gh first (GitHub) and tea
+// second (Gitea), ignoring a tool that doesn't recognize the repo.
+async function detectPullRequestProvider(remoteUrl: string, cwd: string): Promise<PullRequestProvider | null> {
+  if (await isCliInstalled('gh', cwd)) {
+    if (isGithubRemote(remoteUrl) || (await ghRecognizesRepo(cwd))) {
+      return 'gh'
+    }
+  }
+
+  if (await isCliInstalled('tea', cwd)) {
+    if (await teaRecognizesRepo(remoteUrl, cwd)) {
+      return 'tea'
+    }
+  }
+
+  return null
 }
 
 export class QuickPushService {
@@ -587,8 +633,9 @@ export class QuickPushService {
           throw new Error('Pull request details are missing.')
         }
         const remoteUrl = (await runGit(['remote', 'get-url', remote], repoRoot)).trim()
+        const provider = await detectPullRequestProvider(remoteUrl, repoRoot)
 
-        if (isGithubRemote(remoteUrl)) {
+        if (provider === 'gh') {
           try {
             const output = await runCommand(
               'gh',
@@ -609,7 +656,7 @@ export class QuickPushService {
             pullRequestUrlLabel = 'Create pull request'
             steps.push({ label: 'Create pull request manually', ok: true, output: fallback })
           }
-        } else if (await hasTeaLoginForRemote(remoteUrl, repoRoot)) {
+        } else if (provider === 'tea') {
           try {
             const output = await runCommand(
               'tea',
@@ -644,7 +691,9 @@ export class QuickPushService {
         } else {
           const fallback = buildManualPullRequestMessage(remoteUrl, pushTarget)
           if (!fallback) {
-            throw new Error('The git remote is not GitHub and does not have a usable web URL for a pull request.')
+            throw new Error(
+              'No installed CLI (gh or tea) recognized this remote, and it has no usable web URL for a pull request.',
+            )
           }
           pullRequestUrl = parseRemoteWebInfo(remoteUrl).webUrl
           pullRequestUrlLabel = 'Create pull request'
