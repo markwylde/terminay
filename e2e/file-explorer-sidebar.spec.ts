@@ -281,9 +281,12 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   await modifiedRow.click()
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
 
-  // Collapsing the Git pane hides the change list.
+  // Collapsing the Git pane hides the change list...
   await gitPane.locator('.sidebar-pane__header').click()
   await expect(gitPane.locator('.git-panel__row')).toHaveCount(0)
+  // ...but the push-agent button stays available in the collapsed header.
+  await expect(gitPane).toHaveClass(/sidebar-pane--collapsed/)
+  await expect(gitPane.getByLabel('Commit and push with an AI agent')).toBeVisible()
 })
 
 test('git sidebar pane shows no changes for a clean repository', async ({ createWorkspace, mainWindow }) => {
