@@ -340,6 +340,10 @@
 }
 
 .worktrees-panel__worktree-name {
+	flex: 0 0 auto;
+}
+
+.worktrees-panel__worktree-name {
 	color: rgba(220, 226, 240, 0.9);
 	font-size: 13px;
 	line-height: 18px;
@@ -350,6 +354,11 @@
 	font-size: 11px;
 	line-height: 16px;
 	padding-left: 22px;
+}
+
+.worktrees-panel__spacer {
+	flex: 1 1 auto;
+	min-width: 0;
 }
 
 .worktrees-panel__branch,
