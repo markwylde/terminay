@@ -3805,10 +3805,25 @@ const ProjectWorkspace = forwardRef<
 			}
 
 			try {
-				const activeSessionId = api.activePanel?.params?.sessionId;
-				const inheritedCwd = activeSessionId
-					? await window.terminay.getTerminalCwd(activeSessionId)
-					: null;
+				const activeParams = api.activePanel?.params;
+				let inheritedCwd: string | null = null;
+				if (activeParams?.sessionId) {
+					// Terminal tab: inherit its live working directory.
+					inheritedCwd = await window.terminay.getTerminalCwd(
+						activeParams.sessionId,
+					);
+				} else if (typeof activeParams?.folderPath === 'string') {
+					// Folder / tasks / kanban tab: use the folder path directly.
+					inheritedCwd = activeParams.folderPath;
+				} else if (typeof activeParams?.filePath === 'string') {
+					// File tab: use the file's parent directory.
+					const filePath = activeParams.filePath;
+					inheritedCwd =
+						filePath.substring(
+							0,
+							Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')),
+						) || filePath;
+				}
 				const targetCwd = options?.cwd ?? inheritedCwd;
 				const { id: sessionId } = await window.terminay.createTerminal(
 					targetCwd ? { cwd: targetCwd } : undefined,
