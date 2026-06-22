@@ -246,6 +246,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 									<span className="worktrees-panel__worktree-name">
 										{worktree.name}
 									</span>
+									<span className="worktrees-panel__spacer" />
 									{branchLabel ? (
 										<span className="worktrees-panel__branch">{branchLabel}</span>
 									) : null}
