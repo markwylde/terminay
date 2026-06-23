@@ -81,9 +81,12 @@ import {
 import { formatRunCommandInput } from './terminalInput';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
 import type {
+	AdoptedProjectPayload,
 	AiTabMetadataTarget,
 	AppCommand,
 	AppUpdateStatus,
+	ProjectTabDragResult,
+	ProjectTabDragPreview,
 	FileExplorerEntry,
 	FileExplorerGitStatus,
 	FileSearchResult,
@@ -227,6 +230,11 @@ type MovedTerminalTab = {
 	title: string;
 };
 
+type MovedProject = {
+	terminals: MovedTerminalTab[];
+	activeSessionId: string | null;
+};
+
 type TerminalActivityOverviewState = Extract<
 	TerminalActivityState,
 	'recent' | 'unviewed' | 'attention'
@@ -253,6 +261,13 @@ type ProjectWorkspaceHandle = {
 	activateTerminal: (panelId: string, sessionId: string) => void;
 	executeCommand: (command: AppCommand) => void;
 	exportTerminalForMove: (panelId: string) => MovedTerminalTab | null;
+	/**
+	 * Export every terminal in this project for a cross-window move, flagging
+	 * their sessions as "moving" so the later workspace unmount does not kill the
+	 * live PTYs. Does not remove the project — the caller does that once the
+	 * sessions have been re-homed to the receiving window.
+	 */
+	exportProjectForMove: () => MovedProject | null;
 	focusActiveTerminal: () => void;
 	/** True when the given terminal session lives in this workspace's project. */
 	ownsControlSession: (sessionId: string) => boolean;
@@ -284,6 +299,8 @@ type ProjectWorkspaceProps = {
 	popoutUrl: string;
 	project: ProjectTab;
 	projects: ProjectTab[];
+	/** Terminals to reattach instead of seeding a fresh terminal (adopted project). */
+	adoptedTerminals?: MovedTerminalTab[];
 };
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher';
@@ -1630,8 +1647,12 @@ function getFileExplorerPathParent(filePath: string): string {
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
->(({ isActive, isMac, macros, onAddProject, onCloseProject, onEditProject, onMoveTerminalToProject, onTerminalActivityOverviewChange, onUpdateProject, popoutUrl, project, projects }, ref) => {
+>(({ isActive, isMac, macros, onAddProject, onCloseProject, onEditProject, onMoveTerminalToProject, onTerminalActivityOverviewChange, onUpdateProject, popoutUrl, project, projects, adoptedTerminals }, ref) => {
 	const { settings } = useTerminalSettings();
+	// Latest adopted terminals, read lazily when the workspace seeds so the seed
+	// effect needn't depend on prop identity.
+	const adoptedTerminalsRef = useRef(adoptedTerminals);
+	adoptedTerminalsRef.current = adoptedTerminals;
 	const settingsRef = useRef(settings);
 	useEffect(() => {
 		settingsRef.current = settings;
@@ -4030,16 +4051,16 @@ const ProjectWorkspace = forwardRef<
 		[settings.gitPushAgent.provider, project.rootFolder, getActiveSessionId],
 	);
 
-	const exportTerminalForMove = useCallback(
-		(panelId: string): MovedTerminalTab | null => {
-			const api = dockviewApiRef.current;
-			const panel = api?.getPanel(panelId);
-			const sessionId = panel?.params?.sessionId;
-			if (!panel || !sessionId) {
+	const buildMovedTerminalFromPanel = useCallback(
+		(
+			panel: NonNullable<ReturnType<DockviewApi['getPanel']>>,
+		): MovedTerminalTab | null => {
+			const sessionId = panel.params?.sessionId;
+			if (!sessionId) {
 				return null;
 			}
 
-			const movedTerminal: MovedTerminalTab = {
+			return {
 				color: panel.params?.color,
 				activityIndicatorsEnabled: panel.params?.activityIndicatorsEnabled,
 				emoji: panel.params?.emoji,
@@ -4056,14 +4077,59 @@ const ProjectWorkspace = forwardRef<
 				terminalNote: panel.params?.terminalNote,
 				title: panel.title ?? 'Terminal',
 			};
+		},
+		[runningMacroRunsBySession],
+	);
 
-			movingTerminalSessionIdsRef.current.add(sessionId);
+	const exportTerminalForMove = useCallback(
+		(panelId: string): MovedTerminalTab | null => {
+			const api = dockviewApiRef.current;
+			const panel = api?.getPanel(panelId);
+			if (!panel) {
+				return null;
+			}
+
+			const movedTerminal = buildMovedTerminalFromPanel(panel);
+			if (!movedTerminal) {
+				return null;
+			}
+
+			movingTerminalSessionIdsRef.current.add(movedTerminal.sessionId);
 			panel.api.close();
 
 			return movedTerminal;
 		},
-		[runningMacroRunsBySession],
+		[buildMovedTerminalFromPanel],
 	);
+
+	const exportProjectForMove = useCallback((): MovedProject | null => {
+		const api = dockviewApiRef.current;
+		if (!api) {
+			return null;
+		}
+
+		const activeSessionId = api.activePanel?.params?.sessionId ?? null;
+		const terminals: MovedTerminalTab[] = [];
+		for (const panel of api.panels) {
+			const moved = buildMovedTerminalFromPanel(panel);
+			if (moved) {
+				terminals.push(moved);
+			}
+		}
+
+		if (terminals.length === 0) {
+			return null;
+		}
+
+		// Flag every session as moving so that when this project's workspace
+		// unmounts (the caller removes the project after ownership has been
+		// re-homed), the panel-removal handler does not kill the live PTYs.
+		for (const moved of terminals) {
+			movingTerminalSessionIdsRef.current.add(moved.sessionId);
+		}
+
+		return { terminals, activeSessionId };
+	}, [buildMovedTerminalFromPanel]);
 
 	const acceptMovedTerminal = useCallback(
 		(movedTerminal: MovedTerminalTab) => {
@@ -4989,6 +5055,7 @@ const ProjectWorkspace = forwardRef<
 				executeAppCommand(command);
 			},
 			exportTerminalForMove,
+			exportProjectForMove,
 			focusActiveTerminal,
 			ownsControlSession,
 			handleControlRequest,
@@ -4998,6 +5065,7 @@ const ProjectWorkspace = forwardRef<
 			activateTerminal,
 			executeAppCommand,
 			exportTerminalForMove,
+			exportProjectForMove,
 			focusActiveTerminal,
 			ownsControlSession,
 			handleControlRequest,
@@ -5124,8 +5192,19 @@ const ProjectWorkspace = forwardRef<
 		}
 
 		initialTerminalSeededRef.current = true;
+
+		// Adopted project (popped out / merged): reattach its existing sessions
+		// instead of spawning a brand-new terminal.
+		const adopted = adoptedTerminalsRef.current;
+		if (adopted && adopted.length > 0) {
+			for (const terminal of adopted) {
+				acceptMovedTerminal(terminal);
+			}
+			return;
+		}
+
 		void addTerminal({});
-	}, [addTerminal, isDockviewReady]);
+	}, [acceptMovedTerminal, addTerminal, isDockviewReady]);
 
 	useEffect(() => {
 		const onOpenFileEvent = (event: Event) => {
@@ -6618,6 +6697,11 @@ const ProjectWorkspace = forwardRef<
 
 ProjectWorkspace.displayName = 'ProjectWorkspace';
 
+// A window torn off from another (popout) boots with ?adopt=1 so it starts with
+// no default project and pulls its adopted project on mount instead.
+const isAdoptWindow =
+	new URLSearchParams(window.location.search).get('adopt') === '1';
+
 function App() {
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
 	const popoutUrl = useMemo(
@@ -6696,15 +6780,37 @@ function App() {
 
 	const [homePath, setHomePath] = useState('');
 
-	const [projects, setProjects] = useState<ProjectTab[]>([
-		createProjectTab(1, ''),
-	]);
+	const [projects, setProjects] = useState<ProjectTab[]>(() =>
+		isAdoptWindow ? [] : [createProjectTab(1, '')],
+	);
 	const projectsRef = useRef(projects);
-	const [activeProjectId, setActiveProjectId] = useState('project-1');
+	const [activeProjectId, setActiveProjectId] = useState(
+		isAdoptWindow ? '' : 'project-1',
+	);
 	const activeProjectIdRef = useRef(activeProjectId);
 	const [draggingProjectId, setDraggingProjectId] = useState<string | null>(
 		null,
 	);
+	// Terminals to reattach (rather than seed fresh) for adopted projects.
+	const [adoptedTerminalsByProject, setAdoptedTerminalsByProject] = useState<
+		Record<string, MovedTerminalTab[]>
+	>({});
+	// True while another window is dragging a project tab over this window's bar.
+	const [isProjectDropTarget, setIsProjectDropTarget] = useState(false);
+	// True once the actively dragged tab has torn off into the floating ghost,
+	// so it should collapse out of this window's bar.
+	const [isDraggingTabTornOff, setIsDraggingTabTornOff] = useState(false);
+	const projectTabBarRef = useRef<HTMLDivElement | null>(null);
+	// In-bar placeholder while a tab from ANOTHER window is dragged over this bar:
+	// the insertion index + the dragged tab's preview, so the user can slot it in.
+	const [dropPreview, setDropPreview] = useState<{
+		index: number;
+		preview: ProjectTabDragPreview;
+	} | null>(null);
+	const dropPreviewIndexRef = useRef<number | null>(null);
+	// Tab-center X snapshot captured when the drag enters this bar, so the
+	// computed insertion index stays stable as the placeholder reflows the tabs.
+	const dropTargetTabCentersRef = useRef<number[] | null>(null);
 	const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(
 		null,
 	);
@@ -6799,7 +6905,9 @@ function App() {
 			const isLastProject =
 				currentProjects.length === 1 && currentProjects[0]?.id === projectId;
 			if (isLastProject) {
-				void window.terminay.quitApp();
+				// Closing the final project closes this window. The main process
+				// quits the app once the last project-host window is gone.
+				void window.terminay.closeThisWindow();
 				return;
 			}
 
@@ -6808,6 +6916,14 @@ function App() {
 			);
 			projectsRef.current = nextProjects;
 			setProjects(nextProjects);
+			setAdoptedTerminalsByProject((current) => {
+				if (!(projectId in current)) {
+					return current;
+				}
+				const { [projectId]: _removed, ...rest } = current;
+				void _removed;
+				return rest;
+			});
 
 			if (activeProjectIdRef.current === projectId) {
 				const fallbackIndex = Math.max(0, index - 1);
@@ -6818,6 +6934,110 @@ function App() {
 			}
 		},
 		[],
+	);
+
+	const adoptProject = useCallback((payload: AdoptedProjectPayload) => {
+		const incoming = payload.project as unknown as ProjectTab;
+		const terminals = payload.terminals as unknown as MovedTerminalTab[];
+		projectCounterRef.current += 1;
+		// Re-id the adopted project so it can't collide with a project already in
+		// this window (e.g. both windows have a "project-1").
+		const nextProjectId = `project-${projectCounterRef.current}`;
+		const adoptedTab: ProjectTab = { ...incoming, id: nextProjectId };
+
+		setAdoptedTerminalsByProject((current) => ({
+			...current,
+			[nextProjectId]: terminals,
+		}));
+		// Insert at the slot chosen during the drag (if dropped on this bar),
+		// otherwise append.
+		const insertIndex = dropPreviewIndexRef.current;
+		setProjects((current) => {
+			if (insertIndex === null || insertIndex >= current.length) {
+				return [...current, adoptedTab];
+			}
+			const next = [...current];
+			next.splice(Math.max(0, insertIndex), 0, adoptedTab);
+			return next;
+		});
+		dropPreviewIndexRef.current = null;
+		dropTargetTabCentersRef.current = null;
+		setDropPreview(null);
+		setIsProjectDropTarget(false);
+		setActiveProjectId(nextProjectId);
+	}, []);
+
+	const handleProjectTabDragStart = useCallback((projectId: string) => {
+		setDraggingProjectId(projectId);
+		const project = projectsRef.current.find((p) => p.id === projectId);
+		const tabElement = projectTabBarRef.current?.querySelector<HTMLElement>(
+			`[data-project-id="${projectId}"]`,
+		);
+		const width = tabElement
+			? Math.round(tabElement.getBoundingClientRect().width)
+			: 160;
+		window.terminay.beginProjectTabDrag({
+			title: project?.title ?? 'Project',
+			emoji: project?.emoji ?? '',
+			color: project?.color ?? '#4db5ff',
+			width,
+		});
+	}, []);
+
+	const handleProjectTabDragEnd = useCallback(
+		async (projectId: string) => {
+			setDraggingProjectId(null);
+			setIsDraggingTabTornOff(false);
+
+			let decision: ProjectTabDragResult;
+			try {
+				decision = await window.terminay.endProjectTabDrag();
+			} catch {
+				return;
+			}
+
+			// Dropped back on this window's own tab bar — framer-motion already
+			// handled any reordering.
+			if (decision.action === 'reorder') {
+				return;
+			}
+
+			const project = projectsRef.current.find((p) => p.id === projectId);
+			const workspace = workspaceRefs.current.get(projectId);
+			if (!project || !workspace) {
+				return;
+			}
+
+			const moved = workspace.exportProjectForMove();
+			if (!moved) {
+				return;
+			}
+
+			const payload: AdoptedProjectPayload = {
+				project: project as unknown as AdoptedProjectPayload['project'],
+				terminals:
+					moved.terminals as unknown as AdoptedProjectPayload['terminals'],
+				activeSessionId: moved.activeSessionId,
+			};
+
+			// Re-home the live PTYs to the receiving window BEFORE removing the
+			// project here, so closing this window can't kill sessions mid-move.
+			if (decision.action === 'merge') {
+				await window.terminay.mergeProject({
+					project: payload,
+					targetWindowId: decision.targetWindowId,
+				});
+			} else {
+				await window.terminay.popoutProject({
+					project: payload,
+					x: decision.x,
+					y: decision.y,
+				});
+			}
+
+			closeProject(projectId);
+		},
+		[closeProject],
 	);
 
 	const onReorder = (newOrder: ProjectTab[]) => {
@@ -6996,6 +7216,117 @@ function App() {
 			unsubscribeCommand();
 		};
 	}, [executeCommandOnActiveProject]);
+
+	// Adopt a project pushed in from another window (merge), and — for a
+	// freshly torn-off window — pull the adopted project once on mount.
+	useEffect(() => {
+		const unsubscribe = window.terminay.onAdoptProject((payload) => {
+			adoptProject(payload);
+		});
+
+		if (isAdoptWindow) {
+			void window.terminay.getAdoptedProject().then((payload) => {
+				if (payload) {
+					adoptProject(payload);
+				}
+			});
+		}
+
+		return () => {
+			unsubscribe();
+		};
+	}, [adoptProject]);
+
+	// While another window drags a tab over this bar, render an in-bar drop
+	// placeholder at the cursor's insertion index so the user can slot it exactly.
+	useEffect(() => {
+		const unsubscribe = window.terminay.onProjectTabDragHover((message) => {
+			if (!message.active || !message.preview) {
+				setIsProjectDropTarget(false);
+				setDropPreview(null);
+				dropPreviewIndexRef.current = null;
+				dropTargetTabCentersRef.current = null;
+				return;
+			}
+
+			setIsProjectDropTarget(true);
+
+			// Snapshot tab centers on entry so the insertion index stays stable as
+			// the placeholder reflows the bar.
+			if (!dropTargetTabCentersRef.current) {
+				const bar = projectTabBarRef.current;
+				const tabs = bar
+					? Array.from(
+							bar.querySelectorAll<HTMLElement>(
+								'.project-tab:not(.project-tab--drop-placeholder)',
+							),
+						)
+					: [];
+				dropTargetTabCentersRef.current = tabs.map((tab) => {
+					const rect = tab.getBoundingClientRect();
+					return rect.left + rect.width / 2;
+				});
+			}
+
+			const centers = dropTargetTabCentersRef.current ?? [];
+			const clientX = message.clientX ?? 0;
+			let index = 0;
+			for (const center of centers) {
+				if (clientX > center) {
+					index += 1;
+				}
+			}
+
+			dropPreviewIndexRef.current = index;
+			setDropPreview({ index, preview: message.preview });
+		});
+
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Collapse the dragged tab out of the bar once it tears off into the ghost
+	// (and restore it if the cursor returns and it re-docks).
+	useEffect(() => {
+		const unsubscribe = window.terminay.onProjectTabTornOff((message) => {
+			setIsDraggingTabTornOff(message.active);
+		});
+
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Publish the project tab bar's viewport rect so cross-window drags can be
+	// hit-tested against it (the main process adds this window's screen origin).
+	useEffect(() => {
+		const element = projectTabBarRef.current;
+		if (!element) {
+			return;
+		}
+
+		const publishRect = () => {
+			const rect = element.getBoundingClientRect();
+			window.terminay.registerProjectTabBarRect({
+				x: rect.left,
+				y: rect.top,
+				width: rect.width,
+				height: rect.height,
+			});
+		};
+
+		publishRect();
+		const observer = new ResizeObserver(publishRect);
+		observer.observe(element);
+		window.addEventListener('resize', publishRect);
+
+		return () => {
+			observer.disconnect();
+			window.removeEventListener('resize', publishRect);
+			window.terminay.registerProjectTabBarRect(null);
+		};
+	}, []);
 
 	useEffect(() => {
 		let isMounted = true;
@@ -7386,7 +7717,10 @@ function App() {
 
 	return (
 		<div className={`app-shell${isMac ? ' app-shell--macos' : ''}`}>
-			<header className="project-tabbar">
+			<header
+				ref={projectTabBarRef}
+				className={`project-tabbar${isProjectDropTarget ? ' project-tabbar--drop-target' : ''}`}
+			>
 				<div className="project-tab-sidebar-toggle-box">
 					<button
 						type="button"
@@ -7422,19 +7756,42 @@ function App() {
 					className="project-tabbar-list"
 				>
 					<AnimatePresence initial={false}>
-						{projects.map((project) => (
+						{projects.flatMap((project, projectIndex) => [
+							dropPreview && dropPreview.index === projectIndex ? (
+								<li
+									key="__drop-placeholder"
+									className="project-tab project-tab--drop-placeholder"
+									style={
+										{
+											'--project-color': dropPreview.preview.color,
+										} as CSSProperties
+									}
+								>
+									<span className="project-tab-main">
+										{dropPreview.preview.emoji ? (
+											<span className="project-tab-emoji" aria-hidden="true">
+												{dropPreview.preview.emoji}
+											</span>
+										) : null}
+										<span className="project-tab-title">
+											{dropPreview.preview.title}
+										</span>
+									</span>
+								</li>
+							) : null,
 							<Reorder.Item
 								key={project.id}
 								value={project}
+								data-project-id={project.id}
 								initial={{ opacity: 0, scale: 0.95 }}
 								animate={{ opacity: 1, scale: 1 }}
 								exit={{ opacity: 0, scale: 0.95 }}
-								className={`project-tab${project.id === activeProjectId ? ' project-tab--active' : ''}${project.id === draggingProjectId ? ' project-tab--dragging' : ''}`}
+								className={`project-tab${project.id === activeProjectId ? ' project-tab--active' : ''}${project.id === draggingProjectId ? ' project-tab--dragging' : ''}${project.id === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}`}
 								style={
 									{ '--project-color': project.color } as CSSProperties
 								}
-								onDragStart={() => setDraggingProjectId(project.id)}
-								onDragEnd={() => setDraggingProjectId(null)}
+								onDragStart={() => handleProjectTabDragStart(project.id)}
+								onDragEnd={() => void handleProjectTabDragEnd(project.id)}
 								onClick={() => setActiveProjectId(project.id)}
 								onDoubleClick={() => void openEditProjectWindow(project.id)}
 								whileDrag={{ scale: 1.05, zIndex: 50 }}
@@ -7479,8 +7836,30 @@ function App() {
 										/>
 									</svg>
 								</button>
-							</Reorder.Item>
-						))}
+							</Reorder.Item>,
+						])}
+						{dropPreview && dropPreview.index >= projects.length ? (
+							<li
+								key="__drop-placeholder"
+								className="project-tab project-tab--drop-placeholder"
+								style={
+									{
+										'--project-color': dropPreview.preview.color,
+									} as CSSProperties
+								}
+							>
+								<span className="project-tab-main">
+									{dropPreview.preview.emoji ? (
+										<span className="project-tab-emoji" aria-hidden="true">
+											{dropPreview.preview.emoji}
+										</span>
+									) : null}
+									<span className="project-tab-title">
+										{dropPreview.preview.title}
+									</span>
+								</span>
+							</li>
+						) : null}
 					</AnimatePresence>
 				</Reorder.Group>
 				<div className="project-tab-add-box">
@@ -7832,6 +8211,7 @@ function App() {
 						popoutUrl={popoutUrl}
 						project={project}
 						projects={projects}
+						adoptedTerminals={adoptedTerminalsByProject[project.id]}
 					/>
 				))}
 			</div>

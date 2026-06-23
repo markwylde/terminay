@@ -32,6 +32,12 @@
   padding-left: 86px;
 }
 
+/* Highlighted while another window drags a project tab over this tab bar. */
+.project-tabbar--drop-target {
+  box-shadow: inset 0 -2px 0 0 var(--accent, #4db5ff);
+  background: color-mix(in srgb, var(--accent, #4db5ff) 12%, var(--tabbar-bg));
+}
+
 .app-shell--macos .header-actions > :last-child > .remote-access-button {
   border-top-right-radius: 10px;
 }
@@ -866,6 +872,32 @@
 .project-tab--dragging {
   cursor: grabbing;
   z-index: 50;
+}
+
+/* The dragged tab has torn off into the floating ghost window: collapse it out
+   of the bar so the remaining tabs close the gap. */
+.project-tab--torn-off {
+  min-width: 0 !important;
+  max-width: 0 !important;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* In-bar placeholder shown while a tab from another window is dragged over this
+   bar — looks like the dragged tab slotted into place at the drop index. */
+.project-tab--drop-placeholder {
+  color: var(--tab-text-selected);
+  pointer-events: none;
+}
+
+.project-tab--drop-placeholder::before {
+  background-color: color-mix(in srgb, var(--project-color) 45%, var(--tab-bg-active));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--project-color) 70%, transparent);
+}
+
+.project-tab--drop-placeholder .project-tab-title {
+  font-weight: 700;
 }
 
 .project-tab--dragging::before {

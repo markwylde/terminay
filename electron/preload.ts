@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
 import type {
+  AdoptedProjectPayload,
+  ProjectTabDragResult,
+  ProjectTabDragPreview,
+  ProjectTabDragHoverMessage,
   AppCommand,
   AiTabMetadataGenerateRequest,
   AiTabMetadataGenerateResult,
@@ -92,6 +96,8 @@ contextBridge.exposeInMainWorld('terminay', {
   quitApp: () => ipcRenderer.invoke('app:quit'),
   createTerminal: (options?: { cwd?: string }) => ipcRenderer.invoke('terminal:create', options),
   getTerminalCwd: (id: string) => ipcRenderer.invoke('terminal:get-cwd', { id }),
+  getTerminalBuffer: (id: string) =>
+    ipcRenderer.invoke('terminal:get-buffer', { id }) as Promise<string | null>,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   writeTerminal: (id: string, data: string) => ipcRenderer.send('terminal:write', { id, data }),
   resizeTerminal: (id: string, cols: number, rows: number) =>
@@ -164,6 +170,35 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.invoke('app:open-terminal-edit', draft) as Promise<TerminalEditWindowResult | null>,
   getEditWindowState: () => ipcRenderer.invoke('app:get-edit-window-state') as Promise<EditWindowState | null>,
   submitEditWindowResult: (result: EditWindowResult) => ipcRenderer.invoke('app:submit-edit-window-result', result) as Promise<void>,
+  getAdoptedProject: () =>
+    ipcRenderer.invoke('app:get-adopted-project') as Promise<AdoptedProjectPayload | null>,
+  popoutProject: (payload: { project: AdoptedProjectPayload; x: number; y: number }) =>
+    ipcRenderer.invoke('app:popout-project', payload) as Promise<{ ok: boolean; windowId?: number }>,
+  mergeProject: (payload: { project: AdoptedProjectPayload; targetWindowId: number }) =>
+    ipcRenderer.invoke('app:merge-project', payload) as Promise<{ ok: boolean }>,
+  closeThisWindow: () => ipcRenderer.send('app:close-this-window'),
+  registerProjectTabBarRect: (rect: { x: number; y: number; width: number; height: number } | null) =>
+    ipcRenderer.send('app:register-tabbar-rect', rect),
+  beginProjectTabDrag: (preview: ProjectTabDragPreview) =>
+    ipcRenderer.send('app:project-drag-start', preview),
+  endProjectTabDrag: () =>
+    ipcRenderer.invoke('app:project-drag-end') as Promise<ProjectTabDragResult>,
+  onAdoptProject: (listener: (payload: AdoptedProjectPayload) => void) => {
+    const wrapper: ElectronListener<AdoptedProjectPayload> = (_event, payload) => listener(payload)
+    ipcRenderer.on('app:adopt-project', wrapper)
+    return () => ipcRenderer.off('app:adopt-project', wrapper)
+  },
+  onProjectTabDragHover: (listener: (message: ProjectTabDragHoverMessage) => void) => {
+    const wrapper: ElectronListener<ProjectTabDragHoverMessage> = (_event, message) =>
+      listener(message)
+    ipcRenderer.on('app:project-drag-hover', wrapper)
+    return () => ipcRenderer.off('app:project-drag-hover', wrapper)
+  },
+  onProjectTabTornOff: (listener: (message: { active: boolean }) => void) => {
+    const wrapper: ElectronListener<{ active: boolean }> = (_event, message) => listener(message)
+    ipcRenderer.on('app:project-tab-torn-off', wrapper)
+    return () => ipcRenderer.off('app:project-tab-torn-off', wrapper)
+  },
   openSettingsWindow: (options?: { sectionId?: string }) => ipcRenderer.invoke('app:open-settings', options),
   openMacrosWindow: () => ipcRenderer.invoke('app:open-macros') as Promise<void>,
   openRecordingsWindow: () => ipcRenderer.invoke('app:open-recordings') as Promise<void>,

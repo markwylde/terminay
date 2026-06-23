@@ -466,13 +466,41 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     fitAndResize(true)
 
-    const terminalDataDisposer = window.terminay.onTerminalData((message) => {
-      if (message.id !== sessionId) {
-        return
-      }
+    // Restore the session's current screen/scrollback from the authoritative
+    // buffer the main process keeps (the same buffer it replays to remote
+    // viewers). This makes a freshly-mounted xterm — whether brand new, moved
+    // between projects, or adopted by another window — show prior history
+    // instead of starting blank. Fetch the snapshot first, then subscribe to
+    // live data, so replayed and live output never duplicate.
+    let dataReplayDisposed = false
+    let terminalDataDisposer: (() => void) | null = null
+    const subscribeToTerminalData = () => {
+      terminalDataDisposer = window.terminay.onTerminalData((message) => {
+        if (message.id !== sessionId) {
+          return
+        }
 
-      terminal.write(message.data)
-    })
+        terminal.write(message.data)
+      })
+    }
+
+    void window.terminay
+      .getTerminalBuffer(sessionId)
+      .then((buffer) => {
+        if (dataReplayDisposed) {
+          return
+        }
+        if (buffer) {
+          terminal.write(buffer)
+        }
+        subscribeToTerminalData()
+      })
+      .catch(() => {
+        if (dataReplayDisposed) {
+          return
+        }
+        subscribeToTerminalData()
+      })
 
     const terminalExitDisposer = window.terminay.onTerminalExit((message) => {
       if (message.id !== sessionId) {
@@ -771,7 +799,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       keyDisposer.dispose()
       dataDisposer.dispose()
       terminalExitDisposer()
-      terminalDataDisposer()
+      dataReplayDisposed = true
+      terminalDataDisposer?.()
       contextReaderDisposer?.()
       zoomDisposer()
       remoteSizeOverrideDisposer()

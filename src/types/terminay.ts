@@ -12,6 +12,35 @@ export type AppCommand =
   | 'toggle-file-explorer-sidebar'
   | 'set-project-root-folder-to-working-directory'
 
+// A project tab torn off / merged across windows. `project` is a ProjectTab and
+// `terminals` are MovedTerminalTab entries (kept loose here to avoid coupling
+// this shared type file to App.tsx's local definitions); the renderer casts.
+export interface AdoptedProjectPayload {
+  project: Record<string, unknown>
+  terminals: Array<{ sessionId: string } & Record<string, unknown>>
+  activeSessionId?: string | null
+}
+
+export type ProjectTabDragResult =
+  | { action: 'reorder' }
+  | { action: 'merge'; targetWindowId: number }
+  | { action: 'popout'; x: number; y: number }
+
+export type ProjectTabDragPreview = {
+  title: string
+  emoji: string
+  color: string
+  width: number
+}
+
+// Sent to a window while another window drags a project tab over its bar.
+// `clientX` (viewport-relative) drives the in-bar insertion index.
+export type ProjectTabDragHoverMessage = {
+  active: boolean
+  clientX?: number
+  preview?: ProjectTabDragPreview | null
+}
+
 export type FileViewerTextEncoding = 'utf8' | 'utf-8' | 'utf16le' | 'utf-16le' | 'latin1' | 'ascii'
 
 export type FileViewerFileInfo = {
@@ -548,6 +577,7 @@ export interface TerminayApi {
   quitApp: () => Promise<void>
   createTerminal: (options?: { cwd?: string }) => Promise<{ id: string }>
   getTerminalCwd: (id: string) => Promise<string | null>
+  getTerminalBuffer: (id: string) => Promise<string | null>
   getPathForFile: (file: File) => string
   writeTerminal: (id: string, data: string) => void
   resizeTerminal: (id: string, cols: number, rows: number) => void
@@ -599,6 +629,27 @@ export interface TerminayApi {
   openTerminalEditWindow: (draft: TerminalEditWindowDraft) => Promise<TerminalEditWindowResult | null>
   getEditWindowState: () => Promise<EditWindowState | null>
   submitEditWindowResult: (result: EditWindowResult) => Promise<void>
+  getAdoptedProject: () => Promise<AdoptedProjectPayload | null>
+  popoutProject: (payload: {
+    project: AdoptedProjectPayload
+    x: number
+    y: number
+  }) => Promise<{ ok: boolean; windowId?: number }>
+  mergeProject: (payload: {
+    project: AdoptedProjectPayload
+    targetWindowId: number
+  }) => Promise<{ ok: boolean }>
+  closeThisWindow: () => void
+  registerProjectTabBarRect: (
+    rect: { x: number; y: number; width: number; height: number } | null,
+  ) => void
+  beginProjectTabDrag: (preview: ProjectTabDragPreview) => void
+  endProjectTabDrag: () => Promise<ProjectTabDragResult>
+  onAdoptProject: (listener: (payload: AdoptedProjectPayload) => void) => () => void
+  onProjectTabDragHover: (
+    listener: (message: ProjectTabDragHoverMessage) => void,
+  ) => () => void
+  onProjectTabTornOff: (listener: (message: { active: boolean }) => void) => () => void
   openSettingsWindow: (options?: { sectionId?: string }) => Promise<void>
   openRecordingsWindow: () => Promise<void>
   getRemoteAccessStatus: () => Promise<RemoteAccessStatus>
