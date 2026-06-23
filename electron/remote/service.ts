@@ -444,6 +444,17 @@ export class RemoteAccessService {
     }
   }
 
+  getSessionBuffer(id: string): string | null {
+    const session = this.sessions.get(id)
+    if (!session) {
+      return null
+    }
+
+    return session.buffer.length > MAX_SESSION_SNAPSHOT_BUFFER_LENGTH
+      ? session.buffer.slice(-MAX_SESSION_SNAPSHOT_BUFFER_LENGTH)
+      : session.buffer
+  }
+
   markSessionExit(id: string, exitCode: number): void {
     const session = this.sessions.get(id)
     if (!session) {
