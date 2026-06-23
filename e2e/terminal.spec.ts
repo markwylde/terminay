@@ -129,6 +129,32 @@ test.describe('terminal behavior', () => {
     ).toHaveCount(1)
   })
 
+  test('preserves terminal scrollback when moving a tab to another project', async ({ mainWindow }) => {
+    const marker = 'SCROLLBACK_MARKER_4242'
+
+    // Emit a known line into the terminal so it lands in the main-process buffer.
+    await writeToTerminal(mainWindow, `echo ${marker}\r`)
+    await expect(mainWindow.locator('.project-workspace--active .xterm-rows')).toContainText(marker, {
+      timeout: 15000,
+    })
+
+    // Move the terminal to a new project — its xterm panel is destroyed and
+    // recreated, which must restore scrollback from the buffer (not start blank).
+    await mainWindow.getByLabel('Add project tab').click()
+    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
+    await mainWindow.locator('.project-tab').filter({ hasText: 'Project 1' }).click()
+
+    const tabToMove = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
+    await tabToMove.click({ button: 'right' })
+    await contextMenuItem(mainWindow, 'Move to project').click()
+    await contextMenuItem(mainWindow, 'Project 2').click()
+
+    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
+    await expect(mainWindow.locator('.project-workspace--active .xterm-rows')).toContainText(marker, {
+      timeout: 15000,
+    })
+  })
+
   test('new terminals inherit the active project tab color by default', async ({ mainWindow }) => {
     const activeProjectTab = mainWindow.locator('.project-tab--active')
     const terminalTabs = mainWindow.locator('.terminal-tab-content')
