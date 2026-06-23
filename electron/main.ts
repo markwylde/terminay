@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, clipboard, ipcMain, nativeImage, shell, webContents, safeStorage } from 'electron'
+import { app, BrowserWindow, Menu, clipboard, ipcMain, nativeImage, screen, shell, webContents, safeStorage } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -211,6 +211,27 @@ const pendingEditWindows = new Map<
     state: EditWindowState
     window: BrowserWindow
   }
+>()
+
+// A project torn off into its own window (or merged into another) travels as an
+// opaque payload built by the renderer. Main only needs the terminal session
+// ids so it can re-home ownership of the live PTYs to the receiving window.
+interface AdoptedProjectPayload {
+  project: unknown
+  terminals: Array<{ sessionId: string; [key: string]: unknown }>
+  activeSessionId?: string | null
+}
+
+// Project-host (index.html) windows, as opposed to the auxiliary settings /
+// macros / recordings / edit windows. Multi-window project tabs are peers.
+const appWindows = new Set<BrowserWindow>()
+// New popout windows pull their adopted project on boot via app:get-adopted-project.
+const pendingAdoptedProjects = new Map<number, AdoptedProjectPayload>()
+// Each project-host window publishes the screen-relative rect of its project tab
+// bar so a cross-window drag can be hit-tested against it on release.
+const tabBarRectsByWebContents = new Map<
+  number,
+  { x: number; y: number; width: number; height: number }
 >()
 const fileBufferService = new FileBufferService(() => app.getPath('home'))
 const fileWatchService = new FileWatchService(fileBufferService)
@@ -1571,15 +1592,39 @@ function sendToSessionRenderer(
   }
 }
 
-let mainWindow: BrowserWindow | null = null
 let isQuitting = false
+
+function getFirstAppWindow(): BrowserWindow | null {
+  for (const window of appWindows) {
+    if (!window.isDestroyed()) {
+      return window
+    }
+  }
+  return null
+}
+
+function reassignSessionOwner(sessionId: string, newWebContentsId: number): void {
+  const session = terminalSessions.get(sessionId)
+  if (session) {
+    session.ownerWebContentsId = newWebContentsId
+  }
+
+  // Keep MCP control routing pointed at the window that now hosts the session.
+  const token = controlTokensBySession.get(sessionId)
+  if (token) {
+    const record = controlTokensByToken.get(token)
+    if (record) {
+      record.webContentsId = newWebContentsId
+    }
+  }
+}
 
 function sendCommandToFocusedWindow(command: AppCommand): void {
   if (isQuitting) {
     return
   }
 
-  const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
+  const targetWindow = BrowserWindow.getFocusedWindow() ?? getFirstAppWindow()
   if (!targetWindow || targetWindow.isDestroyed()) {
     return
   }
@@ -1808,15 +1853,21 @@ function createAppMenu(settings: TerminalSettings = readTerminalSettings()): voi
         { role: 'toggleDevTools' },
       ],
     },
+    // Standard multi-window menu (Minimise, Zoom, Bring All to Front, window
+    // list / cycling). macOS injects its own extras (Fill, Centre, etc.).
+    { role: 'windowMenu' },
   ]
 
   const menu = Menu.buildFromTemplate(template)
   Menu.setApplicationMenu(menu)
 }
 
-function createWindow() {
+function createWindow(options?: {
+  adoptedProject?: AdoptedProjectPayload
+  bounds?: { x: number; y: number }
+}): BrowserWindow | null {
   if (isQuitting) {
-    return
+    return null
   }
 
   const preloadPath = path.join(__dirname, 'preload.mjs')
@@ -1828,6 +1879,9 @@ function createWindow() {
     icon: windowIconPath,
     width: 1400,
     height: 900,
+    // Place a torn-off window's title bar near the drop point, like a browser.
+    x: options?.bounds ? Math.round(options.bounds.x) - 120 : undefined,
+    y: options?.bounds ? Math.round(options.bounds.y) - 12 : undefined,
     title: 'Terminay',
     // Deliver the first click on an inactive window to the web contents instead of
     // letting macOS swallow it purely to activate the window (electron/electron#212).
@@ -1854,17 +1908,27 @@ function createWindow() {
       nodeIntegration: false,
     },
   })
-  mainWindow = window
+  appWindows.add(window)
+
+  // Capture the webContents id now; it's unreadable once the window is closed
+  // (accessing window.webContents after destruction throws).
+  const windowWebContentsId = window.webContents.id
+
+  if (options?.adoptedProject) {
+    pendingAdoptedProjects.set(windowWebContentsId, options.adoptedProject)
+  }
 
   window.on('closed', () => {
-    if (mainWindow === window) {
-      mainWindow = null
-    }
+    appWindows.delete(window)
+    tabBarRectsByWebContents.delete(windowWebContentsId)
+    pendingAdoptedProjects.delete(windowWebContentsId)
   })
 
   window.on('page-title-updated', (event) => {
     event.preventDefault()
-    mainWindow?.setTitle('Terminay')
+    if (!window.isDestroyed()) {
+      window.setTitle('Terminay')
+    }
   })
 
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -1908,13 +1972,25 @@ function createWindow() {
     openInBrowser(event.url)
   })
 
+  // A torn-off window boots in "adopt" mode so the renderer starts with no
+  // default project and instead pulls its adopted project on mount.
+  const isAdoptWindow = Boolean(options?.adoptedProject)
   if (VITE_DEV_SERVER_URL) {
-    window.loadURL(VITE_DEV_SERVER_URL)
+    const target = new URL(VITE_DEV_SERVER_URL)
+    if (isAdoptWindow) {
+      target.searchParams.set('adopt', '1')
+    }
+    window.loadURL(target.toString())
   } else {
-    window.loadFile(path.join(RENDERER_DIST, 'index.html'))
+    window.loadFile(
+      path.join(RENDERER_DIST, 'index.html'),
+      isAdoptWindow ? { query: { adopt: '1' } } : undefined,
+    )
   }
 
   void getAppUpdateStatus()
+
+  return window
 }
 
 function openSettingsWindow(sectionId?: string): void {
@@ -2238,6 +2314,10 @@ ipcMain.handle('terminal:get-cwd', async (_event, payload: { id: string }) => {
   return resolveTerminalCwd(payload.id)
 })
 
+ipcMain.handle('terminal:get-buffer', (_event, payload: { id: string }) => {
+  return remoteAccessService.getSessionBuffer(payload.id)
+})
+
 ipcMain.on('terminal:write', (_event, payload: { id: string; data: string }) => {
   const session = terminalSessions.get(payload.id)
   if (!session) {
@@ -2450,6 +2530,399 @@ ipcMain.handle('macros:reset', () => {
 ipcMain.handle('app:quit', () => {
   isQuitting = true
   app.quit()
+})
+
+// --- Multi-window project tabs (tear-off, re-merge) -----------------------
+
+// A freshly torn-off window pulls its adopted project once on boot.
+ipcMain.handle('app:get-adopted-project', (event) => {
+  const payload = pendingAdoptedProjects.get(event.sender.id)
+  if (payload) {
+    pendingAdoptedProjects.delete(event.sender.id)
+  }
+  return payload ?? null
+})
+
+// Pop a project tab out into its own window near the drop point.
+ipcMain.handle(
+  'app:popout-project',
+  (_event, payload: { project: AdoptedProjectPayload; x: number; y: number }) => {
+    const window = createWindow({
+      adoptedProject: payload.project,
+      bounds: { x: payload.x, y: payload.y },
+    })
+    if (!window) {
+      return { ok: false }
+    }
+
+    for (const terminal of payload.project.terminals) {
+      reassignSessionOwner(terminal.sessionId, window.webContents.id)
+    }
+    return { ok: true, windowId: window.webContents.id }
+  },
+)
+
+// Move a project tab into an already-open window's tab bar.
+ipcMain.handle(
+  'app:merge-project',
+  (_event, payload: { project: AdoptedProjectPayload; targetWindowId: number }) => {
+    const target = webContents.fromId(payload.targetWindowId)
+    if (!target || target.isDestroyed()) {
+      return { ok: false }
+    }
+
+    for (const terminal of payload.project.terminals) {
+      reassignSessionOwner(terminal.sessionId, target.id)
+    }
+    target.send('app:adopt-project', payload.project)
+    BrowserWindow.fromWebContents(target)?.focus()
+    return { ok: true }
+  },
+)
+
+// Close the window that just gave up its last project to a tear-off / merge.
+ipcMain.on('app:close-this-window', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close()
+})
+
+// Each project-host window publishes the screen-relative rect of its tab bar.
+ipcMain.on(
+  'app:register-tabbar-rect',
+  (event, rect: { x: number; y: number; width: number; height: number } | null) => {
+    if (rect) {
+      tabBarRectsByWebContents.set(event.sender.id, rect)
+    } else {
+      tabBarRectsByWebContents.delete(event.sender.id)
+    }
+  },
+)
+
+// Cross-window drag tracking with Chrome-style tear-off. While a project tab is
+// being dragged, framer-motion keeps it x-locked in its own bar (reorder). The
+// main process polls the cursor; once the cursor is dragged past a threshold
+// away from the source bar, the tab "tears off" into a floating ghost window
+// that follows the cursor and magnetically snaps onto any window's tab bar. The
+// outcome (reorder / merge / popout) is decided on release.
+type ProjectDragPreview = {
+  title: string
+  emoji: string
+  color: string
+  width: number
+}
+
+const PROJECT_TAB_TEAR_OFF_DISTANCE = 100
+// Transparent padding around the ghost card so its drop shadow isn't clipped.
+const GHOST_PADDING = 24
+const GHOST_HEIGHT = 56
+
+let projectDragPollTimer: ReturnType<typeof setInterval> | null = null
+let projectDragSourceWebContentsId: number | null = null
+let projectDragHoverTargetId: number | null = null
+let projectDragPreview: ProjectDragPreview | null = null
+let projectDragTornOff = false
+let tabGhostWindow: BrowserWindow | null = null
+let ghostWindowWidth = 0
+
+type ScreenRect = { x: number; y: number; width: number; height: number }
+
+function getBarScreenRect(webContentsId: number | null): ScreenRect | null {
+  if (webContentsId === null) {
+    return null
+  }
+  for (const window of appWindows) {
+    if (window.isDestroyed() || window.isMinimized()) {
+      continue
+    }
+    if (window.webContents.id !== webContentsId) {
+      continue
+    }
+    const rect = tabBarRectsByWebContents.get(webContentsId)
+    if (!rect) {
+      return null
+    }
+    const content = window.getContentBounds()
+    return {
+      x: content.x + rect.x,
+      y: content.y + rect.y,
+      width: rect.width,
+      height: rect.height,
+    }
+  }
+  return null
+}
+
+function getAppWindowByWebContentsId(webContentsId: number): BrowserWindow | null {
+  for (const window of appWindows) {
+    if (!window.isDestroyed() && window.webContents.id === webContentsId) {
+      return window
+    }
+  }
+  return null
+}
+
+function pointInRect(point: { x: number; y: number }, rect: ScreenRect): boolean {
+  return (
+    point.x >= rect.x &&
+    point.x <= rect.x + rect.width &&
+    point.y >= rect.y &&
+    point.y <= rect.y + rect.height
+  )
+}
+
+function distanceToRect(point: { x: number; y: number }, rect: ScreenRect): number {
+  const dx = Math.max(rect.x - point.x, 0, point.x - (rect.x + rect.width))
+  const dy = Math.max(rect.y - point.y, 0, point.y - (rect.y + rect.height))
+  return Math.hypot(dx, dy)
+}
+
+function findAppWindowTabBarAtPoint(point: {
+  x: number
+  y: number
+}): number | null {
+  for (const window of appWindows) {
+    if (window.isDestroyed() || window.isMinimized()) {
+      continue
+    }
+    const rect = getBarScreenRect(window.webContents.id)
+    if (rect && pointInRect(point, rect)) {
+      return window.webContents.id
+    }
+  }
+  return null
+}
+
+// Clears the in-bar drop placeholder on whichever window previously had it, and
+// remembers the new hover target. The per-tick "active" message (with the live
+// cursor X for the insertion index) is sent from the poll loop, not here.
+function setProjectDragHoverTarget(targetId: number | null): void {
+  if (targetId === projectDragHoverTargetId) {
+    return
+  }
+
+  if (projectDragHoverTargetId !== null) {
+    const previous = webContents.fromId(projectDragHoverTargetId)
+    if (previous && !previous.isDestroyed()) {
+      previous.send('app:project-drag-hover', { active: false })
+    }
+  }
+
+  projectDragHoverTargetId = targetId
+}
+
+function escapeGhostHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function buildTabGhostUrl(preview: ProjectDragPreview): string {
+  const title = escapeGhostHtml(preview.title || 'Project')
+  const emoji = escapeGhostHtml(preview.emoji)
+  const color = /^#[0-9a-fA-F]{3,8}$/.test(preview.color) ? preview.color : '#4db5ff'
+  // Match the in-app active project tab: a project-color tint over the active
+  // tab background (--tab-bg-active #0d1014), white bold label, no border.
+  const badge = emoji ? `<span class="em">${emoji}</span>` : ''
+  const cardWidth = Math.max(80, Math.round(preview.width))
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;height:100%;background:transparent;overflow:hidden;cursor:grabbing;
+      display:flex;align-items:center;justify-content:center;
+      font-family:'Open Sans','Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;}
+    .tab{display:flex;align-items:center;gap:8px;box-sizing:border-box;
+      width:${cardWidth}px;height:30px;padding:0 12px;
+      border-radius:6px;color:#ffffff;font-size:13px;font-weight:700;letter-spacing:.01em;
+      white-space:nowrap;background:color-mix(in srgb, ${color} 45%, #0d1014);
+      box-shadow:0 10px 28px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35);}
+    .em{font-size:14px;line-height:1;flex:none;}
+    .ti{overflow:hidden;text-overflow:ellipsis;}
+  </style></head><body><div class="tab">${badge}<span class="ti">${title}</span></div></body></html>`
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
+}
+
+function showTabGhostWindow(preview: ProjectDragPreview): void {
+  ghostWindowWidth = Math.max(80, Math.round(preview.width)) + GHOST_PADDING * 2
+  if (!tabGhostWindow || tabGhostWindow.isDestroyed()) {
+    tabGhostWindow = new BrowserWindow({
+      width: ghostWindowWidth,
+      height: GHOST_HEIGHT,
+      frame: false,
+      transparent: true,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      focusable: false,
+      skipTaskbar: true,
+      hasShadow: false,
+      alwaysOnTop: true,
+      show: false,
+    })
+    tabGhostWindow.setIgnoreMouseEvents(true)
+  }
+  tabGhostWindow.setSize(ghostWindowWidth, GHOST_HEIGHT)
+  tabGhostWindow.loadURL(buildTabGhostUrl(preview))
+  tabGhostWindow.showInactive()
+}
+
+// Center the ghost card under the cursor.
+function moveTabGhostToCursor(point: { x: number; y: number }): void {
+  if (tabGhostWindow && !tabGhostWindow.isDestroyed()) {
+    if (!tabGhostWindow.isVisible()) {
+      tabGhostWindow.showInactive()
+    }
+    tabGhostWindow.setBounds({
+      x: Math.round(point.x - ghostWindowWidth / 2),
+      y: Math.round(point.y - GHOST_HEIGHT / 2),
+      width: ghostWindowWidth,
+      height: GHOST_HEIGHT,
+    })
+  }
+}
+
+function hideTabGhostWindow(): void {
+  if (tabGhostWindow && !tabGhostWindow.isDestroyed() && tabGhostWindow.isVisible()) {
+    tabGhostWindow.hide()
+  }
+}
+
+function destroyTabGhostWindow(): void {
+  if (tabGhostWindow && !tabGhostWindow.isDestroyed()) {
+    tabGhostWindow.destroy()
+  }
+  tabGhostWindow = null
+}
+
+function setProjectTabTornOff(tornOff: boolean): void {
+  if (tornOff === projectDragTornOff) {
+    return
+  }
+  projectDragTornOff = tornOff
+  const source = webContents.fromId(projectDragSourceWebContentsId ?? -1)
+  if (tornOff) {
+    if (projectDragPreview) {
+      showTabGhostWindow(projectDragPreview)
+    }
+    source?.send('app:project-tab-torn-off', { active: true })
+  } else {
+    destroyTabGhostWindow()
+    setProjectDragHoverTarget(null)
+    source?.send('app:project-tab-torn-off', { active: false })
+  }
+}
+
+function stopProjectDragTracking(): void {
+  if (projectDragPollTimer) {
+    clearInterval(projectDragPollTimer)
+    projectDragPollTimer = null
+  }
+  setProjectDragHoverTarget(null)
+  destroyTabGhostWindow()
+  projectDragTornOff = false
+  projectDragSourceWebContentsId = null
+  projectDragPreview = null
+}
+
+ipcMain.on('app:project-drag-start', (event, preview?: ProjectDragPreview) => {
+  projectDragSourceWebContentsId = event.sender.id
+  projectDragPreview = preview ?? null
+  projectDragTornOff = false
+  if (projectDragPollTimer) {
+    clearInterval(projectDragPollTimer)
+  }
+  projectDragPollTimer = setInterval(() => {
+    const point = screen.getCursorScreenPoint()
+    const sourceId = projectDragSourceWebContentsId
+    const sourceBar = getBarScreenRect(sourceId)
+
+    if (!projectDragTornOff) {
+      // Still docked: tear off only once the cursor is dragged far enough away
+      // from the source tab bar.
+      if (sourceBar && distanceToRect(point, sourceBar) > PROJECT_TAB_TEAR_OFF_DISTANCE) {
+        setProjectTabTornOff(true)
+      }
+      return
+    }
+
+    // Torn off: re-dock if the cursor returns to the source bar.
+    if (sourceBar && pointInRect(point, sourceBar)) {
+      setProjectTabTornOff(false)
+      return
+    }
+
+    const hit = findAppWindowTabBarAtPoint(point)
+    const target = hit !== null && hit !== sourceId ? hit : null
+    setProjectDragHoverTarget(target)
+
+    if (target !== null) {
+      // Over another window's bar: hide the floating ghost and let that window
+      // render a real in-bar placeholder at the cursor's insertion point, so the
+      // user can slot it into the exact position (Chrome-style). Forward the
+      // cursor as a viewport-relative X for that window's index calculation.
+      hideTabGhostWindow()
+      const targetWindow = getAppWindowByWebContentsId(target)
+      const viewportX = targetWindow
+        ? point.x - targetWindow.getContentBounds().x
+        : point.x
+      targetWindow?.webContents.send('app:project-drag-hover', {
+        active: true,
+        clientX: viewportX,
+        preview: projectDragPreview,
+      })
+      return
+    }
+
+    moveTabGhostToCursor(point)
+  }, 16)
+})
+
+ipcMain.handle('app:project-drag-end', () => {
+  const sourceId = projectDragSourceWebContentsId
+  const wasTornOff = projectDragTornOff
+  const hoverTargetId = projectDragHoverTargetId
+  if (projectDragPollTimer) {
+    clearInterval(projectDragPollTimer)
+    projectDragPollTimer = null
+  }
+  destroyTabGhostWindow()
+  projectDragTornOff = false
+  projectDragSourceWebContentsId = null
+  projectDragPreview = null
+  projectDragHoverTargetId = null
+
+  const point = screen.getCursorScreenPoint()
+  const hit = findAppWindowTabBarAtPoint(point)
+  const source = webContents.fromId(sourceId ?? -1)
+
+  const clearPlaceholder = (id: number | null) => {
+    if (id === null) {
+      return
+    }
+    const wc = webContents.fromId(id)
+    if (wc && !wc.isDestroyed()) {
+      wc.send('app:project-drag-hover', { active: false })
+    }
+  }
+
+  // Never torn off, or dropped back on its own bar — a plain reorder.
+  if (!wasTornOff || hit === sourceId) {
+    clearPlaceholder(hoverTargetId)
+    source?.send('app:project-tab-torn-off', { active: false })
+    return { action: 'reorder' as const }
+  }
+
+  // Merge: leave the drop target's in-bar placeholder up so adoptProject can
+  // replace it in place (no flicker). Clear any other stale placeholder.
+  if (hit !== null) {
+    if (hoverTargetId !== hit) {
+      clearPlaceholder(hoverTargetId)
+    }
+    return { action: 'merge' as const, targetWindowId: hit }
+  }
+
+  clearPlaceholder(hoverTargetId)
+  return { action: 'popout' as const, x: point.x, y: point.y }
 })
 
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
@@ -2721,6 +3194,10 @@ app.on('web-contents-created', (_event, contents) => {
   bindAppShortcuts(contents)
 
   contents.once('destroyed', () => {
+    if (contents.id === projectDragSourceWebContentsId) {
+      stopProjectDragTracking()
+    }
+    tabBarRectsByWebContents.delete(contents.id)
     killSessionsForWebContents(contents.id)
     fileExplorerWatchService.disposeSubscriber(contents.id)
     fileWatchService.disposeSubscriber(contents.id)
@@ -2753,7 +3230,6 @@ registerQuickPushIpcHandlers({
 })
 
 app.on('window-all-closed', () => {
-  mainWindow = null
   if (process.platform !== 'darwin') {
     app.quit()
   }
