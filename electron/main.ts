@@ -9,6 +9,7 @@ import { promisify } from 'node:util'
 import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
 import { findCommandForKeyboardEvent, getCommandShortcut, isReservedSystemAccelerator } from '../src/keyboardShortcuts'
+import { distanceToRect, pointInRect } from '../src/projectTabDrag'
 import { registerAiTabMetadataIpcHandlers } from './aiTabMetadata/ipc'
 import { AiTabMetadataService, warmAiTabMetadataProviderEnv } from './aiTabMetadata/service'
 import { registerQuickPushIpcHandlers } from './quickPush/ipc'
@@ -2658,21 +2659,6 @@ function getAppWindowByWebContentsId(webContentsId: number): BrowserWindow | nul
     }
   }
   return null
-}
-
-function pointInRect(point: { x: number; y: number }, rect: ScreenRect): boolean {
-  return (
-    point.x >= rect.x &&
-    point.x <= rect.x + rect.width &&
-    point.y >= rect.y &&
-    point.y <= rect.y + rect.height
-  )
-}
-
-function distanceToRect(point: { x: number; y: number }, rect: ScreenRect): number {
-  const dx = Math.max(rect.x - point.x, 0, point.x - (rect.x + rect.width))
-  const dy = Math.max(rect.y - point.y, 0, point.y - (rect.y + rect.height))
-  return Math.hypot(dx, dy)
 }
 
 function findAppWindowTabBarAtPoint(point: {

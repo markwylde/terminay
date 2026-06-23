@@ -69,6 +69,7 @@ import {
 	getCommandShortcutLabel,
 } from './keyboardShortcuts';
 import { renderMacroTemplate } from './macroSettings';
+import { computeDropIndex } from './projectTabDrag';
 import {
 	isRemoteAccessPairingPinConfigured,
 	PAIRING_PIN_PATTERN,
@@ -7269,13 +7270,7 @@ function App() {
 			}
 
 			const centers = dropTargetTabCentersRef.current ?? [];
-			const clientX = message.clientX ?? 0;
-			let index = 0;
-			for (const center of centers) {
-				if (clientX > center) {
-					index += 1;
-				}
-			}
+			const index = computeDropIndex(centers, message.clientX ?? 0);
 
 			dropPreviewIndexRef.current = index;
 			setDropPreview({ index, preview: message.preview });
