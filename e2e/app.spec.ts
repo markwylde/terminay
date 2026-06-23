@@ -204,6 +204,18 @@ test('updates menu accelerators when command shortcuts are cleared and reset', a
   await expect(getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).resolves.toBe('CmdOrCtrl+T')
 })
 
+test('exposes a Window menu for multi-window management', async ({ electronApp }) => {
+  const hasWindowMenu = await electronApp.evaluate(({ Menu }) => {
+    const menu = Menu.getApplicationMenu()
+    if (!menu) {
+      return false
+    }
+    return menu.items.some((item) => item.role === 'windowMenu' || item.label === 'Window')
+  })
+
+  expect(hasWindowMenu).toBe(true)
+})
+
 test('runs customized app shortcuts from the keyboard', async ({ mainWindow }) => {
   const isMac = await mainWindow.evaluate(() => navigator.platform.toLowerCase().includes('mac'))
 
