@@ -397,7 +397,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	},
 	theme: {
 		foreground: '#dce2f0',
-		background: '#111316',
+		background: buildTabThemeHueValue(10),
 		cursor: TAB_THEME_HUE_COLOR_VALUE,
 		cursorAccent: '#111316',
 		selectionBackground: TAB_THEME_HUE_COLOR_VALUE,
