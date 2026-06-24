@@ -4,9 +4,12 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal } from '@xterm/xterm'
 import {
+  buildTabThemeHueValue,
   buildTerminalOptions,
   defaultTerminalSettings,
+  getTabThemeHueBrightness,
   getTerminalThemeColorFallback,
+  isTabThemeHueValue,
   TAB_THEME_HUE_COLOR_VALUE,
   terminalSettingsCategories,
   terminalSettingsSections,
@@ -1046,7 +1049,8 @@ export function SettingsWindow() {
       case 'color':
         {
           const stringValue = String(value)
-          const isTabThemeHue = stringValue === TAB_THEME_HUE_COLOR_VALUE
+          const isTabThemeHue = isTabThemeHueValue(stringValue)
+          const tabHueBrightness = getTabThemeHueBrightness(stringValue)
           const defaultValue = String(getDefaultValueAtPath(field.key) || '#000000')
           const fallbackValue =
             defaultValue === TAB_THEME_HUE_COLOR_VALUE
@@ -1071,10 +1075,30 @@ export function SettingsWindow() {
                 <option value={TAB_THEME_HUE_COLOR_VALUE}>Tab Theme Hue</option>
               </select>
               {isTabThemeHue ? (
-                <span className="settings-tab-hue-chip">
-                  <span className="settings-tab-hue-chip-swatch" aria-hidden="true" />
-                  Tab Theme Hue
-                </span>
+                <div className="settings-tab-hue-controls">
+                  <span className="settings-tab-hue-chip">
+                    <span
+                      className="settings-tab-hue-chip-swatch"
+                      style={{ filter: `brightness(${tabHueBrightness / 60})` }}
+                      aria-hidden="true"
+                    />
+                    Tab Theme Hue
+                  </span>
+                  <input
+                    className="settings-tab-hue-brightness"
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={tabHueBrightness}
+                    aria-label="Tab theme hue brightness"
+                    title="Brightness"
+                    onChange={(e) =>
+                      void updateField(field, buildTabThemeHueValue(Number(e.target.value)))
+                    }
+                  />
+                  <span className="settings-tab-hue-brightness-value">{tabHueBrightness}%</span>
+                </div>
               ) : (
                 <>
                   <input
