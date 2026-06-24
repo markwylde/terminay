@@ -191,7 +191,6 @@ function TerminalPreview({ settings }: { settings: TerminalSettings }) {
     terminal.writeln('')
     terminal.writeln('\x1b[31mred\x1b[0m \x1b[32mgreen\x1b[0m \x1b[33myellow\x1b[0m \x1b[34mblue\x1b[0m \x1b[35mmagenta\x1b[0m \x1b[36mcyan\x1b[0m')
     terminal.write('$ ')
-    terminal.focus()
 
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit()
