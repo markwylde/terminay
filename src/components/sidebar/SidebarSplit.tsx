@@ -14,12 +14,26 @@ export type SidebarSplitProps = {
 	bottomCollapsed: boolean;
 	topHeight: number;
 	minPaneHeight?: number;
+	/**
+	 * Minimum height the bottom pane keeps when both panes are expanded so its
+	 * header(s) stay visible even if the top pane wants more room than fits.
+	 * Defaults to a single header. Pass a larger value when the bottom is itself
+	 * a nested split that needs room for more than one header.
+	 */
+	bottomMinHeight?: number;
 	onTopHeightChange: (height: number) => void;
 	/** Called once when a resize drag ends, with the final height. */
 	onTopHeightCommit?: (height: number) => void;
 };
 
 const SPLITTER_HEIGHT = 4;
+
+/**
+ * Approximate height of a single collapsed pane header row. Used as the hard
+ * floor so a pane can never shrink so far that its own header is clipped, and so
+ * an expanded sibling can never push another section's header off the page.
+ */
+export const SIDEBAR_HEADER_MIN_HEIGHT = 30;
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.min(Math.max(value, min), max);
@@ -33,6 +47,7 @@ export function SidebarSplit(props: SidebarSplitProps): JSX.Element {
 		bottomCollapsed,
 		topHeight,
 		minPaneHeight = 80,
+		bottomMinHeight = SIDEBAR_HEADER_MIN_HEIGHT,
 		onTopHeightChange,
 		onTopHeightCommit,
 	} = props;
@@ -88,14 +103,21 @@ export function SidebarSplit(props: SidebarSplitProps): JSX.Element {
 	}, [minPaneHeight, onTopHeightChange, onTopHeightCommit]);
 
 	const topStyle: CSSProperties = bothExpanded
-		? { flex: '0 0 auto', height: `${topHeight}px` }
+		? // Allow the fixed-height top pane to shrink (flex-shrink: 1) when the
+			// container is too short, so it can never crush the bottom section's
+			// headers off the page. Its own header stays visible via minHeight.
+			{
+				flex: '0 1 auto',
+				height: `${topHeight}px`,
+				minHeight: `${SIDEBAR_HEADER_MIN_HEIGHT}px`,
+			}
 		: topCollapsed
 			? { flex: '0 0 auto' }
 			: { flex: '1 1 auto', minHeight: 0 };
 
 	const bottomStyle: CSSProperties = bottomCollapsed
 		? { flex: '0 0 auto' }
-		: { flex: '1 1 auto', minHeight: 0 };
+		: { flex: '1 1 auto', minHeight: `${bottomMinHeight}px` };
 
 	return (
 		<div className="sidebar-split" ref={rootRef}>
