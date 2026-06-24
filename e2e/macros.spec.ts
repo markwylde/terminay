@@ -35,6 +35,43 @@ test('shows starter macro fields in the macros window', async ({ appHarness, mai
   await expect(macrosWindow.locator('input[value="Emoji"]').first()).toBeVisible()
 })
 
+test('saves select field options after raw textarea editing', async ({ appHarness, mainWindow }) => {
+  const macrosWindow = await appHarness.openMacrosWindow(mainWindow)
+
+  await macrosWindow.getByRole('button', { name: 'New Macro' }).click()
+  await macrosWindow.getByPlaceholder('Macro Title').fill('Eta Select Macro')
+  await macrosWindow
+    .locator('select')
+    .filter({ has: macrosWindow.locator('option', { hasText: '+ Add Step...' }) })
+    .selectOption('type')
+  await macrosWindow.getByPlaceholder('Type text... use {{Variable}} for fields.').fill(
+    "This is a test message:<% if (message === 'one') { %>This is the first message<% } else { %>This is the second message<% } %>",
+  )
+  await macrosWindow.getByRole('button', { name: 'Add Field' }).click()
+  await macrosWindow.getByPlaceholder('Variable Name').fill('message')
+  await macrosWindow.getByPlaceholder('Display Label').fill('Message')
+  await macrosWindow
+    .locator('select')
+    .filter({ has: macrosWindow.locator('option[value="select"]') })
+    .selectOption('select')
+
+  const optionsEditor = macrosWindow.locator('textarea[placeholder^="Option 1"]').first()
+  await optionsEditor.fill('First|one\nSecond|two')
+  await expect(optionsEditor).toHaveValue('First|one\nSecond|two')
+
+  await macrosWindow.getByRole('button', { name: 'Save Changes' }).click()
+
+  const savedMacro = await macrosWindow.evaluate(async () => {
+    const macros = await window.terminay.getMacros()
+    return macros.find((macro) => macro.title === 'Eta Select Macro') ?? null
+  })
+
+  expect(savedMacro?.fields[0]?.options).toEqual([
+    { label: 'First', value: 'one' },
+    { label: 'Second', value: 'two' },
+  ])
+})
+
 test('clears finished macro runs from the queue', async ({ appHarness, mainWindow }) => {
   await appHarness.openMacroLauncher(mainWindow)
   await mainWindow.getByRole('button', { name: 'Create a pull request' }).click()

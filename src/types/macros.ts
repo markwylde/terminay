@@ -11,6 +11,7 @@ export type MacroFieldDefinition = {
   id: string
   name: string
   label: string
+  optionsText?: string
   type: MacroFieldType
   required: boolean
   description: string

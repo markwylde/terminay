@@ -1,3 +1,4 @@
+import { Eta } from 'eta/core'
 import type {
   MacroDefinition,
   MacroFieldDefinition,
@@ -9,6 +10,64 @@ import type {
 } from './types/macros'
 
 const placeholderPattern = /{{\s*([^{}]+?)\s*}}/g
+const etaTagPattern = /<%[-_]?\s*[~=]?([\s\S]*?)\s*[-_]?%>/g
+const etaRenderer = new Eta({ autoEscape: false, useWith: true })
+const jsKeywords = new Set([
+  'await',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'import',
+  'in',
+  'instanceof',
+  'let',
+  'new',
+  'null',
+  'return',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typeof',
+  'undefined',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield',
+])
+const jsGlobals = new Set([
+  'Array',
+  'Boolean',
+  'Date',
+  'JSON',
+  'Math',
+  'Number',
+  'Object',
+  'RegExp',
+  'String',
+  'console',
+  'encodeURI',
+  'encodeURIComponent',
+  'parseFloat',
+  'parseInt',
+])
 
 export const defaultMacros: MacroDefinition[] = [
   {
@@ -221,13 +280,85 @@ function extractTemplatePlaceholders(template: string): string[] {
   return placeholders
 }
 
+function stripJavaScriptLiterals(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/.*$/gm, ' ')
+    .replace(/`(?:\\[\s\S]|\$\{[\s\S]*?\}|[^\\`])*`/g, ' ')
+    .replace(/'(?:\\[\s\S]|[^\\'])*'/g, ' ')
+    .replace(/"(?:\\[\s\S]|[^\\"])*"/g, ' ')
+}
+
+function extractEtaPlaceholders(template: string): string[] {
+  const seen = new Set<string>()
+  const placeholders: string[] = []
+
+  for (const match of template.matchAll(etaTagPattern)) {
+    const source = stripJavaScriptLiterals(match[1] ?? '')
+
+    for (const propertyMatch of source.matchAll(/\bit\.([A-Za-z_$][\w$]*)\b/g)) {
+      const name = propertyMatch[1]
+      if (!seen.has(name)) {
+        seen.add(name)
+        placeholders.push(name)
+      }
+    }
+
+    const declaredNames = new Set<string>()
+    for (const declarationMatch of source.matchAll(/\b(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)\b/g)) {
+      declaredNames.add(declarationMatch[1])
+    }
+    for (const parameterMatch of source.matchAll(/\b([A-Za-z_$][\w$]*)\s*=>/g)) {
+      declaredNames.add(parameterMatch[1])
+    }
+
+    for (const identifierMatch of source.matchAll(/\b[A-Za-z_$][\w$]*\b/g)) {
+      const identifier = identifierMatch[0]
+      const index = identifierMatch.index ?? 0
+      const previous = source[index - 1]
+      const next = source[index + identifier.length]
+
+      if (
+        previous === '.' ||
+        next === '.' ||
+        next === ':' ||
+        jsKeywords.has(identifier) ||
+        jsGlobals.has(identifier) ||
+        declaredNames.has(identifier) ||
+        seen.has(identifier)
+      ) {
+        continue
+      }
+
+      seen.add(identifier)
+      placeholders.push(identifier)
+    }
+  }
+
+  return placeholders
+}
+
+function extractMacroPlaceholders(template: string): string[] {
+  const seen = new Set<string>()
+  const placeholders: string[] = []
+
+  for (const placeholder of [...extractTemplatePlaceholders(template), ...extractEtaPlaceholders(template)]) {
+    if (!seen.has(placeholder)) {
+      seen.add(placeholder)
+      placeholders.push(placeholder)
+    }
+  }
+
+  return placeholders
+}
+
 export function extractAllMacroPlaceholders(macro: MacroDefinition): string[] {
   const seen = new Set<string>()
   const placeholders: string[] = []
 
   for (const step of macro.steps) {
     if (step.type === 'type') {
-      const stepPlaceholders = extractTemplatePlaceholders(step.content)
+      const stepPlaceholders = extractMacroPlaceholders(step.content)
       for (const p of stepPlaceholders) {
         if (!seen.has(p)) {
           seen.add(p)
@@ -241,7 +372,9 @@ export function extractAllMacroPlaceholders(macro: MacroDefinition): string[] {
 }
 
 export function renderMacroTemplate(template: string, values: Record<string, MacroFieldValue>): string {
-  return template.replace(placeholderPattern, (_match, token: string) => {
+  const rendered = etaRenderer.renderString(template, values)
+
+  return rendered.replace(placeholderPattern, (_match, token: string) => {
     const key = token.trim()
     const value = values[key]
 
@@ -257,13 +390,22 @@ export function renderMacroTemplate(template: string, values: Record<string, Mac
   })
 }
 
+export function tryRenderMacroTemplate(template: string, values: Record<string, MacroFieldValue>): string {
+  try {
+    return renderMacroTemplate(template, values)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return `Template error: ${message}`
+  }
+}
+
 export function mergeFieldsWithSteps(steps: MacroStep[], fields: MacroFieldDefinition[]): MacroFieldDefinition[] {
   const placeholders: string[] = []
   const seen = new Set<string>()
 
   for (const step of steps) {
     if (step.type === 'type') {
-      const stepPlaceholders = extractTemplatePlaceholders(step.content)
+      const stepPlaceholders = extractMacroPlaceholders(step.content)
       for (const p of stepPlaceholders) {
         if (!seen.has(p)) {
           seen.add(p)
@@ -273,11 +415,7 @@ export function mergeFieldsWithSteps(steps: MacroStep[], fields: MacroFieldDefin
     }
   }
 
-  const placeholderSet = new Set(placeholders)
-
-  // Keep existing fields that are still in any step, in their current order
-  const existingValidFields = fields.filter((f) => placeholderSet.has(f.name))
-  const existingNames = new Set(existingValidFields.map((f) => f.name))
+  const existingNames = new Set(fields.map((f) => f.name))
 
   // Add missing placeholders
   const missingFields = placeholders
@@ -294,7 +432,7 @@ export function mergeFieldsWithSteps(steps: MacroStep[], fields: MacroFieldDefin
       options: [],
     }))
 
-  return [...existingValidFields, ...missingFields]
+  return [...fields, ...missingFields]
 }
 
 function deriveLegacyTemplate(steps: MacroStep[]): Pick<MacroDefinition, 'submitMode' | 'template'> {
