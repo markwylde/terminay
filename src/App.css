@@ -1782,6 +1782,45 @@
   width: 100%;
 }
 
+.macro-parameter-modal.project-edit-modal--wide {
+  width: min(640px, calc(100vw - 40px));
+  max-height: min(720px, calc(100vh - 40px));
+}
+
+.macro-parameter-modal > :not(.project-edit-modal-titlebar) {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.macro-parameter-modal > :last-child {
+  margin-bottom: 0;
+}
+
+.macro-parameter-modal .project-edit-modal-titlebar {
+  padding: 12px 18px;
+}
+
+.macro-parameter-modal .project-edit-modal-title {
+  font-size: 14px;
+}
+
+.macro-parameter-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 14px;
+}
+
+.macro-parameter-modal .project-edit-actions {
+  margin-top: 0;
+  padding: 14px 18px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.055);
+  background: rgba(8, 11, 15, 0.18);
+}
+
 .project-name-row {
   display: flex;
   align-items: center;
@@ -1820,8 +1859,8 @@
 }
 
 .macro-parameter-description {
-  margin: -4px 0 0;
-  color: rgba(214, 227, 240, 0.68);
+  margin: 0;
+  color: rgba(214, 227, 240, 0.72);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -1841,16 +1880,112 @@
 }
 
 .macro-parameter-field {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.3fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0 12px;
+  border-bottom: 1px solid rgba(131, 148, 171, 0.14);
+}
+
+.macro-parameter-fields {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.macro-parameter-fields .macro-parameter-field:last-child {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+
+.macro-parameter-field__label {
+  min-width: 0;
+  color: rgba(214, 227, 240, 0.68);
   font-size: 12px;
-  font-weight: 500;
-  color: rgba(214, 227, 240, 0.6);
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.macro-parameter-field .project-edit-select,
+.macro-parameter-field input[type='text'],
+.macro-parameter-field input[type='number'],
+.macro-parameter-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 42px;
+  border-color: rgba(131, 148, 171, 0.22);
+  background: #06090d;
+  box-shadow: none;
+  font-size: 14px;
+}
+
+.macro-parameter-field .project-edit-select {
+  padding-right: 38px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(214, 227, 240, 0.7) 50%),
+    linear-gradient(135deg, rgba(214, 227, 240, 0.7) 50%, transparent 50%);
+  background-position:
+    calc(100% - 20px) 50%,
+    calc(100% - 15px) 50%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px;
+}
+
+.macro-parameter-field input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  accent-color: #2f81f7;
+}
+
+.macro-parameter-field .project-edit-textarea {
+  min-height: 96px;
+}
+
+.macro-parameter-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.macro-parameter-preview__label {
+  color: rgba(214, 227, 240, 0.62);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.macro-parameter-preview .project-edit-preview {
+  min-height: 104px;
+  border-color: rgba(131, 148, 171, 0.16);
+  border-top: 1px solid rgba(131, 148, 171, 0.16);
+  background: #06090d;
+}
+
+.macro-parameter-preview .project-edit-preview--multiline {
+  padding: 14px 16px;
+}
+
+.macro-parameter-preview .project-edit-preview--multiline pre {
+  color: #e6edf3;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .macro-parameter-modal {
   overflow: visible;
+}
+
+@media (max-width: 640px) {
+  .macro-parameter-field {
+    grid-template-columns: 1fr;
+  }
+
+  .macro-parameter-modal.project-edit-modal--wide {
+    width: calc(100vw - 24px);
+  }
 }
 
 .macro-file-field {
