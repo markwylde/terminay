@@ -1591,6 +1591,30 @@
   background: linear-gradient(90deg, #ff5f57, #ffbd2e, #28c840, #0a84ff, #bf5af2);
 }
 
+.settings-tab-hue-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-tab-hue-brightness {
+  flex: 1;
+  min-width: 80px;
+  max-width: 140px;
+  accent-color: var(--settings-accent);
+  cursor: pointer;
+}
+
+.settings-tab-hue-brightness-value {
+  font-size: 13px;
+  color: var(--settings-text-secondary, var(--settings-text));
+  font-variant-numeric: tabular-nums;
+  width: 40px;
+  text-align: right;
+}
+
 .settings-right-pane {
   display: flex;
   flex-direction: column;

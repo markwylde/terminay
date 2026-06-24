@@ -17,11 +17,141 @@ type TerminalThemeKey = keyof TerminalSettings['theme'];
 
 export const TAB_THEME_HUE_COLOR_VALUE = 'tabThemeHue';
 
+// Brightness (HSL lightness, as a percentage) used when a "Tab Theme Hue"
+// color does not specify one. 60% matches the lightness the tab colors are
+// generated with, so the default looks identical to the tab colour.
+export const TAB_THEME_HUE_DEFAULT_BRIGHTNESS = 60;
+
 const TAB_THEME_HUE_COLOR_FALLBACKS: Partial<Record<TerminalThemeKey, string>> =
 	{
 		cursor: '#6ac1ff',
 		selectionBackground: '#ffff00',
 	};
+
+// "Tab Theme Hue" colors are stored either as the bare sentinel
+// (`tabThemeHue`, meaning default brightness) or with an explicit brightness
+// suffix (`tabThemeHue:40`, meaning 40% lightness).
+export function isTabThemeHueValue(value: string): boolean {
+	return (
+		value === TAB_THEME_HUE_COLOR_VALUE ||
+		value.startsWith(`${TAB_THEME_HUE_COLOR_VALUE}:`)
+	);
+}
+
+export function getTabThemeHueBrightness(value: string): number {
+	const prefix = `${TAB_THEME_HUE_COLOR_VALUE}:`;
+	if (!value.startsWith(prefix)) {
+		return TAB_THEME_HUE_DEFAULT_BRIGHTNESS;
+	}
+
+	const parsed = Number.parseInt(value.slice(prefix.length), 10);
+	if (!Number.isFinite(parsed)) {
+		return TAB_THEME_HUE_DEFAULT_BRIGHTNESS;
+	}
+
+	return Math.min(100, Math.max(0, parsed));
+}
+
+export function buildTabThemeHueValue(brightness: number): string {
+	const clamped = Math.round(Math.min(100, Math.max(0, brightness)));
+	return clamped === TAB_THEME_HUE_DEFAULT_BRIGHTNESS
+		? TAB_THEME_HUE_COLOR_VALUE
+		: `${TAB_THEME_HUE_COLOR_VALUE}:${clamped}`;
+}
+
+function hexToRgb(hex: string): [number, number, number] | null {
+	const normalized = hex.replace(/^#/, '');
+	if (normalized.length < 6) {
+		return null;
+	}
+
+	const r = Number.parseInt(normalized.slice(0, 2), 16);
+	const g = Number.parseInt(normalized.slice(2, 4), 16);
+	const b = Number.parseInt(normalized.slice(4, 6), 16);
+	if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) {
+		return null;
+	}
+
+	return [r / 255, g / 255, b / 255];
+}
+
+function rgbToHsl(
+	r: number,
+	g: number,
+	b: number,
+): [number, number, number] {
+	const max = Math.max(r, g, b);
+	const min = Math.min(r, g, b);
+	const lightness = (max + min) / 2;
+
+	if (max === min) {
+		return [0, 0, lightness];
+	}
+
+	const delta = max - min;
+	const saturation =
+		lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+
+	let hue = 0;
+	switch (max) {
+		case r:
+			hue = (g - b) / delta + (g < b ? 6 : 0);
+			break;
+		case g:
+			hue = (b - r) / delta + 2;
+			break;
+		default:
+			hue = (r - g) / delta + 4;
+			break;
+	}
+	hue /= 6;
+
+	return [hue, saturation, lightness];
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number): string {
+	const hue2rgb = (p: number, q: number, t: number) => {
+		let normalized = t;
+		if (normalized < 0) normalized += 1;
+		if (normalized > 1) normalized -= 1;
+		if (normalized < 1 / 6) return p + (q - p) * 6 * normalized;
+		if (normalized < 1 / 2) return q;
+		if (normalized < 2 / 3) return p + (q - p) * (2 / 3 - normalized) * 6;
+		return p;
+	};
+
+	const q =
+		lightness < 0.5
+			? lightness * (1 + saturation)
+			: lightness + saturation - lightness * saturation;
+	const p = 2 * lightness - q;
+	const r = hue2rgb(p, q, hue + 1 / 3);
+	const g = hue2rgb(p, q, hue);
+	const b = hue2rgb(p, q, hue - 1 / 3);
+
+	const toHex = (value: number) => {
+		const hex = Math.round(value * 255).toString(16);
+		return hex.length === 1 ? `0${hex}` : hex;
+	};
+
+	return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+// Re-light a tab colour to the requested brightness, keeping its hue and
+// saturation. Returns the input unchanged if it cannot be parsed.
+export function applyTabThemeHueBrightness(
+	hex: string,
+	brightness: number,
+): string {
+	const rgb = hexToRgb(hex);
+	if (!rgb) {
+		return hex;
+	}
+
+	const [hue, saturation] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+	const lightness = Math.min(100, Math.max(0, brightness)) / 100;
+	return hslToHex(hue, saturation, lightness);
+}
 
 type SettingsCategoryId =
 	| 'ai'
@@ -1818,7 +1948,7 @@ export function getTerminalThemeColorFallback(key: string): string {
 
 	const themeKey = key as TerminalThemeKey;
 	const defaultValue = defaultTerminalSettings.theme[themeKey];
-	return defaultValue === TAB_THEME_HUE_COLOR_VALUE
+	return isTabThemeHueValue(defaultValue)
 		? (TAB_THEME_HUE_COLOR_FALLBACKS[themeKey] ?? '#000000')
 		: defaultValue;
 }
@@ -1830,8 +1960,14 @@ export function resolveTerminalTheme(
 	const nextTheme = { ...settings.theme };
 
 	for (const key of Object.keys(nextTheme) as TerminalThemeKey[]) {
-		if (nextTheme[key] === TAB_THEME_HUE_COLOR_VALUE) {
-			nextTheme[key] = tabColor ?? getTerminalThemeColorFallback(key);
+		const themeValue = nextTheme[key];
+		if (isTabThemeHueValue(themeValue)) {
+			const base = tabColor ?? getTerminalThemeColorFallback(key);
+			const brightness = getTabThemeHueBrightness(themeValue);
+			nextTheme[key] =
+				brightness === TAB_THEME_HUE_DEFAULT_BRIGHTNESS
+					? base
+					: applyTabThemeHueBrightness(base, brightness);
 		}
 	}
 
