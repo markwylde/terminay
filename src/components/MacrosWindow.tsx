@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Editor, { type Monaco } from '@monaco-editor/react'
 import { Reorder, useDragControls } from 'framer-motion'
 import { FileText, X } from 'lucide-react'
 import {
@@ -10,6 +11,10 @@ import {
 import { useMacroSettings } from '../hooks/useMacroSettings'
 import type { MacroDefinition, MacroFieldDefinition, MacroFieldValue, MacroStep, SecretDefinition } from '../types/macros'
 import '../settings.css'
+
+const ETA_TEMPLATE_LANGUAGE = 'eta-template'
+const ETA_TEMPLATE_THEME = 'terminay-eta-template-dark'
+let didConfigureEtaTemplateMonaco = false
 
 function createEmptyMacro(nextIndex: number): MacroDefinition {
   return {
@@ -60,18 +65,165 @@ function serializeOptions(field: MacroFieldDefinition): string {
   return field.options.map((option) => `${option.label}|${option.value}`).join('\n')
 }
 
-function parseOptions(text: string) {
-  return text
+function parseSelectOptions(text: string, fieldLabel: string) {
+  const lines = text
     .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [rawLabel, rawValue] = line.split('|').map((part) => part.trim())
-      return {
-        label: rawLabel || rawValue || 'Option',
-        value: rawValue || rawLabel || 'option',
+    .map((line, index) => ({ index: index + 1, text: line.trim() }))
+    .filter((line) => line.text.length > 0)
+
+  if (lines.length === 0) {
+    throw new Error(`"${fieldLabel}" needs at least one select option.`)
+  }
+
+  const seenValues = new Set<string>()
+  return lines.map((line) => {
+    const parts = line.text.split('|')
+    if (parts.length > 2) {
+      throw new Error(`"${fieldLabel}" option line ${line.index} has too many "|" separators.`)
+    }
+
+    const label = parts[0]?.trim() ?? ''
+    const value = parts.length === 2 ? parts[1]?.trim() ?? '' : label
+
+    if (!label || !value) {
+      throw new Error(`"${fieldLabel}" option line ${line.index} must be "label|value" or a single label.`)
+    }
+
+    if (seenValues.has(value)) {
+      throw new Error(`"${fieldLabel}" has duplicate select option value "${value}".`)
+    }
+
+    seenValues.add(value)
+    return { label, value }
+  })
+}
+
+function prepareMacrosForSave(macros: MacroDefinition[]): MacroDefinition[] {
+  return macros.map((macro) => ({
+    ...macro,
+    fields: macro.fields.map((field) => {
+      if (field.type !== 'select') {
+        const { optionsText: _optionsText, ...persistedField } = field
+        return persistedField
       }
+
+      const optionsText = field.optionsText ?? serializeOptions(field)
+      const options = parseSelectOptions(optionsText, field.label || field.name)
+      const defaultValue = String(field.defaultValue ?? '')
+      const nextDefaultValue = options.some((option) => option.value === defaultValue) ? defaultValue : options[0]?.value ?? ''
+      const { optionsText: _optionsText, ...persistedField } = field
+      return {
+        ...persistedField,
+        defaultValue: nextDefaultValue,
+        options,
+      }
+    }),
+  }))
+}
+
+function configureEtaTemplateMonaco(monaco: Monaco) {
+  if (!monaco.languages.getLanguages().some((language: { id: string }) => language.id === ETA_TEMPLATE_LANGUAGE)) {
+    monaco.languages.register({
+      id: ETA_TEMPLATE_LANGUAGE,
+      aliases: ['Eta Template', 'eta-template'],
     })
+
+    monaco.languages.setLanguageConfiguration(ETA_TEMPLATE_LANGUAGE, {
+      brackets: [
+        ['{', '}'],
+        ['(', ')'],
+        ['[', ']'],
+        ['<%', '%>'],
+      ],
+      autoClosingPairs: [
+        { open: '<%', close: '%>' },
+        { open: '<%=', close: '%>' },
+        { open: '<%~', close: '%>' },
+        { open: '{', close: '}' },
+        { open: '(', close: ')' },
+        { open: '[', close: ']' },
+        { open: '"', close: '"' },
+        { open: '\'', close: '\'' },
+        { open: '`', close: '`' },
+      ],
+      surroundingPairs: [
+        { open: '{', close: '}' },
+        { open: '(', close: ')' },
+        { open: '[', close: ']' },
+        { open: '"', close: '"' },
+        { open: '\'', close: '\'' },
+        { open: '`', close: '`' },
+      ],
+    })
+
+    monaco.languages.setMonarchTokensProvider(ETA_TEMPLATE_LANGUAGE, {
+      defaultToken: 'text',
+      tokenizer: {
+        root: [
+          [/<%[-_]?\s*=/, { token: 'delimiter.eta', next: '@eta' }],
+          [/<%[-_]?\s*~/, { token: 'delimiter.eta.raw', next: '@eta' }],
+          [/<%[-_]?/, { token: 'delimiter.eta', next: '@eta' }],
+          [/{{\s*[^{}]+?\s*}}/, 'variable.legacy'],
+          [/[^<{]+/, 'text'],
+          [/[<{]/, 'text'],
+        ],
+        eta: [
+          [/%>/, { token: 'delimiter.eta', next: '@pop' }],
+          [/\/\*/, { token: 'comment', next: '@comment' }],
+          [/\/\/.*$/, 'comment'],
+          [/"([^"\\]|\\.)*$/, 'string.invalid'],
+          [/'([^'\\]|\\.)*$/, 'string.invalid'],
+          [/`/, { token: 'string', next: '@templateString' }],
+          [/"([^"\\]|\\.)*"/, 'string'],
+          [/'([^'\\]|\\.)*'/, 'string'],
+          [/\b(?:if|else|for|while|switch|case|break|continue|return|const|let|var|function|true|false|null|undefined|await|async)\b/, 'keyword'],
+          [/\b(?:Array|Boolean|Date|JSON|Math|Number|Object|RegExp|String)\b/, 'type.identifier'],
+          [/[A-Za-z_$][\w$]*/, 'identifier'],
+          [/-?(?:0|[1-9]\d*)(?:\.\d+)?(?:e[+-]?\d+)?/i, 'number'],
+          [/[{}[\]().,;:?]/, 'delimiter'],
+          [/[+\-*/%=&|!<>]+/, 'operator'],
+        ],
+        comment: [
+          [/[^*]+/, 'comment'],
+          [/\*\//, { token: 'comment', next: '@pop' }],
+          [/./, 'comment'],
+        ],
+        templateString: [
+          [/[^`\\$]+/, 'string'],
+          [/\\./, 'string.escape'],
+          [/\$\{/, { token: 'delimiter.bracket', next: '@eta' }],
+          [/`/, { token: 'string', next: '@pop' }],
+        ],
+      },
+    })
+  }
+
+  if (!didConfigureEtaTemplateMonaco) {
+    didConfigureEtaTemplateMonaco = true
+    monaco.editor.defineTheme(ETA_TEMPLATE_THEME, {
+      base: 'vs-dark',
+      inherit: true,
+      rules: [
+        { token: 'delimiter.eta', foreground: '1e88ff', fontStyle: 'bold' },
+        { token: 'delimiter.eta.raw', foreground: 'f7c46c', fontStyle: 'bold' },
+        { token: 'variable.legacy', foreground: '7cc7ff' },
+        { token: 'identifier', foreground: 'dce2f0' },
+        { token: 'type.identifier', foreground: '7cc7ff' },
+        { token: 'keyword', foreground: 'ff8f70' },
+        { token: 'operator', foreground: 'dce2f0' },
+        { token: 'string', foreground: 'c7e88d' },
+        { token: 'string.escape', foreground: 'f7c46c' },
+        { token: 'number', foreground: 'f7c46c' },
+        { token: 'comment', foreground: '8b9bb5', fontStyle: 'italic' },
+      ],
+      colors: {
+        'editor.background': '#101010',
+        'editor.foreground': '#f2f4f8',
+        'editorCursor.foreground': '#1e88ff',
+        'editor.lineHighlightBackground': '#1f1f1f',
+      },
+    })
+  }
 }
 
 function coerceDefaultValue(field: MacroFieldDefinition, value: string): MacroFieldValue {
@@ -116,25 +268,41 @@ function MacroTextEditorModal({
           </button>
         </div>
 
-        <textarea
-          className="macro-text-modal-textarea"
-          value={draftValue}
-          autoFocus
-          spellCheck={false}
-          onChange={(event) => setDraftValue(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-              event.preventDefault()
-              saveDraft()
-            }
-
-            if (event.key === 'Escape') {
-              event.preventDefault()
-              onCancel()
-            }
-          }}
-          placeholder="Type text... use {{Variable}} for fields."
-        />
+        <div className="macro-text-modal-editor">
+          <Editor
+            height="100%"
+            language={ETA_TEMPLATE_LANGUAGE}
+            theme={ETA_TEMPLATE_THEME}
+            value={draftValue}
+            beforeMount={configureEtaTemplateMonaco}
+            onMount={(editor, monaco) => {
+              configureEtaTemplateMonaco(monaco)
+              monaco.editor.setTheme(ETA_TEMPLATE_THEME)
+              const model = editor.getModel()
+              if (model) {
+                monaco.editor.setModelLanguage(model, ETA_TEMPLATE_LANGUAGE)
+              }
+              editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, saveDraft)
+              editor.addCommand(monaco.KeyCode.Escape, onCancel)
+              editor.focus()
+            }}
+            onChange={(value) => setDraftValue(value ?? '')}
+            options={{
+              automaticLayout: true,
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+              fontSize: 13,
+              lineHeight: 20,
+              lineNumbers: 'off',
+              minimap: { enabled: false },
+              padding: { top: 14, bottom: 14 },
+              quickSuggestions: false,
+              renderLineHighlight: 'line',
+              scrollBeyondLastLine: false,
+              tabSize: 2,
+              wordWrap: 'on',
+            }}
+          />
+        </div>
 
         <div className="macro-text-modal-footer">
           <button type="button" className="settings-secondary-button" onClick={onCancel}>
@@ -402,11 +570,11 @@ function FieldItem({
                 style={{ flex: 1, minHeight: 40 }}
                 placeholder="Option 1|val1&#10;Option 2|val2"
                 rows={1}
-                value={serializeOptions(field)}
+                value={field.optionsText ?? serializeOptions(field)}
                 onChange={(event) =>
                   onUpdateField((current) => ({
                     ...current,
-                    options: parseOptions(event.target.value),
+                    optionsText: event.target.value,
                   }))
                 }
               />
@@ -646,7 +814,7 @@ export function MacrosWindow() {
     setErrorText(null)
 
     try {
-      const saved = await window.terminay.updateMacros(normalizeMacros(draftMacros))
+      const saved = await window.terminay.updateMacros(normalizeMacros(prepareMacrosForSave(draftMacros)))
       setDraftMacros(saved)
       setSelectedMacroId((current) => (current && saved.some((macro) => macro.id === current) ? current : saved[0]?.id ?? null))
     } catch (error) {

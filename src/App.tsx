@@ -68,7 +68,7 @@ import {
 	getCommandShortcut,
 	getCommandShortcutLabel,
 } from './keyboardShortcuts';
-import { renderMacroTemplate } from './macroSettings';
+import { renderMacroTemplate, tryRenderMacroTemplate } from './macroSettings';
 import { computeDropIndex } from './projectTabDrag';
 import {
 	isRemoteAccessPairingPinConfigured,
@@ -662,6 +662,7 @@ function ModalTitlebar({
 }
 
 type MacroFileFieldInputProps = {
+	id?: string;
 	onChange: (value: string) => void;
 	placeholder: string;
 	rootPath: string;
@@ -671,7 +672,7 @@ type MacroFileFieldInputProps = {
 const MacroFileFieldInput = forwardRef<
 	HTMLInputElement,
 	MacroFileFieldInputProps
->(({ onChange, placeholder, rootPath, value }, ref) => {
+>(({ id, onChange, placeholder, rootPath, value }, ref) => {
 	const [suggestions, setSuggestions] = useState<FileSearchResult[]>([]);
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
 	const [isOpen, setIsOpen] = useState(false);
@@ -771,6 +772,7 @@ const MacroFileFieldInput = forwardRef<
 	return (
 		<div className="macro-file-field">
 			<input
+				id={id}
 				ref={ref}
 				type="text"
 				value={value}
@@ -6573,113 +6575,132 @@ const ProjectWorkspace = forwardRef<
 							onClose={closeMacroParameterModal}
 							onMouseDown={macroParameterModal.handleTitlebarPointerDown}
 						/>
-						<p className="macro-parameter-description">
-							{macroToRun.description ||
-								'Fill in the parameters to render the final macro output.'}
-						</p>
+						<div className="macro-parameter-content">
+							{macroToRun.description ? (
+								<p className="macro-parameter-description">
+									{macroToRun.description}
+								</p>
+							) : null}
 
-						{macroToRun.fields.map((field, index) => {
-							const value = macroFieldValues[field.name];
-							const firstFieldRef =
-								index === 0
-									? (
-											element:
-												| HTMLInputElement
-												| HTMLTextAreaElement
-												| HTMLSelectElement
-												| null,
-										) => {
-											firstMacroFieldRef.current = element;
-										}
-									: undefined;
-							return (
-								<div key={field.id} className="macro-parameter-field">
-									<span>{field.label}</span>
-									{field.type === 'textarea' ? (
-										<textarea
-											ref={firstFieldRef}
-											className="project-edit-textarea"
-											value={String(value ?? '')}
-											placeholder={field.placeholder}
-											onChange={(event) =>
-												setMacroFieldValues((current) => ({
-													...current,
-													[field.name]: event.target.value,
-												}))
-											}
-											rows={4}
-										/>
-									) : field.type === 'select' ? (
-										<select
-											ref={firstFieldRef}
-											className="project-edit-select"
-											value={String(value ?? '')}
-											onChange={(event) =>
-												setMacroFieldValues((current) => ({
-													...current,
-													[field.name]: event.target.value,
-												}))
-											}
-										>
-											{field.options.map((option) => (
-												<option
-													key={`${field.id}-${option.value}`}
-													value={option.value}
+							<div className="macro-parameter-fields">
+								{macroToRun.fields.map((field, index) => {
+									const value = macroFieldValues[field.name];
+									const fieldInputId = `macro-field-input-${field.id}`;
+									const firstFieldRef =
+										index === 0
+											? (
+													element:
+														| HTMLInputElement
+														| HTMLTextAreaElement
+														| HTMLSelectElement
+														| null,
+												) => {
+													firstMacroFieldRef.current = element;
+												}
+											: undefined;
+									return (
+										<div key={field.id} className="macro-parameter-field">
+											<label
+												className="macro-parameter-field__label"
+												htmlFor={fieldInputId}
+											>
+												{field.label}
+											</label>
+											{field.type === 'textarea' ? (
+												<textarea
+													id={fieldInputId}
+													ref={firstFieldRef}
+													className="project-edit-textarea"
+													value={String(value ?? '')}
+													placeholder={field.placeholder}
+													onChange={(event) =>
+														setMacroFieldValues((current) => ({
+															...current,
+															[field.name]: event.target.value,
+														}))
+													}
+													rows={4}
+												/>
+											) : field.type === 'select' ? (
+												<select
+													id={fieldInputId}
+													ref={firstFieldRef}
+													className="project-edit-select"
+													value={String(value ?? '')}
+													onChange={(event) =>
+														setMacroFieldValues((current) => ({
+															...current,
+															[field.name]: event.target.value,
+														}))
+													}
 												>
-													{option.label}
-												</option>
-												))}
-										</select>
-									) : field.type === 'file' ? (
-										<MacroFileFieldInput
-											ref={firstFieldRef}
-											rootPath={macroFileSearchRootPath || project.rootFolder}
-											value={String(value ?? '')}
-											placeholder={field.placeholder}
-											onChange={(nextValue) =>
-												setMacroFieldValues((current) => ({
-													...current,
-													[field.name]: nextValue,
-												}))
-											}
-										/>
-									) : field.type === 'checkbox' ? (
-										<input
-											ref={firstFieldRef}
-											type="checkbox"
-											checked={Boolean(value)}
-											onChange={(event) =>
-												setMacroFieldValues((current) => ({
-													...current,
-													[field.name]: event.target.checked,
-												}))
-											}
-										/>
-									) : (
-										<input
-											ref={firstFieldRef}
-											type={field.type === 'number' ? 'number' : 'text'}
-											value={String(value ?? '')}
-											placeholder={field.placeholder}
-											onChange={(event) =>
-												setMacroFieldValues((current) => ({
-													...current,
-													[field.name]:
-														field.type === 'number'
-															? Number(event.target.value || 0)
-															: event.target.value,
-												}))
-											}
-										/>
-									)}
-								</div>
-							);
-						})}
+													{field.options.map((option) => (
+														<option
+															key={`${field.id}-${option.value}`}
+															value={option.value}
+														>
+															{option.label}
+														</option>
+													))}
+												</select>
+											) : field.type === 'file' ? (
+												<MacroFileFieldInput
+													id={fieldInputId}
+													ref={firstFieldRef}
+													rootPath={macroFileSearchRootPath || project.rootFolder}
+													value={String(value ?? '')}
+													placeholder={field.placeholder}
+													onChange={(nextValue) =>
+														setMacroFieldValues((current) => ({
+															...current,
+															[field.name]: nextValue,
+														}))
+													}
+												/>
+											) : field.type === 'checkbox' ? (
+												<input
+													id={fieldInputId}
+													ref={firstFieldRef}
+													type="checkbox"
+													checked={Boolean(value)}
+													onChange={(event) =>
+														setMacroFieldValues((current) => ({
+															...current,
+															[field.name]: event.target.checked,
+														}))
+													}
+												/>
+											) : (
+												<input
+													id={fieldInputId}
+													ref={firstFieldRef}
+													type={field.type === 'number' ? 'number' : 'text'}
+													value={String(value ?? '')}
+													placeholder={field.placeholder}
+													onChange={(event) =>
+														setMacroFieldValues((current) => ({
+															...current,
+															[field.name]:
+																field.type === 'number'
+																	? Number(event.target.value || 0)
+																	: event.target.value,
+														}))
+													}
+												/>
+											)}
+										</div>
+									);
+								})}
+							</div>
 
-						<div className="project-edit-preview project-edit-preview--multiline">
-							<pre>
-								{renderMacroTemplate(macroToRun.template, macroFieldValues)}
-							</pre>
+							<div className="macro-parameter-preview">
+								<div className="macro-parameter-preview__label">Preview</div>
+								<div className="project-edit-preview project-edit-preview--multiline">
+									<pre>
+										{tryRenderMacroTemplate(macroToRun.template, macroFieldValues)}
+									</pre>
+								</div>
+							</div>
 						</div>
 
 						<div className="project-edit-actions">
