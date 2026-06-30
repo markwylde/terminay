@@ -30,6 +30,7 @@ import {
 	Play,
 	Plug,
 	PlusSquare,
+	RefreshCw,
 	Search,
 	Settings,
 	Sidebar,
@@ -2255,6 +2256,28 @@ const ProjectWorkspace = forwardRef<
 		},
 		[loadDirectory, refreshGitStatuses],
 	);
+
+	const refreshFileExplorerTree = useCallback(() => {
+		if (!project.rootFolder) {
+			return;
+		}
+
+		for (const timerId of fileExplorerRefreshTimersRef.current.values()) {
+			window.clearTimeout(timerId);
+		}
+		fileExplorerRefreshTimersRef.current.clear();
+
+		const directories = new Set<string>([
+			project.rootFolder,
+			...Object.keys(directoryChildren),
+		]);
+
+		void Promise.all(
+			Array.from(directories, (dirPath) => loadDirectory(dirPath)),
+		).then(() => {
+			void refreshGitStatuses();
+		});
+	}, [directoryChildren, loadDirectory, project.rootFolder, refreshGitStatuses]);
 
 	const toggleDirectory = useCallback(
 		(dirPath: string) => {
@@ -6171,6 +6194,17 @@ const ProjectWorkspace = forwardRef<
 												: 'expanded',
 										});
 									}}
+									actions={
+										<button
+											type="button"
+											className="sidebar-pane__action-button"
+											onClick={refreshFileExplorerTree}
+											aria-label="Reload explorer"
+											title="Reload explorer"
+										>
+											<RefreshCw size={14} aria-hidden="true" />
+										</button>
+									}
 								>
 									<FileExplorerTree
 										directoryChildren={directoryChildren}
