@@ -47,6 +47,13 @@ type FolderTasksViewerProps = {
 	scannedMarkdownCount: number;
 };
 
+type FolderTaskSort = 'progress' | 'name';
+
+const FOLDER_TASK_SORT_OPTIONS: { id: FolderTaskSort; label: string }[] = [
+	{ id: 'progress', label: 'Progress' },
+	{ id: 'name', label: 'Name' },
+];
+
 function combineStats(documents: FolderTaskDocument[]): TaskStats {
 	return documents.reduce<TaskStats>(
 		(total, document) => ({
@@ -57,6 +64,42 @@ function combineStats(documents: FolderTaskDocument[]): TaskStats {
 				total.completedInDiff + document.tree.stats.completedInDiff,
 		}),
 		{ total: 0, completed: 0, remaining: 0, completedInDiff: 0 },
+	);
+}
+
+function compareDocumentsByName(
+	a: FolderTaskDocument,
+	b: FolderTaskDocument,
+): number {
+	return a.relativePath.localeCompare(b.relativePath, undefined, {
+		numeric: true,
+		sensitivity: 'base',
+	});
+}
+
+function compareDocumentsByProgress(
+	a: FolderTaskDocument,
+	b: FolderTaskDocument,
+): number {
+	const progressDelta = percent(b.tree.stats) - percent(a.tree.stats);
+	if (progressDelta !== 0) {
+		return progressDelta;
+	}
+
+	const remainingDelta = a.tree.stats.remaining - b.tree.stats.remaining;
+	if (remainingDelta !== 0) {
+		return remainingDelta;
+	}
+
+	return compareDocumentsByName(a, b);
+}
+
+function sortDocumentsByMode(
+	documents: FolderTaskDocument[],
+	sort: FolderTaskSort,
+): FolderTaskDocument[] {
+	return [...documents].sort(
+		sort === 'progress' ? compareDocumentsByProgress : compareDocumentsByName,
 	);
 }
 
@@ -125,6 +168,8 @@ function FileTaskGroup({
 
 	const stats = document.tree.stats;
 	const complete = isComplete(stats);
+	const showRelativeDirectory =
+		document.relativeDirectory.length > 0 && document.relativeDirectory !== '.';
 
 	return (
 		<section
@@ -151,9 +196,11 @@ function FileTaskGroup({
 				</span>
 				<span className="folder-tasks__file-main">
 					<span className="folder-tasks__file-name">{document.name}</span>
-					<span className="folder-tasks__file-path">
-						{document.relativeDirectory}
-					</span>
+					{showRelativeDirectory ? (
+						<span className="folder-tasks__file-path">
+							{document.relativeDirectory}
+						</span>
+					) : null}
 				</span>
 				{complete ? (
 					<span className="folder-tasks__file-done">Done</span>
@@ -237,7 +284,12 @@ export function FolderTasksViewer({
 	const [filter, setFilter] = useState<TaskFilter>('all');
 	const [query, setQuery] = useState('');
 	const [view, setView] = useState<TaskView>('list');
+	const [sort, setSort] = useState<FolderTaskSort>('progress');
 	const [groupByFile, setGroupByFile] = useState(false);
+	const sortedDocuments = useMemo(
+		() => sortDocumentsByMode(documents, sort),
+		[documents, sort],
+	);
 
 	const toggle = (id: string) => {
 		setCollapsed((previous) => {
@@ -258,12 +310,22 @@ export function FolderTasksViewer({
 	const activeCollapsed = isSearching ? NO_COLLAPSE : collapsed;
 	const predicate = buildPredicate(filter, query);
 	const visibleCards = allCards.filter((card) => cardMatchesQuery(card, query));
-	const visibleLanes = cardsByDocument
-		.map((entry) => ({
-			document: entry.document,
-			cards: entry.cards.filter((card) => cardMatchesQuery(card, query)),
-		}))
-		.filter((entry) => entry.cards.length > 0);
+	const visibleLanes = sortedDocuments
+		.map((document) => {
+			const entry = cardsByDocument.find(
+				(candidate) => candidate.document.path === document.path,
+			);
+			return entry
+				? {
+						document,
+						cards: entry.cards.filter((card) => cardMatchesQuery(card, query)),
+					}
+				: null;
+		})
+		.filter(
+			(entry): entry is { document: FolderTaskDocument; cards: TaskCard[] } =>
+				entry !== null && entry.cards.length > 0,
+		);
 	const hasVisibleDocuments = documents.some((document) => {
 		const root = document.tree.root;
 		return (
@@ -331,8 +393,8 @@ export function FolderTasksViewer({
 				<StatTile tone="remaining" value={stats.remaining} label="remaining" />
 				<StatTile
 					tone="files"
-					value={documents.length}
-					label={documents.length === 1 ? 'file' : 'files'}
+					value={`${filesComplete}/${documents.length}`}
+					label="files complete"
 				/>
 			</TaskHero>
 
@@ -340,11 +402,6 @@ export function FolderTasksViewer({
 				<TaskCallout tone="success" icon="🎉">
 					All {stats.total} tasks across {documents.length}{' '}
 					{documents.length === 1 ? 'file' : 'files'} complete.
-				</TaskCallout>
-			) : filesComplete > 0 ? (
-				<TaskCallout tone="info" icon="✓">
-					{filesComplete} of {documents.length} files fully complete · {stats.remaining}{' '}
-					tasks remaining.
 				</TaskCallout>
 			) : null}
 
@@ -357,6 +414,18 @@ export function FolderTasksViewer({
 				onQueryChange={setQuery}
 				showFilter={!isKanban}
 			>
+				<select
+					className="folder-tasks__sort"
+					value={sort}
+					onChange={(event) => setSort(event.target.value as FolderTaskSort)}
+					aria-label="Sort files"
+				>
+					{FOLDER_TASK_SORT_OPTIONS.map((option) => (
+						<option key={option.id} value={option.id}>
+							{option.label}
+						</option>
+					))}
+				</select>
 				{isKanban ? (
 					<button
 						type="button"
@@ -377,9 +446,6 @@ export function FolderTasksViewer({
 						{allCollapsed ? 'Expand all' : 'Collapse all'}
 					</button>
 				) : null}
-				<button type="button" className="file-tasks__action" onClick={onRefresh}>
-					Refresh
-				</button>
 			</TaskToolbar>
 
 			<div className="file-tasks__scroll">
@@ -431,7 +497,7 @@ export function FolderTasksViewer({
 										: 'No completed tasks yet.'}
 							</div>
 						) : null}
-						{documents.map((document) => (
+						{sortedDocuments.map((document) => (
 							<FileTaskGroup
 								key={document.path}
 								collapsed={activeCollapsed}
