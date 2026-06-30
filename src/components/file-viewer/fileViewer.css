@@ -1058,8 +1058,13 @@
 
 .file-tasks__chevron {
   flex: none;
-  width: 12px;
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 11px;
+  line-height: 1;
   color: rgba(196, 206, 224, 0.5);
   transition: transform 0.15s ease;
 }
