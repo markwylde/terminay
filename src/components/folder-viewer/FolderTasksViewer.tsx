@@ -1,5 +1,8 @@
-import { useMemo, useState } from 'react';
+import { Copy, FolderOpen, Terminal } from 'lucide-react';
+import { type MouseEvent, useMemo, useState } from 'react';
 import type { FileViewerMode } from '../../types/fileViewer';
+import { getParentPath, getPathRelativeToRoot } from '../../pathUtils';
+import { ContextMenu, type ContextMenuItem } from '../ContextMenu';
 import type { TaskSection, TaskStats } from '../file-viewer/tasks/parseTasks';
 import {
 	KanbanBoard,
@@ -7,6 +10,7 @@ import {
 	SectionNode,
 	StatTile,
 	StatsBadge,
+	TASK_SORT_OPTIONS,
 	type TaskCard,
 	type TaskFilter,
 	TaskCallout,
@@ -14,6 +18,7 @@ import {
 	TaskRow,
 	TaskToolbar,
 	type TaskPredicate,
+	type TaskSort,
 	type TaskView,
 	buildPredicate,
 	cardMatchesQuery,
@@ -22,6 +27,8 @@ import {
 	isComplete,
 	percent,
 	sectionHasVisibleTasks,
+	sortTaskCards,
+	sortTaskSections,
 } from '../file-viewer/tasks/taskView';
 import '../file-viewer/fileViewer.css';
 
@@ -42,17 +49,12 @@ type FolderTasksViewerProps = {
 	ignoredDirectoryCount: number;
 	isLoading: boolean;
 	onOpenFile: (path: string, initialMode?: FileViewerMode) => void;
+	onOpenTerminal?: (path: string) => void;
 	onRefresh: () => void;
+	projectRootPath: string;
 	scannedDirectoryCount: number;
 	scannedMarkdownCount: number;
 };
-
-type FolderTaskSort = 'progress' | 'name';
-
-const FOLDER_TASK_SORT_OPTIONS: { id: FolderTaskSort; label: string }[] = [
-	{ id: 'progress', label: 'Progress' },
-	{ id: 'name', label: 'Name' },
-];
 
 function combineStats(documents: FolderTaskDocument[]): TaskStats {
 	return documents.reduce<TaskStats>(
@@ -96,7 +98,7 @@ function compareDocumentsByProgress(
 
 function sortDocumentsByMode(
 	documents: FolderTaskDocument[],
-	sort: FolderTaskSort,
+	sort: TaskSort,
 ): FolderTaskDocument[] {
 	return [...documents].sort(
 		sort === 'progress' ? compareDocumentsByProgress : compareDocumentsByName,
@@ -146,19 +148,26 @@ function FileTaskGroup({
 	document,
 	predicate,
 	onOpenFile,
+	onOpenPathContextMenu,
+	sort,
 	onToggle,
 }: {
 	collapsed: ReadonlySet<string>;
 	document: FolderTaskDocument;
 	predicate: TaskPredicate;
 	onOpenFile: (path: string, initialMode?: FileViewerMode) => void;
+	onOpenPathContextMenu: (event: MouseEvent<HTMLElement>, document: FolderTaskDocument) => void;
+	sort: TaskSort;
 	onToggle: (id: string) => void;
 }) {
 	const fileId = `file:${document.path}`;
 	const isCollapsed = collapsed.has(fileId);
 	const rootTasks = document.tree.root.tasks.filter(predicate);
-	const rootChildren = document.tree.root.children.filter((child) =>
-		sectionHasVisibleTasks(child, predicate),
+	const rootChildren = sortTaskSections(
+		document.tree.root.children.filter((child) =>
+			sectionHasVisibleTasks(child, predicate),
+		),
+		sort,
 	);
 	const hasVisible = rootTasks.length > 0 || rootChildren.length > 0;
 
@@ -179,6 +188,7 @@ function FileTaskGroup({
 				type="button"
 				className="folder-tasks__file-header"
 				onClick={() => onToggle(fileId)}
+				onContextMenu={(event) => onOpenPathContextMenu(event, document)}
 				onDoubleClick={() => onOpenFile(document.path, 'tasks')}
 				aria-expanded={!isCollapsed}
 				title={document.path}
@@ -231,6 +241,7 @@ function FileTaskGroup({
 							collapsed={collapsed}
 							predicate={predicate}
 							onToggle={onToggle}
+							sort={sort}
 							keyPrefix={document.path}
 							documentPath={document.path}
 							onOpenFile={onOpenFile}
@@ -248,7 +259,9 @@ export function FolderTasksViewer({
 	ignoredDirectoryCount,
 	isLoading,
 	onOpenFile,
+	onOpenTerminal,
 	onRefresh,
+	projectRootPath,
 	scannedDirectoryCount,
 	scannedMarkdownCount,
 }: FolderTasksViewerProps) {
@@ -284,11 +297,20 @@ export function FolderTasksViewer({
 	const [filter, setFilter] = useState<TaskFilter>('all');
 	const [query, setQuery] = useState('');
 	const [view, setView] = useState<TaskView>('list');
-	const [sort, setSort] = useState<FolderTaskSort>('progress');
+	const [sort, setSort] = useState<TaskSort>('progress');
 	const [groupByFile, setGroupByFile] = useState(false);
+	const [contextMenu, setContextMenu] = useState<{
+		x: number;
+		y: number;
+		document: FolderTaskDocument;
+	} | null>(null);
 	const sortedDocuments = useMemo(
 		() => sortDocumentsByMode(documents, sort),
 		[documents, sort],
+	);
+	const sortedCards = useMemo(
+		() => sortTaskCards(allCards, sort),
+		[allCards, sort],
 	);
 
 	const toggle = (id: string) => {
@@ -303,13 +325,26 @@ export function FolderTasksViewer({
 		});
 	};
 
+	const openPathContextMenu = (
+		event: MouseEvent<HTMLElement>,
+		document: FolderTaskDocument,
+	) => {
+		event.preventDefault();
+		event.stopPropagation();
+		setContextMenu({
+			x: event.clientX,
+			y: event.clientY,
+			document,
+		});
+	};
+
 	const allCollapsed =
 		allSectionIds.length > 0 && allSectionIds.every((id) => collapsed.has(id));
 	const isSearching = query.trim().length > 0;
 	const isKanban = view === 'kanban';
 	const activeCollapsed = isSearching ? NO_COLLAPSE : collapsed;
 	const predicate = buildPredicate(filter, query);
-	const visibleCards = allCards.filter((card) => cardMatchesQuery(card, query));
+	const visibleCards = sortedCards.filter((card) => cardMatchesQuery(card, query));
 	const visibleLanes = sortedDocuments
 		.map((document) => {
 			const entry = cardsByDocument.find(
@@ -318,7 +353,9 @@ export function FolderTasksViewer({
 			return entry
 				? {
 						document,
-						cards: entry.cards.filter((card) => cardMatchesQuery(card, query)),
+						cards: sortTaskCards(entry.cards, sort).filter((card) =>
+							cardMatchesQuery(card, query),
+						),
 					}
 				: null;
 		})
@@ -415,12 +452,12 @@ export function FolderTasksViewer({
 				showFilter={!isKanban}
 			>
 				<select
-					className="folder-tasks__sort"
+					className="file-tasks__sort"
 					value={sort}
-					onChange={(event) => setSort(event.target.value as FolderTaskSort)}
-					aria-label="Sort files"
+					onChange={(event) => setSort(event.target.value as TaskSort)}
+					aria-label="Sort task groups"
 				>
-					{FOLDER_TASK_SORT_OPTIONS.map((option) => (
+					{TASK_SORT_OPTIONS.map((option) => (
 						<option key={option.id} value={option.id}>
 							{option.label}
 						</option>
@@ -462,6 +499,9 @@ export function FolderTasksViewer({
 								<button
 									type="button"
 									className="file-kanban__lane-header"
+									onContextMenu={(event) =>
+										openPathContextMenu(event, lane.document)
+									}
 									onDoubleClick={() => onOpenFile(lane.document.path, 'tasks')}
 									title={`Open ${lane.document.path}`}
 								>
@@ -504,12 +544,63 @@ export function FolderTasksViewer({
 								document={document}
 								predicate={predicate}
 								onOpenFile={onOpenFile}
+								onOpenPathContextMenu={openPathContextMenu}
+								sort={sort}
 								onToggle={toggle}
 							/>
 						))}
 					</>
 				)}
 			</div>
+			{contextMenu ? (
+				<ContextMenu
+					x={contextMenu.x}
+					y={contextMenu.y}
+					onClose={() => setContextMenu(null)}
+					items={buildTaskPathContextMenuItems({
+						document: contextMenu.document,
+						onOpenTerminal,
+						projectRootPath,
+					})}
+				/>
+			) : null}
 		</div>
 	);
+}
+
+function buildTaskPathContextMenuItems(options: {
+	document: FolderTaskDocument;
+	onOpenTerminal?: (path: string) => void;
+	projectRootPath: string;
+}): ContextMenuItem[] {
+	const { document, onOpenTerminal, projectRootPath } = options;
+	const directoryPath = getParentPath(document.path);
+
+	return [
+		{
+			label: 'Copy path',
+			icon: <Copy size={14} />,
+			onClick: () => void window.terminay.writeClipboardText(document.path),
+		},
+		{
+			label: 'Copy relative path',
+			icon: <Copy size={14} />,
+			onClick: () =>
+				void window.terminay.writeClipboardText(
+					getPathRelativeToRoot(document.path, projectRootPath),
+				),
+		},
+		{ separator: true, label: '', onClick: () => {} },
+		{
+			label: 'Open shell in folder',
+			icon: <Terminal size={14} />,
+			disabled: !onOpenTerminal,
+			onClick: () => onOpenTerminal?.(directoryPath),
+		},
+		{
+			label: 'Reveal in OS',
+			icon: <FolderOpen size={14} />,
+			onClick: () => void window.terminay.revealInOS(document.path),
+		},
+	];
 }

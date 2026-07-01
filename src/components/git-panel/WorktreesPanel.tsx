@@ -1,5 +1,6 @@
 import {
 	ChevronDown,
+	Copy,
 	FileEdit,
 	FolderInput,
 	FolderOpen,
@@ -16,6 +17,7 @@ import type {
 } from '../../types/terminay';
 import { ContextMenu, type ContextMenuItem } from '../ContextMenu';
 import { GitPanel } from './GitPanel';
+import { getPathRelativeToRoot } from '../../pathUtils';
 import './gitPanel.css';
 
 export type WorktreesPanelProps = {
@@ -24,6 +26,7 @@ export type WorktreesPanelProps = {
 	onDeleteWorktree: (worktree: GitWorktreeStatus) => void;
 	onOpenEntry: (entry: GitChangeEntry) => void;
 	onOpenTerminal: (worktree: GitWorktreeStatus) => void;
+	onOpenTerminalAtPath: (path: string) => void;
 	onRenameWorktree: (worktree: GitWorktreeStatus) => void;
 	onRevealWorktree: (worktree: GitWorktreeStatus) => void;
 	onSwitchProjectRoot: (worktree: GitWorktreeStatus) => void;
@@ -83,6 +86,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 		onDeleteWorktree,
 		onOpenEntry,
 		onOpenTerminal,
+		onOpenTerminalAtPath,
 		onRenameWorktree,
 		onRevealWorktree,
 		onSwitchProjectRoot,
@@ -282,6 +286,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 									status={worktreeStatus}
 									viewMode={viewMode}
 									onOpenEntry={onOpenEntry}
+									onOpenTerminal={onOpenTerminalAtPath}
 								/>
 							</div>
 						)}
@@ -299,6 +304,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 						onRenameWorktree,
 						onRevealWorktree,
 						onSwitchProjectRoot,
+						rootPath: status.repoRoot,
 						worktree: contextMenu.worktree,
 					})}
 				/>
@@ -313,6 +319,7 @@ function buildWorktreeContextMenuItems(options: {
 	onRenameWorktree: (worktree: GitWorktreeStatus) => void;
 	onRevealWorktree: (worktree: GitWorktreeStatus) => void;
 	onSwitchProjectRoot: (worktree: GitWorktreeStatus) => void;
+	rootPath: string;
 	worktree: GitWorktreeStatus;
 }): ContextMenuItem[] {
 	const {
@@ -321,6 +328,7 @@ function buildWorktreeContextMenuItems(options: {
 		onRenameWorktree,
 		onRevealWorktree,
 		onSwitchProjectRoot,
+		rootPath,
 		worktree,
 	} = options;
 	const unavailable = worktree.isBare || worktree.isPrunable;
@@ -349,7 +357,23 @@ function buildWorktreeContextMenuItems(options: {
 		},
 		{ separator: true, label: '', onClick: () => {} },
 		{
-			label: 'Open terminal here',
+			label: 'Copy path',
+			icon: <Copy size={14} />,
+			disabled: unavailable,
+			onClick: () => void window.terminay.writeClipboardText(worktree.path),
+		},
+		{
+			label: 'Copy relative path',
+			icon: <Copy size={14} />,
+			disabled: unavailable,
+			onClick: () =>
+				void window.terminay.writeClipboardText(
+					getPathRelativeToRoot(worktree.path, rootPath),
+				),
+		},
+		{ separator: true, label: '', onClick: () => {} },
+		{
+			label: 'Open shell in folder',
 			icon: <Terminal size={14} />,
 			disabled: unavailable,
 			onClick: () => onOpenTerminal(worktree),

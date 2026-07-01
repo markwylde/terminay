@@ -9,6 +9,13 @@ export type FolderPanelInstanceParams = {
 
 export type FolderViewMode = 'tree' | 'tasks' | 'list' | 'thumbnail' | 'gallery';
 
+export type FolderNodeStats = {
+	createdAtMs: number | null;
+	mode: number | null;
+	modifiedAtMs: number | null;
+	size: number | null;
+};
+
 export type FolderFileNode = {
 	kind: 'file';
 	extension: string;
@@ -16,6 +23,7 @@ export type FolderFileNode = {
 	name: string;
 	path: string;
 	relativePath: string;
+	stats: FolderNodeStats;
 };
 
 export type FolderDirectoryNode = {
@@ -28,6 +36,7 @@ export type FolderDirectoryNode = {
 	name: string;
 	path: string;
 	relativePath: string;
+	stats?: FolderNodeStats;
 };
 
 export type FolderTreeNode = FolderFileNode | FolderDirectoryNode;
