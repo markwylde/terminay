@@ -207,10 +207,27 @@ export type RemoteAccessStatus = {
 }
 
 export type FileExplorerEntry = {
+  createdAtMs?: number | null
   isDirectory: boolean
   isSymbolicLink: boolean
+  mode?: number | null
+  modifiedAtMs?: number | null
   name: string
   path: string
+  size?: number
+}
+
+export type FolderSizeProgress = {
+  entryCount: number
+  jobId: string
+  size: number
+}
+
+export type FolderSizeResult = {
+  cancelled: boolean
+  entryCount: number
+  jobId: string
+  size: number
 }
 
 export type FileExplorerWatchEvent = {
@@ -547,6 +564,8 @@ export interface ControlRendererResponseMessage {
 export interface TerminayApi {
   getHomePath: () => Promise<string>
   listDirectory: (dirPath: string) => Promise<FileExplorerEntry[]>
+  calculateFolderSize: (payload: { jobId: string; path: string }) => Promise<FolderSizeResult>
+  cancelFolderSize: (jobId: string) => Promise<void>
   searchFiles: (options: { rootPath: string; query: string; limit?: number }) => Promise<FileSearchResult[]>
   getFileExplorerGitStatuses: (dirPath: string) => Promise<FileExplorerGitStatuses>
   getGitPanelStatus: (dirPath: string) => Promise<GitPanelStatus>
@@ -666,6 +685,7 @@ export interface TerminayApi {
   onTerminalExit: (listener: (message: TerminalExitMessage) => void) => () => void
   onAppCommand: (listener: (command: AppCommand) => void) => () => void
   onFileExplorerWatchEvent: (listener: (message: FileExplorerWatchEvent) => void) => () => void
+  onFolderSizeProgress: (listener: (message: FolderSizeProgress) => void) => () => void
   onFileWatchEvent: (listener: (message: FileViewerWatchEvent) => void) => () => void
   onTerminalSettingsChanged: (listener: (message: SettingsChangeMessage) => void) => () => void
   onMacrosChanged: (listener: (message: MacrosChangeMessage) => void) => () => void

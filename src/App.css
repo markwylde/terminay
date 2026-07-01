@@ -6,6 +6,7 @@
   color: #dce2f0;
 
   --tabbar-bg: #090b0e;
+  --tab-bg: #0d1014;
   --tab-bg-active: #0d1014;
   --terminal-tab-bg-active: #161c25;
   --tab-bg-hover: rgba(255, 255, 255, 0.05);
@@ -1022,9 +1023,9 @@
 }
 
 .project-tab-sidebar-toggle--active {
-  color: #bfe7ff;
-  background: rgba(77, 181, 255, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(77, 181, 255, 0.2);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 
 .project-tab-sidebar-toggle:disabled {
@@ -1033,6 +1034,19 @@
 }
 
 /* Dockview Overrides */
+
+/* Dockview defaults to its Abyss theme (blue #000c18 surfaces); repoint its
+   variables at the app palette so panel voids match the rest of the chrome. */
+.workspace .dv-shell {
+  --dv-group-view-background-color: var(--tab-bg);
+  --dv-separator-border: var(--tab-border);
+  --dv-tab-divider-color: var(--tab-border);
+  --dv-tabs-and-actions-container-background-color: var(--tabbar-bg);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--tab-bg);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--tabbar-bg);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--tab-bg);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--tabbar-bg);
+}
 
 .workspace .dv-tabs-and-actions-container {
   background: var(--tabbar-bg) !important;
