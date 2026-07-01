@@ -91,3 +91,42 @@ test('markdown files expose a Tasks tab with grouped stats and diff progress', a
   await expect(mainWindow.locator('.file-tasks__item')).toHaveCount(2)
   await expect(mainWindow.locator('.file-tasks__item:not(.file-tasks__item--checked)')).toHaveCount(0)
 })
+
+test('file task groups can be sorted recursively', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'file-viewer-task-sort',
+    seed: {
+      files: {
+        'sorted.md': [
+          '# Sortable Plan',
+          '',
+          '## Parent',
+          '',
+          '### Alpha',
+          '',
+          '- [ ] Alpha todo',
+          '',
+          '### Zebra',
+          '',
+          '- [x] Zebra done',
+          '',
+        ].join('\n'),
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+  await fileExplorerItem(mainWindow, 'sorted.md').dblclick()
+  await mainWindow.getByRole('tab', { name: 'Tasks' }).click()
+
+  const titles = mainWindow.locator('.file-tasks__section-title')
+  await expect(titles.filter({ hasText: 'Zebra' })).toBeVisible()
+  await expect(titles.filter({ hasText: 'Alpha' })).toBeVisible()
+  let sectionTitles = await titles.allTextContents()
+  expect(sectionTitles.indexOf('Zebra')).toBeLessThan(sectionTitles.indexOf('Alpha'))
+
+  await mainWindow.getByLabel('Sort task groups').selectOption('name')
+  sectionTitles = await titles.allTextContents()
+  expect(sectionTitles.indexOf('Alpha')).toBeLessThan(sectionTitles.indexOf('Zebra'))
+})
