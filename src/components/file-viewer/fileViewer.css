@@ -332,7 +332,6 @@
   line-height: 1.65;
   font-size: 14.5px;
   color: rgba(220, 227, 240, 0.86);
-  max-width: 980px;
 }
 
 .file-preview-markdown > *:first-child {
