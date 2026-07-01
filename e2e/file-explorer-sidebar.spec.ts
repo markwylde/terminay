@@ -134,7 +134,7 @@ test('file explorer refreshes after external filesystem changes', async ({ creat
   await expect(fileExplorerItem(mainWindow, 'old.txt')).toHaveCount(0)
 })
 
-test('file explorer context menu supports create rename delete and open terminal here', async ({
+test('file explorer context menu supports create rename delete and path actions', async ({
   appHarness,
   createWorkspace,
   mainWindow,
@@ -154,6 +154,9 @@ test('file explorer context menu supports create rename delete and open terminal
   await openFileExplorer(mainWindow)
 
   await fileExplorerItem(mainWindow, 'target-dir').click({ button: 'right' })
+  await expect(contextMenuItem(mainWindow, 'Copy path')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Copy relative path')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'New File')).toBeVisible()
   await contextMenuItem(mainWindow, 'New File').click()
   await submitFileExplorerNameModal(mainWindow, 'File name', 'created.txt')
@@ -182,8 +185,8 @@ test('file explorer context menu supports create rename delete and open terminal
   const terminalCloses = mainWindow.getByLabel('Close terminal')
   await expect(terminalCloses).toHaveCount(1)
   await fileExplorerItem(mainWindow, 'created-folder').click({ button: 'right' })
-  await expect(contextMenuItem(mainWindow, 'Open terminal here')).toBeVisible()
-  await contextMenuItem(mainWindow, 'Open terminal here').click()
+  await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeVisible()
+  await contextMenuItem(mainWindow, 'Open shell in folder').click()
   await expect(terminalCloses).toHaveCount(2)
 })
 
@@ -262,6 +265,11 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   const stagedRow = stagedGroup.locator('.git-panel__row').filter({ hasText: 'staged-new.txt' })
   await expect(stagedRow).toBeVisible({ timeout: 6000 })
   await expect(stagedRow.locator('.git-panel__badge')).toHaveText('A')
+  await stagedRow.click({ button: 'right' })
+  await expect(contextMenuItem(mainWindow, 'Copy path')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Copy relative path')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeVisible()
+  await mainWindow.keyboard.press('Escape')
 
   // The Changes group lists the modified and untracked files.
   const changesGroup = gitPane.locator('.git-panel__group').filter({ hasText: /^Changes/ })

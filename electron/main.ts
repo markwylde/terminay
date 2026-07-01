@@ -26,6 +26,8 @@ import type {
   EditWindowState,
   FileExplorerEntry,
   FileSearchResult,
+  FolderSizeProgress,
+  FolderSizeResult,
   ProjectEditWindowDraft,
   ProjectEditWindowResult,
   TerminalRecordingStartMetadata,
@@ -616,10 +618,14 @@ async function readDirectoryEntries(dirPath: string): Promise<FileExplorerEntry[
         : linkStats
 
       return {
+        createdAtMs: Number.isFinite(stats.birthtimeMs) ? stats.birthtimeMs : null,
         isDirectory: stats.isDirectory(),
         isSymbolicLink: linkStats.isSymbolicLink(),
+        mode: stats.mode,
+        modifiedAtMs: Number.isFinite(stats.mtimeMs) ? stats.mtimeMs : null,
         name: entry.name,
         path: entryPath,
+        size: stats.size,
       } satisfies FileExplorerEntry
     }),
   )
@@ -633,6 +639,76 @@ async function readDirectoryEntries(dirPath: string): Promise<FileExplorerEntry[
   })
 
   return items
+}
+
+const folderSizeJobs = new Map<string, { cancelled: boolean }>()
+
+async function runFolderSizeJob(
+  sender: Electron.WebContents,
+  payload: { jobId: string; path: string },
+): Promise<FolderSizeResult> {
+  const job = { cancelled: false }
+  folderSizeJobs.set(payload.jobId, job)
+
+  let size = 0
+  let entryCount = 0
+  let lastProgressAt = Date.now()
+  const pendingDirectories = [resolveExplorerPath(payload.path)]
+
+  try {
+    while (pendingDirectories.length > 0) {
+      if (job.cancelled) {
+        return { cancelled: true, entryCount, jobId: payload.jobId, size }
+      }
+
+      const directoryPath = pendingDirectories.pop() as string
+      let entries: Dirent[]
+      try {
+        entries = await readdir(directoryPath, { withFileTypes: true })
+      } catch {
+        continue
+      }
+
+      for (const entry of entries) {
+        if (job.cancelled) {
+          return { cancelled: true, entryCount, jobId: payload.jobId, size }
+        }
+
+        entryCount += 1
+        const entryPath = path.join(directoryPath, entry.name)
+
+        // Never follow symlinks: avoids cycles and double counting.
+        if (entry.isSymbolicLink()) {
+          continue
+        }
+        if (entry.isDirectory()) {
+          pendingDirectories.push(entryPath)
+          continue
+        }
+
+        try {
+          const stats = await lstat(entryPath)
+          size += stats.size
+        } catch {
+          // unreadable entry: skip it
+        }
+      }
+
+      const now = Date.now()
+      if (now - lastProgressAt >= 100 && !sender.isDestroyed()) {
+        lastProgressAt = now
+        sender.send('folder-size:progress', {
+          entryCount,
+          jobId: payload.jobId,
+          size,
+        } satisfies FolderSizeProgress)
+      }
+    }
+
+    return { cancelled: false, entryCount, jobId: payload.jobId, size }
+  } finally {
+    folderSizeJobs.delete(payload.jobId)
+  }
 }
 
 const FILE_SEARCH_IGNORED_DIRECTORIES = new Set([
@@ -2442,6 +2518,17 @@ ipcMain.handle('fs:list-directory', async (_event, payload: { dirPath: string })
 
 ipcMain.handle('fs:search-files', async (_event, payload: { rootPath: string; query: string; limit?: number }) => {
   return searchFiles(payload.rootPath, payload.query, payload.limit)
+})
+
+ipcMain.handle('fs:calculate-folder-size', (event, payload: { jobId: string; path: string }) => {
+  return runFolderSizeJob(event.sender, payload)
+})
+
+ipcMain.handle('fs:cancel-folder-size', (_event, payload: { jobId: string }) => {
+  const job = folderSizeJobs.get(payload.jobId)
+  if (job) {
+    job.cancelled = true
+  }
 })
 
 ipcMain.handle('fs:get-git-statuses', async (_event, payload: { dirPath: string }) => {

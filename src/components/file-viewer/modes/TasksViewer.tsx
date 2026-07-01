@@ -6,11 +6,13 @@ import {
   NO_COLLAPSE,
   SectionNode,
   StatTile,
+  TASK_SORT_OPTIONS,
   type TaskFilter,
   TaskCallout,
   TaskHero,
   TaskRow,
   TaskToolbar,
+  type TaskSort,
   type TaskView,
   buildPredicate,
   cardMatchesQuery,
@@ -18,6 +20,8 @@ import {
   collectSectionIds,
   isComplete,
   sectionHasVisibleTasks,
+  sortTaskCards,
+  sortTaskSections,
 } from '../tasks/taskView'
 
 type TasksViewerProps = {
@@ -33,6 +37,7 @@ export function TasksViewer({ diff, text }: TasksViewerProps) {
   const [filter, setFilter] = useState<TaskFilter>('all')
   const [query, setQuery] = useState('')
   const [view, setView] = useState<TaskView>('list')
+  const [sort, setSort] = useState<TaskSort>('progress')
 
   const toggle = (id: string) => {
     setCollapsed((previous) => {
@@ -64,10 +69,13 @@ export function TasksViewer({ diff, text }: TasksViewerProps) {
   const activeCollapsed = isSearching ? NO_COLLAPSE : collapsed
   const predicate = buildPredicate(filter, query)
   const rootTasks = tree.root.tasks.filter(predicate)
-  const rootChildren = tree.root.children.filter((child) => sectionHasVisibleTasks(child, predicate))
+  const rootChildren = sortTaskSections(
+    tree.root.children.filter((child) => sectionHasVisibleTasks(child, predicate)),
+    sort,
+  )
   const hasVisible = rootTasks.length > 0 || rootChildren.length > 0
   const complete = isComplete(stats)
-  const visibleCards = cards.filter((card) => cardMatchesQuery(card, query))
+  const visibleCards = sortTaskCards(cards, sort).filter((card) => cardMatchesQuery(card, query))
   const isKanban = view === 'kanban'
 
   return (
@@ -103,6 +111,18 @@ export function TasksViewer({ diff, text }: TasksViewerProps) {
         onQueryChange={setQuery}
         showFilter={!isKanban}
       >
+        <select
+          className="file-tasks__sort"
+          value={sort}
+          onChange={(event) => setSort(event.target.value as TaskSort)}
+          aria-label="Sort task groups"
+        >
+          {TASK_SORT_OPTIONS.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+        </select>
         {!isKanban && allSectionIds.length > 0 ? (
           <button
             type="button"
@@ -148,6 +168,7 @@ export function TasksViewer({ diff, text }: TasksViewerProps) {
                 collapsed={activeCollapsed}
                 predicate={predicate}
                 onToggle={toggle}
+                sort={sort}
               />
             ))}
           </>

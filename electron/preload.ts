@@ -40,6 +40,8 @@ import type {
   QuickPushGenerateRequest,
   QuickPushPlan,
   FileExplorerWatchEvent,
+  FolderSizeProgress,
+  FolderSizeResult,
   RemoteAccessStatus,
   SettingsChangeMessage,
   TerminalActivityMessage,
@@ -63,6 +65,9 @@ type ElectronListener<T> = (_event: Electron.IpcRendererEvent, payload: T) => vo
 contextBridge.exposeInMainWorld('terminay', {
   getHomePath: () => ipcRenderer.invoke('fs:get-home-path') as Promise<string>,
   listDirectory: (dirPath: string) => ipcRenderer.invoke('fs:list-directory', { dirPath }) as Promise<FileExplorerEntry[]>,
+  calculateFolderSize: (payload: { jobId: string; path: string }) =>
+    ipcRenderer.invoke('fs:calculate-folder-size', payload) as Promise<FolderSizeResult>,
+  cancelFolderSize: (jobId: string) => ipcRenderer.invoke('fs:cancel-folder-size', { jobId }) as Promise<void>,
   searchFiles: (options: { rootPath: string; query: string; limit?: number }) =>
     ipcRenderer.invoke('fs:search-files', options) as Promise<FileSearchResult[]>,
   getFileExplorerGitStatuses: (dirPath: string) =>
@@ -236,6 +241,11 @@ contextBridge.exposeInMainWorld('terminay', {
     const wrapper: ElectronListener<FileExplorerWatchEvent> = (_event, message) => listener(message)
     ipcRenderer.on('file-explorer:watch-event', wrapper)
     return () => ipcRenderer.off('file-explorer:watch-event', wrapper)
+  },
+  onFolderSizeProgress: (listener: (message: FolderSizeProgress) => void) => {
+    const wrapper: ElectronListener<FolderSizeProgress> = (_event, message) => listener(message)
+    ipcRenderer.on('folder-size:progress', wrapper)
+    return () => ipcRenderer.off('folder-size:progress', wrapper)
   },
   onFileWatchEvent: (listener: (message: FileViewerWatchEvent) => void) => {
     const wrapper: ElectronListener<FileViewerWatchEvent> = (_event, message) => listener(message)

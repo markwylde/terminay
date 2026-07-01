@@ -6,11 +6,17 @@ import { type TaskItem, type TaskSection, type TaskStats, computeStats } from '.
 const inlineMarkdown = new MarkdownIt({ html: false, linkify: true, typographer: true })
 
 export type TaskFilter = 'all' | 'remaining' | 'done'
+export type TaskSort = 'progress' | 'name'
 
 export const FILTERS: { id: TaskFilter; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'remaining', label: 'Remaining' },
   { id: 'done', label: 'Done' },
+]
+
+export const TASK_SORT_OPTIONS: { id: TaskSort; label: string }[] = [
+  { id: 'progress', label: 'Progress' },
+  { id: 'name', label: 'Name' },
 ]
 
 /** A stable empty set used to force-expand everything while searching. */
@@ -31,6 +37,43 @@ export function percent(stats: TaskStats): number {
 
 export function isComplete(stats: TaskStats): boolean {
   return stats.total > 0 && stats.completed === stats.total
+}
+
+function compareNames(a: string, b: string): number {
+  return a.localeCompare(b, undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  })
+}
+
+function compareStatsByProgress(a: TaskStats, b: TaskStats): number {
+  const progressDelta = percent(b) - percent(a)
+  if (progressDelta !== 0) {
+    return progressDelta
+  }
+
+  return a.remaining - b.remaining
+}
+
+function sectionSortName(section: TaskSection): string {
+  return section.title ?? ''
+}
+
+export function compareSectionsByName(a: TaskSection, b: TaskSection): number {
+  return compareNames(sectionSortName(a), sectionSortName(b))
+}
+
+export function compareSectionsByProgress(a: TaskSection, b: TaskSection): number {
+  const statsDelta = compareStatsByProgress(computeStats(a), computeStats(b))
+  if (statsDelta !== 0) {
+    return statsDelta
+  }
+
+  return compareSectionsByName(a, b)
+}
+
+export function sortTaskSections(sections: TaskSection[], sort: TaskSort): TaskSection[] {
+  return [...sections].sort(sort === 'progress' ? compareSectionsByProgress : compareSectionsByName)
 }
 
 export function matchesFilter(task: TaskItem, filter: TaskFilter): boolean {
@@ -288,12 +331,12 @@ export function StatsBadge({ stats }: { stats: TaskStats }) {
         <span className="file-tasks__track-fill" style={{ width: `${percent(stats)}%` }} />
       </span>
       <span className={`file-tasks__badge-count${complete ? ' file-tasks__badge-count--complete' : ''}`}>
+        {stats.completed}/{stats.total}
         {complete ? (
           <span className="file-tasks__badge-check" aria-hidden="true">
             <CheckGlyph />
           </span>
         ) : null}
-        {stats.completed}/{stats.total}
       </span>
     </span>
   )
@@ -336,6 +379,7 @@ export function SectionNode({
   collapsed,
   predicate,
   onToggle,
+  sort,
   keyPrefix,
   documentPath,
   onOpenFile,
@@ -344,6 +388,7 @@ export function SectionNode({
   collapsed: ReadonlySet<string>
   predicate: TaskPredicate
   onToggle: (id: string) => void
+  sort: TaskSort
   keyPrefix?: string
   documentPath?: string
   onOpenFile?: (path: string, initialMode?: FileViewerMode) => void
@@ -356,7 +401,10 @@ export function SectionNode({
   const stats = computeStats(section)
   const isCollapsed = collapsed.has(sectionId)
   const visibleTasks = section.tasks.filter(predicate)
-  const childSections = section.children.filter((child) => sectionHasVisibleTasks(child, predicate))
+  const childSections = sortTaskSections(
+    section.children.filter((child) => sectionHasVisibleTasks(child, predicate)),
+    sort,
+  )
   const complete = isComplete(stats)
 
   return (
@@ -388,6 +436,7 @@ export function SectionNode({
               collapsed={collapsed}
               predicate={predicate}
               onToggle={onToggle}
+              sort={sort}
               keyPrefix={keyPrefix}
               documentPath={documentPath}
               onOpenFile={onOpenFile}
@@ -425,6 +474,44 @@ export type TaskCard = {
   completed: number
   total: number
   tasks: TaskItem[]
+}
+
+function cardSortName(card: TaskCard): string {
+  return [...card.crumbs, card.title].join(' / ')
+}
+
+export function compareTaskCardsByName(a: TaskCard, b: TaskCard): number {
+  const nameDelta = compareNames(cardSortName(a), cardSortName(b))
+  if (nameDelta !== 0) {
+    return nameDelta
+  }
+
+  return compareNames(a.fileName ?? '', b.fileName ?? '')
+}
+
+export function compareTaskCardsByProgress(a: TaskCard, b: TaskCard): number {
+  const aStats: TaskStats = {
+    total: a.total,
+    completed: a.completed,
+    remaining: a.total - a.completed,
+    completedInDiff: 0,
+  }
+  const bStats: TaskStats = {
+    total: b.total,
+    completed: b.completed,
+    remaining: b.total - b.completed,
+    completedInDiff: 0,
+  }
+  const statsDelta = compareStatsByProgress(aStats, bStats)
+  if (statsDelta !== 0) {
+    return statsDelta
+  }
+
+  return compareTaskCardsByName(a, b)
+}
+
+export function sortTaskCards(cards: TaskCard[], sort: TaskSort): TaskCard[] {
+  return [...cards].sort(sort === 'progress' ? compareTaskCardsByProgress : compareTaskCardsByName)
 }
 
 function shallowCount(section: TaskSection): { total: number; completed: number } {
