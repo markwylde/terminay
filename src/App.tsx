@@ -18,6 +18,7 @@ import {
 } from 'react';
 import {
 	ChevronDown,
+	Copy,
 	Eraser,
 	FileEdit,
 	FolderOpen,
@@ -63,6 +64,7 @@ import type {
 	TerminalTabMoveProject,
 } from './components/TerminalTab';
 import { TerminalTab } from './components/TerminalTab';
+import { FileTypeIcon } from './fileIcons';
 import { useMacroSettings } from './hooks/useMacroSettings';
 import { useTerminalSettings } from './hooks/useTerminalSettings';
 import { defaultTerminalSettings } from './terminalSettings';
@@ -73,6 +75,7 @@ import {
 	getCommandShortcutLabel,
 } from './keyboardShortcuts';
 import { renderMacroTemplate, tryRenderMacroTemplate } from './macroSettings';
+import { getPathRelativeToRoot } from './pathUtils';
 import { computeDropIndex } from './projectTabDrag';
 import {
 	isRemoteAccessPairingPinConfigured,
@@ -915,6 +918,8 @@ type FileExplorerTreeProps = {
 	onNewFile: (dirPath: string) => void;
 	onNewFolder: (dirPath: string) => void;
 	onOpenTerminal: (path: string) => void;
+	onCopyPath: (path: string) => void;
+	onCopyRelativePath: (path: string) => void;
 	rootPath: string;
 };
 
@@ -932,6 +937,8 @@ function FileExplorerTree({
 	onNewFile,
 	onNewFolder,
 	onOpenTerminal,
+	onCopyPath,
+	onCopyRelativePath,
 	rootPath,
 }: FileExplorerTreeProps) {
 	const activeDragRef = useRef(false);
@@ -1247,20 +1254,7 @@ function FileExplorerTree({
 												/>
 											</svg>
 										) : (
-											<svg
-												aria-hidden="true"
-												width="14"
-												height="14"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												strokeWidth="2"
-												strokeLinecap="round"
-												strokeLinejoin="round"
-											>
-												<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-												<polyline points="13 2 13 9 20 9" />
-											</svg>
+											<FileTypeIcon name={entry.name} />
 										)}
 									</span>
 									<span className="file-explorer-tree-name">{entry.name}</span>
@@ -1380,7 +1374,18 @@ function FileExplorerTree({
 									{ separator: true },
 								]),
 						{
-							label: 'Open terminal here',
+							label: 'Copy path',
+							icon: <Copy size={14} />,
+							onClick: () => onCopyPath(contextMenu.path),
+						},
+						{
+							label: 'Copy relative path',
+							icon: <Copy size={14} />,
+							onClick: () => onCopyRelativePath(contextMenu.path),
+						},
+						{ separator: true },
+						{
+							label: 'Open shell in folder',
 							icon: <Terminal size={14} />,
 							onClick: () => onOpenTerminal(contextMenu.path),
 						},
@@ -2729,6 +2734,19 @@ const ProjectWorkspace = forwardRef<
 		[loadDirectory, refreshGitStatuses, requestFileExplorerName],
 	);
 
+	const handleCopyPath = useCallback((path: string) => {
+		void window.terminay.writeClipboardText(path);
+	}, []);
+
+	const handleCopyRelativePath = useCallback(
+		(path: string) => {
+			void window.terminay.writeClipboardText(
+				getPathRelativeToRoot(path, project.rootFolder),
+			);
+		},
+		[project.rootFolder],
+	);
+
 	const handleOpenTerminalAt = useCallback(
 		async (path: string) => {
 			const api = dockviewApiRef.current;
@@ -2976,6 +2994,9 @@ const ProjectWorkspace = forwardRef<
 				onNewFile?: (dirPath: string) => void;
 				onNewFolder?: (dirPath: string) => void;
 				onOpenTerminal?: (path: string) => void;
+				onCopyPath?: (path: string) => void;
+				onCopyRelativePath?: (path: string) => void;
+				projectRootPath?: string;
 			}>({
 				component: 'folder',
 				id: panelId,
@@ -2989,7 +3010,10 @@ const ProjectWorkspace = forwardRef<
 					onNewFile: handleNewFile,
 					onNewFolder: handleNewFolder,
 					onOpenTerminal: handleOpenTerminalAt,
+					onCopyPath: handleCopyPath,
+					onCopyRelativePath: handleCopyRelativePath,
 					projectColor: project.color,
+					projectRootPath: project.rootFolder,
 				},
 				position: api.activePanel
 					? {
@@ -3007,11 +3031,14 @@ const ProjectWorkspace = forwardRef<
 		},
 		[
 			handleDelete,
+			handleCopyPath,
+			handleCopyRelativePath,
 			handleNewFile,
 			handleNewFolder,
 			handleOpenTerminalAt,
 			handleRename,
 			project.color,
+			project.rootFolder,
 			syncPanelFocusState,
 		],
 	);
@@ -6220,6 +6247,8 @@ const ProjectWorkspace = forwardRef<
 										onNewFile={handleNewFile}
 										onNewFolder={handleNewFolder}
 										onOpenTerminal={handleOpenTerminalAt}
+										onCopyPath={handleCopyPath}
+										onCopyRelativePath={handleCopyRelativePath}
 										rootPath={project.rootFolder}
 									/>
 								</SidebarPane>
@@ -6294,6 +6323,7 @@ const ProjectWorkspace = forwardRef<
 												status={gitPanelStatus}
 												viewMode={settings.sidebar.gitPanelViewMode}
 												onOpenEntry={handleOpenGitEntry}
+												onOpenTerminal={handleOpenTerminalAt}
 											/>
 										</SidebarPane>
 									}
@@ -6320,6 +6350,7 @@ const ProjectWorkspace = forwardRef<
 												onDeleteWorktree={handleDeleteWorktree}
 												onOpenEntry={handleOpenGitEntry}
 												onOpenTerminal={handleOpenTerminalAtWorktree}
+												onOpenTerminalAtPath={handleOpenTerminalAt}
 												onRenameWorktree={handleRenameWorktree}
 												onRevealWorktree={handleRevealWorktree}
 												onSwitchProjectRoot={handleSwitchProjectRootToWorktree}

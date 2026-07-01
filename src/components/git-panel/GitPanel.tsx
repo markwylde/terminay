@@ -1,25 +1,20 @@
-import {
-	ChevronDown,
-	FileMinus,
-	FilePen,
-	FilePlus,
-	FileQuestion,
-	FileSymlink,
-	Files,
-	FileWarning,
-} from 'lucide-react';
-import { type ComponentType, type JSX, useState } from 'react';
+import { ChevronDown, Copy, Terminal } from 'lucide-react';
+import { type JSX, type MouseEvent, useState } from 'react';
 import type {
 	GitChangeEntry,
 	GitFileState,
 	GitPanelStatus,
 } from '../../types/terminay';
+import { ContextMenu, type ContextMenuItem } from '../ContextMenu';
+import { FileTypeIcon } from '../../fileIcons';
+import { getParentPath, getPathRelativeToRoot } from '../../pathUtils';
 import './gitPanel.css';
 
 export type GitPanelProps = {
 	status: GitPanelStatus | null;
 	viewMode: 'list' | 'tree';
 	onOpenEntry: (entry: GitChangeEntry) => void;
+	onOpenTerminal?: (path: string) => void;
 };
 
 type TreeNode =
@@ -28,19 +23,6 @@ type TreeNode =
 
 const FOLDER_INDENT = 12;
 const ROW_BASE_INDENT = 12;
-
-const STATE_ICONS: Record<
-	GitFileState,
-	ComponentType<{ size?: number; 'aria-hidden'?: boolean }>
-> = {
-	added: FilePlus,
-	modified: FilePen,
-	deleted: FileMinus,
-	renamed: FileSymlink,
-	copied: Files,
-	untracked: FileQuestion,
-	conflicted: FileWarning,
-};
 
 const STATE_BADGES: Record<GitFileState, string> = {
 	added: 'A',
@@ -82,11 +64,12 @@ function getRowTitle(entry: GitChangeEntry): string {
 function GitPanelRow({
 	entry,
 	onOpenEntry,
+	onContextMenu,
 }: {
 	entry: GitChangeEntry;
 	onOpenEntry: (entry: GitChangeEntry) => void;
+	onContextMenu: (event: MouseEvent<HTMLElement>, path: string, relativePath: string, isDirectory: boolean) => void;
 }) {
-	const Icon = STATE_ICONS[entry.state];
 	const badge = STATE_BADGES[entry.state];
 	const { dir, name } = splitName(entry.relativePath);
 	const title = getRowTitle(entry);
@@ -96,13 +79,16 @@ function GitPanelRow({
 			type="button"
 			className="git-panel__row"
 			onClick={() => onOpenEntry(entry)}
+			onContextMenu={(event) =>
+				onContextMenu(event, entry.path, entry.relativePath, false)
+			}
 			title={title}
 		>
 			<span
 				className={`git-panel__icon git-panel__icon--${entry.state}`}
 				aria-hidden="true"
 			>
-				<Icon size={14} aria-hidden />
+				<FileTypeIcon name={name} />
 			</span>
 			<span className="git-panel__name">{name}</span>
 			{dir ? <span className="git-panel__dir">{dir}</span> : null}
@@ -170,6 +156,8 @@ function GitTreeNode({
 	collapsedFolders,
 	onToggleFolder,
 	onOpenEntry,
+	onContextMenu,
+	repoRoot,
 }: {
 	node: TreeNode;
 	depth: number;
@@ -177,10 +165,11 @@ function GitTreeNode({
 	collapsedFolders: Set<string>;
 	onToggleFolder: (key: string) => void;
 	onOpenEntry: (entry: GitChangeEntry) => void;
+	onContextMenu: (event: MouseEvent<HTMLElement>, path: string, relativePath: string, isDirectory: boolean) => void;
+	repoRoot: string;
 }): JSX.Element {
 	if (node.type === 'file') {
 		const { entry } = node;
-		const Icon = STATE_ICONS[entry.state];
 		const badge = STATE_BADGES[entry.state];
 		const title = getRowTitle(entry);
 
@@ -190,13 +179,16 @@ function GitTreeNode({
 				className="git-panel__row"
 				style={{ paddingLeft: depth * FOLDER_INDENT + ROW_BASE_INDENT }}
 				onClick={() => onOpenEntry(entry)}
+				onContextMenu={(event) =>
+					onContextMenu(event, entry.path, entry.relativePath, false)
+				}
 				title={title}
 			>
 				<span
 					className={`git-panel__icon git-panel__icon--${entry.state}`}
 					aria-hidden="true"
 				>
-					<Icon size={14} aria-hidden />
+					<FileTypeIcon name={node.name} />
 				</span>
 				<span className="git-panel__name">{node.name}</span>
 				<span className={`git-panel__badge git-panel__badge--${entry.state}`}>
@@ -208,6 +200,7 @@ function GitTreeNode({
 
 	const folderKey = `${groupKey}:${node.path}`;
 	const collapsed = collapsedFolders.has(folderKey);
+	const folderPath = `${repoRoot.replace(/[\\/]+$/, '')}/${node.path}`;
 
 	return (
 		<>
@@ -218,6 +211,7 @@ function GitTreeNode({
 				}`}
 				style={{ paddingLeft: depth * FOLDER_INDENT + ROW_BASE_INDENT }}
 				onClick={() => onToggleFolder(folderKey)}
+				onContextMenu={(event) => onContextMenu(event, folderPath, node.path, true)}
 			>
 				<span
 					className={`git-panel__folder-chevron${
@@ -244,6 +238,8 @@ function GitTreeNode({
 							collapsedFolders={collapsedFolders}
 							onToggleFolder={onToggleFolder}
 							onOpenEntry={onOpenEntry}
+							onContextMenu={onContextMenu}
+							repoRoot={repoRoot}
 						/>
 					))}
 		</>
@@ -251,10 +247,17 @@ function GitTreeNode({
 }
 
 export function GitPanel(props: GitPanelProps): JSX.Element {
-	const { status, viewMode, onOpenEntry } = props;
+	const { status, viewMode, onOpenEntry, onOpenTerminal } = props;
 	const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(
 		() => new Set(),
 	);
+	const [contextMenu, setContextMenu] = useState<{
+		x: number;
+		y: number;
+		path: string;
+		relativePath: string;
+		isDirectory: boolean;
+	} | null>(null);
 
 	const onToggleFolder = (key: string) => {
 		setCollapsedFolders((prev) => {
@@ -265,6 +268,23 @@ export function GitPanel(props: GitPanelProps): JSX.Element {
 				next.add(key);
 			}
 			return next;
+		});
+	};
+
+	const openContextMenu = (
+		event: MouseEvent<HTMLElement>,
+		path: string,
+		relativePath: string,
+		isDirectory: boolean,
+	) => {
+		event.preventDefault();
+		event.stopPropagation();
+		setContextMenu({
+			x: event.clientX,
+			y: event.clientY,
+			path,
+			relativePath,
+			isDirectory,
 		});
 	};
 
@@ -300,6 +320,7 @@ export function GitPanel(props: GitPanelProps): JSX.Element {
 		);
 	}
 
+	const repoRoot = status.repoRoot;
 	const mergeChanges: GitChangeEntry[] = [];
 	const stagedChanges: GitChangeEntry[] = [];
 	const changes: GitChangeEntry[] = [];
@@ -350,6 +371,8 @@ export function GitPanel(props: GitPanelProps): JSX.Element {
 									collapsedFolders={collapsedFolders}
 									onToggleFolder={onToggleFolder}
 									onOpenEntry={onOpenEntry}
+									onContextMenu={openContextMenu}
+									repoRoot={repoRoot}
 								/>
 							))
 						: group.entries.map((entry) => (
@@ -357,10 +380,59 @@ export function GitPanel(props: GitPanelProps): JSX.Element {
 									key={`${group.key}:${entry.relativePath}`}
 									entry={entry}
 									onOpenEntry={onOpenEntry}
+									onContextMenu={openContextMenu}
 								/>
 							))}
 				</section>
 			))}
+			{contextMenu ? (
+				<ContextMenu
+					x={contextMenu.x}
+					y={contextMenu.y}
+					onClose={() => setContextMenu(null)}
+					items={buildGitPathContextMenuItems({
+						isDirectory: contextMenu.isDirectory,
+						onOpenTerminal,
+						path: contextMenu.path,
+						relativePath: contextMenu.relativePath,
+						repoRoot,
+					})}
+				/>
+			) : null}
 		</div>
 	);
+}
+
+function buildGitPathContextMenuItems(options: {
+	isDirectory: boolean;
+	onOpenTerminal?: (path: string) => void;
+	path: string;
+	relativePath: string;
+	repoRoot: string;
+}): ContextMenuItem[] {
+	const { isDirectory, onOpenTerminal, path, relativePath, repoRoot } = options;
+	const terminalPath = isDirectory ? path : getParentPath(path);
+
+	return [
+		{
+			label: 'Copy path',
+			icon: <Copy size={14} />,
+			onClick: () => void window.terminay.writeClipboardText(path),
+		},
+		{
+			label: 'Copy relative path',
+			icon: <Copy size={14} />,
+			onClick: () =>
+				void window.terminay.writeClipboardText(
+					relativePath || getPathRelativeToRoot(path, repoRoot),
+				),
+		},
+		{ separator: true, label: '', onClick: () => {} },
+		{
+			label: 'Open shell in folder',
+			icon: <Terminal size={14} />,
+			disabled: !onOpenTerminal,
+			onClick: () => onOpenTerminal?.(terminalPath),
+		},
+	];
 }
