@@ -4,7 +4,9 @@ import {
 	type ReactNode,
 	useEffect,
 	useRef,
+	useState,
 } from 'react';
+import { useResizeObserver } from '../../hooks/useResizeObserver';
 import './sidebar.css';
 
 export type SidebarSplitProps = {
@@ -26,7 +28,7 @@ export type SidebarSplitProps = {
 	onTopHeightCommit?: (height: number) => void;
 };
 
-const SPLITTER_HEIGHT = 4;
+export const SIDEBAR_SPLITTER_HEIGHT = 4;
 
 /**
  * Approximate height of a single collapsed pane header row. Used as the hard
@@ -52,7 +54,9 @@ export function SidebarSplit(props: SidebarSplitProps): JSX.Element {
 		onTopHeightCommit,
 	} = props;
 
+	const [rootElement, setRootElement] = useState<HTMLDivElement | null>(null);
 	const rootRef = useRef<HTMLDivElement | null>(null);
+	const topPaneRef = useRef<HTMLDivElement | null>(null);
 	const dragStateRef = useRef<{
 		pointerId: number;
 		startHeight: number;
@@ -61,6 +65,10 @@ export function SidebarSplit(props: SidebarSplitProps): JSX.Element {
 	} | null>(null);
 
 	const bothExpanded = !topCollapsed && !bottomCollapsed;
+
+	// Watch the container so the applied height re-clamps whenever the sidebar
+	// (or window) resizes, keeping every header on screen at all times.
+	const { height: containerHeight } = useResizeObserver(rootElement);
 
 	useEffect(() => {
 		const handlePointerMove = (event: PointerEvent) => {
@@ -71,13 +79,16 @@ export function SidebarSplit(props: SidebarSplitProps): JSX.Element {
 
 			const rootElement = rootRef.current;
 			const containerHeight = rootElement
-				? rootElement.getBoundingClientRect().height - SPLITTER_HEIGHT
+				? rootElement.getBoundingClientRect().height - SIDEBAR_SPLITTER_HEIGHT
 				: state.startHeight;
 
 			const nextHeight = clamp(
 				state.startHeight + (event.clientY - state.startY),
 				minPaneHeight,
-				Math.max(minPaneHeight, containerHeight - minPaneHeight),
+				Math.max(
+					minPaneHeight,
+					containerHeight - Math.max(minPaneHeight, bottomMinHeight),
+				),
 			);
 			state.latestHeight = nextHeight;
 			onTopHeightChange(nextHeight);
@@ -100,17 +111,29 @@ export function SidebarSplit(props: SidebarSplitProps): JSX.Element {
 			window.removeEventListener('pointerup', handlePointerUp);
 			window.removeEventListener('pointercancel', handlePointerUp);
 		};
-	}, [minPaneHeight, onTopHeightChange, onTopHeightCommit]);
+	}, [bottomMinHeight, minPaneHeight, onTopHeightChange, onTopHeightCommit]);
+
+	// The stored height is the user's preference; the applied height is clamped
+	// against the live container size so the bottom section's header(s) can never
+	// be pushed off the page — during drags, window resizes, or restored state.
+	// The preference itself is left untouched, so growing the window back
+	// restores the pane to the size the user chose.
+	const effectiveTopHeight =
+		containerHeight > 0
+			? clamp(
+					topHeight,
+					SIDEBAR_HEADER_MIN_HEIGHT,
+					Math.max(
+						SIDEBAR_HEADER_MIN_HEIGHT,
+						containerHeight - SIDEBAR_SPLITTER_HEIGHT - bottomMinHeight,
+					),
+				)
+			: topHeight;
 
 	const topStyle: CSSProperties = bothExpanded
-		? // Allow the fixed-height top pane to shrink (flex-shrink: 1) when the
-			// container is too short, so it can never crush the bottom section's
-			// headers off the page. Its own header stays visible via minHeight.
-			{
-				flex: '0 1 auto',
-				height: `${topHeight}px`,
-				minHeight: `${SIDEBAR_HEADER_MIN_HEIGHT}px`,
-			}
+		? // A hard fixed height (no flex shrink) so dragging the splitter maps
+			// 1:1 to pixels; header visibility is guaranteed by the clamp above.
+			{ flex: '0 0 auto', height: `${effectiveTopHeight}px` }
 		: topCollapsed
 			? { flex: '0 0 auto' }
 			: { flex: '1 1 auto', minHeight: 0 };
@@ -120,10 +143,17 @@ export function SidebarSplit(props: SidebarSplitProps): JSX.Element {
 		: { flex: '1 1 auto', minHeight: `${bottomMinHeight}px` };
 
 	return (
-		<div className="sidebar-split" ref={rootRef}>
+		<div
+			className="sidebar-split"
+			ref={(element) => {
+				rootRef.current = element;
+				setRootElement(element);
+			}}
+		>
 			<div
 				className="sidebar-split__pane sidebar-split__pane--top"
 				style={topStyle}
+				ref={topPaneRef}
 			>
 				{top}
 			</div>
@@ -133,14 +163,20 @@ export function SidebarSplit(props: SidebarSplitProps): JSX.Element {
 					className="sidebar-split__splitter"
 					role="separator"
 					aria-orientation="horizontal"
-					aria-valuenow={Math.round(topHeight)}
+					aria-valuenow={Math.round(effectiveTopHeight)}
 					tabIndex={0}
 					onPointerDown={(event) => {
+						// Start from the rendered height, not the stored preference —
+						// they differ when the clamp is active, and starting from the
+						// stored value would make the splitter jump away from the mouse.
+						const renderedHeight =
+							topPaneRef.current?.getBoundingClientRect().height ??
+							effectiveTopHeight;
 						dragStateRef.current = {
 							pointerId: event.pointerId,
-							startHeight: topHeight,
+							startHeight: renderedHeight,
 							startY: event.clientY,
-							latestHeight: topHeight,
+							latestHeight: renderedHeight,
 						};
 						event.currentTarget.setPointerCapture(event.pointerId);
 					}}
