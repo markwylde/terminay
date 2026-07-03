@@ -51,6 +51,7 @@ import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
 import { SidebarPane } from './components/sidebar/SidebarPane';
 import {
 	SIDEBAR_HEADER_MIN_HEIGHT,
+	SIDEBAR_SPLITTER_HEIGHT,
 	SidebarSplit,
 } from './components/sidebar/SidebarSplit';
 import { McpInstallModal } from './components/McpInstallModal';
@@ -6194,8 +6195,11 @@ const ProjectWorkspace = forwardRef<
 							topHeight={project.sidebarExplorerHeight}
 							minPaneHeight={MIN_SIDEBAR_PANE_HEIGHT}
 							// The bottom is a nested Git + Worktrees split; reserve room for
-							// both of their headers so neither gets pushed off the page.
-							bottomMinHeight={SIDEBAR_HEADER_MIN_HEIGHT * 2}
+							// both of their headers (plus the splitter between them) so
+							// neither gets pushed off the page.
+							bottomMinHeight={
+								SIDEBAR_HEADER_MIN_HEIGHT * 2 + SIDEBAR_SPLITTER_HEIGHT
+							}
 							onTopHeightChange={(height) => {
 								onUpdateProject(project.id, {
 									sidebarExplorerHeight: height,
