@@ -259,7 +259,6 @@
 }
 
 .worktrees-panel__worktree-header {
-	all: unset;
 	box-sizing: border-box;
 	min-height: 48px;
 	display: flex;
@@ -277,7 +276,20 @@
 	background: rgba(255, 255, 255, 0.05);
 }
 
-.worktrees-panel__worktree-header:focus-visible {
+.worktrees-panel__worktree-toggle {
+	all: unset;
+	box-sizing: border-box;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 40px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	cursor: pointer;
+}
+
+.worktrees-panel__worktree-toggle:focus-visible,
+.worktrees-panel__push-button:focus-visible {
 	background: rgba(255, 255, 255, 0.08);
 	outline: 1px solid rgba(87, 183, 255, 0.5);
 	outline-offset: -1px;
@@ -356,12 +368,6 @@
 	padding-left: 22px;
 }
 
-.worktrees-panel__spacer {
-	flex: 1 1 auto;
-	min-width: 0;
-}
-
-.worktrees-panel__branch,
 .worktrees-panel__pill {
 	flex: 0 1 auto;
 	display: inline-flex;
@@ -383,6 +389,35 @@
 
 .worktrees-panel__pill {
 	color: #57b7ff;
+}
+
+.worktrees-panel__push-button {
+	all: unset;
+	box-sizing: border-box;
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 6px;
+	color: rgba(220, 226, 240, 0.64);
+	cursor: pointer;
+	transition:
+		background 100ms ease,
+		color 100ms ease;
+}
+
+.worktrees-panel__push-button:hover,
+.worktrees-panel__push-button--active {
+	background: rgba(87, 183, 255, 0.12);
+	color: #57b7ff;
+}
+
+.worktrees-panel__push-button:disabled {
+	background: transparent;
+	color: rgba(220, 226, 240, 0.24);
+	cursor: default;
 }
 
 .worktrees-panel__delta {
