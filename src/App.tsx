@@ -348,6 +348,12 @@ const GIT_PUSH_AGENT_ACTIONS: Array<{
 	},
 ];
 
+type GitPushMenuTarget = {
+	branch: string | null | undefined;
+	cwd: string;
+	worktreePath?: string;
+};
+
 function buildGitPushAgentPrompt(
 	template: string,
 	task: string,
@@ -1960,6 +1966,7 @@ const ProjectWorkspace = forwardRef<
 	const [worktreePanelStatus, setWorktreePanelStatus] =
 		useState<WorktreePanelStatus | null>(null);
 	const [gitPushMenuPosition, setGitPushMenuPosition] = useState<{
+		target?: GitPushMenuTarget;
 		x: number;
 		y: number;
 	} | null>(null);
@@ -3687,6 +3694,25 @@ const ProjectWorkspace = forwardRef<
 		[handleOpenTerminalAt],
 	);
 
+	const handleOpenWorktreePushMenu = useCallback(
+		(worktree: GitWorktreeStatus, anchor: { x: number; y: number }) => {
+			setGitPushMenuPosition((current) =>
+				current?.target?.worktreePath === worktree.path
+					? null
+					: {
+							x: anchor.x,
+							y: anchor.y,
+							target: {
+								branch: worktree.branch,
+								cwd: worktree.path,
+								worktreePath: worktree.path,
+							},
+						},
+			);
+		},
+		[],
+	);
+
 	const handleOpenGitEntry = useCallback(
 		(entry: GitChangeEntry) => {
 			// Untracked files have no diff to show; open them directly. Everything
@@ -4771,7 +4797,7 @@ const ProjectWorkspace = forwardRef<
 	);
 
 	const launchGitPushAgent = useCallback(
-		(action: GitPushAgentAction) => {
+		(action: GitPushAgentAction, target?: GitPushMenuTarget) => {
 			setGitPushMenuPosition(null);
 
 			const config = settings.gitPushAgent;
@@ -4799,7 +4825,7 @@ const ProjectWorkspace = forwardRef<
 			const prompt = buildGitPushAgentPrompt(
 				config.prompt,
 				actionMeta.task,
-				gitPanelStatus?.branch,
+				target ? target.branch : gitPanelStatus?.branch,
 			);
 			const command = buildGitPushAgentCommand(
 				config.provider,
@@ -4808,7 +4834,7 @@ const ProjectWorkspace = forwardRef<
 			);
 
 			void addTerminal({
-				cwd: project.rootFolder,
+				cwd: target?.cwd ?? project.rootFolder,
 				title: 'Push agent',
 				initialInput: command,
 			});
@@ -4822,7 +4848,7 @@ const ProjectWorkspace = forwardRef<
 	);
 
 	const launchQuickPush = useCallback(
-		async (action: GitPushAgentAction) => {
+		async (action: GitPushAgentAction, target?: GitPushMenuTarget) => {
 			setGitPushMenuPosition(null);
 
 			if (settings.gitPushAgent.provider === 'disabled') {
@@ -4835,18 +4861,20 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-			// Operate on the active terminal's working directory so Quick Push
-			// targets the branch the user is actually on (e.g. a worktree),
-			// falling back to the project root.
-			let cwd = project.rootFolder;
-			const activeSessionId = getActiveSessionId();
-			if (activeSessionId) {
-				try {
-					cwd =
-						(await window.terminay.getTerminalCwd(activeSessionId)) ??
-						project.rootFolder;
-				} catch {
-					cwd = project.rootFolder;
+			let cwd = target?.cwd ?? project.rootFolder;
+			if (!target) {
+				// Operate on the active terminal's working directory so Quick Push
+				// targets the branch the user is actually on (e.g. a worktree),
+				// falling back to the project root.
+				const activeSessionId = getActiveSessionId();
+				if (activeSessionId) {
+					try {
+						cwd =
+							(await window.terminay.getTerminalCwd(activeSessionId)) ??
+							project.rootFolder;
+					} catch {
+						cwd = project.rootFolder;
+					}
 				}
 			}
 
@@ -7068,7 +7096,8 @@ const ProjectWorkspace = forwardRef<
 												<button
 													type="button"
 													className={`sidebar-pane__action-button${
-														gitPushMenuPosition
+														gitPushMenuPosition &&
+														!gitPushMenuPosition.target
 															? ' sidebar-pane__action-button--active'
 															: ''
 													}`}
@@ -7076,7 +7105,7 @@ const ProjectWorkspace = forwardRef<
 														const rect =
 															event.currentTarget.getBoundingClientRect();
 														setGitPushMenuPosition((current) =>
-															current
+															current && !current.target
 																? null
 																: {
 																		x: rect.left,
@@ -7086,7 +7115,9 @@ const ProjectWorkspace = forwardRef<
 													}}
 													aria-label="Commit and push with an AI agent"
 													aria-haspopup="menu"
-													aria-expanded={!!gitPushMenuPosition}
+													aria-expanded={
+														!!gitPushMenuPosition && !gitPushMenuPosition.target
+													}
 													title="Commit & push with AI"
 												>
 													<Upload size={14} aria-hidden="true" />
@@ -7119,10 +7150,14 @@ const ProjectWorkspace = forwardRef<
 											count={worktreePanelStatus?.worktrees.length}
 										>
 											<WorktreesPanel
+												activePushMenuWorktreePath={
+													gitPushMenuPosition?.target?.worktreePath ?? null
+												}
 												status={worktreePanelStatus}
 												viewMode={settings.sidebar.gitPanelViewMode}
 												onDeleteWorktree={handleDeleteWorktree}
 												onOpenEntry={handleOpenGitEntry}
+												onOpenPushMenu={handleOpenWorktreePushMenu}
 												onOpenTerminal={handleOpenTerminalAtWorktree}
 												onOpenTerminalAtPath={handleOpenTerminalAt}
 												onRenameWorktree={handleRenameWorktree}
@@ -7152,11 +7187,19 @@ const ProjectWorkspace = forwardRef<
 										) : (
 											<GitPullRequestArrow size={14} aria-hidden="true" />
 										),
-									onClick: () => launchGitPushAgent(entry.action),
+									onClick: () =>
+										launchGitPushAgent(
+											entry.action,
+											gitPushMenuPosition.target,
+										),
 									trailingAction: {
 										icon: <Zap size={14} aria-hidden="true" />,
 										label: `${entry.label} (quick mode)`,
-										onClick: () => void launchQuickPush(entry.action),
+										onClick: () =>
+											void launchQuickPush(
+												entry.action,
+												gitPushMenuPosition.target,
+											),
 									},
 								}))}
 							/>
