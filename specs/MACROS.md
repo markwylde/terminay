@@ -16,6 +16,8 @@ Type steps support Eta templates. The renderer is configured for plain terminal 
 
 Template rendering is centralized in `src/macroSettings.ts` through `renderMacroTemplate(...)`. Runtime execution in `src/App.tsx` uses that renderer for each `type` step before writing to the terminal.
 
+Wait steps store user-facing durations in seconds through `durationSeconds`. Runtime execution renders the duration and converts it to milliseconds only when scheduling the delay or inactivity timer. Older saved `durationMs` values are migrated to seconds during normalization.
+
 ## Fields
 
 Macro fields are stored on the macro definition and keyed by `field.name`. Supported field types are:
@@ -35,7 +37,7 @@ When the user runs a macro, `src/App.tsx` opens a parameter modal if the macro h
 - renders a live preview with `tryRenderMacroTemplate(...)`
 - executes the macro only after the user submits the form
 
-`Sync from Steps` detects both legacy `{{Field}}` placeholders and common Eta identifiers inside template tags. This detection is a convenience for creating fields; explicit fields are preserved on save even when they are not currently detected in a step.
+`Sync from Steps` detects both legacy `{{Field}}` placeholders and common Eta identifiers inside template tags. For wait durations, it also detects single-brace fields such as `{Delay}`. This detection is a convenience for creating fields; explicit fields are preserved on save even when they are not currently detected in a step.
 
 ## Select Fields
 

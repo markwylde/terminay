@@ -75,7 +75,11 @@ import {
 	getCommandShortcut,
 	getCommandShortcutLabel,
 } from './keyboardShortcuts';
-import { renderMacroTemplate, tryRenderMacroTemplate } from './macroSettings';
+import {
+	renderMacroDurationMs,
+	renderMacroTemplate,
+	tryRenderMacroTemplate,
+} from './macroSettings';
 import { getPathRelativeToRoot } from './pathUtils';
 import { computeDropIndex } from './projectTabDrag';
 import {
@@ -1495,6 +1499,15 @@ function isAbortError(error: unknown): boolean {
 	return error instanceof Error && error.name === 'AbortError';
 }
 
+function formatMacroDurationSeconds(durationSeconds: string): string {
+	const numericDurationSeconds = Number(durationSeconds);
+	if (durationSeconds.trim() && Number.isFinite(numericDurationSeconds)) {
+		return String(Math.max(0, Math.round(numericDurationSeconds * 10) / 10));
+	}
+
+	return durationSeconds.trim() || '0';
+}
+
 function describeMacroStep(step: MacroDefinition['steps'][number]): string {
 	switch (step.type) {
 		case 'type':
@@ -1507,9 +1520,9 @@ function describeMacroStep(step: MacroDefinition['steps'][number]): string {
 		case 'secret':
 			return 'Insert secret';
 		case 'wait_time':
-			return `Wait ${Math.max(0, Math.round(step.durationMs / 100) / 10)}s`;
+			return `Wait ${formatMacroDurationSeconds(step.durationSeconds)}s`;
 		case 'wait_inactivity':
-			return `Wait for inactivity ${Math.max(0, Math.round(step.durationMs / 100) / 10)}s`;
+			return `Wait for inactivity ${formatMacroDurationSeconds(step.durationSeconds)}s`;
 		case 'select_line':
 			return 'Select current line';
 		case 'paste':
@@ -3219,12 +3232,15 @@ const ProjectWorkspace = forwardRef<
 							}
 							break;
 						case 'wait_time':
-							await waitForDelay(step.durationMs, abortController.signal);
+							await waitForDelay(
+								renderMacroDurationMs(step.durationSeconds, values),
+								abortController.signal,
+							);
 							break;
 						case 'wait_inactivity':
 							await waitForSessionInactivity(
 								sessionId,
-								step.durationMs,
+								renderMacroDurationMs(step.durationSeconds, values),
 								abortController.signal,
 							);
 							break;
