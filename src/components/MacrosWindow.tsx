@@ -52,9 +52,9 @@ function createEmptyStep(type: MacroStep['type']): MacroStep {
     case 'secret':
       return { id, type, secretId: '' }
     case 'wait_time':
-      return { id, type, durationMs: 1000 }
+      return { id, type, durationSeconds: '1' }
     case 'wait_inactivity':
-      return { id, type, durationMs: 3000 }
+      return { id, type, durationSeconds: '3' }
     case 'select_line':
     case 'paste':
       return { id, type }
@@ -446,12 +446,13 @@ function StepItem({
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
                 <input
                   className="settings-input-text"
-                  type="number"
-                  value={step.durationMs}
-                  style={{ width: 100 }}
-                  onChange={(e) => onUpdateStep(s => ({ ...s, durationMs: parseInt(e.target.value, 10) || 0 } as MacroStep))}
+                  type="text"
+                  value={step.durationSeconds}
+                  style={{ width: 160 }}
+                  onChange={(e) => onUpdateStep(s => ({ ...s, durationSeconds: e.target.value } as MacroStep))}
+                  placeholder="3 or {Delay}"
                 />
-                <span style={{ fontSize: 12, color: 'var(--settings-text-muted)' }}>ms</span>
+                <span style={{ fontSize: 12, color: 'var(--settings-text-muted)' }}>seconds</span>
               </div>
             )}
 

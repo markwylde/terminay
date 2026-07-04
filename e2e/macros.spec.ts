@@ -72,6 +72,38 @@ test('saves select field options after raw textarea editing', async ({ appHarnes
   ])
 })
 
+test('saves parameterized wait steps in seconds', async ({ appHarness, mainWindow }) => {
+  const macrosWindow = await appHarness.openMacrosWindow(mainWindow)
+
+  await macrosWindow.getByRole('button', { name: 'New Macro' }).click()
+  await macrosWindow.getByPlaceholder('Macro Title').fill('Parameterized Wait Macro')
+  await macrosWindow
+    .locator('select')
+    .filter({ has: macrosWindow.locator('option', { hasText: '+ Add Step...' }) })
+    .selectOption('wait_time')
+
+  await macrosWindow.getByPlaceholder('3 or {Delay}').fill('{Delay}')
+  await expect(macrosWindow.getByText('seconds')).toBeVisible()
+
+  await macrosWindow.getByRole('button', { name: 'Sync from Steps' }).click()
+  await expect(macrosWindow.getByText('Detected:')).toBeVisible()
+  await expect(macrosWindow.getByText('Delay')).toBeVisible()
+
+  await macrosWindow.getByRole('button', { name: 'Save Changes' }).click()
+
+  const savedMacro = await macrosWindow.evaluate(async () => {
+    const macros = await window.terminay.getMacros()
+    return macros.find((macro) => macro.title === 'Parameterized Wait Macro') ?? null
+  })
+
+  expect(savedMacro?.steps[0]).toMatchObject({
+    type: 'wait_time',
+    durationSeconds: '{Delay}',
+  })
+  expect('durationMs' in (savedMacro?.steps[0] ?? {})).toBe(false)
+  expect(savedMacro?.fields.some((field) => field.name === 'Delay')).toBe(true)
+})
+
 test('clears finished macro runs from the queue', async ({ appHarness, mainWindow }) => {
   await appHarness.openMacroLauncher(mainWindow)
   await mainWindow.getByRole('button', { name: 'Create a pull request' }).click()

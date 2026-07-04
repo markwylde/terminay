@@ -10,6 +10,7 @@ import type {
 } from './types/macros'
 
 const placeholderPattern = /{{\s*([^{}]+?)\s*}}/g
+const singleBracePlaceholderPattern = /{\s*([^{}]+?)\s*}/g
 const etaTagPattern = /<%[-_]?\s*[~=]?([\s\S]*?)\s*[-_]?%>/g
 const etaRenderer = new Eta({ autoEscape: false, useWith: true })
 const jsKeywords = new Set([
@@ -79,7 +80,7 @@ export const defaultMacros: MacroDefinition[] = [
     steps: [
       { id: 'step-1', type: 'type', content: 'sudo apt-get update' },
       { id: 'step-2', type: 'key', key: 'Enter' },
-      { id: 'step-3', type: 'wait_inactivity', durationMs: 3000 },
+      { id: 'step-3', type: 'wait_inactivity', durationSeconds: '3' },
       { id: 'step-4', type: 'type', content: 'sudo apt-get upgrade -y' },
       { id: 'step-5', type: 'key', key: 'Enter' },
     ],
@@ -147,6 +148,31 @@ function normalizeBoolean(value: unknown, fallback = false): boolean {
 
 function normalizeNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(value) ? Number(value) : fallback
+}
+
+function formatSeconds(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)))
+}
+
+function normalizeDurationSeconds(record: Record<string, unknown>, fallbackSeconds: string): string {
+  if (typeof record.durationSeconds === 'string') {
+    return record.durationSeconds
+  }
+
+  if (typeof record.durationSeconds === 'number' && Number.isFinite(record.durationSeconds)) {
+    return formatSeconds(record.durationSeconds)
+  }
+
+  if (typeof record.durationMs === 'number' && Number.isFinite(record.durationMs)) {
+    return formatSeconds(record.durationMs / 1000)
+  }
+
+  if (typeof record.durationMs === 'string') {
+    const parsedDurationMs = Number(record.durationMs)
+    return Number.isFinite(parsedDurationMs) ? formatSeconds(parsedDurationMs / 1000) : record.durationMs
+  }
+
+  return fallbackSeconds
 }
 
 function normalizeFieldType(value: unknown): MacroFieldType {
@@ -253,9 +279,9 @@ function normalizeStep(input: unknown, index: number): MacroStep {
     case 'secret':
       return { id, type, secretId: normalizeString(record.secretId) }
     case 'wait_time':
-      return { id, type, durationMs: normalizeNumber(record.durationMs, 1000) }
+      return { id, type, durationSeconds: normalizeDurationSeconds(record, '1') }
     case 'wait_inactivity':
-      return { id, type, durationMs: normalizeNumber(record.durationMs, 3000) }
+      return { id, type, durationSeconds: normalizeDurationSeconds(record, '3') }
     case 'select_line':
     case 'paste':
       return { id, type }
@@ -278,6 +304,31 @@ function extractTemplatePlaceholders(template: string): string[] {
   }
 
   return placeholders
+}
+
+function extractSingleBracePlaceholders(template: string): string[] {
+  const seen = new Set<string>()
+  const placeholders: string[] = []
+
+  for (const match of template.matchAll(singleBracePlaceholderPattern)) {
+    if (!isSingleBracePlaceholderMatch(template, match[0], match.index ?? 0)) {
+      continue
+    }
+
+    const placeholder = match[1]?.trim()
+    if (!placeholder || seen.has(placeholder)) {
+      continue
+    }
+
+    seen.add(placeholder)
+    placeholders.push(placeholder)
+  }
+
+  return placeholders
+}
+
+function isSingleBracePlaceholderMatch(template: string, match: string, index: number): boolean {
+  return template[index - 1] !== '{' && template[index + match.length] !== '}'
 }
 
 function stripJavaScriptLiterals(source: string): string {
@@ -352,18 +403,42 @@ function extractMacroPlaceholders(template: string): string[] {
   return placeholders
 }
 
+function extractDurationPlaceholders(template: string): string[] {
+  const seen = new Set<string>()
+  const placeholders: string[] = []
+
+  for (const placeholder of [...extractMacroPlaceholders(template), ...extractSingleBracePlaceholders(template)]) {
+    if (!seen.has(placeholder)) {
+      seen.add(placeholder)
+      placeholders.push(placeholder)
+    }
+  }
+
+  return placeholders
+}
+
+function extractStepPlaceholders(step: MacroStep): string[] {
+  switch (step.type) {
+    case 'type':
+      return extractMacroPlaceholders(step.content)
+    case 'wait_time':
+    case 'wait_inactivity':
+      return extractDurationPlaceholders(step.durationSeconds)
+    default:
+      return []
+  }
+}
+
 export function extractAllMacroPlaceholders(macro: MacroDefinition): string[] {
   const seen = new Set<string>()
   const placeholders: string[] = []
 
   for (const step of macro.steps) {
-    if (step.type === 'type') {
-      const stepPlaceholders = extractMacroPlaceholders(step.content)
-      for (const p of stepPlaceholders) {
-        if (!seen.has(p)) {
-          seen.add(p)
-          placeholders.push(p)
-        }
+    const stepPlaceholders = extractStepPlaceholders(step)
+    for (const p of stepPlaceholders) {
+      if (!seen.has(p)) {
+        seen.add(p)
+        placeholders.push(p)
       }
     }
   }
@@ -390,6 +465,41 @@ export function renderMacroTemplate(template: string, values: Record<string, Mac
   })
 }
 
+function renderSingleBraceMacroTemplate(template: string, values: Record<string, MacroFieldValue>): string {
+  return template.replace(singleBracePlaceholderPattern, (match: string, token: string, index: number) => {
+    if (!isSingleBracePlaceholderMatch(template, match, index)) {
+      return match
+    }
+
+    const key = token.trim()
+    const value = values[key]
+
+    if (typeof value === 'boolean') {
+      return value ? 'true' : 'false'
+    }
+
+    if (typeof value === 'number') {
+      return `${value}`
+    }
+
+    return typeof value === 'string' ? value : ''
+  })
+}
+
+export function renderMacroDurationMs(
+  durationSeconds: string,
+  values: Record<string, MacroFieldValue>,
+): number {
+  const renderedSeconds = renderSingleBraceMacroTemplate(renderMacroTemplate(durationSeconds, values), values).trim()
+  const seconds = Number(renderedSeconds)
+
+  if (!renderedSeconds || !Number.isFinite(seconds) || seconds < 0) {
+    throw new Error(`Wait duration "${renderedSeconds || durationSeconds}" must resolve to a non-negative number of seconds.`)
+  }
+
+  return Math.round(seconds * 1000)
+}
+
 export function tryRenderMacroTemplate(template: string, values: Record<string, MacroFieldValue>): string {
   try {
     return renderMacroTemplate(template, values)
@@ -404,13 +514,11 @@ export function mergeFieldsWithSteps(steps: MacroStep[], fields: MacroFieldDefin
   const seen = new Set<string>()
 
   for (const step of steps) {
-    if (step.type === 'type') {
-      const stepPlaceholders = extractMacroPlaceholders(step.content)
-      for (const p of stepPlaceholders) {
-        if (!seen.has(p)) {
-          seen.add(p)
-          placeholders.push(p)
-        }
+    const stepPlaceholders = extractStepPlaceholders(step)
+    for (const p of stepPlaceholders) {
+      if (!seen.has(p)) {
+        seen.add(p)
+        placeholders.push(p)
       }
     }
   }
@@ -454,9 +562,9 @@ function deriveLegacyTemplate(steps: MacroStep[]): Pick<MacroDefinition, 'submit
           case 'secret':
             return `[secret:${step.secretId}]`
           case 'wait_time':
-            return `[wait:${step.durationMs}]`
+            return `[wait:${step.durationSeconds}s]`
           case 'wait_inactivity':
-            return `[wait-inactive:${step.durationMs}]`
+            return `[wait-inactive:${step.durationSeconds}s]`
           case 'select_line':
             return '[select-line]'
           case 'paste':
