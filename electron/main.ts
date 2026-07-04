@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, clipboard, ipcMain, nativeImage, screen, shell, webContents, safeStorage } from 'electron'
+import { app, BrowserWindow, Menu, clipboard, ipcMain, nativeImage, screen, shell, systemPreferences, webContents, safeStorage } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -12,6 +12,8 @@ import { findCommandForKeyboardEvent, getCommandShortcut, isReservedSystemAccele
 import { distanceToRect, pointInRect } from '../src/projectTabDrag'
 import { registerAiTabMetadataIpcHandlers } from './aiTabMetadata/ipc'
 import { AiTabMetadataService, warmAiTabMetadataProviderEnv } from './aiTabMetadata/service'
+import { registerDictationIpcHandlers } from './dictation/ipc'
+import { DictationService } from './dictation/service'
 import { registerQuickPushIpcHandlers } from './quickPush/ipc'
 import { QuickPushService } from './quickPush/service'
 import { TerminalRecordingService } from './recording/service'
@@ -59,6 +61,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const execFileAsync = promisify(execFile)
 const RELEASES_LATEST_URL = 'https://github.com/markwylde/terminay/releases/latest'
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
+const DICTATION_OPENAI_SECRET_ID = 'dictation-openai-api-key'
+const DICTATION_OPENAI_SECRET_NAME = 'OpenAI API key'
 
 process.env.APP_ROOT = path.join(__dirname, '..')
 app.setName('Terminay')
@@ -241,6 +245,9 @@ const fileWatchService = new FileWatchService(fileBufferService)
 const fileExplorerWatchService = new FileExplorerWatchService(() => app.getPath('home'))
 const gitDiffService = new GitDiffService(fileBufferService)
 const aiTabMetadataService = new AiTabMetadataService(app.getPath('home'))
+const dictationService = new DictationService({
+  apiKeyProvider: () => readDictationOpenAiKey(),
+})
 const quickPushService = new QuickPushService(aiTabMetadataService)
 warmAiTabMetadataProviderEnv()
 let cachedAppUpdateStatus: AppUpdateStatus | null = null
@@ -548,7 +555,107 @@ function readSecrets(): SecretRecord[] {
 }
 
 function writeSecrets(secrets: SecretRecord[]): void {
+  mkdirSync(path.dirname(getSecretsPath()), { recursive: true })
   writeFileSync(getSecretsPath(), JSON.stringify(secrets, null, 2))
+}
+
+function getDictationOpenAiSecret(secrets = readSecrets()): SecretRecord | null {
+  return secrets.find((secret) =>
+    secret.id === DICTATION_OPENAI_SECRET_ID ||
+    secret.name === DICTATION_OPENAI_SECRET_NAME
+  ) ?? null
+}
+
+function getDictationOpenAiKeyStatus(): { configured: boolean } {
+  return { configured: getDictationOpenAiSecret() !== null }
+}
+
+function getDictationMicrophonePermissionStatus():
+  | 'not-determined'
+  | 'granted'
+  | 'denied'
+  | 'restricted'
+  | 'unknown' {
+  if (process.platform !== 'darwin') {
+    return 'granted'
+  }
+
+  return systemPreferences.getMediaAccessStatus('microphone')
+}
+
+async function requestDictationMicrophonePermission(): Promise<
+  'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'
+> {
+  if (process.platform !== 'darwin') {
+    return 'granted'
+  }
+
+  const currentStatus = systemPreferences.getMediaAccessStatus('microphone')
+  if (currentStatus === 'granted' || currentStatus === 'denied' || currentStatus === 'restricted') {
+    return currentStatus
+  }
+
+  const granted = await systemPreferences.askForMediaAccess('microphone')
+  return granted ? 'granted' : systemPreferences.getMediaAccessStatus('microphone')
+}
+
+function saveDictationOpenAiKey(apiKey: string): { configured: boolean } {
+  const trimmedApiKey = apiKey.trim()
+  if (!trimmedApiKey) {
+    throw new Error('OpenAI API key is required.')
+  }
+
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Encryption is not available on this system.')
+  }
+
+  const secrets = readSecrets()
+  const encryptedValue = safeStorage.encryptString(trimmedApiKey).toString('base64')
+  const existingIndex = secrets.findIndex((secret) =>
+    secret.id === DICTATION_OPENAI_SECRET_ID ||
+    secret.name === DICTATION_OPENAI_SECRET_NAME
+  )
+  const record: SecretRecord = {
+    id: DICTATION_OPENAI_SECRET_ID,
+    name: DICTATION_OPENAI_SECRET_NAME,
+    encryptedValue,
+  }
+
+  if (existingIndex === -1) {
+    secrets.push(record)
+  } else {
+    secrets[existingIndex] = record
+  }
+
+  writeSecrets(secrets)
+  return { configured: true }
+}
+
+function clearDictationOpenAiKey(): boolean {
+  const secrets = readSecrets()
+  const nextSecrets = secrets.filter((secret) =>
+    secret.id !== DICTATION_OPENAI_SECRET_ID &&
+    secret.name !== DICTATION_OPENAI_SECRET_NAME
+  )
+  if (nextSecrets.length === secrets.length) {
+    return false
+  }
+
+  writeSecrets(nextSecrets)
+  return true
+}
+
+function readDictationOpenAiKey(): string | null {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Encryption is not available on this system.')
+  }
+
+  const secret = getDictationOpenAiSecret()
+  if (!secret) {
+    return null
+  }
+
+  return safeStorage.decryptString(Buffer.from(secret.encryptedValue, 'base64'))
 }
 
 function shellEscapePath(pathValue: string): string {
@@ -1875,6 +1982,11 @@ function createAppMenu(settings: TerminalSettings = readTerminalSettings()): voi
           click: () => sendCommandToFocusedWindow('open-command-bar'),
         },
         {
+          label: 'Start Dictation',
+          accelerator: getMenuShortcut(settings, 'start-dictation'),
+          click: () => sendCommandToFocusedWindow('start-dictation'),
+        },
+        {
           label: 'Clear Terminal',
           accelerator: getMenuShortcut(settings, 'clear-terminal'),
           click: () => sendCommandToFocusedWindow('clear-terminal'),
@@ -3190,7 +3302,12 @@ if (process.env.TERMINAY_TEST === '1') {
 
 ipcMain.handle('secrets:get', () => {
   const secrets = readSecrets()
-  return secrets.map((s) => ({ id: s.id, name: s.name }))
+  return secrets
+    .filter((secret) =>
+      secret.id !== DICTATION_OPENAI_SECRET_ID &&
+      secret.name !== DICTATION_OPENAI_SECRET_NAME
+    )
+    .map((s) => ({ id: s.id, name: s.name }))
 })
 
 ipcMain.handle('secrets:save', (_event, { name, value }) => {
@@ -3216,6 +3333,9 @@ ipcMain.handle('secrets:delete', (_event, id) => {
 })
 
 ipcMain.handle('secrets:get-decrypted', (_event, id) => {
+  if (id === DICTATION_OPENAI_SECRET_ID) {
+    throw new Error('Secret not found.')
+  }
   if (!safeStorage.isEncryptionAvailable()) {
     throw new Error('Encryption is not available on this system.')
   }
@@ -3295,6 +3415,16 @@ registerFileViewerIpcHandlers({
 registerAiTabMetadataIpcHandlers({
   aiTabMetadataService,
   ipcMain,
+})
+
+registerDictationIpcHandlers({
+  clearOpenAiKey: clearDictationOpenAiKey,
+  dictationService,
+  getMicrophonePermissionStatus: getDictationMicrophonePermissionStatus,
+  getOpenAiKeyStatus: getDictationOpenAiKeyStatus,
+  ipcMain,
+  requestMicrophonePermission: requestDictationMicrophonePermission,
+  saveOpenAiKey: saveDictationOpenAiKey,
 })
 
 registerQuickPushIpcHandlers({

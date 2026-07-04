@@ -76,6 +76,12 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'open command bar launcher palette search commands macros',
   },
   {
+    command: 'start-dictation',
+    title: 'Start dictation',
+    description: 'Record speech and type the transcript into the active terminal.',
+    keywords: 'dictation voice speech microphone record audio transcribe terminal input',
+  },
+  {
     command: 'toggle-file-explorer-sidebar',
     title: 'Toggle file explorer sidebar',
     description: 'Show or hide the file explorer sidebar for this project.',
@@ -100,6 +106,7 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'popout-active': 'CmdOrCtrl+Shift+P',
   'close-active': 'CmdOrCtrl+W',
   'open-command-bar': 'CmdOrCtrl+L',
+  'start-dictation': 'CmdOrCtrl+Shift+D',
   'toggle-file-explorer-sidebar': 'CmdOrCtrl+O',
   'set-project-root-folder-to-working-directory': 'CmdOrCtrl+R',
 }
