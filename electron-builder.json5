@@ -19,6 +19,12 @@
   ],
   "mac": {
     "icon": "public/icon.icns",
+    "hardenedRuntime": true,
+    "entitlements": "build/entitlements.mac.plist",
+    "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+    "extendInfo": {
+      "NSMicrophoneUsageDescription": "Terminay uses the microphone to record dictation and transcribe it into the active terminal."
+    },
     "target": [
       "dmg"
     ],
