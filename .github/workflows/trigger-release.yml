@@ -163,6 +163,20 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
         run: ${{ matrix.script }}
 
+      - name: Verify macOS microphone entitlement
+        if: matrix.os == 'macos-latest'
+        run: |
+          APP_BUNDLE="$(find release -name 'Terminay.app' -type d | head -n 1)"
+          if [ -z "$APP_BUNDLE" ]; then
+            echo "Terminay.app was not found in release output."
+            exit 1
+          fi
+
+          ENTITLEMENTS_PLIST="$RUNNER_TEMP/terminay-entitlements.plist"
+          codesign -d --entitlements :- "$APP_BUNDLE" > "$ENTITLEMENTS_PLIST" 2>/dev/null
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$ENTITLEMENTS_PLIST" | grep -q true
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$APP_BUNDLE/Contents/Info.plist" >/dev/null
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
