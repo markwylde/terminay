@@ -28,12 +28,13 @@ import {
 } from '../remotePairingPin'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { FileViewerDefaultMode, TerminalSettings } from '../types/settings'
-import type { AppCommand } from '../types/terminay'
+import type { AppCommand, DictationMicrophonePermissionStatus } from '../types/terminay'
 import type { RemoteAccessStatus } from '../types/terminay'
 import '../settings.css'
 
 type CategoryId = (typeof terminalSettingsCategories)[number]['id']
 type AiModelOption = { id: string; label: string }
+type MicrophoneDeviceOption = { deviceId: string; label: string }
 
 function getValueAtPath(settings: TerminalSettings, key: string): boolean | number | string {
   const segments = key.split('.')
@@ -59,6 +60,7 @@ function setValueAtPath(settings: TerminalSettings, key: string, value: boolean 
   const allowedRoots = new Set([
     'activityIndicators',
     'aiTabMetadata',
+    'dictation',
     'fileViewer',
     'gitPushAgent',
     'keyboardShortcuts',
@@ -350,6 +352,15 @@ export function SettingsWindow() {
   const [claudeCodeModels, setClaudeCodeModels] = useState<AiModelOption[]>([])
   const [isLoadingClaudeCodeModels, setIsLoadingClaudeCodeModels] = useState(false)
   const [claudeCodeModelsError, setClaudeCodeModelsError] = useState<string | null>(null)
+  const [dictationOpenAiKeyConfigured, setDictationOpenAiKeyConfigured] = useState(false)
+  const [dictationOpenAiKeyDraft, setDictationOpenAiKeyDraft] = useState('')
+  const [dictationOpenAiKeyError, setDictationOpenAiKeyError] = useState<string | null>(null)
+  const [isSavingDictationOpenAiKey, setIsSavingDictationOpenAiKey] = useState(false)
+  const [dictationMicrophoneDevices, setDictationMicrophoneDevices] = useState<MicrophoneDeviceOption[]>([])
+  const [dictationMicrophoneError, setDictationMicrophoneError] = useState<string | null>(null)
+  const [dictationMicrophonePermissionStatus, setDictationMicrophonePermissionStatus] =
+    useState<DictationMicrophonePermissionStatus>('unknown')
+  const [isLoadingDictationMicrophones, setIsLoadingDictationMicrophones] = useState(false)
 
   const handleResizePointerDown = (e: React.PointerEvent) => {
     e.preventDefault()
@@ -373,6 +384,77 @@ export function SettingsWindow() {
   const contentRef = useRef<HTMLDivElement>(null)
   const pairingPinRequestRef = useRef<((configured: boolean) => void) | null>(null)
 
+  const loadDictationMicrophones = useCallback(async (requestPermission = false) => {
+    setIsLoadingDictationMicrophones(true)
+    setDictationMicrophoneError(null)
+
+    try {
+      let permissionStatus = await window.terminay.getDictationMicrophonePermissionStatus()
+      let permissionProbeError: string | null = null
+
+      if (requestPermission && permissionStatus !== 'granted') {
+        permissionStatus = await window.terminay.requestDictationMicrophonePermission()
+      }
+
+      if (
+        permissionStatus !== 'denied' &&
+        permissionStatus !== 'restricted' &&
+        navigator.mediaDevices?.getUserMedia
+      ) {
+        let permissionProbeStream: MediaStream | null = null
+        try {
+          permissionProbeStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+          permissionStatus = 'granted'
+        } catch (error) {
+          permissionProbeError = error instanceof Error ? error.message : String(error)
+          permissionStatus = await window.terminay.getDictationMicrophonePermissionStatus()
+        } finally {
+          permissionProbeStream?.getTracks().forEach((track) => {
+            track.stop()
+          })
+        }
+      }
+
+      setDictationMicrophonePermissionStatus(permissionStatus)
+
+      if (!navigator.mediaDevices?.enumerateDevices) {
+        setDictationMicrophoneDevices([])
+        setDictationMicrophoneError('Microphone device listing is not available in this environment.')
+        return
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const microphones = devices
+        .filter((device) => device.kind === 'audioinput')
+        .map((device, index) => ({
+          deviceId: device.deviceId,
+          label: device.label || `Microphone ${index + 1}`,
+        }))
+
+      setDictationMicrophoneDevices(microphones)
+      if (microphones.length > 0) {
+        setDictationMicrophoneError(null)
+        if (permissionStatus !== 'granted' && microphones.some((device) => device.label.length > 0)) {
+          setDictationMicrophonePermissionStatus('granted')
+        }
+      } else if (permissionStatus !== 'granted') {
+        setDictationMicrophoneError(
+          permissionProbeError ??
+          (permissionStatus === 'not-determined'
+            ? 'Microphone access has not been requested yet.'
+            : `Microphone access is ${permissionStatus}.`),
+        )
+      } else {
+        setDictationMicrophoneError('No microphone devices were found.')
+      }
+    } catch (error) {
+      setDictationMicrophoneDevices([])
+      setDictationMicrophoneError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsLoadingDictationMicrophones(false)
+    }
+  }, [])
+
   useEffect(() => {
     setDraft(persistedSettings)
     draftRef.current = persistedSettings
@@ -384,6 +466,18 @@ export function SettingsWindow() {
 
   useEffect(() => {
     let isMounted = true
+
+    void window.terminay.getDictationOpenAiKeyStatus().then((status) => {
+      if (isMounted) {
+        setDictationOpenAiKeyConfigured(status.configured)
+      }
+    }).catch((error) => {
+      if (isMounted) {
+        setDictationOpenAiKeyError(error instanceof Error ? error.message : String(error))
+      }
+    })
+
+    void loadDictationMicrophones()
 
     void window.terminay.getRemoteAccessStatus().then((status) => {
       if (isMounted) {
@@ -399,7 +493,7 @@ export function SettingsWindow() {
       isMounted = false
       unsubscribe()
     }
-  }, [])
+  }, [loadDictationMicrophones])
 
   useEffect(() => {
     setSelectedRemotePairingMode(remoteStatus?.pairingMode ?? draft.remoteAccess.pairingMode)
@@ -656,6 +750,95 @@ export function SettingsWindow() {
     }
   }
 
+  const saveDictationOpenAiKey = async () => {
+    setDictationOpenAiKeyError(null)
+    setIsSavingDictationOpenAiKey(true)
+    try {
+      const status = await window.terminay.saveDictationOpenAiKey(dictationOpenAiKeyDraft)
+      setDictationOpenAiKeyConfigured(status.configured)
+      setDictationOpenAiKeyDraft('')
+    } catch (error) {
+      setDictationOpenAiKeyError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsSavingDictationOpenAiKey(false)
+    }
+  }
+
+  const clearDictationOpenAiKey = async () => {
+    setDictationOpenAiKeyError(null)
+    setIsSavingDictationOpenAiKey(true)
+    try {
+      const status = await window.terminay.clearDictationOpenAiKey()
+      setDictationOpenAiKeyConfigured(status.configured)
+      setDictationOpenAiKeyDraft('')
+    } catch (error) {
+      setDictationOpenAiKeyError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsSavingDictationOpenAiKey(false)
+    }
+  }
+
+  const renderDictationMicrophoneControl = (field: SettingsFieldDefinition, value: boolean | number | string) => {
+    const selectedValue = String(value)
+    const options = [
+      { deviceId: '', label: 'System default' },
+      ...dictationMicrophoneDevices,
+    ]
+    const selectedDeviceStillAvailable =
+      selectedValue.length === 0 || options.some((option) => option.deviceId === selectedValue)
+
+    return (
+      <div className="settings-shortcut-editor">
+        <div className="settings-shortcut-value">
+          <select
+            className="settings-select"
+            value={selectedDeviceStillAvailable ? selectedValue : ''}
+            disabled={isLoadingDictationMicrophones || dictationMicrophonePermissionStatus !== 'granted'}
+            onChange={(event) => void updateField(field, event.target.value)}
+          >
+            {options.map((device) => (
+              <option key={device.deviceId || 'default'} value={device.deviceId}>
+                {device.label}
+              </option>
+            ))}
+          </select>
+          <span
+            className={`settings-shortcut-chip${
+              dictationMicrophonePermissionStatus === 'granted' ? '' : ' settings-shortcut-chip--muted'
+            }`}
+          >
+            {dictationMicrophonePermissionStatus}
+          </span>
+        </div>
+        {!selectedDeviceStillAvailable ? (
+          <span className="settings-shortcut-warning">The selected microphone is no longer available.</span>
+        ) : dictationMicrophoneError ? (
+          <span className="settings-shortcut-warning">{dictationMicrophoneError}</span>
+        ) : null}
+        <div className="settings-shortcut-actions">
+          {dictationMicrophonePermissionStatus !== 'granted' ? (
+            <button
+              type="button"
+              className="settings-secondary-button settings-secondary-button--small"
+              disabled={isLoadingDictationMicrophones}
+              onClick={() => void loadDictationMicrophones(true)}
+            >
+              Allow Access
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="settings-secondary-button settings-secondary-button--small"
+            disabled={isLoadingDictationMicrophones}
+            onClick={() => void loadDictationMicrophones(false)}
+          >
+            {isLoadingDictationMicrophones ? 'Refreshing' : 'Refresh'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   useEffect(() => {
     const shouldLoadCodexModels =
       draft.aiTabMetadata.title.provider === 'codex' ||
@@ -907,6 +1090,59 @@ export function SettingsWindow() {
 
   const renderFieldControl = (field: SettingsFieldDefinition) => {
     const value = getValueAtPath(draft, field.key)
+
+    if (field.key === 'dictation.openaiApiKey') {
+      const canSaveKey = dictationOpenAiKeyDraft.trim().length > 0 && !isSavingDictationOpenAiKey
+      return (
+        <div className="settings-shortcut-editor">
+          <div className="settings-shortcut-value">
+            <input
+              className="settings-input-text"
+              type="password"
+              value={dictationOpenAiKeyDraft}
+              placeholder={dictationOpenAiKeyConfigured ? 'OpenAI API key saved' : 'sk-...'}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => setDictationOpenAiKeyDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && canSaveKey) {
+                  event.preventDefault()
+                  void saveDictationOpenAiKey()
+                }
+              }}
+            />
+            <span className={`settings-shortcut-chip${dictationOpenAiKeyConfigured ? '' : ' settings-shortcut-chip--muted'}`}>
+              {dictationOpenAiKeyConfigured ? 'Configured' : 'Not set'}
+            </span>
+          </div>
+          {dictationOpenAiKeyError ? (
+            <span className="settings-shortcut-warning">{dictationOpenAiKeyError}</span>
+          ) : null}
+          <div className="settings-shortcut-actions">
+            <button
+              type="button"
+              className="settings-secondary-button settings-secondary-button--small"
+              disabled={!canSaveKey}
+              onClick={() => void saveDictationOpenAiKey()}
+            >
+              {isSavingDictationOpenAiKey ? 'Saving' : 'Save Key'}
+            </button>
+            <button
+              type="button"
+              className="settings-secondary-button settings-secondary-button--small"
+              disabled={!dictationOpenAiKeyConfigured || isSavingDictationOpenAiKey}
+              onClick={() => void clearDictationOpenAiKey()}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    if (field.key === 'dictation.microphoneDeviceId') {
+      return renderDictationMicrophoneControl(field, value)
+    }
 
     if (field.key.startsWith('keyboardShortcuts.')) {
       const command = field.key.replace('keyboardShortcuts.', '') as AppCommand

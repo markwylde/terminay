@@ -44,6 +44,8 @@ test.describe('keyboard shortcut utilities', () => {
   test('formats shortcut labels for mac and non-mac platforms', () => {
     expect(getCommandShortcutLabel(undefined, 'new-terminal', true)).toBe('⌘T')
     expect(getCommandShortcutLabel(undefined, 'new-terminal', false)).toBe('Ctrl+T')
+    expect(getCommandShortcutLabel(undefined, 'start-dictation', true)).toBe('⌘⇧D')
+    expect(getCommandShortcutLabel(undefined, 'start-dictation', false)).toBe('Ctrl+Shift+D')
     expect(getCommandShortcutLabel(undefined, 'toggle-file-explorer-sidebar', true)).toBe('⌘O')
     expect(getCommandShortcutLabel({ 'new-terminal': 'Ctrl+Alt+Space' }, 'new-terminal', true)).toBe('⌃⌥Space')
     expect(getCommandShortcutLabel({ 'new-terminal': '' }, 'new-terminal', false)).toBe('')
@@ -94,5 +96,15 @@ test.describe('keyboard shortcut utilities', () => {
         false,
       ),
     ).toBeNull()
+  })
+
+  test('finds the default dictation shortcut', () => {
+    expect(
+      findCommandForKeyboardEvent(
+        { altKey: false, ctrlKey: true, key: 'd', metaKey: false, shiftKey: true },
+        undefined,
+        false,
+      ),
+    ).toBe('start-dictation')
   })
 })

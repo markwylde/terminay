@@ -123,6 +123,46 @@ test('normalizes custom file viewer extension defaults', () => {
   })
 })
 
+test('normalizes dictation settings defaults and bounds', () => {
+  expect(normalizeTerminalSettings({}).dictation).toEqual(defaultTerminalSettings.dictation)
+
+  expect(
+    normalizeTerminalSettings({
+      dictation: {
+        enabled: false,
+        language: ' en ',
+        maxDurationSeconds: 999,
+        microphoneDeviceId: ' hd-pro-webcam ',
+        model: 'gpt-4o-mini-transcribe',
+        prompt: 'Prefer terminal command names.',
+        silenceStopSeconds: 0,
+      },
+    }).dictation,
+  ).toEqual({
+    enabled: false,
+    language: 'en',
+    maxDurationSeconds: 300,
+    microphoneDeviceId: 'hd-pro-webcam',
+    model: 'gpt-4o-mini-transcribe',
+    prompt: 'Prefer terminal command names.',
+    silenceStopSeconds: 1,
+  })
+
+  expect(
+    normalizeTerminalSettings({
+      dictation: {
+        maxDurationSeconds: 2,
+        model: 'invalid',
+        silenceStopSeconds: 99,
+      },
+    }).dictation,
+  ).toMatchObject({
+    maxDurationSeconds: 5,
+    model: defaultTerminalSettings.dictation.model,
+    silenceStopSeconds: 15,
+  })
+})
+
 test('saves custom file extension default tabs in settings', async ({ appHarness, mainWindow }) => {
   const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'file-viewer-refresh' })
 

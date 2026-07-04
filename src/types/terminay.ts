@@ -8,6 +8,7 @@ export type AppCommand =
   | 'popout-active'
   | 'close-active'
   | 'open-command-bar'
+  | 'start-dictation'
   | 'clear-terminal'
   | 'toggle-file-explorer-sidebar'
   | 'set-project-root-folder-to-working-directory'
@@ -133,6 +134,31 @@ export type FileViewerGitDiff = {
 export type TerminalDataMessage = {
   id: string
   data: string
+}
+
+export type DictationKeyStatus = {
+  configured: boolean
+}
+
+export type DictationMicrophonePermissionStatus =
+  | 'not-determined'
+  | 'granted'
+  | 'denied'
+  | 'restricted'
+  | 'unknown'
+
+export type DictationTranscribeRequest = {
+  audioBase64: string
+  fileName: string
+  language?: string
+  mimeType: string
+  model?: import('./settings').DictationTranscriptionModel
+  prompt?: string
+}
+
+export type DictationTranscribeResult = {
+  model: string
+  text: string
 }
 
 export type { TerminalActivityMessage, SemanticActivity } from './terminalSignals'
@@ -631,6 +657,12 @@ export interface TerminayApi {
   resetTerminalSettings: () => Promise<import('./settings').TerminalSettings>
   listAiTabMetadataModels: (provider: AiTabMetadataProvider) => Promise<AiTabMetadataModel[]>
   generateAiTabMetadata: (payload: AiTabMetadataGenerateRequest) => Promise<AiTabMetadataGenerateResult>
+  getDictationOpenAiKeyStatus: () => Promise<DictationKeyStatus>
+  saveDictationOpenAiKey: (apiKey: string) => Promise<DictationKeyStatus>
+  clearDictationOpenAiKey: () => Promise<DictationKeyStatus>
+  getDictationMicrophonePermissionStatus: () => Promise<DictationMicrophonePermissionStatus>
+  requestDictationMicrophonePermission: () => Promise<DictationMicrophonePermissionStatus>
+  transcribeDictation: (request: DictationTranscribeRequest) => Promise<DictationTranscribeResult>
   getMacros: () => Promise<import('./macros').MacroDefinition[]>
   updateMacros: (macros: import('./macros').MacroDefinition[]) => Promise<import('./macros').MacroDefinition[]>
   resetMacros: () => Promise<import('./macros').MacroDefinition[]>

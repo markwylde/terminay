@@ -307,6 +307,15 @@ export const defaultTerminalSettings: TerminalSettings = {
 			codexModel: '',
 		},
 	},
+	dictation: {
+		enabled: true,
+		model: 'gpt-4o-transcribe',
+		microphoneDeviceId: '',
+		language: 'en',
+		prompt: '',
+		silenceStopSeconds: 5,
+		maxDurationSeconds: 60,
+	},
 	gitPushAgent: {
 		provider: 'disabled',
 		claudeCodeModel: '',
@@ -628,6 +637,130 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'control',
 					'terminal',
 				],
+			}),
+		],
+	},
+	{
+		id: 'openai-dictation',
+		categoryId: 'ai',
+		title: 'OpenAI Dictation',
+		description:
+			'Record speech, transcribe it with OpenAI, and type the result into the active terminal.',
+		fields: [
+			makeField({
+				key: 'dictation.openaiApiKey',
+				label: 'OpenAI API key',
+				description:
+					'Stored with OS-level encryption and used only by the local main process for dictation transcription.',
+				sectionId: 'openai-dictation',
+				categoryId: 'ai',
+				input: 'text',
+				keywords: [
+					'openai',
+					'api key',
+					'dictation',
+					'audio',
+					'speech',
+					'transcription',
+					'microphone',
+				],
+			}),
+			makeField({
+				key: 'dictation.enabled',
+				label: 'Enable dictation',
+				description:
+					'Allow the Command bar action to record microphone audio and insert an OpenAI transcript.',
+				sectionId: 'openai-dictation',
+				categoryId: 'ai',
+				input: 'boolean',
+				keywords: ['dictation', 'voice', 'speech', 'microphone', 'openai'],
+			}),
+			makeField({
+				key: 'dictation.model',
+				label: 'Transcription model',
+				description:
+					'OpenAI speech-to-text model used when a dictation recording stops.',
+				sectionId: 'openai-dictation',
+				categoryId: 'ai',
+				input: 'select',
+				options: [
+					{ label: 'GPT-4o Transcribe', value: 'gpt-4o-transcribe' },
+					{
+						label: 'GPT-4o Mini Transcribe',
+						value: 'gpt-4o-mini-transcribe',
+					},
+				],
+				visibleWhen: { key: 'dictation.enabled', value: true },
+				keywords: [
+					'openai',
+					'model',
+					'gpt-4o',
+					'transcribe',
+					'speech to text',
+				],
+			}),
+			makeField({
+				key: 'dictation.microphoneDeviceId',
+				label: 'Microphone',
+				description:
+					'Audio input device used for dictation recording.',
+				sectionId: 'openai-dictation',
+				categoryId: 'ai',
+				input: 'select',
+				options: [{ label: 'System default', value: '' }],
+				visibleWhen: { key: 'dictation.enabled', value: true },
+				keywords: ['dictation', 'microphone', 'input', 'audio', 'device'],
+			}),
+			makeField({
+				key: 'dictation.language',
+				label: 'Language hint',
+				description:
+					'ISO language hint for transcription. Defaults to en.',
+				sectionId: 'openai-dictation',
+				categoryId: 'ai',
+				input: 'text',
+				placeholder: 'en',
+				visibleWhen: { key: 'dictation.enabled', value: true },
+				keywords: ['dictation', 'language', 'locale', 'openai'],
+			}),
+			makeField({
+				key: 'dictation.prompt',
+				label: 'Prompt',
+				description:
+					'Optional terms or formatting hints for dictation transcription.',
+				sectionId: 'openai-dictation',
+				categoryId: 'ai',
+				input: 'textarea',
+				visibleWhen: { key: 'dictation.enabled', value: true },
+				keywords: ['dictation', 'prompt', 'terms', 'context', 'openai'],
+			}),
+			makeField({
+				key: 'dictation.silenceStopSeconds',
+				label: 'Stop after silence',
+				description:
+					'Seconds of quiet audio before Terminay automatically stops recording.',
+				sectionId: 'openai-dictation',
+				categoryId: 'ai',
+				input: 'number',
+				min: 1,
+				max: 15,
+				step: 0.5,
+				visibleWhen: { key: 'dictation.enabled', value: true },
+				keywords: ['dictation', 'silence', 'timeout', 'voice activity'],
+			}),
+			makeField({
+				key: 'dictation.maxDurationSeconds',
+				label: 'Max recording duration',
+				description:
+					'Maximum seconds for a single dictation recording before it stops.',
+				sectionId: 'openai-dictation',
+				categoryId: 'ai',
+				input: 'number',
+				min: 5,
+				max: 300,
+				step: 5,
+				visibleWhen: { key: 'dictation.enabled', value: true },
+				keywords: ['dictation', 'duration', 'recording', 'limit'],
 			}),
 		],
 	},
@@ -2031,6 +2164,10 @@ export function normalizeTerminalSettings(
 		typeof input.gitPushAgent === 'object' && input.gitPushAgent !== null
 			? input.gitPushAgent
 			: defaultTerminalSettings.gitPushAgent;
+	const dictationInput =
+		typeof input.dictation === 'object' && input.dictation !== null
+			? input.dictation
+			: defaultTerminalSettings.dictation;
 	const terminayMcpInput =
 		typeof input.terminayMcp === 'object' && input.terminayMcp !== null
 			? input.terminayMcp
@@ -2118,7 +2255,43 @@ export function normalizeTerminalSettings(
 			prompt:
 				typeof gitPushAgentInput.prompt === 'string'
 					? gitPushAgentInput.prompt
-					: defaultTerminalSettings.gitPushAgent.prompt,
+				: defaultTerminalSettings.gitPushAgent.prompt,
+		},
+		dictation: {
+			enabled:
+				typeof dictationInput.enabled === 'boolean'
+					? dictationInput.enabled
+					: defaultTerminalSettings.dictation.enabled,
+			model:
+				dictationInput.model === 'gpt-4o-mini-transcribe' ||
+				dictationInput.model === 'gpt-4o-transcribe'
+					? dictationInput.model
+					: defaultTerminalSettings.dictation.model,
+			language:
+				typeof dictationInput.language === 'string' &&
+				dictationInput.language.trim().length > 0
+					? dictationInput.language.trim()
+					: defaultTerminalSettings.dictation.language,
+			microphoneDeviceId:
+				typeof dictationInput.microphoneDeviceId === 'string'
+					? dictationInput.microphoneDeviceId.trim()
+					: defaultTerminalSettings.dictation.microphoneDeviceId,
+			prompt:
+				typeof dictationInput.prompt === 'string'
+					? dictationInput.prompt
+					: defaultTerminalSettings.dictation.prompt,
+			silenceStopSeconds: clampNumber(
+				Number(dictationInput.silenceStopSeconds),
+				defaultTerminalSettings.dictation.silenceStopSeconds,
+				1,
+				15,
+			),
+			maxDurationSeconds: clampNumber(
+				Number(dictationInput.maxDurationSeconds),
+				defaultTerminalSettings.dictation.maxDurationSeconds,
+				5,
+				300,
+			),
 		},
 		terminayMcp: {
 			enabled:

@@ -33,6 +33,10 @@ import type {
   McpInstallStatus,
   ControlRendererRequestMessage,
   ControlRendererResponseMessage,
+  DictationKeyStatus,
+  DictationMicrophonePermissionStatus,
+  DictationTranscribeRequest,
+  DictationTranscribeResult,
   ProjectEditWindowDraft,
   ProjectEditWindowResult,
   QuickPushApplyRequest,
@@ -146,6 +150,18 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.invoke('ai-tab-metadata:list-models', { provider }) as Promise<AiTabMetadataModel[]>,
   generateAiTabMetadata: (payload: AiTabMetadataGenerateRequest) =>
     ipcRenderer.invoke('ai-tab-metadata:generate', payload) as Promise<AiTabMetadataGenerateResult>,
+  getDictationOpenAiKeyStatus: () =>
+    ipcRenderer.invoke('dictation:get-openai-key-status') as Promise<DictationKeyStatus>,
+  saveDictationOpenAiKey: (apiKey: string) =>
+    ipcRenderer.invoke('dictation:save-openai-key', { apiKey }) as Promise<DictationKeyStatus>,
+  clearDictationOpenAiKey: () =>
+    ipcRenderer.invoke('dictation:clear-openai-key') as Promise<DictationKeyStatus>,
+  getDictationMicrophonePermissionStatus: () =>
+    ipcRenderer.invoke('dictation:get-microphone-permission-status') as Promise<DictationMicrophonePermissionStatus>,
+  requestDictationMicrophonePermission: () =>
+    ipcRenderer.invoke('dictation:request-microphone-permission') as Promise<DictationMicrophonePermissionStatus>,
+  transcribeDictation: (request: DictationTranscribeRequest) =>
+    ipcRenderer.invoke('dictation:transcribe', request) as Promise<DictationTranscribeResult>,
   generateQuickPushPlan: (payload: QuickPushGenerateRequest) =>
     ipcRenderer.invoke('quick-push:generate-plan', payload) as Promise<QuickPushPlan>,
   applyQuickPush: (payload: QuickPushApplyRequest) =>

@@ -111,8 +111,23 @@ export type GitPushAgentSettings = {
 
 export type TerminayMcpSettings = { enabled: boolean };
 
+export type DictationTranscriptionModel =
+	| 'gpt-4o-transcribe'
+	| 'gpt-4o-mini-transcribe';
+
+export type DictationSettings = {
+	enabled: boolean;
+	model: DictationTranscriptionModel;
+	microphoneDeviceId: string;
+	language: string;
+	prompt: string;
+	silenceStopSeconds: number;
+	maxDurationSeconds: number;
+};
+
 export type TerminalSettings = {
 	aiTabMetadata: AiTabMetadataSettings;
+	dictation: DictationSettings;
 	gitPushAgent: GitPushAgentSettings;
 	terminayMcp: TerminayMcpSettings;
 	allowTransparency: boolean;

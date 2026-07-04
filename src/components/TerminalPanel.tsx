@@ -12,6 +12,8 @@ import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalPanelParams } from './TerminalTab'
 import type { TerminalSettings } from '../types/settings'
 import { formatBracketedPaste } from '../terminalInput'
+import { DictationOverlay } from './DictationOverlay'
+import type { DictationOverlayProps } from './DictationOverlay'
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher'
 const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path'
@@ -200,9 +202,30 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     index: 0,
     count: 0,
   })
+  const [dictationOverlay, setDictationOverlay] =
+    useState<DictationOverlayProps | null>(null)
   const hasTerminalNote = typeof props.params.terminalNote === 'string'
 
   tabColorRef.current = props.params.color
+
+  useEffect(() => {
+    const handleDictationOverlay = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        overlay: DictationOverlayProps | null
+        sessionId: string
+      }>).detail
+      if (detail?.sessionId !== props.params.sessionId) {
+        return
+      }
+
+      setDictationOverlay(detail.overlay)
+    }
+
+    window.addEventListener('terminay-dictation-overlay', handleDictationOverlay)
+    return () => {
+      window.removeEventListener('terminay-dictation-overlay', handleDictationOverlay)
+    }
+  }, [props.params.sessionId])
 
   const runSearchAction = useCallback((action: (searchAddon: SearchAddon) => void) => {
     const searchAddon = searchAddonRef.current
@@ -1010,6 +1033,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         </search>
       ) : null}
       <div className="terminal-panel-root" ref={xtermRootRef} />
+      {dictationOverlay ? <DictationOverlay {...dictationOverlay} /> : null}
     </div>
   )
 }
