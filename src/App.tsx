@@ -28,6 +28,7 @@ import {
 	GitBranchPlus,
 	GitPullRequestArrow,
 	History,
+	Mic,
 	Play,
 	Plug,
 	PlusSquare,
@@ -56,6 +57,10 @@ import {
 } from './components/sidebar/SidebarSplit';
 import { McpInstallModal } from './components/McpInstallModal';
 import { QuickPushModal } from './components/QuickPushModal';
+import type {
+	DictationOverlayProps,
+	DictationOverlayState,
+} from './components/DictationOverlay';
 import { TerminalPanel } from './components/TerminalPanel';
 import type {
 	TerminalActivityState,
@@ -91,7 +96,7 @@ import {
 	TerminalActivityStore,
 	type TerminalActivityEvaluation,
 } from './terminalActivityStore';
-import { formatRunCommandInput } from './terminalInput';
+import { formatBracketedPaste, formatRunCommandInput } from './terminalInput';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
 import type {
 	AdoptedProjectPayload,
@@ -125,6 +130,194 @@ type AddTerminalOptions = {
 	/** Text written to the terminal once the shell is ready (e.g. to launch an agent). */
 	initialInput?: string;
 };
+
+type DictationSessionState = DictationOverlayState & {
+	sessionId: string;
+};
+
+type DictationAudioLevels = {
+	durationMs: number;
+	peakRms: number;
+	rms: number;
+};
+
+const DICTATION_WAVEFORM_BAR_COUNT = 18;
+const DICTATION_SILENCE_RMS_THRESHOLD = 0.008;
+const DICTATION_SPEECH_RMS_THRESHOLD = 0.014;
+const DICTATION_MIN_SPEECH_RMS = 0.012;
+const DICTATION_MIN_SPEECH_FRAMES = 4;
+const DICTATION_MIN_RECORDING_MS = 700;
+const DICTATION_INITIAL_SILENCE_GRACE_MS = 1000;
+const DICTATION_UPLOAD_LIMIT_BYTES = 25 * 1024 * 1024;
+const DICTATION_RECORDER_TIMESLICE_MS = 250;
+const DICTATION_SCRIPT_PROCESSOR_BUFFER_SIZE = 2048;
+const DICTATION_WAVEFORM_GAIN = 8.5;
+const DICTATION_MIME_TYPES = [
+	'audio/webm;codecs=opus',
+	'audio/webm',
+	'audio/mp4',
+	'audio/mpeg',
+	'audio/wav',
+];
+const EMPTY_DICTATION_WAVEFORM = Array.from(
+	{ length: DICTATION_WAVEFORM_BAR_COUNT },
+	() => 0.08,
+);
+
+function getDictationMimeType(): string | undefined {
+	if (typeof MediaRecorder === 'undefined') {
+		return undefined;
+	}
+
+	return DICTATION_MIME_TYPES.find((mimeType) =>
+		MediaRecorder.isTypeSupported(mimeType),
+	);
+}
+
+function getDictationFileExtension(mimeType: string): string {
+	const normalized = mimeType.toLowerCase().split(';', 1)[0]?.trim();
+	switch (normalized) {
+		case 'audio/mp4':
+			return 'mp4';
+		case 'audio/mpeg':
+			return 'mp3';
+		case 'audio/wav':
+			return 'wav';
+		default:
+			return 'webm';
+	}
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onerror = () => reject(reader.error ?? new Error('Unable to read dictation audio.'));
+		reader.onload = () => {
+			const result = reader.result;
+			if (typeof result !== 'string') {
+				reject(new Error('Unable to encode dictation audio.'));
+				return;
+			}
+
+			const separatorIndex = result.indexOf(',');
+			resolve(separatorIndex === -1 ? result : result.slice(separatorIndex + 1));
+		};
+		reader.readAsDataURL(blob);
+	});
+}
+
+function encodeDictationWav(
+	chunks: Float32Array[],
+	sampleRate: number,
+	totalLength: number,
+): Blob {
+	const dataLength = totalLength * 2;
+	const buffer = new ArrayBuffer(44 + dataLength);
+	const view = new DataView(buffer);
+	let offset = 0;
+
+	const writeString = (value: string) => {
+		for (let index = 0; index < value.length; index += 1) {
+			view.setUint8(offset, value.charCodeAt(index));
+			offset += 1;
+		}
+	};
+
+	writeString('RIFF');
+	view.setUint32(offset, 36 + dataLength, true);
+	offset += 4;
+	writeString('WAVE');
+	writeString('fmt ');
+	view.setUint32(offset, 16, true);
+	offset += 4;
+	view.setUint16(offset, 1, true);
+	offset += 2;
+	view.setUint16(offset, 1, true);
+	offset += 2;
+	view.setUint32(offset, sampleRate, true);
+	offset += 4;
+	view.setUint32(offset, sampleRate * 2, true);
+	offset += 4;
+	view.setUint16(offset, 2, true);
+	offset += 2;
+	view.setUint16(offset, 16, true);
+	offset += 2;
+	writeString('data');
+	view.setUint32(offset, dataLength, true);
+	offset += 4;
+
+	for (const chunk of chunks) {
+		for (const sample of chunk) {
+			const clamped = Math.max(-1, Math.min(1, sample));
+			view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+			offset += 2;
+		}
+	}
+
+	return new Blob([buffer], { type: 'audio/wav' });
+}
+
+async function measureDictationBlobAudio(
+	blob: Blob,
+): Promise<DictationAudioLevels | null> {
+	if (typeof AudioContext === 'undefined') {
+		return null;
+	}
+
+	const audioContext = new AudioContext();
+	try {
+		const audioBuffer = await audioContext.decodeAudioData(
+			await blob.arrayBuffer(),
+		);
+		const channelCount = Math.max(1, audioBuffer.numberOfChannels);
+		const frameCount = audioBuffer.length;
+		if (frameCount === 0) {
+			return null;
+		}
+
+		const windowSize = Math.max(256, Math.floor(audioBuffer.sampleRate / 24));
+		let totalSquares = 0;
+		let totalSamples = 0;
+		let peakWindowRms = 0;
+
+		for (let channel = 0; channel < channelCount; channel += 1) {
+			const samples = audioBuffer.getChannelData(channel);
+			for (let start = 0; start < samples.length; start += windowSize) {
+				const end = Math.min(samples.length, start + windowSize);
+				let windowSquares = 0;
+				for (let index = start; index < end; index += 1) {
+					const sample = samples[index] ?? 0;
+					const square = sample * sample;
+					windowSquares += square;
+					totalSquares += square;
+				}
+				const windowLength = end - start;
+				totalSamples += windowLength;
+				if (windowLength > 0) {
+					peakWindowRms = Math.max(
+						peakWindowRms,
+						Math.sqrt(windowSquares / windowLength),
+					);
+				}
+			}
+		}
+
+		return {
+			durationMs: Math.round(audioBuffer.duration * 1000),
+			peakRms: peakWindowRms,
+			rms: totalSamples > 0 ? Math.sqrt(totalSquares / totalSamples) : 0,
+		};
+	} catch (error) {
+		console.warn('Unable to measure dictation recording audio levels', error);
+		return null;
+	} finally {
+		void audioContext.close().catch(() => {});
+	}
+}
+
+function formatDictationTranscriptForTerminal(text: string): string {
+	return /[\r\n]/.test(text) ? formatBracketedPaste(text) : text;
+}
 
 type GitPushAgentAction = 'current' | 'current-pr' | 'new' | 'new-pr';
 
@@ -1711,6 +1904,21 @@ const ProjectWorkspace = forwardRef<
 		(sessionId: string, now?: number) => void
 	>(() => {});
 	const focusedSessionIdRef = useRef<string | null>(null);
+	const dictationMediaRecorderRef = useRef<MediaRecorder | null>(null);
+	const dictationStreamRef = useRef<MediaStream | null>(null);
+	const dictationAudioContextRef = useRef<AudioContext | null>(null);
+	const dictationMediaSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+	const dictationAnalyserRef = useRef<AnalyserNode | null>(null);
+	const dictationMonitorGainRef = useRef<GainNode | null>(null);
+	const dictationScriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
+	const dictationWaveformFrameRef = useRef<number | null>(null);
+	const dictationChunksRef = useRef<Blob[]>([]);
+	const dictationPcmChunksRef = useRef<Float32Array[]>([]);
+	const dictationPcmLengthRef = useRef(0);
+	const dictationPcmSampleRateRef = useRef(0);
+	const dictationSilenceStartedAtRef = useRef<number | null>(null);
+	const dictationPeakRmsRef = useRef(0);
+	const dictationSpeechFrameCountRef = useRef(0);
 	const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
 	const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
 	const terminalCounterRef = useRef(0);
@@ -1732,6 +1940,8 @@ const ProjectWorkspace = forwardRef<
 	} | null>(null);
 	const [errorText, setErrorText] = useState<string | null>(null);
 	const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
+	const [dictationSession, setDictationSession] =
+		useState<DictationSessionState | null>(null);
 	const [directoryChildren, setDirectoryChildren] = useState<
 		Record<string, FileExplorerEntry[]>
 	>({});
@@ -2188,6 +2398,528 @@ const ProjectWorkspace = forwardRef<
 		},
 		[markTerminalActivityViewed],
 	);
+
+	const cleanupDictationAudio = useCallback(() => {
+		if (dictationWaveformFrameRef.current !== null) {
+			window.cancelAnimationFrame(dictationWaveformFrameRef.current);
+			dictationWaveformFrameRef.current = null;
+		}
+
+		dictationStreamRef.current?.getTracks().forEach((track) => {
+			track.stop();
+		});
+		dictationStreamRef.current = null;
+		dictationMediaSourceRef.current = null;
+		dictationAnalyserRef.current = null;
+		dictationMonitorGainRef.current = null;
+		dictationScriptProcessorRef.current?.disconnect();
+		dictationScriptProcessorRef.current = null;
+		void dictationAudioContextRef.current?.close().catch(() => {});
+		dictationAudioContextRef.current = null;
+		dictationMediaRecorderRef.current = null;
+		dictationPcmChunksRef.current = [];
+		dictationPcmLengthRef.current = 0;
+		dictationPcmSampleRateRef.current = 0;
+		dictationSilenceStartedAtRef.current = null;
+		dictationPeakRmsRef.current = 0;
+		dictationSpeechFrameCountRef.current = 0;
+	}, []);
+
+	const stopDictationRecording = useCallback(() => {
+		const recorder = dictationMediaRecorderRef.current;
+		if (!recorder || recorder.state === 'inactive') {
+			return;
+		}
+
+		setDictationSession((current) =>
+			current && current.status === 'recording'
+				? { ...current, status: 'stopping' }
+				: current,
+		);
+		recorder.stop();
+	}, []);
+
+	const cancelDictation = useCallback(() => {
+		cleanupDictationAudio();
+		setDictationSession(null);
+	}, [cleanupDictationAudio]);
+
+	const insertDictationTranscript = useCallback(
+		async (sessionId: string, transcript: string) => {
+			const panel = getPanelForSession(sessionId);
+			if (!panel) {
+				await window.terminay.writeClipboardText(transcript);
+				throw new Error('The target terminal closed. Transcript copied to clipboard.');
+			}
+
+			window.terminay.writeTerminal(
+				sessionId,
+				formatDictationTranscriptForTerminal(transcript),
+			);
+			panel.api.setActive();
+			focusedSessionIdRef.current = sessionId;
+			setFocusedSessionId(sessionId);
+			window.requestAnimationFrame(() => {
+				window.dispatchEvent(
+					new CustomEvent('terminay-focus-terminal', {
+						detail: { sessionId },
+					}),
+				);
+			});
+		},
+		[getPanelForSession],
+	);
+
+	const startDictation = useCallback(async () => {
+		setIsMacroLauncherOpen(false);
+		setMacroQuery('');
+
+		if (dictationMediaRecorderRef.current?.state === 'recording') {
+			setErrorText('Dictation is already recording.');
+			return;
+		}
+
+		if (!settingsRef.current.dictation.enabled) {
+			setErrorText('Enable dictation in Settings before recording.');
+			void window.terminay.openSettingsWindow({ sectionId: 'openai-dictation' });
+			return;
+		}
+
+		const sessionId = getActiveSessionId();
+		if (!sessionId) {
+			setErrorText('Open a terminal before starting dictation.');
+			return;
+		}
+
+		try {
+			const keyStatus = await window.terminay.getDictationOpenAiKeyStatus();
+			if (!keyStatus.configured) {
+				setErrorText('Add an OpenAI API key in Settings before starting dictation.');
+				void window.terminay.openSettingsWindow({
+					sectionId: 'openai-dictation',
+				});
+				return;
+			}
+
+			if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+				throw new Error('Microphone recording is not available in this environment.');
+			}
+
+			const microphonePermissionStatus =
+				await window.terminay.requestDictationMicrophonePermission();
+			if (
+				microphonePermissionStatus === 'denied' ||
+				microphonePermissionStatus === 'restricted'
+			) {
+				throw new Error(
+					`Microphone access is ${microphonePermissionStatus}. Allow microphone access in macOS Privacy & Security settings, then restart Terminay.`,
+				);
+			}
+
+			const captureConfig = settingsRef.current.dictation;
+			const selectedMicrophoneDeviceId =
+				captureConfig.microphoneDeviceId.trim();
+			const audioConstraints: MediaTrackConstraints = {};
+			if (selectedMicrophoneDeviceId) {
+				audioConstraints.deviceId = { exact: selectedMicrophoneDeviceId };
+			}
+
+			let stream: MediaStream;
+			try {
+				stream = await navigator.mediaDevices.getUserMedia({
+					audio: audioConstraints,
+				});
+			} catch (error) {
+				if (selectedMicrophoneDeviceId) {
+					throw new Error(
+						'Unable to open the selected microphone. Refresh the dictation microphone list in Settings or choose System default.',
+					);
+				}
+
+				if (microphonePermissionStatus !== 'granted') {
+					const message = error instanceof Error ? error.message : String(error);
+					throw new Error(
+						`Unable to open the microphone while permission is ${microphonePermissionStatus}: ${message}`,
+					);
+				}
+
+				throw error;
+			}
+			const audioTrack = stream.getAudioTracks()[0] ?? null;
+			const audioTrackSettings = audioTrack?.getSettings();
+			console.info('Dictation microphone stream opened', {
+				requestedDeviceId: selectedMicrophoneDeviceId || 'default',
+				label: audioTrack?.label,
+				muted: audioTrack?.muted,
+				readyState: audioTrack?.readyState,
+				settings: audioTrackSettings,
+			});
+			const mimeType = getDictationMimeType();
+			const recorder = mimeType
+				? new MediaRecorder(stream, { mimeType })
+				: new MediaRecorder(stream);
+			const actualMimeType = recorder.mimeType || mimeType || 'audio/webm';
+			const audioContext = new AudioContext();
+			await audioContext.resume();
+			const source = audioContext.createMediaStreamSource(stream);
+			const analyser = audioContext.createAnalyser();
+			analyser.fftSize = 512;
+			analyser.smoothingTimeConstant = 0.72;
+			const processor = audioContext.createScriptProcessor(
+				DICTATION_SCRIPT_PROCESSOR_BUFFER_SIZE,
+				1,
+				1,
+			);
+			const monitorGain = audioContext.createGain();
+			monitorGain.gain.value = 0;
+			source.connect(analyser);
+			source.connect(processor);
+			processor.connect(monitorGain);
+			monitorGain.connect(audioContext.destination);
+
+			const startedAt = Date.now();
+
+			dictationChunksRef.current = [];
+			dictationPcmChunksRef.current = [];
+			dictationPcmLengthRef.current = 0;
+			dictationPcmSampleRateRef.current = audioContext.sampleRate;
+			dictationStreamRef.current = stream;
+			dictationMediaRecorderRef.current = recorder;
+			dictationAudioContextRef.current = audioContext;
+			dictationMediaSourceRef.current = source;
+			dictationAnalyserRef.current = analyser;
+			dictationMonitorGainRef.current = monitorGain;
+			dictationScriptProcessorRef.current = processor;
+			dictationSilenceStartedAtRef.current = null;
+			dictationPeakRmsRef.current = 0;
+			dictationSpeechFrameCountRef.current = 0;
+
+			processor.onaudioprocess = (event) => {
+				if (recorder.state !== 'recording') {
+					return;
+				}
+
+				const input = event.inputBuffer.getChannelData(0);
+				const samples = new Float32Array(input.length);
+				samples.set(input);
+				dictationPcmChunksRef.current.push(samples);
+				dictationPcmLengthRef.current += samples.length;
+
+				let sum = 0;
+				for (const sample of samples) {
+					sum += sample * sample;
+				}
+				const rms = Math.sqrt(sum / samples.length);
+				dictationPeakRmsRef.current = Math.max(
+					dictationPeakRmsRef.current,
+					rms,
+				);
+				if (rms >= DICTATION_SPEECH_RMS_THRESHOLD) {
+					dictationSpeechFrameCountRef.current += 1;
+				}
+
+				const now = Date.now();
+				const elapsedMs = now - startedAt;
+				const bars = Array.from(
+					{ length: DICTATION_WAVEFORM_BAR_COUNT },
+					(_, index) => {
+						const start = Math.floor(
+							(index / DICTATION_WAVEFORM_BAR_COUNT) * samples.length,
+						);
+						const end = Math.max(
+							start + 1,
+							Math.floor(
+								((index + 1) / DICTATION_WAVEFORM_BAR_COUNT) *
+									samples.length,
+							),
+						);
+						let total = 0;
+						for (let offset = start; offset < end; offset += 1) {
+							total += Math.abs(samples[offset] ?? 0);
+						}
+						return Math.max(
+							0.08,
+							Math.min(
+								1,
+								(total / (end - start)) * DICTATION_WAVEFORM_GAIN,
+							),
+						);
+					},
+				);
+
+				setDictationSession((current) =>
+					current &&
+					current.sessionId === sessionId &&
+					current.status === 'recording'
+						? { ...current, elapsedMs, waveformLevels: bars }
+						: current,
+				);
+
+				const config = settingsRef.current.dictation;
+				const maxDurationMs = config.maxDurationSeconds * 1000;
+				const silenceStopMs = config.silenceStopSeconds * 1000;
+				if (elapsedMs >= maxDurationMs) {
+					stopDictationRecording();
+					return;
+				}
+
+				if (elapsedMs > DICTATION_INITIAL_SILENCE_GRACE_MS) {
+					if (rms < DICTATION_SILENCE_RMS_THRESHOLD) {
+						dictationSilenceStartedAtRef.current ??= now;
+						if (now - dictationSilenceStartedAtRef.current >= silenceStopMs) {
+							stopDictationRecording();
+							return;
+						}
+					} else {
+						dictationSilenceStartedAtRef.current = null;
+					}
+				}
+			};
+
+			recorder.ondataavailable = (event) => {
+				if (event.data.size > 0) {
+					dictationChunksRef.current.push(event.data);
+				}
+			};
+
+			recorder.onerror = () => {
+				cleanupDictationAudio();
+				setDictationSession((current) =>
+					current && current.sessionId === sessionId
+						? {
+								...current,
+								status: 'failed',
+								error: 'Microphone recording failed.',
+							}
+						: current,
+				);
+			};
+
+			recorder.onstop = () => {
+				void (async () => {
+					const chunks = dictationChunksRef.current;
+					const pcmChunks = dictationPcmChunksRef.current;
+					const pcmLength = dictationPcmLengthRef.current;
+					const pcmSampleRate =
+						dictationPcmSampleRateRef.current || audioContext.sampleRate;
+					const durationMs = Date.now() - startedAt;
+					const peakRms = dictationPeakRmsRef.current;
+					const speechFrameCount = dictationSpeechFrameCountRef.current;
+					dictationChunksRef.current = [];
+					dictationPcmChunksRef.current = [];
+					dictationPcmLengthRef.current = 0;
+					cleanupDictationAudio();
+
+					if (chunks.length === 0 && pcmLength === 0) {
+						setDictationSession((current) =>
+							current && current.sessionId === sessionId
+								? {
+										...current,
+										status: 'failed',
+										error: 'No dictation audio was captured.',
+									}
+								: current,
+						);
+						return;
+					}
+
+					const pcmAudioAvailable = pcmChunks.length > 0 && pcmLength > 0;
+					const uploadMimeType = pcmAudioAvailable ? 'audio/wav' : actualMimeType;
+					const audioBlob = pcmAudioAvailable
+						? encodeDictationWav(pcmChunks, pcmSampleRate, pcmLength)
+						: new Blob(chunks, { type: actualMimeType });
+					if (audioBlob.size === 0) {
+						setDictationSession((current) =>
+							current && current.sessionId === sessionId
+								? {
+										...current,
+										status: 'failed',
+										error: 'No dictation audio was captured.',
+									}
+								: current,
+						);
+						return;
+					}
+					if (audioBlob.size > DICTATION_UPLOAD_LIMIT_BYTES) {
+						setDictationSession((current) =>
+							current && current.sessionId === sessionId
+								? {
+										...current,
+										status: 'failed',
+										error: 'Dictation audio exceeds the 25 MB upload limit.',
+									}
+								: current,
+						);
+						return;
+					}
+					const recordedLevels =
+						peakRms < DICTATION_MIN_SPEECH_RMS
+							? await measureDictationBlobAudio(audioBlob)
+							: null;
+					const effectivePeakRms = Math.max(
+						peakRms,
+						recordedLevels?.peakRms ?? 0,
+					);
+					const audioDiagnostics = {
+						audioBytes: audioBlob.size,
+						audioSource: pcmAudioAvailable ? 'pcm-wav' : 'media-recorder',
+						durationMs,
+						livePeakRms: Number(peakRms.toFixed(5)),
+						pcmLength,
+						pcmSampleRate,
+						recordedDurationMs: recordedLevels?.durationMs,
+						recordedPeakRms:
+							typeof recordedLevels?.peakRms === 'number'
+								? Number(recordedLevels.peakRms.toFixed(5))
+								: undefined,
+						recordedRms:
+							typeof recordedLevels?.rms === 'number'
+								? Number(recordedLevels.rms.toFixed(5))
+								: undefined,
+						speechFrameCount,
+						trackLabel: audioTrack?.label,
+						trackMuted: audioTrack?.muted,
+						trackReadyState: audioTrack?.readyState,
+						trackSettings: audioTrackSettings,
+					};
+					console.info('Dictation audio diagnostics', audioDiagnostics);
+					if (
+						durationMs < DICTATION_MIN_RECORDING_MS ||
+						(effectivePeakRms < DICTATION_MIN_SPEECH_RMS &&
+							speechFrameCount < DICTATION_MIN_SPEECH_FRAMES)
+					) {
+						console.warn(
+							'Dictation audio levels are below the local speech threshold; uploading anyway.',
+							audioDiagnostics,
+						);
+					}
+
+					setDictationSession((current) =>
+						current && current.sessionId === sessionId
+							? { ...current, status: 'transcribing' }
+							: current,
+					);
+
+					try {
+						const config = settingsRef.current.dictation;
+						const audioBase64 = await blobToBase64(audioBlob);
+						const result = await window.terminay.transcribeDictation({
+							audioBase64,
+							fileName: `dictation-${Date.now()}.${getDictationFileExtension(uploadMimeType)}`,
+							language:
+								config.language.trim() ||
+								defaultTerminalSettings.dictation.language,
+							mimeType: uploadMimeType,
+							model: config.model,
+							prompt: config.prompt,
+						});
+						const transcript = result.text.trim();
+						if (!transcript) {
+							throw new Error('OpenAI returned an empty transcript.');
+						}
+
+						await insertDictationTranscript(sessionId, transcript);
+						setErrorText(null);
+						setDictationSession((current) =>
+							current && current.sessionId === sessionId
+								? {
+										...current,
+										status: 'complete',
+										transcript,
+									}
+								: current,
+						);
+						window.setTimeout(() => {
+							setDictationSession((current) =>
+								current && current.sessionId === sessionId &&
+								current.status === 'complete'
+									? null
+									: current,
+							);
+						}, 1400);
+					} catch (error) {
+						const message =
+							error instanceof Error ? error.message : String(error);
+						setErrorText(`Dictation failed: ${message}`);
+						setDictationSession((current) =>
+							current && current.sessionId === sessionId
+								? { ...current, status: 'failed', error: message }
+								: current,
+						);
+					}
+				})();
+			};
+
+			recorder.start(DICTATION_RECORDER_TIMESLICE_MS);
+			setDictationSession({
+				sessionId,
+				status: 'recording',
+				elapsedMs: 0,
+				waveformLevels: EMPTY_DICTATION_WAVEFORM,
+			});
+			setErrorText(null);
+		} catch (error) {
+			cleanupDictationAudio();
+			const message = error instanceof Error ? error.message : String(error);
+			setErrorText(`Unable to start dictation: ${message}`);
+			setDictationSession({
+				sessionId,
+				status: 'failed',
+				elapsedMs: 0,
+				waveformLevels: EMPTY_DICTATION_WAVEFORM,
+				error: message,
+			});
+		}
+	}, [
+		cleanupDictationAudio,
+		getActiveSessionId,
+		insertDictationTranscript,
+		stopDictationRecording,
+	]);
+
+	const retryDictation = useCallback(() => {
+		setDictationSession(null);
+		void startDictation();
+	}, [startDictation]);
+
+	useEffect(() => {
+		return () => {
+			cleanupDictationAudio();
+		};
+	}, [cleanupDictationAudio]);
+
+	useEffect(() => {
+		const api = dockviewApiRef.current;
+		if (!api) {
+			return;
+		}
+
+		for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
+			const panel = api.getPanel(panelId);
+			const overlay: DictationOverlayProps | null =
+				dictationSession?.sessionId === sessionId
+					? {
+						...dictationSession,
+						accentColor: panel?.params?.color ?? project.color,
+						onCancel: cancelDictation,
+						onRetry: retryDictation,
+						onStop: stopDictationRecording,
+					}
+					: null;
+
+			window.dispatchEvent(
+				new CustomEvent('terminay-dictation-overlay', {
+					detail: { sessionId, overlay },
+				}),
+			);
+		}
+	}, [
+		cancelDictation,
+		dictationSession,
+		project.color,
+		retryDictation,
+		stopDictationRecording,
+	]);
 
 	const [terminalSwitcherItems, setTerminalSwitcherItems] = useState<
 		TerminalSwitcherItem[]
@@ -4369,6 +5101,23 @@ const ProjectWorkspace = forwardRef<
 			},
 			{
 				group: 'Terminal',
+				icon: <Mic size={18} strokeWidth={2.1} />,
+				id: 'start-dictation',
+				title: 'Start dictation',
+				description:
+					'Record speech and type the transcript into the active terminal.',
+				searchText: `start dictation voice speech microphone audio transcribe terminal input ${getCommandShortcut(settings.keyboardShortcuts, 'start-dictation')}`,
+				shortcutLabel: getCommandShortcutLabel(
+					settings.keyboardShortcuts,
+					'start-dictation',
+					isMac,
+				),
+				onSelect: () => {
+					void startDictation();
+				},
+			},
+			{
+				group: 'Terminal',
 				icon: <Sparkles size={18} strokeWidth={2.1} />,
 				id: 'set-tab-title-with-ai',
 				title: 'Set tab title with AI',
@@ -4542,6 +5291,7 @@ const ProjectWorkspace = forwardRef<
 		runMacro,
 		settings.keyboardShortcuts,
 		setProjectRootFolderToWorkingDirectory,
+		startDictation,
 		toggleFileExplorerSidebar,
 	]);
 	const activeMacroId = filteredMacros[selectedMacroIndex]?.id ?? null;
@@ -4631,6 +5381,9 @@ const ProjectWorkspace = forwardRef<
 					setMacroToRun(null);
 					setMacroFieldValues({});
 					break;
+				case 'start-dictation':
+					void startDictation();
+					break;
 				case 'open-recordings':
 					void window.terminay.openRecordingsWindow();
 					break;
@@ -4652,6 +5405,7 @@ const ProjectWorkspace = forwardRef<
 			popoutActivePanel,
 			saveActivePanel,
 			setProjectRootFolderToWorkingDirectory,
+			startDictation,
 			toggleFileExplorerSidebar,
 		],
 	);
