@@ -8,6 +8,7 @@ import {
 	FolderGit,
 	Terminal,
 	Trash2,
+	Upload,
 } from 'lucide-react';
 import { type JSX, type MouseEvent, useEffect, useRef, useState } from 'react';
 import type {
@@ -21,10 +22,15 @@ import { getPathRelativeToRoot } from '../../pathUtils';
 import './gitPanel.css';
 
 export type WorktreesPanelProps = {
+	activePushMenuWorktreePath?: string | null;
 	status: WorktreePanelStatus | null;
 	viewMode: 'list' | 'tree';
 	onDeleteWorktree: (worktree: GitWorktreeStatus) => void;
 	onOpenEntry: (entry: GitChangeEntry) => void;
+	onOpenPushMenu: (
+		worktree: GitWorktreeStatus,
+		anchor: { x: number; y: number },
+	) => void;
 	onOpenTerminal: (worktree: GitWorktreeStatus) => void;
 	onOpenTerminalAtPath: (path: string) => void;
 	onRenameWorktree: (worktree: GitWorktreeStatus) => void;
@@ -53,7 +59,9 @@ function getWorktreeTitle(worktree: GitWorktreeStatus): string {
 		);
 	}
 	if (worktree.lineAdditions !== null || worktree.lineDeletions !== null) {
-		parts.push(`+${worktree.lineAdditions ?? 0} -${worktree.lineDeletions ?? 0}`);
+		parts.push(
+			`+${worktree.lineAdditions ?? 0} -${worktree.lineDeletions ?? 0}`,
+		);
 	}
 	if (worktree.lastChangedAt) {
 		parts.push(`Last changed: ${formatWorktreeDate(worktree.lastChangedAt)}`);
@@ -81,10 +89,12 @@ function formatWorktreeDate(value: string | null): string {
 
 export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 	const {
+		activePushMenuWorktreePath,
 		status,
 		viewMode,
 		onDeleteWorktree,
 		onOpenEntry,
+		onOpenPushMenu,
 		onOpenTerminal,
 		onOpenTerminalAtPath,
 		onRenameWorktree,
@@ -108,7 +118,9 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 			return;
 		}
 
-		const currentPaths = new Set(status.worktrees.map((worktree) => worktree.path));
+		const currentPaths = new Set(
+			status.worktrees.map((worktree) => worktree.path),
+		);
 		setCollapsedWorktrees((prev) => {
 			const next = new Set(
 				Array.from(prev).filter((worktreePath) =>
@@ -188,13 +200,15 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 		<div className="worktrees-panel">
 			{status.worktrees.map((worktree) => {
 				const collapsed = collapsedWorktrees.has(worktree.path);
-				const branchLabel = worktree.branch ?? (worktree.isDetached ? 'HEAD' : '');
 				const hasUnmergedOrUncommittedWork =
 					worktree.isDirtyBranch || worktree.entries.length > 0;
 				const hasLineChanges =
 					(worktree.lineAdditions ?? 0) > 0 ||
 					(worktree.lineDeletions ?? 0) > 0;
 				const WorktreeIcon = worktree.isMain ? FolderGit : GitBranch;
+				const pushUnavailable =
+					worktree.isBare || worktree.isPrunable || !!worktree.errorMessage;
+				const pushMenuOpen = activePushMenuWorktreePath === worktree.path;
 				const worktreeStatus = {
 					gitAvailable: status.gitAvailable,
 					repoRoot: worktree.path,
@@ -204,8 +218,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 
 				return (
 					<section key={worktree.path} className="worktrees-panel__worktree">
-						<button
-							type="button"
+						<div
 							className={[
 								'worktrees-panel__worktree-header',
 								collapsed ? 'worktrees-panel__worktree-header--collapsed' : '',
@@ -218,62 +231,91 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 							]
 								.filter(Boolean)
 								.join(' ')}
-							onClick={() => toggleWorktree(worktree.path)}
 							onContextMenu={(event) => openContextMenu(event, worktree)}
 							title={getWorktreeTitle(worktree)}
-							aria-expanded={!collapsed}
 						>
-							<span
-								className={`git-panel__folder-chevron${
-									collapsed ? ' git-panel__folder-chevron--collapsed' : ''
-								}`}
-								aria-hidden="true"
+							<button
+								type="button"
+								className="worktrees-panel__worktree-toggle"
+								onClick={() => toggleWorktree(worktree.path)}
+								aria-expanded={!collapsed}
 							>
-								<ChevronDown size={14} aria-hidden />
-							</span>
-							<span className="worktrees-panel__worktree-main">
-								<span className="worktrees-panel__worktree-topline">
-									<span
-										className={`worktrees-panel__worktree-icon${
-											hasUnmergedOrUncommittedWork
-												? ' worktrees-panel__worktree-icon--dirty'
-												: ''
-										}${
-											worktree.isCurrent
-												? ' worktrees-panel__worktree-icon--current'
-												: ''
-										}`}
-										aria-hidden="true"
-									>
-										<WorktreeIcon size={14} aria-hidden />
-									</span>
-									<span className="worktrees-panel__worktree-name">
-										{worktree.name}
-									</span>
-									<span className="worktrees-panel__spacer" />
-									{branchLabel ? (
-										<span className="worktrees-panel__branch">{branchLabel}</span>
-									) : null}
+								<span
+									className={`git-panel__folder-chevron${
+										collapsed ? ' git-panel__folder-chevron--collapsed' : ''
+									}`}
+									aria-hidden="true"
+								>
+									<ChevronDown size={14} aria-hidden />
 								</span>
-								<span className="worktrees-panel__worktree-meta">
-									{hasLineChanges ? (
-										<>
-											<span className="worktrees-panel__delta worktrees-panel__delta--additions">
-												+{worktree.lineAdditions ?? 0}
-											</span>
-											<span className="worktrees-panel__delta worktrees-panel__delta--deletions">
-												-{worktree.lineDeletions ?? 0}
-											</span>
-										</>
-									) : (
-										<span className="worktrees-panel__clean">clean</span>
-									)}
-									<span className="worktrees-panel__date">
-										{formatWorktreeDate(worktree.lastChangedAt)}
+								<span className="worktrees-panel__worktree-main">
+									<span className="worktrees-panel__worktree-topline">
+										<span
+											className={`worktrees-panel__worktree-icon${
+												hasUnmergedOrUncommittedWork
+													? ' worktrees-panel__worktree-icon--dirty'
+													: ''
+											}${
+												worktree.isCurrent
+													? ' worktrees-panel__worktree-icon--current'
+													: ''
+											}`}
+											aria-hidden="true"
+										>
+											<WorktreeIcon size={14} aria-hidden />
+										</span>
+										<span className="worktrees-panel__worktree-name">
+											{worktree.name}
+										</span>
+									</span>
+									<span className="worktrees-panel__worktree-meta">
+										{hasLineChanges ? (
+											<>
+												<span className="worktrees-panel__delta worktrees-panel__delta--additions">
+													+{worktree.lineAdditions ?? 0}
+												</span>
+												<span className="worktrees-panel__delta worktrees-panel__delta--deletions">
+													-{worktree.lineDeletions ?? 0}
+												</span>
+											</>
+										) : (
+											<span className="worktrees-panel__clean">clean</span>
+										)}
+										<span className="worktrees-panel__date">
+											{formatWorktreeDate(worktree.lastChangedAt)}
+										</span>
 									</span>
 								</span>
-							</span>
-						</button>
+							</button>
+							<button
+								type="button"
+								className={`worktrees-panel__push-button${
+									pushMenuOpen ? ' worktrees-panel__push-button--active' : ''
+								}`}
+								disabled={pushUnavailable}
+								onClick={(event) => {
+									event.stopPropagation();
+									if (pushUnavailable) {
+										return;
+									}
+									const rect = event.currentTarget.getBoundingClientRect();
+									onOpenPushMenu(worktree, {
+										x: rect.left,
+										y: rect.bottom + 4,
+									});
+								}}
+								aria-label={`Commit and push ${worktree.name} with an AI agent`}
+								aria-haspopup="menu"
+								aria-expanded={pushMenuOpen}
+								title={
+									pushUnavailable
+										? 'Push is unavailable for this worktree'
+										: 'Commit & push with AI'
+								}
+							>
+								<Upload size={14} aria-hidden="true" />
+							</button>
+						</div>
 						{collapsed ? null : worktree.errorMessage ? (
 							<div className="git-panel__message">{worktree.errorMessage}</div>
 						) : worktree.isBare ? (
