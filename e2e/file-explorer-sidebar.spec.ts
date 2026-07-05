@@ -351,6 +351,11 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['add', '.'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
+  const defaultBranch = (
+    await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: workspace.rootDir })
+  ).stdout.trim()
+  const featureBranch = 'feature/push-menu'
+  await execFileAsync('git', ['checkout', '-b', featureBranch], { cwd: workspace.rootDir })
 
   await workspace.writeText('src/lib/util.ts', 'export const x = 2\n')
   await workspace.writeText('src/lib/new.ts', 'export const y = 3\n')
@@ -390,10 +395,16 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   await pushButton.click()
 
   const pushMenu = mainWindow.locator('.context-menu')
+  const pushMenuHeadings = pushMenu.locator('.context-menu__heading')
+  await expect(pushMenuHeadings.getByText(`Current Branch (${featureBranch})`, { exact: true })).toBeVisible()
   await expect(pushMenu.getByText('Push to current branch', { exact: true })).toBeVisible()
-  await expect(pushMenu.getByText('Push to current branch + PR')).toBeVisible()
+  await expect(pushMenu.getByText('Push to current branch + create PR')).toBeVisible()
+  await expect(pushMenuHeadings.getByText('New Branch', { exact: true })).toBeVisible()
   await expect(pushMenu.getByText('Push to new branch', { exact: true })).toBeVisible()
-  await expect(pushMenu.getByText('Push to new branch + PR')).toBeVisible()
+  await expect(pushMenu.getByText('Push to new branch + create PR')).toBeVisible()
+  await expect(pushMenuHeadings.getByText(`Default Branch (${defaultBranch})`, { exact: true })).toBeVisible()
+  await expect(pushMenu.getByText('Push to default branch')).toBeVisible()
+  await expect(pushMenu.locator('.context-menu__trailing')).toHaveCount(5)
 
   await mainWindow.keyboard.press('Escape')
   await expect(pushMenu).toHaveCount(0)

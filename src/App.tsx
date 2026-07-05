@@ -105,6 +105,7 @@ import type {
 	GitChangeEntry,
 	GitWorktreeStatus,
 	RemoteAccessStatus,
+	QuickPushAction,
 	TerminalRecordingStartMetadata,
 	TerminalRecordingState,
 	WorktreePanelStatus,
@@ -312,51 +313,139 @@ function formatDictationTranscriptForTerminal(text: string): string {
 	return /[\r\n]/.test(text) ? formatBracketedPaste(text) : text;
 }
 
-type GitPushAgentAction = 'current' | 'current-pr' | 'new' | 'new-pr';
+type GitPushAgentAction = QuickPushAction;
+type GitPushAgentActionGroup = 'current' | 'new' | 'default';
 
 const GIT_PUSH_AGENT_ACTIONS: Array<{
 	action: GitPushAgentAction;
+	group: GitPushAgentActionGroup;
 	label: string;
 	task: string;
+	quickPush?: boolean;
 }> = [
 	{
 		action: 'current',
+		group: 'current',
 		label: 'Push to current branch',
 		task: 'Commit all of my current changes and push them to the current branch.',
+		quickPush: true,
 	},
 	{
 		action: 'current-pr',
-		label: 'Push to current branch + PR',
+		group: 'current',
+		label: 'Push to current branch + create PR',
 		task: 'Commit all of my current changes, push them to the current branch, and open a pull request.',
+		quickPush: true,
 	},
 	{
 		action: 'new',
+		group: 'new',
 		label: 'Push to new branch',
 		task: 'Commit all of my current changes onto a new, descriptively named branch and push it.',
+		quickPush: true,
 	},
 	{
 		action: 'new-pr',
-		label: 'Push to new branch + PR',
+		group: 'new',
+		label: 'Push to new branch + create PR',
 		task: 'Commit all of my current changes onto a new, descriptively named branch, push it, and open a pull request.',
+		quickPush: true,
+	},
+	{
+		action: 'default',
+		group: 'default',
+		label: 'Push to default branch',
+		task: 'Commit all of my current changes onto the default branch and push it.',
+		quickPush: true,
 	},
 ];
 
 type GitPushMenuTarget = {
 	branch: string | null | undefined;
 	cwd: string;
+	defaultBranch?: string | null;
 	worktreePath?: string;
 };
+
+function formatGitPushBranchLabel(branch: string | null | undefined): string {
+	return branch?.trim() || 'unknown';
+}
+
+function getGitPushActionIcon(action: GitPushAgentAction): ReactNode {
+	if (action === 'new') {
+		return <GitBranchPlus size={14} aria-hidden="true" />;
+	}
+
+	if (action === 'current-pr' || action === 'new-pr') {
+		return <GitPullRequestArrow size={14} aria-hidden="true" />;
+	}
+
+	return <GitBranch size={14} aria-hidden="true" />;
+}
+
+function buildGitPushMenuItems(options: {
+	target: GitPushMenuTarget;
+	onLaunchAgent: (action: GitPushAgentAction, target: GitPushMenuTarget) => void;
+	onLaunchQuickPush: (action: QuickPushAction, target: GitPushMenuTarget) => void;
+}): ContextMenuItem[] {
+	const { target, onLaunchAgent, onLaunchQuickPush } = options;
+	const currentBranch = formatGitPushBranchLabel(target.branch);
+	const defaultBranch = formatGitPushBranchLabel(target.defaultBranch ?? 'main');
+
+	const headings: Record<GitPushAgentActionGroup, string> = {
+		current: `Current Branch (${currentBranch})`,
+		new: 'New Branch',
+		default: `Default Branch (${defaultBranch})`,
+	};
+	const items: ContextMenuItem[] = [];
+
+	for (const group of [
+		'current',
+		'new',
+		'default',
+	] as GitPushAgentActionGroup[]) {
+		if (items.length > 0) {
+			items.push({ key: `${group}-separator`, label: '', separator: true });
+		}
+		items.push({ key: `${group}-heading`, label: headings[group], heading: true });
+
+		for (const entry of GIT_PUSH_AGENT_ACTIONS.filter(
+			(action) => action.group === group,
+		)) {
+			items.push({
+				key: entry.action,
+				label: entry.label,
+				icon: getGitPushActionIcon(entry.action),
+				onClick: () => onLaunchAgent(entry.action, target),
+				trailingAction: entry.quickPush
+					? {
+							icon: <Zap size={14} aria-hidden="true" />,
+							label: `${entry.label} (quick mode)`,
+							onClick: () =>
+								onLaunchQuickPush(entry.action as QuickPushAction, target),
+						}
+					: undefined,
+			});
+		}
+	}
+
+	return items;
+}
 
 function buildGitPushAgentPrompt(
 	template: string,
 	task: string,
 	branch: string | null | undefined,
+	defaultBranch: string | null | undefined,
 ): string {
 	const safeBranch = branch?.trim() ? branch.trim() : 'the current branch';
+	const safeDefaultBranch = defaultBranch?.trim() ? defaultBranch.trim() : 'the default branch';
 	const withTask = template.includes('{{task}}')
 		? template.replace(/\{\{task\}\}/g, () => task)
 		: `${template.trim()}\n\nTask: ${task}`;
-	return withTask.replace(/\{\{branch\}\}/g, () => safeBranch);
+	return withTask
+		.replace(/\{\{branch\}\}/g, () => safeBranch)
+		.replace(/\{\{defaultBranch\}\}/g, () => safeDefaultBranch);
 }
 
 function buildGitPushAgentCommand(
@@ -1955,7 +2044,8 @@ const ProjectWorkspace = forwardRef<
 		x: number;
 		y: number;
 	} | null>(null);
-	const [quickPushAction, setQuickPushAction] = useState<GitPushAgentAction | null>(null);
+	const [quickPushAction, setQuickPushAction] =
+		useState<QuickPushAction | null>(null);
 	const [quickPushCwd, setQuickPushCwd] = useState<string | null>(null);
 	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
 	const [runningMacroRunsBySession, setRunningMacroRunsBySession] = useState<
@@ -3690,6 +3780,7 @@ const ProjectWorkspace = forwardRef<
 
 	const handleOpenWorktreePushMenu = useCallback(
 		(worktree: GitWorktreeStatus, anchor: { x: number; y: number }) => {
+			const defaultBranch = worktreePanelStatus?.defaultBranch ?? 'main';
 			setGitPushMenuPosition((current) =>
 				current?.target?.worktreePath === worktree.path
 					? null
@@ -3699,12 +3790,13 @@ const ProjectWorkspace = forwardRef<
 							target: {
 								branch: worktree.branch,
 								cwd: worktree.path,
+								defaultBranch,
 								worktreePath: worktree.path,
 							},
 						},
 			);
 		},
-		[],
+		[worktreePanelStatus],
 	);
 
 	const handleOpenGitEntry = useCallback(
@@ -4812,14 +4904,19 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
+			const task =
+				actionMeta.action === 'default'
+					? `Commit all of my current changes onto the default branch "${formatGitPushBranchLabel(target.defaultBranch ?? 'main')}" and push it.`
+					: actionMeta.task;
 			const model =
 				config.provider === 'claudeCode'
 					? config.claudeCodeModel
 					: config.codexModel;
 			const prompt = buildGitPushAgentPrompt(
 				config.prompt,
-				actionMeta.task,
+				task,
 				target.branch,
+				target.defaultBranch,
 			);
 			const command = buildGitPushAgentCommand(
 				config.provider,
@@ -4837,7 +4934,7 @@ const ProjectWorkspace = forwardRef<
 	);
 
 	const launchQuickPush = useCallback(
-		async (action: GitPushAgentAction, target: GitPushMenuTarget) => {
+		async (action: QuickPushAction, target: GitPushMenuTarget) => {
 			setGitPushMenuPosition(null);
 
 			if (settings.gitPushAgent.provider === 'disabled') {
@@ -7064,33 +7161,12 @@ const ProjectWorkspace = forwardRef<
 								x={gitPushMenuPosition.x}
 								y={gitPushMenuPosition.y}
 								onClose={() => setGitPushMenuPosition(null)}
-								items={GIT_PUSH_AGENT_ACTIONS.map((entry) => ({
-									key: entry.action,
-									label: entry.label,
-									separator: false,
-									icon:
-										entry.action === 'current' ? (
-											<GitBranch size={14} aria-hidden="true" />
-										) : entry.action === 'new' ? (
-											<GitBranchPlus size={14} aria-hidden="true" />
-										) : (
-											<GitPullRequestArrow size={14} aria-hidden="true" />
-										),
-									onClick: () =>
-										launchGitPushAgent(
-											entry.action,
-											gitPushMenuPosition.target,
-										),
-									trailingAction: {
-										icon: <Zap size={14} aria-hidden="true" />,
-										label: `${entry.label} (quick mode)`,
-										onClick: () =>
-											void launchQuickPush(
-												entry.action,
-												gitPushMenuPosition.target,
-											),
-									},
-								}))}
+								items={buildGitPushMenuItems({
+									target: gitPushMenuPosition.target,
+									onLaunchAgent: launchGitPushAgent,
+									onLaunchQuickPush: (action, target) =>
+										void launchQuickPush(action, target),
+								})}
 							/>
 						) : null}
 

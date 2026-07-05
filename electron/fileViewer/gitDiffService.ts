@@ -152,6 +152,7 @@ export class GitDiffService {
         return {
           gitAvailable: false,
           repoRoot: null,
+          defaultBranch: null,
           worktrees: [],
         }
       }
@@ -159,6 +160,7 @@ export class GitDiffService {
       return {
         gitAvailable: true,
         repoRoot: null,
+        defaultBranch: null,
         worktrees: [],
       }
     }
@@ -167,6 +169,7 @@ export class GitDiffService {
       return {
         gitAvailable: true,
         repoRoot: null,
+        defaultBranch: null,
         worktrees: [],
       }
     }
@@ -176,6 +179,7 @@ export class GitDiffService {
     })
 
     const worktrees = parseWorktreeList(stdout, repoRoot)
+    const defaultBranch = await this.resolveDefaultBranch(workingDirectory)
 
     const withEntries = await Promise.all(
       worktrees.map(async (worktree): Promise<GitWorktreeStatus> => {
@@ -234,6 +238,7 @@ export class GitDiffService {
     return {
       gitAvailable: true,
       repoRoot,
+      defaultBranch,
       worktrees: withEntries,
     }
   }
@@ -275,6 +280,38 @@ export class GitDiffService {
       return result.stdout.trim() || 'HEAD'
     } catch {
       return 'HEAD'
+    }
+  }
+
+  private async resolveDefaultBranch(cwd: string): Promise<string | null> {
+    try {
+      const result = await execFileAsync('git', ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], {
+        cwd,
+      })
+      const remoteHead = result.stdout.trim()
+      if (remoteHead.startsWith('origin/')) {
+        return remoteHead.slice('origin/'.length)
+      }
+      if (remoteHead) {
+        return remoteHead
+      }
+    } catch {}
+
+    for (const branch of ['main', 'master']) {
+      try {
+        await execFileAsync('git', ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { cwd })
+        return branch
+      } catch {}
+    }
+
+    try {
+      const result = await execFileAsync('git', ['branch', '--format=%(refname:short)'], { cwd })
+      return result.stdout
+        .split(/\r?\n/)
+        .map((branch) => branch.trim())
+        .find((branch) => branch.length > 0) ?? null
+    } catch {
+      return null
     }
   }
 
