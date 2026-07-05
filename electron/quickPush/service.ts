@@ -32,6 +32,7 @@ type PorcelainEntry = {
 type QuickPushContext = {
   repoRoot: string
   branch: string
+  defaultBranch: string
   changedFiles: string[]
   statusText: string
   diffText: string
@@ -103,6 +104,36 @@ function actionNeedsBranch(action: QuickPushAction): boolean {
 
 function actionNeedsPullRequest(action: QuickPushAction): boolean {
   return action === 'current-pr' || action === 'new-pr'
+}
+
+async function resolveDefaultBranch(cwd: string): Promise<string | null> {
+  try {
+    const result = await runGit(['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], cwd)
+    const remoteHead = result.trim()
+    if (remoteHead.startsWith('origin/')) {
+      return remoteHead.slice('origin/'.length)
+    }
+    if (remoteHead) {
+      return remoteHead
+    }
+  } catch {}
+
+  for (const branch of ['main', 'master']) {
+    try {
+      await runGit(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], cwd)
+      return branch
+    } catch {}
+  }
+
+  try {
+    const result = await runGit(['branch', '--format=%(refname:short)'], cwd)
+    return result
+      .split(/\r?\n/)
+      .map((branch) => branch.trim())
+      .find((branch) => branch.length > 0) ?? null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -287,7 +318,7 @@ export function parseQuickPushPlan(
   return { branchName, pullRequest, commits, uncoveredFiles, warnings }
 }
 
-function describeAction(action: QuickPushAction, branch: string): string {
+function describeAction(action: QuickPushAction, branch: string, defaultBranch: string): string {
   switch (action) {
     case 'current':
       return `Commit all of the changes onto the current branch "${branch}". Do not set "branchName" or "pullRequest".`
@@ -297,6 +328,8 @@ function describeAction(action: QuickPushAction, branch: string): string {
       return `Commit all of the changes onto a new, descriptively named branch. Set "branchName" to a short kebab-case branch name (you may include a "feat/" or "fix/" style prefix). Do not set "pullRequest".`
     case 'new-pr':
       return `Commit all of the changes onto a new, descriptively named branch, then open a pull request. Set "branchName" to a short kebab-case branch name and set "pullRequest" with a title and body.`
+    case 'default':
+      return `Commit all of the changes onto the default branch "${defaultBranch}". Do not set "branchName" or "pullRequest".`
     default:
       return 'Commit all of the changes.'
   }
@@ -321,7 +354,10 @@ function buildPrompt(context: QuickPushContext, action: QuickPushAction): string
     '- Use the file paths EXACTLY as shown under "Changed files" (relative to the repo root).',
     '- Group related changes together; split unrelated changes into separate commits.',
     '',
-    `Task: ${describeAction(action, context.branch)}`,
+    `Task: ${describeAction(action, context.branch, context.defaultBranch)}`,
+    '',
+    `Current branch: ${context.branch}`,
+    `Default branch: ${context.defaultBranch}`,
     '',
     'Changed files:',
     context.changedFiles.length > 0 ? context.changedFiles.map((file) => `- ${file}`).join('\n') : '(none)',
@@ -400,6 +436,7 @@ async function gatherContext(cwd: string): Promise<QuickPushContext> {
   if (!branch || branch === 'HEAD') {
     branch = 'the current branch'
   }
+  const defaultBranch = (await resolveDefaultBranch(repoRoot)) ?? 'main'
 
   const porcelain = await runGit(
     ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=no'],
@@ -432,6 +469,7 @@ async function gatherContext(cwd: string): Promise<QuickPushContext> {
   return {
     repoRoot,
     branch,
+    defaultBranch,
     changedFiles,
     statusText: statusTextRaw,
     diffText,
@@ -608,6 +646,16 @@ export class QuickPushService {
         }
         await run(`Create branch ${branchName}`, ['checkout', '-b', branchName])
         branch = branchName
+      } else if (request.action === 'default') {
+        const defaultBranch = await resolveDefaultBranch(repoRoot)
+        if (!defaultBranch) {
+          throw new Error('Unable to resolve the repository default branch.')
+        }
+        const currentBranch = (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot)).trim()
+        if (currentBranch !== defaultBranch) {
+          await run(`Checkout default branch ${defaultBranch}`, ['checkout', defaultBranch])
+        }
+        branch = defaultBranch
       } else {
         branch = (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot)).trim()
       }

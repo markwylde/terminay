@@ -332,6 +332,7 @@ export type GitWorktreeStatus = {
 export type WorktreePanelStatus = {
   gitAvailable: boolean
   repoRoot: string | null
+  defaultBranch: string | null
   worktrees: GitWorktreeStatus[]
 }
 
@@ -455,7 +456,7 @@ export type AiTabMetadataGenerateResult = {
   text: string
 }
 
-export type QuickPushAction = 'current' | 'current-pr' | 'new' | 'new-pr'
+export type QuickPushAction = 'current' | 'current-pr' | 'new' | 'new-pr' | 'default'
 
 export type QuickPushCommit = {
   message: string
