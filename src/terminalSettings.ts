@@ -265,6 +265,7 @@ export const DEFAULT_GIT_PUSH_AGENT_PROMPT = `You are helping me commit and push
 Task: {{task}}
 
 Current branch: {{branch}}
+Default branch: {{defaultBranch}}
 
 Please:
 1. Run \`git status\` and \`git diff\` to understand what has changed.
@@ -602,7 +603,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				key: 'gitPushAgent.prompt',
 				label: 'Agent prompt',
 				description:
-					'Prompt sent to the agent. Use {{task}} for the chosen push action and {{branch}} for the current branch.',
+					'Prompt sent to the agent. Use {{task}} for the chosen push action, {{branch}} for the current branch, and {{defaultBranch}} for the default branch.',
 				sectionId: 'git-push-agent',
 				categoryId: 'ai',
 				input: 'textarea',
