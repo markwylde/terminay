@@ -332,6 +332,7 @@ export type GitWorktreeStatus = {
 export type WorktreePanelStatus = {
   gitAvailable: boolean
   repoRoot: string | null
+  defaultBranch: string | null
   worktrees: GitWorktreeStatus[]
 }
 

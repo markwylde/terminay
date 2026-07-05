@@ -30,9 +30,9 @@ type Phase = 'generating' | 'review' | 'applying' | 'done' | 'error';
 
 const ACTION_LABELS: Record<QuickPushAction, string> = {
 	current: 'Push to current branch',
-	'current-pr': 'Push to current branch + PR',
+	'current-pr': 'Push to current branch + create PR',
 	new: 'Push to new branch',
-	'new-pr': 'Push to new branch + PR',
+	'new-pr': 'Push to new branch + create PR',
 };
 
 export function QuickPushModal({

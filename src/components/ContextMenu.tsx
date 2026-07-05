@@ -10,11 +10,12 @@ export type ContextMenuTrailingAction = {
 
 export type ContextMenuItem = {
 	label: string;
-	onClick: () => void;
+	onClick?: () => void;
 	icon?: ReactNode;
 	danger?: boolean;
 	disabled?: boolean;
 	separator?: boolean;
+	heading?: boolean;
 	key?: string;
 	/** Optional secondary action rendered as a button on the right edge of the row. */
 	trailingAction?: ContextMenuTrailingAction;
@@ -35,6 +36,10 @@ export function ContextMenu({ x, y, items, onClose, portalContainer }: ContextMe
 	const getItemKey = (item: ContextMenuItem, index: number) => {
 		if (item.key) {
 			return item.key;
+		}
+
+		if (item.heading) {
+			return `heading-${item.label}`;
 		}
 
 		if (!item.separator) {
@@ -88,6 +93,8 @@ export function ContextMenu({ x, y, items, onClose, portalContainer }: ContextMe
 				<div key={getItemKey(item, index)}>
 					{item.separator ? (
 						<div className="context-menu__separator" />
+					) : item.heading ? (
+						<div className="context-menu__heading">{item.label}</div>
 					) : (
 						<div
 							className={`context-menu__row${item.trailingAction ? ' context-menu__row--has-trailing' : ''}`}
@@ -100,7 +107,7 @@ export function ContextMenu({ x, y, items, onClose, portalContainer }: ContextMe
 									if (item.disabled) {
 										return;
 									}
-									item.onClick();
+									item.onClick?.();
 									onClose();
 								}}
 							>
