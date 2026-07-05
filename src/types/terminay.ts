@@ -456,7 +456,7 @@ export type AiTabMetadataGenerateResult = {
   text: string
 }
 
-export type QuickPushAction = 'current' | 'current-pr' | 'new' | 'new-pr'
+export type QuickPushAction = 'current' | 'current-pr' | 'new' | 'new-pr' | 'default'
 
 export type QuickPushCommit = {
   message: string

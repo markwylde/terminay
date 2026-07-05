@@ -33,6 +33,7 @@ const ACTION_LABELS: Record<QuickPushAction, string> = {
 	'current-pr': 'Push to current branch + create PR',
 	new: 'Push to new branch',
 	'new-pr': 'Push to new branch + create PR',
+	default: 'Push to default branch',
 };
 
 export function QuickPushModal({

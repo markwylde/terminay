@@ -404,7 +404,7 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   await expect(pushMenu.getByText('Push to new branch + create PR')).toBeVisible()
   await expect(pushMenuHeadings.getByText(`Default Branch (${defaultBranch})`, { exact: true })).toBeVisible()
   await expect(pushMenu.getByText('Push to default branch')).toBeVisible()
-  await expect(pushMenu.locator('.context-menu__trailing')).toHaveCount(4)
+  await expect(pushMenu.locator('.context-menu__trailing')).toHaveCount(5)
 
   await mainWindow.keyboard.press('Escape')
   await expect(pushMenu).toHaveCount(0)

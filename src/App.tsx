@@ -313,7 +313,7 @@ function formatDictationTranscriptForTerminal(text: string): string {
 	return /[\r\n]/.test(text) ? formatBracketedPaste(text) : text;
 }
 
-type GitPushAgentAction = QuickPushAction | 'default';
+type GitPushAgentAction = QuickPushAction;
 type GitPushAgentActionGroup = 'current' | 'new' | 'default';
 
 const GIT_PUSH_AGENT_ACTIONS: Array<{
@@ -356,6 +356,7 @@ const GIT_PUSH_AGENT_ACTIONS: Array<{
 		group: 'default',
 		label: 'Push to default branch',
 		task: 'Commit all of my current changes onto the default branch and push it.',
+		quickPush: true,
 	},
 ];
 
