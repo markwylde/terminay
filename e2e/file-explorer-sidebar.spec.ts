@@ -259,9 +259,14 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   const gitPane = mainWindow
     .locator('.sidebar-pane')
     .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  const worktree = gitPane.locator('.worktrees-panel__worktree').first()
+  await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-changes', {
+    timeout: 6000,
+  })
+  await worktree.locator('.worktrees-panel__worktree-toggle').click()
 
   // The Staged Changes group lists the added file with an "A" badge.
-  const stagedGroup = gitPane.locator('.git-panel__group').filter({ hasText: 'Staged Changes' })
+  const stagedGroup = worktree.locator('.git-panel__group').filter({ hasText: 'Staged Changes' })
   const stagedRow = stagedGroup.locator('.git-panel__row').filter({ hasText: 'staged-new.txt' })
   await expect(stagedRow).toBeVisible({ timeout: 6000 })
   await expect(stagedRow.locator('.git-panel__badge')).toHaveText('A')
@@ -272,7 +277,7 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   await mainWindow.keyboard.press('Escape')
 
   // The Changes group lists the modified and untracked files.
-  const changesGroup = gitPane.locator('.git-panel__group').filter({ hasText: /^Changes/ })
+  const changesGroup = worktree.locator('.git-panel__group').filter({ hasText: /^Changes/ })
   const modifiedRow = changesGroup.locator('.git-panel__row').filter({ hasText: 'README.md' })
   const untrackedRow = changesGroup.locator('.git-panel__row').filter({ hasText: 'untracked.txt' })
   await expect(modifiedRow.locator('.git-panel__badge')).toHaveText('M')
@@ -281,8 +286,8 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   // Modified files are colour-coded amber, matching the file tree.
   await expect(modifiedRow.locator('.git-panel__icon')).toHaveCSS('color', 'rgb(226, 192, 141)')
 
-  // The pane header shows the branch name and a total change count of 3.
-  await expect(gitPane.locator('.sidebar-pane__count')).toHaveText('3')
+  // The pane header shows the branch name and the number of worktrees.
+  await expect(gitPane.locator('.sidebar-pane__count')).toHaveText('1')
   await expect(gitPane.locator('.sidebar-pane__branch')).toHaveText(/^(main|master)$/)
 
   // Clicking a tracked change opens it in the file viewer.
@@ -292,9 +297,7 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   // Collapsing the Git pane hides the change list...
   await gitPane.locator('.sidebar-pane__header').click()
   await expect(gitPane.locator('.git-panel__row')).toHaveCount(0)
-  // ...but the push-agent button stays available in the collapsed header.
   await expect(gitPane).toHaveClass(/sidebar-pane--collapsed/)
-  await expect(gitPane.getByLabel('Commit and push with an AI agent')).toBeVisible()
 })
 
 test('git sidebar pane shows no changes for a clean repository', async ({ createWorkspace, mainWindow }) => {
@@ -319,9 +322,14 @@ test('git sidebar pane shows no changes for a clean repository', async ({ create
   const gitPane = mainWindow
     .locator('.sidebar-pane')
     .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  const worktree = gitPane.locator('.worktrees-panel__worktree').first()
+  await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-clean', {
+    timeout: 6000,
+  })
+  await worktree.locator('.worktrees-panel__worktree-toggle').click()
 
-  await expect(gitPane.locator('.git-panel__message')).toHaveText('No changes', { timeout: 6000 })
-  await expect(gitPane.locator('.git-panel__row')).toHaveCount(0)
+  await expect(worktree.locator('.git-panel__message')).toHaveText('No changes', { timeout: 6000 })
+  await expect(worktree.locator('.git-panel__row')).toHaveCount(0)
 })
 
 test('git sidebar pane renders a nested tree and offers a push menu', async ({
@@ -353,27 +361,31 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   const gitPane = mainWindow
     .locator('.sidebar-pane')
     .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  const worktree = gitPane.locator('.worktrees-panel__worktree').first()
+  await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-tree', {
+    timeout: 6000,
+  })
+  await worktree.locator('.worktrees-panel__worktree-toggle').click()
 
   // Tree is the default view: nested folder rows are rendered.
-  const utilRow = gitPane.locator('.git-panel__row').filter({ hasText: 'util.ts' })
+  const utilRow = worktree.locator('.git-panel__row').filter({ hasText: 'util.ts' })
   await expect(utilRow).toBeVisible({ timeout: 6000 })
-  // A single section has no redundant group header (the "Git" pane header covers it).
-  await expect(gitPane.locator('.git-panel__group-header')).toHaveCount(0)
-  await expect(gitPane.locator('.git-panel__folder-name').filter({ hasText: 'src' })).toBeVisible()
-  await expect(gitPane.locator('.git-panel__folder-name').filter({ hasText: 'lib' })).toBeVisible()
+  // A single section has no redundant group header (the worktree row covers it).
+  await expect(worktree.locator('.git-panel__group-header')).toHaveCount(0)
+  await expect(worktree.locator('.git-panel__folder-name').filter({ hasText: 'src' })).toBeVisible()
+  await expect(worktree.locator('.git-panel__folder-name').filter({ hasText: 'lib' })).toBeVisible()
   // In tree mode the row does not repeat the directory path.
   await expect(utilRow.locator('.git-panel__dir')).toHaveCount(0)
 
   // Collapsing the "lib" folder hides its files.
-  await gitPane.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
+  await worktree.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
   await expect(utilRow).toHaveCount(0)
   // Re-expand.
-  await gitPane.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
+  await worktree.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
   await expect(utilRow).toBeVisible()
 
-  // The sidebar header exposes a push-agent menu (replacing the old
-  // tree/list toggle) offering the four commit-and-push actions.
-  const pushButton = gitPane.getByLabel('Commit and push with an AI agent')
+  // The worktree row exposes a push-agent menu offering the four commit-and-push actions.
+  const pushButton = worktree.getByLabel(/Commit and push .* with an AI agent/)
   await expect(pushButton).toBeVisible()
   await pushButton.click()
 

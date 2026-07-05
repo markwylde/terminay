@@ -39,7 +39,6 @@ import {
 	Sparkles,
 	Terminal,
 	Trash2,
-	Upload,
 	Zap,
 } from 'lucide-react';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
@@ -47,14 +46,9 @@ import type { FilePanelInstanceParams } from './components/file-viewer';
 import { FilePanel, FileTab } from './components/file-viewer';
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
-import { GitPanel } from './components/git-panel/GitPanel';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
 import { SidebarPane } from './components/sidebar/SidebarPane';
-import {
-	SIDEBAR_HEADER_MIN_HEIGHT,
-	SIDEBAR_SPLITTER_HEIGHT,
-	SidebarSplit,
-} from './components/sidebar/SidebarSplit';
+import { SidebarSplit } from './components/sidebar/SidebarSplit';
 import { McpInstallModal } from './components/McpInstallModal';
 import { QuickPushModal } from './components/QuickPushModal';
 import type {
@@ -110,7 +104,6 @@ import type {
 	FileSearchResult,
 	GitChangeEntry,
 	GitWorktreeStatus,
-	GitPanelStatus,
 	RemoteAccessStatus,
 	TerminalRecordingStartMetadata,
 	TerminalRecordingState,
@@ -420,9 +413,7 @@ type ProjectTab = {
 	isFileExplorerOpen: boolean;
 	isExplorerPaneCollapsed: boolean;
 	isGitPaneCollapsed: boolean;
-	isWorktreesPaneCollapsed: boolean;
 	sidebarExplorerHeight: number;
-	sidebarGitHeight: number;
 	rootFolder: string;
 };
 
@@ -711,10 +702,7 @@ function createProjectTab(
 		isFileExplorerOpen: false,
 		isExplorerPaneCollapsed: sidebarDefaults.defaultExplorerState === 'collapsed',
 		isGitPaneCollapsed: sidebarDefaults.defaultGitState === 'collapsed',
-		isWorktreesPaneCollapsed:
-			sidebarDefaults.defaultWorktreesState === 'collapsed',
 		sidebarExplorerHeight: sidebarDefaults.defaultExplorerPaneHeight,
-		sidebarGitHeight: sidebarDefaults.defaultGitPaneHeight,
 		rootFolder: homePath,
 	};
 }
@@ -1960,13 +1948,10 @@ const ProjectWorkspace = forwardRef<
 	const [gitStatuses, setGitStatuses] = useState<
 		Record<string, FileExplorerGitStatus>
 	>({});
-	const [gitPanelStatus, setGitPanelStatus] = useState<GitPanelStatus | null>(
-		null,
-	);
 	const [worktreePanelStatus, setWorktreePanelStatus] =
 		useState<WorktreePanelStatus | null>(null);
 	const [gitPushMenuPosition, setGitPushMenuPosition] = useState<{
-		target?: GitPushMenuTarget;
+		target: GitPushMenuTarget;
 		x: number;
 		y: number;
 	} | null>(null);
@@ -1983,6 +1968,19 @@ const ProjectWorkspace = forwardRef<
 	const fileExplorerNameDialogRequestIdRef = useRef(0);
 	const [fileExplorerNameDialog, setFileExplorerNameDialog] =
 		useState<FileExplorerNameDialogState | null>(null);
+	const currentGitBranch = useMemo(() => {
+		const worktrees = worktreePanelStatus?.worktrees;
+		if (!worktrees) {
+			return null;
+		}
+
+		return (
+			worktrees.find((worktree) => worktree.isCurrent)?.branch ??
+			worktrees.find((worktree) => worktree.path === worktreePanelStatus.repoRoot)
+				?.branch ??
+			null
+		);
+	}, [worktreePanelStatus]);
 
 	const [isDockviewReady, setIsDockviewReady] = useState(false);
 	const [isMacroLauncherOpen, setIsMacroLauncherOpen] = useState(false);
@@ -2969,7 +2967,6 @@ const ProjectWorkspace = forwardRef<
 	const refreshGitStatuses = useCallback(async () => {
 		if (!project.rootFolder) {
 			setGitStatuses({});
-			setGitPanelStatus(null);
 			setWorktreePanelStatus(null);
 			return;
 		}
@@ -2980,17 +2977,14 @@ const ProjectWorkspace = forwardRef<
 
 		isRefreshingGitStatusesRef.current = true;
 		try {
-			const [nextStatuses, nextPanel, nextWorktrees] = await Promise.all([
+			const [nextStatuses, nextWorktrees] = await Promise.all([
 				window.terminay.getFileExplorerGitStatuses(project.rootFolder),
-				window.terminay.getGitPanelStatus(project.rootFolder),
 				window.terminay.getWorktreePanelStatus(project.rootFolder),
 			]);
 			setGitStatuses(nextStatuses.statuses);
-			setGitPanelStatus(nextPanel);
 			setWorktreePanelStatus(nextWorktrees);
 		} catch {
 			setGitStatuses({});
-			setGitPanelStatus(null);
 			setWorktreePanelStatus(null);
 		} finally {
 			isRefreshingGitStatusesRef.current = false;
@@ -4797,7 +4791,7 @@ const ProjectWorkspace = forwardRef<
 	);
 
 	const launchGitPushAgent = useCallback(
-		(action: GitPushAgentAction, target?: GitPushMenuTarget) => {
+		(action: GitPushAgentAction, target: GitPushMenuTarget) => {
 			setGitPushMenuPosition(null);
 
 			const config = settings.gitPushAgent;
@@ -4825,7 +4819,7 @@ const ProjectWorkspace = forwardRef<
 			const prompt = buildGitPushAgentPrompt(
 				config.prompt,
 				actionMeta.task,
-				target ? target.branch : gitPanelStatus?.branch,
+				target.branch,
 			);
 			const command = buildGitPushAgentCommand(
 				config.provider,
@@ -4834,21 +4828,16 @@ const ProjectWorkspace = forwardRef<
 			);
 
 			void addTerminal({
-				cwd: target?.cwd ?? project.rootFolder,
+				cwd: target.cwd,
 				title: 'Push agent',
 				initialInput: command,
 			});
 		},
-		[
-			addTerminal,
-			gitPanelStatus?.branch,
-			project.rootFolder,
-			settings.gitPushAgent,
-		],
+		[addTerminal, settings.gitPushAgent],
 	);
 
 	const launchQuickPush = useCallback(
-		async (action: GitPushAgentAction, target?: GitPushMenuTarget) => {
+		async (action: GitPushAgentAction, target: GitPushMenuTarget) => {
 			setGitPushMenuPosition(null);
 
 			if (settings.gitPushAgent.provider === 'disabled') {
@@ -4861,27 +4850,10 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-			let cwd = target?.cwd ?? project.rootFolder;
-			if (!target) {
-				// Operate on the active terminal's working directory so Quick Push
-				// targets the branch the user is actually on (e.g. a worktree),
-				// falling back to the project root.
-				const activeSessionId = getActiveSessionId();
-				if (activeSessionId) {
-					try {
-						cwd =
-							(await window.terminay.getTerminalCwd(activeSessionId)) ??
-							project.rootFolder;
-					} catch {
-						cwd = project.rootFolder;
-					}
-				}
-			}
-
-			setQuickPushCwd(cwd);
+			setQuickPushCwd(target.cwd);
 			setQuickPushAction(action);
 		},
-		[settings.gitPushAgent.provider, project.rootFolder, getActiveSessionId],
+		[settings.gitPushAgent.provider],
 	);
 
 	const buildMovedTerminalFromPanel = useCallback(
@@ -6986,18 +6958,9 @@ const ProjectWorkspace = forwardRef<
 					>
 						<SidebarSplit
 							topCollapsed={project.isExplorerPaneCollapsed}
-							bottomCollapsed={
-								project.isGitPaneCollapsed &&
-								project.isWorktreesPaneCollapsed
-							}
+							bottomCollapsed={project.isGitPaneCollapsed}
 							topHeight={project.sidebarExplorerHeight}
 							minPaneHeight={MIN_SIDEBAR_PANE_HEIGHT}
-							// The bottom is a nested Git + Worktrees split; reserve room for
-							// both of their headers (plus the splitter between them) so
-							// neither gets pushed off the page.
-							bottomMinHeight={
-								SIDEBAR_HEADER_MIN_HEIGHT * 2 + SIDEBAR_SPLITTER_HEIGHT
-							}
 							onTopHeightChange={(height) => {
 								onUpdateProject(project.id, {
 									sidebarExplorerHeight: height,
@@ -7056,117 +7019,43 @@ const ProjectWorkspace = forwardRef<
 								</SidebarPane>
 							}
 							bottom={
-								<SidebarSplit
-									topCollapsed={project.isGitPaneCollapsed}
-									bottomCollapsed={project.isWorktreesPaneCollapsed}
-									topHeight={project.sidebarGitHeight}
-									minPaneHeight={MIN_SIDEBAR_PANE_HEIGHT}
-									onTopHeightChange={(height) => {
+								<SidebarPane
+									title="Git"
+									collapsed={project.isGitPaneCollapsed}
+									onToggleCollapsed={() => {
+										const next = !project.isGitPaneCollapsed;
 										onUpdateProject(project.id, {
-											sidebarGitHeight: height,
+											isGitPaneCollapsed: next,
 										});
-									}}
-									onTopHeightCommit={(height) => {
 										updateSidebarSettings({
-											defaultGitPaneHeight: height,
+											defaultGitState: next ? 'collapsed' : 'expanded',
 										});
 									}}
-									top={
-										<SidebarPane
-											title="Git"
-											collapsed={project.isGitPaneCollapsed}
-											onToggleCollapsed={() => {
-												const next = !project.isGitPaneCollapsed;
-												onUpdateProject(project.id, {
-													isGitPaneCollapsed: next,
-												});
-												updateSidebarSettings({
-													defaultGitState: next ? 'collapsed' : 'expanded',
-												});
-											}}
-											count={gitPanelStatus?.entries.length}
-											accessory={
-												gitPanelStatus?.branch ? (
-													<span className="sidebar-pane__branch">
-														{gitPanelStatus.branch}
-													</span>
-												) : null
-											}
-											actions={
-												<button
-													type="button"
-													className={`sidebar-pane__action-button${
-														gitPushMenuPosition &&
-														!gitPushMenuPosition.target
-															? ' sidebar-pane__action-button--active'
-															: ''
-													}`}
-													onClick={(event) => {
-														const rect =
-															event.currentTarget.getBoundingClientRect();
-														setGitPushMenuPosition((current) =>
-															current && !current.target
-																? null
-																: {
-																		x: rect.left,
-																		y: rect.bottom + 4,
-																	},
-														);
-													}}
-													aria-label="Commit and push with an AI agent"
-													aria-haspopup="menu"
-													aria-expanded={
-														!!gitPushMenuPosition && !gitPushMenuPosition.target
-													}
-													title="Commit & push with AI"
-												>
-													<Upload size={14} aria-hidden="true" />
-												</button>
-											}
-										>
-											<GitPanel
-												status={gitPanelStatus}
-												viewMode={settings.sidebar.gitPanelViewMode}
-												onOpenEntry={handleOpenGitEntry}
-												onOpenTerminal={handleOpenTerminalAt}
-											/>
-										</SidebarPane>
+									count={worktreePanelStatus?.worktrees.length}
+									accessory={
+										currentGitBranch ? (
+											<span className="sidebar-pane__branch">
+												{currentGitBranch}
+											</span>
+										) : null
 									}
-									bottom={
-										<SidebarPane
-											title="Worktrees"
-											collapsed={project.isWorktreesPaneCollapsed}
-											onToggleCollapsed={() => {
-												const next = !project.isWorktreesPaneCollapsed;
-												onUpdateProject(project.id, {
-													isWorktreesPaneCollapsed: next,
-												});
-												updateSidebarSettings({
-													defaultWorktreesState: next
-														? 'collapsed'
-														: 'expanded',
-												});
-											}}
-											count={worktreePanelStatus?.worktrees.length}
-										>
-											<WorktreesPanel
-												activePushMenuWorktreePath={
-													gitPushMenuPosition?.target?.worktreePath ?? null
-												}
-												status={worktreePanelStatus}
-												viewMode={settings.sidebar.gitPanelViewMode}
-												onDeleteWorktree={handleDeleteWorktree}
-												onOpenEntry={handleOpenGitEntry}
-												onOpenPushMenu={handleOpenWorktreePushMenu}
-												onOpenTerminal={handleOpenTerminalAtWorktree}
-												onOpenTerminalAtPath={handleOpenTerminalAt}
-												onRenameWorktree={handleRenameWorktree}
-												onRevealWorktree={handleRevealWorktree}
-												onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
-											/>
-										</SidebarPane>
-									}
-								/>
+								>
+									<WorktreesPanel
+										activePushMenuWorktreePath={
+											gitPushMenuPosition?.target?.worktreePath ?? null
+										}
+										status={worktreePanelStatus}
+										viewMode={settings.sidebar.gitPanelViewMode}
+										onDeleteWorktree={handleDeleteWorktree}
+										onOpenEntry={handleOpenGitEntry}
+										onOpenPushMenu={handleOpenWorktreePushMenu}
+										onOpenTerminal={handleOpenTerminalAtWorktree}
+										onOpenTerminalAtPath={handleOpenTerminalAt}
+										onRenameWorktree={handleRenameWorktree}
+										onRevealWorktree={handleRevealWorktree}
+										onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
+									/>
+								</SidebarPane>
 							}
 						/>
 
