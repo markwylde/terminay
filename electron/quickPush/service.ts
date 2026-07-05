@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process'
-import { readFile, stat } from 'node:fs/promises'
+import { execFile, spawn } from 'node:child_process'
+import { copyFile, mkdir, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type {
@@ -134,6 +134,122 @@ async function resolveDefaultBranch(cwd: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+function normalizeWorktreeBranch(refName: string): string {
+  const trimmed = refName.trim()
+  const headsPrefix = 'refs/heads/'
+  return trimmed.startsWith(headsPrefix) ? trimmed.slice(headsPrefix.length) : trimmed
+}
+
+async function resolveBranchWorktree(cwd: string, branch: string): Promise<string | null> {
+  try {
+    const output = await runGit(['worktree', 'list', '--porcelain'], cwd)
+    const sections = output
+      .split(/\r?\n\r?\n/)
+      .map((section) => section.trim())
+      .filter((section) => section.length > 0)
+
+    for (const section of sections) {
+      let worktreePath: string | null = null
+      let worktreeBranch: string | null = null
+
+      for (const line of section.split(/\r?\n/)) {
+        if (line.startsWith('worktree ')) {
+          worktreePath = line.slice('worktree '.length).trim()
+        } else if (line.startsWith('branch ')) {
+          worktreeBranch = normalizeWorktreeBranch(line.slice('branch '.length))
+        }
+      }
+
+      if (worktreePath && worktreeBranch === branch) {
+        return worktreePath
+      }
+    }
+  } catch {}
+
+  return null
+}
+
+async function isWorktreeClean(cwd: string): Promise<boolean> {
+  const status = await runGit(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=no'], cwd)
+  return status.length === 0
+}
+
+async function runGitWithInput(args: string[], cwd: string, input: string): Promise<string> {
+  const env = await getProviderEnv()
+
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, {
+      cwd,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString()
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout)
+        return
+      }
+
+      const message = `${stderr}${stdout}`.trim() || `git ${args.join(' ')} failed with exit code ${code}`
+      reject(new Error(message))
+    })
+    child.stdin.end(input)
+  })
+}
+
+async function applyPatchFromSource(sourceRoot: string, targetRoot: string, args: string[]): Promise<void> {
+  const patch = await runGit(args, sourceRoot)
+  if (!patch.trim()) {
+    return
+  }
+
+  await runGitWithInput(['apply', '--3way', '--whitespace=nowarn', '-'], targetRoot, patch)
+}
+
+async function copyUntrackedCommitFiles(sourceRoot: string, targetRoot: string, files: string[]): Promise<void> {
+  const status = parsePorcelain(
+    await runGit(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=no'], sourceRoot),
+  )
+  const untracked = new Set(status.filter((entry) => entry.x === '?' && entry.y === '?').map((entry) => entry.path))
+
+  for (const file of files) {
+    if (!untracked.has(file)) {
+      continue
+    }
+
+    const sourcePath = path.join(sourceRoot, file)
+    const targetPath = path.join(targetRoot, file)
+    const sourceStats = await stat(sourcePath)
+
+    if (!sourceStats.isFile()) {
+      await rm(targetPath, { force: true, recursive: true })
+      continue
+    }
+
+    await mkdir(path.dirname(targetPath), { recursive: true })
+    await copyFile(sourcePath, targetPath)
+  }
+}
+
+async function applyCommitChangesToWorktree(
+  sourceRoot: string,
+  targetRoot: string,
+  files: string[],
+): Promise<void> {
+  await applyPatchFromSource(sourceRoot, targetRoot, ['diff', '--cached', '--binary', '--', ...files])
+  await applyPatchFromSource(sourceRoot, targetRoot, ['diff', '--binary', '--', ...files])
+  await copyUntrackedCommitFiles(sourceRoot, targetRoot, files)
 }
 
 /**
@@ -614,12 +730,13 @@ export class QuickPushService {
     let branch: string | null = null
 
     const repoRoot = (await runGit(['rev-parse', '--show-toplevel'], request.cwd)).trim()
+    let applyRepoRoot = repoRoot
 
-    const run = async (label: string, args: string[]): Promise<string> => {
+    const run = async (label: string, args: string[], cwd = applyRepoRoot): Promise<string> => {
       try {
         const env = await getProviderEnv()
         const { stdout, stderr } = await execFileAsync('git', args, {
-          cwd: repoRoot,
+          cwd,
           env,
           maxBuffer: MAX_BUFFER,
           timeout: GIT_TIMEOUT_MS,
@@ -653,7 +770,21 @@ export class QuickPushService {
         }
         const currentBranch = (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot)).trim()
         if (currentBranch !== defaultBranch) {
-          await run(`Checkout default branch ${defaultBranch}`, ['checkout', defaultBranch])
+          const defaultWorktreePath = await resolveBranchWorktree(repoRoot, defaultBranch)
+          if (defaultWorktreePath) {
+            if (!(await isWorktreeClean(defaultWorktreePath))) {
+              throw new Error(
+                `Default branch worktree at "${defaultWorktreePath}" has local changes. Commit or stash them before quick-pushing to ${defaultBranch}.`,
+              )
+            }
+            applyRepoRoot = defaultWorktreePath
+            steps.push({
+              label: `Use default branch worktree ${defaultWorktreePath}`,
+              ok: true,
+            })
+          } else {
+            await run(`Checkout default branch ${defaultBranch}`, ['checkout', defaultBranch], repoRoot)
+          }
         }
         branch = defaultBranch
       } else {
@@ -662,11 +793,14 @@ export class QuickPushService {
 
       for (const commit of request.commits) {
         const shortMessage = commit.message.split('\n')[0]
+        if (request.action === 'default' && applyRepoRoot !== repoRoot) {
+          await applyCommitChangesToWorktree(repoRoot, applyRepoRoot, commit.files)
+        }
         await run(`Stage: ${shortMessage}`, ['add', '--', ...commit.files])
         await run(`Commit: ${shortMessage}`, ['commit', '-m', commit.message, '--', ...commit.files])
       }
 
-      const remote = pickRemote(await runGit(['remote'], repoRoot))
+      const remote = pickRemote(await runGit(['remote'], applyRepoRoot))
       if (!remote) {
         throw new Error('No git remote is configured to push to.')
       }

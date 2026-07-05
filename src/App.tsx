@@ -4906,7 +4906,7 @@ const ProjectWorkspace = forwardRef<
 
 			const task =
 				actionMeta.action === 'default'
-					? `Commit all of my current changes onto the default branch "${formatGitPushBranchLabel(target.defaultBranch ?? 'main')}" and push it.`
+					? `Commit all of my current changes onto the default branch "${formatGitPushBranchLabel(target.defaultBranch ?? 'main')}" and push it. If that branch is already checked out in another worktree, make the commit from that worktree instead of checking it out here.`
 					: actionMeta.task;
 			const model =
 				config.provider === 'claudeCode'
