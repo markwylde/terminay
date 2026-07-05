@@ -68,10 +68,8 @@ export type SidebarSettings = {
 	gitPanelViewMode: GitPanelViewMode;
 	defaultExplorerState: SidebarPaneState;
 	defaultGitState: SidebarPaneState;
-	defaultWorktreesState: SidebarPaneState;
 	defaultWidth: number;
 	defaultExplorerPaneHeight: number;
-	defaultGitPaneHeight: number;
 };
 
 export type FileViewerSettings = {
