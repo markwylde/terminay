@@ -623,6 +623,23 @@ async function runCommand(command: string, args: string[], cwd: string): Promise
   return `${stdout}${stderr}`.trim()
 }
 
+function errorOutputPart(value: unknown): string {
+  if (Buffer.isBuffer(value)) {
+    return value.toString().trim()
+  }
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function commandFailureMessage(error: unknown): string {
+  const err = error as NodeJS.ErrnoException & { stderr?: unknown; stdout?: unknown }
+  const message = error instanceof Error ? error.message.trim() : String(error)
+  const output = [errorOutputPart(err.stderr), errorOutputPart(err.stdout)].filter(Boolean).join('\n')
+  if (!output || message.includes(output)) {
+    return message
+  }
+  return `${message}\n${output}`.trim()
+}
+
 function commandErrorMessage(error: unknown, missingMessage: string): string {
   const err = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string }
   if (err.code === 'ENOENT') {
@@ -702,6 +719,19 @@ async function detectPullRequestProvider(remoteUrl: string, cwd: string): Promis
   return null
 }
 
+async function hasStagedChanges(cwd: string, files: string[]): Promise<boolean> {
+  try {
+    await runGit(['diff', '--cached', '--quiet', '--', ...files], cwd)
+    return false
+  } catch (error) {
+    const code = (error as { code?: unknown }).code
+    if (code === 1 || code === '1') {
+      return true
+    }
+    throw error
+  }
+}
+
 export class QuickPushService {
   constructor(private readonly aiTabMetadataService: AiTabMetadataService) {}
 
@@ -745,7 +775,7 @@ export class QuickPushService {
         steps.push({ label, ok: true, output: output || undefined })
         return stdout
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = commandFailureMessage(error)
         steps.push({ label, ok: false, output: message })
         throw new Error(message)
       }
@@ -797,6 +827,15 @@ export class QuickPushService {
           await applyCommitChangesToWorktree(repoRoot, applyRepoRoot, commit.files)
         }
         await run(`Stage: ${shortMessage}`, ['add', '--', ...commit.files])
+        if (!(await hasStagedChanges(applyRepoRoot, commit.files))) {
+          steps.push({
+            label: `Skip commit: ${shortMessage}`,
+            ok: true,
+            output:
+              'No changes to commit for the selected files in the target worktree. They may already be committed on the target branch.',
+          })
+          continue
+        }
         await run(`Commit: ${shortMessage}`, ['commit', '-m', commit.message, '--', ...commit.files])
       }
 
