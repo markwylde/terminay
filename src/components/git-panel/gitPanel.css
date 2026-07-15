@@ -258,6 +258,10 @@
 	border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+.worktrees-panel__worktree--deleting {
+	opacity: 0.52;
+}
+
 .worktrees-panel__worktree-header {
 	box-sizing: border-box;
 	min-height: 48px;
@@ -274,6 +278,10 @@
 
 .worktrees-panel__worktree-header:hover {
 	background: rgba(255, 255, 255, 0.05);
+}
+
+.worktrees-panel__worktree--deleting .worktrees-panel__worktree-header:hover {
+	background: transparent;
 }
 
 .worktrees-panel__worktree-toggle {
@@ -440,6 +448,13 @@
 .worktrees-panel__clean {
 	flex: 0 0 auto;
 	color: rgba(220, 226, 240, 0.5);
+	font-weight: 600;
+}
+
+.worktrees-panel__deleting {
+	flex: 0 0 auto;
+	color: rgba(220, 226, 240, 0.72);
+	font-style: italic;
 	font-weight: 600;
 }
 

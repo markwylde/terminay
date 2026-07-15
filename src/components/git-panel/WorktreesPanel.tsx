@@ -23,6 +23,7 @@ import './gitPanel.css';
 
 export type WorktreesPanelProps = {
 	activePushMenuWorktreePath?: string | null;
+	deletingWorktreePaths?: ReadonlySet<string>;
 	status: WorktreePanelStatus | null;
 	viewMode: 'list' | 'tree';
 	onDeleteWorktree: (worktree: GitWorktreeStatus) => void;
@@ -90,6 +91,7 @@ function formatWorktreeDate(value: string | null): string {
 export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 	const {
 		activePushMenuWorktreePath,
+		deletingWorktreePaths,
 		status,
 		viewMode,
 		onDeleteWorktree,
@@ -199,12 +201,15 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 	return (
 		<div className="worktrees-panel">
 			{status.worktrees.map((worktree) => {
+				const isDeleting = deletingWorktreePaths?.has(worktree.path) ?? false;
 				const collapsed = collapsedWorktrees.has(worktree.path);
 				const hasUnmergedOrUncommittedWork =
-					worktree.isDirtyBranch || worktree.entries.length > 0;
+					!isDeleting &&
+					(worktree.isDirtyBranch || worktree.entries.length > 0);
 				const hasLineChanges =
-					(worktree.lineAdditions ?? 0) > 0 ||
-					(worktree.lineDeletions ?? 0) > 0;
+					!isDeleting &&
+					((worktree.lineAdditions ?? 0) > 0 ||
+						(worktree.lineDeletions ?? 0) > 0);
 				const WorktreeIcon = worktree.isMain ? FolderGit : GitBranch;
 				const pushUnavailable =
 					worktree.isBare || worktree.isPrunable || !!worktree.errorMessage;
@@ -217,7 +222,13 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 				};
 
 				return (
-					<section key={worktree.path} className="worktrees-panel__worktree">
+					<section
+						key={worktree.path}
+						className={`worktrees-panel__worktree${
+							isDeleting ? ' worktrees-panel__worktree--deleting' : ''
+						}`}
+						aria-busy={isDeleting}
+					>
 						<div
 							className={[
 								'worktrees-panel__worktree-header',
@@ -231,12 +242,24 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 							]
 								.filter(Boolean)
 								.join(' ')}
-							onContextMenu={(event) => openContextMenu(event, worktree)}
-							title={getWorktreeTitle(worktree)}
+							onContextMenu={(event) => {
+								if (isDeleting) {
+									event.preventDefault();
+									event.stopPropagation();
+									return;
+								}
+								openContextMenu(event, worktree);
+							}}
+							title={
+								isDeleting
+									? `${worktree.path}\nDeleting…`
+									: getWorktreeTitle(worktree)
+							}
 						>
 							<button
 								type="button"
 								className="worktrees-panel__worktree-toggle"
+								disabled={isDeleting}
 								onClick={() => toggleWorktree(worktree.path)}
 								aria-expanded={!collapsed}
 							>
@@ -269,7 +292,11 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 										</span>
 									</span>
 									<span className="worktrees-panel__worktree-meta">
-										{hasLineChanges ? (
+										{isDeleting ? (
+											<span className="worktrees-panel__deleting">
+												deleting…
+											</span>
+										) : hasLineChanges ? (
 											<>
 												<span className="worktrees-panel__delta worktrees-panel__delta--additions">
 													+{worktree.lineAdditions ?? 0}
@@ -292,7 +319,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 								className={`worktrees-panel__push-button${
 									pushMenuOpen ? ' worktrees-panel__push-button--active' : ''
 								}`}
-								disabled={pushUnavailable}
+								disabled={pushUnavailable || isDeleting}
 								onClick={(event) => {
 									event.stopPropagation();
 									if (pushUnavailable) {
@@ -316,7 +343,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 								<Upload size={14} aria-hidden="true" />
 							</button>
 						</div>
-						{collapsed ? null : worktree.errorMessage ? (
+						{isDeleting || collapsed ? null : worktree.errorMessage ? (
 							<div className="git-panel__message">{worktree.errorMessage}</div>
 						) : worktree.isBare ? (
 							<div className="git-panel__message">Bare worktree</div>
