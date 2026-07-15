@@ -24,6 +24,12 @@ type GitContext = {
   repoRoot: string | null
 }
 
+type NumstatDelta = {
+  additions: number
+  deletions: number
+  hasChanges: boolean
+}
+
 function isMissingGitError(error: unknown): boolean {
   const candidate = error as NodeJS.ErrnoException | undefined
   return candidate?.code === 'ENOENT'
@@ -209,8 +215,8 @@ export class GitDiffService {
               ? await this.resolveDetachedBranch(worktree.path)
               : branch || worktree.branch
           const [aheadOfMainCount, lineDelta, lastChangedAt] = await Promise.all([
-            this.getAheadOfMainCount(worktree.path),
-            this.getWorktreeLineDelta(worktree.path),
+            this.getAheadOfDefaultBranchCount(worktree.path, defaultBranch),
+            this.getWorktreeLineDelta(worktree.path, defaultBranch),
             this.getLastChangedAt(worktree.path, entries),
           ])
 
@@ -219,7 +225,8 @@ export class GitDiffService {
             aheadOfMainCount,
             branch: resolvedBranch,
             entries,
-            isDirtyBranch: aheadOfMainCount !== null && aheadOfMainCount > 0,
+            isDirtyBranch:
+              lineDelta.hasCommittedChanges ?? (aheadOfMainCount !== null && aheadOfMainCount > 0),
             lastChangedAt,
             lineAdditions: lineDelta.additions,
             lineDeletions: lineDelta.deletions,
@@ -315,9 +322,13 @@ export class GitDiffService {
     }
   }
 
-  private async getAheadOfMainCount(cwd: string): Promise<number | null> {
+  private async getAheadOfDefaultBranchCount(cwd: string, defaultBranch: string | null): Promise<number | null> {
+    if (!defaultBranch) {
+      return null
+    }
+
     try {
-      const result = await execFileAsync('git', ['rev-list', '--count', 'main..HEAD'], { cwd })
+      const result = await execFileAsync('git', ['rev-list', '--count', `${defaultBranch}..HEAD`], { cwd })
       const count = Number.parseInt(result.stdout.trim(), 10)
       return Number.isFinite(count) ? count : null
     } catch {
@@ -325,35 +336,71 @@ export class GitDiffService {
     }
   }
 
-  private async getWorktreeLineDelta(cwd: string): Promise<{ additions: number | null; deletions: number | null }> {
+  private async getWorktreeLineDelta(
+    cwd: string,
+    defaultBranch: string | null,
+  ): Promise<{ additions: number | null; deletions: number | null; hasCommittedChanges: boolean | null }> {
     const [branchDelta, workingTreeDelta] = await Promise.all([
-      this.getNumstatDelta(cwd, ['diff', '--numstat', 'main...HEAD']),
+      this.getBranchDelta(cwd, defaultBranch),
       this.getNumstatDelta(cwd, ['diff', '--numstat', 'HEAD']),
     ])
 
     if (!branchDelta && !workingTreeDelta) {
-      return { additions: null, deletions: null }
+      return { additions: null, deletions: null, hasCommittedChanges: null }
     }
 
     return {
       additions: (branchDelta?.additions ?? 0) + (workingTreeDelta?.additions ?? 0),
       deletions: (branchDelta?.deletions ?? 0) + (workingTreeDelta?.deletions ?? 0),
+      hasCommittedChanges: branchDelta?.hasChanges ?? null,
+    }
+  }
+
+  private async getBranchDelta(cwd: string, defaultBranch: string | null): Promise<NumstatDelta | null> {
+    if (!defaultBranch) {
+      return null
+    }
+
+    try {
+      const [defaultTreeResult, mergeTreeResult] = await Promise.all([
+        execFileAsync('git', ['rev-parse', `${defaultBranch}^{tree}`], { cwd }),
+        execFileAsync('git', ['merge-tree', '--write-tree', '--no-messages', defaultBranch, 'HEAD'], { cwd }),
+      ])
+      const defaultTree = defaultTreeResult.stdout.trim()
+      const mergeTree = mergeTreeResult.stdout.trim()
+
+      if (!/^[0-9a-f]{40,64}$/i.test(defaultTree) || !/^[0-9a-f]{40,64}$/i.test(mergeTree)) {
+        throw new Error('git merge-tree returned an invalid tree id')
+      }
+
+      if (mergeTree === defaultTree) {
+        return { additions: 0, deletions: 0, hasChanges: false }
+      }
+
+      return await this.getNumstatDelta(cwd, ['diff', '--numstat', defaultTree, mergeTree])
+    } catch {
+      // Git versions before 2.38 do not support this form of merge-tree. The
+      // merge-base diff preserves the previous behaviour as a safe fallback.
+      return await this.getNumstatDelta(cwd, ['diff', '--numstat', `${defaultBranch}...HEAD`])
     }
   }
 
   private async getNumstatDelta(
     cwd: string,
     args: string[],
-  ): Promise<{ additions: number; deletions: number } | null> {
+  ): Promise<NumstatDelta | null> {
     try {
       const result = await execFileAsync('git', args, { cwd })
       let additions = 0
       let deletions = 0
+      let hasChanges = false
 
       for (const line of result.stdout.split(/\r?\n/)) {
         if (!line.trim()) {
           continue
         }
+
+        hasChanges = true
 
         const [rawAdditions, rawDeletions] = line.split('\t')
         const nextAdditions = Number.parseInt(rawAdditions ?? '', 10)
@@ -367,7 +414,7 @@ export class GitDiffService {
         }
       }
 
-      return { additions, deletions }
+      return { additions, deletions, hasChanges }
     } catch {
       return null
     }
