@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -71,6 +71,43 @@ test('worktree status treats squash-merged commits as clean', async () => {
     assert.equal(unmergedWorktree.isDirtyBranch, true)
     assert.equal(unmergedWorktree.lineAdditions, 2)
     assert.equal(unmergedWorktree.lineDeletions, 0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('pulling a worktree from origin fast-forwards its current branch', async () => {
+  const { GitDiffService } = await importBundled('../electron/fileViewer/gitDiffService.ts')
+  const root = await mkdtemp(join(tmpdir(), 'terminay-git-worktree-pull-test-'))
+  const remote = join(root, 'remote.git')
+  const project = join(root, 'project')
+  const contributor = join(root, 'contributor')
+
+  try {
+    await git(['init', '--bare', remote], root)
+    await mkdir(project)
+    await git(['init', '-b', 'main'], project)
+    await git(['config', 'user.email', 'test@example.invalid'], project)
+    await git(['config', 'user.name', 'Terminay Test'], project)
+    await writeFile(join(project, 'shared.txt'), 'base\n')
+    await git(['add', 'shared.txt'], project)
+    await git(['commit', '-m', 'initial commit'], project)
+    await git(['remote', 'add', 'origin', remote], project)
+    await git(['push', '-u', 'origin', 'main'], project)
+    await git(['symbolic-ref', 'HEAD', 'refs/heads/main'], remote)
+
+    await git(['clone', remote, contributor], root)
+    await git(['config', 'user.email', 'contributor@example.invalid'], contributor)
+    await git(['config', 'user.name', 'Contributor'], contributor)
+    await writeFile(join(contributor, 'shared.txt'), 'updated upstream\n')
+    await git(['add', 'shared.txt'], contributor)
+    await git(['commit', '-m', 'upstream change'], contributor)
+    await git(['push', 'origin', 'main'], contributor)
+
+    const service = new GitDiffService(fileBufferStub)
+    await service.pullWorktreeFromOrigin(project)
+
+    assert.equal(await readFile(join(project, 'shared.txt'), 'utf8'), 'updated upstream\n')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

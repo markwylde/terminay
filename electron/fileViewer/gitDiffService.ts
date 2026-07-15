@@ -276,6 +276,18 @@ export class GitDiffService {
     }
   }
 
+  async pullWorktreeFromOrigin(rawWorktreePath: string): Promise<void> {
+    const cwd = await this.resolveGitCommandCwd(rawWorktreePath)
+    const { stdout } = await execFileAsync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd })
+    const branch = stdout.trim()
+
+    if (!branch) {
+      throw new Error('Cannot pull into a detached HEAD worktree.')
+    }
+
+    await execFileAsync('git', ['pull', 'origin', branch], { cwd })
+  }
+
   private async resolveGitCommandCwd(rawPath: string): Promise<string> {
     const info = await this.fileBufferService.getFileInfo(rawPath)
     return getGitWorkingDirectory(info.path, info.isDirectory)
