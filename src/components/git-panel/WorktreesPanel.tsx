@@ -1,6 +1,7 @@
 import {
 	ChevronDown,
 	Copy,
+	Download,
 	FileEdit,
 	FolderInput,
 	FolderOpen,
@@ -34,6 +35,7 @@ export type WorktreesPanelProps = {
 	) => void;
 	onOpenTerminal: (worktree: GitWorktreeStatus) => void;
 	onOpenTerminalAtPath: (path: string) => void;
+	onPullFromOrigin: (worktree: GitWorktreeStatus) => void;
 	onRenameWorktree: (worktree: GitWorktreeStatus) => void;
 	onRevealWorktree: (worktree: GitWorktreeStatus) => void;
 	onSwitchProjectRoot: (worktree: GitWorktreeStatus) => void;
@@ -99,6 +101,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 		onOpenPushMenu,
 		onOpenTerminal,
 		onOpenTerminalAtPath,
+		onPullFromOrigin,
 		onRenameWorktree,
 		onRevealWorktree,
 		onSwitchProjectRoot,
@@ -370,6 +373,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 					items={buildWorktreeContextMenuItems({
 						onDeleteWorktree,
 						onOpenTerminal,
+						onPullFromOrigin,
 						onRenameWorktree,
 						onRevealWorktree,
 						onSwitchProjectRoot,
@@ -385,6 +389,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 function buildWorktreeContextMenuItems(options: {
 	onDeleteWorktree: (worktree: GitWorktreeStatus) => void;
 	onOpenTerminal: (worktree: GitWorktreeStatus) => void;
+	onPullFromOrigin: (worktree: GitWorktreeStatus) => void;
 	onRenameWorktree: (worktree: GitWorktreeStatus) => void;
 	onRevealWorktree: (worktree: GitWorktreeStatus) => void;
 	onSwitchProjectRoot: (worktree: GitWorktreeStatus) => void;
@@ -394,6 +399,7 @@ function buildWorktreeContextMenuItems(options: {
 	const {
 		onDeleteWorktree,
 		onOpenTerminal,
+		onPullFromOrigin,
 		onRenameWorktree,
 		onRevealWorktree,
 		onSwitchProjectRoot,
@@ -405,6 +411,16 @@ function buildWorktreeContextMenuItems(options: {
 		worktree.isCurrent || worktree.isMain || worktree.isBare;
 
 	return [
+		{
+			label: 'Pull from origin',
+			icon: <Download size={14} />,
+			disabled:
+				unavailable ||
+				worktree.isDetached ||
+				!worktree.branch ||
+				!!worktree.errorMessage,
+			onClick: () => onPullFromOrigin(worktree),
+		},
 		{
 			label: 'Switch project root',
 			icon: <FolderInput size={14} />,

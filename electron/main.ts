@@ -2669,6 +2669,10 @@ ipcMain.handle(
   },
 )
 
+ipcMain.handle('fs:pull-git-worktree-from-origin', async (_event, payload: { worktreePath: string }) => {
+  await gitDiffService.pullWorktreeFromOrigin(payload.worktreePath)
+})
+
 ipcMain.handle('fs:rename', async (_event, { oldPath, newPath }: { oldPath: string; newPath: string }) => {
   await rename(oldPath, newPath)
 })
