@@ -84,6 +84,8 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.invoke('fs:move-git-worktree', payload) as Promise<void>,
   removeGitWorktree: (payload: { force?: boolean; repoPath: string; worktreePath: string }) =>
     ipcRenderer.invoke('fs:remove-git-worktree', payload) as Promise<void>,
+  pullGitWorktreeFromOrigin: (worktreePath: string) =>
+    ipcRenderer.invoke('fs:pull-git-worktree-from-origin', { worktreePath }) as Promise<void>,
   getFileInfo: (filePath: string) => ipcRenderer.invoke('file:get-info', { path: filePath }) as Promise<FileViewerFileInfo>,
   readFileBytes: (options: { path: string; start: number; length: number }) =>
     ipcRenderer.invoke('file:read-bytes', options) as Promise<FileViewerByteRange>,
