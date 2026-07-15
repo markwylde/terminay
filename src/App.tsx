@@ -2039,6 +2039,9 @@ const ProjectWorkspace = forwardRef<
 	>({});
 	const [worktreePanelStatus, setWorktreePanelStatus] =
 		useState<WorktreePanelStatus | null>(null);
+	const [deletingWorktreePaths, setDeletingWorktreePaths] = useState<
+		Set<string>
+	>(() => new Set());
 	const [gitPushMenuPosition, setGitPushMenuPosition] = useState<{
 		target: GitPushMenuTarget;
 		x: number;
@@ -3749,6 +3752,12 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
+			setDeletingWorktreePaths((current) => {
+				const next = new Set(current);
+				next.add(worktree.path);
+				return next;
+			});
+
 			try {
 				await window.terminay.removeGitWorktree({
 					force: true,
@@ -3760,6 +3769,11 @@ const ProjectWorkspace = forwardRef<
 				void loadDirectory(parentDir || project.rootFolder);
 				void refreshGitStatuses();
 			} catch (error) {
+				setDeletingWorktreePaths((current) => {
+					const next = new Set(current);
+					next.delete(worktree.path);
+					return next;
+				});
 				setErrorText(`Failed to delete worktree: ${String(error)}`);
 				void refreshGitStatuses();
 			}
@@ -4311,6 +4325,7 @@ const ProjectWorkspace = forwardRef<
 		setDirectoryChildren({});
 		setDirectoryErrors({});
 		setGitStatuses({});
+		setDeletingWorktreePaths(new Set());
 		setLoadingPaths({});
 		setExpandedPaths(project.rootFolder ? { [project.rootFolder]: true } : {});
 
@@ -4319,6 +4334,22 @@ const ProjectWorkspace = forwardRef<
 			void refreshGitStatuses();
 		}
 	}, [loadDirectory, project.rootFolder, refreshGitStatuses]);
+
+	useEffect(() => {
+		if (!worktreePanelStatus?.repoRoot) {
+			return;
+		}
+
+		const visibleWorktreePaths = new Set(
+			worktreePanelStatus.worktrees.map((worktree) => worktree.path),
+		);
+		setDeletingWorktreePaths((current) => {
+			const next = new Set(
+				Array.from(current).filter((path) => visibleWorktreePaths.has(path)),
+			);
+			return next.size === current.size ? current : next;
+		});
+	}, [worktreePanelStatus]);
 
 	useEffect(() => {
 		if (!project.rootFolder || !project.isFileExplorerOpen) {
@@ -7141,6 +7172,7 @@ const ProjectWorkspace = forwardRef<
 										activePushMenuWorktreePath={
 											gitPushMenuPosition?.target?.worktreePath ?? null
 										}
+										deletingWorktreePaths={deletingWorktreePaths}
 										status={worktreePanelStatus}
 										viewMode={settings.sidebar.gitPanelViewMode}
 										onDeleteWorktree={handleDeleteWorktree}
