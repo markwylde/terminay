@@ -326,6 +326,11 @@ test('git sidebar pane shows no changes for a clean repository', async ({ create
   await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-clean', {
     timeout: 6000,
   })
+
+  await worktree.locator('.worktrees-panel__worktree-header').click({ button: 'right' })
+  await expect(contextMenuItem(mainWindow, 'Pull from origin')).toBeVisible()
+  await mainWindow.keyboard.press('Escape')
+
   await worktree.locator('.worktrees-panel__worktree-toggle').click()
 
   await expect(worktree.locator('.git-panel__message')).toHaveText('No changes', { timeout: 6000 })
