@@ -3767,6 +3767,20 @@ const ProjectWorkspace = forwardRef<
 		[loadDirectory, project.rootFolder, refreshGitStatuses],
 	);
 
+	const handlePullWorktreeFromOrigin = useCallback(
+		async (worktree: GitWorktreeStatus) => {
+			try {
+				await window.terminay.pullGitWorktreeFromOrigin(worktree.path);
+				setErrorText(null);
+			} catch (error) {
+				setErrorText(`Failed to pull from origin: ${String(error)}`);
+			} finally {
+				refreshFileExplorerTree();
+			}
+		},
+		[refreshFileExplorerTree],
+	);
+
 	const handleRevealWorktree = useCallback((worktree: GitWorktreeStatus) => {
 		void window.terminay.revealInOS(worktree.path);
 	}, []);
@@ -7148,6 +7162,7 @@ const ProjectWorkspace = forwardRef<
 										onOpenPushMenu={handleOpenWorktreePushMenu}
 										onOpenTerminal={handleOpenTerminalAtWorktree}
 										onOpenTerminalAtPath={handleOpenTerminalAt}
+										onPullFromOrigin={handlePullWorktreeFromOrigin}
 										onRenameWorktree={handleRenameWorktree}
 										onRevealWorktree={handleRevealWorktree}
 										onSwitchProjectRoot={handleSwitchProjectRootToWorktree}

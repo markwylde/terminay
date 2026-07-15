@@ -599,6 +599,7 @@ export interface TerminayApi {
   getWorktreePanelStatus: (dirPath: string) => Promise<WorktreePanelStatus>
   moveGitWorktree: (payload: { repoPath: string; worktreePath: string; newPath: string }) => Promise<void>
   removeGitWorktree: (payload: { force?: boolean; repoPath: string; worktreePath: string }) => Promise<void>
+  pullGitWorktreeFromOrigin: (worktreePath: string) => Promise<void>
   getFileInfo: (filePath: string) => Promise<FileViewerFileInfo>
   readFileBytes: (options: { path: string; start: number; length: number }) => Promise<FileViewerByteRange>
   readFileText: (options: {
