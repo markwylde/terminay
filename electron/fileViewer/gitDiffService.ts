@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type {
@@ -40,6 +41,19 @@ function isNotWorkingTreeError(error: unknown): boolean {
   const stderr = typeof candidate.stderr === 'string' ? candidate.stderr : ''
   const message = typeof candidate.message === 'string' ? candidate.message : ''
   return `${stderr}\n${message}`.includes('is not a working tree')
+}
+
+function isMissingWorktreeGitFileError(error: unknown): boolean {
+  const candidate = error as { stderr?: unknown; message?: unknown }
+  const stderr = typeof candidate.stderr === 'string' ? candidate.stderr : ''
+  const message = typeof candidate.message === 'string' ? candidate.message : ''
+  const output = `${stderr}\n${message}`
+
+  return (
+    output.includes('validation failed, cannot remove working tree:') &&
+    output.includes('/.git') &&
+    (output.includes('does not exist') || output.includes('is not a file'))
+  )
 }
 
 export class GitDiffService {
@@ -268,11 +282,18 @@ export class GitDiffService {
     try {
       await execFileAsync('git', args, { cwd })
     } catch (error) {
-      if (!isNotWorkingTreeError(error)) {
-        throw error
+      if (isNotWorkingTreeError(error)) {
+        await execFileAsync('git', ['worktree', 'prune'], { cwd })
+        return
       }
 
-      await execFileAsync('git', ['worktree', 'prune'], { cwd })
+      if (force && isMissingWorktreeGitFileError(error)) {
+        await rm(worktreePath, { recursive: true, force: true })
+        await execFileAsync('git', ['worktree', 'prune'], { cwd })
+        return
+      }
+
+      throw error
     }
   }
 

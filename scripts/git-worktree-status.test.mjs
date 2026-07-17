@@ -113,6 +113,34 @@ test('pulling a worktree from origin fast-forwards its current branch', async ()
   }
 })
 
+test('force-removing a worktree recovers when its .git file is missing', async () => {
+  const { GitDiffService } = await importBundled('../electron/fileViewer/gitDiffService.ts')
+  const root = await mkdtemp(join(tmpdir(), 'terminay-git-worktree-remove-test-'))
+  const main = join(root, 'project')
+  const broken = join(root, 'project-broken')
+
+  try {
+    await mkdir(main)
+    await git(['init', '-b', 'main'], main)
+    await git(['config', 'user.email', 'test@example.invalid'], main)
+    await git(['config', 'user.name', 'Terminay Test'], main)
+    await writeFile(join(main, 'shared.txt'), 'base\n')
+    await git(['add', 'shared.txt'], main)
+    await git(['commit', '-m', 'initial commit'], main)
+    await git(['worktree', 'add', broken, '-b', 'broken'], main)
+    await writeFile(join(broken, 'untracked.txt'), 'discard me\n')
+    await rm(join(broken, '.git'), { force: true })
+
+    const service = new GitDiffService(fileBufferStub)
+    await service.removeWorktree(main, broken, true)
+
+    assert.equal((await fileBufferStub.getFileInfo(broken)).exists, false)
+    assert.equal((await git(['worktree', 'list', '--porcelain'], main)).includes(broken), false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 const fileBufferStub = {
   async getFileInfo(rawPath) {
     const normalizedPath = resolve(rawPath)
