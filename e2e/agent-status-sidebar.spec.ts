@@ -64,14 +64,13 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
     mainWindow.getByRole('button', { name: /^Agents/ }),
   ).toHaveAttribute('aria-expanded', 'true')
   await expect(mainWindow.getByRole('tab', { name: /Agents/ })).toHaveCount(0)
-  await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Codex')
-  await expect(mainWindow.locator('.agents-sidebar__metadata')).toContainText(
-    'gpt-test-codex',
-  )
-  await expect(mainWindow.locator('.agents-sidebar__prompt')).toContainText(
+  await expect(mainWindow.locator('.agents-sidebar__name')).toContainText(
     'Implement the stable agent status flow',
   )
-  await expect(mainWindow.locator('.agents-sidebar__prompt').first()).toHaveCSS(
+  await expect(mainWindow.locator('.agents-sidebar__metadata')).toContainText(
+    'Terminal 2 · Codex · gpt-test-codex',
+  )
+  await expect(mainWindow.locator('.agents-sidebar__name').first()).toHaveCSS(
     'white-space',
     'nowrap',
   )
@@ -95,25 +94,25 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
   const childRow = mainWindow.getByRole('button', {
     name: 'Focus Reviewer terminal',
   })
+  await expect(childRow).not.toBeVisible()
+  const childDisclosure = mainWindow.getByRole('button', {
+    name: 'Expand 1 subagent for Implement the stable agent status flow',
+  })
+  await expect(childDisclosure).toBeVisible()
+  await expect(childDisclosure).toHaveCSS('width', '16px')
+  await childDisclosure.click()
   await expect(childRow).toBeVisible()
   await expect(childRow.locator('.agents-sidebar__name')).toHaveCSS(
     'font-size',
     '13px',
   )
-  await expect(childRow.locator('.agents-sidebar__metadata')).toHaveCSS(
-    'font-size',
-    '11px',
-  )
+  await expect(childRow.locator('.agents-sidebar__metadata')).toHaveCount(0)
   await expect(
     mainWindow.locator('.agents-sidebar__prompt').filter({
       hasText: 'Review the stable lifecycle implementation',
     }),
   ).toBeVisible()
-  const childDisclosure = mainWindow.getByRole('button', {
-    name: 'Collapse 1 subagent for Codex',
-  })
-  await expect(childDisclosure).toBeVisible()
-  await expect(childDisclosure).toHaveCSS('width', '16px')
+  await expect(childRow.locator('..')).toHaveCSS('min-height', '32px')
   const indentation = await mainWindow
     .locator('.agents-sidebar__row')
     .evaluateAll((rows) =>
@@ -122,10 +121,23 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
       ),
     )
   expect(indentation[1] - indentation[0]).toBe(12)
-  await childDisclosure.click()
+  await mainWindow
+    .getByRole('button', {
+      name: 'Collapse 1 subagent for Implement the stable agent status flow',
+    })
+    .click()
   await expect(childRow).not.toBeVisible()
   await mainWindow
-    .getByRole('button', { name: 'Expand 1 subagent for Codex' })
+    .getByRole('button', {
+      name: 'Expand 1 subagent for Implement the stable agent status flow',
+    })
+    .click()
+  await expect(childRow).toBeVisible()
+
+  await sendAppCommand(mainWindow, 'new-project')
+  await mainWindow
+    .locator('.project-tab')
+    .filter({ hasText: 'Project 1' })
     .click()
   await expect(childRow).toBeVisible()
 
@@ -273,7 +285,7 @@ test('agent integration setting disables and restores the full agent surface', a
   await expect(
     mainWindow.getByRole('button', { name: /^Agents/ }),
   ).toBeVisible()
-  await expect(mainWindow.locator('.agents-sidebar__prompt')).toContainText(
+  await expect(mainWindow.locator('.agents-sidebar__name')).toContainText(
     'Agent integration restored',
   )
 })

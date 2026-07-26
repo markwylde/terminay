@@ -277,13 +277,19 @@ over the canonical snapshot.
   entries must not jump unpredictably on every metadata update.
 - Show a concise empty state when the project has no recognized agents.
 
-Each row may show provider, model, short prompt/description, state, and
-acknowledgement. Missing optional metadata is omitted rather than replaced by
-invented values.
+Each root row uses a useful driver/session description as its primary title
+when available, otherwise its terminal/tab title, prompt, or provider fallback.
+The terminal/tab title remains visible in the row metadata when it is not the
+primary title. Missing optional metadata is omitted rather than replaced by
+invented values. Child rows omit provider/model metadata inherited unchanged
+from their parent.
 
 Prompts are rendered on one ellipsized line; the full value remains available
 through the row tooltip. Root rows with children expose a disclosure control
 that shows the child count and expands/collapses that root's subagent group.
+Child groups are collapsed by default, never auto-expand when a child arrives,
+and retain their manual per-project expansion state while switching projects
+or remounting the sidebar.
 Agent rows reuse the Explorer/Git tree geometry and type scale: aligned
 16-pixel disclosure/status columns, 13-pixel primary labels, 11-pixel metadata,
 and 12 pixels of additional indentation per child depth.
@@ -428,7 +434,8 @@ snapshot begins empty. Within one app run:
     motion disables working animation.
 17. The Agents pane shows only the active project's roots and their children in
     deterministic order; prompts stay on one ellipsized line and child groups
-    expose an accessible count/disclosure control.
+    expose an accessible count/disclosure control. Child groups start collapsed,
+    do not auto-expand, and retain manual expansion state across project switches.
 18. Clicking a root or in-process child activates its exact terminal and
     acknowledges it without changing operational state.
 19. A missing terminal does not activate a similarly titled terminal.
