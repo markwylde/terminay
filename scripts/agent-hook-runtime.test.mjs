@@ -292,6 +292,54 @@ test('status service binds normalized events to an active terminal and publishes
 	}
 });
 
+test('status service correlates driver-identified launch metadata with the next subagent', async () => {
+	const service = new AgentStatusService({
+		token: 'service-token',
+		now: () => 100,
+		normalizeHookPayload(provider, payload, context) {
+			return {
+				...payload,
+				provider,
+				sessionId: 'provider-session',
+				activationTerminalSessionId: context.activationTerminalSessionId,
+				sequence: context.sequence,
+				occurredAt: context.occurredAt,
+			};
+		},
+	});
+	await service.start();
+	try {
+		service.prepareTerminalSession('terminal-uuid');
+		await service.ingestHookPayload('codex', 'terminal-uuid', {
+			kind: 'session.started',
+		});
+		await service.ingestHookPayload('codex', 'terminal-uuid', {
+			kind: 'tool.started',
+			tool: {
+				id: 'spawn-1',
+				name: 'Agent',
+				subagentLaunch: {
+					displayName: 'math_one',
+					promptText: 'What is 2 + 2?',
+				},
+			},
+		});
+		await service.ingestHookPayload('codex', 'terminal-uuid', {
+			kind: 'subagent.started',
+			subagentId: 'child-1',
+			displayName: 'default',
+		});
+
+		const child = Object.values(service.getSnapshot().entries).find(
+			(entry) => entry.kind === 'subagent',
+		);
+		assert.equal(child.displayName, 'math_one');
+		assert.equal(child.promptText, 'What is 2 + 2?');
+	} finally {
+		await service.stop();
+	}
+});
+
 test('status service rejects unknown sessions and identity changes from drivers', async () => {
 	const service = new AgentStatusService({
 		token: 'service-token',

@@ -121,6 +121,26 @@ function validateNormalizedEvent(
 			'Agent driver returned an oversized prompt.',
 		);
 	}
+	if (
+		'displayName' in event &&
+		event.displayName !== undefined &&
+		event.displayName.length > 200
+	) {
+		throw new AgentHookRequestError(
+			422,
+			'Agent driver returned an oversized display name.',
+		);
+	}
+	if (
+		event.kind === 'tool.started' &&
+		((event.tool.subagentLaunch?.displayName?.length ?? 0) > 200 ||
+			(event.tool.subagentLaunch?.promptText?.length ?? 0) > 4_000)
+	) {
+		throw new AgentHookRequestError(
+			422,
+			'Agent driver returned oversized subagent launch metadata.',
+		);
+	}
 	if (!Number.isSafeInteger(event.sequence) || event.sequence < 0) {
 		throw new AgentHookRequestError(
 			422,
@@ -142,6 +162,14 @@ export class AgentStatusService {
 	private readonly server: AgentHookServer;
 	private readonly activeTerminalSessions = new Set<string>();
 	private readonly nextSequenceByTerminalProvider = new Map<string, number>();
+	private readonly pendingSubagentLaunches = new Map<
+		string,
+		Array<{
+			displayName?: string;
+			promptText?: string;
+			toolId: string;
+		}>
+	>();
 	private started = false;
 
 	constructor(options: AgentStatusServiceOptions) {
@@ -187,11 +215,13 @@ export class AgentStatusService {
 		}
 		this.started = false;
 		this.nextSequenceByTerminalProvider.clear();
+		this.pendingSubagentLaunches.clear();
 		await this.server.stop();
 	}
 
 	clearStatus(): boolean {
 		this.nextSequenceByTerminalProvider.clear();
+		this.pendingSubagentLaunches.clear();
 		return this.store.clear();
 	}
 
@@ -210,6 +240,7 @@ export class AgentStatusService {
 	abandonTerminalSession(terminalSessionId: string): void {
 		this.activeTerminalSessions.delete(terminalSessionId);
 		this.removeSequenceCounters(terminalSessionId);
+		this.removePendingSubagentLaunches(terminalSessionId);
 	}
 
 	terminalExited(
@@ -218,6 +249,7 @@ export class AgentStatusService {
 	): void {
 		this.activeTerminalSessions.delete(terminalSessionId);
 		this.removeSequenceCounters(terminalSessionId);
+		this.removePendingSubagentLaunches(terminalSessionId);
 		const snapshot = this.store.getSnapshot();
 		const roots = Object.values(snapshot.entries).filter(
 			(entry) =>
@@ -272,7 +304,7 @@ export class AgentStatusService {
 			validateNormalizedEvent(event, provider, activationTerminalSessionId);
 		}
 		for (const event of events) {
-			this.store.dispatch(event);
+			this.store.dispatch(this.correlateSubagentLaunch(event));
 		}
 		return events.length;
 	}
@@ -310,6 +342,65 @@ export class AgentStatusService {
 		for (const key of this.nextSequenceByTerminalProvider.keys()) {
 			if (key.endsWith(`:${terminalSessionId}`)) {
 				this.nextSequenceByTerminalProvider.delete(key);
+			}
+		}
+	}
+
+	private correlateSubagentLaunch(
+		event: AgentLifecycleEvent,
+	): AgentLifecycleEvent {
+		const streamId = makeAgentStatusStreamId(
+			event.provider,
+			event.activationTerminalSessionId,
+			event.sessionId,
+		);
+		if (event.kind === 'tool.started' && event.tool.subagentLaunch) {
+			const pending = this.pendingSubagentLaunches.get(streamId) ?? [];
+			pending.push({
+				...event.tool.subagentLaunch,
+				toolId: event.tool.id,
+			});
+			// A broken or third-party driver must not grow receiver state forever.
+			this.pendingSubagentLaunches.set(streamId, pending.slice(-32));
+			return event;
+		}
+		if (event.kind === 'tool.finished') {
+			const pending = this.pendingSubagentLaunches.get(streamId);
+			if (pending) {
+				const next = pending.filter(
+					(candidate) => candidate.toolId !== event.toolId,
+				);
+				if (next.length > 0) {
+					this.pendingSubagentLaunches.set(streamId, next);
+				} else {
+					this.pendingSubagentLaunches.delete(streamId);
+				}
+			}
+			return event;
+		}
+		if (event.kind !== 'subagent.started') {
+			return event;
+		}
+
+		const pending = this.pendingSubagentLaunches.get(streamId);
+		const launch = pending?.shift();
+		if (!launch) {
+			return event;
+		}
+		if (pending && pending.length === 0) {
+			this.pendingSubagentLaunches.delete(streamId);
+		}
+		return {
+			...event,
+			displayName: launch.displayName ?? event.displayName,
+			promptText: event.promptText ?? launch.promptText,
+		};
+	}
+
+	private removePendingSubagentLaunches(terminalSessionId: string): void {
+		for (const key of this.pendingSubagentLaunches.keys()) {
+			if (key.includes(`:${encodeURIComponent(terminalSessionId)}:`)) {
+				this.pendingSubagentLaunches.delete(key);
 			}
 		}
 	}
