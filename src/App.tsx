@@ -53,7 +53,10 @@ import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
 import { SidebarPane } from './components/sidebar/SidebarPane';
-import { SidebarSplit } from './components/sidebar/SidebarSplit';
+import {
+	SIDEBAR_HEADER_MIN_HEIGHT,
+	SidebarSplit,
+} from './components/sidebar/SidebarSplit';
 import { McpInstallModal } from './components/McpInstallModal';
 import { QuickPushModal } from './components/QuickPushModal';
 import type {
@@ -518,8 +521,9 @@ type ProjectTab = {
 	fileExplorerWidth: number;
 	isFileExplorerOpen: boolean;
 	isExplorerPaneCollapsed: boolean;
+	isAgentsPaneCollapsed: boolean;
 	isGitPaneCollapsed: boolean;
-	sidebarView: 'workspace' | 'agents';
+	sidebarAgentsHeight: number;
 	sidebarExplorerHeight: number;
 	rootFolder: string;
 };
@@ -626,6 +630,7 @@ const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher';
 const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path';
 const MIN_FILE_EXPLORER_WIDTH = 180;
 const MIN_SIDEBAR_PANE_HEIGHT = 80;
+const DEFAULT_AGENTS_PANE_HEIGHT = 200;
 const FILE_EXPLORER_DRAG_THRESHOLD = 6;
 const FILE_EXPLORER_WATCH_REFRESH_DELAY_MS = 120;
 const FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS = 2500;
@@ -869,8 +874,9 @@ function createProjectTab(
 		fileExplorerWidth: sidebarDefaults.defaultWidth,
 		isFileExplorerOpen: false,
 		isExplorerPaneCollapsed: sidebarDefaults.defaultExplorerState === 'collapsed',
+		isAgentsPaneCollapsed: false,
 		isGitPaneCollapsed: sidebarDefaults.defaultGitState === 'collapsed',
-		sidebarView: 'workspace',
+		sidebarAgentsHeight: DEFAULT_AGENTS_PANE_HEIGHT,
 		sidebarExplorerHeight: sidebarDefaults.defaultExplorerPaneHeight,
 		rootFolder: homePath,
 	};
@@ -7296,6 +7302,46 @@ const ProjectWorkspace = forwardRef<
 		};
 	}, [closeMacroParameterModal, macroToRun]);
 
+	const gitSidebarPane = (
+		<SidebarPane
+			title="Git"
+			collapsed={project.isGitPaneCollapsed}
+			onToggleCollapsed={() => {
+				const next = !project.isGitPaneCollapsed;
+				onUpdateProject(project.id, {
+					isGitPaneCollapsed: next,
+				});
+				updateSidebarSettings({
+					defaultGitState: next ? 'collapsed' : 'expanded',
+				});
+			}}
+			count={worktreePanelStatus?.worktrees.length}
+			accessory={
+				currentGitBranch ? (
+					<span className="sidebar-pane__branch">{currentGitBranch}</span>
+				) : null
+			}
+		>
+			<WorktreesPanel
+				activePushMenuWorktreePath={
+					gitPushMenuPosition?.target?.worktreePath ?? null
+				}
+				deletingWorktreePaths={deletingWorktreePaths}
+				status={worktreePanelStatus}
+				viewMode={settings.sidebar.gitPanelViewMode}
+				onDeleteWorktree={handleDeleteWorktree}
+				onOpenEntry={handleOpenGitEntry}
+				onOpenPushMenu={handleOpenWorktreePushMenu}
+				onOpenTerminal={handleOpenTerminalAtWorktree}
+				onOpenTerminalAtPath={handleOpenTerminalAt}
+				onPullFromOrigin={handlePullWorktreeFromOrigin}
+				onRenameWorktree={handleRenameWorktree}
+				onRevealWorktree={handleRevealWorktree}
+				onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
+			/>
+		</SidebarPane>
+	);
+
 	return (
 		<section
 			className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
@@ -7310,56 +7356,21 @@ const ProjectWorkspace = forwardRef<
 						className="file-explorer-sidebar"
 						style={{ width: `${project.fileExplorerWidth}px` }}
 					>
-						{settings.agentIntegration.enabled ? (
-							<div
-								className="project-sidebar-tabs"
-								role="tablist"
-								aria-label="Project sidebar"
-							>
-								<button
-									type="button"
-									role="tab"
-									aria-selected={project.sidebarView === 'workspace'}
-									className={`project-sidebar-tab${project.sidebarView === 'workspace' ? ' project-sidebar-tab--active' : ''}`}
-									onClick={() => {
-										setGitPushMenuPosition(null);
-										onUpdateProject(project.id, { sidebarView: 'workspace' });
-									}}
-								>
-									Workspace
-								</button>
-								<button
-									type="button"
-									role="tab"
-									aria-selected={project.sidebarView === 'agents'}
-									className={`project-sidebar-tab${project.sidebarView === 'agents' ? ' project-sidebar-tab--active' : ''}`}
-									onClick={() => {
-										setGitPushMenuPosition(null);
-										onUpdateProject(project.id, { sidebarView: 'agents' });
-									}}
-								>
-									Agents
-									{projectAgentItems.length > 0 ? (
-										<span className="project-sidebar-tab__count">
-											{projectAgentItems.length}
-										</span>
-									) : null}
-								</button>
-							</div>
-						) : null}
-						{settings.agentIntegration.enabled &&
-						project.sidebarView === 'agents' ? (
-							<AgentsSidebar
-								projectId={project.id}
-								agents={projectAgentItems}
-								onActivateTerminal={activateAgentTerminal}
-							/>
-						) : (
 						<SidebarSplit
 							topCollapsed={project.isExplorerPaneCollapsed}
-							bottomCollapsed={project.isGitPaneCollapsed}
+							bottomCollapsed={
+								settings.agentIntegration.enabled
+									? project.isAgentsPaneCollapsed &&
+										project.isGitPaneCollapsed
+									: project.isGitPaneCollapsed
+							}
 							topHeight={project.sidebarExplorerHeight}
 							minPaneHeight={MIN_SIDEBAR_PANE_HEIGHT}
+							bottomMinHeight={
+								settings.agentIntegration.enabled
+									? SIDEBAR_HEADER_MIN_HEIGHT * 2
+									: SIDEBAR_HEADER_MIN_HEIGHT
+							}
 							onTopHeightChange={(height) => {
 								onUpdateProject(project.id, {
 									sidebarExplorerHeight: height,
@@ -7418,48 +7429,43 @@ const ProjectWorkspace = forwardRef<
 								</SidebarPane>
 							}
 							bottom={
-								<SidebarPane
-									title="Git"
-									collapsed={project.isGitPaneCollapsed}
-									onToggleCollapsed={() => {
-										const next = !project.isGitPaneCollapsed;
-										onUpdateProject(project.id, {
-											isGitPaneCollapsed: next,
-										});
-										updateSidebarSettings({
-											defaultGitState: next ? 'collapsed' : 'expanded',
-										});
-									}}
-									count={worktreePanelStatus?.worktrees.length}
-									accessory={
-										currentGitBranch ? (
-											<span className="sidebar-pane__branch">
-												{currentGitBranch}
-											</span>
-										) : null
-									}
-								>
-									<WorktreesPanel
-										activePushMenuWorktreePath={
-											gitPushMenuPosition?.target?.worktreePath ?? null
+								settings.agentIntegration.enabled ? (
+									<SidebarSplit
+										topCollapsed={project.isAgentsPaneCollapsed}
+										bottomCollapsed={project.isGitPaneCollapsed}
+										topHeight={project.sidebarAgentsHeight}
+										minPaneHeight={MIN_SIDEBAR_PANE_HEIGHT}
+										onTopHeightChange={(height) => {
+											onUpdateProject(project.id, {
+												sidebarAgentsHeight: height,
+											});
+										}}
+										top={
+											<SidebarPane
+												title="Agents"
+												collapsed={project.isAgentsPaneCollapsed}
+												onToggleCollapsed={() => {
+													onUpdateProject(project.id, {
+														isAgentsPaneCollapsed:
+															!project.isAgentsPaneCollapsed,
+													});
+												}}
+												count={projectAgentItems.length}
+											>
+												<AgentsSidebar
+													projectId={project.id}
+													agents={projectAgentItems}
+													onActivateTerminal={activateAgentTerminal}
+												/>
+											</SidebarPane>
 										}
-										deletingWorktreePaths={deletingWorktreePaths}
-										status={worktreePanelStatus}
-										viewMode={settings.sidebar.gitPanelViewMode}
-										onDeleteWorktree={handleDeleteWorktree}
-										onOpenEntry={handleOpenGitEntry}
-										onOpenPushMenu={handleOpenWorktreePushMenu}
-										onOpenTerminal={handleOpenTerminalAtWorktree}
-										onOpenTerminalAtPath={handleOpenTerminalAt}
-										onPullFromOrigin={handlePullWorktreeFromOrigin}
-										onRenameWorktree={handleRenameWorktree}
-										onRevealWorktree={handleRevealWorktree}
-										onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
+										bottom={gitSidebarPane}
 									/>
-								</SidebarPane>
+								) : (
+									gitSidebarPane
+								)
 							}
 						/>
-						)}
 
 						{gitPushMenuPosition ? (
 							<ContextMenu
@@ -8147,7 +8153,9 @@ function App() {
 		const adoptedTab: ProjectTab = {
 			...incoming,
 			id: nextProjectId,
-			sidebarView: incoming.sidebarView === 'agents' ? 'agents' : 'workspace',
+			isAgentsPaneCollapsed: incoming.isAgentsPaneCollapsed ?? false,
+			sidebarAgentsHeight:
+				incoming.sidebarAgentsHeight ?? DEFAULT_AGENTS_PANE_HEIGHT,
 		};
 
 		setAdoptedTerminalsByProject((current) => ({

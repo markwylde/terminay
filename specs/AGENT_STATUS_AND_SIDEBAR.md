@@ -262,8 +262,10 @@ recreate an unreadable user config.
 
 ## Agents pane
 
-The **Agents** pane is part of the project sidebar and uses presentation-only
-components over the canonical snapshot.
+The **Agents** pane is an ordinary collapsible section in the project sidebar,
+alongside Explorer and Git. It does not introduce a second sidebar tab or
+replace the other project tools. The pane uses presentation-only components
+over the canonical snapshot.
 
 ### Filtering and order
 
@@ -301,7 +303,7 @@ approximate terminal.
 enabled by default.
 
 Enabling it reconciles the Terminay-managed Codex and Claude Code hook entries
-and enables the tab, project-sidebar, and header status surfaces. Disabling it
+and enables the terminal-tab, project-sidebar panel, and header status surfaces. Disabling it
 removes only Terminay-managed hook entries and hides/disables those agent
 surfaces. It does not remove user-owned hooks or unrelated provider settings.
 

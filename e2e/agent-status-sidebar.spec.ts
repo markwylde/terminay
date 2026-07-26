@@ -60,7 +60,10 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
   ).toBeVisible()
 
   await openFileExplorer(mainWindow)
-  await mainWindow.getByRole('tab', { name: /Agents/ }).click()
+  await expect(
+    mainWindow.getByRole('button', { name: /^Agents/ }),
+  ).toHaveAttribute('aria-expanded', 'true')
+  await expect(mainWindow.getByRole('tab', { name: /Agents/ })).toHaveCount(0)
   await expect(mainWindow.locator('.agents-sidebar__name')).toContainText('Codex')
   await expect(mainWindow.locator('.agents-sidebar__metadata')).toContainText(
     'gpt-test-codex',
@@ -143,7 +146,9 @@ test('agent integration setting disables and restores the full agent surface', a
   await settingsWindow.close()
 
   await openFileExplorer(mainWindow)
-  await expect(mainWindow.getByRole('tab', { name: /Agents/ })).toHaveCount(0)
+  await expect(
+    mainWindow.getByRole('button', { name: /^Agents/ }),
+  ).toHaveCount(0)
 
   const restoredSettingsWindow = await appHarness.openSettingsWindow({
     page: mainWindow,
@@ -169,8 +174,9 @@ test('agent integration setting disables and restores the full agent surface', a
     session_id: 'codex-restored',
     prompt: 'Agent integration restored',
   })
-  await expect(mainWindow.getByRole('tab', { name: /Agents/ })).toBeVisible()
-  await mainWindow.getByRole('tab', { name: /Agents/ }).click()
+  await expect(
+    mainWindow.getByRole('button', { name: /^Agents/ }),
+  ).toBeVisible()
   await expect(mainWindow.locator('.agents-sidebar__prompt')).toContainText(
     'Agent integration restored',
   )
