@@ -156,6 +156,24 @@ test('Claude Code maps request_user_input and AskUserQuestion to waiting', () =>
 });
 
 test('subagent lifecycle and child agent_id target children without replacing the lead', () => {
+	const launch = codexDriver.normalize(
+		{
+			hook_event_name: 'PreToolUse',
+			session_id: 'root-session',
+			tool_name: 'Agent',
+			tool_use_id: 'spawn-child-a',
+			tool_input: {
+				task_name: 'reviewer-child',
+				message: 'Review the lifecycle implementation',
+			},
+		},
+		context,
+	);
+	assert.deepEqual(launch.tool.subagentLaunch, {
+		displayName: 'reviewer-child',
+		promptText: 'Review the lifecycle implementation',
+	});
+
 	const started = codexDriver.normalize(
 		{
 			hook_event_name: 'SubagentStart',

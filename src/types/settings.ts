@@ -63,6 +63,8 @@ export type TerminalRecordingSettings = {
 export type GitPanelViewMode = 'list' | 'tree';
 
 export type SidebarPaneState = 'expanded' | 'collapsed';
+export const SIDEBAR_PANEL_IDS = ['explorer', 'agents', 'git'] as const;
+export type SidebarPanelId = (typeof SIDEBAR_PANEL_IDS)[number];
 
 export type SidebarSettings = {
 	gitPanelViewMode: GitPanelViewMode;
@@ -70,6 +72,7 @@ export type SidebarSettings = {
 	defaultGitState: SidebarPaneState;
 	defaultWidth: number;
 	defaultExplorerPaneHeight: number;
+	panelOrder: SidebarPanelId[];
 };
 
 export type FileViewerSettings = {

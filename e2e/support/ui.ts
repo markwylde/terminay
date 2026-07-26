@@ -50,7 +50,9 @@ export async function cancelEditWindow(editWindow: Page): Promise<void> {
 }
 
 export async function openFileExplorer(page: Page): Promise<void> {
-  const sidebar = page.locator('.file-explorer-sidebar')
+  const sidebar = page.locator(
+    '.project-workspace--active .file-explorer-sidebar',
+  )
   if (!(await sidebar.count())) {
     await page.getByLabel('Toggle file explorer').click()
   }

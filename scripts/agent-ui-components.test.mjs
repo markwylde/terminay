@@ -33,6 +33,10 @@ const { AgentsSidebar } = await bundleComponent(
 	'src/components/AgentsSidebar.tsx',
 	'agents-sidebar.cjs',
 );
+const { reorderSidebarPanelIds } = await bundleComponent(
+	'src/components/sidebar/SidebarPanelStack.tsx',
+	'sidebar-panel-stack.cjs',
+);
 const { DockTabChrome } = await bundleComponent(
 	'src/components/DockTabChrome.tsx',
 	'dock-tab-chrome.cjs',
@@ -187,4 +191,27 @@ test('sidebar filters by project, nests subagents, and keeps unread separate fro
 	assert.match(markup, /agent-status-indicator--done/);
 	assert.doesNotMatch(markup, /agent-status-indicator--attention/);
 	assert.ok(markup.indexOf('Lead agent') < markup.indexOf('Researcher'));
+	assert.match(markup, /Collapse 1 subagent for Lead agent/);
+	assert.match(markup, /Research the implementation/);
+});
+
+test('sidebar panel ordering supports before and after moves without losing panels', () => {
+	assert.deepEqual(
+		reorderSidebarPanelIds(
+			['explorer', 'agents', 'git'],
+			'agents',
+			'git',
+			'after',
+		),
+		['explorer', 'git', 'agents'],
+	);
+	assert.deepEqual(
+		reorderSidebarPanelIds(
+			['explorer', 'git', 'agents'],
+			'agents',
+			'explorer',
+			'before',
+		),
+		['agents', 'explorer', 'git'],
+	);
 });

@@ -281,6 +281,19 @@ Each row may show provider, model, short prompt/description, state, and
 acknowledgement. Missing optional metadata is omitted rather than replaced by
 invented values.
 
+Prompts are rendered on one ellipsized line; the full value remains available
+through the row tooltip. Root rows with children expose a disclosure control
+that shows the child count and expands/collapses that root's subagent group.
+Subagent prompt/name metadata is taken directly from its lifecycle payload when
+available. When a provider's subagent-start payload omits it, the driver may
+identify the preceding launch tool so the receiver can correlate its bounded
+task metadata with the next child start event.
+
+Explorer, Agents, and Git are vertically reorderable by dragging their header
+handles. Reordering changes only the Y-axis panel order, preserves collapse and
+split-height state, and persists the resulting order as the default for future
+project tabs. The drag handle also supports Up/Down arrow keys.
+
 ### Click to focus
 
 Activating a root row:
@@ -410,7 +423,8 @@ snapshot begins empty. Within one app run:
 16. The RAG glyph and accessible label match every canonical state; reduced
     motion disables working animation.
 17. The Agents pane shows only the active project's roots and their children in
-    deterministic order.
+    deterministic order; prompts stay on one ellipsized line and child groups
+    expose an accessible count/disclosure control.
 18. Clicking a root or in-process child activates its exact terminal and
     acknowledges it without changing operational state.
 19. A missing terminal does not activate a similarly titled terminal.
@@ -420,6 +434,10 @@ snapshot begins empty. Within one app run:
 21. The header dropdown prioritizes unacknowledged waiting/blocked entries,
     navigates by exact session ID, and removes an entry from unread counts after
     acknowledgement.
+22. Driver-identified subagent launch metadata supplies the child name/prompt
+    when the provider's subagent-start payload omits it.
+23. Explorer, Agents, and Git can be reordered vertically by drag handle or
+    keyboard, and the chosen order persists.
 22. A hook-backed agent ignores spinner output, OSC progress, and bell state
     changes; an uninstrumented terminal still uses fallback activity.
 

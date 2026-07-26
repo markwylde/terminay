@@ -71,16 +71,45 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
   await expect(mainWindow.locator('.agents-sidebar__prompt')).toContainText(
     'Implement the stable agent status flow',
   )
+  await expect(mainWindow.locator('.agents-sidebar__prompt').first()).toHaveCSS(
+    'white-space',
+    'nowrap',
+  )
 
+  await emitHook(mainWindow, agentTerminalSessionId, {
+    hook_event_name: 'PreToolUse',
+    session_id: 'codex-e2e-root',
+    tool_name: 'Agent',
+    tool_use_id: 'spawn-reviewer',
+    tool_input: {
+      task_name: 'Reviewer',
+      message: 'Review the stable lifecycle implementation',
+    },
+  })
   await emitHook(mainWindow, agentTerminalSessionId, {
     hook_event_name: 'SubagentStart',
     session_id: 'codex-e2e-root',
     agent_id: 'reviewer-child',
-    agent_type: 'Reviewer',
+    agent_type: 'default',
   })
   const childRow = mainWindow.getByRole('button', {
     name: 'Focus Reviewer terminal',
   })
+  await expect(childRow).toBeVisible()
+  await expect(
+    mainWindow.locator('.agents-sidebar__prompt').filter({
+      hasText: 'Review the stable lifecycle implementation',
+    }),
+  ).toBeVisible()
+  const childDisclosure = mainWindow.getByRole('button', {
+    name: 'Collapse 1 subagent for Codex',
+  })
+  await expect(childDisclosure).toBeVisible()
+  await childDisclosure.click()
+  await expect(childRow).not.toBeVisible()
+  await mainWindow
+    .getByRole('button', { name: 'Expand 1 subagent for Codex' })
+    .click()
   await expect(childRow).toBeVisible()
 
   await emitHook(mainWindow, agentTerminalSessionId, {
@@ -123,6 +152,47 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
   await expect(
     agentTab.locator('.agent-status-indicator[data-agent-state="done"]'),
   ).toBeVisible()
+})
+
+test('sidebar panels can be reordered vertically', async ({ mainWindow }) => {
+  await openFileExplorer(mainWindow)
+  const activeWorkspace = mainWindow.locator('.project-workspace--active')
+  const panelTitles = activeWorkspace.locator('.sidebar-pane__title')
+  await expect(panelTitles).toHaveText(['Explorer', 'Agents', 'Git'])
+
+  const agentsHandle = mainWindow.getByRole('button', {
+    name: 'Reorder Agents panel',
+  })
+  const gitHeader = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+    .locator('.sidebar-pane__header-row')
+    .first()
+  const gitHeaderBox = await gitHeader.boundingBox()
+  if (!gitHeaderBox) {
+    throw new Error('Git panel header is unavailable')
+  }
+  const dataTransfer = await mainWindow.evaluateHandle(() => new DataTransfer())
+  await agentsHandle.dispatchEvent('dragstart', { dataTransfer })
+  await gitHeader.dispatchEvent('dragover', {
+    dataTransfer,
+    clientY: gitHeaderBox.y + gitHeaderBox.height - 2,
+  })
+  await gitHeader.dispatchEvent('drop', {
+    dataTransfer,
+    clientY: gitHeaderBox.y + gitHeaderBox.height - 2,
+  })
+  await agentsHandle.dispatchEvent('dragend', { dataTransfer })
+  await expect(panelTitles).toHaveText(['Explorer', 'Git', 'Agents'])
+
+  await mainWindow.getByLabel('Toggle file explorer').click()
+  await openFileExplorer(mainWindow)
+  await expect(panelTitles).toHaveText(['Explorer', 'Git', 'Agents'])
+
+  await mainWindow.waitForTimeout(150)
+  await sendAppCommand(mainWindow, 'new-project')
+  await openFileExplorer(mainWindow)
+  await expect(panelTitles).toHaveText(['Explorer', 'Git', 'Agents'])
 })
 
 test('agent integration setting disables and restores the full agent surface', async ({
