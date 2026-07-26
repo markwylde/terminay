@@ -110,6 +110,7 @@ type WebRtcTerminalPeer = RemoteConnectionPeer & {
 type WebRtcHostRuntime = {
   hostWindow: ReturnType<RemoteAccessServiceOptions['createWebRtcHostWindow']>
   ownsSignalSocket: boolean
+  phase: 'waiting' | 'pairing' | 'connected' | 'failed'
   ready: boolean
   signalSocket: WebSocket | null
 }
@@ -286,6 +287,7 @@ export class RemoteAccessService {
 
     return {
       activeConnectionCount: this.connectionStore.count(),
+      pendingWebRtcConnectionCount: this.getPendingWebRtcConnectionCount(),
       auditEvents: this.auditStore.listRecent(),
       availableAddresses,
       connections: this.connectionStore.list().map((connection) => {
@@ -699,6 +701,16 @@ export class RemoteAccessService {
       : false
   }
 
+  private getPendingWebRtcConnectionCount(): number {
+    let count = 0
+    for (const runtime of this.webRtcHostRuntimesByWebContentsId.values()) {
+      if (runtime.phase === 'pairing') {
+        count += 1
+      }
+    }
+    return count
+  }
+
   private isRunning(): boolean {
     return this.httpsServer !== null || this.webRtcHostRuntimesByWebContentsId.size > 0
   }
@@ -1048,6 +1060,7 @@ export class RemoteAccessService {
     this.webRtcHostRuntimesByWebContentsId.set(hostWindow.webContentsId, {
       hostWindow,
       ownsSignalSocket: true,
+      phase: 'waiting',
       ready: false,
       signalSocket: null,
     })
@@ -1088,6 +1101,7 @@ export class RemoteAccessService {
     this.webRtcHostRuntimesByWebContentsId.set(hostWindow.webContentsId, {
       hostWindow,
       ownsSignalSocket: false,
+      phase: 'waiting',
       ready: false,
       signalSocket: options.signalingSocket,
     })
@@ -1184,15 +1198,23 @@ export class RemoteAccessService {
     if (message.type === 'host-registered') {
       runtime.ready = true
       if (this.webRtcActivePairingWebContentsId === webContentsId) {
-        this.webRtcStatusMessage = 'WebRTC relay room is ready. Scan the QR code to continue.'
+        this.webRtcStatusMessage = 'WebRTC relay room is ready. Scan the QR code to connect another browser.'
         this.emitStatus()
       }
       return
     }
 
     if (message.type === 'client-join') {
+      runtime.phase = 'pairing'
       if (this.webRtcActivePairingWebContentsId === webContentsId) {
-        this.webRtcStatusMessage = 'Browser joined the relay room. Establishing the secure WebRTC channel.'
+        // The admitted room now belongs to this browser's handshake. Stop
+        // advertising its one-time QR immediately and prepare a fresh room for
+        // another browser without disturbing the peer that is connecting.
+        this.webRtcActivePairingWebContentsId = null
+        this.webRtcStatusMessage = 'A browser is pairing, but is not connected yet. Preparing a fresh QR for another browser.'
+        this.emitStatus()
+        void this.rotateWebRtcPairingCode().then(() => this.emitStatus())
+      } else {
         this.emitStatus()
       }
       return
@@ -1200,6 +1222,9 @@ export class RemoteAccessService {
 
     if (message.type === 'error') {
       runtime.ready = false
+      if (runtime.phase === 'pairing') {
+        runtime.phase = 'failed'
+      }
       const config = this.webRtcHostConfigByWebContentsId.get(webContentsId)
       if (this.webRtcActivePairingWebContentsId === webContentsId || config?.reconnect) {
         this.webRtcStatusMessage = message.detail || 'The WebRTC relay rejected the pairing room.'
@@ -1569,7 +1594,6 @@ export class RemoteAccessService {
         deviceId: device.id,
         deviceName: device.name,
       })
-      await this.rotateWebRtcPairingCode()
       this.syncWebRtcReconnectAvailability()
       this.emitStatus()
       return { deviceId: device.id, deviceName: device.name, reconnectGrant }
@@ -1642,6 +1666,7 @@ export class RemoteAccessService {
       },
     }
     const connection = this.connectionStore.register(peer, ticketInfo.connectionId, ticketInfo.deviceId)
+    runtime.phase = 'connected'
     this.webRtcTerminalConnectionsByChannelId.set(channelId, connection.connectionId)
     await this.auditStore.append({
       action: 'connection-opened',
@@ -1649,7 +1674,7 @@ export class RemoteAccessService {
       deviceId: connection.deviceId,
       deviceName: this.deviceStore.get(connection.deviceId)?.name ?? null,
     })
-    this.webRtcStatusMessage = 'Browser connected over WebRTC.'
+    this.webRtcStatusMessage = 'Browser connected over WebRTC. A fresh pairing QR remains available for another browser.'
     this.sendSessionList(connection.socket, connection.connectionId)
     this.emitStatus()
   }
