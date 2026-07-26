@@ -525,6 +525,7 @@ type ProjectTab = {
 	isExplorerPaneCollapsed: boolean;
 	isAgentsPaneCollapsed: boolean;
 	isGitPaneCollapsed: boolean;
+	expandedAgentEntryIds: string[];
 	sidebarAgentsHeight: number;
 	sidebarExplorerHeight: number;
 	sidebarGitHeight: number;
@@ -880,6 +881,7 @@ function createProjectTab(
 		isExplorerPaneCollapsed: sidebarDefaults.defaultExplorerState === 'collapsed',
 		isAgentsPaneCollapsed: false,
 		isGitPaneCollapsed: sidebarDefaults.defaultGitState === 'collapsed',
+		expandedAgentEntryIds: [],
 		sidebarAgentsHeight: DEFAULT_AGENTS_PANE_HEIGHT,
 		sidebarExplorerHeight: sidebarDefaults.defaultExplorerPaneHeight,
 		sidebarGitHeight: DEFAULT_AGENTS_PANE_HEIGHT,
@@ -2115,6 +2117,7 @@ const ProjectWorkspace = forwardRef<
 	} | null>(null);
 	const [errorText, setErrorText] = useState<string | null>(null);
 	const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
+	const [terminalTitleRevision, setTerminalTitleRevision] = useState(0);
 	const [dictationSession, setDictationSession] =
 		useState<DictationSessionState | null>(null);
 	const [directoryChildren, setDirectoryChildren] = useState<
@@ -2173,6 +2176,14 @@ const ProjectWorkspace = forwardRef<
 		}
 
 		const terminalSessionIds = new Set(panelSessionMapRef.current.values());
+		const terminalTitlesBySession = new Map<string, string>();
+		const dockviewApi = dockviewApiRef.current;
+		for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
+			const title = dockviewApi?.getPanel(panelId)?.title;
+			if (typeof title === 'string' && title.trim()) {
+				terminalTitlesBySession.set(sessionId, title.trim());
+			}
+		}
 		const priority: Record<AgentState, number> = {
 			blocked: 0,
 			waiting: 1,
@@ -2195,6 +2206,9 @@ const ProjectWorkspace = forwardRef<
 				projectId: project.id,
 				model: entry.model?.displayName ?? entry.model?.id,
 				prompt: entry.promptText,
+				terminalTitle: terminalTitlesBySession.get(
+					entry.activationTerminalSessionId,
+				),
 			}));
 	}, [
 		agentStatusSnapshot,
@@ -2202,6 +2216,7 @@ const ProjectWorkspace = forwardRef<
 		isDockviewReady,
 		project.id,
 		settings.agentIntegration.enabled,
+		terminalTitleRevision,
 	]);
 
 	const [isMacroLauncherOpen, setIsMacroLauncherOpen] = useState(false);
@@ -4786,6 +4801,7 @@ const ProjectWorkspace = forwardRef<
 			const nextColor = result.color;
 
 			panel.api.setTitle(nextTitle);
+			setTerminalTitleRevision((revision) => revision + 1);
 			panel.api.updateParameters({
 				activityIndicatorsEnabled: result.activityIndicatorsEnabled,
 				emoji: nextEmoji,
@@ -4922,6 +4938,7 @@ const ProjectWorkspace = forwardRef<
 			setErrorText(null);
 			if (target === 'title') {
 				activePanel.api.setTitle('Generating...');
+				setTerminalTitleRevision((revision) => revision + 1);
 				activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
 			}
 
@@ -4946,6 +4963,7 @@ const ProjectWorkspace = forwardRef<
 
 				if (target === 'title') {
 					activePanel.api.setTitle(text);
+					setTerminalTitleRevision((revision) => revision + 1);
 					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
 					window.terminay.updateTerminalRemoteMetadata(sessionId, {
 						color: activePanel.params?.color ?? project.color,
@@ -4966,6 +4984,7 @@ const ProjectWorkspace = forwardRef<
 			} catch (error) {
 				if (target === 'title') {
 					activePanel.api.setTitle(previousTitle);
+					setTerminalTitleRevision((revision) => revision + 1);
 					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
 				}
 				const message = error instanceof Error ? error.message : String(error);
@@ -6106,6 +6125,7 @@ const ProjectWorkspace = forwardRef<
 							};
 						}
 						api?.getPanel(match.found.panelId)?.api.setTitle(name);
+						setTerminalTitleRevision((revision) => revision + 1);
 						window.terminay.updateTerminalRemoteMetadata(match.found.sessionId, {
 							title: name,
 						});
@@ -7373,6 +7393,18 @@ const ProjectWorkspace = forwardRef<
 				<AgentsSidebar
 					projectId={project.id}
 					agents={projectAgentItems}
+					expandedEntryIds={project.expandedAgentEntryIds}
+					onToggleEntryExpanded={(entryId) => {
+						const expanded =
+							project.expandedAgentEntryIds.includes(entryId);
+						onUpdateProject(project.id, {
+							expandedAgentEntryIds: expanded
+								? project.expandedAgentEntryIds.filter(
+										(candidate) => candidate !== entryId,
+									)
+								: [...project.expandedAgentEntryIds, entryId],
+						});
+					}}
 					onActivateTerminal={activateAgentTerminal}
 				/>
 			),
@@ -8183,6 +8215,11 @@ function App() {
 			...incoming,
 			id: nextProjectId,
 			isAgentsPaneCollapsed: incoming.isAgentsPaneCollapsed ?? false,
+			expandedAgentEntryIds: Array.isArray(incoming.expandedAgentEntryIds)
+				? incoming.expandedAgentEntryIds.filter(
+						(entryId): entryId is string => typeof entryId === 'string',
+					)
+				: [],
 			sidebarAgentsHeight:
 				incoming.sidebarAgentsHeight ?? DEFAULT_AGENTS_PANE_HEIGHT,
 			sidebarGitHeight:
