@@ -162,6 +162,7 @@ export type DictationTranscribeResult = {
 }
 
 export type { TerminalActivityMessage, SemanticActivity } from './terminalSignals'
+export type { AgentStatusSnapshot } from './agentStatus'
 
 export type TerminalExitMessage = {
   id: string
@@ -624,6 +625,9 @@ export interface TerminayApi {
   applyQuickPush: (request: QuickPushApplyRequest) => Promise<QuickPushApplyResult>
   quitApp: () => Promise<void>
   createTerminal: (options?: { cwd?: string }) => Promise<{ id: string }>
+  getAgentStatusSnapshot: () => Promise<import('./agentStatus').AgentStatusSnapshot>
+  acknowledgeAgentStatus: (entryId: string) => Promise<boolean>
+  acknowledgeTerminalAgentStatuses: (terminalSessionId: string) => Promise<number>
   getTerminalCwd: (id: string) => Promise<string | null>
   getTerminalBuffer: (id: string) => Promise<string | null>
   getPathForFile: (file: File) => string
@@ -718,6 +722,9 @@ export interface TerminayApi {
     listener: (message: import('./terminalSignals').TerminalActivityMessage) => void,
   ) => () => void
   onTerminalExit: (listener: (message: TerminalExitMessage) => void) => () => void
+  onAgentStatusSnapshot: (
+    listener: (snapshot: import('./agentStatus').AgentStatusSnapshot) => void,
+  ) => () => void
   onAppCommand: (listener: (command: AppCommand) => void) => () => void
   onFileExplorerWatchEvent: (listener: (message: FileExplorerWatchEvent) => void) => () => void
   onFolderSizeProgress: (listener: (message: FolderSizeProgress) => void) => () => void
@@ -738,6 +745,11 @@ export interface TerminayApi {
 }
 
 export interface TerminayTestApi {
+  emitAgentHook: (payload: {
+    provider: import('./agentStatus').AgentProvider
+    terminalSessionId: string
+    nativePayload: Record<string, unknown>
+  }) => Promise<number>
   sendAppCommand: (command: AppCommand) => Promise<void>
   setAiTabMetadataMock: (mock: {
     error?: string | null

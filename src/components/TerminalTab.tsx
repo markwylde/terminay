@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { DockTabChrome } from './DockTabChrome'
+import type { AgentState } from '../types/agentStatus'
 
 export type TerminalTabMacroRunStep = {
   id: string
@@ -54,6 +55,9 @@ export type TerminalPanelParams = {
   recordingError?: string | null
   recordingStatus?: 'failed' | 'idle' | 'recording'
   terminalActivityState?: TerminalActivityState
+  agentState?: AgentState
+  agentNeedsAttention?: boolean
+  agentUnread?: boolean
   color?: string
   emoji?: string
   inheritsProjectColor?: boolean
@@ -87,6 +91,27 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
     (terminalActivityState === 'unviewed' && params?.showFinishedTabActivityIndicator === false)
       ? 'viewed'
       : terminalActivityState
+  const fallbackAgentState: AgentState | undefined =
+    displayedActivityState === 'recent'
+      ? 'working'
+      : displayedActivityState === 'unviewed'
+        ? 'done'
+        : displayedActivityState === 'attention'
+          ? 'blocked'
+          : undefined
+  const displayedAgentState = params?.agentState ?? fallbackAgentState
+  const displayedAgentNeedsAttention =
+    params?.agentState !== undefined
+      ? params.agentNeedsAttention === true
+      : displayedActivityState === 'attention'
+  const displayedAgentStatusLabel =
+    params?.agentState !== undefined || displayedAgentState === undefined
+      ? undefined
+      : displayedActivityState === 'attention'
+        ? 'Terminal needs attention'
+        : displayedActivityState === 'recent'
+          ? 'Terminal active'
+          : 'Terminal finished'
   const isFocused = params?.isFocused === true
   const hasCustomColor = typeof color === 'string' && color !== DEFAULT_TERMINAL_TAB_COLOR
   const [isMacroMenuOpen, setIsMacroMenuOpen] = useState(false)
@@ -434,6 +459,9 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
         isActive={isFocused}
         hasCustomColor={hasCustomColor}
         activityState={displayedActivityState}
+        agentState={displayedAgentState}
+        agentNeedsAttention={displayedAgentNeedsAttention}
+        agentStatusLabel={displayedAgentStatusLabel}
         titleAttribute="Double-click to edit tab"
         style={style}
         onClick={onClick}

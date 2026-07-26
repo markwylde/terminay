@@ -4,7 +4,11 @@ import {
 	defaultKeyboardShortcuts,
 	normalizeAccelerator,
 } from './keyboardShortcuts';
-import type { TerminalSettings } from './types/settings';
+import {
+	SIDEBAR_PANEL_IDS,
+	type SidebarPanelId,
+	type TerminalSettings,
+} from './types/settings';
 
 type SettingsInputKind =
 	| 'boolean'
@@ -201,7 +205,7 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
 	{
 		id: 'ai',
 		label: 'AI',
-		description: 'AI providers and models for tab titles and notes.',
+		description: 'Agent status, providers, and models for AI-assisted workflows.',
 	},
 	{
 		id: 'recording',
@@ -296,6 +300,9 @@ export const DEFAULT_FOLDER_TASK_IGNORED_DIRECTORIES = [
 ].join('\n');
 
 export const defaultTerminalSettings: TerminalSettings = {
+	agentIntegration: {
+		enabled: true,
+	},
 	aiTabMetadata: {
 		title: {
 			provider: 'disabled',
@@ -402,6 +409,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		defaultGitState: 'expanded',
 		defaultWidth: 280,
 		defaultExplorerPaneHeight: 320,
+		panelOrder: [...SIDEBAR_PANEL_IDS],
 	},
 	theme: {
 		foreground: '#dce2f0',
@@ -442,6 +450,33 @@ function makeField(
 }
 
 export const terminalSettingsSections: SettingsSectionDefinition[] = [
+	{
+		id: 'agent-integration',
+		categoryId: 'ai',
+		title: 'Agents',
+		description:
+			'Track supported coding agents using their native lifecycle hooks and show them in terminal and project status surfaces.',
+		fields: [
+			makeField({
+				key: 'agentIntegration.enabled',
+				label: 'Agent status and sidebar',
+				description:
+					'Install Terminay-managed Codex and Claude Code hooks, show reliable working/attention/done status, and add the per-project Agents sidebar panel. Turning this off removes only Terminay-managed hooks.',
+				sectionId: 'agent-integration',
+				categoryId: 'ai',
+				input: 'boolean',
+				keywords: [
+					'agents',
+					'agent status',
+					'codex',
+					'claude',
+					'hooks',
+					'sidebar',
+					'activity',
+				],
+			}),
+		],
+	},
 	{
 		id: 'ai-tab-metadata',
 		categoryId: 'ai',
@@ -2093,6 +2128,22 @@ function clampNumber(
 	return max === undefined ? minApplied : Math.min(max, minApplied);
 }
 
+export function normalizeSidebarPanelOrder(value: unknown): SidebarPanelId[] {
+	const validIds = new Set<string>(SIDEBAR_PANEL_IDS);
+	const ordered = Array.isArray(value)
+		? value.filter(
+				(candidate, index, input): candidate is SidebarPanelId =>
+					typeof candidate === 'string' &&
+					validIds.has(candidate) &&
+					input.indexOf(candidate) === index,
+			)
+		: [];
+	return [
+		...ordered,
+		...SIDEBAR_PANEL_IDS.filter((id) => !ordered.includes(id)),
+	];
+}
+
 function normalizeThemeColor(
 	input: Partial<TerminalSettings['theme']>,
 	key: TerminalThemeKey,
@@ -2122,6 +2173,11 @@ export function normalizeTerminalSettings(
 		typeof input.aiTabMetadata === 'object' && input.aiTabMetadata !== null
 			? input.aiTabMetadata
 			: defaultTerminalSettings.aiTabMetadata;
+	const agentIntegrationInput =
+		typeof input.agentIntegration === 'object' &&
+		input.agentIntegration !== null
+			? input.agentIntegration
+			: defaultTerminalSettings.agentIntegration;
 	const aiTitleInput =
 		typeof aiTabMetadataInput.title === 'object' &&
 		aiTabMetadataInput.title !== null
@@ -2178,6 +2234,12 @@ export function normalizeTerminalSettings(
 			: {};
 
 	return {
+		agentIntegration: {
+			enabled:
+				typeof agentIntegrationInput.enabled === 'boolean'
+					? agentIntegrationInput.enabled
+					: defaultTerminalSettings.agentIntegration.enabled,
+		},
 		aiTabMetadata: {
 			title: {
 				provider:
@@ -2647,6 +2709,7 @@ export function normalizeTerminalSettings(
 				80,
 				2000,
 			),
+			panelOrder: normalizeSidebarPanelOrder(sidebarInput.panelOrder),
 		},
 		theme: {
 			foreground:

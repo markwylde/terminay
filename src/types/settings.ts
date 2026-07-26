@@ -63,6 +63,8 @@ export type TerminalRecordingSettings = {
 export type GitPanelViewMode = 'list' | 'tree';
 
 export type SidebarPaneState = 'expanded' | 'collapsed';
+export const SIDEBAR_PANEL_IDS = ['explorer', 'agents', 'git'] as const;
+export type SidebarPanelId = (typeof SIDEBAR_PANEL_IDS)[number];
 
 export type SidebarSettings = {
 	gitPanelViewMode: GitPanelViewMode;
@@ -70,6 +72,7 @@ export type SidebarSettings = {
 	defaultGitState: SidebarPaneState;
 	defaultWidth: number;
 	defaultExplorerPaneHeight: number;
+	panelOrder: SidebarPanelId[];
 };
 
 export type FileViewerSettings = {
@@ -98,6 +101,10 @@ export type AiTabMetadataSettings = {
 	note: AiTabMetadataTargetSettings;
 };
 
+export type AgentIntegrationSettings = {
+	enabled: boolean;
+};
+
 export type GitPushAgentProvider = 'disabled' | 'codex' | 'claudeCode';
 
 export type GitPushAgentSettings = {
@@ -124,6 +131,7 @@ export type DictationSettings = {
 };
 
 export type TerminalSettings = {
+	agentIntegration: AgentIntegrationSettings;
 	aiTabMetadata: AiTabMetadataSettings;
 	dictation: DictationSettings;
 	gitPushAgent: GitPushAgentSettings;

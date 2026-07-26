@@ -58,6 +58,7 @@ function getDefaultValueAtPath(key: string): boolean | number | string {
 function setValueAtPath(settings: TerminalSettings, key: string, value: boolean | number | string): TerminalSettings {
   const segments = key.split('.')
   const allowedRoots = new Set([
+    'agentIntegration',
     'activityIndicators',
     'aiTabMetadata',
     'dictation',
