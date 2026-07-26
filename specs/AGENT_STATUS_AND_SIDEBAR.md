@@ -284,15 +284,19 @@ invented values.
 Prompts are rendered on one ellipsized line; the full value remains available
 through the row tooltip. Root rows with children expose a disclosure control
 that shows the child count and expands/collapses that root's subagent group.
+Agent rows reuse the Explorer/Git tree geometry and type scale: aligned
+16-pixel disclosure/status columns, 13-pixel primary labels, 11-pixel metadata,
+and 12 pixels of additional indentation per child depth.
 Subagent prompt/name metadata is taken directly from its lifecycle payload when
 available. When a provider's subagent-start payload omits it, the driver may
 identify the preceding launch tool so the receiver can correlate its bounded
 task metadata with the next child start event.
 
-Explorer, Agents, and Git are vertically reorderable by dragging their header
-handles. Reordering changes only the Y-axis panel order, preserves collapse and
-split-height state, and persists the resulting order as the default for future
-project tabs. The drag handle also supports Up/Down arrow keys.
+Explorer, Agents, and Git are vertically reorderable with pointer-driven header
+handles. Reordering tracks real pointer movement only on the Y axis, preserves
+collapse and split-height state, and persists the resulting order as the
+default for future project tabs. The drag handle also supports Up/Down arrow
+keys.
 
 ### Click to focus
 
