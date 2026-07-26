@@ -2,7 +2,10 @@
 
 ## Status
 
-Proposed. Researched against current OpenAI docs on 2026-07-04 and the current Terminay codebase.
+Implemented. Dictation is an opt-in local capture workflow backed by the
+configured OpenAI transcription model. The remaining realtime/transcription
+provider ideas are future scope, not a statement that the shipped feature is
+missing.
 
 ## Summary
 
@@ -294,7 +297,11 @@ UI behavior:
 - Transcription errors keep the overlay visible with retry/cancel actions.
 - If the target terminal disappeared, copy transcript to clipboard and show a message.
 
-## Implementation Order
+## Historical delivery record
+
+This is the completed first-release delivery record. The unchecked realtime
+preview item is future scope, not an incomplete implementation of Dictation
+Mode.
 
 - [x] Add types and normalized default settings for `dictation`.
 - [x] Add OpenAI key storage IPC using the existing encrypted secret store.

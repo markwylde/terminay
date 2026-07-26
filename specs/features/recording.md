@@ -395,7 +395,11 @@ Add coverage at both service and UI levels:
 - Should timeline open as a separate window or as a Dockview tab in the main workspace?
 - Should input capture be configurable in the first release or hard-coded to "record with sensitive filter"?
 
-## Implementation Checklist
+## Historical delivery record
+
+This completed implementation record is retained for provenance. Unchecked
+items are not part of the current recording contract; they are audited in
+[feature drift alignment](../tasks/2-feature-drift-alignment.md).
 
 ### Research And Validation
 
