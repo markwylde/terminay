@@ -15,7 +15,7 @@ The same model feeds:
 
 Raw terminal signals remain available only as terminal-activity fallback. They
 must not override an authoritative agent entry. See
-[TERMINAL_ACTIVITY_SIGNALS.md](./TERMINAL_ACTIVITY_SIGNALS.md).
+[terminal-activity-signals.md](./terminal-activity-signals.md).
 
 ## Goals
 
