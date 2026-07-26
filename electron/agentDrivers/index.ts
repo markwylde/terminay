@@ -32,6 +32,16 @@ export function createAgentDriverRegistry(
 				byProvider.get(provider)?.normalize(nativePayload, context) ?? null
 			);
 		},
+		async normalizeAsync(provider, nativePayload, context) {
+			const driver = byProvider.get(provider);
+			if (!driver) {
+				return null;
+			}
+			const enrichedPayload = driver.enrichNativePayload
+				? await driver.enrichNativePayload(nativePayload, context)
+				: nativePayload;
+			return driver.normalize(enrichedPayload, context);
+		},
 		async hookStatus(provider, options) {
 			const driver = byProvider.get(provider);
 			if (!driver) {

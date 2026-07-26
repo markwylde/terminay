@@ -25,6 +25,10 @@ export interface AgentDriver {
 	readonly provider: AgentProvider;
 	readonly displayName: string;
 	readonly hooks: ManagedHookReconciler;
+	enrichNativePayload?(
+		nativePayload: unknown,
+		context: AgentDriverContext,
+	): unknown | Promise<unknown>;
 	normalize(
 		nativePayload: unknown,
 		context: AgentDriverContext,
@@ -41,6 +45,11 @@ export interface AgentDriverRegistry {
 		nativePayload: unknown,
 		context: AgentDriverContext,
 	): AgentLifecycleEvent | null;
+	normalizeAsync(
+		provider: AgentProvider | string,
+		nativePayload: unknown,
+		context: AgentDriverContext,
+	): Promise<AgentLifecycleEvent | null>;
 	hookStatus(
 		provider: AgentProvider | string,
 		options?: ManagedHookOptions,

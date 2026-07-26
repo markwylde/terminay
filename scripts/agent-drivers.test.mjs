@@ -5,6 +5,7 @@ import {
 	mkdir,
 	mkdtemp,
 	readFile,
+	rm,
 	stat,
 	writeFile,
 } from 'node:fs/promises';
@@ -229,6 +230,59 @@ test('subagent lifecycle and child agent_id target children without replacing th
 	);
 	assert.equal(stopped.kind, 'subagent.stopped');
 	assert.equal(stopped.subagentId, 'child-a');
+});
+
+test('Codex resolves a spawned task name from structured child transcript metadata', async (t) => {
+	const directory = await mkdtemp(join(tmpdir(), 'terminay-codex-transcript-'));
+	t.after(() => rm(directory, { recursive: true, force: true }));
+	const transcriptPath = join(
+		directory,
+		'rollout-2026-07-26T22-23-55-child-a.jsonl',
+	);
+	await writeFile(
+		transcriptPath,
+		`${JSON.stringify({
+			type: 'session_meta',
+			payload: {
+				id: 'child-a',
+				parent_thread_id: 'root-session',
+				source: {
+					subagent: {
+						thread_spawn: {
+							parent_thread_id: 'root-session',
+							agent_path: '/root/math_question_one',
+						},
+					},
+				},
+			},
+		})}\n`,
+	);
+
+	const started = await agentDriverRegistry.normalizeAsync(
+		'codex',
+		{
+			hook_event_name: 'SubagentStart',
+			session_id: 'root-session',
+			agent_id: 'child-a',
+			agent_type: 'default',
+			agent_transcript_path: transcriptPath,
+		},
+		context,
+	);
+	assert.equal(started.displayName, 'math_question_one');
+
+	const mismatched = await agentDriverRegistry.normalizeAsync(
+		'codex',
+		{
+			hook_event_name: 'SubagentStart',
+			session_id: 'root-session',
+			agent_id: 'different-child',
+			agent_type: 'default',
+			agent_transcript_path: transcriptPath,
+		},
+		context,
+	);
+	assert.equal(mismatched.displayName, 'default');
 });
 
 test('provider identifiers and renderer-facing text are bounded at normalization', () => {
