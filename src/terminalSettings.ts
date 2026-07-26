@@ -456,7 +456,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				key: 'agentIntegration.enabled',
 				label: 'Agent status and sidebar',
 				description:
-					'Install Terminay-managed Codex and Claude Code hooks, show reliable working/attention/done status, and add the per-project Agents sidebar tab. Turning this off removes only Terminay-managed hooks.',
+					'Install Terminay-managed Codex and Claude Code hooks, show reliable working/attention/done status, and add the per-project Agents sidebar panel. Turning this off removes only Terminay-managed hooks.',
 				sectionId: 'agent-integration',
 				categoryId: 'ai',
 				input: 'boolean',

@@ -2458,66 +2458,6 @@
   min-height: 0;
 }
 
-.file-explorer-sidebar > .agents-sidebar {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.project-sidebar-tabs {
-  display: flex;
-  flex: 0 0 auto;
-  min-height: 34px;
-  padding: 4px;
-  gap: 3px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  background: #090b0e;
-}
-
-.project-sidebar-tab {
-  all: unset;
-  box-sizing: border-box;
-  display: flex;
-  flex: 1 1 0;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 5px 8px;
-  border-radius: 5px;
-  color: rgba(214, 227, 240, 0.54);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 14px;
-}
-
-.project-sidebar-tab:hover {
-  color: rgba(230, 238, 247, 0.82);
-  background: rgba(255, 255, 255, 0.045);
-}
-
-.project-sidebar-tab:focus-visible {
-  outline: 1px solid rgba(87, 183, 255, 0.7);
-  outline-offset: -1px;
-}
-
-.project-sidebar-tab--active {
-  color: #e4ebf3;
-  background: rgba(255, 255, 255, 0.085);
-}
-
-.project-sidebar-tab__count {
-  min-width: 15px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(235, 241, 248, 0.7);
-  font-size: 9px;
-  line-height: 15px;
-  text-align: center;
-}
-
 .file-explorer-sidebar__resizer {
   position: absolute;
   top: 0;
