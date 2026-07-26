@@ -158,10 +158,12 @@ export function normalizePreparedHook(
 			parentAgentId: native.parentAgentId,
 			displayName: boundedFirstString(
 				200,
-				native.payload.agent_type,
-				native.payload.agentType,
 				native.payload.display_name,
 				native.payload.displayName,
+				native.payload.task_name,
+				native.payload.taskName,
+				native.payload.agent_type,
+				native.payload.agentType,
 			),
 		};
 	}
