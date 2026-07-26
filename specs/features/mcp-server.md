@@ -51,7 +51,8 @@ boundary* that defines the visible set, never a thing the MCP API exposes.
 - No file system, settings, recording, or remote-access control via MCP. This is
   about terminals only.
 - No network exposure. This is distinct from the existing remote-access feature
-  (see `specs/REMOTE.md`) and does not reuse its transport, pairing, or auth.
+  (see [remote access](./remote-access.md)) and does not reuse its transport,
+  pairing, or auth.
 - Advanced window management (popout windows, moving tabs between groups, pane
   resizing) is out of scope for the first version. Basics only: open, close,
   focus, rename, split.
@@ -244,7 +245,7 @@ name races). All tools operate strictly within the agent's own window/project.
   activity; built on `waitForInactivity()` in `electron/ptyHost.ts`
 - `wait_for_command({ terminal, timeout? })` → returns when the next command
   finishes, with its exit code (OSC 133 command lifecycle, see
-  `specs/TERMINAL_ACTIVITY_SIGNALS.md`)
+  [terminal activity signals](./terminal-activity-signals.md))
 - `wait_for_attention({ terminal, timeout? })` → returns on bell/notification
 
 These are ordinary request/response MCP tool calls that simply do not return
@@ -258,7 +259,8 @@ shape for Claude Code and Codex.
   token from one project cannot reach another project or another window.
 - User-controllable: the Settings → AI toggle disables the server and stops env
   injection entirely.
-- Distinct from `specs/REMOTE.md`: no shared transport, pairing, PIN, or device
+- Distinct from [remote access](./remote-access.md): no shared transport,
+  pairing, PIN, or device
   keys.
 
 ## Affected Files
@@ -293,7 +295,12 @@ shape for Claude Code and Codex.
 - `package.json` — add `@modelcontextprotocol/sdk`; ensure the `mcp` entry point
   is bundled by Vite/electron-builder.
 
-## Tasks
+## Historical delivery record
+
+This completed implementation checklist is retained as history. The remaining
+manual multi-provider verification item is tracked by
+[feature drift alignment](../tasks/2-feature-drift-alignment.md), rather than
+being implied product functionality.
 
 > Implementation notes (deviations from the original sketch, both deliberate):
 > 1. **Scope source of truth is the renderer, resolved per request.** The

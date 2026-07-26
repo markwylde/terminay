@@ -1,5 +1,10 @@
 # AI Tab Metadata Specification
 
+## Status
+
+Implemented for Codex and Claude Code. This specification records the shipped
+command, settings, model-selection, and provider-boundary behaviour.
+
 ## Summary
 
 Terminay should let the user generate terminal tab metadata from the Command bar. Pressing `Cmd/Ctrl+L` opens the existing Command bar, where the user can choose:
@@ -216,7 +221,9 @@ E2E tests should cover Settings UI visibility and Command bar behavior with mock
 - Should the generated note replace an existing note, append to it, or ask before replacing? Initial recommendation: replace only after explicit Command bar action.
 - Should AI errors be shown as the existing app-level error text, a toast-like status, or an inline Command bar state?
 
-## Implementation Checklist
+## Historical delivery record
+
+This is the completed implementation record for the shipped feature.
 
 ### Settings Model
 

@@ -429,7 +429,11 @@ Suggested areas:
 - `src/types/fileViewer.ts`
 - `electron/fileViewer/`
 
-## Implementation Checklist
+## Historical delivery record
+
+This checklist records the original delivery work. Its unchecked items are not
+claimed as shipped behaviour and are tracked for an explicit product decision
+in [feature drift alignment](../tasks/2-feature-drift-alignment.md).
 
 ### Workspace and Tab Integration
 

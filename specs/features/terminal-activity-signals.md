@@ -6,7 +6,7 @@ Terminay has two related, but different, activity systems:
 
 - **Agent status** describes the lifecycle of a recognized AI agent. Provider
   hooks are authoritative for this state. See
-  [AGENT_STATUS_AND_SIDEBAR.md](./AGENT_STATUS_AND_SIDEBAR.md).
+  [agent-status-and-sidebar.md](./agent-status-and-sidebar.md).
 - **Terminal activity** describes activity in any terminal, including shells,
   builds, and agents for which authoritative hooks are unavailable.
 
