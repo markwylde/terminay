@@ -8923,7 +8923,11 @@ function App() {
 							aria-haspopup="menu"
 							aria-expanded={isRemoteMenuOpen}
 						>
-							<span className="remote-access-button__label">Remote</span>
+							<span className="remote-access-button__label">
+								{remoteStatus?.isRunning
+									? `Remote (${remoteStatus.activeConnectionCount})`
+									: 'Remote'}
+							</span>
 							{remoteStatus?.isRunning ? (
 								<span
 									className="remote-access-button__badge remote-access-button__badge--live"
@@ -9064,6 +9068,15 @@ function App() {
 								<div className="remote-access-menu__section-label">
 									Active Connections
 								</div>
+								{remoteStatus?.pendingWebRtcConnectionCount ? (
+									<div className="remote-access-menu__empty">
+										{remoteStatus.pendingWebRtcConnectionCount}{' '}
+										{remoteStatus.pendingWebRtcConnectionCount === 1
+											? 'browser is'
+											: 'browsers are'}{' '}
+										pairing, but not connected yet.
+									</div>
+								) : null}
 								{remoteStatus?.connections.length ? (
 									remoteStatus.connections.map((connection) => (
 										<div

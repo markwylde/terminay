@@ -50,9 +50,7 @@ export class PairingManager {
       throw new Error('This pairing code has expired.')
     }
 
-    if (this.currentAdoptedSessionId) {
-      this.sessions.delete(this.currentAdoptedSessionId)
-    }
+    this.pruneExpiredSessions()
 
     this.sessions.set(options.pairingSessionId, {
       expiresAt,
@@ -152,6 +150,15 @@ export class PairingManager {
     }
     if (this.currentAdoptedSessionId === pairingSessionId) {
       this.currentAdoptedSessionId = null
+    }
+  }
+
+  private pruneExpiredSessions(): void {
+    const now = Date.now()
+    for (const [sessionId, session] of this.sessions) {
+      if (session.expiresAt < now) {
+        this.sessions.delete(sessionId)
+      }
     }
   }
 

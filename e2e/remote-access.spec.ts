@@ -1,6 +1,7 @@
 import { constants, generateKeyPairSync, sign } from 'node:crypto'
 import { request as httpsRequest } from 'node:https'
 import type { Page } from '@playwright/test'
+import WebSocket from 'ws'
 import { expect, test } from './fixtures'
 import { openRemoteMenu } from './support/ui'
 
@@ -88,6 +89,7 @@ test('starts remote access from the host menu and shows a pairing qr modal', asy
   await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456')
   await pinDialog.getByRole('button', { name: 'Save PIN' }).click()
   await expect(pinDialog).toHaveCount(0)
+  await expect(mainWindow.getByLabel('Open remote access menu')).toContainText('Remote (0)')
 
   const pairingDialog = mainWindow.getByRole('dialog', { name: 'Pair device' })
   await expect(pairingDialog).toBeVisible()
@@ -341,7 +343,7 @@ test('requires the configured PIN for Local Network auth tickets', async ({ main
   expect(missingPinResponse.body.error).toBe('Remote PIN was missing or incorrect.')
 
   const correctPinAuth = await createAuthSignature()
-  const correctPinResponse = await postRemoteJson<{ ticket?: string }>(reachablePairingUrl, '/api/auth/verify', {
+  const correctPinResponse = await postRemoteJson<{ ticket?: string; websocketUrl?: string }>(reachablePairingUrl, '/api/auth/verify', {
     challengeId: correctPinAuth.challengeId,
     deviceId: completeResponse.body.deviceId,
     deviceSignature: correctPinAuth.deviceSignature,
@@ -349,11 +351,23 @@ test('requires the configured PIN for Local Network auth tickets', async ({ main
   }, pairingOrigin)
   expect(correctPinResponse.status).toBe(200)
   expect(correctPinResponse.body.ticket).toBeTruthy()
+  expect(correctPinResponse.body.websocketUrl).toBeTruthy()
 
-  await mainWindow
-    .getByRole('dialog', { name: 'Pair device' })
-    .getByRole('button', { name: 'Close Pair Device' })
-    .click()
+  const websocketUrl = new URL(correctPinResponse.body.websocketUrl!)
+  websocketUrl.hostname = '127.0.0.1'
+  const remoteSocket = new WebSocket(websocketUrl, {
+    origin: pairingOrigin,
+    rejectUnauthorized: false,
+  })
+  await new Promise<void>((resolve, reject) => {
+    remoteSocket.once('open', resolve)
+    remoteSocket.once('error', reject)
+  })
+  await expect(mainWindow.getByLabel('Open remote access menu')).toContainText('Remote (1)')
+  remoteSocket.close()
+  await expect(mainWindow.getByLabel('Open remote access menu')).toContainText('Remote (0)')
+
+  await expect(mainWindow.getByRole('dialog', { name: 'Pair device' })).toHaveCount(0)
   await openRemoteMenu(mainWindow)
   await mainWindow.getByRole('button', { name: 'Stop Server' }).click()
 })
