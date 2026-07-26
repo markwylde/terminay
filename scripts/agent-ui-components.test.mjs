@@ -187,7 +187,7 @@ test('sidebar filters by project, nests subagents, and keeps unread separate fro
 	assert.match(markup, /Lead agent/);
 	assert.match(markup, /Researcher/);
 	assert.doesNotMatch(markup, /Other project agent/);
-	assert.match(markup, /agents-sidebar__agent--unread/);
+	assert.match(markup, /agents-sidebar__row--unread/);
 	assert.match(markup, /agent-status-indicator--done/);
 	assert.doesNotMatch(markup, /agent-status-indicator--attention/);
 	assert.ok(markup.indexOf('Lead agent') < markup.indexOf('Researcher'));

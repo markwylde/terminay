@@ -1,5 +1,5 @@
-import { ChevronRight } from 'lucide-react';
-import { type CSSProperties, memo, useMemo, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { memo, useMemo, useState } from 'react';
 import type { AgentProvider, AgentStatusEntry } from '../types/agentStatus';
 import { AgentStatusIndicator } from './AgentStatusIndicator';
 import './AgentsSidebar.css';
@@ -93,32 +93,26 @@ function AgentRow({
 
 	return (
 		<li className="agents-sidebar__tree-item">
-			<div className="agents-sidebar__row">
-				{entry.kind === 'root' ? (
-					childCount > 0 ? (
-						<button
-							type="button"
-							className="agents-sidebar__disclosure"
-							aria-label={`${childrenExpanded ? 'Collapse' : 'Expand'} ${childCount} subagent${childCount === 1 ? '' : 's'} for ${name}`}
-							aria-expanded={childrenExpanded}
-							title={`${childrenExpanded ? 'Collapse' : 'Expand'} ${childCount} subagent${childCount === 1 ? '' : 's'}`}
-							onClick={() => setChildrenExpanded((current) => !current)}
-						>
-							<ChevronRight
-								className={`agents-sidebar__disclosure-chevron${childrenExpanded ? ' agents-sidebar__disclosure-chevron--expanded' : ''}`}
-								size={13}
-								aria-hidden="true"
-							/>
-							<span className="agents-sidebar__disclosure-count">
-								{childCount}
-							</span>
-						</button>
-					) : (
-						<span
-							className="agents-sidebar__disclosure-spacer"
+			<div
+				className={`agents-sidebar__row${entry.unread ? ' agents-sidebar__row--unread' : ''}`}
+				data-agent-state={entry.state}
+				style={{ paddingLeft: `${10 + depth * 12}px` }}
+			>
+				{entry.kind === 'root' && childCount > 0 ? (
+					<button
+						type="button"
+						className="agents-sidebar__disclosure"
+						aria-label={`${childrenExpanded ? 'Collapse' : 'Expand'} ${childCount} subagent${childCount === 1 ? '' : 's'} for ${name}`}
+						aria-expanded={childrenExpanded}
+						title={`${childrenExpanded ? 'Collapse' : 'Expand'} ${childCount} subagent${childCount === 1 ? '' : 's'}`}
+						onClick={() => setChildrenExpanded((current) => !current)}
+					>
+						<ChevronDown
+							className={`agents-sidebar__disclosure-chevron${childrenExpanded ? '' : ' agents-sidebar__disclosure-chevron--collapsed'}`}
+							size={14}
 							aria-hidden="true"
 						/>
-					)
+					</button>
 				) : (
 					<span
 						className="agents-sidebar__disclosure-spacer"
@@ -127,9 +121,8 @@ function AgentRow({
 				)}
 				<button
 					type="button"
-					className={`agents-sidebar__agent${entry.unread ? ' agents-sidebar__agent--unread' : ''}`}
+					className="agents-sidebar__agent"
 					data-agent-state={entry.state}
-					style={{ '--agents-sidebar-depth': depth } as CSSProperties}
 					onClick={() =>
 						onActivateTerminal(entry.activationTerminalSessionId, entry)
 					}
@@ -140,11 +133,15 @@ function AgentRow({
 							: `${name}\n${metadata}`
 					}
 				>
-					<span className="agents-sidebar__tree-guide" aria-hidden="true" />
-					<AgentStatusIndicator state={entry.state} showIdle />
+					<AgentStatusIndicator state={entry.state} showIdle size="medium" />
 					<span className="agents-sidebar__content">
 						<span className="agents-sidebar__heading">
 							<span className="agents-sidebar__name">{name}</span>
+							{childCount > 0 ? (
+								<span className="agents-sidebar__child-count">
+									{childCount}
+								</span>
+							) : null}
 							<span className="agents-sidebar__state">{entry.state}</span>
 						</span>
 						<span className="agents-sidebar__metadata">{metadata}</span>

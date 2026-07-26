@@ -96,6 +96,14 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
     name: 'Focus Reviewer terminal',
   })
   await expect(childRow).toBeVisible()
+  await expect(childRow.locator('.agents-sidebar__name')).toHaveCSS(
+    'font-size',
+    '13px',
+  )
+  await expect(childRow.locator('.agents-sidebar__metadata')).toHaveCSS(
+    'font-size',
+    '11px',
+  )
   await expect(
     mainWindow.locator('.agents-sidebar__prompt').filter({
       hasText: 'Review the stable lifecycle implementation',
@@ -105,6 +113,15 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
     name: 'Collapse 1 subagent for Codex',
   })
   await expect(childDisclosure).toBeVisible()
+  await expect(childDisclosure).toHaveCSS('width', '16px')
+  const indentation = await mainWindow
+    .locator('.agents-sidebar__row')
+    .evaluateAll((rows) =>
+      rows.slice(0, 2).map((row) =>
+        Number.parseFloat(window.getComputedStyle(row).paddingLeft),
+      ),
+    )
+  expect(indentation[1] - indentation[0]).toBe(12)
   await childDisclosure.click()
   await expect(childRow).not.toBeVisible()
   await mainWindow
@@ -172,17 +189,26 @@ test('sidebar panels can be reordered vertically', async ({ mainWindow }) => {
   if (!gitHeaderBox) {
     throw new Error('Git panel header is unavailable')
   }
-  const dataTransfer = await mainWindow.evaluateHandle(() => new DataTransfer())
-  await agentsHandle.dispatchEvent('dragstart', { dataTransfer })
-  await gitHeader.dispatchEvent('dragover', {
-    dataTransfer,
-    clientY: gitHeaderBox.y + gitHeaderBox.height - 2,
-  })
-  await gitHeader.dispatchEvent('drop', {
-    dataTransfer,
-    clientY: gitHeaderBox.y + gitHeaderBox.height - 2,
-  })
-  await agentsHandle.dispatchEvent('dragend', { dataTransfer })
+  const agentsHandleBox = await agentsHandle.boundingBox()
+  if (!agentsHandleBox) {
+    throw new Error('Agents panel drag handle is unavailable')
+  }
+  await mainWindow.mouse.move(
+    agentsHandleBox.x + agentsHandleBox.width / 2,
+    agentsHandleBox.y + agentsHandleBox.height / 2,
+  )
+  await mainWindow.mouse.down()
+  await mainWindow.mouse.move(
+    agentsHandleBox.x + agentsHandleBox.width / 2,
+    agentsHandleBox.y + agentsHandleBox.height / 2 + 8,
+    { steps: 3 },
+  )
+  await mainWindow.mouse.move(
+    gitHeaderBox.x + gitHeaderBox.width / 2,
+    gitHeaderBox.y + gitHeaderBox.height - 2,
+    { steps: 10 },
+  )
+  await mainWindow.mouse.up()
   await expect(panelTitles).toHaveText(['Explorer', 'Git', 'Agents'])
 
   await mainWindow.getByLabel('Toggle file explorer').click()

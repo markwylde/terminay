@@ -1,8 +1,9 @@
 import {
-	type DragEvent,
 	type JSX,
+	type PointerEvent as ReactPointerEvent,
 	type ReactNode,
 	useCallback,
+	useEffect,
 	useRef,
 	useState,
 } from 'react';
@@ -53,17 +54,117 @@ export function SidebarPanelStack({
 	onReorder,
 }: SidebarPanelStackProps): JSX.Element {
 	const [draggedId, setDraggedId] = useState<string | null>(null);
-	const draggedIdRef = useRef<string | null>(null);
+	const rootRef = useRef<HTMLDivElement | null>(null);
+	const itemsRef = useRef(items);
+	const onReorderRef = useRef(onReorder);
+	itemsRef.current = items;
+	onReorderRef.current = onReorder;
+	const dragStateRef = useRef<{
+		active: boolean;
+		pointerId: number;
+		sourceId: string;
+		startY: number;
+		targetId?: string;
+		targetPosition?: 'before' | 'after';
+	} | null>(null);
 	const [dropTarget, setDropTarget] = useState<{
 		id: string;
 		position: 'before' | 'after';
 	} | null>(null);
 
 	const resetDrag = useCallback(() => {
-		draggedIdRef.current = null;
+		dragStateRef.current = null;
+		document.body.classList.remove('sidebar-panel-reordering');
 		setDraggedId(null);
 		setDropTarget(null);
 	}, []);
+
+	useEffect(() => {
+		const onPointerMove = (event: PointerEvent) => {
+			const drag = dragStateRef.current;
+			if (!drag || event.pointerId !== drag.pointerId) {
+				return;
+			}
+			if (!drag.active) {
+				if (Math.abs(event.clientY - drag.startY) < 4) {
+					return;
+				}
+				drag.active = true;
+				document.body.classList.add('sidebar-panel-reordering');
+				setDraggedId(drag.sourceId);
+			}
+			event.preventDefault();
+
+			const headers = Array.from(
+				rootRef.current?.querySelectorAll<HTMLElement>(
+					'[data-sidebar-panel-drop-id]',
+				) ?? [],
+			);
+			let nearest:
+				| {
+						element: HTMLElement;
+						distance: number;
+				  }
+				| undefined;
+			for (const element of headers) {
+				const rect = element.getBoundingClientRect();
+				const distance =
+					event.clientY < rect.top
+						? rect.top - event.clientY
+						: event.clientY > rect.bottom
+							? event.clientY - rect.bottom
+							: 0;
+				if (!nearest || distance < nearest.distance) {
+					nearest = { element, distance };
+				}
+			}
+			const targetId = nearest?.element.dataset.sidebarPanelDropId;
+			if (!nearest || !targetId || targetId === drag.sourceId) {
+				drag.targetId = undefined;
+				drag.targetPosition = undefined;
+				setDropTarget(null);
+				return;
+			}
+			const rect = nearest.element.getBoundingClientRect();
+			const position =
+				event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+			drag.targetId = targetId;
+			drag.targetPosition = position;
+			setDropTarget((current) =>
+				current?.id === targetId && current.position === position
+					? current
+					: { id: targetId, position },
+			);
+		};
+
+		const onPointerEnd = (event: PointerEvent) => {
+			const drag = dragStateRef.current;
+			if (!drag || event.pointerId !== drag.pointerId) {
+				return;
+			}
+			if (drag.active && drag.targetId && drag.targetPosition) {
+				onReorderRef.current(
+					reorderSidebarPanelIds(
+						itemsRef.current.map((item) => item.id),
+						drag.sourceId,
+						drag.targetId,
+						drag.targetPosition,
+					),
+				);
+			}
+			resetDrag();
+		};
+
+		window.addEventListener('pointermove', onPointerMove, { passive: false });
+		window.addEventListener('pointerup', onPointerEnd);
+		window.addEventListener('pointercancel', onPointerEnd);
+		return () => {
+			window.removeEventListener('pointermove', onPointerMove);
+			window.removeEventListener('pointerup', onPointerEnd);
+			window.removeEventListener('pointercancel', onPointerEnd);
+			document.body.classList.remove('sidebar-panel-reordering');
+		};
+	}, [resetDrag]);
 
 	const movePanel = useCallback(
 		(id: string, direction: -1 | 1) => {
@@ -93,34 +194,22 @@ export function SidebarPanelStack({
 					dragging: draggedId === item.id,
 					dropPosition:
 						dropTarget?.id === item.id ? dropTarget.position : null,
-					onDragStart: (event: DragEvent<HTMLButtonElement>) => {
-						event.dataTransfer.effectAllowed = 'move';
-						event.dataTransfer.setData('text/plain', item.id);
-						draggedIdRef.current = item.id;
-						setDraggedId(item.id);
+					panelId: item.id,
+					onPointerDown: (
+						event: ReactPointerEvent<HTMLButtonElement>,
+					) => {
+						if (event.button !== 0) {
+							return;
+						}
+						event.preventDefault();
+						dragStateRef.current = {
+							active: false,
+							pointerId: event.pointerId,
+							sourceId: item.id,
+							startY: event.clientY,
+						};
 						setDropTarget(null);
 					},
-					onDragOver: (position) => {
-						const sourceId = draggedIdRef.current;
-						if (sourceId && sourceId !== item.id) {
-							setDropTarget({ id: item.id, position });
-						}
-					},
-					onDrop: (position) => {
-						const sourceId = draggedIdRef.current;
-						if (sourceId) {
-							onReorder(
-								reorderSidebarPanelIds(
-									items.map((candidate) => candidate.id),
-									sourceId,
-									item.id,
-									position,
-								),
-							);
-						}
-						resetDrag();
-					},
-					onDragEnd: resetDrag,
 					onMove: (direction) => movePanel(item.id, direction),
 				}}
 			/>
@@ -164,5 +253,9 @@ export function SidebarPanelStack({
 		],
 	);
 
-	return <div className="sidebar-panel-stack">{renderStack(items)}</div>;
+	return (
+		<div className="sidebar-panel-stack" ref={rootRef}>
+			{renderStack(items)}
+		</div>
+	);
 }

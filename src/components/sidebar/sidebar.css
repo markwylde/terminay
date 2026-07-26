@@ -107,10 +107,18 @@
 	width: 22px;
 	align-self: stretch;
 	cursor: grab;
+	touch-action: none;
+	user-select: none;
 	color: rgba(214, 227, 240, 0.26);
 	transition:
 		background 100ms ease,
 		color 100ms ease;
+}
+
+.sidebar-panel-reordering,
+.sidebar-panel-reordering * {
+	cursor: ns-resize !important;
+	user-select: none !important;
 }
 
 .sidebar-pane__drag-handle:hover {

@@ -1,5 +1,5 @@
 import { ChevronDown, GripVertical } from 'lucide-react';
-import type { DragEvent, JSX, KeyboardEvent, ReactNode } from 'react';
+import type { JSX, KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import './sidebar.css';
 
 export type SidebarPaneDropPosition = 'before' | 'after';
@@ -7,11 +7,9 @@ export type SidebarPaneDropPosition = 'before' | 'after';
 export type SidebarPaneReorderProps = {
 	dragging: boolean;
 	dropPosition: SidebarPaneDropPosition | null;
-	onDragEnd: () => void;
-	onDragOver: (position: SidebarPaneDropPosition) => void;
-	onDragStart: (event: DragEvent<HTMLButtonElement>) => void;
-	onDrop: (position: SidebarPaneDropPosition) => void;
 	onMove: (direction: -1 | 1) => void;
+	onPointerDown: (event: PointerEvent<HTMLButtonElement>) => void;
+	panelId: string;
 };
 
 export type SidebarPaneProps = {
@@ -60,46 +58,18 @@ export function SidebarPane(props: SidebarPaneProps): JSX.Element {
 		.join(' ');
 
 	return (
-		<section className={rootClassName}>
+		<section className={rootClassName} data-sidebar-panel-id={reorder?.panelId}>
 			<div
 				className="sidebar-pane__header-row"
-				onDragOver={
-					reorder
-						? (event) => {
-								event.preventDefault();
-								event.dataTransfer.dropEffect = 'move';
-								const rect = event.currentTarget.getBoundingClientRect();
-								reorder.onDragOver(
-									event.clientY < rect.top + rect.height / 2
-										? 'before'
-										: 'after',
-								);
-							}
-						: undefined
-				}
-				onDrop={
-					reorder
-						? (event) => {
-								event.preventDefault();
-								const rect = event.currentTarget.getBoundingClientRect();
-								reorder.onDrop(
-									event.clientY < rect.top + rect.height / 2
-										? 'before'
-										: 'after',
-								);
-							}
-						: undefined
-				}
+				data-sidebar-panel-drop-id={reorder?.panelId}
 			>
 				{reorder ? (
 					<button
 						type="button"
 						className="sidebar-pane__drag-handle"
-						draggable
 						aria-label={`Reorder ${title} panel`}
 						title={`Drag to reorder ${title}`}
-						onDragStart={reorder.onDragStart}
-						onDragEnd={reorder.onDragEnd}
+						onPointerDown={reorder.onPointerDown}
 						onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
 							if (event.key === 'ArrowUp') {
 								event.preventDefault();
