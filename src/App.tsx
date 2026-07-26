@@ -42,13 +42,20 @@ import {
 	Zap,
 } from 'lucide-react';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
+import { AgentStatusIndicator } from './components/AgentStatusIndicator';
+import {
+	AgentsSidebar,
+	type AgentsSidebarItem,
+} from './components/AgentsSidebar';
 import type { FilePanelInstanceParams } from './components/file-viewer';
 import { FilePanel, FileTab } from './components/file-viewer';
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
-import { SidebarPane } from './components/sidebar/SidebarPane';
-import { SidebarSplit } from './components/sidebar/SidebarSplit';
+import {
+	SidebarPanelStack,
+	type SidebarPanelStackItem,
+} from './components/sidebar/SidebarPanelStack';
 import { McpInstallModal } from './components/McpInstallModal';
 import { QuickPushModal } from './components/QuickPushModal';
 import type {
@@ -67,8 +74,11 @@ import { TerminalTab } from './components/TerminalTab';
 import { FileTypeIcon } from './fileIcons';
 import { useMacroSettings } from './hooks/useMacroSettings';
 import { useTerminalSettings } from './hooks/useTerminalSettings';
-import { defaultTerminalSettings } from './terminalSettings';
-import type { SidebarSettings } from './types/settings';
+import {
+	defaultTerminalSettings,
+	normalizeSidebarPanelOrder,
+} from './terminalSettings';
+import type { SidebarPanelId, SidebarSettings } from './types/settings';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -87,11 +97,20 @@ import {
 	saveRemoteAccessPairingPin,
 } from './remotePairingPin';
 import {
+	EMPTY_AGENT_STATUS_SNAPSHOT,
+	selectAgentStatusesForTerminal,
+} from './agentStatusStore';
+import {
 	TerminalActivityStore,
 	type TerminalActivityEvaluation,
 } from './terminalActivityStore';
 import { formatBracketedPaste, formatRunCommandInput } from './terminalInput';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
+import type {
+	AgentState,
+	AgentStatusEntry,
+	AgentStatusSnapshot,
+} from './types/agentStatus';
 import type {
 	AdoptedProjectPayload,
 	AiTabMetadataTarget,
@@ -484,6 +503,9 @@ type MacroLauncherGroupedItem = {
 
 type DockPanelTabAppearance = {
 	activityIndicatorsEnabled?: boolean;
+	agentNeedsAttention?: boolean;
+	agentState?: AgentState;
+	agentUnread?: boolean;
 	color?: string;
 	emoji?: string;
 	inheritsProjectColor?: boolean;
@@ -501,13 +523,21 @@ type ProjectTab = {
 	fileExplorerWidth: number;
 	isFileExplorerOpen: boolean;
 	isExplorerPaneCollapsed: boolean;
+	isAgentsPaneCollapsed: boolean;
 	isGitPaneCollapsed: boolean;
+	expandedAgentEntryIds: string[];
+	sidebarAgentsHeight: number;
 	sidebarExplorerHeight: number;
+	sidebarGitHeight: number;
+	sidebarPanelOrder: SidebarPanelId[];
 	rootFolder: string;
 };
 
 type MovedTerminalTab = {
 	activityIndicatorsEnabled?: boolean;
+	agentNeedsAttention?: boolean;
+	agentState?: AgentState;
+	agentUnread?: boolean;
 	color?: string;
 	emoji?: string;
 	inheritsProjectColor?: boolean;
@@ -527,10 +557,14 @@ type MovedProject = {
 	activeSessionId: string | null;
 };
 
-type TerminalActivityOverviewState = Extract<
+type LegacyTerminalActivityOverviewState = Extract<
 	TerminalActivityState,
 	'recent' | 'unviewed' | 'attention'
 >;
+
+type TerminalActivityOverviewState =
+	| LegacyTerminalActivityOverviewState
+	| Exclude<AgentState, 'idle'>;
 
 type TerminalActivityOverviewItem = {
 	color: string;
@@ -541,6 +575,7 @@ type TerminalActivityOverviewItem = {
 	projectTitle: string;
 	sessionId: string;
 	state: TerminalActivityOverviewState;
+	isAgentStatus: boolean;
 	title: string;
 };
 
@@ -588,6 +623,7 @@ type ProjectWorkspaceProps = {
 		items: TerminalActivityOverviewItem[],
 	) => void;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
+	agentStatusSnapshot: AgentStatusSnapshot;
 	popoutUrl: string;
 	project: ProjectTab;
 	projects: ProjectTab[];
@@ -599,6 +635,7 @@ const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher';
 const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path';
 const MIN_FILE_EXPLORER_WIDTH = 180;
 const MIN_SIDEBAR_PANE_HEIGHT = 80;
+const DEFAULT_AGENTS_PANE_HEIGHT = 200;
 const FILE_EXPLORER_DRAG_THRESHOLD = 6;
 const FILE_EXPLORER_WATCH_REFRESH_DELAY_MS = 120;
 const FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS = 2500;
@@ -756,7 +793,7 @@ function areTerminalActivityIndicatorsEnabled(
 function isTerminalActivityIndicatorStateVisible(
 	state: TerminalActivityState | undefined,
 	params: DockPanelTabAppearance | undefined,
-): state is TerminalActivityOverviewState {
+): state is LegacyTerminalActivityOverviewState {
 	if (!areTerminalActivityIndicatorsEnabled(params)) {
 		return false;
 	}
@@ -776,6 +813,58 @@ function isTerminalActivityIndicatorStateVisible(
 	return false;
 }
 
+type AggregatedAgentStatus = {
+	entries: readonly AgentStatusEntry[];
+	state: AgentState;
+	unread: boolean;
+};
+
+function aggregateAgentStatusForTerminal(
+	snapshot: AgentStatusSnapshot,
+	terminalSessionId: string,
+): AggregatedAgentStatus | null {
+	const entries = selectAgentStatusesForTerminal(snapshot, terminalSessionId);
+	if (entries.length === 0) {
+		return null;
+	}
+
+	let state: AgentState = 'idle';
+	if (entries.some((entry) => entry.state === 'blocked')) {
+		state = 'blocked';
+	} else if (entries.some((entry) => entry.state === 'waiting')) {
+		state = 'waiting';
+	} else if (entries.some((entry) => entry.state === 'working')) {
+		state = 'working';
+	} else if (entries.some((entry) => entry.state === 'done')) {
+		state = 'done';
+	}
+
+	return {
+		entries,
+		state,
+		unread: entries.some((entry) => entry.unread),
+	};
+}
+
+function isAgentAttentionState(state: AgentState): boolean {
+	return state === 'waiting' || state === 'blocked';
+}
+
+function terminalOverviewStateToAgentState(
+	state: TerminalActivityOverviewState,
+): Exclude<AgentState, 'idle'> {
+	if (state === 'recent') {
+		return 'working';
+	}
+	if (state === 'unviewed') {
+		return 'done';
+	}
+	if (state === 'attention') {
+		return 'blocked';
+	}
+	return state;
+}
+
 function createProjectTab(
 	index: number,
 	homePath: string,
@@ -790,8 +879,13 @@ function createProjectTab(
 		fileExplorerWidth: sidebarDefaults.defaultWidth,
 		isFileExplorerOpen: false,
 		isExplorerPaneCollapsed: sidebarDefaults.defaultExplorerState === 'collapsed',
+		isAgentsPaneCollapsed: false,
 		isGitPaneCollapsed: sidebarDefaults.defaultGitState === 'collapsed',
+		expandedAgentEntryIds: [],
+		sidebarAgentsHeight: DEFAULT_AGENTS_PANE_HEIGHT,
 		sidebarExplorerHeight: sidebarDefaults.defaultExplorerPaneHeight,
+		sidebarGitHeight: DEFAULT_AGENTS_PANE_HEIGHT,
+		sidebarPanelOrder: [...sidebarDefaults.panelOrder],
 		rootFolder: homePath,
 	};
 }
@@ -1949,7 +2043,7 @@ function getFileExplorerPathParent(filePath: string): string {
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
->(({ isActive, isMac, macros, onAddProject, onCloseProject, onEditProject, onMoveTerminalToProject, onTerminalActivityOverviewChange, onUpdateProject, popoutUrl, project, projects, adoptedTerminals }, ref) => {
+>(({ agentStatusSnapshot, isActive, isMac, macros, onAddProject, onCloseProject, onEditProject, onMoveTerminalToProject, onTerminalActivityOverviewChange, onUpdateProject, popoutUrl, project, projects, adoptedTerminals }, ref) => {
 	const { settings } = useTerminalSettings();
 	// Latest adopted terminals, read lazily when the workspace seeds so the seed
 	// effect needn't depend on prop identity.
@@ -2023,6 +2117,7 @@ const ProjectWorkspace = forwardRef<
 	} | null>(null);
 	const [errorText, setErrorText] = useState<string | null>(null);
 	const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
+	const [terminalTitleRevision, setTerminalTitleRevision] = useState(0);
 	const [dictationSession, setDictationSession] =
 		useState<DictationSessionState | null>(null);
 	const [directoryChildren, setDirectoryChildren] = useState<
@@ -2054,6 +2149,7 @@ const ProjectWorkspace = forwardRef<
 	const [runningMacroRunsBySession, setRunningMacroRunsBySession] = useState<
 		Record<string, TerminalTabMacroRun[]>
 	>({});
+	const [isDockviewReady, setIsDockviewReady] = useState(false);
 	const macroRunControllersRef = useRef<Map<string, MacroRunController>>(
 		new Map(),
 	);
@@ -2074,8 +2170,55 @@ const ProjectWorkspace = forwardRef<
 			null
 		);
 	}, [worktreePanelStatus]);
+	const projectAgentItems = useMemo<AgentsSidebarItem[]>(() => {
+		if (!settings.agentIntegration.enabled) {
+			return [];
+		}
 
-	const [isDockviewReady, setIsDockviewReady] = useState(false);
+		const terminalSessionIds = new Set(panelSessionMapRef.current.values());
+		const terminalTitlesBySession = new Map<string, string>();
+		const dockviewApi = dockviewApiRef.current;
+		for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
+			const title = dockviewApi?.getPanel(panelId)?.title;
+			if (typeof title === 'string' && title.trim()) {
+				terminalTitlesBySession.set(sessionId, title.trim());
+			}
+		}
+		const priority: Record<AgentState, number> = {
+			blocked: 0,
+			waiting: 1,
+			working: 2,
+			done: 3,
+			idle: 4,
+		};
+		return Object.values(agentStatusSnapshot.entries)
+			.filter((entry) =>
+				terminalSessionIds.has(entry.activationTerminalSessionId),
+			)
+			.sort(
+				(left, right) =>
+					priority[left.state] - priority[right.state] ||
+					right.updatedAt - left.updatedAt ||
+					left.entryId.localeCompare(right.entryId),
+			)
+			.map((entry) => ({
+				entry,
+				projectId: project.id,
+				model: entry.model?.displayName ?? entry.model?.id,
+				prompt: entry.promptText,
+				terminalTitle: terminalTitlesBySession.get(
+					entry.activationTerminalSessionId,
+				),
+			}));
+	}, [
+		agentStatusSnapshot,
+		focusedSessionId,
+		isDockviewReady,
+		project.id,
+		settings.agentIntegration.enabled,
+		terminalTitleRevision,
+	]);
+
 	const [isMacroLauncherOpen, setIsMacroLauncherOpen] = useState(false);
 	const [macroQuery, setMacroQuery] = useState('');
 	const [selectedMacroIndex, setSelectedMacroIndex] = useState(0);
@@ -2274,6 +2417,35 @@ const ProjectWorkspace = forwardRef<
 			for (const group of api.groups) {
 				for (const panel of group.panels) {
 					const sessionId = panel.params?.sessionId;
+					const agentState = panel.params?.agentState;
+					if (
+						settings.agentIntegration.enabled &&
+						sessionId &&
+						agentState
+					) {
+						const agentUnread = panel.params?.agentUnread === true;
+						const shouldIncludeAgent =
+							agentState === 'working' ||
+							isAgentAttentionState(agentState) ||
+							(agentState === 'done' && agentUnread);
+						if (shouldIncludeAgent) {
+							items.push({
+								color: getEffectiveTerminalTabColor(panel.params, project.color),
+								emoji: panel.params?.emoji ?? '',
+								panelId: panel.id,
+								projectEmoji: project.emoji,
+								projectId: project.id,
+								projectTitle: project.title,
+								sessionId,
+								state: agentState,
+								isAgentStatus: true,
+								title: panel.title ?? 'Terminal',
+							});
+						}
+						// Once a native lifecycle hook has claimed this terminal, raw
+						// output activity must never compete with that authority.
+						continue;
+					}
 					const state = panel.params?.terminalActivityState;
 					if (
 						!sessionId ||
@@ -2291,13 +2463,20 @@ const ProjectWorkspace = forwardRef<
 						projectTitle: project.title,
 						sessionId,
 						state,
+						isAgentStatus: false,
 						title: panel.title ?? 'Terminal',
 					});
 				}
 			}
 
 			return items;
-		}, [project.color, project.emoji, project.id, project.title]);
+		}, [
+			project.color,
+			project.emoji,
+			project.id,
+			project.title,
+			settings.agentIntegration.enabled,
+		]);
 
 	const publishTerminalActivityOverview = useCallback(() => {
 		onTerminalActivityOverviewChange(project.id, getActivityOverviewItems());
@@ -2354,6 +2533,53 @@ const ProjectWorkspace = forwardRef<
 		},
 		[getPanelForSession, publishTerminalActivityOverview],
 	);
+
+	useEffect(() => {
+		let didChange = false;
+		const enabled = settings.agentIntegration.enabled;
+
+		for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
+			const panel = dockviewApiRef.current?.getPanel(panelId);
+			if (!panel) {
+				continue;
+			}
+
+			const aggregate = enabled
+				? aggregateAgentStatusForTerminal(agentStatusSnapshot, sessionId)
+				: null;
+			const nextState = aggregate?.state;
+			const nextNeedsAttention =
+				nextState !== undefined && isAgentAttentionState(nextState);
+			const nextUnread = aggregate?.unread === true;
+			if (
+				panel.params?.agentState === nextState &&
+				panel.params?.agentNeedsAttention === nextNeedsAttention &&
+				panel.params?.agentUnread === nextUnread
+			) {
+				continue;
+			}
+
+			panel.api.updateParameters({
+				agentState: nextState,
+				agentNeedsAttention: nextNeedsAttention,
+				agentUnread: nextUnread,
+			});
+			didChange = true;
+
+			if (nextUnread && focusedSessionIdRef.current === sessionId) {
+				void window.terminay.acknowledgeTerminalAgentStatuses(sessionId);
+			}
+		}
+
+		if (didChange) {
+			window.requestAnimationFrame(publishTerminalActivityOverview);
+		}
+	}, [
+		agentStatusSnapshot,
+		isDockviewReady,
+		publishTerminalActivityOverview,
+		settings.agentIntegration.enabled,
+	]);
 
 	const suppressInitialTerminalActivity = useCallback((sessionId: string) => {
 		terminalActivityStoreRef.current.recordInitialSuppression(sessionId);
@@ -2417,6 +2643,9 @@ const ProjectWorkspace = forwardRef<
 				sessionId,
 				terminalActivityStoreRef.current.markViewed(sessionId),
 			);
+			if (settingsRef.current.agentIntegration.enabled) {
+				void window.terminay.acknowledgeTerminalAgentStatuses(sessionId);
+			}
 		},
 		[applyTerminalActivityEvaluation],
 	);
@@ -2495,6 +2724,16 @@ const ProjectWorkspace = forwardRef<
 			});
 		},
 		[markTerminalActivityViewed],
+	);
+	const activateAgentTerminal = useCallback(
+		(terminalSessionId: string) => {
+			const panel = getPanelForSession(terminalSessionId);
+			if (!panel) {
+				return;
+			}
+			activateTerminal(panel.id, terminalSessionId);
+		},
+		[activateTerminal, getPanelForSession],
 	);
 
 	const cleanupDictationAudio = useCallback(() => {
@@ -4562,6 +4801,7 @@ const ProjectWorkspace = forwardRef<
 			const nextColor = result.color;
 
 			panel.api.setTitle(nextTitle);
+			setTerminalTitleRevision((revision) => revision + 1);
 			panel.api.updateParameters({
 				activityIndicatorsEnabled: result.activityIndicatorsEnabled,
 				emoji: nextEmoji,
@@ -4698,6 +4938,7 @@ const ProjectWorkspace = forwardRef<
 			setErrorText(null);
 			if (target === 'title') {
 				activePanel.api.setTitle('Generating...');
+				setTerminalTitleRevision((revision) => revision + 1);
 				activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
 			}
 
@@ -4722,6 +4963,7 @@ const ProjectWorkspace = forwardRef<
 
 				if (target === 'title') {
 					activePanel.api.setTitle(text);
+					setTerminalTitleRevision((revision) => revision + 1);
 					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
 					window.terminay.updateTerminalRemoteMetadata(sessionId, {
 						color: activePanel.params?.color ?? project.color,
@@ -4742,6 +4984,7 @@ const ProjectWorkspace = forwardRef<
 			} catch (error) {
 				if (target === 'title') {
 					activePanel.api.setTitle(previousTitle);
+					setTerminalTitleRevision((revision) => revision + 1);
 					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
 				}
 				const message = error instanceof Error ? error.message : String(error);
@@ -5882,6 +6125,7 @@ const ProjectWorkspace = forwardRef<
 							};
 						}
 						api?.getPanel(match.found.panelId)?.api.setTitle(name);
+						setTerminalTitleRevision((revision) => revision + 1);
 						window.terminay.updateTerminalRemoteMetadata(match.found.sessionId, {
 							title: name,
 						});
@@ -7084,6 +7328,133 @@ const ProjectWorkspace = forwardRef<
 		};
 	}, [closeMacroParameterModal, macroToRun]);
 
+	const sidebarPanelItemsById: Record<
+		SidebarPanelId,
+		SidebarPanelStackItem
+	> = {
+		explorer: {
+			id: 'explorer',
+			title: 'Explorer',
+			height: project.sidebarExplorerHeight,
+			collapsed: project.isExplorerPaneCollapsed,
+			onToggleCollapsed: () => {
+				const next = !project.isExplorerPaneCollapsed;
+				onUpdateProject(project.id, {
+					isExplorerPaneCollapsed: next,
+				});
+				updateSidebarSettings({
+					defaultExplorerState: next ? 'collapsed' : 'expanded',
+				});
+			},
+			actions: (
+				<button
+					type="button"
+					className="sidebar-pane__action-button"
+					onClick={refreshFileExplorerTree}
+					aria-label="Reload explorer"
+					title="Reload explorer"
+				>
+					<RefreshCw size={14} aria-hidden="true" />
+				</button>
+			),
+			children: (
+				<FileExplorerTree
+					directoryChildren={directoryChildren}
+					directoryErrors={directoryErrors}
+					expandedPaths={expandedPaths}
+					gitStatuses={gitStatuses}
+					loadingPaths={loadingPaths}
+					onOpenFile={openFile}
+					onOpenFolder={openFolder}
+					onToggleDirectory={toggleDirectory}
+					onRename={handleRename}
+					onDelete={handleDelete}
+					onNewFile={handleNewFile}
+					onNewFolder={handleNewFolder}
+					onOpenTerminal={handleOpenTerminalAt}
+					onCopyPath={handleCopyPath}
+					onCopyRelativePath={handleCopyRelativePath}
+					rootPath={project.rootFolder}
+				/>
+			),
+		},
+		agents: {
+			id: 'agents',
+			title: 'Agents',
+			height: project.sidebarAgentsHeight,
+			collapsed: project.isAgentsPaneCollapsed,
+			onToggleCollapsed: () => {
+				onUpdateProject(project.id, {
+					isAgentsPaneCollapsed: !project.isAgentsPaneCollapsed,
+				});
+			},
+			count: projectAgentItems.length,
+			children: (
+				<AgentsSidebar
+					projectId={project.id}
+					agents={projectAgentItems}
+					expandedEntryIds={project.expandedAgentEntryIds}
+					onToggleEntryExpanded={(entryId) => {
+						const expanded =
+							project.expandedAgentEntryIds.includes(entryId);
+						onUpdateProject(project.id, {
+							expandedAgentEntryIds: expanded
+								? project.expandedAgentEntryIds.filter(
+										(candidate) => candidate !== entryId,
+									)
+								: [...project.expandedAgentEntryIds, entryId],
+						});
+					}}
+					onActivateTerminal={activateAgentTerminal}
+				/>
+			),
+		},
+		git: {
+			id: 'git',
+			title: 'Git',
+			height: project.sidebarGitHeight,
+			collapsed: project.isGitPaneCollapsed,
+			onToggleCollapsed: () => {
+				const next = !project.isGitPaneCollapsed;
+				onUpdateProject(project.id, {
+					isGitPaneCollapsed: next,
+				});
+				updateSidebarSettings({
+					defaultGitState: next ? 'collapsed' : 'expanded',
+				});
+			},
+			count: worktreePanelStatus?.worktrees.length,
+			accessory: currentGitBranch ? (
+				<span className="sidebar-pane__branch">{currentGitBranch}</span>
+			) : null,
+			children: (
+				<WorktreesPanel
+					activePushMenuWorktreePath={
+						gitPushMenuPosition?.target?.worktreePath ?? null
+					}
+					deletingWorktreePaths={deletingWorktreePaths}
+					status={worktreePanelStatus}
+					viewMode={settings.sidebar.gitPanelViewMode}
+					onDeleteWorktree={handleDeleteWorktree}
+					onOpenEntry={handleOpenGitEntry}
+					onOpenPushMenu={handleOpenWorktreePushMenu}
+					onOpenTerminal={handleOpenTerminalAtWorktree}
+					onOpenTerminalAtPath={handleOpenTerminalAt}
+					onPullFromOrigin={handlePullWorktreeFromOrigin}
+					onRenameWorktree={handleRenameWorktree}
+					onRevealWorktree={handleRevealWorktree}
+					onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
+				/>
+			),
+		},
+	};
+	const visibleSidebarPanelIds = project.sidebarPanelOrder.filter(
+		(id) => settings.agentIntegration.enabled || id !== 'agents',
+	);
+	const sidebarPanelItems = visibleSidebarPanelIds.map(
+		(id) => sidebarPanelItemsById[id],
+	);
+
 	return (
 		<section
 			className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
@@ -7098,109 +7469,46 @@ const ProjectWorkspace = forwardRef<
 						className="file-explorer-sidebar"
 						style={{ width: `${project.fileExplorerWidth}px` }}
 					>
-						<SidebarSplit
-							topCollapsed={project.isExplorerPaneCollapsed}
-							bottomCollapsed={project.isGitPaneCollapsed}
-							topHeight={project.sidebarExplorerHeight}
+						<SidebarPanelStack
+							items={sidebarPanelItems}
 							minPaneHeight={MIN_SIDEBAR_PANE_HEIGHT}
-							onTopHeightChange={(height) => {
+							onHeightChange={(id, height) => {
 								onUpdateProject(project.id, {
-									sidebarExplorerHeight: height,
+									...(id === 'explorer'
+										? { sidebarExplorerHeight: height }
+										: id === 'agents'
+											? { sidebarAgentsHeight: height }
+											: { sidebarGitHeight: height }),
 								});
 							}}
-							onTopHeightCommit={(height) => {
-								updateSidebarSettings({
-									defaultExplorerPaneHeight: height,
-								});
+							onHeightCommit={(id, height) => {
+								if (id === 'explorer') {
+									updateSidebarSettings({
+										defaultExplorerPaneHeight: height,
+									});
+								}
 							}}
-							top={
-								<SidebarPane
-									title="Explorer"
-									collapsed={project.isExplorerPaneCollapsed}
-									onToggleCollapsed={() => {
-										const next = !project.isExplorerPaneCollapsed;
-										onUpdateProject(project.id, {
-											isExplorerPaneCollapsed: next,
-										});
-										updateSidebarSettings({
-											defaultExplorerState: next
-												? 'collapsed'
-												: 'expanded',
-										});
-									}}
-									actions={
-										<button
-											type="button"
-											className="sidebar-pane__action-button"
-											onClick={refreshFileExplorerTree}
-											aria-label="Reload explorer"
-											title="Reload explorer"
-										>
-											<RefreshCw size={14} aria-hidden="true" />
-										</button>
-									}
-								>
-									<FileExplorerTree
-										directoryChildren={directoryChildren}
-										directoryErrors={directoryErrors}
-										expandedPaths={expandedPaths}
-										gitStatuses={gitStatuses}
-										loadingPaths={loadingPaths}
-										onOpenFile={openFile}
-										onOpenFolder={openFolder}
-										onToggleDirectory={toggleDirectory}
-										onRename={handleRename}
-										onDelete={handleDelete}
-										onNewFile={handleNewFile}
-										onNewFolder={handleNewFolder}
-										onOpenTerminal={handleOpenTerminalAt}
-										onCopyPath={handleCopyPath}
-										onCopyRelativePath={handleCopyRelativePath}
-										rootPath={project.rootFolder}
-									/>
-								</SidebarPane>
-							}
-							bottom={
-								<SidebarPane
-									title="Git"
-									collapsed={project.isGitPaneCollapsed}
-									onToggleCollapsed={() => {
-										const next = !project.isGitPaneCollapsed;
-										onUpdateProject(project.id, {
-											isGitPaneCollapsed: next,
-										});
-										updateSidebarSettings({
-											defaultGitState: next ? 'collapsed' : 'expanded',
-										});
-									}}
-									count={worktreePanelStatus?.worktrees.length}
-									accessory={
-										currentGitBranch ? (
-											<span className="sidebar-pane__branch">
-												{currentGitBranch}
-											</span>
-										) : null
-									}
-								>
-									<WorktreesPanel
-										activePushMenuWorktreePath={
-											gitPushMenuPosition?.target?.worktreePath ?? null
-										}
-										deletingWorktreePaths={deletingWorktreePaths}
-										status={worktreePanelStatus}
-										viewMode={settings.sidebar.gitPanelViewMode}
-										onDeleteWorktree={handleDeleteWorktree}
-										onOpenEntry={handleOpenGitEntry}
-										onOpenPushMenu={handleOpenWorktreePushMenu}
-										onOpenTerminal={handleOpenTerminalAtWorktree}
-										onOpenTerminalAtPath={handleOpenTerminalAt}
-										onPullFromOrigin={handlePullWorktreeFromOrigin}
-										onRenameWorktree={handleRenameWorktree}
-										onRevealWorktree={handleRevealWorktree}
-										onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
-									/>
-								</SidebarPane>
-							}
+							onReorder={(orderedIds) => {
+								const reorderedVisibleIds = orderedIds.filter(
+									(id): id is SidebarPanelId =>
+										project.sidebarPanelOrder.includes(
+											id as SidebarPanelId,
+										),
+								);
+								const visibleIds = new Set(reorderedVisibleIds);
+								const orderedIterator =
+									reorderedVisibleIds[Symbol.iterator]();
+								const nextOrder = project.sidebarPanelOrder.map((id) =>
+									visibleIds.has(id)
+										? (orderedIterator.next().value ?? id)
+										: id,
+								);
+								setGitPushMenuPosition(null);
+								onUpdateProject(project.id, {
+									sidebarPanelOrder: nextOrder,
+								});
+								updateSidebarSettings({ panelOrder: nextOrder });
+							}}
 						/>
 
 						{gitPushMenuPosition ? (
@@ -7631,8 +7939,10 @@ function App() {
 		[],
 	);
 	const { macros } = useMacroSettings();
-	const { settings } = useTerminalSettings();
+	const { settings, isLoading: areTerminalSettingsLoading } =
+		useTerminalSettings();
 	const sidebarDefaultsRef = useRef(settings.sidebar);
+	const didApplyPersistedSidebarOrderRef = useRef(false);
 	useEffect(() => {
 		sidebarDefaultsRef.current = settings.sidebar;
 	}, [settings.sidebar]);
@@ -7705,6 +8015,21 @@ function App() {
 	const [projects, setProjects] = useState<ProjectTab[]>(() =>
 		isAdoptWindow ? [] : [createProjectTab(1, '')],
 	);
+	useEffect(() => {
+		if (
+			areTerminalSettingsLoading ||
+			didApplyPersistedSidebarOrderRef.current
+		) {
+			return;
+		}
+		didApplyPersistedSidebarOrderRef.current = true;
+		setProjects((current) =>
+			current.map((project) => ({
+				...project,
+				sidebarPanelOrder: [...settings.sidebar.panelOrder],
+			})),
+		);
+	}, [areTerminalSettingsLoading, settings.sidebar.panelOrder]);
 	const projectsRef = useRef(projects);
 	const [activeProjectId, setActiveProjectId] = useState(
 		isAdoptWindow ? '' : 'project-1',
@@ -7760,6 +8085,8 @@ function App() {
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
 	const [terminalActivityItemsByProject, setTerminalActivityItemsByProject] =
 		useState<Record<string, TerminalActivityOverviewItem[]>>({});
+	const [agentStatusSnapshot, setAgentStatusSnapshot] =
+		useState<AgentStatusSnapshot>(EMPTY_AGENT_STATUS_SNAPSHOT);
 	const pairingPinRequestRef = useRef<((configured: boolean) => void) | null>(
 		null,
 	);
@@ -7767,6 +8094,25 @@ function App() {
 	useEffect(() => {
 		projectsRef.current = projects;
 	}, [projects]);
+
+	useEffect(() => {
+		let disposed = false;
+		const acceptSnapshot = (snapshot: AgentStatusSnapshot) => {
+			if (disposed) {
+				return;
+			}
+			setAgentStatusSnapshot((current) =>
+				snapshot.revision >= current.revision ? snapshot : current,
+			);
+		};
+		const unsubscribe =
+			window.terminay.onAgentStatusSnapshot(acceptSnapshot);
+		void window.terminay.getAgentStatusSnapshot().then(acceptSnapshot, () => {});
+		return () => {
+			disposed = true;
+			unsubscribe();
+		};
+	}, []);
 
 	useEffect(() => {
 		activeProjectIdRef.current = activeProjectId;
@@ -7865,7 +8211,23 @@ function App() {
 		// Re-id the adopted project so it can't collide with a project already in
 		// this window (e.g. both windows have a "project-1").
 		const nextProjectId = `project-${projectCounterRef.current}`;
-		const adoptedTab: ProjectTab = { ...incoming, id: nextProjectId };
+		const adoptedTab: ProjectTab = {
+			...incoming,
+			id: nextProjectId,
+			isAgentsPaneCollapsed: incoming.isAgentsPaneCollapsed ?? false,
+			expandedAgentEntryIds: Array.isArray(incoming.expandedAgentEntryIds)
+				? incoming.expandedAgentEntryIds.filter(
+						(entryId): entryId is string => typeof entryId === 'string',
+					)
+				: [],
+			sidebarAgentsHeight:
+				incoming.sidebarAgentsHeight ?? DEFAULT_AGENTS_PANE_HEIGHT,
+			sidebarGitHeight:
+				incoming.sidebarGitHeight ?? DEFAULT_AGENTS_PANE_HEIGHT,
+			sidebarPanelOrder: normalizeSidebarPanelOrder(
+				incoming.sidebarPanelOrder,
+			),
+		};
 
 		setAdoptedTerminalsByProject((current) => ({
 			...current,
@@ -8090,10 +8452,21 @@ function App() {
 		const items = projects.flatMap(
 			(project) => terminalActivityItemsByProject[project.id] ?? [],
 		);
+		const priority = (state: TerminalActivityOverviewState) => {
+			const canonical = terminalOverviewStateToAgentState(state);
+			if (canonical === 'blocked' || canonical === 'waiting') {
+				return 0;
+			}
+			if (canonical === 'working') {
+				return 1;
+			}
+			return 2;
+		};
 
 		return items.sort((a, b) => {
-			if (a.state !== b.state) {
-				return a.state === 'recent' ? -1 : 1;
+			const stateComparison = priority(a.state) - priority(b.state);
+			if (stateComparison !== 0) {
+				return stateComparison;
 			}
 
 			const projectComparison = a.projectTitle.localeCompare(b.projectTitle);
@@ -8106,13 +8479,14 @@ function App() {
 	}, [projects, terminalActivityItemsByProject]);
 
 	const unviewedTerminalActivityCount = terminalActivityItems.filter(
-		(item) => item.state === 'unviewed',
+		(item) => terminalOverviewStateToAgentState(item.state) === 'done',
 	).length;
 	const recentTerminalActivityCount = terminalActivityItems.filter(
-		(item) => item.state === 'recent',
+		(item) => terminalOverviewStateToAgentState(item.state) === 'working',
 	).length;
 	const attentionTerminalActivityCount = terminalActivityItems.filter(
-		(item) => item.state === 'attention',
+		(item) =>
+			isAgentAttentionState(terminalOverviewStateToAgentState(item.state)),
 	).length;
 	const hasTerminalActivityOverview = terminalActivityItems.length > 0;
 
@@ -8876,9 +9250,13 @@ function App() {
 											className="terminal-activity-menu__item"
 											onClick={() => activateTerminalFromOverview(item)}
 										>
-											<span
-												className={`terminal-activity-menu__state terminal-activity-menu__state--${item.state}`}
-												aria-hidden="true"
+											<AgentStatusIndicator
+												state={terminalOverviewStateToAgentState(item.state)}
+												label={
+													item.isAgentStatus
+														? undefined
+														: `Terminal ${terminalOverviewStateToAgentState(item.state)}`
+												}
 											/>
 											<span
 												className="terminal-activity-menu__preview"
@@ -9128,6 +9506,7 @@ function App() {
 						ref={(instance) => {
 							workspaceRefs.current.set(project.id, instance);
 						}}
+						agentStatusSnapshot={agentStatusSnapshot}
 						isActive={project.id === activeProjectId}
 						isMac={isMac}
 						macros={macros}
