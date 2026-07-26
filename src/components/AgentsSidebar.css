@@ -25,7 +25,7 @@
 	display: flex;
 	align-items: center;
 	min-width: 0;
-	min-height: 56px;
+	min-height: 32px;
 	padding: 4px 8px 4px 12px;
 	border-left: 2px solid transparent;
 	transition:

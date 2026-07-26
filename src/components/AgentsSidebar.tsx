@@ -1,5 +1,5 @@
 import { ChevronDown } from 'lucide-react';
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import type { AgentProvider, AgentStatusEntry } from '../types/agentStatus';
 import { AgentStatusIndicator } from './AgentStatusIndicator';
 import './AgentsSidebar.css';
@@ -9,6 +9,7 @@ export type AgentsSidebarItem = {
 	projectId: string;
 	model?: string;
 	prompt?: string;
+	terminalTitle?: string;
 };
 
 export type AgentsSidebarProps = {
@@ -18,6 +19,8 @@ export type AgentsSidebarProps = {
 		activationTerminalSessionId: string,
 		entry: AgentStatusEntry,
 	) => void;
+	expandedEntryIds: readonly string[];
+	onToggleEntryExpanded: (entryId: string) => void;
 	emptyLabel?: string;
 	className?: string;
 };
@@ -73,23 +76,127 @@ function getEntryName(entry: AgentStatusEntry): string {
 	return PROVIDER_LABELS[entry.provider];
 }
 
+function cleanText(value: string | undefined): string | undefined {
+	const cleaned = value?.replace(/\s+/g, ' ').trim();
+	return cleaned || undefined;
+}
+
+function meaningfulDisplayName(entry: AgentStatusEntry): string | undefined {
+	const displayName = cleanText(entry.displayName);
+	if (!displayName) {
+		return undefined;
+	}
+	const normalized = displayName.toLowerCase();
+	const provider = PROVIDER_LABELS[entry.provider].toLowerCase();
+	return normalized === 'default' ||
+		normalized === 'agent' ||
+		normalized === 'subagent' ||
+		normalized === provider
+		? undefined
+		: displayName;
+}
+
+function isGenericTerminalTitle(value: string | undefined): boolean {
+	return /^terminal(?:\s+\d+)?$/i.test(value ?? '');
+}
+
+function uniqueParts(parts: Array<string | undefined>): string[] {
+	const seen = new Set<string>();
+	const result: string[] = [];
+	for (const part of parts) {
+		const cleaned = cleanText(part);
+		if (!cleaned) {
+			continue;
+		}
+		const key = cleaned.toLowerCase();
+		if (seen.has(key)) {
+			continue;
+		}
+		seen.add(key);
+		result.push(cleaned);
+	}
+	return result;
+}
+
+function getPresentation(
+	node: AgentTreeNode,
+	siblingIndex: number,
+	parent?: AgentsSidebarItem,
+): {
+	metadata?: string;
+	name: string;
+	prompt?: string;
+} {
+	const { entry } = node.item;
+	const provider = PROVIDER_LABELS[entry.provider];
+	const displayName = meaningfulDisplayName(entry);
+	const prompt = cleanText(node.item.prompt);
+	const terminalTitle = cleanText(node.item.terminalTitle);
+
+	if (entry.kind === 'root') {
+		const customTerminalTitle =
+			terminalTitle && !isGenericTerminalTitle(terminalTitle)
+				? terminalTitle
+				: undefined;
+		const name =
+			displayName ??
+			customTerminalTitle ??
+			prompt ??
+			terminalTitle ??
+			getEntryName(entry);
+		const metadata = uniqueParts([
+			name === terminalTitle ? undefined : terminalTitle,
+			name.toLowerCase() === provider.toLowerCase() ? undefined : provider,
+			name.toLowerCase() === node.item.model?.toLowerCase()
+				? undefined
+				: node.item.model,
+		]).join(' · ');
+		return {
+			name,
+			...(metadata ? { metadata } : {}),
+			...(prompt && prompt !== name ? { prompt } : {}),
+		};
+	}
+
+	const name = displayName ?? prompt ?? `Subagent ${siblingIndex + 1}`;
+	const metadata = uniqueParts([
+		parent?.entry.provider !== entry.provider ? provider : undefined,
+		node.item.model && node.item.model !== parent?.model
+			? node.item.model
+			: undefined,
+	]).join(' · ');
+	return {
+		name,
+		...(metadata ? { metadata } : {}),
+		...(prompt && prompt !== name ? { prompt } : {}),
+	};
+}
+
 function AgentRow({
 	node,
 	depth,
+	siblingIndex,
+	parent,
+	expandedEntryIds,
+	onToggleEntryExpanded,
 	onActivateTerminal,
 }: {
 	node: AgentTreeNode;
 	depth: number;
+	siblingIndex: number;
+	parent?: AgentsSidebarItem;
+	expandedEntryIds: ReadonlySet<string>;
+	onToggleEntryExpanded: AgentsSidebarProps['onToggleEntryExpanded'];
 	onActivateTerminal: AgentsSidebarProps['onActivateTerminal'];
 }) {
 	const { entry } = node.item;
-	const name = getEntryName(entry);
-	const provider = PROVIDER_LABELS[entry.provider];
-	const [childrenExpanded, setChildrenExpanded] = useState(true);
+	const { metadata, name, prompt } = getPresentation(
+		node,
+		siblingIndex,
+		parent,
+	);
+	const childrenExpanded = expandedEntryIds.has(entry.entryId);
 	const childCount = node.children.length;
-	const metadata = node.item.model
-		? `${provider} · ${node.item.model}`
-		: provider;
 
 	return (
 		<li className="agents-sidebar__tree-item">
@@ -105,7 +212,7 @@ function AgentRow({
 						aria-label={`${childrenExpanded ? 'Collapse' : 'Expand'} ${childCount} subagent${childCount === 1 ? '' : 's'} for ${name}`}
 						aria-expanded={childrenExpanded}
 						title={`${childrenExpanded ? 'Collapse' : 'Expand'} ${childCount} subagent${childCount === 1 ? '' : 's'}`}
-						onClick={() => setChildrenExpanded((current) => !current)}
+						onClick={() => onToggleEntryExpanded(entry.entryId)}
 					>
 						<ChevronDown
 							className={`agents-sidebar__disclosure-chevron${childrenExpanded ? '' : ' agents-sidebar__disclosure-chevron--collapsed'}`}
@@ -128,9 +235,7 @@ function AgentRow({
 					}
 					aria-label={`Focus ${name} terminal`}
 					title={
-						node.item.prompt
-							? `${name}\n${metadata}\n${node.item.prompt}`
-							: `${name}\n${metadata}`
+						[name, metadata, prompt].filter(Boolean).join('\n')
 					}
 				>
 					<AgentStatusIndicator state={entry.state} showIdle size="medium" />
@@ -144,22 +249,26 @@ function AgentRow({
 							) : null}
 							<span className="agents-sidebar__state">{entry.state}</span>
 						</span>
-						<span className="agents-sidebar__metadata">{metadata}</span>
-						{node.item.prompt ? (
-							<span className="agents-sidebar__prompt">
-								{node.item.prompt}
-							</span>
+						{metadata ? (
+							<span className="agents-sidebar__metadata">{metadata}</span>
+						) : null}
+						{prompt ? (
+							<span className="agents-sidebar__prompt">{prompt}</span>
 						) : null}
 					</span>
 				</button>
 			</div>
 			{childCount > 0 && childrenExpanded ? (
 				<ul className="agents-sidebar__tree">
-					{node.children.map((child) => (
+					{node.children.map((child, index) => (
 						<AgentRow
 							key={child.item.entry.entryId}
 							node={child}
 							depth={depth + 1}
+							siblingIndex={index}
+							parent={node.item}
+							expandedEntryIds={expandedEntryIds}
+							onToggleEntryExpanded={onToggleEntryExpanded}
 							onActivateTerminal={onActivateTerminal}
 						/>
 					))}
@@ -173,6 +282,8 @@ export const AgentsSidebar = memo(function AgentsSidebar({
 	projectId,
 	agents,
 	onActivateTerminal,
+	expandedEntryIds,
+	onToggleEntryExpanded,
 	emptyLabel = 'No agents in this project',
 	className,
 }: AgentsSidebarProps) {
@@ -180,6 +291,10 @@ export const AgentsSidebar = memo(function AgentsSidebar({
 		() =>
 			buildAgentTree(agents.filter((agent) => agent.projectId === projectId)),
 		[agents, projectId],
+	);
+	const expandedEntries = useMemo(
+		() => new Set(expandedEntryIds),
+		[expandedEntryIds],
 	);
 
 	const classes = ['agents-sidebar', className].filter(Boolean).join(' ');
@@ -195,11 +310,14 @@ export const AgentsSidebar = memo(function AgentsSidebar({
 	return (
 		<nav className={classes} aria-label="Project agents">
 			<ul className="agents-sidebar__tree agents-sidebar__tree--root">
-				{tree.map((root) => (
+				{tree.map((root, index) => (
 					<AgentRow
 						key={root.item.entry.entryId}
 						node={root}
 						depth={0}
+						siblingIndex={index}
+						expandedEntryIds={expandedEntries}
+						onToggleEntryExpanded={onToggleEntryExpanded}
 						onActivateTerminal={onActivateTerminal}
 					/>
 				))}

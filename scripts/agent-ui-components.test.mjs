@@ -177,9 +177,12 @@ test('sidebar filters by project, nests subagents, and keeps unread separate fro
 					projectId: 'project-a',
 					model: 'gpt-5',
 					prompt: 'Implement the feature',
+					terminalTitle: 'Terminal 7',
 				},
 				{ entry: otherProjectEntry, projectId: 'project-b' },
 			],
+			expandedEntryIds: ['root-entry'],
+			onToggleEntryExpanded: () => {},
 			onActivateTerminal: () => {},
 		}),
 	);
@@ -193,6 +196,11 @@ test('sidebar filters by project, nests subagents, and keeps unread separate fro
 	assert.ok(markup.indexOf('Lead agent') < markup.indexOf('Researcher'));
 	assert.match(markup, /Collapse 1 subagent for Lead agent/);
 	assert.match(markup, /Research the implementation/);
+	assert.match(markup, /Terminal 7 · Codex · gpt-5/);
+	assert.doesNotMatch(
+		markup,
+		/aria-label="Focus Researcher terminal"(?:(?!<\/button>).)*agents-sidebar__metadata/s,
+	);
 });
 
 test('sidebar panel ordering supports before and after moves without losing panels', () => {
