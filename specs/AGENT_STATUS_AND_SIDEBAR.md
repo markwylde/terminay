@@ -297,8 +297,8 @@ Subagent prompt/name metadata is taken directly from its lifecycle payload when
 available. When a provider's subagent-start payload omits it, the driver may
 identify the preceding launch tool so the receiver can correlate its bounded
 task metadata with the next child start event.
-For Codex, `SubagentStart` may omit the task name while supplying the child
-transcript path. The Codex driver reads only the bounded structured
+For Codex, `SubagentStart` omits the task name while supplying the child
+`transcript_path`. The Codex driver reads only the bounded structured
 `session_meta` record, verifies its child and parent thread IDs, and uses the
 final `agent_path` component as the child display name.
 
