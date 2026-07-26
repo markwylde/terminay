@@ -157,7 +157,16 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
   )
 
   await childRow.click()
-  await expect(agentTab).toHaveClass(/terminal-tab-content--active/)
+  await expect(
+    agentTab.locator(
+      'xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " dv-tab ")][1]',
+    ),
+  ).toHaveClass(/dv-active-tab/)
+  await expect(
+    mainWindow.locator(
+      `.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${agentTerminalSessionId}"]`,
+    ),
+  ).toBeVisible()
 
   await emitHook(mainWindow, agentTerminalSessionId, {
     hook_event_name: 'Stop',
