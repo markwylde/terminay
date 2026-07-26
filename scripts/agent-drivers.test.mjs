@@ -265,7 +265,7 @@ test('Codex resolves a spawned task name from structured child transcript metada
 			session_id: 'root-session',
 			agent_id: 'child-a',
 			agent_type: 'default',
-			agent_transcript_path: transcriptPath,
+			transcript_path: transcriptPath,
 		},
 		context,
 	);
@@ -278,7 +278,7 @@ test('Codex resolves a spawned task name from structured child transcript metada
 			session_id: 'root-session',
 			agent_id: 'different-child',
 			agent_type: 'default',
-			agent_transcript_path: transcriptPath,
+			transcript_path: transcriptPath,
 		},
 		context,
 	);
