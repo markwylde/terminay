@@ -56,6 +56,11 @@ import {
 } from './control/protocol'
 import { getMcpInstallStatus, installMcpAgent, uninstallMcpAgent, type McpServerCommand } from './mcpInstall'
 import type { McpAgentId } from '../src/types/terminay'
+import { isAgentProvider } from '../src/types/agentStatus'
+import { agentDriverRegistry } from './agentDrivers'
+import { registerAgentStatusIpcHandlers, AGENT_STATUS_SNAPSHOT_CHANNEL } from './agentStatus/ipc'
+import { AgentStatusService } from './agentStatus/service'
+import type { AgentHookEnvironment } from './agentStatus/environment'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const execFileAsync = promisify(execFile)
@@ -180,6 +185,7 @@ interface TerminalSession {
   host: ChildProcess
   rootPid: number | null
   exited: boolean
+  agentHookEnvironmentStamped: boolean
   inactivityWaiters: Map<string, () => void>
 }
 
@@ -192,6 +198,60 @@ type PtyHostMessage =
   | { type: 'inactive'; requestId: string }
 
 const terminalSessions = new Map<string, TerminalSession>()
+const agentStatusService = new AgentStatusService({
+  normalizeHookPayload: (provider, payload, context) =>
+    agentDriverRegistry.normalizeAsync(provider, payload, context),
+})
+let agentStatusEnabled = false
+let appliedAgentIntegrationSetting: boolean | null = null
+let applyAgentIntegrationPromise = Promise.resolve()
+
+function applyAgentIntegrationSetting(settings: TerminalSettings): Promise<void> {
+  const enabled = settings.agentIntegration.enabled
+  applyAgentIntegrationPromise = applyAgentIntegrationPromise.catch(() => undefined).then(async () => {
+    if (appliedAgentIntegrationSetting === enabled) {
+      return
+    }
+
+    // Keep the loopback receiver alive for the app lifetime so terminals that
+    // were stamped before a temporary disable keep a stable endpoint.
+    await agentStatusService.start()
+    if (enabled) {
+      agentStatusEnabled = true
+      for (const session of terminalSessions.values()) {
+        if (session.agentHookEnvironmentStamped) {
+          agentStatusService.prepareTerminalSession(session.id)
+        }
+      }
+      if (process.env.TERMINAY_TEST !== '1') {
+        const result = await agentDriverRegistry.reconcileHooks({ action: 'install' })
+        if (!result.ok) {
+          console.error('[agent-status] one or more provider hooks could not be installed', result.statuses)
+        }
+      }
+      appliedAgentIntegrationSetting = true
+      return
+    }
+
+    agentStatusEnabled = false
+    for (const session of terminalSessions.values()) {
+      agentStatusService.abandonTerminalSession(session.id)
+    }
+    agentStatusService.clearStatus()
+    if (process.env.TERMINAY_TEST !== '1') {
+      const result = await agentDriverRegistry.reconcileHooks({ action: 'uninstall' })
+      if (!result.ok) {
+        console.error('[agent-status] one or more provider hooks could not be removed', result.statuses)
+      }
+    }
+    appliedAgentIntegrationSetting = false
+  }).catch((error) => {
+    agentStatusEnabled = false
+    appliedAgentIntegrationSetting = null
+    console.error('[agent-status] failed to apply integration setting', error)
+  })
+  return applyAgentIntegrationPromise
+}
 
 // --- MCP control surface state -------------------------------------------
 // Each terminal gets a unique capability token injected into its shell env.
@@ -1251,7 +1311,10 @@ function parseCommandLineArgs(value: string): string[] {
   return args
 }
 
-function getTerminalSpawnEnv(controlEnv?: { socketPath: string; token: string }): NodeJS.ProcessEnv {
+function getTerminalSpawnEnv(
+  controlEnv?: { socketPath: string; token: string },
+  agentHookEnv?: AgentHookEnvironment,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
 
   // xterm.js renders true color, but many CLI tools only enable 24-bit output
@@ -1263,6 +1326,9 @@ function getTerminalSpawnEnv(controlEnv?: { socketPath: string; token: string })
   if (controlEnv) {
     env[CONTROL_SOCKET_ENV] = controlEnv.socketPath
     env[CONTROL_TOKEN_ENV] = controlEnv.token
+  }
+  if (agentHookEnv) {
+    Object.assign(env, agentHookEnv)
   }
 
   if (process.platform !== 'darwin') {
@@ -1579,6 +1645,7 @@ function finalizeTerminalSession(session: TerminalSession, exitCode: number): vo
 
   session.exited = true
   terminalSessions.delete(session.id)
+  agentStatusService.terminalExited(session.id, { exitCode })
   remoteAccessService.markSessionExit(session.id, exitCode)
   recordingService.finalize(session.id, exitCode)
   sendToSessionRenderer(session, 'terminal:exit', {
@@ -1597,6 +1664,7 @@ async function buildPtySpawnOptions(
   settings: TerminalSettings,
   cwd?: string,
   controlEnv?: { socketPath: string; token: string },
+  agentHookEnv?: AgentHookEnvironment,
 ): Promise<{
   shellPath: string
   args: string[]
@@ -1605,7 +1673,7 @@ async function buildPtySpawnOptions(
 }> {
   const shells = getConfiguredShells(settings)
   const spawnCwd = await normalizeSpawnCwd(cwd)
-  const spawnEnv = getTerminalSpawnEnv(controlEnv)
+  const spawnEnv = getTerminalSpawnEnv(controlEnv, agentHookEnv)
   const extraArgs = parseCommandLineArgs(settings.shell.extraArgs)
 
   for (const shellPath of shells) {
@@ -1632,16 +1700,33 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
     const token = registerControlToken(id, webContentsId)
     controlEnv = { socketPath: getControlSocketPath(), token }
   }
-  const spawnOptions = await buildPtySpawnOptions(settings, cwd, controlEnv)
+  const agentHookEnv = agentStatusEnabled
+    ? agentStatusService.prepareTerminalSession(id)
+    : undefined
+  let spawnOptions: Awaited<ReturnType<typeof buildPtySpawnOptions>>
+  try {
+    spawnOptions = await buildPtySpawnOptions(settings, cwd, controlEnv, agentHookEnv)
+  } catch (error) {
+    agentStatusService.abandonTerminalSession(id)
+    removeControlToken(id)
+    throw error
+  }
   const progressStaleMs = Math.round(settings.activityIndicators.progressStaleSeconds * 1000)
-  const host = fork(getPtyHostPath(), {
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
-      TERMINAY_PTY_HOST: '1',
-    },
-    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-  })
+  let host: ChildProcess
+  try {
+    host = fork(getPtyHostPath(), {
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+        TERMINAY_PTY_HOST: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    })
+  } catch (error) {
+    agentStatusService.abandonTerminalSession(id)
+    removeControlToken(id)
+    throw error
+  }
   let startupOutput = ''
   host.stdout?.on('data', (chunk: Buffer) => {
     startupOutput += chunk.toString()
@@ -1656,6 +1741,7 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
     host,
     rootPid: null,
     exited: false,
+    agentHookEnvironmentStamped: agentHookEnv !== undefined,
     inactivityWaiters: new Map(),
   }
 
@@ -1668,6 +1754,7 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
       }
 
       settled = true
+      agentStatusService.abandonTerminalSession(id)
       removeControlToken(id)
       try {
         host.kill()
@@ -1742,6 +1829,7 @@ function killSession(id: string): void {
   sendToPtyHost(session, { type: 'kill' })
   recordingService.finalize(id, null)
   terminalSessions.delete(id)
+  agentStatusService.terminalExited(id)
   remoteAccessService.removeSession(id)
   removeControlToken(id)
 }
@@ -2697,21 +2785,23 @@ ipcMain.handle('settings:get-terminal', () => {
   return readTerminalSettings()
 })
 
-ipcMain.handle('settings:update-terminal', (_event, payload: TerminalSettings) => {
+ipcMain.handle('settings:update-terminal', async (_event, payload: TerminalSettings) => {
   const settings = writeTerminalSettings(payload)
   broadcastTerminalSettings(settings)
   createAppMenu(settings)
   remoteAccessService.notifyStatusChanged()
   applyControlServerSetting()
+  await applyAgentIntegrationSetting(settings)
   return settings
 })
 
-ipcMain.handle('settings:reset-terminal', () => {
+ipcMain.handle('settings:reset-terminal', async () => {
   const settings = writeTerminalSettings(defaultTerminalSettings)
   broadcastTerminalSettings(settings)
   createAppMenu(settings)
   remoteAccessService.notifyStatusChanged()
   applyControlServerSetting()
+  await applyAgentIntegrationSetting(settings)
   return settings
 })
 
@@ -3302,6 +3392,40 @@ if (process.env.TERMINAY_TEST === '1') {
       aiTabMetadataService.setTestMock(mock)
     },
   )
+
+  ipcMain.handle(
+    'test:emit-agent-hook',
+    async (
+      _event,
+      payload?: {
+        provider?: unknown
+        terminalSessionId?: unknown
+        nativePayload?: unknown
+      },
+    ) => {
+      if (!isAgentProvider(payload?.provider)) {
+        throw new Error('A supported agent provider is required.')
+      }
+      if (
+        typeof payload?.terminalSessionId !== 'string' ||
+        payload.terminalSessionId.length === 0
+      ) {
+        throw new Error('A terminal session id is required.')
+      }
+      if (
+        !payload.nativePayload ||
+        typeof payload.nativePayload !== 'object' ||
+        Array.isArray(payload.nativePayload)
+      ) {
+        throw new Error('An agent hook object is required.')
+      }
+      return agentStatusService.ingestHookPayload(
+        payload.provider,
+        payload.terminalSessionId,
+        payload.nativePayload as Record<string, unknown>,
+      )
+    },
+  )
 }
 
 ipcMain.handle('secrets:get', () => {
@@ -3406,7 +3530,20 @@ app.on('before-quit', () => {
   for (const session of terminalSessions.values()) {
     recordingService.finalize(session.id, null)
   }
+  void agentStatusService.stop()
   void stopControlServer()
+})
+
+registerAgentStatusIpcHandlers({
+  ipcMain,
+  publishSnapshot: (snapshot) => {
+    for (const window of appWindows) {
+      if (!window.isDestroyed()) {
+        window.webContents.send(AGENT_STATUS_SNAPSHOT_CHANNEL, snapshot)
+      }
+    }
+  },
+  service: agentStatusService,
 })
 
 registerFileViewerIpcHandlers({
@@ -3448,12 +3585,13 @@ app.on('activate', () => {
   }
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setName('Terminay')
   app.setAboutPanelOptions({ applicationName: 'Terminay' })
   ensureNodePtySpawnHelperIsExecutable()
   setDockIcon()
   createAppMenu()
+  await applyAgentIntegrationSetting(readTerminalSettings())
   createWindow()
   applyControlServerSetting()
 })
