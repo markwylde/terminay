@@ -7,6 +7,7 @@ import type {
   ProjectTabDragPreview,
   ProjectTabDragHoverMessage,
   AppCommand,
+  AgentStatusSnapshot,
   AiTabMetadataGenerateRequest,
   AiTabMetadataGenerateResult,
   AiTabMetadataModel,
@@ -106,6 +107,12 @@ contextBridge.exposeInMainWorld('terminay', {
   getGitDiff: (filePath: string) => ipcRenderer.invoke('file:get-git-diff', { path: filePath }) as Promise<FileViewerGitDiff>,
   quitApp: () => ipcRenderer.invoke('app:quit'),
   createTerminal: (options?: { cwd?: string }) => ipcRenderer.invoke('terminal:create', options),
+  getAgentStatusSnapshot: () =>
+    ipcRenderer.invoke('agent-status:get-snapshot') as Promise<AgentStatusSnapshot>,
+  acknowledgeAgentStatus: (entryId: string) =>
+    ipcRenderer.invoke('agent-status:acknowledge', { entryId }) as Promise<boolean>,
+  acknowledgeTerminalAgentStatuses: (terminalSessionId: string) =>
+    ipcRenderer.invoke('agent-status:acknowledge-terminal', { terminalSessionId }) as Promise<number>,
   getTerminalCwd: (id: string) => ipcRenderer.invoke('terminal:get-cwd', { id }),
   getTerminalBuffer: (id: string) =>
     ipcRenderer.invoke('terminal:get-buffer', { id }) as Promise<string | null>,
@@ -250,6 +257,12 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.on('terminal:exit', wrapper)
     return () => ipcRenderer.off('terminal:exit', wrapper)
   },
+  onAgentStatusSnapshot: (listener: (snapshot: AgentStatusSnapshot) => void) => {
+    const wrapper: ElectronListener<AgentStatusSnapshot> = (_event, snapshot) =>
+      listener(snapshot)
+    ipcRenderer.on('agent-status:snapshot', wrapper)
+    return () => ipcRenderer.off('agent-status:snapshot', wrapper)
+  },
   onAppCommand: (listener: (command: AppCommand) => void) => {
     const wrapper: ElectronListener<AppCommand> = (_event, command) => listener(command)
     ipcRenderer.on('app:command', wrapper)
@@ -375,6 +388,8 @@ contextBridge.exposeInMainWorld('terminayWebRtcHost', {
 
 if (process.env.TERMINAY_TEST === '1') {
   const testApi: TerminayTestApi = {
+    emitAgentHook: (payload) =>
+      ipcRenderer.invoke('test:emit-agent-hook', payload) as Promise<number>,
     sendAppCommand: (command) => ipcRenderer.invoke('test:send-app-command', command) as Promise<void>,
     setAiTabMetadataMock: (mock) => ipcRenderer.invoke('test:set-ai-tab-metadata-mock', mock) as Promise<void>,
   }

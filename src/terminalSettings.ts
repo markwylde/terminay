@@ -201,7 +201,7 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
 	{
 		id: 'ai',
 		label: 'AI',
-		description: 'AI providers and models for tab titles and notes.',
+		description: 'Agent status, providers, and models for AI-assisted workflows.',
 	},
 	{
 		id: 'recording',
@@ -296,6 +296,9 @@ export const DEFAULT_FOLDER_TASK_IGNORED_DIRECTORIES = [
 ].join('\n');
 
 export const defaultTerminalSettings: TerminalSettings = {
+	agentIntegration: {
+		enabled: true,
+	},
 	aiTabMetadata: {
 		title: {
 			provider: 'disabled',
@@ -442,6 +445,33 @@ function makeField(
 }
 
 export const terminalSettingsSections: SettingsSectionDefinition[] = [
+	{
+		id: 'agent-integration',
+		categoryId: 'ai',
+		title: 'Agents',
+		description:
+			'Track supported coding agents using their native lifecycle hooks and show them in terminal and project status surfaces.',
+		fields: [
+			makeField({
+				key: 'agentIntegration.enabled',
+				label: 'Agent status and sidebar',
+				description:
+					'Install Terminay-managed Codex and Claude Code hooks, show reliable working/attention/done status, and add the per-project Agents sidebar tab. Turning this off removes only Terminay-managed hooks.',
+				sectionId: 'agent-integration',
+				categoryId: 'ai',
+				input: 'boolean',
+				keywords: [
+					'agents',
+					'agent status',
+					'codex',
+					'claude',
+					'hooks',
+					'sidebar',
+					'activity',
+				],
+			}),
+		],
+	},
 	{
 		id: 'ai-tab-metadata',
 		categoryId: 'ai',
@@ -2122,6 +2152,11 @@ export function normalizeTerminalSettings(
 		typeof input.aiTabMetadata === 'object' && input.aiTabMetadata !== null
 			? input.aiTabMetadata
 			: defaultTerminalSettings.aiTabMetadata;
+	const agentIntegrationInput =
+		typeof input.agentIntegration === 'object' &&
+		input.agentIntegration !== null
+			? input.agentIntegration
+			: defaultTerminalSettings.agentIntegration;
 	const aiTitleInput =
 		typeof aiTabMetadataInput.title === 'object' &&
 		aiTabMetadataInput.title !== null
@@ -2178,6 +2213,12 @@ export function normalizeTerminalSettings(
 			: {};
 
 	return {
+		agentIntegration: {
+			enabled:
+				typeof agentIntegrationInput.enabled === 'boolean'
+					? agentIntegrationInput.enabled
+					: defaultTerminalSettings.agentIntegration.enabled,
+		},
 		aiTabMetadata: {
 			title: {
 				provider:

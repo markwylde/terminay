@@ -1,0 +1,71 @@
+.agent-status-indicator {
+	--agent-status-color: #77818c;
+	--agent-status-size: 7px;
+	display: inline-grid;
+	flex: 0 0 auto;
+	width: 14px;
+	height: 14px;
+	place-items: center;
+	color: var(--agent-status-color);
+	vertical-align: middle;
+}
+
+.agent-status-indicator--medium {
+	--agent-status-size: 8px;
+	width: 16px;
+	height: 16px;
+}
+
+.agent-status-indicator__glyph {
+	width: var(--agent-status-size);
+	height: var(--agent-status-size);
+	border-radius: 999px;
+	background: currentColor;
+	box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 38%, transparent);
+}
+
+.agent-status-indicator--working {
+	--agent-status-color: #e8b931;
+}
+
+.agent-status-indicator--waiting,
+.agent-status-indicator--blocked,
+.agent-status-indicator--attention {
+	--agent-status-color: #ee6258;
+}
+
+.agent-status-indicator--done {
+	--agent-status-color: #45c874;
+}
+
+.agent-status-indicator--idle {
+	--agent-status-color: #77818c;
+	opacity: 0.52;
+}
+
+.agent-status-indicator--working .agent-status-indicator__glyph {
+	animation: agent-status-breathe 2.2s ease-in-out infinite;
+}
+
+.terminal-tab-content > .agent-status-indicator {
+	margin-left: 8px;
+}
+
+@keyframes agent-status-breathe {
+	0%,
+	100% {
+		opacity: 0.68;
+		transform: scale(0.88);
+	}
+
+	50% {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-status-indicator--working .agent-status-indicator__glyph {
+		animation: none;
+	}
+}
