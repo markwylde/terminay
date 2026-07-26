@@ -1,4 +1,5 @@
-import { type CSSProperties, memo, useMemo } from 'react';
+import { ChevronRight } from 'lucide-react';
+import { type CSSProperties, memo, useMemo, useState } from 'react';
 import type { AgentProvider, AgentStatusEntry } from '../types/agentStatus';
 import { AgentStatusIndicator } from './AgentStatusIndicator';
 import './AgentsSidebar.css';
@@ -84,41 +85,78 @@ function AgentRow({
 	const { entry } = node.item;
 	const name = getEntryName(entry);
 	const provider = PROVIDER_LABELS[entry.provider];
+	const [childrenExpanded, setChildrenExpanded] = useState(true);
+	const childCount = node.children.length;
 	const metadata = node.item.model
 		? `${provider} · ${node.item.model}`
 		: provider;
 
 	return (
 		<li className="agents-sidebar__tree-item">
-			<button
-				type="button"
-				className={`agents-sidebar__agent${entry.unread ? ' agents-sidebar__agent--unread' : ''}`}
-				data-agent-state={entry.state}
-				style={{ '--agents-sidebar-depth': depth } as CSSProperties}
-				onClick={() =>
-					onActivateTerminal(entry.activationTerminalSessionId, entry)
-				}
-				aria-label={`Focus ${name} terminal`}
-				title={
-					node.item.prompt
-						? `${name}\n${metadata}\n${node.item.prompt}`
-						: `${name}\n${metadata}`
-				}
-			>
-				<span className="agents-sidebar__tree-guide" aria-hidden="true" />
-				<AgentStatusIndicator state={entry.state} showIdle />
-				<span className="agents-sidebar__content">
-					<span className="agents-sidebar__heading">
-						<span className="agents-sidebar__name">{name}</span>
-						<span className="agents-sidebar__state">{entry.state}</span>
+			<div className="agents-sidebar__row">
+				{entry.kind === 'root' ? (
+					childCount > 0 ? (
+						<button
+							type="button"
+							className="agents-sidebar__disclosure"
+							aria-label={`${childrenExpanded ? 'Collapse' : 'Expand'} ${childCount} subagent${childCount === 1 ? '' : 's'} for ${name}`}
+							aria-expanded={childrenExpanded}
+							title={`${childrenExpanded ? 'Collapse' : 'Expand'} ${childCount} subagent${childCount === 1 ? '' : 's'}`}
+							onClick={() => setChildrenExpanded((current) => !current)}
+						>
+							<ChevronRight
+								className={`agents-sidebar__disclosure-chevron${childrenExpanded ? ' agents-sidebar__disclosure-chevron--expanded' : ''}`}
+								size={13}
+								aria-hidden="true"
+							/>
+							<span className="agents-sidebar__disclosure-count">
+								{childCount}
+							</span>
+						</button>
+					) : (
+						<span
+							className="agents-sidebar__disclosure-spacer"
+							aria-hidden="true"
+						/>
+					)
+				) : (
+					<span
+						className="agents-sidebar__disclosure-spacer"
+						aria-hidden="true"
+					/>
+				)}
+				<button
+					type="button"
+					className={`agents-sidebar__agent${entry.unread ? ' agents-sidebar__agent--unread' : ''}`}
+					data-agent-state={entry.state}
+					style={{ '--agents-sidebar-depth': depth } as CSSProperties}
+					onClick={() =>
+						onActivateTerminal(entry.activationTerminalSessionId, entry)
+					}
+					aria-label={`Focus ${name} terminal`}
+					title={
+						node.item.prompt
+							? `${name}\n${metadata}\n${node.item.prompt}`
+							: `${name}\n${metadata}`
+					}
+				>
+					<span className="agents-sidebar__tree-guide" aria-hidden="true" />
+					<AgentStatusIndicator state={entry.state} showIdle />
+					<span className="agents-sidebar__content">
+						<span className="agents-sidebar__heading">
+							<span className="agents-sidebar__name">{name}</span>
+							<span className="agents-sidebar__state">{entry.state}</span>
+						</span>
+						<span className="agents-sidebar__metadata">{metadata}</span>
+						{node.item.prompt ? (
+							<span className="agents-sidebar__prompt">
+								{node.item.prompt}
+							</span>
+						) : null}
 					</span>
-					<span className="agents-sidebar__metadata">{metadata}</span>
-					{node.item.prompt ? (
-						<span className="agents-sidebar__prompt">{node.item.prompt}</span>
-					) : null}
-				</span>
-			</button>
-			{node.children.length > 0 ? (
+				</button>
+			</div>
+			{childCount > 0 && childrenExpanded ? (
 				<ul className="agents-sidebar__tree">
 					{node.children.map((child) => (
 						<AgentRow

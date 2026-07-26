@@ -34,6 +34,11 @@ export type AgentToolStatus = {
 	id: string;
 	name: string;
 	description?: string;
+	/** Driver-identified metadata for a tool call that launches a subagent. */
+	subagentLaunch?: {
+		displayName?: string;
+		promptText?: string;
+	};
 	startedAt: number;
 };
 
@@ -78,6 +83,10 @@ export type AgentLifecycleEvent =
 					id: string;
 					name: string;
 					description?: string;
+					subagentLaunch?: {
+						displayName?: string;
+						promptText?: string;
+					};
 				};
 			})
 	| (AgentLifecycleEventBase &

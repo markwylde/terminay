@@ -4,7 +4,11 @@ import {
 	defaultKeyboardShortcuts,
 	normalizeAccelerator,
 } from './keyboardShortcuts';
-import type { TerminalSettings } from './types/settings';
+import {
+	SIDEBAR_PANEL_IDS,
+	type SidebarPanelId,
+	type TerminalSettings,
+} from './types/settings';
 
 type SettingsInputKind =
 	| 'boolean'
@@ -405,6 +409,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 		defaultGitState: 'expanded',
 		defaultWidth: 280,
 		defaultExplorerPaneHeight: 320,
+		panelOrder: [...SIDEBAR_PANEL_IDS],
 	},
 	theme: {
 		foreground: '#dce2f0',
@@ -2123,6 +2128,22 @@ function clampNumber(
 	return max === undefined ? minApplied : Math.min(max, minApplied);
 }
 
+export function normalizeSidebarPanelOrder(value: unknown): SidebarPanelId[] {
+	const validIds = new Set<string>(SIDEBAR_PANEL_IDS);
+	const ordered = Array.isArray(value)
+		? value.filter(
+				(candidate, index, input): candidate is SidebarPanelId =>
+					typeof candidate === 'string' &&
+					validIds.has(candidate) &&
+					input.indexOf(candidate) === index,
+			)
+		: [];
+	return [
+		...ordered,
+		...SIDEBAR_PANEL_IDS.filter((id) => !ordered.includes(id)),
+	];
+}
+
 function normalizeThemeColor(
 	input: Partial<TerminalSettings['theme']>,
 	key: TerminalThemeKey,
@@ -2688,6 +2709,7 @@ export function normalizeTerminalSettings(
 				80,
 				2000,
 			),
+			panelOrder: normalizeSidebarPanelOrder(sidebarInput.panelOrder),
 		},
 		theme: {
 			foreground:

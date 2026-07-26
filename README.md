@@ -63,7 +63,9 @@ Recording can capture terminal output, typed input, commands, file paths, tokens
 
 Terminay uses installed Codex and Claude Code lifecycle hooks as the authoritative source for recognized agents. Their terminal tabs use compact RAG indicators: yellow while working, red when waiting for input or blocked, green when done, and neutral when idle. Unread acknowledgement is tracked separately, so viewing an agent never changes the state reported by the provider.
 
-The project sidebar includes an **Agents** pane with root agents and their in-process subagents. It shows only agents belonging to that project. Selecting an agent switches to its exact terminal; selecting a subagent without its own PTY focuses the parent agent's terminal.
+The project sidebar includes an **Agents** pane with root agents and their in-process subagents. It shows only agents belonging to that project. Prompts stay on one compact line, and each root has a child-count disclosure for expanding or collapsing its subagents. Selecting an agent switches to its exact terminal; selecting a subagent without its own PTY focuses the parent agent's terminal.
+
+Explorer, Agents, and Git can be reordered vertically using the drag handle on each panel header (or the Up/Down arrow keys while that handle is focused). The chosen order is saved for future project tabs.
 
 **Agent status and sidebar** under **Settings → AI → Agents** is enabled by default. It installs Terminay-managed Codex and Claude Code hook entries and enables the status surfaces. Turning it off removes only Terminay-managed hook entries and preserves all other provider settings and user hooks.
 
