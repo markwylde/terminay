@@ -98,6 +98,10 @@ export type AiTabMetadataSettings = {
 	note: AiTabMetadataTargetSettings;
 };
 
+export type AgentIntegrationSettings = {
+	enabled: boolean;
+};
+
 export type GitPushAgentProvider = 'disabled' | 'codex' | 'claudeCode';
 
 export type GitPushAgentSettings = {
@@ -124,6 +128,7 @@ export type DictationSettings = {
 };
 
 export type TerminalSettings = {
+	agentIntegration: AgentIntegrationSettings;
 	aiTabMetadata: AiTabMetadataSettings;
 	dictation: DictationSettings;
 	gitPushAgent: GitPushAgentSettings;

@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/headless'
 import type { IPty } from 'node-pty'
 import type { SemanticActivity } from '../src/types/terminalSignals'
 import { createInterpreterRuntime, type InterpreterRuntime } from './signalInterpreters'
+import { forwardTerminalDataAfterSignals } from './terminalActivityForwarder'
 import { attachSignalParser } from './terminalSignalParser'
 
 const require = createRequire(import.meta.url)
@@ -160,8 +161,9 @@ function createTerminal(message: CreateMessage): void {
     })
 
     ptyProcess.onData((data: string) => {
-      send({ type: 'data', data })
-      signalTerminal?.write(data)
+      forwardTerminalDataAfterSignals(signalTerminal, data, (parsedData) => {
+        send({ type: 'data', data: parsedData })
+      })
     })
 
     ptyProcess.onExit((exit: { exitCode: number; signal?: number }) => {
