@@ -178,6 +178,7 @@ export type MacrosChangeMessage = {
 
 export type RemoteAccessStatus = {
   activeConnectionCount: number
+  pendingWebRtcConnectionCount: number
   auditEvents: Array<{
     action:
       | 'pairing-completed'
