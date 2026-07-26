@@ -9,6 +9,7 @@ import {
 	reconcileCodexManagedTrust,
 	removeCodexManagedTrust,
 } from './codexTrust';
+import { enrichCodexNativePayload } from './codexTranscript';
 import { normalizePreparedHook, prepareNativeHook } from './normalize';
 import type { AgentDriver } from './types';
 
@@ -106,6 +107,7 @@ export const codexDriver: AgentDriver = {
 			return codexJsonHooks.uninstall(options);
 		},
 	},
+	enrichNativePayload: enrichCodexNativePayload,
 	normalize(nativePayload, context) {
 		const native = prepareNativeHook(nativePayload, context);
 		return native && CODEX_NATIVE_EVENTS.has(native.eventName)

@@ -200,7 +200,7 @@ type PtyHostMessage =
 const terminalSessions = new Map<string, TerminalSession>()
 const agentStatusService = new AgentStatusService({
   normalizeHookPayload: (provider, payload, context) =>
-    agentDriverRegistry.normalize(provider, payload, context),
+    agentDriverRegistry.normalizeAsync(provider, payload, context),
 })
 let agentStatusEnabled = false
 let appliedAgentIntegrationSetting: boolean | null = null
