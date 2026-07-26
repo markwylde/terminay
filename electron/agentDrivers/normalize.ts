@@ -202,6 +202,10 @@ export function normalizePreparedHook(
 		if (!native.toolName) {
 			return null;
 		}
+		const subagentLaunch = extractSubagentLaunch(
+			native.toolName,
+			native.payload.tool_input,
+		);
 		return {
 			...base,
 			...target,
@@ -210,6 +214,7 @@ export function normalizePreparedHook(
 				id: native.toolId ?? native.toolName,
 				name: native.toolName,
 				description: describeToolInput(native.payload.tool_input),
+				...(subagentLaunch ? { subagentLaunch } : {}),
 			},
 		};
 	}
@@ -363,9 +368,53 @@ function describeToolInput(value: unknown): string | undefined {
 		value.file_path,
 		value.path,
 		value.query,
+		value.message,
 		value.prompt,
 		value.description,
 	)?.slice(0, 500);
+}
+
+function extractSubagentLaunch(
+	toolName: string,
+	toolInput: unknown,
+):
+	| {
+			displayName?: string;
+			promptText?: string;
+	  }
+	| undefined {
+	const key = canonicalEventKey(toolName);
+	if (
+		key !== 'agent' &&
+		key !== 'task' &&
+		key !== 'spawnagent' &&
+		!key.endsWith('spawnagent')
+	) {
+		return undefined;
+	}
+	if (!isPlainObject(toolInput)) {
+		return {};
+	}
+
+	const displayName = boundedFirstString(
+		200,
+		toolInput.task_name,
+		toolInput.taskName,
+		toolInput.name,
+		toolInput.agent_type,
+		toolInput.agentType,
+	);
+	const promptText = boundedFirstString(
+		4_000,
+		toolInput.message,
+		toolInput.prompt,
+		toolInput.description,
+		toolInput.task,
+	);
+	return {
+		...(displayName ? { displayName } : {}),
+		...(promptText ? { promptText } : {}),
+	};
 }
 
 function extractPrompt(payload: Record<string, unknown>): string | undefined {
