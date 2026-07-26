@@ -168,14 +168,17 @@ Forbidden session-origin responsibilities:
 7. The bootstrap derives one-time relay, pairing, signaling, asset, and CSRF
    secrets from the QR secret.
 8. The phone and desktop exchange signed WebRTC signaling through the relay.
-9. The phone downloads and verifies the desktop-provided remote app bundle over
+9. As soon as the relay admits the phone, Terminay stops advertising that
+   one-time room and registers a fresh QR room for another browser. The admitted
+   phone keeps using its original room and pairing credentials.
+10. The phone downloads and verifies the desktop-provided remote app bundle over
    the asset data channel.
-10. The remote app asks for the desktop PIN and completes device pairing.
-11. The desktop issues a reconnect grant scoped to this session origin and paired
+11. The remote app asks for the desktop PIN and completes device pairing.
+12. The desktop issues a reconnect grant scoped to this session origin and paired
     device, with a default 24-hour expiry.
-12. The session origin saves the device private key and reconnect grant. The
+13. The session origin saves the device private key and reconnect grant. The
     manager may save only the session origin and display metadata.
-13. The relay room is completed and purged. The live WebRTC peer connection may
+14. The relay room is completed and purged. The live WebRTC peer connection may
     continue after relay room purge.
 
 ### Adding Or Re-Adding Devices
@@ -439,7 +442,10 @@ Pairing room behavior:
 - Rooms are created only by the desktop.
 - Rooms expire quickly, with a default/hard maximum of 10 minutes.
 - A room accepts one active client during initial pairing.
-- Additional clients are rejected after the first accepted client.
+- Additional clients are rejected while the accepted client remains in the
+  signaling room.
+- If that client abandons signaling before the room completes, only its admission
+  is released so its own transient reconnect can retry safely.
 - Events are deleted when the room completes, the host disconnects, or the room
   expires.
 - Host or client sends `room-complete` once the peer connection is established.

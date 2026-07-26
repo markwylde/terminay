@@ -9,6 +9,16 @@ import { constants, generateKeyPairSync, scryptSync, sign } from 'node:crypto'
 
 const { RemoteAccessService } = await importRemoteAccessService()
 
+async function waitFor(predicate, timeoutMs = 5_000) {
+  const startedAt = Date.now()
+  while (!predicate()) {
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error('Timed out waiting for condition.')
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
 test('RemoteAccessService rotates WebRTC QR rooms without closing existing host peers', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'terminay-webrtc-service-test-'))
   const hostWindows = []
@@ -86,6 +96,85 @@ test('RemoteAccessService rotates WebRTC QR rooms without closing existing host 
   service.handleWebRtcHostStatus(secondWindow.webContentsId, { type: 'host-registered' })
   assert.equal(service.getStatus().webRtcStatus, 'pairing-ready')
   assert.equal(statuses.at(-1).webRtcRoomId, secondConfig.roomId)
+})
+
+test('RemoteAccessService rotates the advertised WebRTC room as soon as a browser joins', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-webrtc-auto-rotate-test-'))
+  const hostWindows = []
+  let nextWebContentsId = 1
+
+  const service = new RemoteAccessService({
+    app: {
+      getPath: () => tempDir,
+    },
+    createWebRtcHostWindow: () => {
+      const hostWindow = {
+        closed: false,
+        configs: [],
+        sentSignalMessages: [],
+        sentTerminalMessages: [],
+        webContentsId: nextWebContentsId,
+        close() {
+          this.closed = true
+        },
+        closeTerminal() {},
+        sendConfig(config) {
+          this.configs.push(config)
+        },
+        sendSignalMessage(message) {
+          this.sentSignalMessages.push(message)
+        },
+        sendTerminalMessage(channelId, message) {
+          this.sentTerminalMessages.push({ channelId, message })
+        },
+      }
+      nextWebContentsId += 1
+      hostWindows.push(hostWindow)
+      return hostWindow
+    },
+    getControllableSession: () => null,
+    getRemoteAccessSettings: () => ({
+      bindAddress: '127.0.0.1',
+      origin: 'https://127.0.0.1:9443',
+      pairingMode: 'webrtc',
+      pinFailureLimit: 3,
+      pairingPinHash: 'configured-pin-hash',
+      tlsCertPath: '',
+      tlsKeyPath: '',
+      webRtcHostedDomain: 'remote.example.com',
+      webRtcIceServers: '',
+    }),
+    notifyTerminalRemoteSizeOverride: () => {},
+    onStatusChanged: () => {},
+    publicDir: tempDir,
+    rendererDistDir: tempDir,
+    saveGeneratedTlsPaths: () => {},
+  })
+
+  await service.rotateWebRtcPairingCode()
+  const firstWindow = hostWindows[0]
+  const firstRoomId = firstWindow.configs[0].roomId
+  service.handleWebRtcHostStatus(firstWindow.webContentsId, { type: 'host-registered' })
+  service.handleWebRtcHostStatus(firstWindow.webContentsId, { type: 'client-join' })
+
+  await waitFor(() => hostWindows.length === 2)
+  const secondWindow = hostWindows[1]
+  const secondRoomId = secondWindow.configs[0].roomId
+  service.handleWebRtcHostStatus(secondWindow.webContentsId, { type: 'host-registered' })
+  service.handleWebRtcHostStatus(secondWindow.webContentsId, { type: 'client-join' })
+
+  await waitFor(() => hostWindows.length === 3)
+
+  const status = service.getStatus()
+  assert.equal(firstWindow.closed, false)
+  assert.equal(secondWindow.closed, false)
+  assert.equal(status.activeConnectionCount, 0)
+  assert.equal(status.pendingWebRtcConnectionCount, 2)
+  assert.notEqual(status.webRtcRoomId, firstRoomId)
+  assert.notEqual(status.webRtcRoomId, secondRoomId)
+  assert.equal(service.pairingManager.sessions.has(firstRoomId), true)
+  assert.equal(service.pairingManager.sessions.has(secondRoomId), true)
+  assert.equal(hostWindows[2].closed, false)
 })
 
 test('RemoteAccessService does not bind the Local Network server in WebRTC mode', async () => {
