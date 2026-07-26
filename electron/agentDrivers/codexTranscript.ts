@@ -127,8 +127,8 @@ export async function enrichCodexNativePayload(
 		nativePayload.agentPath,
 	);
 	const transcriptPath = firstString(
-		nativePayload.agent_transcript_path,
-		nativePayload.agentTranscriptPath,
+		nativePayload.transcript_path,
+		nativePayload.transcriptPath,
 	);
 
 	let metadata: CodexSessionMeta | undefined;

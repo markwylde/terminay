@@ -1,4 +1,7 @@
 import type { Page } from '@playwright/test'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { expect, test } from './fixtures'
 import { sendAppCommand } from './support/app'
 import { openFileExplorer } from './support/ui'
@@ -181,6 +184,73 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
   await expect(
     agentTab.locator('.agent-status-indicator[data-agent-state="done"]'),
   ).toBeVisible()
+})
+
+test('real Codex SubagentStart transcript metadata supplies the task name', async ({
+  mainWindow,
+}) => {
+  const terminalSessionId = await getActiveSessionId(mainWindow)
+  const transcriptDirectory = await mkdtemp(
+    join(tmpdir(), 'terminay-codex-e2e-'),
+  )
+  const transcriptPath = join(
+    transcriptDirectory,
+    'rollout-2026-07-26T22-23-55-child-math.jsonl',
+  )
+  try {
+    await writeFile(
+      transcriptPath,
+      `${JSON.stringify({
+        type: 'session_meta',
+        payload: {
+          id: 'child-math',
+          session_id: 'codex-transcript-root',
+          parent_thread_id: 'codex-transcript-root',
+          source: {
+            subagent: {
+              thread_spawn: {
+                parent_thread_id: 'codex-transcript-root',
+                depth: 1,
+                agent_path: '/root/math_question_one',
+              },
+            },
+          },
+          thread_source: 'subagent',
+        },
+      })}\n`,
+    )
+
+    await emitHook(mainWindow, terminalSessionId, {
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'codex-transcript-root',
+      prompt: 'Spawn one named math agent',
+    })
+    await emitHook(mainWindow, terminalSessionId, {
+      hook_event_name: 'SubagentStart',
+      session_id: 'codex-transcript-root',
+      turn_id: 'child-turn',
+      transcript_path: transcriptPath,
+      agent_id: 'child-math',
+      agent_type: 'default',
+    })
+
+    await openFileExplorer(mainWindow)
+    await mainWindow
+      .getByRole('button', {
+        name: 'Expand 1 subagent for Spawn one named math agent',
+      })
+      .click()
+    await expect(
+      mainWindow.getByRole('button', {
+        name: 'Focus math_question_one terminal',
+      }),
+    ).toBeVisible()
+    await expect(mainWindow.getByText('Subagent 1', { exact: true })).toHaveCount(
+      0,
+    )
+  } finally {
+    await rm(transcriptDirectory, { recursive: true, force: true })
+  }
 })
 
 test('sidebar panels can be reordered vertically', async ({ mainWindow }) => {
