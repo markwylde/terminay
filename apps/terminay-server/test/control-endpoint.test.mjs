@@ -4,11 +4,13 @@ import { mkdtemp } from "node:fs/promises"
 import { connect } from "node:net"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { ServerSettingsRepository } from "@terminay/server-core"
 
 const {
   CONTROL_PROTOCOL_VERSION,
   ControlCapabilityStore,
   ControlEndpointError,
+  bindControlSetting,
   createControlOperationDispatcher,
   createControlEndpoint,
   encodeControlMessage,
@@ -166,6 +168,31 @@ test("moving a calling terminal replaces its project capability and exit revokes
   })
   assert.equal(capabilities.onTerminalExit("caller"), 1)
   assert.equal(capabilities.resolve(moved.token), null)
+})
+
+test("server MCP setting disables and revokes capabilities immediately", async () => {
+  let persisted
+  const settings = new ServerSettingsRepository({
+    async load() { return persisted },
+    async commit(value) { persisted = value },
+  })
+  const capabilities = new ControlCapabilityStore({ tokenFactory: (() => { let n = 0; return () => `setting-token-${++n}` })() })
+  const binding = await bindControlSetting(capabilities, settings)
+  try {
+    const lease = capabilities.mint("caller", "project-a")
+    await settings.set("terminayMcp.enabled", false)
+    assert.equal(capabilities.isEnabled(), false)
+    assert.equal(capabilities.resolve(lease.token), null)
+    assert.throws(() => capabilities.mint("caller", "project-a"), /disabled/)
+
+    await settings.set("terminayMcp.enabled", true)
+    assert.equal(capabilities.isEnabled(), true)
+    const replacement = capabilities.mint("caller", "project-a")
+    assert.notEqual(replacement.token, lease.token)
+    assert.equal(capabilities.resolve(replacement.token)?.projectId, "project-a")
+  } finally {
+    binding.dispose()
+  }
 })
 
 test("malformed and oversized partial frames never reach dispatch", async () => {

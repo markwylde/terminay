@@ -18,6 +18,7 @@ export class ServerSettingsRepository {
   private current: ServerSettingsState | undefined;
   private loaded = false;
   private readonly outcomes = new Map<string, SettingsApplyResult>();
+  private readonly listeners = new Set<(state: ServerSettingsState) => void>();
 
   constructor(private readonly backend: SettingsBackend) {}
 
@@ -43,6 +44,14 @@ export class ServerSettingsRepository {
   get settings(): SettingsObject { return this.state.settings; }
 
   snapshot(): ServerSettingsState { return this.state; }
+
+  /** Subscribe to committed server-setting snapshots. Observer failures are
+   * isolated so a policy consumer cannot roll back a persisted update. */
+  onChange(listener: (state: ServerSettingsState) => void): () => void {
+    if (typeof listener !== "function") throw new TypeError("settings listener is required");
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
 
   async apply(envelope: SettingsCommandEnvelope): Promise<SettingsApplyResult> {
     const current = this.current ?? (await this.load());
@@ -73,6 +82,9 @@ export class ServerSettingsRepository {
     const next: ServerSettingsState = { schemaVersion: SETTINGS_SCHEMA_VERSION, revision: current.revision + 1, cursor: String(current.revision + 1), settings: nextSettings, secretReferences: nextReferences };
     await this.backend.commit(next);
     this.current = next;
+    for (const listener of [...this.listeners]) {
+      try { listener(cloneSettings(next)); } catch { /* observers cannot affect persistence */ }
+    }
     const result: SettingsApplyResult = { ok: true, revision: next.revision, cursor: next.cursor, state: cloneSettings(next) };
     if (envelope.commandId !== undefined) this.outcomes.set(envelope.commandId, result);
     return cloneSettings(result);

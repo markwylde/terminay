@@ -71,7 +71,10 @@ headless use and makes UI state part of the authorization path.
   install, permission preservation, malformed-config refusal, and uninstall.
 - [x] Preserve unrelated provider configuration, file permissions, and
   changed-entry review; never silently replace a user-modified Terminay entry.
-- [ ] Make the server setting immediately enable or revoke control operations.
+- [x] Make the server setting immediately enable or revoke control operations.
+  `bindControlSetting` subscribes the server MCP setting to the capability
+  store; the control-endpoint test verifies disable revokes existing tokens,
+  rejects new minting, and re-enable permits a fresh capability.
 
 ### Tests
 
