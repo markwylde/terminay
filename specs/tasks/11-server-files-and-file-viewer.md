@@ -34,7 +34,10 @@ multi-client state.
   than `webContentsId`.
 - [x] Preserve symlink, case, atomic-save, missing-root, and ignore-pattern
   safeguards at the final server boundary (`file-hardening.test.mjs`).
-- [ ] Preserve large-content safeguards across the full viewer transfer path.
+- [x] Preserve large-content safeguards across the full viewer transfer path.
+  Server file/content, adapter, session, and resume fixtures pass alongside
+  the performant viewer/draft/diff suites (37 + 17 tests), covering bounded
+  ranges, previews, HEX, UTF-8 paging, cancellation, and sparse edits.
 - [x] Add bounded pagination/chunks, cancellation, deduplication, and overflow
   resync.
 
