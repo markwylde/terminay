@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TerminalActivityService, TerminalService } from "@terminay/server-core";
+import { TerminalActivityService, TerminalService, WorkspaceRepository } from "@terminay/server-core";
 import { createServerTerminalControlAdapter, createTerminalControlAdapter } from "../dist/index.js";
 
 function createPtyFactory() {
@@ -84,6 +84,52 @@ test("server terminal adapter wires bounded PTY operations to implicit project s
   const denied = await request("cross", "read_terminal", { terminal: "other" });
   assert.equal(denied.ok, false);
   assert.equal(denied.error.code, "terminal_not_found");
+});
+
+test("server terminal adapter binds layout operations to the canonical workspace repository", async () => {
+  const pty = createPtyFactory();
+  const ids = ["caller", "sibling"];
+  const terminal = new TerminalService({ serverId: "server-a", ptyFactory: pty, generateSessionId: () => ids.shift() });
+  const caller = await terminal.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  const sibling = await terminal.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  let persisted;
+  const workspace = new WorkspaceRepository({
+    async load() { return persisted; },
+    async commit(state) { persisted = state; },
+  }, "server-a");
+  const initial = await workspace.load();
+  const viewId = initial.viewOrder[0];
+  await workspace.apply({ commandId: "project", command: { type: "project.create", projectId: "project-a", viewId, root: "/workspace", name: "Project" } });
+  await workspace.apply({ commandId: "caller", command: { type: "terminal.create", sessionId: caller.sessionId, projectId: "project-a", createdAt: 1 } });
+  await workspace.apply({ commandId: "sibling", command: { type: "terminal.create", sessionId: sibling.sessionId, projectId: "project-a", createdAt: 2 } });
+  await workspace.apply({ commandId: "caller-panel", command: { type: "panel.create", panel: { id: "panel-caller", projectId: "project-a", type: "terminal", sessionId: caller.sessionId, createdAt: 1 } } });
+  await workspace.apply({ commandId: "sibling-panel", command: { type: "panel.create", panel: { id: "panel-sibling", projectId: "project-a", type: "terminal", sessionId: sibling.sessionId, createdAt: 2 } } });
+
+  const adapter = createServerTerminalControlAdapter({
+    terminal,
+    workspace,
+    focusTerminal: () => { throw new Error("renderer focus callback must not run"); },
+    renameTerminal: () => { throw new Error("renderer rename callback must not run"); },
+    splitTerminal: () => { throw new Error("renderer split callback must not run"); },
+  });
+  const dispatch = createTerminalControlAdapter({ adapter });
+  const request = (id, op, params) => dispatch({ id, version: 1, op, params }, { ...context(), requestId: id });
+
+  assert.deepEqual(await request("workspace-focus", "focus_terminal", { terminal: "sibling" }), { terminal: "sibling", focused: true });
+  assert.deepEqual(await request("workspace-rename", "rename_terminal", { terminal: "sibling", name: "Worker" }), { terminal: "sibling", renamed: true, name: "Worker" });
+  assert.deepEqual(await request("workspace-split", "split_terminal", { terminal: "sibling", direction: "below" }), { terminal: "sibling", split: "below" });
+  const updated = await workspace.load();
+  assert.equal(updated.panels["panel-sibling"].title, "Worker");
+  assert.equal(updated.projects["project-a"].activePanelId, "panel-sibling");
+  assert.equal(updated.projects["project-a"].layout.kind, "split");
+  assert.equal(updated.projects["project-a"].layout.direction, "vertical");
+
+  const movedViewId = `${viewId}:other`;
+  await workspace.apply({ commandId: "view-other", command: { type: "view.create", viewId: movedViewId, name: "Other" } });
+  await workspace.apply({ commandId: "move-project", command: { type: "project.move", projectId: "project-a", targetViewId: movedViewId } });
+  const moved = await request("workspace-moved", "focus_terminal", { terminal: "sibling" });
+  assert.deepEqual(moved, { terminal: "sibling", focused: true });
+  assert.equal((await workspace.load()).projects["project-a"].viewId, movedViewId);
 });
 
 test("server terminal adapter waits on canonical activity transitions with bounded timeout", async () => {
