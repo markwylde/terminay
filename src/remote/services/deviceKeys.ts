@@ -19,6 +19,7 @@ export type StoredReconnectGrant = {
 
 export type ReconnectGrantRecord = StoredReconnectGrant & {
   proofKey: CryptoKey
+  signalingKey: CryptoKey
 }
 
 export type StoredReconnectHandle = {
@@ -97,16 +98,19 @@ function base64UrlToArrayBuffer(value: string): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
 }
 
-async function createReconnectProofKey(grant: string): Promise<CryptoKey> {
+async function createReconnectKeys(grant: string): Promise<{
+  proofKey: CryptoKey
+  signalingKey: CryptoKey
+}> {
   const grantKey = await crypto.subtle.importKey(
     'raw',
     base64UrlToArrayBuffer(grant),
     'HKDF',
     false,
-    ['deriveKey'],
+    ['deriveBits'],
   )
 
-  return crypto.subtle.deriveKey(
+  const verifierBytes = await crypto.subtle.deriveBits(
     {
       hash: 'SHA-256',
       info: new TextEncoder().encode('terminay remote v1 reconnect proof verifier'),
@@ -114,10 +118,24 @@ async function createReconnectProofKey(grant: string): Promise<CryptoKey> {
       salt: new Uint8Array(),
     },
     grantKey,
-    { hash: 'SHA-256', length: 256, name: 'HMAC' },
-    false,
-    ['sign', 'verify'],
+    256,
   )
+  return {
+    proofKey: await crypto.subtle.importKey(
+      'raw',
+      verifierBytes,
+      { hash: 'SHA-256', name: 'HMAC' },
+      false,
+      ['sign', 'verify'],
+    ),
+    signalingKey: await crypto.subtle.importKey(
+      'raw',
+      verifierBytes,
+      'HKDF',
+      false,
+      ['deriveKey'],
+    ),
+  }
 }
 
 export async function exportPublicKeyPem(publicKey: CryptoKey): Promise<string> {
@@ -191,7 +209,7 @@ export async function removePairing(origin: string): Promise<void> {
 }
 
 export async function saveReconnectGrant(issued: IssuedReconnectGrant): Promise<void> {
-  const proofKey = await createReconnectProofKey(issued.grant)
+  const { proofKey, signalingKey } = await createReconnectKeys(issued.grant)
   const database = await openDatabase()
   try {
     const transaction = database.transaction([RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
@@ -201,6 +219,7 @@ export async function saveReconnectGrant(issued: IssuedReconnectGrant): Promise<
       issuedAt: issued.issuedAt,
       origin: issued.origin,
       proofKey,
+      signalingKey,
       protocolVersion: issued.protocolVersion,
       sessionId: issued.sessionId,
     })

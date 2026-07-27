@@ -37,7 +37,7 @@ export type RemoteServerMessage =
   | { id: string; type: 'session-closed' }
   | { session: RemoteSessionSummary; type: 'session-updated' }
   | { payload: string; sessionId: string; type: 'output' }
-  | { exitCode: number; sessionId: string; type: 'exit' }
+  | { exitCode: number; sessionId: string; signal?: number | null; type: 'exit' }
   | { message: string; type: 'error' }
   | { seq: number; type: 'pong' }
 

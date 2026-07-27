@@ -27,14 +27,21 @@ failure, performance, and operational proof.
 
 ### Security review
 
-- [ ] Threat-model local bootstrap, WebRTC auth, host bridge, UI bundle,
+- [x] Threat-model local bootstrap, WebRTC auth, host bridge, UI bundle,
   filesystem scope, MCP tokens, vault, migrations, logs, and updates.
-- [ ] Fuzz protocol validators plus signaling/application framing.
-- [ ] Test privilege escalation across server/device/project/view/session ids.
+- [x] Fuzz protocol validators plus local-control/application framing.
+- [ ] Fuzz Electron WebRTC signaling message handling and relay framing.
+- [x] Test privilege escalation across server/device/project/view/session ids.
 - [ ] Audit CSP, permissions policy, sandbox, navigation, deep links,
   clipboard/dialogs, downloads, and external URLs.
-- [ ] Verify revocation, lockout, expiry, rate limits, replay protection, and
-  redaction under concurrent failure.
+  Current evidence covers the server UI host's CSP/permissions policy,
+  sandbox, same-origin navigation, and download denial. Deep-link, dialog,
+  clipboard, external-URL, and primary-window platform review remains open.
+- [x] Verify revocation, lockout, expiry, rate limits, replay protection, and
+  redaction under concurrent failure with deterministic local-control, pairing,
+  reconnect, remote-transport, and vault evidence
+  (`apps/terminay-server/test/security-revocation-replay.test.mjs`). This does
+  not claim fuzzing or sustained load coverage.
 - [ ] Run dependency, license, native-binary provenance, SBOM, and vulnerability
   checks.
 
@@ -42,10 +49,13 @@ failure, performance, and operational proof.
 
 - [ ] Load-test many PTYs, clients, watches, agent events, file transfers,
   recordings, and reconnects with bounded memory and queues.
+- [ ] Measure the selected WebRTC runtime under sustained real multi-peer
+  direct and TURN traffic, slow consumers, relay loss, peer crashes, and
+  admission-limit exhaustion on supported release architectures.
 - [ ] Test Desktop/server crash loops, sleep, network changes, disk full,
   corrupt/read-only state, provider failure, signaling outage, and TURN outage.
 - [ ] Verify desktop and mobile UI responsiveness while background streams run.
-- [ ] Add telemetry-free local diagnostics and opt-in support-bundle redaction.
+- [x] Add telemetry-free local diagnostics and opt-in support-bundle redaction.
 
 ### Artifacts and updates
 
@@ -53,6 +63,12 @@ failure, performance, and operational proof.
   server and UI.
 - [ ] Publish verified standalone artifacts for supported platforms with
   checksums, signatures, version output, and supply-chain metadata.
+- [ ] Run the complete PTY and server probes on native Linux x64/arm64 release
+  runners, the packaged Linux x64 AppImage, and macOS arm64 at the supported
+  macOS 12 floor; do not substitute emulation or configured-but-unrun CI.
+- [ ] Produce deterministic WebRTC runtime artifacts with license notices,
+  source correspondence, locked dependencies, SBOM, provenance attestation,
+  vulnerability-response ownership, and browser interoperability evidence.
 - [ ] Test clean install, upgrade, rollback, and incompatible-version recovery.
 - [ ] Define independent Desktop-host and standalone-server update behaviour
   without silently replacing a remote server.
@@ -61,12 +77,12 @@ failure, performance, and operational proof.
 
 ### Operations and documentation
 
-- [ ] Document data/log paths, configuration precedence, firewall, STUN/TURN,
+- [x] Document data/log paths, configuration precedence, firewall, STUN/TURN,
   service-manager setup, pairing, revocation, vault unlock, backup/restore,
   upgrade, rollback, and incident diagnostics.
-- [ ] Provide example systemd/launch service configuration without hiding
+- [x] Provide example systemd/launch service configuration without hiding
   foreground server behaviour.
-- [ ] Add release smoke tests on clean supported machines and hosted deployment
+- [x] Add release smoke tests on clean supported machines and hosted deployment
   ordering checks.
 - [ ] Decide from release evidence whether separate repositories improve
   ownership or cadence; keep the workspace if they do not.

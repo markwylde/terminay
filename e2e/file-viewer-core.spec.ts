@@ -34,6 +34,59 @@ test('file viewer edits and saves text files without duplicating tabs', async ({
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
 })
 
+test('HEX edits share dirty state and survive Text mode switches', async ({
+  appHarness,
+  createWorkspace,
+  mainWindow,
+}) => {
+  const workspace = await createWorkspace({
+    name: 'file-viewer-hex-draft',
+    seed: {
+      files: {
+        'bytes.txt': 'hello world\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+  await fileExplorerItem(mainWindow, 'bytes.txt').dblclick()
+  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
+
+  const firstByte = mainWindow.getByLabel('Byte 00000000')
+  const fourthByte = mainWindow.getByLabel('Byte 00000003')
+  await firstByte.fill('48')
+  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+
+  await firstByte.click()
+  await fourthByte.click({ modifiers: ['Shift'] })
+  await expect(mainWindow.locator('.file-hex-row__byte--selected')).toHaveCount(4)
+  await expect(mainWindow.locator('.file-hex-viewer__header')).toContainText('Selected 0x0–0x3')
+
+  await mainWindow.getByLabel('Bytes per row').selectOption('8')
+  await expect(mainWindow.locator('.file-hex-row__bytes').first().locator('input')).toHaveCount(8)
+
+  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+  await expect
+    .poll(() =>
+      mainWindow.evaluate(() => {
+        const monacoApi = (window as Window & {
+          monaco?: { editor?: { getModels: () => Array<{ getValue: () => string }> } }
+        }).monaco
+        return monacoApi?.editor?.getModels()?.at(-1)?.getValue() ?? ''
+      }),
+    )
+    .toBe('Hello world\n')
+  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+
+  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
+  await expect(mainWindow.getByLabel('Byte 00000000')).toHaveValue('48')
+  await activateDockTab(mainWindow, 'bytes.txt')
+  await appHarness.sendAppCommand('save-active')
+  await expect.poll(() => workspace.readText('bytes.txt')).toBe('Hello world\n')
+  await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced')
+})
+
 test('preview syntax highlights tsx files', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'file-viewer-preview-highlight',

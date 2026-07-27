@@ -1,15 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { defaultTerminalSettings } from '../terminalSettings'
 import type { TerminalSettings } from '../types/settings'
+import { createLegacySettingsClient } from '../services/settings/legacySettingsClient'
 
 export function useTerminalSettings() {
+  const settingsClient = useMemo(() => createLegacySettingsClient(), [])
   const [settings, setSettings] = useState<TerminalSettings>(defaultTerminalSettings)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     let isMounted = true
 
-    void window.terminay.getTerminalSettings().then((nextSettings) => {
+    void settingsClient.get<TerminalSettings>().then((nextSettings) => {
       if (!isMounted) {
         return
       }
@@ -18,8 +20,8 @@ export function useTerminalSettings() {
       setIsLoading(false)
     })
 
-    const unsubscribe = window.terminay.onTerminalSettingsChanged((message) => {
-      setSettings(message.settings)
+    const unsubscribe = settingsClient.onChanged((nextSettings) => {
+      setSettings(nextSettings as unknown as TerminalSettings)
       setIsLoading(false)
     })
 
@@ -27,7 +29,7 @@ export function useTerminalSettings() {
       isMounted = false
       unsubscribe()
     }
-  }, [])
+  }, [settingsClient])
 
   return { settings, isLoading, setSettings }
 }

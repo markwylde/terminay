@@ -22,8 +22,11 @@ import type {
   FileViewerPreviewSource,
   FileViewerSaveRequest,
   FileViewerSaveResult,
+  FileViewerSparseFileSaveRequest,
   FileViewerTextEncoding,
+  FileViewerTextMetadata,
   FileViewerTextRange,
+  FileViewerTextWindow,
   FileViewerWatchEvent,
   GitPanelStatus,
   EditWindowResult,
@@ -55,9 +58,9 @@ import type {
   TerminalEditWindowResult,
   TerminalExitMessage,
   TerminalRemoteSizeOverrideMessage,
-  TerminalRecordingCast,
-  TerminalRecordingChangeMessage,
   TerminalRecordingChunk,
+  TerminalRecordingChunkRequest,
+  TerminalRecordingChangeMessage,
   TerminalRecordingListItem,
   TerminalRecordingStartMetadata,
   TerminalRecordingState,
@@ -93,6 +96,12 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.invoke('file:read-bytes', options) as Promise<FileViewerByteRange>,
   readFileText: (options: { path: string; start: number; length: number; encoding?: FileViewerTextEncoding }) =>
     ipcRenderer.invoke('file:read-text', options) as Promise<FileViewerTextRange>,
+  getFileTextMetadata: (options: { path: string; projectRoot: string }) =>
+    ipcRenderer.invoke('file:get-text-metadata', options) as Promise<FileViewerTextMetadata>,
+  readFileTextLines: (options: { lineCount: number; path: string; projectRoot: string; startLine: number }) =>
+    ipcRenderer.invoke('file:read-text-lines', options) as Promise<FileViewerTextWindow>,
+  saveSparseFile: (payload: FileViewerSparseFileSaveRequest) =>
+    ipcRenderer.invoke('file:save-sparse', payload) as Promise<FileViewerSaveResult>,
   saveFile: (payload: FileViewerSaveRequest) => ipcRenderer.invoke('file:save', payload) as Promise<FileViewerSaveResult>,
   renameEntry: (oldPath: string, newPath: string) => ipcRenderer.invoke('fs:rename', { oldPath, newPath }),
   deleteEntry: (path: string) => ipcRenderer.invoke('fs:delete', { path }),
@@ -146,14 +155,12 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.invoke('terminal-recording:stop', { id }) as Promise<TerminalRecordingState>,
   listTerminalRecordings: () =>
     ipcRenderer.invoke('terminal-recording:list') as Promise<TerminalRecordingListItem[]>,
-  readTerminalRecording: (castPath: string) =>
-    ipcRenderer.invoke('terminal-recording:read', { castPath }) as Promise<TerminalRecordingCast>,
-  readTerminalRecordingChunk: (options: { castPath: string; offset: number; length?: number }) =>
-    ipcRenderer.invoke('terminal-recording:read-chunk', options) as Promise<TerminalRecordingChunk>,
-  deleteTerminalRecording: (castPath: string) =>
-    ipcRenderer.invoke('terminal-recording:delete', { castPath }) as Promise<void>,
-  revealTerminalRecording: (castPath: string) =>
-    ipcRenderer.invoke('terminal-recording:reveal', { castPath }) as Promise<void>,
+  readTerminalRecordingChunk: (request: TerminalRecordingChunkRequest) =>
+    ipcRenderer.invoke('terminal-recording:read-chunk', request) as Promise<TerminalRecordingChunk>,
+  deleteTerminalRecordingById: (recordingId: string) =>
+    ipcRenderer.invoke('terminal-recording:delete-by-id', { recordingId }) as Promise<void>,
+  revealTerminalRecordingById: (recordingId: string) =>
+    ipcRenderer.invoke('terminal-recording:reveal-by-id', { recordingId }) as Promise<void>,
   getTerminalSettings: () => ipcRenderer.invoke('settings:get-terminal') as Promise<TerminalSettings>,
   updateTerminalSettings: (settings: TerminalSettings) =>
     ipcRenderer.invoke('settings:update-terminal', settings) as Promise<TerminalSettings>,
@@ -393,6 +400,10 @@ if (process.env.TERMINAY_TEST === '1') {
   const testApi: TerminayTestApi = {
     emitAgentHook: (payload) =>
       ipcRenderer.invoke('test:emit-agent-hook', payload) as Promise<number>,
+    getMcpControlEnvironment: (terminalSessionId) =>
+      ipcRenderer.invoke('test:get-mcp-control-environment', {
+        terminalSessionId,
+      }) as Promise<{ socketPath: string; token: string }>,
     sendAppCommand: (command) => ipcRenderer.invoke('test:send-app-command', command) as Promise<void>,
     setAiTabMetadataMock: (mock) => ipcRenderer.invoke('test:set-ai-tab-metadata-mock', mock) as Promise<void>,
   }

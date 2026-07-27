@@ -36,6 +36,35 @@ responsive client renders results through the application protocol and never
 uses browser or Electron filesystem authority. Path/project scoping,
 large-content safeguards, and explicit destructive actions remain required.
 
+The server catalog exposes project-relative, bounded directory pages, filename
+search, non-following folder-size traversal, and create/rename/delete commands.
+Each child is canonicalized again before metadata is returned; escaped
+symlinks are reported as inaccessible metadata and are never traversed or
+mutated. Search and size traversal enforce entry/depth/byte caps, honour
+ignored-directory patterns, and accept cancellation.
+
+The same catalog exposes content-free preview metadata for a canonical file.
+It inspects only a bounded prefix to classify Markdown, images, PDF, text, and
+binary content, reports safe edit/view capabilities, and selects a bounded
+large-file fallback without returning file bytes.
+
+Recursive Markdown task aggregation is also server-owned. It canonicalizes each
+project-relative child before reading, skips configured ignored directories and
+symlinks, parses checkbox tasks outside fenced code, and returns heading/file
+metadata with deterministic progress statistics. Traversal, decoded bytes,
+files, labels, and task output are bounded; ranged reads are sequential and
+cancellable so a large folder cannot exhaust host resources.
+
+Watch delivery is also server-owned. A watch subscription is keyed by the
+server, project, canonical project-relative resource, and client subscription;
+it is never keyed by an Electron `webContentsId`. Host filesystem adapters
+publish small metadata/revision facts, while clients fetch content through the
+bounded file-session read contract. The server deduplicates repeated watcher
+facts, paginates event batches, cancels subscriptions when their client
+disconnects, and collapses an overflowing queue to an explicit resync event.
+After resync, the client requests a fresh bounded tree/file snapshot before
+applying later events.
+
 ## Acceptance outcomes
 
 - File changes made externally become visible without losing an unrelated

@@ -16,6 +16,7 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
           'utf8',
         ),
         'diff-target.tsx': 'export function Example() {\n  return <div className="start">old</div>\n}\n',
+        'large-diff.txt': `${Array.from({ length: 600 }, (_, index) => `before ${index}`).join('\n')}\n`,
         'pixel.png': Buffer.from(
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9pJsteUAAAAASUVORK5CYII=',
           'base64',
@@ -28,11 +29,15 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   await execFileAsync('git', ['init'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['config', 'user.email', 'e2e@example.com'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['config', 'user.name', 'E2E'], { cwd: workspace.rootDir })
-  await execFileAsync('git', ['add', 'diff-target.tsx'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['add', 'diff-target.tsx', 'large-diff.txt'], { cwd: workspace.rootDir })
   await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
   await workspace.writeText(
     'diff-target.tsx',
     'export function Example() {\n  const label = "new"\n  return <div className="updated">{label}</div>\n}\n',
+  )
+  await workspace.writeText(
+    'large-diff.txt',
+    `${Array.from({ length: 600 }, (_, index) => `after ${index}`).join('\n')}\n`,
   )
 
   await setProjectRoot(mainWindow, workspace.rootDir)
@@ -71,6 +76,12 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   await expect(mainWindow.locator('.file-diff-viewer .file-token--keyword', { hasText: 'const' })).toHaveCount(1)
   await expect(mainWindow.locator('.file-diff-viewer .file-token--string', { hasText: '"new"' })).toHaveCount(1)
   await expect(mainWindow.locator('.file-diff-viewer .file-token--tag-name', { hasText: 'div' }).first()).toBeVisible()
+  await expect(mainWindow.getByRole('button', { name: 'Side by side' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(mainWindow.locator('.file-diff-grid-row').first()).toBeVisible()
+  await mainWindow.getByRole('button', { name: 'Unified' }).click()
+  await expect(mainWindow.getByRole('button', { name: 'Unified' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(mainWindow.locator('.file-diff-row').first()).toBeVisible()
+  await expect(mainWindow.locator('.file-diff-grid-row')).toHaveCount(0)
 
   const largeDiffText = Array.from({ length: 3000 }, (_, index) => `export const row${index} = ${index}\n`).join('')
   await workspace.writeText('diff-target.tsx', largeDiffText)
@@ -83,6 +94,12 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   )
   await expect(mainWindow.locator('.file-diff-viewer')).toContainText('const label = "again"')
   await expect(mainWindow.locator('.file-diff-viewer .file-token--tag-name', { hasText: 'section' }).first()).toBeVisible()
+
+  await fileExplorerItem(mainWindow, 'large-diff.txt').dblclick()
+  await mainWindow.getByRole('tab', { name: 'Diff' }).click()
+  await expect(mainWindow.getByRole('button', { name: 'Unified' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(mainWindow.locator('.file-diff-viewer__viewport')).toHaveAttribute('data-row-count', /[1-9]\d{2,}/)
+  await expect.poll(() => mainWindow.locator('.file-viewer-virtual-surface__row').count()).toBeLessThan(100)
 })
 
 test('text mode colorizes syntax on open without needing a scroll', async ({ createWorkspace, mainWindow }) => {

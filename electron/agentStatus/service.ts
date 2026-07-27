@@ -50,6 +50,17 @@ export interface AgentStatusServiceOptions {
 	now?: () => number;
 	store?: AgentStatusStore;
 	token?: string;
+	/** Injectable for lifecycle tests; production uses the host timer. */
+	foregroundExitConfirmationMs?: number;
+}
+
+const DEFAULT_FOREGROUND_EXIT_CONFIRMATION_MS = 500;
+
+function providerFromForegroundProcess(processName: string): AgentProvider | null {
+	const executable = processName.trim().split(/[\\/]/).pop()?.toLowerCase() ?? '';
+	if (/^codex(?:[-_.]|$)/.test(executable)) return 'codex';
+	if (/^claude(?:[-_.]|$)/.test(executable)) return 'claude-code';
+	return null;
 }
 
 function singleHeader(
@@ -170,12 +181,19 @@ export class AgentStatusService {
 			toolId: string;
 		}>
 	>();
+	private readonly foregroundProviderByTerminal = new Map<string, AgentProvider | null>();
+	private readonly pendingForegroundExits = new Map<string, ReturnType<typeof setTimeout>>();
+	private readonly foregroundExitConfirmationMs: number;
 	private started = false;
 
 	constructor(options: AgentStatusServiceOptions) {
 		this.normalizeHookPayload = options.normalizeHookPayload;
 		this.now = options.now ?? Date.now;
 		this.store = options.store ?? new AgentStatusStore();
+		this.foregroundExitConfirmationMs = Math.max(
+			0,
+			options.foregroundExitConfirmationMs ?? DEFAULT_FOREGROUND_EXIT_CONFIRMATION_MS,
+		);
 		this.server = createAgentHookServer({
 			token: options.token,
 			handleRequest: (request) => this.handleHookRequest(request),
@@ -216,12 +234,14 @@ export class AgentStatusService {
 		this.started = false;
 		this.nextSequenceByTerminalProvider.clear();
 		this.pendingSubagentLaunches.clear();
+		this.clearForegroundTracking();
 		await this.server.stop();
 	}
 
 	clearStatus(): boolean {
 		this.nextSequenceByTerminalProvider.clear();
 		this.pendingSubagentLaunches.clear();
+		this.clearForegroundTracking();
 		return this.store.clear();
 	}
 
@@ -241,6 +261,7 @@ export class AgentStatusService {
 		this.activeTerminalSessions.delete(terminalSessionId);
 		this.removeSequenceCounters(terminalSessionId);
 		this.removePendingSubagentLaunches(terminalSessionId);
+		this.clearForegroundTrackingForTerminal(terminalSessionId);
 	}
 
 	terminalExited(
@@ -250,6 +271,7 @@ export class AgentStatusService {
 		this.activeTerminalSessions.delete(terminalSessionId);
 		this.removeSequenceCounters(terminalSessionId);
 		this.removePendingSubagentLaunches(terminalSessionId);
+		this.clearForegroundTrackingForTerminal(terminalSessionId);
 		const snapshot = this.store.getSnapshot();
 		const roots = Object.values(snapshot.entries).filter(
 			(entry) =>
@@ -279,6 +301,25 @@ export class AgentStatusService {
 		}
 	}
 
+	/** Retire a hook-backed provider only after a confirmed return to its shell. */
+	foregroundProcessChanged(
+		terminalSessionId: string,
+		processName: string,
+		shellForeground: boolean,
+	): void {
+		if (!this.activeTerminalSessions.has(terminalSessionId)) return;
+		const provider = providerFromForegroundProcess(processName);
+		const previousProvider = this.foregroundProviderByTerminal.get(terminalSessionId);
+		if (provider !== null) {
+			this.foregroundProviderByTerminal.set(terminalSessionId, provider);
+			this.cancelPendingForegroundExit(terminalSessionId);
+			return;
+		}
+		if (!shellForeground || previousProvider === undefined || previousProvider === null) return;
+		this.scheduleForegroundExit(terminalSessionId, previousProvider);
+		this.foregroundProviderByTerminal.set(terminalSessionId, null);
+	}
+
 	async ingestHookPayload(
 		provider: AgentProvider,
 		activationTerminalSessionId: string,
@@ -303,6 +344,7 @@ export class AgentStatusService {
 		for (const event of events) {
 			validateNormalizedEvent(event, provider, activationTerminalSessionId);
 		}
+		if (events.length > 0) this.cancelPendingForegroundExit(activationTerminalSessionId);
 		for (const event of events) {
 			this.store.dispatch(this.correlateSubagentLaunch(event));
 		}
@@ -403,5 +445,53 @@ export class AgentStatusService {
 				this.pendingSubagentLaunches.delete(key);
 			}
 		}
+	}
+
+	private scheduleForegroundExit(terminalSessionId: string, provider: AgentProvider): void {
+		if (this.pendingForegroundExits.has(terminalSessionId)) return;
+		const roots = Object.values(this.store.getSnapshot().entries).filter(
+			(entry) =>
+				entry.kind === 'root' && entry.provider === provider &&
+				entry.activationTerminalSessionId === terminalSessionId && entry.active,
+		);
+		if (roots.length === 0) return;
+		const timer = setTimeout(() => {
+			this.pendingForegroundExits.delete(terminalSessionId);
+			if (this.foregroundProviderByTerminal.get(terminalSessionId) !== null ||
+				!this.activeTerminalSessions.has(terminalSessionId)) return;
+			for (const root of roots) {
+				const current = this.store.getSnapshot().entries[root.entryId];
+				if (current?.kind !== 'root' || !current.active) continue;
+				const streamId = makeAgentStatusStreamId(root.provider, root.activationTerminalSessionId, root.sessionId);
+				const cursor = this.store.getSnapshot().eventCursors[streamId];
+				this.store.dispatch({
+					kind: 'session.stopped',
+					provider: root.provider,
+					sessionId: root.sessionId,
+					activationTerminalSessionId: root.activationTerminalSessionId,
+					sequence: (cursor?.sequence ?? root.lastEventSequence) + 1,
+					occurredAt: Math.max(this.now(), cursor?.occurredAt ?? root.updatedAt),
+					reason: 'foreground-shell',
+				});
+			}
+		}, this.foregroundExitConfirmationMs);
+		this.pendingForegroundExits.set(terminalSessionId, timer);
+	}
+
+	private cancelPendingForegroundExit(terminalSessionId: string): void {
+		const timer = this.pendingForegroundExits.get(terminalSessionId);
+		if (timer === undefined) return;
+		clearTimeout(timer);
+		this.pendingForegroundExits.delete(terminalSessionId);
+	}
+
+	private clearForegroundTrackingForTerminal(terminalSessionId: string): void {
+		this.cancelPendingForegroundExit(terminalSessionId);
+		this.foregroundProviderByTerminal.delete(terminalSessionId);
+	}
+
+	private clearForegroundTracking(): void {
+		for (const terminalSessionId of this.pendingForegroundExits.keys()) this.cancelPendingForegroundExit(terminalSessionId);
+		this.foregroundProviderByTerminal.clear();
 	}
 }

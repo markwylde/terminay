@@ -9,6 +9,10 @@ implement and verify it, then retain the completed plan as history.
 - [CORE.md](./CORE.md) — product purpose, core model, architecture boundaries,
   and feature map.
 - [features/](./features/) — canonical, detailed feature specifications.
+- [decisions/](./decisions/) — evidence-backed architecture decisions and
+  unresolved proof gates.
+- [operations/](./operations/) — operator runbooks for standalone and embedded
+  server deployments.
 - [tasks/](./tasks/) — active delivery work only.
 - [tasks_completed/](./tasks_completed/) — completed task history.
 

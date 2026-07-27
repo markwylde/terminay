@@ -26,38 +26,62 @@ headless use and makes UI state part of the authorization path.
 
 ### Control endpoint and capability
 
-- [ ] Host the user-only local control socket in Terminay Server.
-- [ ] Mint, inject, rotate, and revoke one capability per terminal.
-- [ ] Resolve the calling session and implicit project from canonical server
+- [x] Host the user-only local control socket in Terminay Server.
+- [x] Mint, inject, rotate, and revoke one capability per terminal.
+- [x] Resolve the calling session and implicit project from canonical server
   ownership.
-- [ ] Bound framing, request size, concurrency, waits, and output.
-- [ ] Keep the endpoint local-only and distinct from remote device auth.
+- [x] Authenticate the local peer/capability without trusting a PID supplied in
+  the request body; reject absent, invalid, copied, or cross-process
+  credentials rather than widening to PID ancestry.
+- [x] Bound framing, request size, concurrency, waits, and output.
+- [x] Keep the endpoint local-only and distinct from remote device auth.
+- [x] Route validated operation names through an explicit server-owned handler
+  table; unsupported operations and typed handler failures have bounded,
+  stable error envelopes with no renderer or PID fallback.
 
 ### Tools
 
-- [ ] Implement list/read/status/write/run/open/close/focus/rename/split
-  directly against server services.
-- [ ] Implement bounded idle, command-completion, and attention waits from
-  canonical activity state.
-- [ ] Return ambiguity, exit, timeout, cancellation, and revocation explicitly.
+- [x] Provide a typed server-owned adapter boundary for every declared tool;
+  validate bounded parameters before dispatch, propagate the request abort
+  signal, and normalize scope/backend failures without renderer fallback.
+- [x] Implement list/read/status/write/run/open/close directly against the
+  server-owned TerminalService with implicit project scope and bounded replay
+  or input.
+- [ ] Bind focus/rename/split to the canonical server workspace view service;
+  the terminal adapter accepts explicit host callbacks but has no view
+  authority to call yet.
+- [x] Implement bounded idle, command-completion, and attention waits from
+  canonical TerminalActivityService state when that service is composed.
+- [x] Return ambiguity, exit, timeout, cancellation, and revocation explicitly.
 - [ ] Remove `control:request` renderer forwarding.
 
 ### Stdio adapter and installation
 
-- [ ] Package the headless `terminay mcp` stdio adapter in standalone and
-  Desktop-bundled server artifacts.
+- [x] Expose a server-owned `terminay mcp` stdio entry for all declared tools;
+  it connects only to the inherited local socket/token, advertises the
+  bounded schemas, passes MCP arguments through the typed adapter boundary,
+  and preserves typed control error codes in renderer-free results.
+- [x] Package the headless `terminay mcp` stdio adapter in standalone and
+  Desktop-bundled server artifacts. `npm run build:app` emits the
+  renderer-free `dist-electron/serverMcpEntry.js`; standalone manifest and
+  desktop artifact tests verify both entry points and reject Electron imports.
 - [ ] Update Claude Code and Codex install detection, atomic config editing,
   status, and uninstall for the new artifact path.
-- [ ] Preserve unrelated provider configuration and changed-entry review.
+- [x] Preserve unrelated provider configuration, file permissions, and
+  changed-entry review; never silently replace a user-modified Terminay entry.
 - [ ] Make the server setting immediately enable or revoke control operations.
 
 ### Tests
 
-- [ ] Run protocol, socket, tool, wait, install, and uninstall tests without a
+- [x] Run protocol, socket, tool, wait, install, and uninstall tests without a
   renderer.
-- [ ] Test scope after project/view moves and calling-terminal exit.
-- [ ] Test copied/stale tokens, other-project ids, malformed frames, slow
-  readers, and concurrent waits.
+- [x] Test scope after a project move and calling-terminal exit; the old
+  capability is revoked before the replacement project scope is usable.
+- [ ] Test scope after workspace/view moves; view identity is not yet exposed
+  by the server control adapter.
+- [x] Test copied/stale tokens, other-project ids, malformed frames, slow
+  readers, forged PIDs, unbounded partial frames, concurrency limits, and
+  concurrent waits.
 - [ ] Run focused real Codex and Claude Code smoke tests where available.
 
 ## Acceptance checks

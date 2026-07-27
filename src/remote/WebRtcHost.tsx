@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-type HostConfig = {
+export type HostConfig = {
   appOrigin: string
   expiresAt: string
   iceServers?: RTCIceServer[]
@@ -18,7 +18,7 @@ type HostConfig = {
   signalingUrl: string
 }
 
-type HostApi = {
+export type HostApi = {
   attachTerminal(channelId: string, ticket: string): Promise<void>
   closeTerminal(channelId: string, reason?: string): void
   getAsset(path: string): Promise<unknown>
@@ -36,6 +36,26 @@ type HostApi = {
 }
 
 const ASSET_CHUNK_BODY_CHARS = 64 * 1024
+const ASSET_CHUNK_WINDOW = 4
+const ASSET_TRANSFER_TIMEOUT_MS = 15_000
+// The bundled browser installs its manifest and assets sequentially. One
+// active request is therefore sufficient for product behavior and prevents a
+// hostile peer from multiplying the per-transfer acknowledgement window.
+const MAX_ACTIVE_ASSET_REQUESTS = 1
+const MAX_UNACKNOWLEDGED_ASSET_BODY_CHARS =
+  MAX_ACTIVE_ASSET_REQUESTS * ASSET_CHUNK_WINDOW * ASSET_CHUNK_BODY_CHARS
+
+type AssetTransfer = {
+  acknowledged: Set<number>
+  cancelled: boolean
+  notify: Set<() => void>
+  sent: number
+}
+
+export type WebRtcHostRuntimeDependencies = {
+  api?: HostApi
+  createPeerConnection?: (configuration: RTCConfiguration) => RTCPeerConnection
+}
 
 declare global {
   interface Window {
@@ -77,14 +97,37 @@ function stableJson(value: unknown): string {
 }
 
 function canonicalSignalPayload(message: Record<string, unknown>): string {
-  const payload: Record<string, unknown> = {
-    nonce: message.nonce,
-    roomId: message.roomId ?? message.sessionId,
-    type: message.type,
-  }
+  const reconnect = typeof message.type === 'string' && message.type.startsWith('reconnect-')
+  const payload: Record<string, unknown> = reconnect
+    ? {
+        attemptId: message.attemptId ?? '',
+        nonce: message.nonce,
+        protocolVersion: message.protocolVersion ?? '',
+        reconnectHandle: message.reconnectHandle ?? '',
+        savedSessionExpiresAt: message.savedSessionExpiresAt ?? '',
+        sessionId: message.sessionId ?? '',
+        type: message.type,
+      }
+    : {
+        nonce: message.nonce,
+        roomId: message.roomId,
+        type: message.type,
+      }
   if ('candidate' in message) payload.candidate = message.candidate
   if ('sdp' in message) payload.sdp = message.sdp
   return stableJson(payload)
+}
+
+function assertSignalContext(config: HostConfig, message: Record<string, unknown>): void {
+  if (!config.reconnect) return
+  if (
+    message.attemptId !== config.reconnect.attemptId ||
+    message.protocolVersion !== config.reconnect.protocolVersion ||
+    message.reconnectHandle !== config.reconnect.reconnectHandle ||
+    message.sessionId !== config.reconnect.sessionId
+  ) {
+    throw new Error('The browser sent WebRTC signaling for a different reconnect attempt.')
+  }
 }
 
 function isSignalForRoom(message: Record<string, unknown>, roomId: string): boolean {
@@ -146,7 +189,39 @@ async function verifySignalMessage(authKey: CryptoKey, message: Record<string, u
   )
 }
 
-function sendAssetResponse(channel: RTCDataChannel, id: string, response: unknown): void {
+function notifyAssetTransfer(transfer: AssetTransfer): void {
+  for (const notify of transfer.notify) notify()
+  transfer.notify.clear()
+}
+
+async function waitForAssetTransfer(
+  transfer: AssetTransfer,
+  predicate: () => boolean,
+): Promise<void> {
+  while (!predicate()) {
+    if (transfer.cancelled) {
+      throw new Error('Asset transfer was cancelled.')
+    }
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        transfer.notify.delete(onProgress)
+        reject(new Error('Asset transfer acknowledgement timed out.'))
+      }, ASSET_TRANSFER_TIMEOUT_MS)
+      const onProgress = () => {
+        clearTimeout(timeout)
+        resolve()
+      }
+      transfer.notify.add(onProgress)
+    })
+  }
+}
+
+async function sendAssetResponse(
+  channel: RTCDataChannel,
+  transfers: Map<string, AssetTransfer>,
+  id: string,
+  response: unknown,
+): Promise<void> {
   const bodyBase64 = typeof response === 'object' && response !== null && 'bodyBase64' in response
     ? (response as { bodyBase64?: unknown }).bodyBase64
     : null
@@ -159,33 +234,66 @@ function sendAssetResponse(channel: RTCDataChannel, id: string, response: unknow
   const total = Math.ceil(bodyBase64.length / ASSET_CHUNK_BODY_CHARS)
   const metadata = { ...response as Record<string, unknown> }
   delete metadata.bodyBase64
-
-  for (let index = 0; index < total; index += 1) {
-    channel.send(JSON.stringify({
-      ...metadata,
-      bodyBase64Chunk: bodyBase64.slice(index * ASSET_CHUNK_BODY_CHARS, (index + 1) * ASSET_CHUNK_BODY_CHARS),
-      id,
-      index,
-      total,
-      type: 'asset:chunk',
-    }))
+  const transfer: AssetTransfer = {
+    acknowledged: new Set(),
+    cancelled: false,
+    notify: new Set(),
+    sent: 0,
+  }
+  transfers.set(id, transfer)
+  try {
+    for (let index = 0; index < total; index += 1) {
+      await waitForAssetTransfer(
+        transfer,
+        () => transfer.sent - transfer.acknowledged.size < ASSET_CHUNK_WINDOW,
+      )
+      if (channel.readyState !== 'open') {
+        throw new Error('Asset channel closed during transfer.')
+      }
+      channel.send(JSON.stringify({
+        ...metadata,
+        bodyBase64Chunk: bodyBase64.slice(index * ASSET_CHUNK_BODY_CHARS, (index + 1) * ASSET_CHUNK_BODY_CHARS),
+        id,
+        index,
+        total,
+        type: 'asset:chunk',
+      }))
+      transfer.sent += 1
+      // Yield so API and terminal stream callbacks are not monopolized by a
+      // large cached UI asset.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+    await waitForAssetTransfer(
+      transfer,
+      () => transfer.acknowledged.size === total,
+    )
+  } finally {
+    transfers.delete(id)
   }
 }
 
-export async function runHost(config: HostConfig): Promise<() => void> {
-  const api = window.terminayWebRtcHost
+export async function runHost(
+  config: HostConfig,
+  dependencies: WebRtcHostRuntimeDependencies = {},
+): Promise<() => void> {
+  const api = dependencies.api ?? window.terminayWebRtcHost
   if (!api) throw new Error('WebRTC host bridge is unavailable.')
 
   const signalingAuthKey = await createSignalingAuthKey(config.signalingAuthToken)
-  const peer = new RTCPeerConnection({
+  const peerConfiguration: RTCConfiguration = {
     iceServers: config.iceServers?.length ? config.iceServers : [{ urls: 'stun:stun.l.google.com:19302' }],
-  })
+  }
+  const peer = dependencies.createPeerConnection
+    ? dependencies.createPeerConnection(peerConfiguration)
+    : new RTCPeerConnection(peerConfiguration)
   const channels = {
     api: peer.createDataChannel('api'),
     asset: peer.createDataChannel('asset'),
     terminal: peer.createDataChannel('terminal'),
   }
   const terminalChannelId = crypto.randomUUID()
+  const assetTransfers = new Map<string, AssetTransfer>()
+  const activeAssetRequestIds = new Set<string>()
   let terminalClosed = false
   let terminalCloseReason = 'WebRTC terminal channel closed.'
   let terminalAuthenticated = false
@@ -208,16 +316,54 @@ export async function runHost(config: HostConfig): Promise<() => void> {
     void (async () => {
       const request = parseJson(event.data)
       if (!request || typeof request.id !== 'string') return
+      if (request.type === 'asset:ack') {
+        const transfer = assetTransfers.get(request.id)
+        const index = Number(request.index)
+        if (
+          transfer &&
+          Number.isInteger(index) &&
+          index >= 0 &&
+          index < transfer.sent
+        ) {
+          transfer.acknowledged.add(index)
+          notifyAssetTransfer(transfer)
+        }
+        return
+      }
+      if (request.type === 'asset:cancel') {
+        const transfer = assetTransfers.get(request.id)
+        if (transfer) {
+          transfer.cancelled = true
+          notifyAssetTransfer(transfer)
+        }
+        return
+      }
+      if (
+        activeAssetRequestIds.has(request.id) ||
+        activeAssetRequestIds.size >= MAX_ACTIVE_ASSET_REQUESTS
+      ) {
+        channels.asset.send(JSON.stringify({
+          error:
+            `Asset request limit reached. Terminay permits ${MAX_ACTIVE_ASSET_REQUESTS} ` +
+            `active request and ${MAX_UNACKNOWLEDGED_ASSET_BODY_CHARS} ` +
+            'unacknowledged Base64 body characters per peer.',
+          id: request.id,
+        }))
+        return
+      }
+      activeAssetRequestIds.add(request.id)
       try {
         const response = request.type === 'asset:get-manifest'
           ? await api.getAssetManifest()
           : await api.getAsset(String(request.path ?? ''))
-        sendAssetResponse(channels.asset, request.id, response)
+        await sendAssetResponse(channels.asset, assetTransfers, request.id, response)
       } catch (error) {
         channels.asset.send(JSON.stringify({
           error: error instanceof Error ? error.message : 'Asset request failed.',
           id: request.id,
         }))
+      } finally {
+        activeAssetRequestIds.delete(request.id)
       }
     })()
   })
@@ -300,16 +446,29 @@ export async function runHost(config: HostConfig): Promise<() => void> {
       } else if (message.type === 'client-join') {
         api.updateStatus?.({ type: 'client-join' })
         const offer = await peer.createOffer()
-        await peer.setLocalDescription(offer)
-        const signedOffer = await signSignalMessage(signalingAuthKey, createOutboundSignalPayload(config, { sdp: offer, type: 'offer' }))
+        const offerInit: RTCSessionDescriptionInit = {
+          sdp: offer.sdp ?? '',
+          type: offer.type,
+        }
+        await peer.setLocalDescription(offerInit)
+        const signedOffer = await signSignalMessage(
+          signalingAuthKey,
+          createOutboundSignalPayload(config, { sdp: offerInit, type: 'offer' }),
+        )
         api.sendSignalMessage(signedOffer)
       } else if ((message.type === 'answer' || message.type === 'reconnect-answer') && message.sdp && typeof message.sdp === 'object') {
+        assertSignalContext(config, message)
+        if (!await verifySignalMessage(signalingAuthKey, message)) {
+          throw new Error('The browser sent an unauthenticated WebRTC answer.')
+        }
         rejectSignalReplay(message, seenSignalNonces)
-        if (!await verifySignalMessage(signalingAuthKey, message)) return
         await peer.setRemoteDescription(message.sdp as RTCSessionDescriptionInit)
       } else if ((message.type === 'ice' || message.type === 'reconnect-ice') && message.candidate && typeof message.candidate === 'object') {
+        assertSignalContext(config, message)
+        if (!await verifySignalMessage(signalingAuthKey, message)) {
+          throw new Error('The browser sent an unauthenticated WebRTC candidate.')
+        }
         rejectSignalReplay(message, seenSignalNonces)
-        if (!await verifySignalMessage(signalingAuthKey, message)) return
         await peer.addIceCandidate(message.candidate as RTCIceCandidateInit)
       } else if (message.type === 'error') {
         api.updateStatus?.({
@@ -332,6 +491,12 @@ export async function runHost(config: HostConfig): Promise<() => void> {
     stopTerminalMessages()
     stopTerminalCloseRequests()
     closeTerminal('WebRTC host window stopped.')
+    for (const transfer of assetTransfers.values()) {
+      transfer.cancelled = true
+      notifyAssetTransfer(transfer)
+    }
+    assetTransfers.clear()
+    activeAssetRequestIds.clear()
     peer.close()
   }
 }

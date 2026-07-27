@@ -119,6 +119,13 @@ test('Codex normalizes root session, prompt, tool, wait, and completion events',
 	assert.equal(done.outcome, 'success');
 	assert.equal(
 		codexDriver.normalize(
+			{ hook_event_name: 'SessionEnd', session_id: 'codex-session' },
+			context,
+		).kind,
+		'session.stopped',
+	);
+	assert.equal(
+		codexDriver.normalize(
 			{
 				hook_event_name: 'StopFailure',
 				session_id: 'codex-session',

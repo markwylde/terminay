@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
+import type { TerminalPanelAttachment } from '@terminay/client-core'
 import type { IDockviewPanelProps } from 'dockview'
 import { Terminal } from '@xterm/xterm'
 import type { ILinkHandler } from '@xterm/xterm'
@@ -190,6 +191,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
+  const terminalPanelResizeRef = useRef<(cols: number, rows: number) => void>(() => {})
   const tabColorRef = useRef(props.params.color)
   const zoomLevelRef = useRef(0)
   const remoteSizeOverrideRef = useRef<{ cols: number; rows: number } | null>(null)
@@ -338,6 +340,52 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
     screenElement?.addEventListener('mousedown', preventModifierLinkSelection)
 
+    const panelClient = props.params.terminalPanelClient
+    const panelIdentity = props.params.terminalClientIdentity
+    const panelClientId = props.params.terminalClientId
+    const useServerTerminal = panelClient !== undefined && panelIdentity !== undefined && panelClientId !== undefined
+    let panelAttachment: TerminalPanelAttachment | null = null
+    let pendingPanelInput: string[] = []
+    let pendingPanelInputLength = 0
+    let pendingPanelResize: { cols: number; rows: number } | null = null
+
+    const writePanelInput = (data: string) => {
+      if (!useServerTerminal) {
+        window.terminay.writeTerminal(sessionId, data)
+        return
+      }
+
+      if (panelAttachment === null) {
+        if (pendingPanelInputLength + data.length <= 64 * 1024) {
+          pendingPanelInput.push(data)
+          pendingPanelInputLength += data.length
+        }
+        return
+      }
+
+      void panelAttachment.write(data).catch((error: unknown) => {
+        console.error('Server terminal input failed', error)
+      })
+    }
+
+    const resizePanel = (cols: number, rows: number) => {
+      if (!useServerTerminal) {
+        window.terminay.resizeTerminal(sessionId, cols, rows)
+        return
+      }
+
+      pendingPanelResize = { cols, rows }
+      if (panelAttachment !== null) {
+        const next = pendingPanelResize
+        pendingPanelResize = null
+        void panelAttachment.resize(next).catch((error: unknown) => {
+          console.error('Server terminal resize failed', error)
+        })
+      }
+    }
+
+    terminalPanelResizeRef.current = resizePanel
+
     const copySelectionToClipboard = () => {
       const selectedText = terminal.getSelection()
       if (selectedText.length === 0) {
@@ -424,7 +472,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         // Send the newline through bracketed paste so shells keep it in the
         // current command buffer instead of accepting the line.
         announceTerminalUserInput()
-        window.terminay.writeTerminal(sessionId, formatBracketedPaste('\n'))
+        writePanelInput(formatBracketedPaste('\n'))
         return false
       }
 
@@ -469,7 +517,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       fitAddon.fit()
       if (terminal.cols !== lastSentSize.cols || terminal.rows !== lastSentSize.rows) {
         lastSentSize = { cols: terminal.cols, rows: terminal.rows }
-        window.terminay.resizeTerminal(sessionId, terminal.cols, terminal.rows)
+        resizePanel(terminal.cols, terminal.rows)
       }
       updateRemoteViewportMetadata(sessionId, root)
     }
@@ -489,53 +537,108 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     fitAndResize(true)
 
-    // Restore the session's current screen/scrollback from the authoritative
-    // buffer the main process keeps (the same buffer it replays to remote
-    // viewers). This makes a freshly-mounted xterm — whether brand new, moved
-    // between projects, or adopted by another window — show prior history
-    // instead of starting blank. Fetch the snapshot first, then subscribe to
-    // live data, so replayed and live output never duplicate.
     let dataReplayDisposed = false
     let terminalDataDisposer: (() => void) | null = null
-    const subscribeToTerminalData = () => {
-      terminalDataDisposer = window.terminay.onTerminalData((message) => {
-        if (message.id !== sessionId) {
-          return
-        }
+    let panelOutputDisposer: (() => void) | null = null
+    let panelExitDisposer: (() => void) | null = null
+    let panelResyncDisposer: (() => void) | null = null
+    let terminalExitDisposer: (() => void) = () => {}
 
-        terminal.write(message.data)
-      })
+    const renderTerminalExit = (exitCode: number, signal: number | null) => {
+      if (
+        settingsRef.current.autoCloseTerminalOnExitZero &&
+        exitCode === 0 &&
+        signal == null
+      ) {
+        return
+      }
+
+      const exitDescription =
+        signal == null
+          ? `code ${exitCode}`
+          : `signal ${signal} (code ${exitCode})`
+      terminal.write(`\r\n\x1b[31m[process exited with ${exitDescription}]\x1b[0m\r\n`)
     }
 
-    void window.terminay
-      .getTerminalBuffer(sessionId)
-      .then((buffer) => {
+    const renderTerminalResync = () => {
+      terminal.write('\r\n\x1b[33m[terminal output requires resync]\x1b[0m\r\n')
+    }
+
+    if (useServerTerminal && panelClient !== undefined && panelIdentity !== undefined && panelClientId !== undefined) {
+      const mode = props.params.terminalClientMode ?? 'attach'
+      const request = {
+        serverId: panelIdentity.serverId,
+        projectId: panelIdentity.projectId,
+        sessionId,
+        clientId: panelClientId,
+        ...(props.params.terminalClientFromPosition === undefined ? {} : { fromPosition: props.params.terminalClientFromPosition }),
+      }
+      void (mode === 'resume' ? panelClient.resume(request) : panelClient.attach(request)).then((attachment) => {
         if (dataReplayDisposed) {
+          void attachment.detach().catch(() => {})
           return
         }
-        if (buffer) {
-          terminal.write(buffer)
-        }
-        subscribeToTerminalData()
-      })
-      .catch(() => {
-        if (dataReplayDisposed) {
-          return
-        }
-        subscribeToTerminalData()
-      })
 
-    const terminalExitDisposer = window.terminay.onTerminalExit((message) => {
-      if (message.id !== sessionId) {
-        return
+        panelAttachment = attachment
+        for (const event of attachment.initialEvents) {
+          if (event.type === 'output') {
+            terminal.write(event.bytes, () => {
+              void attachment.ack(event.nextPosition).catch(() => {})
+            })
+          } else if (event.type === 'exit') {
+            renderTerminalExit(event.exitCode, event.signal)
+          } else {
+            renderTerminalResync()
+          }
+        }
+        panelOutputDisposer = attachment.onOutput((event) => {
+          terminal.write(event.bytes, () => {
+            void attachment.ack(event.nextPosition).catch(() => {})
+          })
+        })
+        panelExitDisposer = attachment.onExit((event) => renderTerminalExit(event.exitCode, event.signal))
+        panelResyncDisposer = attachment.onResync(() => renderTerminalResync())
+
+        const queuedInput = pendingPanelInput
+        pendingPanelInput = []
+        pendingPanelInputLength = 0
+        for (const input of queuedInput) writePanelInput(input)
+        if (pendingPanelResize !== null) {
+          const resize = pendingPanelResize
+          pendingPanelResize = null
+          void attachment.resize(resize).catch((error: unknown) => {
+            console.error('Server terminal resize failed', error)
+          })
+        }
+      }).catch((error: unknown) => {
+        if (!dataReplayDisposed) console.error('Server terminal attachment failed', error)
+      })
+    } else {
+      // Compatibility path while the existing preload bridge is still the
+      // host's source of Local terminal data. The panel above can switch to
+      // the server contract without changing xterm setup or interaction UX.
+      const subscribeToTerminalData = () => {
+        terminalDataDisposer = window.terminay.onTerminalData((message) => {
+          if (message.id !== sessionId) return
+          terminal.write(message.data)
+        })
       }
 
-      if (settingsRef.current.autoCloseTerminalOnExitZero && message.exitCode === 0) {
-        return
-      }
+      void window.terminay
+        .getTerminalBuffer(sessionId)
+        .then((buffer) => {
+          if (dataReplayDisposed) return
+          if (buffer) terminal.write(buffer)
+          subscribeToTerminalData()
+        })
+        .catch(() => {
+          if (!dataReplayDisposed) subscribeToTerminalData()
+        })
 
-      terminal.write(`\r\n\x1b[31m[process exited with code ${message.exitCode}]\x1b[0m\r\n`)
-    })
+      terminalExitDisposer = window.terminay.onTerminalExit((message) => {
+        if (message.id === sessionId) renderTerminalExit(message.exitCode, message.signal ?? null)
+      })
+    }
 
     const zoomDisposer = window.terminay.onTerminalZoomChanged((message) => {
       zoomLevelRef.current = message.zoomLevel
@@ -583,7 +686,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
 
     const dataDisposer = terminal.onData((data) => {
-      window.terminay.writeTerminal(sessionId, data)
+      writePanelInput(data)
     })
 
     const resizeDisposer = props.api.onDidDimensionsChange(() => {
@@ -706,7 +809,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return
       }
 
-      window.terminay.writeTerminal(sessionId, `${escapePathForShell(customEvent.detail.path)} `)
+      writePanelInput(`${escapePathForShell(customEvent.detail.path)} `)
       terminal.focus()
       announceTerminalFocus()
     }
@@ -756,7 +859,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       event.preventDefault()
       event.stopPropagation()
 
-      window.terminay.writeTerminal(sessionId, `${droppedText} `)
+      writePanelInput(`${droppedText} `)
       terminal.focus()
       announceTerminalFocus()
     }
@@ -822,8 +925,18 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       keyDisposer.dispose()
       dataDisposer.dispose()
       terminalExitDisposer()
+      panelOutputDisposer?.()
+      panelExitDisposer?.()
+      panelResyncDisposer?.()
       dataReplayDisposed = true
       terminalDataDisposer?.()
+      const attachmentToDetach = panelAttachment
+      panelAttachment = null
+      terminalPanelResizeRef.current = () => {}
+      pendingPanelInput = []
+      pendingPanelInputLength = 0
+      pendingPanelResize = null
+      if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
       contextReaderDisposer?.()
       zoomDisposer()
       remoteSizeOverrideDisposer()
@@ -833,7 +946,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminalRef.current = null
       terminal.dispose()
     }
-  }, [announceTerminalFocus, props.api, props.params.registerTerminalContextReader, props.params.sessionId])
+  }, [announceTerminalFocus, props.api, props.params.registerTerminalContextReader, props.params.sessionId, props.params.terminalClientFromPosition, props.params.terminalClientId, props.params.terminalClientIdentity, props.params.terminalClientMode, props.params.terminalPanelClient])
 
   useEffect(() => {
     settingsRef.current = settings
@@ -862,9 +975,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     clearRemoteTerminalElementSize(root, terminal)
     fitAddon.fit()
-    window.terminay.resizeTerminal(props.params.sessionId, terminal.cols, terminal.rows)
+    const useServerTerminal = props.params.terminalPanelClient !== undefined && props.params.terminalClientIdentity !== undefined && props.params.terminalClientId !== undefined
+    if (useServerTerminal) {
+      terminalPanelResizeRef.current(terminal.cols, terminal.rows)
+    } else {
+      window.terminay.resizeTerminal(props.params.sessionId, terminal.cols, terminal.rows)
+    }
     updateRemoteViewportMetadata(props.params.sessionId, root)
-  }, [props.params.color, props.params.sessionId, settings])
+  }, [props.params.color, props.params.sessionId, props.params.terminalClientId, props.params.terminalClientIdentity, props.params.terminalPanelClient, settings])
 
   useEffect(() => {
     const note = noteRef.current

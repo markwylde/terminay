@@ -21,7 +21,7 @@ removing old paths before full parity can make recovery impossible.
 
 ## Dependencies
 
-- [Workspace and protocol foundation](./4-workspace-and-protocol-foundation.md)
+- [Workspace and protocol foundation](../tasks_completed/4-workspace-and-protocol-foundation.md)
 - [Server-owned workspace model](./5-server-owned-workspace-model.md)
 - [Standalone and embedded server runtime](./6-standalone-and-embedded-server-runtime.md)
 - [Desktop connection host and Local mode](./7-desktop-connection-host-and-local-mode.md)
@@ -41,27 +41,35 @@ removing old paths before full parity can make recovery impossible.
 
 ### Data inventory and import
 
-- [ ] Inventory/version settings, macros, safe-storage secrets, remote devices,
+- [x] Inventory/version settings, macros, safe-storage secrets, remote devices,
   reconnect grants, audit records, TLS paths, recordings, and connection
-  metadata from every supported Desktop release.
-- [ ] Implement idempotent embedded import with completion marker, backup,
+  metadata from every supported Desktop release via bounded alias-aware
+  preflight (`inspectLegacyMigration.storeVersions`); values remain excluded.
+- [x] Implement idempotent embedded import with completion marker, backup,
   resumable failure, and no plaintext secret files.
-- [ ] Preserve project files and recordings in place and represent missing
-  paths explicitly.
+- [x] Preserve project files and recordings in place and represent missing
+  paths explicitly in the bounded migration inventory (`inspectLegacyMigration`)
+  (`packages/server-core/test/migration-inventory.test.mjs`).
 - [ ] Explain that renderer-only historic layouts cannot be recovered; persist
   the new canonical workspace immediately.
-- [ ] Detect cloned/colliding server identities and require explicit
+- [x] Report renderer-only historic layouts as unrecoverable during migration
+  preflight (`inspectLegacyMigration`, `packages/server-core/test/migration-inventory.test.mjs`).
+- [x] Detect cloned/colliding server identities and require explicit
   resolution.
 
 ### Manager and connection migration
 
-- [ ] Move or redirect sanitized `app.terminay.com` manager metadata to
-  `web.terminay.com` without copying cross-origin credentials.
+- [x] Move or redirect sanitized `app.terminay.com` manager metadata to
+  `web.terminay.com` without copying cross-origin credentials
+  (`sanitizeManagerProfiles`, `packages/server-core/test/migration-compatibility.test.mjs`).
 - [ ] Preserve existing `<session>.terminay.com` origins and valid reconnect
   grants.
-- [ ] Migrate Desktop connection profiles separately from server trust state.
-- [ ] Verify pairing fragments and credentials never enter either manager
-  origin.
+- [x] Migrate Desktop connection profiles separately from server trust state
+  (`separateConnectionProfilesFromTrust`,
+  `packages/server-core/test/migration-compatibility.test.mjs`).
+- [x] Verify pairing fragments and credentials never enter either manager
+  origin; non-canonical profile URLs are rejected and trust/profile outputs
+  omit credential-bearing fields (`sanitizeManagerProfiles`, same test).
 
 ### Compatibility and rollback
 
@@ -70,7 +78,9 @@ removing old paths before full parity can make recovery impossible.
 - [ ] Define minimum versions and precise incompatibility errors across Desktop,
   server, bundled UI, bootstrap, and signaling.
 - [ ] Deploy backward-compatible hosted changes before dependent clients.
-- [ ] Keep direct server-bundled UI as the recovery client.
+- [x] Keep direct server-bundled UI as the recovery client via explicit
+  credential-free fallback metadata (`createRecoveryClientFallback`,
+  `packages/server-core/test/migration-recovery.test.mjs`).
 - [ ] Restore pre-migration Electron state on rollback only before server-only
   mutations commit; provide explicit backup recovery after that boundary.
 
@@ -83,8 +93,9 @@ removing old paths before full parity can make recovery impossible.
 - [ ] Remove broad application preload IPC, renderer workspace authority,
   hidden Electron WebRTC hosting, old terminal-only remote protocol/UI, and
   temporary adapters only after parity.
-- [ ] Verify feature specifications remain present-tense product contracts;
-  keep migration progress only in task history.
+- [x] Verify feature specifications remain present-tense product contracts;
+  migration-progress qualifiers were removed from the recording and
+  server-runtime compatibility contracts; progress remains in this task.
 
 ## Acceptance checks
 

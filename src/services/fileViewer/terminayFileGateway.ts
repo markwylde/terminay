@@ -1,3 +1,4 @@
+import { FileViewerClient, type QueryCommandTransport } from '@terminay/client-core'
 import type {
   FileInfo,
   FileRangeRequest,
@@ -8,8 +9,10 @@ import type {
   GitFileDiff,
   FileViewerGateway,
 } from '../../types/fileViewer'
-import { parseGitDiff, toFileInfo } from '../../types/fileViewer'
+import type { FileViewerGitDiff } from '../../types/terminay'
+import { toFileInfo, toGitFileDiff } from '../../types/fileViewer'
 import { isTextLikeFile } from './capabilities'
+import { createLegacyFileViewerTransport } from './legacyFileViewerTransport'
 
 function detectMimeType(path: string): string | null {
   const extension = path.toLowerCase().split('.').pop()
@@ -43,14 +46,11 @@ function decodeBase64(base64: string): string {
   }
 }
 
-export const terminayFileGateway: FileViewerGateway = {
-  async getFileDiff(path: string): Promise<GitFileDiff> {
-    const [gitDiff, repoInfo] = await Promise.all([
-      window.terminay.getGitDiff(path),
-      window.terminay.getGitRepoInfo(path),
-    ])
-    return parseGitDiff(gitDiff, repoInfo)
-  },
+export function createTerminayFileGateway(fileViewerClient = new FileViewerClient(createLegacyFileViewerTransport())): FileViewerGateway {
+  return {
+    async getFileDiff(path: string): Promise<GitFileDiff> {
+      return toGitFileDiff(await fileViewerClient.getGitDiff(path) as unknown as FileViewerGitDiff)
+    },
   async getFileInfo(path: string): Promise<FileInfo> {
     const fileInfo = toFileInfo(await window.terminay.getFileInfo(path))
     const mimeType = detectMimeType(path)
@@ -64,7 +64,7 @@ export const terminayFileGateway: FileViewerGateway = {
       ...nextInfo,
       isBinary: !isTextLikeFile(nextInfo) && nextInfo.isFile,
     }
-  },
+    },
   getGitRepoInfo(path: string) {
     return window.terminay.getGitRepoInfo(path)
   },
@@ -148,4 +148,19 @@ export const terminayFileGateway: FileViewerGateway = {
   watchFile(path: string): Promise<void> {
     return window.terminay.watchFile(path)
   },
+  }
+}
+
+/** Shared UI uses this gateway factory; preload remains only the compatibility
+ * adapter until the Desktop host supplies a TerminayClient transport. */
+export const terminayFileGateway: FileViewerGateway = createTerminayFileGateway()
+
+export function createTerminayFileViewerClient(transport: QueryCommandTransport): FileViewerClient {
+  return new FileViewerClient(transport)
+}
+
+/** Compatibility constructor for shared file-viewer components while the
+ * Desktop host is wiring a real framed TerminayClient transport. */
+export function createLegacyFileViewerClient(): FileViewerClient {
+  return new FileViewerClient(createLegacyFileViewerTransport())
 }

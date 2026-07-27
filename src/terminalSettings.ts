@@ -375,12 +375,13 @@ export const defaultTerminalSettings: TerminalSettings = {
 	wordSeparator: ' ()[]{}\',"`',
 	fileViewer: {
 		customFileExtensions: [],
+		diffLayout: 'side-by-side',
 		folderTaskIgnoredDirectories: DEFAULT_FOLDER_TASK_IGNORED_DIRECTORIES,
 		refreshIntervalSeconds: 5,
 	},
 	keyboardShortcuts: defaultKeyboardShortcuts,
 	recording: {
-		captureInput: true,
+		captureInput: false,
 		directory: '~/Documents/TerminaySessions',
 		openTimelineAfterSaving: false,
 		recordNewTerminals: false,
@@ -985,7 +986,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				key: 'remoteAccess.webRtcIceServers',
 				label: 'WebRTC ICE servers',
 				description:
-					'Comma-separated STUN or TURN server URLs used by the WebRTC host.',
+					'Comma-separated STUN/TURN URLs, or a JSON array of ICE server objects with urls and optional TURN username/credential.',
 				sectionId: 'remote-access-host',
 				categoryId: 'remote',
 				input: 'text',
@@ -2554,6 +2555,11 @@ export function normalizeTerminalSettings(
 							) === index,
 						)
 				: defaultTerminalSettings.fileViewer.customFileExtensions,
+			diffLayout:
+				fileViewerInput.diffLayout === 'unified' ||
+				fileViewerInput.diffLayout === 'side-by-side'
+					? fileViewerInput.diffLayout
+					: defaultTerminalSettings.fileViewer.diffLayout,
 			folderTaskIgnoredDirectories:
 				typeof fileViewerInput.folderTaskIgnoredDirectories === 'string'
 					? fileViewerInput.folderTaskIgnoredDirectories

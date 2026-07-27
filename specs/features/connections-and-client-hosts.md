@@ -48,6 +48,17 @@ The menu contains:
 - diagnostics that distinguish server offline, relay unavailable, WebRTC
   route failure, expired grant, revoked device, and incompatible version.
 
+The shared browser-safe UI package projects this model into an accessible
+`menuitemradio` list with stable ordering, position/set-size metadata, and
+keyboard/touch focus behavior (arrow wrapping, Home/End, Escape, and explicit
+activation). Host capabilities gate administrative actions such as exposure;
+the menu never invokes a native operation directly.
+
+The same package exposes a route registry for workspace, connections, settings,
+recordings, macros, file, and Git surfaces. Browser hosts keep every route
+in-page; Desktop may present eligible secondary routes in native auxiliary
+windows only when its `nativeWindows` capability is declared.
+
 The existing activity/notification indicator remains separate. Connection
 status must not be conflated with terminal or agent attention.
 
@@ -55,6 +66,11 @@ status must not be conflated with terminal or agent attention.
 
 - Startup supervises the embedded server and opens/focuses a window bound to
   its **Local** profile.
+- The initial native window is explicitly bound to immutable Local and the
+  header reports the selected profile label/status (including Local failure or
+  offline state), never a transport name. Local uses authenticated loopback
+  transport and does not require internet access, hosted signaling, or WebRTC;
+  remote profiles require their own selected transport.
 - A Desktop installation has one embedded Local server identity and may
   remember any number of remote profiles.
 - A native window is bound to exactly one server at a time. Its title and
@@ -68,6 +84,33 @@ status must not be conflated with terminal or agent attention.
   Remote server shutdown/update is never implied by closing its window.
 - Desktop stores non-secret profiles locally and credentials through OS-backed
   secure storage where available.
+
+The Desktop host foundation keeps the connection manager deliberately separate
+from server workspace state. A profile record contains only its stable server
+identity, exact session origin, display metadata, timestamps, and a diagnostic
+status; pairing fragments, device keys, reconnect grants, terminal data, and
+filesystem paths are not profile fields. The embedded server creates one
+immutable `Local` profile from its stable identity before the first workspace
+client is opened. A failed identity check marks that profile as an explicit
+identity-mismatch failure and never switches to Local or another remembered
+profile implicitly. A Local crash, restart, or stopped state detaches the
+active client and marks the profile unavailable until an explicit recovery
+connects again; the host never presents a stale connected workspace.
+
+Connection management actions remain distinct: rename changes only remote
+display metadata, archive hides a remote profile without deleting its saved
+origin, forget removes host-local metadata only after confirmation, and revoke
+marks remote access unavailable only after separate confirmation. None of these
+actions can rename, archive, forget, or revoke the immutable Local profile.
+
+Native actions are exposed through a versioned, source-bound host bridge. Each
+request is checked against its bound window and current connection, rejects
+unknown payload fields, and requires a user gesture for actions that can read
+or change native state. The bridge surface is limited to window/view focus and
+close, menu commands, clipboard, approved file selection, HTTPS external
+links, server-owned reveal tokens, update status, and notifications. Server-bundled renderers
+receive a `TerminayClient` and capability provider rather than Electron or
+generic IPC imports.
 
 A normal arrangement may therefore be one Local window plus three windows
 connected to three remote servers.
@@ -87,6 +130,24 @@ connected to three remote servers.
 - The connection host cannot read terminal output, project names, paths, device
   keys, reconnect grants, PINs, or session-origin storage.
 
+The browser host implementation uses a Local-disabled `ConnectionProfileStore`
+and a versioned `terminay.web.connection-profiles.v1` metadata record. It
+restores malformed records defensively, keeps offline/relay/WebRTC/expired/
+revoked/unreachable statuses distinct, and requires explicit confirmation for
+forget or revoke. Opening a profile constructs a route-only URL on that exact
+HTTPS origin; an explicit new-tab action is host-controlled. Pairing fragments
+are consumed in memory and are not returned, persisted, or copied into the
+session URL. The host bridge accepts messages only from the exact selected
+session origin and expected window source, and rejects privileged payload keys.
+
+Legacy manager records are redirected from `app.terminay.com` to the stable
+`web.terminay.com` manager only as sanitized profile metadata. Profile ids,
+server ids, labels, fingerprints, and canonical origins may be retained;
+pairing fragments, device keys, reconnect grants, and other credentials are
+discarded. A session record retains only a canonical origin; legacy paths,
+queries, fragments, or origin userinfo are rejected rather than becoming
+manager state or a session credential.
+
 `web.terminay.com` is a stable host/manager, not a latest independent workspace
 client. The selected server's verified bundle renders the workspace.
 
@@ -99,6 +160,10 @@ The product has one full responsive workspace UI implementation:
 - remote Desktop/browser clients load it through the selected server session
   origin and existing verified asset flow;
 - it works standalone when the session URL is opened directly.
+- On mobile browsers, the workspace follows the visual viewport and resizes the
+  active terminal and surrounding content when the software keyboard appears.
+  The focused terminal remains visible and interactive without trapping the
+  page, and its previous geometry returns when the keyboard is dismissed.
 
 Desktop and web connection hosts may wrap that workspace in a small stable
 shell. Cross-origin communication is narrow, versioned, and validated:
@@ -117,7 +182,12 @@ shell. Cross-origin communication is narrow, versioned, and validated:
 
 Remote server-provided code inside Electron runs with sandboxing, context
 isolation, Node integration disabled, and no ambient privileged preload. A
-minimal host bridge validates every native action.
+minimal host bridge validates every native action. The Desktop shell resolves
+the selected server bundle manifest/assets only on that profile's exact session
+origin. Same-origin bundle navigation is allowed; arbitrary origins, URL
+credentials/query state, new windows, downloads, permission prompts, and custom
+protocol handlers are denied by default. A privileged host may explicitly allow
+one guarded request through the native policy boundary.
 
 ## Adding and pairing a connection
 
@@ -138,6 +208,13 @@ minimal host bridge validates every native action.
 Desktop may accept the pairing URL in its connection menu even when the URL
 would otherwise open a browser. Browser and Desktop flows must produce the same
 server-side device and audit semantics.
+
+The Desktop connection host consumes a pasted/deep-link pairing URL's
+one-time HTTPS fragment in memory, rejects credentials and query data, and
+persists only the exact session origin plus sanitized profile metadata. The
+fragment and any pairing URL path are never returned by the host profile API or
+serialized into the connection menu store; protocol pairing completes as a
+separate operation against that origin.
 
 ## Exposing a server
 

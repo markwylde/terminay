@@ -1,4 +1,11 @@
-import { constants, createHash, verify as verifySignature } from 'node:crypto'
+import {
+  constants,
+  createHash,
+  hkdfSync,
+  randomBytes,
+  randomUUID,
+  verify as verifySignature,
+} from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import https from 'node:https'
 import os from 'node:os'
@@ -87,8 +94,9 @@ type JsonResponse = Record<string, unknown>
 type WebRtcHostConfig = {
   appOrigin: string
   expiresAt: string
-  iceServers: Array<{ urls: string | string[] }>
+  iceServers: RTCIceServer[]
   relayJoinTokenHash: string
+  reconnectRegistrationToken: string
   reconnect?: {
     attemptId: string
     protocolVersion: 'v1'
@@ -110,6 +118,7 @@ type WebRtcTerminalPeer = RemoteConnectionPeer & {
 type WebRtcHostRuntime = {
   hostWindow: ReturnType<RemoteAccessServiceOptions['createWebRtcHostWindow']>
   ownsSignalSocket: boolean
+  pendingSignalMessages: string[]
   phase: 'waiting' | 'pairing' | 'connected' | 'failed'
   ready: boolean
   signalSocket: WebSocket | null
@@ -118,8 +127,9 @@ type WebRtcHostRuntime = {
 type PendingWebRtcReconnect = {
   appOrigin: string
   clientNonce: string
+  expiresAt: number
   handle: string
-  iceServers: Array<{ urls: string | string[] }>
+  iceServers: RTCIceServer[]
   origin: string
   sessionId: string
   signalingUrl: string
@@ -127,9 +137,23 @@ type PendingWebRtcReconnect = {
   webContentsId: number | null
 }
 
+type ReconnectSignalAuth = {
+  attemptId: string
+  expiresAt: string
+  iceServers: RTCIceServer[]
+  keyId: string
+  nonce: string
+  protocolVersion: 'v1'
+  reconnectHandle: string
+  salt: string
+  sessionId: string
+}
+
 type WebRtcReconnectAvailabilityRuntime = {
   appOrigin: string
-  iceServers: Array<{ urls: string | string[] }>
+  iceServers: RTCIceServer[]
+  reconnectRegistrationToken: string
+  refreshTimer: NodeJS.Timeout | null
   sessionId: string
   signalingUrl: string
   socket: WebSocket
@@ -137,12 +161,53 @@ type WebRtcReconnectAvailabilityRuntime = {
 
 const MAX_BUFFER_LENGTH = 200_000
 const MAX_SESSION_SNAPSHOT_BUFFER_LENGTH = 50_000
-const WEBRTC_HOST_REGISTERING_MESSAGE =
-  'WebRTC relay host is connecting to the signaling relay. Keep Terminay open while it becomes ready.'
-const WEBRTC_HOST_NOT_READY_MESSAGE =
-  'WebRTC relay is configured, but the host could not become ready. Check the WebRTC hosted domain and signaling relay settings, then stop and start Remote Access to retry.'
-const WEBRTC_HOST_RELAY_LOST_MESSAGE =
-  'WebRTC relay host lost its signaling connection. Check the WebRTC hosted domain and signaling relay settings, then stop and start Remote Access to retry.'
+const RECONNECT_LEASE_MS = 5 * 60 * 1000
+const RECONNECT_REFRESH_MIN_MS = 45 * 1000
+const RECONNECT_REFRESH_JITTER_MS = 30 * 1000
+
+export function createReconnectLeaseTiming(
+  now = Date.now(),
+  random = Math.random(),
+): { expiresAt: string; refreshDelayMs: number } {
+  const boundedRandom = Math.min(1, Math.max(0, random))
+  return {
+    expiresAt: new Date(now + RECONNECT_LEASE_MS).toISOString(),
+    refreshDelayMs:
+      RECONNECT_REFRESH_MIN_MS +
+      Math.floor(boundedRandom * RECONNECT_REFRESH_JITTER_MS),
+  }
+}
+
+function serializeReconnectSignalContext(auth: Omit<ReconnectSignalAuth, 'salt'>): string {
+  return JSON.stringify({
+    attemptId: auth.attemptId,
+    expiresAt: auth.expiresAt,
+    iceServers: auth.iceServers.map((server) => ({
+      ...(typeof server.credential === 'string' ? { credential: server.credential } : {}),
+      urls: server.urls,
+      ...(server.username ? { username: server.username } : {}),
+    })),
+    keyId: auth.keyId,
+    nonce: auth.nonce,
+    protocolVersion: auth.protocolVersion,
+    reconnectHandle: auth.reconnectHandle,
+    sessionId: auth.sessionId,
+  })
+}
+
+function deriveReconnectSignalingToken(
+  proofVerifier: string,
+  salt: string,
+  auth: Omit<ReconnectSignalAuth, 'salt'>,
+): string {
+  return Buffer.from(hkdfSync(
+    'sha256',
+    Buffer.from(proofVerifier, 'base64url'),
+    Buffer.from(salt, 'base64url'),
+    serializeReconnectSignalContext(auth),
+    32,
+  )).toString('base64url')
+}
 
 function appendToBuffer(current: string, chunk: string): string {
   const next = current + chunk
@@ -157,13 +222,104 @@ function normalizePem(value: string): string {
   return value.replace(/\r\n/g, '\n').trim()
 }
 
-function parseWebRtcIceServers(value: string): Array<{ urls: string | string[] }> {
-  const urls = String(value ?? '')
+export function parseWebRtcIceServers(value: string): RTCIceServer[] {
+  const input = String(value ?? '').trim()
+  if (!input) {
+    return [{ urls: 'stun:stun.l.google.com:19302' }]
+  }
+  if (input.length > 32 * 1024) {
+    throw new Error('WebRTC ICE server configuration exceeds 32 KiB.')
+  }
+
+  if (input.startsWith('[')) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(input)
+    } catch {
+      throw new Error('WebRTC ICE server JSON is invalid.')
+    }
+    if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 8) {
+      throw new Error('WebRTC ICE server JSON must contain between 1 and 8 entries.')
+    }
+    return parsed.map((entry) => normalizeStructuredIceServer(entry))
+  }
+
+  const urls = input
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean)
-    .filter((entry) => /^(stun|stuns|turn|turns):/i.test(entry))
-  return urls.length > 0 ? urls.map((url) => ({ urls: url })) : [{ urls: 'stun:stun.l.google.com:19302' }]
+  if (urls.length < 1 || urls.length > 16) {
+    throw new Error('WebRTC ICE server URL list must contain between 1 and 16 entries.')
+  }
+  return urls.map((url) => {
+    assertIceServerUrl(url)
+    return { urls: url }
+  })
+}
+
+function normalizeStructuredIceServer(value: unknown): RTCIceServer {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Each WebRTC ICE server entry must be an object.')
+  }
+  const entry = value as Record<string, unknown>
+  const allowedKeys = new Set(['credential', 'urls', 'username'])
+  if (Object.keys(entry).some((key) => !allowedKeys.has(key))) {
+    throw new Error('WebRTC ICE server entries contain an unsupported field.')
+  }
+  const urls = typeof entry.urls === 'string'
+    ? [entry.urls]
+    : Array.isArray(entry.urls) && entry.urls.every((url) => typeof url === 'string')
+      ? entry.urls
+      : null
+  if (!urls || urls.length < 1 || urls.length > 4) {
+    throw new Error('Each WebRTC ICE server entry requires between 1 and 4 URLs.')
+  }
+  for (const url of urls) assertIceServerUrl(url)
+
+  const hasUsername = Reflect.has(entry, 'username')
+  const hasCredential = Reflect.has(entry, 'credential')
+  if (hasUsername !== hasCredential) {
+    throw new Error('TURN username and credential must be supplied together.')
+  }
+  if (hasUsername) {
+    if (
+      typeof entry.username !== 'string' ||
+      entry.username.length < 1 ||
+      entry.username.length > 512 ||
+      typeof entry.credential !== 'string' ||
+      entry.credential.length < 1 ||
+      entry.credential.length > 2048
+    ) {
+      throw new Error('TURN username or credential has an invalid length.')
+    }
+    if (urls.some((url) => !/^turns?:/i.test(url))) {
+      throw new Error('WebRTC ICE credentials apply only to TURN URLs.')
+    }
+  }
+
+  return {
+    ...(hasCredential ? {
+      credential: entry.credential as string,
+      username: entry.username as string,
+    } : {}),
+    urls: typeof entry.urls === 'string' ? urls[0] : urls,
+  }
+}
+
+function assertIceServerUrl(value: string): void {
+  if (
+    value.length < 1 ||
+    value.length > 2048 ||
+    !/^(stun|stuns|turn|turns):/i.test(value) ||
+    value.includes('@') ||
+    /\s/.test(value) ||
+    Array.from(value).some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0
+      return codePoint < 0x20 || codePoint === 0x7f
+    })
+  ) {
+    throw new Error('WebRTC ICE server configuration contains an invalid URL.')
+  }
 }
 
 function jsonResponse(body: JsonResponse, status = 200): { body: Buffer; contentType: string; status: number } {
@@ -290,6 +446,8 @@ export class RemoteAccessService {
             url: this.pairingUrl,
           }
 
+    const webRtcHostReady = this.isActiveWebRtcHostReady()
+
     return {
       activeConnectionCount: this.connectionStore.count(),
       pendingWebRtcConnectionCount: this.getPendingWebRtcConnectionCount(),
@@ -336,14 +494,12 @@ export class RemoteAccessService {
       webRtcPairingQrCodeDataUrl: this.webRtcPairingQrCodeDataUrl,
       webRtcPairingUrl: this.webRtcPairingUrl,
       webRtcRoomId: this.webRtcRoomId,
-      webRtcStatus: this.webRtcStatus,
+      webRtcStatus: webRtcHostReady ? 'pairing-ready' : this.webRtcStatus,
       webRtcStatusMessage:
         this.webRtcStatusMessage ??
-        (this.webRtcStatus === 'registering'
-          ? WEBRTC_HOST_REGISTERING_MESSAGE
-          : this.webRtcStatus === 'error'
-            ? WEBRTC_HOST_NOT_READY_MESSAGE
-            : null),
+        (this.webRtcPairingUrl
+          ? 'The WebRTC pairing room exists, but this Terminay host is not ready yet. Keep Terminay open and retry; check Remote Access settings if this persists.'
+          : null),
     }
   }
 
@@ -370,7 +526,7 @@ export class RemoteAccessService {
     const device = this.deviceStore.get(deviceId)
     await this.deviceStore.revoke(deviceId)
     await this.reconnectGrantStore.revokeForDevice(deviceId)
-    this.syncWebRtcReconnectAvailability()
+    await this.syncWebRtcReconnectAvailability()
     for (const connection of this.connectionStore.list()) {
       if (connection.deviceId === deviceId) {
         this.clearRemoteSizeOverridesForConnection(connection.connectionId)
@@ -464,7 +620,7 @@ export class RemoteAccessService {
       : session.buffer
   }
 
-  markSessionExit(id: string, exitCode: number): void {
+  markSessionExit(id: string, exitCode: number, signal: number | null = null): void {
     const session = this.sessions.get(id)
     if (!session) {
       return
@@ -474,6 +630,7 @@ export class RemoteAccessService {
     this.broadcast({
       exitCode,
       sessionId: id,
+      signal,
       type: 'exit',
     })
     this.removeSession(id)
@@ -608,7 +765,7 @@ export class RemoteAccessService {
         this.pairingQrCodePath = null
         this.pairingUrl = null
         await this.rotateWebRtcPairingCode()
-        this.syncWebRtcReconnectAvailability()
+        await this.syncWebRtcReconnectAvailability()
         this.emitStatus()
         return
       }
@@ -692,15 +849,21 @@ export class RemoteAccessService {
     this.webRtcPairingUrl = null
     this.webRtcRoomId = null
     this.webRtcActivePairingWebContentsId = null
-    this.webRtcStatus = 'not-configured'
     this.closeWebRtcPairingHost()
     this.closeWebRtcReconnectAvailability()
+    this.webRtcStatus = 'not-configured'
     this.webRtcStatusMessage = null
     this.emitStatus()
   }
 
   private emitStatus(): void {
     this.onStatusChanged(this.getStatus())
+  }
+
+  private isActiveWebRtcHostReady(): boolean {
+    return this.webRtcActivePairingWebContentsId !== null
+      ? this.webRtcHostRuntimesByWebContentsId.get(this.webRtcActivePairingWebContentsId)?.ready === true
+      : false
   }
 
   private getPendingWebRtcConnectionCount(): number {
@@ -755,9 +918,10 @@ export class RemoteAccessService {
 
   private async rotateWebRtcPairingCode(): Promise<void> {
     const settings = this.getRemoteAccessSettings()
-    this.webRtcStatus = 'registering'
 
     try {
+      this.webRtcStatus = 'registering'
+      this.webRtcStatusMessage = 'WebRTC relay room is registering. Keep Terminay open while the browser connects.'
       if (!settings.pairingPinHash.trim()) {
         throw new Error('Set a Remote Access PIN before generating a WebRTC QR code.')
       }
@@ -780,17 +944,19 @@ export class RemoteAccessService {
         margin: 2,
         width: 720,
       })
+      const reconnectRegistrationToken =
+        await this.reconnectGrantStore.getOrCreateHostRegistrationToken(payload.sessionId)
       this.openWebRtcPairingHost({
         appOrigin: payload.appOrigin,
         expiresAt: payload.expiresAt,
         iceServers: parseWebRtcIceServers(settings.webRtcIceServers),
         relayJoinTokenHash: payload.relayJoinTokenHash,
+        reconnectRegistrationToken,
         roomId: payload.roomId,
         sessionId: payload.sessionId,
         signalingAuthToken: payload.signalingAuthToken,
         signalingUrl: payload.signalingUrl,
       })
-      this.webRtcStatusMessage = WEBRTC_HOST_REGISTERING_MESSAGE
     } catch (error) {
       this.webRtcPairingExpiresAt = null
       this.webRtcPairingUrl = null
@@ -798,8 +964,7 @@ export class RemoteAccessService {
       this.webRtcActivePairingWebContentsId = null
       this.webRtcPairingQrCodeDataUrl = null
       this.webRtcStatus = 'error'
-      const detail = error instanceof Error ? error.message : 'Unable to generate WebRTC pairing QR.'
-      this.webRtcStatusMessage = `WebRTC relay pairing could not be prepared: ${detail} Check the WebRTC hosted domain and signaling relay settings, then stop and start Remote Access to retry.`
+      this.webRtcStatusMessage = error instanceof Error ? error.message : 'Unable to generate WebRTC pairing QR.'
     }
   }
 
@@ -853,6 +1018,7 @@ export class RemoteAccessService {
     }
 
     if (message.type === 'reconnect-intent') {
+      this.pruneWebRtcReconnectAttempts()
       const sessionId = String(message.sessionId ?? '')
       const reconnectHandle = String(message.reconnectHandle ?? '')
       const clientNonce = String(message.clientNonce ?? '')
@@ -866,6 +1032,7 @@ export class RemoteAccessService {
       this.webRtcReconnectAttemptsById.set(challenge.payload.attemptId, {
         appOrigin: config.appOrigin,
         clientNonce,
+        expiresAt: Date.parse(challenge.payload.expiresAt),
         handle: reconnectHandle,
         iceServers: config.iceServers,
         origin,
@@ -877,7 +1044,6 @@ export class RemoteAccessService {
       socket.send(JSON.stringify({
         ...challenge.payload,
         reconnectHandle: challenge.payload.handle,
-        signingInput: challenge.signingInput,
         type: 'reconnect-challenge',
       }))
       return
@@ -889,18 +1055,58 @@ export class RemoteAccessService {
       if (!attempt) {
         throw new Error('This reconnect challenge is no longer valid.')
       }
-      const grant = await this.reconnectGrantStore.verifyProof({
+      let grant: ReconnectGrantRecord
+      try {
+        grant = await this.reconnectGrantStore.verifyProof({
+          attemptId,
+          clientNonce: String(message.clientNonce ?? ''),
+          handle: attempt.handle,
+          lifetime: resolveReconnectGrantLifetime(this.getRemoteAccessSettings().reconnectGrantLifetime),
+          origin: attempt.origin,
+          proof: String(message.proof ?? ''),
+          verifyDeviceProof: (deviceId, signingInput) => {
+            const device = this.deviceStore.get(deviceId)
+            if (!device) return false
+            return verifySignature(
+              'sha256',
+              Buffer.from(signingInput),
+              {
+                key: normalizePem(device.publicKeyPem),
+                padding: constants.RSA_PKCS1_PSS_PADDING,
+                saltLength: 32,
+              },
+              Buffer.from(String(message.deviceProof ?? ''), 'base64url'),
+            )
+          },
+        })
+      } catch (error) {
+        this.webRtcReconnectAttemptsById.delete(attemptId)
+        this.reconnectGrantStore.cancelChallenge(attemptId)
+        throw error
+      }
+      const signalAuthWithoutSalt = {
         attemptId,
-        clientNonce: String(message.clientNonce ?? ''),
-        handle: attempt.handle,
-        lifetime: resolveReconnectGrantLifetime(this.getRemoteAccessSettings().reconnectGrantLifetime),
-        origin: attempt.origin,
-        proof: String(message.proof ?? ''),
-      })
-      socket.send(JSON.stringify({
+        expiresAt: new Date(Date.now() + 60 * 1000).toISOString(),
         iceServers: attempt.iceServers,
-        signalingAuthToken: String(message.proof ?? ''),
+        keyId: randomUUID(),
+        nonce: randomBytes(24).toString('base64url'),
+        protocolVersion: 'v1' as const,
+        reconnectHandle: attempt.handle,
+        sessionId: grant.sessionId,
+      }
+      const signalSalt = randomBytes(32).toString('base64url')
+      const signalingAuthToken = deriveReconnectSignalingToken(
+        grant.proofVerifier,
+        signalSalt,
+        signalAuthWithoutSalt,
+      )
+      socket.send(JSON.stringify({
         type: 'reconnect-accepted',
+      }))
+      socket.send(JSON.stringify({
+        ...signalAuthWithoutSalt,
+        salt: signalSalt,
+        type: 'reconnect-signal-auth',
       }))
       attempt.webContentsId = this.openWebRtcReconnectHost({
         appOrigin: attempt.appOrigin,
@@ -909,10 +1115,15 @@ export class RemoteAccessService {
         reconnectHandle: attempt.handle,
         savedSessionExpiresAt: grant.expiresAt ?? '',
         sessionId: grant.sessionId,
-        signalingAuthToken: String(message.proof ?? ''),
+        signalingAuthToken,
         signalingSocket: socket,
         signalingUrl: attempt.signalingUrl,
       })
+      return
+    }
+
+    if (message.type === 'reconnect-complete') {
+      this.closeWebRtcReconnectAttempt(String(message.attemptId ?? ''))
       return
     }
 
@@ -921,6 +1132,23 @@ export class RemoteAccessService {
       const webContentsId = attempt?.webContentsId
       if (!webContentsId) return
       this.getWebRtcHostRuntime(webContentsId)?.hostWindow.sendSignalMessage(message)
+    }
+  }
+
+  private pruneWebRtcReconnectAttempts(): void {
+    const now = Date.now()
+    for (const [attemptId, attempt] of this.webRtcReconnectAttemptsById) {
+      if (attempt.expiresAt <= now) this.closeWebRtcReconnectAttempt(attemptId)
+    }
+  }
+
+  private closeWebRtcReconnectAttempt(attemptId: string): void {
+    const attempt = this.webRtcReconnectAttemptsById.get(attemptId)
+    if (!attempt) return
+    this.webRtcReconnectAttemptsById.delete(attemptId)
+    this.reconnectGrantStore.cancelChallenge(attemptId)
+    if (attempt.webContentsId) {
+      this.closeWebRtcHostRuntime(attempt.webContentsId, 'Reconnect attempt completed')
     }
   }
 
@@ -948,13 +1176,14 @@ export class RemoteAccessService {
     for (const [entrySessionId, runtime] of entries) {
       if (!runtime) continue
       this.webRtcReconnectAvailabilityBySessionId.delete(entrySessionId)
+      if (runtime.refreshTimer) clearTimeout(runtime.refreshTimer)
       if (runtime.socket.readyState !== WebSocket.CLOSING && runtime.socket.readyState !== WebSocket.CLOSED) {
         runtime.socket.close(1000, 'Reconnect availability stopped')
       }
     }
   }
 
-  private syncWebRtcReconnectAvailability(): void {
+  private async syncWebRtcReconnectAvailability(): Promise<void> {
     const settings = this.getRemoteAccessSettings()
     const grantsBySessionId = new Map<string, ReconnectGrantRecord>()
 
@@ -978,24 +1207,33 @@ export class RemoteAccessService {
 
       const appOrigin = this.getWebRtcGrantAppOrigin(grant)
       const signalingUrl = this.createWebRtcSignalingUrl(appOrigin)
-      const socket = new WebSocket(signalingUrl)
+      const reconnectRegistrationToken =
+        await this.reconnectGrantStore.getOrCreateHostRegistrationToken(sessionId)
+      const socket = new WebSocket(signalingUrl, { origin: appOrigin })
       const runtime: WebRtcReconnectAvailabilityRuntime = {
         appOrigin,
         iceServers: parseWebRtcIceServers(settings.webRtcIceServers),
+        reconnectRegistrationToken,
+        refreshTimer: null,
         sessionId,
         signalingUrl,
         socket,
       }
       this.webRtcReconnectAvailabilityBySessionId.set(sessionId, runtime)
 
-      socket.on('open', () => {
+      const advertise = () => {
         if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !== socket) return
+        const lease = createReconnectLeaseTiming()
         socket.send(JSON.stringify({
-          expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          expiresAt: lease.expiresAt,
+          reconnectRegistrationToken,
           sessionIds: [sessionId],
           type: 'reconnect-host-ready',
         }))
-      })
+        runtime.refreshTimer = setTimeout(advertise, lease.refreshDelayMs)
+        runtime.refreshTimer.unref?.()
+      }
+      socket.on('open', advertise)
 
       socket.on('message', (raw) => {
         if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !== socket) return
@@ -1014,6 +1252,7 @@ export class RemoteAccessService {
           expiresAt: '',
           iceServers: runtime.iceServers,
           relayJoinTokenHash: '',
+          reconnectRegistrationToken,
           roomId: runtime.sessionId,
           sessionId: runtime.sessionId,
           signalingAuthToken: '',
@@ -1028,6 +1267,10 @@ export class RemoteAccessService {
 
       socket.on('close', () => {
         if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket === socket) {
+          if (runtime.refreshTimer) clearTimeout(runtime.refreshTimer)
+          for (const [attemptId, attempt] of this.webRtcReconnectAttemptsById) {
+            if (attempt.socket === socket) this.closeWebRtcReconnectAttempt(attemptId)
+          }
           this.webRtcReconnectAvailabilityBySessionId.delete(sessionId)
         }
       })
@@ -1043,8 +1286,9 @@ export class RemoteAccessService {
   private openWebRtcPairingHost(options: {
     appOrigin: string
     expiresAt: string
-    iceServers: Array<{ urls: string | string[] }>
+    iceServers: RTCIceServer[]
     relayJoinTokenHash: string
+    reconnectRegistrationToken: string
     roomId: string
     sessionId: string
     signalingAuthToken: string
@@ -1056,6 +1300,7 @@ export class RemoteAccessService {
       expiresAt: options.expiresAt,
       iceServers: options.iceServers,
       relayJoinTokenHash: options.relayJoinTokenHash,
+      reconnectRegistrationToken: options.reconnectRegistrationToken,
       roomId: options.roomId,
       sessionId: options.sessionId,
       signalingAuthToken: options.signalingAuthToken,
@@ -1065,18 +1310,20 @@ export class RemoteAccessService {
     this.webRtcHostRuntimesByWebContentsId.set(hostWindow.webContentsId, {
       hostWindow,
       ownsSignalSocket: true,
+      pendingSignalMessages: [],
       phase: 'waiting',
       ready: false,
       signalSocket: null,
     })
     this.webRtcActivePairingWebContentsId = hostWindow.webContentsId
+    this.webRtcStatus = 'registering'
     hostWindow.sendConfig(hostConfig)
   }
 
   private openWebRtcReconnectHost(options: {
     appOrigin: string
     attemptId: string
-    iceServers: Array<{ urls: string | string[] }>
+    iceServers: RTCIceServer[]
     reconnectHandle: string
     savedSessionExpiresAt: string
     sessionId: string
@@ -1097,6 +1344,7 @@ export class RemoteAccessService {
         sessionId: options.sessionId,
       },
       relayJoinTokenHash: '',
+      reconnectRegistrationToken: '',
       roomId: options.sessionId,
       sessionId: options.sessionId,
       signalingAuthToken: options.signalingAuthToken,
@@ -1106,6 +1354,7 @@ export class RemoteAccessService {
     this.webRtcHostRuntimesByWebContentsId.set(hostWindow.webContentsId, {
       hostWindow,
       ownsSignalSocket: false,
+      pendingSignalMessages: [],
       phase: 'waiting',
       ready: false,
       signalSocket: options.signalingSocket,
@@ -1126,7 +1375,7 @@ export class RemoteAccessService {
     }
 
     this.closeWebRtcSignalSocket(runtime)
-    const socket = new WebSocket(config.signalingUrl)
+    const socket = new WebSocket(config.signalingUrl, { origin: config.appOrigin })
     runtime.signalSocket = socket
 
     socket.on('open', () => {
@@ -1134,7 +1383,9 @@ export class RemoteAccessService {
       socket.send(JSON.stringify({
         expiresAt: config.expiresAt,
         relayJoinTokenHash: config.relayJoinTokenHash,
+        reconnectRegistrationToken: config.reconnectRegistrationToken,
         roomId: config.roomId,
+        sessionId: config.sessionId,
         type: 'host-ready',
       }))
     })
@@ -1185,15 +1436,37 @@ export class RemoteAccessService {
 
   handleWebRtcHostSignalMessage(webContentsId: number, message: unknown): void {
     if (!this.webRtcHostConfigByWebContentsId.has(webContentsId)) return
-    const socket = this.getWebRtcHostRuntime(webContentsId)?.signalSocket ?? null
+    const runtime = this.getWebRtcHostRuntime(webContentsId)
+    const socket = runtime?.signalSocket ?? null
+    let serializedMessage: string
+    try {
+      serializedMessage = JSON.stringify(message)
+    } catch {
+      this.handleWebRtcHostStatus(webContentsId, {
+        detail: 'The WebRTC signaling message was not serializable.',
+        type: 'error',
+      })
+      return
+    }
     if (!socket || socket.readyState !== WebSocket.OPEN) {
+      if (runtime?.ownsSignalSocket && runtime.pendingSignalMessages.length < 256) {
+        const pendingBytes = runtime.pendingSignalMessages.reduce(
+          (total, pending) => total + Buffer.byteLength(pending),
+          0,
+        )
+        const messageBytes = Buffer.byteLength(serializedMessage)
+        if (pendingBytes + messageBytes <= 128 * 1024) {
+          runtime.pendingSignalMessages.push(serializedMessage)
+          return
+        }
+      }
       this.handleWebRtcHostStatus(webContentsId, {
         detail: 'The WebRTC signaling relay is not connected.',
         type: 'error',
       })
       return
     }
-    socket.send(JSON.stringify(message))
+    socket.send(serializedMessage)
   }
 
   handleWebRtcHostStatus(webContentsId: number, message: { detail?: string; type?: string }): void {
@@ -1202,7 +1475,12 @@ export class RemoteAccessService {
 
     if (message.type === 'host-registered') {
       runtime.ready = true
-      runtime.phase = 'waiting'
+      const socket = runtime.signalSocket
+      if (socket?.readyState === WebSocket.OPEN) {
+        for (const pending of runtime.pendingSignalMessages.splice(0)) {
+          socket.send(pending)
+        }
+      }
       if (this.webRtcActivePairingWebContentsId === webContentsId) {
         this.webRtcStatus = 'pairing-ready'
         this.webRtcStatusMessage = 'WebRTC relay room is ready. Scan the QR code to connect another browser.'
@@ -1229,22 +1507,16 @@ export class RemoteAccessService {
     }
 
     if (message.type === 'error') {
-      const wasReady = runtime.ready
       runtime.ready = false
-      runtime.phase = 'failed'
+      if (runtime.phase === 'pairing') {
+        runtime.phase = 'failed'
+      }
       const config = this.webRtcHostConfigByWebContentsId.get(webContentsId)
       if (this.webRtcActivePairingWebContentsId === webContentsId || config?.reconnect) {
         if (this.webRtcActivePairingWebContentsId === webContentsId) {
           this.webRtcStatus = 'error'
-          this.webRtcStatusMessage = wasReady
-            ? WEBRTC_HOST_RELAY_LOST_MESSAGE
-            : WEBRTC_HOST_NOT_READY_MESSAGE
-          if (message.detail) {
-            this.webRtcStatusMessage = `${this.webRtcStatusMessage} Details: ${message.detail}`
-          }
-        } else {
-          this.webRtcStatusMessage = message.detail || 'Saved-session reconnect failed.'
         }
+        this.webRtcStatusMessage = message.detail || 'The WebRTC relay rejected the pairing room.'
         this.emitStatus()
       }
       return
@@ -1253,12 +1525,16 @@ export class RemoteAccessService {
     if (message.type === 'closed') {
       const wasReady = runtime.ready
       runtime.ready = false
-      runtime.phase = 'failed'
+      if (runtime.phase !== 'connected') {
+        runtime.phase = 'failed'
+      }
       if (this.webRtcActivePairingWebContentsId === webContentsId) {
         this.webRtcStatus = 'error'
-        this.webRtcStatusMessage = wasReady
-          ? WEBRTC_HOST_RELAY_LOST_MESSAGE
-          : WEBRTC_HOST_NOT_READY_MESSAGE
+        this.webRtcStatusMessage =
+          message.detail ||
+          (wasReady
+            ? 'The WebRTC signaling connection was lost after this Terminay host became ready. Retry to advertise a fresh pairing room.'
+            : 'The WebRTC signaling connection closed before this Terminay host became ready. Retry or check Remote Access settings.')
         this.emitStatus()
       }
     }
@@ -1355,6 +1631,8 @@ export class RemoteAccessService {
             'content-security-policy':
               "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
             'content-type': staticResponse.contentType,
+            'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=()',
+            'referrer-policy': 'no-referrer',
             'x-content-type-options': 'nosniff',
           })
           response.end(staticResponse.body)
@@ -1617,7 +1895,7 @@ export class RemoteAccessService {
         deviceId: device.id,
         deviceName: device.name,
       })
-      this.syncWebRtcReconnectAvailability()
+      await this.syncWebRtcReconnectAvailability()
       this.emitStatus()
       return { deviceId: device.id, deviceName: device.name, reconnectGrant }
     }

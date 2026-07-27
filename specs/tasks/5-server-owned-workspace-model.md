@@ -21,66 +21,75 @@ can reconstruct the full workspace from authoritative state.
 
 ## Dependencies
 
-- [Workspace and protocol foundation](./4-workspace-and-protocol-foundation.md)
+- [Workspace and protocol foundation](../tasks_completed/4-workspace-and-protocol-foundation.md)
 
 ## Work slices
 
 ### Domain model
 
-- [ ] Define stable server, workspace-view, project, panel, and terminal-session
+- [x] Define stable server, workspace-view, project, panel, and terminal-session
   ids and their ownership relationships.
-- [ ] Model terminal, file, and folder panel state without importing Dockview
+- [x] Model terminal, file, and folder panel state without importing Dockview
   types into server-core.
-- [ ] Model normalized split/order/active state separately from native window
+- [x] Model normalized split/order/active state separately from native window
   ids and screen pixels.
-- [ ] Define close semantics separately for client window, logical workspace
+- [x] Define close semantics separately for client window, logical workspace
   view, panel, and PTY.
-- [ ] Define interruption/tombstone representation for sessions that were live
+- [x] Define interruption/tombstone representation for sessions that were live
   before a server restart.
 
 ### Commands and revisions
 
-- [ ] Implement snapshot, ordered event, expected-revision, idempotent command
+- [x] Implement snapshot, ordered event, expected-revision, idempotent command
   id, conflict, delta, and full-resync behaviour.
-- [ ] Add scoped commands for project/view/panel create, update, reorder, move,
+- [x] Add scoped commands for project/view/panel create, update, reorder, move,
   split, activate, and close.
-- [ ] Make multi-object moves one atomic committed revision.
-- [ ] Enforce object/server/project boundaries independently of client focus or
+- [x] Make multi-object moves one atomic committed revision.
+- [x] Enforce object/server/project boundaries independently of client focus or
   labels.
-- [ ] Add deterministic optimistic-update/rollback helpers only for safe UI
+- [x] Add deterministic optimistic-update/rollback helpers only for safe UI
   mutations.
 
 ### Persistence
 
-- [ ] Implement the selected schema-versioned state repository and atomic
+- [x] Implement the selected schema-versioned state repository and atomic
   commit path.
-- [ ] Add backup/recovery and idempotent migration primitives.
-- [ ] Persist only documented canonical state; exclude modal, hover, drag
+- [x] Add backup/recovery and idempotent migration primitives.
+- [x] Persist only documented canonical state; exclude modal, hover, drag
   geometry, search text, and unbounded terminal content.
-- [ ] Report missing roots and interrupted sessions without silently replacing
-  them.
+- [x] Report missing roots and interrupted sessions without silently replacing
+  them. `reportWorkspaceRecovery` returns explicit metadata while preserving
+  canonical project/session ids and state.
 
 ### Compatibility integration
 
-- [ ] Introduce a `TerminayClient` workspace API and adapt the current renderer
+- [x] Introduce a `TerminayClient` workspace API and adapt the current renderer
   to it without immediately changing every component.
-- [ ] Seed the first canonical workspace from the current/default renderer model
-  and persist from that point forward.
+- [x] Seed the first canonical workspace from the current/default renderer model
+  and persist from that point forward through bounded `view.create`,
+  `project.create`/`project.move`, `terminal.create`, and panel commands with
+  expected revisions; renderer/window fields are discarded and interrupted
+  sessions are not resurrected.
 - [ ] Replace opaque cross-window adopted-project payloads with server move
   commands while preserving current drag UX.
 - [ ] Remove PTY ownership from `webContentsId`; renderer subscriptions become
   detachable consumers.
-- [ ] Keep a temporary Electron IPC transport adapter behind the shared client
-  contract until the local server process task replaces it.
+- [x] Keep a temporary Electron IPC transport adapter behind the shared client
+  contract until the local server process task replaces it. The Desktop
+  compatibility bridge wraps every framed MessagePort packet in a fixed,
+  versioned server scope and exposes only `TerminayClient` to the renderer;
+  focused tests reject mismatched or malformed scopes.
 
 ### Tests
 
-- [ ] Unit-test model invariants, invalid cross-scope ids, atomic moves,
+- [x] Unit-test model invariants, invalid cross-scope ids, atomic moves,
   duplicate commands, stale revisions, delta/resync, and migrations.
-- [ ] Add two-client tests covering simultaneous non-conflicting and conflicting
+- [x] Add two-client tests covering simultaneous non-conflicting and conflicting
   commands.
-- [ ] Add renderer reload/window close tests proving workspace and PTY identity
-  remain intact.
+- [x] Add renderer reload/window close tests proving workspace and PTY identity
+  remain intact through the compatibility boundary: recreating the renderer
+  context and unbinding the native window leaves the server-scoped client and
+  terminal attachment connected with the same immutable identity.
 - [ ] Preserve current project drag, split, rename, close, popout, and adoption
   E2E coverage through the compatibility adapter.
 

@@ -69,6 +69,22 @@ Codex and Claude Code execute on the server machine using that machine's
 configured CLI/provider environment. Provider-specific commands, model-list
 formats, response envelopes, stderr, and exit codes remain inside the adapter.
 
+The server implementation builds Codex and Claude Code adapters through
+`createServerAiProviderAdapters` in `packages/server-core`. It owns the bounded
+child-process environment, model-catalog cache, CLI output cap, timeout, and
+credential callback. A credential callback may inject a vault secret into the
+short-lived provider environment, but the secret is never part of an adapter
+model/status snapshot or client payload; provider output is bounded and
+credential-redacted before it crosses the adapter boundary.
+
+Codex model discovery uses its JSON catalog command by default. Claude Code
+generation uses its non-interactive stream output mode; its model catalog is
+provided by a bounded server configuration or an injected host command because
+the CLI does not expose a stable non-interactive catalog command. Both paths
+normalize model IDs/labels and keep provider-specific envelopes inside the
+adapter. A cancelled or timed-out child is terminated and, if necessary,
+force-killed, with a typed server error.
+
 Remote clients never receive provider credentials, provider configuration
 files, raw process environment, or unbounded provider output.
 

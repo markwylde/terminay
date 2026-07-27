@@ -49,6 +49,7 @@ export type FileViewerFileInfo = {
   ctimeMs: number | null
   exists: boolean
   extension: string
+  ino: number | null
   isDirectory: boolean
   isFile: boolean
   isSymbolicLink: boolean
@@ -75,6 +76,46 @@ export type FileViewerTextRange = {
   start: number
   text: string
   totalSize: number
+}
+
+export type FileViewerTextMetadata = {
+  indexedByteLength: number
+  ino: number
+  isComplete: boolean
+  lineCount: number
+  mtimeMs: number
+  path: string
+  size: number
+}
+
+export type FileViewerTextLine = {
+  end: number
+  eol: '' | '\n' | '\r\n'
+  lineNumber: number
+  start: number
+  text: string
+}
+
+export type FileViewerTextWindow = {
+  lineCount: number
+  lines: FileViewerTextLine[]
+  path: string
+  startLine: number
+}
+
+export type FileViewerSparseFileEdit = {
+  dataBase64: string
+  end: number
+  start: number
+}
+
+export type FileViewerSparseFileSaveRequest = {
+  edits: FileViewerSparseFileEdit[]
+  expectedIno: number
+  expectedMtimeMs: number
+  expectedSize: number
+  path: string
+  projectRoot: string
 }
 
 export type FileViewerSaveRequest =
@@ -124,11 +165,25 @@ export type FileViewerGitDiff = {
   compareTarget: 'HEAD'
   gitAvailable: boolean
   hasDiff: boolean
+  hunks: FileViewerGitDiffHunk[]
   isBinary: boolean
+  isTracked: boolean
   path: string
-  patch: string
   relativePath: string | null
   repoRoot: string | null
+  tooLarge: boolean
+}
+
+export type FileViewerGitDiffHunk = {
+  header: string
+  lines: FileViewerGitDiffLine[]
+}
+
+export type FileViewerGitDiffLine = {
+  newLineNumber: number | null
+  oldLineNumber: number | null
+  type: 'add' | 'context' | 'delete'
+  value: string
 }
 
 export type TerminalDataMessage = {
@@ -167,6 +222,7 @@ export type { AgentStatusSnapshot } from './agentStatus'
 export type TerminalExitMessage = {
   id: string
   exitCode: number
+  signal?: number | null
 }
 
 export type SettingsChangeMessage = {
@@ -230,7 +286,7 @@ export type RemoteAccessStatus = {
   webRtcPairingQrCodeDataUrl: string | null
   webRtcPairingUrl: string | null
   webRtcRoomId: string | null
-  webRtcStatus: 'not-configured' | 'registering' | 'pairing-ready' | 'error'
+  webRtcStatus: 'error' | 'not-configured' | 'pairing-ready' | 'registering'
   webRtcStatusMessage: string | null
 }
 
@@ -356,10 +412,8 @@ export type TerminalRemoteSizeOverrideMessage =
 
 export type TerminalRecordingState = {
   bytesWritten: number
-  castPath: string | null
   errorMessage: string | null
   eventCount: number
-  metadataPath: string | null
   recordingId: string | null
   sessionId: string
   startedAt: string | null
@@ -378,13 +432,13 @@ export type TerminalRecordingStartMetadata = {
 }
 
 export type TerminalRecordingMetadata = {
-  version: 1
+  version: 2
   bytesWritten: number
+  castAvailable: boolean
   capturedInput: boolean
-  castPath: string
   color: string | null
   cols: number
-  cwd: string | null
+  cwdLabel: string | null
   durationMs: number | null
   endedAt: string | null
   errorMessage?: string | null
@@ -396,30 +450,41 @@ export type TerminalRecordingMetadata = {
   projectId: string | null
   projectTitle: string | null
   recordingId: string
-  recordingState: 'recording' | 'stopped' | 'failed'
+  recordingState: 'recording' | 'completed' | 'interrupted' | 'failed'
   rows: number
   sensitiveInputPolicy: 'drop' | 'mask'
   sessionId: string
-  shell: string | null
+  shellName: string | null
+  signal: number | null
   startedAt: string
   theme: import('./settings').TerminalThemeSettings | null
   title: string
 }
 
-export type TerminalRecordingListItem = TerminalRecordingMetadata & {
-  metadataPath: string | null
+export type TerminalRecordingListItem = TerminalRecordingMetadata
+
+export type TerminalRecordingChunkRequest = {
+  maxBytes?: number
+  recordingId: string
+  start?: number
 }
 
-export type TerminalRecordingCast = {
-  content: string
-  metadata: TerminalRecordingMetadata | null
-  path: string
-}
-
+/**
+ * A byte-bounded sequence of complete UTF-8 asciicast NDJSON records.
+ *
+ * Callers continue with `nextOffset`. A non-zero `start` must be an offset
+ * previously returned by this API, so chunks never split a UTF-8 code point or
+ * an NDJSON record. `incompleteTail` means a trailing partial record was
+ * withheld; it may become complete while an active recording is still growing.
+ */
 export type TerminalRecordingChunk = {
   content: string
-  done: boolean
+  eof: boolean
+  incompleteTail: boolean
   nextOffset: number
+  recordingId: string
+  start: number
+  totalSize: number
 }
 
 export type TerminalRecordingChangeMessage = {
@@ -616,6 +681,14 @@ export interface TerminayApi {
     length: number
     encoding?: FileViewerTextEncoding
   }) => Promise<FileViewerTextRange>
+  getFileTextMetadata: (options: { path: string; projectRoot: string }) => Promise<FileViewerTextMetadata>
+  readFileTextLines: (options: {
+    lineCount: number
+    path: string
+    projectRoot: string
+    startLine: number
+  }) => Promise<FileViewerTextWindow>
+  saveSparseFile: (payload: FileViewerSparseFileSaveRequest) => Promise<FileViewerSaveResult>
   saveFile: (payload: FileViewerSaveRequest) => Promise<FileViewerSaveResult>
   renameEntry: (oldPath: string, newPath: string) => Promise<void>
   deleteEntry: (path: string) => Promise<void>
@@ -660,14 +733,9 @@ export interface TerminayApi {
   startTerminalRecording: (id: string, metadata?: TerminalRecordingStartMetadata) => Promise<TerminalRecordingState>
   stopTerminalRecording: (id: string) => Promise<TerminalRecordingState>
   listTerminalRecordings: () => Promise<TerminalRecordingListItem[]>
-  readTerminalRecording: (castPath: string) => Promise<TerminalRecordingCast>
-  readTerminalRecordingChunk: (options: {
-    castPath: string
-    offset: number
-    length?: number
-  }) => Promise<TerminalRecordingChunk>
-  deleteTerminalRecording: (castPath: string) => Promise<void>
-  revealTerminalRecording: (castPath: string) => Promise<void>
+  readTerminalRecordingChunk: (request: TerminalRecordingChunkRequest) => Promise<TerminalRecordingChunk>
+  deleteTerminalRecordingById: (recordingId: string) => Promise<void>
+  revealTerminalRecordingById: (recordingId: string) => Promise<void>
   getTerminalSettings: () => Promise<import('./settings').TerminalSettings>
   updateTerminalSettings: (
     settings: import('./settings').TerminalSettings,
@@ -761,6 +829,9 @@ export interface TerminayTestApi {
     terminalSessionId: string
     nativePayload: Record<string, unknown>
   }) => Promise<number>
+  getMcpControlEnvironment: (
+    terminalSessionId: string,
+  ) => Promise<{ socketPath: string; token: string }>
   sendAppCommand: (command: AppCommand) => Promise<void>
   setAiTabMetadataMock: (mock: {
     error?: string | null

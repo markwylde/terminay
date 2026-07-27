@@ -26,34 +26,36 @@ clients, and expose replay without granting clients filesystem paths.
 
 ### Capture lifecycle
 
-- [ ] Move start/stop/default policy, output, optional input, resize, metadata
+- [x] Move start/stop/default policy, output, optional input, resize, metadata
   updates, finalization, and error state into server-core.
-- [ ] Capture output/input exactly once at server boundaries.
-- [ ] Continue through client disconnect, reload, and view movement.
-- [ ] Finalize accurately on PTY exit, explicit stop/close, server shutdown,
+- [x] Capture output/input exactly once at server boundaries.
+- [x] Continue through client disconnect, reload, and view movement.
+  - [x] Active capture remains server-owned when all observers disconnect;
+    multiple observers receive lifecycle state without duplicating cast events.
+- [x] Finalize accurately on PTY exit, explicit stop/close, server shutdown,
   writer failure, and restart recovery.
 
 ### Storage and metadata
 
-- [ ] Validate configured roots and opaque recording ids at the final
+- [x] Validate configured roots and opaque recording ids at the final
   filesystem boundary.
-- [ ] Preserve asciicast v3 compatibility and atomic adjacent metadata.
-- [ ] Import/reference supported legacy recording roots without moving user
+- [x] Preserve asciicast v3 compatibility and atomic adjacent metadata.
+- [x] Import/reference supported legacy recording roots without moving user
   data silently.
-- [ ] Add interrupted, missing, malformed, and failed recovery states.
+- [x] Add interrupted, missing, malformed, and failed recovery states.
 
 ### Timeline and replay
 
-- [ ] Implement bounded list/search/filter/group metadata commands.
-- [ ] Stream replay ranges/chunks with cancellation and backpressure.
-- [ ] Keep reveal available only when a capable host represents the server
+- [x] Implement bounded list/search/filter/group metadata commands.
+- [x] Stream replay ranges/chunks with cancellation and backpressure.
+- [x] Keep reveal available only when a capable host represents the server
   machine; provide path/copy guidance elsewhere.
-- [ ] Require explicit authorized stop/delete and prevent traversal or active
+- [x] Require explicit authorized stop/delete and prevent traversal or active
   writer corruption.
 
 ### Privacy
 
-- [ ] Preserve input-recording default off and disclosure.
+- [x] Preserve input-recording default off and disclosure.
 - [ ] Ensure casts, metadata, paths, and input never enter hosted signaling,
   manager storage, analytics, or normal logs.
 - [ ] Apply the same input capture policy to keyboard, paste, macro, dictation,
@@ -62,9 +64,12 @@ clients, and expose replay without granting clients filesystem paths.
 ### Tests
 
 - [ ] Run recording state and timeline E2E through `TerminayClient`.
+- [x] Focused service coverage proves no-observer capture, independent observer
+  removal, restart interruption, metadata-only paths, and input/environment
+  privacy boundaries.
 - [ ] Test no-client capture, multiple observers, restart interruption,
   truncated files, disk full, path changes, and concurrent stop.
-- [ ] Test bounded large replay, cancellation, unauthorized ids, traversal,
+- [x] Test bounded large replay, cancellation, unauthorized ids, traversal,
   active delete, and remote reveal capability.
 
 ## Acceptance checks
@@ -79,3 +84,26 @@ clients, and expose replay without granting clients filesystem paths.
 
 Terminay Server owns the complete recording lifecycle and clients are
 replaceable management/replay surfaces.
+
+## Server-core slice evidence
+
+The server-core recording slice now provides a transport-neutral
+`ServerRecordingAdapter` for authorized `recordings.list`,
+`recordings.replay`, `recordings.start`, `recordings.stop`,
+`recordings.delete`, and `recordings.reveal` operations. Replay remains
+bounded and cancellable, command handlers enforce server/project/scope
+authorization, and reveal invokes a host callback without returning a cast
+path to the client. Adapter disposal or client disconnect has no effect on an
+active `RecordingService` session. `importLegacyRoot` registers historical
+roots by metadata-only opaque reference, keeps unavailable roots in the
+library index, and never moves user data.
+
+Focused evidence is in
+`packages/server-core/test/recordingService.test.mjs` and
+`packages/server-core/test/recording-adapter.test.mjs` and
+`packages/server-core/test/recording-legacy-root.test.mjs`: the service and
+protocol adapter tests cover observer-independent capture, restart interruption,
+bounded replay, and privacy boundaries after
+`npm run build --workspace @terminay/server-core`. Full
+`TerminayClient` E2E, host UI reveal integration, and legacy-root migration
+remain separate acceptance work and are not claimed by this slice.

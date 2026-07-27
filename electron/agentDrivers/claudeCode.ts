@@ -4,6 +4,7 @@ import type { AgentDriver } from './types';
 
 export const CLAUDE_CODE_MANAGED_EVENTS = [
 	{ eventName: 'SessionStart' },
+	{ eventName: 'SessionEnd' },
 	{ eventName: 'UserPromptSubmit' },
 	{ eventName: 'PreToolUse', matcher: '*' },
 	{ eventName: 'PermissionRequest', matcher: '*' },

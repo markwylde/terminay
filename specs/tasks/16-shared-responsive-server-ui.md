@@ -35,9 +35,34 @@ duplicate every new feature and produce incompatible behaviour.
 
 ### Client architecture
 
+- [x] Add a bounded query/command feature facade and migrate the file-diff
+  query through a host-local compatibility adapter; keep the broader renderer
+  migration and full feature parity work explicit below.
 - [ ] Extract connection-independent `TerminayClient` queries, commands,
   subscriptions, caches, conflict handling, and reconnect state from React.
+  - [x] Add a transport-neutral `RecordingsClient` facade for canonical list,
+    bounded replay, lifecycle commands, list caching, and mutation invalidation.
+  - [x] Migrate the Recordings timeline window to `RecordingsClient` through a
+    compatibility-only preload adapter; replay, delete, reveal, and list calls
+    no longer access `window.terminay` from the shared component.
+  - [x] Migrate Performant text metadata and ranged line loading to the bounded
+    `FileViewerClient` facade; legacy preload access remains isolated in the
+    file-viewer compatibility transport.
+  - [x] Migrate the terminal-settings hook's read/change subscription to
+    `SettingsClient`; preload settings methods and event payloads remain only
+    in its compatibility transport.
+  - [x] Migrate FilePanel's ranged text probing, sparse saves, and diff-layout
+    setting update through the shared file/settings clients; direct preload
+    access is absent from the component.
+  - [x] Static boundary coverage verifies these migrated components keep
+    preload/host transport calls inside compatibility adapters.
+- [x] Add the transport-neutral `TerminayTerminalPanelClient` stream boundary;
+  raw output remains bytes and panel commands remain attachment-scoped.
 - [ ] Replace direct `window.terminay` and remote socket calls with that client.
+  - [x] Add a compatibility-only `DesktopTerminalAuthorityAdapter` for
+    non-panel terminal input/resize/kill calls; it requires immutable terminal
+    identity and rejects renderer/window ownership fields. Direct `App.tsx`
+    call-site migration remains open.
 - [ ] Split `src/App.tsx` into feature-owned components/stores without
   recreating separate desktop/mobile application trees.
 - [ ] Delete the duplicate remote terminal workspace once parity is proven.
@@ -47,9 +72,9 @@ duplicate every new feature and produce incompatible behaviour.
 - [ ] Render projects, logical workspace views, Dockview panels, sidebars,
   terminal/file/folder tabs, agents, Git, settings, recordings, macros, and
   command surfaces from one server model.
-- [ ] Define wide, medium, and narrow layouts using container/media queries and
+- [x] Define wide, medium, and narrow layouts using container/media queries and
   host capability inputs.
-- [ ] Replace native-window-only actions with logical view navigation on web.
+- [x] Replace native-window-only actions with logical view navigation on web.
 - [ ] Add touch terminal accessory, virtual keyboard/viewport, accessible
   drawers/selectors, and large touch targets without reducing desktop keyboard
   functionality.
@@ -59,6 +84,9 @@ duplicate every new feature and produce incompatible behaviour.
 
 - [ ] Turn settings, macros, recordings, and edit surfaces into shared
   route/component entries.
+  - [x] Define the host-neutral route registry and in-page/native-auxiliary
+    presentation policy.
+  - [ ] Render the complete shared route components.
 - [ ] Let Desktop present eligible routes in native auxiliary windows while web
   presents them in-page.
 - [ ] Capability-gate OS reveal, native dialogs, updater, and window actions

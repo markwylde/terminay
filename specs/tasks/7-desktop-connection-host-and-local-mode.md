@@ -31,40 +31,40 @@ profiles.
   window/view mapping, global connection menu, and native status.
 - [ ] Render the selected server bundle in a sandboxed context/WebContentsView
   with context isolation and Node disabled.
-- [ ] Define a narrow versioned host bridge for window/view open/focus/close,
+- [x] Define a narrow versioned host bridge for window/view open/focus/close,
   menu commands, clipboard, approved file dialogs, external links, reveal, and
   update status.
-- [ ] Validate source, target, payload, current connection, and user gesture for
+- [x] Validate source, target, payload, current connection, and user gesture for
   every bridge action.
-- [ ] Block arbitrary navigation, new windows, permission requests, downloads,
+- [x] Block arbitrary navigation, new windows, permission requests, downloads,
   and protocol handlers unless explicitly allowed.
 
 ### Local startup
 
-- [ ] Start the embedded server before the default workspace and create the
+- [x] Start the embedded server before the default workspace and create the
   immutable built-in **Local** profile from its stable identity.
-- [ ] Bind the first native window to Local and show Local in the header instead
+- [x] Bind the first native window to Local and show Local in the header instead
   of **Remote**.
-- [ ] Handle starting, ready, migrating, failed, crashed, restarting, and stopped
+- [x] Handle starting, ready, migrating, failed, crashed, restarting, and stopped
   server states without showing a false connected workspace.
-- [ ] Ensure Local works without internet, hosted signaling, or WebRTC.
+- [x] Ensure Local works without internet, hosted signaling, or WebRTC.
 
 ### Connection profile store
 
-- [ ] Define profile metadata separately from device/reconnect credentials.
+- [x] Define profile metadata separately from device/reconnect credentials.
 - [ ] Store credentials using OS-backed secure storage when available and
   provide explicit degraded behaviour when unavailable.
-- [ ] Record server fingerprint/identity and detect unexpected identity changes
+- [x] Record server fingerprint/identity and detect unexpected identity changes
   at a remembered origin.
-- [ ] Persist local native window geometry and `(connection, workspaceView)`
+- [x] Persist local native window geometry and `(connection, workspaceView)`
   mapping without treating it as server workspace state.
-- [ ] Implement add/import, rename, archive/forget, and diagnostics APIs for the
+- [x] Implement add/import, rename, archive/forget, and diagnostics APIs for the
   shared menu.
 
 ### Native windows and logical views
 
-- [ ] Bind each native window to exactly one server connection.
-- [ ] Focus an existing suitable window or open a new one when selecting a
+- [x] Bind each native window to exactly one server connection.
+- [x] Focus an existing suitable window or open a new one when selecting a
   profile; make current-window rebinding explicit.
 - [ ] Map server workspace views to native windows without making
   `BrowserWindow.id` canonical.
@@ -80,7 +80,7 @@ profiles.
   equivalents are active.
 - [ ] Keep updater, menus, app lifecycle, OS integration, local credential
   storage, and server supervision in Electron.
-- [ ] Add an import-boundary test preventing application services from drifting
+- [x] Add an import-boundary test preventing application services from drifting
   back into the Desktop host.
 
 ## Acceptance checks

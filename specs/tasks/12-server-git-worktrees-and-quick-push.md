@@ -26,29 +26,40 @@ flow without receiving server credentials or raw command authority.
 
 ### Repository and status
 
-- [ ] Move repository detection, branch/status, changed-file, normalized diff,
+- [x] Move repository detection, branch/status, changed-file, normalized diff,
   and refresh events into server-core.
-- [ ] Bind every operation to a canonical project/repository/worktree.
-- [ ] Preserve detached-head, missing gitfile, absent remote, unmerged, and
+- [x] Bind every operation to a canonical project/repository/worktree.
+- [x] Preserve detached-head, missing gitfile, absent remote, unmerged, and
   command-error states.
-- [ ] Publish bounded progress and status changes to authorized clients.
+- [x] Publish bounded progress and status changes to authorized clients. The
+  server Git service now emits ordered `git.progress` and
+  `git.status.changed` metadata with bounded revisions; client projections
+  detect gaps and request resync instead of inventing status transitions.
 
 ### Worktrees
 
 - [ ] Move list, open terminal, switch project root, rename presentation,
   remove, and pull operations to the server.
-- [ ] Revalidate worktree identity and Git invariants before mutation.
-- [ ] Prevent removal of the main worktree and unsafe dirty/unmerged deletion.
+- [x] Revalidate worktree identity and Git invariants before mutation. The
+  server resolves an opaque worktree ID from its bounded listing, checks the
+  reviewed full HEAD, re-reads status immediately before `git worktree
+  remove`, and verifies the identity is gone.
+- [x] Prevent removal of the main worktree and unsafe dirty/unmerged deletion.
+  Bare, locked, prunable, dirty, and unmerged worktrees are rejected as well.
 - [ ] Keep reveal/copy behaviour capability-aware for remote clients.
 
 ### Quick Push
 
 - [ ] Run provider discovery/planning and Git/remote commands on the server
   machine.
-- [ ] Produce a bounded structured proposal for explicit client review.
-- [ ] Bind approval to repository revision, target, and exact proposed actions.
-- [ ] Revalidate immediately before each mutation and stop with deterministic
-  partial-failure reporting when state changes.
+- [x] Produce a bounded structured proposal for explicit client review. The
+  server bounds status/diff context and validates the ordered action plan.
+- [x] Bind approval to repository revision, target, and exact proposed actions.
+  Approval carries canonical IDs, a status/revision digest, and an action
+  digest, and is single-use/expiring.
+- [x] Revalidate immediately before each mutation and stop with deterministic
+  partial-failure reporting when state changes. A stale next-step revision is
+  returned as a partial failure after already-applied actions.
 - [ ] Preserve default-branch and already-applied-commit semantics without
   implicit history rewriting.
 
@@ -58,7 +69,9 @@ flow without receiving server credentials or raw command authority.
   environment/vault.
 - [ ] Never copy credential material into protocol snapshots or client
   settings.
-- [ ] Add cancellation and bounded output for long Git/provider operations.
+- [x] Add cancellation and bounded output for long Git/provider operations.
+  Planner and each executor action receive a linked abort signal, have a
+  server-side deadline, and expose only bounded/redacted provider output.
 
 ### Tests
 

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { connect, type Socket } from 'node:net'
 import {
+  CONTROL_MAX_RESPONSE_BYTES,
+  CONTROL_PROTOCOL_VERSION,
   createControlMessageDecoder,
   encodeControlMessage,
 } from '../control/protocol'
@@ -23,13 +25,15 @@ interface PendingRequest {
 
 const LOST_CONNECTION_MESSAGE = 'Lost connection to Terminay'
 
-export function createControlClient(opts: { socketPath: string; token?: string }): ControlClient {
+export function createControlClient(opts: { socketPath: string; token: string }): ControlClient {
   const pending = new Map<string, PendingRequest>()
   let socket: Socket | null = null
   let closed = false
   let connected = false
 
-  const decode = createControlMessageDecoder<ControlResponse>()
+  const decode = createControlMessageDecoder<ControlResponse>(undefined, {
+    maxFrameBytes: CONTROL_MAX_RESPONSE_BYTES,
+  })
 
   const rejectAll = (message: string, code?: string): void => {
     const error = new Error(message)
@@ -104,7 +108,13 @@ export function createControlClient(opts: { socketPath: string; token?: string }
         })
         try {
           const active = ensureSocket()
-          active.write(encodeControlMessage({ id, token: opts.token, pid: process.pid, op, params }))
+          active.write(encodeControlMessage({
+            id,
+            token: opts.token,
+            version: CONTROL_PROTOCOL_VERSION,
+            op,
+            params,
+          }))
         } catch (error) {
           pending.delete(id)
           reject(error instanceof Error ? error : new Error(String(error)))

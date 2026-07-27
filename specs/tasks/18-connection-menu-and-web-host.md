@@ -29,41 +29,43 @@ current-server model.
 
 ### Shared connection model and menu
 
-- [ ] Implement current profile/status, remembered profiles, add/import,
+- [x] Implement current profile/status, remembered profiles, add/import,
   open/focus/switch, manage, retry/disconnect, forget, revoke, and exposure
   actions through a host-neutral connection model.
-- [ ] Label the header with **Local** or the selected server label rather than
+- [x] Label the header with **Local** or the selected server label rather than
   transport.
-- [ ] Keep activity/notification count separate from connection state.
-- [ ] Distinguish offline, relay, WebRTC route, expired, revoked, identity
+- [x] Keep activity/notification count separate from connection state.
+- [x] Distinguish offline, relay, WebRTC route, expired, revoked, identity
   mismatch, and incompatible failures.
-- [ ] Add accessible keyboard/touch menu, rename form, confirmation language,
-  and responsive management cards.
+- [x] Add a host-neutral accessible keyboard/touch menu model with stable
+  ordering, focus wrapping, and explicit activation.
+- [ ] Add the rename form, confirmation language, and responsive management
+  cards.
 
 ### Desktop behaviour
 
-- [ ] Show immutable Local plus remembered remote profiles.
-- [ ] Focus an existing suitable window or open a new connection window by
+- [x] Show immutable Local plus remembered remote profiles.
+- [x] Focus an existing suitable window or open a new connection window by
   default; expose current-window rebinding explicitly.
-- [ ] Support one Local plus several simultaneous remote server windows without
+- [x] Support one Local plus several simultaneous remote server windows without
   credential/state leakage.
 - [ ] Show **Expose this server…** only when the current connection has the
   administrative capability.
-- [ ] Integrate deep links/pasted pairing URLs without leaving unconsumed
+- [x] Integrate deep links/pasted pairing URLs without leaving unconsumed
   fragments in logs/history/profile storage.
 
 ### Web host
 
 - [ ] Deploy the stable connection shell/manager at `web.terminay.com`.
-- [ ] Provide disconnected/empty, remembered, archived, offline, expired,
+- [x] Provide disconnected/empty, remembered, archived, offline, expired,
   revoked, and unreachable states.
 - [ ] Open the selected server's bundled UI in the chosen safe
   navigation/embedding model and support an explicit new-browser-tab action.
-- [ ] Implement the strict origin/source-checked host bridge from the foundation
+- [x] Implement the strict origin/source-checked host bridge from the foundation
   decision.
-- [ ] Store non-secret metadata only and leave keys/grants on exact session
+- [x] Store non-secret metadata only and leave keys/grants on exact session
   origins.
-- [ ] Provide a direct-session path back to connection management without
+- [x] Provide a direct-session path back to connection management without
   transferring secrets.
 
 ### Existing manager migration
@@ -77,11 +79,11 @@ current-server model.
 ### Tests
 
 - [ ] E2E one Desktop Local window plus three distinct remote windows.
-- [ ] Verify selecting an already open connection focuses rather than duplicates
+- [x] Verify selecting an already open connection focuses rather than duplicates
   unless the user requests another logical view.
-- [ ] Test web add/open/switch/new-tab/forget/revoke across isolated origins.
-- [ ] Test malicious postMessage source/origin/payload and sandbox escapes.
-- [ ] Verify no manager storage record contains token-like or workspace fields.
+- [x] Test web add/open/switch/new-tab/forget/revoke across isolated origins.
+- [x] Test malicious postMessage source/origin/payload and sandbox escapes.
+- [x] Verify no manager storage record contains token-like or workspace fields.
 
 ## Acceptance checks
 

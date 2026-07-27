@@ -27,6 +27,11 @@ HTML:
 - XML escaping is disabled because macro output is terminal input, not HTML.
 - Legacy `{{Field Name}}` placeholders continue to work for existing macros.
 
+Server execution treats Eta as a data-only subset: field interpolations and
+literal equality branches are supported, while arbitrary JavaScript tags are
+rejected. This keeps template rendering from becoming a server process/code
+execution boundary; unsupported tags fail before any PTY write.
+
 Terminay Server renders each `type` step immediately before writing to the
 target terminal.
 
@@ -90,6 +95,21 @@ reset, and executed through the application protocol. Normalization preserves
 explicit field definitions, normalizes values by type, migrates legacy
 template-only macros into step-based macros, and derives legacy compatibility
 fields from the step list.
+
+Secret interpolation stays inside the server vault boundary. Vault status and
+secret references are metadata-only protocol values; a resolved secret is
+scoped to the server-side execution callback and is cleared after use, so a
+macro preview or a disconnected client cannot receive it.
+
+The server-core `MacroRepository` owns normalized, revisioned definitions and
+explicit reset/upsert/remove commands. `MacroRunner` executes bounded steps
+against an exact server/project/session target, including server-side secret
+resolution, time/inactivity waits, cancellation, and output/concurrency
+limits. A clipboard `paste` step remains rejected until a server-authorized
+clipboard boundary is provided; it is never silently delegated to a client.
+Each run records an optional launching-client policy: `cancel` (the default)
+aborts when that client disconnects, while `continue` leaves the server-owned
+run alive and independent of the transport.
 
 ## Tests
 

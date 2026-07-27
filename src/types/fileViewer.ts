@@ -59,6 +59,7 @@ export type FileRangeRequest = {
 export type FileInfo = {
   exists: boolean
   extension: string
+  ino: number | null
   isBinary: boolean
   isDirectory: boolean
   isFile: boolean
@@ -100,7 +101,7 @@ export type GitFileDiff = {
   isTracked: boolean
   path: string
   repositoryRoot: string | null
-  rawPatch: string
+  tooLarge: boolean
 }
 
 export type GitFileDiffHunk = {
@@ -146,6 +147,7 @@ export function toFileInfo(fileInfo: FileViewerFileInfo): FileInfo {
   return {
     exists: fileInfo.exists,
     extension: fileInfo.extension,
+    ino: fileInfo.ino,
     isBinary: false,
     isDirectory: fileInfo.isDirectory,
     isFile: fileInfo.isFile,
@@ -159,71 +161,13 @@ export function toFileInfo(fileInfo: FileViewerFileInfo): FileInfo {
   }
 }
 
-export function parseGitDiff(gitDiff: FileViewerGitDiff, repoInfo: FileViewerGitRepoInfo): GitFileDiff {
-  const hunks: GitFileDiffHunk[] = []
-  let currentHunk: GitFileDiffHunk | null = null
-  let oldLineNumber = 0
-  let newLineNumber = 0
-
-  for (const line of gitDiff.patch.split(/\r?\n/)) {
-    if (line.startsWith('@@')) {
-      const match = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
-      oldLineNumber = match ? Number.parseInt(match[1], 10) : 0
-      newLineNumber = match ? Number.parseInt(match[2], 10) : 0
-      currentHunk = {
-        header: line,
-        lines: [],
-      }
-      hunks.push(currentHunk)
-      continue
-    }
-
-    if (!currentHunk) {
-      continue
-    }
-
-    if (line.startsWith('+')) {
-      currentHunk.lines.push({
-        newLineNumber,
-        oldLineNumber: null,
-        type: 'add',
-        value: line.slice(1),
-      })
-      newLineNumber += 1
-      continue
-    }
-
-    if (line.startsWith('-')) {
-      currentHunk.lines.push({
-        newLineNumber: null,
-        oldLineNumber,
-        type: 'delete',
-        value: line.slice(1),
-      })
-      oldLineNumber += 1
-      continue
-    }
-
-    if (line.startsWith('\\')) {
-      continue
-    }
-
-    currentHunk.lines.push({
-      newLineNumber,
-      oldLineNumber,
-      type: 'context',
-      value: line.startsWith(' ') ? line.slice(1) : line,
-    })
-    oldLineNumber += 1
-    newLineNumber += 1
-  }
-
+export function toGitFileDiff(gitDiff: FileViewerGitDiff): GitFileDiff {
   return {
-    hunks,
+    hunks: gitDiff.hunks,
     isBinary: gitDiff.isBinary,
-    isTracked: repoInfo.isTracked,
+    isTracked: gitDiff.isTracked,
     path: gitDiff.path,
-    rawPatch: gitDiff.patch,
     repositoryRoot: gitDiff.repoRoot,
+    tooLarge: gitDiff.tooLarge,
   }
 }

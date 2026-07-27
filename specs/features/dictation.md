@@ -45,9 +45,22 @@ Terminay Server:
 - revalidates the target terminal and request identity; and
 - writes the transcript through the normal PTY input path.
 
+The server-side provider adapter can resolve its configured vault entry only
+through a scoped callback. The callback is not part of any client or status
+DTO, and no vault value is included in the selected-server/provider disclosure
+shown before capture.
+
 The captured audio is sent to the selected Terminay Server and then to the
 configured transcription provider. The UI discloses both destinations before
 capture.
+
+Shared clients use a transport-neutral `DictationCaptureClient` boundary for
+the local capture state. It snapshots one immutable server/project/panel/
+session target and confirmed selected-server/provider disclosure, accepts only
+supported bounded audio chunks, and returns a single bounded request on Stop.
+Duration, byte, MIME, cancellation, and disconnect/target-change cleanup are
+enforced before a transport is allowed to upload audio; the boundary contains
+no provider credential or microphone implementation.
 
 ## Recording flow
 
