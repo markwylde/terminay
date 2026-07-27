@@ -14,21 +14,25 @@ turning a terminal title into an identity boundary.
   working directory. Closing the final panel closes the project; closing the
   first project does not unexpectedly quit the app.
 - New terminals open in the active project. Tabs can split the active layout
-  horizontally or vertically, be reordered, moved to another project, or popped
-  out into a native window.
-- Project tabs can be dragged between native windows. The receiving window shows
-  an insertion target, adopts the project and its panels, and preserves live PTY
-  ownership/scrollback through the Electron session bridge.
+  horizontally or vertically, be reordered, moved to another project, or moved
+  into another workspace view.
+- Desktop presents workspace views as native windows. Project tabs can be
+  dragged between them; web clients manage the same views in-page. Moving a
+  project preserves its panels, live PTYs, scrollback, and service identities.
 - Files and folders opened from project navigation become dockable panels in the
   relevant project. Closing a panel must dispose only that panel's resources;
   terminal termination is explicit terminal lifecycle behaviour.
 
 ## Boundaries and persistence
 
-Project layout and presentation state are local app state. A project is a UI
-and navigation boundary, while an Electron terminal session remains the stable
-identity used by services. Remote and MCP scopes are derived from the owning
-window/project at the main-process boundary, never from tab labels.
+Project identity, layout, panel membership, and logical workspace views are
+canonical server state under
+[server-owned workspace state](./server-owned-workspace-state.md). Desktop
+windows and browser views are presentations of that state. A project is a
+navigation and authorization boundary, while the immutable server terminal
+session id remains the identity used by services. Remote and MCP scopes derive
+from authenticated server/project/session identities, never from tab labels or
+client focus.
 
 ## Acceptance outcomes
 
@@ -38,4 +42,5 @@ window/project at the main-process boundary, never from tab labels.
   connection to activity, agent, recording, or remote services.
 - Keyboard and menu commands operate on the active project/panel and fail
   clearly when their required target is absent.
-
+- Reconnecting from a fresh client restores project and panel identity from
+  server state without recreating live terminals.

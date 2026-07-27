@@ -15,14 +15,16 @@ implement and verify it, then retain the completed plan as history.
 ## Working agreement
 
 Update the governing feature spec before changing product behaviour. Feature
-specifications describe the present contract; an implementation plan belongs in
-`tasks/`, not in a feature document. When the task is done, move it to
-`tasks_completed/` and update the feature spec to describe the shipped result.
+specifications describe the required product contract in present tense,
+independent of delivery status. Implementation gaps and sequencing belong in
+`tasks/`, not in a feature document. When a task is done, move it to
+`tasks_completed/` and keep the feature contract accurate.
 
 ## Feature catalogue
 
 | Area | Canonical specification |
 | --- | --- |
+| Server/client architecture | [server-runtime-and-protocol](./features/server-runtime-and-protocol.md), [server-owned-workspace-state](./features/server-owned-workspace-state.md), [connections-and-client-hosts](./features/connections-and-client-hosts.md) |
 | Workspace and native terminals | [workspace-and-project-tabs](./features/workspace-and-project-tabs.md), [terminal-workspace](./features/terminal-workspace.md) |
 | Navigation and files | [file-explorer-and-folder-tabs](./features/file-explorer-and-folder-tabs.md), [file-viewer](./features/file-viewer.md) |
 | Git workflows | [git-worktrees-and-quick-push](./features/git-worktrees-and-quick-push.md) |
@@ -30,4 +32,3 @@ specifications describe the present contract; an implementation plan belongs in
 | Terminal signals and recordings | [terminal-activity-signals](./features/terminal-activity-signals.md), [recording](./features/recording.md) |
 | Remote access | [remote-access](./features/remote-access.md) |
 | Cross-cutting preferences | [settings-shortcuts-and-desktop-integration](./features/settings-shortcuts-and-desktop-integration.md) |
-
