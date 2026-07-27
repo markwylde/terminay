@@ -639,6 +639,16 @@ The desktop should make the distinction clear:
 - status labels for online, offline, expired, revoked, archived, and unreachable
 - last opened and last connected timestamps
 - no visible copy suggesting the manager itself holds terminal access
+- a clear primary Open action, with less-common management actions grouped
+  separately so destructive actions do not compete with reconnect
+- an in-page rename form that works in mobile browsers, validates a non-empty
+  name, preserves the current name when cancelled, and returns focus to the
+  invoking control
+- confirmation before locally forgetting a session or requesting revocation,
+  with copy that distinguishes forgetting this browser's shortcut from revoking
+  desktop-authorized access
+- a responsive card layout with readable labels, origins, status, and touch
+  targets without horizontal scrolling
 
 Opening a session navigates to its session origin. Revoking navigates to the
 session origin or marks the local manager record revoked when the desktop cannot
@@ -652,6 +662,11 @@ be reached.
 - reconnect progress when opened without a QR fragment
 - clear states for expired grant, revoked grant, desktop offline, relay
   unavailable, WebRTC failed, TURN unavailable, and asset verification failed
+- a desktop-offline state that says Terminay must be open with Remote Access
+  running, preserves the saved credentials, and offers both Retry and Back to
+  saved sessions without telling the user to pair again; explicit offline
+  responses should show this state promptly instead of repeating long automatic
+  retries
 - Save to Manager action after successful pairing if the manager did not already
   import the session
 - sign out / forget this browser action that deletes local grant, device key,
