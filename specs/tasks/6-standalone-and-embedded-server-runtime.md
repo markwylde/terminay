@@ -39,8 +39,9 @@ renderers still depend on Electron APIs.
 
 - [ ] Start exactly one Local server from Desktop with a private bootstrap
   channel and random short-lived local credential.
-- [ ] Select a collision-safe loopback/OS-local endpoint and prevent another
-  process from reusing the data root concurrently.
+- [ ] Select a collision-safe loopback/OS-local endpoint.
+- [x] Prevent another process from reusing the data root concurrently with an
+  atomic mode-0600 `FileDataRootLease`; stale locks are never silently stolen.
 - [x] Report readiness and stable server identity before opening the workspace.
 - [x] Detect crash versus deliberate shutdown and provide retry/recovery without
   starting two authorities.
