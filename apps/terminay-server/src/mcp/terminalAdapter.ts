@@ -17,6 +17,9 @@ import type {
 import {
   TerminalActivityService,
   TerminalService,
+  WorkspaceRepository,
+  type WorkspacePanel,
+  type WorkspaceRepository as WorkspaceRepositoryType,
   type ActivityEvent,
   type ActivitySnapshot,
   type TerminalAuthorization,
@@ -27,6 +30,8 @@ import {
 export interface ServerTerminalControlAdapterOptions {
   readonly terminal: TerminalService;
   readonly activity?: TerminalActivityService;
+  /** Canonical server-owned workspace/view authority for layout mutations. */
+  readonly workspace?: WorkspaceRepositoryType;
   readonly maxReadBytes?: number;
   readonly maxWaitSeconds?: number;
   readonly focusTerminal?: (params: TerminalParams, context: ControlRequestContext, signal: AbortSignal) => unknown | Promise<unknown>;
@@ -39,8 +44,10 @@ const DEFAULT_MAX_WAIT_SECONDS = 15 * 60;
 
 /**
  * Bind MCP operations to the server-owned terminal and activity authorities.
- * Layout mutations remain injected because TerminalService deliberately owns
- * PTYs, not a renderer's view tree.
+ * TerminalService deliberately owns PTYs, while WorkspaceRepository owns the
+ * canonical view tree. Layout mutations use the repository when composed;
+ * injected callbacks remain a compatibility seam for hosts that have not yet
+ * composed workspace persistence.
  */
 export function createServerTerminalControlAdapter(options: ServerTerminalControlAdapterOptions): TerminalControlAdapter {
   if (!(options.terminal instanceof TerminalService)) throw new TypeError("terminal service is required");
@@ -56,15 +63,21 @@ export function createServerTerminalControlAdapter(options: ServerTerminalContro
     closeTerminal: (params, context) => closeTerminal(options, params, context),
     focusTerminal: (params, context, signal) => {
       targetSession(options.terminal, context, params.terminal);
-      return options.focusTerminal === undefined ? unsupported("focus_terminal") : options.focusTerminal(params, context, signal);
+      return options.workspace === undefined
+        ? options.focusTerminal === undefined ? unsupported("focus_terminal") : options.focusTerminal(params, context, signal)
+        : applyWorkspaceViewCommand(options.workspace, "focus_terminal", params.terminal, context, signal);
     },
     renameTerminal: (params, context, signal) => {
       targetSession(options.terminal, context, params.terminal);
-      return options.renameTerminal === undefined ? unsupported("rename_terminal") : options.renameTerminal(params, context, signal);
+      return options.workspace === undefined
+        ? options.renameTerminal === undefined ? unsupported("rename_terminal") : options.renameTerminal(params, context, signal)
+        : applyWorkspaceViewCommand(options.workspace, "rename_terminal", params.terminal, context, signal, params.name);
     },
     splitTerminal: (params, context, signal) => {
       targetSession(options.terminal, context, params.terminal);
-      return options.splitTerminal === undefined ? unsupported("split_terminal") : options.splitTerminal(params, context, signal);
+      return options.workspace === undefined
+        ? options.splitTerminal === undefined ? unsupported("split_terminal") : options.splitTerminal(params, context, signal)
+        : applyWorkspaceViewCommand(options.workspace, "split_terminal", params.terminal, context, signal, params.direction);
     },
     waitForIdle: (params, context, signal) => waitForIdle(options, params, context, signal, maxWaitSeconds),
     waitForCommand: (params, context, signal) => waitForCommand(options, params, context, signal, maxWaitSeconds),
@@ -198,6 +211,54 @@ function targetSession(service: TerminalService, context: ControlRequestContext,
   const session = service.getSession(terminal);
   if (session === undefined || session.serverId !== service.serverId || session.projectId !== context.projectId) throw new ControlEndpointError("terminal_not_found", "The requested terminal is unavailable.");
   return session;
+}
+
+async function applyWorkspaceViewCommand(
+  workspace: WorkspaceRepository,
+  operation: "focus_terminal" | "rename_terminal" | "split_terminal",
+  sessionId: string,
+  context: ControlRequestContext,
+  signal: AbortSignal,
+  value?: string,
+): Promise<unknown> {
+  throwIfAborted(signal);
+  const state = await workspace.load();
+  throwIfAborted(signal);
+  const panel = Object.values(state.panels).find(
+    (candidate): candidate is Extract<WorkspacePanel, { type: "terminal" }> =>
+      candidate.type === "terminal" &&
+      candidate.sessionId === sessionId &&
+      candidate.projectId === context.projectId,
+  );
+  if (panel === undefined) {
+    throw new ControlEndpointError("terminal_not_found", "The requested terminal has no canonical workspace panel.");
+  }
+
+  const command = operation === "focus_terminal"
+    ? { type: "panel.activate" as const, projectId: panel.projectId, panelId: panel.id }
+    : operation === "rename_terminal"
+      ? { type: "panel.update" as const, panelId: panel.id, patch: { title: value ?? "" } }
+      : { type: "panel.split" as const, projectId: panel.projectId, panelId: panel.id, direction: splitDirection(value) };
+  const result = await workspace.apply({
+    commandId: `${context.requestId}.${operation}`.slice(0, 128),
+    command,
+  });
+  throwIfAborted(signal);
+  if (!result.ok) {
+    throw new ControlEndpointError("internal", `The workspace rejected ${operation} at revision ${result.conflict.currentRevision}.`);
+  }
+  if (operation === "rename_terminal") return { terminal: sessionId, renamed: true, name: value };
+  if (operation === "split_terminal") return { terminal: sessionId, split: value };
+  return { terminal: sessionId, focused: true };
+}
+
+function splitDirection(value: string | undefined): "horizontal" | "vertical" {
+  if (value === "right" || value === "left") return "horizontal";
+  return "vertical";
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw new ControlEndpointError("cancelled", "The control operation was cancelled.");
 }
 
 function activitySnapshot(activity: TerminalActivityService | undefined, context: ControlRequestContext, sessionId: string): ReturnType<TerminalActivityService["get"]> | undefined {
