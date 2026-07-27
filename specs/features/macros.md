@@ -4,9 +4,22 @@
 
 Terminay macros are reusable terminal automation recipes. A macro is made from ordered execution steps and optional user-supplied fields. Users launch macros from the Command bar, fill any required fields in a parameter modal, preview the rendered output, then type the rendered steps into the active terminal.
 
+## Ownership
+
+Macro definitions, normalization, execution scheduling, inactivity waits, and
+secret interpolation live in the selected Terminay Server. The shared client
+continues to edit fields and show a safe preview, but a remote client never
+receives plaintext secrets merely to write them back to a PTY. Macro commands
+are authorized against the exact target terminal/project and continue if the
+launching client disconnects only where the macro's documented cancellation
+policy permits.
+
+See [server-owned workspace state](./server-owned-workspace-state.md).
+
 ## Template Syntax
 
-Type steps support Eta templates. The renderer is configured for plain terminal text rather than HTML:
+Type steps support Eta templates configured for plain terminal text rather than
+HTML:
 
 - Eta tags such as `<% if (message === 'one') { %>...<% } %>` can control output.
 - Eta interpolations such as `<%= message %>` insert values.
@@ -14,7 +27,8 @@ Type steps support Eta templates. The renderer is configured for plain terminal 
 - XML escaping is disabled because macro output is terminal input, not HTML.
 - Legacy `{{Field Name}}` placeholders continue to work for existing macros.
 
-Template rendering is centralized in `src/macroSettings.ts` through `renderMacroTemplate(...)`. Runtime execution in `src/App.tsx` uses that renderer for each `type` step before writing to the terminal.
+Terminay Server renders each `type` step immediately before writing to the
+target terminal.
 
 Wait steps store user-facing durations in seconds through `durationSeconds`. Runtime execution renders the duration and converts it to milliseconds only when scheduling the delay or inactivity timer. Older saved `durationMs` values are migrated to seconds during normalization.
 
@@ -30,7 +44,8 @@ Macro fields are stored on the macro definition and keyed by `field.name`. Suppo
 - `emoji`
 - `file`
 
-When the user runs a macro, `src/App.tsx` opens a parameter modal if the macro has fields. The modal:
+When the user runs a macro, the client opens a parameter modal if the macro has
+fields. The modal:
 
 - initializes each field from `defaultValue`
 - validates required fields before execution
@@ -70,13 +85,11 @@ Inline single-line type-step editing remains available for quick edits.
 
 ## Persistence
 
-Macros are loaded, normalized, saved, and reset through Electron IPC:
-
-- `window.terminay.getMacros()`
-- `window.terminay.updateMacros(macros)`
-- `window.terminay.resetMacros()`
-
-Normalization in `src/macroSettings.ts` preserves explicit field definitions, normalizes values by type, migrates legacy template-only macros into step-based macros, and derives the legacy `template` / `submitMode` fields from the step list for compatibility.
+Macros are server-owned, revisioned state and are loaded, normalized, saved,
+reset, and executed through the application protocol. Normalization preserves
+explicit field definitions, normalizes values by type, migrates legacy
+template-only macros into step-based macros, and derives legacy compatibility
+fields from the step list.
 
 ## Tests
 

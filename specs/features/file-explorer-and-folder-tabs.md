@@ -13,7 +13,7 @@ in a persistent, reorderable vertical stack.
 - Users can open files/folders, drag them to the tab area, create, rename, and
   delete entries, copy paths, reveal items in the OS, and set a root from a
   terminal working directory.
-- Filesystem operations execute in Electron and must validate the requested
+- Filesystem operations execute in Terminay Server and validate the requested
   path against the intended project/root scope. Watch updates cope with atomic
   saves, rename/delete events, and temporary unavailable paths.
 
@@ -27,6 +27,15 @@ in a persistent, reorderable vertical stack.
 - Sidebar pane ordering, collapse state, and dimensions persist as local user
   preferences; they never alter project files.
 
+## Ownership
+
+Filesystem listing, search, mutation, watch, and folder-task aggregation run on
+the selected Terminay Server under
+[server-owned workspace state](./server-owned-workspace-state.md). The shared
+responsive client renders results through the application protocol and never
+uses browser or Electron filesystem authority. Path/project scoping,
+large-content safeguards, and explicit destructive actions remain required.
+
 ## Acceptance outcomes
 
 - File changes made externally become visible without losing an unrelated
@@ -35,4 +44,3 @@ in a persistent, reorderable vertical stack.
   renderer arbitrary filesystem access.
 - Folder task aggregation stays responsive by applying ignored-directory and
   large-content safeguards.
-

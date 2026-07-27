@@ -153,25 +153,31 @@ the pending terminal indicator as today.
 
 ## Parsing and data flow
 
-Structured terminal parsing remains in the PTY host so it is independent of
-renderer mounting, pop-out windows, and xterm view lifecycle:
+Structured terminal parsing runs in Terminay Server so it is independent of
+client mounting, native windows, and xterm view lifecycle:
 
-1. `electron/terminalSignalParser.ts` parses PTY bytes with a headless xterm
-   parser and emits typed protocol signals.
-2. `electron/signalInterpreters/` reduces those signals to a
-   `SemanticActivity` snapshot.
-3. `electron/ptyHost.ts` publishes changed snapshots to the main renderer.
-4. `src/terminalActivityStore.ts` merges fallback activity with focused/viewed
-   and recent-input facts.
+1. The terminal signal parser parses PTY bytes with a headless xterm parser and
+   emits typed protocol signals.
+2. Signal interpreters reduce those signals to a `SemanticActivity` snapshot.
+3. The server publishes ordered changes through the application protocol.
+4. The canonical activity reducer combines fallback activity with scoped
+   focus, acknowledgement, and recent-input facts.
 
 The original data remains in the PTY stream. Parsing must not strip escape
 sequences before xterm receives them. Each chunk is parsed before its raw bytes
-are forwarded, so semantic activity IPC is queued first and renderer fallback
-state cannot flash for one frame.
+are forwarded, so semantic activity state is ordered before client rendering
+and fallback state cannot flash for one frame.
 
-The agent lifecycle service is a separate upstream source. The renderer chooses
+The agent lifecycle service is a separate upstream source. The server chooses
 authoritative agent status for a session whenever such an entry exists; it does
 not feed provider hook events through the terminal-signal interpreters.
+
+### Client data flow
+
+Under [server-owned workspace state](./server-owned-workspace-state.md), clients
+render ordered activity events and report scoped focus/input acknowledgement;
+no renderer becomes the fallback authority. Parser precedence and the original
+unmodified PTY stream remain unchanged.
 
 ## Settings
 
