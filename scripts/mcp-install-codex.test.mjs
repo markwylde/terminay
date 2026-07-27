@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { transform } from 'esbuild'
+import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
 
 const { renderCodexBlock, hasCodexBlock, upsertCodexBlock, removeCodexBlock } =
   await importTransformed('../electron/mcpInstall/tomlEntry.ts')
@@ -109,15 +110,17 @@ test('Claude Code install round-trips through an isolated temporary home', async
 })
 
 async function importTransformed(relativePath) {
-  const source = await readFile(new URL(relativePath, import.meta.url), 'utf8')
-  const transformed = await transform(source, {
-    format: 'esm',
-    loader: 'ts',
-    platform: 'node',
-    target: 'node20',
-  })
+  const sourceUrl = new URL(relativePath, import.meta.url)
   const tempDir = await mkdtemp(join(tmpdir(), 'terminay-codex-test-'))
   const outputPath = join(tempDir, `${relativePath.split('/').pop()}.mjs`)
-  await writeFile(outputPath, transformed.code)
+  await build({
+    bundle: true,
+    entryPoints: [fileURLToPath(sourceUrl)],
+    format: 'esm',
+    outfile: outputPath,
+    platform: 'node',
+    target: 'node20',
+    write: true,
+  })
   return import(outputPath)
 }
