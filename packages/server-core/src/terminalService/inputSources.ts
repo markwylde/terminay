@@ -20,6 +20,14 @@ export interface TerminalInputSourceRequest {
   readonly sequence?: number;
 }
 
+/** One accepted PTY write, after identity and authorization validation. */
+export interface TerminalAcceptedInput {
+  readonly identity: TerminalIdentity;
+  readonly clientId: string;
+  readonly source: TerminalInputSource;
+  readonly data: Uint8Array;
+}
+
 export interface TerminalInputSourceResult {
   readonly serverId: string;
   readonly projectId: string;
@@ -65,6 +73,10 @@ export interface TerminalInputSourceAdapterOptions {
   readonly resizeLeaseMs?: number;
   readonly maxResizeLeaseMs?: number;
   readonly now?: () => number;
+  /** Server-owned side effect for recording/audit capture. It runs exactly
+   * once after the corresponding PTY write is accepted and cannot alter the
+   * write result if the observer fails. */
+  readonly onInputAccepted?: (event: TerminalAcceptedInput) => void | Promise<void>;
 }
 
 interface QueuedWrite {
@@ -113,6 +125,7 @@ export class TerminalInputSourceAdapter {
   private readonly resizeLeaseMs: number;
   private readonly maxResizeLeaseMs: number;
   private readonly now: () => number;
+  private readonly onInputAccepted: ((event: TerminalAcceptedInput) => void | Promise<void>) | undefined;
   private readonly queues = new Map<string, InputQueue>();
   private readonly lastSequences = new Map<string, number>();
   private readonly resizeOwners = new Map<string, MutableResizeOwnership>();
@@ -123,6 +136,7 @@ export class TerminalInputSourceAdapter {
     this.maxResizeLeaseMs = positiveLimit(options.maxResizeLeaseMs ?? DEFAULT_MAX_RESIZE_LEASE_MS, "maxResizeLeaseMs");
     this.resizeLeaseMs = boundedLease(options.resizeLeaseMs ?? DEFAULT_RESIZE_LEASE_MS, this.maxResizeLeaseMs);
     this.now = options.now ?? (() => Date.now());
+    this.onInputAccepted = options.onInputAccepted;
   }
 
   /** Alias used by protocol adapters that call terminal writes `input`. */
@@ -238,6 +252,17 @@ export class TerminalInputSourceAdapter {
         if (item === undefined) break;
         try {
           await this.service.input(item.identity, item.bytes, item.authorization);
+          try {
+            await this.onInputAccepted?.({
+              identity: item.identity,
+              clientId: item.clientId,
+              source: item.source,
+              data: item.bytes.slice(),
+            });
+          } catch {
+            // Recording/audit observers are not allowed to reject an already
+            // accepted PTY write or break the serialized input queue.
+          }
           item.resolve(Object.freeze({
             ...item.identity,
             clientId: item.clientId,

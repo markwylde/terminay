@@ -58,8 +58,9 @@ clients, and expose replay without granting clients filesystem paths.
 - [x] Preserve input-recording default off and disclosure.
 - [ ] Ensure casts, metadata, paths, and input never enter hosted signaling,
   manager storage, analytics, or normal logs.
-- [ ] Apply the same input capture policy to keyboard, paste, macro, dictation,
-  MCP, and remote writes.
+- [x] Apply the same input capture policy to keyboard, paste, macro, dictation,
+  MCP, and remote writes through the server `TerminalInputSourceAdapter`'s
+  single accepted-input boundary and `createRecordingInputCapture` callback.
 
 ### Tests
 
