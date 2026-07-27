@@ -81,7 +81,9 @@ flow without receiving server credentials or raw command authority.
   removal, detached head, missing remote, and partial failure. Git adapter,
   GitService, worktree, and Quick Push fixtures pass all of these cases with
   single-use approval and deterministic partial results.
-- [ ] Test two clients observing one mutation and one resulting status revision.
+- [x] Test two clients observing one mutation and one resulting status revision.
+  `GitService` now has two subscribers asserting identical ordered events and
+  revisions for the same status mutation.
 
 ## Acceptance checks
 
