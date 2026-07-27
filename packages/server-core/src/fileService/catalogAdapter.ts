@@ -41,6 +41,7 @@ export interface FileCatalogRequest {
   readonly authorization: FileCatalogAuthorization;
   readonly projectId?: string;
   readonly path?: string;
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -62,52 +63,52 @@ export class ServerFileCatalogAdapter {
 
   async list(request: FileCatalogRequest & { readonly options?: FileCatalogListOptions }): Promise<JsonValue> {
     const catalog = this.authorizedCatalog(request, "read");
-    return asJson(await catalog.list(request.path ?? ".", request.options));
+    return asJson(await catalog.list(request.path ?? ".", withSignal(request.options, request.signal)));
   }
 
   async search(request: FileCatalogRequest & { readonly query: string; readonly options?: FileCatalogSearchOptions }): Promise<JsonValue> {
     const catalog = this.authorizedCatalog(request, "read");
-    return asJson(await catalog.search(request.path ?? ".", request.query, request.options));
+    return asJson(await catalog.search(request.path ?? ".", request.query, withSignal(request.options, request.signal)));
   }
 
   async size(request: FileCatalogRequest & { readonly options?: FileCatalogSizeOptions }): Promise<JsonValue> {
     const catalog = this.authorizedCatalog(request, "read");
-    return asJson(await catalog.size(request.path ?? ".", request.options));
+    return asJson(await catalog.size(request.path ?? ".", withSignal(request.options, request.signal)));
   }
 
   async previewMetadata(request: FileCatalogRequest & { readonly options?: FileCatalogPreviewOptions }): Promise<JsonValue> {
     const catalog = this.authorizedCatalog(request, "read");
-    return asJson(await catalog.previewMetadata(requiredPath(request.path), request.options));
+    return asJson(await catalog.previewMetadata(requiredPath(request.path), withSignal(request.options, request.signal)));
   }
 
   async tasks(request: FileCatalogRequest & { readonly options?: MarkdownTaskAggregationOptions }): Promise<JsonValue> {
     const catalog = this.authorizedCatalog(request, "read");
-    return asJson(await catalog.aggregateMarkdownTasks(request.path ?? ".", request.options));
+    return asJson(await catalog.aggregateMarkdownTasks(request.path ?? ".", withSignal(request.options, request.signal)));
   }
 
   async createFile(request: FileCatalogRequest & { readonly bytes: Uint8Array }): Promise<null> {
     const catalog = this.authorizedCatalog(request, "write");
     const bytes = new Uint8Array(request.bytes.byteLength);
     bytes.set(request.bytes);
-    await catalog.createFile(requiredPath(request.path), bytes);
+    await catalog.createFile(requiredPath(request.path), bytes, request.signal);
     return null;
   }
 
   async createDirectory(request: FileCatalogRequest): Promise<null> {
     const catalog = this.authorizedCatalog(request, "write");
-    await catalog.createDirectory(requiredPath(request.path));
+    await catalog.createDirectory(requiredPath(request.path), request.signal);
     return null;
   }
 
   async rename(request: FileCatalogRequest & { readonly destination: string }): Promise<null> {
     const catalog = this.authorizedCatalog(request, "write");
-    await catalog.rename(requiredPath(request.path), requiredPath(request.destination));
+    await catalog.rename(requiredPath(request.path), requiredPath(request.destination), request.signal);
     return null;
   }
 
   async delete(request: FileCatalogRequest & { readonly recursive?: boolean }): Promise<null> {
     const catalog = this.authorizedCatalog(request, "write");
-    await catalog.delete(requiredPath(request.path), { recursive: request.recursive === true });
+    await catalog.delete(requiredPath(request.path), { recursive: request.recursive === true, signal: request.signal });
     return null;
   }
 
@@ -157,14 +158,14 @@ export class ServerFileCatalogAdapter {
 
   private pathRequest(request: QueryRequest | CommandRequest): FileCatalogRequest {
     const payload = this.payload(request);
-    return { authorization: this.authorization(request), ...(optionalProject(payload.projectId) === undefined ? {} : { projectId: optionalProject(payload.projectId) }), path: requiredPath(typeof payload.path === "string" ? payload.path : undefined) };
+    return { authorization: this.authorization(request), ...(optionalProject(payload.projectId) === undefined ? {} : { projectId: optionalProject(payload.projectId) }), path: requiredPath(typeof payload.path === "string" ? payload.path : undefined), signal: request.context.signal };
   }
 
   private optionsRequest(request: QueryRequest): FileCatalogRequest & { readonly options?: Record<string, unknown> } {
     const payload = this.payload(request);
     const path = typeof payload.path === "string" ? payload.path : ".";
     const options = typeof payload.options === "object" && payload.options !== null && !Array.isArray(payload.options) ? payload.options as Record<string, unknown> : undefined;
-    return { authorization: this.authorization(request), ...(optionalProject(payload.projectId) === undefined ? {} : { projectId: optionalProject(payload.projectId) }), path, ...(options === undefined ? {} : { options }) };
+    return { authorization: this.authorization(request), ...(optionalProject(payload.projectId) === undefined ? {} : { projectId: optionalProject(payload.projectId) }), path, signal: request.context.signal, ...(options === undefined ? {} : { options }) };
   }
 
   private listRequest(request: QueryRequest): FileCatalogRequest & { readonly options?: FileCatalogListOptions } { return this.optionsRequest(request) as FileCatalogRequest & { readonly options?: FileCatalogListOptions }; }
@@ -205,6 +206,9 @@ function decodeBase64(value: unknown): Uint8Array {
 }
 
 function claimsProject(value: unknown): string | undefined { return typeof value === "object" && value !== null && !Array.isArray(value) && typeof (value as Record<string, unknown>).projectId === "string" ? (value as Record<string, string>).projectId : undefined; }
+function withSignal<T extends object>(options: T | undefined, signal: AbortSignal | undefined): T & { readonly signal?: AbortSignal } {
+  return { ...(options ?? {}), ...(signal === undefined ? {} : { signal }) } as T & { readonly signal?: AbortSignal };
+}
 function invalidRequest(message: string): FileServiceError { return new FileServiceError("invalid_path", message); }
 function asJson(value: unknown): JsonValue { return value as JsonValue; }
 function validId(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value); }
