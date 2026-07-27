@@ -57,6 +57,8 @@ test("recording operations expose bounded query/command handlers without filesys
     service.appendOutput("session-b", "protocol output\n");
     const list = await operations.queries[RECORDING_OPERATIONS.list]({ envelope: { type: "query", queryId: "query-a", operation: RECORDING_OPERATIONS.list, payload: { projectId: "project-b", limit: 1 } }, body: new Uint8Array(), context: { ...context, authScope: "read" } });
     assert.equal(list.items.length, 1);
+    assert.equal("relativeCastPath" in list.items[0], false);
+    assert.equal(JSON.stringify(list).includes("recordings/"), false);
     assert.equal(JSON.stringify(list).includes(home), false);
     await operations.commands[RECORDING_OPERATIONS.stop]({ envelope: { type: "command", commandId: "command-b", correlationId: "correlation-b", operation: RECORDING_OPERATIONS.stop, payload: { sessionId: "session-b", projectId: "project-b" } }, body: new Uint8Array(), context });
   } finally { await rm(home, { recursive: true, force: true }); }
