@@ -65,8 +65,10 @@ headless use and makes UI state part of the authorization path.
   Desktop-bundled server artifacts. `npm run build:app` emits the
   renderer-free `dist-electron/serverMcpEntry.js`; standalone manifest and
   desktop artifact tests verify both entry points and reject Electron imports.
-- [ ] Update Claude Code and Codex install detection, atomic config editing,
-  status, and uninstall for the new artifact path.
+- [x] Update Claude Code and Codex install detection, atomic config editing,
+  status, and uninstall for the new artifact path. `mcp-install-providers.test`
+  covers the bundled `serverMcpEntry.js` command contract, status, idempotent
+  install, permission preservation, malformed-config refusal, and uninstall.
 - [x] Preserve unrelated provider configuration, file permissions, and
   changed-entry review; never silently replace a user-modified Terminay entry.
 - [ ] Make the server setting immediately enable or revoke control operations.
