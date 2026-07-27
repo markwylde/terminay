@@ -23,8 +23,6 @@ import { TextViewer } from './modes/TextViewer'
 import type { FilePanelInstanceParams } from './types'
 import './fileViewer.css'
 
-const MAX_PERFORMANT_TEXT_BYTES = 1024 * 1024
-
 function hasFileInfoChanged(currentInfo: FileInfo | null, nextInfo: FileInfo): boolean {
   return (
     currentInfo === null ||
@@ -84,6 +82,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const [gitRepoInfo, setGitRepoInfo] = useState<FileViewerGitRepoInfo | null>(null)
   const [isDirty, setIsDirty] = useState(false)
   const [isHexValid, setIsHexValid] = useState(true)
+  const [hasLargeHexEdits, setHasLargeHexEdits] = useState(false)
   const [conflict, setConflict] = useState(false)
   const [showEngineChoice, setShowEngineChoice] = useState(false)
   const [truncatedForPerformance, setTruncatedForPerformance] = useState(false)
@@ -108,6 +107,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const fileInfoRef = useRef<FileInfo | null>(fileInfo)
   const isDirtyRef = useRef(isDirty)
   const isHexValidRef = useRef(isHexValid)
+  const hasLargeHexEditsRef = useRef(hasLargeHexEdits)
   const modeRef = useRef(mode)
   const sessionStoreRef = useRef(sessionStore)
   const truncatedForPerformanceRef = useRef(truncatedForPerformance)
@@ -115,6 +115,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   fileInfoRef.current = fileInfo
   isDirtyRef.current = isDirty
   isHexValidRef.current = isHexValid
+  hasLargeHexEditsRef.current = hasLargeHexEdits
   modeRef.current = mode
   sessionStoreRef.current = sessionStore
   truncatedForPerformanceRef.current = truncatedForPerformance
@@ -129,12 +130,26 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
     currentTextGetterRef.current = getter
   }, [])
 
+  const handlePerformantEditChange = useCallback((isPerformantDirty: boolean) => {
+    setIsDirty(isPerformantDirty)
+    sessionStoreRef.current?.setDirty(isPerformantDirty)
+  }, [])
+
+  const readTextWindow = useCallback(
+    (range: { length: number; offset: number }) => terminayFileGateway.readFileTextWindow(filePath, range),
+    [filePath],
+  )
+
   useEffect(() => {
     isMountedRef.current = true
     return () => {
       isMountedRef.current = false
     }
   }, [])
+
+  useEffect(() => {
+    setHasLargeHexEdits(false)
+  }, [filePath])
 
   useEffect(() => {
     const onModeRequest = (event: Event) => {
@@ -284,17 +299,11 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 
       if (!fileInfo.isBinary || mode === 'text') {
         if (engine === 'performant' && fileInfo.size > LARGE_FILE_THRESHOLD_BYTES) {
-          const response = await window.terminay.readFileText({
-            length: Math.min(fileInfo.size, MAX_PERFORMANT_TEXT_BYTES),
-            path: fileInfo.path,
-            start: 0,
-          })
           if (!isMounted) {
             return
           }
-          const nextText = `${response.text}\n\n[Large file truncated in Performant mode. Switch to Monaco for the full file.]`
-          setDraftText(nextText)
-          draftBufferRef.current.replaceText(nextText)
+          setDraftText('')
+          draftBufferRef.current.replaceText('')
           setTruncatedForPerformance(true)
           return
         }
@@ -439,6 +448,10 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
           throw new Error('Fix invalid HEX byte values before saving.')
         }
 
+        if (hasLargeHexEditsRef.current) {
+          throw new Error('Large HEX edits are local to the paged viewer. Saving them is unavailable until patch-based file writes are supported.')
+        }
+
         if (modeRef.current === 'text') {
           const currentText = currentTextGetterRef.current?.()
           if (currentText !== undefined) {
@@ -470,6 +483,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         }
         setFileInfo(nextInfo)
         setIsDirty(false)
+        setHasLargeHexEdits(false)
         sessionStoreRef.current?.setDirty(false)
         setConflict(false)
         sessionStoreRef.current?.setConflict({ kind: 'none' })
@@ -547,7 +561,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         ) : null}
         {truncatedForPerformance ? (
           <div className="file-toolbar__fallback">
-            Showing a truncated window in Performant mode. Switch to Monaco to load the full file.
+            Showing a virtualized window in Performant mode. Switch to Monaco before saving the full file.
           </div>
         ) : null}
       </div>
@@ -560,9 +574,12 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
             <TextViewer
               engine={engine}
               filePath={fileInfo.path}
+              fileSize={fileInfo.size}
               language={fileInfo.extension.replace(/^\./, '')}
               text={draftText}
               onCurrentTextGetterChange={handleCurrentTextGetterChange}
+              onPerformantEditChange={handlePerformantEditChange}
+              readTextWindow={readTextWindow}
               onChangeText={(text) => {
                 setDraftText(text)
                 draftBufferRef.current.setText(text)
@@ -582,7 +599,11 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
             onValidationChange={handleHexValidationChange}
             onChangeByte={(offset, value) => {
               draftBufferRef.current.setByte(offset, value)
-              const dirty = draftBufferRef.current.isDirty()
+              const largeHexEdit = fileInfo.isLargeFile
+              if (largeHexEdit) {
+                setHasLargeHexEdits(true)
+              }
+              const dirty = largeHexEdit || draftBufferRef.current.isDirty()
               setIsDirty(dirty)
               sessionStore?.setDirty(dirty)
             }}

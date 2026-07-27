@@ -290,16 +290,25 @@ Do not rely on Monaco as the large-file engine. Monaco requires a full string-ba
 
 #### Performant Text Engine
 
-Use a custom virtualized text viewer/editor for large files.
+Use a custom virtualized text viewer/editor for large files. The shipped
+Performant contract is intentionally windowed: it does not materialize a
+multi-gigabyte string or pretend that a bounded window is a complete draft.
 
 Requirements:
 
-- only render visible lines plus overscan
-- support text selection
-- support cursor movement and editing
+- page file bytes through the ranged text-read API and retain only the current
+  page plus a small adjacent-page cache
+- render only visible gutter rows plus overscan; the editor itself is one
+  bounded native text surface for the loaded page
+- support native text selection, cursor movement, and editing inside the
+  loaded page
 - support scrolling through large files without full load
 - support line number gutter
-- support draft edits through the shared Draft Buffer Layer
+- selection is cleared when paging changes and the status text identifies that
+  selection is limited to the loaded page
+- edits in Performant mode are local and mark the tab dirty, but cannot be
+  saved through the current whole-file save gateway; the UI requires switching
+  to Monaco before saving the complete file
 
 This should be designed as an abstract text surface so it can evolve independently from the rest of the file tab shell.
 
@@ -314,7 +323,9 @@ Requirements:
 - offset column
 - hex byte column
 - ascii column
-- selection support
+- selection support using a contiguous byte range; click selects one byte and
+  Shift-click extends the range without allocating one selection object per
+  byte
 - byte editing
 - shared dirty state via the Draft Buffer Layer
 - only render visible rows plus overscan
@@ -333,6 +344,11 @@ Requirements:
 - global preferred default layout
 - diff data comes from git when available
 - automatic unavailable state when file is not diffable
+- unified rows retain both old and new line numbers and are rendered through a
+  fixed-height virtual surface
+- side-by-side rows pair deletion/addition runs and retain a stable row key
+- clicking a row highlights it; Shift-click selects a contiguous row range;
+  native text selection remains available inside the row
 
 Suggested data model:
 
@@ -365,6 +381,9 @@ This applies where Monaco would matter, including Text mode and any other Monaco
 - Monaco mode reads the file into a Monaco-backed editing model.
 - Users may switch from Performant to Monaco later inside the tab.
 - The app asks every time rather than remembering the choice.
+- Large HEX pages use ranged reads and support local byte editing and
+  selection, but save is deferred until patch-based writes can materialize the
+  untouched bytes safely.
 
 ## Save, Watch, and Conflict Strategy
 
@@ -492,8 +511,8 @@ in [feature drift alignment](../tasks/2-feature-drift-alignment.md).
 
 - [x] Add Monaco integration for normal files
 - [x] Add language detection from path/extension for Monaco
-- [ ] Build the performant virtualized text viewer/editor
-- [ ] Add text selection and editing support in the performant engine
+- [x] Build the performant virtualized text viewer/editor
+- [x] Add text selection and editing support in the performant engine
 - [x] Connect both text engines to the shared draft buffer
 - [x] Add >100 MB open chooser flow for Monaco-relevant paths
 - [x] Allow switching from Performant to Monaco inside the tab
@@ -503,7 +522,7 @@ in [feature drift alignment](../tasks/2-feature-drift-alignment.md).
 - [x] Build the virtualized hex editor shell
 - [x] Add offset, hex, and ascii columns
 - [x] Add row virtualization
-- [ ] Add selection handling
+- [x] Add selection handling
 - [x] Add byte editing
 - [x] Connect HEX edits to the shared draft buffer
 - [x] Add save support from shared draft state
@@ -511,11 +530,11 @@ in [feature drift alignment](../tasks/2-feature-drift-alignment.md).
 ### Diff Mode
 
 - [x] Design normalized diff row data structures
-- [ ] Build diff row virtualization
+- [x] Build diff row virtualization
 - [x] Build side-by-side layout
-- [ ] Build unified layout
-- [ ] Add global default layout preference
-- [ ] Add layout toggle UI
+- [x] Build unified layout
+- [x] Add global default layout preference
+- [x] Add layout toggle UI
 - [x] Add git-backed diff loading
 - [x] Add unavailable states for non-diffable files
 
@@ -548,8 +567,9 @@ in [feature drift alignment](../tasks/2-feature-drift-alignment.md).
 - [ ] Test dirty/save/conflict flows
 - [ ] Test large-file chooser behavior above 100 MB
 - [ ] Test performant text scrolling on very large files
-- [ ] Test HEX virtualization on very large files
-- [ ] Test diff virtualization on large diffs
+- [x] Test performant text scrolling on very large files
+- [x] Test HEX virtualization on very large files
+- [x] Test diff virtualization on large diffs
 
 ## Open Implementation Notes
 
