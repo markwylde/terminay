@@ -31,7 +31,7 @@ the flow from the relevant Git UI.
 1. Terminay gathers bounded repository status, diff, and commit context using
    the user's shell environment.
 2. The provider returns a structured commit plan for user review.
-3. The user chooses a branch target and confirms the planned actions.
+3. The user chooses a branch target and confirms the proposed actions.
 4. Terminay creates the requested commits, pushes them, and can create a
    provider-aware pull request (GitHub or Gitea) when the repository supports it.
 
@@ -42,11 +42,21 @@ rewrites history.
 
 ## Safety and boundaries
 
-Git commands run in Electron with the target worktree/repository path, never in
-the renderer. Quick Push sends only the bounded context needed to the selected
-provider, requires explicit user confirmation before mutation, and reports the
-exact failed Git/remote step. Credentials continue to be handled by the user's
-existing Git/SSH/CLI environment rather than copied into Terminay settings.
+Git commands run in the selected Terminay Server with the target
+worktree/repository path, never in the client. Quick Push sends only the bounded
+context needed to the selected provider, requires explicit user confirmation
+before mutation, and reports the exact failed Git/remote step. Credentials
+remain in the server machine's existing Git/SSH/CLI environment rather than
+being copied into Terminay settings.
+
+## Ownership
+
+Git, worktree, provider CLI, and Quick Push execution run in the selected
+Terminay Server under
+[server-owned workspace state](./server-owned-workspace-state.md). Local and
+remote clients submit the same scoped commands. Review/confirmation remains a
+client interaction, while the server revalidates repository state and
+authorization immediately before every mutation.
 
 ## Acceptance outcomes
 
