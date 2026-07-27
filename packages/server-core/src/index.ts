@@ -23,7 +23,9 @@ export {
   FileContentError,
   FileContentStreamService,
   ServerFileAdapter,
+  ServerFileCatalogAdapter,
   FILE_OPERATIONS,
+  FILE_CATALOG_OPERATIONS,
 } from "./fileService/index.js";
 export type {
   PathStat,
@@ -104,6 +106,9 @@ export type {
   FileReloadRequest,
   FileCloseRequest,
   FileOperationHandlers,
+  FileCatalogProjectContext,
+  FileCatalogAuthorization,
+  FileCatalogAdapterOptions,
 } from "./fileService/index.js";
 export * from "./aiService/index.js";
 export * from "./terminalService/index.js";

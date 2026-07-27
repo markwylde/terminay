@@ -6,3 +6,4 @@ export * from "./catalog.js";
 export * from "./tasks.js";
 export * from "./contentStream.js";
 export * from "./adapter.js";
+export * from "./catalogAdapter.js";
