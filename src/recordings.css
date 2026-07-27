@@ -593,7 +593,8 @@
 }
 
 .recordings-empty,
-.recordings-error {
+.recordings-error,
+.recordings-warning {
   color: var(--settings-text-muted);
   padding: 16px 12px;
   font-size: 13px;
@@ -602,6 +603,11 @@
 .recordings-error {
   color: var(--settings-danger);
   background: color-mix(in srgb, var(--settings-danger) 12%, transparent);
+}
+
+.recordings-warning {
+  color: var(--settings-warning, #f6c85f);
+  background: color-mix(in srgb, var(--settings-warning, #f6c85f) 12%, transparent);
 }
 
 @media (max-width: 860px) {

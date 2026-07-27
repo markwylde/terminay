@@ -665,7 +665,13 @@ export function RemoteApp() {
         })
         return
       case 'exit':
-        if (message.sessionId === selectedSessionIdRef.current) terminalRef.current?.write(`\r\n\x1b[31m[process exited with code ${message.exitCode}]\x1b[0m\r\n`)
+        if (message.sessionId === selectedSessionIdRef.current) {
+          const exitDescription =
+            message.signal == null
+              ? `code ${message.exitCode}`
+              : `signal ${message.signal} (code ${message.exitCode})`
+          terminalRef.current?.write(`\r\n\x1b[31m[process exited with ${exitDescription}]\x1b[0m\r\n`)
+        }
         setSessions(current => {
           const session = current[message.sessionId]
           if (!session) return current

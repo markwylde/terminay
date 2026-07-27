@@ -179,6 +179,14 @@ The server receiver:
 
 Secrets and full native payloads are not logged or exposed to clients.
 
+The server-core receiver binds only to a loopback address, retains a digest
+of each per-session hook token rather than the token itself, and enforces the
+exact registered server/project/session scope on every request. It rejects
+oversized or malformed JSON before normalization. A driver may inspect the
+bounded native object, but only a validated provider, agent identity, state,
+sequence, and acknowledgement update can enter the canonical snapshot; the
+native payload and caller-provided source are never published to clients.
+
 ## Provider mappings
 
 Drivers map native lifecycle meaning, not message text:
@@ -203,7 +211,8 @@ Drivers map native lifecycle meaning, not message text:
 The Codex driver consumes supported native hook payloads and associates them
 with the inherited Terminay session environment. Prompt/session/tool events
 produce `working`; explicit user-input requests produce `waiting`; stop
-boundaries produce `done`; child agent IDs maintain the subagent roster.
+boundaries produce `done`; child agent IDs maintain the subagent roster. The
+managed `SessionEnd` hook retires the root session when the CLI exits.
 
 Terminal spinner output and OSC/BEL notifications are not canonical Codex
 events. If managed hooks are unavailable, the existing Codex terminal-signal
@@ -237,6 +246,12 @@ keeps an existing Terminay group at its current index, reconciles the exact
 managed hashes, and removes only its matching trust blocks on uninstall.
 
 Filesystem and home-directory paths are injectable in tests.
+
+Server-core owns the JSON hook reconciliation for both embedded and standalone
+hosts. Hosts provide the configured home and script roots through an injected
+filesystem boundary; no Electron application path is assumed. The global hook
+files contain only a static managed command and never a per-terminal endpoint,
+session ID, or receiver token.
 
 Installation is reconciliation, not replacement:
 
@@ -293,6 +308,11 @@ The terminal/tab title remains visible in the row metadata when it is not the
 primary title. Missing optional metadata is omitted rather than replaced by
 invented values. Child rows omit provider/model metadata inherited unchanged
 from their parent.
+
+Ended provider sessions and completed child entries remain in status history
+but are excluded from the live Agents roster. A confirmed provider-process
+return to the known terminal shell may retire a live association when hooks do
+not report session end; this fallback does not infer a completion outcome.
 
 Prompts are rendered on one ellipsized line; the full value remains available
 through the row tooltip. Root rows with children expose a disclosure control

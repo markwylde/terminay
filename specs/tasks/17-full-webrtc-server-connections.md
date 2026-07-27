@@ -22,7 +22,7 @@ preserved rather than replaced.
 
 ## Dependencies
 
-- [Server architecture decision spikes](./3-server-architecture-decision-spikes.md)
+- [Server architecture decision spikes](../tasks_completed/3-server-architecture-decision-spikes.md)
 - [Standalone and embedded server runtime](./6-standalone-and-embedded-server-runtime.md)
 - [Shared responsive server UI](./16-shared-responsive-server-ui.md)
 
@@ -30,31 +30,42 @@ preserved rather than replaced.
 
 ### Node WebRTC host
 
-- [ ] Implement the selected headless WebRTC runtime behind a server transport
-  adapter.
-- [ ] Port initial pairing, room rotation, reconnect availability/challenge,
-  signed offer/answer/ICE, STUN/TURN configuration, cleanup, and observability.
+- [x] Provide a privileged standalone-server loader/factory for the optional
+  `node-datachannel` runtime and map its established binary channels into the
+  server-core transport contract.
+- [ ] Complete peer creation/signaling and production runtime integration for
+  the selected headless WebRTC implementation.
+- [x] Keep initial pairing, room rotation, and reconnect challenge/proof
+  material server-owned, origin-bound, single-use, expiring, and revocable.
+- [ ] Port signed offer/answer/ICE, STUN/TURN configuration, cleanup, and
+  production observability through the selected runtime adapter.
 - [ ] Remove the hidden Electron WebRTC host dependency after parity.
-- [ ] Bound peers, channels, queued signaling, transfer sizes, and timeouts.
+- [x] Bound peers, channels, queued signaling, transfer sizes, and timeouts.
 
 ### Full application transport
 
-- [ ] Carry connection/control, application commands/events, terminal streams,
+- [x] Carry connection/control, application commands/events, terminal streams,
   and assets/binary content on isolated channels with backpressure.
-- [ ] Complete application handshake/auth only after device key and PIN/approval
+- [x] Complete application handshake/auth only after device key and PIN/approval
   verification.
-- [ ] Resume workspace revision and terminal positions on reconnect.
-- [ ] Reject commands received before auth, after revoke, with stale connection
+- [x] Resume workspace revision and terminal positions on reconnect.
+- [x] Reject commands received before auth, after revoke, with stale connection
   identity, or from another server/session origin.
-- [ ] Preserve local transport semantics through the shared conformance suite.
+- [x] Preserve the transport-neutral four-channel, limit, cleanup, and
+  admission contract across every injected headless runtime label through the
+  shared server-core conformance suite.
+- [x] Compare remote handshake/resume responses with canonical server-owned
+  workspace revisions, stale-window snapshots, and project-scoped terminal
+  positions in the server-core conformance suite.
+- [ ] Compare Local and remote clients through one end-to-end protocol suite.
 
 ### Exposure lifecycle
 
 - [ ] Move start/stop, pairing-room rotation, device/grant stores, audit,
   connections, and status into Terminay Server.
 - [ ] Keep Embedded Local loopback-only until explicit **Expose this server…**.
-- [ ] Let standalone CLI generate/rotate pairing material and report status.
-- [ ] Ensure stopping exposure does not stop Local/standalone server work or
+- [x] Let standalone CLI generate/rotate pairing material and report status.
+- [x] Ensure stopping exposure does not stop Local/standalone server work or
   existing local clients.
 - [ ] Define reconnect availability while exposed and accurate offline state
   when not advertising.
@@ -63,7 +74,7 @@ preserved rather than replaced.
 
 - [ ] Deliver the complete responsive bundle manifest/assets with current
   hash/path/size verification and versioned cache paths.
-- [ ] Launch direct and embedded server UI modes on the exact isolated session
+- [x] Launch direct and embedded server UI modes on the exact isolated session
   origin.
 - [ ] Preserve old compatible bundles until a new install commits; never launch
   a partial update.

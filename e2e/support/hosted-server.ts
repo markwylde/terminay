@@ -92,15 +92,18 @@ async function waitForHostPort(port: number): Promise<void> {
 }
 
 export function hasHostedServerSource(): boolean {
-  const repoDir = path.resolve(process.cwd(), '../terminay.com')
+  const repoDir = resolveHostedServerRepo()
   return existsSync(path.join(repoDir, 'server/index.js')) &&
     existsSync(path.join(repoDir, 'scripts/build-app.mjs'))
 }
 
 export async function startHostedServer(): Promise<HostedServer> {
-  const repoDir = path.resolve(process.cwd(), '../terminay.com')
+  const repoDir = resolveHostedServerRepo()
   const staticDir = path.join(repoDir, 'app/dist')
-  const pgPort = await getFreePort()
+  const externalDatabaseUrl = process.env.TERMINAY_E2E_DATABASE_URL
+  const pgPort = externalDatabaseUrl
+    ? Number(new URL(externalDatabaseUrl).port || '5432')
+    : await getFreePort()
   const port = await getFreePort()
   const containerName = `terminay-e2e-postgres-${Date.now()}-${Math.random().toString(16).slice(2)}`
   let serverProcess: ChildProcessWithoutNullStreams | null = null
@@ -113,23 +116,25 @@ export async function startHostedServer(): Promise<HostedServer> {
     }
   }
 
-  await execFileAsync('docker', [
-    'run',
-    '--rm',
-    '--name',
-    containerName,
-    '-e',
-    'POSTGRES_DB=terminay_app',
-    '-e',
-    'POSTGRES_USER=terminay',
-    '-e',
-    'POSTGRES_PASSWORD=terminay',
-    '-p',
-    `127.0.0.1:${pgPort}:5432`,
-    '-d',
-    'postgres:17-alpine',
-  ])
-  await waitForPostgres(containerName)
+  if (!externalDatabaseUrl) {
+    await execFileAsync('docker', [
+      'run',
+      '--rm',
+      '--name',
+      containerName,
+      '-e',
+      'POSTGRES_DB=terminay_app',
+      '-e',
+      'POSTGRES_USER=terminay',
+      '-e',
+      'POSTGRES_PASSWORD=terminay',
+      '-p',
+      `127.0.0.1:${pgPort}:5432`,
+      '-d',
+      'postgres:17-alpine',
+    ])
+    await waitForPostgres(containerName)
+  }
   await waitForHostPort(pgPort)
   await new Promise((resolve) => setTimeout(resolve, 1_000))
 
@@ -138,7 +143,8 @@ export async function startHostedServer(): Promise<HostedServer> {
       cwd: repoDir,
       env: {
         ...process.env,
-        DATABASE_URL: `postgres://terminay:terminay@127.0.0.1:${pgPort}/terminay_app`,
+        DATABASE_URL: externalDatabaseUrl ??
+          `postgres://terminay:terminay@127.0.0.1:${pgPort}/terminay_app`,
         PORT: String(port),
         STATIC_DIR: staticDir,
         TERMINAY_HOSTED_DOMAIN: 'localhost',
@@ -161,14 +167,24 @@ export async function startHostedServer(): Promise<HostedServer> {
             setTimeout(resolve, 5_000)
           })
         }
-        await execFileAsync('docker', ['rm', '-f', containerName]).catch(() => undefined)
+        if (!externalDatabaseUrl) {
+          await execFileAsync('docker', ['rm', '-f', containerName]).catch(() => undefined)
+        }
       },
     }
   } catch (error) {
     if (serverProcess && serverProcess.exitCode === null) {
       serverProcess.kill('SIGTERM')
     }
-    await execFileAsync('docker', ['rm', '-f', containerName]).catch(() => undefined)
+    if (!externalDatabaseUrl) {
+      await execFileAsync('docker', ['rm', '-f', containerName]).catch(() => undefined)
+    }
     throw error
   }
+}
+
+function resolveHostedServerRepo(): string {
+  return path.resolve(
+    process.env.TERMINAY_HOSTED_SERVER_REPO ?? path.join(process.cwd(), '../terminay.com'),
+  )
 }

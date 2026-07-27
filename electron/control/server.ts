@@ -9,14 +9,20 @@
 
 import { createServer, type Server, type Socket } from 'node:net'
 import { chmod, unlink } from 'node:fs/promises'
-import type { ControlError, ControlOp, ControlRequest } from './protocol'
+import type { ControlError, ControlOp } from './protocol'
 
 // Wire response shape. We keep `result` as unknown here because the renderer
 // produces the op-specific payload; the socket only needs to serialize it.
 type ControlResponseWire =
   | { id: string; ok: true; result: unknown }
   | { id: string; ok: false; error: ControlError }
-import { createControlMessageDecoder, encodeControlMessage } from './protocol'
+import {
+  CONTROL_MAX_FRAME_BYTES,
+  CONTROL_MAX_RESPONSE_BYTES,
+  createControlMessageDecoder,
+  encodeControlMessage,
+  isControlRequest,
+} from './protocol'
 
 export interface ControlServerScope {
   sessionId: string
@@ -30,16 +36,22 @@ export type ControlForwardResult =
 export interface ControlServerOptions {
   socketPath: string
   /**
-   * Resolve a request to its terminal scope, using the capability token when
-   * present and otherwise the client pid's process ancestry. Returns null when
-   * the caller cannot be matched to a terminal in this instance.
+   * Resolve a valid terminal capability to its exact current scope. Request
+   * body process ids are never an authority source.
    */
-  resolveScope: (
-    token: string | undefined,
-    pid: number | undefined,
-  ) => ControlServerScope | null | Promise<ControlServerScope | null>
+  resolveScope: (token: string) => ControlServerScope | null | Promise<ControlServerScope | null>
   /** Forward a validated request to the owning renderer and await its reply. */
-  forward: (scope: ControlServerScope, op: ControlOp, params: unknown) => Promise<ControlForwardResult>
+  forward: (
+    scope: ControlServerScope,
+    op: ControlOp,
+    params: unknown,
+    context: { signal: AbortSignal },
+  ) => Promise<ControlForwardResult>
+  maxFrameBytes?: number
+  maxInFlight?: number
+  maxTotalInFlight?: number
+  maxResponseBytes?: number
+  requestTimeoutMs?: number
   /** Optional diagnostics sink. */
   onError?: (error: unknown) => void
 }
@@ -51,17 +63,24 @@ export interface ControlServer {
   readonly listening: boolean
 }
 
-const UNRESOLVED_SCOPE_ERROR: ControlError = {
-  code: 'not_in_terminay',
-  message: 'Could not determine which Terminay terminal this request came from.',
+const INVALID_CAPABILITY_ERROR: ControlError = {
+  code: 'invalid_token',
+  message: 'The Terminay terminal capability is missing, invalid, stale, or no longer owns this scope.',
 }
 
 export function createControlServer(options: ControlServerOptions): ControlServer {
   const { socketPath, resolveScope, forward } = options
+  const maxFrameBytes = options.maxFrameBytes ?? CONTROL_MAX_FRAME_BYTES
+  const maxInFlight = options.maxInFlight ?? 8
+  const maxTotalInFlight = options.maxTotalInFlight ?? 64
+  const maxResponseBytes = options.maxResponseBytes ?? CONTROL_MAX_RESPONSE_BYTES
+  const requestTimeoutMs = options.requestTimeoutMs ?? 120_000
 
   let server: Server | null = null
   let isListening = false
   const connections = new Set<Socket>()
+  const inFlightBySocket = new Map<Socket, Map<string, AbortController>>()
+  const allInFlight = new Set<AbortController>()
 
   function reportError(error: unknown): void {
     options.onError?.(error)
@@ -82,63 +101,167 @@ export function createControlServer(options: ControlServerOptions): ControlServe
       return
     }
     try {
-      socket.write(encodeControlMessage(response))
+      let encoded = encodeControlMessage(response)
+      if (Buffer.byteLength(encoded, 'utf8') > maxResponseBytes) {
+        encoded = encodeControlMessage({
+          id: response.id,
+          ok: false,
+          error: {
+            code: 'limit_exceeded',
+            message: `The control response exceeded the ${maxResponseBytes}-byte limit.`,
+          },
+        } satisfies ControlResponseWire)
+      }
+      if (socket.writableLength + Buffer.byteLength(encoded, 'utf8') > maxResponseBytes * 2) {
+        socket.destroy(new Error('Control client is not reading bounded responses.'))
+        return
+      }
+      socket.write(encoded)
     } catch (error) {
       reportError(error)
     }
   }
 
-  async function handleRequest(socket: Socket, request: ControlRequest): Promise<void> {
-    const id = request?.id
-    if (typeof id !== 'string') {
-      // Cannot correlate a reply without an id; drop silently.
+  async function handleRequest(socket: Socket, value: unknown): Promise<void> {
+    const candidateId =
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      typeof (value as { id?: unknown }).id === 'string'
+        ? (value as { id: string }).id
+        : null
+    if (!isControlRequest(value)) {
+      if (candidateId && candidateId.length <= 128) {
+        writeResponse(socket, {
+          id: candidateId,
+          ok: false,
+          error: { code: 'bad_request', message: 'Malformed control request envelope.' },
+        })
+      } else {
+        socket.destroy()
+      }
+      return
+    }
+    const request = value
+    const requests = inFlightBySocket.get(socket)
+    if (!requests || !socket.writable) {
+      return
+    }
+    if (requests.has(request.id)) {
+      writeResponse(socket, {
+        id: request.id,
+        ok: false,
+        error: { code: 'bad_request', message: 'A request with this id is already in flight.' },
+      })
+      return
+    }
+    if (requests.size >= maxInFlight) {
+      writeResponse(socket, {
+        id: request.id,
+        ok: false,
+        error: {
+          code: 'limit_exceeded',
+          message: `At most ${maxInFlight} control requests may be in flight on one connection.`,
+        },
+      })
+      return
+    }
+    if (allInFlight.size >= maxTotalInFlight) {
+      writeResponse(socket, {
+        id: request.id,
+        ok: false,
+        error: {
+          code: 'limit_exceeded',
+          message: `At most ${maxTotalInFlight} control requests may be in flight in this server.`,
+        },
+      })
       return
     }
 
-    const scope = await resolveScope(request.token, request.pid)
-    if (!scope) {
-      writeResponse(socket, { id, ok: false, error: UNRESOLVED_SCOPE_ERROR })
-      return
-    }
+    const controller = new AbortController()
+    requests.set(request.id, controller)
+    allInFlight.add(controller)
+    const timeout = setTimeout(() => controller.abort('timeout'), requestTimeoutMs)
 
     try {
-      const result = await forward(scope, request.op, request.params)
+      const operation = (async (): Promise<ControlForwardResult> => {
+        const scope = await resolveScope(request.token)
+        if (!scope) {
+          return { ok: false, error: INVALID_CAPABILITY_ERROR }
+        }
+        if (controller.signal.aborted) {
+          return {
+            ok: false,
+            error: { code: 'cancelled', message: 'The control request was cancelled.' },
+          }
+        }
+        return forward(scope, request.op, request.params, { signal: controller.signal })
+      })()
+      const aborted = new Promise<ControlForwardResult>((resolve) => {
+        controller.signal.addEventListener(
+          'abort',
+          () => {
+            const timedOut = controller.signal.reason === 'timeout'
+            resolve({
+              ok: false,
+              error: {
+                code: timedOut ? 'timeout' : 'cancelled',
+                message: timedOut
+                  ? `The control request exceeded its ${requestTimeoutMs}ms deadline.`
+                  : 'The control request was cancelled because its caller or scope closed.',
+              },
+            })
+          },
+          { once: true },
+        )
+      })
+      const result = await Promise.race([operation, aborted])
+      if (!socket.writable || controller.signal.reason === 'caller_closed') {
+        return
+      }
       if (result.ok) {
-        writeResponse(socket, { id, ok: true, result: result.result })
+        writeResponse(socket, { id: request.id, ok: true, result: result.result })
       } else {
-        writeResponse(socket, { id, ok: false, error: result.error })
+        writeResponse(socket, { id: request.id, ok: false, error: result.error })
       }
     } catch (error) {
       reportError(error)
       writeResponse(socket, {
-        id,
+        id: request.id,
         ok: false,
         error: {
           code: 'internal',
           message: error instanceof Error ? error.message : String(error),
         },
       })
+    } finally {
+      clearTimeout(timeout)
+      requests.delete(request.id)
+      allInFlight.delete(controller)
     }
   }
 
   function handleConnection(socket: Socket): void {
     connections.add(socket)
+    const requests = new Map<string, AbortController>()
+    inFlightBySocket.set(socket, requests)
     socket.setEncoding('utf8')
 
-    const decode = createControlMessageDecoder<ControlRequest>((_line, error) => {
+    const decode = createControlMessageDecoder<unknown>((_line, error) => {
       reportError(error)
-    })
+      socket.destroy()
+    }, { maxFrameBytes })
 
     socket.on('data', (chunk: string) => {
-      let requests: ControlRequest[]
+      let decodedValues: unknown[]
       try {
-        requests = decode(chunk)
+        decodedValues = decode(chunk)
       } catch (error) {
         reportError(error)
         return
       }
-      for (const request of requests) {
-        void handleRequest(socket, request).catch(reportError)
+      for (const value of decodedValues) {
+        void handleRequest(socket, value).catch(reportError)
       }
     })
 
@@ -147,6 +270,11 @@ export function createControlServer(options: ControlServerOptions): ControlServe
     })
 
     socket.on('close', () => {
+      for (const controller of requests.values()) {
+        controller.abort('caller_closed')
+      }
+      requests.clear()
+      inFlightBySocket.delete(socket)
       connections.delete(socket)
     })
   }
@@ -210,8 +338,13 @@ export function createControlServer(options: ControlServerOptions): ControlServe
         resolve()
       })
       for (const socket of connections) {
+        for (const controller of inFlightBySocket.get(socket)?.values() ?? []) {
+          controller.abort('caller_closed')
+        }
         socket.destroy()
       }
+      inFlightBySocket.clear()
+      allInFlight.clear()
       connections.clear()
     })
 

@@ -435,6 +435,33 @@ test('terminal exit closes active root agents without inventing output-derived s
 	}
 });
 
+test('confirmed provider-to-shell return retires a live session', async () => {
+	const service = new AgentStatusService({
+		token: 'service-token',
+		foregroundExitConfirmationMs: 10,
+		normalizeHookPayload(provider, _payload, context) {
+			return {
+				kind: 'session.started', provider, sessionId: 'provider-session',
+				activationTerminalSessionId: context.activationTerminalSessionId,
+				sequence: context.sequence, occurredAt: context.occurredAt,
+			};
+		},
+	});
+	await service.start();
+	try {
+		service.prepareTerminalSession('terminal-uuid');
+		await service.ingestHookPayload('codex', 'terminal-uuid', {});
+		service.foregroundProcessChanged('terminal-uuid', 'codex', false);
+		service.foregroundProcessChanged('terminal-uuid', 'zsh', true);
+		await new Promise((resolve) => setTimeout(resolve, 25));
+		const [entry] = Object.values(service.getSnapshot().entries);
+		assert.equal(entry.active, false);
+		assert.equal(entry.lastEventKind, 'session.stopped');
+	} finally {
+		await service.stop();
+	}
+});
+
 function authorizedHeaders(token = 'test-token') {
 	return {
 		[AGENT_HOOK_TOKEN_HEADER]: token,

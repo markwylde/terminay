@@ -12,7 +12,7 @@ const { getClaudeCodeConfigPath, isClaudeCodeInstalled, installClaudeCode, unins
 
 const server = {
   command: '/Apps/Terminay',
-  args: ['/Apps/dist-electron/mcpEntry.js'],
+  args: ['/Apps/dist-electron/serverMcpEntry.js'],
   env: { ELECTRON_RUN_AS_NODE: '1' },
 }
 
@@ -20,7 +20,7 @@ test('renderCodexBlock renders header, command, args, and env', () => {
   const block = renderCodexBlock(server)
   assert.match(block, /^\[mcp_servers\.terminay\]$/m)
   assert.match(block, /command = "\/Apps\/Terminay"/)
-  assert.match(block, /args = \["\/Apps\/dist-electron\/mcpEntry\.js"\]/)
+  assert.match(block, /args = \["\/Apps\/dist-electron\/serverMcpEntry\.js"\]/)
   assert.match(block, /env = \{ ELECTRON_RUN_AS_NODE = "1" \}/)
 })
 

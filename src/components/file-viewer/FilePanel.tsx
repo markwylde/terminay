@@ -4,19 +4,27 @@ import {
   LARGE_FILE_THRESHOLD_BYTES,
   createFileDraftBuffer,
   createFileSessionStore,
+  createLegacyFileViewerClient,
   detectFileCapabilities,
   terminayFileGateway,
 } from '../../services/fileViewer'
 import { useTerminalSettings } from '../../hooks/useTerminalSettings'
+import { createLegacySettingsClient } from '../../services/settings/legacySettingsClient'
 import type { FileInfo, FileViewerEngine, FileViewerMode, GitFileDiff } from '../../types/fileViewer'
 import type { FileViewerDefaultMode } from '../../types/settings'
-import type { FileViewerGitRepoInfo } from '../../types/terminay'
+import type { FileViewerGitRepoInfo, FileViewerSparseFileEdit } from '../../types/terminay'
+import {
+  applySparseEdits,
+  decodeSparseEdit,
+  mapProjectedOffset,
+} from '../../services/fileViewer/sparseProjection'
 import { FileConflictBanner } from './FileConflictBanner'
 import { FileLargeFileChooser } from './FileLargeFileChooser'
 import { FileModeSwitcher } from './FileModeSwitcher'
 import { FileStatusBar } from './FileStatusBar'
 import { DiffViewer } from './modes/DiffViewer'
 import { HexViewer } from './modes/HexViewer'
+import { PerformantTextViewer } from './modes/PerformantTextViewer'
 import { PreviewViewer } from './modes/PreviewViewer'
 import { TasksViewer } from './modes/TasksViewer'
 import { TextViewer } from './modes/TextViewer'
@@ -62,16 +70,26 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 
+function encodeUint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+  return window.btoa(binary)
+}
+
 function getCustomDefaultMode(file: FileInfo, customExtensions: { defaultMode: FileViewerDefaultMode; extension: string }[]) {
   return customExtensions.find((entry) => entry.extension === file.extension)?.defaultMode
 }
 
 export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
-  const { filePath, initialMode, preferredEngine = 'auto' } = props.params
+  const { filePath, initialMode, preferredEngine = 'auto', projectRoot } = props.params
   const baseParamsRef = useRef(props.params)
   const panelApiRef = useRef(props.api)
   const containerApiRef = useRef(props.containerApi)
-  const { isLoading: isLoadingSettings, settings } = useTerminalSettings()
+  const { isLoading: isLoadingSettings, settings, setSettings } = useTerminalSettings()
+  const fileViewerClient = useMemo(() => createLegacyFileViewerClient(), [])
+  const settingsClient = useMemo(() => createLegacySettingsClient(), [])
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(props.params.fileInfo ?? null)
   const [draftText, setDraftText] = useState('')
   const [engine, setEngine] = useState<FileViewerEngine>(preferredEngine)
@@ -82,17 +100,22 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const [gitRepoInfo, setGitRepoInfo] = useState<FileViewerGitRepoInfo | null>(null)
   const [isDirty, setIsDirty] = useState(false)
   const [isHexValid, setIsHexValid] = useState(true)
-  const [hasLargeHexEdits, setHasLargeHexEdits] = useState(false)
   const [conflict, setConflict] = useState(false)
   const [showEngineChoice, setShowEngineChoice] = useState(false)
-  const [truncatedForPerformance, setTruncatedForPerformance] = useState(false)
+  const [hexDraftBase64, setHexDraftBase64] = useState<string | null>(null)
+  const [sparseEdits, setSparseEdits] = useState<Map<string, FileViewerSparseFileEdit>>(() => new Map())
+  const [sparseLineDeltas, setSparseLineDeltas] = useState<Map<string, number>>(() => new Map())
   const [previewSourceUrl, setPreviewSourceUrl] = useState<string | null>(null)
   const previewObjectUrlRef = useRef<string | null>(null)
   const draftBufferRef = useRef(createFileDraftBuffer({ text: '' }))
   const currentTextGetterRef = useRef<(() => string) | null>(null)
+  const sparseEditsRef = useRef<Map<string, FileViewerSparseFileEdit>>(new Map())
+  const sparseLineDeltasRef = useRef<Map<string, number>>(new Map())
+  const sparseOriginalBytesRef = useRef<Map<string, number>>(new Map())
   const hasAppliedDefaultModeRef = useRef(initialMode !== undefined)
   const hasSelectedModeRef = useRef(initialMode !== undefined)
   const isMountedRef = useRef(true)
+  const skipNextMonacoContentLoadRef = useRef(false)
 
   const sessionStore = useMemo(
     () =>
@@ -107,20 +130,24 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
   const fileInfoRef = useRef<FileInfo | null>(fileInfo)
   const isDirtyRef = useRef(isDirty)
   const isHexValidRef = useRef(isHexValid)
-  const hasLargeHexEditsRef = useRef(hasLargeHexEdits)
   const modeRef = useRef(mode)
   const sessionStoreRef = useRef(sessionStore)
-  const truncatedForPerformanceRef = useRef(truncatedForPerformance)
 
   fileInfoRef.current = fileInfo
   isDirtyRef.current = isDirty
   isHexValidRef.current = isHexValid
-  hasLargeHexEditsRef.current = hasLargeHexEdits
   modeRef.current = mode
   sessionStoreRef.current = sessionStore
-  truncatedForPerformanceRef.current = truncatedForPerformance
   const watchedFilePath = fileInfo?.path ?? null
   const fileWatchRefreshIntervalMs = Math.max(1, settings.fileViewer.refreshIntervalSeconds) * 1000
+  const orderedSparseEntries = useMemo(
+    () => [...sparseEdits.entries()].sort((left, right) => left[1].start - right[1].start),
+    [sparseEdits],
+  )
+  const orderedSparseEdits = useMemo(
+    () => orderedSparseEntries.map(([, edit]) => edit),
+    [orderedSparseEntries],
+  )
 
   const handleHexValidationChange = useCallback((isValid: boolean) => {
     setIsHexValid(isValid)
@@ -130,14 +157,120 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
     currentTextGetterRef.current = getter
   }, [])
 
-  const handlePerformantEditChange = useCallback((isPerformantDirty: boolean) => {
-    setIsDirty(isPerformantDirty)
-    sessionStoreRef.current?.setDirty(isPerformantDirty)
+  const handleSparseEditChange = useCallback((owner: string, edit: FileViewerSparseFileEdit | null, lineDelta = 0) => {
+    const next = new Map(sparseEditsRef.current)
+    const nextLineDeltas = new Map(sparseLineDeltasRef.current)
+    if (edit) {
+      for (const [existingOwner, existing] of next) {
+        if (
+          existingOwner !== owner &&
+          edit.start < existing.end &&
+          existing.start < edit.end
+        ) {
+          next.delete(existingOwner)
+          nextLineDeltas.delete(existingOwner)
+          sparseOriginalBytesRef.current.delete(existingOwner)
+        }
+      }
+      next.set(owner, edit)
+      nextLineDeltas.set(owner, lineDelta)
+    } else {
+      next.delete(owner)
+      nextLineDeltas.delete(owner)
+      sparseOriginalBytesRef.current.delete(owner)
+    }
+    sparseEditsRef.current = next
+    sparseLineDeltasRef.current = nextLineDeltas
+    setSparseEdits(next)
+    setSparseLineDeltas(nextLineDeltas)
+    setIsDirty(next.size > 0)
+    sessionStoreRef.current?.setDirty(next.size > 0)
   }, [])
 
-  const readTextWindow = useCallback(
-    (range: { length: number; offset: number }) => terminayFileGateway.readFileTextWindow(filePath, range),
-    [filePath],
+  const handleSparseByteChange = useCallback(
+    async (projectedOffset: number, value: number, currentValue: number) => {
+      const currentInfo = fileInfoRef.current
+      if (!currentInfo) {
+        return
+      }
+      const entries = [...sparseEditsRef.current.entries()].sort(
+        (left, right) => left[1].start - right[1].start,
+      )
+      const location = mapProjectedOffset(
+        currentInfo.size,
+        entries.map(([, edit]) => edit),
+        projectedOffset,
+      )
+      if (!location) {
+        return
+      }
+      const newlineDelta = Number(value === 0x0a) - Number(currentValue === 0x0a)
+      if (location.kind === 'original') {
+        let page: number | null = null
+        if (newlineDelta !== 0) {
+          try {
+            let metadata = await fileViewerClient.getTextMetadata(currentInfo.path, projectRoot)
+            while (!metadata.isComplete) {
+              metadata = await fileViewerClient.getTextMetadata(currentInfo.path, projectRoot)
+            }
+            let low = 0
+            let high = Math.max(0, metadata.lineCount - 1)
+            while (low <= high) {
+              const middle = Math.floor((low + high) / 2)
+              const line = (await fileViewerClient.readTextLines(currentInfo.path, projectRoot, middle, 1)).lines[0]
+              if (!line) {
+                break
+              }
+              const lineEnd = line.end + new TextEncoder().encode(line.eol).byteLength
+              if (location.originalOffset < line.start) {
+                high = middle - 1
+              } else if (location.originalOffset >= lineEnd) {
+                low = middle + 1
+              } else {
+                page = Math.floor(line.lineNumber / 128)
+                break
+              }
+            }
+          } catch {
+            // Binary files have no UTF-8 line projection; their byte draft remains valid.
+          }
+        }
+        const owner = page === null
+          ? `hex-byte:${location.originalOffset}`
+          : `hex-byte:${location.originalOffset}:page:${page}`
+        sparseOriginalBytesRef.current.set(owner, currentValue)
+        handleSparseEditChange(
+          owner,
+          {
+            dataBase64: encodeUint8ArrayToBase64(Uint8Array.of(value)),
+            end: location.originalOffset + 1,
+            start: location.originalOffset,
+          },
+          newlineDelta,
+        )
+        return
+      }
+
+      const [owner, edit] = entries[location.editIndex]
+      const replacement = decodeSparseEdit(edit)
+      replacement[location.replacementOffset] = value
+      if (
+        replacement.byteLength === 1 &&
+        sparseOriginalBytesRef.current.get(owner) === value
+      ) {
+        handleSparseEditChange(owner, null)
+        return
+      }
+      handleSparseEditChange(
+        owner,
+        {
+          ...edit,
+          dataBase64: encodeUint8ArrayToBase64(replacement),
+        },
+        (sparseLineDeltasRef.current.get(owner) ?? 0) + newlineDelta,
+      )
+    },
+    [fileViewerClient, handleSparseEditChange, projectRoot],
   )
 
   useEffect(() => {
@@ -146,10 +279,6 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
       isMountedRef.current = false
     }
   }, [])
-
-  useEffect(() => {
-    setHasLargeHexEdits(false)
-  }, [filePath])
 
   useEffect(() => {
     const onModeRequest = (event: Event) => {
@@ -206,6 +335,78 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
     },
     [],
   )
+
+  const saveSparseDraft = useCallback(async (): Promise<FileInfo> => {
+    const currentFileInfo = fileInfoRef.current
+    const edits = [...sparseEditsRef.current.values()].sort((left, right) => left.start - right.start)
+    if (!currentFileInfo) {
+      throw new Error('The sparse draft no longer has a file revision.')
+    }
+    if (edits.length === 0) {
+      return currentFileInfo
+    }
+    if (currentFileInfo.ino === null || currentFileInfo.mtimeMs === null) {
+      throw new Error('The file revision cannot be verified for a sparse save.')
+    }
+
+    try {
+      await fileViewerClient.saveSparseFile({
+        edits,
+        expectedIno: currentFileInfo.ino,
+        expectedMtimeMs: currentFileInfo.mtimeMs,
+        expectedSize: currentFileInfo.size,
+        path: currentFileInfo.path,
+        projectRoot,
+      })
+      const nextInfo = await terminayFileGateway.getFileInfo(currentFileInfo.path)
+      sparseEditsRef.current = new Map()
+      sparseLineDeltasRef.current = new Map()
+      sparseOriginalBytesRef.current = new Map()
+      setSparseEdits(new Map())
+      setSparseLineDeltas(new Map())
+      setFileInfo(nextInfo)
+      setIsDirty(false)
+      sessionStoreRef.current?.setDirty(false)
+      setConflict(false)
+      sessionStoreRef.current?.setConflict({ kind: 'none' })
+      await refreshDiff(nextInfo.path)
+      return nextInfo
+    } catch (error) {
+      setConflict(true)
+      sessionStoreRef.current?.setConflict({
+        diskMtimeMs: currentFileInfo.mtimeMs,
+        kind: 'external-change',
+      })
+      throw error
+    }
+  }, [fileViewerClient, projectRoot, refreshDiff])
+
+  const handleSwitchToMonaco = useCallback(async () => {
+    const currentInfo = fileInfoRef.current
+    if (!currentInfo) {
+      throw new Error('The file is no longer available.')
+    }
+    const originalText = await terminayFileGateway.readFileText(currentInfo.path)
+    const originalBytes = new TextEncoder().encode(originalText)
+    const edits = [...sparseEditsRef.current.values()].sort((left, right) => left.start - right.start)
+    const projectedBytes = applySparseEdits(originalBytes, edits)
+    const projectedText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(projectedBytes)
+
+    draftBufferRef.current.replaceText(originalText)
+    draftBufferRef.current.setText(projectedText)
+    setDraftText(projectedText)
+    sparseEditsRef.current = new Map()
+    sparseLineDeltasRef.current = new Map()
+    sparseOriginalBytesRef.current = new Map()
+    setSparseEdits(new Map())
+    setSparseLineDeltas(new Map())
+    const dirty = projectedText !== originalText
+    setIsDirty(dirty)
+    sessionStoreRef.current?.setDirty(dirty)
+    skipNextMonacoContentLoadRef.current = true
+    setEngine('monaco')
+    sessionStoreRef.current?.setEngine('monaco')
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -289,22 +490,20 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
     let isMounted = true
 
     const loadContent = async () => {
-      const previewKind = detectFileCapabilities(fileInfo).previewKind
-
-      if ((previewKind === 'image' || previewKind === 'pdf') && mode === 'preview') {
-        setTruncatedForPerformance(false)
-        setDraftText('')
+      if (engine === 'monaco' && skipNextMonacoContentLoadRef.current) {
+        skipNextMonacoContentLoadRef.current = false
         return
       }
-
-      if (!fileInfo.isBinary || mode === 'text') {
+      if (
+        engine === 'monaco' &&
+        fileInfo.size > LARGE_FILE_THRESHOLD_BYTES &&
+        draftBufferRef.current.isDirty()
+      ) {
+        return
+      }
+      if (!fileInfo.isBinary) {
         if (engine === 'performant' && fileInfo.size > LARGE_FILE_THRESHOLD_BYTES) {
-          if (!isMounted) {
-            return
-          }
           setDraftText('')
-          draftBufferRef.current.replaceText('')
-          setTruncatedForPerformance(true)
           return
         }
 
@@ -314,8 +513,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         }
         setDraftText(text)
         draftBufferRef.current.replaceText(text)
-        setTruncatedForPerformance(false)
-      } else if (mode === 'hex') {
+      } else {
         if (fileInfo.size <= LARGE_FILE_THRESHOLD_BYTES) {
           const response = await terminayFileGateway.readFileBytes(fileInfo.path, {
             length: fileInfo.size,
@@ -325,8 +523,8 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
             return
           }
           draftBufferRef.current.replaceBytes(response.base64)
+          setHexDraftBase64(response.base64)
         }
-        setTruncatedForPerformance(false)
       }
     }
 
@@ -335,7 +533,22 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
     return () => {
       isMounted = false
     }
-  }, [engine, fileInfo, mode, showEngineChoice])
+  }, [engine, fileInfo, showEngineChoice])
+
+  useEffect(() => {
+    if (
+      mode !== 'text' ||
+      !fileInfo?.isBinary ||
+      fileInfo.size > LARGE_FILE_THRESHOLD_BYTES ||
+      hexDraftBase64 === null
+    ) {
+      return
+    }
+
+    const nextText = draftBufferRef.current.getText()
+    setDraftText(nextText)
+    draftBufferRef.current.setText(nextText)
+  }, [fileInfo, hexDraftBase64, mode])
 
   useEffect(() => {
     if (!watchedFilePath) {
@@ -361,10 +574,6 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 
         setFileInfo(nextInfo)
         sessionStoreRef.current?.setFile(nextInfo)
-
-        if (modeRef.current === 'hex') {
-          setTruncatedForPerformance(false)
-        }
 
         if (modeRef.current === 'diff' || modeRef.current === 'tasks') {
           void refreshDiff(nextInfo.path, { keepPrevious: true })
@@ -440,16 +649,13 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
           return false
         }
 
-        if (truncatedForPerformanceRef.current) {
-          throw new Error('Switch to Monaco before saving this large file so the full file contents are loaded.')
+        if (sparseEditsRef.current.size > 0) {
+          await saveSparseDraft()
+          return true
         }
 
         if (modeRef.current === 'hex' && !isHexValidRef.current) {
           throw new Error('Fix invalid HEX byte values before saving.')
-        }
-
-        if (hasLargeHexEditsRef.current) {
-          throw new Error('Large HEX edits are local to the paged viewer. Saving them is unavailable until patch-based file writes are supported.')
         }
 
         if (modeRef.current === 'text') {
@@ -483,7 +689,6 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         }
         setFileInfo(nextInfo)
         setIsDirty(false)
-        setHasLargeHexEdits(false)
         sessionStoreRef.current?.setDirty(false)
         setConflict(false)
         sessionStoreRef.current?.setConflict({ kind: 'none' })
@@ -492,7 +697,26 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
       },
       preferredEngine: engine,
     })
-  }, [engine, fileInfo, isDirty, refreshDiff])
+  }, [engine, fileInfo, isDirty, refreshDiff, saveSparseDraft])
+
+  const handleModeChange = useCallback(
+    async (nextMode: FileViewerMode) => {
+      const nextInfo = fileInfoRef.current
+      hasSelectedModeRef.current = true
+      hasAppliedDefaultModeRef.current = true
+      if (nextMode === 'hex' && nextInfo && nextInfo.size <= LARGE_FILE_THRESHOLD_BYTES) {
+        setHexDraftBase64(draftBufferRef.current.getBase64())
+      }
+      if (nextMode === 'text' && nextInfo && nextInfo.size <= LARGE_FILE_THRESHOLD_BYTES) {
+        const nextText = draftBufferRef.current.getText()
+        setDraftText(nextText)
+        draftBufferRef.current.setText(nextText)
+      }
+      setMode(nextMode)
+      sessionStoreRef.current?.setMode(nextMode)
+    },
+    [],
+  )
 
   if (!fileInfo) {
     return <div className="file-panel file-panel--loading">Loading file…</div>
@@ -522,6 +746,11 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
           }}
           onReload={async () => {
             const nextInfo = await terminayFileGateway.getFileInfo(fileInfo.path)
+            sparseEditsRef.current = new Map()
+            sparseLineDeltasRef.current = new Map()
+            sparseOriginalBytesRef.current = new Map()
+            setSparseEdits(new Map())
+            setSparseLineDeltas(new Map())
             setFileInfo(nextInfo)
             if (!nextInfo.isBinary) {
               setDraftText(await terminayFileGateway.readFileText(nextInfo.path))
@@ -542,10 +771,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
             diff: !canDiff,
           }}
           onChangeMode={(nextMode) => {
-            hasSelectedModeRef.current = true
-            hasAppliedDefaultModeRef.current = true
-            setMode(nextMode)
-            sessionStore?.setMode(nextMode)
+            void handleModeChange(nextMode)
           }}
         />
         {capabilities.shouldPromptForEngineChoice && showEngineChoice ? (
@@ -559,27 +785,31 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
             }}
           />
         ) : null}
-        {truncatedForPerformance ? (
-          <div className="file-toolbar__fallback">
-            Showing a virtualized window in Performant mode. Switch to Monaco before saving the full file.
-          </div>
-        ) : null}
       </div>
 
       <div className="file-panel__body">
         {effectiveMode === 'preview' ? <PreviewViewer file={fileInfo} previewSourceUrl={previewSourceUrl} text={draftText} /> : null}
         {effectiveMode === 'tasks' ? <TasksViewer text={draftText} diff={diff} /> : null}
-        {effectiveMode === 'text' ? (
+        {engine === 'performant' && fileInfo.size > LARGE_FILE_THRESHOLD_BYTES ? (
+          <div className="file-panel__viewer" hidden={effectiveMode !== 'text'}>
+            <PerformantTextViewer
+              key={`${fileInfo.path}:${fileInfo.size}:${fileInfo.mtimeMs ?? 'unknown'}`}
+              filePath={fileInfo.path}
+              projectRoot={projectRoot}
+              onSparseEditChange={handleSparseEditChange}
+              onSwitchToMonaco={handleSwitchToMonaco}
+              sparseEdits={orderedSparseEntries}
+              sparseLineDeltas={sparseLineDeltas}
+            />
+          </div>
+        ) : effectiveMode === 'text' ? (
           !fileInfo.isDirectory ? (
             <TextViewer
               engine={engine}
               filePath={fileInfo.path}
-              fileSize={fileInfo.size}
               language={fileInfo.extension.replace(/^\./, '')}
               text={draftText}
               onCurrentTextGetterChange={handleCurrentTextGetterChange}
-              onPerformantEditChange={handlePerformantEditChange}
-              readTextWindow={readTextWindow}
               onChangeText={(text) => {
                 setDraftText(text)
                 draftBufferRef.current.setText(text)
@@ -594,18 +824,20 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
         ) : null}
         {effectiveMode === 'hex' ? (
           <HexViewer
+            draftBase64={fileInfo.size <= LARGE_FILE_THRESHOLD_BYTES ? hexDraftBase64 : null}
             filePath={fileInfo.path}
             fileSize={fileInfo.size}
+            sparseEdits={fileInfo.size > LARGE_FILE_THRESHOLD_BYTES ? orderedSparseEdits : undefined}
             onValidationChange={handleHexValidationChange}
-            onChangeByte={(offset, value) => {
-              draftBufferRef.current.setByte(offset, value)
-              const largeHexEdit = fileInfo.isLargeFile
-              if (largeHexEdit) {
-                setHasLargeHexEdits(true)
+            onChangeByte={(offset, value, originalValue) => {
+              if (fileInfo.size > LARGE_FILE_THRESHOLD_BYTES) {
+                handleSparseByteChange(offset, value, originalValue)
+              } else {
+                draftBufferRef.current.setByte(offset, value)
+                const dirty = draftBufferRef.current.isDirty()
+                setIsDirty(dirty)
+                sessionStore?.setDirty(dirty)
               }
-              const dirty = largeHexEdit || draftBufferRef.current.isDirty()
-              setIsDirty(dirty)
-              sessionStore?.setDirty(dirty)
             }}
           />
         ) : null}
@@ -615,7 +847,18 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
             error={diffError}
             filePath={fileInfo.path}
             isLoading={diffStatus === 'loading'}
-            layout={sessionStore?.getState().diffLayout ?? 'side-by-side'}
+            layout={settings.fileViewer.diffLayout}
+            onChangeLayout={(diffLayout) => {
+              const nextSettings = {
+                ...settings,
+                fileViewer: {
+                  ...settings.fileViewer,
+                  diffLayout,
+                },
+              }
+              setSettings(nextSettings)
+              void settingsClient.update(nextSettings as unknown as import('@terminay/protocol').JsonValue)
+            }}
           />
         ) : null}
       </div>

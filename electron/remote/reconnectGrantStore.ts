@@ -65,6 +65,9 @@ const CHALLENGE_TTL_MS = 60 * 1000
 const GRANT_SECRET_BYTES = 32
 const HANDLE_BYTES = 32
 const PROTOCOL_VERSION = 'v1'
+const RECONNECT_CHALLENGE_DOMAIN = 'terminay\u0000v1\u0000reconnect-challenge\u0000'
+const MAX_PENDING_ATTEMPTS = 64
+const MAX_PENDING_ATTEMPTS_PER_SESSION = 4
 
 const LIFETIME_MS: Record<Exclude<ReconnectGrantLifetime, 'until-revoked'>, number> = {
   '1h': 60 * 60 * 1000,
@@ -77,7 +80,7 @@ export function resolveReconnectGrantLifetime(value: string | null | undefined):
 }
 
 export function serializeReconnectChallenge(payload: ReconnectChallengePayload): string {
-  return JSON.stringify({
+  return RECONNECT_CHALLENGE_DOMAIN + JSON.stringify({
     action: payload.action,
     attemptId: payload.attemptId,
     clientNonce: payload.clientNonce,
@@ -136,6 +139,7 @@ function compareBase64Url(expected: string, actual: string): boolean {
 export class ReconnectGrantStore {
   private readonly attempts = new Map<string, PendingReconnectAttempt>()
   private grants = new Map<string, ReconnectGrantRecord>()
+  private hostRegistrationTokens = new Map<string, string>()
 
   constructor(
     private readonly filePath: string,
@@ -145,10 +149,19 @@ export class ReconnectGrantStore {
   async load(): Promise<void> {
     try {
       const raw = await fs.readFile(this.filePath, 'utf8')
-      const parsed = JSON.parse(raw) as ReconnectGrantRecord[]
-      this.grants = new Map(Array.isArray(parsed) ? parsed.map((grant) => [grant.id, grant]) : [])
+      const parsed = JSON.parse(raw) as
+        | ReconnectGrantRecord[]
+        | { grants?: ReconnectGrantRecord[]; hostRegistrationTokens?: Record<string, string> }
+      const grants = Array.isArray(parsed) ? parsed : parsed.grants
+      this.grants = new Map(Array.isArray(grants) ? grants.map((grant) => [grant.id, grant]) : [])
+      this.hostRegistrationTokens = new Map(
+        !Array.isArray(parsed) && parsed.hostRegistrationTokens
+          ? Object.entries(parsed.hostRegistrationTokens)
+          : [],
+      )
     } catch {
       this.grants = new Map()
+      this.hostRegistrationTokens = new Map()
     }
   }
 
@@ -231,6 +244,16 @@ export class ReconnectGrantStore {
   }): Promise<{ payload: ReconnectChallengePayload; signingInput: string }> {
     const grant = this.requireUsableGrantByHandle(options.handle, options.origin, options.sessionId)
     const issuedAt = this.now()
+    this.pruneAttempts(issuedAt.getTime())
+    const attemptsForSession = Array.from(this.attempts.values())
+      .filter((attempt) => attempt.payload.sessionId === grant.sessionId)
+      .length
+    if (
+      this.attempts.size >= MAX_PENDING_ATTEMPTS ||
+      attemptsForSession >= MAX_PENDING_ATTEMPTS_PER_SESSION
+    ) {
+      throw new Error('Too many reconnect challenges are active. Retry after an existing attempt expires.')
+    }
     const expiresAt = new Date(issuedAt.getTime() + CHALLENGE_TTL_MS)
     const payload: ReconnectChallengePayload = {
       action: 'reconnect',
@@ -257,6 +280,19 @@ export class ReconnectGrantStore {
     return { payload, signingInput }
   }
 
+  async getOrCreateHostRegistrationToken(sessionId: string): Promise<string> {
+    const existing = this.hostRegistrationTokens.get(sessionId)
+    if (existing) return existing
+    const token = createSecret()
+    this.hostRegistrationTokens.set(sessionId, token)
+    await this.persist()
+    return token
+  }
+
+  cancelChallenge(attemptId: string): void {
+    this.attempts.delete(attemptId)
+  }
+
   async verifyProof(options: {
     attemptId: string
     clientNonce: string
@@ -264,14 +300,14 @@ export class ReconnectGrantStore {
     lifetime?: ReconnectGrantLifetime | string | null
     origin: string
     proof: string
+    verifyDeviceProof?: (deviceId: string, signingInput: string) => boolean
   }): Promise<ReconnectGrantRecord> {
     const attempt = this.attempts.get(options.attemptId)
     if (!attempt) {
       throw new Error('This reconnect challenge is no longer valid.')
     }
-    this.attempts.delete(options.attemptId)
-
     if (attempt.expiresAt < this.now().getTime()) {
+      this.attempts.delete(options.attemptId)
       throw new Error('This reconnect challenge has expired.')
     }
 
@@ -297,7 +333,11 @@ export class ReconnectGrantStore {
     if (!compareBase64Url(expectedProof, options.proof)) {
       throw new Error('This reconnect proof is invalid.')
     }
+    if (options.verifyDeviceProof && !options.verifyDeviceProof(grant.deviceId, attempt.signingInput)) {
+      throw new Error('This reconnect device-key proof is invalid.')
+    }
 
+    this.attempts.delete(options.attemptId)
     const verifiedAt = this.now()
     grant.lastUsedAt = verifiedAt.toISOString()
     if (options.lifetime !== undefined) {
@@ -375,6 +415,15 @@ export class ReconnectGrantStore {
 
   private async persist(): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true })
-    await fs.writeFile(this.filePath, JSON.stringify(Array.from(this.grants.values()), null, 2), 'utf8')
+    await fs.writeFile(this.filePath, JSON.stringify({
+      grants: Array.from(this.grants.values()),
+      hostRegistrationTokens: Object.fromEntries(this.hostRegistrationTokens),
+    }, null, 2), { encoding: 'utf8', mode: 0o600 })
+  }
+
+  private pruneAttempts(now: number): void {
+    for (const [attemptId, attempt] of this.attempts) {
+      if (attempt.expiresAt <= now) this.attempts.delete(attemptId)
+    }
   }
 }

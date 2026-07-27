@@ -27,6 +27,225 @@ jobs:
       - name: Run smoke checks
         run: npm run smoke
 
+      - name: Validate release evidence and production dependency audit
+        run: |
+          npm run test:release-readiness
+          npm run test:security-fuzz
+          npm run test:security-boundaries
+          npm audit --omit=dev --audit-level=high
+
+  standalone-server-smoke:
+    name: Standalone Server Smoke (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    container:
+      image: node:22.23.1-bookworm-slim
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies on clean supported server runner
+        run: npm ci
+
+      - name: Build and smoke the foreground server
+        run: npm run test:standalone-server
+
+  pty-runtime-artifact:
+    name: PTY Runtime Artifact (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    container:
+      image: node:22.23.1-bookworm-slim
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install baseline build dependencies and native PTY assets
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates curl git python3 xz-utils
+          npm ci
+
+      - name: Test PTY exit compatibility
+        run: node --test scripts/pty-exit-protocol.test.mjs
+
+      - name: Build PTY host
+        run: npm run build:app
+
+      - name: Download pinned artifact runtime
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          case "$TARGET" in
+            linux-x64)
+              NODE_ARCHIVE=node-v22.23.1-linux-x64.tar.xz
+              ;;
+            linux-arm64)
+              NODE_ARCHIVE=node-v22.23.1-linux-arm64.tar.xz
+              ;;
+            *)
+              echo "Unsupported target: $TARGET"
+              exit 1
+              ;;
+          esac
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/$NODE_ARCHIVE" \
+            "https://nodejs.org/dist/v22.23.1/$NODE_ARCHIVE"
+          echo "NODE_ARCHIVE=$RUNNER_TEMP/$NODE_ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Build deterministic artifact twice
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          node scripts/build-pty-runtime-artifact.mjs \
+            --target "$TARGET" \
+            --node-archive "$NODE_ARCHIVE" \
+            --output-dir "$RUNNER_TEMP/pty-artifact-one"
+          node scripts/build-pty-runtime-artifact.mjs \
+            --target "$TARGET" \
+            --node-archive "$NODE_ARCHIVE" \
+            --output-dir "$RUNNER_TEMP/pty-artifact-two"
+
+          ARCHIVE_ONE="$(find "$RUNNER_TEMP/pty-artifact-one" -name '*.tar.gz' -type f)"
+          ARCHIVE_TWO="$(find "$RUNNER_TEMP/pty-artifact-two" -name '*.tar.gz' -type f)"
+          test -n "$ARCHIVE_ONE"
+          test -n "$ARCHIVE_TWO"
+          test "$(sha256sum "$ARCHIVE_ONE" | cut -d ' ' -f 1)" = \
+            "$(sha256sum "$ARCHIVE_TWO" | cut -d ' ' -f 1)"
+          echo "PTY_RUNTIME_ARCHIVE=$ARCHIVE_ONE" >> "$GITHUB_ENV"
+
+      - name: Remove target-machine build tools
+        run: |
+          apt-get purge --yes build-essential gcc g++ make python3
+          apt-get autoremove --yes
+          ! command -v cc
+          ! command -v c++
+          ! command -v gcc
+          ! command -v g++
+          ! command -v make
+          ! command -v python3
+
+      - name: Probe extracted artifact on the Debian 12 baseline
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.36"
+          node scripts/pty-runtime-artifact-probe.mjs \
+            --target "$TARGET" \
+            --archive "$PTY_RUNTIME_ARCHIVE"
+
+      - name: Upload proven artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminay-pty-runtime-${{ matrix.target }}
+          path: ${{ env.PTY_RUNTIME_ARCHIVE }}
+          if-no-files-found: error
+
+  pty-packaged-linux:
+    name: Packaged Desktop PTY (GNU/Linux x64)
+    runs-on: ubuntu-24.04
+    container:
+      image: node:22.23.1-bookworm-slim
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install baseline build and Electron runtime dependencies
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates git python3 xz-utils
+          npm ci
+          npx playwright install-deps chromium
+
+      - name: Build the GNU/Linux x64 AppImage
+        run: |
+          npm run build:app
+          npx electron-builder --linux AppImage --x64 --publish never
+
+      - name: Remove target-machine build tools
+        run: |
+          apt-get purge --yes build-essential gcc g++ make python3
+          apt-get autoremove --yes
+          ! command -v cc
+          ! command -v c++
+          ! command -v gcc
+          ! command -v g++
+          ! command -v make
+          ! command -v python3
+
+      - name: Exercise the packaged PTY payload on the Debian 12 baseline
+        env:
+          TERMINAY_PACKAGED_APPIMAGE: release/0.0.0/Terminay-Linux-0.0.0.AppImage
+        run: |
+          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.36"
+          xvfb-run --auto-servernum node --test scripts/pty-packaged-linux.test.mjs
+
+  production-headless-webrtc:
+    name: Production Headless WebRTC (${{ matrix.arch }})
+    # The two repositories must expose the same hardened signaling protocol.
+    # Enable this matrix only after publishing that hosted-service revision.
+    if: ${{ vars.TERMINAY_HOSTED_WEBRTC_REF != '' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out Terminay
+        uses: actions/checkout@v4
+
+      - name: Check out hosted signaling service
+        uses: actions/checkout@v4
+        with:
+          repository: markwylde/terminay.com
+          ref: ${{ vars.TERMINAY_HOSTED_WEBRTC_REF }}
+          path: terminay-hosted-service
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+
+      - name: Install production proof dependencies
+        run: |
+          npm ci
+          npm ci --prefix terminay-hosted-service
+          npx playwright install --with-deps --only-shell chromium
+
+      - name: Prove production WebRTC on native Linux
+        env:
+          TERMINAY_HOSTED_SERVER_REPO: ${{ github.workspace }}/terminay-hosted-service
+          TERMINAY_PROOF_EXPECT_ARCH: ${{ matrix.arch }}
+        run: |
+          env -u DISPLAY -u WAYLAND_DISPLAY \
+            node --test scripts/production-headless-webrtc-secure-werift.test.mjs
+
   e2e-test:
     name: E2E Test
     runs-on: ${{ vars.E2E_RUNNER != '' && vars.E2E_RUNNER || 'ubuntu-latest' }}
