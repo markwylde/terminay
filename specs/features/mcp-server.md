@@ -297,10 +297,12 @@ shape for Claude Code and Codex.
 
 ## Historical delivery record
 
-This completed implementation checklist is retained as history. The remaining
-manual multi-provider verification item is tracked by
-[feature drift alignment](../tasks/2-feature-drift-alignment.md), rather than
-being implied product functionality.
+This completed implementation checklist is retained as history. The former
+manual multi-provider verification is covered by the deterministic MCP flow
+tests below. Those tests intentionally do not launch the Electron UI or real
+Claude Code/Codex binaries; validating those third-party processes in a live
+multi-project desktop session remains an interactive release-check limitation,
+not an automated acceptance claim.
 
 > Implementation notes (deviations from the original sketch, both deliberate):
 > 1. **Scope source of truth is the renderer, resolved per request.** The
@@ -362,8 +364,7 @@ being implied product functionality.
 - [x] Wire the setting to ControlServer start/stop and env injection
 
 ### Verification
-- [x] Unit tests: protocol framing (`control-protocol`), socket round-trip + token scoping (`control-server`), Codex TOML upsert/remove (`mcp-install-codex`)
-- [x] MCP stdio handshake exposes all 13 tools and degrades gracefully without Terminay env (smoke-tested)
-- [x] Token scoping enforced by construction: a token resolves to exactly one session → one owning project workspace; cross-project access is impossible by routing
-- [ ] Manual end-to-end test in a running app with two projects, plus real Claude Code / Codex (list, read, write, open/close, waits) — _requires interactive run_
+- [x] Unit tests: protocol framing (`control-protocol`), socket round-trip + token scoping (`control-server`), Codex TOML upsert/remove and isolated Claude Code JSON install/uninstall (`mcp-install-codex`)
+- [x] Reproducible MCP stdio integration (`scripts/mcp-flow.test.mjs`): the handshake exposes all 13 tools, exercises list/read/status/open/write/run/close/focus/rename/split/wait operations, and degrades clearly without Terminay environment variables
+- [x] Two MCP stdio clients routed through one ControlServer remain project-scoped: each sees only its own fixture terminals, and a cross-project terminal reference is rejected
 - [x] `npm run smoke` (lint + build) passes
