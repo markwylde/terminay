@@ -626,6 +626,12 @@ The desktop should make the distinction clear:
 - Revocation and expiry are enforced by the desktop.
 - If a user generates a fresh QR, it must not break existing live WebRTC
   sessions.
+- WebRTC host status must distinguish a host that is still registering from a
+  host that is ready to pair. If the configured host cannot become ready or
+  loses its relay connection, the desktop must hide the unusable QR and show a
+  recoverable error that tells the user to check the hosted-domain and relay
+  settings, then stop and start Remote Access to retry. It must not describe
+  the implemented host flow as scaffolded or unavailable.
 
 ## Web App UX
 
@@ -745,6 +751,8 @@ Unit tests should cover:
 
 - Local Network pairing URL creation and parsing.
 - WebRTC `/v1/` QR creation and parsing.
+- WebRTC desktop host status transitions for registering, ready, configured
+  host-not-ready, and relay-loss error states, including recoverable UI copy.
 - old shared-origin QR rejection.
 - unsupported future protocol rejection.
 - HKDF derivation compatibility.
