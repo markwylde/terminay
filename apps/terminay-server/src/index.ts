@@ -3,6 +3,7 @@ import type { LocalUiServer } from "./localUiServer.js";
 
 export * from "./mcp/controlEndpoint.js";
 export * from "./bootstrap.js";
+export * from "./dataRootLease.js";
 export * from "./mcp/dispatcher.js";
 export * from "./mcp/terminalAdapter.js";
 export * from "./cliOptions.js";
