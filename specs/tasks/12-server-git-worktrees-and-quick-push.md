@@ -60,8 +60,9 @@ flow without receiving server credentials or raw command authority.
 - [x] Revalidate immediately before each mutation and stop with deterministic
   partial-failure reporting when state changes. A stale next-step revision is
   returned as a partial failure after already-applied actions.
-- [ ] Preserve default-branch and already-applied-commit semantics without
-  implicit history rewriting.
+- [x] Preserve default-branch and already-applied-commit semantics without
+  implicit history rewriting. The default-branch Quick Push fixture proves an
+  already-applied commit is skipped and the resulting branch is still pushed.
 
 ### Credentials and cancellation
 
