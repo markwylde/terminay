@@ -1,10 +1,11 @@
-import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, type WriteStream } from 'node:fs'
-import { readdir, readFile } from 'node:fs/promises'
+import { createWriteStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync, type WriteStream } from 'node:fs'
+import { open, readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { defaultTerminalSettings, resolveTerminalTheme } from '../../src/terminalSettings'
 import type { TerminalSettings, TerminalThemeSettings } from '../../src/types/settings'
 import type {
   TerminalRecordingCast,
+  TerminalRecordingChunk,
   TerminalRecordingListItem,
   TerminalRecordingMetadata,
   TerminalRecordingState,
@@ -38,6 +39,8 @@ type ActiveRecording = {
   errorMessage: string | null
   eventCount: number
   lastEventAtMs: number
+  lastMetadataWriteAtMs: number
+  lastStateEmitAtMs: number
   metadata: TerminalRecordingMetadata
   metadataPath: string
   recordingId: string
@@ -51,6 +54,27 @@ type ActiveRecording = {
 
 const SENSITIVE_OUTPUT_PATTERN =
   /\b(password|passphrase|secret|token|api[-_\s]?key|private[-_\s]?key|otp|verification code|sudo)\b[^\r\n]*[:?]?\s*$/i
+
+const MAX_BUFFERED_RECORDING_BYTES = 8 * 1024 * 1024
+const MAX_RECORDING_CHUNK_BYTES = 512 * 1024
+const RECORDING_HEADER_READ_BYTES = 64 * 1024
+const RECORDING_STATE_EMIT_INTERVAL_MS = 250
+
+function completeUtf8ByteLength(buffer: Buffer, bytesRead: number): number {
+  let sequenceStart = bytesRead - 1
+  while (sequenceStart >= 0 && (buffer[sequenceStart] & 0xc0) === 0x80) {
+    sequenceStart -= 1
+  }
+
+  if (sequenceStart < 0) {
+    return 0
+  }
+
+  const lead = buffer[sequenceStart]
+  const sequenceLength =
+    lead < 0x80 ? 1 : lead >= 0xc2 && lead <= 0xdf ? 2 : lead >= 0xe0 && lead <= 0xef ? 3 : lead >= 0xf0 && lead <= 0xf4 ? 4 : 1
+  return sequenceStart + sequenceLength <= bytesRead ? bytesRead : sequenceStart
+}
 
 function pad2(value: number): string {
   return String(value).padStart(2, '0')
@@ -157,49 +181,67 @@ function parseRecordingMetadata(value: string, metadataPath: string | null): Ter
   }
 }
 
-function metadataFromCastHeader(castPath: string): TerminalRecordingListItem | null {
-  let headerLine = ''
+async function readCastHeaderLine(castPath: string): Promise<string | null> {
+  const handle = await open(castPath, 'r')
   try {
-    const fd = readFileSync(castPath, 'utf8')
-    headerLine = fd.split(/\r?\n/, 1)[0] ?? ''
+    const buffer = Buffer.alloc(RECORDING_HEADER_READ_BYTES)
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
+    if (bytesRead === 0) {
+      return null
+    }
+
+    const text = buffer.subarray(0, bytesRead).toString('utf8')
+    const firstLine = text.split(/\r?\n/, 1)[0] ?? ''
+    return firstLine || null
+  } finally {
+    await handle.close()
+  }
+}
+
+async function metadataFromCastHeader(castPath: string): Promise<TerminalRecordingListItem | null> {
+  try {
+    const headerLine = await readCastHeaderLine(castPath)
+    if (!headerLine) {
+      return null
+    }
+
+    const header = parseJsonObject(headerLine)
+    const term = typeof header?.term === 'object' && header.term !== null ? (header.term as Record<string, unknown>) : {}
+    const stats = statSync(castPath)
+    const timestamp = typeof header?.timestamp === 'number' ? header.timestamp * 1000 : stats.birthtimeMs
+    const startedAt = new Date(timestamp).toISOString()
+
+    return {
+      bytesWritten: stats.size,
+      capturedInput: false,
+      castPath,
+      color: null,
+      cols: Number(term.cols) || 80,
+      cwd: null,
+      durationMs: null,
+      endedAt: null,
+      errorMessage: null,
+      eventCount: 0,
+      exitCode: null,
+      inputPolicy: 'none',
+      metadataPath: null,
+      projectColor: null,
+      projectEmoji: null,
+      projectId: null,
+      projectTitle: null,
+      recordingId: path.basename(castPath, '.cast'),
+      recordingState: 'stopped',
+      rows: Number(term.rows) || 24,
+      sensitiveInputPolicy: 'drop',
+      sessionId: '',
+      shell: null,
+      startedAt,
+      theme: null,
+      title: typeof header?.title === 'string' ? header.title : path.basename(castPath, '.cast'),
+      version: 1,
+    }
   } catch {
     return null
-  }
-
-  const header = parseJsonObject(headerLine)
-  const term = typeof header?.term === 'object' && header.term !== null ? (header.term as Record<string, unknown>) : {}
-  const stats = statSync(castPath)
-  const timestamp = typeof header?.timestamp === 'number' ? header.timestamp * 1000 : stats.birthtimeMs
-  const startedAt = new Date(timestamp).toISOString()
-
-  return {
-    bytesWritten: stats.size,
-    capturedInput: false,
-    castPath,
-    color: null,
-    cols: Number(term.cols) || 80,
-    cwd: null,
-    durationMs: null,
-    endedAt: null,
-    errorMessage: null,
-    eventCount: 0,
-    exitCode: null,
-    inputPolicy: 'none',
-    metadataPath: null,
-    projectColor: null,
-    projectEmoji: null,
-    projectId: null,
-    projectTitle: null,
-    recordingId: path.basename(castPath, '.cast'),
-    recordingState: 'stopped',
-    rows: Number(term.rows) || 24,
-    sensitiveInputPolicy: 'drop',
-    sessionId: '',
-    shell: null,
-    startedAt,
-    theme: null,
-    title: typeof header?.title === 'string' ? header.title : path.basename(castPath, '.cast'),
-    version: 1,
   }
 }
 
@@ -313,6 +355,8 @@ export class TerminalRecordingService {
       errorMessage: null,
       eventCount: 0,
       lastEventAtMs: now.getTime(),
+      lastMetadataWriteAtMs: 0,
+      lastStateEmitAtMs: 0,
       metadata: {
         version: 1,
         bytesWritten: 0,
@@ -357,8 +401,8 @@ export class TerminalRecordingService {
 
     this.activeRecordings.set(sessionId, active)
     this.writeLine(active, JSON.stringify(header))
-    this.writeMetadata(active)
-    this.emitState(active)
+    this.writeMetadata(active, true)
+    this.emitState(active, true)
     return this.toState(active)
   }
 
@@ -432,7 +476,7 @@ export class TerminalRecordingService {
       exitCode,
       recordingState: active.errorMessage ? 'failed' : 'stopped',
     }
-    this.writeMetadata(active)
+    this.writeMetadata(active, true)
     active.stream.end()
     this.activeRecordings.delete(sessionId)
     const state = this.toState(active, active.errorMessage ? 'failed' : 'idle')
@@ -446,11 +490,16 @@ export class TerminalRecordingService {
       return []
     }
 
-    const files = await this.walkRecordingFiles(root)
     const metadataItems: TerminalRecordingListItem[] = []
     const metadataCastPaths = new Set<string>()
+    const castPaths: string[] = []
 
-    for (const filePath of files.filter((candidate) => candidate.endsWith('.json'))) {
+    for await (const filePath of this.walkRecordingFiles(root)) {
+      if (filePath.endsWith('.cast')) {
+        castPaths.push(filePath)
+        continue
+      }
+
       try {
         const item = parseRecordingMetadata(await readFile(filePath, 'utf8'), filePath)
         if (item) {
@@ -462,12 +511,12 @@ export class TerminalRecordingService {
       }
     }
 
-    for (const filePath of files.filter((candidate) => candidate.endsWith('.cast'))) {
+    for (const filePath of castPaths) {
       if (metadataCastPaths.has(filePath)) {
         continue
       }
 
-      const item = metadataFromCastHeader(filePath)
+      const item = await metadataFromCastHeader(filePath)
       if (item) {
         metadataItems.push(item)
       }
@@ -495,11 +544,53 @@ export class TerminalRecordingService {
     }
   }
 
+  async readRecordingChunk(castPath: string, offset: number, length = 256 * 1024): Promise<TerminalRecordingChunk> {
+    const resolvedCastPath = this.resolveExistingRecordingPath(castPath)
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new Error('Recording read offset must be a non-negative integer.')
+    }
+
+    if (!Number.isInteger(length) || length <= 0) {
+      throw new Error('Recording read length must be a positive integer.')
+    }
+
+    const handle = await open(resolvedCastPath, 'r')
+    try {
+      const fileSize = (await handle.stat()).size
+      const safeOffset = Math.min(offset, fileSize)
+      const safeLength = Math.min(length, MAX_RECORDING_CHUNK_BYTES, fileSize - safeOffset)
+      if (safeLength === 0) {
+        return {
+          content: '',
+          done: true,
+          nextOffset: safeOffset,
+        }
+      }
+
+      const buffer = Buffer.alloc(safeLength)
+      const { bytesRead } = await handle.read(buffer, 0, safeLength, safeOffset)
+      const completeBytes = completeUtf8ByteLength(buffer, bytesRead)
+      const readableBytes = completeBytes > 0 ? completeBytes : bytesRead
+      const nextOffset = safeOffset + readableBytes
+      return {
+        content: buffer.subarray(0, readableBytes).toString('utf8'),
+        done: nextOffset >= fileSize,
+        nextOffset,
+      }
+    } finally {
+      await handle.close()
+    }
+  }
+
   deleteRecording(castPath: string): void {
     const resolvedCastPath = this.resolveExistingRecordingPath(castPath)
     const metadataPath = resolvedCastPath.replace(/\.cast$/i, '.json')
     rmSync(resolvedCastPath, { force: true })
     rmSync(metadataPath, { force: true })
+  }
+
+  revealRecording(castPath: string): string {
+    return this.resolveExistingRecordingPath(castPath)
   }
 
   resolveRecordingRoot(rawDirectory: string): string {
@@ -522,7 +613,9 @@ export class TerminalRecordingService {
     const roundedIntervalMs = Math.round(rawIntervalMs)
     active.roundingCarryMs = rawIntervalMs - roundedIntervalMs
     active.lastEventAtMs = now
-    this.writeLine(active, JSON.stringify([roundedIntervalMs / 1000, code, data]))
+    if (!this.writeLine(active, JSON.stringify([roundedIntervalMs / 1000, code, data]))) {
+      return
+    }
     active.eventCount += 1
     active.metadata.bytesWritten = active.bytesWritten
     active.metadata.eventCount = active.eventCount
@@ -530,7 +623,13 @@ export class TerminalRecordingService {
     this.emitState(active)
   }
 
-  private emitState(active: ActiveRecording): void {
+  private emitState(active: ActiveRecording, force = false): void {
+    const now = Date.now()
+    if (!force && now - active.lastStateEmitAtMs < RECORDING_STATE_EMIT_INTERVAL_MS) {
+      return
+    }
+
+    active.lastStateEmitAtMs = now
     this.options.onStateChanged?.(this.toState(active))
   }
 
@@ -555,8 +654,8 @@ export class TerminalRecordingService {
     active.errorMessage = message
     active.metadata.errorMessage = message
     active.metadata.recordingState = 'failed'
-    this.writeMetadata(active)
-    this.emitState(active)
+    this.writeMetadata(active, true)
+    this.emitState(active, true)
   }
 
   private resolveCollisionPath(directory: string, baseName: string, extension: string): string {
@@ -597,34 +696,44 @@ export class TerminalRecordingService {
     }
   }
 
-  private async walkRecordingFiles(root: string): Promise<string[]> {
+  private async *walkRecordingFiles(root: string): AsyncGenerator<string> {
     const entries = await readdir(root, { withFileTypes: true })
-    const files: string[] = []
 
     for (const entry of entries) {
       const entryPath = path.join(root, entry.name)
       if (entry.isDirectory()) {
-        files.push(...await this.walkRecordingFiles(entryPath))
+        yield* this.walkRecordingFiles(entryPath)
         continue
       }
 
       if (entry.isFile() && (entry.name.endsWith('.cast') || entry.name.endsWith('.json'))) {
-        files.push(entryPath)
+        yield entryPath
       }
     }
-
-    return files
   }
 
-  private writeLine(active: ActiveRecording, line: string): void {
+  private writeLine(active: ActiveRecording, line: string): boolean {
     const text = `${line}\n`
-    active.bytesWritten += Buffer.byteLength(text, 'utf8')
+    const byteLength = Buffer.byteLength(text, 'utf8')
+    if (active.stream.writableLength + byteLength > MAX_BUFFERED_RECORDING_BYTES) {
+      this.markFailed(active.sessionId, 'Recording output exceeded the write buffer limit.')
+      return false
+    }
+
+    active.bytesWritten += byteLength
     active.stream.write(text)
+    return true
   }
 
-  private writeMetadata(active: ActiveRecording): void {
+  private writeMetadata(active: ActiveRecording, force = false): void {
+    const now = Date.now()
+    if (!force && now - active.lastMetadataWriteAtMs < 1_000) {
+      return
+    }
+
     try {
       writeFileSync(active.metadataPath, JSON.stringify(active.metadata, null, 2))
+      active.lastMetadataWriteAtMs = now
     } catch (error) {
       active.errorMessage = error instanceof Error ? error.message : String(error)
     }
