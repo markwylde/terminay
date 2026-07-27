@@ -75,7 +75,10 @@ receiving provider secrets or allowing focus changes to retarget a result.
   in `packages/client-core/test/dictation.test.mjs`.
 - [ ] Test dictation permission, size/type rejection, silence stop, Cancel,
   disconnect, target exit, revocation, and temporary-file cleanup.
-- [ ] Verify provider keys and plaintext secrets never reach clients or logs.
+- [x] Verify provider keys and plaintext secrets never reach clients or logs.
+  Server-core AI/dictation fixtures resolve credentials only inside vault
+  callbacks and assert that snapshots, status logs, and provider errors omit
+  the secret sentinels; client disclosure rejects credential-shaped fields.
 
 ## Acceptance checks
 
