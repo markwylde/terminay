@@ -75,8 +75,9 @@ removing old paths before full parity can make recovery impossible.
 
 - [ ] Define temporary flags/adapters for old renderer and terminal-only remote
   paths during development.
-- [ ] Define minimum versions and precise incompatibility errors across Desktop,
-  server, bundled UI, bootstrap, and signaling.
+- [x] Define minimum versions and precise incompatibility errors across Desktop,
+  server, bundled UI, bootstrap, and signaling. Compatibility-matrix tests
+  assert deterministic minimum-version errors before migration or backup.
 - [ ] Deploy backward-compatible hosted changes before dependent clients.
 - [x] Keep direct server-bundled UI as the recovery client via explicit
   credential-free fallback metadata (`createRecoveryClientFallback`,
