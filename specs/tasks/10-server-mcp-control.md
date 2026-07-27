@@ -47,9 +47,12 @@ headless use and makes UI state part of the authorization path.
 - [x] Implement list/read/status/write/run/open/close directly against the
   server-owned TerminalService with implicit project scope and bounded replay
   or input.
-- [ ] Bind focus/rename/split to the canonical server workspace view service;
-  the terminal adapter accepts explicit host callbacks but has no view
-  authority to call yet.
+- [x] Bind focus/rename/split to the canonical server workspace view service;
+  `createServerTerminalControlAdapter` now applies `panel.activate`,
+  `panel.update`, and `panel.split` through an injected `WorkspaceRepository`
+  while retaining explicit callbacks only for hosts without composed workspace
+  persistence. `apps/terminay-server/test/terminal-adapter.test.mjs` verifies
+  that renderer-style callbacks are not invoked.
 - [x] Implement bounded idle, command-completion, and attention waits from
   canonical TerminalActivityService state when that service is composed.
 - [x] Return ambiguity, exit, timeout, cancellation, and revocation explicitly.
@@ -82,8 +85,9 @@ headless use and makes UI state part of the authorization path.
   renderer.
 - [x] Test scope after a project move and calling-terminal exit; the old
   capability is revoked before the replacement project scope is usable.
-- [ ] Test scope after workspace/view moves; view identity is not yet exposed
-  by the server control adapter.
+- [x] Test scope after workspace/view moves; the adapter test moves the
+  authorized project to another canonical view and verifies the same scoped
+  terminal remains controllable without exposing view identity to MCP.
 - [x] Test copied/stale tokens, other-project ids, malformed frames, slow
   readers, forged PIDs, unbounded partial frames, concurrency limits, and
   concurrent waits.
