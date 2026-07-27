@@ -13,6 +13,11 @@ export const FILE_VIEWER_OPERATIONS = Object.freeze({
   reload: "files.reload",
   keepLocal: "files.keep-local",
   close: "files.close",
+  contentCapabilities: "files.content-capabilities",
+  contentRange: "files.content-range",
+  contentText: "files.content-text",
+  contentHex: "files.content-hex",
+  contentPreview: "files.content-preview",
   gitDiff: "file.get-git-diff",
   textMetadata: "file.text-metadata",
   textLines: "file.text-lines",
@@ -46,6 +51,37 @@ export interface FileViewerModeDecision {
   readonly mode: FileViewerMode;
   readonly requestedMode?: FileViewerMode;
   readonly reason?: "unavailable" | "server-preferred";
+}
+
+export type FileViewerContentKind = "text" | "markdown" | "image" | "pdf" | "binary";
+
+export interface FileViewerContentCapabilities {
+  readonly relativePath: string;
+  readonly size: number;
+  readonly kind: FileViewerContentKind;
+  readonly contentType: string;
+  readonly isLarge: boolean;
+  readonly canPreview: boolean;
+  readonly canText: boolean;
+  readonly canHex: boolean;
+  readonly maxDecodedImagePixels: number;
+}
+
+export interface FileViewerContentRange {
+  readonly relativePath: string;
+  readonly kind: FileViewerContentKind;
+  readonly contentType: string;
+  readonly offset: number;
+  readonly requestedLength: number;
+  readonly bytes: Uint8Array;
+  readonly totalSize: number;
+  readonly truncated: boolean;
+}
+
+export interface FileViewerHexRow {
+  readonly offset: number;
+  readonly hex: string;
+  readonly ascii: string;
 }
 
 /** Select a viewer mode exclusively from the server capability snapshot. */
@@ -146,6 +182,41 @@ export class FileViewerClient {
     return validateCapabilities(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.capabilities, payload, options));
   }
 
+  async getContentCapabilities(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentCapabilities> {
+    const payload = { path: boundedPath(path, "file path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    return validateContentCapabilities(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentCapabilities, payload, options));
+  }
+
+  async readContentRange(path: string, offset: number, length: number, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange> {
+    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    return validateContentRange(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentRange, payload, options));
+  }
+
+  async readContentText(path: string, offset: number, length: number, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange & { readonly text: string; readonly invalidEncoding: boolean }> {
+    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentText, payload, options);
+    if (!isRecord(value) || typeof value.text !== "string" || typeof value.invalidEncoding !== "boolean") throw new TypeError("file content text response is invalid");
+    return Object.freeze({ ...validateContentRange(value), text: value.text, invalidEncoding: value.invalidEncoding });
+  }
+
+  async readContentHex(path: string, offset: number, length: number, bytesPerRow = 16, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange & { readonly bytesPerRow: number; readonly rows: readonly FileViewerHexRow[] }> {
+    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), bytesPerRow: boundedPositiveUInt(bytesPerRow, "bytes per row", 64), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentHex, payload, options);
+    if (!isRecord(value) || !safeUInt(value.bytesPerRow) || !Array.isArray(value.rows) || value.rows.length > 16_384) throw new TypeError("file content HEX response is invalid");
+    const rows = value.rows.map((row) => {
+      if (!isRecord(row) || !safeUInt(row.offset) || typeof row.hex !== "string" || row.hex.length > 256 || typeof row.ascii !== "string" || row.ascii.length > 64) throw new TypeError("file content HEX row is invalid");
+      return Object.freeze({ offset: row.offset, hex: row.hex, ascii: row.ascii });
+    });
+    return Object.freeze({ ...validateContentRange(value), bytesPerRow: value.bytesPerRow, rows: Object.freeze(rows) });
+  }
+
+  async readContentPreview(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange & { readonly decodedImagePixelLimit: number }> {
+    const payload = { path: boundedPath(path, "file path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentPreview, payload, options);
+    if (!isRecord(value) || !safeUInt(value.decodedImagePixelLimit)) throw new TypeError("file content preview response is invalid");
+    return Object.freeze({ ...validateContentRange(value), decodedImagePixelLimit: value.decodedImagePixelLimit });
+  }
+
   async openFile(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerSessionIdentity> {
     const payload = { path: boundedPath(path, "file path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
     return validateSessionIdentity(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.open, payload, options));
@@ -225,6 +296,18 @@ function validateCapabilities(value: JsonValue): FileViewerCapabilities {
   return Object.freeze({ relativePath: value.relativePath, size: value.size, ...(finiteNumberOrUndefined(value.mtimeMs) === undefined ? {} : { mtimeMs: finiteNumberOrUndefined(value.mtimeMs) }), ...(safeUIntOrUndefined(value.mode) === undefined ? {} : { mode: safeUIntOrUndefined(value.mode) }), ...(typeof value.mimeType === "string" ? { mimeType: value.mimeType } : {}), previewKind: value.previewKind, preferredMode: value.preferredMode, isBinary: value.isBinary, isLargeFile: value.isLargeFile, safePreview: value.safePreview, canEditText: value.canEditText, canEditHex: value.canEditHex, inspectedBytes: value.inspectedBytes, inspectionTruncated: value.inspectionTruncated, ...(value.canDiff === undefined ? {} : { canDiff: value.canDiff }) });
 }
 
+function validateContentCapabilities(value: JsonValue): FileViewerContentCapabilities {
+  if (!isRecord(value) || typeof value.relativePath !== "string" || value.relativePath.length > 4096 || !safeUInt(value.size) || !isContentKind(value.kind) || typeof value.contentType !== "string" || value.contentType.length > 256 || typeof value.isLarge !== "boolean" || typeof value.canPreview !== "boolean" || typeof value.canText !== "boolean" || typeof value.canHex !== "boolean" || !safeUInt(value.maxDecodedImagePixels)) throw new TypeError("file content capabilities are invalid");
+  return Object.freeze({ relativePath: value.relativePath, size: value.size, kind: value.kind, contentType: value.contentType, isLarge: value.isLarge, canPreview: value.canPreview, canText: value.canText, canHex: value.canHex, maxDecodedImagePixels: value.maxDecodedImagePixels });
+}
+
+function validateContentRange(value: JsonValue): FileViewerContentRange {
+  if (!isRecord(value) || typeof value.relativePath !== "string" || value.relativePath.length > 4096 || !isContentKind(value.kind) || typeof value.contentType !== "string" || value.contentType.length > 256 || !safeUInt(value.offset) || !safeUInt(value.requestedLength) || typeof value.bytes !== "string" || !safeUInt(value.totalSize) || typeof value.truncated !== "boolean") throw new TypeError("file content range is invalid");
+  const bytes = decodeBase64(value.bytes);
+  if (bytes.byteLength > value.requestedLength || value.offset > value.totalSize) throw new TypeError("file content range exceeds bounds");
+  return Object.freeze({ relativePath: value.relativePath, kind: value.kind, contentType: value.contentType, offset: value.offset, requestedLength: value.requestedLength, bytes, totalSize: value.totalSize, truncated: value.truncated });
+}
+
 function validateSessionIdentity(value: JsonValue): FileViewerSessionIdentity {
   if (!isRecord(value) || typeof value.serverId !== "string" || typeof value.projectId !== "string" || typeof value.sessionId !== "string" || typeof value.relativePath !== "string" || !isRecord(value.metadata)) throw new TypeError("file session identity is invalid");
   return Object.freeze({ serverId: boundedPath(value.serverId, "server id"), projectId: boundedPath(value.projectId, "project id"), sessionId: boundedPath(value.sessionId, "session id"), relativePath: boundedPath(value.relativePath, "relative path"), metadata: validateSessionMetadata(value.metadata) });
@@ -247,6 +330,7 @@ function decodeBase64(value: string): Uint8Array { if (value.length > 4 * 1024 *
 function boundedText(value: string, name: string): string { if (typeof value !== "string" || value.length > 100 * 1024 * 1024) throw new RangeError(`${name} is invalid`); return value; }
 function isPreviewKind(value: unknown): value is FileViewerPreviewKind { return value === "markdown" || value === "image" || value === "pdf" || value === "text" || value === "hex" || value === "unsupported"; }
 function isPreferredMode(value: unknown): value is "preview" | "text" | "hex" { return value === "preview" || value === "text" || value === "hex"; }
+function isContentKind(value: unknown): value is FileViewerContentKind { return value === "text" || value === "markdown" || value === "image" || value === "pdf" || value === "binary"; }
 function isWatchState(value: unknown): value is FileViewerSessionMetadata["watchState"] { return value === "watching" || value === "conflict" || value === "unavailable" || value === "closed"; }
 function safeUIntOrUndefined(value: unknown): number | undefined { return value === undefined ? undefined : safeUInt(value) ? value : undefined; }
 function finiteNumberOrUndefined(value: unknown): number | undefined { return value === undefined ? undefined : finiteNumber(value) ? value : undefined; }
