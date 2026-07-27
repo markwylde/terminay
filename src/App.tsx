@@ -9698,7 +9698,7 @@ function App() {
 													<div className="remote-pairing-modal__tip">
 														{selectedRemotePairingMode === 'webrtc'
 															? remoteStatus?.webRtcStatusMessage ??
-																'WebRTC relay pairing is scaffolded for the host.'
+																'WebRTC relay host is connecting to the signaling relay. Keep Terminay open while it becomes ready.'
 															: 'Best for mobile: Scan the QR code. Use the link for manual entry on desktop.'}
 													</div>
 													{selectedPairingExpiresAt && (

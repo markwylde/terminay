@@ -230,7 +230,7 @@ export type RemoteAccessStatus = {
   webRtcPairingQrCodeDataUrl: string | null
   webRtcPairingUrl: string | null
   webRtcRoomId: string | null
-  webRtcStatus: 'not-configured' | 'pairing-ready' | 'peer-handler-unavailable'
+  webRtcStatus: 'not-configured' | 'registering' | 'pairing-ready' | 'error'
   webRtcStatusMessage: string | null
 }
 
