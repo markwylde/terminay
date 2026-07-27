@@ -31,16 +31,19 @@ function createHarness(home, initialRoot, overrides = {}) {
 }
 
 async function findRecordingFiles(root, recordingId) {
-  const dateDirectories = (await readdir(root, { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory())
-  for (const directory of dateDirectories) {
-    const base = join(root, directory.name, recordingId)
-    try {
-      await stat(`${base}.cast`)
-      return { cast: `${base}.cast`, metadata: `${base}.json` }
-    } catch {
-      // Keep looking.
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const dateDirectories = (await readdir(root, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+    for (const directory of dateDirectories) {
+      const base = join(root, directory.name, recordingId)
+      try {
+        await stat(`${base}.cast`)
+        return { cast: `${base}.cast`, metadata: `${base}.json` }
+      } catch {
+        // The write stream may not have created the cast yet.
+      }
     }
+    await new Promise((resolve) => setTimeout(resolve, 10))
   }
   throw new Error(`Recording files not found for ${recordingId}`)
 }
@@ -277,7 +280,7 @@ test('metadata write failure reports a deterministic path-free failed state', as
   }
 })
 
-test('a fatal cast stream error removes the active writer and persists failed lifecycle metadata', async () => {
+test('a disk-full cast stream error removes the active writer and persists failed lifecycle metadata', async () => {
   const home = await mkdtemp(join(tmpdir(), 'terminay-recording-stream-fault-'))
   const root = join(home, 'recordings')
   try {
@@ -287,10 +290,11 @@ test('a fatal cast stream error removes the active writer and persists failed li
     assert.ok(active)
     const files = await findRecordingFiles(root, started.recordingId)
     await readStable(files.cast)
-    active.stream.emit('error', new Error(`${root}/private.cast failed`))
+    active.stream.emit('error', Object.assign(new Error(`${root}/private.cast failed`), { code: 'ENOSPC' }))
     assert.equal(service.activeRecordings.size, 0)
     assert.equal(service.getState('stream-fault').status, 'failed')
     assertPathFree(service.getState('stream-fault'))
+    await readStable(files.metadata)
     const metadata = JSON.parse(await readFile(files.metadata, 'utf8'))
     assert.equal(metadata.recordingState, 'failed')
     assert.equal(metadata.endedAt !== null, true)

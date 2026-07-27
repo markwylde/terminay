@@ -71,8 +71,11 @@ clients, and expose replay without granting clients filesystem paths.
 - [x] Focused service coverage proves no-observer capture, independent observer
   removal, restart interruption, metadata-only paths, and input/environment
   privacy boundaries.
-- [ ] Test no-client capture, multiple observers, restart interruption,
-  truncated files, disk full, path changes, and concurrent stop.
+- [x] Test no-client capture, multiple observers, restart interruption,
+  truncated files, disk full, path changes, and concurrent stop. Server-core,
+  replay, and recording-service fixtures cover each case; concurrent adapter
+  stops are idempotent and disk-full stream failures persist a path-free failed
+  lifecycle.
 - [x] Test bounded large replay, cancellation, unauthorized ids, traversal,
   active delete, and remote reveal capability.
 
