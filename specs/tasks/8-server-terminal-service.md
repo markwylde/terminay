@@ -45,8 +45,10 @@ keep a terminal alive across client reload, window close, or remote reconnect.
   `TerminayTerminalClient` facade exercises canonical terminal commands and
   subscriptions with stale-cursor duplicate suppression.
 - [x] Bound queued output and define slow-consumer disconnect/resync.
-- [ ] Preserve raw output bytes for xterm, recording, activity parsing, and
-  other authorized consumers without double capture.
+- [x] Preserve raw output bytes for xterm, recording, activity parsing, and
+  other authorized consumers without double capture. Terminal adapter,
+  input-source, and PTY lifecycle tests pass with exact byte assertions,
+  recording capture, activity parsing, and duplicate-suppressed replay.
 
 ### Input and dimensions
 
