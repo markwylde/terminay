@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { execFile, fork, type ChildProcess } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, type Dirent } from 'node:fs'
 import { lstat, readdir, stat, rename, rm, mkdir } from 'node:fs/promises'
+import { constants as osConstants } from 'node:os'
 import { promisify } from 'node:util'
 import { defaultMacros, normalizeMacros } from '../src/macroSettings'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
@@ -17,9 +18,11 @@ import { DictationService } from './dictation/service'
 import { registerQuickPushIpcHandlers } from './quickPush/ipc'
 import { QuickPushService } from './quickPush/service'
 import { TerminalRecordingService } from './recording/service'
+import { writeRecordedTerminalInput } from './recording/inputBoundary'
 import type { MacroDefinition } from '../src/types/macros'
 import type { TerminalSettings } from '../src/types/settings'
 import type { SemanticActivity } from '../src/types/terminalSignals'
+import type { TerminalExitMetadata } from '../src/types/terminalExit'
 import type {
   AppCommand,
   AppUpdateStatus,
@@ -32,6 +35,7 @@ import type {
   FolderSizeResult,
   ProjectEditWindowDraft,
   ProjectEditWindowResult,
+  TerminalRecordingChunkRequest,
   TerminalRecordingStartMetadata,
   TerminalRecordingState,
   TerminalEditWindowDraft,
@@ -193,7 +197,8 @@ type PtyHostMessage =
   | { type: 'ready'; pid: number }
   | { type: 'data'; data: string }
   | { type: 'activity'; activity: SemanticActivity }
-  | { type: 'exit'; exitCode: number }
+  | { type: 'foreground'; processName: string; shellForeground: boolean }
+  | ({ type: 'exit' } & TerminalExitMetadata)
   | { type: 'error'; message: string }
   | { type: 'inactive'; requestId: string }
 
@@ -265,7 +270,13 @@ interface ControlTokenRecord {
 const controlTokensByToken = new Map<string, ControlTokenRecord>()
 const controlTokensBySession = new Map<string, string>()
 let controlServer: ControlServer | null = null
-const pendingControlRequests = new Map<string, (response: ControlForwardResult) => void>()
+type PendingControlRequest = {
+  cleanup: () => void
+  resolve: (response: ControlForwardResult) => void
+  sessionId: string
+  webContentsId: number
+}
+const pendingControlRequests = new Map<string, PendingControlRequest>()
 
 let settingsWindow: BrowserWindow | null = null
 let macrosWindow: BrowserWindow | null = null
@@ -380,8 +391,8 @@ const remoteAccessService = new RemoteAccessService({
     return session
       ? {
           close: () => killSession(sessionId),
-          resize: (cols: number, rows: number) => sendToPtyHost(session, { type: 'resize', cols, rows }),
-          write: (data: string) => sendToPtyHost(session, { type: 'write', data }),
+          resize: (cols: number, rows: number) => resizeTerminalSession(session, cols, rows),
+          write: (data: string) => writeTerminalInput(session, data),
         }
       : null
   },
@@ -424,6 +435,7 @@ const remoteAccessService = new RemoteAccessService({
 
 const recordingService = new TerminalRecordingService({
   getHomePath: () => app.getPath('home'),
+  getLibraryIndexPath: () => path.join(app.getPath('userData'), 'recording-roots.json'),
   getSettings: () => readTerminalSettings(),
   onStateChanged: broadcastTerminalRecordingState,
 })
@@ -1453,8 +1465,10 @@ function getControlSocketPath(): string {
 }
 
 function getMcpEntryPath(): string {
-  // mcpEntry.js is asar-unpacked because it runs under ELECTRON_RUN_AS_NODE.
-  const entry = path.join(MAIN_DIST, 'mcpEntry.js')
+  // serverMcpEntry.js is asar-unpacked because it runs under
+  // ELECTRON_RUN_AS_NODE. This is the server-owned, renderer-free adapter;
+  // the legacy Electron entry is retained only for compatibility fixtures.
+  const entry = path.join(MAIN_DIST, 'serverMcpEntry.js')
   return entry.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`)
 }
 
@@ -1479,69 +1493,40 @@ function removeControlToken(sessionId: string): void {
     controlTokensByToken.delete(token)
     controlTokensBySession.delete(sessionId)
   }
-}
-
-async function getParentPid(pid: number): Promise<number | null> {
-  if (process.platform === 'win32') {
-    return null
-  }
-  try {
-    const { stdout } = await execFileAsync('ps', ['-o', 'ppid=', '-p', String(pid)])
-    const ppid = Number.parseInt(stdout.trim(), 10)
-    return Number.isInteger(ppid) && ppid > 0 ? ppid : null
-  } catch {
-    return null
-  }
-}
-
-// Resolve the terminal a control client belongs to by walking its process
-// ancestry until we hit a known terminal's shell (rootPid). This is how scope
-// works when an MCP client did not forward the capability token env var.
-async function resolveScopeByPid(pid: number): Promise<ControlServerScope | null> {
-  const scopeByRootPid = new Map<number, ControlServerScope>()
-  for (const session of terminalSessions.values()) {
-    if (session.rootPid && session.rootPid > 0) {
-      scopeByRootPid.set(session.rootPid, {
-        sessionId: session.id,
-        webContentsId: session.ownerWebContentsId,
+  for (const pending of pendingControlRequests.values()) {
+    if (pending.sessionId === sessionId) {
+      pending.resolve({
+        ok: false,
+        error: {
+          code: 'cancelled',
+          message: 'The calling terminal closed or its capability was revoked.',
+        },
       })
     }
   }
-  if (scopeByRootPid.size === 0) {
-    return null
-  }
-
-  let current: number | null = pid
-  for (let depth = 0; depth < 40 && current && current > 1; depth += 1) {
-    const scope = scopeByRootPid.get(current)
-    if (scope) {
-      return scope
-    }
-    current = await getParentPid(current)
-  }
-  return null
 }
 
-async function resolveControlScope(
-  token: string | undefined,
-  pid: number | undefined,
-): Promise<ControlServerScope | null> {
-  if (token) {
-    const record = controlTokensByToken.get(token)
-    if (record) {
-      return { sessionId: record.sessionId, webContentsId: record.webContentsId }
-    }
+function resolveControlScope(token: string): ControlServerScope | null {
+  const record = controlTokensByToken.get(token)
+  if (!record || controlTokensBySession.get(record.sessionId) !== token) {
+    return null
   }
-  if (typeof pid === 'number' && pid > 0) {
-    return resolveScopeByPid(pid)
+  const session = terminalSessions.get(record.sessionId)
+  if (
+    !session ||
+    session.exited ||
+    session.ownerWebContentsId !== record.webContentsId
+  ) {
+    return null
   }
-  return null
+  return { sessionId: record.sessionId, webContentsId: record.webContentsId }
 }
 
 function forwardControlRequest(
   scope: ControlServerScope,
   op: ControlOp,
   params: unknown,
+  context: { signal: AbortSignal },
 ): Promise<ControlForwardResult> {
   return new Promise((resolve) => {
     const target = webContents.fromId(scope.webContentsId)
@@ -1554,28 +1539,44 @@ function forwardControlRequest(
     }
 
     const requestId = randomUUID()
-    pendingControlRequests.set(requestId, resolve)
-
-    const handleGone = () => {
-      if (pendingControlRequests.delete(requestId)) {
-        resolve({
-          ok: false,
-          error: { code: 'renderer_unavailable', message: 'The Terminay window closed before responding.' },
-        })
+    let settled = false
+    const finish = (result: ControlForwardResult) => {
+      if (settled) return
+      settled = true
+      const pending = pendingControlRequests.get(requestId)
+      if (pending) {
+        pendingControlRequests.delete(requestId)
+        pending.cleanup()
       }
+      resolve(result)
     }
+    const handleGone = () => finish({
+      ok: false,
+      error: { code: 'renderer_unavailable', message: 'The Terminay window closed before responding.' },
+    })
+    const handleAbort = () => finish({
+      ok: false,
+      error: { code: 'cancelled', message: 'The control request was cancelled.' },
+    })
     target.once('destroyed', handleGone)
+    context.signal.addEventListener('abort', handleAbort, { once: true })
+    pendingControlRequests.set(requestId, {
+      cleanup: () => {
+        target.off('destroyed', handleGone)
+        context.signal.removeEventListener('abort', handleAbort)
+      },
+      resolve: finish,
+      sessionId: scope.sessionId,
+      webContentsId: scope.webContentsId,
+    })
 
     try {
       target.send(CONTROL_REQUEST_CHANNEL, { requestId, scopeSessionId: scope.sessionId, op, params })
     } catch {
-      target.off('destroyed', handleGone)
-      if (pendingControlRequests.delete(requestId)) {
-        resolve({
-          ok: false,
-          error: { code: 'renderer_unavailable', message: 'Failed to reach the Terminay window.' },
-        })
-      }
+      finish({
+        ok: false,
+        error: { code: 'renderer_unavailable', message: 'Failed to reach the Terminay window.' },
+      })
     }
   })
 }
@@ -1638,19 +1639,53 @@ function sendToPtyHost(session: TerminalSession, message: Record<string, unknown
   }
 }
 
-function finalizeTerminalSession(session: TerminalSession, exitCode: number): void {
+function writeTerminalInput(session: TerminalSession, data: string): void {
+  writeRecordedTerminalInput(recordingService, session.id, data, (input) => {
+    sendToPtyHost(session, { type: 'write', data: input })
+  })
+}
+
+function resizeTerminalSession(session: TerminalSession, cols: number, rows: number): void {
+  const normalizedCols = Math.max(2, Math.floor(cols))
+  const normalizedRows = Math.max(1, Math.floor(rows))
+  sendToPtyHost(session, { type: 'resize', cols: normalizedCols, rows: normalizedRows })
+  recordingService.appendResize(session.id, normalizedCols, normalizedRows)
+  recordingService.updateSessionMetadata(session.id, { cols: normalizedCols, rows: normalizedRows })
+  remoteAccessService.updateSessionSize(session.id, normalizedCols, normalizedRows)
+}
+
+function getSignalName(signal: number | null): string | undefined {
+  if (signal === null) {
+    return undefined
+  }
+
+  return (
+    Object.entries(osConstants.signals).find(([, value]) => value === signal)?.[0] ??
+    `signal:${signal}`
+  )
+}
+
+function finalizeTerminalSession(
+  session: TerminalSession,
+  exitCode: number,
+  signal: number | null = null,
+): void {
   if (session.exited) {
     return
   }
 
   session.exited = true
   terminalSessions.delete(session.id)
-  agentStatusService.terminalExited(session.id, { exitCode })
-  remoteAccessService.markSessionExit(session.id, exitCode)
-  recordingService.finalize(session.id, exitCode)
+  agentStatusService.terminalExited(session.id, {
+    exitCode,
+    signal: getSignalName(signal),
+  })
+  remoteAccessService.markSessionExit(session.id, exitCode, signal)
+  recordingService.finalize(session.id, exitCode, signal)
   sendToSessionRenderer(session, 'terminal:exit', {
     id: session.id,
     exitCode,
+    signal,
   })
 
   for (const resolve of session.inactivityWaiters.values()) {
@@ -1744,6 +1779,17 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
     agentHookEnvironmentStamped: agentHookEnv !== undefined,
     inactivityWaiters: new Map(),
   }
+  if (settings.recording.recordNewTerminals) {
+    try {
+      recordingService.start(id, {
+        cwd: spawnOptions.cwd,
+        shell: spawnOptions.shellPath,
+      })
+    } catch {
+      // Recording storage failure never prevents the PTY from starting. The
+      // renderer's idempotent start request reports the failure to the user.
+    }
+  }
 
   return new Promise<TerminalSession>((resolve, reject) => {
     let settled = false
@@ -1756,6 +1802,7 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
       settled = true
       agentStatusService.abandonTerminalSession(id)
       removeControlToken(id)
+      recordingService.finalize(id, null, null, 'failed')
       try {
         host.kill()
       } catch {
@@ -1781,8 +1828,15 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
         case 'activity':
           sendToSessionRenderer(session, 'terminal:activity', { id: session.id, activity: message.activity })
           break
+        case 'foreground':
+          agentStatusService.foregroundProcessChanged(
+            session.id,
+            message.processName,
+            message.shellForeground,
+          )
+          break
         case 'exit':
-          finalizeTerminalSession(session, message.exitCode)
+          finalizeTerminalSession(session, message.exitCode, message.signal)
           break
         case 'error':
           if (!settled) {
@@ -1808,7 +1862,7 @@ async function createPtySession(webContentsId: number, cwd?: string): Promise<Te
       }
 
       if (!session.exited) {
-        finalizeTerminalSession(session, typeof code === 'number' ? code : 1)
+        finalizeTerminalSession(session, typeof code === 'number' ? code : 1, null)
       }
     })
 
@@ -1848,7 +1902,7 @@ function sendToSessionRenderer(
   payload:
     | { id: string; data: string }
     | { id: string; activity: SemanticActivity }
-    | { id: string; exitCode: number }
+    | { id: string; exitCode: number; signal: number | null }
     | { id: string; active: false }
     | { id: string; active: true; cols: number; rows: number },
 ): void {
@@ -2595,30 +2649,29 @@ ipcMain.handle('terminal:get-buffer', (_event, payload: { id: string }) => {
   return remoteAccessService.getSessionBuffer(payload.id)
 })
 
-ipcMain.on('terminal:write', (_event, payload: { id: string; data: string }) => {
+ipcMain.on('terminal:write', (event, payload: { id: string; data: string }) => {
+  if (!payload || typeof payload.id !== 'string' || typeof payload.data !== 'string') {
+    return
+  }
   const session = terminalSessions.get(payload.id)
-  if (!session) {
+  if (!session || session.ownerWebContentsId !== event.sender.id) {
     return
   }
 
-  recordingService.appendInput(payload.id, payload.data)
-  sendToPtyHost(session, { type: 'write', data: payload.data })
+  writeTerminalInput(session, payload.data)
 })
 
-ipcMain.on('terminal:resize', (_event, payload: { id: string; cols: number; rows: number }) => {
+ipcMain.on('terminal:resize', (event, payload: { id: string; cols: number; rows: number }) => {
+  if (!payload || typeof payload.id !== 'string' || !Number.isFinite(payload.cols) || !Number.isFinite(payload.rows)) {
+    return
+  }
   const session = terminalSessions.get(payload.id)
-  if (!session) {
+  if (!session || session.ownerWebContentsId !== event.sender.id) {
     return
   }
 
-  const cols = Math.max(2, Math.floor(payload.cols))
-  const rows = Math.max(1, Math.floor(payload.rows))
-
   try {
-    sendToPtyHost(session, { type: 'resize', cols, rows })
-    recordingService.appendResize(payload.id, cols, rows)
-    recordingService.updateSessionMetadata(payload.id, { cols, rows })
-    remoteAccessService.updateSessionSize(payload.id, cols, rows)
+    resizeTerminalSession(session, payload.cols, payload.rows)
   } catch {
     // can throw during teardown races
   }
@@ -2695,33 +2748,16 @@ ipcMain.handle('terminal-recording:list', () => {
   return recordingService.listRecordings()
 })
 
-ipcMain.handle('terminal-recording:read', (_event, payload: { castPath: string }) => {
-  return recordingService.readRecording(payload.castPath)
+ipcMain.handle('terminal-recording:read-chunk', (_event, payload: TerminalRecordingChunkRequest) => {
+  return recordingService.readRecordingChunk(payload)
 })
 
-ipcMain.handle(
-  'terminal-recording:read-chunk',
-  (_event, payload: { castPath: string; offset: number; length?: number }) => {
-    if (
-      !payload ||
-      typeof payload.castPath !== 'string' ||
-      !Number.isInteger(payload.offset) ||
-      payload.offset < 0 ||
-      (payload.length !== undefined && (!Number.isInteger(payload.length) || payload.length <= 0))
-    ) {
-      throw new Error('Invalid recording chunk request.')
-    }
-
-    return recordingService.readRecordingChunk(payload.castPath, payload.offset, payload.length)
-  },
-)
-
-ipcMain.handle('terminal-recording:delete', (_event, payload: { castPath: string }) => {
-  recordingService.deleteRecording(payload.castPath)
+ipcMain.handle('terminal-recording:delete-by-id', (_event, payload: { recordingId: string }) => {
+  return recordingService.deleteRecordingById(payload.recordingId)
 })
 
-ipcMain.handle('terminal-recording:reveal', async (_event, payload: { castPath: string }) => {
-  shell.showItemInFolder(recordingService.revealRecording(payload.castPath))
+ipcMain.handle('terminal-recording:reveal-by-id', async (_event, payload: { recordingId: string }) => {
+  shell.showItemInFolder(await recordingService.resolveRevealPathById(payload.recordingId))
 })
 
 ipcMain.handle('fs:get-home-path', () => {
@@ -3390,6 +3426,27 @@ ipcMain.handle('app:open-recordings', () => {
 })
 
 if (process.env.TERMINAY_TEST === '1') {
+  ipcMain.handle(
+    'test:get-mcp-control-environment',
+    (_event, payload?: { terminalSessionId?: unknown }) => {
+      const terminalSessionId = payload?.terminalSessionId
+      if (typeof terminalSessionId !== 'string' || terminalSessionId.length === 0) {
+        throw new Error('A terminal session id is required.')
+      }
+      if (!terminalSessions.has(terminalSessionId)) {
+        throw new Error('The requested terminal session is not available.')
+      }
+      const token = controlTokensBySession.get(terminalSessionId)
+      if (!token) {
+        throw new Error('The requested terminal has no MCP capability.')
+      }
+      return {
+        socketPath: getControlSocketPath(),
+        token,
+      }
+    },
+  )
+
   ipcMain.handle('test:send-app-command', (event, command: AppCommand) => {
     event.sender.send('app:command', command)
   })
@@ -3504,16 +3561,15 @@ ipcMain.handle('terminal:wait-for-inactivity', async (_event, { id, durationMs }
   })
 })
 
-ipcMain.on(CONTROL_RESPONSE_CHANNEL, (_event, message: ControlRendererResponse) => {
-  const resolver = pendingControlRequests.get(message.requestId)
-  if (!resolver) {
+ipcMain.on(CONTROL_RESPONSE_CHANNEL, (event, message: ControlRendererResponse) => {
+  const pending = pendingControlRequests.get(message.requestId)
+  if (!pending || event.sender.id !== pending.webContentsId) {
     return
   }
-  pendingControlRequests.delete(message.requestId)
   if (message.ok) {
-    resolver({ ok: true, result: message.result })
+    pending.resolve({ ok: true, result: message.result })
   } else {
-    resolver({ ok: false, error: message.error })
+    pending.resolve({ ok: false, error: message.error })
   }
 })
 
@@ -3544,7 +3600,7 @@ app.on('web-contents-created', (_event, contents) => {
 app.on('before-quit', () => {
   isQuitting = true
   for (const session of terminalSessions.values()) {
-    recordingService.finalize(session.id, null)
+    recordingService.finalize(session.id, null, null, 'interrupted')
   }
   void agentStatusService.stop()
   void stopControlServer()

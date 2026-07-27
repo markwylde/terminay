@@ -43,6 +43,10 @@ components are shared.
   the user explicitly exposes it.
 - Desktop receives readiness, endpoint, server identity, and a short-lived
   bootstrap credential through a private parent/child channel.
+- Desktop keeps that credential in a private local-transport context only; it is
+  never copied into connection profiles, host state, logs, or normal readiness
+  diagnostics. A restart releases the old endpoint/data-root lease before
+  claiming fresh readiness.
 - Closing or reloading an individual renderer does not terminate PTYs.
 - Desktop supervises unexpected server exit and presents recovery rather than
   silently starting a second authority over the same data directory.
@@ -60,9 +64,33 @@ components are shared.
   processes according to the documented session-lifetime policy.
 - It exposes health and version diagnostics without exposing workspace names,
   paths, terminal data, device records, or secrets.
-- Standalone distributions support the documented desktop platforms and common
-  Linux server architectures; unsupported native `node-pty` builds fail
-  during installation/startup with actionable guidance.
+- Unsupported native dependencies fail during startup with actionable
+  platform and architecture guidance.
+
+The foreground entry accepts explicit `--data-root`, `--server-id`,
+`--endpoint`, `--log-sink`, and `--ui-bundle` values, with corresponding
+`TERMINAY_*` environment variables as fallbacks. `--version` is diagnostic
+only; `--status` reports phase, identity, version, and configured-resource
+metadata without workspace, path, terminal, or secret contents. A normal
+foreground start emits a bounded readiness record and handles `SIGINT` and
+`SIGTERM` through the same graceful runtime shutdown path.
+
+## Supported runtime matrix
+
+- Terminay Desktop supports macOS 12 Monterey or newer on Apple silicon
+  through an arm64 DMG and 64-bit GNU/Linux on x64 through an AppImage.
+- Terminay Server supports 64-bit GNU/Linux on x64 and arm64 through
+  self-contained archives. Each archive contains the pinned Node runtime,
+  server code, matching responsive UI, and target-native dependencies. It
+  requires no system Node, npm, compiler, display server, or browser.
+- Supported GNU/Linux hosts provide a Debian 12-compatible userspace with
+  glibc 2.36 or newer.
+- macOS x64, Linux arm64 Desktop, Windows Desktop, standalone macOS and
+  Windows Server, and Alpine/musl Linux are outside the supported matrix.
+- Release packaging validates the standalone distribution manifest, pinned Node
+  engine, required CLI/MCP entrypoints, payload hashes, and absence of Electron
+  imports before publication. Native OS/architecture/ABI probes remain release
+  evidence; this manifest check does not claim signing or notarization.
 
 ## Server identity and storage
 
@@ -72,13 +100,19 @@ components are shared.
   two live authorities with one identity. Identity rotation is explicit.
 - Workspace state, settings, macros, trust records, reconnect grants, audit
   events, and service metadata live under one documented server data root.
+- The embedded and standalone runtimes compose the revisioned settings
+  repository and server vault as server-owned services. Runtime health and
+  diagnostics may report settings revisions and vault lock/configuration
+  metadata, but never secret values. Secret bytes are available only to a
+  privileged server callback used by automation or provider adapters.
 - Workspace/project files and configured recording directories remain at their
   user-selected filesystem locations.
 - Writes that define canonical state are transactional or atomically
   replaceable, schema-versioned, and recoverable after interruption.
-- The storage implementation is hidden behind a repository boundary so the
-  foundation task can select the simplest backend that meets atomicity,
-  migration, and concurrent-client requirements.
+- The storage implementation remains behind a repository boundary. Canonical
+  state supports atomic multi-object commits, numbered migrations, revision
+  lookup, bounded concurrent access, integrity checks, and recoverable
+  backups.
 
 ## Application protocol
 
@@ -103,9 +137,28 @@ The protocol includes:
 - reconnect/resync rules that never require the client to guess whether a
   mutation committed.
 
+Cross-surface compatibility gates use bounded semantic versions for Desktop,
+Server, the bundled UI, bootstrap, and signaling. A missing, below-minimum, or
+above-maximum version fails before migration or connection state is committed
+with a typed component-specific incompatibility error.
+
 Protocol types and runtime validators live in a dependency-light shared
 package. UI code consumes a `TerminayClient` interface and does not call
 Electron IPC, WebRTC, WebSocket, or server internals directly.
+
+Feature-owned client facades may reduce the shared query/command envelope to
+typed feature results. A host-local compatibility adapter may satisfy that
+same query/command contract from the legacy preload bridge; the adapter is not
+part of the shared UI authority or protocol model. A bounded cleanup report may
+identify renderer-preload, terminal-only-remote, recording-preload, and
+file-viewer-preload adapters as `retain-until-parity`; the report contains no
+legacy payloads and never treats those adapters as server authority.
+
+The Desktop compatibility transport wraps each framed byte message in a
+versioned `{serverId, frame}` packet before it reaches
+`TerminayClient`. The privileged host fixes the server id when constructing the
+adapter; inbound packets for another server or with an invalid shape are
+rejected, and the renderer receives no raw MessagePort or transport authority.
 
 ## Transports
 
@@ -138,7 +191,37 @@ inspect the application protocol.
 - The server distribution contains a complete production build of the
   responsive Terminay workspace UI and a manifest binding it to the server and
   protocol versions.
+- The manifest is schema-versioned and gives each bundle a deterministic id,
+  exact entry path, content type, byte length, and SHA-256 content hash. Asset
+  paths remain inside the bundle's `/remote-app/<bundle-id>/` namespace.
+- The privileged server validates the manifest before serving or transferring
+  it: traversal, duplicate paths, namespace escapes, malformed versions,
+  oversized bundles, and hash/byte-length mismatches are rejected. Verified
+  assets are read through a bounded immutable snapshot so a file replacement
+  cannot change UI code after verification.
+- The authenticated local UI origin applies a restrictive response policy to
+  bundle, handshake, and event responses: same-origin scripts and connections
+  (with WSS for remote transport), no objects or framing, no referrer, and no
+  camera, microphone, geolocation, payment, USB, serial, or Bluetooth
+  permissions.
 - Local clients can load the bundle from the authenticated local server.
+- The local origin exposes a bounded `POST /protocol/handshake` using the
+  shared client/server hello envelopes. The response binds the client id to
+  the server identity, negotiated capabilities, protocol limits, and the
+  authenticated scope before workspace access.
+- After that handshake, the local origin exposes bounded `POST /protocol/query`
+  and `POST /protocol/command` routes for registered
+  server-core operations. They accept only validated shared envelopes,
+  dispatch through the canonical operation registry, and return the same
+  result envelopes used by framed transports. Request bodies and deadlines
+  are capped by local limits, command replay is idempotent per authenticated
+  client, and client identity is carried only in the authenticated protocol
+  context rather than URL parameters or operation payloads.
+- The local origin can replay ordered output/application events from a bounded
+  server journal and open an authenticated event subscription. If the cursor
+  is older than retained history, the server returns a bounded canonical
+  snapshot for resync; the journal remains outside the UI process so a local
+  HTTP listener restart does not discard it.
 - WebRTC clients obtain and hash-verify the bundle through the existing
   origin-isolated asset-install flow.
 - The hosted bootstrap refuses incomplete, oversized, path-unsafe, or
@@ -169,6 +252,10 @@ inspect the application protocol.
 
 - PTYs and server-side agents are owned by the server, not by a renderer,
   browser tab, Electron window, or individual transport connection.
+- The privileged server host loads its concrete PTY implementation through a
+  window-independent adapter. The adapter accepts only shell, cwd, env, and
+  dimensions, and exposes output/exit callbacks to the server terminal
+  authority; client or window ids are not part of PTY creation.
 - They continue running through client disconnect, reload, window close, and
   temporary network loss.
 - A client can resubscribe using session identity and output position without
@@ -200,11 +287,43 @@ inspect the application protocol.
   replacement server or terminal.
 - An incompatible protocol receives a clear version/capability error. Direct
   server URLs remain the recovery path because their UI ships with the server.
+- Host failure recovery exposes metadata for a direct server-bundled client:
+  the exact verified session origin and root entry path, `requiresHostShell:
+  false`, and server authority. Recovery metadata never carries endpoint
+  credentials, pairing fragments, or renderer state.
 - Corrupt canonical state is preserved for diagnosis and recovered from the
   last valid committed state where possible; it is never silently replaced with
   defaults.
 - Failure in files, Git, AI, recording, or one PTY does not take down the
   connection runtime or unrelated sessions.
+
+## Operational contract
+
+The standalone foreground command accepts explicit data-root, server-id,
+endpoint, log-sink, and matching-UI-bundle values, with `TERMINAY_*`
+environment variables as fallbacks. Command-line values take precedence over
+environment values. `--status` returns only redacted phase, identity, version,
+runtime-mode, and configured-resource metadata; readiness output is local
+operator output and may identify the configured paths. `SIGINT` and `SIGTERM`
+use the bounded graceful shutdown path.
+
+The supported operator paths, service-manager examples, pairing/revocation
+boundaries, backup/restore procedure, and incident-redaction rules are kept in
+the [standalone server operations runbook](../operations/standalone-server.md).
+
+Local UI credentials are accepted only through an authorization header. Query
+parameters named `token`, `access_token`, `bootstrap_credential`, or
+`credential` are rejected, and local responses set `Referrer-Policy:
+no-referrer` so endpoint URLs cannot propagate credentials through browser
+history or referrers.
+
+Standalone packaging emits a deterministic `artifact-manifest.json` containing
+the package version, pinned Node engine, required entrypoint paths, SHA-256
+payload hashes, and provenance pointers. `scripts/standalone-artifact.mjs`
+re-hashes a candidate payload and fails on missing files, tampering, unsafe
+manifest paths, or Electron imports. This is a pre-release integrity check;
+signatures, notarization, and native release certification remain separate
+gates.
 
 ## Non-goals
 

@@ -18,9 +18,10 @@ type AuthChallenge = {
 }
 
 const CHALLENGE_TTL_MS = 60 * 1000
+const DEVICE_AUTH_CHALLENGE_DOMAIN = 'terminay\u0000v1\u0000device-auth-challenge\u0000'
 
 export function serializeDeviceChallenge(payload: DeviceChallengePayload): string {
-  return JSON.stringify(payload)
+  return DEVICE_AUTH_CHALLENGE_DOMAIN + JSON.stringify(payload)
 }
 
 export class ChallengeStore {

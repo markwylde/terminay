@@ -27,42 +27,45 @@ uses the client as a secret relay.
 
 ### Settings classification
 
-- [ ] Inventory every setting and classify it as server, connection host,
+- [x] Inventory every setting and classify it as server, connection host,
   device-specific override, or transient client state.
-- [ ] Define revisioned server schemas, defaults, normalization, migrations,
+- [x] Define revisioned server schemas, defaults, normalization, migrations,
   sanitized reads, and reset.
-- [ ] Define precedence for server values and explicit device overrides without
+- [x] Define precedence for server values and explicit device overrides without
   changing shared workspace meaning.
 - [ ] Keep native accelerators, window geometry, updater, and OS integration in
   Desktop while sharing command/settings presentation.
 
 ### Vault
 
-- [ ] Implement the selected server vault and headless unlock/key-management
-  experience.
-- [ ] Add embedded one-time import from Electron safe storage without plaintext
+- [x] Implement the selected server vault and headless unlock/key-management
+  experience with a server-core passphrase envelope adapter, atomic file
+  storage boundary, zeroization, lock/restart, and metadata-only tests.
+- [x] Add embedded one-time import from Electron safe storage without plaintext
   files or logs.
-- [ ] Expose configured/locked/unavailable metadata, never secret values.
-- [ ] Implement set, replace, test, delete, rotation, restart lock, and
+- [x] Expose configured/locked/unavailable metadata, never secret values.
+- [x] Compose settings and vault services in embedded/standalone runtime with
+  metadata-only diagnostics and exact target-scoped server callbacks.
+- [x] Implement set, replace, test, delete, rotation, restart lock, and
   audit-safe error behaviour.
 
 ### Macros
 
-- [ ] Move definitions, normalization, revision conflicts, reset, scheduling,
+- [x] Move definitions, normalization, revision conflicts, reset, scheduling,
   waits, cancellation, and execution to server-core.
 - [ ] Keep field entry and a non-secret preview client-side.
-- [ ] Resolve secret placeholders and write output directly to the exact
+- [x] Resolve secret placeholders and write output directly to the exact
   authorized PTY on the server.
-- [ ] Define per-run continue/cancel behaviour after launching-client
+- [x] Define per-run continue/cancel behaviour after launching-client
   disconnect.
-- [ ] Bound templates, fields, output, delays, waits, and concurrent runs.
+- [x] Bound templates, fields, output, delays, waits, and concurrent runs.
 
 ### Tests
 
 - [ ] Cover every setting's classification and serialization boundary.
-- [ ] Test two-client updates, stale revisions, migration, reset, and
+- [x] Test two-client updates, stale revisions, migration, reset, and
   device-override precedence.
-- [ ] Verify plaintext secrets never appear in protocol snapshots, logs, test
+- [x] Verify plaintext secrets never appear in protocol snapshots, logs, test
   traces, connection storage, or macro preview.
 - [ ] Run macro editing/execution E2E locally and remotely, including
   disconnect, cancellation, inactivity waits, and exact target validation.

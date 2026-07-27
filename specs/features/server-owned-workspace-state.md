@@ -69,6 +69,12 @@ device:
 Client-local state must not be required to recover project membership, panel
 identity, or a live terminal after reconnect.
 
+The temporary Desktop compatibility lifecycle test recreates a renderer context
+and removes its native-window binding while retaining one server-scoped
+`TerminayClient` and terminal attachment. The client remains connected and the
+server/project/session identity is unchanged; window unbinding is host-local
+cleanup rather than a workspace or PTY lifecycle command.
+
 ## Commands, revisions, and conflicts
 
 - The server publishes a complete initial snapshot with a monotonically
@@ -151,9 +157,27 @@ and insertion into the intended terminal remain server-authorized operations.
 - Server secrets use a pluggable vault. Embedded migration may use Electron
   safe storage to decrypt old records and import them over the private local
   bootstrap channel.
-- A headless vault must document its unlock/key-management policy. Merely
-  placing an encryption key beside ciphertext is not described as secure
-  storage.
+- Embedded safe-storage import is source-marked and idempotent: ciphertext is
+  bounded and copied into the privileged adapter, decrypted bytes exist only
+  for the vault write, and the durable import marker contains source metadata
+  but never plaintext. A failed entry leaves the marker incomplete so restart
+  retries already-imported ids without replaying their values.
+- Electron safe storage protects embedded-vault wrapping keys only when the
+  platform reports an OS-backed encryption backend. Linux `basic_text` storage
+  is unavailable for this purpose.
+- A headless vault wraps its data-encryption key in a versioned, bounded
+  passphrase envelope using the specified scrypt parameters. Unlock input comes
+  only from an echo-disabled controlling terminal or a one-shot inherited file
+  descriptor; command-line arguments, environment variables, ordinary stdin,
+  and a plaintext key beside the ciphertext are not unlock mechanisms.
+- The selected server-core headless adapter persists that envelope through an
+  injected server storage boundary (the file implementation uses mode-0600
+  replace-by-rename writes), authenticates its metadata, zeroizes passphrase,
+  derived-key, and scoped plaintext buffers, and starts locked after restart.
+  Its protocol-facing status and references contain metadata only; Electron
+  safe-storage remains a separate embedded migration/protector boundary.
+- The canonical state repository rejects a complete but stale vault envelope
+  using its expected revision.
 - Secret values are not included in workspace snapshots, audit events, logs, or
   normal settings responses.
 - Macro execution resolves secret placeholders on the server and writes the
@@ -181,8 +205,29 @@ and insertion into the intended terminal remain server-authorized operations.
   workspace; the migration does not claim to recover unavailable data.
 - Existing recordings and project files are referenced in place unless the user
   explicitly requests a move.
+- Embedded migration preflight produces a bounded, metadata-only inventory of
+  known legacy stores and versions, recognizing supported historical aliases
+  for settings, macros, devices, reconnect grants, audit records, TLS paths,
+  profiles, projects, and recordings. Per-store format/schema/version markers
+  contain no store payloads. Project and recording references retain their
+  original paths and explicitly report available, missing, inaccessible, or
+  invalid roots; renderer-only layouts are reported as unrecoverable.
+- Legacy manager metadata is redirected to the `web.terminay.com` manager as a
+  sanitized profile list; server trust state remains on the exact session
+  origin. Pairing fragments, device keys, reconnect grants, and credentials
+  are not part of the migrated manager record. An explicit failed-import
+  marker retains an opaque backup id and can be reset only through a backend
+  restore boundary before retry.
 - Migration records source version, destination schema, completion, and
   recoverable failure details.
+
+Workspace recovery reports missing project roots and interrupted terminal
+sessions as metadata over the canonical state. The Desktop compatibility seed
+adapter adopts legacy renderer projects through revisioned server commands,
+emits a server `project.move` for an existing project whose logical view
+changed, and ignores native window, renderer, and `webContentsId` fields. It
+never creates a new running session for a legacy session already marked
+interrupted or exited.
 
 ## Non-goals
 

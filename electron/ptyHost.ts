@@ -6,6 +6,7 @@ import type { SemanticActivity } from '../src/types/terminalSignals'
 import { createInterpreterRuntime, type InterpreterRuntime } from './signalInterpreters'
 import { forwardTerminalDataAfterSignals } from './terminalActivityForwarder'
 import { attachSignalParser } from './terminalSignalParser'
+import { normalizeTerminalExit } from '../src/types/terminalExit'
 
 const require = createRequire(import.meta.url)
 const pty = require('node-pty') as typeof import('node-pty')
@@ -107,6 +108,11 @@ function pollForeground(): void {
   }
 
   lastForegroundProcess = processName
+  send({
+    type: 'foreground',
+    processName,
+    shellForeground: cachedShellProcess !== null && processName === cachedShellProcess,
+  })
   interpreterRuntime.push({
     kind: 'foreground',
     busy: cachedShellProcess !== null && processName !== cachedShellProcess,
@@ -169,7 +175,7 @@ function createTerminal(message: CreateMessage): void {
     ptyProcess.onExit((exit: { exitCode: number; signal?: number }) => {
       send({
         type: 'exit',
-        exitCode: exit.exitCode ?? 0,
+        ...normalizeTerminalExit(exit),
       })
       teardownSignalDetection()
       process.exit(0)

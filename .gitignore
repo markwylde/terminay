@@ -5,9 +5,12 @@ node_modules/
 /dist/
 /dist-ssr/
 /dist-electron/
+/apps/*/dist/
+/packages/*/dist/
 /release/
 /out/
 /build/
+.release/
 /docs/
 
 # Logs

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hostile server UI fixture</title>
+  </head>
+  <body>
+    <h1>Hostile server UI fixture</h1>
+    <a id="download" href="/download" download>Attempt download</a>
+    <label for="terminal-input">Terminal input</label>
+    <textarea id="terminal-input"></textarea>
+    <iframe id="foreign-frame" title="Foreign frame"></iframe>
+    <script>
+      window.proof = {
+        globals: {
+          Buffer: typeof globalThis.Buffer,
+          ipcRenderer: typeof globalThis.ipcRenderer,
+          process: typeof globalThis.process,
+          require: typeof globalThis.require,
+          terminay: typeof globalThis.terminay,
+          terminayHost: typeof globalThis.terminayHost,
+          terminayWebRtcHost: typeof globalThis.terminayWebRtcHost,
+        },
+        async readState() {
+          const idb = await new Promise((resolve, reject) => {
+            const request = indexedDB.open('hostile-proof', 1)
+            request.onupgradeneeded = () => request.result.createObjectStore('state')
+            request.onerror = () => reject(request.error)
+            request.onsuccess = () => {
+              const database = request.result
+              const transaction = database.transaction('state', 'readonly')
+              const getRequest = transaction.objectStore('state').get('value')
+              getRequest.onerror = () => reject(getRequest.error)
+              getRequest.onsuccess = () => {
+                database.close()
+                resolve(getRequest.result ?? null)
+              }
+            }
+          })
+          return {
+            cookie: document.cookie,
+            idb,
+            local: localStorage.getItem('hostile-proof'),
+          }
+        },
+        async seedState(value) {
+          localStorage.setItem('hostile-proof', value)
+          document.cookie = `hostile-proof=${encodeURIComponent(value)}; Path=/; SameSite=Strict`
+          await new Promise((resolve, reject) => {
+            const request = indexedDB.open('hostile-proof', 1)
+            request.onupgradeneeded = () => request.result.createObjectStore('state')
+            request.onerror = () => reject(request.error)
+            request.onsuccess = () => {
+              const database = request.result
+              const transaction = database.transaction('state', 'readwrite')
+              transaction.objectStore('state').put(value, 'value')
+              transaction.onerror = () => reject(transaction.error)
+              transaction.oncomplete = () => {
+                database.close()
+                resolve()
+              }
+            }
+          })
+        },
+      }
+    </script>
+  </body>
+</html>
