@@ -101,7 +101,7 @@ export interface RecordingMetadata {
 }
 
 /** Timeline DTO: path snapshots are intentionally not sent to clients. */
-export interface RecordingListItem extends Omit<RecordingMetadata, "cwd" | "projectRoot" | "shell"> {
+export interface RecordingListItem extends Omit<RecordingMetadata, "cwd" | "projectRoot" | "shell" | "relativeCastPath"> {
   readonly castAvailable: boolean;
   readonly cwdLabel: string | null;
   readonly shellName: string | null;

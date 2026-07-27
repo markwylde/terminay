@@ -527,7 +527,6 @@ export class RecordingService {
       sensitiveInputPolicy: metadata.sensitiveInputPolicy,
       eventCount: metadata.eventCount,
       bytesWritten: bytes,
-      relativeCastPath: metadata.relativeCastPath,
       castSize: bytes,
       format: metadata.format,
       formatVersion: metadata.formatVersion,
