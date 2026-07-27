@@ -27,6 +27,7 @@ export function createControlClient(opts: { socketPath: string; token?: string }
   const pending = new Map<string, PendingRequest>()
   let socket: Socket | null = null
   let closed = false
+  let connected = false
 
   const decode = createControlMessageDecoder<ControlResponse>()
 
@@ -61,8 +62,12 @@ export function createControlClient(opts: { socketPath: string; token?: string }
     if (socket) {
       return socket
     }
+    connected = false
     const next = connect(opts.socketPath)
     next.setEncoding('utf8')
+    next.on('connect', () => {
+      connected = true
+    })
     next.on('data', (chunk: string) => {
       for (const response of decode(chunk)) {
         handleResponse(response)
@@ -72,13 +77,14 @@ export function createControlClient(opts: { socketPath: string; token?: string }
       socket = null
       if (!closed) {
         // ENOENT / ECONNREFUSED mean Terminay is not listening on the socket.
-        const notConnected = error?.code === 'ENOENT' || error?.code === 'ECONNREFUSED'
+        const notConnected =
+          !connected || error?.code === 'ENOENT' || error?.code === 'ECONNREFUSED'
         rejectAll(LOST_CONNECTION_MESSAGE, notConnected ? 'not_connected' : error?.code)
       }
     })
     next.on('close', () => {
       if (!closed) {
-        rejectAll(LOST_CONNECTION_MESSAGE)
+        rejectAll(LOST_CONNECTION_MESSAGE, connected ? undefined : 'not_connected')
       }
     })
     socket = next
