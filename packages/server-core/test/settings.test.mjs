@@ -2,13 +2,28 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_SERVER_SETTINGS,
+  SETTING_AUTHORITY,
   ServerSettingsRepository,
   classifySetting,
   migrateServerSettings,
   normalizeSettingsAndSecrets,
   partitionSettings,
   resolveServerSettingsForDevice,
+  serializeServerSettings,
 } from "../dist/settings/index.js";
+
+test("every registered setting authority is classified and serialized at its boundary", () => {
+  for (const [path, authority] of Object.entries(SETTING_AUTHORITY)) {
+    assert.equal(classifySetting(path), authority, path);
+  }
+
+  const input = Object.fromEntries(Object.keys(SETTING_AUTHORITY).map((path) => [path, { sentinel: path }]));
+  const serialized = serializeServerSettings(input);
+  for (const [path, authority] of Object.entries(SETTING_AUTHORITY)) {
+    if (authority === "server") assert.equal(path in serialized, true, path);
+    else assert.equal(path in serialized, false, path);
+  }
+});
 
 test("settings classification keeps server state separate from host, device, and transient state", () => {
   assert.equal(classifySetting("shell.program"), "server");
