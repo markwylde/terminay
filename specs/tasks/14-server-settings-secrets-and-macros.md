@@ -62,7 +62,9 @@ uses the client as a secret relay.
 
 ### Tests
 
-- [ ] Cover every setting's classification and serialization boundary.
+- [x] Cover every setting's classification and serialization boundary. The
+  server-core settings test enumerates the complete `SETTING_AUTHORITY` table
+  and verifies that only server-owned entries survive serialization.
 - [x] Test two-client updates, stale revisions, migration, reset, and
   device-override precedence.
 - [x] Verify plaintext secrets never appear in protocol snapshots, logs, test
