@@ -89,3 +89,22 @@ test("reloaded protocol observers reuse one server capture without duplicate cas
     assert.equal(statesB.length >= 3, true);
   } finally { await rm(home, { recursive: true, force: true }); }
 });
+
+test("concurrent stop commands are idempotent and finalize one cast", async () => {
+  const home = await mkdtemp(join(tmpdir(), "terminay-recording-adapter-stop-"));
+  try {
+    const service = new RecordingService({ homeDirectory: home, recordingRoot: join(home, "recordings"), serverId: "server-a" });
+    const adapter = new ServerRecordingAdapter(service, { serverId: "server-a" });
+    const authorization = auth("write");
+    adapter.start({ authorization, sessionId: "concurrent-stop" });
+    service.appendOutput("concurrent-stop", "one event\n");
+    const states = await Promise.all([
+      Promise.resolve().then(() => adapter.stop({ authorization, sessionId: "concurrent-stop" })),
+      Promise.resolve().then(() => adapter.stop({ authorization, sessionId: "concurrent-stop" })),
+    ]);
+    assert.deepEqual(states.map((state) => state.status), ["idle", "idle"]);
+    const [item] = service.listRecordings();
+    assert.equal(item.recordingState, "completed");
+    assert.equal(item.eventCount, 1);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
