@@ -102,7 +102,9 @@ test("GitService publishes bounded progress and status revisions to subscribers"
     await git(["commit", "-m", "initial"], root);
     const service = new GitService({ maxEvents: 32 });
     const events = [];
+    const secondClientEvents = [];
     service.subscribe((event) => events.push(event));
+    service.subscribe((event) => secondClientEvents.push(event));
     const binding = await service.bindProject("project", root);
     const first = await service.status({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: binding.worktreeId });
     assert.equal(first.state, "ready");
@@ -116,6 +118,7 @@ test("GitService publishes bounded progress and status revisions to subscribers"
     assert.equal(events[2].changedFiles, 0);
     assert.equal("repositoryRoot" in events[2], false);
     assert.equal("stderr" in events[2], false);
+    assert.deepEqual(secondClientEvents, events);
 
     await service.status({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: binding.worktreeId });
     assert.equal(events.filter((event) => event.type === "git.status.changed").length, 1);
@@ -128,6 +131,7 @@ test("GitService publishes bounded progress and status revisions to subscribers"
     assert.equal(changed.repositoryId, binding.repositoryId);
     assert.equal(changed.worktreeId, binding.worktreeId);
     assert.equal(service.revision, events.at(-1).revision);
+    assert.deepEqual(secondClientEvents.map((event) => event.revision), events.map((event) => event.revision));
     assert.equal(service.replay(0).kind, "events");
   } finally {
     await rm(root, { recursive: true, force: true });
