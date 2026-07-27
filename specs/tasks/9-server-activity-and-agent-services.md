@@ -26,23 +26,23 @@ ordered authority with unchanged hook precedence.
 
 ### Terminal activity
 
-- [ ] Keep structured signal parsing beside the server PTY stream and preserve
+- [x] Keep structured signal parsing beside the server PTY stream and preserve
   unmodified output bytes.
-- [ ] Move fallback interpretation, timeouts, foreground-process signals, and
+- [x] Move fallback interpretation, timeouts, foreground-process signals, and
   acknowledgement authority into server-core.
-- [ ] Publish ordered project/session activity snapshots and events.
-- [ ] Accept scoped focus, viewed, and recent-input facts without making one
+- [x] Publish ordered project/session activity snapshots and events.
+- [x] Accept scoped focus, viewed, and recent-input facts without making one
   client canonical.
 
 ### Agent runtime
 
 - [ ] Move the loopback hook receiver, authentication, environment injection,
   drivers, trust, reducer, and acknowledgement into server-core.
-- [ ] Resolve hooks only by exact immutable server terminal session.
-- [ ] Preserve provider-hook authority over raw/structured fallback signals.
-- [ ] Reject stale, reordered, cross-server, exited-session, malformed, and
+- [x] Resolve hooks only by exact immutable server terminal session.
+- [x] Preserve provider-hook authority over raw/structured fallback signals.
+- [x] Reject stale, reordered, cross-server, exited-session, malformed, and
   oversized hook events.
-- [ ] Reconcile managed Codex and Claude Code hooks in embedded and standalone
+- [x] Reconcile managed Codex and Claude Code hooks in embedded and standalone
   layouts without Electron path assumptions.
 
 ### Client integration
@@ -51,16 +51,17 @@ ordered authority with unchanged hook precedence.
   acknowledgement from server snapshots.
 - [ ] Preserve root/subagent lineage, ordering, filters, accessibility, and
   reduced-motion behaviour.
-- [ ] Make client reload/resync reproduce the same snapshot without inventing
-  transitions.
+- [x] Make client reload/resync reproduce the same snapshot without inventing
+  transitions (the transport-neutral client adapter applies ordered events and
+  requires a snapshot on replay gaps).
 
 ### Tests
 
 - [ ] Run parser, interpreter, agent reducer, driver, and hook fixtures against
   server-core.
-- [ ] Test multiple clients receiving identical ordered state and
+- [x] Test multiple clients receiving identical ordered state and
   acknowledgement revisions.
-- [ ] Test reconnect, terminal exit, missing hooks, hook recovery, and server
+- [x] Test reconnect, terminal exit, missing hooks, hook recovery, and server
   restart semantics.
 - [ ] Test cross-project/session navigation and authorization.
 

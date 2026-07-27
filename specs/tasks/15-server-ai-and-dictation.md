@@ -27,40 +27,52 @@ receiving provider secrets or allowing focus changes to retarget a result.
 
 ### AI metadata
 
-- [ ] Move Codex/Claude model discovery, environment setup, bounded terminal
+- [x] Move Codex/Claude model discovery, environment setup, bounded terminal
   context, generation, normalization, timeout, and cancellation to server-core.
-- [ ] Read context from the bounded server replay buffer rather than xterm.
-- [ ] Bind title/note generation to exact panel/session and expected metadata
+  `createServerAiProviderAdapters` owns provider-specific model catalogs/CLI
+  commands, server-only environment and vault credential injection, bounded
+  output, and typed child cancellation; `AiMetadataService` supplies bounded
+  replay context and exact-target mutation checks.
+- [x] Read context from the bounded server replay buffer rather than xterm.
+- [x] Bind title/note generation to exact panel/session and expected metadata
   revision.
-- [ ] Preserve independent provider/model settings and clear data-exposure
+- [x] Preserve independent provider/model settings and clear data-exposure
   disclosure.
-- [ ] Keep provider credentials, CLI configuration, environment, and raw output
-  away from clients.
+- [x] Keep provider credentials, CLI configuration, environment, and raw output
+  away from clients through the server-owned CLI adapter boundary
+  (`packages/server-core/test/provider-cli.test.mjs`).
 
 ### Dictation client
 
 - [ ] Keep permission, `MediaRecorder`, audio level, silence detection, overlay,
   Stop, and Cancel in shared client UI.
-- [ ] Bind each capture to one immutable server/project/panel/session request.
-- [ ] Enforce client-side duration, byte, MIME, cleanup, and cancellation
-  limits.
-- [ ] Present explicit selected-server and provider disclosure before capture.
+- [x] Bind each capture to one immutable server/project/panel/session request
+  in the transport-neutral `DictationCaptureClient` boundary.
+- [x] Enforce client-side duration, byte, MIME, cleanup, and cancellation
+  limits in the bounded capture state machine.
+- [x] Present explicit selected-server and provider disclosure before capture;
+  the client boundary accepts only confirmed, credential-free disclosure.
 
 ### Dictation server
 
-- [ ] Implement bounded audio upload with backpressure, timeout, cancellation,
+- [x] Implement bounded audio upload with backpressure, timeout, cancellation,
   media validation, and server-side limits.
-- [ ] Transcribe using server settings and vault credentials.
-- [ ] Normalize and insert only into the original authorized live terminal
+- [x] Transcribe using server settings and vault credentials through a scoped
+  server-side provider credential callback; plaintext is never returned in
+  protocol or status data.
+- [x] Normalize and insert only into the original authorized live terminal
   after request/liveness validation.
-- [ ] Never retarget after focus, view, window, or connection changes.
-- [ ] Remove temporary audio and redact provider errors.
+- [x] Never retarget after focus, view, window, or connection changes.
+- [x] Remove temporary audio and redact provider errors.
 
 ### Tests
 
 - [ ] Run AI model/generation E2E through `TerminayClient`.
 - [ ] Test stale metadata revision, target exit, provider timeout, cancellation,
   oversized context/output, and multi-client focus changes.
+- [x] Cover the transport-neutral dictation capture/request boundary for target
+  immutability, disclosure, MIME/byte/duration bounds, and cancellation cleanup
+  in `packages/client-core/test/dictation.test.mjs`.
 - [ ] Test dictation permission, size/type rejection, silence stop, Cancel,
   disconnect, target exit, revocation, and temporary-file cleanup.
 - [ ] Verify provider keys and plaintext secrets never reach clients or logs.

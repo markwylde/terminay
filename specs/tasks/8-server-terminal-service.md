@@ -25,32 +25,50 @@ keep a terminal alive across client reload, window close, or remote reconnect.
 
 ### PTY ownership
 
+- [x] Keep concrete node-pty loading behind a window-independent server
+  adapter; server-core tests prove one process survives subscription detach
+  and resumes from a known output position.
 - [ ] Move spawn configuration, child supervision, cwd/process inspection,
   input, resize, kill, exit, and shutdown into server-core.
-- [ ] Assign immutable server/project/session ownership at creation.
+- [x] Assign immutable server/project/session ownership at creation.
 - [ ] Remove PTY lifetime from Electron renderer/window destruction.
-- [ ] Represent exit and server-restart interruption exactly once.
+- [x] Represent exit and server-restart interruption exactly once.
 
 ### Streams and replay
 
-- [ ] Add per-session output positions, bounded replay snapshots, subscriber
+- [x] Provide a transport-neutral server attachment adapter with per-client
+  session high-water marks, detach/resume, and retained-replay gap errors;
+  the client facade below uses the same identity and cursor contract.
+- [x] Add per-session output positions, bounded replay snapshots, subscriber
   cursors, and duplicate suppression.
-- [ ] Implement attach/detach/resume over `TerminayClient`.
-- [ ] Bound queued output and define slow-consumer disconnect/resync.
+- [x] Implement attach/detach/resume over `TerminayClient`; the transport-neutral
+  `TerminayTerminalClient` facade exercises canonical terminal commands and
+  subscriptions with stale-cursor duplicate suppression.
+- [x] Bound queued output and define slow-consumer disconnect/resync.
 - [ ] Preserve raw output bytes for xterm, recording, activity parsing, and
   other authorized consumers without double capture.
 
 ### Input and dimensions
 
-- [ ] Route keyboard, paste, macro, dictation, MCP, and remote writes through
+- [x] Route keyboard, paste, macro, dictation, MCP, and remote writes through
   one authorized input boundary with backpressure.
-- [ ] Define terminal-size ownership when several clients attach, including
+- [x] Define terminal-size ownership when several clients attach, including
   release, stale clients, and narrow/mobile viewers.
-- [ ] Reject input/resize/kill for exited, stale, cross-project, or
+- [x] Reject input/resize/kill for exited, stale, cross-project, or
   cross-server sessions.
 
 ### Compatibility
 
+- [x] Define and test a transport-neutral `TerminayTerminalPanelClient`
+  attachment contract that preserves raw xterm bytes and routes input, resize,
+  kill, and acknowledgement through the exact terminal attachment.
+- [x] Add an opt-in Desktop `TerminalPanel` path that attaches/resumes through
+  that contract, preserves the existing xterm surface, and keeps preload as a
+  compatibility fallback until host wiring is complete.
+- [x] Add a compatibility-only `DesktopTerminalAuthorityAdapter` for the
+  remaining non-panel terminal input/resize/kill path; it forwards immutable
+  server/project/session identity through `TerminayTerminalClient` and rejects
+  renderer/window ownership fields.
 - [ ] Adapt the existing Desktop terminal panels to the terminal client
   contract without changing xterm behaviour.
 - [ ] Keep splits, search, clipboard, paste, links, drops, zoom, styling, note,
@@ -61,9 +79,11 @@ keep a terminal alive across client reload, window close, or remote reconnect.
 ### Tests
 
 - [ ] Exercise real shells in standalone and embedded modes.
-- [ ] Test replay positions, retained-buffer gaps, duplicate suppression,
+- [x] Test replay positions, retained-buffer gaps, duplicate suppression,
   backpressure, slow clients, disconnect, exit, and shutdown.
-- [ ] Test two simultaneous clients with competing resize and input.
+- [x] Test two simultaneous clients with competing resize and input.
+- [x] Exercise a real `/bin/sh` through the server's `createNodePtyFactory`
+  seam; standalone and embedded application harnesses remain open above.
 - [ ] Preserve terminal UI E2E coverage through the client contract.
 
 ## Acceptance checks

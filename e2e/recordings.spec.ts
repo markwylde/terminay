@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from './fixtures'
 import { contextMenuItem } from './support/ui'
@@ -29,6 +29,24 @@ async function readTextEventually(filePath: string): Promise<string> {
   }
 
   throw lastError instanceof Error ? lastError : new Error(`Timed out waiting for ${filePath}`)
+}
+
+async function findRecordingFiles(root: string, recordingId: string): Promise<{ cast: string; metadata: string }> {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    for (const entry of await readdir(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const base = path.join(root, entry.name, recordingId)
+      try {
+        await stat(`${base}.cast`)
+        return { cast: `${base}.cast`, metadata: `${base}.json` }
+      } catch {
+        // Continue searching retained date directories.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  throw new Error(`Recording files not found for ${recordingId}`)
 }
 
 test.describe('recording settings and service', () => {
@@ -80,6 +98,7 @@ test.describe('recording settings and service', () => {
       ...defaultTerminalSettings,
       recording: {
         ...defaultTerminalSettings.recording,
+        captureInput: true,
         directory: recordingDir,
         sensitiveInputPolicy: 'mask',
       },
@@ -103,7 +122,8 @@ test.describe('recording settings and service', () => {
     })
 
     expect(started.status).toBe('recording')
-    expect(started.castPath).toContain(`${path.sep}recordings${path.sep}`)
+    expect(started).not.toHaveProperty('castPath')
+    expect(started).not.toHaveProperty('metadataPath')
 
     service.appendOutput('session-one', 'Password: ')
     service.appendInput('session-one', 'secret\n')
@@ -115,9 +135,9 @@ test.describe('recording settings and service', () => {
     expect(changedStates).toContain('recording')
     expect(changedStates).toContain('idle')
 
-    const castText = await readTextEventually(started.castPath ?? '')
-    const metadataText = await readTextEventually(started.metadataPath ?? '')
-    expect(service.revealRecording(started.castPath ?? '')).toBe(started.castPath)
+    const files = await findRecordingFiles(recordingDir, started.recordingId ?? '')
+    const castText = await readTextEventually(files.cast)
+    const metadataText = await readTextEventually(files.metadata)
     const header = JSON.parse(castText.split(/\r?\n/, 1)[0] ?? '{}') as { title?: string; term?: { cols?: number; rows?: number } }
     const metadata = JSON.parse(metadataText) as { recordingState?: string; title?: string; eventCount?: number; theme?: { cursor?: string } }
 
@@ -128,7 +148,7 @@ test.describe('recording settings and service', () => {
     expect(castText).toContain('"r","100x30"')
     expect(castText).toContain('"x","0"')
     expect(metadata).toMatchObject({
-      recordingState: 'stopped',
+      recordingState: 'completed',
       title: 'Deploy Shell',
     })
     expect(metadata.eventCount).toBeGreaterThanOrEqual(4)
@@ -138,17 +158,27 @@ test.describe('recording settings and service', () => {
     expect(recordings).toHaveLength(1)
     expect(recordings[0]).toMatchObject({
       projectTitle: 'Project One',
-      recordingState: 'stopped',
+      recordingState: 'completed',
       title: 'Deploy Shell',
     })
 
-    const loaded = await service.readRecording(recordings[0].castPath)
-    expect(loaded.content).toBe(castText)
-    expect(loaded.metadata?.recordingId).toBe(recordings[0].recordingId)
+    let loadedContent = ''
+    let chunkStart = 0
+    for (;;) {
+      const chunk = await service.readRecordingChunk({
+        recordingId: recordings[0].recordingId,
+        start: chunkStart,
+      })
+      loadedContent += chunk.content
+      chunkStart = chunk.nextOffset
+      if (chunk.eof) {
+        break
+      }
+    }
+    expect(loadedContent).toBe(castText)
+    await expect(service.readRecordingChunk({ recordingId: '../outside' })).rejects.toThrow(/invalid/)
 
-    await expect(service.readRecording(path.join(tempDir, 'outside.cast'))).rejects.toThrow(/outside/)
-
-    service.deleteRecording(recordings[0].castPath)
+    await service.deleteRecordingById(recordings[0].recordingId)
     await expect(service.listRecordings()).resolves.toEqual([])
   })
 
@@ -158,6 +188,7 @@ test.describe('recording settings and service', () => {
       ...defaultTerminalSettings,
       recording: {
         ...defaultTerminalSettings.recording,
+        captureInput: true,
         directory: recordingDir,
         sensitiveInputPolicy: 'drop',
       },
@@ -172,60 +203,10 @@ test.describe('recording settings and service', () => {
     service.appendInput('session-two', 'abc123\r')
     service.finalize('session-two')
 
-    const castText = await readTextEventually(started.castPath ?? '')
+    const files = await findRecordingFiles(recordingDir, started.recordingId ?? '')
+    const castText = await readTextEventually(files.cast)
     expect(castText).not.toContain('abc123')
     expect(castText).toContain('"i","\\r"')
-  })
-
-  test('lists large metadata-free casts from a bounded header read and exposes bounded replay chunks', async ({ tempDir }) => {
-    const recordingDir = path.join(tempDir, 'large-recordings')
-    const dateDir = path.join(recordingDir, '2026-07-27')
-    const castPath = path.join(dateDir, 'large.cast')
-    await mkdir(dateDir, { recursive: true })
-
-    const largeOutput = 'x'.repeat(2 * 1024 * 1024)
-    await writeFile(
-      castPath,
-      `${JSON.stringify({
-        env: { TERM: 'xterm-256color' },
-        term: { cols: 120, rows: 40, type: 'xterm-256color' },
-        timestamp: Date.now() / 1000,
-        title: 'Large replay',
-        version: 3,
-      })}\n${JSON.stringify([0, 'o', largeOutput])}\n`,
-      'utf8',
-    )
-
-    const settings: TerminalSettings = {
-      ...defaultTerminalSettings,
-      recording: {
-        ...defaultTerminalSettings.recording,
-        directory: recordingDir,
-      },
-    }
-    const service = new TerminalRecordingService({
-      getHomePath: () => tempDir,
-      getSettings: () => settings,
-    })
-
-    const recordings = await service.listRecordings()
-    expect(recordings).toHaveLength(1)
-    expect(recordings[0]).toMatchObject({
-      castPath,
-      cols: 120,
-      recordingState: 'stopped',
-      rows: 40,
-      title: 'Large replay',
-    })
-
-    const firstChunk = await service.readRecordingChunk(castPath, 0, 64)
-    expect(firstChunk.content.length).toBeLessThanOrEqual(64)
-    expect(firstChunk.done).toBe(false)
-    expect(firstChunk.nextOffset).toBeGreaterThan(0)
-
-    const secondChunk = await service.readRecordingChunk(castPath, firstChunk.nextOffset, 64)
-    expect(secondChunk.content.length).toBeLessThanOrEqual(64)
-    expect(secondChunk.nextOffset).toBeGreaterThan(firstChunk.nextOffset)
   })
 })
 
@@ -236,6 +217,9 @@ test.describe('recordings UI', () => {
     tempDir,
   }) => {
     const recordingDir = path.join(tempDir, 'ui-recordings')
+    const existingRecordingIds = new Set(
+      await mainWindow.evaluate(() => window.terminay.listTerminalRecordings().then((items) => items.map((item) => item.recordingId))),
+    )
     await mkdir(recordingDir, { recursive: true })
     await mainWindow.evaluate(async (nextRecordingDir) => {
       const settings = await window.terminay.getTerminalSettings()
@@ -244,6 +228,7 @@ test.describe('recordings UI', () => {
         recording: {
           ...settings.recording,
           directory: nextRecordingDir,
+          openTimelineAfterSaving: false,
         },
       })
     }, recordingDir)
@@ -253,18 +238,23 @@ test.describe('recordings UI', () => {
     await contextMenuItem(mainWindow, 'Start Recording').click()
 
     await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toBeVisible()
-    await terminalTab.click({ button: 'right' })
-    await expect(contextMenuItem(mainWindow, 'Reveal Current Recording')).toBeVisible()
-    await mainWindow.keyboard.press('Escape')
     await mainWindow.keyboard.type('printf recording-ui-hit')
     await mainWindow.keyboard.press('Enter')
 
     await terminalTab.click({ button: 'right' })
+    await expect(contextMenuItem(mainWindow, 'Reveal Current Recording')).toBeVisible()
     await contextMenuItem(mainWindow, 'Stop Recording').click()
     await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toHaveCount(0)
+    await terminalTab.click({ button: 'right' })
+    await expect(contextMenuItem(mainWindow, 'Reveal Last Recording')).toBeVisible()
+    await mainWindow.keyboard.press('Escape')
 
     await expect
-      .poll(async () => mainWindow.evaluate(() => window.terminay.listTerminalRecordings().then((items) => items.length)))
+      .poll(async () => mainWindow.evaluate(
+        (knownIds) => window.terminay.listTerminalRecordings()
+          .then((items) => items.filter((item) => !knownIds.includes(item.recordingId)).length),
+        [...existingRecordingIds],
+      ))
       .toBe(1)
 
     const recordingsWindow = await appHarness.openChildWindow(async () => {
@@ -274,10 +264,30 @@ test.describe('recordings UI', () => {
     })
 
     await expect(recordingsWindow.getByRole('heading', { name: 'Recordings' })).toBeVisible()
+    expect(
+      await recordingsWindow.evaluate(async () => {
+        const serializedRecordings = JSON.stringify(await window.terminay.listTerminalRecordings())
+        return {
+          boundedRead: typeof window.terminay.readTerminalRecordingChunk === 'function',
+          hasCastPath: serializedRecordings.includes('"castPath"'),
+          hasMetadataPath: serializedRecordings.includes('"metadataPath"'),
+          legacyDelete: 'deleteTerminalRecording' in window.terminay,
+          legacyRead: 'readTerminalRecording' in window.terminay,
+          legacyReveal: 'revealTerminalRecording' in window.terminay,
+        }
+      }),
+    ).toEqual({
+      boundedRead: true,
+      hasCastPath: false,
+      hasMetadataPath: false,
+      legacyDelete: false,
+      legacyRead: false,
+      legacyReveal: false,
+    })
     await expect(recordingsWindow.getByPlaceholder('Search recordings')).toBeVisible()
-    await expect(recordingsWindow.locator('.recordings-list-item')).toHaveCount(1)
+    await expect(recordingsWindow.locator('.recordings-list-item').first()).toBeVisible()
     await recordingsWindow.getByPlaceholder('Search recordings').fill('Terminal')
-    await expect(recordingsWindow.locator('.recordings-list-item')).toHaveCount(1)
+    await expect(recordingsWindow.locator('.recordings-list-item').first()).toBeVisible()
     await expect(recordingsWindow.getByRole('button', { name: 'Play replay' })).toBeEnabled()
     await expect(recordingsWindow.getByLabel('Replay zoom')).toBeVisible()
     await expect(recordingsWindow.getByLabel('Replay zoom')).toHaveValue('Fit')

@@ -109,6 +109,7 @@ test('normalizes custom file viewer extension defaults', () => {
           { extension: '.', defaultMode: 'hex' },
           { extension: '.bad', defaultMode: 'nonsense' },
         ],
+        diffLayout: 'unified',
         refreshIntervalSeconds: 9,
       },
     }).fileViewer,
@@ -118,6 +119,7 @@ test('normalizes custom file viewer extension defaults', () => {
       { extension: '.bin', defaultMode: 'hex' },
       { extension: '.bad', defaultMode: 'preview' },
     ],
+    diffLayout: 'unified',
     folderTaskIgnoredDirectories: defaultTerminalSettings.fileViewer.folderTaskIgnoredDirectories,
     refreshIntervalSeconds: 9,
   })

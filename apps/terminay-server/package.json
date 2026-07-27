@@ -1,0 +1,26 @@
+{
+  "name": "@terminay/server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Terminay's standalone server composition boundary.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "bin": { "terminay-server": "dist/cli.js", "terminay-mcp": "dist/mcpEntry.js" },
+  "dependencies": { "@terminay/server-core": "1.0.0", "@terminay/protocol": "1.0.0", "@modelcontextprotocol/sdk": "^1.29.0", "zod": "^4.3.6" },
+  "engines": {
+    "node": "22.23.1"
+  },
+  "scripts": {
+    "build": "npm run build --workspace @terminay/server-core && tsc -p tsconfig.json",
+    "typecheck": "npm run build --workspace @terminay/server-core && tsc -p tsconfig.json --noEmit",
+    "start": "node dist/cli.js",
+    "test": "npm run build && node --test test/*.test.mjs"
+  }
+}

@@ -36,6 +36,14 @@ jobs:
       - name: Validate release configuration
         run: npm run test:release-config
 
+      - name: Validate release evidence and production dependency audit
+        run: |
+          npm run test:release-readiness
+          npm run test:standalone-artifact
+          npm run test:security-fuzz
+          npm run test:security-boundaries
+          npm audit --omit=dev --audit-level=high
+
   release:
     name: Create Release
     runs-on: ubuntu-latest

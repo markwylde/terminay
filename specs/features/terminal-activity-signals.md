@@ -114,6 +114,11 @@ shell. This is weak evidence for working and is useful for silent commands. It
 also helps select a terminal-signal interpreter, but a process name alone must
 not create an authoritative agent entry or infer a canonical provider state.
 
+For an existing hook-backed Codex or Claude Code session, a recognized
+provider process returning to the known shell may retire the live association
+after a short confirmation window. A provider hook during that window cancels
+the retirement.
+
 ## Fallback interpretation
 
 Fallback interpretation remains provider-aware only to avoid known false
@@ -178,6 +183,18 @@ Under [server-owned workspace state](./server-owned-workspace-state.md), clients
 render ordered activity events and report scoped focus/input acknowledgement;
 no renderer becomes the fallback authority. Parser precedence and the original
 unmodified PTY stream remain unchanged.
+
+Transport-neutral clients maintain a bounded projection of the server snapshot.
+They apply only contiguous revisions; a replay gap requests a fresh snapshot,
+and reload/resync replaces the projection without replaying old transitions as
+new local activity. Project-scoped projections advance the global cursor while
+omitting sessions owned by other projects.
+
+The server reducer fences every session to its first immutable project binding.
+An activity or acknowledgement request that names a different project is
+ignored without consuming a revision. Events and timeout ticks carrying an
+older observation time than the current session snapshot are also ignored, so
+delayed PTY chunks cannot rewind state or publish a second stale transition.
 
 ## Settings
 

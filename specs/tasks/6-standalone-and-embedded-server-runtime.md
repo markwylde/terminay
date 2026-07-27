@@ -20,20 +20,20 @@ renderers still depend on Electron APIs.
 
 ## Dependencies
 
-- [Workspace and protocol foundation](./4-workspace-and-protocol-foundation.md)
+- [Workspace and protocol foundation](../tasks_completed/4-workspace-and-protocol-foundation.md)
 - [Server-owned workspace model](./5-server-owned-workspace-model.md)
 
 ## Work slices
 
 ### Runtime composition
 
-- [ ] Create a server entry with explicit configuration for data root, runtime
+- [x] Create a server entry with explicit configuration for data root, runtime
   mode, log sink, UI bundle, local endpoint, and shutdown policy.
 - [ ] Replace `app.getPath(...)` dependencies with injected platform paths.
 - [ ] Move service construction out of Electron main into server composition.
-- [ ] Add readiness, version, health, and structured diagnostics that redact
+- [x] Add readiness, version, health, and structured diagnostics that redact
   workspace and secret data.
-- [ ] Handle signals and graceful shutdown with bounded timeouts.
+- [x] Handle signals and graceful shutdown with bounded timeouts.
 
 ### Embedded supervision
 
@@ -41,33 +41,42 @@ renderers still depend on Electron APIs.
   channel and random short-lived local credential.
 - [ ] Select a collision-safe loopback/OS-local endpoint and prevent another
   process from reusing the data root concurrently.
-- [ ] Report readiness and stable server identity before opening the workspace.
-- [ ] Detect crash versus deliberate shutdown and provide retry/recovery without
+- [x] Report readiness and stable server identity before opening the workspace.
+- [x] Detect crash versus deliberate shutdown and provide retry/recovery without
   starting two authorities.
 - [ ] Keep the server alive through renderer/window reload and close according
   to the selected Desktop lifecycle policy.
 
 ### Standalone CLI
 
-- [ ] Implement clear `start`, `status/version`, and pairing/exposure entry
+- [x] Implement clear `start`, `status/version`, and pairing/exposure entry
   points without requiring a display.
-- [ ] Print readiness, data/log paths, and pairing instructions without leaking
+- [x] Print readiness, data/log paths, and pairing instructions without leaking
   secrets into unrelated diagnostics.
-- [ ] Support configuration through documented flags/environment/config with
+- [x] Support configuration through documented flags/environment/config with
   deterministic precedence and validation.
-- [ ] Provide foreground operation first and example service-manager units
+- [x] Provide foreground operation first and example service-manager units
   without making daemonization part of application correctness.
 
 ### Local protocol and UI bundle
 
-- [ ] Serve the exact bundled responsive workspace manifest/assets from an
+- [x] Serve the exact bundled responsive workspace manifest/assets from an
   authenticated local origin.
-- [ ] Implement the shared protocol on the selected local transport.
-- [ ] Establish a client handshake with server identity, capabilities, and
-  bootstrap authorization before workspace access.
-- [ ] Add output/event subscriptions and resync across local transport restart.
-- [ ] Ensure endpoint/token URLs are not retained in normal browser history,
-  logs, or connection metadata.
+- [x] Implement the shared protocol handshake on the selected local transport.
+- [x] Expose bounded authenticated query/command envelopes for registered
+  server-core operations on the local HTTP transport, binding each request to
+  a completed client handshake and its current authorization scope; command
+  idempotency is retained per authenticated client.
+- [ ] Complete parity for every shared query/command operation, binary bodies,
+  cancellation transport, and remote/local conformance on this HTTP boundary.
+- [x] Establish a client handshake with server identity, negotiated
+  capabilities, bounded limits, and bootstrap authorization before workspace
+  access.
+- [x] Add bounded output/event replay and subscriptions with snapshot resync
+  across a local UI transport restart.
+- [x] Ensure endpoint/token URLs are not retained in normal browser history,
+  logs, or connection metadata; credentials are header-only and responses use
+  `Referrer-Policy: no-referrer`.
 
 ### Packaging
 
@@ -76,7 +85,10 @@ renderers still depend on Electron APIs.
   maintaining an Electron-only server fork.
 - [ ] Verify `node-pty`, provider CLIs, hook scripts, MCP entry, and unpacked
   assets resolve in development, packaged Desktop, and standalone layouts.
-- [ ] Add artifact version/manifest checks and supply-chain metadata.
+- [x] Add deterministic standalone artifact version/manifest checks with
+  payload hashes, pinned Node metadata, required entrypoints, provenance
+  pointers, and Electron-import rejection; signing and native certification
+  remain separate release gates.
 
 ## Acceptance checks
 

@@ -1,5 +1,9 @@
 import type { IpcMain } from 'electron'
-import type { FileViewerSaveRequest, FileViewerTextEncoding } from '../../src/types/terminay'
+import type {
+  FileViewerSaveRequest,
+  FileViewerSparseFileSaveRequest,
+  FileViewerTextEncoding,
+} from '../../src/types/terminay'
 import type { FileBufferService } from './fileBufferService'
 import type { FileWatchService } from './fileWatchService'
 import type { GitDiffService } from './gitDiffService'
@@ -37,6 +41,29 @@ export function registerFileViewerIpcHandlers({
 
   ipcMain.handle('file:save', async (_event, payload: FileViewerSaveRequest) => {
     return fileBufferService.saveFile(payload)
+  })
+
+  ipcMain.handle('file:get-text-metadata', async (_event, payload: { path: string; projectRoot: string }) => {
+    return fileBufferService.getTextMetadata(payload.path, payload.projectRoot)
+  })
+
+  ipcMain.handle(
+    'file:read-text-lines',
+    async (
+      _event,
+      payload: { lineCount: number; path: string; projectRoot: string; startLine: number },
+    ) => {
+      return fileBufferService.readTextLines(
+        payload.path,
+        payload.projectRoot,
+        payload.startLine,
+        payload.lineCount,
+      )
+    },
+  )
+
+  ipcMain.handle('file:save-sparse', async (_event, payload: FileViewerSparseFileSaveRequest) => {
+    return fileBufferService.saveSparseFile(payload)
   })
 
   ipcMain.handle('file:watch', async (event, payload: { path: string }) => {

@@ -29,11 +29,15 @@ const AGENT_LABELS: Record<McpAgentId, string> = {
   codex: 'Codex',
 }
 
+export type McpInstallOptions = {
+  homeDirectory?: string
+}
+
 /** Detect, for every supported agent, whether the `terminay` server is registered. */
-export async function getMcpInstallStatus(): Promise<McpInstallStatus> {
+export async function getMcpInstallStatus(options: McpInstallOptions = {}): Promise<McpInstallStatus> {
   const [claudeInstalled, codexInstalled] = await Promise.all([
-    isClaudeCodeInstalled(),
-    isCodexInstalled(),
+    isClaudeCodeInstalled(options.homeDirectory),
+    isCodexInstalled(options.homeDirectory),
   ])
 
   const agents: McpAgentInstallState[] = [
@@ -41,13 +45,13 @@ export async function getMcpInstallStatus(): Promise<McpInstallStatus> {
       id: 'claudeCode',
       label: AGENT_LABELS.claudeCode,
       installed: claudeInstalled,
-      configPath: getClaudeCodeConfigPath(),
+      configPath: getClaudeCodeConfigPath(options.homeDirectory),
     },
     {
       id: 'codex',
       label: AGENT_LABELS.codex,
       installed: codexInstalled,
-      configPath: getCodexConfigPath(),
+      configPath: getCodexConfigPath(options.homeDirectory),
     },
   ]
 
@@ -58,24 +62,28 @@ export async function getMcpInstallStatus(): Promise<McpInstallStatus> {
 export async function installMcpAgent(
   agent: McpAgentId,
   server: McpServerCommand,
+  options: McpInstallOptions = {},
 ): Promise<McpInstallActionResult> {
   switch (agent) {
     case 'claudeCode':
-      return installClaudeCode(server)
+      return installClaudeCode(server, options.homeDirectory)
     case 'codex':
-      return installCodex(server)
+      return installCodex(server, options.homeDirectory)
     default:
       return unknownAgent(agent)
   }
 }
 
 /** Unregister the `terminay` MCP server for the given agent. Never throws. */
-export async function uninstallMcpAgent(agent: McpAgentId): Promise<McpInstallActionResult> {
+export async function uninstallMcpAgent(
+  agent: McpAgentId,
+  options: McpInstallOptions = {},
+): Promise<McpInstallActionResult> {
   switch (agent) {
     case 'claudeCode':
-      return uninstallClaudeCode()
+      return uninstallClaudeCode(options.homeDirectory)
     case 'codex':
-      return uninstallCodex()
+      return uninstallCodex(options.homeDirectory)
     default:
       return unknownAgent(agent)
   }

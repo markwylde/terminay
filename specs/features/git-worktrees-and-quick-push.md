@@ -40,6 +40,19 @@ repository default branch. Terminay skips already-applied commits where that is
 the explicitly selected default-branch workflow; it never silently rebases or
 rewrites history.
 
+The server-side Quick Push coordinator gives the configured provider only a
+bounded status/diff context and accepts a bounded, ordered action plan. The
+review response carries the canonical project/repository/worktree IDs, the
+observed branch/HEAD/status digest, and an action digest. Approval is
+single-use, expires, and is rejected when any of those values no longer match.
+Before each injected server-side Git/provider executor action, the coordinator
+captures status again; a changed revision produces a deterministic partial
+failure instead of silently continuing. Provider planning and execution
+callbacks run in the server environment, receive a linked cancellation signal,
+and are bounded by server-side deadlines. Provider output returned to the
+proposal or action result is bounded and redacted, so credentials never enter
+the proposal or protocol response.
+
 ## Safety and boundaries
 
 Git commands run in the selected Terminay Server with the target
@@ -57,6 +70,38 @@ Terminay Server under
 remote clients submit the same scoped commands. Review/confirmation remains a
 client interaction, while the server revalidates repository state and
 authorization immediately before every mutation.
+
+Read-only repository queries are bound to the canonical project, repository,
+and worktree identities held by that server. Status, branch, worktree, and
+diff responses are bounded and report detached heads, missing Git metadata,
+absent repositories/remotes, unmerged entries, and command failures as
+structured state; a client cannot substitute an arbitrary path or command
+working directory.
+
+The server Git protocol adapter exposes stable, project-scoped operations for
+listing and removing worktrees plus host-gated open-terminal, switch-project,
+presentation-rename, reveal, and copy actions. Requests carry only canonical
+repository/worktree IDs; host callbacks receive those opaque IDs and fail
+closed when a capability is unavailable. Quick Push proposals resolve an
+omitted target branch from the server's canonical default-branch listing, and
+the adapter binds the resulting proposal to the authorized project before
+approval.
+
+Authorized clients also receive bounded, ordered Git progress and status-change
+metadata. `git.progress` indicates the start/completion/failure of a read-only
+operation without command output, while `git.status.changed` carries only the
+canonical project/repository/worktree IDs, branch/head, state, changed-file
+count, and bounded flag. Clients advance the shared revision for events from
+other projects without retaining their status; a revision gap requires a fresh
+status query rather than a locally invented transition.
+
+Worktree removal is also server-owned and identity-bound. The client submits
+only the project, repository, and opaque worktree IDs (optionally the full
+HEAD it reviewed); the server obtains the canonical path from a fresh bounded
+worktree listing, rechecks status immediately before invoking Git, and then
+verifies that the exact identity disappeared. Main, bare, locked, prunable,
+dirty, and unmerged worktrees are rejected, and a changed reviewed HEAD is
+reported as stale rather than being removed.
 
 ## Acceptance outcomes
 

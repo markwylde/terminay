@@ -106,8 +106,9 @@ export function createFileDraftBuffer(options: {
     },
     setByte(offset: number, value: number) {
       if (!draftBytes) {
-        draftBytes = new TextEncoder().encode(draftText ?? '')
-        initialBytes = draftBytes.slice()
+        const encoder = new TextEncoder()
+        draftBytes = encoder.encode(draftText ?? '')
+        initialBytes = encoder.encode(initialText ?? '')
         draftText = null
         initialText = null
       }
@@ -117,8 +118,12 @@ export function createFileDraftBuffer(options: {
       }
     },
     setText(text: string) {
+      if (initialText === null && initialBytes) {
+        initialText = new TextDecoder().decode(initialBytes)
+      }
       draftText = text
       draftBytes = null
+      initialBytes = null
     },
   }
 }

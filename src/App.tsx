@@ -98,7 +98,7 @@ import {
 } from './remotePairingPin';
 import {
 	EMPTY_AGENT_STATUS_SNAPSHOT,
-	selectAgentStatusesForTerminal,
+	selectLiveAgentStatusesForTerminal,
 } from './agentStatusStore';
 import {
 	TerminalActivityStore,
@@ -543,7 +543,7 @@ type MovedTerminalTab = {
 	inheritsProjectColor?: boolean;
 	macroRuns?: TerminalTabMacroRun[];
 	recordingError?: string | null;
-	recordingPath?: string | null;
+	recordingId?: string | null;
 	recordingStatus?: 'failed' | 'idle' | 'recording';
 	sessionId: string;
 	showActiveTabActivityIndicator?: boolean;
@@ -824,7 +824,7 @@ function aggregateAgentStatusForTerminal(
 	snapshot: AgentStatusSnapshot,
 	terminalSessionId: string,
 ): AggregatedAgentStatus | null {
-	const entries = selectAgentStatusesForTerminal(snapshot, terminalSessionId);
+	const entries = selectLiveAgentStatusesForTerminal(snapshot, terminalSessionId);
 	if (entries.length === 0) {
 		return null;
 	}
@@ -2192,9 +2192,12 @@ const ProjectWorkspace = forwardRef<
 			done: 3,
 			idle: 4,
 		};
-		return Object.values(agentStatusSnapshot.entries)
-			.filter((entry) =>
-				terminalSessionIds.has(entry.activationTerminalSessionId),
+		return [...terminalSessionIds]
+			.flatMap((terminalSessionId) =>
+				selectLiveAgentStatusesForTerminal(
+					agentStatusSnapshot,
+					terminalSessionId,
+				),
 			)
 			.sort(
 				(left, right) =>
@@ -2358,9 +2361,12 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-				panel.api.updateParameters({
-					recordingError: state.errorMessage,
-				recordingPath: state.castPath,
+			panel.api.updateParameters({
+				recordingError: state.errorMessage,
+				recordingId:
+					state.recordingId ??
+					(panel.params as TerminalPanelParams | undefined)?.recordingId ??
+					null,
 				recordingStatus: state.status,
 			});
 		},
@@ -2398,24 +2404,14 @@ const ProjectWorkspace = forwardRef<
 		[applyTerminalRecordingState],
 	);
 
-	const revealRecordingForSession = useCallback(
-		async (sessionId: string) => {
-			const panel = getPanelForSession(sessionId);
-			const recordingPath = panel?.params?.recordingPath;
-			if (typeof recordingPath !== 'string' || recordingPath.length === 0) {
-				setErrorText('This terminal does not have an active recording file.');
-				return;
-			}
-
-			try {
-				await window.terminay.revealTerminalRecording(recordingPath);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				setErrorText(`Unable to reveal recording: ${message}`);
-			}
-		},
-		[getPanelForSession],
-	);
+	const revealRecording = useCallback(async (recordingId: string) => {
+		try {
+			await window.terminay.revealTerminalRecordingById(recordingId);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			setErrorText(`Unable to reveal recording: ${message}`);
+		}
+	}, []);
 
 	const hydrateRecordingStateForSession = useCallback(
 		(sessionId: string) => {
@@ -3717,8 +3713,9 @@ const ProjectWorkspace = forwardRef<
 					inheritsProjectColor: true,
 					isFocused: false,
 					preferredEngine: 'auto',
-					projectColor: project.color,
-				},
+						projectColor: project.color,
+						projectRoot: project.rootFolder,
+					},
 				position: api.activePanel
 					? {
 							direction: 'within',
@@ -3733,7 +3730,7 @@ const ProjectWorkspace = forwardRef<
 			panel.api.setActive();
 			syncPanelFocusState();
 		},
-		[project.color, syncPanelFocusState],
+		[project.color, project.rootFolder, syncPanelFocusState],
 	);
 
 	const handleRename = useCallback(
@@ -3890,9 +3887,10 @@ const ProjectWorkspace = forwardRef<
 						onCancelMacroRun: cancelMacroRun,
 						onMoveToProject: (targetProjectId: string) =>
 							onMoveTerminalToProject(project.id, panelId, targetProjectId),
+						onRevealRecording: (recordingId: string) =>
+							void revealRecording(recordingId),
 						onStartRecording: () => void startRecordingForSession(sessionId),
 						onStopRecording: () => void stopRecordingForSession(sessionId),
-						onRevealRecording: () => void revealRecordingForSession(sessionId),
 						recordingStatus: 'idle',
 						registerTerminalContextReader,
 						onUpdateNote: (terminalNote: string | undefined) =>
@@ -3943,8 +3941,8 @@ const ProjectWorkspace = forwardRef<
 			project.color,
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
+			revealRecording,
 			hydrateRecordingStateForSession,
-			revealRecordingForSession,
 			settings.activityIndicators.showActiveTabs,
 			settings.activityIndicators.showFinishedTabs,
 			settings.recording.recordNewTerminals,
@@ -5101,9 +5099,10 @@ const ProjectWorkspace = forwardRef<
 						onCancelMacroRun: cancelMacroRun,
 						onMoveToProject: (targetProjectId: string) =>
 							onMoveTerminalToProject(project.id, panelId, targetProjectId),
+						onRevealRecording: (recordingId: string) =>
+							void revealRecording(recordingId),
 						onStartRecording: () => void startRecordingForSession(sessionId),
 						onStopRecording: () => void stopRecordingForSession(sessionId),
-						onRevealRecording: () => void revealRecordingForSession(sessionId),
 						recordingStatus: 'idle',
 						registerTerminalContextReader,
 						onUpdateNote: (terminalNote: string | undefined) =>
@@ -5184,8 +5183,8 @@ const ProjectWorkspace = forwardRef<
 			project.color,
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
+			revealRecording,
 			hydrateRecordingStateForSession,
-			revealRecordingForSession,
 			settings.activityIndicators.showActiveTabs,
 			settings.activityIndicators.showFinishedTabs,
 			settings.recording.recordNewTerminals,
@@ -5282,7 +5281,7 @@ const ProjectWorkspace = forwardRef<
 				inheritsProjectColor: panel.params?.inheritsProjectColor,
 				macroRuns: runningMacroRunsBySession[sessionId] ?? [],
 				recordingError: panel.params?.recordingError,
-				recordingPath: panel.params?.recordingPath,
+				recordingId: panel.params?.recordingId,
 				recordingStatus: panel.params?.recordingStatus,
 				sessionId,
 				showActiveTabActivityIndicator:
@@ -5386,14 +5385,14 @@ const ProjectWorkspace = forwardRef<
 					onCancelMacroRun: cancelMacroRun,
 					onMoveToProject: (targetProjectId: string) =>
 						onMoveTerminalToProject(project.id, panelId, targetProjectId),
+					onRevealRecording: (recordingId: string) =>
+						void revealRecording(recordingId),
 					onStartRecording: () =>
 						void startRecordingForSession(movedTerminal.sessionId),
 					onStopRecording: () =>
 						void stopRecordingForSession(movedTerminal.sessionId),
-					onRevealRecording: () =>
-						void revealRecordingForSession(movedTerminal.sessionId),
 					recordingError: movedTerminal.recordingError,
-					recordingPath: movedTerminal.recordingPath,
+					recordingId: movedTerminal.recordingId,
 					recordingStatus: movedTerminal.recordingStatus ?? 'idle',
 					registerTerminalContextReader,
 					onUpdateNote: (terminalNote: string | undefined) =>
@@ -5450,8 +5449,8 @@ const ProjectWorkspace = forwardRef<
 			project.title,
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
+			revealRecording,
 			hydrateRecordingStateForSession,
-			revealRecordingForSession,
 			settings.activityIndicators.showActiveTabs,
 			settings.activityIndicators.showFinishedTabs,
 			startRecordingForSession,
@@ -6682,7 +6681,11 @@ const ProjectWorkspace = forwardRef<
 				}
 			}
 
-			if (settings.autoCloseTerminalOnExitZero && message.exitCode === 0) {
+			if (
+				settings.autoCloseTerminalOnExitZero &&
+				message.exitCode === 0 &&
+				message.signal == null
+			) {
 				getPanelForSession(message.id)?.api.close();
 			}
 		});
@@ -9728,7 +9731,7 @@ function App() {
 													<div className="remote-pairing-modal__tip">
 														{selectedRemotePairingMode === 'webrtc'
 															? remoteStatus?.webRtcStatusMessage ??
-																'WebRTC relay host is connecting to the signaling relay. Keep Terminay open while it becomes ready.'
+																'The WebRTC host is starting. Keep Terminay open while it becomes ready.'
 															: 'Best for mobile: Scan the QR code. Use the link for manual entry on desktop.'}
 													</div>
 													{selectedPairingExpiresAt && (

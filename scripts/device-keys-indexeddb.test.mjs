@@ -14,13 +14,13 @@ test('saveReconnectGrant queues IndexedDB writes before the transaction can auto
     configurable: true,
     value: {
       subtle: {
-        async importKey() {
+        async importKey(_format, _keyData, algorithm) {
           await Promise.resolve()
-          return { type: 'hkdf-source' }
+          return { type: typeof algorithm === 'string' ? 'hkdf-key' : 'hmac-proof-key' }
         },
-        async deriveKey() {
+        async deriveBits() {
           await Promise.resolve()
-          return { type: 'hmac-proof-key' }
+          return new Uint8Array(32).buffer
         },
       },
     },
@@ -43,6 +43,7 @@ test('saveReconnectGrant queues IndexedDB writes before the transaction can auto
   assert.equal(grant.origin, origin)
   assert.equal(grant.sessionId, '2d5057472b1731ccfb1a')
   assert.deepEqual(grant.proofKey, { type: 'hmac-proof-key' })
+  assert.deepEqual(grant.signalingKey, { type: 'hkdf-key' })
   assert.equal(handle.origin, origin)
   assert.equal(handle.handle, 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
   assert.equal(indexedDB.transactions.some((transaction) => transaction.closedWithoutRequests), false)
