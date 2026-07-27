@@ -57,8 +57,10 @@ ordered authority with unchanged hook precedence.
 
 ### Tests
 
-- [ ] Run parser, interpreter, agent reducer, driver, and hook fixtures against
-  server-core.
+- [x] Run parser, interpreter, agent reducer, driver, and hook fixtures against
+  server-core. The server-core activity fixture set passes alongside the
+  signal parser/interpreter and agent driver, hook-runtime, and status-store
+  suites (22 + 9 + 10 + 12 + 10 + 13 tests).
 - [x] Test multiple clients receiving identical ordered state and
   acknowledgement revisions.
 - [x] Test reconnect, terminal exit, missing hooks, hook recovery, and server
