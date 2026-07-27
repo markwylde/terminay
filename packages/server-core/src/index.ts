@@ -109,6 +109,7 @@ export type {
   FileCatalogProjectContext,
   FileCatalogAuthorization,
   FileCatalogAdapterOptions,
+  FileCatalogRequest,
 } from "./fileService/index.js";
 export * from "./aiService/index.js";
 export * from "./terminalService/index.js";
