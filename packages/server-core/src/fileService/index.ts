@@ -5,5 +5,6 @@ export * from "./watchRegistry.js";
 export * from "./catalog.js";
 export * from "./tasks.js";
 export * from "./contentStream.js";
+export * from "./contentAdapter.js";
 export * from "./adapter.js";
 export * from "./catalogAdapter.js";
