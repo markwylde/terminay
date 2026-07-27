@@ -3,6 +3,7 @@ import type {
   FileRangeRequest,
   FileReadResponse,
   FileSavePayload,
+  FileTextWindow,
   FileWatchEvent,
   GitFileDiff,
   FileViewerGateway,
@@ -107,6 +108,22 @@ export const terminayFileGateway: FileViewerGateway = {
     })
 
     return response.text.length > 0 ? response.text : decodeBase64((await this.readFileBytes(path, { length: info.size, offset: 0 })).base64)
+  },
+  async readFileTextWindow(path: string, range: FileRangeRequest): Promise<FileTextWindow> {
+    const response = await window.terminay.readFileText({
+      length: range.length,
+      path,
+      start: range.offset,
+    })
+    const lineCount = response.text.length === 0 ? 0 : response.text.split(/\r?\n/).length
+
+    return {
+      endLine: lineCount,
+      lineEndOffset: response.start + response.length,
+      lineStartOffset: response.start,
+      startLine: 0,
+      text: response.text,
+    }
   },
   saveFile(path: string, payload: FileSavePayload): Promise<FileInfo> {
     return window.terminay
