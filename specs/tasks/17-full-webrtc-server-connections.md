@@ -67,8 +67,10 @@ preserved rather than replaced.
 - [x] Let standalone CLI generate/rotate pairing material and report status.
 - [x] Ensure stopping exposure does not stop Local/standalone server work or
   existing local clients.
-- [ ] Define reconnect availability while exposed and accurate offline state
-  when not advertising.
+- [x] Define reconnect availability while exposed and accurate offline state
+  when not advertising. Runtime and server-core exposure fixtures verify
+  authenticated lease refresh, expired/offline reporting, and that stopping
+  exposure preserves existing local work while rejecting new peers.
 
 ### Server bundle delivery
 
