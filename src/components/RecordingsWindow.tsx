@@ -46,6 +46,7 @@ type ReplayThemeMode = 'current' | 'recorded'
 const MIN_SCALE = 0.01
 const MAX_SCALE = 2
 const TERMINAL_STAGE_BORDER_SIZE = 2
+const RECORDING_READ_CHUNK_BYTES = 256 * 1024
 const ZOOM_PRESETS = [
   { label: 'Fit', value: 'fit' },
   { label: '50%', value: '50' },
@@ -87,34 +88,40 @@ function parseZoomValue(value: string): number | 'fit' | null {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, numericValue / 100))
 }
 
-function parseAsciicast(content: string): ParsedCast {
-  const lines = content.split(/\r?\n/).filter((line) => line.length > 0)
-  const header = JSON.parse(lines[0] ?? '{}') as {
-    term?: { cols?: number; rows?: number }
-    title?: string
-  }
+function createAsciicastParser(): { consume: (chunk: string) => void; finish: () => ParsedCast } {
+  let bufferedLine = ''
+  let header: { term?: { cols?: number; rows?: number }; title?: string } | null = null
   const events: ParsedCastEvent[] = []
   let time = 0
 
-  for (const line of lines.slice(1)) {
+  const parseLine = (line: string) => {
+    if (line.length === 0) {
+      return
+    }
+
+    if (!header) {
+      header = JSON.parse(line) as { term?: { cols?: number; rows?: number }; title?: string }
+      return
+    }
+
     if (line.startsWith('#')) {
-      continue
+      return
     }
 
     let tuple: unknown
     try {
       tuple = JSON.parse(line)
     } catch {
-      continue
+      return
     }
 
     if (!Array.isArray(tuple) || tuple.length < 3) {
-      continue
+      return
     }
 
     const [interval, code, data] = tuple
     if (typeof interval !== 'number' || typeof code !== 'string' || typeof data !== 'string') {
-      continue
+      return
     }
 
     time += Math.max(0, interval)
@@ -122,11 +129,27 @@ function parseAsciicast(content: string): ParsedCast {
   }
 
   return {
-    cols: Math.max(2, Math.floor(Number(header.term?.cols) || 80)),
-    duration: events.length > 0 ? events[events.length - 1].time : 0,
-    events,
-    rows: Math.max(1, Math.floor(Number(header.term?.rows) || 24)),
-    title: typeof header.title === 'string' ? header.title : 'Terminal Recording',
+    consume: (chunk: string) => {
+      const lines = `${bufferedLine}${chunk}`.split(/\r?\n/)
+      bufferedLine = lines.pop() ?? ''
+      for (const line of lines) {
+        parseLine(line)
+      }
+    },
+    finish: () => {
+      parseLine(bufferedLine)
+      if (!header) {
+        throw new Error('Recording is missing its asciicast header.')
+      }
+
+      return {
+        cols: Math.max(2, Math.floor(Number(header.term?.cols) || 80)),
+        duration: events.length > 0 ? events[events.length - 1].time : 0,
+        events,
+        rows: Math.max(1, Math.floor(Number(header.term?.rows) || 24)),
+        title: typeof header.title === 'string' ? header.title : 'Terminal Recording',
+      }
+    },
   }
 }
 
@@ -470,7 +493,7 @@ export function RecordingsWindow() {
   const measureFrameRef = useRef<number | null>(null)
   const [recordings, setRecordings] = useState<TerminalRecordingListItem[]>([])
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
-  const [loadedCast, setLoadedCast] = useState<TerminalRecordingCast | null>(null)
+  const [hasLoadedCast, setHasLoadedCast] = useState(false)
   const [parsedCast, setParsedCast] = useState<ParsedCast | null>(null)
   const [query, setQuery] = useState('')
   const [isLoading, setIsLoading] = useState(true)
@@ -566,7 +589,7 @@ export function RecordingsWindow() {
     }),
     [displayScale, terminalSize.height, terminalSize.width],
   )
-  const recordedTheme = loadedCast?.metadata?.theme ?? null
+  const recordedTheme = selectedRecording?.theme ?? null
   const canUseRecordedTheme = recordedTheme !== null
   const replayThemeMode = themeMode === 'recorded' && canUseRecordedTheme ? 'recorded' : 'current'
   const zoomValue = scaleMode === 'fit' ? 'fit' : String(Math.round(displayScale * 100))
@@ -591,8 +614,8 @@ export function RecordingsWindow() {
       return recordedTheme
     }
 
-    return resolveTerminalTheme(settings ?? defaultTerminalSettings, getRecordingTabColor(loadedCast ?? selectedRecording))
-  }, [loadedCast, recordedTheme, replayThemeMode, selectedRecording, settings])
+    return resolveTerminalTheme(settings ?? defaultTerminalSettings, getRecordingTabColor(selectedRecording))
+  }, [recordedTheme, replayThemeMode, selectedRecording, settings])
 
   const loadRecordings = useCallback(async () => {
     setIsLoading(true)
@@ -712,7 +735,7 @@ export function RecordingsWindow() {
 
   useEffect(() => {
     if (!selectedPath) {
-      setLoadedCast(null)
+      setHasLoadedCast(false)
       setParsedCast(null)
       return
     }
@@ -721,28 +744,43 @@ export function RecordingsWindow() {
     setErrorText(null)
     setIsPlaying(false)
     setPlayhead(0)
+    setHasLoadedCast(false)
+    setParsedCast(null)
+    parsedCastRef.current = null
 
-    void window.terminay.readTerminalRecording(selectedPath).then(
-      (recording) => {
+    void (async () => {
+      const parser = createAsciicastParser()
+      let offset = 0
+      let done = false
+
+      while (!done) {
+        const chunk = await window.terminay.readTerminalRecordingChunk({
+          castPath: selectedPath,
+          length: RECORDING_READ_CHUNK_BYTES,
+          offset,
+        })
+        parser.consume(chunk.content)
+        offset = chunk.nextOffset
+        done = chunk.done
+      }
+
+      const parsed = parser.finish()
         if (canceled) {
           return
         }
 
-        const parsed = parseAsciicast(recording.content)
-        setLoadedCast(recording)
+        setHasLoadedCast(true)
         setParsedCast(parsed)
         parsedCastRef.current = parsed
         renderedEventIndexRef.current = 0
         setScaleMode('fit')
         renderUpTo(0)
         measureTerminal()
-      },
-      (error) => {
+    })().catch((error) => {
         if (!canceled) {
           setErrorText(error instanceof Error ? error.message : String(error))
         }
-      },
-    )
+      })
 
     return () => {
       canceled = true
@@ -919,7 +957,7 @@ export function RecordingsWindow() {
 
     await window.terminay.deleteTerminalRecording(selectedPath)
     setSelectedPath(null)
-    setLoadedCast(null)
+    setHasLoadedCast(false)
     setParsedCast(null)
     parsedCastRef.current = null
     await loadRecordings()
@@ -1045,7 +1083,7 @@ export function RecordingsWindow() {
                 type="button"
                 className="recordings-control-button"
                 onClick={onTogglePlay}
-                disabled={!loadedCast || !parsedCast}
+                disabled={!hasLoadedCast || !parsedCast}
                 aria-label={isPlaying ? 'Pause replay' : 'Play replay'}
                 title={isPlaying ? 'Pause' : 'Play'}
               >

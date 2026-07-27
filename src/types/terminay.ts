@@ -230,7 +230,7 @@ export type RemoteAccessStatus = {
   webRtcPairingQrCodeDataUrl: string | null
   webRtcPairingUrl: string | null
   webRtcRoomId: string | null
-  webRtcStatus: 'not-configured' | 'pairing-ready' | 'peer-handler-unavailable'
+  webRtcStatus: 'not-configured' | 'registering' | 'pairing-ready' | 'error'
   webRtcStatusMessage: string | null
 }
 
@@ -414,6 +414,12 @@ export type TerminalRecordingCast = {
   content: string
   metadata: TerminalRecordingMetadata | null
   path: string
+}
+
+export type TerminalRecordingChunk = {
+  content: string
+  done: boolean
+  nextOffset: number
 }
 
 export type TerminalRecordingChangeMessage = {
@@ -655,6 +661,11 @@ export interface TerminayApi {
   stopTerminalRecording: (id: string) => Promise<TerminalRecordingState>
   listTerminalRecordings: () => Promise<TerminalRecordingListItem[]>
   readTerminalRecording: (castPath: string) => Promise<TerminalRecordingCast>
+  readTerminalRecordingChunk: (options: {
+    castPath: string
+    offset: number
+    length?: number
+  }) => Promise<TerminalRecordingChunk>
   deleteTerminalRecording: (castPath: string) => Promise<void>
   revealTerminalRecording: (castPath: string) => Promise<void>
   getTerminalSettings: () => Promise<import('./settings').TerminalSettings>
