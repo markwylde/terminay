@@ -131,6 +131,7 @@ export type FileViewerGateway = {
   onFileWatchEvent: (listener: (event: FileWatchEvent) => void) => () => void
   readFileBytes: (path: string, range: FileRangeRequest) => Promise<FileReadResponse>
   readFileText: (path: string) => Promise<string>
+  readFileTextWindow: (path: string, range: FileRangeRequest) => Promise<FileTextWindow>
   saveFile: (path: string, payload: FileSavePayload) => Promise<FileInfo>
   unwatchFile: (path: string) => Promise<void>
   watchFile: (path: string) => Promise<void>
