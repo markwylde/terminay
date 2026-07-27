@@ -18,6 +18,7 @@ import {
 
 type CodexEventLabel =
 	| 'session_start'
+	| 'session_end'
 	| 'user_prompt_submit'
 	| 'pre_tool_use'
 	| 'permission_request'
@@ -33,6 +34,7 @@ type TrustEntry = {
 
 const EVENT_LABELS: Readonly<Record<string, CodexEventLabel>> = {
 	SessionStart: 'session_start',
+	SessionEnd: 'session_end',
 	UserPromptSubmit: 'user_prompt_submit',
 	PreToolUse: 'pre_tool_use',
 	PermissionRequest: 'permission_request',
