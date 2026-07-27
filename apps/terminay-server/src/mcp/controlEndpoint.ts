@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute } from "node:path";
+import type { ServerSettingsRepository, ServerSettingsState } from "@terminay/server-core";
 
 /**
  * The local control endpoint is deliberately a small server boundary.  It
@@ -394,6 +395,38 @@ export class ControlCapabilityStore implements ControlCapabilityResolver {
   private assertScope(scope: string): asserts scope is ControlScope {
     if (!(scope in scopeRank)) throw new TypeError("invalid control scope");
   }
+}
+
+export interface ControlSettingsBinding {
+  readonly dispose: () => void;
+}
+
+/**
+ * Bind the server-owned terminayMcp setting to capability authority. The
+ * initial snapshot and every committed update are applied synchronously at
+ * this boundary; disabling MCP revokes existing capabilities immediately.
+ */
+export async function bindControlSetting(
+  capabilities: Pick<ControlCapabilityStore, "setEnabled">,
+  settings: ServerSettingsRepository,
+): Promise<ControlSettingsBinding> {
+  if (typeof capabilities?.setEnabled !== "function") throw new TypeError("control capability store is required");
+  if (!(settings instanceof Object) || typeof settings.onChange !== "function") throw new TypeError("server settings repository is required");
+  const apply = (state: ServerSettingsState): void => {
+    const setting = state.settings.terminayMcp;
+    const enabled = typeof setting === "object" && setting !== null && !Array.isArray(setting) && typeof setting.enabled === "boolean"
+      ? setting.enabled
+      : true;
+    capabilities.setEnabled(enabled);
+  };
+  const remove = settings.onChange(apply);
+  try {
+    apply(await settings.load());
+  } catch (error) {
+    remove();
+    throw error;
+  }
+  return { dispose: remove };
 }
 
 export class ControlFrameLimitError extends Error {
