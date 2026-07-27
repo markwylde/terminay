@@ -68,7 +68,8 @@ export async function runMcpServer(): Promise<void> {
     } catch (error) {
       // The socket isn't there -> Terminay isn't running (or this process isn't
       // under a Terminay terminal). Reset the client so the next call retries.
-      if ((error as Error & { code?: string })?.code === 'not_connected') {
+      const code = (error as Error & { code?: string })?.code
+      if (code === 'not_connected' || code === 'not_in_terminay') {
         client = null
         return textResult(NOT_IN_TERMINAY_MESSAGE, true)
       }

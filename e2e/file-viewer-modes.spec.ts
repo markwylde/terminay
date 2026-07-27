@@ -53,6 +53,10 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   await fileExplorerItem(mainWindow, 'switch.txt').dblclick()
   await mainWindow.getByRole('tab', { name: 'HEX' }).click()
   await expect(mainWindow.locator('.file-hex-viewer')).toBeVisible()
+  const hexBytes = mainWindow.locator('.file-hex-viewer__byte')
+  await hexBytes.first().click()
+  await hexBytes.nth(3).click({ modifiers: ['Shift'] })
+  await expect(mainWindow.locator('.file-hex-viewer__selection')).toContainText('Selected 4 bytes')
   await mainWindow.getByRole('tab', { name: 'Preview' }).click()
   await expect(mainWindow.locator('.file-preview-text')).toContainText('switch me')
 
@@ -60,9 +64,18 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   await mainWindow.getByRole('tab', { name: 'Diff' }).click()
   await expect(mainWindow.locator('.file-diff-viewer')).toBeVisible()
   await expect(mainWindow.locator('.file-diff-viewer')).toContainText('const label = "new"')
+  await expect(mainWindow.getByRole('button', { name: 'Unified' })).toBeVisible()
+  await mainWindow.getByRole('button', { name: 'Unified' }).click()
+  await expect(mainWindow.locator('.file-diff-viewer--unified')).toBeVisible()
+  await expect(mainWindow.locator('[data-testid="file-diff-virtual-surface"]')).toBeVisible()
   await expect(mainWindow.locator('.file-diff-viewer .file-token--keyword', { hasText: 'const' })).toHaveCount(1)
   await expect(mainWindow.locator('.file-diff-viewer .file-token--string', { hasText: '"new"' })).toHaveCount(1)
   await expect(mainWindow.locator('.file-diff-viewer .file-token--tag-name', { hasText: 'div' }).first()).toBeVisible()
+
+  const largeDiffText = Array.from({ length: 3000 }, (_, index) => `export const row${index} = ${index}\n`).join('')
+  await workspace.writeText('diff-target.tsx', largeDiffText)
+  await expect(mainWindow.locator('[data-testid="file-diff-virtual-surface"]')).toBeVisible()
+  await expect.poll(() => mainWindow.locator('.file-diff-virtual-row').count()).toBeLessThan(500)
 
   await workspace.writeText(
     'diff-target.tsx',

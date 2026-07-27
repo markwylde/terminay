@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from './fixtures'
 import { contextMenuItem } from './support/ui'
@@ -117,6 +117,7 @@ test.describe('recording settings and service', () => {
 
     const castText = await readTextEventually(started.castPath ?? '')
     const metadataText = await readTextEventually(started.metadataPath ?? '')
+    expect(service.revealRecording(started.castPath ?? '')).toBe(started.castPath)
     const header = JSON.parse(castText.split(/\r?\n/, 1)[0] ?? '{}') as { title?: string; term?: { cols?: number; rows?: number } }
     const metadata = JSON.parse(metadataText) as { recordingState?: string; title?: string; eventCount?: number; theme?: { cursor?: string } }
 
@@ -175,6 +176,57 @@ test.describe('recording settings and service', () => {
     expect(castText).not.toContain('abc123')
     expect(castText).toContain('"i","\\r"')
   })
+
+  test('lists large metadata-free casts from a bounded header read and exposes bounded replay chunks', async ({ tempDir }) => {
+    const recordingDir = path.join(tempDir, 'large-recordings')
+    const dateDir = path.join(recordingDir, '2026-07-27')
+    const castPath = path.join(dateDir, 'large.cast')
+    await mkdir(dateDir, { recursive: true })
+
+    const largeOutput = 'x'.repeat(2 * 1024 * 1024)
+    await writeFile(
+      castPath,
+      `${JSON.stringify({
+        env: { TERM: 'xterm-256color' },
+        term: { cols: 120, rows: 40, type: 'xterm-256color' },
+        timestamp: Date.now() / 1000,
+        title: 'Large replay',
+        version: 3,
+      })}\n${JSON.stringify([0, 'o', largeOutput])}\n`,
+      'utf8',
+    )
+
+    const settings: TerminalSettings = {
+      ...defaultTerminalSettings,
+      recording: {
+        ...defaultTerminalSettings.recording,
+        directory: recordingDir,
+      },
+    }
+    const service = new TerminalRecordingService({
+      getHomePath: () => tempDir,
+      getSettings: () => settings,
+    })
+
+    const recordings = await service.listRecordings()
+    expect(recordings).toHaveLength(1)
+    expect(recordings[0]).toMatchObject({
+      castPath,
+      cols: 120,
+      recordingState: 'stopped',
+      rows: 40,
+      title: 'Large replay',
+    })
+
+    const firstChunk = await service.readRecordingChunk(castPath, 0, 64)
+    expect(firstChunk.content.length).toBeLessThanOrEqual(64)
+    expect(firstChunk.done).toBe(false)
+    expect(firstChunk.nextOffset).toBeGreaterThan(0)
+
+    const secondChunk = await service.readRecordingChunk(castPath, firstChunk.nextOffset, 64)
+    expect(secondChunk.content.length).toBeLessThanOrEqual(64)
+    expect(secondChunk.nextOffset).toBeGreaterThan(firstChunk.nextOffset)
+  })
 })
 
 test.describe('recordings UI', () => {
@@ -201,6 +253,9 @@ test.describe('recordings UI', () => {
     await contextMenuItem(mainWindow, 'Start Recording').click()
 
     await expect(terminalTab.getByRole('img', { name: 'Recording terminal session' })).toBeVisible()
+    await terminalTab.click({ button: 'right' })
+    await expect(contextMenuItem(mainWindow, 'Reveal Current Recording')).toBeVisible()
+    await mainWindow.keyboard.press('Escape')
     await mainWindow.keyboard.type('printf recording-ui-hit')
     await mainWindow.keyboard.press('Enter')
 

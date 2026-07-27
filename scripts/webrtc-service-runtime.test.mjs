@@ -91,10 +91,29 @@ test('RemoteAccessService rotates WebRTC QR rooms without closing existing host 
   assert.equal(service.getStatus().webRtcRoomId, secondConfig.roomId)
 
   service.handleWebRtcHostStatus(firstWindow.webContentsId, { type: 'host-registered' })
-  assert.equal(service.getStatus().webRtcStatus, 'peer-handler-unavailable')
+  assert.equal(service.getStatus().webRtcStatus, 'registering')
+  assert.match(service.getStatus().webRtcStatusMessage, /connecting to the signaling relay/i)
+
+  service.handleWebRtcHostStatus(secondWindow.webContentsId, {
+    detail: 'The WebRTC signaling relay is not connected.',
+    type: 'error',
+  })
+  const failedStatus = service.getStatus()
+  assert.equal(failedStatus.webRtcStatus, 'error')
+  assert.match(failedStatus.webRtcStatusMessage, /configured.*could not become ready/i)
+  assert.match(failedStatus.webRtcStatusMessage, /check the WebRTC hosted domain and signaling relay settings/i)
+  assert.match(failedStatus.webRtcStatusMessage, /stop and start Remote Access to retry/i)
+  assert.doesNotMatch(failedStatus.webRtcStatusMessage, /scaffolded|peer handler unavailable/i)
 
   service.handleWebRtcHostStatus(secondWindow.webContentsId, { type: 'host-registered' })
   assert.equal(service.getStatus().webRtcStatus, 'pairing-ready')
+
+  service.handleWebRtcHostStatus(secondWindow.webContentsId, { type: 'closed' })
+  const closedStatus = service.getStatus()
+  assert.equal(closedStatus.webRtcStatus, 'error')
+  assert.match(closedStatus.webRtcStatusMessage, /lost its signaling connection/i)
+  assert.match(closedStatus.webRtcStatusMessage, /stop and start Remote Access to retry/i)
+
   assert.equal(statuses.at(-1).webRtcRoomId, secondConfig.roomId)
 })
 

@@ -1535,7 +1535,11 @@ export function SettingsWindow() {
     const activePairingMode = selectedRemotePairingMode
     const selectedPairingUrl = activePairingMode === 'webrtc' ? remoteStatus?.webRtcPairingUrl : remoteStatus?.lanPairingUrl
     const selectedPairingQrCodeDataUrl =
-      activePairingMode === 'webrtc' ? remoteStatus?.webRtcPairingQrCodeDataUrl : remoteStatus?.lanPairingQrCodeDataUrl
+      activePairingMode === 'webrtc' && remoteStatus?.webRtcStatus !== 'pairing-ready'
+        ? null
+        : activePairingMode === 'webrtc'
+          ? remoteStatus?.webRtcPairingQrCodeDataUrl
+          : remoteStatus?.lanPairingQrCodeDataUrl
     const selectedPairingExpiresAt =
       activePairingMode === 'webrtc' ? remoteStatus?.webRtcPairingExpiresAt : remoteStatus?.lanPairingExpiresAt
     const selectedPairingLabel = activePairingMode === 'webrtc' ? 'WebRTC Relay QR' : 'Local Network QR'
@@ -1878,7 +1882,9 @@ export function SettingsWindow() {
                 </>
               ) : (
                 <p className="settings-remote-empty">
-                  Start remote access to generate a fresh pairing QR code for browsers.
+                  {activePairingMode === 'webrtc' && remoteStatus?.webRtcStatusMessage
+                    ? remoteStatus.webRtcStatusMessage
+                    : 'Start remote access to generate a fresh pairing QR code for browsers.'}
                 </p>
               )}
             </div>

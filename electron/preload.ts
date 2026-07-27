@@ -57,6 +57,7 @@ import type {
   TerminalRemoteSizeOverrideMessage,
   TerminalRecordingCast,
   TerminalRecordingChangeMessage,
+  TerminalRecordingChunk,
   TerminalRecordingListItem,
   TerminalRecordingStartMetadata,
   TerminalRecordingState,
@@ -147,6 +148,8 @@ contextBridge.exposeInMainWorld('terminay', {
     ipcRenderer.invoke('terminal-recording:list') as Promise<TerminalRecordingListItem[]>,
   readTerminalRecording: (castPath: string) =>
     ipcRenderer.invoke('terminal-recording:read', { castPath }) as Promise<TerminalRecordingCast>,
+  readTerminalRecordingChunk: (options: { castPath: string; offset: number; length?: number }) =>
+    ipcRenderer.invoke('terminal-recording:read-chunk', options) as Promise<TerminalRecordingChunk>,
   deleteTerminalRecording: (castPath: string) =>
     ipcRenderer.invoke('terminal-recording:delete', { castPath }) as Promise<void>,
   revealTerminalRecording: (castPath: string) =>

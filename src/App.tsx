@@ -543,6 +543,7 @@ type MovedTerminalTab = {
 	inheritsProjectColor?: boolean;
 	macroRuns?: TerminalTabMacroRun[];
 	recordingError?: string | null;
+	recordingPath?: string | null;
 	recordingStatus?: 'failed' | 'idle' | 'recording';
 	sessionId: string;
 	showActiveTabActivityIndicator?: boolean;
@@ -2357,8 +2358,9 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-			panel.api.updateParameters({
-				recordingError: state.errorMessage,
+				panel.api.updateParameters({
+					recordingError: state.errorMessage,
+				recordingPath: state.castPath,
 				recordingStatus: state.status,
 			});
 		},
@@ -2394,6 +2396,25 @@ const ProjectWorkspace = forwardRef<
 			}
 		},
 		[applyTerminalRecordingState],
+	);
+
+	const revealRecordingForSession = useCallback(
+		async (sessionId: string) => {
+			const panel = getPanelForSession(sessionId);
+			const recordingPath = panel?.params?.recordingPath;
+			if (typeof recordingPath !== 'string' || recordingPath.length === 0) {
+				setErrorText('This terminal does not have an active recording file.');
+				return;
+			}
+
+			try {
+				await window.terminay.revealTerminalRecording(recordingPath);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setErrorText(`Unable to reveal recording: ${message}`);
+			}
+		},
+		[getPanelForSession],
 	);
 
 	const hydrateRecordingStateForSession = useCallback(
@@ -3871,6 +3892,7 @@ const ProjectWorkspace = forwardRef<
 							onMoveTerminalToProject(project.id, panelId, targetProjectId),
 						onStartRecording: () => void startRecordingForSession(sessionId),
 						onStopRecording: () => void stopRecordingForSession(sessionId),
+						onRevealRecording: () => void revealRecordingForSession(sessionId),
 						recordingStatus: 'idle',
 						registerTerminalContextReader,
 						onUpdateNote: (terminalNote: string | undefined) =>
@@ -3922,6 +3944,7 @@ const ProjectWorkspace = forwardRef<
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
 			hydrateRecordingStateForSession,
+			revealRecordingForSession,
 			settings.activityIndicators.showActiveTabs,
 			settings.activityIndicators.showFinishedTabs,
 			settings.recording.recordNewTerminals,
@@ -5080,6 +5103,7 @@ const ProjectWorkspace = forwardRef<
 							onMoveTerminalToProject(project.id, panelId, targetProjectId),
 						onStartRecording: () => void startRecordingForSession(sessionId),
 						onStopRecording: () => void stopRecordingForSession(sessionId),
+						onRevealRecording: () => void revealRecordingForSession(sessionId),
 						recordingStatus: 'idle',
 						registerTerminalContextReader,
 						onUpdateNote: (terminalNote: string | undefined) =>
@@ -5161,6 +5185,7 @@ const ProjectWorkspace = forwardRef<
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
 			hydrateRecordingStateForSession,
+			revealRecordingForSession,
 			settings.activityIndicators.showActiveTabs,
 			settings.activityIndicators.showFinishedTabs,
 			settings.recording.recordNewTerminals,
@@ -5257,6 +5282,7 @@ const ProjectWorkspace = forwardRef<
 				inheritsProjectColor: panel.params?.inheritsProjectColor,
 				macroRuns: runningMacroRunsBySession[sessionId] ?? [],
 				recordingError: panel.params?.recordingError,
+				recordingPath: panel.params?.recordingPath,
 				recordingStatus: panel.params?.recordingStatus,
 				sessionId,
 				showActiveTabActivityIndicator:
@@ -5364,7 +5390,10 @@ const ProjectWorkspace = forwardRef<
 						void startRecordingForSession(movedTerminal.sessionId),
 					onStopRecording: () =>
 						void stopRecordingForSession(movedTerminal.sessionId),
+					onRevealRecording: () =>
+						void revealRecordingForSession(movedTerminal.sessionId),
 					recordingError: movedTerminal.recordingError,
+					recordingPath: movedTerminal.recordingPath,
 					recordingStatus: movedTerminal.recordingStatus ?? 'idle',
 					registerTerminalContextReader,
 					onUpdateNote: (terminalNote: string | undefined) =>
@@ -5422,6 +5451,7 @@ const ProjectWorkspace = forwardRef<
 			publishTerminalActivityOverview,
 			registerTerminalContextReader,
 			hydrateRecordingStateForSession,
+			revealRecordingForSession,
 			settings.activityIndicators.showActiveTabs,
 			settings.activityIndicators.showFinishedTabs,
 			startRecordingForSession,
@@ -9698,7 +9728,7 @@ function App() {
 													<div className="remote-pairing-modal__tip">
 														{selectedRemotePairingMode === 'webrtc'
 															? remoteStatus?.webRtcStatusMessage ??
-																'WebRTC relay pairing is scaffolded for the host.'
+																'WebRTC relay host is connecting to the signaling relay. Keep Terminay open while it becomes ready.'
 															: 'Best for mobile: Scan the QR code. Use the link for manual entry on desktop.'}
 													</div>
 													{selectedPairingExpiresAt && (

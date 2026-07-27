@@ -37,8 +37,10 @@ export function HexViewer({ filePath, fileSize, onChangeByte, onValidationChange
   const [editedTexts, setEditedTexts] = useState<Map<number, string>>(() => new Map())
   const [invalidOffsets, setInvalidOffsets] = useState<Set<number>>(() => new Set())
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [selectionRange, setSelectionRange] = useState<{ end: number; start: number } | null>(null)
   const failedOffsetsRef = useRef<Set<number>>(new Set())
   const invalidOffsetsRef = useRef<Set<number>>(new Set())
+  const selectionAnchorRef = useRef<number | null>(null)
   const previousPageLayoutKeyRef = useRef<string | null>(null)
   const previousFilePathRef = useRef<string | null>(null)
   const bytesPerRow = useMemo(() => {
@@ -81,6 +83,8 @@ export function HexViewer({ filePath, fileSize, onChangeByte, onValidationChange
     previousFilePathRef.current = filePath
     setEditedBytes(new Map())
     setEditedTexts(new Map())
+    setSelectionRange(null)
+    selectionAnchorRef.current = null
     invalidOffsetsRef.current = new Set()
     setInvalidOffsets(invalidOffsetsRef.current)
     onValidationChange(true)
@@ -233,12 +237,32 @@ export function HexViewer({ filePath, fileSize, onChangeByte, onValidationChange
     return result
   }, [bytesPerRow, editedBytes, fileSize, pageSize, pages, visibleRange.endRow, visibleRange.startRow])
 
+  const selectByteRange = useCallback((offset: number, extend: boolean) => {
+    const anchor = selectionAnchorRef.current
+    if (extend && anchor !== null) {
+      setSelectionRange({ end: Math.max(anchor, offset), start: Math.min(anchor, offset) })
+      return
+    }
+    selectionAnchorRef.current = offset
+    setSelectionRange({ end: offset, start: offset })
+  }, [])
+
+  const isSelected = useCallback(
+    (offset: number) => selectionRange !== null && offset >= selectionRange.start && offset <= selectionRange.end,
+    [selectionRange],
+  )
+
   return (
     <div className="file-hex-viewer">
       <div className="file-hex-viewer__header">
         <span>Offset</span>
         <span>HEX</span>
         <span>ASCII</span>
+      </div>
+      <div className="file-hex-viewer__selection" aria-live="polite">
+        {selectionRange
+          ? `Selected ${selectionRange.end - selectionRange.start + 1} byte${selectionRange.end === selectionRange.start ? '' : 's'}`
+          : 'Click a byte to select it; Shift-click extends the range.'}
       </div>
       {loadError ? <div className="file-preview-unsupported">Unable to load HEX data: {loadError}</div> : null}
       <div
@@ -271,10 +295,12 @@ export function HexViewer({ filePath, fileSize, onChangeByte, onValidationChange
                       <input
                         key={byteOffset}
                         aria-label={`Byte ${byteOffset.toString(16).padStart(8, '0')}`}
-                        className={`file-hex-viewer__byte${editedBytes.has(byteOffset) ? ' file-hex-row__byte--changed' : ''}${invalidOffsets.has(byteOffset) ? ' file-hex-row__byte--invalid' : ''}`}
+                        className={`file-hex-viewer__byte${isSelected(byteOffset) ? ' file-hex-row__byte--selected' : ''}${editedBytes.has(byteOffset) ? ' file-hex-row__byte--changed' : ''}${invalidOffsets.has(byteOffset) ? ' file-hex-row__byte--invalid' : ''}`}
                         value={editedTexts.get(byteOffset) ?? toHex(value)}
                         maxLength={2}
                         pattern="[0-9a-fA-F]{1,2}"
+                        data-selected={isSelected(byteOffset) ? 'true' : 'false'}
+                        onMouseDown={(event) => selectByteRange(byteOffset, event.shiftKey)}
                         onFocus={(event) => event.currentTarget.select()}
                         onChange={(event) => updateByte(byteOffset, event.target.value)}
                       />
