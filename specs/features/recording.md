@@ -166,11 +166,11 @@ Minimum timeline functionality:
 - Reveal the recording file in the OS file manager.
 - Delete a recording pair (`.cast` and metadata `.json`) with confirmation.
 
-The timeline should not require an app database in the first version. A directory scan is enough, with caching if needed for responsiveness.
+The timeline should not require an app database in the first version. A directory scan is enough, with caching if needed for responsiveness. Metadata files are read normally, but when metadata is missing the scan must read only a bounded prefix of each `.cast` file to obtain its header; it must not load a complete cast merely to populate the timeline.
 
 ### Replay
 
-Replay should render into an xterm instance using the recorded output stream. The first implementation can be an in-app replay panel or timeline detail view.
+Replay should render into an xterm instance using the recorded output stream. The first implementation can be an in-app replay panel or timeline detail view. The renderer retrieves casts in bounded chunks and incrementally parses newline-delimited events so it does not hold both a complete raw cast and its parsed representation. Parsed event data remains in memory for scrubbing and replay; checkpointed or fully streamed replay for recordings whose parsed event data itself is very large is intentionally deferred.
 
 Expected controls:
 
@@ -190,7 +190,7 @@ Each terminal tab context menu should show recording controls:
 
 - "Start Recording" when the terminal is not recording.
 - "Stop Recording" when the terminal is recording.
-- Optional secondary action later: "Reveal Current Recording".
+- "Reveal Current Recording" when the terminal has a current or just-finalized recording path.
 
 The tab should expose recording state visually without adding noisy text. A small icon in the tab header is enough, with a tooltip.
 
@@ -349,6 +349,7 @@ Expose recording state through preload APIs:
 - `stopTerminalRecording(sessionId)`
 - `onTerminalRecordingChanged(listener)`
 - `listTerminalRecordings(options)`
+- `readTerminalRecordingChunk(options)` for bounded replay reads
 - `deleteTerminalRecording(recordingId)`
 - `revealTerminalRecording(recordingId)`
 
@@ -383,7 +384,7 @@ Use xterm for rendering. Feed only output events into the replay terminal unless
 
 Add coverage at both service and UI levels:
 
-- Unit or node tests for filename sanitization, metadata normalization, asciicast event writing, and parser behavior.
+- Unit or node tests for filename sanitization, metadata normalization, asciicast event writing, bounded header/chunk reads, and parser behavior.
 - Electron IPC smoke coverage for start/stop/list/delete/reveal where practical.
 - E2E coverage for enabling auto-record, opening a terminal, emitting output, stopping recording, seeing it in the timeline, and replaying it.
 
@@ -458,7 +459,7 @@ items are not part of the current recording contract; they are audited in
 - [x] Add Start Recording and Stop Recording actions to `TerminalTab` context menu.
 - [x] Add a subtle recording indicator to terminal tabs.
 - [x] Show errors if start/stop fails.
-- [ ] Optionally add "Reveal Current Recording" for active or completed recordings.
+- [x] Add "Reveal Current Recording" for active or just-finalized recordings when a path is available.
 
 ### Timeline UI
 
@@ -481,7 +482,7 @@ items are not part of the current recording contract; they are audited in
 - [x] Show current time and total duration.
 - [x] Apply resize events during playback or define a stable fallback.
 - [x] Preserve copy-selection behavior in replay terminals.
-- [ ] Avoid loading very large recordings into memory if streaming is practical.
+- [x] Read replay casts in bounded chunks and incrementally parse them; retain parsed events for scrub/replay. Fully streamed or checkpointed replay for recordings whose parsed event data is itself very large remains intentionally deferred.
 
 ### Testing
 
@@ -490,6 +491,7 @@ items are not part of the current recording contract; they are audited in
 - [ ] Add tests for asciicast v3 writer output.
 - [ ] Add tests for metadata finalization.
 - [ ] Add tests for asciicast parser behavior.
+- [x] Add focused coverage for metadata-free large-cast timeline scans, bounded replay chunks, and active-recording reveal visibility.
 - [ ] Add E2E test for manual start/stop recording.
 - [ ] Add E2E test for auto-recording new terminals.
 - [ ] Add E2E test for timeline listing and replay.
