@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createEmbeddedBootstrap } from "../dist/index.js";
+import { createEmbeddedBootstrap, FileDataRootLease } from "../dist/index.js";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 test("embedded bootstrap claims one data root, chooses a private endpoint, and publishes a short-lived credential", async () => {
   const calls = [];
@@ -57,4 +60,25 @@ test("embedded bootstrap releases the lease when startup fails", async () => {
   assert.equal(bootstrap.phase, "failed");
   assert.equal(acquired, 1);
   assert.equal(released, 1);
+});
+
+test("file data-root lease prevents a second authority and releases atomically", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-data-root-"));
+  const first = new FileDataRootLease();
+  const second = new FileDataRootLease();
+  try {
+    await first.acquire(root);
+    const lock = await stat(join(root, ".terminay-server.lock"));
+    assert.equal(lock.mode & 0o777, 0o600);
+    assert.match(await readFile(join(root, ".terminay-server.lock"), "utf8"), /"pid"/);
+    await assert.rejects(second.acquire(root), /data root is already in use/);
+    await first.release(root);
+    await second.acquire(root);
+    await second.release(root);
+    await assert.rejects(stat(join(root, ".terminay-server.lock")), { code: "ENOENT" });
+  } finally {
+    await first.release(root);
+    await second.release(root);
+    await rm(root, { recursive: true, force: true });
+  }
 });
