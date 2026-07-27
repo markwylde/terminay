@@ -77,8 +77,10 @@ flow without receiving server credentials or raw command authority.
 
 - [ ] Run status, diff, worktree, default-branch, and PR tests through the
   server client.
-- [ ] Test stale review, replayed approval, path substitution, main-worktree
-  removal, detached head, missing remote, and partial failure.
+- [x] Test stale review, replayed approval, path substitution, main-worktree
+  removal, detached head, missing remote, and partial failure. Git adapter,
+  GitService, worktree, and Quick Push fixtures pass all of these cases with
+  single-use approval and deterministic partial results.
 - [ ] Test two clients observing one mutation and one resulting status revision.
 
 ## Acceptance checks
