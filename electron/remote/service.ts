@@ -137,6 +137,12 @@ type WebRtcReconnectAvailabilityRuntime = {
 
 const MAX_BUFFER_LENGTH = 200_000
 const MAX_SESSION_SNAPSHOT_BUFFER_LENGTH = 50_000
+const WEBRTC_HOST_REGISTERING_MESSAGE =
+  'WebRTC relay host is connecting to the signaling relay. Keep Terminay open while it becomes ready.'
+const WEBRTC_HOST_NOT_READY_MESSAGE =
+  'WebRTC relay is configured, but the host could not become ready. Check the WebRTC hosted domain and signaling relay settings, then stop and start Remote Access to retry.'
+const WEBRTC_HOST_RELAY_LOST_MESSAGE =
+  'WebRTC relay host lost its signaling connection. Check the WebRTC hosted domain and signaling relay settings, then stop and start Remote Access to retry.'
 
 function appendToBuffer(current: string, chunk: string): string {
   const next = current + chunk
@@ -241,6 +247,7 @@ export class RemoteAccessService {
   private readonly webRtcReconnectAvailabilityBySessionId = new Map<string, WebRtcReconnectAvailabilityRuntime>()
   private readonly webRtcReconnectAttemptsById = new Map<string, PendingWebRtcReconnect>()
   private readonly webRtcTerminalConnectionsByChannelId = new Map<string, string>()
+  private webRtcStatus: RemoteAccessStatus['webRtcStatus'] = 'not-configured'
   private webRtcStatusMessage: string | null = null
   private readonly wsServer = new WebSocketServer({ noServer: true })
 
@@ -282,8 +289,6 @@ export class RemoteAccessService {
             qrCodePath: this.pairingQrCodePath,
             url: this.pairingUrl,
           }
-
-    const webRtcHostReady = this.isActiveWebRtcHostReady()
 
     return {
       activeConnectionCount: this.connectionStore.count(),
@@ -331,12 +336,14 @@ export class RemoteAccessService {
       webRtcPairingQrCodeDataUrl: this.webRtcPairingQrCodeDataUrl,
       webRtcPairingUrl: this.webRtcPairingUrl,
       webRtcRoomId: this.webRtcRoomId,
-      webRtcStatus: webRtcHostReady ? 'pairing-ready' : this.webRtcPairingUrl ? 'peer-handler-unavailable' : 'not-configured',
+      webRtcStatus: this.webRtcStatus,
       webRtcStatusMessage:
         this.webRtcStatusMessage ??
-        (this.webRtcPairingUrl
-          ? 'WebRTC relay pairing is scaffolded; host peer connection handling is not active yet.'
-          : null),
+        (this.webRtcStatus === 'registering'
+          ? WEBRTC_HOST_REGISTERING_MESSAGE
+          : this.webRtcStatus === 'error'
+            ? WEBRTC_HOST_NOT_READY_MESSAGE
+            : null),
     }
   }
 
@@ -685,6 +692,7 @@ export class RemoteAccessService {
     this.webRtcPairingUrl = null
     this.webRtcRoomId = null
     this.webRtcActivePairingWebContentsId = null
+    this.webRtcStatus = 'not-configured'
     this.closeWebRtcPairingHost()
     this.closeWebRtcReconnectAvailability()
     this.webRtcStatusMessage = null
@@ -693,12 +701,6 @@ export class RemoteAccessService {
 
   private emitStatus(): void {
     this.onStatusChanged(this.getStatus())
-  }
-
-  private isActiveWebRtcHostReady(): boolean {
-    return this.webRtcActivePairingWebContentsId !== null
-      ? this.webRtcHostRuntimesByWebContentsId.get(this.webRtcActivePairingWebContentsId)?.ready === true
-      : false
   }
 
   private getPendingWebRtcConnectionCount(): number {
@@ -753,6 +755,7 @@ export class RemoteAccessService {
 
   private async rotateWebRtcPairingCode(): Promise<void> {
     const settings = this.getRemoteAccessSettings()
+    this.webRtcStatus = 'registering'
 
     try {
       if (!settings.pairingPinHash.trim()) {
@@ -787,14 +790,16 @@ export class RemoteAccessService {
         signalingAuthToken: payload.signalingAuthToken,
         signalingUrl: payload.signalingUrl,
       })
-      this.webRtcStatusMessage = 'WebRTC relay room is registering. Keep Terminay open while the browser connects.'
+      this.webRtcStatusMessage = WEBRTC_HOST_REGISTERING_MESSAGE
     } catch (error) {
       this.webRtcPairingExpiresAt = null
       this.webRtcPairingUrl = null
       this.webRtcRoomId = null
       this.webRtcActivePairingWebContentsId = null
       this.webRtcPairingQrCodeDataUrl = null
-      this.webRtcStatusMessage = error instanceof Error ? error.message : 'Unable to generate WebRTC pairing QR.'
+      this.webRtcStatus = 'error'
+      const detail = error instanceof Error ? error.message : 'Unable to generate WebRTC pairing QR.'
+      this.webRtcStatusMessage = `WebRTC relay pairing could not be prepared: ${detail} Check the WebRTC hosted domain and signaling relay settings, then stop and start Remote Access to retry.`
     }
   }
 
@@ -1197,7 +1202,9 @@ export class RemoteAccessService {
 
     if (message.type === 'host-registered') {
       runtime.ready = true
+      runtime.phase = 'waiting'
       if (this.webRtcActivePairingWebContentsId === webContentsId) {
+        this.webRtcStatus = 'pairing-ready'
         this.webRtcStatusMessage = 'WebRTC relay room is ready. Scan the QR code to connect another browser.'
         this.emitStatus()
       }
@@ -1211,6 +1218,7 @@ export class RemoteAccessService {
         // advertising its one-time QR immediately and prepare a fresh room for
         // another browser without disturbing the peer that is connecting.
         this.webRtcActivePairingWebContentsId = null
+        this.webRtcStatus = 'registering'
         this.webRtcStatusMessage = 'A browser is pairing, but is not connected yet. Preparing a fresh QR for another browser.'
         this.emitStatus()
         void this.rotateWebRtcPairingCode().then(() => this.emitStatus())
@@ -1221,21 +1229,36 @@ export class RemoteAccessService {
     }
 
     if (message.type === 'error') {
+      const wasReady = runtime.ready
       runtime.ready = false
-      if (runtime.phase === 'pairing') {
-        runtime.phase = 'failed'
-      }
+      runtime.phase = 'failed'
       const config = this.webRtcHostConfigByWebContentsId.get(webContentsId)
       if (this.webRtcActivePairingWebContentsId === webContentsId || config?.reconnect) {
-        this.webRtcStatusMessage = message.detail || 'The WebRTC relay rejected the pairing room.'
+        if (this.webRtcActivePairingWebContentsId === webContentsId) {
+          this.webRtcStatus = 'error'
+          this.webRtcStatusMessage = wasReady
+            ? WEBRTC_HOST_RELAY_LOST_MESSAGE
+            : WEBRTC_HOST_NOT_READY_MESSAGE
+          if (message.detail) {
+            this.webRtcStatusMessage = `${this.webRtcStatusMessage} Details: ${message.detail}`
+          }
+        } else {
+          this.webRtcStatusMessage = message.detail || 'Saved-session reconnect failed.'
+        }
         this.emitStatus()
       }
       return
     }
 
     if (message.type === 'closed') {
+      const wasReady = runtime.ready
       runtime.ready = false
+      runtime.phase = 'failed'
       if (this.webRtcActivePairingWebContentsId === webContentsId) {
+        this.webRtcStatus = 'error'
+        this.webRtcStatusMessage = wasReady
+          ? WEBRTC_HOST_RELAY_LOST_MESSAGE
+          : WEBRTC_HOST_NOT_READY_MESSAGE
         this.emitStatus()
       }
     }
