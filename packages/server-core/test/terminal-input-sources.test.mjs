@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  createRecordingInputCapture,
+  RecordingService,
   TerminalInputSourceAdapter,
   TerminalService,
   TerminalServiceError,
@@ -64,6 +69,37 @@ test("input sources serialize keyboard, paste, macro, dictation, MCP, and remote
     (error) => error instanceof TerminalServiceError && error.code === "invalid_position",
   );
   await service.shutdown();
+});
+
+test("one recording boundary applies input consent to every accepted input source", async () => {
+  const home = await mkdtemp(join(tmpdir(), "terminay-input-capture-"));
+  const pty = fakePty();
+  const service = new TerminalService({ serverId: identity.serverId, ptyFactory: pty });
+  const recording = new RecordingService({ homeDirectory: home, recordingRoot: join(home, "recordings") });
+  try {
+    await service.createSession({ projectId: identity.projectId, sessionId: identity.sessionId, cols: 80, rows: 24 });
+    const started = recording.start(identity.sessionId, { projectId: identity.projectId, captureInput: true });
+    const adapter = new TerminalInputSourceAdapter(service, { onInputAccepted: createRecordingInputCapture(recording) });
+    const sources = ["keyboard", "paste", "macro", "dictation", "mcp", "remote"];
+    for (const source of sources) {
+      await adapter.write({
+        identity,
+        clientId: `${source}-client`,
+        source,
+        data: `${source}-input`,
+        authorization: authorization(`${source}-client`),
+      });
+    }
+    recording.finalize(identity.sessionId);
+    const replay = recording.readRecordingChunk({ recordingId: started.recordingId, start: 0, maxBytes: 64 * 1024 });
+    const inputRecords = replay.content.split("\n").filter((line) => line.includes('"i"'));
+    assert.equal(inputRecords.length, sources.length);
+    for (const source of sources) assert.equal(inputRecords.some((line) => line.includes(`${source}-input`)), true);
+    assert.deepEqual(pty.processes[0].writes.map((bytes) => new TextDecoder().decode(bytes)), sources.map((source) => `${source}-input`));
+  } finally {
+    await service.shutdown();
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("input source queue applies bounded backpressure while preserving write order", async () => {
