@@ -2699,13 +2699,29 @@ ipcMain.handle('terminal-recording:read', (_event, payload: { castPath: string }
   return recordingService.readRecording(payload.castPath)
 })
 
+ipcMain.handle(
+  'terminal-recording:read-chunk',
+  (_event, payload: { castPath: string; offset: number; length?: number }) => {
+    if (
+      !payload ||
+      typeof payload.castPath !== 'string' ||
+      !Number.isInteger(payload.offset) ||
+      payload.offset < 0 ||
+      (payload.length !== undefined && (!Number.isInteger(payload.length) || payload.length <= 0))
+    ) {
+      throw new Error('Invalid recording chunk request.')
+    }
+
+    return recordingService.readRecordingChunk(payload.castPath, payload.offset, payload.length)
+  },
+)
+
 ipcMain.handle('terminal-recording:delete', (_event, payload: { castPath: string }) => {
   recordingService.deleteRecording(payload.castPath)
 })
 
 ipcMain.handle('terminal-recording:reveal', async (_event, payload: { castPath: string }) => {
-  const recording = await recordingService.readRecording(payload.castPath)
-  shell.showItemInFolder(recording.path)
+  shell.showItemInFolder(recordingService.revealRecording(payload.castPath))
 })
 
 ipcMain.handle('fs:get-home-path', () => {

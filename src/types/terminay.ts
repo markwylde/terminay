@@ -416,6 +416,12 @@ export type TerminalRecordingCast = {
   path: string
 }
 
+export type TerminalRecordingChunk = {
+  content: string
+  done: boolean
+  nextOffset: number
+}
+
 export type TerminalRecordingChangeMessage = {
   state: TerminalRecordingState
 }
@@ -655,6 +661,11 @@ export interface TerminayApi {
   stopTerminalRecording: (id: string) => Promise<TerminalRecordingState>
   listTerminalRecordings: () => Promise<TerminalRecordingListItem[]>
   readTerminalRecording: (castPath: string) => Promise<TerminalRecordingCast>
+  readTerminalRecordingChunk: (options: {
+    castPath: string
+    offset: number
+    length?: number
+  }) => Promise<TerminalRecordingChunk>
   deleteTerminalRecording: (castPath: string) => Promise<void>
   revealTerminalRecording: (castPath: string) => Promise<void>
   getTerminalSettings: () => Promise<import('./settings').TerminalSettings>

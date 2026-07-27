@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  ExternalLink,
   FileEdit,
   FolderSync,
   LoaderCircle,
@@ -53,6 +54,7 @@ export type TerminalPanelParams = {
   showActiveTabActivityIndicator?: boolean
   showFinishedTabActivityIndicator?: boolean
   recordingError?: string | null
+  recordingPath?: string | null
   recordingStatus?: 'failed' | 'idle' | 'recording'
   terminalActivityState?: TerminalActivityState
   agentState?: AgentState
@@ -69,6 +71,7 @@ export type TerminalPanelParams = {
   onMoveToProject?: (projectId: string) => void
   onStartRecording?: () => void
   onStopRecording?: () => void
+  onRevealRecording?: () => void
   registerTerminalContextReader?: (sessionId: string, reader: TerminalContextReader) => () => void
   onUpdateNote?: (note: string | undefined) => void
   projectsForMove?: TerminalTabMoveProject[]
@@ -348,6 +351,15 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
         params?.onStartRecording?.()
       },
     },
+    ...(params?.recordingPath
+      ? [
+          {
+            label: 'Reveal Current Recording',
+            icon: <ExternalLink size={14} />,
+            onClick: () => params.onRevealRecording?.(),
+          },
+        ]
+      : []),
     {
       label: hasTerminalNote ? 'Remove Note' : 'Add Note',
       icon: <FileEdit size={14} />,
