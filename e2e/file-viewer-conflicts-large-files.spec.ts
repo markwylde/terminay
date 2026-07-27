@@ -123,10 +123,25 @@ test('large text files prompt for engine choice, truncate in performant mode, an
   await chooser.getByRole('button', { name: 'Performant' }).click()
   await mainWindow.getByRole('tab', { name: 'Text' }).click()
 
-  await expect(mainWindow.locator('.file-text-viewer__textarea')).toBeVisible()
-  await expect(mainWindow.locator('.file-panel')).toContainText('Showing a truncated window in Performant mode')
+  await expect(mainWindow.locator('.file-text-viewer__textarea--virtual')).toBeVisible()
+  await expect(mainWindow.locator('.file-text-virtual-surface')).toBeVisible()
+  await expect(mainWindow.locator('.file-panel')).toContainText('Showing a virtualized window in Performant mode')
   await expect(mainWindow.locator('.file-status-bar')).toContainText('Performant')
-  await expect(mainWindow.locator('.file-text-viewer__textarea')).toHaveValue(/Large file truncated in Performant mode/)
+  await expect(mainWindow.locator('.file-text-viewer__textarea--virtual')).not.toHaveValue(/Large file truncated in Performant mode/)
+
+  await mainWindow.locator('.file-text-virtual-surface').evaluate((element) => {
+    element.scrollTop = element.scrollHeight / 2
+    element.dispatchEvent(new Event('scroll'))
+  })
+  await expect(mainWindow.locator('.file-text-viewer__textarea--virtual')).toBeVisible()
+
+  await mainWindow.locator('.file-text-viewer__textarea--virtual').fill('local window edit\n')
+  await expect(mainWindow.locator('.file-status-bar')).toContainText('Unsaved changes')
+
+  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
+  await expect(mainWindow.locator('.file-hex-viewer')).toBeVisible()
+  await expect(mainWindow.locator('.file-viewer-virtual-surface')).toBeVisible()
+  await expect(mainWindow.locator('.file-hex-viewer__byte').first()).toBeVisible()
 
   await activateDockTab(mainWindow, 'large.txt')
   await appHarness.sendAppCommand('save-active')
