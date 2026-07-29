@@ -115,6 +115,28 @@ generic IPC imports.
 A normal arrangement may therefore be one Local window plus three windows
 connected to three remote servers.
 
+The production shared Connections route accepts the host-local
+`ConnectionProfileStore` and narrow callbacks for switching, server revocation,
+exposure, and pairing handoff. It supports sanitized add/import and rename,
+keeps forget explicitly separate from revoke with different confirmation copy,
+and never writes a pairing URL into profile metadata. Unsupported actions stay
+absent or disabled. The production Desktop server-UI bridge supplies a
+sanitized profile snapshot and source-bound actions, rejects profiles outside
+the window's host context, allows exposure only for the current connection,
+and consumes pairing credentials without retaining them. Final persisted
+profile/window-registry callbacks use the exact `openProfileWindow` selection,
+flush host-local writes before returning, separate disconnect/forget from
+server revocation, and persist only the sanitized profile returned by pairing.
+The Web manager renders the same action body through `WebConnectionHost`;
+profile metadata remains at the exact manager origin, storage events rebuild
+the sanitized projection in other tabs, and one-time pairing fragments never
+enter localStorage. The connected shared workspace enables the Connections
+route with those same persisted callbacks. Desktop exposes a tested
+`createDesktopServerUiWindow` composition seam, but the current legacy
+Electron bootstrap has no server-bundle window caller to adopt it yet; that
+authority replacement remains explicit parity work rather than creating a
+second BrowserWindow owner.
+
 ## Web connection host
 
 - `web.terminay.com` has no Local server option and never claims browser
@@ -199,9 +221,13 @@ one guarded request through the native policy boundary.
    signaling service.
 4. The server bundle is hash-verified and launched on the exact session origin.
 5. Device-key pairing and PIN/approval complete against the server.
-6. The origin stores its private key/reconnect grant; the connection host
-   stores only sanitized profile metadata.
-7. Later opening uses reconnect. Missing/expired/revoked credentials ask for
+6. The selected server origin is the credential compartment. A static browser
+   host keeps the compartment in IndexedDB keyed by that exact server origin:
+   it derives a non-extractable WebCrypto proof key from the one-time grant,
+   discards the grant, and keeps only sanitized profile metadata in
+   `localStorage`.
+7. Later opening uses a server challenge, the origin-bound proof key, and a
+   fresh short-lived application ticket. Missing/expired/revoked credentials ask for
    fresh pairing without destroying the remembered non-secret profile unless
    the user forgets it.
 
