@@ -171,7 +171,7 @@ silently replace a remote server or rotate its identity.
 The current composition exposes lifecycle and migration primitives but does
 not yet ship a complete archive installer, automated backup command,
 rollback command, or service-manager package. Those remain release gates in
-[Task 20](../tasks/20-security-release-and-operations.md). The procedure above
+[Task 20](../tasks_completed/20-security-release-and-operations.md). The procedure above
 is the required operator runbook until those commands are packaged.
 
 For incident diagnostics, collect:
@@ -187,3 +187,42 @@ provider credentials, terminal output, command history, project paths, and
 filenames before sharing a support bundle. Terminay diagnostics are local and
 telemetry-free by default.
 
+## Local Docker server
+
+The repository includes a local standalone-server image and Compose example. The
+image runs the foreground CLI as an unprivileged `terminay` user, keeps the root
+filesystem read-only when Compose is used, and persists only `/var/lib/terminay`.
+The unauthenticated probe surface is limited to lifecycle status:
+`GET /healthz` is liveness and `GET /readyz` is readiness. Neither endpoint
+returns paths, credentials, project data, or runtime diagnostics.
+
+From the repository root:
+
+```sh
+docker compose -f apps/terminay-server/docker-compose.local.yml build
+docker compose -f apps/terminay-server/docker-compose.local.yml up -d
+curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS http://127.0.0.1:8080/readyz
+docker compose -f apps/terminay-server/docker-compose.local.yml ps
+docker compose -f apps/terminay-server/docker-compose.local.yml logs -f terminay-server
+docker compose -f apps/terminay-server/docker-compose.local.yml down
+```
+
+To run the image without Compose:
+
+```sh
+docker build -f apps/terminay-server/Dockerfile -t terminay-server:local .
+docker run --rm --init --read-only --cap-drop=ALL \
+  --security-opt no-new-privileges:true \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --publish 127.0.0.1:8080:8080 \
+  --volume terminay-data:/var/lib/terminay \
+  terminay-server:local
+```
+
+This is a local lifecycle/health vertical slice. The plain standalone CLI does
+not yet compose an authenticated UI/protocol listener, so this image is not
+evidence that a Desktop client can connect to a remote server over the health
+port. Remote UI transport remains a separate server-composition/release gate.
+Do not publish port 8080 to an untrusted network; it is an orchestration probe,
+not an authenticated application endpoint.

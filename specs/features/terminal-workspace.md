@@ -62,8 +62,11 @@ delivered position. Detaching closes only that client subscription; the PTY and
 its replay window remain owned by the server.
 
 `TerminayTerminalClient` exposes the same boundary over a canonical client
-command/subscription transport. It uses `terminal.attach`, `terminal.resume`,
-`terminal.detach`, and `terminal.ack`, subscribes to the bounded `terminal`
+command/subscription transport. A write-authorized client creates a new
+server-owned session through `terminal.create`; the server assigns its session
+identity and returns its canonical cwd and dimensions. It then uses
+`terminal.attach`, `terminal.resume`, `terminal.detach`, and `terminal.ack`,
+subscribes to the bounded `terminal`
 stream, decodes raw output bytes, and rejects events whose immutable identity
 does not match the requested session. Client/session high-water marks survive a
 detach and stale resume cursors cannot deliver duplicate output. Local sockets,
@@ -76,6 +79,17 @@ exit/resync notifications, and attachment-scoped input, resize, kill, and
 acknowledgement commands. The adapter has no Electron or Node dependency, so a
 Desktop panel can adopt it while retaining xterm's existing rendering and
 host-only preload capabilities.
+
+The production shared Terminal route body is project-scoped from the current
+server-owned workspace snapshot. Creating a terminal is a server-owned
+workspace mutation: the server creates the PTY session and the corresponding
+terminal panel record, commits both under the next workspace revision, and
+publishes the ordered workspace event consumed by every connected client.
+Renderer code must not create durable terminal panel identity as a fallback for
+missing server state. It may only mount the xterm body for a server-owned panel,
+attach through `TerminayTerminalPanelClient`, and keep temporary local
+measurements that are either discarded or committed through explicit workspace
+commands.
 
 While the remaining Desktop renderer paths are migrated, their terminal
 mutations use the compatibility-only `DesktopTerminalAuthorityAdapter`. It is

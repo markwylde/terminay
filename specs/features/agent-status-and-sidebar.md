@@ -364,6 +364,14 @@ and enables the terminal-tab, project-sidebar panel, and header status surfaces.
 removes only Terminay-managed hook entries and hides/disables those agent
 surfaces. It does not remove user-owned hooks or unrelated provider settings.
 
+The server is the runtime authority for this setting. While disabled it issues
+no new hook credentials, revokes every existing session lease, clears the
+reduced agent snapshot, and rejects subsequent hook delivery using a revoked
+lease. Re-enabling permits fresh leases for subsequently registered terminals;
+it never revives the pre-disable roster. Managed-hook reconciliation remains
+best effort: an unavailable provider configuration is reported diagnostically
+without changing the committed setting or inventing agent state.
+
 The existing Explorer/Git layout settings and the terminal-signal fallback
 settings remain independent.
 

@@ -21,7 +21,7 @@ export function frameKindForEnvelope(envelope: Envelope): FrameKind {
   switch (envelope.type) {
     case "query": case "query_result": return FrameKind.Query;
     case "command": case "command_result": return FrameKind.Command;
-    case "event": return FrameKind.Event;
+    case "event": case "event_resync": return FrameKind.Event;
     case "stream_open": case "stream_chunk": case "stream_ack": case "stream_close": return FrameKind.Stream;
     case "binary_start": case "binary_chunk": case "binary_ack": case "binary_complete": case "binary_failure": return FrameKind.Binary;
     case "error": case "incompatible_version": return FrameKind.Error;
@@ -29,9 +29,11 @@ export function frameKindForEnvelope(envelope: Envelope): FrameKind {
   }
 }
 
-export function encodeFrame(envelope: Envelope, body = new Uint8Array(), limits: ProtocolLimits = DEFAULT_PROTOCOL_LIMITS): Uint8Array {
+export function encodeFrame(envelope: Envelope, body: Uint8Array = new Uint8Array(), limits: ProtocolLimits = DEFAULT_PROTOCOL_LIMITS): Uint8Array {
   const checked = validateEnvelope(envelope);
   if (!(body instanceof Uint8Array)) throw new TypeError("body must be Uint8Array");
+  if (checked.type === "query_result" && checked.bodyLength !== undefined && checked.bodyLength !== body.byteLength) throw new RangeError("query result body length mismatch");
+  if (checked.type === "query_result" && checked.bodyLength === undefined && body.byteLength !== 0) throw new RangeError("query result body is undeclared");
   const header = encodeCanonicalJson(checked);
   if (header.byteLength > limits.maxHeaderBytes) throw new RangeError("header exceeds limit");
   if (body.byteLength > limits.maxBodyBytes) throw new RangeError("body exceeds limit");
@@ -54,6 +56,8 @@ export function decodeFrame(frame: Uint8Array, limits: ProtocolLimits = DEFAULT_
   if (total > limits.maxFrameBytes || total !== frame.byteLength) throw new RangeError("invalid declared frame length");
   const envelope = validateEnvelope(decodeCanonicalJson(frame.subarray(FRAME_HEADER_BYTES, FRAME_HEADER_BYTES + headerLength)));
   if (frameKindForEnvelope(envelope) !== kind) throw new TypeError("frame kind does not match envelope");
+  if (envelope.type === "query_result" && envelope.bodyLength !== undefined && envelope.bodyLength !== bodyLength) throw new RangeError("query result body length mismatch");
+  if (envelope.type === "query_result" && envelope.bodyLength === undefined && bodyLength !== 0) throw new RangeError("query result body is undeclared");
   return { kind, envelope, body: frame.slice(FRAME_HEADER_BYTES + headerLength) };
 }
 

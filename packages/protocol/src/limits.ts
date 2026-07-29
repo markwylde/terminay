@@ -9,6 +9,10 @@ export interface ProtocolLimits {
   maxEventsPerBatch: number;
 }
 
+/** Largest raw file range carried directly in a default query-result body.
+ * Four concurrent responses fit the default frame and queue budgets. */
+export const MAX_FILE_CONTENT_RANGE_BYTES = 2 * 1024 * 1024;
+
 export const DEFAULT_PROTOCOL_LIMITS: Readonly<ProtocolLimits> = Object.freeze({
   maxFrameBytes: 8 * 1024 * 1024,
   maxHeaderBytes: 64 * 1024,

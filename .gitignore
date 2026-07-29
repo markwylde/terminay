@@ -5,11 +5,15 @@ node_modules/
 /dist/
 /dist-ssr/
 /dist-electron/
+/dist-web/
 /apps/*/dist/
 /packages/*/dist/
 /release/
 /out/
-/build/
+/build/*
+!/build/webrtc-runtime/
+/build/webrtc-runtime/*
+!/build/webrtc-runtime/selection.json
 .release/
 /docs/
 

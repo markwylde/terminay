@@ -1,4 +1,9 @@
 import type {
+  FileViewerCapabilities,
+  FolderMarkdownTaskAggregation,
+  FolderMarkdownTaskOptions,
+} from '@terminay/client-core'
+import type {
   FileViewerFileInfo,
   FileViewerGitDiff,
   FileViewerGitRepoInfo,
@@ -70,6 +75,8 @@ export type FileInfo = {
   name: string
   path: string
   size: number
+  /** Server-authorized viewer metadata, when the shared client has supplied it. */
+  viewerCapabilities?: FileViewerCapabilities
 }
 
 export type FilePreviewCapabilities = {
@@ -125,6 +132,11 @@ export type FileWatchEvent = {
 }
 
 export type FileViewerGateway = {
+  aggregateFolderMarkdownTasks: (
+    path: string,
+    projectRootPath: string,
+    options?: FolderMarkdownTaskOptions,
+  ) => Promise<FolderMarkdownTaskAggregation>
   getFileDiff: (path: string) => Promise<GitFileDiff>
   getFileInfo: (path: string) => Promise<FileInfo>
   getGitRepoInfo: (path: string) => Promise<FileViewerGitRepoInfo>

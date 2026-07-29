@@ -190,6 +190,13 @@ and reload/resync replaces the projection without replaying old transitions as
 new local activity. Project-scoped projections advance the global cursor while
 omitting sessions owned by other projects.
 
+The protocol exposes this projection as `activity.snapshot` and
+`activity.delta`, emits canonical `activity` events on the normal ordered event
+journal, and accepts `activity.acknowledge` only with the exact immutable
+`projectId` and `sessionId`. This is the client boundary used by both browser
+and Desktop hosts; no `terminal:activity` IPC message is part of the server
+contract.
+
 The server reducer fences every session to its first immutable project binding.
 An activity or acknowledgement request that names a different project is
 ignored without consuming a revision. Events and timeout ticks carrying an

@@ -29,6 +29,13 @@ Terminay has four distinct runtime roles:
    manager-shell, WebRTC signaling, and operational relay state. It never
    becomes a terminal, filesystem, or application-data proxy.
 
+Hosted bootstrap and signaling revisions publish a compatibility window for
+dependent client versions. A new hosted revision must continue to accept every
+currently deployed dependent client while its replacement Desktop/web clients
+roll out; hosted publication and compatibility verification precede dependent
+client publication, and the previous hosted revision is retired only after
+those clients are covered by the new window.
+
 These are deployable roles, not four independent product implementations. The
 server-bundled workspace UI, client library, protocol schemas, and responsive
 components are shared.
@@ -39,6 +46,9 @@ components are shared.
 
 - Terminay Desktop starts one embedded server before opening the default
   workspace window.
+- The embedded composition boundary accepts a host-injected platform path
+  snapshot and privileged service factory; the server runtime never calls
+  Electron path APIs.
 - The server binds only to an authenticated loopback or OS-local endpoint until
   the user explicitly exposes it.
 - Desktop receives readiness, endpoint, server identity, and a short-lived
@@ -50,6 +60,8 @@ components are shared.
 - Closing or reloading an individual renderer does not terminate PTYs.
 - Desktop supervises unexpected server exit and presents recovery rather than
   silently starting a second authority over the same data directory.
+- Local HTTP listeners use an OS-assigned loopback port (`127.0.0.1:0`) so
+  concurrent authorities do not rely on a probe-then-bind race.
 - The embedded server uses a dedicated data directory and imports supported
   legacy Desktop state exactly once.
 
@@ -217,6 +229,12 @@ inspect the application protocol.
   are capped by local limits, command replay is idempotent per authenticated
   client, and client identity is carried only in the authenticated protocol
   context rather than URL parameters or operation payloads.
+- The shared client package provides a fetch-based HTTP `ByteTransport` adapter
+  for this local protocol. It sends the handshake as JSON, sends framed
+  operation bodies when binary data is present, and re-encodes JSON responses
+  into protocol frames before `TerminayClient` consumes them. The adapter is
+  browser/Electron-compatible and keeps the bearer credential out of endpoint
+  URLs; host integration still owns secure credential delivery.
 - The local origin can replay ordered output/application events from a bounded
   server journal and open an authenticated event subscription. If the cursor
   is older than retained history, the server returns a bounded canonical
