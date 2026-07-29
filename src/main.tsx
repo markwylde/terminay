@@ -1,32 +1,37 @@
-import ReactDOM from 'react-dom/client'
-import 'dockview/dist/styles/dockview.css'
-import '@xterm/xterm/css/xterm.css'
-import App from './App.tsx'
-import { EditTabWindow } from './components/EditTabWindow.tsx'
-import { MacrosWindow } from './components/MacrosWindow.tsx'
-import { RecordingsWindow } from './components/RecordingsWindow.tsx'
-import { SettingsWindow } from './components/SettingsWindow.tsx'
-import { WebRtcHost } from './remote/WebRtcHost.tsx'
-import './index.css'
+const BOOT_TIMEOUT_MS = 15_000
 
-const searchParams = new URLSearchParams(window.location.search)
-const view = searchParams.get('view')
+const root = document.getElementById('root')
+if (root === null) throw new Error('Terminay renderer root is unavailable')
 
-const content = (() => {
-  switch (view) {
-    case 'settings':
-      return <SettingsWindow />
-    case 'macros':
-      return <MacrosWindow />
-    case 'recordings':
-      return <RecordingsWindow />
-    case 'edit-tab':
-      return <EditTabWindow />
-    case 'webrtc-host':
-      return <WebRtcHost />
-    default:
-      return <App />
+const renderStatus = (message: string, failed = false) => {
+  const status = document.createElement('main')
+  status.className = 'terminay-server-connecting'
+  status.textContent = message
+  if (failed) {
+    status.setAttribute('role', 'alert')
+  } else {
+    status.setAttribute('aria-busy', 'true')
   }
-})()
+  root.replaceChildren(status)
+}
 
-ReactDOM.createRoot(document.getElementById('root')!).render(content)
+renderStatus('Starting Terminay…')
+
+let settled = false
+const timeout = window.setTimeout(() => {
+  if (settled) return
+  settled = true
+  renderStatus('Terminay renderer modules did not become ready in time.', true)
+}, BOOT_TIMEOUT_MS)
+
+void import('./rendererApp.tsx').then((module) => {
+  if (settled) return
+  settled = true
+  window.clearTimeout(timeout)
+  module.mountRendererApp(root)
+}).catch(() => {
+  if (settled) return
+  settled = true
+  window.clearTimeout(timeout)
+  renderStatus('Terminay renderer modules could not be loaded.', true)
+})

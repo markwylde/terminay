@@ -1,11 +1,38 @@
-import type { Direction, DockviewApi, DockviewReadyEvent } from 'dockview';
-import { DockviewReact, getPanelData } from 'dockview';
-import { AnimatePresence, motion, Reorder } from 'framer-motion';
+import type { FileViewerClient } from '@terminay/client-core';
+import {
+	type ActivitySessionSnapshot,
+	MacroClient,
+	RecordingsClient as ServerRecordingsClient,
+	SettingsClient,
+	TerminayAiClient,
+	TerminayClientFacade,
+} from '@terminay/client-core';
+import type { DockviewApi } from 'dockview';
+import { DockviewReact } from 'dockview';
+import { AnimatePresence, motion } from 'framer-motion';
+import {
+	Eraser,
+	FolderPlus,
+	FolderSync,
+	GitBranch,
+	GitBranchPlus,
+	GitPullRequestArrow,
+	History,
+	Mic,
+	Play,
+	Plug,
+	RefreshCw,
+	Search,
+	Settings,
+	Sidebar,
+	Sparkles,
+	Terminal,
+	Zap,
+} from 'lucide-react';
 import {
 	CSSProperties,
 	type FormEvent,
 	forwardRef,
-	type JSX,
 	type MouseEvent,
 	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
@@ -17,320 +44,156 @@ import {
 	useState,
 } from 'react';
 import {
-	ChevronDown,
-	Copy,
-	Eraser,
-	FileEdit,
-	FolderOpen,
-	FolderPlus,
-	FolderSync,
-	GitBranch,
-	GitBranchPlus,
-	GitPullRequestArrow,
-	History,
-	Mic,
-	Play,
-	Plug,
-	PlusSquare,
-	RefreshCw,
-	Search,
-	Settings,
-	Sidebar,
-	Sparkles,
-	Terminal,
-	Trash2,
-	Zap,
-} from 'lucide-react';
-import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
-import { AgentStatusIndicator } from './components/AgentStatusIndicator';
+	EMPTY_AGENT_STATUS_SNAPSHOT,
+	selectLiveAgentStatusesForTerminal,
+} from './agentStatusStore';
 import {
 	AgentsSidebar,
 	type AgentsSidebarItem,
 } from './components/AgentsSidebar';
+import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
 import type { FilePanelInstanceParams } from './components/file-viewer';
 import { FilePanel, FileTab } from './components/file-viewer';
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
+import { McpInstallModal } from './components/McpInstallModal';
+import {
+	type QuickPushClient,
+	QuickPushModal,
+} from './components/QuickPushModal';
 import {
 	SidebarPanelStack,
 	type SidebarPanelStackItem,
 } from './components/sidebar/SidebarPanelStack';
-import { McpInstallModal } from './components/McpInstallModal';
-import { QuickPushModal } from './components/QuickPushModal';
-import type {
-	DictationOverlayProps,
-	DictationOverlayState,
-} from './components/DictationOverlay';
-import { TerminalPanel } from './components/TerminalPanel';
+import {
+	TERMINAL_PANEL_EXIT_EVENT,
+	TERMINAL_PANEL_INPUT_EVENT,
+	TERMINAL_PANEL_OUTPUT_EVENT,
+	TerminalPanel,
+	TerminalPanelClientContext,
+	type TerminalPanelClientContextValue,
+} from './components/TerminalPanel';
 import type {
 	TerminalActivityState,
 	TerminalContextReader,
 	TerminalPanelParams,
-	TerminalTabMacroRun,
 	TerminalTabMoveProject,
 } from './components/TerminalTab';
 import { TerminalTab } from './components/TerminalTab';
-import { FileTypeIcon } from './fileIcons';
-import { useMacroSettings } from './hooks/useMacroSettings';
-import { useTerminalSettings } from './hooks/useTerminalSettings';
+import { publishTerminalPresentationMetadata } from './components/terminalPresentationHost';
 import {
-	defaultTerminalSettings,
-	normalizeSidebarPanelOrder,
-} from './terminalSettings';
-import type { SidebarPanelId, SidebarSettings } from './types/settings';
+	createServerMacroSettingsClient,
+	useLegacyMacroSettingsCapability,
+	useMacroSettings,
+} from './hooks/useMacroSettings';
+import {
+	createServerTerminalSettingsClient,
+	useTerminalSettings,
+	useTerminalSettingsClient,
+} from './hooks/useTerminalSettings';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
 	getCommandShortcutLabel,
 } from './keyboardShortcuts';
-import {
-	renderMacroDurationMs,
-	renderMacroTemplate,
-	tryRenderMacroTemplate,
-} from './macroSettings';
+import { tryRenderMacroTemplate } from './macroSettings';
 import { getPathRelativeToRoot } from './pathUtils';
-import { computeDropIndex } from './projectTabDrag';
+import { createLegacyAiTabMetadataClient } from './services/ai/legacyAiTabMetadataClient';
+import { useOptionalDisconnectedFileCompatibility } from './services/fileViewer/DisconnectedFileCompatibilityProvider';
+import { createLegacyRecordingsClient } from './services/recordings/legacyRecordingsClient';
 import {
-	isRemoteAccessPairingPinConfigured,
-	PAIRING_PIN_PATTERN,
-	saveRemoteAccessPairingPin,
-} from './remotePairingPin';
+	adaptServerAgentSnapshot,
+	subscribeServerAgentSnapshots,
+} from './shared/rendererAgentConnection';
+import { recordBoundedRendererRender } from './shared/renderLoopGuard';
+import { WorkspaceSplitLayout } from './shared/WorkspaceSplitLayout';
 import {
-	EMPTY_AGENT_STATUS_SNAPSHOT,
-	selectLiveAgentStatusesForTerminal,
-} from './agentStatusStore';
-import {
-	TerminalActivityStore,
 	type TerminalActivityEvaluation,
+	TerminalActivityStore,
 } from './terminalActivityStore';
-import { formatBracketedPaste, formatRunCommandInput } from './terminalInput';
-import type { MacroDefinition, MacroFieldValue } from './types/macros';
+import { defaultTerminalSettings } from './terminalSettings';
 import type {
 	AgentState,
 	AgentStatusEntry,
 	AgentStatusSnapshot,
 } from './types/agentStatus';
+import type { FileViewerMode } from './types/fileViewer';
+import type { MacroDefinition, MacroFieldValue } from './types/macros';
+import type {
+	SidebarPanelId,
+	SidebarSettings,
+	TerminalSettings,
+} from './types/settings';
 import type {
 	AdoptedProjectPayload,
 	AiTabMetadataTarget,
 	AppCommand,
 	AppUpdateStatus,
-	ProjectTabDragResult,
-	ProjectTabDragPreview,
-	FileExplorerEntry,
-	FileExplorerGitStatus,
 	FileSearchResult,
-	GitChangeEntry,
-	GitWorktreeStatus,
-	RemoteAccessStatus,
 	QuickPushAction,
 	TerminalRecordingStartMetadata,
 	TerminalRecordingState,
-	WorktreePanelStatus,
 } from './types/terminay';
-import type { FileViewerMode } from './types/fileViewer';
+import { FileExplorerTree } from './workspace/FileExplorerTree';
+import { ProjectTabList } from './workspace/ProjectTabList';
+import type { ProjectTab } from './workspace/projectTabModel';
+import {
+	type ConnectionSwitcherEntry,
+	RemoteAccessConnectionMenu,
+} from './workspace/RemoteAccessConnectionMenu';
+import { RemoteConnectionModal } from './workspace/RemoteConnectionModal';
+import {
+	buildTerminalActivityOverview,
+	type LegacyTerminalActivityOverviewState,
+	TerminalActivityOverview,
+	type TerminalActivityOverviewItem,
+} from './workspace/TerminalActivityOverview';
+import {
+	activateTerminalPanel,
+	closeActiveDockviewPanel,
+	findTerminalFocusTarget,
+	findTerminalPanel,
+	getActiveTerminalSessionId,
+	popoutActiveDockviewPanel,
+	saveActiveDockviewPanel,
+} from './workspace/terminalDockviewCommands';
+import {
+	exportProjectPresentationsForMove,
+	exportTerminalPresentationForMove,
+	type MovedProject,
+	type MovedTerminalTab,
+} from './workspace/terminalTransferOrchestration';
+import { useDictationController } from './workspace/useDictationController';
+import { useDockviewPanelLifecycle } from './workspace/useDockviewPanelLifecycle';
+import { useFileExplorerController } from './workspace/useFileExplorerController';
+import {
+	type GitPushMenuTarget,
+	useGitPushMenuController,
+} from './workspace/useGitPushMenuController';
+import { useMacroLauncherController } from './workspace/useMacroLauncherController';
+import { useMacroRunController } from './workspace/useMacroRunController';
+import { useProjectCollection } from './workspace/useProjectCollection';
+import { useProjectEditor } from './workspace/useProjectEditor';
+import { useProjectTabTransfer } from './workspace/useProjectTabTransfer';
+import { useProjectTerminalCwd } from './workspace/useProjectTerminalCwd';
+import { useRemoteAccessController } from './workspace/useRemoteAccessController';
+import { useRemoteConnectionForm } from './workspace/useRemoteConnectionForm';
+import { useTerminalActivityController } from './workspace/useTerminalActivityController';
+import { useTerminalAdoptionController } from './workspace/useTerminalAdoptionController';
+import {
+	type ControlHandlerResult,
+	clearTerminalControlActivity,
+	createTerminalControlState,
+	recordTerminalControlActivity,
+	recordTerminalControlExit,
+	useTerminalControlController,
+} from './workspace/useTerminalControlController';
+import { useTerminalCreationController } from './workspace/useTerminalCreationController';
+import { useTerminalDockviewWindowController } from './workspace/useTerminalDockviewWindowController';
+import { useTerminalRecordingController } from './workspace/useTerminalRecordingController';
+import { useTerminalSwitcherController } from './workspace/useTerminalSwitcherController';
 import './App.css';
-
-type SplitDirection = Extract<Direction, 'below' | 'right'>;
-type AddTerminalOptions = {
-	direction?: SplitDirection;
-	groupId?: string;
-	/** Working directory for the new terminal. Overrides the inherited cwd. */
-	cwd?: string | null;
-	/** Tab title for the new terminal. */
-	title?: string;
-	/** Text written to the terminal once the shell is ready (e.g. to launch an agent). */
-	initialInput?: string;
-};
-
-type DictationSessionState = DictationOverlayState & {
-	sessionId: string;
-};
-
-type DictationAudioLevels = {
-	durationMs: number;
-	peakRms: number;
-	rms: number;
-};
-
-const DICTATION_WAVEFORM_BAR_COUNT = 18;
-const DICTATION_SILENCE_RMS_THRESHOLD = 0.008;
-const DICTATION_SPEECH_RMS_THRESHOLD = 0.014;
-const DICTATION_MIN_SPEECH_RMS = 0.012;
-const DICTATION_MIN_SPEECH_FRAMES = 4;
-const DICTATION_MIN_RECORDING_MS = 700;
-const DICTATION_INITIAL_SILENCE_GRACE_MS = 1000;
-const DICTATION_UPLOAD_LIMIT_BYTES = 25 * 1024 * 1024;
-const DICTATION_RECORDER_TIMESLICE_MS = 250;
-const DICTATION_SCRIPT_PROCESSOR_BUFFER_SIZE = 2048;
-const DICTATION_WAVEFORM_GAIN = 8.5;
-const DICTATION_MIME_TYPES = [
-	'audio/webm;codecs=opus',
-	'audio/webm',
-	'audio/mp4',
-	'audio/mpeg',
-	'audio/wav',
-];
-const EMPTY_DICTATION_WAVEFORM = Array.from(
-	{ length: DICTATION_WAVEFORM_BAR_COUNT },
-	() => 0.08,
-);
-
-function getDictationMimeType(): string | undefined {
-	if (typeof MediaRecorder === 'undefined') {
-		return undefined;
-	}
-
-	return DICTATION_MIME_TYPES.find((mimeType) =>
-		MediaRecorder.isTypeSupported(mimeType),
-	);
-}
-
-function getDictationFileExtension(mimeType: string): string {
-	const normalized = mimeType.toLowerCase().split(';', 1)[0]?.trim();
-	switch (normalized) {
-		case 'audio/mp4':
-			return 'mp4';
-		case 'audio/mpeg':
-			return 'mp3';
-		case 'audio/wav':
-			return 'wav';
-		default:
-			return 'webm';
-	}
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const reader = new FileReader();
-		reader.onerror = () => reject(reader.error ?? new Error('Unable to read dictation audio.'));
-		reader.onload = () => {
-			const result = reader.result;
-			if (typeof result !== 'string') {
-				reject(new Error('Unable to encode dictation audio.'));
-				return;
-			}
-
-			const separatorIndex = result.indexOf(',');
-			resolve(separatorIndex === -1 ? result : result.slice(separatorIndex + 1));
-		};
-		reader.readAsDataURL(blob);
-	});
-}
-
-function encodeDictationWav(
-	chunks: Float32Array[],
-	sampleRate: number,
-	totalLength: number,
-): Blob {
-	const dataLength = totalLength * 2;
-	const buffer = new ArrayBuffer(44 + dataLength);
-	const view = new DataView(buffer);
-	let offset = 0;
-
-	const writeString = (value: string) => {
-		for (let index = 0; index < value.length; index += 1) {
-			view.setUint8(offset, value.charCodeAt(index));
-			offset += 1;
-		}
-	};
-
-	writeString('RIFF');
-	view.setUint32(offset, 36 + dataLength, true);
-	offset += 4;
-	writeString('WAVE');
-	writeString('fmt ');
-	view.setUint32(offset, 16, true);
-	offset += 4;
-	view.setUint16(offset, 1, true);
-	offset += 2;
-	view.setUint16(offset, 1, true);
-	offset += 2;
-	view.setUint32(offset, sampleRate, true);
-	offset += 4;
-	view.setUint32(offset, sampleRate * 2, true);
-	offset += 4;
-	view.setUint16(offset, 2, true);
-	offset += 2;
-	view.setUint16(offset, 16, true);
-	offset += 2;
-	writeString('data');
-	view.setUint32(offset, dataLength, true);
-	offset += 4;
-
-	for (const chunk of chunks) {
-		for (const sample of chunk) {
-			const clamped = Math.max(-1, Math.min(1, sample));
-			view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
-			offset += 2;
-		}
-	}
-
-	return new Blob([buffer], { type: 'audio/wav' });
-}
-
-async function measureDictationBlobAudio(
-	blob: Blob,
-): Promise<DictationAudioLevels | null> {
-	if (typeof AudioContext === 'undefined') {
-		return null;
-	}
-
-	const audioContext = new AudioContext();
-	try {
-		const audioBuffer = await audioContext.decodeAudioData(
-			await blob.arrayBuffer(),
-		);
-		const channelCount = Math.max(1, audioBuffer.numberOfChannels);
-		const frameCount = audioBuffer.length;
-		if (frameCount === 0) {
-			return null;
-		}
-
-		const windowSize = Math.max(256, Math.floor(audioBuffer.sampleRate / 24));
-		let totalSquares = 0;
-		let totalSamples = 0;
-		let peakWindowRms = 0;
-
-		for (let channel = 0; channel < channelCount; channel += 1) {
-			const samples = audioBuffer.getChannelData(channel);
-			for (let start = 0; start < samples.length; start += windowSize) {
-				const end = Math.min(samples.length, start + windowSize);
-				let windowSquares = 0;
-				for (let index = start; index < end; index += 1) {
-					const sample = samples[index] ?? 0;
-					const square = sample * sample;
-					windowSquares += square;
-					totalSquares += square;
-				}
-				const windowLength = end - start;
-				totalSamples += windowLength;
-				if (windowLength > 0) {
-					peakWindowRms = Math.max(
-						peakWindowRms,
-						Math.sqrt(windowSquares / windowLength),
-					);
-				}
-			}
-		}
-
-		return {
-			durationMs: Math.round(audioBuffer.duration * 1000),
-			peakRms: peakWindowRms,
-			rms: totalSamples > 0 ? Math.sqrt(totalSquares / totalSamples) : 0,
-		};
-	} catch (error) {
-		console.warn('Unable to measure dictation recording audio levels', error);
-		return null;
-	} finally {
-		void audioContext.close().catch(() => {});
-	}
-}
-
-function formatDictationTranscriptForTerminal(text: string): string {
-	return /[\r\n]/.test(text) ? formatBracketedPaste(text) : text;
-}
 
 type GitPushAgentAction = QuickPushAction;
 type GitPushAgentActionGroup = 'current' | 'new' | 'default';
@@ -379,13 +242,6 @@ const GIT_PUSH_AGENT_ACTIONS: Array<{
 	},
 ];
 
-type GitPushMenuTarget = {
-	branch: string | null | undefined;
-	cwd: string;
-	defaultBranch?: string | null;
-	worktreePath?: string;
-};
-
 function formatGitPushBranchLabel(branch: string | null | undefined): string {
 	return branch?.trim() || 'unknown';
 }
@@ -404,12 +260,20 @@ function getGitPushActionIcon(action: GitPushAgentAction): ReactNode {
 
 function buildGitPushMenuItems(options: {
 	target: GitPushMenuTarget;
-	onLaunchAgent: (action: GitPushAgentAction, target: GitPushMenuTarget) => void;
-	onLaunchQuickPush: (action: QuickPushAction, target: GitPushMenuTarget) => void;
+	onLaunchAgent: (
+		action: GitPushAgentAction,
+		target: GitPushMenuTarget,
+	) => void;
+	onLaunchQuickPush: (
+		action: QuickPushAction,
+		target: GitPushMenuTarget,
+	) => void;
 }): ContextMenuItem[] {
 	const { target, onLaunchAgent, onLaunchQuickPush } = options;
 	const currentBranch = formatGitPushBranchLabel(target.branch);
-	const defaultBranch = formatGitPushBranchLabel(target.defaultBranch ?? 'main');
+	const defaultBranch = formatGitPushBranchLabel(
+		target.defaultBranch ?? 'main',
+	);
 
 	const headings: Record<GitPushAgentActionGroup, string> = {
 		current: `Current Branch (${currentBranch})`,
@@ -426,7 +290,11 @@ function buildGitPushMenuItems(options: {
 		if (items.length > 0) {
 			items.push({ key: `${group}-separator`, label: '', separator: true });
 		}
-		items.push({ key: `${group}-heading`, label: headings[group], heading: true });
+		items.push({
+			key: `${group}-heading`,
+			label: headings[group],
+			heading: true,
+		});
 
 		for (const entry of GIT_PUSH_AGENT_ACTIONS.filter(
 			(action) => action.group === group,
@@ -458,7 +326,9 @@ function buildGitPushAgentPrompt(
 	defaultBranch: string | null | undefined,
 ): string {
 	const safeBranch = branch?.trim() ? branch.trim() : 'the current branch';
-	const safeDefaultBranch = defaultBranch?.trim() ? defaultBranch.trim() : 'the default branch';
+	const safeDefaultBranch = defaultBranch?.trim()
+		? defaultBranch.trim()
+		: 'the default branch';
 	const withTask = template.includes('{{task}}')
 		? template.replace(/\{\{task\}\}/g, () => task)
 		: `${template.trim()}\n\nTask: ${task}`;
@@ -515,79 +385,11 @@ type DockPanelTabAppearance = {
 	terminalNote?: string;
 };
 
-type ProjectTab = {
-	id: string;
-	title: string;
-	color: string;
-	emoji: string;
-	fileExplorerWidth: number;
-	isFileExplorerOpen: boolean;
-	isExplorerPaneCollapsed: boolean;
-	isAgentsPaneCollapsed: boolean;
-	isGitPaneCollapsed: boolean;
-	expandedAgentEntryIds: string[];
-	sidebarAgentsHeight: number;
-	sidebarExplorerHeight: number;
-	sidebarGitHeight: number;
-	sidebarPanelOrder: SidebarPanelId[];
-	rootFolder: string;
-};
-
-type MovedTerminalTab = {
-	activityIndicatorsEnabled?: boolean;
-	agentNeedsAttention?: boolean;
-	agentState?: AgentState;
-	agentUnread?: boolean;
-	color?: string;
-	emoji?: string;
-	inheritsProjectColor?: boolean;
-	macroRuns?: TerminalTabMacroRun[];
-	recordingError?: string | null;
-	recordingId?: string | null;
-	recordingStatus?: 'failed' | 'idle' | 'recording';
-	sessionId: string;
-	showActiveTabActivityIndicator?: boolean;
-	showFinishedTabActivityIndicator?: boolean;
-	terminalActivityState?: TerminalActivityState;
-	terminalNote?: string;
-	title: string;
-};
-
-type MovedProject = {
-	terminals: MovedTerminalTab[];
-	activeSessionId: string | null;
-};
-
-type LegacyTerminalActivityOverviewState = Extract<
-	TerminalActivityState,
-	'recent' | 'unviewed' | 'attention'
->;
-
-type TerminalActivityOverviewState =
-	| LegacyTerminalActivityOverviewState
-	| Exclude<AgentState, 'idle'>;
-
-type TerminalActivityOverviewItem = {
-	color: string;
-	emoji: string;
-	panelId: string;
-	projectEmoji: string;
-	projectId: string;
-	projectTitle: string;
-	sessionId: string;
-	state: TerminalActivityOverviewState;
-	isAgentStatus: boolean;
-	title: string;
-};
-
-type ControlHandlerResult =
-	| { ok: true; result: unknown }
-	| { ok: false; error: { code: string; message: string; candidates?: string[] } };
-
 type ProjectWorkspaceHandle = {
 	acceptMovedTerminal: (terminal: MovedTerminalTab) => void;
+	acceptServerTerminal: (sessionId: string, title?: string) => void;
 	activateTerminal: (panelId: string, sessionId: string) => void;
-	executeCommand: (command: AppCommand) => void;
+	executeCommand: (command: AppCommand) => Promise<void>;
 	exportTerminalForMove: (panelId: string) => MovedTerminalTab | null;
 	/**
 	 * Export every terminal in this project for a cross-window move, flagging
@@ -628,150 +430,49 @@ type ProjectWorkspaceProps = {
 	popoutUrl: string;
 	project: ProjectTab;
 	projects: ProjectTab[];
+	quickPushClient?: QuickPushClient;
+	/** Optional connection-scoped client used by migrated terminal panels. */
+	terminalClientContext?: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	/** Terminals to reattach instead of seeding a fresh terminal (adopted project). */
 	adoptedTerminals?: MovedTerminalTab[];
 };
 
-const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher';
-const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path';
 const MIN_FILE_EXPLORER_WIDTH = 180;
+const MAX_FILE_EXPLORER_WIDTH = 520;
 const MIN_SIDEBAR_PANE_HEIGHT = 80;
-const DEFAULT_AGENTS_PANE_HEIGHT = 200;
-const FILE_EXPLORER_DRAG_THRESHOLD = 6;
-const FILE_EXPLORER_WATCH_REFRESH_DELAY_MS = 120;
-const FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS = 2500;
-const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
 const DOCKVIEW_SASH_ACTIVITY_DEFER_MS = 300;
-const DOCKVIEW_TAB_BAR_DROP_TARGET_SELECTOR = '.workspace .dv-tabs-and-actions-container';
-const DOCKVIEW_TAB_DROP_GHOST_MAX_WIDTH = 180;
-const DOCKVIEW_TAB_DROP_GHOST_MIN_WIDTH = 96;
 
-type DockviewTabDropGhost = {
-	height: number;
-	label: string;
-	left: number;
-	top: number;
-	width: number;
-};
-
-function isPointInDockviewTabBar(clientX: number, clientY: number): boolean {
-	return Array.from(
-		document.querySelectorAll<HTMLElement>(DOCKVIEW_TAB_BAR_DROP_TARGET_SELECTOR),
-	).some((element) => {
-		const rect = element.getBoundingClientRect();
-		return (
-			clientX >= rect.left &&
-			clientX <= rect.right &&
-			clientY >= rect.top &&
-			clientY <= rect.bottom
-		);
-	});
+/** Terminal input is delivered only to the matching server-backed panel
+ * attachment.  The renderer never falls back to a host-side terminal IPC
+ * channel when a panel is unavailable. */
+function sendTerminalPanelInput(sessionId: string, data: string): void {
+	if (!sessionId || data.length === 0) return;
+	window.dispatchEvent(
+		new CustomEvent(TERMINAL_PANEL_INPUT_EVENT, {
+			detail: { data, sessionId },
+		}),
+	);
 }
 
-function getDockviewTabDropGhost(clientX: number, clientY: number, label: string): DockviewTabDropGhost | null {
-	const tabBars = Array.from(document.querySelectorAll<HTMLElement>(DOCKVIEW_TAB_BAR_DROP_TARGET_SELECTOR));
-	const elementAtPoint = document.elementFromPoint(clientX, clientY);
-	const tabBarFromPoint = elementAtPoint?.closest<HTMLElement>(DOCKVIEW_TAB_BAR_DROP_TARGET_SELECTOR) ?? null;
-	const tabBar =
-		tabBarFromPoint ??
-		tabBars.find((element) => {
-			const rect = element.getBoundingClientRect();
-			return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
-		}) ??
-		tabBars.find((element) => {
-			const rect = element.getBoundingClientRect();
-			return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top - 12 && clientY <= rect.bottom + 18;
-		});
-	if (!tabBar) {
-		return null;
+/** Presentation only: canonical activity has already been reduced by the
+ * server. This mapping must not infer a transition or write local state. */
+function serverActivityEvaluation(
+	snapshot: ActivitySessionSnapshot,
+): TerminalActivityEvaluation {
+	if (snapshot.attention && !snapshot.acknowledged) {
+		return { nextDeadline: null, state: 'attention' };
 	}
-
-	const tabBarRect = tabBar.getBoundingClientRect();
-	const tabRects = Array.from(tabBar.querySelectorAll<HTMLElement>('.dv-tab'))
-		.map((tab) => tab.getBoundingClientRect())
-		.filter((rect) => rect.width > 0 && rect.height > 0);
-	const addTabButtonRect = tabBar.querySelector<HTMLElement>('.terminay-add-tab-button')?.getBoundingClientRect();
-	const rightmostTabEdge = tabRects.reduce((right, rect) => Math.max(right, rect.right), tabBarRect.left);
-	const width = Math.min(DOCKVIEW_TAB_DROP_GHOST_MAX_WIDTH, Math.max(DOCKVIEW_TAB_DROP_GHOST_MIN_WIDTH, label.length * 8 + 42));
-	const left = addTabButtonRect
-		? Math.min(addTabButtonRect.left, tabBarRect.right - width - 8)
-		: Math.min(Math.max(rightmostTabEdge + 4, tabBarRect.left + 6), tabBarRect.right - width - 8);
-
+	if (snapshot.status === 'working') {
+		return { nextDeadline: null, state: 'recent' };
+	}
 	return {
-		height: addTabButtonRect ? addTabButtonRect.height : Math.max(22, tabBarRect.height - 8),
-		label,
-		left,
-		top: addTabButtonRect ? addTabButtonRect.top : tabBarRect.top + 4,
-		width,
+		nextDeadline: null,
+		state: snapshot.acknowledged ? 'viewed' : 'unviewed',
 	};
 }
-
-function hueToProjectTabColor(hue: number): string {
-	const normalizedHue = ((hue % 360) + 360) % 360 / 360;
-	const saturation = 0.65;
-	const lightness = 0.6;
-
-	const hue2rgb = (p: number, q: number, t: number) => {
-		if (t < 0) {
-			t += 1;
-		}
-		if (t > 1) {
-			t -= 1;
-		}
-		if (t < 1 / 6) {
-			return p + (q - p) * 6 * t;
-		}
-		if (t < 1 / 2) {
-			return q;
-		}
-		if (t < 2 / 3) {
-			return p + (q - p) * (2 / 3 - t) * 6;
-		}
-
-		return p;
-	};
-
-	const q =
-		lightness < 0.5
-			? lightness * (1 + saturation)
-			: lightness + saturation - lightness * saturation;
-	const p = 2 * lightness - q;
-	const r = hue2rgb(p, q, normalizedHue + 1 / 3);
-	const g = hue2rgb(p, q, normalizedHue);
-	const b = hue2rgb(p, q, normalizedHue - 1 / 3);
-
-	const toHex = (value: number) => {
-		const hex = Math.round(value * 255).toString(16);
-		return hex.length === 1 ? `0${hex}` : hex;
-	};
-
-	return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-}
-
-const DEFAULT_PROJECT_TAB_COLORS = Array.from(
-	{ length: PROJECT_TAB_COLOR_PALETTE_SIZE },
-	(_, index) =>
-		hueToProjectTabColor((360 / PROJECT_TAB_COLOR_PALETTE_SIZE) * index),
-) as readonly string[];
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.min(Math.max(value, min), max);
-}
-
-function getRandomProjectTabColor(usedColors: Iterable<string> = []): string {
-	const normalizedUsedColors = new Set(
-		Array.from(usedColors, (color) => color.trim().toLowerCase()),
-	);
-	const availableColors = DEFAULT_PROJECT_TAB_COLORS.filter(
-		(color) => !normalizedUsedColors.has(color.toLowerCase()),
-	);
-
-	if (availableColors.length > 0) {
-		const index = Math.floor(Math.random() * availableColors.length);
-		return availableColors[index] ?? '#57b7ff';
-	}
-
-	return hueToProjectTabColor(Math.floor(Math.random() * 360));
 }
 
 function getEffectiveTerminalTabColor(
@@ -824,7 +525,10 @@ function aggregateAgentStatusForTerminal(
 	snapshot: AgentStatusSnapshot,
 	terminalSessionId: string,
 ): AggregatedAgentStatus | null {
-	const entries = selectLiveAgentStatusesForTerminal(snapshot, terminalSessionId);
+	const entries = selectLiveAgentStatusesForTerminal(
+		snapshot,
+		terminalSessionId,
+	);
 	if (entries.length === 0) {
 		return null;
 	}
@@ -851,63 +555,6 @@ function isAgentAttentionState(state: AgentState): boolean {
 	return state === 'waiting' || state === 'blocked';
 }
 
-function terminalOverviewStateToAgentState(
-	state: TerminalActivityOverviewState,
-): Exclude<AgentState, 'idle'> {
-	if (state === 'recent') {
-		return 'working';
-	}
-	if (state === 'unviewed') {
-		return 'done';
-	}
-	if (state === 'attention') {
-		return 'blocked';
-	}
-	return state;
-}
-
-function createProjectTab(
-	index: number,
-	homePath: string,
-	usedColors: Iterable<string> = [],
-	sidebarDefaults: SidebarSettings = defaultTerminalSettings.sidebar,
-): ProjectTab {
-	return {
-		id: `project-${index}`,
-		title: `Project ${index}`,
-		color: getRandomProjectTabColor(usedColors),
-		emoji: '',
-		fileExplorerWidth: sidebarDefaults.defaultWidth,
-		isFileExplorerOpen: false,
-		isExplorerPaneCollapsed: sidebarDefaults.defaultExplorerState === 'collapsed',
-		isAgentsPaneCollapsed: false,
-		isGitPaneCollapsed: sidebarDefaults.defaultGitState === 'collapsed',
-		expandedAgentEntryIds: [],
-		sidebarAgentsHeight: DEFAULT_AGENTS_PANE_HEIGHT,
-		sidebarExplorerHeight: sidebarDefaults.defaultExplorerPaneHeight,
-		sidebarGitHeight: DEFAULT_AGENTS_PANE_HEIGHT,
-		sidebarPanelOrder: [...sidebarDefaults.panelOrder],
-		rootFolder: homePath,
-	};
-}
-
-function normalizeRootFolderInput(value: string, homePath: string): string {
-	const trimmedValue = value.trim();
-	if (!trimmedValue) {
-		return homePath;
-	}
-
-	if (trimmedValue === '~') {
-		return homePath;
-	}
-
-	if (trimmedValue.startsWith('~/') || trimmedValue.startsWith('~\\')) {
-		return `${homePath}${trimmedValue.slice(1)}`;
-	}
-
-	return trimmedValue;
-}
-
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -928,7 +575,9 @@ function getCommandSearchScore(
 	const title = item.title.toLowerCase();
 	const description = item.description.toLowerCase();
 	const searchText = item.searchText.toLowerCase();
-	const boundaryQueryPattern = new RegExp(`\\b${escapeRegExp(normalizedQuery)}`);
+	const boundaryQueryPattern = new RegExp(
+		`\\b${escapeRegExp(normalizedQuery)}`,
+	);
 	const queryWords = normalizedQuery.split(/\s+/).filter(Boolean);
 	const titleWords = title.split(/[^a-z0-9]+/).filter(Boolean);
 	let score = 0;
@@ -982,7 +631,8 @@ function ModalBackdrop({
 		<div
 			className="project-edit-modal-backdrop"
 			onMouseDown={(event) => {
-				pointerStartedOnBackdropRef.current = event.target === event.currentTarget;
+				pointerStartedOnBackdropRef.current =
+					event.target === event.currentTarget;
 			}}
 			onMouseUp={(event) => {
 				const shouldClose =
@@ -1045,9 +695,12 @@ function ModalTitlebar({
 }
 
 type MacroFileFieldInputProps = {
+	fileViewerClient?: FileViewerClient;
 	id?: string;
 	onChange: (value: string) => void;
 	placeholder: string;
+	projectId: string;
+	projectRoot: string;
 	rootPath: string;
 	value: string;
 };
@@ -1055,150 +708,187 @@ type MacroFileFieldInputProps = {
 const MacroFileFieldInput = forwardRef<
 	HTMLInputElement,
 	MacroFileFieldInputProps
->(({ id, onChange, placeholder, rootPath, value }, ref) => {
-	const [suggestions, setSuggestions] = useState<FileSearchResult[]>([]);
-	const [highlightedIndex, setHighlightedIndex] = useState(0);
-	const [isOpen, setIsOpen] = useState(false);
-	const [isLoading, setIsLoading] = useState(false);
-	const requestIdRef = useRef(0);
-	const normalizedValue = value.trim();
-
-	useEffect(() => {
-		requestIdRef.current += 1;
-		const requestId = requestIdRef.current;
-
-		if (!isOpen || normalizedValue.length === 0 || !rootPath.trim()) {
-			setSuggestions([]);
-			setIsLoading(false);
-			return;
-		}
-
-		setIsLoading(true);
-		const timeoutId = window.setTimeout(() => {
-			void window.terminay
-				.searchFiles({ rootPath, query: normalizedValue, limit: 60 })
-				.then((results) => {
-					if (requestIdRef.current !== requestId) {
-						return;
-					}
-
-					setSuggestions(results);
-					setHighlightedIndex(0);
-				})
-				.catch(() => {
-					if (requestIdRef.current === requestId) {
-						setSuggestions([]);
-					}
-				})
-				.finally(() => {
-					if (requestIdRef.current === requestId) {
-						setIsLoading(false);
-					}
-				});
-		}, 120);
-
-		return () => {
-			window.clearTimeout(timeoutId);
-		};
-	}, [isOpen, normalizedValue, rootPath]);
-
-	const commitSuggestion = useCallback(
-		(result: FileSearchResult) => {
-			onChange(result.relativePath);
-			setSuggestions([]);
-			setHighlightedIndex(0);
-			setIsOpen(result.isDirectory);
+>(
+	(
+		{
+			fileViewerClient,
+			id,
+			onChange,
+			placeholder,
+			projectId,
+			projectRoot,
+			rootPath,
+			value,
 		},
-		[onChange],
-	);
+		ref,
+	) => {
+		const [suggestions, setSuggestions] = useState<FileSearchResult[]>([]);
+		const [highlightedIndex, setHighlightedIndex] = useState(0);
+		const [isOpen, setIsOpen] = useState(false);
+		const [isLoading, setIsLoading] = useState(false);
+		const requestIdRef = useRef(0);
+		const normalizedValue = value.trim();
 
-	const handleKeyDown = useCallback(
-		(event: ReactKeyboardEvent<HTMLInputElement>) => {
-			if (event.key === 'ArrowDown') {
-				event.preventDefault();
-				setIsOpen(true);
-				setHighlightedIndex((current) =>
-					suggestions.length === 0 ? 0 : (current + 1) % suggestions.length,
-				);
+		useEffect(() => {
+			requestIdRef.current += 1;
+			const requestId = requestIdRef.current;
+
+			if (!isOpen || normalizedValue.length === 0 || !rootPath.trim()) {
+				setSuggestions([]);
+				setIsLoading(false);
 				return;
 			}
 
-			if (event.key === 'ArrowUp') {
-				event.preventDefault();
-				setIsOpen(true);
-				setHighlightedIndex((current) =>
-					suggestions.length === 0
-						? 0
-						: (current - 1 + suggestions.length) % suggestions.length,
-				);
-				return;
-			}
+			setIsLoading(true);
+			const timeoutId = window.setTimeout(() => {
+				if (fileViewerClient === undefined) {
+					setSuggestions([]);
+					setIsLoading(false);
+					return;
+				}
+				void fileViewerClient
+					.searchFolder(
+						getPathRelativeToRoot(rootPath, projectRoot),
+						normalizedValue,
+						projectId,
+						{ limit: 60 },
+					)
+					.then((results) => {
+						if (requestIdRef.current !== requestId) {
+							return;
+						}
 
-			if (
-				(event.key === 'Enter' || event.key === 'Tab') &&
-				isOpen &&
-				suggestions[highlightedIndex]
-			) {
-				event.preventDefault();
-				commitSuggestion(suggestions[highlightedIndex]);
-				return;
-			}
+						setSuggestions(
+							results.results.map((entry) => ({
+								isDirectory: entry.kind === 'directory',
+								path: joinFileExplorerPath(projectRoot, entry.relativePath),
+								relativePath: entry.relativePath,
+							})),
+						);
+						setHighlightedIndex(0);
+					})
+					.catch(() => {
+						if (requestIdRef.current === requestId) {
+							setSuggestions([]);
+						}
+					})
+					.finally(() => {
+						if (requestIdRef.current === requestId) {
+							setIsLoading(false);
+						}
+					});
+			}, 120);
 
-			if (event.key === 'Escape' && isOpen) {
-				event.stopPropagation();
-				setIsOpen(false);
-			}
-		},
-		[commitSuggestion, highlightedIndex, isOpen, suggestions],
-	);
+			return () => {
+				window.clearTimeout(timeoutId);
+			};
+		}, [
+			fileViewerClient,
+			isOpen,
+			normalizedValue,
+			projectId,
+			projectRoot,
+			rootPath,
+		]);
 
-	return (
-		<div className="macro-file-field">
-			<input
-				id={id}
-				ref={ref}
-				type="text"
-				value={value}
-				placeholder={placeholder || 'Start typing a file path...'}
-				onChange={(event) => {
-					onChange(event.target.value);
+		const commitSuggestion = useCallback(
+			(result: FileSearchResult) => {
+				onChange(result.relativePath);
+				setSuggestions([]);
+				setHighlightedIndex(0);
+				setIsOpen(result.isDirectory);
+			},
+			[onChange],
+		);
+
+		const handleKeyDown = useCallback(
+			(event: ReactKeyboardEvent<HTMLInputElement>) => {
+				if (event.key === 'ArrowDown') {
+					event.preventDefault();
 					setIsOpen(true);
-				}}
-				onFocus={() => setIsOpen(true)}
-				onBlur={() => {
-					window.setTimeout(() => setIsOpen(false), 100);
-				}}
-				onKeyDown={handleKeyDown}
-				spellCheck={false}
-				autoComplete="off"
-			/>
-			{isOpen && normalizedValue.length > 0 ? (
-				<div className="macro-file-field-menu" role="listbox">
-					{isLoading ? (
-						<div className="macro-file-field-empty">Searching files...</div>
-					) : suggestions.length === 0 ? (
-						<div className="macro-file-field-empty">No matching files</div>
-					) : (
-						suggestions.map((result, index) => (
-							<button
-								key={result.path}
-								type="button"
-								className={`macro-file-field-option${index === highlightedIndex ? ' macro-file-field-option--active' : ''}`}
-								onMouseDown={(event) => event.preventDefault()}
-								onMouseEnter={() => setHighlightedIndex(index)}
-								onClick={() => commitSuggestion(result)}
-								role="option"
-								aria-selected={index === highlightedIndex}
-							>
-								{result.relativePath}
-							</button>
-						))
-					)}
-				</div>
-			) : null}
-		</div>
-	);
-});
+					setHighlightedIndex((current) =>
+						suggestions.length === 0 ? 0 : (current + 1) % suggestions.length,
+					);
+					return;
+				}
+
+				if (event.key === 'ArrowUp') {
+					event.preventDefault();
+					setIsOpen(true);
+					setHighlightedIndex((current) =>
+						suggestions.length === 0
+							? 0
+							: (current - 1 + suggestions.length) % suggestions.length,
+					);
+					return;
+				}
+
+				if (
+					(event.key === 'Enter' || event.key === 'Tab') &&
+					isOpen &&
+					suggestions[highlightedIndex]
+				) {
+					event.preventDefault();
+					commitSuggestion(suggestions[highlightedIndex]);
+					return;
+				}
+
+				if (event.key === 'Escape' && isOpen) {
+					event.stopPropagation();
+					setIsOpen(false);
+				}
+			},
+			[commitSuggestion, highlightedIndex, isOpen, suggestions],
+		);
+
+		return (
+			<div className="macro-file-field">
+				<input
+					id={id}
+					ref={ref}
+					type="text"
+					value={value}
+					placeholder={placeholder || 'Start typing a file path...'}
+					onChange={(event) => {
+						onChange(event.target.value);
+						setIsOpen(true);
+					}}
+					onFocus={() => setIsOpen(true)}
+					onBlur={() => {
+						window.setTimeout(() => setIsOpen(false), 100);
+					}}
+					onKeyDown={handleKeyDown}
+					spellCheck={false}
+					autoComplete="off"
+				/>
+				{isOpen && normalizedValue.length > 0 ? (
+					<div className="macro-file-field-menu" role="listbox">
+						{isLoading ? (
+							<div className="macro-file-field-empty">Searching files...</div>
+						) : suggestions.length === 0 ? (
+							<div className="macro-file-field-empty">No matching files</div>
+						) : (
+							suggestions.map((result, index) => (
+								<button
+									key={result.path}
+									type="button"
+									className={`macro-file-field-option${index === highlightedIndex ? ' macro-file-field-option--active' : ''}`}
+									onMouseDown={(event) => event.preventDefault()}
+									onMouseEnter={() => setHighlightedIndex(index)}
+									onClick={() => commitSuggestion(result)}
+									role="option"
+									aria-selected={index === highlightedIndex}
+								>
+									{result.relativePath}
+								</button>
+							))
+						)}
+					</div>
+				) : null}
+			</div>
+		);
+	},
+);
 
 MacroFileFieldInput.displayName = 'MacroFileFieldInput';
 
@@ -1280,534 +970,10 @@ function useDraggableModal(isOpen: boolean) {
 	};
 }
 
-type FileExplorerTreeProps = {
-	directoryChildren: Record<string, FileExplorerEntry[]>;
-	directoryErrors: Record<string, string>;
-	expandedPaths: Record<string, boolean>;
-	gitStatuses: Record<string, FileExplorerGitStatus>;
-	loadingPaths: Record<string, boolean>;
-	onOpenFile: (filePath: string) => void;
-	onOpenFolder: (folderPath: string) => void;
-	onToggleDirectory: (dirPath: string) => void;
-	onRename: (path: string) => void;
-	onDelete: (path: string) => void;
-	onNewFile: (dirPath: string) => void;
-	onNewFolder: (dirPath: string) => void;
-	onOpenTerminal: (path: string) => void;
-	onCopyPath: (path: string) => void;
-	onCopyRelativePath: (path: string) => void;
-	rootPath: string;
-};
-
-function FileExplorerTree({
-	directoryChildren,
-	directoryErrors,
-	expandedPaths,
-	gitStatuses,
-	loadingPaths,
-	onOpenFile,
-	onOpenFolder,
-	onToggleDirectory,
-	onRename,
-	onDelete,
-	onNewFile,
-	onNewFolder,
-	onOpenTerminal,
-	onCopyPath,
-	onCopyRelativePath,
-	rootPath,
-}: FileExplorerTreeProps) {
-	const activeDragRef = useRef(false);
-	const pendingDragRef = useRef<{
-		name: string;
-		path: string;
-		isDirectory: boolean;
-		pointerId: number;
-		startX: number;
-		startY: number;
-		target: HTMLButtonElement;
-	} | null>(null);
-	const suppressClickRef = useRef(false);
-	const [activeDrag, setActiveDrag] = useState<{
-		name: string;
-		x: number;
-		y: number;
-	} | null>(null);
-	const [tabDropGhost, setTabDropGhost] = useState<DockviewTabDropGhost | null>(null);
-
-	const [contextMenu, setContextMenu] = useState<{
-		x: number;
-		y: number;
-		path: string;
-		isDirectory: boolean;
-		isRootBlankSpace: boolean;
-	} | null>(null);
-
-	const getDirectoryGitStatus = useCallback(
-		(dirPath: string): FileExplorerGitStatus | null => {
-			let hasNew = false;
-
-			for (const [entryPath, status] of Object.entries(gitStatuses)) {
-				if (
-					!entryPath.startsWith(`${dirPath}/`) &&
-					!entryPath.startsWith(`${dirPath}\\`)
-				) {
-					continue;
-				}
-				if (status === 'modified') {
-					return 'modified';
-				}
-				hasNew = true;
-			}
-
-			return hasNew ? 'new' : null;
-		},
-		[gitStatuses],
-	);
-
-	const handleContextMenu = useCallback(
-		(
-			event: MouseEvent,
-			path: string,
-			isDirectory: boolean,
-			isRootBlankSpace = false,
-		) => {
-			event.preventDefault();
-			event.stopPropagation();
-			setContextMenu({
-				x: event.clientX,
-				y: event.clientY,
-				path,
-				isDirectory,
-				isRootBlankSpace,
-			});
-		},
-		[],
-	);
-
-	useEffect(() => {
-		const clearPendingDrag = () => {
-			const pendingDrag = pendingDragRef.current;
-			if (pendingDrag) {
-				pendingDrag.target.classList.remove(
-					'file-explorer-tree-item--dragging',
-				);
-				if (pendingDrag.target.hasPointerCapture(pendingDrag.pointerId)) {
-					pendingDrag.target.releasePointerCapture(pendingDrag.pointerId);
-				}
-			}
-			pendingDragRef.current = null;
-			activeDragRef.current = false;
-			setActiveDrag(null);
-			setTabDropGhost(null);
-		};
-
-		const handlePointerMove = (event: PointerEvent) => {
-			const pendingDrag = pendingDragRef.current;
-			if (!pendingDrag || event.pointerId !== pendingDrag.pointerId) {
-				return;
-			}
-
-			const distance = Math.hypot(
-				event.clientX - pendingDrag.startX,
-				event.clientY - pendingDrag.startY,
-			);
-			if (distance < FILE_EXPLORER_DRAG_THRESHOLD && !activeDragRef.current) {
-				return;
-			}
-
-			event.preventDefault();
-
-			if (!activeDragRef.current) {
-				pendingDrag.target.classList.add('file-explorer-tree-item--dragging');
-			}
-
-			activeDragRef.current = true;
-			setActiveDrag({
-				name: pendingDrag.name,
-				x: event.clientX,
-				y: event.clientY,
-			});
-			setTabDropGhost(getDockviewTabDropGhost(event.clientX, event.clientY, pendingDrag.name));
-		};
-
-		const handlePointerUp = (event: PointerEvent) => {
-			const pendingDrag = pendingDragRef.current;
-			if (!pendingDrag || event.pointerId !== pendingDrag.pointerId) {
-				return;
-			}
-
-			const wasDragging = activeDragRef.current;
-			const droppedIsDirectory = pendingDrag.isDirectory;
-			const droppedPath = pendingDrag.path;
-			clearPendingDrag();
-
-			if (!wasDragging) {
-				return;
-			}
-
-			suppressClickRef.current = true;
-			window.setTimeout(() => {
-				suppressClickRef.current = false;
-			}, 0);
-
-			const dropTarget = document
-				.elementFromPoint(event.clientX, event.clientY)
-				?.closest<HTMLElement>('[data-terminay-terminal-session-id]');
-			const sessionId = dropTarget?.dataset.terminayTerminalSessionId;
-			if (!sessionId) {
-				if (isPointInDockviewTabBar(event.clientX, event.clientY)) {
-					if (droppedIsDirectory) {
-						onOpenFolder(droppedPath);
-					} else {
-						onOpenFile(droppedPath);
-					}
-				}
-				return;
-			}
-
-			window.dispatchEvent(
-				new CustomEvent(DROP_FILE_EXPLORER_PATH_EVENT, {
-					detail: {
-						path: droppedPath,
-						sessionId,
-					},
-				}),
-			);
-		};
-
-		window.addEventListener('pointermove', handlePointerMove);
-		window.addEventListener('pointerup', handlePointerUp);
-		window.addEventListener('pointercancel', clearPendingDrag);
-		window.addEventListener('blur', clearPendingDrag);
-		return () => {
-			window.removeEventListener('pointermove', handlePointerMove);
-			window.removeEventListener('pointerup', handlePointerUp);
-			window.removeEventListener('pointercancel', clearPendingDrag);
-			window.removeEventListener('blur', clearPendingDrag);
-		};
-	}, [onOpenFile, onOpenFolder]);
-
-	const renderBranch = useCallback(
-		(dirPath: string, depth: number): JSX.Element | null => {
-			if (!expandedPaths[dirPath]) {
-				return null;
-			}
-
-			const entries = directoryChildren[dirPath] ?? [];
-			const errorText = directoryErrors[dirPath];
-			const isLoading = loadingPaths[dirPath];
-
-			return (
-				<div className="file-explorer-tree-children">
-					{entries.map((entry) => {
-						const isExpanded = !!expandedPaths[entry.path];
-						const isDirectory = entry.isDirectory;
-						const gitStatus = isDirectory
-							? getDirectoryGitStatus(entry.path)
-							: gitStatuses[entry.path] ?? null;
-
-						return (
-							<div key={entry.path} className="file-explorer-tree-node">
-								<button
-									type="button"
-									className={[
-										'file-explorer-tree-item',
-										isDirectory ? 'file-explorer-tree-item--directory' : '',
-										gitStatus
-											? `file-explorer-tree-item--git-${gitStatus}`
-											: '',
-									]
-										.filter(Boolean)
-										.join(' ')}
-									style={{ paddingLeft: `${depth * 12 + 8}px` }}
-									onClick={() => {
-										if (suppressClickRef.current) {
-											return;
-										}
-										if (isDirectory) {
-											onToggleDirectory(entry.path);
-										}
-									}}
-									onContextMenu={(e) => handleContextMenu(e, entry.path, isDirectory)}
-									onDoubleClick={() => {
-										if (isDirectory) {
-											onOpenFolder(entry.path);
-										} else {
-											onOpenFile(entry.path);
-										}
-									}}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' || e.key === ' ') {
-											e.preventDefault();
-											if (isDirectory) {
-												onToggleDirectory(entry.path);
-											} else if (e.key === 'Enter') {
-												onOpenFile(entry.path);
-											}
-										}
-									}}
-									title={entry.path}
-									onPointerDown={(event) => {
-										if (event.button !== 0) {
-											return;
-										}
-
-										pendingDragRef.current = {
-											name: entry.name,
-											path: entry.path,
-											isDirectory,
-											pointerId: event.pointerId,
-											startX: event.clientX,
-											startY: event.clientY,
-											target: event.currentTarget,
-										};
-
-										event.currentTarget.setPointerCapture(event.pointerId);
-									}}
-									onPointerUp={(event) => {
-										if (
-											event.currentTarget.hasPointerCapture(event.pointerId)
-										) {
-											event.currentTarget.releasePointerCapture(
-												event.pointerId,
-											);
-										}
-									}}
-									aria-expanded={isDirectory ? isExpanded : undefined}
-								>
-									<span
-										className={`file-explorer-tree-chevron${isExpanded ? ' file-explorer-tree-chevron--expanded' : ''}`}
-										aria-hidden="true"
-									>
-										{isDirectory ? (
-											<svg
-												aria-hidden="true"
-												width="12"
-												height="12"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												strokeWidth="3"
-												strokeLinecap="round"
-												strokeLinejoin="round"
-											>
-												<polyline points="9 18 15 12 9 6" />
-											</svg>
-										) : null}
-									</span>
-									<span className="file-explorer-tree-icon" aria-hidden="true">
-										{isDirectory ? (
-											<svg
-												aria-hidden="true"
-												width="14"
-												height="14"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												strokeWidth="2"
-												strokeLinecap="round"
-												strokeLinejoin="round"
-											>
-												<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-											</svg>
-										) : entry.isSymbolicLink ? (
-											<svg
-												aria-hidden="true"
-												width="14"
-												height="14"
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												strokeWidth="2"
-												strokeLinecap="round"
-												strokeLinejoin="round"
-											>
-												<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-												<path
-													d="M9 14l3-3m0 0h-2.5m2.5 0v2.5"
-													strokeWidth="2.5"
-												/>
-											</svg>
-										) : (
-											<FileTypeIcon name={entry.name} />
-										)}
-									</span>
-									<span className="file-explorer-tree-name">{entry.name}</span>
-								</button>
-								{isDirectory ? renderBranch(entry.path, depth + 1) : null}
-							</div>
-						);
-					})}
-
-					{isLoading ? (
-						<div
-							className="file-explorer-tree-feedback"
-							style={{ paddingLeft: `${depth * 12 + 32}px` }}
-						>
-							Loading...
-						</div>
-					) : null}
-					{errorText ? (
-						<div
-							className="file-explorer-tree-feedback file-explorer-tree-feedback--error"
-							style={{ paddingLeft: `${depth * 12 + 32}px` }}
-						>
-							{errorText}
-						</div>
-					) : null}
-					{!isLoading && !errorText && entries.length === 0 ? (
-						<div
-							className="file-explorer-tree-feedback"
-							style={{ paddingLeft: `${depth * 12 + 32}px` }}
-						>
-							Empty folder
-						</div>
-					) : null}
-				</div>
-			);
-		},
-		[
-			directoryChildren,
-			directoryErrors,
-			expandedPaths,
-			getDirectoryGitStatus,
-			gitStatuses,
-			handleContextMenu,
-			loadingPaths,
-			onOpenFile,
-			onOpenFolder,
-			onToggleDirectory,
-		],
-	);
-
-	return (
-		<div
-			className="file-explorer-tree"
-			onContextMenu={(e) => handleContextMenu(e, rootPath, true, true)}
-		>
-			{renderBranch(rootPath, 0)}
-			{activeDrag ? (
-				<div
-					className="file-explorer-tree-drag-preview"
-					style={{
-						left: `${activeDrag.x + 14}px`,
-						top: `${activeDrag.y + 14}px`,
-					}}
-				>
-					{activeDrag.name}
-				</div>
-			) : null}
-			{tabDropGhost ? (
-				<div
-					className="file-explorer-tab-drop-ghost"
-					style={{
-						height: `${tabDropGhost.height}px`,
-						left: `${tabDropGhost.left}px`,
-						top: `${tabDropGhost.top}px`,
-						width: `${tabDropGhost.width}px`,
-					}}
-				>
-					<span className="file-explorer-tab-drop-ghost__label">{tabDropGhost.label}</span>
-				</div>
-			) : null}
-
-			{contextMenu && (
-				<ContextMenu
-					x={contextMenu.x}
-					y={contextMenu.y}
-					onClose={() => setContextMenu(null)}
-					items={[
-						...(contextMenu.isDirectory
-							? [
-									{
-										label: 'Create new file',
-										icon: <PlusSquare size={14} />,
-										onClick: () => onNewFile(contextMenu.path),
-									},
-									{
-										label: 'Create new folder',
-										icon: <FolderPlus size={14} />,
-										onClick: () => onNewFolder(contextMenu.path),
-									},
-									{ separator: true },
-								]
-							: []),
-						...(contextMenu.isRootBlankSpace
-							? []
-							: [
-									{
-										label: 'Rename',
-										icon: <FileEdit size={14} />,
-										onClick: () => onRename(contextMenu.path),
-									},
-									{
-										label: 'Delete',
-										icon: <Trash2 size={14} />,
-										danger: true,
-										onClick: () => onDelete(contextMenu.path),
-									},
-									{ separator: true },
-								]),
-						{
-							label: 'Copy path',
-							icon: <Copy size={14} />,
-							onClick: () => onCopyPath(contextMenu.path),
-						},
-						{
-							label: 'Copy relative path',
-							icon: <Copy size={14} />,
-							onClick: () => onCopyRelativePath(contextMenu.path),
-						},
-						{ separator: true },
-						{
-							label: 'Open shell in folder',
-							icon: <Terminal size={14} />,
-							onClick: () => onOpenTerminal(contextMenu.path),
-						},
-						{
-							label: 'Reveal in OS',
-							icon: <FolderOpen size={14} />,
-							onClick: () => void window.terminay.revealInOS(contextMenu.path),
-						},
-					].filter(Boolean) as ContextMenuItem[]}
-				/>
-			)}
-		</div>
-	);
-}
-
 function createAbortError(): Error {
 	const error = new Error('Macro execution canceled.');
 	error.name = 'AbortError';
 	return error;
-}
-
-function throwIfAborted(signal: AbortSignal): void {
-	if (signal.aborted) {
-		throw createAbortError();
-	}
-}
-
-function waitForDelay(durationMs: number, signal: AbortSignal): Promise<void> {
-	return new Promise((resolve, reject) => {
-		if (signal.aborted) {
-			reject(createAbortError());
-			return;
-		}
-
-		const onAbort = () => {
-			window.clearTimeout(timeout);
-			reject(createAbortError());
-		};
-
-		const timeout = window.setTimeout(() => {
-			signal.removeEventListener('abort', onAbort);
-			resolve();
-		}, durationMs);
-
-		signal.addEventListener('abort', onAbort, { once: true });
-	});
 }
 
 function waitForSessionInactivity(
@@ -1844,75 +1010,22 @@ function waitForSessionInactivity(
 			timeout = window.setTimeout(finish, durationMs);
 		};
 
-		const dispose = window.terminay.onTerminalData((message) => {
-			if (message.id !== sessionId) {
+		const onTerminalOutput = (event: Event) => {
+			const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
+			if (detail?.sessionId !== sessionId) {
 				return;
 			}
 
 			restartTimer();
-		});
+		};
+		window.addEventListener(TERMINAL_PANEL_OUTPUT_EVENT, onTerminalOutput);
+		const dispose = () =>
+			window.removeEventListener(TERMINAL_PANEL_OUTPUT_EVENT, onTerminalOutput);
 
 		signal.addEventListener('abort', onAbort, { once: true });
 		restartTimer();
 	});
 }
-
-function formatMacroTypeTextForTerminal(text: string): string {
-	if (!/[\r\n]/.test(text)) {
-		return text;
-	}
-
-	const normalizedNewlines = text.replace(/\r\n?/g, '\n');
-	return `\x1b[200~${normalizedNewlines}\x1b[201~`;
-}
-
-function isAbortError(error: unknown): boolean {
-	return error instanceof Error && error.name === 'AbortError';
-}
-
-function formatMacroDurationSeconds(durationSeconds: string): string {
-	const numericDurationSeconds = Number(durationSeconds);
-	if (durationSeconds.trim() && Number.isFinite(numericDurationSeconds)) {
-		return String(Math.max(0, Math.round(numericDurationSeconds * 10) / 10));
-	}
-
-	return durationSeconds.trim() || '0';
-}
-
-function describeMacroStep(step: MacroDefinition['steps'][number]): string {
-	switch (step.type) {
-		case 'type':
-			return `Type: ${step.content.replace(/\s+/g, ' ').trim() || '(empty)'}`.slice(
-				0,
-				96,
-			);
-		case 'key':
-			return `Press ${step.key}`;
-		case 'secret':
-			return 'Insert secret';
-		case 'wait_time':
-			return `Wait ${formatMacroDurationSeconds(step.durationSeconds)}s`;
-		case 'wait_inactivity':
-			return `Wait for inactivity ${formatMacroDurationSeconds(step.durationSeconds)}s`;
-		case 'select_line':
-			return 'Select current line';
-		case 'paste':
-			return 'Paste clipboard';
-	}
-}
-
-type TerminalSwitcherItem = {
-	panelId: string;
-	sessionId: string;
-	title: string;
-	emoji: string;
-	color: string;
-};
-
-type MacroRunController = {
-	abortController: AbortController;
-	sessionId: string;
-};
 
 type FileExplorerNameDialogOptions = {
 	description?: string;
@@ -2027,5936 +1140,3446 @@ function joinFileExplorerPath(dirPath: string, name: string): string {
 	return `${dirPath}/${name}`;
 }
 
-function getFileExplorerPathParent(filePath: string): string {
-	const trimmedPath = filePath.replace(/[\\/]+$/, '');
-	const lastSlash = Math.max(
-		trimmedPath.lastIndexOf('/'),
-		trimmedPath.lastIndexOf('\\'),
-	);
-
-	if (lastSlash <= 0) {
-		return lastSlash === 0 ? trimmedPath.slice(0, 1) : '';
-	}
-
-	return trimmedPath.slice(0, lastSlash);
-}
-
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
->(({ agentStatusSnapshot, isActive, isMac, macros, onAddProject, onCloseProject, onEditProject, onMoveTerminalToProject, onTerminalActivityOverviewChange, onUpdateProject, popoutUrl, project, projects, adoptedTerminals }, ref) => {
-	const { settings } = useTerminalSettings();
-	// Latest adopted terminals, read lazily when the workspace seeds so the seed
-	// effect needn't depend on prop identity.
-	const adoptedTerminalsRef = useRef(adoptedTerminals);
-	adoptedTerminalsRef.current = adoptedTerminals;
-	const settingsRef = useRef(settings);
-	useEffect(() => {
-		settingsRef.current = settings;
-	}, [settings]);
-	const dockviewApiRef = useRef<DockviewApi | null>(null);
-	const initialTerminalSeededRef = useRef(false);
-	const panelSessionMapRef = useRef<Map<string, string>>(new Map());
-	const terminalContextReadersRef = useRef<Map<string, TerminalContextReader>>(
-		new Map(),
-	);
-	const aiGenerationInFlightRef = useRef<Set<string>>(new Set());
-	const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
-	// MCP control surface: latest semantic activity, exit codes, and one-shot
-	// waiters (wait_for_command / wait_for_attention) keyed by session id.
-	const controlActivityRef = useRef<
-		Map<string, { status: 'working' | 'idle'; attention: boolean; exitCode: number | null; at: number }>
-	>(new Map());
-	const controlExitRef = useRef<Map<string, number>>(new Map());
-	const controlCommandWaitersRef = useRef<
-		Map<string, Set<(exitCode: number | null) => void>>
-	>(new Map());
-	const controlAttentionWaitersRef = useRef<Map<string, Set<() => void>>>(
-		new Map(),
-	);
-	const [isMcpInstallModalOpen, setIsMcpInstallModalOpen] = useState(false);
-	const terminalActivityStoreRef = useRef(new TerminalActivityStore());
-	const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
-	const fileExplorerRefreshTimersRef = useRef<Map<string, number>>(new Map());
-	const evaluateTerminalActivityStateRef = useRef<
-		(sessionId: string, now?: number) => void
-	>(() => {});
-	const focusedSessionIdRef = useRef<string | null>(null);
-	const dictationMediaRecorderRef = useRef<MediaRecorder | null>(null);
-	const dictationStreamRef = useRef<MediaStream | null>(null);
-	const dictationAudioContextRef = useRef<AudioContext | null>(null);
-	const dictationMediaSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-	const dictationAnalyserRef = useRef<AnalyserNode | null>(null);
-	const dictationMonitorGainRef = useRef<GainNode | null>(null);
-	const dictationScriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
-	const dictationWaveformFrameRef = useRef<number | null>(null);
-	const dictationChunksRef = useRef<Blob[]>([]);
-	const dictationPcmChunksRef = useRef<Float32Array[]>([]);
-	const dictationPcmLengthRef = useRef(0);
-	const dictationPcmSampleRateRef = useRef(0);
-	const dictationSilenceStartedAtRef = useRef<number | null>(null);
-	const dictationPeakRmsRef = useRef(0);
-	const dictationSpeechFrameCountRef = useRef(0);
-	const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
-	const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
-	const terminalCounterRef = useRef(0);
-	const filePanelCounterRef = useRef(0);
-	const folderPanelCounterRef = useRef(0);
-	const draggingTransferRef = useRef<{
-		panelId?: string;
-		groupId: string;
-	} | null>(null);
-	const workspaceRef = useRef<HTMLElement | null>(null);
-	const isDockviewSashDraggingRef = useRef(false);
-	const deferredTerminalActivitySessionIdsRef = useRef<Set<string>>(new Set());
-	const deferredTerminalActivityFlushTimerRef = useRef<number | null>(null);
-	const explorerResizeStateRef = useRef<{
-		pointerId: number;
-		startWidth: number;
-		startX: number;
-		latestWidth: number;
-	} | null>(null);
-	const [errorText, setErrorText] = useState<string | null>(null);
-	const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
-	const [terminalTitleRevision, setTerminalTitleRevision] = useState(0);
-	const [dictationSession, setDictationSession] =
-		useState<DictationSessionState | null>(null);
-	const [directoryChildren, setDirectoryChildren] = useState<
-		Record<string, FileExplorerEntry[]>
-	>({});
-	const [directoryErrors, setDirectoryErrors] = useState<
-		Record<string, string>
-	>({});
-	const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>(
-		{},
-	);
-	const [gitStatuses, setGitStatuses] = useState<
-		Record<string, FileExplorerGitStatus>
-	>({});
-	const [worktreePanelStatus, setWorktreePanelStatus] =
-		useState<WorktreePanelStatus | null>(null);
-	const [deletingWorktreePaths, setDeletingWorktreePaths] = useState<
-		Set<string>
-	>(() => new Set());
-	const [gitPushMenuPosition, setGitPushMenuPosition] = useState<{
-		target: GitPushMenuTarget;
-		x: number;
-		y: number;
-	} | null>(null);
-	const [quickPushAction, setQuickPushAction] =
-		useState<QuickPushAction | null>(null);
-	const [quickPushCwd, setQuickPushCwd] = useState<string | null>(null);
-	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
-	const [runningMacroRunsBySession, setRunningMacroRunsBySession] = useState<
-		Record<string, TerminalTabMacroRun[]>
-	>({});
-	const [isDockviewReady, setIsDockviewReady] = useState(false);
-	const macroRunControllersRef = useRef<Map<string, MacroRunController>>(
-		new Map(),
-	);
-	const isRefreshingGitStatusesRef = useRef(false);
-	const fileExplorerNameDialogRequestIdRef = useRef(0);
-	const [fileExplorerNameDialog, setFileExplorerNameDialog] =
-		useState<FileExplorerNameDialogState | null>(null);
-	const currentGitBranch = useMemo(() => {
-		const worktrees = worktreePanelStatus?.worktrees;
-		if (!worktrees) {
-			return null;
-		}
-
-		return (
-			worktrees.find((worktree) => worktree.isCurrent)?.branch ??
-			worktrees.find((worktree) => worktree.path === worktreePanelStatus.repoRoot)
-				?.branch ??
-			null
+>(
+	(
+		{
+			agentStatusSnapshot,
+			isActive,
+			isMac,
+			macros,
+			onAddProject,
+			onCloseProject,
+			onEditProject,
+			onMoveTerminalToProject,
+			onTerminalActivityOverviewChange,
+			onUpdateProject,
+			popoutUrl,
+			project,
+			projects,
+			quickPushClient,
+			terminalClientContext,
+			adoptedTerminals,
+		},
+		ref,
+	) => {
+		const legacySettingsClient = useTerminalSettingsClient();
+		const disconnectedFileCompatibility =
+			useOptionalDisconnectedFileCompatibility();
+		recordBoundedRendererRender(
+			`project-workspace:${project.id}`,
+			`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}:${project.rootFolder}`,
 		);
-	}, [worktreePanelStatus]);
-	const projectAgentItems = useMemo<AgentsSidebarItem[]>(() => {
-		if (!settings.agentIntegration.enabled) {
-			return [];
-		}
-
-		const terminalSessionIds = new Set(panelSessionMapRef.current.values());
-		const terminalTitlesBySession = new Map<string, string>();
-		const dockviewApi = dockviewApiRef.current;
-		for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
-			const title = dockviewApi?.getPanel(panelId)?.title;
-			if (typeof title === 'string' && title.trim()) {
-				terminalTitlesBySession.set(sessionId, title.trim());
-			}
-		}
-		const priority: Record<AgentState, number> = {
-			blocked: 0,
-			waiting: 1,
-			working: 2,
-			done: 3,
-			idle: 4,
-		};
-		return [...terminalSessionIds]
-			.flatMap((terminalSessionId) =>
-				selectLiveAgentStatusesForTerminal(
-					agentStatusSnapshot,
-					terminalSessionId,
-				),
-			)
-			.sort(
-				(left, right) =>
-					priority[left.state] - priority[right.state] ||
-					right.updatedAt - left.updatedAt ||
-					left.entryId.localeCompare(right.entryId),
-			)
-			.map((entry) => ({
-				entry,
-				projectId: project.id,
-				model: entry.model?.displayName ?? entry.model?.id,
-				prompt: entry.promptText,
-				terminalTitle: terminalTitlesBySession.get(
-					entry.activationTerminalSessionId,
-				),
-			}));
-	}, [
-		agentStatusSnapshot,
-		focusedSessionId,
-		isDockviewReady,
-		project.id,
-		settings.agentIntegration.enabled,
-		terminalTitleRevision,
-	]);
-
-	const [isMacroLauncherOpen, setIsMacroLauncherOpen] = useState(false);
-	const [macroQuery, setMacroQuery] = useState('');
-	const [selectedMacroIndex, setSelectedMacroIndex] = useState(0);
-	const [macroToRun, setMacroToRun] = useState<MacroDefinition | null>(null);
-	const [macroFieldValues, setMacroFieldValues] = useState<
-		Record<string, MacroFieldValue>
-	>({});
-	const [macroFileSearchRootPath, setMacroFileSearchRootPath] = useState('');
-	const macroLauncherInputRef = useRef<HTMLInputElement | null>(null);
-	const macroLauncherListRef = useRef<HTMLDivElement | null>(null);
-	const macroLauncherItemRefs = useRef(
-		new Map<string, HTMLButtonElement | null>(),
-	);
-	const firstMacroFieldRef = useRef<
-		HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
-	>(null);
-	const macroParameterModal = useDraggableModal(macroToRun !== null);
-	const fileExplorerNameModal = useDraggableModal(
-		fileExplorerNameDialog !== null,
-	);
-
-	useEffect(() => {
-		terminalActivityStoreRef.current.configure(
-			{
-				amberDelayMs: settings.activityIndicators.amberDelaySeconds * 1000,
-				greenDelayMs: settings.activityIndicators.greenDelaySeconds * 1000,
-				tabSwitchSuppressionMs:
-					settings.activityIndicators.tabSwitchSuppressionSeconds * 1000,
-			},
-			{ signalDetectionEnabled: settings.activityIndicators.signalDetection },
-		);
-
-		const now = Date.now();
-		for (const sessionId of panelSessionMapRef.current.values()) {
-			evaluateTerminalActivityStateRef.current(sessionId, now);
-		}
-	}, [
-		settings.activityIndicators.amberDelaySeconds,
-		settings.activityIndicators.greenDelaySeconds,
-		settings.activityIndicators.tabSwitchSuppressionSeconds,
-		settings.activityIndicators.signalDetection,
-	]);
-
-	const requestFileExplorerName = useCallback(
-		(options: FileExplorerNameDialogOptions) => {
-			return new Promise<string | null>((resolve) => {
-				fileExplorerNameDialogRequestIdRef.current += 1;
-				setFileExplorerNameDialog({
-					...options,
-					id: fileExplorerNameDialogRequestIdRef.current,
-					resolve,
-				});
-			});
-		},
-		[],
-	);
-
-	const cancelFileExplorerNameDialog = useCallback(() => {
-		setFileExplorerNameDialog((current) => {
-			current?.resolve(null);
-			return null;
-		});
-	}, []);
-
-	const submitFileExplorerNameDialog = useCallback((value: string) => {
-		setFileExplorerNameDialog((current) => {
-			current?.resolve(value);
-			return null;
-		});
-	}, []);
-
-	const getProjectsForTerminalMove = useCallback((): TerminalTabMoveProject[] => {
-		return projects
-			.filter((candidate) => candidate.id !== project.id)
-			.map((candidate) => ({
-				emoji: candidate.emoji,
-				id: candidate.id,
-				title: candidate.title,
-			}));
-	}, [project.id, projects]);
-
-	const getActiveSessionId = useCallback(() => {
-		return dockviewApiRef.current?.activePanel?.params?.sessionId ?? null;
-	}, []);
-
-	const getPanelForSession = useCallback((sessionId: string) => {
-		const api = dockviewApiRef.current;
-		if (!api) {
-			return null;
-		}
-
-		for (const [panelId, panelSessionId] of panelSessionMapRef.current.entries()) {
-			if (panelSessionId !== sessionId) {
-				continue;
-			}
-
-			return api.getPanel(panelId) ?? null;
-		}
-
-		return null;
-	}, []);
-
-	const getRecordingStartMetadataForSession = useCallback(
-		(sessionId: string): TerminalRecordingStartMetadata => {
-			const panel = getPanelForSession(sessionId);
-			const params = panel?.params as TerminalPanelParams | undefined;
-			const title =
-				typeof panel?.title === 'string' && panel.title.trim().length > 0
-					? panel.title
-					: 'Terminal';
-
-			return {
-				color: typeof params?.color === 'string' ? params.color : project.color,
-				emoji: typeof params?.emoji === 'string' ? params.emoji : '',
-				inheritsProjectColor: params?.inheritsProjectColor === true,
-				projectColor: project.color,
-				projectEmoji: project.emoji,
-				projectId: project.id,
-				projectTitle: project.title,
-				title,
-			};
-		},
-		[
-			getPanelForSession,
-			project.color,
-			project.emoji,
-			project.id,
-			project.title,
-		],
-	);
-
-	const applyTerminalRecordingState = useCallback(
-		(state: TerminalRecordingState) => {
-			const panel = getPanelForSession(state.sessionId);
-			if (!panel) {
-				return;
-			}
-
-			panel.api.updateParameters({
-				recordingError: state.errorMessage,
-				recordingId:
-					state.recordingId ??
-					(panel.params as TerminalPanelParams | undefined)?.recordingId ??
-					null,
-				recordingStatus: state.status,
-			});
-		},
-		[getPanelForSession],
-	);
-
-	const startRecordingForSession = useCallback(
-		async (sessionId: string) => {
-			try {
-				applyTerminalRecordingState(
-					await window.terminay.startTerminalRecording(
-						sessionId,
-						getRecordingStartMetadataForSession(sessionId),
-					),
-				);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				setErrorText(`Unable to start recording: ${message}`);
-			}
-		},
-		[applyTerminalRecordingState, getRecordingStartMetadataForSession],
-	);
-
-	const stopRecordingForSession = useCallback(
-		async (sessionId: string) => {
-			try {
-				applyTerminalRecordingState(
-					await window.terminay.stopTerminalRecording(sessionId),
-				);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				setErrorText(`Unable to stop recording: ${message}`);
-			}
-		},
-		[applyTerminalRecordingState],
-	);
-
-	const revealRecording = useCallback(async (recordingId: string) => {
-		try {
-			await window.terminay.revealTerminalRecordingById(recordingId);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			setErrorText(`Unable to reveal recording: ${message}`);
-		}
-	}, []);
-
-	const hydrateRecordingStateForSession = useCallback(
-		(sessionId: string) => {
-			void window.terminay.getTerminalRecordingState(sessionId).then(
-				applyTerminalRecordingState,
-				() => {},
+		const terminalPanelClientContext =
+			useMemo<TerminalPanelClientContextValue | null>(
+				() =>
+					terminalClientContext === undefined
+						? null
+						: { ...terminalClientContext, projectId: project.id },
+				[
+					project.id,
+					terminalClientContext?.client,
+					terminalClientContext?.serverId,
+					terminalClientContext?.clientId,
+					terminalClientContext?.workspaceSnapshotStore,
+				],
 			);
-		},
-		[applyTerminalRecordingState],
-	);
-
-	const getActivityOverviewItems =
-		useCallback((): TerminalActivityOverviewItem[] => {
-			const api = dockviewApiRef.current;
-			if (!api) {
+		const serverActivityClient = terminalClientContext?.activityClient;
+		const serverAgentStatusClient = terminalClientContext?.agentStatusClient;
+		const serverMacroClient = useMemo(
+			() =>
+				terminalClientContext?.applicationClient === undefined
+					? undefined
+					: new MacroClient(
+							new TerminayClientFacade(terminalClientContext.applicationClient),
+						),
+			[terminalClientContext?.applicationClient],
+		);
+		const getServerTerminalCwd = useProjectTerminalCwd(
+			terminalPanelClientContext,
+		);
+		const serverSettingsClient = useMemo(
+			() =>
+				terminalClientContext?.applicationClient === undefined
+					? undefined
+					: createServerTerminalSettingsClient(
+							new SettingsClient(
+								new TerminayClientFacade(
+									terminalClientContext.applicationClient,
+								),
+							),
+							legacySettingsClient,
+						),
+			[legacySettingsClient, terminalClientContext?.applicationClient],
+		);
+		const { settings, settingsClient } =
+			useTerminalSettings(serverSettingsClient);
+		const macroSettingsCapability = useLegacyMacroSettingsCapability();
+		const serverFileViewerClient = terminalClientContext?.fileViewerClient;
+		const disconnectedFileViewerClient = useMemo(() => {
+			if (serverFileViewerClient !== undefined) return undefined;
+			if (disconnectedFileCompatibility === null) {
+				throw new Error(
+					'Disconnected file compatibility is unavailable without a canonical server file client',
+				);
+			}
+			return disconnectedFileCompatibility.filePanel.createClient();
+		}, [disconnectedFileCompatibility, serverFileViewerClient]);
+		const fileViewerClient =
+			serverFileViewerClient ?? disconnectedFileViewerClient!;
+		const fileClientPath = useCallback(
+			(path: string) =>
+				serverFileViewerClient === undefined
+					? path
+					: getPathRelativeToRoot(path, project.rootFolder),
+			[project.rootFolder, serverFileViewerClient],
+		);
+		const fileClientProjectId =
+			serverFileViewerClient === undefined ? undefined : project.id;
+		const recordingsClient = useMemo(() => {
+			if (terminalClientContext?.applicationClient !== undefined)
+				return undefined;
+			if (window.terminayRecordingServiceHost === undefined) {
+				throw new Error('Desktop recording service capability is unavailable');
+			}
+			return createLegacyRecordingsClient(window.terminayRecordingServiceHost);
+		}, [terminalClientContext?.applicationClient]);
+		const serverRecordingsClient = useMemo(
+			() =>
+				terminalClientContext?.applicationClient === undefined
+					? undefined
+					: new ServerRecordingsClient({
+							query: async <
+								T extends
+									import('@terminay/protocol').JsonValue = import('@terminay/protocol').JsonValue,
+							>(
+								operation: string,
+								payload?: import('@terminay/protocol').JsonValue,
+								options?: Parameters<
+									typeof terminalClientContext.applicationClient.query
+								>[2],
+							) =>
+								(
+									await terminalClientContext.applicationClient!.query(
+										operation,
+										payload,
+										options,
+									)
+								).result as T,
+							command: async <
+								T extends
+									import('@terminay/protocol').JsonValue = import('@terminay/protocol').JsonValue,
+							>(
+								operation: string,
+								payload?: import('@terminay/protocol').JsonValue,
+								options?: Parameters<
+									typeof terminalClientContext.applicationClient.command
+								>[2],
+							) =>
+								(
+									await terminalClientContext.applicationClient!.command(
+										operation,
+										payload,
+										options,
+									)
+								).result as T,
+						}),
+			[terminalClientContext?.applicationClient],
+		);
+		const aiTabMetadataClient = useMemo(
+			() =>
+				terminalClientContext?.applicationClient === undefined
+					? createLegacyAiTabMetadataClient(window.terminayAiMetadataHost)
+					: undefined,
+			[terminalClientContext?.applicationClient],
+		);
+		const serverAiClient = useMemo(
+			() =>
+				terminalClientContext?.applicationClient === undefined
+					? undefined
+					: new TerminayAiClient(
+							new TerminayClientFacade(terminalClientContext.applicationClient),
+						),
+			[terminalClientContext?.applicationClient],
+		);
+		// Latest adopted terminals, read lazily when the workspace seeds so the seed
+		// effect needn't depend on prop identity.
+		const adoptedTerminalsRef = useRef(adoptedTerminals);
+		adoptedTerminalsRef.current = adoptedTerminals;
+		const settingsRef = useRef(settings);
+		useEffect(() => {
+			settingsRef.current = settings;
+		}, [settings]);
+		const dockviewApiRef = useRef<DockviewApi | null>(null);
+		const initialTerminalSeededRef = useRef(false);
+		// Dockview may repeat onReady while React is reconciling its wrapper.
+		// This latch is deliberately independent from the layout's seeded flag,
+		// which Dockview lifecycle resets when a new API instance is published.
+		const initialTerminalSeedStartedRef = useRef(false);
+		const initialTerminalSeedPromiseRef = useRef<Promise<unknown> | null>(null);
+		const [initialTerminalSeedAttempt, setInitialTerminalSeedAttempt] =
+			useState(0);
+		const panelSessionMapRef = useRef<Map<string, string>>(new Map());
+		const terminalContextReadersRef = useRef<
+			Map<string, TerminalContextReader>
+		>(new Map());
+		const terminalControlStateRef = useRef(createTerminalControlState());
+		const aiGenerationInFlightRef = useRef<Set<string>>(new Set());
+		const movingTerminalSessionIdsRef = useRef<Set<string>>(new Set());
+		const [isMcpInstallModalOpen, setIsMcpInstallModalOpen] = useState(false);
+		const terminalActivityStoreRef = useRef(new TerminalActivityStore());
+		const terminalActivityTimersRef = useRef<Map<string, number>>(new Map());
+		const evaluateTerminalActivityStateRef = useRef<
+			(sessionId: string, now?: number) => void
+		>(() => {});
+		const focusedSessionIdRef = useRef<string | null>(null);
+		const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
+		const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
+		const terminalCounterRef = useRef(0);
+		const filePanelCounterRef = useRef(0);
+		const folderPanelCounterRef = useRef(0);
+		const draggingTransferRef = useRef<{
+			panelId?: string;
+			groupId: string;
+		} | null>(null);
+		const workspaceRef = useRef<HTMLElement | null>(null);
+		const isDockviewSashDraggingRef = useRef(false);
+		const deferredTerminalActivitySessionIdsRef = useRef<Set<string>>(
+			new Set(),
+		);
+		const deferredTerminalActivityFlushTimerRef = useRef<number | null>(null);
+		const [errorText, setErrorText] = useState<string | null>(null);
+		const [focusedSessionId, setFocusedSessionId] = useState<string | null>(
+			null,
+		);
+		const [terminalTitleRevision, setTerminalTitleRevision] = useState(0);
+		const [isDockviewReady, setIsDockviewReady] = useState(false);
+		// Dockview treats its component registries as configuration. Keep their
+		// identities stable across ordinary workspace state changes (for example,
+		// opening the Explorer) so it does not recreate the layout and orphan the
+		// terminal-to-agent ownership map.
+		const dockviewComponents = useMemo(
+			() => ({
+				file: FilePanel,
+				folder: FolderPanel,
+				terminal: TerminalPanel,
+			}),
+			[],
+		);
+		const dockviewTabComponents = useMemo(
+			() => ({
+				fileTab: FileTab,
+				folderTab: FolderTab,
+				terminalTab: TerminalTab,
+			}),
+			[],
+		);
+		const projectAgentItems = useMemo<AgentsSidebarItem[]>(() => {
+			if (!settings.agentIntegration.enabled) {
 				return [];
 			}
 
-			const items: TerminalActivityOverviewItem[] = [];
-			for (const group of api.groups) {
-				for (const panel of group.panels) {
-					const sessionId = panel.params?.sessionId;
-					const agentState = panel.params?.agentState;
-					if (
-						settings.agentIntegration.enabled &&
-						sessionId &&
-						agentState
-					) {
-						const agentUnread = panel.params?.agentUnread === true;
-						const shouldIncludeAgent =
-							agentState === 'working' ||
-							isAgentAttentionState(agentState) ||
-							(agentState === 'done' && agentUnread);
-						if (shouldIncludeAgent) {
-							items.push({
-								color: getEffectiveTerminalTabColor(panel.params, project.color),
-								emoji: panel.params?.emoji ?? '',
-								panelId: panel.id,
-								projectEmoji: project.emoji,
-								projectId: project.id,
-								projectTitle: project.title,
-								sessionId,
-								state: agentState,
-								isAgentStatus: true,
-								title: panel.title ?? 'Terminal',
-							});
-						}
-						// Once a native lifecycle hook has claimed this terminal, raw
-						// output activity must never compete with that authority.
-						continue;
-					}
-					const state = panel.params?.terminalActivityState;
-					if (
-						!sessionId ||
-						!isTerminalActivityIndicatorStateVisible(state, panel.params)
-					) {
-						continue;
-					}
-
-					items.push({
-						color: getEffectiveTerminalTabColor(panel.params, project.color),
-						emoji: panel.params?.emoji ?? '',
-						panelId: panel.id,
-						projectEmoji: project.emoji,
-						projectId: project.id,
-						projectTitle: project.title,
-						sessionId,
-						state,
-						isAgentStatus: false,
-						title: panel.title ?? 'Terminal',
-					});
-				}
-			}
-
-			return items;
-		}, [
-			project.color,
-			project.emoji,
-			project.id,
-			project.title,
-			settings.agentIntegration.enabled,
-		]);
-
-	const publishTerminalActivityOverview = useCallback(() => {
-		onTerminalActivityOverviewChange(project.id, getActivityOverviewItems());
-	}, [getActivityOverviewItems, onTerminalActivityOverviewChange, project.id]);
-
-	const registerTerminalContextReader = useCallback(
-		(sessionId: string, reader: TerminalContextReader) => {
-			terminalContextReadersRef.current.set(sessionId, reader);
-
-			return () => {
-				if (terminalContextReadersRef.current.get(sessionId) === reader) {
-					terminalContextReadersRef.current.delete(sessionId);
-				}
-			};
-		},
-		[],
-	);
-
-	const applyTerminalActivityEvaluation = useCallback(
-		(sessionId: string, evaluation: TerminalActivityEvaluation) => {
-			const panel = getPanelForSession(sessionId);
-			if (!panel) {
-				return;
-			}
-
-			const didActivityStateChange =
-				panel.params?.terminalActivityState !== evaluation.state;
-			if (didActivityStateChange) {
-				panel.api.updateParameters({ terminalActivityState: evaluation.state });
-			}
-
-			const existingTimer = terminalActivityTimersRef.current.get(sessionId);
-			if (existingTimer !== undefined) {
-				window.clearTimeout(existingTimer);
-				terminalActivityTimersRef.current.delete(sessionId);
-			}
-
-			const now = Date.now();
-			if (
-				evaluation.nextDeadline !== null &&
-				evaluation.nextDeadline > now
-			) {
-				const nextTimer = window.setTimeout(() => {
-					terminalActivityTimersRef.current.delete(sessionId);
-					evaluateTerminalActivityStateRef.current(sessionId);
-				}, Math.max(0, evaluation.nextDeadline - now));
-
-				terminalActivityTimersRef.current.set(sessionId, nextTimer);
-			}
-
-			if (didActivityStateChange) {
-				window.requestAnimationFrame(publishTerminalActivityOverview);
-			}
-		},
-		[getPanelForSession, publishTerminalActivityOverview],
-	);
-
-	useEffect(() => {
-		let didChange = false;
-		const enabled = settings.agentIntegration.enabled;
-
-		for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
-			const panel = dockviewApiRef.current?.getPanel(panelId);
-			if (!panel) {
-				continue;
-			}
-
-			const aggregate = enabled
-				? aggregateAgentStatusForTerminal(agentStatusSnapshot, sessionId)
-				: null;
-			const nextState = aggregate?.state;
-			const nextNeedsAttention =
-				nextState !== undefined && isAgentAttentionState(nextState);
-			const nextUnread = aggregate?.unread === true;
-			if (
-				panel.params?.agentState === nextState &&
-				panel.params?.agentNeedsAttention === nextNeedsAttention &&
-				panel.params?.agentUnread === nextUnread
-			) {
-				continue;
-			}
-
-			panel.api.updateParameters({
-				agentState: nextState,
-				agentNeedsAttention: nextNeedsAttention,
-				agentUnread: nextUnread,
-			});
-			didChange = true;
-
-			if (nextUnread && focusedSessionIdRef.current === sessionId) {
-				void window.terminay.acknowledgeTerminalAgentStatuses(sessionId);
-			}
-		}
-
-		if (didChange) {
-			window.requestAnimationFrame(publishTerminalActivityOverview);
-		}
-	}, [
-		agentStatusSnapshot,
-		isDockviewReady,
-		publishTerminalActivityOverview,
-		settings.agentIntegration.enabled,
-	]);
-
-	const suppressInitialTerminalActivity = useCallback((sessionId: string) => {
-		terminalActivityStoreRef.current.recordInitialSuppression(sessionId);
-	}, []);
-
-	const evaluateTerminalActivityState = useCallback(
-		(sessionId: string, now = Date.now()) => {
-			const panel = getPanelForSession(sessionId);
-			if (!panel) {
-				return;
-			}
-
-			applyTerminalActivityEvaluation(
-				sessionId,
-				terminalActivityStoreRef.current.evaluate(sessionId, now),
-			);
-		},
-		[applyTerminalActivityEvaluation, getPanelForSession],
-	);
-	evaluateTerminalActivityStateRef.current = evaluateTerminalActivityState;
-
-	const clearDeferredTerminalActivityFlushTimer = useCallback(() => {
-		const flushTimer = deferredTerminalActivityFlushTimerRef.current;
-		if (flushTimer === null) {
-			return;
-		}
-
-		window.clearTimeout(flushTimer);
-		deferredTerminalActivityFlushTimerRef.current = null;
-	}, []);
-
-	const flushDeferredTerminalActivity = useCallback(() => {
-		if (isDockviewSashDraggingRef.current) {
-			return;
-		}
-
-		clearDeferredTerminalActivityFlushTimer();
-		const sessionIds = Array.from(deferredTerminalActivitySessionIdsRef.current);
-		deferredTerminalActivitySessionIdsRef.current.clear();
-
-		for (const sessionId of sessionIds) {
-			evaluateTerminalActivityStateRef.current(sessionId);
-		}
-	}, [clearDeferredTerminalActivityFlushTimer]);
-
-	const scheduleDeferredTerminalActivityFlush = useCallback(() => {
-		clearDeferredTerminalActivityFlushTimer();
-		deferredTerminalActivityFlushTimerRef.current = window.setTimeout(
-			flushDeferredTerminalActivity,
-			DOCKVIEW_SASH_ACTIVITY_DEFER_MS,
-		);
-	}, [clearDeferredTerminalActivityFlushTimer, flushDeferredTerminalActivity]);
-
-	const markTerminalActivityViewed = useCallback(
-		(sessionId: string | null) => {
-			if (!sessionId) {
-				return;
-			}
-
-			applyTerminalActivityEvaluation(
-				sessionId,
-				terminalActivityStoreRef.current.markViewed(sessionId),
-			);
-			if (settingsRef.current.agentIntegration.enabled) {
-				void window.terminay.acknowledgeTerminalAgentStatuses(sessionId);
-			}
-		},
-		[applyTerminalActivityEvaluation],
-	);
-
-	const focusActiveTerminal = useCallback(() => {
-		const api = dockviewApiRef.current;
-
-		// If a non-terminal panel (file or folder viewer) is intentionally
-		// active, leave it focused instead of stealing focus into an unrelated
-		// terminal. Without this guard, restoring focus after closing the
-		// edit-project/edit-tab windows would activate an arbitrary terminal.
-		const activePanel = api?.activePanel ?? null;
-		if (activePanel && !activePanel.params?.sessionId) {
-			return;
-		}
-
-		let terminalPanel = activePanel?.params?.sessionId ? activePanel : null;
-
-		if (!terminalPanel && focusedSessionIdRef.current) {
-			terminalPanel = getPanelForSession(focusedSessionIdRef.current);
-		}
-
-		if (!terminalPanel && api) {
-			for (const group of api.groups) {
-				if (group.activePanel?.params?.sessionId) {
-					terminalPanel = group.activePanel;
-					break;
-				}
-
-				const panel = group.panels.find(
-					(candidate) => candidate.params?.sessionId,
-				);
-				if (panel) {
-					terminalPanel = panel;
-					break;
-				}
-			}
-		}
-
-		const sessionId = terminalPanel?.params?.sessionId ?? null;
-		if (!terminalPanel || !sessionId) {
-			return;
-		}
-
-		terminalPanel.api.setActive();
-		focusedSessionIdRef.current = sessionId;
-		setFocusedSessionId(sessionId);
-		markTerminalActivityViewed(sessionId);
-		window.requestAnimationFrame(() => {
-			window.dispatchEvent(
-				new CustomEvent('terminay-focus-terminal', {
-					detail: { sessionId },
-				}),
-			);
-		});
-	}, [getPanelForSession, markTerminalActivityViewed]);
-
-	const activateTerminal = useCallback(
-		(panelId: string, sessionId: string) => {
-			const panel = dockviewApiRef.current?.getPanel(panelId);
-			if (!panel || panel.params?.sessionId !== sessionId) {
-				return;
-			}
-
-			panel.api.setActive();
-			focusedSessionIdRef.current = sessionId;
-			setFocusedSessionId(sessionId);
-			markTerminalActivityViewed(sessionId);
-			setErrorText(null);
-			window.requestAnimationFrame(() => {
-				window.dispatchEvent(
-					new CustomEvent('terminay-focus-terminal', {
-						detail: { sessionId },
-					}),
-				);
-			});
-		},
-		[markTerminalActivityViewed],
-	);
-	const activateAgentTerminal = useCallback(
-		(terminalSessionId: string) => {
-			const panel = getPanelForSession(terminalSessionId);
-			if (!panel) {
-				return;
-			}
-			activateTerminal(panel.id, terminalSessionId);
-		},
-		[activateTerminal, getPanelForSession],
-	);
-
-	const cleanupDictationAudio = useCallback(() => {
-		if (dictationWaveformFrameRef.current !== null) {
-			window.cancelAnimationFrame(dictationWaveformFrameRef.current);
-			dictationWaveformFrameRef.current = null;
-		}
-
-		dictationStreamRef.current?.getTracks().forEach((track) => {
-			track.stop();
-		});
-		dictationStreamRef.current = null;
-		dictationMediaSourceRef.current = null;
-		dictationAnalyserRef.current = null;
-		dictationMonitorGainRef.current = null;
-		dictationScriptProcessorRef.current?.disconnect();
-		dictationScriptProcessorRef.current = null;
-		void dictationAudioContextRef.current?.close().catch(() => {});
-		dictationAudioContextRef.current = null;
-		dictationMediaRecorderRef.current = null;
-		dictationPcmChunksRef.current = [];
-		dictationPcmLengthRef.current = 0;
-		dictationPcmSampleRateRef.current = 0;
-		dictationSilenceStartedAtRef.current = null;
-		dictationPeakRmsRef.current = 0;
-		dictationSpeechFrameCountRef.current = 0;
-	}, []);
-
-	const stopDictationRecording = useCallback(() => {
-		const recorder = dictationMediaRecorderRef.current;
-		if (!recorder || recorder.state === 'inactive') {
-			return;
-		}
-
-		setDictationSession((current) =>
-			current && current.status === 'recording'
-				? { ...current, status: 'stopping' }
-				: current,
-		);
-		recorder.stop();
-	}, []);
-
-	const cancelDictation = useCallback(() => {
-		cleanupDictationAudio();
-		setDictationSession(null);
-	}, [cleanupDictationAudio]);
-
-	const insertDictationTranscript = useCallback(
-		async (sessionId: string, transcript: string) => {
-			const panel = getPanelForSession(sessionId);
-			if (!panel) {
-				await window.terminay.writeClipboardText(transcript);
-				throw new Error('The target terminal closed. Transcript copied to clipboard.');
-			}
-
-			window.terminay.writeTerminal(
-				sessionId,
-				formatDictationTranscriptForTerminal(transcript),
-			);
-			panel.api.setActive();
-			focusedSessionIdRef.current = sessionId;
-			setFocusedSessionId(sessionId);
-			window.requestAnimationFrame(() => {
-				window.dispatchEvent(
-					new CustomEvent('terminay-focus-terminal', {
-						detail: { sessionId },
-					}),
-				);
-			});
-		},
-		[getPanelForSession],
-	);
-
-	const startDictation = useCallback(async () => {
-		setIsMacroLauncherOpen(false);
-		setMacroQuery('');
-
-		if (dictationMediaRecorderRef.current?.state === 'recording') {
-			setErrorText('Dictation is already recording.');
-			return;
-		}
-
-		if (!settingsRef.current.dictation.enabled) {
-			setErrorText('Enable dictation in Settings before recording.');
-			void window.terminay.openSettingsWindow({ sectionId: 'openai-dictation' });
-			return;
-		}
-
-		const sessionId = getActiveSessionId();
-		if (!sessionId) {
-			setErrorText('Open a terminal before starting dictation.');
-			return;
-		}
-
-		try {
-			const keyStatus = await window.terminay.getDictationOpenAiKeyStatus();
-			if (!keyStatus.configured) {
-				setErrorText('Add an OpenAI API key in Settings before starting dictation.');
-				void window.terminay.openSettingsWindow({
-					sectionId: 'openai-dictation',
-				});
-				return;
-			}
-
-			if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-				throw new Error('Microphone recording is not available in this environment.');
-			}
-
-			const microphonePermissionStatus =
-				await window.terminay.requestDictationMicrophonePermission();
-			if (
-				microphonePermissionStatus === 'denied' ||
-				microphonePermissionStatus === 'restricted'
-			) {
-				throw new Error(
-					`Microphone access is ${microphonePermissionStatus}. Allow microphone access in macOS Privacy & Security settings, then restart Terminay.`,
-				);
-			}
-
-			const captureConfig = settingsRef.current.dictation;
-			const selectedMicrophoneDeviceId =
-				captureConfig.microphoneDeviceId.trim();
-			const audioConstraints: MediaTrackConstraints = {};
-			if (selectedMicrophoneDeviceId) {
-				audioConstraints.deviceId = { exact: selectedMicrophoneDeviceId };
-			}
-
-			let stream: MediaStream;
-			try {
-				stream = await navigator.mediaDevices.getUserMedia({
-					audio: audioConstraints,
-				});
-			} catch (error) {
-				if (selectedMicrophoneDeviceId) {
-					throw new Error(
-						'Unable to open the selected microphone. Refresh the dictation microphone list in Settings or choose System default.',
-					);
-				}
-
-				if (microphonePermissionStatus !== 'granted') {
-					const message = error instanceof Error ? error.message : String(error);
-					throw new Error(
-						`Unable to open the microphone while permission is ${microphonePermissionStatus}: ${message}`,
-					);
-				}
-
-				throw error;
-			}
-			const audioTrack = stream.getAudioTracks()[0] ?? null;
-			const audioTrackSettings = audioTrack?.getSettings();
-			console.info('Dictation microphone stream opened', {
-				requestedDeviceId: selectedMicrophoneDeviceId || 'default',
-				label: audioTrack?.label,
-				muted: audioTrack?.muted,
-				readyState: audioTrack?.readyState,
-				settings: audioTrackSettings,
-			});
-			const mimeType = getDictationMimeType();
-			const recorder = mimeType
-				? new MediaRecorder(stream, { mimeType })
-				: new MediaRecorder(stream);
-			const actualMimeType = recorder.mimeType || mimeType || 'audio/webm';
-			const audioContext = new AudioContext();
-			await audioContext.resume();
-			const source = audioContext.createMediaStreamSource(stream);
-			const analyser = audioContext.createAnalyser();
-			analyser.fftSize = 512;
-			analyser.smoothingTimeConstant = 0.72;
-			const processor = audioContext.createScriptProcessor(
-				DICTATION_SCRIPT_PROCESSOR_BUFFER_SIZE,
-				1,
-				1,
-			);
-			const monitorGain = audioContext.createGain();
-			monitorGain.gain.value = 0;
-			source.connect(analyser);
-			source.connect(processor);
-			processor.connect(monitorGain);
-			monitorGain.connect(audioContext.destination);
-
-			const startedAt = Date.now();
-
-			dictationChunksRef.current = [];
-			dictationPcmChunksRef.current = [];
-			dictationPcmLengthRef.current = 0;
-			dictationPcmSampleRateRef.current = audioContext.sampleRate;
-			dictationStreamRef.current = stream;
-			dictationMediaRecorderRef.current = recorder;
-			dictationAudioContextRef.current = audioContext;
-			dictationMediaSourceRef.current = source;
-			dictationAnalyserRef.current = analyser;
-			dictationMonitorGainRef.current = monitorGain;
-			dictationScriptProcessorRef.current = processor;
-			dictationSilenceStartedAtRef.current = null;
-			dictationPeakRmsRef.current = 0;
-			dictationSpeechFrameCountRef.current = 0;
-
-			processor.onaudioprocess = (event) => {
-				if (recorder.state !== 'recording') {
-					return;
-				}
-
-				const input = event.inputBuffer.getChannelData(0);
-				const samples = new Float32Array(input.length);
-				samples.set(input);
-				dictationPcmChunksRef.current.push(samples);
-				dictationPcmLengthRef.current += samples.length;
-
-				let sum = 0;
-				for (const sample of samples) {
-					sum += sample * sample;
-				}
-				const rms = Math.sqrt(sum / samples.length);
-				dictationPeakRmsRef.current = Math.max(
-					dictationPeakRmsRef.current,
-					rms,
-				);
-				if (rms >= DICTATION_SPEECH_RMS_THRESHOLD) {
-					dictationSpeechFrameCountRef.current += 1;
-				}
-
-				const now = Date.now();
-				const elapsedMs = now - startedAt;
-				const bars = Array.from(
-					{ length: DICTATION_WAVEFORM_BAR_COUNT },
-					(_, index) => {
-						const start = Math.floor(
-							(index / DICTATION_WAVEFORM_BAR_COUNT) * samples.length,
-						);
-						const end = Math.max(
-							start + 1,
-							Math.floor(
-								((index + 1) / DICTATION_WAVEFORM_BAR_COUNT) *
-									samples.length,
-							),
-						);
-						let total = 0;
-						for (let offset = start; offset < end; offset += 1) {
-							total += Math.abs(samples[offset] ?? 0);
-						}
-						return Math.max(
-							0.08,
-							Math.min(
-								1,
-								(total / (end - start)) * DICTATION_WAVEFORM_GAIN,
-							),
-						);
-					},
-				);
-
-				setDictationSession((current) =>
-					current &&
-					current.sessionId === sessionId &&
-					current.status === 'recording'
-						? { ...current, elapsedMs, waveformLevels: bars }
-						: current,
-				);
-
-				const config = settingsRef.current.dictation;
-				const maxDurationMs = config.maxDurationSeconds * 1000;
-				const silenceStopMs = config.silenceStopSeconds * 1000;
-				if (elapsedMs >= maxDurationMs) {
-					stopDictationRecording();
-					return;
-				}
-
-				if (elapsedMs > DICTATION_INITIAL_SILENCE_GRACE_MS) {
-					if (rms < DICTATION_SILENCE_RMS_THRESHOLD) {
-						dictationSilenceStartedAtRef.current ??= now;
-						if (now - dictationSilenceStartedAtRef.current >= silenceStopMs) {
-							stopDictationRecording();
-							return;
-						}
-					} else {
-						dictationSilenceStartedAtRef.current = null;
-					}
-				}
-			};
-
-			recorder.ondataavailable = (event) => {
-				if (event.data.size > 0) {
-					dictationChunksRef.current.push(event.data);
-				}
-			};
-
-			recorder.onerror = () => {
-				cleanupDictationAudio();
-				setDictationSession((current) =>
-					current && current.sessionId === sessionId
-						? {
-								...current,
-								status: 'failed',
-								error: 'Microphone recording failed.',
-							}
-						: current,
-				);
-			};
-
-			recorder.onstop = () => {
-				void (async () => {
-					const chunks = dictationChunksRef.current;
-					const pcmChunks = dictationPcmChunksRef.current;
-					const pcmLength = dictationPcmLengthRef.current;
-					const pcmSampleRate =
-						dictationPcmSampleRateRef.current || audioContext.sampleRate;
-					const durationMs = Date.now() - startedAt;
-					const peakRms = dictationPeakRmsRef.current;
-					const speechFrameCount = dictationSpeechFrameCountRef.current;
-					dictationChunksRef.current = [];
-					dictationPcmChunksRef.current = [];
-					dictationPcmLengthRef.current = 0;
-					cleanupDictationAudio();
-
-					if (chunks.length === 0 && pcmLength === 0) {
-						setDictationSession((current) =>
-							current && current.sessionId === sessionId
-								? {
-										...current,
-										status: 'failed',
-										error: 'No dictation audio was captured.',
-									}
-								: current,
-						);
-						return;
-					}
-
-					const pcmAudioAvailable = pcmChunks.length > 0 && pcmLength > 0;
-					const uploadMimeType = pcmAudioAvailable ? 'audio/wav' : actualMimeType;
-					const audioBlob = pcmAudioAvailable
-						? encodeDictationWav(pcmChunks, pcmSampleRate, pcmLength)
-						: new Blob(chunks, { type: actualMimeType });
-					if (audioBlob.size === 0) {
-						setDictationSession((current) =>
-							current && current.sessionId === sessionId
-								? {
-										...current,
-										status: 'failed',
-										error: 'No dictation audio was captured.',
-									}
-								: current,
-						);
-						return;
-					}
-					if (audioBlob.size > DICTATION_UPLOAD_LIMIT_BYTES) {
-						setDictationSession((current) =>
-							current && current.sessionId === sessionId
-								? {
-										...current,
-										status: 'failed',
-										error: 'Dictation audio exceeds the 25 MB upload limit.',
-									}
-								: current,
-						);
-						return;
-					}
-					const recordedLevels =
-						peakRms < DICTATION_MIN_SPEECH_RMS
-							? await measureDictationBlobAudio(audioBlob)
-							: null;
-					const effectivePeakRms = Math.max(
-						peakRms,
-						recordedLevels?.peakRms ?? 0,
-					);
-					const audioDiagnostics = {
-						audioBytes: audioBlob.size,
-						audioSource: pcmAudioAvailable ? 'pcm-wav' : 'media-recorder',
-						durationMs,
-						livePeakRms: Number(peakRms.toFixed(5)),
-						pcmLength,
-						pcmSampleRate,
-						recordedDurationMs: recordedLevels?.durationMs,
-						recordedPeakRms:
-							typeof recordedLevels?.peakRms === 'number'
-								? Number(recordedLevels.peakRms.toFixed(5))
-								: undefined,
-						recordedRms:
-							typeof recordedLevels?.rms === 'number'
-								? Number(recordedLevels.rms.toFixed(5))
-								: undefined,
-						speechFrameCount,
-						trackLabel: audioTrack?.label,
-						trackMuted: audioTrack?.muted,
-						trackReadyState: audioTrack?.readyState,
-						trackSettings: audioTrackSettings,
-					};
-					console.info('Dictation audio diagnostics', audioDiagnostics);
-					if (
-						durationMs < DICTATION_MIN_RECORDING_MS ||
-						(effectivePeakRms < DICTATION_MIN_SPEECH_RMS &&
-							speechFrameCount < DICTATION_MIN_SPEECH_FRAMES)
-					) {
-						console.warn(
-							'Dictation audio levels are below the local speech threshold; uploading anyway.',
-							audioDiagnostics,
-						);
-					}
-
-					setDictationSession((current) =>
-						current && current.sessionId === sessionId
-							? { ...current, status: 'transcribing' }
-							: current,
-					);
-
-					try {
-						const config = settingsRef.current.dictation;
-						const audioBase64 = await blobToBase64(audioBlob);
-						const result = await window.terminay.transcribeDictation({
-							audioBase64,
-							fileName: `dictation-${Date.now()}.${getDictationFileExtension(uploadMimeType)}`,
-							language:
-								config.language.trim() ||
-								defaultTerminalSettings.dictation.language,
-							mimeType: uploadMimeType,
-							model: config.model,
-							prompt: config.prompt,
-						});
-						const transcript = result.text.trim();
-						if (!transcript) {
-							throw new Error('OpenAI returned an empty transcript.');
-						}
-
-						await insertDictationTranscript(sessionId, transcript);
-						setErrorText(null);
-						setDictationSession((current) =>
-							current && current.sessionId === sessionId
-								? {
-										...current,
-										status: 'complete',
-										transcript,
-									}
-								: current,
-						);
-						window.setTimeout(() => {
-							setDictationSession((current) =>
-								current && current.sessionId === sessionId &&
-								current.status === 'complete'
-									? null
-									: current,
-							);
-						}, 1400);
-					} catch (error) {
-						const message =
-							error instanceof Error ? error.message : String(error);
-						setErrorText(`Dictation failed: ${message}`);
-						setDictationSession((current) =>
-							current && current.sessionId === sessionId
-								? { ...current, status: 'failed', error: message }
-								: current,
-						);
-					}
-				})();
-			};
-
-			recorder.start(DICTATION_RECORDER_TIMESLICE_MS);
-			setDictationSession({
-				sessionId,
-				status: 'recording',
-				elapsedMs: 0,
-				waveformLevels: EMPTY_DICTATION_WAVEFORM,
-			});
-			setErrorText(null);
-		} catch (error) {
-			cleanupDictationAudio();
-			const message = error instanceof Error ? error.message : String(error);
-			setErrorText(`Unable to start dictation: ${message}`);
-			setDictationSession({
-				sessionId,
-				status: 'failed',
-				elapsedMs: 0,
-				waveformLevels: EMPTY_DICTATION_WAVEFORM,
-				error: message,
-			});
-		}
-	}, [
-		cleanupDictationAudio,
-		getActiveSessionId,
-		insertDictationTranscript,
-		stopDictationRecording,
-	]);
-
-	const retryDictation = useCallback(() => {
-		setDictationSession(null);
-		void startDictation();
-	}, [startDictation]);
-
-	useEffect(() => {
-		return () => {
-			cleanupDictationAudio();
-		};
-	}, [cleanupDictationAudio]);
-
-	useEffect(() => {
-		const api = dockviewApiRef.current;
-		if (!api) {
-			return;
-		}
-
-		for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
-			const panel = api.getPanel(panelId);
-			const overlay: DictationOverlayProps | null =
-				dictationSession?.sessionId === sessionId
-					? {
-						...dictationSession,
-						accentColor: panel?.params?.color ?? project.color,
-						onCancel: cancelDictation,
-						onRetry: retryDictation,
-						onStop: stopDictationRecording,
-					}
-					: null;
-
-			window.dispatchEvent(
-				new CustomEvent('terminay-dictation-overlay', {
-					detail: { sessionId, overlay },
-				}),
-			);
-		}
-	}, [
-		cancelDictation,
-		dictationSession,
-		project.color,
-		retryDictation,
-		stopDictationRecording,
-	]);
-
-	const [terminalSwitcherItems, setTerminalSwitcherItems] = useState<
-		TerminalSwitcherItem[]
-	>([]);
-	const [isTerminalSwitcherOpen, setIsTerminalSwitcherOpen] = useState(false);
-	const [terminalSwitcherIndex, setTerminalSwitcherIndex] = useState(0);
-	const terminalSwitcherSelectionRef = useRef(0);
-
-	const loadDirectory = useCallback(async (dirPath: string) => {
-		setLoadingPaths((current) => ({ ...current, [dirPath]: true }));
-		setDirectoryErrors((current) => {
-			if (!(dirPath in current)) {
-				return current;
-			}
-
-			const { [dirPath]: _removed, ...rest } = current;
-			return rest;
-		});
-
-		try {
-			const entries = await window.terminay.listDirectory(dirPath);
-			setDirectoryChildren((current) => ({
-				...current,
-				[dirPath]: entries,
-			}));
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			setDirectoryErrors((current) => ({
-				...current,
-				[dirPath]: message,
-			}));
-		} finally {
-			setLoadingPaths((current) => {
-				const { [dirPath]: _removed, ...rest } = current;
-				return rest;
-			});
-		}
-	}, []);
-
-	const refreshGitStatuses = useCallback(async () => {
-		if (!project.rootFolder) {
-			setGitStatuses({});
-			setWorktreePanelStatus(null);
-			return;
-		}
-
-		if (isRefreshingGitStatusesRef.current) {
-			return;
-		}
-
-		isRefreshingGitStatusesRef.current = true;
-		try {
-			const [nextStatuses, nextWorktrees] = await Promise.all([
-				window.terminay.getFileExplorerGitStatuses(project.rootFolder),
-				window.terminay.getWorktreePanelStatus(project.rootFolder),
-			]);
-			setGitStatuses(nextStatuses.statuses);
-			setWorktreePanelStatus(nextWorktrees);
-		} catch {
-			setGitStatuses({});
-			setWorktreePanelStatus(null);
-		} finally {
-			isRefreshingGitStatusesRef.current = false;
-		}
-	}, [project.rootFolder]);
-
-	const scheduleFileExplorerDirectoryRefresh = useCallback(
-		(dirPath: string) => {
-			const existingTimer = fileExplorerRefreshTimersRef.current.get(dirPath);
-			if (existingTimer !== undefined) {
-				window.clearTimeout(existingTimer);
-			}
-
-			const nextTimer = window.setTimeout(() => {
-				fileExplorerRefreshTimersRef.current.delete(dirPath);
-				void loadDirectory(dirPath);
-				void refreshGitStatuses();
-			}, FILE_EXPLORER_WATCH_REFRESH_DELAY_MS);
-
-			fileExplorerRefreshTimersRef.current.set(dirPath, nextTimer);
-		},
-		[loadDirectory, refreshGitStatuses],
-	);
-
-	const refreshFileExplorerTree = useCallback(() => {
-		if (!project.rootFolder) {
-			return;
-		}
-
-		for (const timerId of fileExplorerRefreshTimersRef.current.values()) {
-			window.clearTimeout(timerId);
-		}
-		fileExplorerRefreshTimersRef.current.clear();
-
-		const directories = new Set<string>([
-			project.rootFolder,
-			...Object.keys(directoryChildren),
-		]);
-
-		void Promise.all(
-			Array.from(directories, (dirPath) => loadDirectory(dirPath)),
-		).then(() => {
-			void refreshGitStatuses();
-		});
-	}, [directoryChildren, loadDirectory, project.rootFolder, refreshGitStatuses]);
-
-	const toggleDirectory = useCallback(
-		(dirPath: string) => {
-			const shouldExpand = !expandedPaths[dirPath];
-			const shouldLoad =
-				shouldExpand &&
-				!(dirPath in directoryChildren) &&
-				!(dirPath in loadingPaths);
-
-			setExpandedPaths((current) => {
-				return {
-					...current,
-					[dirPath]: !current[dirPath],
-				};
-			});
-
-			if (shouldLoad) {
-				void loadDirectory(dirPath);
-			}
-		},
-		[directoryChildren, expandedPaths, loadDirectory, loadingPaths],
-	);
-
-	const updateMacroRun = useCallback(
-		(
-			sessionId: string,
-			runId: string,
-			updater: (run: TerminalTabMacroRun) => TerminalTabMacroRun,
-		) => {
-			setRunningMacroRunsBySession((current) => {
-				const existingRuns = current[sessionId];
-				if (!existingRuns?.length) {
-					return current;
-				}
-
-				let changed = false;
-				const nextRuns = existingRuns.map((run) => {
-					if (run.id !== runId) {
-						return run;
-					}
-
-					changed = true;
-					return updater(run);
-				});
-
-				return changed
-					? {
-							...current,
-							[sessionId]: nextRuns,
-						}
-					: current;
-			});
-		},
-		[],
-	);
-
-	const updateMacroRunStatus = useCallback(
-		(
-			sessionId: string,
-			runId: string,
-			status: TerminalTabMacroRun['status'],
-		) => {
-			updateMacroRun(sessionId, runId, (run) => ({
-				...run,
-				status,
-			}));
-		},
-		[updateMacroRun],
-	);
-
-	const updateMacroRunStepStatus = useCallback(
-		(
-			sessionId: string,
-			runId: string,
-			stepId: string,
-			status: 'pending' | 'running' | 'completed' | 'canceled' | 'failed',
-		) => {
-			updateMacroRun(sessionId, runId, (run) => ({
-				...run,
-				steps: run.steps.map((step) =>
-					step.id === stepId ? { ...step, status } : step,
-				),
-			}));
-		},
-		[updateMacroRun],
-	);
-
-	const clearMacroRunsForSession = useCallback((sessionId: string) => {
-		setRunningMacroRunsBySession((current) => {
-			if (!(sessionId in current)) {
-				return current;
-			}
-
-			const { [sessionId]: _removed, ...rest } = current;
-			return rest;
-		});
-	}, []);
-
-	const clearFinishedMacroRunsForSession = useCallback((sessionId: string) => {
-		setRunningMacroRunsBySession((current) => {
-			const existingRuns = current[sessionId];
-			if (!existingRuns?.length) {
-				return current;
-			}
-
-			const nextRuns = existingRuns.filter(
-				(run) => run.status === 'running' || run.status === 'canceling',
-			);
-			if (nextRuns.length === existingRuns.length) {
-				return current;
-			}
-
-			if (nextRuns.length === 0) {
-				const { [sessionId]: _removed, ...rest } = current;
-				return rest;
-			}
-
-			return {
-				...current,
-				[sessionId]: nextRuns,
-			};
-		});
-	}, []);
-
-	const clearMacroRunForSession = useCallback(
-		(sessionId: string, runId: string) => {
-			setRunningMacroRunsBySession((current) => {
-				const existingRuns = current[sessionId];
-				if (!existingRuns?.length) {
-					return current;
-				}
-
-				const nextRuns = existingRuns.filter((run) => run.id !== runId);
-				if (nextRuns.length === existingRuns.length) {
-					return current;
-				}
-
-				if (nextRuns.length === 0) {
-					const { [sessionId]: _removed, ...rest } = current;
-					return rest;
-				}
-
-				return {
-					...current,
-					[sessionId]: nextRuns,
-				};
-			});
-		},
-		[],
-	);
-
-	const cancelMacroRun = useCallback(
-		(runId: string) => {
-			const controller = macroRunControllersRef.current.get(runId);
-			if (!controller) {
-				return;
-			}
-
-			updateMacroRunStatus(controller.sessionId, runId, 'canceling');
-			controller.abortController.abort();
-		},
-		[updateMacroRunStatus],
-	);
-
-	const cancelMacroRunsForSession = useCallback(
-		(sessionId: string) => {
-			for (const [
-				runId,
-				controller,
-			] of macroRunControllersRef.current.entries()) {
-				if (controller.sessionId !== sessionId) {
+			const terminalSessionIds = new Set<string>();
+			const terminalTitlesBySession = new Map<string, string>();
+			const dockviewApi = dockviewApiRef.current;
+			for (const panel of dockviewApi?.panels ?? []) {
+				const sessionId = panel.params?.sessionId;
+				if (typeof sessionId !== 'string' || sessionId.length === 0) {
 					continue;
 				}
-
-				updateMacroRunStatus(sessionId, runId, 'canceling');
-				controller.abortController.abort();
+				terminalSessionIds.add(sessionId);
+				// The index can lag during panel adoption/moves. Keep it in sync
+				// from Dockview's live immutable terminal identity.
+				panelSessionMapRef.current.set(panel.id, sessionId);
+				const title =
+					typeof panel.title === 'string' && panel.title.trim().length > 0
+						? panel.title
+						: panel.params?.title;
+				if (typeof title === 'string' && title.trim()) {
+					terminalTitlesBySession.set(sessionId, title.trim());
+				}
 			}
-		},
-		[updateMacroRunStatus],
-	);
+			const priority: Record<AgentState, number> = {
+				blocked: 0,
+				waiting: 1,
+				working: 2,
+				done: 3,
+				idle: 4,
+			};
+			return [...terminalSessionIds]
+				.flatMap((terminalSessionId) =>
+					selectLiveAgentStatusesForTerminal(
+						agentStatusSnapshot,
+						terminalSessionId,
+					),
+				)
+				.sort(
+					(left, right) =>
+						priority[left.state] - priority[right.state] ||
+						right.updatedAt - left.updatedAt ||
+						left.entryId.localeCompare(right.entryId),
+				)
+				.map((entry) => ({
+					entry,
+					projectId: project.id,
+					model: entry.model?.displayName ?? entry.model?.id,
+					prompt: entry.promptText,
+					terminalTitle: terminalTitlesBySession.get(
+						entry.activationTerminalSessionId,
+					),
+				}));
+		}, [
+			agentStatusSnapshot,
+			focusedSessionId,
+			isDockviewReady,
+			project.id,
+			settings.agentIntegration.enabled,
+			terminalTitleRevision,
+		]);
 
-	const getOrderedTerminalSwitcherItems =
-		useCallback((): TerminalSwitcherItem[] => {
-			const api = dockviewApiRef.current;
-			if (!api) {
-				return [];
+		useEffect(() => {
+			terminalActivityStoreRef.current.configure(
+				{
+					amberDelayMs: settings.activityIndicators.amberDelaySeconds * 1000,
+					greenDelayMs: settings.activityIndicators.greenDelaySeconds * 1000,
+					tabSwitchSuppressionMs:
+						settings.activityIndicators.tabSwitchSuppressionSeconds * 1000,
+				},
+				{ signalDetectionEnabled: settings.activityIndicators.signalDetection },
+			);
+
+			const now = Date.now();
+			for (const sessionId of panelSessionMapRef.current.values()) {
+				evaluateTerminalActivityStateRef.current(sessionId, now);
 			}
+		}, [
+			settings.activityIndicators.amberDelaySeconds,
+			settings.activityIndicators.greenDelaySeconds,
+			settings.activityIndicators.tabSwitchSuppressionSeconds,
+			settings.activityIndicators.signalDetection,
+		]);
 
-			return api.groups
-				.map((group) => {
-					const referencePanel = group.activePanel ?? group.panels[0];
-					if (!referencePanel) {
-						return null;
-					}
+		const getProjectsForTerminalMove =
+			useCallback((): TerminalTabMoveProject[] => {
+				return projects
+					.filter((candidate) => candidate.id !== project.id)
+					.map((candidate) => ({
+						emoji: candidate.emoji,
+						id: candidate.id,
+						title: candidate.title,
+					}));
+			}, [project.id, projects]);
 
-					try {
-						if (referencePanel.api.getWindow() !== window) {
-							return null;
-						}
-					} catch {
-						return null;
-					}
-
-					const rect = group.element.getBoundingClientRect();
-					return {
-						group,
-						top: rect.top,
-						left: rect.left,
-					};
-				})
-				.filter(
-					(
-						entry,
-					): entry is {
-						group: DockviewApi['groups'][number];
-						top: number;
-						left: number;
-					} => entry !== null,
-				)
-				.sort((a, b) => {
-					const verticalDistance = Math.abs(a.top - b.top);
-					if (verticalDistance > 24) {
-						return a.top - b.top;
-					}
-
-					return a.left - b.left;
-				})
-				.flatMap(({ group }) =>
-					group.panels.map((panel) => ({
-						panelId: panel.id,
-						sessionId: panel.params?.sessionId ?? '',
-						title: panel.title ?? 'Terminal',
-						emoji: panel.params?.emoji ?? '',
-						color: panel.params?.color ?? '#4db5ff',
-					})),
-				)
-				.filter((panel) => panel.sessionId.length > 0);
+		const getActiveSessionId = useCallback(() => {
+			return getActiveTerminalSessionId(dockviewApiRef.current);
 		}, []);
 
-	const closeTerminalSwitcher = useCallback(() => {
-		terminalSwitcherSelectionRef.current = 0;
-		setIsTerminalSwitcherOpen(false);
-		setTerminalSwitcherItems([]);
-		setTerminalSwitcherIndex(0);
-	}, []);
-
-	const commitTerminalSwitcherSelection = useCallback(() => {
-		const api = dockviewApiRef.current;
-		const selectedPanel =
-			terminalSwitcherItems[terminalSwitcherSelectionRef.current];
-		closeTerminalSwitcher();
-
-		if (!api || !selectedPanel) {
-			return;
-		}
-
-		api.getPanel(selectedPanel.panelId)?.api.setActive();
-		setErrorText(null);
-		window.requestAnimationFrame(() => {
-			window.dispatchEvent(
-				new CustomEvent('terminay-focus-terminal', {
-					detail: { sessionId: selectedPanel.sessionId },
-				}),
-			);
-		});
-	}, [closeTerminalSwitcher, terminalSwitcherItems]);
-
-	const syncPanelFocusState = useCallback(() => {
-		const api = dockviewApiRef.current;
-		if (!api) {
-			return;
-		}
-
-		const activePanelId = api.activePanel?.id ?? null;
-
-		for (const group of api.groups) {
-			for (const panel of group.panels) {
-				panel.api.updateParameters({
-					...panel.params,
-					isFocused: panel.id === activePanelId,
-				});
-			}
-		}
-	}, []);
-
-	const openFile = useCallback(
-		async (filePath: string, options?: OpenFileOptions) => {
-			const api = dockviewApiRef.current;
-			if (!api) {
-				return;
-			}
-
-			const existingPanelId = filePathPanelMapRef.current.get(filePath);
-			if (existingPanelId) {
-				const existingPanel = api.getPanel(existingPanelId);
-				if (existingPanel) {
-					if (options?.initialMode) {
-						existingPanel.api.updateParameters({
-							...existingPanel.params,
-							initialMode: options.initialMode,
-						});
-					}
-					existingPanel.api.setActive();
-					syncPanelFocusState();
-					if (options?.initialMode) {
-						window.requestAnimationFrame(() => {
-							window.dispatchEvent(
-								new CustomEvent('terminay-file-mode-request', {
-									detail: {
-										mode: options.initialMode,
-										path: filePath,
-									},
-								}),
-							);
-						});
-					}
-					return;
-				}
-			}
-
-			filePanelCounterRef.current += 1;
-			const panelId = `file-${filePanelCounterRef.current}`;
-			const title = filePath.split(/[/\\]/).pop() || filePath;
-
-			const panel = api.addPanel<FilePanelInstanceParams>({
-				component: 'file',
-				id: panelId,
-				params: {
-					color: project.color,
-					filePath,
-					initialMode: options?.initialMode,
-					inheritsProjectColor: true,
-					isFocused: false,
-					preferredEngine: 'auto',
-						projectColor: project.color,
-						projectRoot: project.rootFolder,
-					},
-				position: api.activePanel
-					? {
-							direction: 'within',
-							referenceGroup: api.activePanel.group.id,
-						}
-					: undefined,
-				tabComponent: 'fileTab',
-				title,
-			});
-
-			filePathPanelMapRef.current.set(filePath, panel.id);
-			panel.api.setActive();
-			syncPanelFocusState();
-		},
-		[project.color, project.rootFolder, syncPanelFocusState],
-	);
-
-	const handleRename = useCallback(
-		async (oldPath: string) => {
-			const fileName = oldPath.split(/[/\\]/).pop() || '';
-			const newName = await requestFileExplorerName({
-				initialValue: fileName,
-				label: 'Name',
-				submitLabel: 'Rename',
-				title: 'Rename',
-			});
-			if (!newName || newName === fileName) {
-				return;
-			}
-
-			const parentDir = oldPath.substring(0, oldPath.length - fileName.length);
-			const newPath = `${parentDir}${newName}`;
-
-			try {
-				await window.terminay.renameEntry(oldPath, newPath);
-				// Refresh parent directory
-				void loadDirectory(parentDir || project.rootFolder);
-				void refreshGitStatuses();
-			} catch (error) {
-				setErrorText(`Failed to rename: ${String(error)}`);
-			}
-		},
-		[loadDirectory, project.rootFolder, refreshGitStatuses, requestFileExplorerName],
-	);
-
-	const handleDelete = useCallback(
-		async (path: string) => {
-			const fileName = path.split(/[/\\]/).pop() || '';
-			if (!window.confirm(`Are you sure you want to delete "${fileName}"?`)) {
-				return;
-			}
-
-			try {
-				await window.terminay.deleteEntry(path);
-				const parentDir = path.substring(0, path.length - fileName.length - 1);
-				void loadDirectory(parentDir || project.rootFolder);
-				void refreshGitStatuses();
-			} catch (error) {
-				setErrorText(`Failed to delete: ${String(error)}`);
-			}
-		},
-		[loadDirectory, project.rootFolder, refreshGitStatuses],
-	);
-
-	const handleNewFile = useCallback(
-		async (dirPath: string) => {
-			const fileName = await requestFileExplorerName({
-				label: 'File name',
-				submitLabel: 'Create File',
-				title: 'Create New File',
-			});
-			if (!fileName) {
-				return;
-			}
-
-			const filePath = joinFileExplorerPath(dirPath, fileName);
-			try {
-				await window.terminay.saveFile({
-					kind: 'text',
-					path: filePath,
-					data: '',
-				});
-				void loadDirectory(dirPath);
-				void refreshGitStatuses();
-				openFile(filePath, { initialMode: 'text' });
-			} catch (error) {
-				setErrorText(`Failed to create file: ${String(error)}`);
-			}
-		},
-		[loadDirectory, openFile, refreshGitStatuses, requestFileExplorerName],
-	);
-
-	const handleNewFolder = useCallback(
-		async (dirPath: string) => {
-			const folderName = await requestFileExplorerName({
-				label: 'Folder name',
-				submitLabel: 'Create Folder',
-				title: 'Create New Folder',
-			});
-			if (!folderName) {
-				return;
-			}
-
-			const newFolderPath = joinFileExplorerPath(dirPath, folderName);
-			try {
-				await window.terminay.mkdir(newFolderPath);
-				void loadDirectory(dirPath);
-				void refreshGitStatuses();
-			} catch (error) {
-				setErrorText(`Failed to create folder: ${String(error)}`);
-			}
-		},
-		[loadDirectory, refreshGitStatuses, requestFileExplorerName],
-	);
-
-	const handleCopyPath = useCallback((path: string) => {
-		void window.terminay.writeClipboardText(path);
-	}, []);
-
-	const handleCopyRelativePath = useCallback(
-		(path: string) => {
-			void window.terminay.writeClipboardText(
-				getPathRelativeToRoot(path, project.rootFolder),
-			);
-		},
-		[project.rootFolder],
-	);
-
-	const handleOpenTerminalAt = useCallback(
-		async (path: string) => {
-			const api = dockviewApiRef.current;
-			if (!api) {
-				return;
-			}
-
-			// If it's a file, get the parent directory
-			let cwd = path;
-			try {
-				const info = await window.terminay.getFileInfo(path);
-				if (!info.isDirectory) {
-					cwd = path.substring(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')));
-				}
-			} catch {
-				// ignore
-			}
-
-			try {
-				const { id: sessionId } = await window.terminay.createTerminal({ cwd });
-				suppressInitialTerminalActivity(sessionId);
-
-				terminalCounterRef.current += 1;
-				const panelId = `terminal-${terminalCounterRef.current}`;
-
-				const panel = api.addPanel<TerminalPanelParams>({
-					id: panelId,
-					title: `Terminal ${terminalCounterRef.current}`,
-					component: 'terminal',
-					tabComponent: 'terminalTab',
-					params: {
-						activityIndicatorsEnabled: true,
-						color: project.color,
-						inheritsProjectColor: true,
-						isFocused: false,
-						macroRuns: [],
-						onClearFinishedMacroRuns: () =>
-							clearFinishedMacroRunsForSession(sessionId),
-						onClearMacroRun: (runId: string) =>
-							clearMacroRunForSession(sessionId, runId),
-						onCancelMacroRun: cancelMacroRun,
-						onMoveToProject: (targetProjectId: string) =>
-							onMoveTerminalToProject(project.id, panelId, targetProjectId),
-						onRevealRecording: (recordingId: string) =>
-							void revealRecording(recordingId),
-						onStartRecording: () => void startRecordingForSession(sessionId),
-						onStopRecording: () => void stopRecordingForSession(sessionId),
-						recordingStatus: 'idle',
-						registerTerminalContextReader,
-						onUpdateNote: (terminalNote: string | undefined) =>
-							dockviewApiRef.current
-								?.getPanel(panelId)
-								?.api.updateParameters({ terminalNote }),
-						projectColor: project.color,
-						projectsForMove: getProjectsForTerminalMove(),
-						sessionId,
-						showActiveTabActivityIndicator:
-							settings.activityIndicators.showActiveTabs,
-						showFinishedTabActivityIndicator:
-							settings.activityIndicators.showFinishedTabs,
-						terminalActivityState: 'viewed',
-					},
-				});
-
-				panelSessionMapRef.current.set(panel.id, sessionId);
-				window.terminay.updateTerminalRemoteMetadata(sessionId, {
-					color: project.color,
-					emoji: '',
-					inheritsProjectColor: true,
-					title: `Terminal ${terminalCounterRef.current}`,
-					projectId: project.id,
-					projectTitle: project.title,
-					projectEmoji: project.emoji,
-					projectColor: project.color,
-				});
-				if (settings.recording.recordNewTerminals) {
-					void startRecordingForSession(sessionId);
-				} else {
-					hydrateRecordingStateForSession(sessionId);
-				}
-				window.requestAnimationFrame(publishTerminalActivityOverview);
-			} catch (error) {
-				setErrorText(`Failed to open terminal: ${String(error)}`);
-			}
-		},
-		[
-			cancelMacroRun,
-			clearFinishedMacroRunsForSession,
-			clearMacroRunForSession,
-			getProjectsForTerminalMove,
-			onMoveTerminalToProject,
-			project.emoji,
-			project.id,
-			project.title,
-			project.color,
-			publishTerminalActivityOverview,
-			registerTerminalContextReader,
-			revealRecording,
-			hydrateRecordingStateForSession,
-			settings.activityIndicators.showActiveTabs,
-			settings.activityIndicators.showFinishedTabs,
-			settings.recording.recordNewTerminals,
-			startRecordingForSession,
-			stopRecordingForSession,
-			suppressInitialTerminalActivity,
-		],
-	);
-
-	const handleSwitchProjectRootToWorktree = useCallback(
-		(worktree: GitWorktreeStatus) => {
-			onUpdateProject(project.id, { rootFolder: worktree.path });
-			setExpandedPaths({ [worktree.path]: true });
-			setErrorText(null);
-		},
-		[onUpdateProject, project.id],
-	);
-
-	const handleRenameWorktree = useCallback(
-		async (worktree: GitWorktreeStatus) => {
-			const nextName = await requestFileExplorerName({
-				initialValue: worktree.name,
-				label: 'Worktree folder name',
-				submitLabel: 'Rename',
-				title: 'Rename Worktree',
-			});
-			if (!nextName || nextName === worktree.name) {
-				return;
-			}
-
-			const parentDir = getFileExplorerPathParent(worktree.path);
-			const newPath = joinFileExplorerPath(parentDir, nextName);
-
-			try {
-				await window.terminay.moveGitWorktree({
-					repoPath: project.rootFolder,
-					worktreePath: worktree.path,
-					newPath,
-				});
-				if (project.rootFolder === worktree.path) {
-					onUpdateProject(project.id, { rootFolder: newPath });
-					setExpandedPaths({ [newPath]: true });
-				}
-				void loadDirectory(parentDir || project.rootFolder);
-				void refreshGitStatuses();
-			} catch (error) {
-				setErrorText(`Failed to rename worktree: ${String(error)}`);
-			}
-		},
-		[
-			loadDirectory,
-			onUpdateProject,
-			project.id,
-			project.rootFolder,
-			refreshGitStatuses,
-			requestFileExplorerName,
-		],
-	);
-
-	const handleDeleteWorktree = useCallback(
-		async (worktree: GitWorktreeStatus) => {
-			if (
-				!window.confirm(
-					`Delete worktree "${worktree.name}"?\n\n${worktree.path}\n\nThis permanently removes this worktree folder, including uncommitted and untracked files.`,
-				)
-			) {
-				return;
-			}
-
-			setDeletingWorktreePaths((current) => {
-				const next = new Set(current);
-				next.add(worktree.path);
-				return next;
-			});
-
-			try {
-				await window.terminay.removeGitWorktree({
-					force: true,
-					repoPath: project.rootFolder,
-					worktreePath: worktree.path,
-				});
-				setErrorText(null);
-				const parentDir = getFileExplorerPathParent(worktree.path);
-				void loadDirectory(parentDir || project.rootFolder);
-				void refreshGitStatuses();
-			} catch (error) {
-				setDeletingWorktreePaths((current) => {
-					const next = new Set(current);
-					next.delete(worktree.path);
-					return next;
-				});
-				setErrorText(`Failed to delete worktree: ${String(error)}`);
-				void refreshGitStatuses();
-			}
-		},
-		[loadDirectory, project.rootFolder, refreshGitStatuses],
-	);
-
-	const handlePullWorktreeFromOrigin = useCallback(
-		async (worktree: GitWorktreeStatus) => {
-			try {
-				await window.terminay.pullGitWorktreeFromOrigin(worktree.path);
-				setErrorText(null);
-			} catch (error) {
-				setErrorText(`Failed to pull from origin: ${String(error)}`);
-			} finally {
-				refreshFileExplorerTree();
-			}
-		},
-		[refreshFileExplorerTree],
-	);
-
-	const handleRevealWorktree = useCallback((worktree: GitWorktreeStatus) => {
-		void window.terminay.revealInOS(worktree.path);
-	}, []);
-
-	const handleOpenTerminalAtWorktree = useCallback(
-		(worktree: GitWorktreeStatus) => {
-			void handleOpenTerminalAt(worktree.path);
-		},
-		[handleOpenTerminalAt],
-	);
-
-	const handleOpenWorktreePushMenu = useCallback(
-		(worktree: GitWorktreeStatus, anchor: { x: number; y: number }) => {
-			const defaultBranch = worktreePanelStatus?.defaultBranch ?? 'main';
-			setGitPushMenuPosition((current) =>
-				current?.target?.worktreePath === worktree.path
-					? null
-					: {
-							x: anchor.x,
-							y: anchor.y,
-							target: {
-								branch: worktree.branch,
-								cwd: worktree.path,
-								defaultBranch,
-								worktreePath: worktree.path,
-							},
-						},
-			);
-		},
-		[worktreePanelStatus],
-	);
-
-	const handleOpenGitEntry = useCallback(
-		(entry: GitChangeEntry) => {
-			// Untracked files have no diff to show; open them directly. Everything
-			// else opens straight into the file viewer's diff mode.
-			if (entry.state === 'untracked') {
-				void openFile(entry.path);
-				return;
-			}
-
-			void openFile(entry.path, { initialMode: 'diff' });
-		},
-		[openFile],
-	);
-
-	const updateSidebarSettings = useCallback(
-		(patch: Partial<SidebarSettings>) => {
-			const current = settingsRef.current;
-			void window.terminay.updateTerminalSettings({
-				...current,
-				sidebar: { ...current.sidebar, ...patch },
-			});
-		},
-		[],
-	);
-
-	const openFolder = useCallback(
-		(folderPath: string) => {
-			const api = dockviewApiRef.current;
-			if (!api) {
-				return;
-			}
-
-			const existingPanelId = folderPathPanelMapRef.current.get(folderPath);
-			if (existingPanelId) {
-				const existingPanel = api.getPanel(existingPanelId);
-				if (existingPanel) {
-					existingPanel.api.setActive();
-					syncPanelFocusState();
-					return;
-				}
-			}
-
-			folderPanelCounterRef.current += 1;
-			const panelId = `folder-${folderPanelCounterRef.current}`;
-			const title =
-				folderPath.split(/[/\\]/).filter(Boolean).pop() || folderPath;
-
-			const panel = api.addPanel<FolderPanelInstanceParams & {
-				onRename?: (path: string) => void;
-				onDelete?: (path: string) => void;
-				onNewFile?: (dirPath: string) => void;
-				onNewFolder?: (dirPath: string) => void;
-				onOpenTerminal?: (path: string) => void;
-				onCopyPath?: (path: string) => void;
-				onCopyRelativePath?: (path: string) => void;
-				projectRootPath?: string;
-			}>({
-				component: 'folder',
-				id: panelId,
-				params: {
-					color: project.color,
-					folderPath,
-					inheritsProjectColor: true,
-					isFocused: false,
-					onRename: handleRename,
-					onDelete: handleDelete,
-					onNewFile: handleNewFile,
-					onNewFolder: handleNewFolder,
-					onOpenTerminal: handleOpenTerminalAt,
-					onCopyPath: handleCopyPath,
-					onCopyRelativePath: handleCopyRelativePath,
-					projectColor: project.color,
-					projectRootPath: project.rootFolder,
-				},
-				position: api.activePanel
-					? {
-							direction: 'within',
-							referenceGroup: api.activePanel.group.id,
-						}
-					: undefined,
-				tabComponent: 'folderTab',
-				title,
-			});
-
-			folderPathPanelMapRef.current.set(folderPath, panel.id);
-			panel.api.setActive();
-			syncPanelFocusState();
-		},
-		[
-			handleDelete,
-			handleCopyPath,
-			handleCopyRelativePath,
-			handleNewFile,
-			handleNewFolder,
-			handleOpenTerminalAt,
-			handleRename,
-			project.color,
-			project.rootFolder,
-			syncPanelFocusState,
-		],
-	);
-
-	const moveTerminalSwitcherSelection = useCallback(
-		(direction: 1 | -1) => {
-			const items = terminalSwitcherItems;
-			if (items.length <= 1) {
-				return;
-			}
-
-			const nextIndex =
-				(terminalSwitcherSelectionRef.current + direction + items.length) %
-				items.length;
-			terminalSwitcherSelectionRef.current = nextIndex;
-			setTerminalSwitcherIndex(nextIndex);
-		},
-		[terminalSwitcherItems],
-	);
-
-	const openTerminalSwitcher = useCallback(
-		(direction: 1 | -1 = 1) => {
-			const items = getOrderedTerminalSwitcherItems();
-			if (items.length <= 1) {
-				return;
-			}
-
-			const activePanelId = dockviewApiRef.current?.activePanel?.id;
-			const activeIndex = activePanelId
-				? items.findIndex((item) => item.panelId === activePanelId)
-				: -1;
-			const startIndex = activeIndex >= 0 ? activeIndex : 0;
-			const nextIndex = (startIndex + direction + items.length) % items.length;
-
-			terminalSwitcherSelectionRef.current = nextIndex;
-			setTerminalSwitcherItems(items);
-			setTerminalSwitcherIndex(nextIndex);
-			setIsTerminalSwitcherOpen(true);
-		},
-		[getOrderedTerminalSwitcherItems],
-	);
-
-	const closeMacroLauncher = useCallback(() => {
-		setIsMacroLauncherOpen(false);
-		setMacroQuery('');
-		setSelectedMacroIndex(0);
-		window.requestAnimationFrame(() => {
-			focusActiveTerminal();
-		});
-	}, [focusActiveTerminal]);
-
-	const closeMacroParameterModal = useCallback(() => {
-		setMacroToRun(null);
-		setMacroFieldValues({});
-		setMacroFileSearchRootPath('');
-		window.requestAnimationFrame(() => {
-			focusActiveTerminal();
-		});
-	}, [focusActiveTerminal]);
-
-	const setProjectRootFolderToWorkingDirectory = useCallback(async () => {
-		const sessionId = getActiveSessionId();
-		if (!sessionId) {
-			setErrorText(
-				'Open a terminal before setting the project root to its working directory.',
-			);
-			return;
-		}
-
-		try {
-			const cwd = await window.terminay.getTerminalCwd(sessionId);
-			if (!cwd) {
-				setErrorText('The active terminal does not have a working directory yet.');
-				return;
-			}
-
-			const nextRootFolder = cwd.trim();
-
-			if (!nextRootFolder) {
-				setErrorText('The active terminal does not have a working directory yet.');
-				return;
-			}
-
-			onUpdateProject(project.id, { rootFolder: nextRootFolder });
-			setErrorText(null);
-			setIsMacroLauncherOpen(false);
-			setMacroQuery('');
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			setErrorText(`Unable to set the project root folder: ${message}`);
-		}
-	}, [getActiveSessionId, onUpdateProject, project.id]);
-
-	const executeMacro = useCallback(
-		async (macro: MacroDefinition, values: Record<string, MacroFieldValue>) => {
-			const sessionId = getActiveSessionId();
-			if (!sessionId) {
-				setErrorText('No active terminal is available to receive the macro.');
-				return;
-			}
-
-			setErrorText(null);
-			setMacroToRun(null);
-			setMacroFieldValues({});
-			setMacroFileSearchRootPath('');
-			setIsMacroLauncherOpen(false);
-			setMacroQuery('');
-			setSelectedMacroIndex(0);
-
-			const runId = `${sessionId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-			const abortController = new AbortController();
-			const nextRun: TerminalTabMacroRun = {
-				id: runId,
-				startedAt: Date.now(),
-				status: 'running',
-				steps: macro.steps.map((step) => ({
-					id: step.id,
-					status: 'pending',
-					title: describeMacroStep(step),
-				})),
-				title: macro.title,
-			};
-
-			macroRunControllersRef.current.set(runId, {
-				abortController,
-				sessionId,
-			});
-			setRunningMacroRunsBySession((current) => ({
-				...current,
-				[sessionId]: [nextRun, ...(current[sessionId] ?? [])],
-			}));
-
-			try {
-				for (const step of macro.steps) {
-					throwIfAborted(abortController.signal);
-					updateMacroRunStepStatus(sessionId, runId, step.id, 'running');
-
-					switch (step.type) {
-						case 'type': {
-							const rendered = renderMacroTemplate(step.content, values);
-							window.terminay.writeTerminal(
-								sessionId,
-								formatMacroTypeTextForTerminal(rendered),
-							);
-							break;
-						}
-						case 'key':
-							// In this terminal app, we just write the key name for Enter if it's the only way,
-							// but usually we want to send \r for Enter.
-							if (step.key === 'Enter') {
-								window.terminay.writeTerminal(sessionId, '\r');
-							} else if (step.key === 'Tab') {
-								window.terminay.writeTerminal(sessionId, '\t');
-							} else if (step.key === 'Escape') {
-								window.terminay.writeTerminal(sessionId, '\x1b');
-							} else if (step.key === 'Backspace') {
-								window.terminay.writeTerminal(sessionId, '\x7f');
-							} else if (step.key === 'ArrowUp') {
-								window.terminay.writeTerminal(sessionId, '\x1b[A');
-							} else if (step.key === 'ArrowDown') {
-								window.terminay.writeTerminal(sessionId, '\x1b[B');
-							}
-							break;
-						case 'secret':
-							try {
-								const secretVal = await window.terminay.getDecryptedSecret(
-									step.secretId,
-								);
-								throwIfAborted(abortController.signal);
-								window.terminay.writeTerminal(sessionId, secretVal);
-							} catch (error) {
-								if (isAbortError(error)) {
-									throw error;
-								}
-
-								console.error('Failed to decrypt secret', error);
-							}
-							break;
-						case 'wait_time':
-							await waitForDelay(
-								renderMacroDurationMs(step.durationSeconds, values),
-								abortController.signal,
-							);
-							break;
-						case 'wait_inactivity':
-							await waitForSessionInactivity(
-								sessionId,
-								renderMacroDurationMs(step.durationSeconds, values),
-								abortController.signal,
-							);
-							break;
-						case 'select_line':
-							// Typical "select line" escape sequence for some terminals, or just a placeholder
-							// For now, let's just do nothing or a common one if known.
-							break;
-						case 'paste':
-							try {
-								const text = await navigator.clipboard.readText();
-								throwIfAborted(abortController.signal);
-								window.terminay.writeTerminal(sessionId, text);
-							} catch (error) {
-								if (isAbortError(error)) {
-									throw error;
-								}
-
-								console.error('Failed to paste from clipboard', error);
-							}
-							break;
-					}
-
-					updateMacroRunStepStatus(sessionId, runId, step.id, 'completed');
-				}
-
-				updateMacroRunStatus(sessionId, runId, 'completed');
-				window.requestAnimationFrame(() => {
-					focusActiveTerminal();
-				});
-			} catch (error) {
-				if (isAbortError(error)) {
-					updateMacroRunStatus(sessionId, runId, 'canceled');
-					updateMacroRun(sessionId, runId, (run) => ({
-						...run,
-						steps: run.steps.map((candidate) =>
-							candidate.status === 'running'
-								? { ...candidate, status: 'canceled' }
-								: candidate,
-						),
-					}));
-				} else {
-					updateMacroRunStatus(sessionId, runId, 'failed');
-					updateMacroRun(sessionId, runId, (run) => ({
-						...run,
-						steps: run.steps.map((candidate) =>
-							candidate.status === 'running'
-								? { ...candidate, status: 'failed' }
-								: candidate,
-						),
-					}));
-					const message =
-						error instanceof Error ? error.message : String(error);
-					setErrorText(message);
-				}
-			} finally {
-				macroRunControllersRef.current.delete(runId);
-			}
-		},
-		[
-			focusActiveTerminal,
-			getActiveSessionId,
-			updateMacroRun,
-			updateMacroRunStatus,
-			updateMacroRunStepStatus,
-		],
-	);
-
-	const syncFocusedTerminalTabs = useCallback((sessionId: string | null) => {
-		const api = dockviewApiRef.current;
-		if (!api) {
-			return;
-		}
-
-		for (const [
-			panelId,
-			panelSessionId,
-		] of panelSessionMapRef.current.entries()) {
-			const panel = api.getPanel(panelId);
-			if (!panel) {
-				continue;
-			}
-
-			const isFocused = panelSessionId === sessionId;
-			if (panel.params?.isFocused === isFocused) {
-				continue;
-			}
-
-			panel.api.updateParameters({ isFocused });
-		}
-	}, []);
-
-	const syncRunningMacroTabs = useCallback(() => {
-		const api = dockviewApiRef.current;
-		if (!api) {
-			return;
-		}
-
-		for (const [
-			panelId,
-			panelSessionId,
-		] of panelSessionMapRef.current.entries()) {
-			const panel = api.getPanel(panelId);
-			if (!panel) {
-				continue;
-			}
-
-			panel.api.updateParameters({
-				macroRuns: runningMacroRunsBySession[panelSessionId] ?? [],
-				onClearFinishedMacroRuns: () =>
-					clearFinishedMacroRunsForSession(panelSessionId),
-				onClearMacroRun: (runId: string) =>
-					clearMacroRunForSession(panelSessionId, runId),
-				onCancelMacroRun: cancelMacroRun,
-				onMoveToProject: (targetProjectId: string) =>
-					onMoveTerminalToProject(project.id, panelId, targetProjectId),
-				projectsForMove: getProjectsForTerminalMove(),
-			});
-		}
-	}, [
-		cancelMacroRun,
-		clearFinishedMacroRunsForSession,
-		clearMacroRunForSession,
-		getProjectsForTerminalMove,
-		onMoveTerminalToProject,
-		project.id,
-		runningMacroRunsBySession,
-	]);
-
-	useEffect(() => {
-		const api = dockviewApiRef.current;
-
-		for (const group of api?.groups ?? []) {
-			for (const panel of group.panels) {
-				const params = panel.params as DockPanelTabAppearance | undefined;
-				if (!params || !('inheritsProjectColor' in params)) {
-					continue;
-				}
-
-				const inheritsProjectColor = params.inheritsProjectColor === true;
-				panel.api.updateParameters({
-					projectColor: project.color,
-					...(inheritsProjectColor ? { color: project.color } : {}),
-				});
-			}
-		}
-
-		for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
-			const panel = api?.getPanel(panelId);
-			const inheritsProjectColor =
-				panel?.params?.inheritsProjectColor === true;
-			const nextColor = getEffectiveTerminalTabColor(
-				panel?.params,
-				project.color,
-			);
-
-			if (panel) {
-				panel.api.updateParameters({
-					projectColor: project.color,
-					...(inheritsProjectColor ? { color: project.color } : {}),
-				});
-			}
-
-			window.terminay.updateTerminalRemoteMetadata(sessionId, {
-				color: nextColor,
-				inheritsProjectColor,
-				projectId: project.id,
-				projectTitle: project.title,
-				projectEmoji: project.emoji,
-				projectColor: project.color,
-				title: panel?.title ?? 'Terminal',
-			});
-		}
-		window.requestAnimationFrame(publishTerminalActivityOverview);
-	}, [
-		project.id,
-		project.title,
-		project.emoji,
-		project.color,
-		publishTerminalActivityOverview,
-	]);
-
-	useEffect(() => {
-		const api = dockviewApiRef.current;
-		if (!api) {
-			return;
-		}
-
-		for (const [panelId] of panelSessionMapRef.current.entries()) {
-			const panel = api.getPanel(panelId);
-			if (!panel) {
-				continue;
-			}
-
-			panel.api.updateParameters({
-				showActiveTabActivityIndicator:
-					settings.activityIndicators.showActiveTabs,
-				showFinishedTabActivityIndicator:
-					settings.activityIndicators.showFinishedTabs,
-			});
-		}
-
-		window.requestAnimationFrame(publishTerminalActivityOverview);
-	}, [
-		publishTerminalActivityOverview,
-		settings.activityIndicators.showActiveTabs,
-		settings.activityIndicators.showFinishedTabs,
-	]);
-
-	useEffect(() => {
-		return () => {
-			for (const timerId of fileExplorerRefreshTimersRef.current.values()) {
-				window.clearTimeout(timerId);
-			}
-			fileExplorerRefreshTimersRef.current.clear();
-		};
-	}, []);
-
-	useEffect(() => {
-		for (const timerId of fileExplorerRefreshTimersRef.current.values()) {
-			window.clearTimeout(timerId);
-		}
-		fileExplorerRefreshTimersRef.current.clear();
-
-		setDirectoryChildren({});
-		setDirectoryErrors({});
-		setGitStatuses({});
-		setDeletingWorktreePaths(new Set());
-		setLoadingPaths({});
-		setExpandedPaths(project.rootFolder ? { [project.rootFolder]: true } : {});
-
-		if (project.rootFolder) {
-			void loadDirectory(project.rootFolder);
-			void refreshGitStatuses();
-		}
-	}, [loadDirectory, project.rootFolder, refreshGitStatuses]);
-
-	useEffect(() => {
-		if (!worktreePanelStatus?.repoRoot) {
-			return;
-		}
-
-		const visibleWorktreePaths = new Set(
-			worktreePanelStatus.worktrees.map((worktree) => worktree.path),
-		);
-		setDeletingWorktreePaths((current) => {
-			const next = new Set(
-				Array.from(current).filter((path) => visibleWorktreePaths.has(path)),
-			);
-			return next.size === current.size ? current : next;
-		});
-	}, [worktreePanelStatus]);
-
-	useEffect(() => {
-		if (!project.rootFolder || !project.isFileExplorerOpen) {
-			return;
-		}
-
-		const watchedPaths = Object.entries(expandedPaths)
-			.filter(([, isExpanded]) => isExpanded)
-			.map(([dirPath]) => dirPath);
-
-		if (watchedPaths.length === 0) {
-			return;
-		}
-
-		const watchedPathSet = new Set(watchedPaths);
-		const unsubscribe = window.terminay.onFileExplorerWatchEvent((event) => {
-			if (!watchedPathSet.has(event.path)) {
-				return;
-			}
-
-			scheduleFileExplorerDirectoryRefresh(event.path);
-		});
-
-		for (const dirPath of watchedPaths) {
-			void window.terminay.watchDirectory(dirPath);
-		}
-
-		return () => {
-			unsubscribe();
-			for (const dirPath of watchedPaths) {
-				void window.terminay.unwatchDirectory(dirPath);
-			}
-		};
-	}, [
-		expandedPaths,
-		project.isFileExplorerOpen,
-		project.rootFolder,
-		scheduleFileExplorerDirectoryRefresh,
-	]);
-
-	useEffect(() => {
-		if (!project.rootFolder || !project.isFileExplorerOpen) {
-			return;
-		}
-
-		void refreshGitStatuses();
-
-		const intervalId = window.setInterval(() => {
-			void refreshGitStatuses();
-		}, FILE_EXPLORER_GIT_STATUS_POLL_INTERVAL_MS);
-
-		const handleVisibilityChange = () => {
-			if (document.visibilityState === 'visible') {
-				void refreshGitStatuses();
-			}
-		};
-
-		window.addEventListener('focus', refreshGitStatuses);
-		document.addEventListener('visibilitychange', handleVisibilityChange);
-
-		return () => {
-			window.clearInterval(intervalId);
-			window.removeEventListener('focus', refreshGitStatuses);
-			document.removeEventListener('visibilitychange', handleVisibilityChange);
-		};
-	}, [project.isFileExplorerOpen, project.rootFolder, refreshGitStatuses]);
-
-	useEffect(() => {
-		const onPointerMove = (event: PointerEvent) => {
-			const resizeState = explorerResizeStateRef.current;
-			if (!resizeState || event.pointerId !== resizeState.pointerId) {
-				return;
-			}
-
-			const nextWidth = clamp(
-				resizeState.startWidth + (event.clientX - resizeState.startX),
-				MIN_FILE_EXPLORER_WIDTH,
-				Math.max(MIN_FILE_EXPLORER_WIDTH, window.innerWidth * 0.8),
-			);
-			resizeState.latestWidth = nextWidth;
-			onUpdateProject(project.id, { fileExplorerWidth: nextWidth });
-		};
-
-		const onPointerUp = (event: PointerEvent) => {
-			const resizeState = explorerResizeStateRef.current;
-			if (!resizeState || event.pointerId !== resizeState.pointerId) {
-				return;
-			}
-
-			explorerResizeStateRef.current = null;
-			updateSidebarSettings({ defaultWidth: resizeState.latestWidth });
-		};
-
-		window.addEventListener('pointermove', onPointerMove);
-		window.addEventListener('pointerup', onPointerUp);
-		window.addEventListener('pointercancel', onPointerUp);
-		return () => {
-			window.removeEventListener('pointermove', onPointerMove);
-			window.removeEventListener('pointerup', onPointerUp);
-			window.removeEventListener('pointercancel', onPointerUp);
-		};
-	}, [onUpdateProject, project.id, updateSidebarSettings]);
-
-	const runMacro = useCallback(
-		async (macro: MacroDefinition) => {
-			const effectiveFields = macro.fields;
-			if (effectiveFields.length === 0) {
-				executeMacro(macro, {});
-				return;
-			}
-
-			let searchRootPath = project.rootFolder;
-			const activeSessionId = getActiveSessionId();
-			if (activeSessionId) {
-				try {
-					searchRootPath =
-						(await window.terminay.getTerminalCwd(activeSessionId)) ??
-						project.rootFolder;
-				} catch {
-					searchRootPath = project.rootFolder;
-				}
-			}
-
-			setMacroToRun(macro);
-			setMacroFileSearchRootPath(searchRootPath);
-			setMacroFieldValues(
-				Object.fromEntries(
-					effectiveFields.map((field) => [field.name, field.defaultValue]),
-				) as Record<string, MacroFieldValue>,
-			);
-			setIsMacroLauncherOpen(false);
-		},
-		[executeMacro, getActiveSessionId, project.rootFolder],
-	);
-
-	const validateMacroValues = useCallback(
-		(macro: MacroDefinition, values: Record<string, MacroFieldValue>) => {
-			for (const field of macro.fields) {
-				if (!field.required) {
-					continue;
-				}
-
-				const value = values[field.name];
-				const isMissing =
-					value === undefined ||
-					value === null ||
-					(typeof value === 'string' && value.trim().length === 0);
-
-				if (isMissing) {
-					setErrorText(
-						`"${field.label}" is required before this macro can run.`,
-					);
-					return false;
-				}
-			}
-
-			return true;
-		},
-		[],
-	);
-
-	const openTerminalEditWindow = useCallback(async (panelId: string) => {
-		const api = dockviewApiRef.current;
-		if (!api) {
-			return;
-		}
-
-		const panel = api.getPanel(panelId);
-		if (!panel) {
-			return;
-		}
-
-		const sessionId = panel.params?.sessionId ?? null;
-
-		try {
-			const result = await window.terminay.openTerminalEditWindow({
-				activityIndicatorsEnabled: areTerminalActivityIndicatorsEnabled(
-					panel.params,
+		const getPanelForSession = useCallback(
+			(sessionId: string) =>
+				findTerminalPanel(
+					dockviewApiRef.current,
+					panelSessionMapRef.current,
+					sessionId,
 				),
-				color: getEffectiveTerminalTabColor(panel.params, project.color),
-				emoji: panel.params?.emoji ?? '',
-				inheritsProjectColor:
-					panel.params?.inheritsProjectColor ?? panel.params?.color === project.color,
-				projectColor: project.color,
-				title: panel.title ?? 'Tab',
-			});
-			if (!result) {
-				return;
-			}
-
-			const nextTitle =
-				result.title.trim().length > 0
-					? result.title.trim()
-					: (panel.title ?? 'Tab');
-			const nextEmoji = result.emoji.trim();
-			const nextColor = result.color;
-
-			panel.api.setTitle(nextTitle);
-			setTerminalTitleRevision((revision) => revision + 1);
-			panel.api.updateParameters({
-				activityIndicatorsEnabled: result.activityIndicatorsEnabled,
-				emoji: nextEmoji,
-				color: nextColor,
-				inheritsProjectColor: result.inheritsProjectColor,
-				projectColor: project.color,
-			});
-
-			if (sessionId) {
-				window.terminay.updateTerminalRemoteMetadata(sessionId, {
-					color: nextColor,
-					emoji: nextEmoji,
-					inheritsProjectColor: result.inheritsProjectColor,
-					title: nextTitle,
-					projectId: project.id,
-					projectTitle: project.title,
-					projectEmoji: project.emoji,
-					projectColor: project.color,
-				});
-			}
-			window.requestAnimationFrame(publishTerminalActivityOverview);
-		} finally {
-			window.requestAnimationFrame(() => {
-				if (sessionId) {
-					activateTerminal(panelId, sessionId);
-					return;
-				}
-
-				focusActiveTerminal();
-			});
-		}
-	}, [
-		activateTerminal,
-		focusActiveTerminal,
-		project.color,
-		project.id,
-		project.title,
-		project.emoji,
-		publishTerminalActivityOverview,
-	]);
-
-	const clearActiveTerminal = useCallback(() => {
-		const sessionId = getActiveSessionId();
-		if (!sessionId) {
-			setErrorText('Open a terminal before clearing it.');
-			return;
-		}
-
-		setErrorText(null);
-		window.dispatchEvent(
-			new CustomEvent('terminay-clear-terminal', {
-				detail: { sessionId },
-			}),
+			[],
 		);
-		setIsMacroLauncherOpen(false);
-		setMacroQuery('');
-	}, [getActiveSessionId]);
 
-	const copyActiveTerminalSelection = useCallback(() => {
-		const sessionId = getActiveSessionId();
-		if (!sessionId) {
-			document.execCommand('copy');
-			return;
-		}
-
-		window.dispatchEvent(
-			new CustomEvent('terminay-copy-terminal', {
-				detail: { sessionId },
-			}),
-		);
-	}, [getActiveSessionId]);
-
-	const openActiveTerminalSettings = useCallback(() => {
-		const activePanel = dockviewApiRef.current?.activePanel;
-		if (!activePanel) {
-			setErrorText('Open a tab before editing its settings.');
-			return;
-		}
-
-		setErrorText(null);
-		setIsMacroLauncherOpen(false);
-		setMacroQuery('');
-		void openTerminalEditWindow(activePanel.id);
-	}, [openTerminalEditWindow]);
-
-	const openProjectSettings = useCallback(() => {
-		setErrorText(null);
-		setIsMacroLauncherOpen(false);
-		setMacroQuery('');
-		void onEditProject(project.id);
-	}, [onEditProject, project.id]);
-
-	const runAiTabMetadata = useCallback(
-		async (target: AiTabMetadataTarget, targetPanelId?: string) => {
-			setIsMacroLauncherOpen(false);
-			setMacroQuery('');
-
-			const api = dockviewApiRef.current;
-			const activePanel = targetPanelId
-				? api?.getPanel(targetPanelId)
-				: api?.activePanel;
-			const sessionId = activePanel?.params?.sessionId;
-			if (!activePanel || !sessionId) {
-				setErrorText('Open a terminal before generating tab metadata.');
-				return;
-			}
-
-			const targetSettings = settings.aiTabMetadata[target];
-			if (targetSettings.provider === 'disabled') {
-				setErrorText(
-					`Enable an AI provider for tab ${target === 'title' ? 'titles' : 'notes'} in Settings first.`,
-				);
-				return;
-			}
-
-			const provider = targetSettings.provider;
-			const providerLabel = provider === 'codex' ? 'Codex' : 'Claude Code';
-			const model = provider === 'codex' ? targetSettings.codexModel : targetSettings.claudeCodeModel;
-			if (!model.trim()) {
-				setErrorText(`Choose a ${providerLabel} model in Settings before generating tab metadata.`);
-				return;
-			}
-
-			const inFlightKey = `${sessionId}:${target}`;
-			if (aiGenerationInFlightRef.current.has(inFlightKey)) {
-				setErrorText(`Already generating a tab ${target} for this terminal.`);
-				return;
-			}
-
-			const reader = terminalContextReadersRef.current.get(sessionId);
-			const terminalContext = reader?.() ?? { recentOutput: '' };
-			const previousTitle = activePanel.title ?? 'Terminal';
-			aiGenerationInFlightRef.current.add(inFlightKey);
-			setErrorText(null);
-			if (target === 'title') {
-				activePanel.api.setTitle('Generating...');
-				setTerminalTitleRevision((revision) => revision + 1);
-				activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
-			}
-
-			try {
-				const result = await window.terminay.generateAiTabMetadata({
-					context: {
-						currentTitle: previousTitle,
-						existingNote: activePanel.params?.terminalNote,
-						projectRoot: project.rootFolder,
-						projectTitle: project.title,
-						recentOutput: terminalContext.recentOutput,
-						sessionId,
-					},
-					model,
-					provider,
-					target,
-				});
-				const text = result.text.trim();
-				if (!text) {
-					throw new Error(`${providerLabel} returned an empty result.`);
-				}
-
-				if (target === 'title') {
-					activePanel.api.setTitle(text);
-					setTerminalTitleRevision((revision) => revision + 1);
-					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
-					window.terminay.updateTerminalRemoteMetadata(sessionId, {
-						color: activePanel.params?.color ?? project.color,
-						emoji: activePanel.params?.emoji ?? '',
-						inheritsProjectColor: activePanel.params?.inheritsProjectColor,
-						title: text,
-						projectId: project.id,
-						projectTitle: project.title,
-						projectEmoji: project.emoji,
-						projectColor: project.color,
-					});
-					window.requestAnimationFrame(publishTerminalActivityOverview);
-				} else {
-					activePanel.api.updateParameters({ terminalNote: text });
-				}
-
-				setErrorText(null);
-			} catch (error) {
-				if (target === 'title') {
-					activePanel.api.setTitle(previousTitle);
-					setTerminalTitleRevision((revision) => revision + 1);
-					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
-				}
-				const message = error instanceof Error ? error.message : String(error);
-				setErrorText(`Unable to generate tab ${target}: ${message}`);
-			} finally {
-				aiGenerationInFlightRef.current.delete(inFlightKey);
-			}
-		},
-		[
-			project.color,
-			project.emoji,
-			project.id,
-			project.rootFolder,
-			project.title,
-			publishTerminalActivityOverview,
-			settings.aiTabMetadata,
-		],
-	);
-
-	const runAiTabMetadataRef = useRef(runAiTabMetadata);
-	runAiTabMetadataRef.current = runAiTabMetadata;
-
-	const createProject = useCallback(() => {
-		setErrorText(null);
-		setIsMacroLauncherOpen(false);
-		setMacroQuery('');
-		onAddProject();
-	}, [onAddProject]);
-
-	const toggleFileExplorerSidebar = useCallback(() => {
-		setErrorText(null);
-		setIsMacroLauncherOpen(false);
-		setMacroQuery('');
-		onUpdateProject(project.id, {
-			isFileExplorerOpen: !project.isFileExplorerOpen,
-		});
-	}, [onUpdateProject, project.id, project.isFileExplorerOpen]);
-
-	const addTerminal = useCallback(
-		async (options?: AddTerminalOptions) => {
-			const api = dockviewApiRef.current;
-			if (!api) {
-				return null;
-			}
-
-			try {
-				const activeParams = api.activePanel?.params;
-				let inheritedCwd: string | null = null;
-				if (activeParams?.sessionId) {
-					// Terminal tab: inherit its live working directory.
-					inheritedCwd = await window.terminay.getTerminalCwd(
-						activeParams.sessionId,
-					);
-				} else if (typeof activeParams?.folderPath === 'string') {
-					// Folder / tasks / kanban tab: use the folder path directly.
-					inheritedCwd = activeParams.folderPath;
-				} else if (typeof activeParams?.filePath === 'string') {
-					// File tab: use the file's parent directory.
-					const filePath = activeParams.filePath;
-					inheritedCwd =
-						filePath.substring(
-							0,
-							Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')),
-						) || filePath;
-				}
-				const targetCwd = options?.cwd ?? inheritedCwd;
-				const { id: sessionId } = await window.terminay.createTerminal(
-					targetCwd ? { cwd: targetCwd } : undefined,
-				);
-				suppressInitialTerminalActivity(sessionId);
-
-				terminalCounterRef.current += 1;
-				const panelId = `terminal-${terminalCounterRef.current}`;
-				const tabTitle = options?.title ?? `Terminal ${terminalCounterRef.current}`;
-
-				const panel = api.addPanel<TerminalPanelParams>({
-					id: panelId,
-					title: tabTitle,
-					component: 'terminal',
-					tabComponent: 'terminalTab',
-					params: {
-						activityIndicatorsEnabled: true,
-						color: project.color,
-						inheritsProjectColor: true,
-						isFocused: false,
-						macroRuns: [],
-						onClearFinishedMacroRuns: () =>
-							clearFinishedMacroRunsForSession(sessionId),
-						onClearMacroRun: (runId: string) =>
-							clearMacroRunForSession(sessionId, runId),
-						onCancelMacroRun: cancelMacroRun,
-						onMoveToProject: (targetProjectId: string) =>
-							onMoveTerminalToProject(project.id, panelId, targetProjectId),
-						onRevealRecording: (recordingId: string) =>
-							void revealRecording(recordingId),
-						onStartRecording: () => void startRecordingForSession(sessionId),
-						onStopRecording: () => void stopRecordingForSession(sessionId),
-						recordingStatus: 'idle',
-						registerTerminalContextReader,
-						onUpdateNote: (terminalNote: string | undefined) =>
-							dockviewApiRef.current
-								?.getPanel(panelId)
-								?.api.updateParameters({ terminalNote }),
-						projectColor: project.color,
-						projectsForMove: getProjectsForTerminalMove(),
-						sessionId,
-						showActiveTabActivityIndicator:
-							settings.activityIndicators.showActiveTabs,
-						showFinishedTabActivityIndicator:
-							settings.activityIndicators.showFinishedTabs,
-						terminalActivityState: 'viewed',
-					},
-					position:
-						options?.groupId && api.getGroup(options.groupId)
-							? {
-									referenceGroup: options.groupId,
-									direction: 'within',
-								}
-							: options?.direction && api.activePanel
-								? {
-										referencePanel: api.activePanel,
-										direction: options.direction,
-									}
-								: undefined,
-				});
-
-				panelSessionMapRef.current.set(panel.id, sessionId);
-				window.terminay.updateTerminalRemoteMetadata(sessionId, {
-					color: project.color,
-					emoji: '',
-					inheritsProjectColor: true,
-					title: tabTitle,
-					projectId: project.id,
-					projectTitle: project.title,
-					projectEmoji: project.emoji,
-					projectColor: project.color,
-				});
-				if (options?.initialInput) {
-					const initialInput = options.initialInput;
-					// Give the freshly spawned shell a moment to print its prompt and
-					// enable bracketed paste before we type the launch command into it.
-					window.setTimeout(() => {
-						window.terminay.writeTerminal(
-							sessionId,
-							formatMacroTypeTextForTerminal(initialInput),
-						);
-						window.terminay.writeTerminal(sessionId, '\r');
-					}, 900);
-				}
-				if (settings.recording.recordNewTerminals) {
-					void startRecordingForSession(sessionId);
-				} else {
-					hydrateRecordingStateForSession(sessionId);
-				}
+		const { start: startDictation } = useDictationController({
+			closeLauncher: () => {
+				setIsMacroLauncherOpen(false);
+				setMacroQuery('');
+			},
+			defaultLanguage: defaultTerminalSettings.dictation.language,
+			focusTargetSession: (sessionId) => {
+				const panel = getPanelForSession(sessionId);
+				if (!panel) return;
 				panel.api.setActive();
+				focusedSessionIdRef.current = sessionId;
 				setFocusedSessionId(sessionId);
-				setErrorText(null);
-				window.requestAnimationFrame(publishTerminalActivityOverview);
-				return { sessionId, panelId, title: tabTitle };
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				setErrorText(message);
-				return null;
-			}
-		},
-		[
-			cancelMacroRun,
-			clearFinishedMacroRunsForSession,
-			clearMacroRunForSession,
-			getProjectsForTerminalMove,
-			onMoveTerminalToProject,
-			project.id,
-			project.title,
-			project.emoji,
-			project.color,
-			publishTerminalActivityOverview,
-			registerTerminalContextReader,
-			revealRecording,
-			hydrateRecordingStateForSession,
-			settings.activityIndicators.showActiveTabs,
-			settings.activityIndicators.showFinishedTabs,
-			settings.recording.recordNewTerminals,
-			startRecordingForSession,
-			stopRecordingForSession,
-			suppressInitialTerminalActivity,
-		],
-	);
-
-	const launchGitPushAgent = useCallback(
-		(action: GitPushAgentAction, target: GitPushMenuTarget) => {
-			setGitPushMenuPosition(null);
-
-			const config = settings.gitPushAgent;
-			if (config.provider === 'disabled') {
-				setErrorText(
-					'Choose a Git Push agent in Settings → AI → Git Push Agent first.',
-				);
-				void window.terminay.openSettingsWindow({
-					sectionId: 'git-push-agent',
+				window.requestAnimationFrame(() => {
+					window.dispatchEvent(
+						new CustomEvent('terminay-focus-terminal', {
+							detail: { sessionId },
+						}),
+					);
 				});
-				return;
-			}
+			},
+			getActiveSessionId,
+			getOverlayTargets: () =>
+				[...panelSessionMapRef.current.entries()].flatMap(
+					([panelId, sessionId]) => {
+						const panel = dockviewApiRef.current?.getPanel(panelId);
+						return panel
+							? [{ color: panel.params?.color ?? project.color, sessionId }]
+							: [];
+					},
+				),
+			getSettings: () => settingsRef.current.dictation,
+			hasTargetSession: (sessionId) => getPanelForSession(sessionId) !== null,
+			sendTerminalInput: sendTerminalPanelInput,
+			setErrorText,
+		});
 
-			const actionMeta = GIT_PUSH_AGENT_ACTIONS.find(
-				(entry) => entry.action === action,
-			);
-			if (!actionMeta) {
-				return;
-			}
+		const getRecordingStartMetadataForSession = useCallback(
+			(sessionId: string): TerminalRecordingStartMetadata => {
+				const panel = getPanelForSession(sessionId);
+				const params = panel?.params as TerminalPanelParams | undefined;
+				const title =
+					typeof panel?.title === 'string' && panel.title.trim().length > 0
+						? panel.title
+						: 'Terminal';
 
-			const task =
-				actionMeta.action === 'default'
-					? `Commit all of my current changes onto the default branch "${formatGitPushBranchLabel(target.defaultBranch ?? 'main')}" and push it. If that branch is already checked out in another worktree, make the commit from that worktree instead of checking it out here.`
-					: actionMeta.task;
-			const model =
-				config.provider === 'claudeCode'
-					? config.claudeCodeModel
-					: config.codexModel;
-			const prompt = buildGitPushAgentPrompt(
-				config.prompt,
-				task,
-				target.branch,
-				target.defaultBranch,
-			);
-			const command = buildGitPushAgentCommand(
-				config.provider,
-				model,
-				prompt,
-			);
-
-			void addTerminal({
-				cwd: target.cwd,
-				title: 'Push agent',
-				initialInput: command,
-			});
-		},
-		[addTerminal, settings.gitPushAgent],
-	);
-
-	const launchQuickPush = useCallback(
-		async (action: QuickPushAction, target: GitPushMenuTarget) => {
-			setGitPushMenuPosition(null);
-
-			if (settings.gitPushAgent.provider === 'disabled') {
-				setErrorText(
-					'Choose a Git Push agent in Settings → AI → Git Push Agent first.',
-				);
-				void window.terminay.openSettingsWindow({
-					sectionId: 'git-push-agent',
-				});
-				return;
-			}
-
-			setQuickPushCwd(target.cwd);
-			setQuickPushAction(action);
-		},
-		[settings.gitPushAgent.provider],
-	);
-
-	const buildMovedTerminalFromPanel = useCallback(
-		(
-			panel: NonNullable<ReturnType<DockviewApi['getPanel']>>,
-		): MovedTerminalTab | null => {
-			const sessionId = panel.params?.sessionId;
-			if (!sessionId) {
-				return null;
-			}
-
-			return {
-				color: panel.params?.color,
-				activityIndicatorsEnabled: panel.params?.activityIndicatorsEnabled,
-				emoji: panel.params?.emoji,
-				inheritsProjectColor: panel.params?.inheritsProjectColor,
-				macroRuns: runningMacroRunsBySession[sessionId] ?? [],
-				recordingError: panel.params?.recordingError,
-				recordingId: panel.params?.recordingId,
-				recordingStatus: panel.params?.recordingStatus,
-				sessionId,
-				showActiveTabActivityIndicator:
-					panel.params?.showActiveTabActivityIndicator,
-				showFinishedTabActivityIndicator:
-					panel.params?.showFinishedTabActivityIndicator,
-				terminalActivityState: panel.params?.terminalActivityState,
-				terminalNote: panel.params?.terminalNote,
-				title: panel.title ?? 'Terminal',
-			};
-		},
-		[runningMacroRunsBySession],
-	);
-
-	const exportTerminalForMove = useCallback(
-		(panelId: string): MovedTerminalTab | null => {
-			const api = dockviewApiRef.current;
-			const panel = api?.getPanel(panelId);
-			if (!panel) {
-				return null;
-			}
-
-			const movedTerminal = buildMovedTerminalFromPanel(panel);
-			if (!movedTerminal) {
-				return null;
-			}
-
-			movingTerminalSessionIdsRef.current.add(movedTerminal.sessionId);
-			panel.api.close();
-
-			return movedTerminal;
-		},
-		[buildMovedTerminalFromPanel],
-	);
-
-	const exportProjectForMove = useCallback((): MovedProject | null => {
-		const api = dockviewApiRef.current;
-		if (!api) {
-			return null;
-		}
-
-		const activeSessionId = api.activePanel?.params?.sessionId ?? null;
-		const terminals: MovedTerminalTab[] = [];
-		for (const panel of api.panels) {
-			const moved = buildMovedTerminalFromPanel(panel);
-			if (moved) {
-				terminals.push(moved);
-			}
-		}
-
-		if (terminals.length === 0) {
-			return null;
-		}
-
-		// Flag every session as moving so that when this project's workspace
-		// unmounts (the caller removes the project after ownership has been
-		// re-homed), the panel-removal handler does not kill the live PTYs.
-		for (const moved of terminals) {
-			movingTerminalSessionIdsRef.current.add(moved.sessionId);
-		}
-
-		return { terminals, activeSessionId };
-	}, [buildMovedTerminalFromPanel]);
-
-	const acceptMovedTerminal = useCallback(
-		(movedTerminal: MovedTerminalTab) => {
-			const api = dockviewApiRef.current;
-			if (!api) {
-				return;
-			}
-
-			if ([...panelSessionMapRef.current.values()].includes(movedTerminal.sessionId)) {
-				return;
-			}
-
-			terminalCounterRef.current += 1;
-			const panelId = `terminal-${terminalCounterRef.current}`;
-			const inheritsProjectColor = movedTerminal.inheritsProjectColor === true;
-			const nextColor = inheritsProjectColor
-				? project.color
-				: (movedTerminal.color ?? project.color);
-			const macroRuns = movedTerminal.macroRuns ?? [];
-
-			const panel = api.addPanel<TerminalPanelParams>({
-				id: panelId,
-				title: movedTerminal.title,
-				component: 'terminal',
-				tabComponent: 'terminalTab',
-				params: {
-					activityIndicatorsEnabled:
-						movedTerminal.activityIndicatorsEnabled !== false,
-					color: nextColor,
-					emoji: movedTerminal.emoji ?? '',
-					inheritsProjectColor,
-					isFocused: false,
-					macroRuns,
-					onClearFinishedMacroRuns: () =>
-						clearFinishedMacroRunsForSession(movedTerminal.sessionId),
-					onClearMacroRun: (runId: string) =>
-						clearMacroRunForSession(movedTerminal.sessionId, runId),
-					onCancelMacroRun: cancelMacroRun,
-					onMoveToProject: (targetProjectId: string) =>
-						onMoveTerminalToProject(project.id, panelId, targetProjectId),
-					onRevealRecording: (recordingId: string) =>
-						void revealRecording(recordingId),
-					onStartRecording: () =>
-						void startRecordingForSession(movedTerminal.sessionId),
-					onStopRecording: () =>
-						void stopRecordingForSession(movedTerminal.sessionId),
-					recordingError: movedTerminal.recordingError,
-					recordingId: movedTerminal.recordingId,
-					recordingStatus: movedTerminal.recordingStatus ?? 'idle',
-					registerTerminalContextReader,
-					onUpdateNote: (terminalNote: string | undefined) =>
-						dockviewApiRef.current
-							?.getPanel(panelId)
-							?.api.updateParameters({ terminalNote }),
+				return {
+					color:
+						typeof params?.color === 'string' ? params.color : project.color,
+					emoji: typeof params?.emoji === 'string' ? params.emoji : '',
+					inheritsProjectColor: params?.inheritsProjectColor === true,
 					projectColor: project.color,
-					projectsForMove: getProjectsForTerminalMove(),
-					sessionId: movedTerminal.sessionId,
-					showActiveTabActivityIndicator:
-						movedTerminal.showActiveTabActivityIndicator ??
-						settings.activityIndicators.showActiveTabs,
-					showFinishedTabActivityIndicator:
-						movedTerminal.showFinishedTabActivityIndicator ??
-						settings.activityIndicators.showFinishedTabs,
-					terminalActivityState: movedTerminal.terminalActivityState ?? 'viewed',
-					terminalNote: movedTerminal.terminalNote,
-				},
-			});
-
-			panelSessionMapRef.current.set(panel.id, movedTerminal.sessionId);
-			if (macroRuns.length > 0) {
-				setRunningMacroRunsBySession((current) => ({
-					...current,
-					[movedTerminal.sessionId]: macroRuns,
-				}));
-			}
-			window.terminay.updateTerminalRemoteMetadata(movedTerminal.sessionId, {
-				color: nextColor,
-				emoji: movedTerminal.emoji ?? '',
-				inheritsProjectColor,
-				title: movedTerminal.title,
-				projectId: project.id,
-				projectTitle: project.title,
-				projectEmoji: project.emoji,
-				projectColor: project.color,
-			});
-			hydrateRecordingStateForSession(movedTerminal.sessionId);
-			panel.api.setActive();
-			setFocusedSessionId(movedTerminal.sessionId);
-			setErrorText(null);
-			syncPanelFocusState();
-			window.requestAnimationFrame(publishTerminalActivityOverview);
-		},
-		[
-			cancelMacroRun,
-			clearFinishedMacroRunsForSession,
-			clearMacroRunForSession,
-			getProjectsForTerminalMove,
-			onMoveTerminalToProject,
-			project.color,
-			project.emoji,
-			project.id,
-			project.title,
-			publishTerminalActivityOverview,
-			registerTerminalContextReader,
-			revealRecording,
-			hydrateRecordingStateForSession,
-			settings.activityIndicators.showActiveTabs,
-			settings.activityIndicators.showFinishedTabs,
-			startRecordingForSession,
-			stopRecordingForSession,
-			syncPanelFocusState,
-		],
-	);
-
-	const filteredMacros = useMemo(() => {
-		const normalizedQuery = macroQuery.trim().toLowerCase();
-		const commandItems: MacroLauncherItem[] = [
-			{
-				group: 'Terminal',
-				icon: <Terminal size={18} strokeWidth={2.1} />,
-				id: 'create-terminal-tab',
-				title: 'Create a new terminal tab',
-				description: 'Open a fresh terminal tab in the current project.',
-				searchText: `create new terminal tab open fresh terminal ${getCommandShortcut(settings.keyboardShortcuts, 'new-terminal')}`,
-				shortcutLabel: getCommandShortcutLabel(
-					settings.keyboardShortcuts,
-					'new-terminal',
-					isMac,
-				),
-				onSelect: () => {
-					setErrorText(null);
-					setIsMacroLauncherOpen(false);
-					setMacroQuery('');
-					void addTerminal({});
-				},
+					projectEmoji: project.emoji,
+					projectId: project.id,
+					projectTitle: project.title,
+					title,
+				};
 			},
-			{
-				group: 'Workspace',
-				icon: <FolderPlus size={18} strokeWidth={2.1} />,
-				id: 'create-project',
-				title: 'Create a new project',
-				description: 'Add a new project tab and switch to it.',
-				searchText: `create new project add project tab ${getCommandShortcut(settings.keyboardShortcuts, 'new-project')}`,
-				shortcutLabel: getCommandShortcutLabel(
-					settings.keyboardShortcuts,
-					'new-project',
-					isMac,
-				),
-				onSelect: () => {
-					createProject();
-				},
-			},
-			{
-				group: 'Terminal',
-				icon: <Eraser size={18} strokeWidth={2.1} />,
-				id: 'clear-terminal',
-				title: 'Clear terminal',
-				description: 'Clear the active terminal viewport and scrollback.',
-				searchText: `clear terminal scrollback screen reset ${getCommandShortcut(settings.keyboardShortcuts, 'clear-terminal')}`,
-				shortcutLabel: getCommandShortcutLabel(
-					settings.keyboardShortcuts,
-					'clear-terminal',
-					isMac,
-				),
-				onSelect: () => {
-					clearActiveTerminal();
-				},
-			},
-			{
-				group: 'Terminal',
-				icon: <Mic size={18} strokeWidth={2.1} />,
-				id: 'start-dictation',
-				title: 'Start dictation',
-				description:
-					'Record speech and type the transcript into the active terminal.',
-				searchText: `start dictation voice speech microphone audio transcribe terminal input ${getCommandShortcut(settings.keyboardShortcuts, 'start-dictation')}`,
-				shortcutLabel: getCommandShortcutLabel(
-					settings.keyboardShortcuts,
-					'start-dictation',
-					isMac,
-				),
-				onSelect: () => {
-					void startDictation();
-				},
-			},
-			{
-				group: 'Terminal',
-				icon: <Sparkles size={18} strokeWidth={2.1} />,
-				id: 'set-tab-title-with-ai',
-				title: 'Set tab title with AI',
-				description: 'Generate a concise title for the active terminal tab.',
-				searchText: 'set tab title with ai codex rename generate terminal metadata',
-				onSelect: () => {
-					void runAiTabMetadata('title');
-				},
-			},
-			{
-				group: 'Terminal',
-				icon: <Sparkles size={18} strokeWidth={2.1} />,
-				id: 'set-tab-note-with-ai',
-				title: 'Set tab note with AI',
-				description: 'Generate a short note for the active terminal tab.',
-				searchText: 'set tab note with ai codex generate terminal note metadata',
-				onSelect: () => {
-					void runAiTabMetadata('note');
-				},
-			},
-			{
-				group: 'Terminal',
-				icon: <Settings size={18} strokeWidth={2.1} />,
-				id: 'edit-tab-settings',
-				title: 'Edit tab settings',
-				description: 'Open settings for the active tab.',
-				searchText: 'edit tab settings rename emoji color file folder terminal',
-				onSelect: () => {
-					openActiveTerminalSettings();
-				},
-			},
-			{
-				group: 'Workspace',
-				icon: <History size={18} strokeWidth={2.1} />,
-				id: 'open-recordings',
-				title: 'Open recordings timeline',
-				description: 'Browse and replay saved terminal recordings.',
-				searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
-				shortcutLabel: getCommandShortcutLabel(
-					settings.keyboardShortcuts,
-					'open-recordings',
-					isMac,
-				),
-				onSelect: () => {
-					void window.terminay.openRecordingsWindow();
-				},
-			},
-			{
-				group: 'Workspace',
-				icon: <Plug size={18} strokeWidth={2.1} />,
-				id: 'install-terminay-mcp',
-				title: 'Install Terminay MCP',
-				description: 'Let AI agents (Claude Code, Codex) control the terminals in this window.',
-				searchText:
-					'install terminay mcp model context protocol agent claude code codex control server',
-				onSelect: () => {
-					setIsMacroLauncherOpen(false);
-					setMacroQuery('');
-					setIsMcpInstallModalOpen(true);
-				},
-			},
-			{
-				group: 'Workspace',
-				icon: <Settings size={18} strokeWidth={2.1} />,
-				id: 'edit-project-settings',
-				title: 'Edit project settings',
-				description: 'Open settings for the current project tab.',
-				searchText: 'edit project settings project tab root folder emoji color',
-				onSelect: () => {
-					openProjectSettings();
-				},
-			},
-			{
-				group: 'Workspace',
-				icon: <Sidebar size={18} strokeWidth={2.1} />,
-				id: 'toggle-file-explorer-sidebar',
-				title: project.isFileExplorerOpen
-					? 'Hide file explorer sidebar'
-					: 'Show file explorer sidebar',
-				description: project.isFileExplorerOpen
-					? 'Hide the file explorer sidebar for this project.'
-					: 'Show the file explorer sidebar for this project.',
-				searchText:
-					`toggle file explorer sidebar show hide explorer sidebar project ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-file-explorer-sidebar')}`,
-				shortcutLabel: getCommandShortcutLabel(
-					settings.keyboardShortcuts,
-					'toggle-file-explorer-sidebar',
-					isMac,
-				),
-				onSelect: () => {
-					toggleFileExplorerSidebar();
-				},
-			},
-			{
-				group: 'Workspace',
-				icon: <FolderSync size={18} strokeWidth={2.1} />,
-				id: 'set-project-root-folder-to-working-directory',
-				title: 'Set project root folder to working directory',
-				description:
-					'Use the active terminal working directory as this project root folder.',
-				searchText:
-					`set project root folder working directory cwd active terminal root folder ${getCommandShortcut(settings.keyboardShortcuts, 'set-project-root-folder-to-working-directory')}`,
-				shortcutLabel: getCommandShortcutLabel(
-					settings.keyboardShortcuts,
-					'set-project-root-folder-to-working-directory',
-					isMac,
-				),
-				onSelect: () => {
-					void setProjectRootFolderToWorkingDirectory();
-				},
-			},
-			...macros.map((macro): MacroLauncherItem => ({
-				group: 'Macros',
-				icon: <Play size={18} strokeWidth={2.1} />,
-				id: macro.id,
-				title: macro.title,
-				description:
-					macro.description ||
-					(macro.steps[0]?.type === 'type'
-						? macro.steps[0].content
-						: 'Multi-step macro'),
-				searchText: [
-					macro.title,
-					macro.description,
-					...macro.fields.map((field) => `${field.label} ${field.name}`),
-					...macro.steps.map((step) =>
-						step.type === 'type' ? step.content : '',
-					),
-				]
-					.join(' ')
-					.toLowerCase(),
-				shortcutLabel: '',
-				onSelect: () => runMacro(macro),
-			})),
-		];
-
-		if (!normalizedQuery) {
-			return commandItems;
-		}
-
-		return commandItems
-			.map((macro, index) => ({
-				macro,
-				index,
-				score: getCommandSearchScore(macro, normalizedQuery),
-			}))
-			.filter(({ score }) => score > 0)
-			.sort((left, right) => {
-				if (left.macro.group === 'Macros' && right.macro.group === 'Macros') {
-					return left.index - right.index;
-				}
-
-				if (right.score !== left.score) {
-					return right.score - left.score;
-				}
-
-				return left.index - right.index;
-			})
-			.map(({ macro }) => macro);
-	}, [
-		addTerminal,
-		clearActiveTerminal,
-		createProject,
-		isMac,
-		macroQuery,
-		macros,
-		openActiveTerminalSettings,
-		openProjectSettings,
-		project.isFileExplorerOpen,
-		runAiTabMetadata,
-		runMacro,
-		settings.keyboardShortcuts,
-		setProjectRootFolderToWorkingDirectory,
-		startDictation,
-		toggleFileExplorerSidebar,
-	]);
-	const activeMacroId = filteredMacros[selectedMacroIndex]?.id ?? null;
-	const macroLauncherGroups = useMemo(() => {
-		const groups = new Map<MacroLauncherGroup, MacroLauncherGroupedItem[]>();
-
-		filteredMacros.forEach((item, index) => {
-			const groupItems = groups.get(item.group) ?? [];
-			groupItems.push({ index, item });
-			groups.set(item.group, groupItems);
-		});
-
-		return (['Terminal', 'Workspace', 'Macros'] as const)
-			.map((group) => ({
-				group,
-				items: groups.get(group) ?? [],
-			}))
-			.filter(({ items }) => items.length > 0);
-	}, [filteredMacros]);
-
-	const closeActivePanel = useCallback(() => {
-		dockviewApiRef.current?.activePanel?.api.close();
-	}, []);
-
-	const saveActivePanel = useCallback(async () => {
-		const activePanel = dockviewApiRef.current?.activePanel;
-		const saveHandler = activePanel?.params?.onSave;
-		if (!saveHandler) {
-			return;
-		}
-
-		try {
-			const didSave = await saveHandler();
-			if (didSave) {
-				void refreshGitStatuses();
-			}
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			setErrorText(message);
-		}
-	}, [refreshGitStatuses]);
-
-	const popoutActivePanel = useCallback(async () => {
-		const api = dockviewApiRef.current;
-		const activePanel = api?.activePanel;
-
-		if (!api || !activePanel) {
-			return;
-		}
-
-		await api.addPopoutGroup(activePanel, {
-			popoutUrl,
-		});
-	}, [popoutUrl]);
-
-	const executeAppCommand = useCallback(
-		(command: AppCommand) => {
-			switch (command) {
-				case 'new-terminal':
-					void addTerminal({});
-					break;
-				case 'new-project':
-					onAddProject();
-					break;
-				case 'split-horizontal':
-					void addTerminal({ direction: 'below' });
-					break;
-				case 'split-vertical':
-					void addTerminal({ direction: 'right' });
-					break;
-				case 'save-active':
-					void saveActivePanel();
-					break;
-				case 'popout-active':
-					void popoutActivePanel();
-					break;
-				case 'close-active':
-					closeActivePanel();
-					break;
-				case 'clear-terminal':
-					clearActiveTerminal();
-					break;
-				case 'open-command-bar':
-					setMacroQuery('');
-					setSelectedMacroIndex(0);
-					setIsMacroLauncherOpen(true);
-					setMacroToRun(null);
-					setMacroFieldValues({});
-					break;
-				case 'start-dictation':
-					void startDictation();
-					break;
-				case 'open-recordings':
-					void window.terminay.openRecordingsWindow();
-					break;
-				case 'toggle-file-explorer-sidebar':
-					toggleFileExplorerSidebar();
-					break;
-				case 'set-project-root-folder-to-working-directory':
-					void setProjectRootFolderToWorkingDirectory();
-					break;
-				default:
-					break;
-			}
-		},
-		[
-			addTerminal,
-			clearActiveTerminal,
-			closeActivePanel,
-			onAddProject,
-			popoutActivePanel,
-			saveActivePanel,
-			setProjectRootFolderToWorkingDirectory,
-			startDictation,
-			toggleFileExplorerSidebar,
-		],
-	);
-
-	useEffect(() => {
-		if (!isActive) {
-			return;
-		}
-
-		const unsubscribeCopyRequest = window.terminay.onTerminalCopyRequested(
-			copyActiveTerminalSelection,
+			[
+				getPanelForSession,
+				project.color,
+				project.emoji,
+				project.id,
+				project.title,
+			],
 		);
 
-		return () => {
-			unsubscribeCopyRequest();
-		};
-	}, [copyActiveTerminalSelection, isActive]);
-
-	useEffect(() => {
-		if (!isActive) {
-			return;
-		}
-
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.defaultPrevented) {
-				return;
-			}
-
-			const command = findCommandForKeyboardEvent(
-				event,
-				settings.keyboardShortcuts,
-				isMac,
-			);
-			if (!command) {
-				return;
-			}
-
-			event.preventDefault();
-			event.stopPropagation();
-
-			if (!event.repeat) {
-				executeAppCommand(command);
-			}
-		};
-
-		window.addEventListener('keydown', onKeyDown, true);
-		return () => {
-			window.removeEventListener('keydown', onKeyDown, true);
-		};
-	}, [executeAppCommand, isActive, isMac, settings.keyboardShortcuts]);
-
-	const ownsControlSession = useCallback(
-		(sessionId: string) => getPanelForSession(sessionId) !== null,
-		[getPanelForSession],
-	);
-
-	const handleControlRequest = useCallback(
-		async (
-			op: string,
-			params: unknown,
-			scopeSessionId: string,
-		): Promise<ControlHandlerResult> => {
-			const api = dockviewApiRef.current;
-			const p = (params ?? {}) as Record<string, unknown>;
-			const asString = (value: unknown): string | undefined =>
-				typeof value === 'string' ? value : undefined;
-			const asNumber = (value: unknown): number | undefined =>
-				typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-			// The workspace only splits along two axes, so map the four requested
-			// directions onto the supported pair (horizontal -> right, vertical -> below).
-			const asDirection = (value: unknown): AddTerminalOptions['direction'] | undefined => {
-				if (value === 'right' || value === 'left') {
-					return 'right';
+		const applyTerminalRecordingState = useCallback(
+			(state: TerminalRecordingState) => {
+				const panel = getPanelForSession(state.sessionId);
+				if (!panel) {
+					return;
 				}
-				if (value === 'below' || value === 'above') {
-					return 'below';
-				}
-				return undefined;
-			};
 
-			type ControlTerminal = { panelId: string; sessionId: string; title: string };
+				panel.api.updateParameters({
+					recordingError: state.errorMessage,
+					recordingId:
+						state.recordingId ??
+						(panel.params as TerminalPanelParams | undefined)?.recordingId ??
+						null,
+					recordingStatus: state.status,
+					titleUpdateNonce: Date.now(),
+				});
+			},
+			[getPanelForSession],
+		);
 
-			const enumerate = (): ControlTerminal[] => {
-				const out: ControlTerminal[] = [];
+		const {
+			hydrateRecordingStateForSession,
+			revealRecording,
+			startRecordingForSession,
+			stopRecordingForSession,
+		} = useTerminalRecordingController({
+			applyState: applyTerminalRecordingState,
+			getStartMetadata: getRecordingStartMetadataForSession,
+			legacyClient: recordingsClient,
+			projectId: project.id,
+			serverClient: serverRecordingsClient,
+			setErrorText,
+		});
+
+		const getActivityOverviewItems =
+			useCallback((): TerminalActivityOverviewItem[] => {
+				const api = dockviewApiRef.current;
 				if (!api) {
-					return out;
+					return [];
 				}
+
+				const items: TerminalActivityOverviewItem[] = [];
 				for (const group of api.groups) {
 					for (const panel of group.panels) {
-						const sessionId = (panel.params as TerminalPanelParams | undefined)
-							?.sessionId;
-						if (!sessionId) {
+						const sessionId = panel.params?.sessionId;
+						const agentState = panel.params?.agentState;
+						if (settings.agentIntegration.enabled && sessionId && agentState) {
+							const agentUnread = panel.params?.agentUnread === true;
+							const shouldIncludeAgent =
+								agentState === 'working' ||
+								isAgentAttentionState(agentState) ||
+								(agentState === 'done' && agentUnread);
+							if (shouldIncludeAgent) {
+								items.push({
+									color: getEffectiveTerminalTabColor(
+										panel.params,
+										project.color,
+									),
+									emoji: panel.params?.emoji ?? '',
+									panelId: panel.id,
+									projectEmoji: project.emoji,
+									projectId: project.id,
+									projectTitle: project.title,
+									sessionId,
+									state: agentState,
+									isAgentStatus: true,
+									title: panel.title ?? 'Terminal',
+								});
+							}
+							// Once a native lifecycle hook has claimed this terminal, raw
+							// output activity must never compete with that authority.
 							continue;
 						}
-						const title =
-							typeof panel.title === 'string' && panel.title.trim().length > 0
-								? panel.title
-								: 'Terminal';
-						out.push({ panelId: panel.id, sessionId, title });
-					}
-				}
-				return out;
-			};
+						const state = panel.params?.terminalActivityState;
+						if (
+							!sessionId ||
+							!isTerminalActivityIndicatorStateVisible(state, panel.params)
+						) {
+							continue;
+						}
 
-			// Resolve a terminal reference (name or id) within this project's tabs.
-			const matchTerminal = (
-				value: unknown,
-			):
-				| { found: ControlTerminal }
-				| { error: { code: string; message: string; candidates?: string[] } } => {
-				const ref = asString(value);
-				if (!ref || ref.trim().length === 0) {
-					return { error: { code: 'bad_request', message: 'A terminal name or id is required.' } };
-				}
-				const terminals = enumerate();
-				const byId = terminals.find((terminal) => terminal.sessionId === ref);
-				if (byId) {
-					return { found: byId };
-				}
-				const tiers: ControlTerminal[][] = [
-					terminals.filter((terminal) => terminal.title === ref),
-					terminals.filter(
-						(terminal) => terminal.title.toLowerCase() === ref.toLowerCase(),
-					),
-					terminals.filter((terminal) =>
-						terminal.title.toLowerCase().includes(ref.toLowerCase()),
-					),
-				];
-				for (const tier of tiers) {
-					if (tier.length === 1) {
-						return { found: tier[0] };
-					}
-					if (tier.length > 1) {
-						return {
-							error: {
-								code: 'ambiguous_terminal',
-								message: `More than one terminal matches "${ref}".`,
-								candidates: tier.map((terminal) => terminal.title),
-							},
-						};
-					}
-				}
-				return {
-					error: {
-						code: 'terminal_not_found',
-						message: `No terminal matches "${ref}" in this window.`,
-					},
-				};
-			};
-
-			const buildInfo = async (terminal: ControlTerminal) => {
-				const activity = controlActivityRef.current.get(terminal.sessionId);
-				const exited = controlExitRef.current.get(terminal.sessionId);
-				let cwd: string | null = null;
-				try {
-					cwd = await window.terminay.getTerminalCwd(terminal.sessionId);
-				} catch {
-					cwd = null;
-				}
-				return {
-					id: terminal.sessionId,
-					name: terminal.title,
-					busy: activity?.status === 'working',
-					attention: activity?.attention ?? false,
-					cwd,
-					lastActivityAgoMs: activity ? Math.max(0, Date.now() - activity.at) : null,
-					exitCode: exited ?? activity?.exitCode ?? null,
-					isSelf: terminal.sessionId === scopeSessionId,
-				};
-			};
-
-			const waitOnce = (
-				register: (resolve: () => void) => () => void,
-				timeoutSeconds: number | undefined,
-				onTimeout: () => void,
-				onResolve: () => void,
-			): Promise<void> => {
-				return new Promise<void>((resolve) => {
-					let settled = false;
-					let timer: number | undefined;
-					const finish = (timedOut: boolean) => {
-						if (settled) {
-							return;
-						}
-						settled = true;
-						cleanup();
-						if (timer !== undefined) {
-							window.clearTimeout(timer);
-						}
-						if (timedOut) {
-							onTimeout();
-						} else {
-							onResolve();
-						}
-						resolve();
-					};
-					const cleanup = register(() => finish(false));
-					if (timeoutSeconds && timeoutSeconds > 0) {
-						timer = window.setTimeout(() => finish(true), timeoutSeconds * 1000);
-					}
-				});
-			};
-
-			try {
-				switch (op) {
-					case 'list_terminals': {
-						const terminals = await Promise.all(enumerate().map(buildInfo));
-						return { ok: true, result: { terminals } };
-					}
-					case 'read_terminal': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						const reader = terminalContextReadersRef.current.get(
-							match.found.sessionId,
-						);
-						let output = reader ? reader().recentOutput : '';
-						const lines = asNumber(p.lines);
-						if (lines && lines > 0) {
-							output = output.split('\n').slice(-lines).join('\n');
-						}
-						return {
-							ok: true,
-							result: { id: match.found.sessionId, name: match.found.title, output },
-						};
-					}
-					case 'get_terminal_status': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						const activity = controlActivityRef.current.get(match.found.sessionId);
-						const exited = controlExitRef.current.get(match.found.sessionId);
-						const status =
-							exited !== undefined
-								? 'exited'
-								: activity?.status === 'working'
-									? 'working'
-									: 'idle';
-						return {
-							ok: true,
-							result: {
-								id: match.found.sessionId,
-								name: match.found.title,
-								status,
-								attention: activity?.attention ?? false,
-								exitCode: exited ?? activity?.exitCode ?? null,
-								lastActivityAgoMs: activity
-									? Math.max(0, Date.now() - activity.at)
-									: null,
-							},
-						};
-					}
-					case 'open_terminal': {
-						const split = asDirection(p.split);
-						if (split) {
-							const caller = enumerate().find(
-								(terminal) => terminal.sessionId === scopeSessionId,
-							);
-							if (caller) {
-								api?.getPanel(caller.panelId)?.api.setActive();
-							}
-						}
-						const created = await addTerminal({
-							title: asString(p.name),
-							cwd: asString(p.cwd) ?? undefined,
-							direction: split,
+						items.push({
+							color: getEffectiveTerminalTabColor(panel.params, project.color),
+							emoji: panel.params?.emoji ?? '',
+							panelId: panel.id,
+							projectEmoji: project.emoji,
+							projectId: project.id,
+							projectTitle: project.title,
+							sessionId,
+							state,
+							isAgentStatus: false,
+							title: panel.title ?? 'Terminal',
 						});
-						if (!created) {
-							return {
-								ok: false,
-								error: { code: 'internal', message: 'Failed to open a new terminal.' },
-							};
-						}
-						return {
-							ok: true,
-							result: { id: created.sessionId, name: created.title },
-						};
 					}
-					case 'write_terminal': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						const text = asString(p.text) ?? '';
-						window.terminay.writeTerminal(match.found.sessionId, text);
-						if (p.submit === true) {
-							window.terminay.writeTerminal(match.found.sessionId, '\r');
-						}
-						return { ok: true, result: { ok: true } };
-					}
-					case 'run_command': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						const command = asString(p.command) ?? '';
-						window.terminay.writeTerminal(
-							match.found.sessionId,
-							formatRunCommandInput(command),
-						);
-						window.terminay.writeTerminal(match.found.sessionId, '\r');
-						return { ok: true, result: { ok: true } };
-					}
-					case 'close_terminal': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						api?.getPanel(match.found.panelId)?.api.close();
-						return { ok: true, result: { ok: true } };
-					}
-					case 'focus_terminal': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						api?.getPanel(match.found.panelId)?.api.setActive();
-						return { ok: true, result: { ok: true } };
-					}
-					case 'rename_terminal': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						const name = asString(p.name);
-						if (!name || name.trim().length === 0) {
-							return {
-								ok: false,
-								error: { code: 'bad_request', message: 'A new name is required.' },
-							};
-						}
-						api?.getPanel(match.found.panelId)?.api.setTitle(name);
-						setTerminalTitleRevision((revision) => revision + 1);
-						window.terminay.updateTerminalRemoteMetadata(match.found.sessionId, {
-							title: name,
-						});
-						return { ok: true, result: { ok: true } };
-					}
-					case 'split_terminal': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						const direction = asDirection(p.direction) ?? 'right';
-						api?.getPanel(match.found.panelId)?.api.setActive();
-						const created = await addTerminal({ direction });
-						if (!created) {
-							return {
-								ok: false,
-								error: { code: 'internal', message: 'Failed to split the terminal.' },
-							};
-						}
-						return {
-							ok: true,
-							result: { id: created.sessionId, name: created.title },
-						};
-					}
-					case 'wait_for_idle': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						const seconds = asNumber(p.seconds) ?? 0;
-						const timeout = asNumber(p.timeout);
-						const idlePromise = window.terminay
-							.waitForTerminalInactivity(
-								match.found.sessionId,
-								Math.max(0, seconds * 1000),
-							)
-							.then(() => false);
-						let timedOut = false;
-						if (timeout && timeout > 0) {
-							timedOut = await Promise.race([
-								idlePromise,
-								new Promise<boolean>((resolve) =>
-									window.setTimeout(() => resolve(true), timeout * 1000),
-								),
-							]);
-						} else {
-							await idlePromise;
-						}
-						return { ok: true, result: { idle: true, timedOut } };
-					}
-					case 'wait_for_command': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						const sessionId = match.found.sessionId;
-						const timeout = asNumber(p.timeout);
-						let exitCode: number | null = null;
-						let timedOut = false;
-						await waitOnce(
-							(resolve) => {
-								const waiter = (code: number | null) => {
-									exitCode = code;
-									resolve();
-								};
-								let set = controlCommandWaitersRef.current.get(sessionId);
-								if (!set) {
-									set = new Set();
-									controlCommandWaitersRef.current.set(sessionId, set);
-								}
-								set.add(waiter);
-								return () => {
-									controlCommandWaitersRef.current.get(sessionId)?.delete(waiter);
-								};
-							},
-							timeout,
-							() => {
-								timedOut = true;
-							},
-							() => {},
-						);
-						return { ok: true, result: { exitCode, timedOut } };
-					}
-					case 'wait_for_attention': {
-						const match = matchTerminal(p.terminal);
-						if ('error' in match) {
-							return { ok: false, error: match.error };
-						}
-						const sessionId = match.found.sessionId;
-						const timeout = asNumber(p.timeout);
-						let timedOut = false;
-						await waitOnce(
-							(resolve) => {
-								const waiter = () => resolve();
-								let set = controlAttentionWaitersRef.current.get(sessionId);
-								if (!set) {
-									set = new Set();
-									controlAttentionWaitersRef.current.set(sessionId, set);
-								}
-								set.add(waiter);
-								return () => {
-									controlAttentionWaitersRef.current
-										.get(sessionId)
-										?.delete(waiter);
-								};
-							},
-							timeout,
-							() => {
-								timedOut = true;
-							},
-							() => {},
-						);
-						return { ok: true, result: { attention: true, timedOut } };
-					}
-					default:
-						return {
-							ok: false,
-							error: { code: 'unsupported_op', message: `Unknown operation: ${op}` },
-						};
-				}
-			} catch (error) {
-				return {
-					ok: false,
-					error: {
-						code: 'internal',
-						message: error instanceof Error ? error.message : String(error),
-					},
-				};
-			}
-		},
-		[addTerminal],
-	);
-
-	useImperativeHandle(
-		ref,
-		() => ({
-			acceptMovedTerminal,
-			activateTerminal,
-			executeCommand(command: AppCommand) {
-				executeAppCommand(command);
-			},
-			exportTerminalForMove,
-			exportProjectForMove,
-			focusActiveTerminal,
-			ownsControlSession,
-			handleControlRequest,
-		}),
-		[
-			acceptMovedTerminal,
-			activateTerminal,
-			executeAppCommand,
-			exportTerminalForMove,
-			exportProjectForMove,
-			focusActiveTerminal,
-			ownsControlSession,
-			handleControlRequest,
-		],
-	);
-
-	useEffect(() => {
-		publishTerminalActivityOverview();
-	}, [publishTerminalActivityOverview]);
-
-	useEffect(() => {
-		focusedSessionIdRef.current = focusedSessionId;
-		for (const sessionId of panelSessionMapRef.current.values()) {
-			evaluateTerminalActivityState(sessionId);
-		}
-	}, [evaluateTerminalActivityState, focusedSessionId]);
-
-	useEffect(() => {
-		syncFocusedTerminalTabs(focusedSessionId);
-	}, [focusedSessionId, syncFocusedTerminalTabs]);
-
-	useEffect(() => {
-		syncRunningMacroTabs();
-	}, [syncRunningMacroTabs]);
-
-	const handleReady = useCallback(
-		(event: DockviewReadyEvent) => {
-			dockviewApiRef.current = event.api;
-			initialTerminalSeededRef.current = false;
-			setIsDockviewReady(true);
-
-			event.api.onDidRemovePanel((panel) => {
-				const sessionId = panelSessionMapRef.current.get(panel.id);
-				const closeProjectIfEmpty = () => {
-					window.requestAnimationFrame(() => {
-						const hasPanels = event.api.groups.some(
-							(group) => group.panels.length > 0,
-						);
-						if (!hasPanels) {
-							onCloseProject(project.id);
-						}
-					});
-				};
-
-				if (!sessionId) {
-					const fileEntry = [...filePathPanelMapRef.current.entries()].find(
-						([, candidatePanelId]) => candidatePanelId === panel.id,
-					);
-					if (fileEntry) {
-						filePathPanelMapRef.current.delete(fileEntry[0]);
-					}
-					const folderEntry = [...folderPathPanelMapRef.current.entries()].find(
-						([, candidatePanelId]) => candidatePanelId === panel.id,
-					);
-					if (folderEntry) {
-						folderPathPanelMapRef.current.delete(folderEntry[0]);
-					}
-					closeProjectIfEmpty();
-					return;
 				}
 
-				panelSessionMapRef.current.delete(panel.id);
-				const isMovingTerminal =
-					movingTerminalSessionIdsRef.current.delete(sessionId);
-				const activityTimer = terminalActivityTimersRef.current.get(sessionId);
-				if (activityTimer !== undefined) {
-					window.clearTimeout(activityTimer);
-					terminalActivityTimersRef.current.delete(sessionId);
-				}
-				terminalActivityStoreRef.current.deleteSession(sessionId);
-				clearMacroRunsForSession(sessionId);
-				setFocusedSessionId((current) =>
-					current === sessionId
-						? (event.api.activePanel?.params?.sessionId ?? null)
-						: current,
-				);
-				if (isMovingTerminal) {
-					window.requestAnimationFrame(publishTerminalActivityOverview);
-					return;
-				}
-				cancelMacroRunsForSession(sessionId);
-				window.terminay.killTerminal(sessionId);
-				window.requestAnimationFrame(publishTerminalActivityOverview);
-				closeProjectIfEmpty();
-			});
-			event.api.onDidActivePanelChange(() => {
-				const previousFocusedSessionId = focusedSessionIdRef.current;
-				const nextFocusedSessionId =
-					event.api.activePanel?.params?.sessionId ?? null;
-				if (
-					previousFocusedSessionId &&
-					previousFocusedSessionId !== nextFocusedSessionId
-				) {
-					markTerminalActivityViewed(previousFocusedSessionId);
-				}
-				syncPanelFocusState();
-			});
-		},
-		[
-			cancelMacroRunsForSession,
-			clearMacroRunsForSession,
-			markTerminalActivityViewed,
-			onCloseProject,
+				return items;
+			}, [
+				project.color,
+				project.emoji,
+				project.id,
+				project.title,
+				settings.agentIntegration.enabled,
+			]);
+
+		const publishTerminalActivityOverview = useCallback(() => {
+			onTerminalActivityOverviewChange(project.id, getActivityOverviewItems());
+		}, [
+			getActivityOverviewItems,
+			onTerminalActivityOverviewChange,
 			project.id,
-			publishTerminalActivityOverview,
-			syncPanelFocusState,
-		],
-	);
+		]);
 
-	useEffect(() => {
-		if (!isDockviewReady) {
-			return;
-		}
+		const registerTerminalContextReader = useCallback(
+			(sessionId: string, reader: TerminalContextReader) => {
+				terminalContextReadersRef.current.set(sessionId, reader);
 
-		const api = dockviewApiRef.current;
-		if (!api || initialTerminalSeededRef.current) {
-			return;
-		}
+				return () => {
+					if (terminalContextReadersRef.current.get(sessionId) === reader) {
+						terminalContextReadersRef.current.delete(sessionId);
+					}
+				};
+			},
+			[],
+		);
 
-		const hasPanels = api.groups.some((group) => group.panels.length > 0);
-		if (hasPanels) {
-			initialTerminalSeededRef.current = true;
-			return;
-		}
+		const {
+			applyEvaluation: applyTerminalActivityEvaluation,
+			clearDeferredTimer: clearDeferredTerminalActivityFlushTimer,
+			evaluate: evaluateTerminalActivityState,
+			markViewed: markTerminalActivityViewed,
+			scheduleDeferredFlush: scheduleDeferredTerminalActivityFlush,
+		} = useTerminalActivityController({
+			acknowledgeAgent: (sessionId) => {
+				if (!settingsRef.current.agentIntegration.enabled) return;
+				void serverAgentStatusClient
+					?.acknowledge({ projectId: project.id, sessionId })
+					.catch(() => undefined);
+			},
+			acknowledgeServerActivity:
+				serverActivityClient === undefined
+					? undefined
+					: (sessionId) => {
+							void serverActivityClient
+								.acknowledge({ projectId: project.id, sessionId })
+								.catch(() => undefined);
+						},
+			applyPanelState: (sessionId, state) => {
+				const panel = getPanelForSession(sessionId);
+				if (!panel || panel.params?.terminalActivityState === state)
+					return false;
+				panel.api.updateParameters({
+					terminalActivityState: state,
+					titleUpdateNonce: Date.now(),
+				});
+				return true;
+			},
+			deferredFlushMs: DOCKVIEW_SASH_ACTIVITY_DEFER_MS,
+			deferredSessionsRef: deferredTerminalActivitySessionIdsRef,
+			deferredTimerRef: deferredTerminalActivityFlushTimerRef,
+			evaluateRef: evaluateTerminalActivityStateRef,
+			getEvaluation: (sessionId, now) => {
+				if (!getPanelForSession(sessionId)) return null;
+				const snapshot =
+					serverActivityClient?.store.snapshot.sessions[sessionId];
+				return snapshot === undefined
+					? terminalActivityStoreRef.current.evaluate(sessionId, now)
+					: serverActivityEvaluation(snapshot);
+			},
+			isSashDraggingRef: isDockviewSashDraggingRef,
+			markLocalViewed: (sessionId) =>
+				terminalActivityStoreRef.current.markViewed(sessionId),
+			onOverviewChanged: publishTerminalActivityOverview,
+			timersRef: terminalActivityTimersRef,
+		});
 
-		initialTerminalSeededRef.current = true;
+		useEffect(() => {
+			let didChange = false;
+			const enabled = settings.agentIntegration.enabled;
+			const dockviewApi = dockviewApiRef.current;
 
-		// Adopted project (popped out / merged): reattach its existing sessions
-		// instead of spawning a brand-new terminal.
-		const adopted = adoptedTerminalsRef.current;
-		if (adopted && adopted.length > 0) {
-			for (const terminal of adopted) {
-				acceptMovedTerminal(terminal);
-			}
-			return;
-		}
-
-		void addTerminal({});
-	}, [acceptMovedTerminal, addTerminal, isDockviewReady]);
-
-	useEffect(() => {
-		const onOpenFileEvent = (event: Event) => {
-			const customEvent = event as CustomEvent<{
-				initialMode?: FileViewerMode;
-				path?: string;
-			}>;
-			const filePath = customEvent.detail?.path;
-			if (!filePath) {
-				return;
-			}
-			void openFile(filePath, { initialMode: customEvent.detail.initialMode });
-		};
-
-		window.addEventListener('terminay-open-file', onOpenFileEvent);
-		return () => {
-			window.removeEventListener('terminay-open-file', onOpenFileEvent);
-		};
-	}, [openFile]);
-
-	useEffect(() => {
-		const handlePointerDown = (event: PointerEvent) => {
-			const target = event.target;
-			const workspace = workspaceRef.current;
-			if (
-				!(target instanceof Element) ||
-				!workspace?.contains(target) ||
-				!target.closest('.dv-sash') ||
-				isDockviewSashDraggingRef.current
-			) {
-				return;
-			}
-
-			isDockviewSashDraggingRef.current = true;
-			clearDeferredTerminalActivityFlushTimer();
-
-			const ownerWindow = target.ownerDocument.defaultView ?? window;
-			const ownerDocument = target.ownerDocument;
-			let didEnd = false;
-
-			const endSashDrag = () => {
-				if (didEnd) {
-					return;
+			for (const panel of dockviewApi?.panels ?? []) {
+				const sessionId = panel.params?.sessionId;
+				if (typeof sessionId !== 'string' || sessionId.length === 0) {
+					continue;
 				}
 
-				didEnd = true;
-				isDockviewSashDraggingRef.current = false;
-				ownerDocument.removeEventListener('pointerup', endSashDrag, true);
-				ownerDocument.removeEventListener('pointercancel', endSashDrag, true);
-				ownerDocument.removeEventListener('contextmenu', endSashDrag, true);
-				ownerWindow.removeEventListener('blur', endSashDrag);
-				scheduleDeferredTerminalActivityFlush();
-			};
+				const aggregate = enabled
+					? aggregateAgentStatusForTerminal(agentStatusSnapshot, sessionId)
+					: null;
+				const nextState = aggregate?.state;
+				const nextNeedsAttention =
+					nextState !== undefined && isAgentAttentionState(nextState);
+				const nextUnread = aggregate?.unread === true;
+				if (
+					panel.params?.agentState === nextState &&
+					panel.params?.agentNeedsAttention === nextNeedsAttention &&
+					panel.params?.agentUnread === nextUnread
+				) {
+					continue;
+				}
 
-			ownerDocument.addEventListener('pointerup', endSashDrag, true);
-			ownerDocument.addEventListener('pointercancel', endSashDrag, true);
-			ownerDocument.addEventListener('contextmenu', endSashDrag, true);
-			ownerWindow.addEventListener('blur', endSashDrag);
-		};
+				panel.api.updateParameters({
+					agentState: nextState,
+					agentNeedsAttention: nextNeedsAttention,
+					agentUnread: nextUnread,
+				});
+				didChange = true;
+			}
 
-		window.addEventListener('pointerdown', handlePointerDown, true);
-		return () => {
-			window.removeEventListener('pointerdown', handlePointerDown, true);
-			isDockviewSashDraggingRef.current = false;
-			clearDeferredTerminalActivityFlushTimer();
-			deferredTerminalActivitySessionIdsRef.current.clear();
-		};
-	}, [
-		clearDeferredTerminalActivityFlushTimer,
-		scheduleDeferredTerminalActivityFlush,
-	]);
+			if (didChange) {
+				window.requestAnimationFrame(publishTerminalActivityOverview);
+			}
+		}, [
+			agentStatusSnapshot,
+			isDockviewReady,
+			publishTerminalActivityOverview,
+			settings.agentIntegration.enabled,
+			project.id,
+			serverAgentStatusClient,
+		]);
 
-	useEffect(() => {
-		const onTerminalFocused = (event: Event) => {
-			const customEvent = event as CustomEvent<{ sessionId?: string }>;
-			const sessionId = customEvent.detail?.sessionId ?? null;
-			const previousSessionId = focusedSessionIdRef.current;
-			if (
-				previousSessionId &&
-				previousSessionId !== sessionId &&
-				getPanelForSession(previousSessionId)
-			) {
-				applyTerminalActivityEvaluation(
-					previousSessionId,
-					terminalActivityStoreRef.current.suppressTerminalActivity(
-						previousSessionId,
-					),
+		const suppressInitialTerminalActivity = useCallback(
+			(sessionId: string) => {
+				if (serverActivityClient !== undefined) {
+					return;
+				}
+				terminalActivityStoreRef.current.recordInitialSuppression(sessionId);
+			},
+			[serverActivityClient],
+		);
+
+		useEffect(() => {
+			if (serverAgentStatusClient === undefined || !isDockviewReady) {
+				return;
+			}
+
+			// Desktop can create an initial terminal before the workspace snapshot
+			// observes it. This shared client serves every project view in the
+			// window, so a project with no panels must not clear another project's
+			// already-rendered server-owned agent projection.
+			serverAgentStatusClient.mergeSessionScope([
+				...new Set(panelSessionMapRef.current.values()),
+			]);
+		}, [focusedSessionId, isDockviewReady, serverAgentStatusClient]);
+
+		useEffect(() => {
+			if (serverActivityClient === undefined) {
+				return;
+			}
+			// Activity revisions belong to one server authority. A replacement
+			// connection (including a server restart) begins from a fresh snapshot;
+			// clear the old panel indicators and control facts before applying it so
+			// an empty replacement snapshot cannot leave stale attention behind.
+			for (const sessionId of panelSessionMapRef.current.values()) {
+				applyTerminalActivityEvaluation(sessionId, {
+					state: 'viewed',
+					nextDeadline: null,
+				});
+				clearTerminalControlActivity(
+					terminalControlStateRef.current,
+					sessionId,
 				);
 			}
+			const applySnapshot = () => {
+				for (const snapshot of Object.values(
+					serverActivityClient.store.snapshot.sessions,
+				)) {
+					if (
+						snapshot.projectId !== project.id ||
+						!getPanelForSession(snapshot.sessionId)
+					) {
+						continue;
+					}
+					applyTerminalActivityEvaluation(
+						snapshot.sessionId,
+						serverActivityEvaluation(snapshot),
+					);
+					const exitCode =
+						typeof snapshot.exitCode === 'number' ? snapshot.exitCode : null;
+					recordTerminalControlActivity(
+						terminalControlStateRef.current,
+						snapshot.sessionId,
+						{
+							status: snapshot.status,
+							attention: snapshot.attention,
+							exitCode,
+							at: snapshot.updatedAt,
+						},
+					);
+				}
+			};
+			applySnapshot();
+			const unsubscribe = serverActivityClient.store.subscribe(() =>
+				applySnapshot(),
+			);
+			void serverActivityClient.refresh().catch(() => undefined);
+			return unsubscribe;
+		}, [
+			applyTerminalActivityEvaluation,
+			getPanelForSession,
+			project.id,
+			serverActivityClient,
+		]);
+
+		const focusActiveTerminal = useCallback(() => {
+			const terminalPanel = findTerminalFocusTarget({
+				api: dockviewApiRef.current,
+				focusedSessionId: focusedSessionIdRef.current,
+				panelSessions: panelSessionMapRef.current,
+			});
+			const sessionId = terminalPanel?.params?.sessionId ?? null;
+			if (!terminalPanel || !sessionId) {
+				return;
+			}
+
+			terminalPanel.api.setActive();
 			focusedSessionIdRef.current = sessionId;
 			setFocusedSessionId(sessionId);
 			markTerminalActivityViewed(sessionId);
-		};
-
-		window.addEventListener('terminay-terminal-focused', onTerminalFocused);
-		return () => {
-			window.removeEventListener('terminay-terminal-focused', onTerminalFocused);
-		};
-	}, [
-		applyTerminalActivityEvaluation,
-		getPanelForSession,
-		markTerminalActivityViewed,
-	]);
-
-	useEffect(() => {
-		return window.terminay.onTerminalData((message) => {
-			if (!getPanelForSession(message.id)) {
-				return;
-			}
-
-			const now = Date.now();
-			terminalActivityStoreRef.current.recordTerminalActivity(message.id, now);
-			if (
-				isDockviewSashDraggingRef.current ||
-				deferredTerminalActivityFlushTimerRef.current !== null
-			) {
-				deferredTerminalActivitySessionIdsRef.current.add(message.id);
-				scheduleDeferredTerminalActivityFlush();
-				return;
-			}
-
-			applyTerminalActivityEvaluation(
-				message.id,
-				terminalActivityStoreRef.current.evaluate(message.id, now),
-			);
-		});
-	}, [
-		applyTerminalActivityEvaluation,
-		getPanelForSession,
-		scheduleDeferredTerminalActivityFlush,
-	]);
-
-	useEffect(() => {
-		return window.terminay.onTerminalActivity((message) => {
-			if (!getPanelForSession(message.id)) {
-				return;
-			}
-
-			const now = Date.now();
-			applyTerminalActivityEvaluation(
-				message.id,
-				terminalActivityStoreRef.current.recordActivitySignal(
-					message.id,
-					message.activity,
-					now,
-					{ focused: message.id === focusedSessionIdRef.current },
-				),
-			);
-
-			// MCP control surface: track latest activity and fire pending waiters.
-			const activity = message.activity;
-			const exitCode =
-				typeof activity.exitCode === 'number' ? activity.exitCode : null;
-			const previous = controlActivityRef.current.get(message.id);
-			controlActivityRef.current.set(message.id, {
-				status: activity.status === 'working' ? 'working' : 'idle',
-				attention: activity.attention === true,
-				exitCode,
-				at: now,
+			window.requestAnimationFrame(() => {
+				window.dispatchEvent(
+					new CustomEvent('terminay-focus-terminal', {
+						detail: { sessionId },
+					}),
+				);
 			});
-			// Resolve wait_for_command only on a genuine completion: a
-			// working -> finished transition, or a changed exit code.
-			if (
-				exitCode !== null &&
-				(previous?.status === 'working' || previous?.exitCode !== exitCode)
-			) {
-				const waiters = controlCommandWaitersRef.current.get(message.id);
-				if (waiters && waiters.size > 0) {
-					for (const waiter of Array.from(waiters)) {
-						waiter(exitCode);
-					}
-				}
-			}
-			if (activity.attention === true) {
-				const waiters = controlAttentionWaitersRef.current.get(message.id);
-				if (waiters && waiters.size > 0) {
-					for (const waiter of Array.from(waiters)) {
-						waiter();
-					}
-				}
-			}
-		});
-	}, [applyTerminalActivityEvaluation, getPanelForSession]);
+		}, [markTerminalActivityViewed]);
 
-	useEffect(() => {
-		return window.terminay.onTerminalRecordingChanged(({ state }) => {
-			applyTerminalRecordingState(state);
-		});
-	}, [applyTerminalRecordingState]);
-
-	useEffect(() => {
-		const onTerminalUserInput = (event: Event) => {
-			const customEvent = event as CustomEvent<{ sessionId?: string }>;
-			const sessionId = customEvent.detail?.sessionId;
-			if (!sessionId || !getPanelForSession(sessionId)) {
-				return;
-			}
-
-			applyTerminalActivityEvaluation(
+		const {
+			cancelRun: cancelMacroRun,
+			cancelSessionRuns: cancelMacroRunsForSession,
+			clearFinishedSessionRuns: clearFinishedMacroRunsForSession,
+			clearRun: clearMacroRunForSession,
+			clearSessionRuns: clearMacroRunsForSession,
+			executeMacro: executeMacroRun,
+			replaceSessionRuns: replaceMacroRunsForSession,
+			runningMacroRunsBySession,
+		} = useMacroRunController({
+			focusActiveTerminal,
+			getActiveSessionId,
+			getDecryptedSecret: (secretId) =>
+				macroSettingsCapability.getDecryptedSecret(secretId),
+			sendInput: sendTerminalPanelInput,
+			setErrorText,
+			waitForInactivity: waitForSessionInactivity,
+			serverMacroClient,
+			serverTargetForSession: (sessionId) => ({
+				serverId: terminalClientContext?.serverId ?? 'desktop-local',
+				projectId: project.id,
 				sessionId,
-				terminalActivityStoreRef.current.recordUserInput(sessionId),
-			);
-		};
-
-		window.addEventListener('terminay-terminal-user-input', onTerminalUserInput);
-		return () => {
-			window.removeEventListener('terminay-terminal-user-input', onTerminalUserInput);
-		};
-	}, [applyTerminalActivityEvaluation, getPanelForSession]);
-
-	useEffect(() => {
-		return () => {
-			onTerminalActivityOverviewChange(project.id, []);
-			for (const timer of terminalActivityTimersRef.current.values()) {
-				window.clearTimeout(timer);
-			}
-			terminalActivityTimersRef.current.clear();
-			terminalActivityStoreRef.current.clear();
-		};
-	}, [onTerminalActivityOverviewChange, project.id]);
-
-	useEffect(() => {
-		return window.terminay.onTerminalExit((message) => {
-			cancelMacroRunsForSession(message.id);
-
-			// MCP control surface: record the exit code and release waiters.
-			controlExitRef.current.set(message.id, message.exitCode);
-			const commandWaiters = controlCommandWaitersRef.current.get(message.id);
-			if (commandWaiters && commandWaiters.size > 0) {
-				for (const waiter of Array.from(commandWaiters)) {
-					waiter(message.exitCode);
-				}
-			}
-
-			if (
-				settings.autoCloseTerminalOnExitZero &&
-				message.exitCode === 0 &&
-				message.signal == null
-			) {
-				getPanelForSession(message.id)?.api.close();
-			}
+			}),
 		});
-	}, [
-		cancelMacroRunsForSession,
-		getPanelForSession,
-		settings.autoCloseTerminalOnExitZero,
-	]);
 
-	useEffect(() => {
-		if (!isActive) {
-			return;
-		}
+		const activateTerminal = useCallback(
+			(panelId: string, sessionId: string) => {
+				const panel = activateTerminalPanel({
+					api: dockviewApiRef.current,
+					panelId,
+					sessionId,
+				});
+				if (!panel) {
+					return;
+				}
+				focusedSessionIdRef.current = sessionId;
+				setFocusedSessionId(sessionId);
+				markTerminalActivityViewed(sessionId);
+				setErrorText(null);
+				window.requestAnimationFrame(() => {
+					window.dispatchEvent(
+						new CustomEvent('terminay-focus-terminal', {
+							detail: { sessionId },
+						}),
+					);
+				});
+			},
+			[markTerminalActivityViewed],
+		);
+		const activateAgentTerminal = useCallback(
+			(terminalSessionId: string) => {
+				const panel = getPanelForSession(terminalSessionId);
+				if (!panel) {
+					return;
+				}
+				activateTerminal(panel.id, terminalSessionId);
+			},
+			[activateTerminal, getPanelForSession],
+		);
 
-		const cleanupByWindow = new Map<Window, () => void>();
-		const apiDisposables: Array<{ dispose: () => void }> = [];
-
-		const addTerminalInHeaderSpace = (
-			targetWindow: Window,
-			target: HTMLElement | null,
-			point?: { x: number; y: number },
-		) => {
+		const syncPanelFocusState = useCallback(() => {
 			const api = dockviewApiRef.current;
 			if (!api) {
 				return;
 			}
 
-			let groupElement: HTMLElement | null = target?.closest(
-				'.dv-groupview',
-			) as HTMLElement | null;
+			const activePanelId = api.activePanel?.id ?? null;
 
-			const emptyHeaderSpace = target?.closest(
-				'.dv-void-container',
-			) as HTMLElement | null;
-			if (emptyHeaderSpace) {
-				groupElement = emptyHeaderSpace.closest(
-					'.dv-groupview',
-				) as HTMLElement | null;
-			}
-
-			if (!groupElement && point) {
-				const hitElements = targetWindow.document.elementsFromPoint(
-					point.x,
-					point.y,
-				);
-				const emptySpaceFromPoint = hitElements.find(
-					(element): element is HTMLElement =>
-						element instanceof HTMLElement &&
-						element.classList.contains('dv-void-container'),
-				);
-
-				if (emptySpaceFromPoint) {
-					groupElement = emptySpaceFromPoint.closest(
-						'.dv-groupview',
-					) as HTMLElement | null;
+			for (const group of api.groups) {
+				for (const panel of group.panels) {
+					panel.api.updateParameters({
+						...panel.params,
+						isFocused: panel.id === activePanelId,
+					});
 				}
 			}
+		}, []);
 
-			if (!groupElement && point) {
-				const hitElements = targetWindow.document.elementsFromPoint(
-					point.x,
-					point.y,
-				);
-				const headerContainer = hitElements.find(
-					(element): element is HTMLElement =>
-						element instanceof HTMLElement &&
-						element.classList.contains('dv-tabs-and-actions-container'),
-				);
-
-				if (headerContainer) {
-					const headerRect = headerContainer.getBoundingClientRect();
-					const inHeader =
-						point.x >= headerRect.left &&
-						point.x <= headerRect.right &&
-						point.y >= headerRect.top &&
-						point.y <= headerRect.bottom;
-
-					const tabsContainer = headerContainer.querySelector(
-						'.dv-tabs-container',
-					) as HTMLElement | null;
-					const rightActions = headerContainer.querySelector(
-						'.dv-right-actions-container',
-					) as HTMLElement | null;
-
-					const inTabs = (() => {
-						if (!tabsContainer) {
-							return false;
-						}
-
-						const tabsRect = tabsContainer.getBoundingClientRect();
-						return (
-							point.x >= tabsRect.left &&
-							point.x <= tabsRect.right &&
-							point.y >= tabsRect.top &&
-							point.y <= tabsRect.bottom
-						);
-					})();
-
-					const inRightActions = (() => {
-						if (!rightActions) {
-							return false;
-						}
-
-						const actionsRect = rightActions.getBoundingClientRect();
-						return (
-							point.x >= actionsRect.left &&
-							point.x <= actionsRect.right &&
-							point.y >= actionsRect.top &&
-							point.y <= actionsRect.bottom
-						);
-					})();
-
-					if (inHeader && !inTabs && !inRightActions) {
-						groupElement = headerContainer.closest(
-							'.dv-groupview',
-						) as HTMLElement | null;
-					}
-				}
-			}
-
-			if (!groupElement) {
-				return;
-			}
-
-			const group = api.groups.find((candidate) =>
-				candidate.element.contains(groupElement),
-			);
-			if (!group) {
-				return;
-			}
-
-			void addTerminal({ groupId: group.id });
-		};
-
-		const isEmptyHeaderDoubleClick = (
-			targetWindow: Window,
-			target: HTMLElement | null,
-			point: { x: number; y: number },
-		): boolean => {
-			if (
-				target?.closest('.terminay-add-tab-button') ||
-				target?.closest('.dv-tab') ||
-				target?.closest('.dv-right-actions-container')
-			) {
-				return false;
-			}
-
-			const hitElements = targetWindow.document.elementsFromPoint(
-				point.x,
-				point.y,
-			);
-			if (
-				hitElements.some(
-					(element) =>
-						element instanceof HTMLElement &&
-						(element.classList.contains('dv-tab') ||
-							element.closest('.dv-tab') ||
-							element.classList.contains('dv-right-actions-container') ||
-							element.closest('.dv-right-actions-container')),
-				)
-			) {
-				return false;
-			}
-
-			return hitElements.some(
-				(element) =>
-					element instanceof HTMLElement &&
-					element.classList.contains('dv-void-container'),
-			);
-		};
-
-		const ensureHeaderButtons = (targetWindow: Window) => {
-			const containers =
-				targetWindow.document.querySelectorAll<HTMLElement>(
-					'.dv-void-container',
-				);
-
-			for (const container of containers) {
-				if (container.querySelector('.terminay-add-tab-button')) {
-					continue;
-				}
-
-				const button = targetWindow.document.createElement('button');
-				button.type = 'button';
-				button.className = 'terminay-add-tab-button';
-				button.setAttribute('aria-label', 'New terminal tab');
-				button.title = 'New terminal tab';
-				button.innerHTML = `
-            <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M6 2V10M2 6H10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          `;
-				container.appendChild(button);
-			}
-		};
-
-		const addListenersForWindow = (targetWindow: Window) => {
-			if (cleanupByWindow.has(targetWindow)) {
-				return;
-			}
-
-			ensureHeaderButtons(targetWindow);
-
-			const onClick = (event: PointerEvent) => {
-				const target = event.target as HTMLElement | null;
-				const addTabButton = target?.closest('.terminay-add-tab-button');
-
-				if (!addTabButton) {
-					return;
-				}
-
-				event.preventDefault();
-				event.stopPropagation();
-				addTerminalInHeaderSpace(targetWindow, target, {
-					x: event.clientX,
-					y: event.clientY,
-				});
-			};
-
-			const onDblClick = (event: globalThis.MouseEvent) => {
-				const target = event.target as HTMLElement | null;
-				if (!target?.closest('.dv-void-container')) {
-					return;
-				}
-
-				const point = {
-					x: event.clientX,
-					y: event.clientY,
-				};
-				if (!isEmptyHeaderDoubleClick(targetWindow, target, point)) {
-					return;
-				}
-
-				addTerminalInHeaderSpace(targetWindow, target, point);
-			};
-
-			const onEditTerminal = (event: Event) => {
-				const customEvent = event as CustomEvent<{ panelId: string }>;
-				if (customEvent.detail?.panelId) {
-					void openTerminalEditWindow(customEvent.detail.panelId);
-				}
-			};
-
-			const onGenerateTabTitle = (event: Event) => {
-				const customEvent = event as CustomEvent<{ panelId: string }>;
-				if (customEvent.detail?.panelId) {
-					void runAiTabMetadataRef.current('title', customEvent.detail.panelId);
-				}
-			};
-
-			const onDragStart = () => {
-				targetWindow.requestAnimationFrame(() => {
-					const data = getPanelData();
-					if (!data) {
-						return;
-					}
-
-					draggingTransferRef.current = {
-						panelId: data.panelId ?? undefined,
-						groupId: data.groupId,
-					};
-				});
-			};
-
-			const onDragEnd = (event: DragEvent) => {
-				const transfer = draggingTransferRef.current;
-				draggingTransferRef.current = null;
-
-				if (!transfer) {
-					return;
-				}
-
-				const droppedOutsideWindow =
-					event.clientX <= 0 ||
-					event.clientY <= 0 ||
-					event.clientX >= targetWindow.innerWidth ||
-					event.clientY >= targetWindow.innerHeight;
-
-				if (!droppedOutsideWindow) {
-					return;
-				}
-
+		const openFile = useCallback(
+			async (filePath: string, options?: OpenFileOptions) => {
 				const api = dockviewApiRef.current;
 				if (!api) {
 					return;
 				}
 
-				const item = transfer.panelId
-					? api.getPanel(transfer.panelId)
-					: api.getGroup(transfer.groupId)?.activePanel;
-				if (!item) {
+				const existingPanelId = filePathPanelMapRef.current.get(filePath);
+				if (existingPanelId) {
+					const existingPanel = api.getPanel(existingPanelId);
+					if (existingPanel) {
+						if (options?.initialMode) {
+							existingPanel.api.updateParameters({
+								...existingPanel.params,
+								initialMode: options.initialMode,
+							});
+						}
+						existingPanel.api.setActive();
+						syncPanelFocusState();
+						if (options?.initialMode) {
+							window.requestAnimationFrame(() => {
+								window.dispatchEvent(
+									new CustomEvent('terminay-file-mode-request', {
+										detail: {
+											mode: options.initialMode,
+											path: filePath,
+										},
+									}),
+								);
+							});
+						}
+						return;
+					}
+				}
+
+				filePanelCounterRef.current += 1;
+				const panelId = `file-${filePanelCounterRef.current}`;
+				const title = filePath.split(/[/\\]/).pop() || filePath;
+
+				const panel = api.addPanel<FilePanelInstanceParams>({
+					component: 'file',
+					id: panelId,
+					params: {
+						color: project.color,
+						filePath,
+						initialMode: options?.initialMode,
+						inheritsProjectColor: true,
+						isFocused: false,
+						preferredEngine: 'auto',
+						projectColor: project.color,
+						projectRoot: project.rootFolder,
+					},
+					position: api.activePanel
+						? {
+								direction: 'within',
+								referenceGroup: api.activePanel.group.id,
+							}
+						: undefined,
+					tabComponent: 'fileTab',
+					title,
+				});
+
+				filePathPanelMapRef.current.set(filePath, panel.id);
+				panel.api.setActive();
+				syncPanelFocusState();
+			},
+			[project.color, project.rootFolder, syncPanelFocusState],
+		);
+
+		const handleOpenTerminalAt = useCallback(
+			async (path: string) => {
+				const api = dockviewApiRef.current;
+				if (!api) {
 					return;
 				}
 
-				void api.addPopoutGroup(item, { popoutUrl });
-			};
+				// If it's a file, get the parent directory
+				let cwd = path;
+				try {
+					const info = await fileViewerClient.listFolder(
+						fileClientPath(path),
+						fileClientProjectId,
+					);
+					if (info.root !== fileClientPath(path)) {
+						cwd = path.substring(
+							0,
+							Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
+						);
+					}
+				} catch {
+					cwd = path.substring(
+						0,
+						Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
+					);
+				}
 
-			targetWindow.addEventListener('click', onClick, true);
-			targetWindow.addEventListener('dblclick', onDblClick, true);
-			targetWindow.addEventListener('terminay-edit-terminal', onEditTerminal);
-			targetWindow.addEventListener(
-				'terminay-generate-tab-title',
-				onGenerateTabTitle,
-			);
-			targetWindow.addEventListener('dragstart', onDragStart, true);
-			targetWindow.addEventListener('dragend', onDragEnd, true);
+				try {
+					if (terminalPanelClientContext === null) {
+						throw new Error('The server terminal client is unavailable.');
+					}
+					const sessionId = (
+						await terminalPanelClientContext.client.create({
+							cwd,
+							projectId: project.id,
+						})
+					).sessionId;
+					suppressInitialTerminalActivity(sessionId);
+					if (settings.recording.recordNewTerminals) {
+						void startRecordingForSession(sessionId);
+					} else {
+						hydrateRecordingStateForSession(sessionId);
+					}
+					await terminalPanelClientContext.workspaceSnapshotStore?.refresh();
+					const startedAt = performance.now();
+					await new Promise<void>((resolve) => {
+						const activateServerPanel = () => {
+							const reconciledPanel = getPanelForSession(sessionId);
+							if (reconciledPanel !== null) {
+								reconciledPanel.api.setActive();
+								setFocusedSessionId(sessionId);
+								window.requestAnimationFrame(publishTerminalActivityOverview);
+								resolve();
+								return;
+							}
+							if (performance.now() - startedAt >= 2_000) {
+								resolve();
+								return;
+							}
+							window.requestAnimationFrame(activateServerPanel);
+						};
+						activateServerPanel();
+					});
+				} catch (error) {
+					setErrorText(`Failed to open terminal: ${String(error)}`);
+				}
+			},
+			[
+				fileClientPath,
+				fileClientProjectId,
+				fileViewerClient,
+				getPanelForSession,
+				project.id,
+				publishTerminalActivityOverview,
+				hydrateRecordingStateForSession,
+				settings.recording.recordNewTerminals,
+				startRecordingForSession,
+				terminalPanelClientContext,
+				suppressInitialTerminalActivity,
+			],
+		);
 
-			cleanupByWindow.set(targetWindow, () => {
-				targetWindow.removeEventListener('click', onClick, true);
-				targetWindow.removeEventListener('dblclick', onDblClick, true);
-				targetWindow.removeEventListener(
-					'terminay-edit-terminal',
-					onEditTerminal,
+		const {
+			cancelFileExplorerNameDialog,
+			currentGitBranch,
+			deletingWorktreePaths,
+			directoryChildren,
+			directoryErrors,
+			expandedPaths,
+			fileExplorerNameDialog,
+			gitStatuses,
+			handleCopyPath,
+			handleCopyRelativePath,
+			handleDelete,
+			handleDeleteWorktree,
+			handleNewFile,
+			handleNewFolder,
+			handleOpenGitEntry,
+			handleOpenTerminalAtWorktree,
+			handlePullWorktreeFromOrigin,
+			handleRename,
+			handleRenameWorktree,
+			handleRevealWorktree,
+			handleSwitchProjectRootToWorktree,
+			loadingPaths,
+			refreshFileExplorerTree,
+			refreshGitStatuses,
+			submitFileExplorerNameDialog,
+			toggleDirectory,
+			worktreePanelStatus,
+		} = useFileExplorerController({
+			fileObservationClient: terminalClientContext?.fileObservationClient,
+			fileViewerClient,
+			gitClient: terminalClientContext?.gitClient,
+			isServerFileViewer: serverFileViewerClient !== undefined,
+			onOpenFile: openFile,
+			onOpenTerminalAt: handleOpenTerminalAt,
+			onSetError: setErrorText,
+			onUpdateProject,
+			project,
+		});
+		const updateSidebarSettings = useCallback(
+			(patch: Partial<SidebarSettings>) => {
+				const current = settingsRef.current;
+				void settingsClient.update<TerminalSettings>({
+					...current,
+					sidebar: { ...current.sidebar, ...patch },
+				} as unknown as import('@terminay/protocol').JsonValue);
+			},
+			[settingsClient],
+		);
+
+		const openFolder = useCallback(
+			(folderPath: string) => {
+				const api = dockviewApiRef.current;
+				if (!api) {
+					return;
+				}
+
+				const existingPanelId = folderPathPanelMapRef.current.get(folderPath);
+				if (existingPanelId) {
+					const existingPanel = api.getPanel(existingPanelId);
+					if (existingPanel) {
+						existingPanel.api.setActive();
+						syncPanelFocusState();
+						return;
+					}
+				}
+
+				folderPanelCounterRef.current += 1;
+				const panelId = `folder-${folderPanelCounterRef.current}`;
+				const title =
+					folderPath.split(/[/\\]/).filter(Boolean).pop() || folderPath;
+
+				const panel = api.addPanel<
+					FolderPanelInstanceParams & {
+						onRename?: (path: string) => void;
+						onDelete?: (path: string) => void;
+						onNewFile?: (dirPath: string) => void;
+						onNewFolder?: (dirPath: string) => void;
+						onOpenTerminal?: (path: string) => void;
+						onCopyPath?: (path: string) => void;
+						onCopyRelativePath?: (path: string) => void;
+						projectRootPath?: string;
+					}
+				>({
+					component: 'folder',
+					id: panelId,
+					params: {
+						color: project.color,
+						folderPath,
+						inheritsProjectColor: true,
+						isFocused: false,
+						onRename: handleRename,
+						onDelete: handleDelete,
+						onNewFile: handleNewFile,
+						onNewFolder: handleNewFolder,
+						onOpenTerminal: handleOpenTerminalAt,
+						onCopyPath: handleCopyPath,
+						onCopyRelativePath: handleCopyRelativePath,
+						projectColor: project.color,
+						projectId: project.id,
+						projectRootPath: project.rootFolder,
+					},
+					position: api.activePanel
+						? {
+								direction: 'within',
+								referenceGroup: api.activePanel.group.id,
+							}
+						: undefined,
+					tabComponent: 'folderTab',
+					title,
+				});
+
+				folderPathPanelMapRef.current.set(folderPath, panel.id);
+				panel.api.setActive();
+				syncPanelFocusState();
+			},
+			[
+				handleDelete,
+				handleCopyPath,
+				handleCopyRelativePath,
+				handleNewFile,
+				handleNewFolder,
+				handleOpenTerminalAt,
+				handleRename,
+				project.color,
+				project.rootFolder,
+				syncPanelFocusState,
+			],
+		);
+
+		const setProjectRootFolderToWorkingDirectory = useCallback(async () => {
+			const sessionId = getActiveSessionId();
+			if (!sessionId) {
+				setErrorText(
+					'Open a terminal before setting the project root to its working directory.',
 				);
-				targetWindow.removeEventListener(
-					'terminay-generate-tab-title',
-					onGenerateTabTitle,
-				);
-				targetWindow.removeEventListener('dragstart', onDragStart, true);
-				targetWindow.removeEventListener('dragend', onDragEnd, true);
-			});
-		};
-
-		const collectDockviewWindows = (): Set<Window> => {
-			const result = new Set<Window>([window]);
-			const api = dockviewApiRef.current;
-
-			if (!api) {
-				return result;
+				return;
 			}
 
-			for (const group of api.groups) {
-				const panel = group.activePanel ?? group.panels[0];
+			try {
+				const cwd = await getServerTerminalCwd(sessionId);
+				if (!cwd) {
+					setErrorText(
+						'The active terminal does not have a working directory yet.',
+					);
+					return;
+				}
+
+				const nextRootFolder = cwd.trim();
+
+				if (!nextRootFolder) {
+					setErrorText(
+						'The active terminal does not have a working directory yet.',
+					);
+					return;
+				}
+
+				const workspaceSnapshotStore =
+					terminalPanelClientContext?.workspaceSnapshotStore;
+				const committedRootFolder =
+					workspaceSnapshotStore === undefined
+						? nextRootFolder
+						: (
+								await workspaceSnapshotStore.setProjectRoot({
+									projectId: project.id,
+									root: nextRootFolder,
+								})
+							).root;
+				onUpdateProject(project.id, { rootFolder: committedRootFolder });
+				setErrorText(null);
+				setIsMacroLauncherOpen(false);
+				setMacroQuery('');
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				setErrorText(`Unable to set the project root folder: ${message}`);
+			}
+		}, [
+			getActiveSessionId,
+			getServerTerminalCwd,
+			onUpdateProject,
+			project.id,
+			terminalPanelClientContext?.workspaceSnapshotStore,
+		]);
+
+		const executeMacro = useCallback(
+			async (
+				macro: MacroDefinition,
+				values: Record<string, MacroFieldValue>,
+			) => {
+				setMacroToRun(null);
+				setMacroFieldValues({});
+				setMacroFileSearchRootPath('');
+				setIsMacroLauncherOpen(false);
+				setMacroQuery('');
+				setSelectedMacroIndex(0);
+				await executeMacroRun(macro, values);
+			},
+			[executeMacroRun],
+		);
+
+		const {
+			closeMacroLauncher,
+			closeMacroParameterModal,
+			firstMacroFieldRef,
+			isMacroLauncherOpen,
+			macroFieldValues,
+			macroFileSearchRootPath,
+			macroLauncherInputRef,
+			macroLauncherItemRefs,
+			macroLauncherListRef,
+			macroQuery,
+			macroToRun,
+			runMacro,
+			selectedMacroIndex,
+			setIsMacroLauncherOpen,
+			setMacroFieldValues,
+			setMacroFileSearchRootPath,
+			setMacroQuery,
+			setMacroToRun,
+			setSelectedMacroIndex,
+			validateMacroValues,
+		} = useMacroLauncherController({
+			executeMacro,
+			focusActiveTerminal,
+			getActiveSessionId,
+			getServerTerminalCwd,
+			projectRoot: project.rootFolder,
+			setErrorText,
+		});
+		const {
+			isOpen: isTerminalSwitcherOpen,
+			items: terminalSwitcherItems,
+			select: selectTerminalSwitcherItem,
+			selectAndCommit: selectAndCommitTerminalSwitcherItem,
+			selectedIndex: terminalSwitcherIndex,
+		} = useTerminalSwitcherController({
+			apiRef: dockviewApiRef,
+			blocked: isMacroLauncherOpen || macroToRun !== null,
+			isActive,
+			onClearError: () => setErrorText(null),
+		});
+		const macroParameterModal = useDraggableModal(macroToRun !== null);
+		const fileExplorerNameModal = useDraggableModal(
+			fileExplorerNameDialog !== null,
+		);
+
+		const syncFocusedTerminalTabs = useCallback((sessionId: string | null) => {
+			const api = dockviewApiRef.current;
+			if (!api) {
+				return;
+			}
+
+			for (const [
+				panelId,
+				panelSessionId,
+			] of panelSessionMapRef.current.entries()) {
+				const panel = api.getPanel(panelId);
 				if (!panel) {
 					continue;
 				}
 
-				try {
-					result.add(panel.api.getWindow());
-				} catch {
-					// Ignore transient windows during popout transitions.
-				}
-			}
-
-			return result;
-		};
-
-		const reconcileWindowListeners = () => {
-			const liveWindows = collectDockviewWindows();
-
-			for (const targetWindow of liveWindows) {
-				addListenersForWindow(targetWindow);
-				ensureHeaderButtons(targetWindow);
-			}
-
-			for (const [targetWindow, cleanup] of cleanupByWindow.entries()) {
-				if (liveWindows.has(targetWindow)) {
+				const isFocused = panelSessionId === sessionId;
+				if (panel.params?.isFocused === isFocused) {
 					continue;
 				}
 
-				cleanup();
-				cleanupByWindow.delete(targetWindow);
+				panel.api.updateParameters({ isFocused });
 			}
-		};
+		}, []);
 
-		reconcileWindowListeners();
-
-		const api = dockviewApiRef.current;
-		if (api) {
-			apiDisposables.push(
-				api.onDidAddGroup(reconcileWindowListeners),
-				api.onDidRemoveGroup(reconcileWindowListeners),
-				api.onDidMovePanel(reconcileWindowListeners),
-				api.onDidActivePanelChange(reconcileWindowListeners),
-			);
-		}
-
-		const interval = window.setInterval(reconcileWindowListeners, 500);
-
-		return () => {
-			window.clearInterval(interval);
-			for (const disposable of apiDisposables) {
-				disposable.dispose();
-			}
-			for (const cleanup of cleanupByWindow.values()) {
-				cleanup();
-			}
-			cleanupByWindow.clear();
-		};
-	}, [addTerminal, isActive, openTerminalEditWindow, popoutUrl]);
-
-	useEffect(() => {
-		if (!isActive) {
-			return;
-		}
-
-		const api = dockviewApiRef.current;
-		const workspace = workspaceRef.current;
-		if (!api || !workspace) {
-			return;
-		}
-
-		const { clientWidth, clientHeight } = workspace;
-		if (clientWidth > 0 && clientHeight > 0) {
-			api.layout(clientWidth, clientHeight);
-		}
-
-		if (isMacroLauncherOpen || macroToRun || isTerminalSwitcherOpen) {
-			return;
-		}
-
-		const frame = window.requestAnimationFrame(() => {
-			focusActiveTerminal();
-		});
-
-		return () => {
-			window.cancelAnimationFrame(frame);
-		};
-	}, [
-		focusActiveTerminal,
-		isActive,
-		isMacroLauncherOpen,
-		isTerminalSwitcherOpen,
-		macroToRun,
-	]);
-
-	useEffect(() => {
-		if (!isActive) {
-			return;
-		}
-
-		const sidebarWidth = project.fileExplorerWidth;
-		const explorerIsOpen = project.isFileExplorerOpen;
-		void sidebarWidth;
-		void explorerIsOpen;
-
-		const api = dockviewApiRef.current;
-		const workspace = workspaceRef.current;
-		if (!api || !workspace) {
-			return;
-		}
-
-		const { clientWidth, clientHeight } = workspace;
-		if (clientWidth > 0 && clientHeight > 0) {
-			api.layout(clientWidth, clientHeight);
-		}
-	}, [isActive, project.fileExplorerWidth, project.isFileExplorerOpen]);
-
-	useEffect(() => {
-		if (!isActive || isMacroLauncherOpen || macroToRun) {
-			return;
-		}
-
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.defaultPrevented) {
+		const syncRunningMacroTabs = useCallback(() => {
+			const api = dockviewApiRef.current;
+			if (!api) {
 				return;
 			}
 
+			for (const [
+				panelId,
+				panelSessionId,
+			] of panelSessionMapRef.current.entries()) {
+				const panel = api.getPanel(panelId);
+				if (!panel) {
+					continue;
+				}
+
+				panel.api.updateParameters({
+					macroRuns: runningMacroRunsBySession[panelSessionId] ?? [],
+					onClearFinishedMacroRuns: () =>
+						clearFinishedMacroRunsForSession(panelSessionId),
+					onClearMacroRun: (runId: string) =>
+						clearMacroRunForSession(panelSessionId, runId),
+					onCancelMacroRun: cancelMacroRun,
+					onMoveToProject: (targetProjectId: string) =>
+						onMoveTerminalToProject(project.id, panelId, targetProjectId),
+					projectsForMove: getProjectsForTerminalMove(),
+				});
+			}
+		}, [
+			cancelMacroRun,
+			clearFinishedMacroRunsForSession,
+			clearMacroRunForSession,
+			getProjectsForTerminalMove,
+			onMoveTerminalToProject,
+			project.id,
+			runningMacroRunsBySession,
+		]);
+
+		useEffect(() => {
+			const api = dockviewApiRef.current;
+
+			for (const group of api?.groups ?? []) {
+				for (const panel of group.panels) {
+					const params = panel.params as DockPanelTabAppearance | undefined;
+					if (!params || !('inheritsProjectColor' in params)) {
+						continue;
+					}
+
+					const inheritsProjectColor = params.inheritsProjectColor === true;
+					panel.api.updateParameters({
+						projectColor: project.color,
+						...(inheritsProjectColor ? { color: project.color } : {}),
+					});
+				}
+			}
+
+			for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
+				const panel = api?.getPanel(panelId);
+				const inheritsProjectColor =
+					panel?.params?.inheritsProjectColor === true;
+				const nextColor = getEffectiveTerminalTabColor(
+					panel?.params,
+					project.color,
+				);
+
+				if (panel) {
+					panel.api.updateParameters({
+						projectColor: project.color,
+						...(inheritsProjectColor ? { color: project.color } : {}),
+					});
+				}
+
+				publishTerminalPresentationMetadata(sessionId, {
+					color: nextColor,
+					inheritsProjectColor,
+					projectId: project.id,
+					projectTitle: project.title,
+					projectEmoji: project.emoji,
+					projectColor: project.color,
+					title: panel?.title ?? 'Terminal',
+				});
+			}
+			window.requestAnimationFrame(publishTerminalActivityOverview);
+		}, [
+			project.id,
+			project.title,
+			project.emoji,
+			project.color,
+			publishTerminalActivityOverview,
+		]);
+
+		useEffect(() => {
+			const api = dockviewApiRef.current;
+			if (!api) {
+				return;
+			}
+
+			for (const [panelId] of panelSessionMapRef.current.entries()) {
+				const panel = api.getPanel(panelId);
+				if (!panel) {
+					continue;
+				}
+
+				panel.api.updateParameters({
+					showActiveTabActivityIndicator:
+						settings.activityIndicators.showActiveTabs,
+					showFinishedTabActivityIndicator:
+						settings.activityIndicators.showFinishedTabs,
+				});
+			}
+
+			window.requestAnimationFrame(publishTerminalActivityOverview);
+		}, [
+			publishTerminalActivityOverview,
+			settings.activityIndicators.showActiveTabs,
+			settings.activityIndicators.showFinishedTabs,
+		]);
+
+		const openTerminalEditWindow = useCallback(
+			async (panelId: string) => {
+				const api = dockviewApiRef.current;
+				if (!api) {
+					return;
+				}
+
+				const panel = api.getPanel(panelId);
+				if (!panel) {
+					return;
+				}
+
+				const sessionId = panel.params?.sessionId ?? null;
+
+				try {
+					const result = await window.terminayTerminalEditHost?.open({
+						activityIndicatorsEnabled: areTerminalActivityIndicatorsEnabled(
+							panel.params,
+						),
+						color: getEffectiveTerminalTabColor(panel.params, project.color),
+						emoji: panel.params?.emoji ?? '',
+						inheritsProjectColor:
+							panel.params?.inheritsProjectColor ??
+							panel.params?.color === project.color,
+						projectColor: project.color,
+						title: panel.title ?? 'Tab',
+					});
+					if (!result) {
+						return;
+					}
+
+					const nextTitle =
+						result.title.trim().length > 0
+							? result.title.trim()
+							: (panel.title ?? 'Tab');
+					const nextEmoji = result.emoji.trim();
+					const nextColor = result.color;
+
+					panel.api.setTitle(nextTitle);
+					setTerminalTitleRevision((revision) => revision + 1);
+					panel.api.updateParameters({
+						activityIndicatorsEnabled: result.activityIndicatorsEnabled,
+						emoji: nextEmoji,
+						color: nextColor,
+						inheritsProjectColor: result.inheritsProjectColor,
+						projectColor: project.color,
+					});
+
+					if (sessionId) {
+						publishTerminalPresentationMetadata(sessionId, {
+							color: nextColor,
+							emoji: nextEmoji,
+							inheritsProjectColor: result.inheritsProjectColor,
+							title: nextTitle,
+							projectId: project.id,
+							projectTitle: project.title,
+							projectEmoji: project.emoji,
+							projectColor: project.color,
+						});
+					}
+					window.requestAnimationFrame(publishTerminalActivityOverview);
+				} finally {
+					window.requestAnimationFrame(() => {
+						if (sessionId) {
+							activateTerminal(panelId, sessionId);
+							return;
+						}
+
+						focusActiveTerminal();
+					});
+				}
+			},
+			[
+				activateTerminal,
+				focusActiveTerminal,
+				project.color,
+				project.id,
+				project.title,
+				project.emoji,
+				publishTerminalActivityOverview,
+			],
+		);
+
+		const clearActiveTerminal = useCallback(() => {
+			const sessionId = getActiveSessionId();
+			if (!sessionId) {
+				setErrorText('Open a terminal before clearing it.');
+				return;
+			}
+
+			setErrorText(null);
+			window.dispatchEvent(
+				new CustomEvent('terminay-clear-terminal', {
+					detail: { sessionId },
+				}),
+			);
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+		}, [getActiveSessionId]);
+
+		const copyActiveTerminalSelection = useCallback(() => {
+			const sessionId = getActiveSessionId();
+			if (!sessionId) {
+				document.execCommand('copy');
+				return;
+			}
+
+			window.dispatchEvent(
+				new CustomEvent('terminay-copy-terminal', {
+					detail: { sessionId },
+				}),
+			);
+		}, [getActiveSessionId]);
+
+		const openActiveTerminalSettings = useCallback(() => {
+			const activePanel = dockviewApiRef.current?.activePanel;
+			if (!activePanel) {
+				setErrorText('Open a tab before editing its settings.');
+				return;
+			}
+
+			setErrorText(null);
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+			void openTerminalEditWindow(activePanel.id);
+		}, [openTerminalEditWindow]);
+
+		const openProjectSettings = useCallback(() => {
+			setErrorText(null);
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+			void onEditProject(project.id);
+		}, [onEditProject, project.id]);
+
+		const runAiTabMetadata = useCallback(
+			async (target: AiTabMetadataTarget, targetPanelId?: string) => {
+				setIsMacroLauncherOpen(false);
+				setMacroQuery('');
+
+				const api = dockviewApiRef.current;
+				const activePanel = targetPanelId
+					? api?.getPanel(targetPanelId)
+					: api?.activePanel;
+				const sessionId = activePanel?.params?.sessionId;
+				if (!activePanel || !sessionId) {
+					setErrorText('Open a terminal before generating tab metadata.');
+					return;
+				}
+
+				const targetSettings = settings.aiTabMetadata[target];
+				if (targetSettings.provider === 'disabled') {
+					setErrorText(
+						`Enable an AI provider for tab ${target === 'title' ? 'titles' : 'notes'} in Settings first.`,
+					);
+					return;
+				}
+
+				const provider = targetSettings.provider;
+				const providerLabel = provider === 'codex' ? 'Codex' : 'Claude Code';
+				const model =
+					provider === 'codex'
+						? targetSettings.codexModel
+						: targetSettings.claudeCodeModel;
+				if (!model.trim()) {
+					setErrorText(
+						`Choose a ${providerLabel} model in Settings before generating tab metadata.`,
+					);
+					return;
+				}
+
+				const inFlightKey = `${sessionId}:${target}`;
+				if (aiGenerationInFlightRef.current.has(inFlightKey)) {
+					setErrorText(`Already generating a tab ${target} for this terminal.`);
+					return;
+				}
+
+				const reader = terminalContextReadersRef.current.get(sessionId);
+				const terminalContext = reader?.() ?? { recentOutput: '' };
+				const previousTitle = activePanel.title ?? 'Terminal';
+				aiGenerationInFlightRef.current.add(inFlightKey);
+				setErrorText(null);
+				if (target === 'title') {
+					activePanel.api.setTitle('Generating...');
+					setTerminalTitleRevision((revision) => revision + 1);
+					activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
+				}
+
+				try {
+					const result =
+						serverAiClient === undefined
+							? await aiTabMetadataClient!.generate({
+									context: {
+										currentTitle: previousTitle,
+										existingNote: activePanel.params?.terminalNote,
+										projectRoot: project.rootFolder,
+										projectTitle: project.title,
+										recentOutput: terminalContext.recentOutput,
+										sessionId,
+									},
+									model,
+									provider,
+									target,
+								})
+							: await serverAiClient.generateMetadata({
+									model,
+									provider:
+										provider === 'claudeCode' ? 'claude-code' : provider,
+									requestId: crypto.randomUUID(),
+									target: {
+										panelId: activePanel.id,
+										projectId: project.id,
+										serverId: terminalClientContext!.serverId,
+										sessionId,
+									},
+									targetType: target === 'title' ? 'title' : 'note',
+								});
+					const text =
+						typeof result === 'object' &&
+						result !== null &&
+						!Array.isArray(result) &&
+						typeof result.text === 'string'
+							? result.text.trim()
+							: '';
+					if (!text) {
+						throw new Error(`${providerLabel} returned an empty result.`);
+					}
+
+					if (target === 'title') {
+						activePanel.api.setTitle(text);
+						setTerminalTitleRevision((revision) => revision + 1);
+						activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
+						publishTerminalPresentationMetadata(sessionId, {
+							color: activePanel.params?.color ?? project.color,
+							emoji: activePanel.params?.emoji ?? '',
+							inheritsProjectColor: activePanel.params?.inheritsProjectColor,
+							title: text,
+							projectId: project.id,
+							projectTitle: project.title,
+							projectEmoji: project.emoji,
+							projectColor: project.color,
+						});
+						window.requestAnimationFrame(publishTerminalActivityOverview);
+					} else {
+						activePanel.api.updateParameters({ terminalNote: text });
+					}
+
+					setErrorText(null);
+				} catch (error) {
+					if (target === 'title') {
+						activePanel.api.setTitle(previousTitle);
+						setTerminalTitleRevision((revision) => revision + 1);
+						activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
+					}
+					const message =
+						error instanceof Error ? error.message : String(error);
+					setErrorText(`Unable to generate tab ${target}: ${message}`);
+				} finally {
+					aiGenerationInFlightRef.current.delete(inFlightKey);
+				}
+			},
+			[
+				project.color,
+				project.emoji,
+				project.id,
+				project.rootFolder,
+				project.title,
+				aiTabMetadataClient,
+				serverAiClient,
+				publishTerminalActivityOverview,
+				settings.aiTabMetadata,
+			],
+		);
+
+		const runAiTabMetadataRef = useRef(runAiTabMetadata);
+		runAiTabMetadataRef.current = runAiTabMetadata;
+
+		const createProject = useCallback(() => {
+			setErrorText(null);
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+			onAddProject();
+		}, [onAddProject]);
+
+		const toggleFileExplorerSidebar = useCallback(() => {
+			setErrorText(null);
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+			onUpdateProject(project.id, {
+				isFileExplorerOpen: !project.isFileExplorerOpen,
+			});
+		}, [onUpdateProject, project.id, project.isFileExplorerOpen]);
+
+			const addTerminal = useTerminalCreationController({
+				apiRef: dockviewApiRef,
+				createSession:
+					terminalPanelClientContext === null
+						? null
+						: async (request) => {
+								const session =
+									await terminalPanelClientContext.client.create(request);
+								await terminalPanelClientContext.workspaceSnapshotStore?.refresh();
+								return session;
+							},
+				getTerminalCwd: getServerTerminalCwd,
+				hydrateRecording: hydrateRecordingStateForSession,
+				onError: setErrorText,
+			projectId: project.id,
+			recordNewTerminals: settings.recording.recordNewTerminals,
+			sendInput: sendTerminalPanelInput,
+			startRecording: startRecordingForSession,
+			suppressInitialActivity: suppressInitialTerminalActivity,
+		});
+
+		const runGitPushAgent = useCallback(
+			(action: GitPushAgentAction, target: GitPushMenuTarget) => {
+				const config = settings.gitPushAgent;
+				if (config.provider === 'disabled') return;
+
+				const actionMeta = GIT_PUSH_AGENT_ACTIONS.find(
+					(entry) => entry.action === action,
+				);
+				if (!actionMeta) {
+					return;
+				}
+
+				const task =
+					actionMeta.action === 'default'
+						? `Commit all of my current changes onto the default branch "${formatGitPushBranchLabel(target.defaultBranch ?? 'main')}" and push it. If that branch is already checked out in another worktree, make the commit from that worktree instead of checking it out here.`
+						: actionMeta.task;
+				const model =
+					config.provider === 'claudeCode'
+						? config.claudeCodeModel
+						: config.codexModel;
+				const prompt = buildGitPushAgentPrompt(
+					config.prompt,
+					task,
+					target.branch,
+					target.defaultBranch,
+				);
+				const command = buildGitPushAgentCommand(
+					config.provider,
+					model,
+					prompt,
+				);
+
+				void addTerminal({
+					cwd: target.cwd,
+					title: 'Push agent',
+					initialInput: command,
+				});
+			},
+			[addTerminal, settings.gitPushAgent],
+		);
+
+		const {
+			closeGitPushMenu,
+			closeQuickPush,
+			gitPushMenuPosition,
+			handleOpenWorktreePushMenu,
+			launchGitPushAgent,
+			launchQuickPush,
+			quickPushAction,
+			quickPushCwd,
+		} = useGitPushMenuController({
+			defaultBranch: worktreePanelStatus?.defaultBranch,
+			isAgentEnabled: settings.gitPushAgent.provider !== 'disabled',
+			onDisabled: () => {
+				setErrorText(
+					'Choose a Git Push agent in Settings → AI → Git Push Agent first.',
+				);
+				void window.terminaySettingsWindowHost?.open('git-push-agent');
+			},
+			onLaunchAgent: runGitPushAgent,
+		});
+
+		const exportTerminalForMove = useCallback(
+			(panelId: string): MovedTerminalTab | null =>
+				exportTerminalPresentationForMove({
+					api: dockviewApiRef.current,
+					context: {
+						defaultServerProjectId: terminalPanelClientContext?.projectId,
+						runningMacroRunsBySession,
+					},
+					movingSessionIds: movingTerminalSessionIdsRef.current,
+					panelId,
+				}),
+			[runningMacroRunsBySession, terminalPanelClientContext?.projectId],
+		);
+
+		const exportProjectForMove = useCallback(
+			(): MovedProject | null =>
+				exportProjectPresentationsForMove({
+					api: dockviewApiRef.current,
+					context: {
+						defaultServerProjectId: terminalPanelClientContext?.projectId,
+						runningMacroRunsBySession,
+					},
+					movingSessionIds: movingTerminalSessionIdsRef.current,
+				}),
+			[runningMacroRunsBySession, terminalPanelClientContext?.projectId],
+		);
+
+		const { acceptMovedTerminal, acceptServerTerminal } =
+			useTerminalAdoptionController({
+				apiRef: dockviewApiRef,
+				cancelMacroRun,
+				clearFinishedMacroRuns: clearFinishedMacroRunsForSession,
+				clearMacroRun: clearMacroRunForSession,
+				getProjectsForMove: getProjectsForTerminalMove,
+				hydrateRecording: hydrateRecordingStateForSession,
+				onError: setErrorText,
+				onMoveToProject: onMoveTerminalToProject,
+				panelSessionsRef: panelSessionMapRef,
+				project,
+				publishActivityOverview: publishTerminalActivityOverview,
+				registerTerminalContextReader,
+				replaceMacroRuns: replaceMacroRunsForSession,
+				revealRecording,
+				setFocusedSessionId,
+				showActiveTabActivityIndicator:
+					settings.activityIndicators.showActiveTabs,
+				showFinishedTabActivityIndicator:
+					settings.activityIndicators.showFinishedTabs,
+				startRecording: startRecordingForSession,
+				stopRecording: stopRecordingForSession,
+				syncPanelFocusState,
+				terminalCounterRef,
+				terminalServerIdentity: terminalPanelClientContext,
+			});
+
+		const filteredMacros = useMemo(() => {
+			const normalizedQuery = macroQuery.trim().toLowerCase();
+			const commandItems: MacroLauncherItem[] = [
+				{
+					group: 'Terminal',
+					icon: <Terminal size={18} strokeWidth={2.1} />,
+					id: 'create-terminal-tab',
+					title: 'Create a new terminal tab',
+					description: 'Open a fresh terminal tab in the current project.',
+					searchText: `create new terminal tab open fresh terminal ${getCommandShortcut(settings.keyboardShortcuts, 'new-terminal')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'new-terminal',
+						isMac,
+					),
+					onSelect: () => {
+						setErrorText(null);
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						void addTerminal({});
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <FolderPlus size={18} strokeWidth={2.1} />,
+					id: 'create-project',
+					title: 'Create a new project',
+					description: 'Add a new project tab and switch to it.',
+					searchText: `create new project add project tab ${getCommandShortcut(settings.keyboardShortcuts, 'new-project')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'new-project',
+						isMac,
+					),
+					onSelect: () => {
+						createProject();
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Eraser size={18} strokeWidth={2.1} />,
+					id: 'clear-terminal',
+					title: 'Clear terminal',
+					description: 'Clear the active terminal viewport and scrollback.',
+					searchText: `clear terminal scrollback screen reset ${getCommandShortcut(settings.keyboardShortcuts, 'clear-terminal')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'clear-terminal',
+						isMac,
+					),
+					onSelect: () => {
+						clearActiveTerminal();
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Mic size={18} strokeWidth={2.1} />,
+					id: 'start-dictation',
+					title: 'Start dictation',
+					description:
+						'Record speech and type the transcript into the active terminal.',
+					searchText: `start dictation voice speech microphone audio transcribe terminal input ${getCommandShortcut(settings.keyboardShortcuts, 'start-dictation')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'start-dictation',
+						isMac,
+					),
+					onSelect: () => {
+						void startDictation();
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Sparkles size={18} strokeWidth={2.1} />,
+					id: 'set-tab-title-with-ai',
+					title: 'Set tab title with AI',
+					description: 'Generate a concise title for the active terminal tab.',
+					searchText:
+						'set tab title with ai codex rename generate terminal metadata',
+					onSelect: () => {
+						void runAiTabMetadata('title');
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Sparkles size={18} strokeWidth={2.1} />,
+					id: 'set-tab-note-with-ai',
+					title: 'Set tab note with AI',
+					description: 'Generate a short note for the active terminal tab.',
+					searchText:
+						'set tab note with ai codex generate terminal note metadata',
+					onSelect: () => {
+						void runAiTabMetadata('note');
+					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Settings size={18} strokeWidth={2.1} />,
+					id: 'edit-tab-settings',
+					title: 'Edit tab settings',
+					description: 'Open settings for the active tab.',
+					searchText:
+						'edit tab settings rename emoji color file folder terminal',
+					onSelect: () => {
+						openActiveTerminalSettings();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <History size={18} strokeWidth={2.1} />,
+					id: 'open-recordings',
+					title: 'Open recordings timeline',
+					description: 'Browse and replay saved terminal recordings.',
+					searchText: `open recordings timeline terminal replay asciinema cast history ${getCommandShortcut(settings.keyboardShortcuts, 'open-recordings')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'open-recordings',
+						isMac,
+					),
+					onSelect: () => {
+						void window.terminayRecordingsHost?.open();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Plug size={18} strokeWidth={2.1} />,
+					id: 'install-terminay-mcp',
+					title: 'Install Terminay MCP',
+					description:
+						'Let AI agents (Claude Code, Codex) control the terminals in this window.',
+					searchText:
+						'install terminay mcp model context protocol agent claude code codex control server',
+					onSelect: () => {
+						setIsMacroLauncherOpen(false);
+						setMacroQuery('');
+						setIsMcpInstallModalOpen(true);
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Settings size={18} strokeWidth={2.1} />,
+					id: 'edit-project-settings',
+					title: 'Edit project settings',
+					description: 'Open settings for the current project tab.',
+					searchText:
+						'edit project settings project tab root folder emoji color',
+					onSelect: () => {
+						openProjectSettings();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <Sidebar size={18} strokeWidth={2.1} />,
+					id: 'toggle-file-explorer-sidebar',
+					title: project.isFileExplorerOpen
+						? 'Hide file explorer sidebar'
+						: 'Show file explorer sidebar',
+					description: project.isFileExplorerOpen
+						? 'Hide the file explorer sidebar for this project.'
+						: 'Show the file explorer sidebar for this project.',
+					searchText: `toggle file explorer sidebar show hide explorer sidebar project ${getCommandShortcut(settings.keyboardShortcuts, 'toggle-file-explorer-sidebar')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'toggle-file-explorer-sidebar',
+						isMac,
+					),
+					onSelect: () => {
+						toggleFileExplorerSidebar();
+					},
+				},
+				{
+					group: 'Workspace',
+					icon: <FolderSync size={18} strokeWidth={2.1} />,
+					id: 'set-project-root-folder-to-working-directory',
+					title: 'Set project root folder to working directory',
+					description:
+						'Use the active terminal working directory as this project root folder.',
+					searchText: `set project root folder working directory cwd active terminal root folder ${getCommandShortcut(settings.keyboardShortcuts, 'set-project-root-folder-to-working-directory')}`,
+					shortcutLabel: getCommandShortcutLabel(
+						settings.keyboardShortcuts,
+						'set-project-root-folder-to-working-directory',
+						isMac,
+					),
+					onSelect: () => {
+						void setProjectRootFolderToWorkingDirectory();
+					},
+				},
+				...macros.map(
+					(macro): MacroLauncherItem => ({
+						group: 'Macros',
+						icon: <Play size={18} strokeWidth={2.1} />,
+						id: macro.id,
+						title: macro.title,
+						description:
+							macro.description ||
+							(macro.steps[0]?.type === 'type'
+								? macro.steps[0].content
+								: 'Multi-step macro'),
+						searchText: [
+							macro.title,
+							macro.description,
+							...macro.fields.map((field) => `${field.label} ${field.name}`),
+							...macro.steps.map((step) =>
+								step.type === 'type' ? step.content : '',
+							),
+						]
+							.join(' ')
+							.toLowerCase(),
+						shortcutLabel: '',
+						onSelect: () => runMacro(macro),
+					}),
+				),
+			];
+
+			if (!normalizedQuery) {
+				return commandItems;
+			}
+
+			return commandItems
+				.map((macro, index) => ({
+					macro,
+					index,
+					score: getCommandSearchScore(macro, normalizedQuery),
+				}))
+				.filter(({ score }) => score > 0)
+				.sort((left, right) => {
+					if (left.macro.group === 'Macros' && right.macro.group === 'Macros') {
+						return left.index - right.index;
+					}
+
+					if (right.score !== left.score) {
+						return right.score - left.score;
+					}
+
+					return left.index - right.index;
+				})
+				.map(({ macro }) => macro);
+		}, [
+			addTerminal,
+			clearActiveTerminal,
+			createProject,
+			isMac,
+			macroQuery,
+			macros,
+			openActiveTerminalSettings,
+			openProjectSettings,
+			project.isFileExplorerOpen,
+			runAiTabMetadata,
+			runMacro,
+			settings.keyboardShortcuts,
+			setProjectRootFolderToWorkingDirectory,
+			startDictation,
+			toggleFileExplorerSidebar,
+		]);
+		const activeMacroId = filteredMacros[selectedMacroIndex]?.id ?? null;
+		const macroLauncherGroups = useMemo(() => {
+			const groups = new Map<MacroLauncherGroup, MacroLauncherGroupedItem[]>();
+
+			filteredMacros.forEach((item, index) => {
+				const groupItems = groups.get(item.group) ?? [];
+				groupItems.push({ index, item });
+				groups.set(item.group, groupItems);
+			});
+
+			return (['Terminal', 'Workspace', 'Macros'] as const)
+				.map((group) => ({
+					group,
+					items: groups.get(group) ?? [],
+				}))
+				.filter(({ items }) => items.length > 0);
+		}, [filteredMacros]);
+
+		const closeActivePanel = useCallback(() => {
+			closeActiveDockviewPanel({
+				api: dockviewApiRef.current,
+				onCloseLastPanel: () => onCloseProject(project.id),
+			});
+		}, [onCloseProject, project.id]);
+
+		const saveActivePanel = useCallback(
+			() =>
+				saveActiveDockviewPanel({
+					api: dockviewApiRef.current,
+					onError: setErrorText,
+					onSaved: () => void refreshGitStatuses(),
+				}),
+			[refreshGitStatuses],
+		);
+
+		const popoutActivePanel = useCallback(
+			() =>
+				popoutActiveDockviewPanel({
+					api: dockviewApiRef.current,
+					popoutUrl,
+				}),
+			[popoutUrl],
+		);
+
+		const executeAppCommand = useCallback(
+			async (command: AppCommand): Promise<void> => {
+				switch (command) {
+					case 'new-terminal':
+						await addTerminal({});
+						break;
+					case 'new-project':
+						onAddProject();
+						break;
+					case 'split-horizontal':
+						await addTerminal({ direction: 'below' });
+						break;
+					case 'split-vertical':
+						await addTerminal({ direction: 'right' });
+						break;
+					case 'save-active':
+						await saveActivePanel();
+						break;
+					case 'popout-active':
+						await popoutActivePanel();
+						break;
+					case 'close-active':
+						closeActivePanel();
+						break;
+					case 'clear-terminal':
+						clearActiveTerminal();
+						break;
+					case 'open-command-bar':
+						setMacroQuery('');
+						setSelectedMacroIndex(0);
+						setIsMacroLauncherOpen(true);
+						setMacroToRun(null);
+						setMacroFieldValues({});
+						break;
+					case 'start-dictation':
+						await startDictation();
+						break;
+					case 'open-recordings':
+						void window.terminayRecordingsHost?.open();
+						break;
+					case 'toggle-file-explorer-sidebar':
+						toggleFileExplorerSidebar();
+						break;
+					case 'set-project-root-folder-to-working-directory':
+						await setProjectRootFolderToWorkingDirectory();
+						break;
+					default:
+						break;
+				}
+			},
+			[
+				addTerminal,
+				clearActiveTerminal,
+				closeActivePanel,
+				onAddProject,
+				popoutActivePanel,
+				saveActivePanel,
+				setProjectRootFolderToWorkingDirectory,
+				startDictation,
+				toggleFileExplorerSidebar,
+			],
+		);
+
+		useEffect(() => {
+			if (!isActive) {
+				return;
+			}
+
+			const unsubscribeCopyRequest =
+				window.terminayClipboardHost?.subscribeCopyRequest(
+					copyActiveTerminalSelection,
+				);
+
+			return () => {
+				unsubscribeCopyRequest?.();
+			};
+		}, [copyActiveTerminalSelection, isActive]);
+
+		useEffect(() => {
+			if (!isActive) {
+				return;
+			}
+
+			const onKeyDown = (event: KeyboardEvent) => {
+				if (event.defaultPrevented) {
+					return;
+				}
+
+				const command = findCommandForKeyboardEvent(
+					event,
+					settings.keyboardShortcuts,
+					isMac,
+				);
+				if (!command) {
+					return;
+				}
+
+				event.preventDefault();
+				event.stopPropagation();
+
+				if (!event.repeat) {
+					void executeAppCommand(command);
+				}
+			};
+
+			window.addEventListener('keydown', onKeyDown, true);
+			return () => {
+				window.removeEventListener('keydown', onKeyDown, true);
+			};
+		}, [executeAppCommand, isActive, isMac, settings.keyboardShortcuts]);
+
+		const {
+			handleRequest: handleControlRequest,
+			ownsSession: ownsControlSession,
+		} = useTerminalControlController({
+			addTerminal,
+			apiRef: dockviewApiRef,
+			getTerminalCwd: getServerTerminalCwd,
+			projectId: project.id,
+			sendInput: sendTerminalPanelInput,
+			setTerminalTitleRevision,
+			state: terminalControlStateRef.current,
+			terminalContextReadersRef,
+			waitForInactivity:
+				terminalPanelClientContext === null
+					? null
+					: (projectId, sessionId, idleMs) =>
+							terminalPanelClientContext.client.waitForInactivity(
+								projectId,
+								sessionId,
+								idleMs,
+							),
+		});
+		useImperativeHandle(
+			ref,
+			() => ({
+				acceptMovedTerminal,
+				acceptServerTerminal,
+				activateTerminal,
+				executeCommand(command: AppCommand) {
+					return executeAppCommand(command);
+				},
+				exportTerminalForMove,
+				exportProjectForMove,
+				focusActiveTerminal,
+				ownsControlSession,
+				handleControlRequest,
+			}),
+			[
+				acceptMovedTerminal,
+				acceptServerTerminal,
+				activateTerminal,
+				executeAppCommand,
+				exportTerminalForMove,
+				exportProjectForMove,
+				focusActiveTerminal,
+				ownsControlSession,
+				handleControlRequest,
+			],
+		);
+
+		useEffect(() => {
+			publishTerminalActivityOverview();
+		}, [publishTerminalActivityOverview]);
+
+		useEffect(() => {
+			focusedSessionIdRef.current = focusedSessionId;
+			for (const sessionId of panelSessionMapRef.current.values()) {
+				evaluateTerminalActivityState(sessionId);
+			}
+		}, [evaluateTerminalActivityState, focusedSessionId]);
+
+		useEffect(() => {
+			syncFocusedTerminalTabs(focusedSessionId);
+		}, [focusedSessionId, syncFocusedTerminalTabs]);
+
+		useEffect(() => {
+			syncRunningMacroTabs();
+		}, [syncRunningMacroTabs]);
+
+		const closeServerPanel = useCallback(
+			(panelId: string) => {
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				const panel = store?.snapshot?.panels[panelId];
+				if (store === undefined || panel?.projectId !== project.id) return;
+				void store.closePanel(panelId).catch((error: unknown) => {
+					const message =
+						error instanceof Error
+							? error.message
+							: 'Unable to close this panel on the server.';
+					setErrorText(message);
+				});
+			},
+			[project.id, terminalClientContext?.workspaceSnapshotStore],
+		);
+
+		const handleDockviewReady = useDockviewPanelLifecycle({
+			apiRef: dockviewApiRef,
+			cancelMacroRunsForSession,
+			clearActivitySession: (sessionId) =>
+				terminalActivityStoreRef.current.deleteSession(sessionId),
+			clearMacroRunsForSession,
+			closeServerPanel,
+			filePathPanelMapRef,
+			focusedSessionIdRef,
+			folderPathPanelMapRef,
+			markTerminalActivityViewed,
+			movingTerminalSessionIdsRef,
+			panelSessionMapRef,
+			publishTerminalActivityOverview,
+			setFocusedSessionId,
+			setIsDockviewReady,
+			syncPanelFocusState,
+			terminalActivityTimersRef,
+		});
+
+		useEffect(() => {
+			if (!isDockviewReady) {
+				return;
+			}
+
+			const api = dockviewApiRef.current;
 			if (
-				event.altKey &&
-				!event.ctrlKey &&
-				!event.metaKey &&
-				event.key === 'Tab'
+				!api ||
+				initialTerminalSeededRef.current ||
+				initialTerminalSeedStartedRef.current
 			) {
+				return;
+			}
+
+			const hasPanels = api.groups.some((group) => group.panels.length > 0);
+			if (hasPanels) {
+				initialTerminalSeededRef.current = true;
+				return;
+			}
+
+			initialTerminalSeededRef.current = true;
+			initialTerminalSeedStartedRef.current = true;
+			window.terminayBootstrapDiagnostic?.record('app.workspace.seed.begin', 1);
+
+			// Adopted project (popped out / merged): reattach its existing sessions
+			// instead of spawning a brand-new terminal.
+			const adopted = adoptedTerminalsRef.current;
+			if (adopted && adopted.length > 0) {
+				for (const terminal of adopted) {
+					acceptMovedTerminal(terminal);
+				}
+				window.terminayBootstrapDiagnostic?.record('app.workspace.seed.end', 1);
+				return;
+			}
+
+			const serverSnapshot =
+				terminalClientContext?.workspaceSnapshotStore?.snapshot;
+			const serverSessions = Object.values(
+				serverSnapshot?.terminalSessions ?? {},
+			).filter((session) => session.projectId === project.id);
+			if (serverSessions.length > 0) {
+				for (const session of serverSessions) {
+					const serverPanel = Object.values(serverSnapshot?.panels ?? {}).find(
+						(panel) => panel.sessionId === session.id,
+					);
+					if (serverPanel === undefined) continue;
+					acceptServerTerminal(session.id, serverPanel.title);
+				}
+				window.terminayBootstrapDiagnostic?.record('app.workspace.seed.end', 1);
+				return;
+			}
+
+			window.terminayBootstrapDiagnostic?.record(
+				'app.workspace.seed.before-create',
+			);
+			const seedPromise = new Promise<Awaited<ReturnType<typeof addTerminal>>>(
+				(resolve) => {
+					window.setTimeout(() => resolve(addTerminal({})), 0);
+				},
+			);
+			initialTerminalSeedPromiseRef.current = seedPromise;
+			void seedPromise.then((result) => {
+				if (initialTerminalSeedPromiseRef.current === seedPromise) {
+					initialTerminalSeedPromiseRef.current = null;
+				}
+				if (result === null && initialTerminalSeedAttempt < 1) {
+					// One bounded retry recovers a transient transport failure without
+					// turning repeated Dockview readiness into a create loop.
+					initialTerminalSeedStartedRef.current = false;
+					initialTerminalSeededRef.current = false;
+					setInitialTerminalSeedAttempt((attempt) => attempt + 1);
+				}
+				window.terminayBootstrapDiagnostic?.record(
+					'app.workspace.seed.after-create',
+					result === null ? 0 : 1,
+				);
+			});
+		}, [
+			acceptMovedTerminal,
+			acceptServerTerminal,
+			addTerminal,
+			initialTerminalSeedAttempt,
+			isDockviewReady,
+			project.id,
+			terminalClientContext?.workspaceSnapshotStore,
+		]);
+
+		useEffect(() => {
+			const onOpenFileEvent = (event: Event) => {
+				const customEvent = event as CustomEvent<{
+					initialMode?: FileViewerMode;
+					path?: string;
+				}>;
+				const filePath = customEvent.detail?.path;
+				if (!filePath) {
+					return;
+				}
+				void openFile(filePath, {
+					initialMode: customEvent.detail.initialMode,
+				});
+			};
+
+			window.addEventListener('terminay-open-file', onOpenFileEvent);
+			return () => {
+				window.removeEventListener('terminay-open-file', onOpenFileEvent);
+			};
+		}, [openFile]);
+
+		useEffect(() => {
+			const handlePointerDown = (event: PointerEvent) => {
 				const target = event.target;
+				const workspace = workspaceRef.current;
 				if (
-					target instanceof HTMLElement &&
-					(target.closest('.terminal-panel') ||
-						target.closest('.xterm') ||
-						target.classList.contains('xterm-helper-textarea'))
+					!(target instanceof Element) ||
+					!workspace?.contains(target) ||
+					!target.closest('.dv-sash') ||
+					isDockviewSashDraggingRef.current
 				) {
 					return;
 				}
 
-				event.preventDefault();
-				if (event.repeat) {
-					return;
-				}
+				isDockviewSashDraggingRef.current = true;
+				clearDeferredTerminalActivityFlushTimer();
 
-				if (isTerminalSwitcherOpen) {
-					moveTerminalSwitcherSelection(event.shiftKey ? -1 : 1);
-					return;
-				}
+				const ownerWindow = target.ownerDocument.defaultView ?? window;
+				const ownerDocument = target.ownerDocument;
+				let didEnd = false;
 
-				openTerminalSwitcher(event.shiftKey ? -1 : 1);
-				return;
-			}
-
-			if (!isTerminalSwitcherOpen) {
-				return;
-			}
-
-			if (event.key === 'Escape') {
-				event.preventDefault();
-				closeTerminalSwitcher();
-			}
-		};
-
-		const onSwitcherRequest = (event: Event) => {
-			const customEvent = event as CustomEvent<{ direction?: 1 | -1 }>;
-			const direction = customEvent.detail?.direction === -1 ? -1 : 1;
-
-			if (isTerminalSwitcherOpen) {
-				moveTerminalSwitcherSelection(direction);
-				return;
-			}
-
-			openTerminalSwitcher(direction);
-		};
-
-		const onKeyUp = (event: KeyboardEvent) => {
-			if (!isTerminalSwitcherOpen) {
-				return;
-			}
-
-			if (event.key === 'Alt') {
-				event.preventDefault();
-				commitTerminalSwitcherSelection();
-			}
-		};
-
-		const onBlur = () => {
-			if (isTerminalSwitcherOpen) {
-				commitTerminalSwitcherSelection();
-			}
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-		window.addEventListener('keyup', onKeyUp);
-		window.addEventListener(OPEN_TERMINAL_SWITCHER_EVENT, onSwitcherRequest);
-		window.addEventListener('blur', onBlur);
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-			window.removeEventListener('keyup', onKeyUp);
-			window.removeEventListener(
-				OPEN_TERMINAL_SWITCHER_EVENT,
-				onSwitcherRequest,
-			);
-			window.removeEventListener('blur', onBlur);
-		};
-	}, [
-		closeTerminalSwitcher,
-		commitTerminalSwitcherSelection,
-		isActive,
-		isMacroLauncherOpen,
-		isTerminalSwitcherOpen,
-		macroToRun,
-		moveTerminalSwitcherSelection,
-		openTerminalSwitcher,
-	]);
-
-	useEffect(() => {
-		if (!isMacroLauncherOpen) {
-			return;
-		}
-
-		window.requestAnimationFrame(() => {
-			macroLauncherInputRef.current?.focus();
-			macroLauncherInputRef.current?.select();
-		});
-	}, [isMacroLauncherOpen]);
-
-	useEffect(() => {
-		if (filteredMacros.length === 0) {
-			setSelectedMacroIndex(0);
-			return;
-		}
-
-		setSelectedMacroIndex((current) =>
-			Math.min(current, filteredMacros.length - 1),
-		);
-	}, [filteredMacros.length]);
-
-	useEffect(() => {
-		if (!isMacroLauncherOpen) {
-			return;
-		}
-
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				event.preventDefault();
-				closeMacroLauncher();
-				return;
-			}
-
-			if (event.key === 'ArrowDown') {
-				event.preventDefault();
-				setSelectedMacroIndex((current) =>
-					filteredMacros.length === 0
-						? 0
-						: (current + 1) % filteredMacros.length,
-				);
-				return;
-			}
-
-			if (event.key === 'ArrowUp') {
-				event.preventDefault();
-				setSelectedMacroIndex((current) =>
-					filteredMacros.length === 0
-						? 0
-						: (current - 1 + filteredMacros.length) % filteredMacros.length,
-				);
-				return;
-			}
-
-			if (event.key === 'Enter') {
-				event.preventDefault();
-				const macro = filteredMacros[selectedMacroIndex];
-				if (macro) {
-					macro.onSelect();
-				}
-			}
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-		};
-	}, [
-		closeMacroLauncher,
-		filteredMacros,
-		isMacroLauncherOpen,
-		selectedMacroIndex,
-	]);
-
-	useEffect(() => {
-		if (!isMacroLauncherOpen) {
-			return;
-		}
-
-		const list = macroLauncherListRef.current;
-		const activeItem = activeMacroId
-			? macroLauncherItemRefs.current.get(activeMacroId)
-			: null;
-		if (!list || !activeItem) {
-			return;
-		}
-
-		const animationFrameId = window.requestAnimationFrame(() => {
-			activeItem.scrollIntoView({
-				block: 'nearest',
-				inline: 'nearest',
-				behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-					? 'auto'
-					: 'smooth',
-			});
-		});
-
-		return () => {
-			window.cancelAnimationFrame(animationFrameId);
-		};
-	}, [activeMacroId, isMacroLauncherOpen]);
-
-	useEffect(() => {
-		if (!macroToRun) {
-			return;
-		}
-
-		window.requestAnimationFrame(() => {
-			firstMacroFieldRef.current?.focus();
-		});
-
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				event.preventDefault();
-				closeMacroParameterModal();
-			}
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-		};
-	}, [closeMacroParameterModal, macroToRun]);
-
-	const sidebarPanelItemsById: Record<
-		SidebarPanelId,
-		SidebarPanelStackItem
-	> = {
-		explorer: {
-			id: 'explorer',
-			title: 'Explorer',
-			height: project.sidebarExplorerHeight,
-			collapsed: project.isExplorerPaneCollapsed,
-			onToggleCollapsed: () => {
-				const next = !project.isExplorerPaneCollapsed;
-				onUpdateProject(project.id, {
-					isExplorerPaneCollapsed: next,
-				});
-				updateSidebarSettings({
-					defaultExplorerState: next ? 'collapsed' : 'expanded',
-				});
-			},
-			actions: (
-				<button
-					type="button"
-					className="sidebar-pane__action-button"
-					onClick={refreshFileExplorerTree}
-					aria-label="Reload explorer"
-					title="Reload explorer"
-				>
-					<RefreshCw size={14} aria-hidden="true" />
-				</button>
-			),
-			children: (
-				<FileExplorerTree
-					directoryChildren={directoryChildren}
-					directoryErrors={directoryErrors}
-					expandedPaths={expandedPaths}
-					gitStatuses={gitStatuses}
-					loadingPaths={loadingPaths}
-					onOpenFile={openFile}
-					onOpenFolder={openFolder}
-					onToggleDirectory={toggleDirectory}
-					onRename={handleRename}
-					onDelete={handleDelete}
-					onNewFile={handleNewFile}
-					onNewFolder={handleNewFolder}
-					onOpenTerminal={handleOpenTerminalAt}
-					onCopyPath={handleCopyPath}
-					onCopyRelativePath={handleCopyRelativePath}
-					rootPath={project.rootFolder}
-				/>
-			),
-		},
-		agents: {
-			id: 'agents',
-			title: 'Agents',
-			height: project.sidebarAgentsHeight,
-			collapsed: project.isAgentsPaneCollapsed,
-			onToggleCollapsed: () => {
-				onUpdateProject(project.id, {
-					isAgentsPaneCollapsed: !project.isAgentsPaneCollapsed,
-				});
-			},
-			count: projectAgentItems.length,
-			children: (
-				<AgentsSidebar
-					projectId={project.id}
-					agents={projectAgentItems}
-					expandedEntryIds={project.expandedAgentEntryIds}
-					onToggleEntryExpanded={(entryId) => {
-						const expanded =
-							project.expandedAgentEntryIds.includes(entryId);
-						onUpdateProject(project.id, {
-							expandedAgentEntryIds: expanded
-								? project.expandedAgentEntryIds.filter(
-										(candidate) => candidate !== entryId,
-									)
-								: [...project.expandedAgentEntryIds, entryId],
-						});
-					}}
-					onActivateTerminal={activateAgentTerminal}
-				/>
-			),
-		},
-		git: {
-			id: 'git',
-			title: 'Git',
-			height: project.sidebarGitHeight,
-			collapsed: project.isGitPaneCollapsed,
-			onToggleCollapsed: () => {
-				const next = !project.isGitPaneCollapsed;
-				onUpdateProject(project.id, {
-					isGitPaneCollapsed: next,
-				});
-				updateSidebarSettings({
-					defaultGitState: next ? 'collapsed' : 'expanded',
-				});
-			},
-			count: worktreePanelStatus?.worktrees.length,
-			accessory: currentGitBranch ? (
-				<span className="sidebar-pane__branch">{currentGitBranch}</span>
-			) : null,
-			children: (
-				<WorktreesPanel
-					activePushMenuWorktreePath={
-						gitPushMenuPosition?.target?.worktreePath ?? null
+				const endSashDrag = () => {
+					if (didEnd) {
+						return;
 					}
-					deletingWorktreePaths={deletingWorktreePaths}
-					status={worktreePanelStatus}
-					viewMode={settings.sidebar.gitPanelViewMode}
-					onDeleteWorktree={handleDeleteWorktree}
-					onOpenEntry={handleOpenGitEntry}
-					onOpenPushMenu={handleOpenWorktreePushMenu}
-					onOpenTerminal={handleOpenTerminalAtWorktree}
-					onOpenTerminalAtPath={handleOpenTerminalAt}
-					onPullFromOrigin={handlePullWorktreeFromOrigin}
-					onRenameWorktree={handleRenameWorktree}
-					onRevealWorktree={handleRevealWorktree}
-					onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
-				/>
-			),
-		},
-	};
-	const visibleSidebarPanelIds = project.sidebarPanelOrder.filter(
-		(id) => settings.agentIntegration.enabled || id !== 'agents',
-	);
-	const sidebarPanelItems = visibleSidebarPanelIds.map(
-		(id) => sidebarPanelItemsById[id],
-	);
 
-	return (
-		<section
-			className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
-		>
-			{errorText ? (
-				<div className="error-banner">Terminal error: {errorText}</div>
-			) : null}
+					didEnd = true;
+					isDockviewSashDraggingRef.current = false;
+					ownerDocument.removeEventListener('pointerup', endSashDrag, true);
+					ownerDocument.removeEventListener('pointercancel', endSashDrag, true);
+					ownerDocument.removeEventListener('contextmenu', endSashDrag, true);
+					ownerWindow.removeEventListener('blur', endSashDrag);
+					scheduleDeferredTerminalActivityFlush();
+				};
 
-			<div className="project-workspace-body">
-				{project.isFileExplorerOpen ? (
-					<aside
-						className="file-explorer-sidebar"
-						style={{ width: `${project.fileExplorerWidth}px` }}
-					>
-						<SidebarPanelStack
-							items={sidebarPanelItems}
-							minPaneHeight={MIN_SIDEBAR_PANE_HEIGHT}
-							onHeightChange={(id, height) => {
+				ownerDocument.addEventListener('pointerup', endSashDrag, true);
+				ownerDocument.addEventListener('pointercancel', endSashDrag, true);
+				ownerDocument.addEventListener('contextmenu', endSashDrag, true);
+				ownerWindow.addEventListener('blur', endSashDrag);
+			};
+
+			window.addEventListener('pointerdown', handlePointerDown, true);
+			return () => {
+				window.removeEventListener('pointerdown', handlePointerDown, true);
+				isDockviewSashDraggingRef.current = false;
+				clearDeferredTerminalActivityFlushTimer();
+				deferredTerminalActivitySessionIdsRef.current.clear();
+			};
+		}, [
+			clearDeferredTerminalActivityFlushTimer,
+			scheduleDeferredTerminalActivityFlush,
+		]);
+
+		useEffect(() => {
+			const onTerminalFocused = (event: Event) => {
+				if (!isActive) {
+					return;
+				}
+				const customEvent = event as CustomEvent<{ sessionId?: string }>;
+				const sessionId = customEvent.detail?.sessionId ?? null;
+				if (sessionId !== null && !getPanelForSession(sessionId)) {
+					return;
+				}
+				const previousSessionId = focusedSessionIdRef.current;
+				if (
+					serverActivityClient === undefined &&
+					previousSessionId &&
+					previousSessionId !== sessionId &&
+					getPanelForSession(previousSessionId)
+				) {
+					applyTerminalActivityEvaluation(
+						previousSessionId,
+						terminalActivityStoreRef.current.suppressTerminalActivity(
+							previousSessionId,
+						),
+					);
+				}
+				focusedSessionIdRef.current = sessionId;
+				setFocusedSessionId(sessionId);
+			};
+
+			window.addEventListener('terminay-terminal-focused', onTerminalFocused);
+			return () => {
+				window.removeEventListener(
+					'terminay-terminal-focused',
+					onTerminalFocused,
+				);
+			};
+		}, [
+			applyTerminalActivityEvaluation,
+			getPanelForSession,
+			isActive,
+			serverActivityClient,
+		]);
+
+		useEffect(() => {
+			if (serverActivityClient !== undefined) {
+				return;
+			}
+			const onTerminalOutput = (event: Event) => {
+				const sessionId = (event as CustomEvent<{ sessionId?: string }>).detail
+					?.sessionId;
+				if (!sessionId || !getPanelForSession(sessionId)) {
+					return;
+				}
+
+				const now = Date.now();
+				terminalActivityStoreRef.current.recordTerminalActivity(sessionId, now);
+				if (
+					isDockviewSashDraggingRef.current ||
+					deferredTerminalActivityFlushTimerRef.current !== null
+				) {
+					deferredTerminalActivitySessionIdsRef.current.add(sessionId);
+					scheduleDeferredTerminalActivityFlush();
+					return;
+				}
+
+				applyTerminalActivityEvaluation(
+					sessionId,
+					terminalActivityStoreRef.current.evaluate(sessionId, now),
+				);
+			};
+			window.addEventListener(TERMINAL_PANEL_OUTPUT_EVENT, onTerminalOutput);
+			return () =>
+				window.removeEventListener(
+					TERMINAL_PANEL_OUTPUT_EVENT,
+					onTerminalOutput,
+				);
+		}, [
+			applyTerminalActivityEvaluation,
+			getPanelForSession,
+			scheduleDeferredTerminalActivityFlush,
+			serverActivityClient,
+		]);
+
+		useEffect(() => {
+			if (serverActivityClient !== undefined) {
+				return;
+			}
+			// Server activity is required by the connected workspace. There is no
+			// renderer subscription to a host terminal-activity IPC fallback.
+			return;
+		}, [
+			applyTerminalActivityEvaluation,
+			getPanelForSession,
+			serverActivityClient,
+		]);
+
+		useEffect(() => {
+			const onTerminalUserInput = (event: Event) => {
+				const customEvent = event as CustomEvent<{ sessionId?: string }>;
+				const sessionId = customEvent.detail?.sessionId;
+				if (!sessionId || !getPanelForSession(sessionId)) {
+					return;
+				}
+
+				if (serverActivityClient !== undefined) {
+					void serverActivityClient
+						.acknowledge({ projectId: project.id, sessionId })
+						.catch(() => undefined);
+				} else {
+					applyTerminalActivityEvaluation(
+						sessionId,
+						terminalActivityStoreRef.current.recordUserInput(sessionId),
+					);
+				}
+			};
+
+			window.addEventListener(
+				'terminay-terminal-user-input',
+				onTerminalUserInput,
+			);
+			return () => {
+				window.removeEventListener(
+					'terminay-terminal-user-input',
+					onTerminalUserInput,
+				);
+			};
+		}, [
+			applyTerminalActivityEvaluation,
+			getPanelForSession,
+			project.id,
+			serverActivityClient,
+		]);
+
+		useEffect(() => {
+			return () => {
+				onTerminalActivityOverviewChange(project.id, []);
+				for (const timer of terminalActivityTimersRef.current.values()) {
+					window.clearTimeout(timer);
+				}
+				terminalActivityTimersRef.current.clear();
+				terminalActivityStoreRef.current.clear();
+			};
+		}, [onTerminalActivityOverviewChange, project.id]);
+
+		useEffect(() => {
+			const onTerminalExit = (event: Event) => {
+				const detail = (
+					event as CustomEvent<{
+						autoCloseOnSuccessfulExit?: boolean;
+						exitCode?: number;
+						sessionId?: string;
+						signal?: number | null;
+					}>
+				).detail;
+				if (!detail?.sessionId || typeof detail.exitCode !== 'number') return;
+				cancelMacroRunsForSession(detail.sessionId);
+
+				recordTerminalControlExit(
+					terminalControlStateRef.current,
+					detail.sessionId,
+					detail.exitCode,
+				);
+
+				if (
+					detail.autoCloseOnSuccessfulExit === true &&
+					detail.exitCode === 0 &&
+					detail.signal == null
+				) {
+					getPanelForSession(detail.sessionId)?.api.close();
+				}
+			};
+			window.addEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
+			return () =>
+				window.removeEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
+		}, [cancelMacroRunsForSession, getPanelForSession]);
+
+		useTerminalDockviewWindowController({
+			addTerminal,
+			apiRef: dockviewApiRef,
+			draggingTransferRef,
+			isActive,
+			openTerminalEditWindow,
+			popoutUrl,
+			runAiTabMetadataRef,
+		});
+		useEffect(() => {
+			if (!isActive) {
+				return;
+			}
+
+			const api = dockviewApiRef.current;
+			const workspace = workspaceRef.current;
+			if (!api || !workspace) {
+				return;
+			}
+
+			const { clientWidth, clientHeight } = workspace;
+			if (clientWidth > 0 && clientHeight > 0) {
+				api.layout(clientWidth, clientHeight);
+			}
+
+			if (isMacroLauncherOpen || macroToRun || isTerminalSwitcherOpen) {
+				return;
+			}
+
+			const frame = window.requestAnimationFrame(() => {
+				focusActiveTerminal();
+			});
+
+			return () => {
+				window.cancelAnimationFrame(frame);
+			};
+		}, [
+			focusActiveTerminal,
+			isActive,
+			isMacroLauncherOpen,
+			isTerminalSwitcherOpen,
+			macroToRun,
+		]);
+
+		useEffect(() => {
+			if (!isActive) {
+				return;
+			}
+
+			const frame = window.requestAnimationFrame(() => {
+				const api = dockviewApiRef.current;
+				const workspace = workspaceRef.current;
+				if (!api || !workspace) {
+					return;
+				}
+
+				const { clientWidth, clientHeight } = workspace;
+				if (clientWidth > 0 && clientHeight > 0) {
+					api.layout(clientWidth, clientHeight);
+				}
+			});
+
+			return () => {
+				window.cancelAnimationFrame(frame);
+			};
+		}, [isActive, project.fileExplorerWidth, project.isFileExplorerOpen]);
+
+		useEffect(() => {
+			if (!isMacroLauncherOpen) {
+				return;
+			}
+
+			window.requestAnimationFrame(() => {
+				macroLauncherInputRef.current?.focus();
+				macroLauncherInputRef.current?.select();
+			});
+		}, [isMacroLauncherOpen]);
+
+		useEffect(() => {
+			if (filteredMacros.length === 0) {
+				setSelectedMacroIndex(0);
+				return;
+			}
+
+			setSelectedMacroIndex((current) =>
+				Math.min(current, filteredMacros.length - 1),
+			);
+		}, [filteredMacros.length]);
+
+		useEffect(() => {
+			if (!isMacroLauncherOpen) {
+				return;
+			}
+
+			const onKeyDown = (event: KeyboardEvent) => {
+				if (event.key === 'Escape') {
+					event.preventDefault();
+					closeMacroLauncher();
+					return;
+				}
+
+				if (event.key === 'ArrowDown') {
+					event.preventDefault();
+					setSelectedMacroIndex((current) =>
+						filteredMacros.length === 0
+							? 0
+							: (current + 1) % filteredMacros.length,
+					);
+					return;
+				}
+
+				if (event.key === 'ArrowUp') {
+					event.preventDefault();
+					setSelectedMacroIndex((current) =>
+						filteredMacros.length === 0
+							? 0
+							: (current - 1 + filteredMacros.length) % filteredMacros.length,
+					);
+					return;
+				}
+
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					const macro = filteredMacros[selectedMacroIndex];
+					if (macro) {
+						macro.onSelect();
+					}
+				}
+			};
+
+			window.addEventListener('keydown', onKeyDown);
+			return () => {
+				window.removeEventListener('keydown', onKeyDown);
+			};
+		}, [
+			closeMacroLauncher,
+			filteredMacros,
+			isMacroLauncherOpen,
+			selectedMacroIndex,
+		]);
+
+		useEffect(() => {
+			if (!isMacroLauncherOpen) {
+				return;
+			}
+
+			const list = macroLauncherListRef.current;
+			const activeItem = activeMacroId
+				? macroLauncherItemRefs.current.get(activeMacroId)
+				: null;
+			if (!list || !activeItem) {
+				return;
+			}
+
+			const animationFrameId = window.requestAnimationFrame(() => {
+				activeItem.scrollIntoView({
+					block: 'nearest',
+					inline: 'nearest',
+					behavior: window.matchMedia('(prefers-reduced-motion: reduce)')
+						.matches
+						? 'auto'
+						: 'smooth',
+				});
+			});
+
+			return () => {
+				window.cancelAnimationFrame(animationFrameId);
+			};
+		}, [activeMacroId, isMacroLauncherOpen]);
+
+		useEffect(() => {
+			if (!macroToRun) {
+				return;
+			}
+
+			window.requestAnimationFrame(() => {
+				firstMacroFieldRef.current?.focus();
+			});
+
+			const onKeyDown = (event: KeyboardEvent) => {
+				if (event.key === 'Escape') {
+					event.preventDefault();
+					closeMacroParameterModal();
+				}
+			};
+
+			window.addEventListener('keydown', onKeyDown);
+			return () => {
+				window.removeEventListener('keydown', onKeyDown);
+			};
+		}, [closeMacroParameterModal, macroToRun]);
+
+		const sidebarPanelItemsById: Record<SidebarPanelId, SidebarPanelStackItem> =
+			{
+				explorer: {
+					id: 'explorer',
+					title: 'Explorer',
+					height: project.sidebarExplorerHeight,
+					collapsed: project.isExplorerPaneCollapsed,
+					onToggleCollapsed: () => {
+						const next = !project.isExplorerPaneCollapsed;
+						onUpdateProject(project.id, {
+							isExplorerPaneCollapsed: next,
+						});
+						updateSidebarSettings({
+							defaultExplorerState: next ? 'collapsed' : 'expanded',
+						});
+					},
+					actions: (
+						<button
+							type="button"
+							className="sidebar-pane__action-button"
+							onClick={refreshFileExplorerTree}
+							aria-label="Reload explorer"
+							title="Reload explorer"
+						>
+							<RefreshCw size={14} aria-hidden="true" />
+						</button>
+					),
+					children: (
+						<FileExplorerTree
+							directoryChildren={directoryChildren}
+							directoryErrors={directoryErrors}
+							expandedPaths={expandedPaths}
+							gitStatuses={gitStatuses}
+							loadingPaths={loadingPaths}
+							onOpenFile={openFile}
+							onOpenFolder={openFolder}
+							onToggleDirectory={toggleDirectory}
+							onRename={handleRename}
+							onDelete={handleDelete}
+							onNewFile={handleNewFile}
+							onNewFolder={handleNewFolder}
+							onOpenTerminal={handleOpenTerminalAt}
+							onCopyPath={handleCopyPath}
+							onCopyRelativePath={handleCopyRelativePath}
+							rootPath={project.rootFolder}
+						/>
+					),
+				},
+				agents: {
+					id: 'agents',
+					title: 'Agents',
+					height: project.sidebarAgentsHeight,
+					collapsed: project.isAgentsPaneCollapsed,
+					onToggleCollapsed: () => {
+						onUpdateProject(project.id, {
+							isAgentsPaneCollapsed: !project.isAgentsPaneCollapsed,
+						});
+					},
+					count: projectAgentItems.length,
+					children: (
+						<AgentsSidebar
+							projectId={project.id}
+							agents={projectAgentItems}
+							expandedEntryIds={project.expandedAgentEntryIds}
+							onToggleEntryExpanded={(entryId) => {
+								const expanded =
+									project.expandedAgentEntryIds.includes(entryId);
 								onUpdateProject(project.id, {
-									...(id === 'explorer'
-										? { sidebarExplorerHeight: height }
-										: id === 'agents'
-											? { sidebarAgentsHeight: height }
-											: { sidebarGitHeight: height }),
+									expandedAgentEntryIds: expanded
+										? project.expandedAgentEntryIds.filter(
+												(candidate) => candidate !== entryId,
+											)
+										: [...project.expandedAgentEntryIds, entryId],
 								});
 							}}
-							onHeightCommit={(id, height) => {
-								if (id === 'explorer') {
-									updateSidebarSettings({
-										defaultExplorerPaneHeight: height,
-									});
+							onActivateTerminal={activateAgentTerminal}
+							onAcknowledgeEntry={(entryId) => {
+								const entry = agentStatusSnapshot.entries[entryId];
+								if (entry !== undefined) {
+									void serverAgentStatusClient
+										?.acknowledge({
+											projectId: project.id,
+											sessionId: entry.activationTerminalSessionId,
+											entryId,
+										})
+										.catch(() => undefined);
 								}
 							}}
-							onReorder={(orderedIds) => {
-								const reorderedVisibleIds = orderedIds.filter(
-									(id): id is SidebarPanelId =>
-										project.sidebarPanelOrder.includes(
-											id as SidebarPanelId,
-										),
-								);
-								const visibleIds = new Set(reorderedVisibleIds);
-								const orderedIterator =
-									reorderedVisibleIds[Symbol.iterator]();
-								const nextOrder = project.sidebarPanelOrder.map((id) =>
-									visibleIds.has(id)
-										? (orderedIterator.next().value ?? id)
-										: id,
-								);
-								setGitPushMenuPosition(null);
-								onUpdateProject(project.id, {
-									sidebarPanelOrder: nextOrder,
-								});
-								updateSidebarSettings({ panelOrder: nextOrder });
-							}}
 						/>
-
-						{gitPushMenuPosition ? (
-							<ContextMenu
-								x={gitPushMenuPosition.x}
-								y={gitPushMenuPosition.y}
-								onClose={() => setGitPushMenuPosition(null)}
-								items={buildGitPushMenuItems({
-									target: gitPushMenuPosition.target,
-									onLaunchAgent: launchGitPushAgent,
-									onLaunchQuickPush: (action, target) =>
-										void launchQuickPush(action, target),
-								})}
-							/>
-						) : null}
-
-						<div
-							className="file-explorer-sidebar__resizer"
-							onPointerDown={(event) => {
-								explorerResizeStateRef.current = {
-									pointerId: event.pointerId,
-									startWidth: project.fileExplorerWidth,
-									startX: event.clientX,
-									latestWidth: project.fileExplorerWidth,
-								};
-								(event.currentTarget as HTMLDivElement).setPointerCapture(
-									event.pointerId,
-								);
-							}}
+					),
+				},
+				git: {
+					id: 'git',
+					title: 'Git',
+					height: project.sidebarGitHeight,
+					collapsed: project.isGitPaneCollapsed,
+					onToggleCollapsed: () => {
+						const next = !project.isGitPaneCollapsed;
+						onUpdateProject(project.id, {
+							isGitPaneCollapsed: next,
+						});
+						updateSidebarSettings({
+							defaultGitState: next ? 'collapsed' : 'expanded',
+						});
+					},
+					count: worktreePanelStatus?.worktrees.length,
+					accessory: currentGitBranch ? (
+						<span className="sidebar-pane__branch">{currentGitBranch}</span>
+					) : null,
+					children: (
+						<WorktreesPanel
+							activePushMenuWorktreePath={
+								gitPushMenuPosition?.target?.worktreePath ?? null
+							}
+							deletingWorktreePaths={deletingWorktreePaths}
+							status={worktreePanelStatus}
+							viewMode={settings.sidebar.gitPanelViewMode}
+							onDeleteWorktree={handleDeleteWorktree}
+							onOpenEntry={handleOpenGitEntry}
+							onOpenPushMenu={handleOpenWorktreePushMenu}
+							onOpenTerminal={handleOpenTerminalAtWorktree}
+							onOpenTerminalAtPath={handleOpenTerminalAt}
+							onPullFromOrigin={handlePullWorktreeFromOrigin}
+							onRenameWorktree={handleRenameWorktree}
+							onRevealWorktree={handleRevealWorktree}
+							onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
 						/>
-					</aside>
+					),
+				},
+			};
+		const visibleSidebarPanelIds = project.sidebarPanelOrder.filter(
+			(id) => settings.agentIntegration.enabled || id !== 'agents',
+		);
+		const sidebarPanelItems = visibleSidebarPanelIds.map(
+			(id) => sidebarPanelItemsById[id],
+		);
+
+		return (
+			<section
+				className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
+				data-new-terminal-shortcut={getCommandShortcut(
+					settings.keyboardShortcuts,
+					'new-terminal',
+				)}
+			>
+				{errorText ? (
+					<div className="error-banner">Terminal error: {errorText}</div>
 				) : null}
 
-				<main
-					ref={(element) => {
-						workspaceRef.current = element;
-					}}
-					className="workspace dockview-theme-dark"
-				>
-					<DockviewReact
-						components={{
-							file: FilePanel,
-							folder: FolderPanel,
-							terminal: TerminalPanel,
-						}}
-						tabComponents={{
-							fileTab: FileTab,
-							folderTab: FolderTab,
-							terminalTab: TerminalTab,
-						}}
-						popoutUrl={popoutUrl}
-						onReady={handleReady}
-						floatingGroupBounds="boundedWithinViewport"
-					/>
-				</main>
-			</div>
-
-			<McpInstallModal
-				open={isMcpInstallModalOpen}
-				onClose={() => setIsMcpInstallModalOpen(false)}
-			/>
-			{quickPushAction && settings.gitPushAgent.provider !== 'disabled' ? (
-				<QuickPushModal
-					action={quickPushAction}
-					provider={settings.gitPushAgent.provider}
-					model={
-						settings.gitPushAgent.provider === 'claudeCode'
-							? settings.gitPushAgent.claudeCodeModel
-							: settings.gitPushAgent.codexModel
+				<WorkspaceSplitLayout
+					className="project-workspace-body"
+					isNavigationVisible={project.isFileExplorerOpen}
+					navigationWidth={project.fileExplorerWidth}
+					maximumNavigationWidth={Math.max(
+						MIN_FILE_EXPLORER_WIDTH,
+						MAX_FILE_EXPLORER_WIDTH,
+					)}
+					onNavigationWidthChange={(width) =>
+						onUpdateProject(project.id, { fileExplorerWidth: width })
 					}
-					cwd={quickPushCwd ?? project.rootFolder}
-					onClose={() => {
-						setQuickPushAction(null);
-						setQuickPushCwd(null);
-					}}
-				/>
-			) : null}
-			<AnimatePresence>
-				{isMacroLauncherOpen && (
-					<div className="macro-launcher-overlay" onClick={closeMacroLauncher}>
-						<motion.div
-							initial={{ opacity: 0, scale: 0.98, y: -20 }}
-							animate={{ opacity: 1, scale: 1, y: 0 }}
-							exit={{ opacity: 0, scale: 0.98, y: -10 }}
-							transition={{ duration: 0.15, ease: 'easeOut' }}
-							className="macro-launcher"
-							role="dialog"
-							aria-modal="true"
-							aria-label="Command bar"
-							onClick={(e) => e.stopPropagation()}
-						>
-							<div className="macro-launcher-search-container">
-								<div className="macro-launcher-search-icon">
-									<Search size={20} strokeWidth={2.5} aria-hidden="true" />
-								</div>
-								<input
-									ref={macroLauncherInputRef}
-									type="search"
-									className="macro-launcher-input"
-									value={macroQuery}
-									onChange={(event) => {
-										setMacroQuery(event.target.value);
-										setSelectedMacroIndex(0);
+					onNavigationWidthCommit={(width) =>
+						updateSidebarSettings({ defaultWidth: width })
+					}
+					navigation={
+						project.isFileExplorerOpen ? (
+							<div className="file-explorer-sidebar">
+								<SidebarPanelStack
+									items={sidebarPanelItems}
+									minPaneHeight={MIN_SIDEBAR_PANE_HEIGHT}
+									onHeightChange={(id, height) => {
+										onUpdateProject(project.id, {
+											...(id === 'explorer'
+												? { sidebarExplorerHeight: height }
+												: id === 'agents'
+													? { sidebarAgentsHeight: height }
+													: { sidebarGitHeight: height }),
+										});
 									}}
-									aria-label="Search commands"
-									placeholder="Search commands..."
-									spellCheck={false}
-									autoComplete="off"
+									onHeightCommit={(id, height) => {
+										if (id === 'explorer') {
+											updateSidebarSettings({
+												defaultExplorerPaneHeight: height,
+											});
+										}
+									}}
+									onReorder={(orderedIds) => {
+										const reorderedVisibleIds = orderedIds.filter(
+											(id): id is SidebarPanelId =>
+												project.sidebarPanelOrder.includes(
+													id as SidebarPanelId,
+												),
+										);
+										const visibleIds = new Set(reorderedVisibleIds);
+										const orderedIterator =
+											reorderedVisibleIds[Symbol.iterator]();
+										const nextOrder = project.sidebarPanelOrder.map((id) =>
+											visibleIds.has(id)
+												? (orderedIterator.next().value ?? id)
+												: id,
+										);
+										closeGitPushMenu();
+										onUpdateProject(project.id, {
+											sidebarPanelOrder: nextOrder,
+										});
+										updateSidebarSettings({ panelOrder: nextOrder });
+									}}
 								/>
-								<div className="macro-launcher-shortcut">
-									<span>ESC</span>
-								</div>
+
+								{gitPushMenuPosition ? (
+									<ContextMenu
+										x={gitPushMenuPosition.x}
+										y={gitPushMenuPosition.y}
+										onClose={closeGitPushMenu}
+										items={buildGitPushMenuItems({
+											target: gitPushMenuPosition.target,
+											onLaunchAgent: launchGitPushAgent,
+											onLaunchQuickPush: (action, target) =>
+												void launchQuickPush(action, target),
+										})}
+									/>
+								) : null}
 							</div>
-
-							<div ref={macroLauncherListRef} className="macro-launcher-list">
-								{filteredMacros.length === 0 ? (
-									<div className="macro-launcher-empty">
-										<p>No commands match your search.</p>
-									</div>
-								) : (
-									macroLauncherGroups.map(({ group, items }) => (
-										<section className="macro-launcher-group" key={group}>
-											<div className="macro-launcher-group-label">{group}</div>
-											<div className="macro-launcher-group-items">
-												{items.map(({ item: macro, index }) => (
-													<button
-														key={macro.id}
-														type="button"
-														ref={(element) => {
-															if (element) {
-																macroLauncherItemRefs.current.set(
-																	macro.id,
-																	element,
-																);
-																return;
-															}
-
-															macroLauncherItemRefs.current.delete(macro.id);
-														}}
-														className={`macro-launcher-item ${index === selectedMacroIndex ? 'macro-launcher-item--active' : ''}`}
-														onMouseEnter={() => setSelectedMacroIndex(index)}
-														onClick={() => macro.onSelect()}
-													>
-														<span className="macro-launcher-item-icon">
-															{macro.icon}
-														</span>
-														<div className="macro-launcher-item-content">
-															<span className="macro-launcher-item-title">
-																{macro.title}
-															</span>
-															<span className="macro-launcher-item-description">
-																{macro.description}
-															</span>
-														</div>
-														<div className="macro-launcher-item-actions">
-															{macro.shortcutLabel ? (
-																<span className="macro-launcher-command-shortcut">
-																	{macro.shortcutLabel}
-																</span>
-															) : null}
-															{index === selectedMacroIndex && (
-																<div className="macro-launcher-item-hint">
-																	<span>⏎</span>
-																</div>
-															)}
-														</div>
-													</button>
-												))}
-											</div>
-										</section>
-									))
-								)}
-							</div>
-
-							<div className="macro-launcher-footer">
-								<div className="macro-launcher-footer-hint">
-									<span className="macro-launcher-key">↑↓</span> to navigate
-								</div>
-								<div className="macro-launcher-footer-hint">
-									<span className="macro-launcher-key">⏎</span> to run
-								</div>
-							</div>
-						</motion.div>
-					</div>
-				)}
-			</AnimatePresence>
-
-			{isTerminalSwitcherOpen ? (
-				<div
-					className="terminal-switcher"
-					role="dialog"
-					aria-modal="true"
-					aria-label="Terminal switcher"
-				>
-					<div className="terminal-switcher-panel">
-						<div className="terminal-switcher-header">
-							<p className="terminal-switcher-kicker">Alt+Tab</p>
-							<span className="terminal-switcher-hint">
-								Release Alt to switch
-							</span>
+						) : null
+					}
+					content={
+						<div
+							ref={(element) => {
+								workspaceRef.current = element;
+							}}
+							className="workspace dockview-theme-dark"
+						>
+							<TerminalPanelClientContext.Provider
+								value={terminalPanelClientContext}
+							>
+								<DockviewReact
+									components={dockviewComponents}
+									tabComponents={dockviewTabComponents}
+									popoutUrl={popoutUrl}
+									onReady={handleDockviewReady}
+									floatingGroupBounds="boundedWithinViewport"
+								/>
+							</TerminalPanelClientContext.Provider>
 						</div>
-						<div className="terminal-switcher-list">
-							{terminalSwitcherItems.map((item, index) => (
-								<button
-									key={item.panelId}
-									type="button"
-									className={`terminal-switcher-item${index === terminalSwitcherIndex ? ' terminal-switcher-item--active' : ''}`}
-									onMouseEnter={() => {
-										terminalSwitcherSelectionRef.current = index;
-										setTerminalSwitcherIndex(index);
-									}}
-									onClick={() => {
-										terminalSwitcherSelectionRef.current = index;
-										setTerminalSwitcherIndex(index);
-										commitTerminalSwitcherSelection();
-									}}
-								>
-									<span
-										className="terminal-switcher-item-preview"
-										style={{ '--tab-color': item.color } as CSSProperties}
-									>
-										<span className="terminal-switcher-item-dot" />
-										<span
-											className="terminal-switcher-item-emoji"
-											aria-hidden="true"
-										>
-											{item.emoji || '>'}
-										</span>
-									</span>
-									<span className="terminal-switcher-item-title">
-										{item.title}
-									</span>
-								</button>
-							))}
-						</div>
-					</div>
-				</div>
-			) : null}
-
-			{fileExplorerNameDialog ? (
-				<FileExplorerNameModal
-					dialog={fileExplorerNameDialog}
-					modal={fileExplorerNameModal}
-					onCancel={cancelFileExplorerNameDialog}
-					onSubmit={submitFileExplorerNameDialog}
+					}
 				/>
-			) : null}
 
-			{macroToRun ? (
-				<ModalBackdrop onClose={closeMacroParameterModal}>
-					<form
-						className="project-edit-modal project-edit-modal--wide macro-parameter-modal"
-						ref={(element) => {
-							macroParameterModal.modalRef.current = element;
+				<McpInstallModal
+					open={isMcpInstallModalOpen}
+					onClose={() => setIsMcpInstallModalOpen(false)}
+				/>
+				{quickPushClient !== undefined &&
+				quickPushAction &&
+				settings.gitPushAgent.provider !== 'disabled' ? (
+					<QuickPushModal
+						action={quickPushAction}
+						client={quickPushClient}
+						provider={settings.gitPushAgent.provider}
+						model={
+							settings.gitPushAgent.provider === 'claudeCode'
+								? settings.gitPushAgent.claudeCodeModel
+								: settings.gitPushAgent.codexModel
+						}
+						cwd={quickPushCwd ?? project.rootFolder}
+						onClose={() => {
+							closeQuickPush();
 						}}
-						style={macroParameterModal.modalStyle}
-						onSubmit={(event) => {
-							event.preventDefault();
-							if (!validateMacroValues(macroToRun, macroFieldValues)) {
-								return;
-							}
-							executeMacro(macroToRun, macroFieldValues);
-						}}
-						onClick={(event) => event.stopPropagation()}
+					/>
+				) : null}
+				<AnimatePresence>
+					{isMacroLauncherOpen && (
+						<div
+							className="macro-launcher-overlay"
+							onClick={closeMacroLauncher}
+						>
+							<motion.div
+								initial={{ opacity: 0, scale: 0.98, y: -20 }}
+								animate={{ opacity: 1, scale: 1, y: 0 }}
+								exit={{ opacity: 0, scale: 0.98, y: -10 }}
+								transition={{ duration: 0.15, ease: 'easeOut' }}
+								className="macro-launcher"
+								role="dialog"
+								aria-modal="true"
+								aria-label="Command bar"
+								onClick={(e) => e.stopPropagation()}
+							>
+								<div className="macro-launcher-search-container">
+									<div className="macro-launcher-search-icon">
+										<Search size={20} strokeWidth={2.5} aria-hidden="true" />
+									</div>
+									<input
+										ref={macroLauncherInputRef}
+										type="search"
+										className="macro-launcher-input"
+										value={macroQuery}
+										onChange={(event) => {
+											setMacroQuery(event.target.value);
+											setSelectedMacroIndex(0);
+										}}
+										aria-label="Search commands"
+										placeholder="Search commands..."
+										spellCheck={false}
+										autoComplete="off"
+									/>
+									<div className="macro-launcher-shortcut">
+										<span>ESC</span>
+									</div>
+								</div>
+
+								<div ref={macroLauncherListRef} className="macro-launcher-list">
+									{filteredMacros.length === 0 ? (
+										<div className="macro-launcher-empty">
+											<p>No commands match your search.</p>
+										</div>
+									) : (
+										macroLauncherGroups.map(({ group, items }) => (
+											<section className="macro-launcher-group" key={group}>
+												<div className="macro-launcher-group-label">
+													{group}
+												</div>
+												<div className="macro-launcher-group-items">
+													{items.map(({ item: macro, index }) => (
+														<button
+															key={macro.id}
+															type="button"
+															ref={(element) => {
+																if (element) {
+																	macroLauncherItemRefs.current.set(
+																		macro.id,
+																		element,
+																	);
+																	return;
+																}
+
+																macroLauncherItemRefs.current.delete(macro.id);
+															}}
+															className={`macro-launcher-item ${index === selectedMacroIndex ? 'macro-launcher-item--active' : ''}`}
+															onMouseEnter={() => setSelectedMacroIndex(index)}
+															onClick={() => macro.onSelect()}
+														>
+															<span className="macro-launcher-item-icon">
+																{macro.icon}
+															</span>
+															<div className="macro-launcher-item-content">
+																<span className="macro-launcher-item-title">
+																	{macro.title}
+																</span>
+																<span className="macro-launcher-item-description">
+																	{macro.description}
+																</span>
+															</div>
+															<div className="macro-launcher-item-actions">
+																{macro.shortcutLabel ? (
+																	<span className="macro-launcher-command-shortcut">
+																		{macro.shortcutLabel}
+																	</span>
+																) : null}
+																{index === selectedMacroIndex && (
+																	<div className="macro-launcher-item-hint">
+																		<span>⏎</span>
+																	</div>
+																)}
+															</div>
+														</button>
+													))}
+												</div>
+											</section>
+										))
+									)}
+								</div>
+
+								<div className="macro-launcher-footer">
+									<div className="macro-launcher-footer-hint">
+										<span className="macro-launcher-key">↑↓</span> to navigate
+									</div>
+									<div className="macro-launcher-footer-hint">
+										<span className="macro-launcher-key">⏎</span> to run
+									</div>
+								</div>
+							</motion.div>
+						</div>
+					)}
+				</AnimatePresence>
+
+				{isTerminalSwitcherOpen ? (
+					<div
+						className="terminal-switcher"
 						role="dialog"
 						aria-modal="true"
-						aria-labelledby="macro-parameter-modal-title"
+						aria-label="Terminal switcher"
 					>
-						<ModalTitlebar
-							title={macroToRun.title}
-							titleId="macro-parameter-modal-title"
-							onClose={closeMacroParameterModal}
-							onMouseDown={macroParameterModal.handleTitlebarPointerDown}
-						/>
-						<div className="macro-parameter-content">
-							{macroToRun.description ? (
-								<p className="macro-parameter-description">
-									{macroToRun.description}
-								</p>
-							) : null}
-
-							<div className="macro-parameter-fields">
-								{macroToRun.fields.map((field, index) => {
-									const value = macroFieldValues[field.name];
-									const fieldInputId = `macro-field-input-${field.id}`;
-									const firstFieldRef =
-										index === 0
-											? (
-													element:
-														| HTMLInputElement
-														| HTMLTextAreaElement
-														| HTMLSelectElement
-														| null,
-												) => {
-													firstMacroFieldRef.current = element;
-												}
-											: undefined;
-									return (
-										<div key={field.id} className="macro-parameter-field">
-											<label
-												className="macro-parameter-field__label"
-												htmlFor={fieldInputId}
-											>
-												{field.label}
-											</label>
-											{field.type === 'textarea' ? (
-												<textarea
-													id={fieldInputId}
-													ref={firstFieldRef}
-													className="project-edit-textarea"
-													value={String(value ?? '')}
-													placeholder={field.placeholder}
-													onChange={(event) =>
-														setMacroFieldValues((current) => ({
-															...current,
-															[field.name]: event.target.value,
-														}))
-													}
-													rows={4}
-												/>
-											) : field.type === 'select' ? (
-												<select
-													id={fieldInputId}
-													ref={firstFieldRef}
-													className="project-edit-select"
-													value={String(value ?? '')}
-													onChange={(event) =>
-														setMacroFieldValues((current) => ({
-															...current,
-															[field.name]: event.target.value,
-														}))
-													}
-												>
-													{field.options.map((option) => (
-														<option
-															key={`${field.id}-${option.value}`}
-															value={option.value}
-														>
-															{option.label}
-														</option>
-													))}
-												</select>
-											) : field.type === 'file' ? (
-												<MacroFileFieldInput
-													id={fieldInputId}
-													ref={firstFieldRef}
-													rootPath={macroFileSearchRootPath || project.rootFolder}
-													value={String(value ?? '')}
-													placeholder={field.placeholder}
-													onChange={(nextValue) =>
-														setMacroFieldValues((current) => ({
-															...current,
-															[field.name]: nextValue,
-														}))
-													}
-												/>
-											) : field.type === 'checkbox' ? (
-												<input
-													id={fieldInputId}
-													ref={firstFieldRef}
-													type="checkbox"
-													checked={Boolean(value)}
-													onChange={(event) =>
-														setMacroFieldValues((current) => ({
-															...current,
-															[field.name]: event.target.checked,
-														}))
-													}
-												/>
-											) : (
-												<input
-													id={fieldInputId}
-													ref={firstFieldRef}
-													type={field.type === 'number' ? 'number' : 'text'}
-													value={String(value ?? '')}
-													placeholder={field.placeholder}
-													onChange={(event) =>
-														setMacroFieldValues((current) => ({
-															...current,
-															[field.name]:
-																field.type === 'number'
-																	? Number(event.target.value || 0)
-																	: event.target.value,
-														}))
-													}
-												/>
-											)}
-										</div>
-									);
-								})}
+						<div className="terminal-switcher-panel">
+							<div className="terminal-switcher-header">
+								<p className="terminal-switcher-kicker">Alt+Tab</p>
+								<span className="terminal-switcher-hint">
+									Release Alt to switch
+								</span>
 							</div>
+							<div className="terminal-switcher-list">
+								{terminalSwitcherItems.map((item, index) => (
+									<button
+										key={item.panelId}
+										type="button"
+										className={`terminal-switcher-item${index === terminalSwitcherIndex ? ' terminal-switcher-item--active' : ''}`}
+										onMouseEnter={() => selectTerminalSwitcherItem(index)}
+										onClick={() => selectAndCommitTerminalSwitcherItem(index)}
+									>
+										<span
+											className="terminal-switcher-item-preview"
+											style={{ '--tab-color': item.color } as CSSProperties}
+										>
+											<span className="terminal-switcher-item-dot" />
+											<span
+												className="terminal-switcher-item-emoji"
+												aria-hidden="true"
+											>
+												{item.emoji || '>'}
+											</span>
+										</span>
+										<span className="terminal-switcher-item-title">
+											{item.title}
+										</span>
+									</button>
+								))}
+							</div>
+						</div>
+					</div>
+				) : null}
 
-							<div className="macro-parameter-preview">
-								<div className="macro-parameter-preview__label">Preview</div>
-								<div className="project-edit-preview project-edit-preview--multiline">
-									<pre>
-										{tryRenderMacroTemplate(macroToRun.template, macroFieldValues)}
-									</pre>
+				{fileExplorerNameDialog ? (
+					<FileExplorerNameModal
+						dialog={fileExplorerNameDialog}
+						modal={fileExplorerNameModal}
+						onCancel={cancelFileExplorerNameDialog}
+						onSubmit={submitFileExplorerNameDialog}
+					/>
+				) : null}
+
+				{macroToRun ? (
+					<ModalBackdrop onClose={closeMacroParameterModal}>
+						<form
+							className="project-edit-modal project-edit-modal--wide macro-parameter-modal"
+							ref={(element) => {
+								macroParameterModal.modalRef.current = element;
+							}}
+							style={macroParameterModal.modalStyle}
+							onSubmit={(event) => {
+								event.preventDefault();
+								if (!validateMacroValues(macroToRun, macroFieldValues)) {
+									return;
+								}
+								executeMacro(macroToRun, macroFieldValues);
+							}}
+							onClick={(event) => event.stopPropagation()}
+							role="dialog"
+							aria-modal="true"
+							aria-labelledby="macro-parameter-modal-title"
+						>
+							<ModalTitlebar
+								title={macroToRun.title}
+								titleId="macro-parameter-modal-title"
+								onClose={closeMacroParameterModal}
+								onMouseDown={macroParameterModal.handleTitlebarPointerDown}
+							/>
+							<div className="macro-parameter-content">
+								{macroToRun.description ? (
+									<p className="macro-parameter-description">
+										{macroToRun.description}
+									</p>
+								) : null}
+
+								<div className="macro-parameter-fields">
+									{macroToRun.fields.map((field, index) => {
+										const value = macroFieldValues[field.name];
+										const fieldInputId = `macro-field-input-${field.id}`;
+										const firstFieldRef =
+											index === 0
+												? (
+														element:
+															| HTMLInputElement
+															| HTMLTextAreaElement
+															| HTMLSelectElement
+															| null,
+													) => {
+														firstMacroFieldRef.current = element;
+													}
+												: undefined;
+										return (
+											<div key={field.id} className="macro-parameter-field">
+												<label
+													className="macro-parameter-field__label"
+													htmlFor={fieldInputId}
+												>
+													{field.label}
+												</label>
+												{field.type === 'textarea' ? (
+													<textarea
+														id={fieldInputId}
+														ref={firstFieldRef}
+														className="project-edit-textarea"
+														value={String(value ?? '')}
+														placeholder={field.placeholder}
+														onChange={(event) =>
+															setMacroFieldValues((current) => ({
+																...current,
+																[field.name]: event.target.value,
+															}))
+														}
+														rows={4}
+													/>
+												) : field.type === 'select' ? (
+													<select
+														id={fieldInputId}
+														ref={firstFieldRef}
+														className="project-edit-select"
+														value={String(value ?? '')}
+														onChange={(event) =>
+															setMacroFieldValues((current) => ({
+																...current,
+																[field.name]: event.target.value,
+															}))
+														}
+													>
+														{field.options.map((option) => (
+															<option
+																key={`${field.id}-${option.value}`}
+																value={option.value}
+															>
+																{option.label}
+															</option>
+														))}
+													</select>
+												) : field.type === 'file' ? (
+													<MacroFileFieldInput
+														fileViewerClient={serverFileViewerClient}
+														id={fieldInputId}
+														projectId={project.id}
+														projectRoot={project.rootFolder}
+														ref={firstFieldRef}
+														rootPath={
+															macroFileSearchRootPath || project.rootFolder
+														}
+														value={String(value ?? '')}
+														placeholder={field.placeholder}
+														onChange={(nextValue) =>
+															setMacroFieldValues((current) => ({
+																...current,
+																[field.name]: nextValue,
+															}))
+														}
+													/>
+												) : field.type === 'checkbox' ? (
+													<input
+														id={fieldInputId}
+														ref={firstFieldRef}
+														type="checkbox"
+														checked={Boolean(value)}
+														onChange={(event) =>
+															setMacroFieldValues((current) => ({
+																...current,
+																[field.name]: event.target.checked,
+															}))
+														}
+													/>
+												) : (
+													<input
+														id={fieldInputId}
+														ref={firstFieldRef}
+														type={field.type === 'number' ? 'number' : 'text'}
+														value={String(value ?? '')}
+														placeholder={field.placeholder}
+														onChange={(event) =>
+															setMacroFieldValues((current) => ({
+																...current,
+																[field.name]:
+																	field.type === 'number'
+																		? Number(event.target.value || 0)
+																		: event.target.value,
+															}))
+														}
+													/>
+												)}
+											</div>
+										);
+									})}
+								</div>
+
+								<div className="macro-parameter-preview">
+									<div className="macro-parameter-preview__label">Preview</div>
+									<div className="project-edit-preview project-edit-preview--multiline">
+										<pre>
+											{tryRenderMacroTemplate(
+												macroToRun.template,
+												macroFieldValues,
+											)}
+										</pre>
+									</div>
 								</div>
 							</div>
-						</div>
 
-						<div className="project-edit-actions">
-							<button type="button" onClick={closeMacroParameterModal}>
-								Cancel
-							</button>
-							<button type="submit">Type Macro</button>
-						</div>
-					</form>
-				</ModalBackdrop>
-			) : null}
-
-		</section>
-	);
-});
+							<div className="project-edit-actions">
+								<button type="button" onClick={closeMacroParameterModal}>
+									Cancel
+								</button>
+								<button type="submit">Type Macro</button>
+							</div>
+						</form>
+					</ModalBackdrop>
+				) : null}
+			</section>
+		);
+	},
+);
 
 ProjectWorkspace.displayName = 'ProjectWorkspace';
 
@@ -7965,455 +4588,394 @@ ProjectWorkspace.displayName = 'ProjectWorkspace';
 const isAdoptWindow =
 	new URLSearchParams(window.location.search).get('adopt') === '1';
 
-function App() {
+export type AppProps = {
+	/** Connection-scoped shared client supplied by a migrated host shell. */
+	terminalClientContext?: Omit<TerminalPanelClientContextValue, 'projectId'>;
+	/** Narrow Desktop host client injected at the renderer composition root. */
+	quickPushClient?: QuickPushClient;
+	onDisconnect?: () => void;
+	onOpenConnectionManager?: () => void;
+};
+
+export const TERMINAY_APP_COMPONENT_ID =
+	'src/App.tsx#App/ProjectWorkspace/Dockview@1';
+
+function normalizeConnectionSwitcherEntries(value: unknown): ConnectionSwitcherEntry[] {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+		return [];
+	}
+	const context = value as {
+		profile?: { id?: unknown };
+		profiles?: readonly unknown[];
+	};
+	const selectedId =
+		typeof context.profile?.id === 'string' ? context.profile.id : null;
+	if (!Array.isArray(context.profiles)) return [];
+	return context.profiles
+		.flatMap((profile): ConnectionSwitcherEntry[] => {
+			if (typeof profile !== 'object' || profile === null || Array.isArray(profile)) {
+				return [];
+			}
+			const candidate = profile as {
+				id?: unknown;
+				isLocal?: unknown;
+				label?: unknown;
+				selected?: unknown;
+				status?: unknown;
+			};
+			if (typeof candidate.id !== 'string' || typeof candidate.label !== 'string') {
+				return [];
+			}
+			return [{
+				id: candidate.id,
+				isLocal: candidate.isLocal === true,
+				label: candidate.isLocal === true ? 'Local' : candidate.label,
+				selected:
+					candidate.selected === true ||
+					(selectedId !== null && candidate.id === selectedId),
+				status:
+					typeof candidate.status === 'string'
+						? candidate.status
+						: 'known',
+			}];
+		})
+		.sort((left, right) => Number(right.isLocal) - Number(left.isLocal) || left.label.localeCompare(right.label));
+}
+
+function App({
+	onDisconnect,
+	onOpenConnectionManager,
+	quickPushClient,
+	terminalClientContext,
+}: AppProps) {
+	const legacySettingsClient = useTerminalSettingsClient();
+	const legacyMacroSettingsCapability = useLegacyMacroSettingsCapability();
+	recordBoundedRendererRender(
+		'app',
+		`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}`,
+	);
+	window.terminayBootstrapDiagnostic?.record('app.render');
+	useEffect(() => {
+		window.terminayBootstrapDiagnostic?.record('app.commit');
+	}, []);
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
+	const hasNativeWindowControls =
+		typeof window.terminayWindowLifecycleHost !== 'undefined';
+	const currentServerId = terminalClientContext?.serverId ?? 'desktop-local';
+	const currentServerLabel =
+		terminalClientContext?.connectionLabel ??
+		(currentServerId === 'desktop-local'
+			? 'Local'
+			: `Remote · ${currentServerId}`);
 	const popoutUrl = useMemo(
 		() => new URL('popout.html', window.location.href).toString(),
 		[],
 	);
-	const { macros } = useMacroSettings();
+	// Keep the remaining macro compatibility path explicit at the renderer
+	// boundary rather than letting the hook retain ambient preload authority.
+	const serverMacroSettingsClient = useMemo(
+		() =>
+			terminalClientContext?.applicationClient === undefined
+				? undefined
+				: createServerMacroSettingsClient(
+						new MacroClient(
+							new TerminayClientFacade(terminalClientContext.applicationClient),
+						),
+						legacyMacroSettingsCapability,
+					),
+		[legacyMacroSettingsCapability, terminalClientContext?.applicationClient],
+	);
+	const { macros } = useMacroSettings(serverMacroSettingsClient);
+	const serverSettingsClient = useMemo(
+		() =>
+			terminalClientContext?.applicationClient === undefined
+				? undefined
+				: createServerTerminalSettingsClient(
+						new SettingsClient(
+							new TerminayClientFacade(terminalClientContext.applicationClient),
+						),
+						legacySettingsClient,
+					),
+		[legacySettingsClient, terminalClientContext?.applicationClient],
+	);
 	const { settings, isLoading: areTerminalSettingsLoading } =
-		useTerminalSettings();
-	const sidebarDefaultsRef = useRef(settings.sidebar);
-	const didApplyPersistedSidebarOrderRef = useRef(false);
-	useEffect(() => {
-		sidebarDefaultsRef.current = settings.sidebar;
-	}, [settings.sidebar]);
-	const projectCounterRef = useRef(1);
+		useTerminalSettings(serverSettingsClient);
 	const workspaceRefs = useRef(
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
 
-	// Bridge MCP control requests from the main process to the workspace that
-	// owns the calling terminal, then send the response back over IPC.
-	useEffect(() => {
-		return window.terminay.onControlRequest((request) => {
-			const respond = (response: ControlHandlerResult) => {
-				if (response.ok) {
-					window.terminay.sendControlResponse({
-						requestId: request.requestId,
-						ok: true,
-						result: response.result,
-					});
-				} else {
-					window.terminay.sendControlResponse({
-						requestId: request.requestId,
-						ok: false,
-						error: response.error,
-					});
-				}
-			};
-
-			void (async () => {
-				try {
-					let handler: ProjectWorkspaceHandle | null = null;
-					for (const candidate of workspaceRefs.current.values()) {
-						if (candidate?.ownsControlSession(request.scopeSessionId)) {
-							handler = candidate;
-							break;
-						}
-					}
-					if (!handler) {
-						respond({
-							ok: false,
-							error: {
-								code: 'terminal_not_found',
-								message: 'The calling terminal is no longer available.',
-							},
-						});
+	const {
+		activeProjectId,
+		activateProject,
+		addProject,
+		adoptedTerminalsByProject,
+		adoptProject: adoptProjectIntoCollection,
+		canAddProject,
+		closeProject,
+		homePath,
+		isWorkspaceHydrating,
+		projectCreationError,
+		projects,
+		projectsRef,
+		setProjects,
+		updateProject,
+	} = useProjectCollection<MovedTerminalTab>({
+		defaultProjectRoot:
+			terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects[
+				Object.keys(
+					terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects ?? {},
+				)[0] ?? ''
+			]?.root ?? '',
+		isAdoptWindow,
+		isSettingsLoading: areTerminalSettingsLoading,
+		projectColorScope: currentServerId,
+		sidebarSettings: settings.sidebar,
+		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
+	});
+	const exportProjectForTransfer = useCallback(
+		(projectId: string) =>
+			workspaceRefs.current.get(projectId)?.exportProjectForMove() ?? null,
+		[],
+	);
+	const adoptTransferredProject = useCallback(
+		(payload: AdoptedProjectPayload, insertIndex: number | null) =>
+			adoptProjectIntoCollection(
+				payload.project as unknown as ProjectTab,
+				payload.terminals as unknown as MovedTerminalTab[],
+				insertIndex,
+			),
+		[adoptProjectIntoCollection],
+	);
+	const {
+		draggingProjectId,
+		dropPreview,
+		handleProjectTabDragEnd,
+		handleProjectTabDragStart,
+		isDraggingTabTornOff,
+		isProjectDropTarget,
+		projectTabBarRef,
+	} = useProjectTabTransfer({
+		closeProject,
+		exportProject: exportProjectForTransfer,
+		isAdoptWindow,
+		onAdopt: adoptTransferredProject,
+		projectsRef,
+	});
+	const {
+		addresses: remoteAddresses,
+		closeMenu: closeRemoteMenu,
+		closePinModal: closePairingPinModal,
+		isAdvancedOpen: isRemoteAdvancedOpen,
+		isLinkCopied,
+		isMenuOpen: isRemoteMenuOpen,
+		isPairingModalOpen,
+		isPinModalOpen: isPairingPinModalOpen,
+		isSavingPin: isSavingPairingPin,
+		isToggling: isTogglingRemoteAccess,
+		menuRef: remoteMenuRef,
+		openPairingQr,
+		pairingExpiresAt: selectedPairingExpiresAt,
+		pairingUrl: selectedPairingUrl,
+		pinError: pairingPinError,
+		pinInput: pairingPinInput,
+		preferredAddress: preferredRemoteAddress,
+		selectAddress: selectPairingAddress,
+		selectedMode: selectedRemotePairingMode,
+		selectMode: selectRemotePairingMode,
+		setIsAdvancedOpen: setIsRemoteAdvancedOpen,
+		setIsLinkCopied,
+		setIsMenuOpen: setIsRemoteMenuOpen,
+		setIsPairingModalOpen,
+		setPinError: setPairingPinError,
+		setPinInput: setPairingPinInput,
+		status: remoteStatus,
+		statusMessage: remoteStatusMessage,
+		submitPin: submitPairingPin,
+		toggleExposure: toggleRemoteAccess,
+		tone: remoteButtonTone,
+		visibleQrCodeDataUrl: visiblePairingQrCodeDataUrl,
+		webRtcDisplayUrl: webRtcPairingDisplayUrl,
+	} = useRemoteAccessController(
+		window.terminayRemotePairingPinHost,
+		window.terminayRemoteAccessStatusHost,
+		legacySettingsClient,
+	);
+	const [connectionSwitcherEntries, setConnectionSwitcherEntries] = useState<
+		ConnectionSwitcherEntry[]
+	>([]);
+	const refreshConnectionSwitcherEntries = useCallback(() => {
+		void (async () => {
+			try {
+				if (window.terminayHost !== undefined) {
+					const entries = normalizeConnectionSwitcherEntries(
+						await window.terminayHost.getContext(),
+					);
+					if (entries.length > 0) {
+						setConnectionSwitcherEntries(entries);
 						return;
 					}
-					respond(
-						await handler.handleControlRequest(
-							request.op,
-							request.params,
-							request.scopeSessionId,
+				}
+				if (window.terminayConnectionHost !== undefined) {
+					setConnectionSwitcherEntries(
+						normalizeConnectionSwitcherEntries(
+							await window.terminayConnectionHost.list(),
 						),
 					);
-				} catch (error) {
-					respond({
-						ok: false,
-						error: {
-							code: 'internal',
-							message: error instanceof Error ? error.message : String(error),
-						},
-					});
+					return;
 				}
-			})();
-		});
+			} catch {
+				// Fall through to the empty web/unsupported state.
+			}
+			setConnectionSwitcherEntries([]);
+		})();
 	}, []);
-
-	const [homePath, setHomePath] = useState('');
-
-	const [projects, setProjects] = useState<ProjectTab[]>(() =>
-		isAdoptWindow ? [] : [createProjectTab(1, '')],
-	);
 	useEffect(() => {
-		if (
-			areTerminalSettingsLoading ||
-			didApplyPersistedSidebarOrderRef.current
-		) {
-			return;
-		}
-		didApplyPersistedSidebarOrderRef.current = true;
-		setProjects((current) =>
-			current.map((project) => ({
-				...project,
-				sidebarPanelOrder: [...settings.sidebar.panelOrder],
-			})),
-		);
-	}, [areTerminalSettingsLoading, settings.sidebar.panelOrder]);
-	const projectsRef = useRef(projects);
-	const [activeProjectId, setActiveProjectId] = useState(
-		isAdoptWindow ? '' : 'project-1',
+		if (!isRemoteMenuOpen) return;
+		refreshConnectionSwitcherEntries();
+	}, [isRemoteMenuOpen, refreshConnectionSwitcherEntries]);
+	const selectConnectionProfile = useCallback(
+		(profileId: string) => {
+			setIsRemoteMenuOpen(false);
+			const select =
+				window.terminayConnectionHost?.select ??
+				((id: string) =>
+					window.terminayHost?.requestAction({
+						type: 'connection.select',
+						profileId: id,
+					}) ?? Promise.resolve());
+			void select(profileId)
+				.then(refreshConnectionSwitcherEntries)
+				.catch(() => refreshConnectionSwitcherEntries());
+		},
+		[refreshConnectionSwitcherEntries, setIsRemoteMenuOpen],
 	);
-	const activeProjectIdRef = useRef(activeProjectId);
-	const [draggingProjectId, setDraggingProjectId] = useState<string | null>(
-		null,
-	);
-	// Terminals to reattach (rather than seed fresh) for adopted projects.
-	const [adoptedTerminalsByProject, setAdoptedTerminalsByProject] = useState<
-		Record<string, MovedTerminalTab[]>
-	>({});
-	// True while another window is dragging a project tab over this window's bar.
-	const [isProjectDropTarget, setIsProjectDropTarget] = useState(false);
-	// True once the actively dragged tab has torn off into the floating ghost,
-	// so it should collapse out of this window's bar.
-	const [isDraggingTabTornOff, setIsDraggingTabTornOff] = useState(false);
-	const projectTabBarRef = useRef<HTMLDivElement | null>(null);
-	// In-bar placeholder while a tab from ANOTHER window is dragged over this bar:
-	// the insertion index + the dragged tab's preview, so the user can slot it in.
-	const [dropPreview, setDropPreview] = useState<{
-		index: number;
-		preview: ProjectTabDragPreview;
-	} | null>(null);
-	const dropPreviewIndexRef = useRef<number | null>(null);
-	// Tab-center X snapshot captured when the drag enters this bar, so the
-	// computed insertion index stays stable as the placeholder reflows the tabs.
-	const dropTargetTabCentersRef = useRef<number[] | null>(null);
-	const [remoteStatus, setRemoteStatus] = useState<RemoteAccessStatus | null>(
-		null,
-	);
-	const [isRemoteAdvancedOpen, setIsRemoteAdvancedOpen] = useState(false);
-	const [remoteActionError, setRemoteActionError] = useState<string | null>(
-		null,
-	);
-	const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
-	const [isPairingModalOpen, setIsPairingModalOpen] = useState(false);
-	const [isPairingPinModalOpen, setIsPairingPinModalOpen] = useState(false);
-	const [pairingPinInput, setPairingPinInput] = useState('');
-	const [pairingPinError, setPairingPinError] = useState<string | null>(null);
-	const [isSavingPairingPin, setIsSavingPairingPin] = useState(false);
-	const [selectedRemotePairingMode, setSelectedRemotePairingMode] = useState<
-		'lan' | 'webrtc'
-	>('lan');
-	const [isLinkCopied, setIsLinkCopied] = useState(false);
 	const pairingModal = useDraggableModal(isPairingModalOpen);
-	const remoteMenuRef = useRef<HTMLDivElement | null>(null);
-	const [isRemoteMenuOpen, setIsRemoteMenuOpen] = useState(false);
-	const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(
-		null,
-	);
+	const {
+		close: closeRemoteConnectionModal,
+		error: remoteConnectionError,
+		isOpen: isRemoteConnectionModalOpen,
+		isOpening: isOpeningRemoteConnection,
+		notice: remoteConnectionNotice,
+		open: openRemoteConnectionModal,
+		pairingPin: remoteConnectionPairingPin,
+		setError: setRemoteConnectionError,
+		setNotice: setRemoteConnectionNotice,
+		setPairingPin: setRemoteConnectionPairingPin,
+		setUrl: setRemoteConnectionUrl,
+		submit: submitRemoteConnection,
+		url: remoteConnectionUrl,
+	} = useRemoteConnectionForm(closeRemoteMenu);
+	const [appUpdateStatus, setAppUpdateStatus] =
+		useState<AppUpdateStatus | null>(null);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
 	const [terminalActivityItemsByProject, setTerminalActivityItemsByProject] =
 		useState<Record<string, TerminalActivityOverviewItem[]>>({});
 	const [agentStatusSnapshot, setAgentStatusSnapshot] =
 		useState<AgentStatusSnapshot>(EMPTY_AGENT_STATUS_SNAPSHOT);
-	const pairingPinRequestRef = useRef<((configured: boolean) => void) | null>(
-		null,
-	);
-
-	useEffect(() => {
-		projectsRef.current = projects;
-	}, [projects]);
+	const agentStatusSnapshotServerIdRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		let disposed = false;
+		const snapshotServerId = terminalClientContext?.serverId ?? 'desktop-local';
+		// Revisions are per server authority. Reset only when the authority
+		// actually changes, never when the framed client for this same authority
+		// finishes hydrating with its initially empty terminal scope.
+		if (agentStatusSnapshotServerIdRef.current !== snapshotServerId) {
+			agentStatusSnapshotServerIdRef.current = snapshotServerId;
+			setAgentStatusSnapshot(EMPTY_AGENT_STATUS_SNAPSHOT);
+		}
 		const acceptSnapshot = (snapshot: AgentStatusSnapshot) => {
 			if (disposed) {
 				return;
 			}
-			setAgentStatusSnapshot((current) =>
-				snapshot.revision >= current.revision ? snapshot : current,
-			);
+			setAgentStatusSnapshot((current) => {
+				return snapshot.revision >= current.revision ? snapshot : current;
+			});
 		};
-		const unsubscribe =
-			window.terminay.onAgentStatusSnapshot(acceptSnapshot);
-		void window.terminay.getAgentStatusSnapshot().then(acceptSnapshot, () => {});
+		const agentStatusClient = terminalClientContext?.agentStatusClient;
+		if (agentStatusClient === undefined)
+			return () => {
+				disposed = true;
+			};
+		const unsubscribe = subscribeServerAgentSnapshots(
+			agentStatusClient,
+			acceptSnapshot,
+		);
+		void agentStatusClient.refresh().then(
+			() =>
+				acceptSnapshot(adaptServerAgentSnapshot(agentStatusClient.snapshot)),
+			() => {},
+		);
 		return () => {
 			disposed = true;
 			unsubscribe();
 		};
-	}, []);
+	}, [terminalClientContext?.agentStatusClient]);
 
 	useEffect(() => {
-		activeProjectIdRef.current = activeProjectId;
-	}, [activeProjectId]);
+		const store = terminalClientContext?.workspaceSnapshotStore;
+		if (store === undefined) return;
 
-	useEffect(() => {
-		let isMounted = true;
-
-		void window.terminay.getHomePath().then((resolvedHomePath) => {
-			if (!isMounted) {
-				return;
-			}
-
-			setHomePath(resolvedHomePath);
-			setProjects((current) =>
-				current.map((project) =>
-					project.rootFolder.trim().length > 0
-						? project
-						: {
-								...project,
-								rootFolder: resolvedHomePath,
-							},
-				),
+		let disposed = false;
+		let reconcileFrame: number | null = null;
+		const presentedSessionIds = new Set<string>();
+		const reconcile = (snapshot: NonNullable<typeof store.snapshot>) => {
+			if (disposed) return;
+			window.terminayBootstrapDiagnostic?.record(
+				'app.workspace.reconcile',
+				Object.keys(snapshot.terminalSessions).length,
 			);
-		});
-
-		return () => {
-			isMounted = false;
-		};
-	}, []);
-
-	const addProject = useCallback(() => {
-		projectCounterRef.current += 1;
-		const nextProjectId = `project-${projectCounterRef.current}`;
-
-		setProjects((current) => [
-			...current,
-			createProjectTab(
-				projectCounterRef.current,
-				homePath,
-				current.map((project) => project.color),
-				sidebarDefaultsRef.current,
-			),
-		]);
-		setActiveProjectId(nextProjectId);
-	}, [homePath]);
-
-	const closeProject = useCallback(
-		(projectId: string) => {
-			const currentProjects = projectsRef.current;
-			const index = currentProjects.findIndex(
-				(project) => project.id === projectId,
-			);
-			if (index === -1) {
-				return;
-			}
-
-			const isLastProject =
-				currentProjects.length === 1 && currentProjects[0]?.id === projectId;
-			if (isLastProject) {
-				// Closing the final project closes this window. The main process
-				// quits the app once the last project-host window is gone.
-				void window.terminay.closeThisWindow();
-				return;
-			}
-
-			const nextProjects = currentProjects.filter(
-				(project) => project.id !== projectId,
-			);
-			projectsRef.current = nextProjects;
-			setProjects(nextProjects);
-			setAdoptedTerminalsByProject((current) => {
-				if (!(projectId in current)) {
-					return current;
+			if (reconcileFrame !== null) window.cancelAnimationFrame(reconcileFrame);
+			reconcileFrame = window.requestAnimationFrame(() => {
+				window.terminayBootstrapDiagnostic?.record(
+					'app.workspace.reconcile-frame',
+				);
+				reconcileFrame = null;
+				if (disposed) return;
+				for (const session of Object.values(snapshot.terminalSessions)) {
+					if (presentedSessionIds.has(session.id)) continue;
+					const workspace = workspaceRefs.current.get(session.projectId);
+					if (workspace == null) continue;
+					if (workspace.ownsControlSession(session.id)) {
+						presentedSessionIds.add(session.id);
+						continue;
+					}
+					const panel = Object.values(snapshot.panels).find(
+						(candidate) => candidate.sessionId === session.id,
+					);
+					if (panel === undefined) continue;
+					workspace.acceptServerTerminal(session.id, panel.title);
+					presentedSessionIds.add(session.id);
 				}
-				const { [projectId]: _removed, ...rest } = current;
-				void _removed;
-				return rest;
 			});
-
-			if (activeProjectIdRef.current === projectId) {
-				const fallbackIndex = Math.max(0, index - 1);
-				const nextActiveProjectId =
-					nextProjects[fallbackIndex]?.id ?? nextProjects[0].id;
-				activeProjectIdRef.current = nextActiveProjectId;
-				setActiveProjectId(nextActiveProjectId);
-			}
-		},
-		[],
-	);
-
-	const adoptProject = useCallback((payload: AdoptedProjectPayload) => {
-		const incoming = payload.project as unknown as ProjectTab;
-		const terminals = payload.terminals as unknown as MovedTerminalTab[];
-		projectCounterRef.current += 1;
-		// Re-id the adopted project so it can't collide with a project already in
-		// this window (e.g. both windows have a "project-1").
-		const nextProjectId = `project-${projectCounterRef.current}`;
-		const adoptedTab: ProjectTab = {
-			...incoming,
-			id: nextProjectId,
-			isAgentsPaneCollapsed: incoming.isAgentsPaneCollapsed ?? false,
-			expandedAgentEntryIds: Array.isArray(incoming.expandedAgentEntryIds)
-				? incoming.expandedAgentEntryIds.filter(
-						(entryId): entryId is string => typeof entryId === 'string',
-					)
-				: [],
-			sidebarAgentsHeight:
-				incoming.sidebarAgentsHeight ?? DEFAULT_AGENTS_PANE_HEIGHT,
-			sidebarGitHeight:
-				incoming.sidebarGitHeight ?? DEFAULT_AGENTS_PANE_HEIGHT,
-			sidebarPanelOrder: normalizeSidebarPanelOrder(
-				incoming.sidebarPanelOrder,
-			),
+			window.terminayBootstrapDiagnostic?.record('app.workspace.reconcile.end');
 		};
-
-		setAdoptedTerminalsByProject((current) => ({
-			...current,
-			[nextProjectId]: terminals,
-		}));
-		// Insert at the slot chosen during the drag (if dropped on this bar),
-		// otherwise append.
-		const insertIndex = dropPreviewIndexRef.current;
-		setProjects((current) => {
-			if (insertIndex === null || insertIndex >= current.length) {
-				return [...current, adoptedTab];
-			}
-			const next = [...current];
-			next.splice(Math.max(0, insertIndex), 0, adoptedTab);
-			return next;
-		});
-		dropPreviewIndexRef.current = null;
-		dropTargetTabCentersRef.current = null;
-		setDropPreview(null);
-		setIsProjectDropTarget(false);
-		setActiveProjectId(nextProjectId);
-	}, []);
-
-	const handleProjectTabDragStart = useCallback((projectId: string) => {
-		setDraggingProjectId(projectId);
-		const project = projectsRef.current.find((p) => p.id === projectId);
-		const tabElement = projectTabBarRef.current?.querySelector<HTMLElement>(
-			`[data-project-id="${projectId}"]`,
-		);
-		const width = tabElement
-			? Math.round(tabElement.getBoundingClientRect().width)
-			: 160;
-		window.terminay.beginProjectTabDrag({
-			title: project?.title ?? 'Project',
-			emoji: project?.emoji ?? '',
-			color: project?.color ?? '#4db5ff',
-			width,
-		});
-	}, []);
-
-	const handleProjectTabDragEnd = useCallback(
-		async (projectId: string) => {
-			setDraggingProjectId(null);
-			setIsDraggingTabTornOff(false);
-
-			let decision: ProjectTabDragResult;
-			try {
-				decision = await window.terminay.endProjectTabDrag();
-			} catch {
-				return;
-			}
-
-			// Dropped back on this window's own tab bar — framer-motion already
-			// handled any reordering.
-			if (decision.action === 'reorder') {
-				return;
-			}
-
-			const project = projectsRef.current.find((p) => p.id === projectId);
-			const workspace = workspaceRefs.current.get(projectId);
-			if (!project || !workspace) {
-				return;
-			}
-
-			const moved = workspace.exportProjectForMove();
-			if (!moved) {
-				return;
-			}
-
-			const payload: AdoptedProjectPayload = {
-				project: project as unknown as AdoptedProjectPayload['project'],
-				terminals:
-					moved.terminals as unknown as AdoptedProjectPayload['terminals'],
-				activeSessionId: moved.activeSessionId,
-			};
-
-			// Re-home the live PTYs to the receiving window BEFORE removing the
-			// project here, so closing this window can't kill sessions mid-move.
-			if (decision.action === 'merge') {
-				await window.terminay.mergeProject({
-					project: payload,
-					targetWindowId: decision.targetWindowId,
-				});
-			} else {
-				await window.terminay.popoutProject({
-					project: payload,
-					x: decision.x,
-					y: decision.y,
-				});
-			}
-
-			closeProject(projectId);
-		},
-		[closeProject],
-	);
+		const unsubscribe = store.subscribe(reconcile);
+		return () => {
+			disposed = true;
+			unsubscribe();
+			if (reconcileFrame !== null) window.cancelAnimationFrame(reconcileFrame);
+		};
+	}, [terminalClientContext?.workspaceSnapshotStore]);
 
 	const onReorder = (newOrder: ProjectTab[]) => {
 		setProjects(newOrder);
 	};
 
-	const openEditProjectWindow = useCallback(async (projectId: string) => {
-		const project = projects.find((candidate) => candidate.id === projectId);
-		if (!project) {
-			return;
-		}
-
-		try {
-			const result = await window.terminay.openProjectEditWindow({
-				color: project.color,
-				emoji: project.emoji,
-				rootFolder: project.rootFolder,
-				title: project.title,
-			});
-			if (!result) {
-				return;
-			}
-
-			const nextTitle =
-				result.title.trim().length > 0 ? result.title.trim() : 'Untitled Project';
-			const nextEmoji = result.emoji.trim();
-			const nextRootFolder = normalizeRootFolderInput(result.rootFolder, homePath);
-
-			setProjects((current) =>
-				current.map((candidate) =>
-					candidate.id === projectId
-						? {
-								...candidate,
-								title: nextTitle,
-								emoji: nextEmoji,
-								color: result.color,
-								rootFolder: nextRootFolder,
-							}
-						: candidate,
-				),
-			);
-		} finally {
-			window.requestAnimationFrame(() => {
-				workspaceRefs.current.get(projectId)?.focusActiveTerminal();
-			});
-		}
-	}, [homePath, projects]);
-
-	const updateProject = useCallback(
-		(projectId: string, updates: Partial<ProjectTab>) => {
-			setProjects((current) =>
-				current.map((project) =>
-					project.id === projectId ? { ...project, ...updates } : project,
-				),
-			);
-		},
+	const focusProjectTerminal = useCallback(
+		(projectId: string) =>
+			workspaceRefs.current.get(projectId)?.focusActiveTerminal(),
 		[],
 	);
-
+	const openEditProjectWindow = useProjectEditor({
+		applicationClient: terminalClientContext?.applicationClient,
+		focusProject: focusProjectTerminal,
+		homePath,
+		projects,
+		updateProject,
+		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
+	});
 	const moveTerminalToProject = useCallback(
 		(sourceProjectId: string, panelId: string, targetProjectId: string) => {
 			if (sourceProjectId === targetProjectId) {
@@ -8431,12 +4993,12 @@ function App() {
 				return;
 			}
 
-			setActiveProjectId(targetProjectId);
+			activateProject(targetProjectId);
 			window.requestAnimationFrame(() => {
 				targetWorkspace.acceptMovedTerminal(movedTerminal);
 			});
 		},
-		[],
+		[activateProject],
 	);
 
 	const toggleActiveProjectExplorer = useCallback(() => {
@@ -8453,8 +5015,11 @@ function App() {
 	}, [activeProjectId]);
 
 	const executeCommandOnActiveProject = useCallback(
-		(command: AppCommand) => {
-			workspaceRefs.current.get(activeProjectId)?.executeCommand(command);
+		(command: AppCommand): Promise<void> => {
+			return (
+				workspaceRefs.current.get(activeProjectId)?.executeCommand(command) ??
+				Promise.resolve()
+			);
 		},
 		[activeProjectId],
 	);
@@ -8485,510 +5050,60 @@ function App() {
 		const items = projects.flatMap(
 			(project) => terminalActivityItemsByProject[project.id] ?? [],
 		);
-		const priority = (state: TerminalActivityOverviewState) => {
-			const canonical = terminalOverviewStateToAgentState(state);
-			if (canonical === 'blocked' || canonical === 'waiting') {
-				return 0;
-			}
-			if (canonical === 'working') {
-				return 1;
-			}
-			return 2;
-		};
-
-		return items.sort((a, b) => {
-			const stateComparison = priority(a.state) - priority(b.state);
-			if (stateComparison !== 0) {
-				return stateComparison;
-			}
-
-			const projectComparison = a.projectTitle.localeCompare(b.projectTitle);
-			if (projectComparison !== 0) {
-				return projectComparison;
-			}
-
-			return a.title.localeCompare(b.title);
-		});
+		return buildTerminalActivityOverview(items);
 	}, [projects, terminalActivityItemsByProject]);
 
-	const unviewedTerminalActivityCount = terminalActivityItems.filter(
-		(item) => terminalOverviewStateToAgentState(item.state) === 'done',
-	).length;
-	const recentTerminalActivityCount = terminalActivityItems.filter(
-		(item) => terminalOverviewStateToAgentState(item.state) === 'working',
-	).length;
-	const attentionTerminalActivityCount = terminalActivityItems.filter(
-		(item) =>
-			isAgentAttentionState(terminalOverviewStateToAgentState(item.state)),
-	).length;
-	const hasTerminalActivityOverview = terminalActivityItems.length > 0;
+	const hasTerminalActivityOverview = terminalActivityItems.items.length > 0;
 
 	const activateTerminalFromOverview = useCallback(
 		(item: TerminalActivityOverviewItem) => {
 			setIsActivityMenuOpen(false);
-			setActiveProjectId(item.projectId);
+			activateProject(item.projectId);
 			window.requestAnimationFrame(() => {
 				workspaceRefs.current
 					.get(item.projectId)
 					?.activateTerminal(item.panelId, item.sessionId);
 			});
 		},
-		[],
+		[activateProject],
 	);
 
 	useEffect(() => {
-		const unsubscribeCommand = window.terminay.onAppCommand(
+		const unsubscribeCommand = window.terminayAppCommandHost?.subscribe(
 			executeCommandOnActiveProject,
 		);
 
 		return () => {
-			unsubscribeCommand();
+			unsubscribeCommand?.();
 		};
 	}, [executeCommandOnActiveProject]);
-
-	// Adopt a project pushed in from another window (merge), and — for a
-	// freshly torn-off window — pull the adopted project once on mount.
-	useEffect(() => {
-		const unsubscribe = window.terminay.onAdoptProject((payload) => {
-			adoptProject(payload);
-		});
-
-		if (isAdoptWindow) {
-			void window.terminay.getAdoptedProject().then((payload) => {
-				if (payload) {
-					adoptProject(payload);
-				}
-			});
-		}
-
-		return () => {
-			unsubscribe();
-		};
-	}, [adoptProject]);
-
-	// While another window drags a tab over this bar, render an in-bar drop
-	// placeholder at the cursor's insertion index so the user can slot it exactly.
-	useEffect(() => {
-		const unsubscribe = window.terminay.onProjectTabDragHover((message) => {
-			if (!message.active || !message.preview) {
-				setIsProjectDropTarget(false);
-				setDropPreview(null);
-				dropPreviewIndexRef.current = null;
-				dropTargetTabCentersRef.current = null;
-				return;
-			}
-
-			setIsProjectDropTarget(true);
-
-			// Snapshot tab centers on entry so the insertion index stays stable as
-			// the placeholder reflows the bar.
-			if (!dropTargetTabCentersRef.current) {
-				const bar = projectTabBarRef.current;
-				const tabs = bar
-					? Array.from(
-							bar.querySelectorAll<HTMLElement>(
-								'.project-tab:not(.project-tab--drop-placeholder)',
-							),
-						)
-					: [];
-				dropTargetTabCentersRef.current = tabs.map((tab) => {
-					const rect = tab.getBoundingClientRect();
-					return rect.left + rect.width / 2;
-				});
-			}
-
-			const centers = dropTargetTabCentersRef.current ?? [];
-			const index = computeDropIndex(centers, message.clientX ?? 0);
-
-			dropPreviewIndexRef.current = index;
-			setDropPreview({ index, preview: message.preview });
-		});
-
-		return () => {
-			unsubscribe();
-		};
-	}, []);
-
-	// Collapse the dragged tab out of the bar once it tears off into the ghost
-	// (and restore it if the cursor returns and it re-docks).
-	useEffect(() => {
-		const unsubscribe = window.terminay.onProjectTabTornOff((message) => {
-			setIsDraggingTabTornOff(message.active);
-		});
-
-		return () => {
-			unsubscribe();
-		};
-	}, []);
-
-	// Publish the project tab bar's viewport rect so cross-window drags can be
-	// hit-tested against it (the main process adds this window's screen origin).
-	useEffect(() => {
-		const element = projectTabBarRef.current;
-		if (!element) {
-			return;
-		}
-
-		const publishRect = () => {
-			const rect = element.getBoundingClientRect();
-			window.terminay.registerProjectTabBarRect({
-				x: rect.left,
-				y: rect.top,
-				width: rect.width,
-				height: rect.height,
-			});
-		};
-
-		publishRect();
-		const observer = new ResizeObserver(publishRect);
-		observer.observe(element);
-		window.addEventListener('resize', publishRect);
-
-		return () => {
-			observer.disconnect();
-			window.removeEventListener('resize', publishRect);
-			window.terminay.registerProjectTabBarRect(null);
-		};
-	}, []);
-
-	useEffect(() => {
-		let isMounted = true;
-
-		void window.terminay.getRemoteAccessStatus().then((status) => {
-			if (isMounted) {
-				setRemoteStatus(status);
-			}
-		});
-
-		const unsubscribe = window.terminay.onRemoteAccessStatusChanged((status) => {
-			setRemoteStatus(status);
-		});
-
-		return () => {
-			isMounted = false;
-			unsubscribe();
-		};
-	}, []);
-
-	useEffect(() => {
-		if (remoteStatus?.pairingMode) {
-			setSelectedRemotePairingMode(remoteStatus.pairingMode);
-		}
-	}, [remoteStatus?.pairingMode]);
-
-	const prevActiveConnectionCountRef = useRef<number | null>(null);
-	useEffect(() => {
-		const current = remoteStatus?.activeConnectionCount ?? null;
-		const prev = prevActiveConnectionCountRef.current;
-		if (prev !== null && current !== null && current > prev && isPairingModalOpen) {
-			setIsPairingModalOpen(false);
-		}
-		prevActiveConnectionCountRef.current = current;
-	}, [remoteStatus?.activeConnectionCount, isPairingModalOpen]);
-
-	const selectRemotePairingMode = useCallback(async (mode: 'lan' | 'webrtc') => {
-		setSelectedRemotePairingMode(mode);
-		setRemoteActionError(null);
-
-		try {
-			const settings = await window.terminay.getTerminalSettings();
-			if (settings.remoteAccess.pairingMode !== mode) {
-				await window.terminay.updateTerminalSettings({
-					...settings,
-					remoteAccess: {
-						...settings.remoteAccess,
-						pairingMode: mode,
-					},
-				});
-			}
-
-			setRemoteStatus(await window.terminay.getRemoteAccessStatus());
-			return true;
-		} catch (error) {
-			setRemoteActionError(
-				error instanceof Error
-					? error.message
-					: 'Could not save the remote pairing mode.',
-			);
-			return false;
-		}
-	}, []);
-
-	const closePairingPinModal = useCallback((configured: boolean) => {
-		pairingPinRequestRef.current?.(configured);
-		pairingPinRequestRef.current = null;
-		setIsPairingPinModalOpen(false);
-		setPairingPinInput('');
-		setPairingPinError(null);
-		setIsSavingPairingPin(false);
-	}, []);
-
-	const ensureRemoteAccessPairingPin = useCallback(
-		async (mode: 'lan' | 'webrtc') => {
-			if (await isRemoteAccessPairingPinConfigured(mode)) {
-				return true;
-			}
-
-			setPairingPinInput('');
-			setPairingPinError(null);
-			setIsPairingPinModalOpen(true);
-
-			return new Promise<boolean>((resolve) => {
-				pairingPinRequestRef.current = resolve;
-			});
-		},
-		[],
-	);
-
-	const submitPairingPin = useCallback(
-		async (event: FormEvent<HTMLFormElement>) => {
-			event.preventDefault();
-			const pin = pairingPinInput.trim();
-
-			if (!PAIRING_PIN_PATTERN.test(pin)) {
-				setPairingPinError('Pairing PIN must be exactly 6 digits.');
-				return;
-			}
-
-			setIsSavingPairingPin(true);
-			setPairingPinError(null);
-
-			try {
-				await saveRemoteAccessPairingPin(pin);
-				closePairingPinModal(true);
-			} catch (error) {
-				setPairingPinError(
-					error instanceof Error
-						? error.message
-						: 'Could not save the pairing PIN.',
-				);
-				setIsSavingPairingPin(false);
-			}
-		},
-		[closePairingPinModal, pairingPinInput],
-	);
 
 	useEffect(() => {
 		let isMounted = true;
 
 		const refreshUpdateStatus = async (force = false) => {
-			const status = await window.terminay.getAppUpdateStatus({ force });
+			const status = await window.terminayUpdateHost?.getStatus(force);
+			if (!status) {
+				return;
+			}
 			if (isMounted) {
 				setAppUpdateStatus(status);
 			}
 		};
 
 		void refreshUpdateStatus(true);
-		const intervalId = window.setInterval(() => {
-			void refreshUpdateStatus(true);
-		}, 60 * 60 * 1000);
+		const intervalId = window.setInterval(
+			() => {
+				void refreshUpdateStatus(true);
+			},
+			60 * 60 * 1000,
+		);
 
 		return () => {
 			isMounted = false;
 			window.clearInterval(intervalId);
 		};
 	}, []);
-
-	const toggleRemoteAccess = useCallback(async () => {
-		setIsTogglingRemoteAccess(true);
-		setRemoteActionError(null);
-		try {
-			if (remoteStatus?.configurationIssue) {
-				await window.terminay.openSettingsWindow({
-					sectionId: 'remote-access-host',
-				});
-				return;
-			}
-
-			if (!remoteStatus?.isRunning) {
-				if (!(await selectRemotePairingMode(selectedRemotePairingMode))) {
-					return;
-				}
-			}
-
-			if (
-				!remoteStatus?.isRunning &&
-				!(await ensureRemoteAccessPairingPin(selectedRemotePairingMode))
-			) {
-				return;
-			}
-
-			const nextStatus = await window.terminay.toggleRemoteAccessServer();
-			setRemoteStatus(nextStatus);
-			setRemoteActionError(nextStatus.errorMessage);
-		} catch (error) {
-			const message =
-				error instanceof Error ? error.message : 'Unable to start remote access.';
-			setRemoteActionError(message);
-			setRemoteStatus((current) =>
-				current ? { ...current, errorMessage: message } : current,
-			);
-		} finally {
-			setIsTogglingRemoteAccess(false);
-		}
-	}, [
-		remoteStatus?.configurationIssue,
-		remoteStatus?.isRunning,
-		ensureRemoteAccessPairingPin,
-		selectRemotePairingMode,
-		selectedRemotePairingMode,
-	]);
-
-	const openPairingQr = useCallback(async (mode: 'lan' | 'webrtc' = selectedRemotePairingMode) => {
-		setRemoteActionError(null);
-		try {
-			if (remoteStatus?.configurationIssue) {
-				await window.terminay.openSettingsWindow({
-					sectionId: 'remote-access-host',
-				});
-				return;
-			}
-
-			if (!(await selectRemotePairingMode(mode))) {
-				return;
-			}
-			let nextStatus = remoteStatus;
-
-			if (!nextStatus?.isRunning) {
-				if (!(await ensureRemoteAccessPairingPin(mode))) {
-					return;
-				}
-
-				setIsTogglingRemoteAccess(true);
-				try {
-					nextStatus = await window.terminay.toggleRemoteAccessServer();
-					setRemoteStatus(nextStatus);
-					setRemoteActionError(nextStatus.errorMessage);
-				} finally {
-					setIsTogglingRemoteAccess(false);
-				}
-			}
-
-			const hasPairingQr =
-				mode === 'webrtc'
-					? nextStatus?.webRtcPairingUrl ??
-						nextStatus?.webRtcPairingQrCodeDataUrl
-					: nextStatus?.lanPairingQrCodeDataUrl ??
-						nextStatus?.pairingQrCodeDataUrl;
-			if (hasPairingQr) {
-				setIsPairingModalOpen(true);
-			}
-		} catch (error) {
-			const message =
-				error instanceof Error ? error.message : 'Unable to start remote access.';
-			setRemoteActionError(message);
-			setRemoteStatus((current) =>
-				current ? { ...current, errorMessage: message } : current,
-			);
-		}
-	}, [
-		ensureRemoteAccessPairingPin,
-		remoteStatus,
-		selectRemotePairingMode,
-		selectedRemotePairingMode,
-	]);
-
-	const remoteButtonTone = remoteStatus?.isRunning
-		? 'remote-access-button--active'
-		: remoteStatus?.configurationIssue || remoteStatus?.errorMessage || remoteActionError
-			? 'remote-access-button--warning'
-			: '';
-
-	const remoteAddresses = remoteStatus?.availableAddresses ?? [];
-	const selectedPairingUrl =
-		selectedRemotePairingMode === 'webrtc'
-			? remoteStatus?.webRtcPairingUrl
-			: remoteStatus?.lanPairingUrl ?? remoteStatus?.pairingUrl;
-	const selectedPairingQrCodeDataUrl =
-		selectedRemotePairingMode === 'webrtc'
-			? remoteStatus?.webRtcPairingQrCodeDataUrl
-			: remoteStatus?.lanPairingQrCodeDataUrl ?? remoteStatus?.pairingQrCodeDataUrl;
-	const selectedPairingExpiresAt =
-		selectedRemotePairingMode === 'webrtc'
-			? remoteStatus?.webRtcPairingExpiresAt
-			: remoteStatus?.lanPairingExpiresAt ?? remoteStatus?.pairingExpiresAt;
-	const isSelectedWebRtcPairingReady =
-		selectedRemotePairingMode !== 'webrtc' ||
-		remoteStatus?.webRtcStatus === 'pairing-ready';
-	const visiblePairingQrCodeDataUrl = isSelectedWebRtcPairingReady
-		? selectedPairingQrCodeDataUrl
-		: null;
-	const webRtcPairingDisplayUrl = useMemo(() => {
-		if (!remoteStatus?.webRtcPairingUrl) return null;
-		try {
-			const url = new URL(remoteStatus.webRtcPairingUrl);
-			return url.origin;
-		} catch {
-			return 'WebRTC session link ready.';
-		}
-	}, [remoteStatus?.webRtcPairingUrl]);
-	const preferredRemoteAddress = useMemo(() => {
-		if (selectedRemotePairingMode === 'webrtc') {
-			return webRtcPairingDisplayUrl;
-		}
-		if (!selectedPairingUrl) return remoteAddresses[0] || null;
-		try {
-			const url = new URL(selectedPairingUrl);
-			const origin = url.origin + url.pathname.replace(/\/$/, '');
-			return (
-				remoteAddresses.find((addr) => addr.startsWith(origin)) ||
-				remoteAddresses[0] ||
-				null
-			);
-		} catch {
-			return remoteAddresses[0] || null;
-		}
-	}, [
-		remoteAddresses,
-		selectedPairingUrl,
-		selectedRemotePairingMode,
-		webRtcPairingDisplayUrl,
-	]);
-	const remoteStatusMessage =
-		remoteActionError ??
-		remoteStatus?.errorMessage ??
-		(selectedRemotePairingMode === 'webrtc'
-			? remoteStatus?.webRtcStatusMessage
-			: null);
-
-	const selectPairingAddress = useCallback(async (address: string) => {
-		const nextStatus =
-			await window.terminay.setRemoteAccessPairingAddress(address);
-		setRemoteStatus(nextStatus);
-	}, []);
-
-	useEffect(() => {
-		if (!isRemoteMenuOpen) {
-			return;
-		}
-
-		const onPointerDown = (event: globalThis.MouseEvent) => {
-			const container = remoteMenuRef.current;
-			if (!container) {
-				return;
-			}
-
-			const target = event.target as Node;
-			if (container.contains(target)) {
-				return;
-			}
-
-			setIsRemoteMenuOpen(false);
-		};
-
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				setIsRemoteMenuOpen(false);
-			}
-		};
-
-		window.addEventListener('mousedown', onPointerDown);
-		window.addEventListener('keydown', onKeyDown);
-		return () => {
-			window.removeEventListener('mousedown', onPointerDown);
-			window.removeEventListener('keydown', onKeyDown);
-		};
-	}, [isRemoteMenuOpen]);
 
 	useEffect(() => {
 		if (!hasTerminalActivityOverview) {
@@ -9039,7 +5154,15 @@ function App() {
 		: 'Update Now';
 
 	return (
-		<div className={`app-shell${isMac ? ' app-shell--macos' : ''}`}>
+		<div
+			className={`app-shell${isMac && hasNativeWindowControls ? ' app-shell--macos' : ''}`}
+			data-terminay-app-component={TERMINAY_APP_COMPONENT_ID}
+			data-terminay-active-project-id={activeProjectId}
+			data-terminay-server-id={terminalClientContext?.serverId}
+			data-terminay-workspace-revision={
+				terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision
+			}
+		>
 			<header
 				ref={projectTabBarRef}
 				className={`project-tabbar${isProjectDropTarget ? ' project-tabbar--drop-target' : ''}`}
@@ -9049,9 +5172,7 @@ function App() {
 						type="button"
 						className={`project-tab-sidebar-toggle${activeProject?.isFileExplorerOpen ? ' project-tab-sidebar-toggle--active' : ''}`}
 						onClick={toggleActiveProjectExplorer}
-						disabled={
-							!activeProject || activeProject.rootFolder.trim().length === 0
-						}
+						disabled={!activeProject}
 						aria-label="Toggle file explorer"
 						title="Toggle file explorer"
 					>
@@ -9072,124 +5193,25 @@ function App() {
 						</svg>
 					</button>
 				</div>
-				<Reorder.Group
-					axis="x"
-					values={projects}
+				<ProjectTabList
+					activeProjectId={activeProjectId}
+					draggingProjectId={draggingProjectId}
+					dropPreview={dropPreview}
+					isDraggingTabTornOff={isDraggingTabTornOff}
+					onActivate={activateProject}
+					onClose={closeProject}
+					onDragEnd={handleProjectTabDragEnd}
+					onDragStart={handleProjectTabDragStart}
+					onEdit={openEditProjectWindow}
 					onReorder={onReorder}
-					className="project-tabbar-list"
-				>
-					<AnimatePresence initial={false}>
-						{projects.flatMap((project, projectIndex) => [
-							dropPreview && dropPreview.index === projectIndex ? (
-								<li
-									key="__drop-placeholder"
-									className="project-tab project-tab--drop-placeholder"
-									style={
-										{
-											'--project-color': dropPreview.preview.color,
-										} as CSSProperties
-									}
-								>
-									<span className="project-tab-main">
-										{dropPreview.preview.emoji ? (
-											<span className="project-tab-emoji" aria-hidden="true">
-												{dropPreview.preview.emoji}
-											</span>
-										) : null}
-										<span className="project-tab-title">
-											{dropPreview.preview.title}
-										</span>
-									</span>
-								</li>
-							) : null,
-							<Reorder.Item
-								key={project.id}
-								value={project}
-								data-project-id={project.id}
-								initial={{ opacity: 0, scale: 0.95 }}
-								animate={{ opacity: 1, scale: 1 }}
-								exit={{ opacity: 0, scale: 0.95 }}
-								className={`project-tab${project.id === activeProjectId ? ' project-tab--active' : ''}${project.id === draggingProjectId ? ' project-tab--dragging' : ''}${project.id === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}`}
-								style={
-									{ '--project-color': project.color } as CSSProperties
-								}
-								onDragStart={() => handleProjectTabDragStart(project.id)}
-								onDragEnd={() => void handleProjectTabDragEnd(project.id)}
-								onClick={() => setActiveProjectId(project.id)}
-								onDoubleClick={() => void openEditProjectWindow(project.id)}
-								whileDrag={{ scale: 1.05, zIndex: 50 }}
-								title="Double-click to edit tab"
-							>
-								<span className="project-tab-main">
-									{project.emoji ? (
-										<span className="project-tab-emoji" aria-hidden="true">
-											{project.emoji}
-										</span>
-									) : null}
-									<span className="project-tab-title">{project.title}</span>
-								</span>
-								<button
-									type="button"
-									className="project-tab-close"
-									onClick={(event) => {
-										event.stopPropagation();
-										closeProject(project.id);
-									}}
-									aria-label={`Close ${project.title}`}
-									title={
-										projects.length <= 1
-											? 'Close tab and exit app'
-											: 'Close tab'
-									}
-								>
-									<svg
-										aria-hidden="true"
-										width="12"
-										height="12"
-										viewBox="0 0 12 12"
-										fill="none"
-										xmlns="http://www.w3.org/2000/svg"
-									>
-										<path
-											d="M9 3L3 9M3 3L9 9"
-											stroke="currentColor"
-											strokeWidth="2"
-											strokeLinecap="round"
-											strokeLinejoin="round"
-										/>
-									</svg>
-								</button>
-							</Reorder.Item>,
-						])}
-						{dropPreview && dropPreview.index >= projects.length ? (
-							<li
-								key="__drop-placeholder"
-								className="project-tab project-tab--drop-placeholder"
-								style={
-									{
-										'--project-color': dropPreview.preview.color,
-									} as CSSProperties
-								}
-							>
-								<span className="project-tab-main">
-									{dropPreview.preview.emoji ? (
-										<span className="project-tab-emoji" aria-hidden="true">
-											{dropPreview.preview.emoji}
-										</span>
-									) : null}
-									<span className="project-tab-title">
-										{dropPreview.preview.title}
-									</span>
-								</span>
-							</li>
-						) : null}
-					</AnimatePresence>
-				</Reorder.Group>
+					projects={projects}
+				/>
 				<div className="project-tab-add-box">
 					<button
 						type="button"
 						className="project-tab-add"
 						onClick={addProject}
+						disabled={!canAddProject}
 						aria-label="Add project tab"
 						title="Add project tab"
 					>
@@ -9218,7 +5240,7 @@ function App() {
 								type="button"
 								className="app-update-button"
 								onClick={() =>
-									void window.terminay.openExternal(
+									void window.terminayExternalHost?.open(
 										appUpdateStatus.releaseUrl as string,
 									)
 								}
@@ -9229,310 +5251,61 @@ function App() {
 							</button>
 						</div>
 					) : null}
-					{hasTerminalActivityOverview ? (
-						<div
-							ref={activityMenuRef}
-							className={`terminal-activity-status${isActivityMenuOpen ? ' terminal-activity-status--open' : ''}`}
-						>
-							<button
-								type="button"
-								className="terminal-activity-button"
-								onClick={() => {
-									setIsRemoteMenuOpen(false);
-									setIsActivityMenuOpen((current) => !current);
-								}}
-								title="Open terminal activity menu"
-								aria-label="Open terminal activity menu"
-								aria-haspopup="menu"
-								aria-expanded={isActivityMenuOpen}
-							>
-								{attentionTerminalActivityCount > 0 ? (
-									<span className="terminal-activity-pill terminal-activity-pill--attention">
-										{attentionTerminalActivityCount}
-									</span>
-								) : null}
-								{unviewedTerminalActivityCount > 0 ? (
-									<span className="terminal-activity-pill terminal-activity-pill--unviewed">
-										{unviewedTerminalActivityCount}
-									</span>
-								) : null}
-								{recentTerminalActivityCount > 0 ? (
-									<span className="terminal-activity-pill terminal-activity-pill--recent">
-										{recentTerminalActivityCount}
-									</span>
-								) : null}
-								<ChevronDown
-									className="terminal-activity-button__chevron"
-									size={12}
-									aria-hidden="true"
-								/>
-							</button>
-							{isActivityMenuOpen ? (
-								<div
-									className="terminal-activity-menu"
-									role="menu"
-									aria-label="Terminal activity menu"
-								>
-									<div className="terminal-activity-menu__section-label">
-										Terminal Activity
-									</div>
-									{terminalActivityItems.map((item) => (
-										<button
-											key={`${item.projectId}:${item.panelId}:${item.sessionId}`}
-											type="button"
-											className="terminal-activity-menu__item"
-											onClick={() => activateTerminalFromOverview(item)}
-										>
-											<AgentStatusIndicator
-												state={terminalOverviewStateToAgentState(item.state)}
-												label={
-													item.isAgentStatus
-														? undefined
-														: `Terminal ${terminalOverviewStateToAgentState(item.state)}`
-												}
-											/>
-											<span
-												className="terminal-activity-menu__preview"
-												style={{ '--tab-color': item.color } as CSSProperties}
-											>
-												<span className="terminal-activity-menu__dot" />
-												<span
-													className="terminal-activity-menu__emoji"
-													aria-hidden="true"
-												>
-													{item.emoji || item.projectEmoji || '>'}
-												</span>
-											</span>
-											<span className="terminal-activity-menu__text">
-												<span className="terminal-activity-menu__title">
-													{item.title}
-												</span>
-												<span className="terminal-activity-menu__project">
-													{item.projectEmoji ? `${item.projectEmoji} ` : ''}
-													{item.projectTitle}
-												</span>
-											</span>
-										</button>
-									))}
-								</div>
-							) : null}
-						</div>
-					) : null}
-					<div
-						ref={remoteMenuRef}
-						className={`remote-access-status${remoteStatus?.isRunning ? ' remote-access-status--active' : ''}${isRemoteMenuOpen ? ' remote-access-status--open' : ''}`}
-					>
-						<button
-							type="button"
-							className={`remote-access-button ${remoteButtonTone}`.trim()}
-							onClick={() => {
-								setIsActivityMenuOpen(false);
-								setIsRemoteMenuOpen((current) => !current);
-							}}
-							title="Open remote access menu"
-							aria-label="Open remote access menu"
-							aria-haspopup="menu"
-							aria-expanded={isRemoteMenuOpen}
-						>
-							<span className="remote-access-button__label">
-								{remoteStatus?.isRunning
-									? `Remote (${remoteStatus.activeConnectionCount})`
-									: 'Remote'}
-							</span>
-							{remoteStatus?.isRunning ? (
-								<span
-									className="remote-access-button__badge remote-access-button__badge--live"
-									aria-hidden="true"
-								/>
-							) : null}
-							{remoteStatus?.configurationIssue || remoteStatus?.errorMessage ? (
-								<span
-									className="remote-access-button__badge remote-access-button__badge--warning"
-									aria-hidden="true"
-								>
-									!
-								</span>
-							) : null}
-							<ChevronDown
-								className="remote-access-button__chevron"
-								size={12}
-								aria-hidden="true"
-							/>
-						</button>
-						{isRemoteMenuOpen ? (
-							<div
-								className="remote-access-menu"
-								role="menu"
-								aria-label="Remote access menu"
-							>
-							<button
-								type="button"
-								className="remote-access-menu__item"
-								onClick={() => void toggleRemoteAccess()}
-								disabled={isTogglingRemoteAccess}
-							>
-								<span>
-									{isTogglingRemoteAccess
-										? 'Working...'
-										: remoteStatus?.isRunning
-											? 'Stop Server'
-											: 'Start Server'}
-								</span>
-								<span className="remote-access-menu__meta">
-									{remoteStatus?.isRunning ? 'Live' : 'Offline'}
-								</span>
-							</button>
-							<button
-								type="button"
-								className="remote-access-menu__item"
-								onClick={() =>
-									void window.terminay.openSettingsWindow({
-										sectionId: 'remote-access-host',
-									})
-								}
-							>
-								<span>Remote Access Settings</span>
-								<span className="remote-access-menu__meta">Open</span>
-							</button>
-							<button
-								type="button"
-								className="remote-access-menu__item"
-								onClick={() => void openPairingQr()}
-								disabled={isTogglingRemoteAccess}
-							>
-								<span>
-									{remoteStatus?.isRunning
-										? 'Show Pairing QR'
-										: 'Start Server & Show QR'}
-								</span>
-								<span className="remote-access-menu__meta">
-									{remoteStatus?.isRunning ? 'Scan' : 'Start'}
-								</span>
-							</button>
-							<div className="remote-access-menu__section">
-								<div className="remote-access-menu__section-label">
-									QR Type
-								</div>
-								{(['lan', 'webrtc'] as const).map((mode) => (
-									<button
-										key={mode}
-										type="button"
-										className={`remote-access-menu__address-btn${selectedRemotePairingMode === mode ? ' remote-access-menu__address-btn--active' : ''}`}
-										onClick={() => void selectRemotePairingMode(mode)}
-									>
-										<span className="remote-access-menu__address-text">
-											{mode === 'lan' ? 'Local Network' : 'WebRTC Relay'}
-										</span>
-										{selectedRemotePairingMode === mode && (
-											<span
-												className="remote-access-menu__address-check"
-												aria-hidden="true"
-											>
-												✓
-											</span>
-										)}
-									</button>
-								))}
-							</div>
-							<div className="remote-access-menu__section">
-								<div className="remote-access-menu__section-label">
-									Connect To
-								</div>
-								{selectedRemotePairingMode === 'webrtc' ? (
-									<div className="remote-access-menu__empty">
-										{webRtcPairingDisplayUrl ??
-											'Start remote access to generate a relay pairing link.'}
-									</div>
-								) : remoteStatus?.availableAddresses.length ? (
-									remoteStatus.availableAddresses.map((address) => (
-										<button
-											key={address}
-											type="button"
-											className={`remote-access-menu__address-btn${address === preferredRemoteAddress ? ' remote-access-menu__address-btn--active' : ''}`}
-											onClick={() => void selectPairingAddress(address)}
-											title={
-												address === preferredRemoteAddress
-													? `Active: ${address}`
-													: `Switch to: ${address}`
-											}
-										>
-											<span className="remote-access-menu__address-text">
-												{address}
-											</span>
-											{address === preferredRemoteAddress && (
-												<span
-													className="remote-access-menu__address-check"
-													aria-hidden="true"
-												>
-													✓
-												</span>
-											)}
-										</button>
-									))
-								) : (
-									<div className="remote-access-menu__empty">
-										No local addresses available yet.
-									</div>
-								)}
-							</div>
-							<div className="remote-access-menu__section">
-								<div className="remote-access-menu__section-label">
-									Active Connections
-								</div>
-								{remoteStatus?.pendingWebRtcConnectionCount ? (
-									<div className="remote-access-menu__empty">
-										{remoteStatus.pendingWebRtcConnectionCount}{' '}
-										{remoteStatus.pendingWebRtcConnectionCount === 1
-											? 'browser is'
-											: 'browsers are'}{' '}
-										pairing, but not connected yet.
-									</div>
-								) : null}
-								{remoteStatus?.connections.length ? (
-									remoteStatus.connections.map((connection) => (
-										<div
-											key={connection.connectionId}
-											className="remote-access-menu__connection"
-										>
-											<div className="remote-access-menu__connection-main">
-												<span className="remote-access-menu__connection-device">
-													{connection.deviceName}
-												</span>
-												<span className="remote-access-menu__connection-meta">
-													{connection.attachedSessionCount}{' '}
-													{connection.attachedSessionCount === 1
-														? 'session'
-														: 'sessions'}
-												</span>
-											</div>
-											<div className="remote-access-menu__connection-id">
-												{connection.connectionId}
-											</div>
-										</div>
-									))
-								) : (
-									<div className="remote-access-menu__empty">
-										No active browser connections.
-									</div>
-								)}
-							</div>
-							{remoteStatusMessage ? (
-								<div className="remote-access-menu__section">
-									<div className="remote-access-menu__section-label">
-										Status
-									</div>
-									<div className="remote-access-menu__empty">
-										{remoteStatusMessage}
-									</div>
-								</div>
-							) : null}
-							</div>
-						) : null}
-					</div>
+					<TerminalActivityOverview
+						activityMenuRef={activityMenuRef}
+						attentionCount={terminalActivityItems.attentionCount}
+						isOpen={isActivityMenuOpen}
+						items={terminalActivityItems.items}
+						onActivate={activateTerminalFromOverview}
+						onToggle={() => {
+							setIsRemoteMenuOpen(false);
+							setIsActivityMenuOpen((current) => !current);
+						}}
+						recentCount={terminalActivityItems.recentCount}
+						unviewedCount={terminalActivityItems.unviewedCount}
+					/>
+					<RemoteAccessConnectionMenu
+						connectionSwitcherEntries={connectionSwitcherEntries}
+						currentServerId={currentServerId}
+						currentServerLabel={currentServerLabel}
+						isOpen={isRemoteMenuOpen}
+						isToggling={isTogglingRemoteAccess}
+						menuRef={remoteMenuRef}
+						onDisconnect={onDisconnect}
+						onOpenConnection={
+							onOpenConnectionManager ?? openRemoteConnectionModal
+						}
+						onOpenPairingQr={() => void openPairingQr()}
+						onSelectConnection={selectConnectionProfile}
+						onSelectAddress={(address) => void selectPairingAddress(address)}
+						onSelectMode={(mode) => void selectRemotePairingMode(mode)}
+						onToggleExposure={() => void toggleRemoteAccess()}
+						onToggleMenu={() => {
+							setIsActivityMenuOpen(false);
+							refreshConnectionSwitcherEntries();
+							setIsRemoteMenuOpen((current) => !current);
+						}}
+						preferredAddress={preferredRemoteAddress}
+						selectedMode={selectedRemotePairingMode}
+						status={remoteStatus}
+						statusMessage={remoteStatusMessage ?? null}
+						tone={remoteButtonTone}
+						webRtcDisplayUrl={webRtcPairingDisplayUrl}
+					/>
 				</div>
 			</header>
 
 			<div className="workspace-stack">
+				{isWorkspaceHydrating ? (
+					<div className="workspace-empty-state" role="status">
+						Loading workspace...
+					</div>
+				) : null}
+				{projectCreationError !== null ? (
+					<div className="workspace-empty-state workspace-empty-state--error" role="alert">
+						{projectCreationError}
+					</div>
+				) : null}
 				{projects.map((project) => (
 					<ProjectWorkspace
 						key={project.id}
@@ -9552,11 +5325,34 @@ function App() {
 						popoutUrl={popoutUrl}
 						project={project}
 						projects={projects}
+						quickPushClient={quickPushClient}
+						terminalClientContext={terminalClientContext}
 						adoptedTerminals={adoptedTerminalsByProject[project.id]}
 					/>
 				))}
 			</div>
 
+			{isRemoteConnectionModalOpen ? (
+				<RemoteConnectionModal
+					error={remoteConnectionError}
+					isOpening={isOpeningRemoteConnection}
+					notice={remoteConnectionNotice}
+					onClose={closeRemoteConnectionModal}
+					onPairingPinChange={(value) => {
+						setRemoteConnectionPairingPin(value);
+						setRemoteConnectionError(null);
+						setRemoteConnectionNotice(null);
+					}}
+					onSubmit={submitRemoteConnection}
+					onUrlChange={(value) => {
+						setRemoteConnectionUrl(value);
+						setRemoteConnectionError(null);
+						setRemoteConnectionNotice(null);
+					}}
+					pairingPin={remoteConnectionPairingPin}
+					url={remoteConnectionUrl}
+				/>
+			) : null}
 			{isPairingPinModalOpen ? (
 				<ModalBackdrop onClose={() => closePairingPinModal(false)}>
 					<form
@@ -9582,7 +5378,9 @@ function App() {
 								type="text"
 								value={pairingPinInput}
 								onChange={(event) => {
-									setPairingPinInput(event.target.value.replace(/\D/g, '').slice(0, 6));
+									setPairingPinInput(
+										event.target.value.replace(/\D/g, '').slice(0, 6),
+									);
 									setPairingPinError(null);
 								}}
 								inputMode="numeric"
@@ -9636,9 +5434,9 @@ function App() {
 
 						<div className="remote-pairing-modal__container">
 							<p className="remote-pairing-modal__copy">
-								Scan this QR code to add or re-add a browser to this
-								Terminay host. Saved WebRTC sessions can reconnect later
-								while their grant is valid.
+								Scan this QR code to add or re-add a browser to this Terminay
+								host. Saved WebRTC sessions can reconnect later while their
+								grant is valid.
 							</p>
 
 							<div className="remote-pairing-modal__toggle">
@@ -9730,8 +5528,8 @@ function App() {
 												<div className="remote-pairing-modal__footer">
 													<div className="remote-pairing-modal__tip">
 														{selectedRemotePairingMode === 'webrtc'
-															? remoteStatus?.webRtcStatusMessage ??
-																'The WebRTC host is starting. Keep Terminay open while it becomes ready.'
+															? (remoteStatus?.webRtcStatusMessage ??
+																'The WebRTC host is starting. Keep Terminay open while it becomes ready.')
 															: 'Best for mobile: Scan the QR code. Use the link for manual entry on desktop.'}
 													</div>
 													{selectedPairingExpiresAt && (
@@ -9763,7 +5561,6 @@ function App() {
 					</div>
 				</ModalBackdrop>
 			) : null}
-
 		</div>
 	);
 }
