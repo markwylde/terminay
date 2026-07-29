@@ -305,18 +305,27 @@ The candidates are:
 - `node-datachannel`, a native Node-API binding focused on data channels; and
 - `@roamhq/wrtc`, a W3C-style native binding.
 
-The selected candidate passes production signaling, direct and authenticated
+Terminay formally selects the integrity-pinned, Terminay-owned Werift 0.24.1
+ESM artifact described below as its production WebRTC runtime. The
+machine-readable selection record is
+`build/webrtc-runtime/selection.json`; release packaging and runtime loading
+must consume that exact record rather than infer a runtime from installed
+packages or environment variables.
+
+The selected runtime passes production signaling, direct and authenticated
 TURN-only routing, representative Linux x64/arm64 execution, data-channel
 ordering and bounded application pressure, natural shutdown, hardened
 two-factor reconnect, and revocation. The published Werift package is not used
 unchanged because its stale dependency metadata installs the vulnerable legacy
 ICE chain.
 
-The fallback is to stop the server WebRTC adapter with an actionable diagnostic
-if the deterministic Terminay artifact cannot be verified. Terminay does not
-fall back to the blocked `node-datachannel` prebuilds or the published Werift
-package. Native release certification, sustained multi-peer load, provenance
-attestation, and update-response operations remain Tasks 17/20.
+The production loader verifies the selected identity and complete deterministic
+payload before importing executable code. The fallback is to stop the server
+WebRTC adapter with an actionable diagnostic if that artifact cannot be
+verified. Terminay does not fall back to the blocked `node-datachannel`
+prebuilds or the published Werift package. Native release certification,
+sustained multi-peer load, trusted provenance attestation, and update-response
+operations remain Tasks 17/20 and do not weaken this selection.
 
 ### Candidate comparison
 
@@ -438,7 +447,8 @@ The separate candidate builder proves deterministic source identity, a complete
 retained dependency lock, notices and license texts, CycloneDX SBOM, exact file
 allowlist and hashes across two builds, Node 22 execution, and import from both
 an Electron main process and its server child. The Terminay-owned ESM artifact
-remains the provisional front-runner rather than a selected release dependency.
+is the formally selected release dependency described by the machine-readable
+selection record above.
 
 `scripts/production-webrtc-turn-routes.test.mjs` builds and audits that exact
 minimized artifact, starts an isolated authenticated coturn instance, and runs

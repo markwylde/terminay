@@ -1,0 +1,109 @@
+name: Web image
+
+on:
+  # Operators can publish the already-reviewed commit deliberately without
+  # manufacturing an otherwise unrelated main-branch change.
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/web-image.yml'
+      - 'Dockerfile.web'
+      - 'docker/nginx.web.conf'
+      - 'web.html'
+      - 'vite.web.config.ts'
+      - 'tsconfig.web.json'
+      - 'src/web/**'
+      - 'src/remote/**'
+      - 'remote.html'
+      - 'apps/terminay-web/**'
+      - 'packages/client-core/**'
+      - 'packages/protocol/**'
+      - 'packages/responsive-ui/**'
+      - 'scripts/web-build-contract.test.mjs'
+      - 'scripts/web-image.test.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'public/**'
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+    paths:
+      - '.github/workflows/web-image.yml'
+      - 'Dockerfile.web'
+      - 'docker/nginx.web.conf'
+      - 'web.html'
+      - 'vite.web.config.ts'
+      - 'tsconfig.web.json'
+      - 'src/web/**'
+      - 'src/remote/**'
+      - 'remote.html'
+      - 'apps/terminay-web/**'
+      - 'packages/client-core/**'
+      - 'packages/protocol/**'
+      - 'packages/responsive-ui/**'
+      - 'scripts/web-build-contract.test.mjs'
+      - 'scripts/web-image.test.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'public/**'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/terminay-web
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: build
+        with:
+          context: .
+          file: Dockerfile.web
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          sbom: true
+          provenance: mode=max
+      - name: Record immutable web image
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          digest='${{ steps.build.outputs.digest }}'
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Published web image did not return a valid manifest digest." >&2
+            exit 1
+          fi
+          {
+            echo "### Terminay web image"
+            echo
+            echo "\`${IMAGE_NAME}@${digest}\`"
+            echo
+            echo "Revision: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

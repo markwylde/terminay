@@ -130,6 +130,15 @@ Rotation, device revocation, and expiry fence later challenges. Durable
 storage, signaling transport, and concrete WebRTC runtime adapters remain
 host-owned boundaries around this primitive.
 
+For the local static-browser host, enrollment derives a non-extractable
+WebCrypto HMAC proof key in IndexedDB, partitioned by the selected server
+origin; the one-time pairing grant is discarded immediately. The standalone
+server persists its protected reconnect records (handle, grant hash, and proof
+verifier) in its data root so a server restart can validate a subsequent proof,
+but it never persists a pairing URL, pairing secret, reconnect grant, or
+short-lived application ticket. A successful proof returns a new short-lived
+HTTP development ticket; it is never accepted as a reconnect grant.
+
 Expired credentials request fresh pairing. Revoked credentials cannot be
 renewed. A failed remote connection never falls back to Local or another
 remembered server.

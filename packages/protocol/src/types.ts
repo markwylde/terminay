@@ -25,7 +25,7 @@ export interface IncompatibleVersionEnvelope {
   error: ProtocolError;
 }
 export interface QueryEnvelope { type: "query"; queryId: ProtocolId; operation: string; payload: JsonValue; deadlineMs?: number; }
-export interface QueryResultEnvelope { type: "query_result"; queryId: ProtocolId; ok: boolean; result?: JsonValue; error?: ProtocolError; }
+export interface QueryResultEnvelope { type: "query_result"; queryId: ProtocolId; ok: boolean; result?: JsonValue; error?: ProtocolError; bodyLength?: number; }
 export interface CommandEnvelope {
   type: "command"; commandId: ProtocolId; correlationId: ProtocolId; operation: string; payload: JsonValue;
   expectedRevision?: number; deadlineMs?: number;
@@ -35,6 +35,9 @@ export interface CommandResultEnvelope {
   result?: JsonValue; error?: ProtocolError; revision?: number;
 }
 export interface EventEnvelope { type: "event"; subscriptionId: ProtocolId; revision: number; cursor: string; event: string; payload: JsonValue; }
+/** A bounded journal cannot replay from the requested cursor. Feature clients
+ * must refresh their own authoritative snapshot before subscribing again. */
+export interface EventResyncEnvelope { type: "event_resync"; subscriptionId: ProtocolId; revision: number; cursor: string; snapshot?: JsonValue; }
 export interface StreamOpenEnvelope { type: "stream_open"; streamId: ProtocolId; sessionId: ProtocolId; position: number; contentType?: string; }
 export interface StreamChunkEnvelope { type: "stream_chunk"; streamId: ProtocolId; position: number; final?: boolean; }
 export interface StreamAckEnvelope { type: "stream_ack"; streamId: ProtocolId; position: number; }
@@ -48,13 +51,13 @@ export interface CancelEnvelope { type: "cancel"; correlationId: ProtocolId; rea
 export interface ErrorEnvelope { type: "error"; correlationId?: ProtocolId; error: ProtocolError; }
 
 export type Envelope = ClientHello | ServerHello | CapabilitiesEnvelope | IncompatibleVersionEnvelope |
-  QueryEnvelope | QueryResultEnvelope | CommandEnvelope | CommandResultEnvelope | EventEnvelope |
+  QueryEnvelope | QueryResultEnvelope | CommandEnvelope | CommandResultEnvelope | EventEnvelope | EventResyncEnvelope |
   StreamOpenEnvelope | StreamChunkEnvelope | StreamAckEnvelope | StreamCloseEnvelope | BinaryStartEnvelope |
   BinaryChunkEnvelope | BinaryAckEnvelope | BinaryCompleteEnvelope | BinaryFailureEnvelope | CancelEnvelope | ErrorEnvelope;
 
 const envelopeTypes = new Set<Envelope["type"]>([
   "client_hello", "server_hello", "capabilities", "incompatible_version", "query", "query_result", "command",
-  "command_result", "event", "stream_open", "stream_chunk", "stream_ack", "stream_close", "binary_start",
+  "command_result", "event", "event_resync", "stream_open", "stream_chunk", "stream_ack", "stream_close", "binary_start",
   "binary_chunk", "binary_ack", "binary_complete", "binary_failure", "cancel", "error",
 ]);
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -69,9 +72,9 @@ export function validateEnvelope(value: unknown): Envelope {
     client_hello: ["type", "protocolMin", "protocolMax", "clientId", "clientVersion", "capabilities", "limits"],
     server_hello: ["type", "protocolVersion", "serverId", "serverVersion", "clientId", "capabilities", "limits", "authScope"],
     capabilities: ["type", "capabilities", "limits"], incompatible_version: ["type", "supportedMin", "supportedMax", "requestedMin", "requestedMax", "error"],
-    query: ["type", "queryId", "operation", "payload", "deadlineMs"], query_result: ["type", "queryId", "ok", "result", "error"],
+    query: ["type", "queryId", "operation", "payload", "deadlineMs"], query_result: ["type", "queryId", "ok", "result", "error", "bodyLength"],
     command: ["type", "commandId", "correlationId", "operation", "payload", "expectedRevision", "deadlineMs"], command_result: ["type", "commandId", "correlationId", "ok", "result", "error", "revision"],
-    event: ["type", "subscriptionId", "revision", "cursor", "event", "payload"], stream_open: ["type", "streamId", "sessionId", "position", "contentType"],
+    event: ["type", "subscriptionId", "revision", "cursor", "event", "payload"], event_resync: ["type", "subscriptionId", "revision", "cursor", "snapshot"], stream_open: ["type", "streamId", "sessionId", "position", "contentType"],
     stream_chunk: ["type", "streamId", "position", "final"], stream_ack: ["type", "streamId", "position"], stream_close: ["type", "streamId", "position", "error"],
     binary_start: ["type", "transferId", "size", "contentType", "checksum"], binary_chunk: ["type", "transferId", "position", "final"],
     binary_ack: ["type", "transferId", "position"], binary_complete: ["type", "transferId", "position", "checksum"], binary_failure: ["type", "transferId", "position", "error"],
@@ -85,14 +88,14 @@ export function validateEnvelope(value: unknown): Envelope {
 function checkCommon(value: Record<string, unknown>, type: Envelope["type"]): void {
   const required: Record<string, string[]> = {
     client_hello: ["protocolMin", "protocolMax", "clientId", "clientVersion", "capabilities", "limits"], server_hello: ["protocolVersion", "serverId", "serverVersion", "clientId", "capabilities", "limits", "authScope"], capabilities: ["capabilities", "limits"],
-    incompatible_version: ["supportedMin", "supportedMax", "error"], query: ["queryId", "operation", "payload"], query_result: ["queryId", "ok"], command: ["commandId", "correlationId", "operation", "payload"], command_result: ["commandId", "correlationId", "ok"], event: ["subscriptionId", "revision", "cursor", "event", "payload"],
+    incompatible_version: ["supportedMin", "supportedMax", "error"], query: ["queryId", "operation", "payload"], query_result: ["queryId", "ok"], command: ["commandId", "correlationId", "operation", "payload"], command_result: ["commandId", "correlationId", "ok"], event: ["subscriptionId", "revision", "cursor", "event", "payload"], event_resync: ["subscriptionId", "revision", "cursor"],
     stream_open: ["streamId", "sessionId", "position"], stream_chunk: ["streamId", "position"], stream_ack: ["streamId", "position"], stream_close: ["streamId", "position"], binary_start: ["transferId", "contentType"], binary_chunk: ["transferId", "position"], binary_ack: ["transferId", "position"], binary_complete: ["transferId", "position"], binary_failure: ["transferId", "position", "error"], cancel: ["correlationId"], error: ["error"],
   };
   for (const key of required[type]) if (!(key in value)) throw new TypeError(`${type} missing ${key}`);
   for (const key of ["clientId", "serverId", "queryId", "commandId", "correlationId", "subscriptionId", "streamId", "sessionId", "transferId"]) if (key in value) checkId(value[key], key);
-  for (const key of ["revision", "expectedRevision", "position", "size", "protocolMin", "protocolMax", "protocolVersion", "supportedMin", "supportedMax", "requestedMin", "requestedMax"]) if (key in value) checkUInt(value[key], key);
+  for (const key of ["revision", "expectedRevision", "position", "size", "bodyLength", "protocolMin", "protocolMax", "protocolVersion", "supportedMin", "supportedMax", "requestedMin", "requestedMax"]) if (key in value) checkUInt(value[key], key);
   if ("operation" in value && (typeof value.operation !== "string" || !operationPattern.test(value.operation))) throw new TypeError("invalid operation");
-  for (const key of ["payload", "result"]) if (key in value) assertJsonValue(value[key]);
+  for (const key of ["payload", "result", "snapshot"]) if (key in value) assertJsonValue(value[key]);
   if ("deadlineMs" in value && (typeof value.deadlineMs !== "number" || !Number.isSafeInteger(value.deadlineMs) || value.deadlineMs <= 0 || value.deadlineMs > MAX_DEADLINE_MS)) throw new TypeError("invalid deadline");
   for (const key of ["ok", "final"]) if (key in value && typeof value[key] !== "boolean") throw new TypeError(`invalid ${key}`);
   if ("authScope" in value && (typeof value.authScope !== "string" || !scopeSet.has(value.authScope as AuthScope))) throw new TypeError("invalid auth scope");

@@ -26,7 +26,7 @@
   background: var(--tabbar-bg);
   -webkit-app-region: drag;
   font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  padding: 0;
+  padding: 0 0 0 6px;
 }
 
 .app-shell--macos .project-tabbar {
@@ -390,8 +390,8 @@
   top: calc(100% + 8px);
   right: 0;
   width: 300px;
-  padding: 8px;
-  border-radius: 14px;
+  padding: 10px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.09);
   background: rgba(15, 19, 24, 0.98);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
@@ -434,12 +434,18 @@
 
 .remote-access-menu__section {
   margin-top: 8px;
-  padding: 10px 12px 4px;
+  padding: 8px 0 0;
   border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
+.remote-access-menu__section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .remote-access-menu__section-label {
-  margin-bottom: 8px;
+  margin: 0 4px 8px;
   color: rgba(220, 226, 240, 0.5);
   font-size: 10px;
   font-weight: 700;
@@ -499,10 +505,31 @@
 }
 
 .remote-access-menu__connection {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
   padding: 8px 10px;
   border-radius: 8px;
   margin-bottom: 4px;
   background: rgba(255, 255, 255, 0.025);
+}
+
+.remote-access-menu__connection--button {
+  cursor: pointer;
+}
+
+.remote-access-menu__connection--button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.remote-access-menu__connection--selected {
+  background: rgba(87, 183, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(87, 183, 255, 0.16);
+}
+
+.remote-access-menu__connection:disabled {
+  cursor: default;
 }
 
 .remote-access-menu__connection-main {
@@ -1005,6 +1032,11 @@
 .project-tab-add:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.1);
+}
+
+.project-tab-add:disabled {
+  cursor: default;
+  opacity: 0.28;
 }
 
 .project-tab-sidebar-toggle {
@@ -2411,6 +2443,21 @@
   position: relative;
 }
 
+.workspace-empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(220, 226, 240, 0.68);
+  font-size: 13px;
+  z-index: 2;
+}
+
+.workspace-empty-state--error {
+  color: #ff9a9a;
+}
+
 .project-workspace {
   position: absolute;
   inset: 0;
@@ -2428,6 +2475,8 @@
 }
 
 .project-workspace-body {
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   flex: 1;
   display: flex;
@@ -2435,12 +2484,16 @@
 }
 
 .file-explorer-sidebar {
+  box-sizing: border-box;
   position: relative;
-  flex-shrink: 0;
+  height: 100%;
+  width: 100%;
   min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--tab-border);
+  overflow: hidden;
   background: #0d1014;
 }
 
@@ -2456,22 +2509,6 @@
 .file-explorer-sidebar > .sidebar-split {
   flex: 1 1 auto;
   min-height: 0;
-}
-
-.file-explorer-sidebar__resizer {
-  position: absolute;
-  top: 0;
-  right: -2px;
-  width: 4px;
-  height: 100%;
-  cursor: col-resize;
-  z-index: 5;
-  transition: background 150ms ease;
-}
-
-.file-explorer-sidebar__resizer:hover,
-.file-explorer-sidebar__resizer:active {
-  background: rgba(87, 183, 255, 0.4);
 }
 
 .file-explorer-tree {
@@ -2687,6 +2724,32 @@
   margin: 2px;
   height: auto;
   overflow: hidden;
+}
+
+/* Server-backed panels never fall back to ambient preload terminal authority
+ * after an attachment failure. Keep recovery visible and keyboard reachable. */
+.terminal-panel-connection-error {
+  position: absolute;
+  inset: auto 12px 12px 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 12px;
+  color: #ffdbd5;
+  background: rgba(80, 24, 24, 0.94);
+  border: 1px solid #b74d47;
+  border-radius: 6px;
+}
+
+.terminal-panel-connection-error p {
+  margin: 0;
+}
+
+.terminal-panel-connection-error button {
+  flex: 0 0 auto;
 }
 
 .terminal-panel--has-note .terminal-panel-root {

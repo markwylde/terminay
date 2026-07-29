@@ -103,6 +103,14 @@ verifies that the exact identity disappeared. Main, bare, locked, prunable,
 dirty, and unmerged worktrees are rejected, and a changed reviewed HEAD is
 reported as stale rather than being removed.
 
+The production shared Git route consumes `TerminayGitClient` for its current
+server-owned project. It renders bounded worktree state and exposes Pull,
+explicitly confirmed removal, and a two-step Quick Push proposal/approval
+review. Native terminal opening is rendered only when the host advertises that
+capability. This is an integration body during migration; changed-file detail,
+remaining worktree actions, and canonical Workspace sidebar placement still
+remain explicit parity work.
+
 ## Acceptance outcomes
 
 - The current project shows the correct repository/worktree state without
