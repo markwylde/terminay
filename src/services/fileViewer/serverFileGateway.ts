@@ -6,8 +6,8 @@ import type {
   FileSavePayload,
   FileTextWindow,
   FileViewerGateway,
-  GitFileDiff,
 } from '../../types/fileViewer'
+import { toGitFileDiff } from '../../types/fileViewer'
 
 const MAX_READ_BYTES = 128 * 1024 * 1024
 const RANGE_BYTES = 1024 * 1024
@@ -53,7 +53,9 @@ export function createServerFileGateway(options: Readonly<{
     async aggregateFolderMarkdownTasks(path, _projectRootPath, taskOptions = {}) {
       return options.client.getFolderMarkdownTasks(relative(path), options.projectId, taskOptions, { deadlineMs: FOLDER_TASK_QUERY_DEADLINE_MS })
     },
-    getFileDiff: options.compatibilityGateway?.getFileDiff ?? unsupportedFileDiff,
+    async getFileDiff(path) {
+      return toGitFileDiff(await options.client.getGitDiff(relative(path), options.projectId) as never)
+    },
     async getFileInfo(path: string): Promise<FileInfo> {
       const capabilities = await options.client.getCapabilities(relative(path), options.projectId)
       return {
@@ -73,7 +75,21 @@ export function createServerFileGateway(options: Readonly<{
         viewerCapabilities: capabilities,
       }
     },
-    getGitRepoInfo: options.compatibilityGateway?.getGitRepoInfo ?? unsupportedGitRepoInfo,
+    async getGitRepoInfo(path) {
+      const value = await options.client.getGitDiff(relative(path), options.projectId) as Record<string, unknown>
+      return {
+        canDiff: value.gitAvailable === true && value.isTracked === true,
+        gitAvailable: value.gitAvailable === true,
+        isTracked: value.isTracked === true,
+        path,
+        relativePath: typeof value.relativePath === 'string' ? value.relativePath : relative(path),
+        repoRoot: typeof value.repoRoot === 'string' ? value.repoRoot : null,
+      }
+    },
+    async getMutationRevision(path) {
+      const revision = await options.client.getMutationRevision(relative(path), options.projectId)
+      return { ino: revision.ino, mtimeMs: revision.mtimeMs, size: revision.size }
+    },
     getPreviewSource: options.compatibilityGateway?.getPreviewSource ?? unsupportedPreviewSource,
     onFileWatchEvent(listener) {
       watchListeners.add(listener)
@@ -134,14 +150,6 @@ export function createServerFileGateway(options: Readonly<{
       watches.set(path, { subscriptionId: handle.subscriptionId, unsubscribe })
     },
   }
-}
-
-function unsupportedFileDiff(path: string): Promise<GitFileDiff> {
-  return Promise.reject(new Error(`File diff is unavailable for ${path}.`))
-}
-
-function unsupportedGitRepoInfo(): Promise<never> {
-  return Promise.reject(new Error('Git repository metadata is unavailable.'))
 }
 
 function unsupportedPreviewSource(): Promise<never> {

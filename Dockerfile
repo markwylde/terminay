@@ -21,6 +21,7 @@ COPY packages/protocol/package.json ./packages/protocol/package.json
 COPY packages/protocol-conformance/package.json ./packages/protocol-conformance/package.json
 COPY packages/responsive-ui/package.json ./packages/responsive-ui/package.json
 COPY packages/server-core/package.json ./packages/server-core/package.json
+COPY scripts/ensure-node-pty-helper-mode.mjs ./scripts/ensure-node-pty-helper-mode.mjs
 
 RUN --mount=type=cache,id=terminay-npm-cache-node22,target=/root/.npm,sharing=locked \
   npm ci

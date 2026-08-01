@@ -470,9 +470,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 		// into the server protocol.
 		const mutationRevision =
 			currentFileInfo.ino === null || currentFileInfo.mtimeMs === null
-				? await activeDisconnectedFilePanelCompatibility?.getMutationRevision(
-						currentFileInfo.path,
-					)
+				? await fileGateway.getMutationRevision(currentFileInfo.path)
 				: currentFileInfo;
 		if (mutationRevision === undefined) {
 			throw new Error(
@@ -956,7 +954,10 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 	}
 
 	const capabilities = detectFileCapabilities(fileInfo);
-	const canDiff = gitRepoInfo?.canDiff === true || diffStatus === 'loading';
+	const canDiff =
+		gitRepoInfo?.canDiff === true ||
+		diff?.isTracked === true ||
+		diffStatus === 'loading';
 	const availableModes: FileViewerMode[] = capabilities.canTasks
 		? ['preview', 'tasks', 'text', 'hex', 'diff']
 		: ['preview', 'text', 'hex', 'diff'];

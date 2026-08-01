@@ -187,6 +187,10 @@ export function createTerminayFileGateway(
   getGitRepoInfo(path: string) {
     return api.getGitRepoInfo(path)
   },
+  async getMutationRevision(path: string) {
+    const info = await api.getFileInfo(path)
+    return { ino: info.ino, mtimeMs: info.mtimeMs, size: info.size }
+  },
   getPreviewSource(path: string) {
     return api.getFilePreviewSource(path)
   },
