@@ -69,6 +69,21 @@ test("activity client fences a viewed acknowledgement to its observed session up
   });
 });
 
+test("activity client can acknowledge the currently visible session without a stale snapshot fence", async () => {
+  const commands = [];
+  const client = new ActivityClient({
+    query: async () => ({ revision: 3, cursor: "3", sessions: { "session-a": session(true) } }),
+    command: async (operation, payload) => { commands.push({ operation, payload }); return null; },
+    subscribe: async () => () => {},
+  });
+  await client.refresh();
+  await client.acknowledge({ projectId: "project-a", sessionId: "session-a" }, { fence: false });
+  assert.deepEqual(commands[0], {
+    operation: "activity.acknowledge",
+    payload: { projectId: "project-a", sessionId: "session-a" },
+  });
+});
+
 test("activity client reload replaces a restarted-server snapshot without inferring activity", async () => {
   let snapshot = { revision: 7, cursor: "7", sessions: { "session-a": session(true) } };
   const client = new ActivityClient({
