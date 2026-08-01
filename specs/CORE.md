@@ -2,24 +2,36 @@
 
 ## Product
 
-Terminay is a local-first desktop terminal workspace for software projects. It
-combines native shell sessions with project-aware tabs, file and Git tools,
-automation, AI-agent awareness, recording, and secure browser remote access so
-development work can stay in one focused application.
+Terminay is a local-first, server-backed terminal workspace for software
+projects. It combines native shell sessions with project-aware tabs, file and
+Git tools, automation, AI-agent awareness, recording, and secure remote access
+so development work can stay in one focused application.
+
+A Terminay Desktop installation includes Terminay Server for local use. The
+same server runs headlessly on another workstation, VPS, or dedicated machine.
+Desktop and browser clients connect to one selected server and render the
+complete responsive workspace UI bundled by that server.
 
 ## Core model
 
+- A **server** is one machine authority, data root, trust domain, and collection
+  of durable workspace state.
+- A **server connection** is an authenticated relationship between a client
+  device and one local or remote Terminay Server.
+- A **workspace view** is a server-owned logical grouping of projects. Desktop
+  can present it as a native window; a web client presents it through browser
+  navigation.
 - A **project** is a user-facing workspace with a root folder, name, colour,
   icon, sidebar state, and one or more docked panels.
 - A **panel** is a terminal, file, or folder surface. Panels can be split,
-  reordered, moved between projects, popped into native windows, and adopted by
-  another window without losing their identity.
-- A **terminal session** is an Electron-owned native PTY. Its immutable session
-  ID, not its title or current directory, is the boundary used by activity,
+  reordered, and moved between projects or workspace views without losing
+  their identity.
+- A **terminal session** is a server-owned native PTY. Its immutable session
+  id, not its title or current directory, is the boundary used by activity,
   agents, MCP, recording, and remote access.
-- **Settings and macros** persist locally. Credentials use OS-backed secure
-  storage where available; recordings and workspace files remain local unless a
-  user deliberately shares them.
+- **Settings, macros, and secrets** are classified by their server or client
+  scope. Server state is available to every authorized client; device-local
+  state and credentials remain on that client.
 
 ## Product pillars
 
@@ -28,18 +40,58 @@ development work can stay in one focused application.
 3. Git worktree awareness and reviewed AI-assisted Quick Push workflows.
 4. Automation through macros, dictation, AI tab metadata, and local MCP tools.
 5. Clear agent/activity state and optional local terminal recording.
-6. Secure, paired remote browser access over LAN HTTPS or isolated WebRTC.
+6. Secure connections to embedded or standalone Terminay Servers.
+7. One responsive, server-bundled workspace UI across desktop and browser
+   hosts.
 
 ## Architecture boundaries
 
-React in `src/` renders the workspace using Dockview, xterm, Monaco, and the
-preload API. Electron in `electron/` owns PTYs, filesystem and Git access,
-settings/secrets, recordings, agent hooks, MCP, and remote networking. The
-remote client is a separate web surface rooted at `src/remote/`. Renderer code
-must not obtain Node/Electron privileges directly.
+### Terminay Server
 
-Each privileged integration scopes requests to the correct window, project, or
-terminal session. Remote pairing, MCP capability tokens, and provider hook
-events must never widen that scope. Product-specific detail and acceptance
-contracts live in the feature specifications listed in [README.md](./README.md).
+`terminay-server` owns PTYs, workspace state, persistence, filesystem and Git
+operations, recordings, agents, MCP, automation, server-scoped settings and
+secrets, device trust, and remote exposure.
 
+It runs either as a Desktop-supervised Local child or as a standalone headless
+process. One runtime-validated application protocol carries commands, events,
+terminal streams, and bounded content over authenticated local or WebRTC
+transports.
+
+Every server bundles the complete responsive workspace UI that matches its
+runtime and protocol version.
+
+### Client hosts
+
+Terminay Desktop and `web.terminay.com` are connection hosts around the shared
+server-bundled workspace UI.
+
+Desktop adds native windows, embedded-server supervision, application updates,
+operating-system integration, and secure credential storage. It opens on the
+embedded server connection named **Local** and can open other server
+connections in separate windows.
+
+The web host has no local server. It adds, remembers, opens, and manages remote
+connections in the browser.
+
+### Hosted services
+
+Terminay's hosted service provides static bootstrap assets, the web connection
+host, WebRTC signaling, and relay coordination. It is data-blind: terminal,
+filesystem, workspace, recording, setting, and secret data do not become
+hosted application data.
+
+### Security boundaries
+
+Client and renderer code is untrusted at every privileged boundary. It receives
+neither Node access nor ambient Electron IPC. The server validates every
+command against the authenticated device and exact server, project, panel, and
+terminal identities.
+
+Project/window and terminal-session boundaries remain security boundaries for
+remote access, MCP, recordings, and agent status. User-facing titles, current
+focus, and client-supplied paths do not define authority.
+
+The governing contracts are
+[server runtime and application protocol](./features/server-runtime-and-protocol.md),
+[server-owned workspace state](./features/server-owned-workspace-state.md), and
+[connections and client hosts](./features/connections-and-client-hosts.md).

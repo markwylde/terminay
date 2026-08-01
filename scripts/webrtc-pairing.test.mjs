@@ -73,7 +73,7 @@ test('WebRtcPairingManager supports explicit localhost session origins for E2E',
   assert.equal(url.port, '18080')
   assert.equal(url.pathname, '/v1/')
   assert.equal(payload.appOrigin, `http://${payload.sessionId}.localhost:18080`)
-  assert.equal(payload.signalingUrl, 'ws://localhost:18080/signal')
+  assert.equal(payload.signalingUrl, `ws://${payload.sessionId}.localhost:18080/signal`)
 })
 
 test('WebRtcPairingManager accepts normalized localhost origins from settings', () => {
@@ -83,7 +83,7 @@ test('WebRtcPairingManager accepts normalized localhost origins from settings', 
   const url = new URL(payload.pairingUrl)
 
   assert.equal(url.origin, `http://${payload.sessionId}.localhost:18080`)
-  assert.equal(payload.signalingUrl, 'ws://localhost:18080/signal')
+  assert.equal(payload.signalingUrl, `ws://${payload.sessionId}.localhost:18080/signal`)
 })
 
 async function importWebRtcPairingManager() {

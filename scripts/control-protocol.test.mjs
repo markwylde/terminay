@@ -5,7 +5,13 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { transform } from 'esbuild'
 
-const { encodeControlMessage, createControlMessageDecoder } = await importTransformed(
+const {
+  CONTROL_PROTOCOL_VERSION,
+  ControlFrameLimitError,
+  encodeControlMessage,
+  createControlMessageDecoder,
+  isControlRequest,
+} = await importTransformed(
   '../electron/control/protocol.ts',
 )
 
@@ -51,6 +57,37 @@ test('decoder skips malformed lines and reports them', () => {
 test('decoder ignores blank lines', () => {
   const decode = createControlMessageDecoder()
   assert.deepEqual(decode('\n\n   \n'), [])
+})
+
+test('request validation requires an exact versioned capability envelope', () => {
+  const request = {
+    id: 'request-1',
+    token: 'terminal-capability',
+    version: CONTROL_PROTOCOL_VERSION,
+    op: 'list_terminals',
+    params: {},
+  }
+  assert.equal(isControlRequest(request), true)
+  assert.equal(isControlRequest({ ...request, token: undefined }), false)
+  assert.equal(isControlRequest({ ...request, pid: process.pid }), false)
+  assert.equal(isControlRequest({ ...request, version: 999 }), false)
+  assert.equal(isControlRequest({ ...request, op: 'read_every_secret' }), false)
+  assert.equal(isControlRequest({ ...request, params: [] }), false)
+})
+
+test('decoder rejects oversized complete and unterminated partial frames', () => {
+  const complete = createControlMessageDecoder(undefined, { maxFrameBytes: 8 })
+  assert.throws(
+    () => complete('123456789\n'),
+    (error) => error instanceof ControlFrameLimitError,
+  )
+
+  const partial = createControlMessageDecoder(undefined, { maxFrameBytes: 8 })
+  assert.deepEqual(partial('1234'), [])
+  assert.throws(
+    () => partial('56789'),
+    (error) => error instanceof ControlFrameLimitError,
+  )
 })
 
 async function importTransformed(relativePath) {

@@ -1,0 +1,8 @@
+{
+  "name": "terminay-headless-webrtc-werift-spike",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "werift": "0.24.1"
+  }
+}

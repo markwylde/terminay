@@ -62,7 +62,7 @@ test('saves select field options after raw textarea editing', async ({ appHarnes
   await macrosWindow.getByRole('button', { name: 'Save Changes' }).click()
 
   const savedMacro = await macrosWindow.evaluate(async () => {
-    const macros = await window.terminay.getMacros()
+    const macros = await window.terminayMacroSettingsCompatibilityHost.getMacros()
     return macros.find((macro) => macro.title === 'Eta Select Macro') ?? null
   })
 
@@ -92,7 +92,7 @@ test('saves parameterized wait steps in seconds', async ({ appHarness, mainWindo
   await macrosWindow.getByRole('button', { name: 'Save Changes' }).click()
 
   const savedMacro = await macrosWindow.evaluate(async () => {
-    const macros = await window.terminay.getMacros()
+    const macros = await window.terminayMacroSettingsCompatibilityHost.getMacros()
     return macros.find((macro) => macro.title === 'Parameterized Wait Macro') ?? null
   })
 
@@ -138,7 +138,7 @@ test('searches macro file fields relative to the project root', async ({ createW
   const search = async (query: string) => {
     return mainWindow.evaluate(
       async ({ query: nextQuery, rootDir }) => {
-        return window.terminay.searchFiles({ rootPath: rootDir, query: nextQuery, limit: 20 })
+        return window.terminayFileExplorerHost!.searchFiles({ rootPath: rootDir, query: nextQuery, limit: 20 })
       },
       { query, rootDir: workspace.rootDir },
     )

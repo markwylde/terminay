@@ -17,14 +17,23 @@ Raw terminal signals remain available only as terminal-activity fallback. They
 must not override an authoritative agent entry. See
 [terminal-activity-signals.md](./terminal-activity-signals.md).
 
-## Goals
+## Ownership
+
+The agent hook receiver, trust, drivers, canonical snapshot, acknowledgement,
+and terminal/project mapping live in Terminay Server under
+[server-owned workspace state](./server-owned-workspace-state.md). Connected
+clients subscribe to the same ordered server snapshot, so reload or another
+client cannot create a competing agent authority. Provider hooks remain scoped
+to the exact immutable server terminal session.
+
+## Product outcomes
 
 - Make it obvious which agents are working, need the user, or have finished.
-- Keep provider-specific event formats out of renderer components and stores.
+- Keep provider-specific event formats out of client components and stores.
 - Associate every root agent and child with the exact terminal the user can
   activate.
 - Preserve user-owned provider hook configuration during install and uninstall.
-- Survive renderer reloads and reject stale or out-of-order lifecycle events.
+- Survive client reloads and reject stale or out-of-order lifecycle events.
 - Degrade safely when hooks are unavailable without pretending fallback guesses
   are authoritative.
 
@@ -51,7 +60,7 @@ formats are driver details, not additional providers or UI states.
 | `idle` | The session exists but has no active work or pending result to emphasize. | Neutral or hidden on compact surfaces. |
 
 `working`, `waiting`, `blocked`, `done`, and `idle` are the only canonical
-operational states in v1. The UI must not add inferred states such as
+operational states. The UI must not add inferred states such as
 “thinking”, “planning”, “tooling”, “offline”, or “success” without a later
 model change.
 
@@ -110,16 +119,16 @@ When Terminay creates a local PTY, it injects:
 - `TERMINAY_AGENT_HOOK_TOKEN`: a receiver authentication secret.
 
 Managed provider hooks inherit these values from the agent process and include
-them when delivering events. The main process resolves the event by the exact
+them when delivering events. Terminay Server resolves the event by the exact
 `TERMINAY_SESSION_ID`; terminal title, CWD, provider process name, active tab,
 and “closest match” logic are forbidden for identity.
 
-The terminal session maps to its Dockview panel and owning Terminay project in
-renderer state. A root entry's `activationTerminalSessionId` is that session
-ID. An in-process child inherits it unless the provider proves the child owns a
+The terminal session maps to its owning Terminay project and panel in server
+state. A root entry's `activationTerminalSessionId` is that session ID. An
+in-process child inherits it unless the provider proves the child owns a
 different Terminay PTY.
 
-Unknown, exited, or cross-window session IDs are rejected or ignored safely.
+Unknown, exited, or cross-server session IDs are rejected or ignored safely.
 The runtime must not attach such events to whichever terminal happens to be
 focused.
 
@@ -158,16 +167,25 @@ Normalization may return no event for unsupported or malformed native input.
 Drivers do not focus UI, infer projects, mutate the agent-status store directly,
 or parse terminal output.
 
-The main-process receiver:
+The server receiver:
 
 - listens only on loopback;
 - accepts only the intended HTTP method/path and JSON content;
 - validates the bearer/token secret and exact terminal identity;
 - caps request bodies and rejects malformed JSON;
 - sends validated payloads through the driver registry;
-- stamps/accepts ordering metadata and publishes ordered snapshots over IPC.
+- stamps or accepts ordering metadata and publishes ordered snapshots through
+  the application protocol.
 
-Secrets and full native payloads are not logged or exposed to the renderer.
+Secrets and full native payloads are not logged or exposed to clients.
+
+The server-core receiver binds only to a loopback address, retains a digest
+of each per-session hook token rather than the token itself, and enforces the
+exact registered server/project/session scope on every request. It rejects
+oversized or malformed JSON before normalization. A driver may inspect the
+bounded native object, but only a validated provider, agent identity, state,
+sequence, and acknowledgement update can enter the canonical snapshot; the
+native payload and caller-provided source are never published to clients.
 
 ## Provider mappings
 
@@ -193,7 +211,8 @@ Drivers map native lifecycle meaning, not message text:
 The Codex driver consumes supported native hook payloads and associates them
 with the inherited Terminay session environment. Prompt/session/tool events
 produce `working`; explicit user-input requests produce `waiting`; stop
-boundaries produce `done`; child agent IDs maintain the subagent roster.
+boundaries produce `done`; child agent IDs maintain the subagent roster. The
+managed `SessionEnd` hook retires the root session when the CLI exits.
 
 Terminal spinner output and OSC/BEL notifications are not canonical Codex
 events. If managed hooks are unavailable, the existing Codex terminal-signal
@@ -227,6 +246,12 @@ keeps an existing Terminay group at its current index, reconciles the exact
 managed hashes, and removes only its matching trust blocks on uninstall.
 
 Filesystem and home-directory paths are injectable in tests.
+
+Server-core owns the JSON hook reconciliation for both embedded and standalone
+hosts. Hosts provide the configured home and script roots through an injected
+filesystem boundary; no Electron application path is assumed. The global hook
+files contain only a static managed command and never a per-terminal endpoint,
+session ID, or receiver token.
 
 Installation is reconciliation, not replacement:
 
@@ -284,6 +309,11 @@ primary title. Missing optional metadata is omitted rather than replaced by
 invented values. Child rows omit provider/model metadata inherited unchanged
 from their parent.
 
+Ended provider sessions and completed child entries remain in status history
+but are excluded from the live Agents roster. A confirmed provider-process
+return to the known terminal shell may retire a live association when hooks do
+not report session end; this fallback does not infer a completion outcome.
+
 Prompts are rendered on one ellipsized line; the full value remains available
 through the row tooltip. Root rows with children expose a disclosure control
 that shows the child count and expands/collapses that root's subagent group.
@@ -305,7 +335,7 @@ final `agent_path` component as the child display name.
 Explorer, Agents, and Git are vertically reorderable with pointer-driven header
 handles. Reordering tracks real pointer movement only on the Y axis, preserves
 collapse and split-height state, and persists the resulting order as the
-default for future project tabs. The drag handle also supports Up/Down arrow
+default for newly created project tabs. The drag handle also supports Up/Down arrow
 keys.
 
 ### Click to focus
@@ -333,6 +363,14 @@ Enabling it reconciles the Terminay-managed Codex and Claude Code hook entries
 and enables the terminal-tab, project-sidebar panel, and header status surfaces. Disabling it
 removes only Terminay-managed hook entries and hides/disables those agent
 surfaces. It does not remove user-owned hooks or unrelated provider settings.
+
+The server is the runtime authority for this setting. While disabled it issues
+no new hook credentials, revokes every existing session lease, clears the
+reduced agent snapshot, and rejects subsequent hook delivery using a revoked
+lease. Re-enabling permits fresh leases for subsequently registered terminals;
+it never revives the pre-disable roster. Managed-hook reconciliation remains
+best effort: an unavailable provider configuration is reported diagnostically
+without changing the committed setting or inventing agent state.
 
 The existing Explorer/Git layout settings and the terminal-signal fallback
 settings remain independent.
@@ -364,13 +402,13 @@ No native OS notification is required by this feature.
 
 ## Persistence and freshness
 
-The main process owns the canonical in-memory snapshot and republishes it after
-a renderer reload. This preserves lifecycle state and acknowledgement while the
-app process remains alive.
+Terminay Server owns the canonical snapshot and republishes it after a client
+reload. This preserves lifecycle state and acknowledgement while the server
+process remains alive.
 
-V1 does not persist agent entries across a full app restart and does not
-provide historical agent runs. The persisted setting survives restart, but the
-snapshot begins empty. Within one app run:
+Agent entries do not survive a server restart and do not provide historical
+agent runs. The persisted setting survives restart, but the operational
+snapshot begins empty. Within one server run:
 
 - the latest accepted entry remains current until a newer ordered event or
   terminal lifecycle event arrives;
@@ -414,7 +452,8 @@ snapshot begins empty. Within one app run:
 7. The loopback receiver accepts a valid bounded authenticated request and
    rejects wrong method/path/token, malformed JSON, oversized bodies, and
    unknown terminal IDs without mutation.
-8. Snapshot IPC survives renderer reload and never exposes the receiver token.
+8. Snapshot publication survives client reload and never exposes the receiver
+   token.
 9. Session cleanup removes or ends only entries for the closed terminal.
 
 ### Drivers and hooks

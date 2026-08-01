@@ -112,9 +112,9 @@ function handlePreviewClick(event: MouseEvent<HTMLElement>) {
     return
   }
 
-  if (/^(https?|mailto):/i.test(href)) {
-    event.preventDefault()
-    void window.terminay?.openExternal(href)
+	if (/^https:/i.test(href)) {
+		event.preventDefault()
+		void window.terminayExternalHost?.open(href)
     return
   }
 

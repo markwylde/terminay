@@ -580,13 +580,13 @@ function buildTaskPathContextMenuItems(options: {
 		{
 			label: 'Copy path',
 			icon: <Copy size={14} />,
-			onClick: () => void window.terminay.writeClipboardText(document.path),
+			onClick: () => void window.terminayClipboardHost?.writeText(document.path),
 		},
 		{
 			label: 'Copy relative path',
 			icon: <Copy size={14} />,
 			onClick: () =>
-				void window.terminay.writeClipboardText(
+				void window.terminayClipboardHost?.writeText(
 					getPathRelativeToRoot(document.path, projectRootPath),
 				),
 		},
@@ -600,7 +600,7 @@ function buildTaskPathContextMenuItems(options: {
 		{
 			label: 'Reveal in OS',
 			icon: <FolderOpen size={14} />,
-			onClick: () => void window.terminay.revealInOS(document.path),
+			onClick: () => void window.terminayRevealHost?.reveal(document.path),
 		},
 	];
 }

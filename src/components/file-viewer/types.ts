@@ -13,4 +13,5 @@ export type FilePanelInstanceParams = {
   onSave?: () => Promise<boolean>
   preferredEngine?: FileViewerEngine
   projectColor?: string
+  projectRoot: string
 }

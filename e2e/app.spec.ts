@@ -34,7 +34,7 @@ async function openMacroLauncher(page: Page): Promise<void> {
 
 async function seedScrollTestMacros(page: Page, count = 20): Promise<void> {
   await page.evaluate(async (macroCount) => {
-    const macros = await window.terminay.getMacros()
+    const macros = await window.terminayMacroSettingsCompatibilityHost.getMacros()
     const extraMacros = Array.from({ length: macroCount }, (_, index) => ({
       id: `scroll-test-macro-${index + 1}`,
       title: `Scroll test macro ${index + 1}`,
@@ -51,7 +51,7 @@ async function seedScrollTestMacros(page: Page, count = 20): Promise<void> {
       fields: [],
     }))
 
-    await window.terminay.updateMacros([...macros, ...extraMacros])
+    await window.terminayMacroSettingsCompatibilityHost.updateMacros([...macros, ...extraMacros])
   }, count)
 }
 
@@ -73,6 +73,7 @@ async function openChildWindow(
   electronApp: ElectronApplication,
   action: () => Promise<void>,
 ): Promise<Page> {
+  await electronApp.firstWindow()
   const nextWindowPromise = electronApp.waitForEvent('window')
   await action()
   const nextWindow = await nextWindowPromise
@@ -134,7 +135,7 @@ test('opens and closes the file explorer sidebar', async ({ mainWindow }) => {
 test('opens the settings window', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
     await mainWindow.evaluate(async () => {
-      await window.terminay.openSettingsWindow()
+      await window.terminaySettingsWindowHost?.open()
     })
   })
 
@@ -145,7 +146,7 @@ test('opens the settings window', async ({ electronApp, mainWindow }) => {
 test('captures and resets command shortcuts in settings', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
     await mainWindow.evaluate(async () => {
-      await window.terminay.openSettingsWindow()
+      await window.terminaySettingsWindowHost?.open()
     })
   })
 
@@ -184,7 +185,7 @@ test('captures and resets command shortcuts in settings', async ({ electronApp, 
 test('updates menu accelerators when command shortcuts are cleared and reset', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
     await mainWindow.evaluate(async () => {
-      await window.terminay.openSettingsWindow()
+      await window.terminaySettingsWindowHost?.open()
     })
   })
 
@@ -197,11 +198,11 @@ test('updates menu accelerators when command shortcuts are cleared and reset', a
 
   await terminalShortcutRow.getByRole('button', { name: 'Clear' }).click()
   await expect(shortcutInput).toHaveValue('')
-  await expect(getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).resolves.toBeNull()
+  await expect.poll(() => getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).toBeNull()
 
   await settingsWindow.getByRole('button', { name: 'Reset All' }).click()
   await expect(shortcutInput).toHaveValue('CmdOrCtrl+T')
-  await expect(getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).resolves.toBe('CmdOrCtrl+T')
+  await expect.poll(() => getAppMenuItemAccelerator(electronApp, 'Create a new terminal tab')).toBe('CmdOrCtrl+T')
 })
 
 test('exposes a Window menu for multi-window management', async ({ electronApp }) => {
@@ -217,19 +218,32 @@ test('exposes a Window menu for multi-window management', async ({ electronApp }
 })
 
 test('runs customized app shortcuts from the keyboard', async ({ mainWindow }) => {
-  const isMac = await mainWindow.evaluate(() => navigator.platform.toLowerCase().includes('mac'))
+  // Match the renderer's platform branch exactly. Chromium may report a
+  // reduced navigator.platform while Electron's user agent still identifies
+  // macOS, which otherwise makes this test send Control instead of Command.
+  const isMac = await mainWindow.evaluate(() => navigator.userAgent.includes('Mac'))
 
   await mainWindow.evaluate(async () => {
-    const settings = await window.terminay.getTerminalSettings()
-    await window.terminay.updateTerminalSettings({
-      ...settings,
-      keyboardShortcuts: {
-        ...settings.keyboardShortcuts,
-        'new-terminal': 'CmdOrCtrl+Y',
-      },
+    const changed = new Promise<void>((resolve) => {
+      const unsubscribe =
+        window.terminayTerminalSettingsCompatibilityHost.onTerminalSettingsChanged((message) => {
+          if (message.settings.keyboardShortcuts?.['new-terminal'] !== 'CmdOrCtrl+Y') return
+          unsubscribe()
+          resolve()
+        })
     })
+    const settings = await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()
+    await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings({
+      ...settings,
+      keyboardShortcuts: { ...settings.keyboardShortcuts, 'new-terminal': 'CmdOrCtrl+Y' },
+    })
+    await changed
   })
 
+  await expect(mainWindow.locator('.project-workspace--active')).toHaveAttribute(
+    'data-new-terminal-shortcut',
+    'CmdOrCtrl+Y',
+  )
   await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(1)
   await mainWindow.bringToFront()
   await mainWindow.locator('.terminal-panel').first().click()
@@ -237,16 +251,51 @@ test('runs customized app shortcuts from the keyboard', async ({ mainWindow }) =
   await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2)
 })
 
-test('opens the macros window', async ({ electronApp, mainWindow }) => {
+test('opens the macros window', async ({ electronApp }) => {
   const macrosWindow = await openChildWindow(electronApp, async () => {
-    await mainWindow.evaluate(async () => {
-      await window.terminay.openMacrosWindow()
+    await electronApp.evaluate(({ Menu }) => {
+      const visit = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
+        for (const item of items) {
+          if (item.label === 'Macros') return item
+          const nested = item.submenu == null ? undefined : visit(item.submenu.items)
+          if (nested !== undefined) return nested
+        }
+        return undefined
+      }
+      visit(Menu.getApplicationMenu()?.items ?? [])?.click()
     })
   })
 
   await expect(macrosWindow.getByRole('heading', { name: 'Macros' })).toBeVisible()
   await expect(macrosWindow.getByRole('button', { name: 'New Macro' })).toBeVisible()
   await expect(macrosWindow.getByText('Build reusable automation steps.')).toBeVisible()
+})
+
+test('persists server-owned macro edits across child-window reopen', async ({ electronApp }) => {
+  const openMacros = () => openChildWindow(electronApp, async () => {
+    await electronApp.evaluate(({ Menu }) => {
+      const visit = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
+        for (const item of items) {
+          if (item.label === 'Macros') return item
+          const nested = item.submenu == null ? undefined : visit(item.submenu.items)
+          if (nested !== undefined) return nested
+        }
+        return undefined
+      }
+      visit(Menu.getApplicationMenu()?.items ?? [])?.click()
+    })
+  })
+  const title = `Persistent Macro ${Date.now()}`
+  const firstWindow = await openMacros()
+  await firstWindow.getByRole('button', { name: 'New Macro' }).click()
+  await firstWindow.getByPlaceholder('Macro Title').fill(title)
+  await firstWindow.getByRole('button', { name: 'Save Changes' }).click()
+  await expect(firstWindow.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
+  await firstWindow.close()
+
+  const reopenedWindow = await openMacros()
+  await reopenedWindow.getByRole('button', { name: title }).click()
+  await expect(reopenedWindow.getByPlaceholder('Macro Title')).toHaveValue(title)
 })
 
 test('runs a macro from the launcher and records the completed run', async ({ mainWindow }) => {
@@ -275,7 +324,7 @@ test('prioritizes direct title matches in command bar search', async ({ mainWind
 
 test('preserves macro library order in command bar search', async ({ mainWindow }) => {
   await mainWindow.evaluate(async () => {
-    const macros = await window.terminay.getMacros()
+    const macros = await window.terminayMacroSettingsCompatibilityHost.getMacros()
     const otherMacros = macros.filter((macro) => !['pull-from-main', 'create-pull-request'].includes(macro.id))
     const pullFromMain = {
       id: 'pull-from-main',
@@ -308,7 +357,7 @@ test('preserves macro library order in command bar search', async ({ mainWindow 
       fields: [],
     }
 
-    await window.terminay.updateMacros([pullFromMain, createPullRequest, ...otherMacros])
+    await window.terminayMacroSettingsCompatibilityHost.updateMacros([pullFromMain, createPullRequest, ...otherMacros])
   })
 
   await openMacroLauncher(mainWindow)

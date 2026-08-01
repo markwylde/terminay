@@ -1,34 +1,540 @@
-@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600&display=swap');
-
 :root {
-  color: #dce2f0;
-  background: #0d1014;
-  font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+	color-scheme: light dark;
+	color: #dce2f0;
+	background: #0d1014;
+	font-family:
+		"Open Sans", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 * {
-  box-sizing: border-box;
+	box-sizing: border-box;
 }
 
 html,
 body,
 #root {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+}
+
+body {
+	background: #f6f7f9;
+	color: #17202c;
+}
+
+.terminay-server-connecting {
+	min-height: 100%;
+	display: grid;
+	place-items: center;
+	padding: 32px;
+	overflow: hidden;
+	background:
+		radial-gradient(
+			circle at center,
+			rgba(255, 255, 255, 0.7),
+			rgba(246, 247, 249, 0) 42%
+		),
+		#f6f7f9;
+	color: #17202c;
+	font-family:
+		"Open Sans", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	text-align: center;
+}
+
+.terminay-server-connecting__content {
+	display: grid;
+	justify-items: center;
+	gap: 14px;
+}
+
+.terminay-server-connecting__logo {
+	width: 72px;
+	height: 72px;
+	border-radius: 18px;
+	box-shadow: 0 18px 48px rgba(20, 29, 40, 0.18);
+}
+
+.terminay-server-connecting__text {
+	margin: 0;
+	color: #536170;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1.4;
+}
+
+.terminay-server-connecting[role="alert"] .terminay-server-connecting__text {
+	color: #a83a3a;
+}
+
+.terminay-server-connecting--silent {
+	background: #f6f7f9;
+}
+
+@media (prefers-color-scheme: dark) {
+	body {
+		background: #0d1014;
+		color: #dce2f0;
+	}
+
+	.terminay-server-connecting {
+		background:
+			radial-gradient(
+				circle at center,
+				rgba(49, 68, 91, 0.32),
+				rgba(13, 16, 20, 0) 44%
+			),
+			#0d1014;
+		color: #dce2f0;
+	}
+
+	.terminay-server-connecting__logo {
+		box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+	}
+
+	.terminay-server-connecting__text {
+		color: #9ba9ba;
+	}
+
+	.terminay-server-connecting[role="alert"] .terminay-server-connecting__text {
+		color: #ff9f9f;
+	}
+
+	.terminay-server-connecting--silent {
+		background: #0d1014;
+	}
 }
 
 button {
-  border: 1px solid #2f4158;
-  border-radius: 8px;
-  background: #1a2330;
-  color: #dce2f0;
-  padding: 0.4rem 0.75rem;
-  cursor: pointer;
+	border: 1px solid #2f4158;
+	border-radius: 8px;
+	background: #1a2330;
+	color: #dce2f0;
+	padding: 0.4rem 0.75rem;
+	cursor: pointer;
 }
 
 button:hover {
-  background: #243246;
+	background: #243246;
+}
+.connection-manager-modal {
+	display: grid;
+	gap: 16px;
+	width: min(760px, calc(100vw - 40px));
+	max-height: min(820px, calc(100vh - 40px));
+	overflow: auto;
+}
+
+.connection-manager-modal .project-edit-titlebar {
+	align-items: flex-start;
+}
+
+.connection-manager-modal__eyebrow {
+	display: block;
+	margin-bottom: 5px;
+	color: #62d8b6;
+	font-size: 10px;
+	font-weight: 800;
+	letter-spacing: 0.13em;
+	text-transform: uppercase;
+}
+
+.connection-manager-modal__profiles {
+	display: grid;
+	gap: 10px;
+}
+
+.connection-manager-modal__profiles h3 {
+	margin: 0;
+	font-size: 13px;
+}
+
+.connection-manager-modal__profiles [role='listbox'] {
+	display: grid;
+	gap: 10px;
+}
+
+.connection-manager-card {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-areas:
+		'identity status'
+		'actions actions';
+	align-items: center;
+	gap: 12px 16px;
+	padding: 14px;
+	border: 1px solid var(--border-color, #303946);
+	border-radius: 11px;
+	background: color-mix(in srgb, var(--panel-bg, #151b23) 92%, black);
+}
+
+.connection-manager-card--current {
+	border-color: color-mix(in srgb, #62d8b6 48%, transparent);
+	background: color-mix(
+		in srgb,
+		#62d8b6 7%,
+		var(--panel-bg, #151b23)
+	);
+}
+
+.connection-manager-card__identity {
+	display: grid;
+	grid-area: identity;
+	gap: 5px;
+	min-width: 0;
+}
+
+.connection-manager-card__identity > div {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.connection-manager-card__identity > span {
+	overflow: hidden;
+	color: var(--text-secondary, #92a0b2);
+	font-size: 11px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.connection-manager-card__fixed {
+	padding: 3px 7px;
+	border-radius: 999px;
+	background: rgba(98, 216, 182, 0.11);
+	color: #74dfc0;
+	font-size: 9px;
+	font-weight: 800;
+	text-transform: uppercase;
+}
+
+.connection-manager-card__status {
+	display: inline-flex;
+	grid-area: status;
+	align-items: center;
+	gap: 6px;
+	color: var(--text-secondary, #92a0b2);
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: capitalize;
+}
+
+.connection-manager-card__status::before {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+	content: '';
+}
+
+.connection-manager-card__status--connected {
+	color: #74dfc0;
+}
+
+.connection-manager-card__actions {
+	display: flex;
+	grid-area: actions;
+	flex-wrap: wrap;
+	gap: 7px;
+}
+
+.connection-manager-card__actions button {
+	min-height: 34px;
+	padding: 7px 11px;
+}
+
+.connection-manager-card__actions button:first-child {
+	border-color: rgba(98, 216, 182, 0.4);
+	color: #74dfc0;
+}
+
+.connection-manager-card__actions .danger,
+.connection-manager-modal__subpanel .danger {
+	color: #f2a19a;
+}
+
+.connection-manager-modal__add {
+	padding: 13px 14px;
+	border: 1px solid var(--border-color, #303946);
+	border-radius: 11px;
+	background: color-mix(in srgb, var(--panel-bg, #151b23) 92%, black);
+}
+
+.connection-manager-modal__add summary {
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 750;
+}
+
+.connection-manager-modal__add form {
+	display: grid;
+	gap: 12px;
+	padding-top: 14px;
+}
+
+.connection-manager-modal__subpanel {
+	display: grid;
+	gap: 12px;
+	padding: 14px;
+	border: 1px solid var(--border-color, #303946);
+	border-radius: 11px;
+	background: color-mix(in srgb, var(--panel-bg, #151b23) 92%, black);
+}
+
+.connection-manager-modal__subpanel p {
+	margin: 0;
+	color: var(--text-secondary, #92a0b2);
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+@media (max-width: 620px) {
+	.connection-manager-modal {
+		width: calc(100vw - 24px);
+		max-height: calc(100vh - 24px);
+	}
+
+	.connection-manager-card__actions {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.connection-manager-card__actions button:first-child {
+		grid-column: 1 / -1;
+	}
+}
+
+/* Connection management uses the same visual system as the shared Edit Tab
+ * modal: one quiet surface, content-led header, blue actions, and a sticky
+ * footer. These final declarations intentionally supersede the legacy
+ * project-edit modal styles above. */
+.connection-manager-modal {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+	width: min(680px, calc(100vw - 40px));
+	max-height: min(860px, calc(100vh - 40px));
+	padding: 32px 32px 0;
+	overflow: auto;
+	border: 0;
+	border-radius: 20px;
+	background: #0d0f12;
+	color: #e2e8f0;
+	box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+	font-family:
+		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+		sans-serif;
+}
+
+.connection-manager-modal__header {
+	display: grid;
+	gap: 4px;
+}
+
+.connection-manager-modal__header h2 {
+	margin: 0;
+	color: #fff;
+	font-size: 20px;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.connection-manager-modal__header p {
+	margin: 0;
+	color: #94a3b8;
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.connection-manager-modal__profiles {
+	gap: 8px;
+}
+
+.connection-manager-modal__profiles h3 {
+	color: #94a3b8;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.connection-manager-card {
+	gap: 12px 16px;
+	padding: 14px 16px;
+	border-color: #1e293b;
+	border-radius: 10px;
+	background: #0f172a;
+}
+
+.connection-manager-card--current {
+	border-color: #334155;
+	background: #111827;
+}
+
+.connection-manager-card__identity strong {
+	color: #f8fafc;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.connection-manager-card__identity > span {
+	color: #64748b;
+	font-size: 11px;
+}
+
+.connection-manager-card__fixed {
+	background: #1e293b;
+	color: #94a3b8;
+	font-size: 9px;
+}
+
+.connection-manager-card__status {
+	color: #94a3b8;
+}
+
+.connection-manager-card__status--connected {
+	color: #4ade80;
+}
+
+.connection-manager-modal button,
+.connection-manager-modal .btn {
+	appearance: none;
+	min-height: 38px;
+	padding: 8px 14px;
+	border: 1px solid #1e293b;
+	border-radius: 8px;
+	background: transparent;
+	color: #94a3b8;
+	font: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition:
+		background 0.2s ease,
+		border-color 0.2s ease,
+		color 0.2s ease;
+}
+
+.connection-manager-modal button:hover:not(:disabled) {
+	border-color: #334155;
+	background: rgba(255, 255, 255, 0.05);
+	color: #f1f5f9;
+}
+
+.connection-manager-modal button:disabled {
+	cursor: not-allowed;
+	opacity: 0.48;
+}
+
+.connection-manager-card__actions button:first-child {
+	border-color: #334155;
+	color: #cbd5e1;
+}
+
+.connection-manager-card__actions .danger,
+.connection-manager-modal__subpanel .danger {
+	color: #fca5a5;
+}
+
+.connection-manager-card__actions .danger:hover:not(:disabled),
+.connection-manager-modal__subpanel .danger:hover:not(:disabled) {
+	border-color: rgba(239, 68, 68, 0.35);
+	background: rgba(239, 68, 68, 0.08);
+	color: #fecaca;
+}
+
+.connection-manager-modal__add,
+.connection-manager-modal__subpanel {
+	padding: 16px;
+	border-color: #1e293b;
+	border-radius: 10px;
+	background: transparent;
+}
+
+.connection-manager-modal__add summary {
+	color: #cbd5e1;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.connection-manager-modal__add .file-explorer-name-modal-description {
+	margin: 0;
+	color: #64748b;
+	font-size: 12px;
+}
+
+.connection-manager-modal label {
+	display: grid;
+	gap: 8px;
+	color: #94a3b8;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.connection-manager-modal input[type="text"] {
+	width: 100%;
+	padding: 12px 16px;
+	border: 1px solid #1e293b;
+	border-radius: 8px;
+	outline: none;
+	background: #0f172a;
+	color: #f8fafc;
+	font: inherit;
+	font-size: 14px;
+	transition:
+		border-color 0.2s ease,
+		background 0.2s ease,
+		box-shadow 0.2s ease;
+}
+
+.connection-manager-modal input[type="text"]:focus {
+	border-color: #3b82f6;
+	background: #1e293b;
+	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.connection-manager-modal .project-edit-actions button[type="submit"] {
+	border-color: #3b82f6;
+	background: #3b82f6;
+	color: #fff;
+}
+
+.connection-manager-modal .project-edit-actions button[type="submit"]:hover:not(
+		:disabled
+	) {
+	border-color: #2563eb;
+	background: #2563eb;
+	box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.connection-manager-modal__footer {
+	position: sticky;
+	bottom: 0;
+	z-index: 2;
+	display: flex;
+	justify-content: flex-end;
+	margin: auto -32px 0;
+	padding: 16px 32px;
+	border-top: 1px solid #1e293b;
+	background: #0d0f12;
+}
+
+.connection-manager-modal__footer .btn {
+	min-width: 96px;
+	padding: 10px 24px;
+	font-size: 14px;
+}
+
+@media (max-width: 620px) {
+	.connection-manager-modal {
+		width: calc(100vw - 24px);
+		max-height: calc(100vh - 24px);
+		padding: 24px 20px 0;
+		border-radius: 16px;
+	}
+
+	.connection-manager-modal__footer {
+		margin-inline: -20px;
+		padding-inline: 20px;
+	}
 }
