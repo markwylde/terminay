@@ -370,6 +370,12 @@ The current evidence boundary is recorded in
     it does not prove a successful signed/notarized release-runner execution.
     Evidence: `.github/workflows/trigger-release.yml` and
     `scripts/task20-ci-security.test.mjs`.
+  - [x] Submit the final DMG container to Apple's notary service after
+    packaging, wait for acceptance, and staple its ticket before validating
+    the exact publishable image. App notarization during packaging alone does
+    not create a ticket for a subsequently built DMG. Evidence:
+    `.github/workflows/trigger-release.yml` and
+    `scripts/task20-ci-security.test.mjs`.
   - [x] Require the mounted macOS candidate DMG to contain exactly one real
     `Terminay.app` with a real expected executable before code-signing,
     Gatekeeper, or notarization checks. This prevents an ambiguous, missing,
