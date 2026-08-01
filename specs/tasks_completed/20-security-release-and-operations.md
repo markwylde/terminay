@@ -413,6 +413,12 @@ The current evidence boundary is recorded in
     newline text can corrupt the package manifest. Evidence:
     `scripts/sync-package-version.mjs`, `.github/workflows/trigger-release.yml`,
     and `scripts/release-config.test.mjs`.
+  - [x] Inspect the extracted standalone npm payload and bind its manifest
+    version to the release tag without executing the CLI before its declared
+    package dependencies are installed. Runtime execution remains covered by
+    the dependency-closure artifact tests. Evidence:
+    `scripts/standalone-artifact.mjs`, `.github/workflows/trigger-release.yml`,
+    and `scripts/task20-ci-security.test.mjs`.
   - [x] Require the release job itself to select exactly one newly created
     canonical semantic-version tag, rather than reusing any prior tag that
     happens to point at `HEAD`, and prove that new tag still resolves to the
