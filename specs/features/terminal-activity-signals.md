@@ -156,7 +156,11 @@ changing `working`, `waiting`, `blocked`, `done`, or `idle`.
 For terminal fallback activity, viewing the terminal or typing into it clears
 the pending terminal indicator. Selecting a terminal through the Dockview tab
 lifecycle reports the same server-owned acknowledgement as programmatic focus;
-focus styling alone must not leave an active terminal counted as unviewed.
+focus styling alone must not leave fallback shell noise counted as unviewed.
+Late fallback lifecycle output produced while switching projects is part of the
+same viewing acknowledgement for the terminal that was visible at handoff.
+Structured completion remains eligible for the finished indicator even when
+the terminal is active.
 
 ## Parsing and data flow
 
