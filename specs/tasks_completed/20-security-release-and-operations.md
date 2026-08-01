@@ -458,6 +458,11 @@ The current evidence boundary is recorded in
     execution or signed publication. Evidence:
     `.github/workflows/trigger-release.yml` and
     `scripts/task20-ci-security.test.mjs`.
+  - [x] Check out the immutable release tag without persisted credentials in
+    the final publication job, prove it still resolves to the captured release
+    source, and use that reviewed source's verifier for detached standalone
+    signatures. Evidence: `.github/workflows/trigger-release.yml` and
+    `scripts/task20-ci-security.test.mjs`.
   - [x] Explicitly exclude hidden files from every release workflow-artifact
     upload, so runner-local dotfiles cannot enter release-notes, Desktop-binary,
     or standalone-server handoffs through a future path expansion. This is a

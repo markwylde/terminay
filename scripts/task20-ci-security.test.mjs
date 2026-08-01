@@ -319,6 +319,23 @@ test("standalone server archive is signed and re-verified at every release hando
     "standalone publication must refuse to replace a prior immutable release asset");
 
   const notes = release.slice(notesStart);
+  const notesCheckout = notes.indexOf("- name: Check out release verification code");
+  const notesSource = notes.indexOf("- name: Verify immutable release source before publication");
+  const notesDownload = notes.indexOf("- name: Download release notes artifact");
+  assert.ok(notesCheckout >= 0 && notesSource > notesCheckout && notesDownload > notesSource,
+    "final publication must check out and verify immutable source before downloading release evidence");
+  const notesCheckoutStep = notes.slice(notesCheckout, notesSource);
+  assert.match(notesCheckoutStep, /ref: \$\{\{ needs\.release\.outputs\.tag \}\}/u,
+    "signature verification code must come from the exact release tag");
+  assert.match(notesCheckoutStep, /persist-credentials: false/u,
+    "verification checkout must not persist a write-capable token");
+  const notesSourceStep = notes.slice(notesSource, notesDownload);
+  assert.match(notesSourceStep, /EXPECTED_COMMIT: \$\{\{ needs\.release\.outputs\.source_commit \}\}/u,
+    "final publication must bind verification code to the captured release source");
+  assert.match(notesSourceStep, /git rev-parse "\$TAG\^\{commit\}"/u,
+    "final publication must resolve the immutable tag target");
+  assert.match(notesSourceStep, /git rev-parse HEAD/u,
+    "final publication must verify its checked-out source");
   assert.match(notes, /terminay-server-\$\{VERSION\}\.tgz\.sig/u,
     "release-note publication must require the published standalone signature");
   assert.match(notes, /release-signature\.mjs verify[\s\\]+"\$ASSET_DIR\/terminay-server-\$\{VERSION\}\.tgz"[\s\\]+"\$ASSET_DIR\/terminay-server-\$\{VERSION\}\.tgz\.sig"/u,
