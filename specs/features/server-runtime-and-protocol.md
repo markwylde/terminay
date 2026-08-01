@@ -103,6 +103,10 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
   engine, required CLI/MCP entrypoints, payload hashes, and absence of Electron
   imports before publication. Native OS/architecture/ABI probes remain release
   evidence; this manifest check does not claim signing or notarization.
+- CI exercises node-pty through the canonical server-core terminal authority on
+  native x64 and arm64 runners. Desktop packaging proves its extracted
+  `@terminay/server` dependency closure; the removed Electron `ptyHost` child
+  artifact is not a v2 release input.
 - A clean dependency install normalizes the executable mode of node-pty's
   platform `spawn-helper` before development, tests, or artifact staging. The
   normalization is bounded to that named helper inside the installed node-pty

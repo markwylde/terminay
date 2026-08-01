@@ -13,7 +13,7 @@ test('release evidence is deterministic and records native/runtime provenance', 
   const manifest = createReleaseManifest(inputs, first)
   assert.equal(manifest.lockfileVersion, 3)
   assert.ok(manifest.nativePackages.some((name) => name.includes('node-pty')))
-  assert.match(manifest.provenance.nativeRuntime, /build-pty-runtime-artifact/)
+	assert.match(manifest.provenance.nativeRuntime, /build-standalone-server-artifact/)
   assert.match(manifest.provenance.webrtcRuntime, /build-secure-werift/)
   assert.ok(manifest.dependencyEvidence.packageCount > 0)
   assert.ok(manifest.dependencyEvidence.integrityCoverage > 0)

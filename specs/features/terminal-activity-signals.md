@@ -154,7 +154,9 @@ acknowledgement flag are orthogonal. Viewing an agent acknowledges it without
 changing `working`, `waiting`, `blocked`, `done`, or `idle`.
 
 For terminal fallback activity, viewing the terminal or typing into it clears
-the pending terminal indicator as today.
+the pending terminal indicator. Selecting a terminal through the Dockview tab
+lifecycle reports the same server-owned acknowledgement as programmatic focus;
+focus styling alone must not leave an active terminal counted as unviewed.
 
 ## Parsing and data flow
 

@@ -69,6 +69,11 @@ recordings, macros, file, and Git surfaces. Browser hosts keep every route
 in-page; Desktop may present eligible secondary routes in native auxiliary
 windows only when its `nativeWindows` capability is declared.
 
+Desktop development and auxiliary query routes render those same production
+shared route bodies against the authenticated embedded-server clients. They do
+not substitute legacy placeholder content for connections, Git, agents,
+folders, or terminal views.
+
 The existing activity/notification indicator remains separate. Connection
 status must not be conflated with terminal or agent attention.
 

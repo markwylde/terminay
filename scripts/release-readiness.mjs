@@ -131,7 +131,7 @@ export function createReleaseManifest(inputs, sbom) {
     },
     provenance: {
       lockfile: 'package-lock.json',
-      nativeRuntime: 'scripts/build-pty-runtime-artifact.mjs',
+      nativeRuntime: 'scripts/build-standalone-server-artifact.mjs',
       webrtcRuntime: 'scripts/build-secure-werift-candidate.mjs',
       sourceCorrespondence: 'git commit and locked package manifest are required at release time',
     },

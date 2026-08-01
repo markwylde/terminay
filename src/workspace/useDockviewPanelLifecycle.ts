@@ -85,6 +85,12 @@ export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 		event.api.onDidActivePanelChange(() => {
 			const latest = optionsRef.current;
 			latest.syncPanelFocusState();
+			const sessionId = event.api.activePanel?.params?.sessionId;
+			if (typeof sessionId === 'string' && sessionId.length > 0) {
+				latest.focusedSessionIdRef.current = sessionId;
+				latest.setFocusedSessionId(sessionId);
+				latest.markTerminalActivityViewed(sessionId);
+			}
 		});
 	}, []);
 
