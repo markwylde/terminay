@@ -791,6 +791,6 @@ test("release notes verify downloaded GitHub Release bytes against their publish
     "the macOS checksum sidecar must be downloaded");
   assert.match(verification, /Terminay-Linux-\$\{VERSION\}\.AppImage\.sha256/u,
     "the Linux checksum sidecar must be downloaded");
-  assert.match(verification, /shasum -a 256 -c "\$asset\.sha256"/u,
-    "downloaded Desktop assets must verify against their published sidecars");
+  assert.match(verification, /cd "\$ASSET_DIR"[\s\S]*shasum -a 256 -c "\$\(basename "\$asset"\)\.sha256"/u,
+    "downloaded assets must verify beside their portable published sidecars");
 });

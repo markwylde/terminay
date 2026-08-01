@@ -450,7 +450,9 @@ The current evidence boundary is recorded in
     `scripts/task20-ci-security.test.mjs`.
   - [x] Require release-note publication to download the exact published macOS
     and Linux Desktop assets and validate their downloaded bytes against the
-    published SHA-256 sidecars before presenting download links. This closes
+    published SHA-256 sidecars from the shared download directory before
+    presenting download links. Portable sidecars name only their payload, so
+    verification must run beside those downloaded bytes. This closes
     the GitHub-Release handoff between attachment and release-note publication;
     it is a local workflow-contract proof, not a successful release-runner
     execution or signed publication. Evidence:

@@ -620,7 +620,10 @@ jobs:
             "$ASSET_DIR/Terminay-Mac-${VERSION}-Installer.dmg" \
             "$ASSET_DIR/Terminay-Linux-${VERSION}.AppImage" \
             "$ASSET_DIR/terminay-server-${VERSION}.tgz"; do
-            shasum -a 256 -c "$asset.sha256"
+            (
+              cd "$ASSET_DIR"
+              shasum -a 256 -c "$(basename "$asset").sha256"
+            )
           done
           test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
           node scripts/release-signature.mjs verify \
