@@ -67,7 +67,10 @@ jobs:
           persist-credentials: false
 
       - name: Install dependencies on clean supported server runner
-        run: npm ci
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends build-essential python3
+          npm ci
 
       - name: Build and smoke the foreground server
         run: npm run test:standalone-server

@@ -31,7 +31,7 @@ test('fails a hosted pairing closed when Desktop has no selected server-owned We
 	mainWindow,
 }) => {
 	const runtimeError =
-		'Desktop WebRTC runtime is unavailable in this build. Install a build with an approved production WebRTC runtime before enabling WebRTC Remote Access.';
+		'Desktop WebRTC Relay is unavailable in this build because its authenticated hosted signaling runtime is not installed.';
 	await configureWebRtcRemoteAccess(mainWindow, {
 		hostedDomain: 'http://localhost:9',
 		lanPort: 9,
