@@ -1,4 +1,4 @@
-import { createHash, createHmac, generateKeyPairSync, hkdfSync, randomUUID, sign } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, createHmac, generateKeyPairSync, hkdfSync, randomBytes, randomUUID, sign } from 'node:crypto'
 import { lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -16,6 +16,29 @@ export type ProtectedValueCodec = Readonly<{
   encrypt: (plainText: string) => Buffer
   isAvailable: () => boolean
 }>
+
+/** Authenticated process-lifetime protection for isolated Desktop automation. */
+export function createEphemeralTestProtectedValueCodec(): ProtectedValueCodec {
+  const key = randomBytes(32)
+  return Object.freeze({
+    backend: () => 'terminay_test_ephemeral',
+    decrypt: (encrypted: Buffer) => {
+      if (encrypted.length < 29 || encrypted[0] !== 1) throw new Error('Test credential ciphertext is invalid.')
+      const nonce = encrypted.subarray(1, 13)
+      const tag = encrypted.subarray(13, 29)
+      const decipher = createDecipheriv('aes-256-gcm', key, nonce)
+      decipher.setAuthTag(tag)
+      return Buffer.concat([decipher.update(encrypted.subarray(29)), decipher.final()]).toString('utf8')
+    },
+    encrypt: (plainText: string) => {
+      const nonce = randomBytes(12)
+      const cipher = createCipheriv('aes-256-gcm', key, nonce)
+      const ciphertext = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()])
+      return Buffer.concat([Buffer.from([1]), nonce, cipher.getAuthTag(), ciphertext])
+    },
+    isAvailable: () => true,
+  })
+}
 
 type StoredDeviceCredential = Readonly<{
   deviceId: string
