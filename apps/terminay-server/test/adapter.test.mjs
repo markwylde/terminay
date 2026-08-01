@@ -205,6 +205,9 @@ test("typed terminal adapter bounds every wait lifetime before invoking server h
 
 test("typed terminal adapter cancels before and during backend work and bounds typed errors", async () => {
   let invoked = 0;
+  let releaseWrite;
+  let reportWriteStarted;
+  const writeStarted = new Promise((resolve) => { reportWriteStarted = resolve; });
   const dispatch = createTerminalControlAdapter({
     adapter: {
       listTerminals: () => [],
@@ -213,7 +216,8 @@ test("typed terminal adapter cancels before and during backend work and bounds t
       openTerminal: () => ({}),
       writeTerminal: async (_params, _context, signal) => {
         invoked += 1;
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        reportWriteStarted();
+        await new Promise((resolve) => { releaseWrite = resolve; });
         return signal.aborted ? { ignored: true } : { ok: true };
       },
       runCommand: () => ({}),
@@ -235,7 +239,9 @@ test("typed terminal adapter cancels before and during backend work and bounds t
 
   const during = new AbortController();
   const pending = dispatch({ id: "during", version: 1, op: "write_terminal", params: { terminal: "worker", text: "ok" } }, { ...baseContext, signal: during.signal });
-  setTimeout(() => during.abort(), 1);
+  await writeStarted;
+  during.abort();
+  releaseWrite();
   const cancelledDuring = await pending;
   assert.equal(cancelledDuring.ok, false);
   assert.equal(cancelledDuring.error.code, "cancelled");
