@@ -286,12 +286,14 @@ test('persists server-owned macro edits across child-window reopen', async ({ el
   })
   const title = `Persistent Macro ${Date.now()}`
   const firstWindow = await openMacros()
+  await firstWindow.getByRole('button', { name: 'New Macro' }).click()
   await firstWindow.getByPlaceholder('Macro Title').fill(title)
   await firstWindow.getByRole('button', { name: 'Save Changes' }).click()
   await expect(firstWindow.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
   await firstWindow.close()
 
   const reopenedWindow = await openMacros()
+  await reopenedWindow.getByRole('button', { name: title }).click()
   await expect(reopenedWindow.getByPlaceholder('Macro Title')).toHaveValue(title)
 })
 

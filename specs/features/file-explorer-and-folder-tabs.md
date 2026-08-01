@@ -10,6 +10,9 @@ in a persistent, reorderable vertical stack.
 
 - The Explorer watches the project root, supports refresh, collapse/expand,
   configurable default visibility/width, and Git new/modified decoration.
+- A server-owned filesystem watch event refreshes both the affected directory
+  and its Git decorations; external edits do not wait for the slower Git status
+  reconciliation poll.
 - Users can open files/folders, drag them to the tab area, create, rename, and
   delete entries, copy paths, reveal items in the OS, and set a root from a
   terminal working directory.
@@ -73,6 +76,7 @@ applying later events.
 
 - File changes made externally become visible without losing an unrelated
   selection or opening a duplicate tab.
+- Git decorations reflect external file changes from the same watch delivery.
 - Navigation remains scoped to the selected project root and does not grant the
   renderer arbitrary filesystem access.
 - Folder task aggregation stays responsive by applying ignored-directory and

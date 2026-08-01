@@ -501,7 +501,9 @@ test.describe('terminal behavior', () => {
 		);
 
 		await mainWindow.locator('.terminal-panel').first().click();
-		await mainWindow.keyboard.press('Meta+F');
+		await mainWindow.keyboard.press(
+			process.platform === 'darwin' ? 'Meta+F' : 'Control+F',
+		);
 
 		const search = mainWindow.getByRole('search', {
 			name: 'Search terminal output',
