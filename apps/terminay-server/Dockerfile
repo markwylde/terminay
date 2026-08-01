@@ -12,6 +12,7 @@ COPY packages/protocol/package.json ./packages/protocol/package.json
 COPY packages/protocol-conformance/package.json ./packages/protocol-conformance/package.json
 COPY packages/responsive-ui/package.json ./packages/responsive-ui/package.json
 COPY packages/server-core/package.json ./packages/server-core/package.json
+COPY scripts/ensure-node-pty-helper-mode.mjs ./scripts/ensure-node-pty-helper-mode.mjs
 
 RUN --mount=type=cache,id=terminay-apt-cache-bookworm,target=/var/cache/apt,sharing=locked \
   --mount=type=cache,id=terminay-apt-lists-bookworm,target=/var/lib/apt/lists,sharing=locked \

@@ -19,6 +19,7 @@ export const FILE_VIEWER_OPERATIONS = Object.freeze({
   contentHex: "files.content-hex",
   contentPreview: "files.content-preview",
   gitDiff: "file.get-git-diff",
+  mutationRevision: "file.mutation-revision",
   textMetadata: "file.text-metadata",
   textLines: "file.text-lines",
   saveSparse: "file.save-sparse",
@@ -464,9 +465,21 @@ export class FileViewerClient {
     return validateFolderMarkdownTasks(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.folderTasks, payload, options));
   }
 
-  getGitDiff(path: string, options: QueryOptions = {}): Promise<JsonValue> {
+  async getGitDiff(path: string, projectId?: string, options: QueryOptions = {}): Promise<JsonValue> {
     if (typeof path !== "string" || path.length === 0 || path.includes("\0")) throw new TypeError("file path is invalid");
-    return this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.gitDiff, { path }, options);
+    const payload = { path, ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const binary = this.transport as Partial<BinaryQueryTransport>;
+    if (typeof binary.queryWithBody === "function") {
+      const response = await binary.queryWithBody<JsonValue>(FILE_VIEWER_OPERATIONS.gitDiff, payload, options);
+      return parseJsonBody(response.body, "file Git diff");
+    }
+    return this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.gitDiff, payload, options);
+  }
+
+  async getMutationRevision(path: string, projectId?: string, options: QueryOptions = {}): Promise<{ readonly ino: number; readonly mtimeMs: number; readonly size: number }> {
+    const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.mutationRevision, { path: boundedPath(path, "file path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) }, options);
+    if (!isRecord(value) || !Number.isSafeInteger(value.ino) || (value.ino as number) < 0 || typeof value.mtimeMs !== "number" || !Number.isFinite(value.mtimeMs) || !Number.isSafeInteger(value.size) || (value.size as number) < 0) throw new TypeError("file mutation revision response is invalid");
+    return Object.freeze({ ino: value.ino as number, mtimeMs: value.mtimeMs, size: value.size as number });
   }
 
   async getTextMetadata(path: string, projectRoot: string, options: QueryOptions = {}): Promise<FileTextMetadata> {

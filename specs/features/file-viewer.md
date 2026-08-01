@@ -211,6 +211,13 @@ FilePanel's ranged text probes and sparse saves use the shared `FileViewerClient
 facade, including revision preconditions, so the component does not call a
 host preload API directly.
 
+The embedded Desktop composition registers the complete file-session surface,
+Git-backed file diff projection, mutation-revision query, and bounded sparse
+save command before a connected panel is usable. These operations resolve the
+authenticated project-relative path against the server's canonical root. A
+bounded Git diff remains a tracked target and reports its explicit too-large
+state rather than disabling the Diff mode.
+
 - A clean file matches its confirmed disk revision.
 - A dirty file differs from its confirmed disk revision.
 - Dirty panels show an accessible dirty indicator.

@@ -140,6 +140,7 @@ export type FileViewerGateway = {
   getFileDiff: (path: string) => Promise<GitFileDiff>
   getFileInfo: (path: string) => Promise<FileInfo>
   getGitRepoInfo: (path: string) => Promise<FileViewerGitRepoInfo>
+  getMutationRevision: (path: string) => Promise<Pick<FileInfo, 'ino' | 'mtimeMs' | 'size'>>
   getPreviewSource: (path: string) => Promise<FileViewerPreviewSource>
   onFileWatchEvent: (listener: (event: FileWatchEvent) => void) => () => void
   readFileBytes: (path: string, range: FileRangeRequest) => Promise<FileReadResponse>

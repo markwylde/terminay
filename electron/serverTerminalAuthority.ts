@@ -12,7 +12,7 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { AgentStatusService } from '../packages/server-core/src/activity/agentService';
 import type { ActivitySessionIdentity } from '../packages/server-core/src/activity/service';
 import { TerminalActivityService } from '../packages/server-core/src/activity/service';
@@ -28,7 +28,10 @@ import {
 	type FileCatalogProjectContext,
 	type FileCatalogStorage,
 	type FileContentProjectContext,
+	type FileProjectContext,
+	type FileSessionStorage,
 	FileContentStreamService,
+	ServerFileAdapter,
 	ServerFileCatalogAdapter,
 	ServerFileContentAdapter,
 } from '../packages/server-core/src/fileService/index';
@@ -36,6 +39,11 @@ import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter
 import { GitService } from '../packages/server-core/src/gitService/service';
 import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
+import type {
+	BinaryQueryHandlerResult,
+	CommandRequest,
+	QueryRequest,
+} from '../packages/server-core/src/types';
 import {
 	createNodePtyFactory,
 	DetachableTerminalConsumerRegistry,
@@ -61,6 +69,12 @@ import {
 	createServerAgentStatusIpcAdapter,
 } from './agentStatus/serverAdapter';
 import { decodeFrame } from '@terminay/protocol';
+import type { JsonValue } from '@terminay/protocol';
+import type {
+	AiTabMetadataGenerateRequest,
+	AiTabMetadataGenerateResult,
+	FileViewerSparseFileSaveRequest,
+} from '../src/types/terminay';
 import { resolveTerminalProcessCwd } from './processCwd';
 
 const require = createRequire(import.meta.url);
@@ -172,6 +186,18 @@ export interface ServerTerminalAuthorityOptions {
 	readonly recordings?: ServerCoreCompositionOptions['recordings'];
 	/** Durable server settings shared by Desktop and browser renderers. */
 	readonly settings?: ServerSettingsRepository;
+	/** Desktop provider adapter retained behind the server protocol while the
+	 * canonical AI target registry is wired to workspace presentation state. */
+	readonly aiMetadata?: {
+		readonly generate: (
+			request: AiTabMetadataGenerateRequest,
+		) => Promise<AiTabMetadataGenerateResult>;
+	};
+	/** Privileged sparse writer. The authority verifies its project binding
+	 * before delegating the bounded atomic replacement implementation. */
+	readonly saveSparseFile?: (
+		request: FileViewerSparseFileSaveRequest,
+	) => Promise<unknown>;
 }
 
 interface AuthoritySession {
@@ -215,6 +241,7 @@ export class ServerTerminalAuthority {
 		string,
 		FileContentProjectContext
 	>();
+	private readonly fileSessionProjects = new Map<string, FileProjectContext>();
 	private readonly fileProjectRoots = new Map<string, string>();
 	private serviceEventsUnsubscribe: Unsubscribe | undefined;
 	private shuttingDown = false;
@@ -259,6 +286,10 @@ export class ServerTerminalAuthority {
 		const fileContentAdapter = new ServerFileContentAdapter({
 			serverId: options.serverId,
 			projects: this.fileContentProjects,
+		});
+		const fileSessionAdapter = new ServerFileAdapter({
+			serverId: options.serverId,
+			projects: this.fileSessionProjects,
 		});
 		const eventJournal = new OrderedEventJournal();
 		const fileObservations = new ServerFileObservationAdapter({
@@ -343,6 +374,7 @@ export class ServerTerminalAuthority {
 		});
 		const fileCatalogOperations = fileCatalogAdapter.operations();
 		const fileContentOperations = fileContentAdapter.operations();
+		const fileSessionOperations = fileSessionAdapter.operations();
 		this.maxReplayBytes = options.maxReplayBytes ?? 1024 * 1024;
 		if (
 			!Number.isSafeInteger(this.maxReplayBytes) ||
@@ -374,12 +406,30 @@ export class ServerTerminalAuthority {
 			...(options.settings === undefined ? {} : { settings: options.settings }),
 			operations: {
 				queries: {
+					...fileSessionOperations.queries,
 					...fileCatalogOperations.queries,
 					...fileContentOperations.queries,
+					'file.get-git-diff': (request: QueryRequest) =>
+						this.getFileDiff(request),
+					'file.mutation-revision': (request: QueryRequest) =>
+						this.getFileMutationRevision(request),
 				},
 				commands: {
+					...fileSessionOperations.commands,
 					...fileCatalogOperations.commands,
 					...fileContentOperations.commands,
+					...(options.aiMetadata === undefined
+						? {}
+						: {
+								'ai.metadata.generate': (request: CommandRequest) =>
+									this.generateAiMetadata(request),
+							}),
+					...(options.saveSparseFile === undefined
+						? {}
+						: {
+								'file.save-sparse': (request: CommandRequest) =>
+									this.saveSparseFile(request),
+							}),
 				},
 			},
 			...(options.terminalService === undefined
@@ -408,6 +458,143 @@ export class ServerTerminalAuthority {
 		this.consumers = new DetachableTerminalConsumerRegistry(this.service);
 	}
 
+	private async getFileDiff(
+		request: QueryRequest,
+	): Promise<BinaryQueryHandlerResult> {
+		const payload = protocolPayload(request.envelope.payload);
+		const requestedPath = protocolString(payload.path, 'file path');
+		const projectId = protocolString(payload.projectId, 'project id');
+		const context = this.fileSessionProjects.get(projectId);
+		const root = this.fileProjectRoots.get(projectId);
+		if (context === undefined || root === undefined)
+			throw new Error('file diff project is unavailable');
+		const canonicalPath = isAbsolute(requestedPath)
+			? await realpath(requestedPath)
+			: await context.resolver.resolve(requestedPath, { requireFile: true });
+		const project = this.projectForPath(canonicalPath);
+		if (project.projectId !== projectId)
+			throw new Error('file diff target is outside the connected project');
+		const relativePath = relative(project.root, canonicalPath);
+		const result = await this.git.diff(
+			{ projectId: project.projectId, path: relativePath },
+			request.context.signal,
+		);
+		writePortDiagnostic({
+			phase: 'file-diff-result',
+			path: relativePath,
+			state: result.state,
+			bounded: result.bounded,
+			hunks: result.hunks.length,
+		});
+		const value = {
+			compareTarget: 'HEAD',
+			gitAvailable: result.state !== 'git-unavailable',
+			hasDiff: result.patch.trim().length > 0,
+			hunks: result.hunks,
+			isBinary: result.binary,
+			// A bounded diff is still evidence that Git discovered and tracked the
+			// target. Keep Diff available so the client can render its explicit
+			// too-large state instead of presenting the file as untracked.
+			isTracked:
+				result.state === 'ready' || result.state === 'command-error',
+			path: canonicalPath,
+			relativePath,
+			repoRoot: project.root,
+			tooLarge: result.bounded,
+		} as unknown as JsonValue;
+		return {
+			result: { encoding: 'json' },
+			body: new TextEncoder().encode(JSON.stringify(value)),
+		};
+	}
+
+	private async getFileMutationRevision(
+		request: QueryRequest,
+	): Promise<JsonValue> {
+		const payload = protocolPayload(request.envelope.payload);
+		const projectId = protocolString(payload.projectId, 'project id');
+		const path = protocolString(payload.path, 'file path');
+		const context = this.fileSessionProjects.get(projectId);
+		if (context === undefined)
+			throw new Error('file mutation project is unavailable');
+		const canonicalPath = await context.resolver.resolve(path, {
+			requireFile: true,
+		});
+		const value = await stat(canonicalPath);
+		return { ino: value.ino, mtimeMs: value.mtimeMs, size: value.size };
+	}
+
+	private async generateAiMetadata(
+		request: CommandRequest,
+	): Promise<JsonValue> {
+		const service = this.options.aiMetadata;
+		if (service === undefined)
+			throw new Error('AI metadata provider is unavailable');
+		const payload = protocolPayload(request.envelope.payload);
+		const target = protocolPayload(payload.target);
+		const serverId = protocolString(target.serverId, 'target server id');
+		const projectId = protocolString(target.projectId, 'target project id');
+		const panelId = protocolString(target.panelId, 'target panel id');
+		const sessionId = protocolString(target.sessionId, 'target session id');
+		if (serverId !== this.options.serverId)
+			throw new Error('AI target belongs to another server');
+		const project = this.workspace.state.projects[projectId];
+		const panel = this.workspace.state.panels[panelId];
+		if (
+			project === undefined ||
+			panel?.type !== 'terminal' ||
+			panel.projectId !== projectId ||
+			panel.sessionId !== sessionId
+		)
+			throw new Error('AI terminal target is unavailable');
+		const targetType = payload.targetType;
+		if (targetType !== 'title' && targetType !== 'note')
+			throw new TypeError('AI metadata target type is invalid');
+		const provider = payload.provider;
+		if (provider !== 'codex' && provider !== 'claude-code')
+			throw new TypeError('AI metadata provider is invalid');
+		const model = protocolString(payload.model, 'AI model');
+		const recentOutput = new TextDecoder().decode(
+			this.buffers.get(sessionId) ?? new Uint8Array(),
+		);
+		const result = await service.generate({
+			context: {
+				currentTitle: panel.title ?? 'Terminal',
+				existingNote: '',
+				projectRoot: project.root,
+				projectTitle: project.name,
+				recentOutput,
+				sessionId,
+			},
+			model,
+			provider: provider === 'claude-code' ? 'claudeCode' : 'codex',
+			target: targetType,
+		});
+		return { text: result.text };
+	}
+
+	private async saveSparseFile(request: CommandRequest): Promise<JsonValue> {
+		const save = this.options.saveSparseFile;
+		if (save === undefined) throw new Error('sparse file saving is unavailable');
+		const payload = protocolPayload(request.envelope.payload);
+		const path = protocolString(payload.path, 'file path');
+		const projectRoot = protocolString(payload.projectRoot, 'project root');
+		const canonicalRoot = await realpath(projectRoot);
+		const project = this.projectForPath(await realpath(path));
+		if (project.root !== canonicalRoot)
+			throw new Error('sparse file target is outside the connected project');
+		await save(payload as unknown as FileViewerSparseFileSaveRequest);
+		return null;
+	}
+
+	private projectForPath(path: string): { projectId: string; root: string } {
+		for (const [projectId, root] of this.fileProjectRoots) {
+			if (path === root || path.startsWith(`${root}${sep}`))
+				return { projectId, root };
+		}
+		throw new Error('file path is outside the connected workspace');
+	}
+
 	/** Register a workspace project's root with the server-owned catalog before
 	 * the first PTY for that project becomes visible.  This is host-to-server
 	 * composition, not a renderer capability: the renderer may request file
@@ -434,6 +621,11 @@ export class ServerTerminalAuthority {
 		this.fileCatalogProjects.set(projectId, {
 			projectId,
 			catalog: new FileCatalog(resolver, nodeFileCatalogStorage),
+		});
+		this.fileSessionProjects.set(projectId, {
+			projectId,
+			resolver,
+			storage: nodeFileCatalogStorage,
 		});
 		this.fileProjectRoots.set(projectId, await resolver.root());
 		this.fileContentProjects.set(projectId, {
@@ -466,12 +658,18 @@ export class ServerTerminalAuthority {
 			projectId,
 			content: new FileContentStreamService(resolver, nodeFileCatalogStorage),
 		};
+		const sessionContext = {
+			projectId,
+			resolver,
+			storage: nodeFileCatalogStorage,
+		};
 		return Object.freeze({
 			canonicalRoot,
 			commit: async () => {
 				this.fileProjectRoots.set(projectId, canonicalRoot);
 				this.fileCatalogProjects.set(projectId, context);
 				this.fileContentProjects.set(projectId, contentContext);
+				this.fileSessionProjects.set(projectId, sessionContext);
 				await this.git.bindProject(projectId, canonicalRoot);
 			},
 		});
@@ -1077,7 +1275,24 @@ function diagnosticFrameHash(packet: unknown): string | undefined {
 	return createHash('sha256').update(frame).digest('hex');
 }
 
-const nodeFileCatalogStorage: FileCatalogStorage = {
+function protocolPayload(value: unknown): Record<string, unknown> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		throw new TypeError('protocol payload must be an object');
+	return value as Record<string, unknown>;
+}
+
+function protocolString(value: unknown, label: string): string {
+	if (
+		typeof value !== 'string' ||
+		value.length === 0 ||
+		value.length > 4096 ||
+		value.includes('\0')
+	)
+		throw new TypeError(`${label} is invalid`);
+	return value;
+}
+
+const nodeFileCatalogStorage: FileCatalogStorage & FileSessionStorage = {
 	realpath: (path) => realpath(path),
 	stat: async (path) => toPathStat(await stat(path)),
 	lstat: async (path) => toPathStat(await lstat(path)),
