@@ -125,7 +125,7 @@ import { establishDesktopDevicePairing } from './remote/desktopPairing';
 import { createDesktopReconnectTransport } from './remote/desktopReconnect';
 import { enrollDesktopReconnectCredential } from './remote/desktopReconnectEnrollment';
 import { createDesktopBootstrappedWebRtcTransport } from './remote/desktopWebRtcBootstrap';
-import { DesktopDeviceCredentialStore } from './remote/deviceCredentialStore';
+import { createEphemeralTestProtectedValueCodec, DesktopDeviceCredentialStore } from './remote/deviceCredentialStore';
 import { EmbeddedLanExposure } from './remote/embeddedLanExposure';
 import { createHostedSignalingRoomRegistrar } from './remote/hostedSignalingRegistration';
 import { createPairingPinHash } from './remote/pin';
@@ -154,6 +154,9 @@ const RELEASES_LATEST_URL =
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const DICTATION_OPENAI_SECRET_ID = 'dictation-openai-api-key';
 const DICTATION_OPENAI_SECRET_NAME = 'OpenAI API key';
+const desktopTestCredentialCodec = process.env.TERMINAY_TEST === '1'
+	? createEphemeralTestProtectedValueCodec()
+	: undefined;
 
 process.env.APP_ROOT = path.join(__dirname, '..');
 app.setName('Terminay');
@@ -547,7 +550,7 @@ function rememberRemoteConnection(
 
 function createDesktopDeviceCredentialStore(): DesktopDeviceCredentialStore {
 	return new DesktopDeviceCredentialStore({
-		codec: {
+		codec: desktopTestCredentialCodec ?? {
 			backend: selectedSafeStorageBackend,
 			decrypt: (encrypted) => safeStorage.decryptString(encrypted),
 			encrypt: (plainText) => safeStorage.encryptString(plainText),

@@ -12,7 +12,7 @@ import { createRemoteReconnectProof } from '@terminay/server-core'
 const directory = await mkdtemp(join(tmpdir(), 'terminay-desktop-device-credentials-'))
 const output = join(directory, 'deviceCredentialStore.mjs')
 await build({ bundle: true, entryPoints: ['electron/remote/deviceCredentialStore.ts'], format: 'esm', logLevel: 'silent', outfile: output, platform: 'node', target: 'node20' })
-const { DesktopDeviceCredentialStore } = await import(pathToFileURL(output).href)
+const { createEphemeralTestProtectedValueCodec, DesktopDeviceCredentialStore } = await import(pathToFileURL(output).href)
 test.after(async () => { await rm(directory, { recursive: true, force: true }) })
 
 function codec(available = true) {
@@ -26,6 +26,18 @@ function codec(available = true) {
     },
   }
 }
+
+test('ephemeral automation codec encrypts, authenticates, and cannot decrypt across process keys', () => {
+  const first = createEphemeralTestProtectedValueCodec()
+  const second = createEphemeralTestProtectedValueCodec()
+  const encrypted = first.encrypt('desktop pairing secret')
+  assert.equal(encrypted.includes(Buffer.from('desktop pairing secret')), false)
+  assert.equal(first.decrypt(encrypted), 'desktop pairing secret')
+  assert.throws(() => second.decrypt(encrypted))
+  const tampered = Buffer.from(encrypted)
+  tampered[tampered.length - 1] ^= 1
+  assert.throws(() => first.decrypt(tampered))
+})
 
 test('stores an origin-compartmented device key encrypted at rest and signs without exposing it', async () => {
   const root = join(directory, 'records')

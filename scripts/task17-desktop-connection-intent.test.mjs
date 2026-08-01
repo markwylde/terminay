@@ -62,7 +62,7 @@ test('Desktop enrolls application-token handoff before remembering it as switcha
 	);
 	const pairingReturn = connect.indexOf('\n\t\treturn;', pairingStart);
 	const handoffStart = connect.indexOf(
-		'const { bootstrap, transport: httpTransport } =',
+		'const { bootstrap, transport: remoteTransport } =',
 		pairingReturn,
 	);
 	const enrollStart = connect.indexOf(

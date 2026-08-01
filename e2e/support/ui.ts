@@ -50,11 +50,14 @@ export async function cancelEditWindow(editWindow: Page): Promise<void> {
 }
 
 export async function openFileExplorer(page: Page): Promise<void> {
+  await expect(page.locator('.project-workspace--active')).toBeVisible()
   const sidebar = page.locator(
     '.project-workspace--active .file-explorer-sidebar',
   )
-  if (!(await sidebar.count())) {
-    await page.getByLabel('Toggle file explorer').click()
+  if (!(await sidebar.isVisible())) {
+    const toggle = page.getByLabel('Toggle file explorer')
+    await expect(toggle).toBeVisible()
+    await toggle.click()
   }
 
   await expect(sidebar).toBeVisible()

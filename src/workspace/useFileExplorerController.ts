@@ -354,6 +354,9 @@ export function useFileExplorerController({
 			if (existing !== undefined) window.clearTimeout(existing);
 			const timer = window.setTimeout(() => {
 				refreshTimersRef.current.delete(dirPath);
+				if (project.rootFolder) {
+					void refreshGitStatusesForRoot(project.rootFolder, true);
+				}
 				void loadDirectory(dirPath).then(() => {
 					const settleTimer = window.setTimeout(() => {
 						refreshTimersRef.current.delete(dirPath);
@@ -364,7 +367,7 @@ export function useFileExplorerController({
 			}, WATCH_REFRESH_DELAY_MS);
 			refreshTimersRef.current.set(dirPath, timer);
 		},
-		[loadDirectory],
+		[loadDirectory, project.rootFolder, refreshGitStatusesForRoot],
 	);
 
 	const expandedWatchPaths = useMemo(
