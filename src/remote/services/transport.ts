@@ -1,24 +1,7 @@
-import type { RemoteServerMessage } from '../protocol';
-import type {
-	OutboundClientMessage,
-	RemoteMessageSocket,
-	RemoteSocketState,
-} from './socket';
-import { RemoteSocket } from './socket';
-
 export type RemoteTransportMode = 'local' | 'webrtc';
 
 export type RemoteApiTransport = {
 	postJson<TResponse>(pathname: string, body: unknown): Promise<TResponse>;
-};
-
-export type RemoteTerminalTransport = {
-	createSocket(
-		ticket: string,
-		onMessage: (message: RemoteServerMessage) => void,
-		onStateChange: (state: RemoteSocketState) => void,
-		websocketUrl?: string,
-	): RemoteMessageSocket;
 };
 
 type RemoteRuntimeConfig = {
@@ -46,7 +29,8 @@ type WebRtcApiResponse = {
 type WebRtcBootstrap = {
 	apiChannel?: RTCDataChannel;
 	getChannel?: (
-		name: 'api' | 'terminal',
+		name: 'api' | 'control' | 'application' | 'terminal' | 'assets',
+		ticket?: string,
 	) => RTCDataChannel | Promise<RTCDataChannel>;
 	relayOrigin?: string;
 	sessionId?: string;
@@ -62,7 +46,6 @@ export type RemoteTransportRuntime = {
 	api: RemoteApiTransport;
 	mode: RemoteTransportMode;
 	pairingOrigin: string;
-	terminal: RemoteTerminalTransport;
 };
 
 const WEBRTC_SESSION_STORAGE_KEY = 'terminay-remote-transport';
@@ -183,21 +166,6 @@ class LocalApiTransport implements RemoteApiTransport {
 	}
 }
 
-class LocalTerminalTransport implements RemoteTerminalTransport {
-	createSocket(
-		_ticket: string,
-		onMessage: (message: RemoteServerMessage) => void,
-		onStateChange: (state: RemoteSocketState) => void,
-		websocketUrl?: string,
-	): RemoteMessageSocket {
-		if (!websocketUrl) {
-			throw new Error('The remote host did not provide a WebSocket URL.');
-		}
-
-		return new RemoteSocket(websocketUrl, onMessage, onStateChange);
-	}
-}
-
 function isWebRtcApiResponse(value: unknown): value is WebRtcApiResponse {
 	return (
 		typeof value === 'object' &&
@@ -254,7 +222,7 @@ function parseJsonMessage(raw: unknown): unknown {
 }
 
 async function resolveWebRtcChannel(
-	name: 'api' | 'terminal',
+	name: 'api',
 ): Promise<RTCDataChannel> {
 	const bridge = getRemoteWindow().__TERMINAY_REMOTE_WEBRTC__;
 	const directChannel =
@@ -353,118 +321,6 @@ class WebRtcApiTransport implements RemoteApiTransport {
 	}
 }
 
-class WebRtcTerminalSocket implements RemoteMessageSocket {
-	private channel: RTCDataChannel | null = null;
-	private connectionId = '';
-	private hasHandshake = false;
-	private sequence = 0;
-
-	constructor(
-		private readonly ticket: string,
-		private readonly onMessage: (message: RemoteServerMessage) => void,
-		private readonly onStateChange: (state: RemoteSocketState) => void,
-	) {}
-
-	async connect(): Promise<void> {
-		this.onStateChange('connecting');
-		this.connectionId = '';
-		this.sequence = 0;
-		this.hasHandshake = false;
-
-		const channel = await resolveWebRtcChannel('terminal');
-		this.channel = channel;
-		await waitForOpenChannel(channel);
-
-		await new Promise<void>((resolve, reject) => {
-			let settled = false;
-
-			const handleMessage = (event: MessageEvent<string>) => {
-				const message = parseJsonMessage(
-					event.data,
-				) as RemoteServerMessage | null;
-				if (!message || typeof message !== 'object' || !('type' in message)) {
-					return;
-				}
-
-				if (message.type === 'session-list') {
-					this.connectionId = message.connectionId;
-					if (!this.hasHandshake) {
-						this.hasHandshake = true;
-						if (!settled) {
-							settled = true;
-							this.onStateChange('live');
-							resolve();
-						}
-					}
-				}
-				this.onMessage(message);
-			};
-
-			const handleClose = () => {
-				if (!settled) {
-					settled = true;
-					reject(
-						new Error(
-							'WebRTC terminal channel closed before initialization completed.',
-						),
-					);
-				}
-				this.hasHandshake = false;
-				this.connectionId = '';
-				this.onStateChange('closed');
-			};
-
-			const handleError = () => {
-				if (!settled) {
-					settled = true;
-					reject(new Error('WebRTC terminal channel failed.'));
-				}
-			};
-
-			channel.addEventListener('message', handleMessage);
-			channel.addEventListener('close', handleClose);
-			channel.addEventListener('error', handleError);
-			channel.send(
-				JSON.stringify({ ticket: this.ticket, type: 'terminal-auth' }),
-			);
-		});
-	}
-
-	close(): void {
-		this.channel?.close();
-		this.channel = null;
-	}
-
-	send(message: OutboundClientMessage): void {
-		if (
-			this.channel?.readyState !== 'open' ||
-			!this.hasHandshake ||
-			!this.connectionId
-		) {
-			throw new Error('The remote connection is not open.');
-		}
-
-		this.sequence += 1;
-		this.channel.send(
-			JSON.stringify({
-				...message,
-				connectionId: this.connectionId,
-				seq: this.sequence,
-			}),
-		);
-	}
-}
-
-class WebRtcTerminalTransport implements RemoteTerminalTransport {
-	createSocket(
-		ticket: string,
-		onMessage: (message: RemoteServerMessage) => void,
-		onStateChange: (state: RemoteSocketState) => void,
-	): RemoteMessageSocket {
-		return new WebRtcTerminalSocket(ticket, onMessage, onStateChange);
-	}
-}
-
 export function createRemoteTransportRuntime(): RemoteTransportRuntime {
 	const remoteWindow = getRemoteWindow();
 	const searchParams = new URL(window.location.href).searchParams;
@@ -492,7 +348,6 @@ export function createRemoteTransportRuntime(): RemoteTransportRuntime {
 			api: new WebRtcApiTransport(sessionId),
 			mode,
 			pairingOrigin: createPairingOrigin(mode, relayOrigin),
-			terminal: new WebRtcTerminalTransport(),
 		};
 	}
 
@@ -500,6 +355,5 @@ export function createRemoteTransportRuntime(): RemoteTransportRuntime {
 		api: new LocalApiTransport(),
 		mode,
 		pairingOrigin: createPairingOrigin(mode),
-		terminal: new LocalTerminalTransport(),
 	};
 }

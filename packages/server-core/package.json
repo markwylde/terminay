@@ -1,0 +1,10 @@
+{
+  "name": "@terminay/server-core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" } },
+  "files": ["dist"],
+  "dependencies": { "@terminay/protocol": "1.0.0" },
+  "scripts": { "build": "npm run build --workspace @terminay/protocol && tsc -p tsconfig.json", "typecheck": "npm run build --workspace @terminay/protocol && tsc -p tsconfig.json --noEmit", "test": "npm run build && node --test test/*.test.mjs" }
+}

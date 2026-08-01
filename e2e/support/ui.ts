@@ -50,11 +50,14 @@ export async function cancelEditWindow(editWindow: Page): Promise<void> {
 }
 
 export async function openFileExplorer(page: Page): Promise<void> {
+  await expect(page.locator('.project-workspace--active')).toBeVisible()
   const sidebar = page.locator(
     '.project-workspace--active .file-explorer-sidebar',
   )
-  if (!(await sidebar.count())) {
-    await page.getByLabel('Toggle file explorer').click()
+  if (!(await sidebar.isVisible())) {
+    const toggle = page.getByLabel('Toggle file explorer')
+    await expect(toggle).toBeVisible()
+    await toggle.click()
   }
 
   await expect(sidebar).toBeVisible()
@@ -107,11 +110,11 @@ export async function setMonacoValue(page: Page, value: string): Promise<void> {
 }
 
 export async function openRemoteMenu(page: Page): Promise<void> {
-  const menu = page.getByRole('menu', { name: 'Remote access menu' })
+  const menu = page.getByRole('menu', { name: 'Connection menu' })
   if (await menu.isVisible().catch(() => false)) {
     return
   }
 
-  await page.getByLabel('Open remote access menu').click()
+  await page.getByLabel('Open connection menu').click()
   await expect(menu).toBeVisible()
 }

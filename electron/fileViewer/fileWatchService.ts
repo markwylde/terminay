@@ -18,6 +18,7 @@ type WatchSubscription = {
 
 type FileSnapshot = {
   exists: boolean
+  ino: number | null
   isDirectory: boolean
   isFile: boolean
   isSymbolicLink: boolean
@@ -28,6 +29,7 @@ type FileSnapshot = {
 function toFileSnapshot(info: FileViewerFileInfo): FileSnapshot {
   return {
     exists: info.exists,
+    ino: info.ino,
     isDirectory: info.isDirectory,
     isFile: info.isFile,
     isSymbolicLink: info.isSymbolicLink,
@@ -39,6 +41,7 @@ function toFileSnapshot(info: FileViewerFileInfo): FileSnapshot {
 function snapshotsAreEqual(left: FileSnapshot, right: FileSnapshot): boolean {
   return (
     left.exists === right.exists &&
+    left.ino === right.ino &&
     left.isDirectory === right.isDirectory &&
     left.isFile === right.isFile &&
     left.isSymbolicLink === right.isSymbolicLink &&

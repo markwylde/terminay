@@ -1,15 +1,17 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import type { McpInstallActionResult } from '../../src/types/terminay'
+import { atomicWriteConfig } from './atomicConfigWrite'
 import type { McpServerCommand } from './index'
 
 /** The MCP server key we register inside Claude Code's `mcpServers` map. */
 const SERVER_KEY = 'terminay'
 
 /** Absolute path to Claude Code's config file (`~/.claude.json`). */
-export function getClaudeCodeConfigPath(): string {
-  return join(homedir(), '.claude.json')
+export function getClaudeCodeConfigPath(homeDirectory = homedir()): string {
+  return join(homeDirectory, '.claude.json')
 }
 
 interface ClaudeServerEntry {
@@ -57,8 +59,8 @@ async function readConfig(
 }
 
 /** True when a `terminay` server entry already exists in the config. */
-export async function isClaudeCodeInstalled(): Promise<boolean> {
-  const result = await readConfig(getClaudeCodeConfigPath())
+export async function isClaudeCodeInstalled(homeDirectory?: string): Promise<boolean> {
+  const result = await readConfig(getClaudeCodeConfigPath(homeDirectory))
   if ('error' in result) {
     // A file we cannot parse is reported as not-installed; the install/uninstall
     // actions surface the parse error to the user when they act on it.
@@ -68,12 +70,15 @@ export async function isClaudeCodeInstalled(): Promise<boolean> {
 }
 
 /** Register (or update) the `terminay` MCP server entry. */
-export async function installClaudeCode(server: McpServerCommand): Promise<McpInstallActionResult> {
-  const path = getClaudeCodeConfigPath()
+export async function installClaudeCode(
+  server: McpServerCommand,
+  homeDirectory?: string,
+): Promise<McpInstallActionResult> {
+  const path = getClaudeCodeConfigPath(homeDirectory)
   try {
     const result = await readConfig(path)
     if ('error' in result) {
-      return { ok: false, installed: await safeIsInstalled(), error: result.error }
+      return { ok: false, installed: await safeIsInstalled(homeDirectory), error: result.error }
     }
 
     const config = result.config
@@ -82,24 +87,32 @@ export async function installClaudeCode(server: McpServerCommand): Promise<McpIn
     if (server.env !== undefined) {
       entry.env = server.env
     }
+
+    const existing = servers[SERVER_KEY]
+    if (existing !== undefined && !isDeepStrictEqual(existing, entry)) {
+      return changedEntryResult(path)
+    }
+    if (isDeepStrictEqual(existing, entry)) {
+      return { ok: true, installed: true, message: `terminay is already registered in ${path}` }
+    }
+
     servers[SERVER_KEY] = entry
     config.mcpServers = servers
 
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+    await atomicWriteConfig(path, `${JSON.stringify(config, null, 2)}\n`)
     return { ok: true, installed: true, message: `Registered terminay in ${path}` }
   } catch (cause) {
-    return { ok: false, installed: await safeIsInstalled(), error: describeError(cause) }
+    return { ok: false, installed: await safeIsInstalled(homeDirectory), error: describeError(cause) }
   }
 }
 
 /** Remove the `terminay` MCP server entry. Idempotent. */
-export async function uninstallClaudeCode(): Promise<McpInstallActionResult> {
-  const path = getClaudeCodeConfigPath()
+export async function uninstallClaudeCode(homeDirectory?: string): Promise<McpInstallActionResult> {
+  const path = getClaudeCodeConfigPath(homeDirectory)
   try {
     const result = await readConfig(path)
     if ('error' in result) {
-      return { ok: false, installed: await safeIsInstalled(), error: result.error }
+      return { ok: false, installed: await safeIsInstalled(homeDirectory), error: result.error }
     }
 
     const config = result.config
@@ -108,16 +121,24 @@ export async function uninstallClaudeCode(): Promise<McpInstallActionResult> {
     }
 
     delete config.mcpServers[SERVER_KEY]
-    await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+    await atomicWriteConfig(path, `${JSON.stringify(config, null, 2)}\n`)
     return { ok: true, installed: false, message: `Removed terminay from ${path}` }
   } catch (cause) {
-    return { ok: false, installed: await safeIsInstalled(), error: describeError(cause) }
+    return { ok: false, installed: await safeIsInstalled(homeDirectory), error: describeError(cause) }
   }
 }
 
-async function safeIsInstalled(): Promise<boolean> {
+function changedEntryResult(path: string): McpInstallActionResult {
+  return {
+    ok: false,
+    installed: true,
+    error: `The existing terminay entry in ${path} has changed; review it before replacing it.`,
+  }
+}
+
+async function safeIsInstalled(homeDirectory?: string): Promise<boolean> {
   try {
-    return await isClaudeCodeInstalled()
+    return await isClaudeCodeInstalled(homeDirectory)
   } catch {
     return false
   }

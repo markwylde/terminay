@@ -1,0 +1,85 @@
+services:
+  terminay-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        OCI_VERSION: local
+        OCI_REVISION: compose
+    image: terminay-server:local
+    environment:
+      TERMINAY_SERVER_ID: compose-local
+      TERMINAY_DATA_ROOT: /var/lib/terminay
+      # Keep the repository at its host absolute path inside the development
+      # container. Linked Git worktrees store absolute gitdir pointers, so a
+      # conventional /workspace bind would make their .git file unusable.
+      TERMINAY_PROJECT_ROOT: ${PWD}
+      TERMINAY_ENDPOINT: loopback
+      TERMINAY_HTTP_HOST: 0.0.0.0
+      TERMINAY_HTTP_PORT: "4317"
+      TERMINAY_PUBLIC_ORIGIN: http://localhost:4317
+      TERMINAY_WEB_ORIGIN: http://127.0.0.1:8080
+      TERMINAY_HEALTH_HOST: 0.0.0.0
+      TERMINAY_HEALTH_PORT: "4318"
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: ${PWD}
+    volumes:
+      - terminay-server-data:/var/lib/terminay
+      # Mount the containing checkout directory at the identical absolute
+      # path. This exposes both this worktree and its common Git directory
+      # while the server's file APIs remain bounded to TERMINAY_PROJECT_ROOT.
+      - ..:${PWD}/..
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    expose:
+      - "4317"
+      - "4318"
+    ports:
+      - "127.0.0.1:4317:4317"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4318/readyz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 6
+
+  terminay-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: terminay-web:local
+    depends_on:
+      terminay-server:
+        condition: service_healthy
+    # The browser host serves static files and proxies the local protocol. It
+    # runs without privileges and renders its generated config plus runtime
+    # state only beneath the bounded /tmp mount.
+    read_only: true
+    user: "101:101"
+    environment:
+      NGINX_ENVSUBST_OUTPUT_DIR: /tmp
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,mode=1777,size=32m
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/healthz | grep -qx ok"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 6
+
+volumes:
+  terminay-server-data:
