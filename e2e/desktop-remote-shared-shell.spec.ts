@@ -133,11 +133,11 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 			remoteHost,
 		);
 		await openRemoteMenu(mainWindow);
-		await expect(
-			mainWindow
-				.getByRole('menu', { name: 'Connection menu' })
-				.getByText(/^Server ID: remote-/u),
-		).toBeVisible();
+		const currentRemoteProfile = mainWindow
+			.getByRole('menu', { name: 'Connection menu' })
+			.getByRole('menuitemradio', { checked: true });
+		await expect(currentRemoteProfile).toContainText(remoteHost);
+		await expect(currentRemoteProfile).toContainText('Current');
 
 		const rendererOrigin = new URL(mainWindow.url()).origin;
 		await mainWindow.goto(`${rendererOrigin}/?view=terminal`);

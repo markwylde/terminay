@@ -73,6 +73,7 @@ async function openChildWindow(
   electronApp: ElectronApplication,
   action: () => Promise<void>,
 ): Promise<Page> {
+  await electronApp.firstWindow()
   const nextWindowPromise = electronApp.waitForEvent('window')
   await action()
   const nextWindow = await nextWindowPromise
