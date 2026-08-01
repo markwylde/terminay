@@ -353,6 +353,10 @@ manifest paths, or Electron imports. This is a pre-release integrity check;
 signatures, notarization, and native release certification remain separate
 gates.
 
+Native standalone release jobs establish a version-controlled checkout before
+building or probing the archive. Runner evidence is valid only when it binds
+the probed bytes to the checked-out commit and proves that worktree clean.
+
 ## Non-goals
 
 - No cloud storage or proxying of workspace/application data.
