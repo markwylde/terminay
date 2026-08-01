@@ -173,7 +173,7 @@ test.describe('terminal behavior', () => {
 
 		await mainWindow
 			.locator('.project-tab')
-			.filter({ hasText: 'Project 1' })
+			.filter({ hasText: /^Project$/ })
 			.click();
 		const tabToMove = mainWindow
 			.locator('.project-workspace--active .terminal-tab-content')
@@ -224,7 +224,7 @@ test.describe('terminal behavior', () => {
 		);
 		await mainWindow
 			.locator('.project-tab')
-			.filter({ hasText: 'Project 1' })
+			.filter({ hasText: /^Project$/ })
 			.click();
 
 		const tabToMove = mainWindow
@@ -315,7 +315,9 @@ test.describe('terminal behavior', () => {
 			.toContain('terminay-selectable-text');
 	});
 
-	test('accepts keyboard input after a terminal click', async ({ mainWindow }) => {
+	test('accepts keyboard input after a terminal click', async ({
+		mainWindow,
+	}) => {
 		const marker = 'terminay-click-type-424242';
 		await mainWindow.evaluate(() => {
 			if (document.activeElement instanceof HTMLElement) {
@@ -327,7 +329,9 @@ test.describe('terminal behavior', () => {
 		await expectTerminalInputFocused(mainWindow);
 		await mainWindow.keyboard.type(marker);
 
-		await expect(mainWindow.locator('.project-workspace--active .xterm-rows')).toContainText(marker);
+		await expect(
+			mainWindow.locator('.project-workspace--active .xterm-rows'),
+		).toContainText(marker);
 	});
 
 	test('edits the active terminal tab title and hue', async ({
@@ -804,7 +808,7 @@ test.describe('terminal behavior', () => {
 			.filter({
 				hasText: 'Terminal 2',
 			});
-		await expect(backgroundItem).toContainText('Project 1');
+		await expect(backgroundItem).toContainText('Project');
 		await expect(
 			backgroundItem.locator(
 				'.agent-status-indicator[data-agent-state="done"]',
@@ -814,7 +818,7 @@ test.describe('terminal behavior', () => {
 		await backgroundItem.click();
 
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
-			'Project 1',
+			'Project',
 		);
 		await expect(
 			mainWindow.locator(

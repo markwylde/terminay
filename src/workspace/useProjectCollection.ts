@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
-import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 import { createProjectTab, type ProjectTab } from './projectTabModel';
 
 const DEFAULT_AGENTS_PANE_HEIGHT = 200;
@@ -40,24 +40,28 @@ export function useProjectCollection<TTerminal>({
 		if (isAdoptWindow) return [];
 		if (hasServerWorkspace && initialServerSnapshot === null) return [];
 		if (initialServerProjects.length > 0) {
-			return initialServerProjects.map((serverProject, index) => ({
-				...createProjectTab(
+			const usedColors: string[] = [];
+			return initialServerProjects.map((serverProject, index) => {
+				const base = createProjectTab(
 					index + 1,
 					serverProject.root,
-					[],
+					usedColors,
 					sidebarSettings,
 					projectColorScope,
-				),
-				id: serverProject.id,
-				title: serverProject.name,
-				rootFolder: serverProject.root,
-				...(serverProject.color === undefined
-					? {}
-					: { color: serverProject.color }),
-				...(serverProject.icon === undefined
-					? {}
-					: { emoji: serverProject.icon }),
-			}));
+				);
+				const color = serverProject.color ?? base.color;
+				usedColors.push(color);
+				return {
+					...base,
+					id: serverProject.id,
+					title: serverProject.name,
+					rootFolder: serverProject.root,
+					color,
+					...(serverProject.icon === undefined
+						? {}
+						: { emoji: serverProject.icon }),
+				};
+			});
 		}
 		if (hasServerWorkspace) return [];
 		return [
@@ -74,16 +78,19 @@ export function useProjectCollection<TTerminal>({
 	const [activeProjectId, setActiveProjectId] = useState(
 		isAdoptWindow
 			? ''
-			: (hasServerWorkspace && initialServerSnapshot === null
+			: hasServerWorkspace && initialServerSnapshot === null
 				? ''
-				: initialServerSnapshot?.views[
-					initialServerSnapshot.viewOrder[0] ?? ''
-				]?.activeProjectId ??
-				initialServerProjects[0]?.id ??
-				(hasServerWorkspace ? '' : 'project-1')),
+				: (initialServerSnapshot?.views[
+						initialServerSnapshot.viewOrder[0] ?? ''
+					]?.activeProjectId ??
+					initialServerProjects[0]?.id ??
+					(hasServerWorkspace ? '' : 'project-1')),
 	);
 	const activeProjectIdRef = useRef(activeProjectId);
-	const [projectCreationError, setProjectCreationError] = useState<string | null>(null);
+	const reservedProjectColorsRef = useRef(new Set<string>());
+	const [projectCreationError, setProjectCreationError] = useState<
+		string | null
+	>(null);
 	const [adoptedTerminalsByProject, setAdoptedTerminalsByProject] = useState<
 		Record<string, TTerminal[]>
 	>({});
@@ -116,29 +123,35 @@ export function useProjectCollection<TTerminal>({
 		return workspaceSnapshotStore.subscribe((snapshot) => {
 			const orderedServerProjects = snapshot.viewOrder.flatMap((viewId) => {
 				const view = snapshot.views[viewId];
-				return view?.projectIds
-					.map((projectId) => snapshot.projects[projectId])
-					.filter((project) => project !== undefined) ?? [];
+				return (
+					view?.projectIds
+						.map((projectId) => snapshot.projects[projectId])
+						.filter((project) => project !== undefined) ?? []
+				);
 			});
 			setProjects((current) => {
-				const currentById = new Map(current.map((project) => [project.id, project]));
+				const currentById = new Map(
+					current.map((project) => [project.id, project]),
+				);
+				const usedColors: string[] = [];
 				const next = orderedServerProjects.map((serverProject, index) => {
 					const existing = currentById.get(serverProject.id);
-					const base =
-						existing ??
-						createProjectTab(
-							index + 1,
-							serverProject.root,
-							[],
-							sidebarDefaultsRef.current,
-							projectColorScope,
-						);
+					const generated = createProjectTab(
+						index + 1,
+						serverProject.root,
+						usedColors,
+						sidebarDefaultsRef.current,
+						projectColorScope,
+					);
+					const base = existing ?? generated;
+					const color = serverProject.color ?? generated.color;
+					usedColors.push(color);
 					return {
 						...base,
 						id: serverProject.id,
 						title: serverProject.name,
 						rootFolder: serverProject.root,
-						color: serverProject.color ?? base.color,
+						color,
 						emoji: serverProject.icon ?? base.emoji,
 					};
 				});
@@ -176,12 +189,25 @@ export function useProjectCollection<TTerminal>({
 					.map((id) => snapshot.projects[id]?.root)
 					.find((root) => root !== undefined) ??
 				fallbackProjectRoot;
+			const presentation = createProjectTab(
+				suffix,
+				serverRoot,
+				[
+					...projectsRef.current.map((project) => project.color),
+					...reservedProjectColorsRef.current,
+				],
+				sidebarDefaultsRef.current,
+				projectColorScope,
+			);
+			reservedProjectColorsRef.current.add(presentation.color);
 			void workspaceSnapshotStore
 				.createProject({
 					projectId,
 					viewId,
 					root: serverRoot,
 					name: `Project ${Object.keys(snapshot.projects).length + 1}`,
+					color: presentation.color,
+					icon: presentation.emoji,
 				})
 				.then(() => setProjectCreationError(null))
 				.catch((error) => {
@@ -207,57 +233,60 @@ export function useProjectCollection<TTerminal>({
 		setActiveProjectId(`project-${index}`);
 	}, [defaultProjectRoot, projectColorScope, workspaceSnapshotStore]);
 
-	const closeProject = useCallback((projectId: string) => {
-		const current = projectsRef.current;
-		const index = current.findIndex((project) => project.id === projectId);
-		if (index === -1) return;
-		if (current.length === 1) {
-			void window.terminayWindowLifecycleHost?.closeCurrent();
-			return;
-		}
-		if (workspaceSnapshotStore !== undefined) {
+	const closeProject = useCallback(
+		(projectId: string) => {
+			const current = projectsRef.current;
+			const index = current.findIndex((project) => project.id === projectId);
+			if (index === -1) return;
+			if (current.length === 1) {
+				void window.terminayWindowLifecycleHost?.closeCurrent();
+				return;
+			}
+			if (workspaceSnapshotStore !== undefined) {
+				const next = current.filter((project) => project.id !== projectId);
+				const nextId =
+					activeProjectIdRef.current === projectId
+						? (next[Math.max(0, index - 1)]?.id ?? next[0]?.id ?? '')
+						: activeProjectIdRef.current;
+				projectsRef.current = next;
+				setProjects(next);
+				activeProjectIdRef.current = nextId;
+				setActiveProjectId(nextId);
+				void workspaceSnapshotStore
+					.closeProject(projectId)
+					.then(() => {
+						setProjectCreationError(null);
+						if (nextId.length > 0) {
+							void workspaceSnapshotStore
+								.activateProject({ projectId: nextId })
+								.catch(() => undefined);
+						}
+					})
+					.catch((error) => {
+						setProjectCreationError(
+							error instanceof Error ? error.message : String(error),
+						);
+						void workspaceSnapshotStore.refresh().catch(() => undefined);
+					});
+				return;
+			}
 			const next = current.filter((project) => project.id !== projectId);
-			const nextId =
-				activeProjectIdRef.current === projectId
-					? next[Math.max(0, index - 1)]?.id ?? next[0]?.id ?? ''
-					: activeProjectIdRef.current;
 			projectsRef.current = next;
 			setProjects(next);
-			activeProjectIdRef.current = nextId;
-			setActiveProjectId(nextId);
-			void workspaceSnapshotStore
-				.closeProject(projectId)
-				.then(() => {
-					setProjectCreationError(null);
-					if (nextId.length > 0) {
-						void workspaceSnapshotStore
-							.activateProject({ projectId: nextId })
-							.catch(() => undefined);
-					}
-				})
-				.catch((error) => {
-					setProjectCreationError(
-						error instanceof Error ? error.message : String(error),
-					);
-					void workspaceSnapshotStore.refresh().catch(() => undefined);
-				});
-			return;
-		}
-		const next = current.filter((project) => project.id !== projectId);
-		projectsRef.current = next;
-		setProjects(next);
-		setAdoptedTerminalsByProject((adopted) => {
-			if (!(projectId in adopted)) return adopted;
-			const { [projectId]: removed, ...rest } = adopted;
-			void removed;
-			return rest;
-		});
-		if (activeProjectIdRef.current === projectId) {
-			const nextId = next[Math.max(0, index - 1)]?.id ?? next[0].id;
-			activeProjectIdRef.current = nextId;
-			setActiveProjectId(nextId);
-		}
-	}, [workspaceSnapshotStore]);
+			setAdoptedTerminalsByProject((adopted) => {
+				if (!(projectId in adopted)) return adopted;
+				const { [projectId]: removed, ...rest } = adopted;
+				void removed;
+				return rest;
+			});
+			if (activeProjectIdRef.current === projectId) {
+				const nextId = next[Math.max(0, index - 1)]?.id ?? next[0].id;
+				activeProjectIdRef.current = nextId;
+				setActiveProjectId(nextId);
+			}
+		},
+		[workspaceSnapshotStore],
+	);
 
 	const adoptProject = useCallback(
 		(
@@ -306,7 +335,9 @@ export function useProjectCollection<TTerminal>({
 			if (Object.keys(localUpdates).length > 0) {
 				setProjects((current) =>
 					current.map((project) =>
-						project.id === projectId ? { ...project, ...localUpdates } : project,
+						project.id === projectId
+							? { ...project, ...localUpdates }
+							: project,
 					),
 				);
 			}
@@ -328,14 +359,17 @@ export function useProjectCollection<TTerminal>({
 		[workspaceSnapshotStore],
 	);
 
-	const activateProject = useCallback((projectId: string) => {
-		activeProjectIdRef.current = projectId;
-		setActiveProjectId(projectId);
-		if (workspaceSnapshotStore === undefined) return;
-		void workspaceSnapshotStore.activateProject({ projectId }).catch(() => {
-			void workspaceSnapshotStore.refresh().catch(() => undefined);
-		});
-	}, [workspaceSnapshotStore]);
+	const activateProject = useCallback(
+		(projectId: string) => {
+			activeProjectIdRef.current = projectId;
+			setActiveProjectId(projectId);
+			if (workspaceSnapshotStore === undefined) return;
+			void workspaceSnapshotStore.activateProject({ projectId }).catch(() => {
+				void workspaceSnapshotStore.refresh().catch(() => undefined);
+			});
+		},
+		[workspaceSnapshotStore],
+	);
 
 	return {
 		activateProject,

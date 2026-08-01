@@ -1,114 +1,147 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import type { Page } from '@playwright/test'
-import path from 'node:path'
-import { expect, test } from './fixtures'
-import { sendAppCommand } from './support/app'
+import path from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { Page } from '@playwright/test';
+import { expect, test } from './fixtures';
+import { sendAppCommand } from './support/app';
 
 type McpConnection = {
-  client: Client
-  close: () => Promise<void>
-}
+	client: Client;
+	close: () => Promise<void>;
+};
 
 async function activeSessionIds(page: Page): Promise<string[]> {
-  return page
-    .locator('.project-workspace--active .terminal-panel')
-    .evaluateAll((panels) =>
-      panels.map((panel) => panel.getAttribute('data-terminay-terminal-session-id')).filter(
-        (sessionId): sessionId is string => Boolean(sessionId),
-      ),
-    )
+	return page
+		.locator('.project-workspace--active .terminal-panel')
+		.evaluateAll((panels) =>
+			panels
+				.map((panel) => panel.getAttribute('data-terminay-terminal-session-id'))
+				.filter((sessionId): sessionId is string => Boolean(sessionId)),
+		);
 }
 
-async function connectMcp(page: Page, sessionId: string): Promise<McpConnection> {
-  const control = await page.evaluate(async (terminalSessionId) => {
-    if (!window.terminayTest) {
-      throw new Error('The Terminay test bridge is unavailable.')
-    }
-    return window.terminayTest.getMcpControlEnvironment(terminalSessionId)
-  }, sessionId)
+async function connectMcp(
+	page: Page,
+	sessionId: string,
+): Promise<McpConnection> {
+	const control = await page.evaluate(async (terminalSessionId) => {
+		if (!window.terminayTest) {
+			throw new Error('The Terminay test bridge is unavailable.');
+		}
+		return window.terminayTest.getMcpControlEnvironment(terminalSessionId);
+	}, sessionId);
 
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.resolve('dist-electron/mcpEntry.js')],
-    env: {
-      ...process.env,
-      TERMINAY_CONTROL_SOCKET: control.socketPath,
-      TERMINAY_CONTROL_TOKEN: control.token,
-    },
-    stderr: 'pipe',
-  })
-  const client = new Client({ name: 'terminay-e2e', version: '1.0.0' })
-  await client.connect(transport)
+	const transport = new StdioClientTransport({
+		command: process.execPath,
+		args: [path.resolve('dist-electron/mcpEntry.js')],
+		env: {
+			...process.env,
+			TERMINAY_CONTROL_SOCKET: control.socketPath,
+			TERMINAY_CONTROL_TOKEN: control.token,
+		},
+		stderr: 'pipe',
+	});
+	const client = new Client({ name: 'terminay-e2e', version: '1.0.0' });
+	await client.connect(transport);
 
-  return {
-    client,
-    close: () => client.close(),
-  }
+	return {
+		client,
+		close: () => client.close(),
+	};
 }
 
 function toolText(result: Awaited<ReturnType<Client['callTool']>>): string {
-  return result.content
-    .filter((item) => item.type === 'text')
-    .map((item) => item.text)
-    .join('\n')
+	return result.content
+		.filter((item) => item.type === 'text')
+		.map((item) => item.text)
+		.join('\n');
 }
 
-function toolResultJson(result: Awaited<ReturnType<Client['callTool']>>): unknown {
-  const text = toolText(result)
-  return JSON.parse(text.slice(text.indexOf('\n') + 1))
+function toolResultJson(
+	result: Awaited<ReturnType<Client['callTool']>>,
+): unknown {
+	const text = toolText(result);
+	return JSON.parse(text.slice(text.indexOf('\n') + 1));
 }
 
-test('MCP callers see and control only terminals in their own project', async ({ mainWindow }) => {
-  await sendAppCommand(mainWindow, 'new-terminal')
-  await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
-  const projectASessions = await activeSessionIds(mainWindow)
+test('MCP callers see and control only terminals in their own project', async ({
+	mainWindow,
+}) => {
+	await sendAppCommand(mainWindow, 'new-terminal');
+	await expect(
+		mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+	).toHaveCount(2);
+	const projectASessions = await activeSessionIds(mainWindow);
 
-  await mainWindow.getByLabel('Add project tab').click()
-  await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
-  await expect(mainWindow.locator('.project-workspace--active .terminal-panel')).toHaveCount(1)
-  const projectBSessions = await activeSessionIds(mainWindow)
+	await mainWindow.getByLabel('Add project tab').click();
+	await expect(mainWindow.locator('.project-tab--active')).toContainText(
+		'Project 2',
+	);
+	await expect(
+		mainWindow.locator('.project-workspace--active .terminal-panel'),
+	).toHaveCount(1);
+	const projectBSessions = await activeSessionIds(mainWindow);
 
-  const projectA = await connectMcp(mainWindow, projectASessions[0])
-  const projectB = await connectMcp(mainWindow, projectBSessions[0])
+	const projectA = await connectMcp(mainWindow, projectASessions[0]);
+	const projectB = await connectMcp(mainWindow, projectBSessions[0]);
 
-  try {
-    const listedA = await projectA.client.callTool({ name: 'list_terminals', arguments: {} })
-    const listedB = await projectB.client.callTool({ name: 'list_terminals', arguments: {} })
-    const textA = toolText(listedA)
-    const textB = toolText(listedB)
-    const resultA = toolResultJson(listedA) as { terminals: Array<{ id: string }> }
-    const resultB = toolResultJson(listedB) as { terminals: Array<{ id: string }> }
+	try {
+		const listedA = await projectA.client.callTool({
+			name: 'list_terminals',
+			arguments: {},
+		});
+		const listedB = await projectB.client.callTool({
+			name: 'list_terminals',
+			arguments: {},
+		});
+		const textA = toolText(listedA);
+		const textB = toolText(listedB);
+		const resultA = toolResultJson(listedA) as {
+			terminals: Array<{ id: string }>;
+		};
+		const resultB = toolResultJson(listedB) as {
+			terminals: Array<{ id: string }>;
+		};
 
-    expect(resultA.terminals).toHaveLength(2)
-    expect(resultB.terminals).toHaveLength(1)
-    for (const sessionId of resultA.terminals.map((terminal) => terminal.id)) {
-      expect(textA).toContain(sessionId)
-      expect(textB).not.toContain(sessionId)
-    }
-    for (const sessionId of resultB.terminals.map((terminal) => terminal.id)) {
-      expect(textB).toContain(sessionId)
-      expect(textA).not.toContain(sessionId)
-    }
+		expect(resultA.terminals).toHaveLength(2);
+		expect(resultB.terminals).toHaveLength(1);
+		for (const sessionId of resultA.terminals.map((terminal) => terminal.id)) {
+			expect(textA).toContain(sessionId);
+			expect(textB).not.toContain(sessionId);
+		}
+		for (const sessionId of resultB.terminals.map((terminal) => terminal.id)) {
+			expect(textB).toContain(sessionId);
+			expect(textA).not.toContain(sessionId);
+		}
 
-    const crossProjectRead = await projectA.client.callTool({
-      name: 'read_terminal',
-      arguments: { terminal: projectBSessions[0] },
-    })
-    expect(crossProjectRead.isError).toBe(true)
-    expect(toolText(crossProjectRead)).toContain('No terminal matches')
+		const crossProjectRead = await projectA.client.callTool({
+			name: 'read_terminal',
+			arguments: { terminal: projectBSessions[0] },
+		});
+		expect(crossProjectRead.isError).toBe(true);
+		expect(toolText(crossProjectRead)).toContain('No terminal matches');
 
-    const openedInA = await projectA.client.callTool({
-      name: 'open_terminal',
-      arguments: { name: 'MCP Project A' },
-    })
-    expect(openedInA.isError).toBe(false)
+		const openedInA = await projectA.client.callTool({
+			name: 'open_terminal',
+			arguments: { name: 'MCP Project A' },
+		});
+		expect(openedInA.isError).toBe(false);
 
-    await mainWindow.locator('.project-tab').filter({ hasText: 'Project 1' }).click()
-    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(3)
-    await mainWindow.locator('.project-tab').filter({ hasText: 'Project 2' }).click()
-    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(1)
-  } finally {
-    await Promise.all([projectA.close(), projectB.close()])
-  }
-})
+		await mainWindow
+			.locator('.project-tab')
+			.filter({ hasText: /^Project$/ })
+			.click();
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(3);
+		await mainWindow
+			.locator('.project-tab')
+			.filter({ hasText: 'Project 2' })
+			.click();
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(1);
+	} finally {
+		await Promise.all([projectA.close(), projectB.close()]);
+	}
+});

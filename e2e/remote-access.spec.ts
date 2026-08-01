@@ -33,9 +33,9 @@ test('opens remote access settings from the host menu', async ({
 	appHarness,
 	mainWindow,
 }) => {
-	expect(
-		await mainWindow.evaluate(() => 'terminayWebRtcHost' in window),
-	).toBe(false);
+	expect(await mainWindow.evaluate(() => 'terminayWebRtcHost' in window)).toBe(
+		false,
+	);
 	await openRemoteMenu(mainWindow);
 
 	const settingsWindow = await appHarness.openChildWindow(async () => {
@@ -300,9 +300,7 @@ test('keeps the configured PIN out of the server-owned LAN handoff', async ({
 	mainWindow,
 }) => {
 	await mainWindow.evaluate(() =>
-		window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
-			'654321',
-		),
+		window.terminayRemotePairingPinHost.setRemoteAccessPairingPin('654321'),
 	);
 
 	await openRemoteMenu(mainWindow);
@@ -324,7 +322,10 @@ test('keeps the configured PIN out of the server-owned LAN handoff', async ({
 	);
 	const pairingUrl = new URL(status.lanPairingUrl!);
 	expect(pairingUrl.search).toBe('');
-	expect(pairingUrl.hash.slice(1)).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+	const pairingBootstrap = new URLSearchParams(pairingUrl.hash.slice(1));
+	expect(pairingBootstrap.get('pairingSessionId')).toMatch(/^pair-/);
+	expect(pairingBootstrap.get('pairingToken')).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+	expect(pairingBootstrap.get('pairingExpiresAt')).toBeTruthy();
 	expect(pairingUrl.hash).not.toContain('654321');
 	const settings = await mainWindow.evaluate(() =>
 		window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings(),
@@ -341,9 +342,7 @@ test('rotates and stops server-owned LAN pairing without a legacy renderer API',
 	mainWindow,
 }) => {
 	await mainWindow.evaluate(() =>
-		window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
-			'123456',
-		),
+		window.terminayRemotePairingPinHost.setRemoteAccessPairingPin('123456'),
 	);
 
 	await openRemoteMenu(mainWindow);
