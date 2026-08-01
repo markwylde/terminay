@@ -452,6 +452,7 @@ type ProjectWorkspaceProps = {
 
 const MIN_SIDEBAR_PANE_HEIGHT = 80;
 const DOCKVIEW_SASH_ACTIVITY_DEFER_MS = 300;
+const PROJECT_DEACTIVATION_ACTIVITY_SETTLE_MS = 1_500;
 
 /** Terminal input is delivered only to the matching server-backed panel
  * attachment.  The renderer never falls back to a host-side terminal IPC
@@ -1858,7 +1859,11 @@ const ProjectWorkspace = forwardRef<
 						isActive &&
 						dockviewApiRef.current?.activePanel?.params?.sessionId ===
 							snapshot.sessionId;
-					if (isFocusedSession && !snapshot.acknowledged) {
+					if (
+						isFocusedSession &&
+						!snapshot.acknowledged &&
+						!snapshot.claimed
+					) {
 						// PTY output can arrive after the tab-selection acknowledgement.
 						// While this project and panel remain visibly active, fold it back
 						// into canonical acknowledgement instead of showing a phantom item.
@@ -1899,6 +1904,33 @@ const ProjectWorkspace = forwardRef<
 			isActive,
 			markTerminalActivityViewed,
 			project.id,
+			serverActivityClient,
+		]);
+
+		useEffect(() => {
+			if (isActive || serverActivityClient === undefined) return;
+			const sessionId = dockviewApiRef.current?.activePanel?.params?.sessionId;
+			if (typeof sessionId !== 'string' || sessionId.length === 0) return;
+			const acknowledgeVisibleFallback = () => {
+				const snapshot = serverActivityClient.store.snapshot.sessions[sessionId];
+				if (snapshot !== undefined && !snapshot.claimed) {
+					markTerminalActivityViewed(sessionId);
+				}
+			};
+			// Leaving a project is the last point at which its active shell was
+			// visibly observed. Clear only fallback shell noise here; structured
+			// completion remains meaningful and may still surface as finished. Shell
+			// foreground detection can settle just after the project switch, so fold
+			// that final lifecycle update into the same viewing acknowledgement.
+			acknowledgeVisibleFallback();
+			const settleTimer = window.setTimeout(
+				acknowledgeVisibleFallback,
+				PROJECT_DEACTIVATION_ACTIVITY_SETTLE_MS,
+			);
+			return () => window.clearTimeout(settleTimer);
+		}, [
+			isActive,
+			markTerminalActivityViewed,
 			serverActivityClient,
 		]);
 
