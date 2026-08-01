@@ -484,7 +484,9 @@ jobs:
           test -f "$EXTRACTED/package/dist/release-integrity.json"
           test -f "$EXTRACTED/package/dist/webrtc-runtime/artifact/lib/index.mjs"
           test ! -L "$EXTRACTED/package"
-          node "$EXTRACTED/package/dist/cli.js" --version | grep -Fx "$VERSION"
+          MANIFEST="$RUNNER_TEMP/terminay-server-artifact-manifest.json"
+          node scripts/standalone-artifact.mjs "$EXTRACTED/package" "$MANIFEST"
+          test "$(node -e 'process.stdout.write(require(process.argv[1]).package.version)' "$MANIFEST")" = "$VERSION"
 
       - name: Write and verify standalone server checksum
         env:
