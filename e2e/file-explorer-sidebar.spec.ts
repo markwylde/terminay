@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { rm } from 'node:fs/promises'
+import { realpath, rm } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { expect, test } from './fixtures'
 import {
@@ -11,6 +11,23 @@ import {
 } from './support/ui'
 
 const execFileAsync = promisify(execFile)
+
+async function getActiveSessionId(page: Parameters<typeof openFileExplorer>[0]): Promise<string> {
+  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
+
+  if (!sessionId) {
+    throw new Error('Active terminal session id is unavailable')
+  }
+
+  return sessionId
+}
+
+async function writeToActiveTerminal(page: Parameters<typeof openFileExplorer>[0], data: string): Promise<void> {
+  const sessionId = await getActiveSessionId(page)
+  await page.evaluate(async ({ nextData, nextSessionId }) => {
+    await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
+  }, { nextData: data, nextSessionId: sessionId })
+}
 
 test('file explorer can browse folders and open files', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
@@ -449,7 +466,8 @@ test('collapsing a pane seeds new projects but leaves open projects untouched', 
   // A newly created project inherits the collapsed-by-default Git pane.
   await mainWindow.getByLabel('Add project tab').click()
   await setProjectRoot(mainWindow, workspace.rootDir)
-  await mainWindow.getByLabel('Toggle file explorer').click()
+  await mainWindow.locator('.project-tab').filter({ hasText: 'Project 2' }).click()
+  await openFileExplorer(mainWindow)
   const gitPane2 = activeGitPane()
   await expect(gitPane2).toBeVisible()
   await expect(gitPane2).toHaveClass(/sidebar-pane--collapsed/)
@@ -484,6 +502,139 @@ test('git sidebar pane reports when the folder is not a git repository', async (
     .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
 
   await expect(gitPane.locator('.git-panel__message')).toHaveText('Not a git repository', { timeout: 6000 })
+})
+
+test('git sidebar pane refreshes after setting project root from terminal cwd', async ({
+  appHarness,
+  createWorkspace,
+  mainWindow,
+}) => {
+  const nonRepo = await createWorkspace({
+    name: 'git-pane-root-before',
+    seed: {
+      files: {
+        'README.md': 'not a git repository\n',
+      },
+    },
+  })
+  const mainRepo = await createWorkspace({
+    name: 'git-pane-main-repo',
+    seed: {
+      files: {
+        'README.md': 'tracked readme\n',
+      },
+    },
+  })
+  const linkedWorktree = await createWorkspace({ name: 'git-pane-linked-worktree' })
+  const expectedRoot = await realpath(linkedWorktree.rootDir)
+  const sessionId = await getActiveSessionId(mainWindow)
+
+  await rm(linkedWorktree.rootDir, { recursive: true, force: true })
+  await execFileAsync('git', ['init'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['worktree', 'add', '-b', 'server-client-architecture', linkedWorktree.rootDir], {
+    cwd: mainRepo.rootDir,
+  })
+
+  await setProjectRoot(mainWindow, nonRepo.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.project-workspace--active .sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  await expect(gitPane.locator('.git-panel__message')).toHaveText('Not a git repository', { timeout: 6000 })
+
+  const cwdReady = `cwd-ready-${sessionId}`
+  await writeToActiveTerminal(
+    mainWindow,
+    `cd ${JSON.stringify(linkedWorktree.rootDir)} && printf ${JSON.stringify(cwdReady)}\r`,
+  )
+  await expect(mainWindow.locator('.terminal-panel').filter({ hasText: cwdReady })).toBeVisible()
+  await expect
+    .poll(async () => {
+      return mainWindow.evaluate(async (nextSessionId) => {
+        return window.terminayTest!.getServerTerminalCwd(nextSessionId)
+      }, sessionId)
+    })
+    .toMatchObject({ cwd: expectedRoot, source: 'observed' })
+
+  await mainWindow.locator('.terminal-panel').first().click()
+  await appHarness.sendAppCommand('set-project-root-folder-to-working-directory')
+
+  await expect(fileExplorerItem(mainWindow, 'README.md')).toBeVisible()
+  const worktree = gitPane.locator('.worktrees-panel__worktree').first()
+  await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-linked-worktree', {
+    timeout: 6000,
+  })
+  await expect(gitPane.locator('.git-panel__message').filter({ hasText: 'Not a git repository' })).toHaveCount(0)
+})
+
+test('git sidebar pane refreshes after keyboard sidebar open and keyboard root update', async ({
+  createWorkspace,
+  mainWindow,
+}) => {
+  const nonRepo = await createWorkspace({
+    name: 'git-pane-keyboard-before',
+    seed: {
+      files: {
+        'plain.txt': 'not a git repository\n',
+      },
+    },
+  })
+  const repo = await createWorkspace({
+    name: 'git-pane-keyboard-after',
+    seed: {
+      files: {
+        'README.md': 'tracked readme\n',
+        'src/app.ts': 'export const value = 1\n',
+      },
+    },
+  })
+  const expectedRoot = await realpath(repo.rootDir)
+  const sessionId = await getActiveSessionId(mainWindow)
+  const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+
+  await execFileAsync('git', ['init'], { cwd: repo.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: repo.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: repo.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: repo.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo.rootDir })
+
+  await setProjectRoot(mainWindow, nonRepo.rootDir)
+  await mainWindow.locator('.terminal-panel').first().click()
+
+  const cwdReady = `cwd-ready-${sessionId}`
+  await writeToActiveTerminal(
+    mainWindow,
+    `cd ${JSON.stringify(repo.rootDir)} && printf ${JSON.stringify(cwdReady)}\r`,
+  )
+  await expect(mainWindow.locator('.terminal-panel').filter({ hasText: cwdReady })).toBeVisible()
+  await expect
+    .poll(async () => {
+      return mainWindow.evaluate(async (nextSessionId) => {
+        return window.terminayTest!.getServerTerminalCwd(nextSessionId)
+      }, sessionId)
+    })
+    .toMatchObject({ cwd: expectedRoot, source: 'observed' })
+
+  await mainWindow.keyboard.press(`${modifier}+O`)
+
+  const gitPane = mainWindow
+    .locator('.project-workspace--active .sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  await expect(gitPane.locator('.git-panel__message')).toHaveText('Not a git repository', { timeout: 6000 })
+
+  await mainWindow.keyboard.press(`${modifier}+R`)
+
+  await expect(fileExplorerItem(mainWindow, 'src')).toBeVisible()
+  const worktree = gitPane.locator('.worktrees-panel__worktree').first()
+  await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('git-pane-keyboard-after', {
+    timeout: 6000,
+  })
+  await expect(gitPane.locator('.git-panel__message').filter({ hasText: 'Not a git repository' })).toHaveCount(0)
 })
 
 test('file explorer refreshes git colors after external changes', async ({ createWorkspace, mainWindow }) => {

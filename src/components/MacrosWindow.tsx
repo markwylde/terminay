@@ -9,6 +9,9 @@ import {
   normalizeMacros,
 } from '../macroSettings'
 import { useMacroSettings } from '../hooks/useMacroSettings'
+import { useLegacyMacroSettingsCapability } from '../hooks/useMacroSettings'
+import { SharedMacroLibraryPane } from '../shared/SharedMacroLibraryPane'
+import { SharedMacroRouteBody } from '../shared/SharedMacroRouteBody'
 import type { MacroDefinition, MacroFieldDefinition, MacroFieldValue, MacroStep, SecretDefinition } from '../types/macros'
 import '../settings.css'
 
@@ -317,32 +320,6 @@ function MacroTextEditorModal({
   )
 }
 
-function MacroItem({ macro, isActive, onClick }: { macro: MacroDefinition, isActive: boolean, onClick: () => void }) {
-  const controls = useDragControls()
-
-  return (
-    <Reorder.Item
-      value={macro}
-      className={`macro-nav-item${isActive ? ' macro-nav-item--active' : ''}`}
-      dragListener={false}
-      dragControls={controls}
-    >
-      <div className="macro-nav-item-inner">
-        <div className="macro-nav-item-drag-handle" onPointerDown={(e) => controls.start(e)}>
-          ⋮⋮
-        </div>
-        <button
-          type="button"
-          className="macro-nav-item-button"
-          onClick={onClick}
-        >
-          {macro.title}
-        </button>
-      </div>
-    </Reorder.Item>
-  )
-}
-
 function StepItem({
   step,
   secrets,
@@ -588,6 +565,7 @@ function FieldItem({
 }
 
 function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], onRefresh: () => void }) {
+  const macroCapability = useLegacyMacroSettingsCapability()
   const [newSecretName, setNewSecretName] = useState('')
   const [newSecretValue, setNewSecretValue] = useState('')
   const [isSaving, setIsSaving] = useState(false)
@@ -596,7 +574,7 @@ function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], o
     if (!newSecretName || !newSecretValue) return
     setIsSaving(true)
     try {
-      await window.terminay.saveSecret(newSecretName, newSecretValue)
+      await macroCapability.saveSecret(newSecretName, newSecretValue)
       setNewSecretName('')
       setNewSecretValue('')
       onRefresh()
@@ -607,7 +585,7 @@ function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], o
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this secret? This cannot be undone.')) return
-    await window.terminay.deleteSecret(id)
+    await macroCapability.deleteSecret(id)
     onRefresh()
   }
 
@@ -670,8 +648,14 @@ function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], o
   )
 }
 
-export function MacrosWindow() {
-  const { macros: persistedMacros, isLoading } = useMacroSettings()
+export function MacrosWindow({
+  macroSettingsClient,
+}: Readonly<{ macroSettingsClient?: import('../hooks/useMacroSettings').MacroSettingsClient }>) {
+  // This is an explicit legacy host hand-off. The hook must not acquire the
+  // ambient preload object on its own.
+  const { macros: persistedMacros, isLoading } = useMacroSettings(macroSettingsClient)
+  const macroCapability = useLegacyMacroSettingsCapability()
+  const definitionsCapability = macroSettingsClient ?? macroCapability
   const [draftMacros, setDraftMacros] = useState<MacroDefinition[]>(defaultMacros)
   const [selectedMacroId, setSelectedMacroId] = useState<string | null>(null)
   const [secrets, setSecrets] = useState<SecretDefinition[]>([])
@@ -680,9 +664,9 @@ export function MacrosWindow() {
   const [activeTab, setActiveTab] = useState<'macros' | 'secrets'>('macros')
 
   const refreshSecrets = useCallback(async () => {
-    const list = await window.terminay.getSecrets()
+    const list = await macroCapability.getSecrets()
     setSecrets(list)
-  }, [])
+  }, [macroCapability])
 
   useEffect(() => {
     refreshSecrets()
@@ -815,7 +799,7 @@ export function MacrosWindow() {
     setErrorText(null)
 
     try {
-      const saved = await window.terminay.updateMacros(normalizeMacros(prepareMacrosForSave(draftMacros)))
+      const saved = await definitionsCapability.updateMacros(normalizeMacros(prepareMacrosForSave(draftMacros)))
       setDraftMacros(saved)
       setSelectedMacroId((current) => (current && saved.some((macro) => macro.id === current) ? current : saved[0]?.id ?? null))
     } catch (error) {
@@ -834,7 +818,7 @@ export function MacrosWindow() {
     setErrorText(null)
 
     try {
-      const saved = await window.terminay.resetMacros()
+      const saved = await definitionsCapability.resetMacros()
       setDraftMacros(saved)
       setSelectedMacroId(saved[0]?.id ?? null)
     } catch (error) {
@@ -845,42 +829,21 @@ export function MacrosWindow() {
   }
 
   return (
-    <div className="settings-shell">
-      <aside className="settings-sidebar">
-        <div className="settings-sidebar-header">
-          <div className="settings-brand">
-            <h1>Macros</h1>
-            <p className="settings-status">Build reusable automation steps.</p>
-          </div>
-
-          <button type="button" className="settings-primary-button" onClick={addMacro}>
-            New Macro
-          </button>
-        </div>
+    <SharedMacroRouteBody sidebar={<>
+        <SharedMacroLibraryPane
+          activeMacroId={activeTab === 'macros' ? selectedMacroId : null}
+          isLoading={isLoading}
+          macros={draftMacros.map(({ id, title }) => ({ id, title }))}
+          onCreate={addMacro}
+          onReorder={(orderedIds) => {
+            const macrosById = new Map(draftMacros.map((macro) => [macro.id, macro]))
+            const reordered = orderedIds.map((id) => macrosById.get(id)).filter((macro): macro is MacroDefinition => macro !== undefined)
+            if (reordered.length === draftMacros.length) setDraftMacros(reordered)
+          }}
+          onSelect={(macroId) => { setSelectedMacroId(macroId); setActiveTab('macros') }}
+        />
 
         <div className="settings-nav">
-          <div className="settings-nav-group">
-            <div className="settings-nav-group-title">Library</div>
-            <Reorder.Group
-              axis="y"
-              values={draftMacros}
-              onReorder={setDraftMacros}
-              className="settings-reorder-group"
-            >
-              {draftMacros.map((macro) => (
-                <MacroItem
-                  key={macro.id}
-                  macro={macro}
-                  isActive={macro.id === selectedMacroId && activeTab === 'macros'}
-                  onClick={() => {
-                    setSelectedMacroId(macro.id)
-                    setActiveTab('macros')
-                  }}
-                />
-              ))}
-            </Reorder.Group>
-            {!isLoading && draftMacros.length === 0 ? <p className="settings-empty-state">No macros yet.</p> : null}
-          </div>
 
           <div className="settings-nav-group" style={{ marginTop: 'auto', borderTop: '1px solid var(--settings-border)', paddingTop: 16 }}>
             <button 
@@ -906,10 +869,7 @@ export function MacrosWindow() {
             Reset All
           </button>
         </div>
-      </aside>
-
-      <main className="settings-main">
-        <div className="macros-content">
+      </>}>
           {errorText ? <div className="settings-error-banner">{errorText}</div> : null}
 
           {activeTab === 'secrets' ? (
@@ -1058,8 +1018,6 @@ export function MacrosWindow() {
               </section>
             </>
           )}
-        </div>
-      </main>
-    </div>
+    </SharedMacroRouteBody>
   )
 }

@@ -14,6 +14,7 @@ const {
 	selectAgentStatusesByProvider,
 	selectAgentStatusesByState,
 	selectAgentStatusesForTerminal,
+	selectLiveAgentStatusesForTerminal,
 	selectRootAgentStatuses,
 	selectRootAgentStatusForTerminal,
 	selectSubagentStatuses,
@@ -230,6 +231,32 @@ test('done and exit lifecycle preserve completion while marking the agent inacti
 	assert.equal(root.exitCode, 17);
 	assert.equal(root.exitSignal, 'SIGTERM');
 	assert.equal(root.completionOutcome, 'error');
+});
+
+test('live selection hides completed child history and hides all children after root exit', () => {
+	const store = new AgentStatusStore();
+	store.dispatch(event('session.started', 1, 100));
+	store.dispatch(event('subagent.started', 2, 200, { subagentId: 'child' }));
+	store.dispatch(event('subagent.stopped', 3, 300, { subagentId: 'child' }));
+
+	assert.equal(selectSubagentStatuses(store.getSnapshot()).length, 1);
+	assert.equal(selectLiveAgentStatusesForTerminal(store.getSnapshot(), 'terminal-1').length, 1);
+
+	store.dispatch(event('session.stopped', 4, 400, { reason: 'exit' }));
+	assert.equal(selectLiveAgentStatusesForTerminal(store.getSnapshot(), 'terminal-1').length, 0);
+});
+
+test('resuming the same root session reactivates only the root in the live roster', () => {
+	const store = new AgentStatusStore();
+	store.dispatch(event('session.started', 1, 100));
+	store.dispatch(event('subagent.started', 2, 200, { subagentId: 'child' }));
+	store.dispatch(event('subagent.stopped', 3, 300, { subagentId: 'child' }));
+	store.dispatch(event('session.stopped', 4, 400, { reason: 'exit' }));
+	store.dispatch(event('session.started', 5, 500));
+
+	const live = selectLiveAgentStatusesForTerminal(store.getSnapshot(), 'terminal-1');
+	assert.deepEqual(live.map((entry) => entry.kind), ['root']);
+	assert.equal(selectSubagentStatuses(store.getSnapshot()).length, 1);
 });
 
 test('provider sessions use independent ordering streams on the same terminal', () => {

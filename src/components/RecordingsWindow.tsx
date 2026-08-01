@@ -8,32 +8,26 @@ import {
   Pause,
   Palette,
   Play,
-  RefreshCw,
   RotateCcw,
-  Search,
   Trash2,
 } from 'lucide-react'
 import { buildTerminalOptions, defaultTerminalSettings, resolveTerminalTheme } from '../terminalSettings'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { TerminalSettings, TerminalThemeSettings } from '../types/settings'
-import type { TerminalRecordingCast, TerminalRecordingListItem } from '../types/terminay'
+import type { TerminalRecordingListItem } from '../types/terminay'
+import {
+  advanceReplayCursor,
+  buildReplayIndex,
+  restoreReplayCursor,
+  type ReplayCursor,
+  type ReplayIndex,
+} from '../recordingReplay'
+import { createLegacyRecordingsClient, toLegacyRecordingMetadata } from '../services/recordings/legacyRecordingsClient'
+import { SharedRecordingsLibraryPane } from '../shared/SharedRecordingsLibraryPane'
+import { SharedRecordingsRouteBody } from '../shared/SharedRecordingsRouteBody'
+import type { RecordingsClient } from '@terminay/client-core'
 import '../settings.css'
 import '../recordings.css'
-
-type ParsedCastEvent = {
-  code: string
-  data: string
-  interval: number
-  time: number
-}
-
-type ParsedCast = {
-  cols: number
-  duration: number
-  events: ParsedCastEvent[]
-  rows: number
-  title: string
-}
 
 type ElementSize = {
   height: number
@@ -87,49 +81,6 @@ function parseZoomValue(value: string): number | 'fit' | null {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, numericValue / 100))
 }
 
-function parseAsciicast(content: string): ParsedCast {
-  const lines = content.split(/\r?\n/).filter((line) => line.length > 0)
-  const header = JSON.parse(lines[0] ?? '{}') as {
-    term?: { cols?: number; rows?: number }
-    title?: string
-  }
-  const events: ParsedCastEvent[] = []
-  let time = 0
-
-  for (const line of lines.slice(1)) {
-    if (line.startsWith('#')) {
-      continue
-    }
-
-    let tuple: unknown
-    try {
-      tuple = JSON.parse(line)
-    } catch {
-      continue
-    }
-
-    if (!Array.isArray(tuple) || tuple.length < 3) {
-      continue
-    }
-
-    const [interval, code, data] = tuple
-    if (typeof interval !== 'number' || typeof code !== 'string' || typeof data !== 'string') {
-      continue
-    }
-
-    time += Math.max(0, interval)
-    events.push({ code, data, interval, time })
-  }
-
-  return {
-    cols: Math.max(2, Math.floor(Number(header.term?.cols) || 80)),
-    duration: events.length > 0 ? events[events.length - 1].time : 0,
-    events,
-    rows: Math.max(1, Math.floor(Number(header.term?.rows) || 24)),
-    title: typeof header.title === 'string' ? header.title : 'Terminal Recording',
-  }
-}
-
 function formatDate(value: string | null): string {
   if (!value) {
     return 'Unknown'
@@ -157,6 +108,12 @@ function formatDuration(ms: number | null): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
 function formatPlaybackTime(seconds: number): string {
   const safeSeconds = Math.max(0, seconds)
   const minutes = Math.floor(safeSeconds / 60)
@@ -168,13 +125,11 @@ function getRecordingDisplayTitle(recording: TerminalRecordingListItem): string 
   return recording.projectTitle ? `${recording.projectTitle} > ${recording.title}` : recording.title
 }
 
-function getRecordingTabColor(recording: TerminalRecordingCast | TerminalRecordingListItem | null): string | undefined {
+function getRecordingTabColor(recording: TerminalRecordingListItem | null): string | undefined {
   if (!recording) {
     return undefined
   }
-
-  const metadata = 'metadata' in recording ? recording.metadata : recording
-  return metadata?.color ?? metadata?.projectColor ?? undefined
+  return recording.color ?? recording.projectColor ?? undefined
 }
 
 type SelectDropupOption = {
@@ -455,26 +410,46 @@ function measureReplayTerminal(root: HTMLElement): ElementSize {
   }
 }
 
-export function RecordingsWindow() {
+function missingRecordingsClient(): never {
+  throw new Error('Recording service capability is unavailable')
+}
+
+export function RecordingsWindow({ client }: { readonly client?: RecordingsClient } = {}) {
   const { settings } = useTerminalSettings()
+  const legacyRecordingsClient = useMemo(() => {
+    if (client !== undefined) return undefined
+    if (window.terminayRecordingServiceHost === undefined) {
+      throw new Error('Desktop recording service capability is unavailable')
+    }
+    return createLegacyRecordingsClient(window.terminayRecordingServiceHost)
+  }, [client])
+  const recordingsClient: RecordingsClient = client ?? legacyRecordingsClient ?? missingRecordingsClient()
+  const readRecordingChunk = useCallback(
+    (request: { recordingId: string; start?: number; maxBytes?: number }) => recordingsClient.replay(request.recordingId, request),
+    [recordingsClient],
+  )
   const terminalViewportRef = useRef<HTMLDivElement | null>(null)
   const terminalRootRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const animationFrameRef = useRef<number | null>(null)
+  const indexAbortRef = useRef<AbortController | null>(null)
   const playStartedAtRef = useRef(0)
   const playOffsetRef = useRef(0)
-  const renderedEventIndexRef = useRef(0)
-  const parsedCastRef = useRef<ParsedCast | null>(null)
+  const playbackAbortRef = useRef<AbortController | null>(null)
+  const replayCursorRef = useRef<ReplayCursor | null>(null)
+  const replayIndexRef = useRef<ReplayIndex | null>(null)
+  const seekAbortRef = useRef<AbortController | null>(null)
   const playheadRef = useRef(0)
   const displayScaleRef = useRef(1)
   const measureFrameRef = useRef<number | null>(null)
   const [recordings, setRecordings] = useState<TerminalRecordingListItem[]>([])
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
-  const [loadedCast, setLoadedCast] = useState<TerminalRecordingCast | null>(null)
-  const [parsedCast, setParsedCast] = useState<ParsedCast | null>(null)
+  const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null)
+  const [replayIndex, setReplayIndex] = useState<ReplayIndex | null>(null)
   const [query, setQuery] = useState('')
   const [isLoading, setIsLoading] = useState(true)
+  const [isReplayLoading, setIsReplayLoading] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
+  const [replayWarning, setReplayWarning] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playhead, setPlayhead] = useState(0)
   const [speed, setSpeed] = useState(1)
@@ -483,7 +458,7 @@ export function RecordingsWindow() {
   const [customScale, setCustomScale] = useState(1)
   const [terminalSize, setTerminalSize] = useState<ElementSize>({ height: 1, width: 1 })
   const [viewportSize, setViewportSize] = useState<ElementSize>({ height: 1, width: 1 })
-  const selectedRecording = recordings.find((recording) => recording.castPath === selectedPath) ?? null
+  const selectedRecording = recordings.find((recording) => recording.recordingId === selectedRecordingId) ?? null
 
   useEffect(() => {
     playheadRef.current = playhead
@@ -566,7 +541,7 @@ export function RecordingsWindow() {
     }),
     [displayScale, terminalSize.height, terminalSize.width],
   )
-  const recordedTheme = loadedCast?.metadata?.theme ?? null
+  const recordedTheme = selectedRecording?.theme ?? null
   const canUseRecordedTheme = recordedTheme !== null
   const replayThemeMode = themeMode === 'recorded' && canUseRecordedTheme ? 'recorded' : 'current'
   const zoomValue = scaleMode === 'fit' ? 'fit' : String(Math.round(displayScale * 100))
@@ -591,56 +566,62 @@ export function RecordingsWindow() {
       return recordedTheme
     }
 
-    return resolveTerminalTheme(settings ?? defaultTerminalSettings, getRecordingTabColor(loadedCast ?? selectedRecording))
-  }, [loadedCast, recordedTheme, replayThemeMode, selectedRecording, settings])
+    return resolveTerminalTheme(settings ?? defaultTerminalSettings, getRecordingTabColor(selectedRecording))
+  }, [recordedTheme, replayThemeMode, selectedRecording, settings])
 
   const loadRecordings = useCallback(async () => {
     setIsLoading(true)
     setErrorText(null)
     try {
-      const nextRecordings = await window.terminay.listTerminalRecordings()
+      const nextRecordings = (await recordingsClient.list()).items.map(toLegacyRecordingMetadata)
       setRecordings(nextRecordings)
-      setSelectedPath((current) => current ?? nextRecordings[0]?.castPath ?? null)
+      setSelectedRecordingId((current) =>
+        current && nextRecordings.some((recording) => recording.recordingId === current)
+          ? current
+          : nextRecordings[0]?.recordingId ?? null)
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : String(error))
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [recordingsClient])
 
   useEffect(() => {
     void loadRecordings()
   }, [loadRecordings])
 
-  const renderUpTo = useCallback((time: number) => {
+  const seekToTime = useCallback(async (time: number) => {
     const terminal = terminalRef.current
-    const cast = parsedCastRef.current
-    if (!terminal || !cast) {
-      return
+    const index = replayIndexRef.current
+    if (!terminal || !index) {
+      return false
     }
 
-    terminal.reset()
-    terminal.resize(cast.cols, cast.rows)
-    let index = 0
-    for (const event of cast.events) {
-      if (event.time > time) {
-        break
+    seekAbortRef.current?.abort()
+    playbackAbortRef.current?.abort()
+    const controller = new AbortController()
+    seekAbortRef.current = controller
+    setErrorText(null)
+    try {
+      replayCursorRef.current = await restoreReplayCursor(
+        index,
+        time,
+        terminal,
+        readRecordingChunk,
+        controller.signal,
+      )
+      if (!controller.signal.aborted) {
+        setPlayhead(Math.max(0, Math.min(time, index.duration)))
+        measureTerminal()
+        return true
       }
-
-      if (event.code === 'o') {
-        terminal.write(event.data)
-      } else if (event.code === 'r') {
-        const [cols, rows] = event.data.split('x').map((part) => Number(part))
-        if (Number.isFinite(cols) && Number.isFinite(rows)) {
-          terminal.resize(Math.max(2, cols), Math.max(1, rows))
-          measureTerminal()
-        }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setErrorText(error instanceof Error ? error.message : String(error))
       }
-      index += 1
     }
-    renderedEventIndexRef.current = index
-    measureTerminal()
-  }, [measureTerminal])
+    return false
+  }, [measureTerminal, readRecordingChunk])
 
   useEffect(() => {
     const root = terminalRootRef.current
@@ -648,13 +629,14 @@ export function RecordingsWindow() {
       return
     }
 
+    setIsPlaying(false)
     root.innerHTML = ''
     const terminal = new Terminal({
       ...buildReplayTerminalOptions(settings ?? defaultTerminalSettings, replayTheme),
       allowProposedApi: true,
-      cols: parsedCastRef.current?.cols ?? 80,
+      cols: replayIndexRef.current?.cols ?? 80,
       disableStdin: false,
-      rows: parsedCastRef.current?.rows ?? 24,
+      rows: replayIndexRef.current?.rows ?? 24,
     })
     terminal.loadAddon(new Unicode11Addon())
     terminal.unicode.activeVersion = '11'
@@ -675,8 +657,8 @@ export function RecordingsWindow() {
     measureTerminal()
 
     window.requestAnimationFrame(() => {
-      if (parsedCastRef.current) {
-        renderUpTo(playheadRef.current)
+      if (replayIndexRef.current) {
+        void seekToTime(playheadRef.current)
         terminal.focus()
       }
       measureTerminal()
@@ -684,11 +666,13 @@ export function RecordingsWindow() {
 
     return () => {
       resizeObserver.disconnect()
+      seekAbortRef.current?.abort()
+      playbackAbortRef.current?.abort()
       restoreMouseCoordinates()
       terminal.dispose()
       terminalRef.current = null
     }
-  }, [measureTerminal, renderUpTo, replayTheme, settings])
+  }, [measureTerminal, replayTheme, seekToTime, settings])
 
   useEffect(() => {
     const terminal = terminalRef.current
@@ -711,43 +695,57 @@ export function RecordingsWindow() {
   }, [measureTerminal, replayTheme, settings])
 
   useEffect(() => {
-    if (!selectedPath) {
-      setLoadedCast(null)
-      setParsedCast(null)
+    const recordingId = selectedRecording?.recordingId
+    indexAbortRef.current?.abort()
+    seekAbortRef.current?.abort()
+    playbackAbortRef.current?.abort()
+    setIsPlaying(false)
+    setPlayhead(0)
+    setReplayWarning(null)
+    replayCursorRef.current = null
+    replayIndexRef.current = null
+    setReplayIndex(null)
+    terminalRef.current?.reset()
+    if (!recordingId) {
       return
     }
 
-    let canceled = false
+    const controller = new AbortController()
+    indexAbortRef.current = controller
     setErrorText(null)
-    setIsPlaying(false)
-    setPlayhead(0)
-
-    void window.terminay.readTerminalRecording(selectedPath).then(
-      (recording) => {
-        if (canceled) {
+    setIsReplayLoading(true)
+    void buildReplayIndex(recordingId, readRecordingChunk, controller.signal)
+      .then(async (index) => {
+        if (controller.signal.aborted) {
           return
         }
-
-        const parsed = parseAsciicast(recording.content)
-        setLoadedCast(recording)
-        setParsedCast(parsed)
-        parsedCastRef.current = parsed
-        renderedEventIndexRef.current = 0
+        replayIndexRef.current = index
+        setReplayIndex(index)
+        const warnings = [
+          index.malformedRecordCount > 0
+            ? `${index.malformedRecordCount} malformed replay record${index.malformedRecordCount === 1 ? ' was' : 's were'} skipped.`
+            : null,
+          index.truncatedTail ? 'The recording ends with an incomplete record; the valid prefix remains playable.' : null,
+        ].filter(Boolean)
+        setReplayWarning(warnings.join(' ') || null)
         setScaleMode('fit')
-        renderUpTo(0)
-        measureTerminal()
-      },
-      (error) => {
-        if (!canceled) {
+        await seekToTime(0)
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
           setErrorText(error instanceof Error ? error.message : String(error))
         }
-      },
-    )
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsReplayLoading(false)
+        }
+      })
 
     return () => {
-      canceled = true
+      controller.abort()
     }
-  }, [measureTerminal, renderUpTo, selectedPath])
+  }, [readRecordingChunk, seekToTime, selectedRecording?.recordingId])
 
   const stopAnimation = useCallback(() => {
     if (animationFrameRef.current !== null) {
@@ -756,54 +754,73 @@ export function RecordingsWindow() {
     }
   }, [])
 
-  const tickPlayback = useCallback(() => {
-    const cast = parsedCastRef.current
-    const terminal = terminalRef.current
-    if (!cast || !terminal) {
-      return
-    }
-
-    const elapsed = playOffsetRef.current + ((performance.now() - playStartedAtRef.current) / 1000) * speed
-    const nextTime = Math.min(elapsed, cast.duration)
-    let index = renderedEventIndexRef.current
-
-    while (index < cast.events.length && cast.events[index].time <= nextTime) {
-      const event = cast.events[index]
-      if (event.code === 'o') {
-        terminal.write(event.data)
-      } else if (event.code === 'r') {
-        const [cols, rows] = event.data.split('x').map((part) => Number(part))
-        if (Number.isFinite(cols) && Number.isFinite(rows)) {
-          terminal.resize(Math.max(2, cols), Math.max(1, rows))
-          measureTerminal()
-        }
-      }
-      index += 1
-    }
-
-    renderedEventIndexRef.current = index
-    setPlayhead(nextTime)
-
-    if (nextTime >= cast.duration) {
-      setIsPlaying(false)
-      animationFrameRef.current = null
-      return
-    }
-
-    animationFrameRef.current = window.requestAnimationFrame(tickPlayback)
-  }, [measureTerminal, speed])
-
   useEffect(() => {
     stopAnimation()
-    if (!isPlaying || !parsedCast) {
+    playbackAbortRef.current?.abort()
+    if (!isPlaying || !replayIndex) {
       return
     }
 
+    const controller = new AbortController()
+    playbackAbortRef.current = controller
+    let advancing = false
     playStartedAtRef.current = performance.now()
-    playOffsetRef.current = playhead
+    playOffsetRef.current = playheadRef.current
+
+    const tickPlayback = () => {
+      if (controller.signal.aborted) {
+        return
+      }
+      if (advancing) {
+        animationFrameRef.current = window.requestAnimationFrame(tickPlayback)
+        return
+      }
+      const terminal = terminalRef.current
+      const cursor = replayCursorRef.current
+      if (!terminal || !cursor) {
+        setIsPlaying(false)
+        return
+      }
+
+      const elapsed = playOffsetRef.current + ((performance.now() - playStartedAtRef.current) / 1000) * speed
+      const nextTime = Math.min(elapsed, replayIndex.duration)
+      advancing = true
+      void advanceReplayCursor(
+        cursor,
+        nextTime,
+        terminal,
+        readRecordingChunk,
+        controller.signal,
+      )
+        .then(() => {
+          if (controller.signal.aborted) {
+            return
+          }
+          setPlayhead(nextTime)
+          measureTerminal()
+          if (nextTime >= replayIndex.duration) {
+            setIsPlaying(false)
+            return
+          }
+          animationFrameRef.current = window.requestAnimationFrame(tickPlayback)
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted) {
+            setErrorText(error instanceof Error ? error.message : String(error))
+            setIsPlaying(false)
+          }
+        })
+        .finally(() => {
+          advancing = false
+        })
+    }
+
     animationFrameRef.current = window.requestAnimationFrame(tickPlayback)
-    return stopAnimation
-  }, [isPlaying, parsedCast, playhead, stopAnimation, tickPlayback])
+    return () => {
+      controller.abort()
+      stopAnimation()
+    }
+  }, [isPlaying, measureTerminal, readRecordingChunk, replayIndex, speed, stopAnimation])
 
   const filteredRecordings = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -816,8 +833,8 @@ export function RecordingsWindow() {
         recording.title,
         recording.projectTitle,
         getRecordingDisplayTitle(recording),
-        recording.cwd,
-        recording.castPath,
+        recording.cwdLabel,
+        recording.shellName,
         recording.startedAt,
       ]
         .filter(Boolean)
@@ -839,27 +856,34 @@ export function RecordingsWindow() {
   }, [filteredRecordings])
 
   const onTogglePlay = () => {
-    if (!parsedCast) {
+    if (!replayIndex || isReplayLoading) {
       return
     }
-
-    if (playhead >= parsedCast.duration) {
-      renderUpTo(0)
-      setPlayhead(0)
+    if (isPlaying) {
+      setIsPlaying(false)
+      return
     }
-    setIsPlaying((current) => !current)
+    if (playhead >= replayIndex.duration) {
+      void seekToTime(0).then((restored) => {
+        if (restored) {
+          setIsPlaying(true)
+        }
+      })
+      return
+    }
+    setIsPlaying(true)
   }
 
   const onRestart = () => {
     setIsPlaying(false)
     setPlayhead(0)
-    renderUpTo(0)
+    void seekToTime(0)
   }
 
   const onScrub = (value: number) => {
     setIsPlaying(false)
     setPlayhead(value)
-    renderUpTo(value)
+    void seekToTime(value)
   }
 
   const updateCustomScale = (nextScale: number) => {
@@ -913,77 +937,56 @@ export function RecordingsWindow() {
   }
 
   const onDelete = async () => {
-    if (!selectedPath || !confirm('Delete this recording?')) {
+    if (!selectedRecordingId || !confirm('Delete this recording?')) {
       return
     }
 
-    await window.terminay.deleteTerminalRecording(selectedPath)
-    setSelectedPath(null)
-    setLoadedCast(null)
-    setParsedCast(null)
-    parsedCastRef.current = null
+    if (!selectedRecording) {
+      return
+    }
+    await recordingsClient.delete(selectedRecording.recordingId)
+    setSelectedRecordingId(null)
+    setReplayIndex(null)
+    replayIndexRef.current = null
+    replayCursorRef.current = null
     await loadRecordings()
   }
 
   return (
-    <div className="recordings-window">
-      <aside className="recordings-sidebar">
-        <header className="recordings-header">
-          <div>
-            <h1>Recordings</h1>
-            <p>{recordings.length} saved session{recordings.length === 1 ? '' : 's'}</p>
-          </div>
-          <button type="button" className="recordings-icon-button" onClick={() => void loadRecordings()} aria-label="Refresh recordings">
-            <RefreshCw size={16} />
-          </button>
-        </header>
-        <label className="recordings-search">
-          <Search size={15} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search recordings" />
-        </label>
-        <div className="recordings-list">
-          {isLoading ? <div className="recordings-empty">Loading recordings...</div> : null}
-          {!isLoading && groupedRecordings.length === 0 ? <div className="recordings-empty">No recordings found.</div> : null}
-          {groupedRecordings.map(([date, items]) => (
-            <section key={date} className="recordings-group">
-              <h2>{date}</h2>
-              {items.map((recording) => (
-                <button
-                  key={recording.castPath}
-                  type="button"
-                  className={`recordings-list-item${recording.castPath === selectedPath ? ' recordings-list-item--selected' : ''}`}
-                  onClick={() => setSelectedPath(recording.castPath)}
-                >
-                  <span className="recordings-list-item__title">{getRecordingDisplayTitle(recording)}</span>
-                  <span className="recordings-list-item__meta">
-                    {(recording.cwd ?? 'Unknown cwd')} · {formatDuration(recording.durationMs)}
-                  </span>
-                  <span className={`recordings-list-item__state recordings-list-item__state--${recording.recordingState}`}>
-                    {recording.recordingState}
-                  </span>
-                </button>
-              ))}
-            </section>
-          ))}
-        </div>
-      </aside>
-      <main className="recordings-main">
-        {errorText ? <div className="recordings-error">{errorText}</div> : null}
+    <SharedRecordingsRouteBody library={<SharedRecordingsLibraryPane
+        groupedRecordings={groupedRecordings}
+        isLoading={isLoading}
+        onQueryChange={setQuery}
+        onRefresh={() => void loadRecordings()}
+        onSelect={setSelectedRecordingId}
+        query={query}
+        recordings={recordings}
+        selectedRecordingId={selectedRecordingId}
+        titleFor={getRecordingDisplayTitle}
+        durationFor={formatDuration}
+      />}>
+        {errorText ? <div className="recordings-error" role="alert">{errorText}</div> : null}
+        {isReplayLoading ? <div className="recordings-empty" role="status">Preparing replay…</div> : null}
+        {replayWarning ? <div className="recordings-warning" role="status">{replayWarning}</div> : null}
         <header className="recordings-detail-header">
           <div>
-            <h2>{selectedRecording ? getRecordingDisplayTitle(selectedRecording) : parsedCast?.title ?? 'Select a recording'}</h2>
+            <h2>{selectedRecording ? getRecordingDisplayTitle(selectedRecording) : replayIndex?.title ?? 'Select a recording'}</h2>
             <p>
-              {selectedRecording ? `${formatDate(selectedRecording.startedAt)} · ${selectedRecording.cwd ?? 'Unknown cwd'}` : 'Choose a saved session to replay it.'}
+              {selectedRecording ? `${formatDate(selectedRecording.startedAt)} · ${selectedRecording.cwdLabel ?? 'Unknown folder'}` : 'Choose a saved session to replay it.'}
             </p>
             {selectedRecording ? (
               <p className="recordings-detail-path">
-                {selectedRecording.recordingState} · exit {selectedRecording.exitCode ?? 'unknown'} · {selectedRecording.castPath}
+                {selectedRecording.recordingState} · exit {selectedRecording.exitCode ?? 'unknown'} · {formatBytes(selectedRecording.bytesWritten)}
               </p>
             ) : null}
           </div>
           {selectedRecording ? (
             <div className="recordings-actions">
-              <button type="button" className="recordings-secondary-button" onClick={() => void window.terminay.revealTerminalRecording(selectedRecording.castPath)}>
+              <button
+                type="button"
+                className="recordings-secondary-button"
+                onClick={() => void recordingsClient.reveal(selectedRecording.recordingId)}
+              >
                 <ExternalLink size={15} />
                 Reveal
               </button>
@@ -1024,7 +1027,7 @@ export function RecordingsWindow() {
             className="recordings-timeline"
             style={
               {
-                '--progress': `${parsedCast?.duration ? (Math.min(playhead, parsedCast.duration) / parsedCast.duration) * 100 : 0}%`,
+                '--progress': `${replayIndex?.duration ? (Math.min(playhead, replayIndex.duration) / replayIndex.duration) * 100 : 0}%`,
               } as React.CSSProperties
             }
           >
@@ -1032,11 +1035,11 @@ export function RecordingsWindow() {
               className="recordings-range"
               type="range"
               min={0}
-              max={parsedCast?.duration ?? 0}
+              max={replayIndex?.duration ?? 0}
               step={0.1}
-              value={Math.min(playhead, parsedCast?.duration ?? 0)}
+              value={Math.min(playhead, replayIndex?.duration ?? 0)}
               onChange={(event) => onScrub(Number(event.target.value))}
-              disabled={!parsedCast}
+              disabled={!replayIndex || isReplayLoading}
             />
           </div>
           <div className="recordings-controls">
@@ -1045,17 +1048,17 @@ export function RecordingsWindow() {
                 type="button"
                 className="recordings-control-button"
                 onClick={onTogglePlay}
-                disabled={!loadedCast || !parsedCast}
+                disabled={!replayIndex || isReplayLoading}
                 aria-label={isPlaying ? 'Pause replay' : 'Play replay'}
                 title={isPlaying ? 'Pause' : 'Play'}
               >
                 {isPlaying ? <Pause size={20} fill="currentColor" color="currentColor" /> : <Play size={20} className="recordings-play-icon" fill="currentColor" color="currentColor" />}
               </button>
-              <button type="button" className="recordings-control-button" onClick={onRestart} disabled={!parsedCast} aria-label="Restart replay" title="Restart">
+              <button type="button" className="recordings-control-button" onClick={onRestart} disabled={!replayIndex || isReplayLoading} aria-label="Restart replay" title="Restart">
                 <RotateCcw size={16} />
               </button>
               <div className="recordings-time">
-                {formatPlaybackTime(playhead)} / {formatPlaybackTime(parsedCast?.duration ?? 0)}
+                {formatPlaybackTime(playhead)} / {formatPlaybackTime(replayIndex?.duration ?? 0)}
               </div>
             </div>
 
@@ -1064,7 +1067,7 @@ export function RecordingsWindow() {
                 allowManualInput
                 ariaLabel="Replay zoom"
                 className="recordings-select--zoom"
-                disabled={!parsedCast}
+                disabled={!replayIndex || isReplayLoading}
                 displayValue={scaleMode === 'fit' ? 'Fit' : formatZoomScale(displayScale)}
                 inputMode="decimal"
                 menuLabel="Zoom presets"
@@ -1076,7 +1079,7 @@ export function RecordingsWindow() {
               <SelectDropup
                 ariaLabel="Replay palette"
                 className="recordings-select--palette"
-                disabled={!parsedCast}
+                disabled={!replayIndex || isReplayLoading}
                 icon={<Palette size={15} />}
                 menuLabel="Palette choices"
                 onChange={(value) => setThemeMode(value as ReplayThemeMode)}
@@ -1086,7 +1089,7 @@ export function RecordingsWindow() {
               <SelectDropup
                 ariaLabel="Playback speed"
                 className="recordings-select--speed"
-                disabled={!parsedCast}
+                disabled={!replayIndex || isReplayLoading}
                 menuLabel="Speed choices"
                 onChange={(value) => setSpeed(Number(value))}
                 options={[
@@ -1102,7 +1105,6 @@ export function RecordingsWindow() {
             </div>
           </div>
         </footer>
-      </main>
-    </div>
+    </SharedRecordingsRouteBody>
   )
 }

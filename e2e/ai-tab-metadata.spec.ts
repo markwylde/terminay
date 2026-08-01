@@ -27,8 +27,8 @@ async function getActiveTerminalSessionId(page: Page): Promise<string> {
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
   const sessionId = await getActiveTerminalSessionId(page)
   await page.evaluate(
-    ({ nextSessionId, nextData }) => {
-      window.terminay.writeTerminal(nextSessionId, nextData)
+    async ({ nextSessionId, nextData }) => {
+      await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
     },
     { nextData: data, nextSessionId: sessionId },
   )
@@ -36,7 +36,7 @@ async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
 
 async function firstAiProviderModel(page: Page, provider: AiTabMetadataProvider): Promise<string> {
   return page.evaluate(async (nextProvider) => {
-    const models = await window.terminay.listAiTabMetadataModels(nextProvider)
+    const models = await window.terminayAiMetadataHost.listAiTabMetadataModels(nextProvider)
     const model = models[0]?.id
     if (!model) {
       throw new Error(`No ${nextProvider} model is available for AI tab metadata tests.`)
@@ -48,8 +48,8 @@ async function firstAiProviderModel(page: Page, provider: AiTabMetadataProvider)
 
 async function configureAiTabMetadata(page: Page, provider: 'claudeCode' | 'codex' = 'codex', model = 'codex-test-model') {
   await page.evaluate(async ({ nextModel, nextProvider }) => {
-    const settings = await window.terminay.getTerminalSettings()
-    await window.terminay.updateTerminalSettings({
+    const settings = await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()
+    await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings({
       ...settings,
       aiTabMetadata: {
         title: {

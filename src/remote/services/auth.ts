@@ -1,4 +1,3 @@
-import { signDeviceChallenge } from './deviceKeys'
 import type { PairingBootstrap } from './pairing'
 import type { RemoteApiTransport } from './transport'
 
@@ -29,7 +28,9 @@ export async function authenticateDevice(options: {
   api: RemoteApiTransport
   deviceId: string
   pairingPin?: string
-  privateKey: CryptoKey
+  /** The signer owns the private key. Browser and Electron implementations
+   * deliberately use different key stores, but send the identical proof. */
+  signChallenge: (signingInput: string) => Promise<string>
 }): Promise<{ ticket: string; websocketUrl?: string }> {
   const authOptions = await options.api.postJson<{
     deviceChallenge: { challengeId: string }
@@ -38,7 +39,7 @@ export async function authenticateDevice(options: {
     deviceId: options.deviceId,
   })
 
-  const deviceSignature = await signDeviceChallenge(options.privateKey, authOptions.signingInput)
+  const deviceSignature = await options.signChallenge(authOptions.signingInput)
 
   return options.api.postJson('/api/auth/verify', {
     challengeId: authOptions.deviceChallenge.challengeId,

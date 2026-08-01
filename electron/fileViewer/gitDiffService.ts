@@ -5,6 +5,8 @@ import { promisify } from 'node:util'
 import type {
   FileExplorerGitStatuses,
   FileViewerGitDiff,
+  FileViewerGitDiffHunk,
+  FileViewerGitDiffLine,
   FileViewerGitRepoInfo,
   GitChangeEntry,
   GitFileState,
@@ -16,6 +18,86 @@ import { getGitWorkingDirectory } from './pathUtils'
 import type { FileBufferService } from './fileBufferService'
 
 const execFileAsync = promisify(execFile)
+export const MAX_FILE_DIFF_BYTES = 4 * 1024 * 1024
+export const MAX_NORMALIZED_DIFF_HUNKS = 10_000
+export const MAX_NORMALIZED_DIFF_LINES = 100_000
+export const MAX_NORMALIZED_DIFF_LINE_BYTES = 64 * 1024
+
+type NormalizedGitPatch = {
+  hunks: FileViewerGitDiffHunk[]
+  tooLarge: boolean
+}
+
+export function normalizeGitPatch(patch: string): NormalizedGitPatch {
+  const hunks: FileViewerGitDiffHunk[] = []
+  let currentHunk: FileViewerGitDiffHunk | null = null
+  let oldLineNumber = 0
+  let newLineNumber = 0
+  let normalizedLineCount = 0
+
+  for (const line of patch.split(/\r?\n/)) {
+    if (Buffer.byteLength(line, 'utf8') > MAX_NORMALIZED_DIFF_LINE_BYTES) {
+      return { hunks: [], tooLarge: true }
+    }
+
+    if (line.startsWith('@@')) {
+      const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
+      if (!match) {
+        continue
+      }
+      oldLineNumber = Number.parseInt(match[1], 10)
+      newLineNumber = Number.parseInt(match[2], 10)
+      if (hunks.length >= MAX_NORMALIZED_DIFF_HUNKS) {
+        return { hunks: [], tooLarge: true }
+      }
+      currentHunk = { header: line, lines: [] }
+      hunks.push(currentHunk)
+      continue
+    }
+
+    if (!currentHunk || line.startsWith('\\')) {
+      continue
+    }
+
+    let normalizedLine: FileViewerGitDiffLine
+    if (line.startsWith('+')) {
+      normalizedLine = {
+        newLineNumber,
+        oldLineNumber: null,
+        type: 'add',
+        value: line.slice(1),
+      }
+      newLineNumber += 1
+    } else if (line.startsWith('-')) {
+      normalizedLine = {
+        newLineNumber: null,
+        oldLineNumber,
+        type: 'delete',
+        value: line.slice(1),
+      }
+      oldLineNumber += 1
+    } else if (line.startsWith(' ')) {
+      normalizedLine = {
+        newLineNumber,
+        oldLineNumber,
+        type: 'context',
+        value: line.slice(1),
+      }
+      oldLineNumber += 1
+      newLineNumber += 1
+    } else {
+      continue
+    }
+
+    normalizedLineCount += 1
+    if (normalizedLineCount > MAX_NORMALIZED_DIFF_LINES) {
+      return { hunks: [], tooLarge: true }
+    }
+    currentHunk.lines.push(normalizedLine)
+  }
+
+  return { hunks, tooLarge: false }
+}
 
 type GitContext = {
   gitAvailable: boolean
@@ -34,6 +116,14 @@ type NumstatDelta = {
 function isMissingGitError(error: unknown): boolean {
   const candidate = error as NodeJS.ErrnoException | undefined
   return candidate?.code === 'ENOENT'
+}
+
+function isMaxBufferError(error: unknown): boolean {
+  const candidate = error as { code?: unknown; message?: unknown }
+  return (
+    candidate.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ||
+    (typeof candidate.message === 'string' && candidate.message.includes('maxBuffer'))
+  )
 }
 
 function isNotWorkingTreeError(error: unknown): boolean {
@@ -198,7 +288,7 @@ export class GitDiffService {
       cwd: workingDirectory,
     })
 
-    const worktrees = parseWorktreeList(stdout, repoRoot)
+    const worktrees = parseWorktreeList(stdout, repoRoot).sort(currentWorktreeFirst)
     const defaultBranch = await this.resolveDefaultBranch(workingDirectory)
 
     const withEntries = await Promise.all(
@@ -514,35 +604,69 @@ export class GitDiffService {
         compareTarget: 'HEAD',
         gitAvailable: context.gitAvailable,
         hasDiff: false,
+        hunks: [],
         isBinary: false,
+        isTracked: context.isTracked,
         path: context.path,
-        patch: '',
         relativePath: context.relativePath,
         repoRoot: context.repoRoot,
+        tooLarge: false,
       }
     }
 
     const repoRoot = context.repoRoot
     const relativePath = context.relativePath
 
-    const [{ stdout: patch }, { stdout: numstat }] = await Promise.all([
-      execFileAsync('git', ['diff', '--no-ext-diff', '--find-renames', 'HEAD', '--', relativePath], { cwd: repoRoot }),
-      execFileAsync('git', ['diff', '--numstat', 'HEAD', '--', relativePath], { cwd: repoRoot }),
-    ])
+    const { stdout: numstat } = await execFileAsync('git', ['diff', '--numstat', 'HEAD', '--', relativePath], {
+      cwd: repoRoot,
+    })
+
+    let patch: string
+    try {
+      const result = await execFileAsync(
+        'git',
+        ['diff', '--no-ext-diff', '--find-renames', 'HEAD', '--', relativePath],
+        {
+          cwd: repoRoot,
+          maxBuffer: MAX_FILE_DIFF_BYTES,
+        },
+      )
+      patch = result.stdout
+    } catch (error) {
+      if (!isMaxBufferError(error)) {
+        throw error
+      }
+
+      return {
+        compareTarget: 'HEAD',
+        gitAvailable: true,
+        hasDiff: true,
+        hunks: [],
+        isBinary: false,
+        isTracked: true,
+        path: context.path,
+        relativePath,
+        repoRoot,
+        tooLarge: true,
+      }
+    }
 
     const isBinary = numstat
       .split(/\r?\n/)
       .some((line) => line.trim().length > 0 && line.startsWith('-\t-\t'))
+    const normalized = isBinary ? { hunks: [], tooLarge: false } : normalizeGitPatch(patch)
 
     return {
       compareTarget: 'HEAD',
       gitAvailable: true,
       hasDiff: patch.trim().length > 0,
+      hunks: normalized.hunks,
       isBinary,
+      isTracked: true,
       path: context.path,
-      patch,
       relativePath,
       repoRoot,
+      tooLarge: normalized.tooLarge,
     }
   }
 
@@ -663,6 +787,12 @@ function parseWorktreeList(output: string, currentRepoRoot: string): GitWorktree
       },
     ]
   })
+}
+
+function currentWorktreeFirst(left: GitWorktreeStatus, right: GitWorktreeStatus): number {
+  if (left.isCurrent !== right.isCurrent) return left.isCurrent ? -1 : 1
+  if (left.isMain !== right.isMain) return left.isMain ? 1 : -1
+  return left.name.localeCompare(right.name)
 }
 
 function normalizeWorktreeBranch(refName: string): string | null {

@@ -40,6 +40,34 @@ test('WebRTC host closes the terminal data channel when the desktop revokes the 
   cleanup()
 })
 
+test('WebRTC host accepts bounded UTF-8 byte-view messages from a non-browser peer', async () => {
+  const api = createHostApi()
+  const assetChannel = new MockDataChannel('asset')
+  const terminalChannel = new MockDataChannel('terminal')
+  const peer = new MockPeerConnection()
+  peer.createDataChannel = (label) => label === 'asset'
+    ? assetChannel
+    : label === 'terminal'
+      ? terminalChannel
+      : new MockDataChannel(label)
+  api.getAssetManifest = async () => ({ assets: [{ path: '/remote-app/bundle/remote.html' }] })
+
+  const cleanup = await runHost(createHostConfig(), {
+    api,
+    createPeerConnection: () => peer,
+  })
+  const encode = (value) => new TextEncoder().encode(JSON.stringify(value))
+  assetChannel.dispatchMessage(encode({ id: 'manifest', type: 'asset:get-manifest' }))
+  await waitFor(() => assetChannel.sent.some((raw) => JSON.parse(raw).id === 'manifest'))
+
+  terminalChannel.dispatchMessage(encode({ ticket: 'ticket-1', type: 'terminal-auth' }))
+  await api.waitForAttach()
+  terminalChannel.dispatchMessage(new TextEncoder().encode('byte-view-terminal-input'))
+  await waitFor(() => api.terminalMessages.some(({ message }) => message === 'byte-view-terminal-input'))
+
+  cleanup()
+})
+
 test('WebRTC host owns relay registration and sends an offer after client join', async () => {
   const api = createHostApi()
 
@@ -100,6 +128,273 @@ test('WebRTC host ignores signaling messages for another room', async () => {
   cleanup()
 })
 
+test('WebRTC host verifies a signal before reserving its nonce and rejects a verified replay', async () => {
+  const api = createHostApi()
+  const peer = new MockPeerConnection()
+  const signalingAuthToken = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8'
+  const config = {
+    appOrigin: 'https://session-a.terminay.com',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    iceServers: [],
+    relayJoinTokenHash: 'relay-token-hash',
+    roomId: 'room-a12345',
+    sessionId: 'session-a',
+    signalingAuthToken,
+    signalingUrl: 'wss://session-a.terminay.com/signal',
+  }
+  const answer = {
+    nonce: 'same-nonce-is-valid-after-the-forgery',
+    roomId: config.roomId,
+    sdp: { sdp: 'v=0\r\n', type: 'answer' },
+    type: 'answer',
+  }
+  const validAnswer = {
+    ...answer,
+    signature: await signSignal(signalingAuthToken, answer),
+  }
+
+  const cleanup = await runHost(config, {
+    api,
+    createPeerConnection: () => peer,
+  })
+
+  api.emitSignalMessage({
+    ...answer,
+    signature: 'forged-signature',
+  })
+  await waitFor(() => api.statusMessages.some((message) => /unauthenticated/.test(message.detail ?? '')))
+  assert.equal(peer.remoteDescription, undefined)
+
+  api.emitSignalMessage(validAnswer)
+  await waitFor(() => peer.remoteDescription)
+  assert.deepEqual(peer.remoteDescription, answer.sdp)
+
+  api.emitSignalMessage(validAnswer)
+  await waitFor(() => api.statusMessages.some((message) => /replayed/.test(message.detail ?? '')))
+  assert.deepEqual(peer.remoteDescription, answer.sdp)
+
+  cleanup()
+})
+
+test('WebRTC host bounds acknowledged asset chunks without starving API traffic', async () => {
+  const api = createHostApi()
+  const assetChannel = new AutoAckDataChannel('asset')
+  const apiChannel = new MockDataChannel('api')
+  const peer = new MockPeerConnection()
+  peer.createDataChannel = (label) => {
+    if (label === 'asset') return assetChannel
+    if (label === 'api') return apiChannel
+    return new MockDataChannel(label)
+  }
+  api.getAsset = async () => ({
+    bodyBase64: 'A'.repeat(10 * 64 * 1024),
+    contentType: 'application/javascript',
+    hash: 'asset-hash',
+    path: '/remote-app/bundle/assets/large.js',
+  })
+  api.handleApiRequest = async () => ({ responsive: true })
+
+  const cleanup = await runHost(createHostConfig(), {
+    api,
+    createPeerConnection: () => peer,
+  })
+  assetChannel.dispatchMessage(JSON.stringify({
+    id: 'large-asset',
+    path: '/remote-app/bundle/assets/large.js',
+    type: 'asset:get',
+  }))
+  apiChannel.dispatchMessage(JSON.stringify({
+    body: {},
+    id: 'api-during-asset',
+    pathname: '/api/sessions',
+    type: 'api-request',
+  }))
+
+  await waitFor(() => apiChannel.sent.some((raw) => JSON.parse(raw).id === 'api-during-asset'))
+  await waitFor(() => assetChannel.acknowledged.size === 10)
+  assert.equal(assetChannel.maxOutstanding <= 4, true)
+  assert.deepEqual(
+    assetChannel.sent
+      .map((raw) => JSON.parse(raw))
+      .filter((message) => message.type === 'asset:chunk')
+      .map((message) => message.index),
+    Array.from({ length: 10 }, (_, index) => index),
+  )
+
+  cleanup()
+})
+
+test('WebRTC host stops an unacknowledged asset transfer when the browser cancels it', async () => {
+  const api = createHostApi()
+  const assetChannel = new MockDataChannel('asset')
+  const peer = new MockPeerConnection()
+  peer.createDataChannel = (label) => label === 'asset'
+    ? assetChannel
+    : new MockDataChannel(label)
+  api.getAsset = async () => ({
+    bodyBase64: 'A'.repeat(10 * 64 * 1024),
+    contentType: 'application/javascript',
+    hash: 'asset-hash',
+    path: '/remote-app/bundle/assets/cancel.js',
+  })
+
+  const cleanup = await runHost(createHostConfig(), {
+    api,
+    createPeerConnection: () => peer,
+  })
+  assetChannel.dispatchMessage(JSON.stringify({
+    id: 'cancel-asset',
+    path: '/remote-app/bundle/assets/cancel.js',
+    type: 'asset:get',
+  }))
+  await waitFor(() => assetChannel.sent.filter((raw) => JSON.parse(raw).type === 'asset:chunk').length === 4)
+  assetChannel.dispatchMessage(JSON.stringify({
+    id: 'cancel-asset',
+    type: 'asset:cancel',
+  }))
+  await settle()
+
+  assert.equal(
+    assetChannel.sent.filter((raw) => JSON.parse(raw).type === 'asset:chunk').length,
+    4,
+  )
+  assert.equal(
+    assetChannel.sent.some((raw) => /cancelled/.test(JSON.parse(raw).error ?? '')),
+    true,
+  )
+  cleanup()
+})
+
+test('WebRTC host admits one asset request per peer and rejects request-window multiplication', async () => {
+  const api = createHostApi()
+  const assetChannel = new MockDataChannel('asset')
+  const apiChannel = new MockDataChannel('api')
+  const terminalChannel = new MockDataChannel('terminal')
+  const peer = new MockPeerConnection()
+  peer.createDataChannel = (label) => {
+    if (label === 'asset') return assetChannel
+    if (label === 'api') return apiChannel
+    if (label === 'terminal') return terminalChannel
+    return new MockDataChannel(label)
+  }
+  let assetReads = 0
+  api.getAsset = async (assetPath) => {
+    assetReads += 1
+    return {
+      bodyBase64: assetPath.endsWith('after-cancel.js')
+        ? 'small-response'
+        : 'A'.repeat(10 * 64 * 1024),
+      contentType: 'application/javascript',
+      hash: 'asset-hash',
+      path: assetPath,
+    }
+  }
+  api.handleApiRequest = async () => ({ responsive: true })
+
+  const cleanup = await runHost(createHostConfig(), {
+    api,
+    createPeerConnection: () => peer,
+  })
+  terminalChannel.dispatchMessage(JSON.stringify({ ticket: 'ticket-1', type: 'terminal-auth' }))
+  await api.waitForAttach()
+  assetChannel.dispatchMessage(JSON.stringify({
+    id: 'accepted-stalled-asset',
+    path: '/remote-app/bundle/assets/stalled.js',
+    type: 'asset:get',
+  }))
+  await waitFor(() => assetChannel.sent.filter((raw) => JSON.parse(raw).type === 'asset:chunk').length === 4)
+
+  const rejectedIds = Array.from({ length: 12 }, (_, index) => `excess-asset-${index}`)
+  for (const id of rejectedIds) {
+    assetChannel.dispatchMessage(JSON.stringify({
+      id,
+      path: `/remote-app/bundle/assets/${id}.js`,
+      type: 'asset:get',
+    }))
+  }
+  apiChannel.dispatchMessage(JSON.stringify({
+    body: {},
+    id: 'api-under-admission-pressure',
+    pathname: '/api/sessions',
+    type: 'api-request',
+  }))
+  terminalChannel.dispatchMessage('terminal-under-admission-pressure')
+
+  await waitFor(() => rejectedIds.every((id) => assetChannel.sent.some((raw) => {
+    const message = JSON.parse(raw)
+    return message.id === id && /limit reached.*262144/.test(message.error ?? '')
+  })))
+  await waitFor(() => apiChannel.sent.some((raw) => JSON.parse(raw).id === 'api-under-admission-pressure'))
+  assert.equal(assetReads, 1)
+  assert.equal(api.terminalMessages.some(({ message }) => message === 'terminal-under-admission-pressure'), true)
+  assert.equal(
+    assetChannel.sent.filter((raw) => JSON.parse(raw).type === 'asset:chunk').length,
+    4,
+  )
+
+  assetChannel.dispatchMessage(JSON.stringify({
+    id: 'accepted-stalled-asset',
+    type: 'asset:cancel',
+  }))
+  await waitFor(() => assetChannel.sent.some((raw) => {
+    const message = JSON.parse(raw)
+    return message.id === 'accepted-stalled-asset' && /cancelled/.test(message.error ?? '')
+  }))
+  assetChannel.dispatchMessage(JSON.stringify({
+    id: 'accepted-after-cancel',
+    path: '/remote-app/bundle/assets/after-cancel.js',
+    type: 'asset:get',
+  }))
+  await waitFor(() => assetChannel.sent.some((raw) => JSON.parse(raw).id === 'accepted-after-cancel'))
+  assert.equal(assetReads, 2)
+
+  cleanup()
+})
+
+function createHostConfig() {
+  return {
+    appOrigin: 'https://session-a.terminay.com',
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    iceServers: [],
+    relayJoinTokenHash: 'relay-token-hash',
+    roomId: 'room-a12345',
+    sessionId: 'session-a',
+    signalingAuthToken: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
+    signalingUrl: 'wss://session-a.terminay.com/signal',
+  }
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(',')}]`
+  }
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+async function signSignal(token, message) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    Buffer.from(token, 'base64url'),
+    { hash: 'SHA-256', name: 'HMAC' },
+    false,
+    ['sign'],
+  )
+  const canonical = stableJson({
+    nonce: message.nonce,
+    roomId: message.roomId ?? message.sessionId,
+    sdp: message.sdp,
+    type: message.type,
+  })
+  return Buffer.from(await crypto.subtle.sign(
+    'HMAC',
+    key,
+    new TextEncoder().encode(canonical),
+  )).toString('base64url')
+}
+
 async function waitFor(predicate, timeoutMs = 1000) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
@@ -125,6 +420,7 @@ function createHostApi() {
     closedTerminals: [],
     signalMessages: [],
     signalOpened: false,
+    terminalMessages: [],
     async attachTerminal(channelId) {
       this.attachedChannelId = channelId
       attachResolve()
@@ -142,7 +438,9 @@ function createHostApi() {
     getAssetManifest: async () => ({}),
     getConfig: async () => null,
     handleApiRequest: async () => ({}),
-    handleTerminalMessage() {},
+    handleTerminalMessage(channelId, message) {
+      this.terminalMessages.push({ channelId, message })
+    },
     onConfig: () => () => {},
     openSignal() {
       this.signalOpened = true
@@ -191,6 +489,34 @@ class MockDataChannel extends EventTarget {
   }
 }
 
+class AutoAckDataChannel extends MockDataChannel {
+  constructor(label) {
+    super(label)
+    this.acknowledged = new Set()
+    this.maxOutstanding = 0
+    this.sentChunks = new Set()
+  }
+
+  send(raw) {
+    super.send(raw)
+    const message = JSON.parse(raw)
+    if (message.type !== 'asset:chunk') return
+    this.sentChunks.add(message.index)
+    this.maxOutstanding = Math.max(
+      this.maxOutstanding,
+      this.sentChunks.size - this.acknowledged.size,
+    )
+    setTimeout(() => {
+      this.acknowledged.add(message.index)
+      this.dispatchMessage(JSON.stringify({
+        id: message.id,
+        index: message.index,
+        type: 'asset:ack',
+      }))
+    }, 2)
+  }
+}
+
 class MockPeerConnection extends EventTarget {
   constructor() {
     super()
@@ -230,7 +556,7 @@ async function importWebRtcHost() {
   const outputPath = join(tempDir, 'WebRtcHost.mjs')
   await build({
     bundle: true,
-    entryPoints: [new URL('../src/remote/WebRtcHost.tsx', import.meta.url).pathname],
+    entryPoints: [new URL('./support/webRtcHostRuntime.ts', import.meta.url).pathname],
     format: 'esm',
     outfile: outputPath,
     platform: 'node',

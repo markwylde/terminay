@@ -5,6 +5,8 @@ export type FolderPanelInstanceParams = {
 	inheritsProjectColor?: boolean;
 	isFocused?: boolean;
 	projectColor?: string;
+	/** Immutable server project identity for server-owned catalog queries. */
+	projectId?: string;
 };
 
 export type FolderViewMode = 'tree' | 'tasks' | 'list' | 'thumbnail' | 'gallery';

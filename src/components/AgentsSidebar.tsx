@@ -19,6 +19,8 @@ export type AgentsSidebarProps = {
 		activationTerminalSessionId: string,
 		entry: AgentStatusEntry,
 	) => void;
+	/** A server-owned unread entry is acknowledged after its terminal is focused. */
+	onAcknowledgeEntry?: (entryId: string) => void;
 	expandedEntryIds: readonly string[];
 	onToggleEntryExpanded: (entryId: string) => void;
 	emptyLabel?: string;
@@ -29,6 +31,22 @@ type AgentTreeNode = {
 	item: AgentsSidebarItem;
 	children: AgentTreeNode[];
 };
+
+/**
+ * Keep navigation and acknowledgement tied to the exact snapshot entry that
+ * the user selected. The server remains authoritative; this only forwards the
+ * entry id through the renderer/preload boundary.
+ */
+export function activateAgentFromSnapshot(
+	entry: AgentStatusEntry,
+	onActivateTerminal: AgentsSidebarProps['onActivateTerminal'],
+	onAcknowledgeEntry?: AgentsSidebarProps['onAcknowledgeEntry'],
+): void {
+	onActivateTerminal(entry.activationTerminalSessionId, entry);
+	if (entry.unread) {
+		onAcknowledgeEntry?.(entry.entryId);
+	}
+}
 
 const PROVIDER_LABELS: Record<AgentProvider, string> = {
 	codex: 'Codex',
@@ -180,6 +198,7 @@ function AgentRow({
 	expandedEntryIds,
 	onToggleEntryExpanded,
 	onActivateTerminal,
+	onAcknowledgeEntry,
 }: {
 	node: AgentTreeNode;
 	depth: number;
@@ -188,6 +207,7 @@ function AgentRow({
 	expandedEntryIds: ReadonlySet<string>;
 	onToggleEntryExpanded: AgentsSidebarProps['onToggleEntryExpanded'];
 	onActivateTerminal: AgentsSidebarProps['onActivateTerminal'];
+	onAcknowledgeEntry: AgentsSidebarProps['onAcknowledgeEntry'];
 }) {
 	const { entry } = node.item;
 	const { metadata, name, prompt } = getPresentation(
@@ -197,6 +217,7 @@ function AgentRow({
 	);
 	const childrenExpanded = expandedEntryIds.has(entry.entryId);
 	const childCount = node.children.length;
+	const childGroupId = `agents-sidebar-subagents-${entry.entryId}`;
 
 	return (
 		<li className="agents-sidebar__tree-item">
@@ -211,6 +232,7 @@ function AgentRow({
 						className="agents-sidebar__disclosure"
 						aria-label={`${childrenExpanded ? 'Collapse' : 'Expand'} ${childCount} subagent${childCount === 1 ? '' : 's'} for ${name}`}
 						aria-expanded={childrenExpanded}
+						aria-controls={childGroupId}
 						title={`${childrenExpanded ? 'Collapse' : 'Expand'} ${childCount} subagent${childCount === 1 ? '' : 's'}`}
 						onClick={() => onToggleEntryExpanded(entry.entryId)}
 					>
@@ -231,12 +253,14 @@ function AgentRow({
 					className="agents-sidebar__agent"
 					data-agent-state={entry.state}
 					onClick={() =>
-						onActivateTerminal(entry.activationTerminalSessionId, entry)
+						activateAgentFromSnapshot(
+							entry,
+							onActivateTerminal,
+							onAcknowledgeEntry,
+						)
 					}
 					aria-label={`Focus ${name} terminal`}
-					title={
-						[name, metadata, prompt].filter(Boolean).join('\n')
-					}
+					title={[name, metadata, prompt].filter(Boolean).join('\n')}
 				>
 					<AgentStatusIndicator state={entry.state} showIdle size="medium" />
 					<span className="agents-sidebar__content">
@@ -259,7 +283,7 @@ function AgentRow({
 				</button>
 			</div>
 			{childCount > 0 && childrenExpanded ? (
-				<ul className="agents-sidebar__tree">
+				<ul id={childGroupId} className="agents-sidebar__tree">
 					{node.children.map((child, index) => (
 						<AgentRow
 							key={child.item.entry.entryId}
@@ -270,6 +294,7 @@ function AgentRow({
 							expandedEntryIds={expandedEntryIds}
 							onToggleEntryExpanded={onToggleEntryExpanded}
 							onActivateTerminal={onActivateTerminal}
+							onAcknowledgeEntry={onAcknowledgeEntry}
 						/>
 					))}
 				</ul>
@@ -286,6 +311,7 @@ export const AgentsSidebar = memo(function AgentsSidebar({
 	onToggleEntryExpanded,
 	emptyLabel = 'No agents in this project',
 	className,
+	onAcknowledgeEntry,
 }: AgentsSidebarProps) {
 	const tree = useMemo(
 		() =>
@@ -319,6 +345,7 @@ export const AgentsSidebar = memo(function AgentsSidebar({
 						expandedEntryIds={expandedEntries}
 						onToggleEntryExpanded={onToggleEntryExpanded}
 						onActivateTerminal={onActivateTerminal}
+						onAcknowledgeEntry={onAcknowledgeEntry}
 					/>
 				))}
 			</ul>

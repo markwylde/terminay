@@ -27,7 +27,7 @@ test('ReconnectGrantStore issues opaque grants and persists verifier records', a
   assert.equal(issued.protocolVersion, 'v1')
   assert.equal(Date.parse(issued.expiresAt) - Date.parse(issued.issuedAt), 24 * 60 * 60 * 1000)
 
-  const records = JSON.parse(await readFile(filePath, 'utf8'))
+  const { grants: records } = JSON.parse(await readFile(filePath, 'utf8'))
   assert.equal(records.length, 1)
   assert.equal(records[0].handle, issued.handle)
   assert.equal(records[0].origin, issued.origin)
@@ -69,6 +69,74 @@ test('ReconnectGrantStore validates proof once and records last use', async () =
       handle: issued.handle,
       origin: issued.origin,
       proof,
+    }),
+    /no longer valid/,
+  )
+})
+
+test('ReconnectGrantStore requires the bound device proof without burning the challenge on forgery', async () => {
+  const { store } = await createStore()
+  const issued = await store.issueGrant({
+    deviceId: 'device-proof-owner',
+    origin: 'https://session-proof.terminay.com#transport=webrtc:https://session-proof.terminay.com',
+    sessionId: 'session-proof',
+  })
+  const challenge = await store.createChallenge({
+    clientNonce: 'device-proof-client',
+    handle: issued.handle,
+    origin: issued.origin,
+    sessionId: issued.sessionId,
+  })
+  const proof = createReconnectProof(issued.grant, challenge.signingInput)
+  const attempts = []
+
+  await assert.rejects(
+    store.verifyProof({
+      attemptId: challenge.payload.attemptId,
+      clientNonce: 'device-proof-client',
+      handle: issued.handle,
+      origin: issued.origin,
+      proof,
+      verifyDeviceProof(deviceId, signingInput) {
+        attempts.push({ deviceId, signingInput, valid: false })
+        return false
+      },
+    }),
+    /device-key proof is invalid/,
+  )
+
+  const verified = await store.verifyProof({
+    attemptId: challenge.payload.attemptId,
+    clientNonce: 'device-proof-client',
+    handle: issued.handle,
+    origin: issued.origin,
+    proof,
+    verifyDeviceProof(deviceId, signingInput) {
+      attempts.push({ deviceId, signingInput, valid: true })
+      return deviceId === 'device-proof-owner' && signingInput === challenge.signingInput
+    },
+  })
+  assert.equal(verified.deviceId, 'device-proof-owner')
+  assert.deepEqual(attempts, [
+    {
+      deviceId: 'device-proof-owner',
+      signingInput: challenge.signingInput,
+      valid: false,
+    },
+    {
+      deviceId: 'device-proof-owner',
+      signingInput: challenge.signingInput,
+      valid: true,
+    },
+  ])
+  await assert.rejects(
+    store.verifyProof({
+      attemptId: challenge.payload.attemptId,
+      clientNonce: 'device-proof-client',
+      handle: issued.handle,
+      origin: issued.origin,
+      proof,
+      verifyDeviceProof: () => true,
     }),
     /no longer valid/,
   )
@@ -218,6 +286,81 @@ test('ReconnectGrantStore binds challenges to exact origin and session', async (
     /different session/,
   )
   assert.equal(resolveReconnectGrantLifetime('not-a-choice'), '24h')
+})
+
+test('ReconnectGrantStore caps pending attempts per session and prunes them by TTL', async () => {
+  const clock = { value: Date.parse('2026-05-16T10:00:00.000Z') }
+  const { store } = await createStore(clock)
+  const issued = await store.issueGrant({
+    deviceId: 'device-cap',
+    origin: 'https://session-cap.terminay.com#transport=webrtc:https://session-cap.terminay.com',
+    sessionId: 'session-cap',
+  })
+  for (let index = 0; index < 4; index += 1) {
+    await store.createChallenge({
+      clientNonce: `client-cap-${index}`,
+      handle: issued.handle,
+      origin: issued.origin,
+      sessionId: issued.sessionId,
+    })
+  }
+  await assert.rejects(
+    store.createChallenge({
+      clientNonce: 'client-cap-rejected',
+      handle: issued.handle,
+      origin: issued.origin,
+      sessionId: issued.sessionId,
+    }),
+    /Too many reconnect challenges/,
+  )
+  clock.value += 60_001
+  const replacement = await store.createChallenge({
+    clientNonce: 'client-cap-after-expiry',
+    handle: issued.handle,
+    origin: issued.origin,
+    sessionId: issued.sessionId,
+  })
+  assert.equal(
+    replacement.signingInput.startsWith('terminay\u0000v1\u0000reconnect-challenge\u0000'),
+    true,
+  )
+})
+
+test('ReconnectGrantStore filters malformed persisted reconnect state without losing valid grants', async () => {
+  const clock = { value: Date.parse('2026-05-16T10:00:00.000Z') }
+  const { filePath, store } = await createStore(clock)
+  const issued = await store.issueGrant({
+    deviceId: 'device-persisted',
+    origin: 'https://session-persisted.terminay.com#transport=webrtc:https://session-persisted.terminay.com',
+    sessionId: 'session-persisted',
+  })
+  const persisted = JSON.parse(await readFile(filePath, 'utf8'))
+  await writeFile(filePath, JSON.stringify({
+    grants: [
+      persisted.grants[0],
+      { ...persisted.grants[0], id: 'not-a-uuid', handle: 'attacker-handle' },
+      { ...persisted.grants[0], id: '5d210a86-f152-4a2c-9dc1-64ef88ff00b5' },
+      { ...persisted.grants[0], id: '8e6fbf7e-66b1-43f7-86be-13d89e781f63', proofVerifier: 'invalid' },
+    ],
+    hostRegistrationTokens: {
+      'session-persisted': 'a'.repeat(43),
+      '': 'b'.repeat(43),
+      'session-invalid-token': 'not-a-token',
+    },
+  }), 'utf8')
+
+  const reloaded = new ReconnectGrantStore(filePath, () => new Date(clock.value))
+  await reloaded.load()
+  assert.equal(reloaded.listActive().length, 1)
+  const challenge = await reloaded.createChallenge({
+    clientNonce: 'persisted-client',
+    handle: issued.handle,
+    origin: issued.origin,
+    sessionId: issued.sessionId,
+  })
+  assert.equal(challenge.payload.handle, issued.handle)
+  assert.equal(await reloaded.getOrCreateHostRegistrationToken('session-persisted'), 'a'.repeat(43))
+  assert.match(await reloaded.getOrCreateHostRegistrationToken('session-invalid-token'), /^[A-Za-z0-9_-]{43}$/)
 })
 
 async function createStore(clock = { value: Date.parse('2026-05-16T10:00:00.000Z') }) {

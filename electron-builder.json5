@@ -17,6 +17,15 @@
     "dist",
     "dist-electron"
   ],
+  // The selection record is always packaged. Release preparation stages the
+  // verified self-contained runtime beside it; the production loader fails
+  // closed when that payload is absent or does not match the record.
+  "extraResources": [
+    {
+      "from": "build/webrtc-runtime",
+      "to": "webrtc-runtime"
+    }
+  ],
   "mac": {
     "icon": "public/icon.icns",
     "hardenedRuntime": true,

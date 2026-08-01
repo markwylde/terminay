@@ -4,7 +4,16 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  # Default all jobs to the minimum token needed to read the release source.
+  # Jobs that create tags or mutate a GitHub Release opt into write below.
+  contents: read
+
+# Every release shell step must stop on command, unset-variable, or pipeline
+# failures.  A release workflow must never proceed to publish after a partial
+# verification command or a failed command hidden by a pipeline.
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
 
 concurrency:
   group: trigger-release
@@ -14,15 +23,19 @@ jobs:
   smoke-test:
     name: Smoke Test
     runs-on: ubuntu-latest
+    # Bound dependency, audit, and smoke execution so a stalled runner cannot
+    # indefinitely retain a workflow token or block the serialized release.
+    timeout-minutes: 30
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -36,24 +49,41 @@ jobs:
       - name: Validate release configuration
         run: npm run test:release-config
 
+      - name: Validate release evidence and production dependency audit
+        run: |
+          npm run test:release-readiness
+          npm run test:task18-web-host-readiness
+          npm run test:hosted-deployment-order
+          npm run test:standalone-artifact
+          npm run test:task20-artifact-contract
+          npm run test:security-fuzz
+          npm run test:security-boundaries
+          node --test scripts/task20-supply-chain-audit.test.mjs scripts/task20-release-lifecycle.test.mjs scripts/repository-ownership-release.test.mjs scripts/task20-direct-ui-mismatch.test.mjs
+          node scripts/task20-supply-chain-audit.mjs --npm-audit
+          npm audit --omit=dev --audit-level=high
+
   release:
     name: Create Release
     runs-on: ubuntu-latest
+    # Tagging and notes generation are bounded independently of packaging.
+    timeout-minutes: 30
     needs: smoke-test
-    env:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    permissions:
+      contents: write
     outputs:
       tag: ${{ steps.release_tag.outputs.tag }}
       no_release: ${{ steps.release_tag.outputs.no_release }}
+      source_commit: ${{ steps.release_source.outputs.commit }}
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -61,26 +91,68 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Record immutable release source and tag baseline
+        id: release_source
+        run: |
+          SOURCE_COMMIT="$(git rev-parse HEAD)"
+          echo "commit=$SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
+          git tag --points-at "$SOURCE_COMMIT" --list 'v*' --sort=version:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | LC_ALL=C sort -u \
+            > "$RUNNER_TEMP/terminay-release-tags-before" || true
+
       - name: Create release tag
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run release
 
-      - name: Resolve release tag
+      - name: Resolve and verify newly created release tag
         id: release_tag
+        env:
+          SOURCE_COMMIT: ${{ steps.release_source.outputs.commit }}
         run: |
-          TAG=$(git tag --points-at HEAD | tail -n 1)
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          if [ -z "$TAG" ]; then
+          test -n "$SOURCE_COMMIT"
+          AFTER_TAGS="$RUNNER_TEMP/terminay-release-tags-after"
+          git tag --points-at "$SOURCE_COMMIT" --list 'v*' --sort=version:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | LC_ALL=C sort -u \
+            > "$AFTER_TAGS" || true
+
+          NEW_TAGS="$RUNNER_TEMP/terminay-release-tags-new"
+          comm -13 "$RUNNER_TEMP/terminay-release-tags-before" "$AFTER_TAGS" > "$NEW_TAGS"
+          NEW_TAG_COUNT="$(wc -l < "$NEW_TAGS" | tr -d '[:space:]')"
+
+          if [ "$NEW_TAG_COUNT" = 0 ]; then
             echo "no_release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          test "$NEW_TAG_COUNT" = 1
+          TAG="$(cat "$NEW_TAGS")"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse "$TAG^{commit}")" = "$SOURCE_COMMIT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Detect AI release-notes credential
+        id: release_notes_credential
+        if: steps.release_tag.outputs.no_release != 'true'
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [ -n "$OPENROUTER_API_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate AI release notes
-        if: steps.release_tag.outputs.no_release != 'true' && env.OPENROUTER_API_KEY != ''
+        if: steps.release_tag.outputs.no_release != 'true' && steps.release_notes_credential.outputs.available == 'true'
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: node scripts/generate-release-notes.mjs "${{ steps.release_tag.outputs.tag }}"
 
       - name: Skip AI release notes without API key
-        if: steps.release_tag.outputs.no_release != 'true' && env.OPENROUTER_API_KEY == ''
+        if: steps.release_tag.outputs.no_release != 'true' && steps.release_notes_credential.outputs.available != 'true'
         run: |
           cat <<EOF > RELEASE.md
           ## Release Notes
@@ -91,17 +163,23 @@ jobs:
 
       - name: Upload release notes artifact
         if: steps.release_tag.outputs.no_release != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-notes
           path: RELEASE.md
           if-no-files-found: error
+          include-hidden-files: false
 
   build-binaries:
     name: Build ${{ matrix.label }} Binary
     runs-on: ${{ matrix.os }}
+    # Native packaging, notarization, and upload must fail closed on a stalled
+    # runner rather than leaving a write-capable job alive without a bound.
+    timeout-minutes: 45
     needs: release
     if: needs.release.outputs.no_release != 'true'
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -110,40 +188,66 @@ jobs:
             label: macOS
             script: npm run build:mac
             pattern: release/**/*.dmg
+            asset_template: Terminay-Mac-%VERSION%-Installer.dmg
           - os: ubuntu-latest
             label: Linux
             script: npm run build:linux
             pattern: release/**/*.AppImage
+            asset_template: Terminay-Linux-%VERSION%.AppImage
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Build the immutable release tag, never a branch that could advance
+          # after the release job creates the tag.
+          ref: ${{ needs.release.outputs.tag }}
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
+
+      - name: Verify immutable release tag source
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          EXPECTED_COMMIT: ${{ needs.release.outputs.source_commit }}
+        run: |
+          test -n "$TAG"
+          test -n "$EXPECTED_COMMIT"
+          TAG_COMMIT="$(git rev-parse "$TAG^{commit}")"
+          CHECKED_OUT_COMMIT="$(git rev-parse HEAD)"
+          test "$TAG_COMMIT" = "$EXPECTED_COMMIT"
+          test "$CHECKED_OUT_COMMIT" = "$EXPECTED_COMMIT"
 
       - name: Install dependencies
         run: npm ci
 
       - name: Check macOS signing secrets
-        id: macos_signing_secrets
         if: matrix.os == 'macos-latest'
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ vars.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: |
-          if [ -n "$MACOS_CERTIFICATE_P12" ] && [ -n "$MACOS_CERTIFICATE_PASSWORD" ]; then
-            echo "has_certs=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_certs=false" >> "$GITHUB_OUTPUT"
+          missing=""
+          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "$(printenv "$name")" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "Refusing to publish an unsigned or unnotarized macOS release; missing:$missing" >&2
+            exit 1
           fi
 
       - name: Import Apple signing certificate
-        if: matrix.os == 'macos-latest' && steps.macos_signing_secrets.outputs.has_certs == 'true'
-        uses: apple-actions/import-codesign-certs@v3
+        if: matrix.os == 'macos-latest'
+        uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -161,7 +265,30 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.os == 'macos-latest' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && vars.APPLE_TEAM_ID || '' }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
-        run: ${{ matrix.script }}
+        run: |
+          node scripts/stage-selected-secure-werift-runtime.mjs
+          ${{ matrix.script }}
+
+      - name: Verify exact release asset selection
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          ASSET_TEMPLATE: ${{ matrix.asset_template }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag is not a supported semantic version: $TAG" >&2
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          EXPECTED_ASSET="${ASSET_TEMPLATE//%VERSION%/$VERSION}"
+          EXPECTED_FILE="release/$VERSION/$EXPECTED_ASSET"
+          test -f "$EXPECTED_FILE"
+          test ! -L "$EXPECTED_FILE"
+
+          CANDIDATE_COUNT="$(find release -type f \( -name '*.dmg' -o -name '*.AppImage' \) -print | wc -l | tr -d '[:space:]')"
+          test "$CANDIDATE_COUNT" = 1
+          ACTUAL_FILE="$(find release -type f \( -name '*.dmg' -o -name '*.AppImage' \) -print | sort)"
+          test "$ACTUAL_FILE" = "$EXPECTED_FILE"
 
       - name: Verify macOS microphone entitlement
         if: matrix.os == 'macos-latest'
@@ -175,16 +302,92 @@ jobs:
           ENTITLEMENTS_PLIST="$RUNNER_TEMP/terminay-entitlements.plist"
           codesign -d --entitlements :- "$APP_BUNDLE" > "$ENTITLEMENTS_PLIST" 2>/dev/null
           /usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$ENTITLEMENTS_PLIST" | grep -q true
-          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$APP_BUNDLE/Contents/Info.plist" >/dev/null
+          MICROPHONE_USAGE_DESCRIPTION="$(/usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$APP_BUNDLE/Contents/Info.plist")"
+          test -n "$(printf '%s' "$MICROPHONE_USAGE_DESCRIPTION" | tr -d '[:space:]')"
+
+      - name: Verify macOS signed and notarized release DMG
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          DMG="release/$VERSION/Terminay-Mac-$VERSION-Installer.dmg"
+          test -f "$DMG"
+
+          MOUNT_POINT="$RUNNER_TEMP/terminay-release-dmg"
+          mkdir -p "$MOUNT_POINT"
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT_POINT"
+          cleanup() {
+            hdiutil detach "$MOUNT_POINT" || true
+          }
+          trap cleanup EXIT
+
+          # The signed application must come from this exact, read-only DMG.
+          # Do not let a stale unpacked app or an ambiguous second bundle stand
+          # in for the payload that will be published.
+          APP_BUNDLE_COUNT="$(find "$MOUNT_POINT" -type d -name 'Terminay.app' -print | wc -l | tr -d '[:space:]')"
+          test "$APP_BUNDLE_COUNT" = 1
+          APP_BUNDLE="$(find "$MOUNT_POINT" -type d -name 'Terminay.app' -print)"
+          test ! -L "$APP_BUNDLE"
+          APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/Terminay"
+          test -f "$APP_EXECUTABLE"
+          test ! -L "$APP_EXECUTABLE"
+          codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+          codesign -dvv "$APP_BUNDLE" 2>&1 | grep -F "TeamIdentifier=$APPLE_TEAM_ID"
+          spctl --assess --type execute --verbose=4 "$APP_BUNDLE"
+          xcrun stapler validate "$DMG"
+
+      - name: Write release asset checksums
+        env:
+          ASSET_PATTERN: ${{ matrix.pattern }}
+        run: |
+          found=false
+          for file in $ASSET_PATTERN; do
+            test -f "$file" || continue
+            test ! -L "$file"
+            # A stale sidecar must not be followed or replaced through a
+            # symlink when a runner retries packaging in its workspace.
+            test ! -e "$file.sha256"
+            test ! -L "$file.sha256"
+            # Sidecars are published next to their payload.  Do not embed the
+            # runner-local release/ path: downloaded release assets must be
+            # verifiable from any directory without recreating that path.
+            checksum="$(shasum -a 256 "$file" | awk '{ print $1 }')"
+            printf '%s  %s\n' "$checksum" "$(basename "$file")" > "$file.sha256"
+            found=true
+          done
+          test "$found" = true
+
+      - name: Verify release asset checksums before upload
+        env:
+          ASSET_PATTERN: ${{ matrix.pattern }}
+        run: |
+          found=false
+          for file in $ASSET_PATTERN; do
+            test -f "$file" || continue
+            test -f "$file.sha256"
+            test ! -L "$file"
+            test ! -L "$file.sha256"
+            (
+              cd "$(dirname "$file")"
+              shasum -a 256 -c "$(basename "$file").sha256"
+            )
+            found=true
+          done
+          test "$found" = true
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.label }} binary
-          path: ${{ matrix.pattern }}
+          path: |
+            ${{ matrix.pattern }}
+            ${{ matrix.pattern }}.sha256
           if-no-files-found: error
+          include-hidden-files: false
 
-      - name: Attach binary to GitHub release
+      - name: Attach checksummed binaries to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -192,20 +395,229 @@ jobs:
           ASSET_PATTERN: ${{ matrix.pattern }}
         run: |
           for file in $ASSET_PATTERN; do
-            gh release upload "$TAG" "$file" --repo "$GH_REPO" --clobber
+            test -f "$file"
+            test -f "$file.sha256"
+            test ! -L "$file"
+            test ! -L "$file.sha256"
+            (
+              cd "$(dirname "$file")"
+              shasum -a 256 -c "$(basename "$file").sha256"
+            )
+            # Deliberately omit --clobber: a release asset name is immutable
+            # once attached, and a retry must never silently replace its bytes.
+            gh release upload "$TAG" "$file" "$file.sha256" --repo "$GH_REPO"
           done
+
+  build-standalone-server:
+    name: Build Standalone Server Artifact
+    runs-on: ubuntu-latest
+    # Packing, extracted-payload validation, and publication must not retain a
+    # write-capable token indefinitely.
+    timeout-minutes: 30
+    needs: release
+    if: needs.release.outputs.no_release != 'true'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify immutable release tag source
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          EXPECTED_COMMIT: ${{ needs.release.outputs.source_commit }}
+        run: |
+          test -n "$TAG"
+          test -n "$EXPECTED_COMMIT"
+          test "$(git rev-parse "$TAG^{commit}")" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync package version to release tag
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          node scripts/sync-package-version.mjs "$VERSION"
+          node --input-type=module -e '
+            import { readFile, writeFile } from "node:fs/promises";
+            const path = "apps/terminay-server/package.json";
+            const pkg = JSON.parse(await readFile(path, "utf8"));
+            pkg.version = process.argv[1];
+            await writeFile(path, `${JSON.stringify(pkg, null, 2)}\\n`);
+          ' "$VERSION"
+
+      - name: Build and pack exact standalone server artifact
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          OUTPUT="release/$VERSION"
+          mkdir -p "$OUTPUT"
+          npm run build --workspace @terminay/server
+          node scripts/stage-selected-secure-werift-runtime.mjs
+          cp -R build/webrtc-runtime apps/terminay-server/dist/webrtc-runtime
+          node apps/terminay-server/scripts/write-release-integrity-manifest.mjs
+          npm pack --workspace @terminay/server --json --pack-destination "$OUTPUT" > "$RUNNER_TEMP/terminay-server-pack.json"
+
+          EXPECTED="terminay-server-$VERSION.tgz"
+          test "$(node -e 'const result = require(process.argv[1]); if (!Array.isArray(result) || result.length !== 1) process.exit(1); process.stdout.write(result[0].filename)' "$RUNNER_TEMP/terminay-server-pack.json")" = "$EXPECTED"
+          test -f "$OUTPUT/$EXPECTED"
+          test "$(find "$OUTPUT" -maxdepth 1 -type f -name '*.tgz' -print | wc -l | tr -d '[:space:]')" = 1
+
+      - name: Verify extracted standalone server payload before checksumming
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          ARCHIVE="release/$VERSION/terminay-server-$VERSION.tgz"
+          EXTRACTED="release/$VERSION/extracted"
+          mkdir -p "$EXTRACTED"
+          tar -xzf "$ARCHIVE" -C "$EXTRACTED"
+          test -d "$EXTRACTED/package"
+          test -f "$EXTRACTED/package/dist/release-integrity.json"
+          test -f "$EXTRACTED/package/dist/webrtc-runtime/artifact/lib/index.mjs"
+          test ! -L "$EXTRACTED/package"
+          node "$EXTRACTED/package/dist/cli.js" --version | grep -Fx "$VERSION"
+
+      - name: Write and verify standalone server checksum
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          ARCHIVE="release/$VERSION/terminay-server-$VERSION.tgz"
+          node scripts/release-checksum.mjs write "$ARCHIVE" "$ARCHIVE.sha256"
+          node scripts/release-checksum.mjs verify "$ARCHIVE" "$ARCHIVE.sha256"
+
+      - name: Sign and verify exact standalone server archive
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64 }}
+          TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
+        run: |
+          VERSION="${TAG#v}"
+          ARCHIVE="release/$VERSION/terminay-server-$VERSION.tgz"
+          test -n "$TERMINAY_RELEASE_SIGNING_PRIVATE_KEY_B64"
+          test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
+          node scripts/release-signature.mjs sign "$ARCHIVE" "$ARCHIVE.sig"
+          node scripts/release-signature.mjs verify "$ARCHIVE" "$ARCHIVE.sig"
+
+      - name: Upload standalone server workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: standalone-server
+          path: |
+            release/*/terminay-server-*.tgz
+            release/*/terminay-server-*.tgz.sha256
+            release/*/terminay-server-*.tgz.sig
+          if-no-files-found: error
+          include-hidden-files: false
+
+      - name: Attach checksummed standalone server to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+          TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
+        run: |
+          VERSION="${TAG#v}"
+          ARCHIVE="release/$VERSION/terminay-server-$VERSION.tgz"
+          test -f "$ARCHIVE"
+          test -f "$ARCHIVE.sha256"
+          test -f "$ARCHIVE.sig"
+          test ! -L "$ARCHIVE"
+          test ! -L "$ARCHIVE.sha256"
+          test ! -L "$ARCHIVE.sig"
+          test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
+          node scripts/release-checksum.mjs verify "$ARCHIVE" "$ARCHIVE.sha256"
+          node scripts/release-signature.mjs verify "$ARCHIVE" "$ARCHIVE.sig"
+          # Deliberately omit --clobber: each published standalone asset name
+          # is immutable, including its checksum and detached signature.
+          gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" "$ARCHIVE.sig" --repo "$GH_REPO"
 
   publish-release-notes:
     name: Publish Release Notes
     runs-on: ubuntu-latest
-    needs: [release, build-binaries]
+    # Download, checksum verification, and the final release edit are bounded.
+    timeout-minutes: 20
+    needs: [release, build-binaries, build-standalone-server]
     if: needs.release.outputs.no_release != 'true'
+    permissions:
+      contents: write
 
     steps:
       - name: Download release notes artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-notes
+
+      - name: Verify immutable Desktop release assets before notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          test -n "$TAG"
+          VERSION="${TAG#v}"
+          ASSET_NAMES="$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
+          EXPECTED_ASSET_NAMES="$(cat <<EOF
+          Terminay-Linux-${VERSION}.AppImage
+          Terminay-Linux-${VERSION}.AppImage.sha256
+          Terminay-Mac-${VERSION}-Installer.dmg
+          Terminay-Mac-${VERSION}-Installer.dmg.sha256
+          terminay-server-${VERSION}.tgz
+          terminay-server-${VERSION}.tgz.sha256
+          terminay-server-${VERSION}.tgz.sig
+          EOF
+          )"
+          # A release retry must not publish notes for a mixture of the exact
+          # verified assets and stale or substituted attachments.
+          test "$ASSET_NAMES" = "$EXPECTED_ASSET_NAMES"
+
+      - name: Verify published Desktop asset checksums before notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release.outputs.tag }}
+          TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ vars.TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64 }}
+        run: |
+          test -n "$TAG"
+          VERSION="${TAG#v}"
+          ASSET_DIR="release/$VERSION"
+          mkdir -p "$ASSET_DIR"
+          for expected in \
+            "Terminay-Mac-${VERSION}-Installer.dmg" \
+            "Terminay-Mac-${VERSION}-Installer.dmg.sha256" \
+            "Terminay-Linux-${VERSION}.AppImage" \
+            "Terminay-Linux-${VERSION}.AppImage.sha256" \
+            "terminay-server-${VERSION}.tgz" \
+            "terminay-server-${VERSION}.tgz.sha256" \
+            "terminay-server-${VERSION}.tgz.sig"; do
+            gh release download "$TAG" --repo "$GH_REPO" --dir "$ASSET_DIR" --pattern "$expected"
+            test -f "$ASSET_DIR/$expected"
+          done
+          for asset in \
+            "$ASSET_DIR/Terminay-Mac-${VERSION}-Installer.dmg" \
+            "$ASSET_DIR/Terminay-Linux-${VERSION}.AppImage" \
+            "$ASSET_DIR/terminay-server-${VERSION}.tgz"; do
+            shasum -a 256 -c "$asset.sha256"
+          done
+          test -n "$TERMINAY_RELEASE_SIGNING_PUBLIC_KEY_B64"
+          node scripts/release-signature.mjs verify \
+            "$ASSET_DIR/terminay-server-${VERSION}.tgz" \
+            "$ASSET_DIR/terminay-server-${VERSION}.tgz.sig"
 
       - name: Append release asset summary
         env:
@@ -218,6 +630,7 @@ jobs:
 
           - macOS installer: https://github.com/${REPOSITORY}/releases/download/${TAG}/Terminay-Mac-${TAG#v}-Installer.dmg
           - Linux AppImage: https://github.com/${REPOSITORY}/releases/download/${TAG}/Terminay-Linux-${TAG#v}.AppImage
+          - Standalone server: https://github.com/${REPOSITORY}/releases/download/${TAG}/terminay-server-${TAG#v}.tgz
           EOF
 
       - name: Update GitHub release notes

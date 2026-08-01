@@ -2,6 +2,7 @@ import {
 	type CSSProperties,
 	type JSX,
 	type ReactNode,
+	useCallback,
 	useEffect,
 	useRef,
 	useState,
@@ -69,6 +70,10 @@ export function SidebarSplit(props: SidebarSplitProps): JSX.Element {
 	// Watch the container so the applied height re-clamps whenever the sidebar
 	// (or window) resizes, keeping every header on screen at all times.
 	const { height: containerHeight } = useResizeObserver(rootElement);
+	const setRoot = useCallback((element: HTMLDivElement | null) => {
+		rootRef.current = element;
+		setRootElement(element);
+	}, []);
 
 	useEffect(() => {
 		const handlePointerMove = (event: PointerEvent) => {
@@ -143,13 +148,7 @@ export function SidebarSplit(props: SidebarSplitProps): JSX.Element {
 		: { flex: '1 1 auto', minHeight: `${bottomMinHeight}px` };
 
 	return (
-		<div
-			className="sidebar-split"
-			ref={(element) => {
-				rootRef.current = element;
-				setRootElement(element);
-			}}
-		>
+		<div className="sidebar-split" ref={setRoot}>
 			<div
 				className="sidebar-split__pane sidebar-split__pane--top"
 				style={topStyle}

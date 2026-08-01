@@ -77,6 +77,21 @@ function findCodexBlock(lines: string[]): { start: number; end: number } | null 
   return { start, end }
 }
 
+/** Return the Terminay table without separator whitespace, or `null` if absent. */
+export function getCodexBlock(content: string): string | null {
+  const lines = content.split('\n')
+  const found = findCodexBlock(lines)
+  if (!found) {
+    return null
+  }
+
+  let end = found.end
+  while (end > found.start + 1 && lines[end - 1].trim().length === 0) {
+    end -= 1
+  }
+  return lines.slice(found.start, end).join('\n')
+}
+
 /**
  * Insert or replace the `[mcp_servers.terminay]` block in `content`. When the
  * block is absent it is appended; when present, only that block is swapped and

@@ -45,15 +45,20 @@ function describeError(error: unknown): string {
 
 export async function runMcpServer(): Promise<void> {
   // The socket path env is an override; otherwise derive it from OS conventions.
-  // MCP clients rarely forward inherited env, so scope is resolved server-side
-  // from this process's ancestry rather than from a forwarded token.
+  // Authority always comes from the per-terminal capability. A process without
+  // that inherited capability never attempts a PID-based fallback.
   const socketPath = process.env[CONTROL_SOCKET_ENV] || getDefaultControlSocketPath()
-  const token = process.env[CONTROL_TOKEN_ENV] || undefined
+  const token = process.env[CONTROL_TOKEN_ENV] || null
 
   const server = new McpServer({ name: 'terminay', version: readVersion() })
 
   let client: ControlClient | null = null
   const getClient = (): ControlClient => {
+    if (!token) {
+      const error = new Error(NOT_IN_TERMINAY_MESSAGE)
+      ;(error as Error & { code?: string }).code = 'not_in_terminay'
+      throw error
+    }
     if (!client) {
       client = createControlClient({ socketPath, token })
     }
@@ -68,7 +73,9 @@ export async function runMcpServer(): Promise<void> {
     } catch (error) {
       // The socket isn't there -> Terminay isn't running (or this process isn't
       // under a Terminay terminal). Reset the client so the next call retries.
-      if ((error as Error & { code?: string })?.code === 'not_connected') {
+      if (['not_connected', 'not_in_terminay', 'invalid_token'].includes(
+        (error as Error & { code?: string })?.code ?? '',
+      )) {
         client = null
         return textResult(NOT_IN_TERMINAY_MESSAGE, true)
       }

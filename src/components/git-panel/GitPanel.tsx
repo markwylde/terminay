@@ -417,13 +417,13 @@ function buildGitPathContextMenuItems(options: {
 		{
 			label: 'Copy path',
 			icon: <Copy size={14} />,
-			onClick: () => void window.terminay.writeClipboardText(path),
+			onClick: () => void window.terminayClipboardHost?.writeText(path),
 		},
 		{
 			label: 'Copy relative path',
 			icon: <Copy size={14} />,
 			onClick: () =>
-				void window.terminay.writeClipboardText(
+				void window.terminayClipboardHost?.writeText(
 					relativePath || getPathRelativeToRoot(path, repoRoot),
 				),
 		},

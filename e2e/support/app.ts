@@ -42,6 +42,9 @@ export async function openChildWindow(
   electronApp: ElectronApplication,
   action: () => Promise<void>,
 ): Promise<Page> {
+  // Consume the initial Desktop window before listening for an auxiliary one.
+  // On slower Linux runners the launch event can otherwise satisfy this wait.
+  await electronApp.firstWindow()
   const nextWindowPromise = electronApp.waitForEvent('window')
   await action()
   const nextWindow = await nextWindowPromise
@@ -55,18 +58,26 @@ export async function openSettingsWindow(
 ): Promise<Page> {
   return openChildWindow(electronApp, async () => {
     await page.evaluate(async (nextOptions) => {
-      await window.terminay.openSettingsWindow(nextOptions)
+      await window.terminaySettingsWindowHost?.open(nextOptions?.sectionId)
     }, options ?? null)
   })
 }
 
 export async function openMacrosWindow(
   electronApp: ElectronApplication,
-  page: Page,
+  _page: Page,
 ): Promise<Page> {
   return openChildWindow(electronApp, async () => {
-    await page.evaluate(async () => {
-      await window.terminay.openMacrosWindow()
+    await electronApp.evaluate(({ Menu }) => {
+      const visit = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
+        for (const item of items) {
+          if (item.label === 'Macros') return item
+          const nested = item.submenu == null ? undefined : visit(item.submenu.items)
+          if (nested !== undefined) return nested
+        }
+        return undefined
+      }
+      visit(Menu.getApplicationMenu()?.items ?? [])?.click()
     })
   })
 }

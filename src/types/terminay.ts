@@ -49,6 +49,7 @@ export type FileViewerFileInfo = {
   ctimeMs: number | null
   exists: boolean
   extension: string
+  ino: number | null
   isDirectory: boolean
   isFile: boolean
   isSymbolicLink: boolean
@@ -75,6 +76,46 @@ export type FileViewerTextRange = {
   start: number
   text: string
   totalSize: number
+}
+
+export type FileViewerTextMetadata = {
+  indexedByteLength: number
+  ino: number
+  isComplete: boolean
+  lineCount: number
+  mtimeMs: number
+  path: string
+  size: number
+}
+
+export type FileViewerTextLine = {
+  end: number
+  eol: '' | '\n' | '\r\n'
+  lineNumber: number
+  start: number
+  text: string
+}
+
+export type FileViewerTextWindow = {
+  lineCount: number
+  lines: FileViewerTextLine[]
+  path: string
+  startLine: number
+}
+
+export type FileViewerSparseFileEdit = {
+  dataBase64: string
+  end: number
+  start: number
+}
+
+export type FileViewerSparseFileSaveRequest = {
+  edits: FileViewerSparseFileEdit[]
+  expectedIno: number
+  expectedMtimeMs: number
+  expectedSize: number
+  path: string
+  projectRoot: string
 }
 
 export type FileViewerSaveRequest =
@@ -124,11 +165,25 @@ export type FileViewerGitDiff = {
   compareTarget: 'HEAD'
   gitAvailable: boolean
   hasDiff: boolean
+  hunks: FileViewerGitDiffHunk[]
   isBinary: boolean
+  isTracked: boolean
   path: string
-  patch: string
   relativePath: string | null
   repoRoot: string | null
+  tooLarge: boolean
+}
+
+export type FileViewerGitDiffHunk = {
+  header: string
+  lines: FileViewerGitDiffLine[]
+}
+
+export type FileViewerGitDiffLine = {
+  newLineNumber: number | null
+  oldLineNumber: number | null
+  type: 'add' | 'context' | 'delete'
+  value: string
 }
 
 export type TerminalDataMessage = {
@@ -167,6 +222,7 @@ export type { AgentStatusSnapshot } from './agentStatus'
 export type TerminalExitMessage = {
   id: string
   exitCode: number
+  signal?: number | null
 }
 
 export type SettingsChangeMessage = {
@@ -230,7 +286,7 @@ export type RemoteAccessStatus = {
   webRtcPairingQrCodeDataUrl: string | null
   webRtcPairingUrl: string | null
   webRtcRoomId: string | null
-  webRtcStatus: 'not-configured' | 'pairing-ready' | 'peer-handler-unavailable'
+  webRtcStatus: 'error' | 'not-configured' | 'pairing-ready' | 'registering'
   webRtcStatusMessage: string | null
 }
 
@@ -356,10 +412,8 @@ export type TerminalRemoteSizeOverrideMessage =
 
 export type TerminalRecordingState = {
   bytesWritten: number
-  castPath: string | null
   errorMessage: string | null
   eventCount: number
-  metadataPath: string | null
   recordingId: string | null
   sessionId: string
   startedAt: string | null
@@ -378,13 +432,13 @@ export type TerminalRecordingStartMetadata = {
 }
 
 export type TerminalRecordingMetadata = {
-  version: 1
+  version: 2
   bytesWritten: number
+  castAvailable: boolean
   capturedInput: boolean
-  castPath: string
   color: string | null
   cols: number
-  cwd: string | null
+  cwdLabel: string | null
   durationMs: number | null
   endedAt: string | null
   errorMessage?: string | null
@@ -396,24 +450,41 @@ export type TerminalRecordingMetadata = {
   projectId: string | null
   projectTitle: string | null
   recordingId: string
-  recordingState: 'recording' | 'stopped' | 'failed'
+  recordingState: 'recording' | 'completed' | 'interrupted' | 'failed'
   rows: number
   sensitiveInputPolicy: 'drop' | 'mask'
   sessionId: string
-  shell: string | null
+  shellName: string | null
+  signal: number | null
   startedAt: string
   theme: import('./settings').TerminalThemeSettings | null
   title: string
 }
 
-export type TerminalRecordingListItem = TerminalRecordingMetadata & {
-  metadataPath: string | null
+export type TerminalRecordingListItem = TerminalRecordingMetadata
+
+export type TerminalRecordingChunkRequest = {
+  maxBytes?: number
+  recordingId: string
+  start?: number
 }
 
-export type TerminalRecordingCast = {
+/**
+ * A byte-bounded sequence of complete UTF-8 asciicast NDJSON records.
+ *
+ * Callers continue with `nextOffset`. A non-zero `start` must be an offset
+ * previously returned by this API, so chunks never split a UTF-8 code point or
+ * an NDJSON record. `incompleteTail` means a trailing partial record was
+ * withheld; it may become complete while an active recording is still growing.
+ */
+export type TerminalRecordingChunk = {
   content: string
-  metadata: TerminalRecordingMetadata | null
-  path: string
+  eof: boolean
+  incompleteTail: boolean
+  nextOffset: number
+  recordingId: string
+  start: number
+  totalSize: number
 }
 
 export type TerminalRecordingChangeMessage = {
@@ -536,6 +607,7 @@ export type EditWindowState =
   | {
       draft: ProjectEditWindowDraft
       kind: 'project'
+      projectId: string
     }
   | {
       draft: TerminalEditWindowDraft
@@ -574,182 +646,45 @@ export interface McpInstallActionResult {
   error?: string
 }
 
-/** main -> renderer control request, scoped to a single terminal's project. */
-export interface ControlRendererRequestMessage {
-  requestId: string
-  scopeSessionId: string
-  op: string
-  params: unknown
-}
-
-/** renderer -> main control response. */
-export interface ControlRendererResponseMessage {
-  requestId: string
-  ok: boolean
-  result?: unknown
-  error?: { code: string; message: string; candidates?: string[] }
-}
-
-export interface TerminayApi {
-  getHomePath: () => Promise<string>
-  listDirectory: (dirPath: string) => Promise<FileExplorerEntry[]>
-  calculateFolderSize: (payload: { jobId: string; path: string }) => Promise<FolderSizeResult>
-  cancelFolderSize: (jobId: string) => Promise<void>
-  searchFiles: (options: { rootPath: string; query: string; limit?: number }) => Promise<FileSearchResult[]>
-  getFileExplorerGitStatuses: (dirPath: string) => Promise<FileExplorerGitStatuses>
-  getGitPanelStatus: (dirPath: string) => Promise<GitPanelStatus>
-  getWorktreePanelStatus: (dirPath: string) => Promise<WorktreePanelStatus>
-  moveGitWorktree: (payload: { repoPath: string; worktreePath: string; newPath: string }) => Promise<void>
-  removeGitWorktree: (payload: { force?: boolean; repoPath: string; worktreePath: string }) => Promise<void>
-  pullGitWorktreeFromOrigin: (worktreePath: string) => Promise<void>
-  getFileInfo: (filePath: string) => Promise<FileViewerFileInfo>
-  readFileBytes: (options: { path: string; start: number; length: number }) => Promise<FileViewerByteRange>
-  readFileText: (options: {
-    path: string
-    start: number
-    length: number
-    encoding?: FileViewerTextEncoding
-  }) => Promise<FileViewerTextRange>
-  saveFile: (payload: FileViewerSaveRequest) => Promise<FileViewerSaveResult>
-  renameEntry: (oldPath: string, newPath: string) => Promise<void>
-  deleteEntry: (path: string) => Promise<void>
-  mkdir: (path: string) => Promise<void>
-  watchDirectory: (dirPath: string) => Promise<void>
-  unwatchDirectory: (dirPath: string) => Promise<void>
-  watchFile: (filePath: string) => Promise<void>
-  unwatchFile: (filePath: string) => Promise<void>
-  getFilePreviewSource: (filePath: string) => Promise<FileViewerPreviewSource>
-  getGitRepoInfo: (filePath: string) => Promise<FileViewerGitRepoInfo>
-  getGitDiff: (filePath: string) => Promise<FileViewerGitDiff>
-  generateQuickPushPlan: (request: QuickPushGenerateRequest) => Promise<QuickPushPlan>
-  applyQuickPush: (request: QuickPushApplyRequest) => Promise<QuickPushApplyResult>
-  quitApp: () => Promise<void>
-  createTerminal: (options?: { cwd?: string }) => Promise<{ id: string }>
-  getAgentStatusSnapshot: () => Promise<import('./agentStatus').AgentStatusSnapshot>
-  acknowledgeAgentStatus: (entryId: string) => Promise<boolean>
-  acknowledgeTerminalAgentStatuses: (terminalSessionId: string) => Promise<number>
-  getTerminalCwd: (id: string) => Promise<string | null>
-  getTerminalBuffer: (id: string) => Promise<string | null>
-  getPathForFile: (file: File) => string
-  writeTerminal: (id: string, data: string) => void
-  resizeTerminal: (id: string, cols: number, rows: number) => void
-  killTerminal: (id: string) => void
-  updateTerminalRemoteMetadata: (
-    id: string,
-    metadata: {
-      title?: string
-      emoji?: string
-      color?: string
-      inheritsProjectColor?: boolean
-      viewportWidth?: number
-      viewportHeight?: number
-      projectId?: string
-      projectTitle?: string
-      projectEmoji?: string
-      projectColor?: string
-    },
-  ) => void
-  getTerminalZoom: () => Promise<number>
-  getTerminalRecordingState: (id: string) => Promise<TerminalRecordingState>
-  startTerminalRecording: (id: string, metadata?: TerminalRecordingStartMetadata) => Promise<TerminalRecordingState>
-  stopTerminalRecording: (id: string) => Promise<TerminalRecordingState>
-  listTerminalRecordings: () => Promise<TerminalRecordingListItem[]>
-  readTerminalRecording: (castPath: string) => Promise<TerminalRecordingCast>
-  deleteTerminalRecording: (castPath: string) => Promise<void>
-  revealTerminalRecording: (castPath: string) => Promise<void>
-  getTerminalSettings: () => Promise<import('./settings').TerminalSettings>
-  updateTerminalSettings: (
-    settings: import('./settings').TerminalSettings,
-  ) => Promise<import('./settings').TerminalSettings>
-  resetTerminalSettings: () => Promise<import('./settings').TerminalSettings>
-  listAiTabMetadataModels: (provider: AiTabMetadataProvider) => Promise<AiTabMetadataModel[]>
-  generateAiTabMetadata: (payload: AiTabMetadataGenerateRequest) => Promise<AiTabMetadataGenerateResult>
-  getDictationOpenAiKeyStatus: () => Promise<DictationKeyStatus>
-  saveDictationOpenAiKey: (apiKey: string) => Promise<DictationKeyStatus>
-  clearDictationOpenAiKey: () => Promise<DictationKeyStatus>
-  getDictationMicrophonePermissionStatus: () => Promise<DictationMicrophonePermissionStatus>
-  requestDictationMicrophonePermission: () => Promise<DictationMicrophonePermissionStatus>
-  transcribeDictation: (request: DictationTranscribeRequest) => Promise<DictationTranscribeResult>
-  getMacros: () => Promise<import('./macros').MacroDefinition[]>
-  updateMacros: (macros: import('./macros').MacroDefinition[]) => Promise<import('./macros').MacroDefinition[]>
-  resetMacros: () => Promise<import('./macros').MacroDefinition[]>
-  getSecrets: () => Promise<import('./macros').SecretDefinition[]>
-  saveSecret: (name: string, value: string) => Promise<import('./macros').SecretDefinition>
-  deleteSecret: (id: string) => Promise<void>
-  getDecryptedSecret: (id: string) => Promise<string>
-  waitForTerminalInactivity: (id: string, durationMs: number) => Promise<void>
-  smartPasteClipboard: () => Promise<string>
-  writeClipboardText: (text: string) => Promise<void>
-  openExternal: (url: string) => Promise<void>
-  revealInOS: (path: string) => Promise<void>
-  getAppUpdateStatus: (options?: { force?: boolean }) => Promise<AppUpdateStatus>
-  openProjectEditWindow: (draft: ProjectEditWindowDraft) => Promise<ProjectEditWindowResult | null>
-  openTerminalEditWindow: (draft: TerminalEditWindowDraft) => Promise<TerminalEditWindowResult | null>
-  getEditWindowState: () => Promise<EditWindowState | null>
-  submitEditWindowResult: (result: EditWindowResult) => Promise<void>
-  getAdoptedProject: () => Promise<AdoptedProjectPayload | null>
-  popoutProject: (payload: {
-    project: AdoptedProjectPayload
-    x: number
-    y: number
-  }) => Promise<{ ok: boolean; windowId?: number }>
-  mergeProject: (payload: {
-    project: AdoptedProjectPayload
-    targetWindowId: number
-  }) => Promise<{ ok: boolean }>
-  closeThisWindow: () => void
-  registerProjectTabBarRect: (
-    rect: { x: number; y: number; width: number; height: number } | null,
-  ) => void
-  beginProjectTabDrag: (preview: ProjectTabDragPreview) => void
-  endProjectTabDrag: () => Promise<ProjectTabDragResult>
-  onAdoptProject: (listener: (payload: AdoptedProjectPayload) => void) => () => void
-  onProjectTabDragHover: (
-    listener: (message: ProjectTabDragHoverMessage) => void,
-  ) => () => void
-  onProjectTabTornOff: (listener: (message: { active: boolean }) => void) => () => void
-  openSettingsWindow: (options?: { sectionId?: string }) => Promise<void>
-  openRecordingsWindow: () => Promise<void>
-  getRemoteAccessStatus: () => Promise<RemoteAccessStatus>
-  toggleRemoteAccessServer: () => Promise<RemoteAccessStatus>
-  revokeRemoteAccessDevice: (deviceId: string) => Promise<RemoteAccessStatus>
-  closeRemoteAccessConnection: (connectionId: string) => Promise<RemoteAccessStatus>
-  setRemoteAccessPairingAddress: (address: string) => Promise<RemoteAccessStatus>
-  setRemoteAccessPairingPin: (pin: string) => Promise<import('./settings').TerminalSettings>
-  openMacrosWindow: () => Promise<void>
-  onTerminalData: (listener: (message: TerminalDataMessage) => void) => () => void
-  onTerminalActivity: (
-    listener: (message: import('./terminalSignals').TerminalActivityMessage) => void,
-  ) => () => void
-  onTerminalExit: (listener: (message: TerminalExitMessage) => void) => () => void
-  onAgentStatusSnapshot: (
-    listener: (snapshot: import('./agentStatus').AgentStatusSnapshot) => void,
-  ) => () => void
-  onAppCommand: (listener: (command: AppCommand) => void) => () => void
-  onFileExplorerWatchEvent: (listener: (message: FileExplorerWatchEvent) => void) => () => void
-  onFolderSizeProgress: (listener: (message: FolderSizeProgress) => void) => () => void
-  onFileWatchEvent: (listener: (message: FileViewerWatchEvent) => void) => () => void
-  onTerminalSettingsChanged: (listener: (message: SettingsChangeMessage) => void) => () => void
-  onMacrosChanged: (listener: (message: MacrosChangeMessage) => void) => () => void
-  onRemoteAccessStatusChanged: (listener: (status: RemoteAccessStatus) => void) => () => void
-  onTerminalZoomChanged: (listener: (message: TerminalZoomMessage) => void) => () => void
-  onTerminalRemoteSizeOverrideChanged: (listener: (message: TerminalRemoteSizeOverrideMessage) => void) => () => void
-  onTerminalRecordingChanged: (listener: (message: TerminalRecordingChangeMessage) => void) => () => void
-  onTerminalCopyRequested: (listener: () => void) => () => void
-  onSettingsFocusSection: (listener: (message: { sectionId: string }) => void) => () => void
-  getMcpInstallStatus: () => Promise<McpInstallStatus>
-  installMcpAgent: (agent: McpAgentId) => Promise<McpInstallActionResult>
-  uninstallMcpAgent: (agent: McpAgentId) => Promise<McpInstallActionResult>
-  onControlRequest: (listener: (message: ControlRendererRequestMessage) => void) => () => void
-  sendControlResponse: (message: ControlRendererResponseMessage) => void
-}
-
 export interface TerminayTestApi {
+  /** Test-only server-owned terminal creation. Never exposed in production. */
+  createServerTerminal: (options?: { cwd?: string; projectId?: string }) => Promise<{ id: string }>
+  /** Test-only input through the canonical embedded server terminal authority. */
+  writeServerTerminal: (sessionId: string, data: string) => Promise<void>
+  getServerTerminalCwd: (sessionId: string) => Promise<{
+    cwd: string
+    source: 'observed' | 'spawn'
+    observationError?: 'unavailable' | 'failed' | 'timeout'
+  } | null>
+  getServerGitWorkspace: (sessionId: string) => Promise<{
+    projectId: string
+    projectRoot: string | null
+    binding: {
+      projectRoot: string
+      repositoryRoot: string | null
+      state: string
+      worktreeRoot: string | null
+    } | null
+    worktrees: {
+      repositoryRoot: string | null
+      state: string
+      paths: string[]
+    }
+  } | null>
+  getServerTerminalActivity: (sessionId: string) => Promise<{
+    status: 'working' | 'idle'
+    acknowledged: boolean
+    claimed: boolean
+    source: string
+  } | null>
   emitAgentHook: (payload: {
     provider: import('./agentStatus').AgentProvider
     terminalSessionId: string
     nativePayload: Record<string, unknown>
   }) => Promise<number>
+  getMcpControlEnvironment: (
+    terminalSessionId: string,
+  ) => Promise<{ socketPath: string; token: string }>
   sendAppCommand: (command: AppCommand) => Promise<void>
   setAiTabMetadataMock: (mock: {
     error?: string | null

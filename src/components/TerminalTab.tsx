@@ -1,4 +1,5 @@
 import { IDockviewPanelHeaderProps } from 'dockview'
+import type { TerminalClientIdentity } from '@terminay/client-core'
 import { CSSProperties, MouseEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -7,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
+  ExternalLink,
   FileEdit,
   FolderSync,
   LoaderCircle,
@@ -49,10 +51,18 @@ export type TerminalTabMoveProject = {
 
 export type TerminalPanelParams = {
   sessionId: string
+  cwd?: string
+  /** Optional server-owned stream used by the incremental panel migration. */
+  terminalPanelClient?: import('@terminay/client-core').TerminayTerminalPanelClient
+  terminalClientIdentity?: Pick<TerminalClientIdentity, 'serverId' | 'projectId'>
+  terminalClientId?: string
+  terminalClientMode?: 'attach' | 'resume'
+  terminalClientFromPosition?: number
   activityIndicatorsEnabled?: boolean
   showActiveTabActivityIndicator?: boolean
   showFinishedTabActivityIndicator?: boolean
   recordingError?: string | null
+  recordingId?: string | null
   recordingStatus?: 'failed' | 'idle' | 'recording'
   terminalActivityState?: TerminalActivityState
   agentState?: AgentState
@@ -67,6 +77,7 @@ export type TerminalPanelParams = {
   onClearMacroRun?: (runId: string) => void
   macroRuns?: TerminalTabMacroRun[]
   onMoveToProject?: (projectId: string) => void
+  onRevealRecording?: (recordingId: string) => void
   onStartRecording?: () => void
   onStopRecording?: () => void
   registerTerminalContextReader?: (sessionId: string, reader: TerminalContextReader) => () => void
@@ -314,6 +325,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
 
   const moveProjects = params?.projectsForMove ?? []
   const hasTerminalNote = typeof params?.terminalNote === 'string'
+  const recordingId = params?.recordingId
   const contextMenuItems: ContextMenuItem[] = [
     {
       label: 'Close',
@@ -348,6 +360,15 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
         params?.onStartRecording?.()
       },
     },
+    ...(recordingId
+      ? [
+          {
+            label: recordingStatus === 'recording' ? 'Reveal Current Recording' : 'Reveal Last Recording',
+            icon: <ExternalLink size={14} />,
+            onClick: () => params?.onRevealRecording?.(recordingId),
+          },
+        ]
+      : []),
     {
       label: hasTerminalNote ? 'Remove Note' : 'Add Note',
       icon: <FileEdit size={14} />,

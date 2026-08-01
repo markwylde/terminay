@@ -1,5 +1,3 @@
-import { useEffect, useId, useState } from 'react';
-import type { JSX } from 'react';
 import {
 	AlertTriangle,
 	Check,
@@ -10,16 +8,30 @@ import {
 	X,
 	Zap,
 } from 'lucide-react';
+import type { JSX } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type {
 	AiTabMetadataProvider,
 	QuickPushAction,
+	QuickPushApplyRequest,
 	QuickPushApplyResult,
+	QuickPushGenerateRequest,
 	QuickPushPlan,
 } from '../types/terminay';
 import './quickPushModal.css';
 
+export type QuickPushClient = Readonly<{
+	generateQuickPushPlan: (
+		request: QuickPushGenerateRequest,
+	) => Promise<QuickPushPlan>;
+	applyQuickPush: (
+		request: QuickPushApplyRequest,
+	) => Promise<QuickPushApplyResult>;
+}>;
+
 export interface QuickPushModalProps {
 	action: QuickPushAction;
+	client: QuickPushClient;
 	provider: AiTabMetadataProvider;
 	model: string;
 	cwd: string;
@@ -38,6 +50,7 @@ const ACTION_LABELS: Record<QuickPushAction, string> = {
 
 export function QuickPushModal({
 	action,
+	client,
 	provider,
 	model,
 	cwd,
@@ -53,7 +66,7 @@ export function QuickPushModal({
 	useEffect(() => {
 		let isMounted = true;
 
-		void window.terminay
+		void client
 			.generateQuickPushPlan({ provider, model, action, cwd })
 			.then((nextPlan) => {
 				if (!isMounted) {
@@ -77,7 +90,7 @@ export function QuickPushModal({
 		return () => {
 			isMounted = false;
 		};
-	}, [action, provider, model, cwd]);
+	}, [action, client, provider, model, cwd]);
 
 	const toggleExpanded = (index: number) => {
 		setExpanded((previous) => {
@@ -97,7 +110,7 @@ export function QuickPushModal({
 		}
 
 		setPhase('applying');
-		void window.terminay
+		void client
 			.applyQuickPush({
 				cwd,
 				action,
@@ -131,7 +144,11 @@ export function QuickPushModal({
 			>
 				<div className="project-edit-modal-titlebar">
 					<h2 id={titleId} className="project-edit-modal-title">
-						<Zap size={14} aria-hidden="true" className="quick-push-title-icon" />
+						<Zap
+							size={14}
+							aria-hidden="true"
+							className="quick-push-title-icon"
+						/>
 						Quick Push
 						<span className="quick-push-subtitle">{ACTION_LABELS[action]}</span>
 					</h2>
@@ -162,7 +179,11 @@ export function QuickPushModal({
 				) : null}
 
 				{phase === 'review' && plan ? (
-					<QuickPushReview plan={plan} expanded={expanded} onToggle={toggleExpanded} />
+					<QuickPushReview
+						plan={plan}
+						expanded={expanded}
+						onToggle={toggleExpanded}
+					/>
 				) : null}
 
 				{phase === 'applying' ? (
@@ -172,7 +193,9 @@ export function QuickPushModal({
 					</div>
 				) : null}
 
-				{phase === 'done' && result ? <QuickPushResult result={result} /> : null}
+				{phase === 'done' && result ? (
+					<QuickPushResult result={result} />
+				) : null}
 
 				<div className="project-edit-actions">
 					{phase === 'review' ? (
@@ -206,7 +229,11 @@ interface QuickPushReviewProps {
 	onToggle: (index: number) => void;
 }
 
-function QuickPushReview({ plan, expanded, onToggle }: QuickPushReviewProps): JSX.Element {
+function QuickPushReview({
+	plan,
+	expanded,
+	onToggle,
+}: QuickPushReviewProps): JSX.Element {
 	return (
 		<div className="quick-push-review">
 			{plan.branchName ? (
@@ -217,13 +244,18 @@ function QuickPushReview({ plan, expanded, onToggle }: QuickPushReviewProps): JS
 			) : null}
 
 			{plan.commits.length === 0 ? (
-				<div className="quick-push-empty">The AI did not propose any commits.</div>
+				<div className="quick-push-empty">
+					The AI did not propose any commits.
+				</div>
 			) : (
 				<ul className="quick-push-commits">
 					{plan.commits.map((commit, index) => {
 						const isOpen = expanded.has(index);
 						return (
-							<li key={`${commit.message}-${index}`} className="quick-push-commit">
+							<li
+								key={`${commit.message}-${index}`}
+								className="quick-push-commit"
+							>
 								<button
 									type="button"
 									className="quick-push-commit-header"
@@ -235,10 +267,17 @@ function QuickPushReview({ plan, expanded, onToggle }: QuickPushReviewProps): JS
 									) : (
 										<ChevronRight size={14} aria-hidden="true" />
 									)}
-									<GitCommit size={14} aria-hidden="true" className="quick-push-commit-icon" />
-									<span className="quick-push-commit-message">{commit.message}</span>
+									<GitCommit
+										size={14}
+										aria-hidden="true"
+										className="quick-push-commit-icon"
+									/>
+									<span className="quick-push-commit-message">
+										{commit.message}
+									</span>
 									<span className="quick-push-commit-count">
-										{commit.files.length} {commit.files.length === 1 ? 'file' : 'files'}
+										{commit.files.length}{' '}
+										{commit.files.length === 1 ? 'file' : 'files'}
 									</span>
 								</button>
 								{isOpen ? (
@@ -272,9 +311,12 @@ function QuickPushReview({ plan, expanded, onToggle }: QuickPushReviewProps): JS
 					<div>
 						<strong>
 							{plan.uncoveredFiles.length} changed{' '}
-							{plan.uncoveredFiles.length === 1 ? 'file' : 'files'} won't be committed:
+							{plan.uncoveredFiles.length === 1 ? 'file' : 'files'} won't be
+							committed:
 						</strong>
-						<div className="quick-push-warning-files">{plan.uncoveredFiles.join(', ')}</div>
+						<div className="quick-push-warning-files">
+							{plan.uncoveredFiles.join(', ')}
+						</div>
 					</div>
 				</div>
 			) : null}
@@ -290,7 +332,11 @@ function QuickPushReview({ plan, expanded, onToggle }: QuickPushReviewProps): JS
 	);
 }
 
-function QuickPushResult({ result }: { result: QuickPushApplyResult }): JSX.Element {
+function QuickPushResult({
+	result,
+}: {
+	result: QuickPushApplyResult;
+}): JSX.Element {
 	return (
 		<div className="quick-push-review">
 			<ul className="quick-push-steps">
@@ -323,7 +369,11 @@ function QuickPushResult({ result }: { result: QuickPushApplyResult }): JSX.Elem
 				<button
 					type="button"
 					className="quick-push-pr-link"
-					onClick={() => void window.terminay.openExternal(result.pullRequestUrl as string)}
+					onClick={() =>
+						void window.terminayExternalHost?.open(
+							result.pullRequestUrl as string,
+						)
+					}
 				>
 					<ExternalLink size={14} aria-hidden="true" />
 					{result.pullRequestUrlLabel ?? 'View pull request'}

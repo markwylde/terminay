@@ -35,12 +35,19 @@ const appInput = {
 
 const electronInput = {
   main: path.join(__dirname, 'electron/main.ts'),
-  ptyHost: path.join(__dirname, 'electron/ptyHost.ts'),
+  // Keep the packaged desktop MCP process on the server-owned adapter. The
+  // legacy Electron entry remains available for compatibility tests, but the
+  // installed provider command points at this renderer-free bundle.
+  serverMcpEntry: path.join(__dirname, 'apps/terminay-server/src/mcpEntry.ts'),
   mcpEntry: path.join(__dirname, 'electron/mcpEntry.ts'),
 }
 
 export default defineConfig({
   build: {
+    // The desktop bootstrap must execute before any dependency graph work.
+    // Vite's preload helper otherwise gates the dynamic renderer import on
+    // stylesheet/module preload events in Electron.
+    modulePreload: false,
     rollupOptions: {
       input: appInput,
     },

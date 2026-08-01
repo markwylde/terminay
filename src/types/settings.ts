@@ -72,16 +72,20 @@ export type SidebarSettings = {
 	defaultGitState: SidebarPaneState;
 	defaultWidth: number;
 	defaultExplorerPaneHeight: number;
+	defaultAgentsPaneHeight: number;
+	defaultGitPaneHeight: number;
 	panelOrder: SidebarPanelId[];
 };
 
 export type FileViewerSettings = {
 	customFileExtensions: FileViewerCustomExtensionDefault[];
+	diffLayout: FileViewerDiffLayout;
 	folderTaskIgnoredDirectories: string;
 	refreshIntervalSeconds: number;
 };
 
 export type FileViewerDefaultMode = 'preview' | 'text' | 'hex';
+export type FileViewerDiffLayout = 'side-by-side' | 'unified';
 
 export type FileViewerCustomExtensionDefault = {
 	extension: string;

@@ -1,4 +1,3 @@
-import { Eta } from 'eta/core'
 import type {
   MacroDefinition,
   MacroFieldDefinition,
@@ -11,64 +10,8 @@ import type {
 
 const placeholderPattern = /{{\s*([^{}]+?)\s*}}/g
 const singleBracePlaceholderPattern = /{\s*([^{}]+?)\s*}/g
-const etaTagPattern = /<%[-_]?\s*[~=]?([\s\S]*?)\s*[-_]?%>/g
-const etaRenderer = new Eta({ autoEscape: false, useWith: true })
-const jsKeywords = new Set([
-  'await',
-  'break',
-  'case',
-  'catch',
-  'class',
-  'const',
-  'continue',
-  'debugger',
-  'default',
-  'delete',
-  'do',
-  'else',
-  'export',
-  'extends',
-  'false',
-  'finally',
-  'for',
-  'function',
-  'if',
-  'import',
-  'in',
-  'instanceof',
-  'let',
-  'new',
-  'null',
-  'return',
-  'switch',
-  'this',
-  'throw',
-  'true',
-  'try',
-  'typeof',
-  'undefined',
-  'var',
-  'void',
-  'while',
-  'with',
-  'yield',
-])
-const jsGlobals = new Set([
-  'Array',
-  'Boolean',
-  'Date',
-  'JSON',
-  'Math',
-  'Number',
-  'Object',
-  'RegExp',
-  'String',
-  'console',
-  'encodeURI',
-  'encodeURIComponent',
-  'parseFloat',
-  'parseInt',
-])
+const etaTagPattern = /<%[-_]?\s*([~=]?)([\s\S]*?)\s*[-_]?%>/g
+const identifierPattern = /^[A-Za-z_$][\w$]*$/u
 
 export const defaultMacros: MacroDefinition[] = [
   {
@@ -345,44 +288,16 @@ function extractEtaPlaceholders(template: string): string[] {
   const placeholders: string[] = []
 
   for (const match of template.matchAll(etaTagPattern)) {
-    const source = stripJavaScriptLiterals(match[1] ?? '')
-
-    for (const propertyMatch of source.matchAll(/\bit\.([A-Za-z_$][\w$]*)\b/g)) {
-      const name = propertyMatch[1]
-      if (!seen.has(name)) {
+    const marker = match[1] ?? ''
+    const source = stripJavaScriptLiterals(match[2] ?? '')
+    const names = marker === '=' || marker === '~'
+      ? [source.trim().replace(/^it\./u, '')]
+      : [source.match(/^if\s*\(\s*(?:it\.)?([A-Za-z_$][\w$]*)\s*(?:===|!==|==|!=)/u)?.[1] ?? '']
+    for (const name of names) {
+      if (identifierPattern.test(name) && !seen.has(name)) {
         seen.add(name)
         placeholders.push(name)
       }
-    }
-
-    const declaredNames = new Set<string>()
-    for (const declarationMatch of source.matchAll(/\b(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)\b/g)) {
-      declaredNames.add(declarationMatch[1])
-    }
-    for (const parameterMatch of source.matchAll(/\b([A-Za-z_$][\w$]*)\s*=>/g)) {
-      declaredNames.add(parameterMatch[1])
-    }
-
-    for (const identifierMatch of source.matchAll(/\b[A-Za-z_$][\w$]*\b/g)) {
-      const identifier = identifierMatch[0]
-      const index = identifierMatch.index ?? 0
-      const previous = source[index - 1]
-      const next = source[index + identifier.length]
-
-      if (
-        previous === '.' ||
-        next === '.' ||
-        next === ':' ||
-        jsKeywords.has(identifier) ||
-        jsGlobals.has(identifier) ||
-        declaredNames.has(identifier) ||
-        seen.has(identifier)
-      ) {
-        continue
-      }
-
-      seen.add(identifier)
-      placeholders.push(identifier)
     }
   }
 
@@ -447,7 +362,7 @@ export function extractAllMacroPlaceholders(macro: MacroDefinition): string[] {
 }
 
 export function renderMacroTemplate(template: string, values: Record<string, MacroFieldValue>): string {
-  const rendered = etaRenderer.renderString(template, values)
+  const rendered = renderSafeEtaTemplate(template, values)
 
   return rendered.replace(placeholderPattern, (_match, token: string) => {
     const key = token.trim()
@@ -463,6 +378,99 @@ export function renderMacroTemplate(template: string, values: Record<string, Mac
 
     return typeof value === 'string' ? value : ''
   })
+}
+
+/**
+ * Render only the data-only Eta subset shared with server-core. Macro
+ * definitions are server-owned input, so a preview must never evaluate
+ * arbitrary JavaScript in the renderer. Unsupported tags fail closed and are
+ * presented by tryRenderMacroTemplate as a safe preview error.
+ */
+function renderSafeEtaTemplate(template: string, values: Record<string, MacroFieldValue>): string {
+  const stack: Array<{ parentActive: boolean; condition: boolean }> = []
+  let active = true
+  let cursor = 0
+  let output = ''
+
+  for (const match of template.matchAll(etaTagPattern)) {
+    const index = match.index ?? 0
+    if (active) {
+      output += template.slice(cursor, index)
+    }
+
+    const marker = match[1] ?? ''
+    const code = (match[2] ?? '').trim()
+    if (marker === '=' || marker === '~') {
+      if (active) {
+        output += renderSafeEtaExpression(code, values)
+      }
+    } else if (/^if\s*\(/u.test(code)) {
+      const condition = evaluateSafeEtaCondition(code, values)
+      stack.push({ parentActive: active, condition })
+      active = active && condition
+    } else if (/^(?:\}\s*)?else\s*\{/u.test(code)) {
+      const branch = stack.at(-1)
+      if (!branch) {
+        throw new Error('template has an unmatched else branch')
+      }
+      active = branch.parentActive && !branch.condition
+    } else if (/^\}\s*$/u.test(code)) {
+      const branch = stack.pop()
+      if (!branch) {
+        throw new Error('template has an unmatched closing branch')
+      }
+      active = branch.parentActive
+    } else if (code.length > 0) {
+      throw new Error('template expression is not allowed in the client preview')
+    }
+    cursor = index + match[0].length
+  }
+
+  if (active) {
+    output += template.slice(cursor)
+  }
+  if (stack.length > 0) {
+    throw new Error('template has an unterminated branch')
+  }
+  return output
+}
+
+function renderSafeEtaExpression(expression: string, values: Record<string, MacroFieldValue>): string {
+  const name = safeEtaName(expression)
+  if (!name) {
+    throw new Error('template interpolation is not allowed in the client preview')
+  }
+  const value = values[name]
+  return value === undefined ? '' : typeof value === 'string' ? value : String(value)
+}
+
+function evaluateSafeEtaCondition(code: string, values: Record<string, MacroFieldValue>): boolean {
+  const match = /^if\s*\(\s*([A-Za-z_$][\w$]*|it\.[A-Za-z_$][\w$]*)\s*(===|!==|==|!=)\s*(true|false|null|-?\d+(?:\.\d+)?|'(?:\\.|[^'])*'|"(?:\\.|[^"])*")\s*\)\s*\{?$/u.exec(code)
+  if (!match) {
+    throw new Error('template condition is not allowed in the client preview')
+  }
+  const name = safeEtaName(match[1] ?? '')
+  if (!name) {
+    throw new Error('template condition field is invalid')
+  }
+  const actual = values[name]
+  const expectedToken = match[3] ?? ''
+  const expected: MacroFieldValue | null = expectedToken === 'true'
+    ? true
+    : expectedToken === 'false'
+      ? false
+      : expectedToken === 'null'
+        ? null
+        : (expectedToken.startsWith("'") || expectedToken.startsWith('"'))
+          ? expectedToken.slice(1, -1).replace(/\\(['"])/g, '$1')
+          : Number(expectedToken)
+  const equal = actual === expected
+  return match[2] === '!==' || match[2] === '!=' ? !equal : equal
+}
+
+function safeEtaName(expression: string): string | undefined {
+  const normalized = expression.trim().replace(/^it\./u, '')
+  return identifierPattern.test(normalized) ? normalized : undefined
 }
 
 function renderSingleBraceMacroTemplate(template: string, values: Record<string, MacroFieldValue>): string {

@@ -19,6 +19,7 @@ export type StoredReconnectGrant = {
 
 export type ReconnectGrantRecord = StoredReconnectGrant & {
   proofKey: CryptoKey
+  signalingKey: CryptoKey
 }
 
 export type StoredReconnectHandle = {
@@ -97,16 +98,19 @@ function base64UrlToArrayBuffer(value: string): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
 }
 
-async function createReconnectProofKey(grant: string): Promise<CryptoKey> {
+async function createReconnectKeys(grant: string): Promise<{
+  proofKey: CryptoKey
+  signalingKey: CryptoKey
+}> {
   const grantKey = await crypto.subtle.importKey(
     'raw',
     base64UrlToArrayBuffer(grant),
     'HKDF',
     false,
-    ['deriveKey'],
+    ['deriveBits'],
   )
 
-  return crypto.subtle.deriveKey(
+  const verifierBytes = await crypto.subtle.deriveBits(
     {
       hash: 'SHA-256',
       info: new TextEncoder().encode('terminay remote v1 reconnect proof verifier'),
@@ -114,10 +118,24 @@ async function createReconnectProofKey(grant: string): Promise<CryptoKey> {
       salt: new Uint8Array(),
     },
     grantKey,
-    { hash: 'SHA-256', length: 256, name: 'HMAC' },
-    false,
-    ['sign', 'verify'],
+    256,
   )
+  return {
+    proofKey: await crypto.subtle.importKey(
+      'raw',
+      verifierBytes,
+      { hash: 'SHA-256', name: 'HMAC' },
+      false,
+      ['sign', 'verify'],
+    ),
+    signalingKey: await crypto.subtle.importKey(
+      'raw',
+      verifierBytes,
+      'HKDF',
+      false,
+      ['deriveKey'],
+    ),
+  }
 }
 
 export async function exportPublicKeyPem(publicKey: CryptoKey): Promise<string> {
@@ -167,6 +185,32 @@ export async function savePairing(pairing: PairingRecord): Promise<void> {
   }
 }
 
+/** Store a device registration and its reconnect material in one IndexedDB
+ * transaction. Re-pairing removes old reconnect material when none is issued. */
+export async function saveEstablishedPairing(pairing: PairingRecord, issued?: IssuedReconnectGrant): Promise<void> {
+  if (issued !== undefined && issued.origin !== pairing.origin) throw new Error('Reconnect grant belongs to another origin.')
+  const reconnectKeys = issued === undefined ? undefined : await createReconnectKeys(issued.grant)
+  const database = await openDatabase()
+  try {
+    const transaction = database.transaction([PAIRINGS_STORE, RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
+    const complete = transactionComplete(transaction)
+    const requests: Promise<unknown>[] = [
+      transactionRequest(transaction.objectStore(PAIRINGS_STORE).put({ deviceId: pairing.deviceId, deviceName: pairing.deviceName, origin: pairing.origin, privateKey: pairing.privateKey, publicKeyPem: pairing.publicKeyPem })),
+    ]
+    if (issued === undefined) {
+      requests.push(transactionRequest(transaction.objectStore(RECONNECT_GRANTS_STORE).delete(pairing.origin)))
+      requests.push(transactionRequest(transaction.objectStore(RECONNECT_HANDLES_STORE).delete(pairing.origin)))
+    } else {
+      const keys = reconnectKeys!
+      requests.push(transactionRequest(transaction.objectStore(RECONNECT_GRANTS_STORE).put({ expiresAt: issued.expiresAt, issuedAt: issued.issuedAt, origin: issued.origin, proofKey: keys.proofKey, signalingKey: keys.signalingKey, protocolVersion: issued.protocolVersion, sessionId: issued.sessionId })))
+      requests.push(transactionRequest(transaction.objectStore(RECONNECT_HANDLES_STORE).put({ handle: issued.handle, origin: issued.origin, sessionId: issued.sessionId })))
+    }
+    await Promise.all([...requests, complete])
+  } finally {
+    database.close()
+  }
+}
+
 export async function loadPairing(origin: string): Promise<PairingRecord | null> {
   const database = await openDatabase()
   const transaction = database.transaction(PAIRINGS_STORE, 'readonly')
@@ -191,7 +235,7 @@ export async function removePairing(origin: string): Promise<void> {
 }
 
 export async function saveReconnectGrant(issued: IssuedReconnectGrant): Promise<void> {
-  const proofKey = await createReconnectProofKey(issued.grant)
+  const { proofKey, signalingKey } = await createReconnectKeys(issued.grant)
   const database = await openDatabase()
   try {
     const transaction = database.transaction([RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
@@ -201,6 +245,7 @@ export async function saveReconnectGrant(issued: IssuedReconnectGrant): Promise<
       issuedAt: issued.issuedAt,
       origin: issued.origin,
       proofKey,
+      signalingKey,
       protocolVersion: issued.protocolVersion,
       sessionId: issued.sessionId,
     })
