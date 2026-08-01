@@ -168,6 +168,73 @@ test('AI cancellation aborts provider work and exposes no provider output', asyn
   assert.equal(logs.some((event) => 'text' in event || 'output' in event), false)
 })
 
+test('AI matrix bounds context/output, times out providers, and fences authorization changes', async () => {
+  const authority = createTarget({ title: '', note: '', authorizedClients: ['client-a'] })
+  const replay = new TerminalReplayRegistry({ maxBytes: 128, maxChars: 128 })
+  replay.append(target.sessionId, 'x'.repeat(100))
+  let seenContext
+  const bounded = new AiMetadataService({
+    serverId,
+    authority,
+    replay,
+    providers: {
+      codex: {
+        generate: async ({ context }) => {
+          seenContext = context
+          return 'bounded title'
+        },
+      },
+    },
+    limits: { maxContextBytes: 8, maxContextChars: 8, maxProviderOutputBytes: 32 },
+  })
+  await bounded.generate({ requestId: 'matrix-bounded', clientId: 'client-a', target, targetType: 'title', provider: 'codex', model: 'test-model' })
+  assert.ok(seenContext.bytes <= 8)
+  assert.ok(seenContext.text.length <= 8)
+  assert.equal(seenContext.truncated, true)
+
+  const oversized = new AiMetadataService({
+    serverId,
+    authority,
+    replay,
+    providers: { codex: { generate: () => 'x'.repeat(33) } },
+    limits: { maxProviderOutputBytes: 32 },
+  })
+  await assert.rejects(
+    oversized.generate({ requestId: 'matrix-output', clientId: 'client-a', target, targetType: 'note', provider: 'codex', model: 'test-model' }),
+    (error) => error instanceof AiServiceError && error.code === 'provider_output_too_large',
+  )
+
+  const timeout = new AiMetadataService({
+    serverId,
+    authority,
+    replay,
+    providers: { codex: { generate: () => new Promise(() => {}) } },
+    limits: { providerTimeoutMs: 5 },
+  })
+  await assert.rejects(
+    timeout.generate({ requestId: 'matrix-timeout', clientId: 'client-a', target, targetType: 'title', provider: 'codex', model: 'test-model' }),
+    (error) => error instanceof AiServiceError && error.code === 'provider_timeout',
+  )
+
+  let release
+  const focusChanged = new AiMetadataService({
+    serverId,
+    authority,
+    replay,
+    providers: {
+      codex: {
+        generate: () => new Promise((resolve) => { release = resolve }),
+      },
+    },
+  })
+  const pending = focusChanged.generate({ requestId: 'matrix-focus', clientId: 'client-a', target, targetType: 'title', provider: 'codex', model: 'test-model' })
+  await new Promise((resolve) => setImmediate(resolve))
+  authority.setAuthorizedClients(target, ['client-b'])
+  release('must not apply')
+  await assert.rejects(pending, (error) => error instanceof AiServiceError && error.code === 'not_authorized')
+  assert.equal(authority.getTarget(target).title, 'bounded title')
+})
+
 test('dictation validates bounded audio and writes only to original live target', async () => {
   const inserted = []
   const authority = createTarget({

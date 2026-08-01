@@ -9,9 +9,9 @@
 //   - Client: the `terminay mcp` subcommand (a child of an AI agent running
 //     inside a Terminay terminal). It authenticates with the per-terminal
 //     capability token injected into its environment.
-//   - Server: the ControlServer in the Electron main process. It validates the
-//     token, resolves the calling terminal's scope (its owning project), and
-//     forwards the operation to that project's renderer, which performs the work.
+//   - Server: the ControlServer in the Electron host compatibility boundary.
+//     It validates the token, resolves the calling terminal's server-owned
+//     project scope, and dispatches directly to the Local server authority.
 //
 // The agent never sees "projects" or other windows. Every op is implicitly
 // scoped to the sibling terminals of the calling terminal.
@@ -276,29 +276,6 @@ export interface ControlError {
 export type ControlResponse<Op extends ControlOp = ControlOp> =
   | { id: string; ok: true; result: ControlResultByOp[Op] }
   | { id: string; ok: false; error: ControlError }
-
-// --- Internal main<->renderer IPC contract ---------------------------------
-//
-// The ControlServer forwards each validated request to the renderer that owns
-// the calling terminal over the `control:request` channel, and the renderer
-// replies over `control:response`. These are not part of the socket wire
-// protocol, but live here so main and renderer agree on the shape.
-
-export const CONTROL_REQUEST_CHANNEL = 'control:request'
-export const CONTROL_RESPONSE_CHANNEL = 'control:response'
-
-export interface ControlRendererRequest {
-  /** Correlates the renderer response back to the socket request. */
-  requestId: string
-  /** The session id of the calling terminal; defines the project scope. */
-  scopeSessionId: string
-  op: ControlOp
-  params: unknown
-}
-
-export type ControlRendererResponse =
-  | { requestId: string; ok: true; result: unknown }
-  | { requestId: string; ok: false; error: ControlError }
 
 // --- Framing helpers -------------------------------------------------------
 

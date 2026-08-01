@@ -76,6 +76,7 @@ test('file viewer supports markdown image pdf hex and diff modes', async ({ crea
   await expect(mainWindow.locator('.file-diff-viewer .file-token--keyword', { hasText: 'const' })).toHaveCount(1)
   await expect(mainWindow.locator('.file-diff-viewer .file-token--string', { hasText: '"new"' })).toHaveCount(1)
   await expect(mainWindow.locator('.file-diff-viewer .file-token--tag-name', { hasText: 'div' }).first()).toBeVisible()
+  await mainWindow.getByRole('button', { name: 'Side by side' }).click()
   await expect(mainWindow.getByRole('button', { name: 'Side by side' })).toHaveAttribute('aria-pressed', 'true')
   await expect(mainWindow.locator('.file-diff-grid-row').first()).toBeVisible()
   await mainWindow.getByRole('button', { name: 'Unified' }).click()

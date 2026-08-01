@@ -200,8 +200,8 @@ test('custom extension defaults choose the first file viewer tab', async ({ crea
   })
 
   await mainWindow.evaluate(async () => {
-    const settings = await window.terminay.getTerminalSettings()
-    await window.terminay.updateTerminalSettings({
+    const settings = await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()
+    await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings({
       ...settings,
       fileViewer: {
         ...settings.fileViewer,

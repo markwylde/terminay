@@ -56,6 +56,13 @@ An administrator uses **Expose this server…** to:
 - inspect relay health, paired devices, and live connections;
 - revoke devices or stop accepting remote connections.
 
+Desktop reports exposure availability before an administrator starts it. A
+mode is selectable and described as ready only when its complete privileged
+transport composition is present. A build without the selected WebRTC runtime,
+authenticated per-peer signaling registrar, or required hosted-service
+contract shows WebRTC Relay as unavailable and does not invite a start action.
+Availability failures never allocate a pairing room or publish a pairing URL.
+
 The same exposure and trust model applies to an embedded Local server and a
 standalone `terminay-server` process. The standalone CLI prints the secure
 pairing URL after exposure starts.
@@ -79,6 +86,21 @@ An optional Local Network endpoint exposes the same protocol directly over
 authenticated HTTPS/WebSocket transport on a user-selected interface. It uses
 the same device, authorization, and audit rules and never starts implicitly.
 WebRTC exposure does not bind a LAN listener.
+
+For an embedded Local server, starting Local Network exposure binds the
+configured interface and port to the embedded server's canonical
+`ServerCore`. It does not create a second workspace, terminal authority, or
+standalone server process. The listener starts only after an explicit exposure
+action, stops with exposure, rolls back pairing state when binding or TLS setup
+fails, and rejects remote traffic after stop. Loopback HTTP is permitted only
+for local development; non-loopback exposure requires HTTPS.
+
+The Local Network pairing URL is usable by the shared Desktop/browser pairing
+flow. The listener validates the one-time fragment material and pairing PIN,
+enrolls a device, issues origin-bound reconnect material, and then carries the
+same framed application protocol used by Local. A generated URL must never be
+published for an address on which no listener is accepting the matching
+protocol.
 
 ## First pairing
 

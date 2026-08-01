@@ -6,10 +6,11 @@ export * from "./metadata.js";
 export * from "./dictation.js";
 export * from "./cliProvider.js";
 export * from "./credentials.js";
+export * from "./protocol.js";
 
 import { AiMetadataService } from "./metadata.js";
 import { DictationService } from "./dictation.js";
-import type { AiMetadataRequest, AiMetadataResult, DictationResult, DictationTranscribeRequest, AiMetadataServiceOptions, DictationServiceOptions } from "./types.js";
+import type { AiMetadataRequest, AiMetadataResult, AiMetadataServiceOptions, AiRequestStatusSnapshot, DictationResult, DictationServiceOptions, DictationTranscribeRequest } from "./types.js";
 
 export interface AiServiceOptions extends AiMetadataServiceOptions {
   readonly dictationProvider?: DictationServiceOptions["provider"];
@@ -44,6 +45,14 @@ export class AiService {
   transcribe(request: DictationTranscribeRequest): Promise<DictationResult> {
     if (this.dictation === undefined) throw new Error("dictation provider is not configured");
     return this.dictation.transcribe(request);
+  }
+
+  listModels(provider: string, signal?: AbortSignal) {
+    return this.metadata.listModels(provider, signal);
+  }
+
+  status(requestId: string): AiRequestStatusSnapshot | undefined {
+    return this.metadata.status(requestId) ?? this.dictation?.status(requestId);
   }
 
   cancel(requestId: string): boolean {

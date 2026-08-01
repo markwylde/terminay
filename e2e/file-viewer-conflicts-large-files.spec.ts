@@ -110,12 +110,12 @@ test('large text files use ranged virtual editing and sparse atomic saves in per
     },
   })
   const chunk = '0123456789abcdef\n'.repeat(8192)
-  while ((await mainWindow.evaluate((filePath) => window.terminay.getFileInfo(filePath).then((info) => info.size), workspace.path('large.txt'))) < 101 * 1024 * 1024) {
+  while ((await mainWindow.evaluate((filePath) => window.terminayFileViewerCompatibilityHost.getFileInfo(filePath).then((info) => info.size), workspace.path('large.txt'))) < 101 * 1024 * 1024) {
     await appendFile(workspace.path('large.txt'), chunk, 'utf8')
   }
   const readDiskPrefix = () =>
     mainWindow.evaluate((filePath) =>
-      window.terminay
+      window.terminayFileViewerCompatibilityHost
         .readFileText({ length: 128, path: filePath, start: 0 })
         .then((result) => result.text),
     workspace.path('large.txt'))
@@ -222,7 +222,7 @@ test('large text files use ranged virtual editing and sparse atomic saves in per
   await expect
     .poll(() =>
       mainWindow.evaluate((filePath) =>
-        window.terminay
+        window.terminayFileViewerCompatibilityHost
           .readFileText({ length: 64, path: filePath, start: 0 })
           .then((result) => result.text),
       workspace.path('large.txt')),

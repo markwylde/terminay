@@ -2,7 +2,7 @@
 
 export type GitDiscoveryState = "ready" | "not-repository" | "git-unavailable" | "missing-gitfile" | "command-error";
 export type GitProgressPhase = "started" | "completed" | "failed";
-export type GitOperation = "status" | "branch" | "diff" | "worktrees" | "worktree.remove" | "quick-push";
+export type GitOperation = "status" | "branch" | "diff" | "worktrees" | "worktree.remove" | "worktree.pull" | "quick-push";
 
 export interface GitProgressEvent {
   readonly revision: number;
@@ -150,7 +150,7 @@ function validateStatusEvent(event: GitStatusChangeEvent): void {
 
 function validateProgressEvent(event: GitProgressEvent): void {
   if (![
-    "status", "branch", "diff", "worktrees", "worktree.remove", "quick-push",
+    "status", "branch", "diff", "worktrees", "worktree.remove", "worktree.pull", "quick-push",
   ].includes(event.operation) || !["started", "completed", "failed"].includes(event.phase) || (event.repositoryId !== null && !ID_PATTERN.test(event.repositoryId)) || (event.worktreeId !== null && !ID_PATTERN.test(event.worktreeId)) || !["ready", "not-repository", "git-unavailable", "missing-gitfile", "command-error", "removed"].includes(event.state) || typeof event.bounded !== "boolean") throw new TypeError("Git progress event is invalid");
 }
 

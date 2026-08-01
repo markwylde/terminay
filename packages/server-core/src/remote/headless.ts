@@ -6,6 +6,7 @@ import type {
 	RemotePeerSnapshot,
 	RemoteTrafficChannel,
 } from './transport.js';
+import { HeadlessChannelTransport, type HeadlessChannelTransportOptions } from './channelTransport.js';
 
 export type HeadlessWebRtcRuntime = 'node-datachannel' | 'werift' | 'custom';
 export type HeadlessDataChannelState =
@@ -51,6 +52,27 @@ export interface RemoteHeadlessWebRtcFactoryOptions {
 	readonly maxBufferedBytes?: number;
 }
 
+/**
+ * Server-owned session host contract. Concrete hosts may use a native
+ * displayless WebRTC implementation, while the exposure controller remains
+ * independent of that implementation.
+ */
+export interface RemoteHeadlessSessionHost {
+	connect(
+		runtime: HeadlessWebRtcRuntime,
+		proof: RemoteAuthProof,
+		signal?: AbortSignal,
+	): Promise<RemoteHeadlessSession>;
+	listSessions(): readonly RemoteHeadlessSessionSnapshot[];
+	/**
+	 * Fence negotiations that have consumed admission but have not yet published
+	 * a session. Exposure stop must not disconnect established peers.
+	 */
+	abortPendingConnections(): void;
+	closeAll(): Promise<void>;
+	revokeDevice(deviceId: ProtocolId): Promise<number>;
+}
+
 export interface RemoteHeadlessSessionSnapshot {
 	readonly peerId: ProtocolId;
 	readonly deviceId: ProtocolId;
@@ -86,6 +108,15 @@ export class RemoteHeadlessWebRtcFactory {
 	private readonly maxFrameBytes: number;
 	private readonly maxBufferedBytes: number;
 	private readonly sessions = new Map<ProtocolId, RemoteHeadlessSession>();
+	/**
+	 * Admission happens before a runtime has completed its WebRTC negotiation.
+	 * Keep those attempts explicit so host shutdown can fence them too; otherwise
+	 * a late adapter result could recreate a session after closeAll().
+	 */
+	private readonly connecting = new Map<
+		ProtocolId,
+		{ readonly controller: AbortController; readonly deviceId: ProtocolId }
+	>();
 
 	constructor(options: RemoteHeadlessWebRtcFactoryOptions) {
 		this.manager = options.manager;
@@ -118,11 +149,18 @@ export class RemoteHeadlessWebRtcFactory {
 		if (adapter === undefined)
 			throw new Error(`headless WebRTC runtime ${runtime} is unavailable`);
 		const peer = this.manager.admit(proof);
+		const connectionAbort = new AbortController();
+		const forwardAbort = () => connectionAbort.abort();
+		signal.addEventListener('abort', forwardAbort, { once: true });
+		this.connecting.set(peer.peerId, {
+			controller: connectionAbort,
+			deviceId: peer.deviceId,
+		});
 		let channels:
 			| ReadonlyMap<RemoteTrafficChannel, HeadlessDataChannel>
 			| undefined;
 		try {
-			abortIfSignalled(signal);
+			abortIfSignalled(connectionAbort.signal);
 			channels = await adapter.connect({
 				peerId: peer.peerId,
 				deviceId: peer.deviceId,
@@ -131,9 +169,9 @@ export class RemoteHeadlessWebRtcFactory {
 				channels: CHANNELS,
 				maxFrameBytes: this.maxFrameBytes,
 				maxBufferedBytes: this.maxBufferedBytes,
-				signal,
+				signal: connectionAbort.signal,
 			});
-			abortIfSignalled(signal);
+			abortIfSignalled(connectionAbort.signal);
 			validateChannels(channels);
 			const session = new RemoteHeadlessSession(
 				this.manager,
@@ -148,14 +186,56 @@ export class RemoteHeadlessWebRtcFactory {
 			return session;
 		} catch (error) {
 			closeChannels(channels);
-			this.manager.closePeer(peer.peerId);
+			try {
+				this.manager.closePeer(peer.peerId);
+			} catch {
+				/* closeAll() may already have fenced this admitted peer. */
+			}
 			throw error;
+		} finally {
+			signal.removeEventListener('abort', forwardAbort);
+			this.connecting.delete(peer.peerId);
 		}
 	}
 
 	async closeAll(): Promise<void> {
+		// Pending runtime negotiation is an admitted resource too. Abort it and
+		// release its manager slot synchronously; a non-cooperative adapter is
+		// still unable to register a late session because its signal is fenced.
+		for (const [peerId, connecting] of this.connecting) {
+			connecting.controller.abort();
+			try {
+				this.manager.closePeer(peerId);
+			} catch {
+				/* A concurrent failed attempt has already released this peer. */
+			}
+		}
+		this.connecting.clear();
 		const sessions = [...this.sessions.values()];
 		await Promise.all(sessions.map(async (session) => session.close()));
+	}
+
+	abortPendingConnections(): void {
+		// Exposure stop blocks new connections but intentionally preserves live
+		// sessions. A negotiation that has consumed a manager admission is neither:
+		// abort it and release that slot before a late runtime result can publish.
+		for (const [peerId, connecting] of this.connecting) {
+			connecting.controller.abort();
+			try {
+				this.manager.closePeer(peerId);
+			} catch {
+				/* A concurrent failed attempt has already released this peer. */
+			}
+		}
+		this.connecting.clear();
+	}
+
+	async closePeer(peerId: ProtocolId): Promise<void> {
+		await this.sessions.get(peerId)?.close();
+	}
+
+	listSessions(): readonly RemoteHeadlessSessionSnapshot[] {
+		return this.snapshot();
 	}
 
 	snapshot(): readonly RemoteHeadlessSessionSnapshot[] {
@@ -171,18 +251,37 @@ export class RemoteHeadlessWebRtcFactory {
 	}
 
 	async revokeDevice(deviceId: ProtocolId): Promise<number> {
+		// An admitted runtime negotiation is a live device connection even before
+		// it has published its session. Abort it first so a late adapter result
+		// cannot reintroduce a peer after the manager revokes the device. Release
+		// its admission synchronously too: a non-cooperative native runtime may
+		// ignore the AbortSignal indefinitely, and must not leave a revoked peer in
+		// the manager snapshot or consume lifecycle resources in the meantime.
+		let pendingCount = 0;
+		for (const [peerId, connecting] of this.connecting) {
+			if (connecting.deviceId !== deviceId) continue;
+			connecting.controller.abort();
+			try {
+				this.manager.closePeer(peerId);
+				pendingCount += 1;
+			} catch {
+				/* A concurrent failed attempt has already released this peer. */
+			}
+			this.connecting.delete(peerId);
+		}
 		const count = this.manager.revokeDevice(deviceId);
 		const sessions = [...this.sessions.values()].filter(
 			(session) => session.deviceId === deviceId,
 		);
 		await Promise.all(sessions.map(async (session) => session.close()));
-		return count;
+		return pendingCount + count;
 	}
 }
 
 export class RemoteHeadlessSession {
 	private stateValue: 'connected' | 'closed' = 'connected';
 	private readonly removeListeners: Array<() => void> = [];
+	private readonly transportConsumers = new Map<RemoteTrafficChannel, Set<(frame: Uint8Array) => void>>();
 
 	constructor(
 		private readonly manager: RemoteConnectionManager,
@@ -196,18 +295,47 @@ export class RemoteHeadlessSession {
 		private readonly maxBufferedBytes: number,
 		private readonly onClosed: () => void,
 	) {
+		// A native adapter can synchronously report a close while server-core is
+		// registering its session observers. Do not let that re-entrant callback
+		// publish a half-initialized session: defer normal session teardown until
+		// construction is complete, then reject the whole allocation so the factory
+		// retains the single cleanup attempt for every lane.
+		let installingLifecycleListeners = true;
+		let channelClosedDuringListenerRegistration = false;
 		for (const channelName of CHANNELS) {
 			const channel = channels.get(channelName);
 			if (channel === undefined)
 				throw new Error('headless WebRTC channel is missing');
+			this.transportConsumers.set(channelName, new Set());
 			this.removeListeners.push(
-				channel.onMessage((frame) => this.receive(channelName, frame)),
+				channel.onMessage((frame) => {
+					const consumers = this.transportConsumers.get(channelName);
+					if (consumers !== undefined && consumers.size > 0) {
+						for (const consumer of [...consumers]) consumer(frame);
+					} else {
+						this.receive(channelName, frame);
+					}
+				}),
 			);
 			this.removeListeners.push(
 				channel.onStateChange((state) => {
-					if (state === 'closed' || state === 'closing') void this.close();
+					if (state !== 'closed' && state !== 'closing') return;
+					if (installingLifecycleListeners) {
+						channelClosedDuringListenerRegistration = true;
+						return;
+					}
+					void this.close();
 				}),
 			);
+		}
+		installingLifecycleListeners = false;
+		if (
+			channelClosedDuringListenerRegistration ||
+			CHANNELS.some((channelName) => channels.get(channelName)?.readyState !== 'open')
+		) {
+			for (const remove of this.removeListeners.splice(0)) remove();
+			for (const consumers of this.transportConsumers.values()) consumers.clear();
+			throw new Error('headless WebRTC channel closed during session listener registration');
 		}
 	}
 
@@ -219,6 +347,33 @@ export class RemoteHeadlessSession {
 	}
 	get deviceId(): ProtocolId {
 		return this.peer.deviceId;
+	}
+
+	/** Create a canonical ByteTransport for one isolated traffic channel. */
+	createTransport(
+		channelName: RemoteTrafficChannel,
+		options: HeadlessChannelTransportOptions = {},
+	): HeadlessChannelTransport {
+		this.ensureConnected();
+		const consumers = this.transportConsumers.get(channelName);
+		if (consumers === undefined) throw new Error('headless WebRTC channel is missing');
+		// A traffic class is one ordered protocol stream. Allowing two transports
+		// to subscribe to the same native channel would duplicate an authenticated
+		// command frame into independent application handlers. A reconnect must
+		// close its previous transport before it can acquire the channel again.
+		if (consumers.size !== 0)
+			throw new Error(`remote ${channelName} transport is already attached`);
+		return new HeadlessChannelTransport(this.requireChannel(channelName), options, (listener) => {
+			consumers.add(listener);
+			return () => consumers.delete(listener);
+		});
+	}
+
+	/** Build one canonical transport per isolated traffic class. */
+	createTransports(
+		options: HeadlessChannelTransportOptions = {},
+	): ReadonlyMap<RemoteTrafficChannel, HeadlessChannelTransport> {
+		return new Map(CHANNELS.map((channelName) => [channelName, this.createTransport(channelName, options)]));
 	}
 
 	send(channelName: RemoteTrafficChannel, frame: Uint8Array): void {
@@ -268,6 +423,7 @@ export class RemoteHeadlessSession {
 		if (this.stateValue === 'closed') return;
 		this.stateValue = 'closed';
 		for (const remove of this.removeListeners.splice(0)) remove();
+		for (const consumers of this.transportConsumers.values()) consumers.clear();
 		closeChannels(this.channels);
 		try {
 			this.manager.closePeer(this.peer.peerId);

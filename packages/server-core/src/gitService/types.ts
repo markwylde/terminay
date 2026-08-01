@@ -252,6 +252,51 @@ export interface GitWorktreeRemoveResult {
   readonly error?: GitErrorInfo;
 }
 
+export interface GitWorktreePullRequest {
+  readonly projectId: string;
+  readonly repositoryId: GitRepositoryId;
+  readonly worktreeId: GitWorktreeId;
+  /** Full HEAD from the reviewed listing, when one was available. */
+  readonly expectedHead?: string | null;
+  readonly signal?: AbortSignal;
+}
+
+export interface GitWorktreePullResult {
+  readonly operation: "pull";
+  readonly projectId: string;
+  readonly repositoryId: GitRepositoryId;
+  readonly worktreeId: GitWorktreeId;
+  readonly applied: boolean;
+  readonly state: "pulled" | "command-error";
+  readonly headBefore: string | null;
+  readonly headAfter: string | null;
+  readonly error?: GitErrorInfo;
+}
+
+export interface GitWorktreeMoveRequest {
+  readonly projectId: string;
+  readonly repositoryId: GitRepositoryId;
+  readonly worktreeId: GitWorktreeId;
+  /** One directory basename; the server derives the sibling destination. */
+  readonly name: string;
+  readonly expectedHead?: string | null;
+  readonly signal?: AbortSignal;
+}
+
+export interface GitWorktreeMoveResult {
+  readonly operation: "move";
+  readonly projectId: string;
+  readonly repositoryId: GitRepositoryId;
+  readonly worktreeIdBefore: GitWorktreeId;
+  readonly worktreeId: GitWorktreeId;
+  readonly applied: boolean;
+  readonly state: "moved" | "command-error";
+  readonly headBefore: string | null;
+  readonly headAfter: string | null;
+  readonly path: string | null;
+  readonly error?: GitErrorInfo;
+}
+
 export type GitQuickPushActionKind = "commit" | "push" | "pull-request";
 
 /** One exact, reviewable action; no raw command or filesystem path is exposed. */
@@ -364,9 +409,11 @@ export interface GitServiceOptions {
   readonly limits?: GitServiceLimits;
   /** Maximum retained progress/status events for authorized subscribers. */
   readonly maxEvents?: number;
+  /** Server-owned worktree status polling. Use false for injected tests. */
+  readonly statusPollIntervalMs?: number | false;
 }
 
-export type GitServiceOperation = GitReadOnlyOperation | "worktree.remove" | "quick-push";
+export type GitServiceOperation = GitReadOnlyOperation | "worktree.remove" | "worktree.pull" | "worktree.move" | "quick-push";
 export type GitProgressPhase = "started" | "completed" | "failed";
 
 /** Bounded progress metadata; command output and credentials stay server-side. */

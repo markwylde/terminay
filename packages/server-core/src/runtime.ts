@@ -2,6 +2,11 @@ import type { ProtocolId } from "@terminay/protocol";
 import type { MacroTarget } from "./macroService/types.js";
 import type { ServerSettingsRepository } from "./settings/repository.js";
 import type { ServerVaultService, VaultStatus } from "./settings/vault.js";
+import type { RemoteExposureService } from "./remote/exposure.js";
+import type { AgentStatusService } from "./activity/agentService.js";
+import type { TerminalActivityService } from "./activity/service.js";
+import { validateServerPlatformPaths, type ServerPlatformPaths } from "./platform.js";
+import type { TerminalInputSourceAdapter, TerminalService, TerminalServiceAdapter } from "./terminalService/index.js";
 
 export type ServerRuntimeMode = "embedded" | "standalone";
 export type RuntimePhase = "created" | "starting" | "ready" | "stopping" | "stopped" | "failed";
@@ -10,6 +15,8 @@ export interface ServerRuntimeConfig {
   readonly serverId: ProtocolId;
   readonly serverVersion: string;
   readonly dataRoot: string;
+  /** Host-injected paths used to compose server-owned services. */
+  readonly platformPaths?: ServerPlatformPaths;
   readonly runtimeMode: ServerRuntimeMode;
   readonly logSink?: string;
   readonly uiBundle?: string;
@@ -20,8 +27,18 @@ export interface ServerRuntimeConfig {
 }
 
 export interface ServerRuntimeServices {
+  /** Server-owned canonical terminal activity and provider agent state. */
+  readonly activity?: TerminalActivityService;
+  readonly agents?: AgentStatusService;
   readonly settings?: ServerSettingsRepository;
   readonly vault?: ServerVaultService;
+  /** Server-owned PTY authority. Client disconnects never stop this service. */
+  readonly terminal?: TerminalService;
+  /** Optional protocol-facing adapters composed around the PTY authority. */
+  readonly terminalAdapter?: TerminalServiceAdapter;
+  readonly terminalInputSources?: TerminalInputSourceAdapter;
+  /** Server-owned remote exposure lifecycle; credentials remain inside the controller. */
+  readonly remoteExposure?: RemoteExposureService;
 }
 
 export interface ServerRuntimeHooks {
@@ -41,6 +58,17 @@ export interface RuntimeDiagnostics {
   /** Revision and vault metadata are safe to expose; values are never present. */
   readonly settingsRevision?: number;
   readonly vault?: VaultStatus;
+  readonly remoteExposure?: {
+    readonly state: "disabled" | "exposed";
+    readonly roomId: ProtocolId | null;
+    readonly expiresAt: string | null;
+    readonly connectedPeers: number;
+    readonly headlessSessions: number;
+  };
+  readonly terminal?: {
+    readonly sessions: number;
+    readonly runningSessions: number;
+  };
 }
 
 /** Electron-free lifecycle composition shared by embedded and foreground
@@ -48,6 +76,7 @@ export interface RuntimeDiagnostics {
 export class ServerRuntime {
   private phase: RuntimePhase = "created";
   private startedAt = 0;
+  private startPromise: Promise<RuntimeHealth> | undefined;
   private stopPromise: Promise<void> | undefined;
   readonly config: ServerRuntimeConfig;
   readonly services: ServerRuntimeServices;
@@ -56,11 +85,17 @@ export class ServerRuntime {
     if (!/^[-A-Za-z0-9._:]{1,128}$/.test(config.serverId)) throw new TypeError("invalid server id");
     if (config.dataRoot.length === 0 || config.dataRoot.length > 4096) throw new TypeError("invalid data root");
     if (config.shutdownTimeoutMs !== undefined && (!Number.isSafeInteger(config.shutdownTimeoutMs) || config.shutdownTimeoutMs < 0)) throw new RangeError("invalid shutdown timeout");
-    this.services = Object.freeze(config.services === undefined ? {} : { ...config.services });
+    const platformPaths = config.platformPaths === undefined
+      ? undefined
+      : validateServerPlatformPaths(config.platformPaths, config.dataRoot);
+    const normalizedConfig: ServerRuntimeConfig = platformPaths === undefined
+      ? config
+      : { ...config, platformPaths };
+    this.services = Object.freeze(normalizedConfig.services === undefined ? {} : { ...normalizedConfig.services });
     // Keep service instances out of the public config object. A host may log
     // or serialize config for readiness diagnostics; service adapters can own
     // key material and must remain reachable only through this runtime.
-    const { services: _services, ...publicConfig } = config;
+    const { services: _services, ...publicConfig } = normalizedConfig;
     void _services;
     this.config = Object.freeze(publicConfig);
   }
@@ -68,19 +103,58 @@ export class ServerRuntime {
   get state(): RuntimePhase { return this.phase; }
   async start(): Promise<RuntimeHealth> {
     if (this.phase === "ready") return this.health();
+    if (this.phase === "starting" && this.startPromise !== undefined) return this.startPromise;
     if (this.phase !== "created") throw new Error(`server runtime is ${this.phase}`);
     this.phase = "starting";
-    try { await this.hooks.startServices?.(this.config, this.services); this.startedAt = Date.now(); this.phase = "ready"; return this.health(); }
-    catch (error) { this.phase = "failed"; throw error; }
+    this.startPromise = (async () => {
+      try {
+        await this.services.agents?.start();
+        await this.hooks.startServices?.(this.config, this.services);
+        if (this.phase === "starting") {
+          this.startedAt = Date.now();
+          this.phase = "ready";
+        }
+        return this.health();
+      }
+      catch (error) {
+        if (this.phase === "starting") this.phase = "failed";
+        throw error;
+      }
+    })();
+    return this.startPromise;
   }
 
   async stop(): Promise<void> {
-    if (this.phase === "stopped" || this.phase === "created") { this.phase = "stopped"; return; }
+    if (this.phase === "stopped") return;
     if (this.stopPromise !== undefined) return this.stopPromise;
     this.phase = "stopping"; const deadline = Date.now() + (this.config.shutdownTimeoutMs ?? 5_000);
-    const stopWork = Promise.resolve(this.hooks.stopServices?.(deadline, this.services));
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, this.config.shutdownTimeoutMs ?? 5_000));
-    this.stopPromise = Promise.race([stopWork, timeout]).then(() => { this.phase = "stopped"; });
+    const stopWork = (async (): Promise<void> => {
+	  // Do not let a deferred startup bind a service after teardown. `start()`
+	  // observes the stopping phase and cannot publish readiness.
+	  await this.startPromise?.catch(() => undefined);
+      const failures: unknown[] = [];
+      const attempt = async (operation: () => Promise<unknown> | unknown): Promise<void> => {
+        try { await operation(); } catch (error) { failures.push(error); }
+      };
+      // Exposure must be withdrawn even before a failed/unfinished start.
+      await attempt(() => this.services.remoteExposure?.shutdown());
+      // Terminal exit emits final lifecycle facts; stop agents only afterwards.
+      await attempt(() => this.services.terminal?.shutdown());
+      await attempt(() => this.services.agents?.stop());
+      await attempt(() => this.hooks.stopServices?.(deadline, this.services));
+      if (failures.length > 0) throw cleanupFailure("server runtime shutdown failed", failures);
+    })();
+    const timeoutMs = this.config.shutdownTimeoutMs ?? 5_000;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => { timeoutHandle = setTimeout(resolve, timeoutMs); });
+    this.stopPromise = Promise.race([stopWork, timeout]).then(() => {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      this.phase = "stopped";
+    }, (error) => {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+      this.phase = "stopped";
+      throw error;
+    });
     return this.stopPromise;
   }
 
@@ -89,6 +163,23 @@ export class ServerRuntime {
   diagnostics(): RuntimeDiagnostics {
     const settingsRevision = readSettingsRevision(this.services.settings);
     const vault = this.services.vault?.status();
+    const remoteStatus = this.services.remoteExposure?.status;
+    const remoteExposure = remoteStatus === undefined
+      ? undefined
+      : {
+          state: remoteStatus.exposure.state,
+          roomId: remoteStatus.exposure.roomId ?? null,
+          expiresAt: remoteStatus.exposure.expiresAt === undefined ? null : new Date(remoteStatus.exposure.expiresAt).toISOString(),
+          connectedPeers: remoteStatus.peers.filter((peer) => peer.state === "connected").length,
+          headlessSessions: remoteStatus.sessions.length,
+        };
+    const terminalSessions = this.services.terminal?.listSessions();
+    const terminal = terminalSessions === undefined
+      ? undefined
+      : {
+          sessions: terminalSessions.length,
+          runningSessions: terminalSessions.filter((session) => session.status === "running").length,
+        };
     return {
       phase: this.phase,
       serverId: this.config.serverId,
@@ -99,6 +190,8 @@ export class ServerRuntime {
       localEndpointConfigured: this.config.localEndpoint !== undefined,
       ...(settingsRevision === undefined ? {} : { settingsRevision }),
       ...(vault === undefined ? {} : { vault }),
+      ...(remoteExposure === undefined ? {} : { remoteExposure }),
+      ...(terminal === undefined ? {} : { terminal }),
     };
   }
 
@@ -122,6 +215,12 @@ export class ServerRuntime {
       return this.withSecret(secretId, (secret) => new Uint8Array(secret));
     };
   }
+}
+
+function cleanupFailure(message: string, failures: readonly unknown[]): Error {
+  const error = new Error(message);
+  Object.defineProperty(error, "errors", { value: [...failures], enumerable: false });
+  return error;
 }
 
 function readSettingsRevision(repository: ServerSettingsRepository | undefined): number | undefined {

@@ -107,6 +107,12 @@ function desktopLayer(path, record) {
   return rest[0] || null;
 }
 
+function isDesktopEmbeddedServerImport(file, owner, target) {
+  return owner?.name === '@terminay/desktop'
+    && target?.name === '@terminay/server'
+    && desktopLayer(file, owner) === 'main';
+}
+
 function staticModuleSpecifiers(sourceFile) {
   const result = [];
   const add = (node, value) => {
@@ -169,7 +175,15 @@ function inspectSpecifier({ file, owner, sourceFile, node, specifier, records, v
   if (target) {
     const subpath = packageSubpath(specifier, target);
     if (!hasExport(target, subpath)) addViolation(violations, file, sourceFile, node, `package-internal or generated-output deep import is not public: ${specifier}`);
-    if (owner && target !== owner && owner.kind === 'app' && target.kind === 'app') addViolation(violations, file, sourceFile, node, `application packages cannot depend on one another: ${specifier}`);
+    if (
+      owner
+      && target !== owner
+      && owner.kind === 'app'
+      && target.kind === 'app'
+      && !isDesktopEmbeddedServerImport(file, owner, target)
+    ) {
+      addViolation(violations, file, sourceFile, node, `application packages cannot depend on one another: ${specifier}`);
+    }
     if (owner && target !== owner && !moduleDependencies(owner.manifest).has(target.name)) addViolation(violations, file, sourceFile, node, `workspace dependency is not declared by ${owner.name}: ${target.name}`);
     if (target.name === '@terminay/server-core' && owner?.name !== '@terminay/server') addViolation(violations, file, sourceFile, node, 'server-core is only imported by the Server composition');
     return;

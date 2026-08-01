@@ -19,6 +19,10 @@ turning a terminal title into an identity boundary.
 - Desktop presents workspace views as native windows. Project tabs can be
   dragged between them; web clients manage the same views in-page. Moving a
   project preserves its panels, live PTYs, scrollback, and service identities.
+- Double-clicking a project tab opens project-tab editing in the current host's
+  auxiliary-route presentation. Desktop may use a native modal window; web uses
+  an in-page edit-tab surface. Saving updates the server-owned project name,
+  root, colour, and icon; cancel leaves project state unchanged.
 - Files and folders opened from project navigation become dockable panels in the
   relevant project. Closing a panel must dispose only that panel's resources;
   terminal termination is explicit terminal lifecycle behaviour.

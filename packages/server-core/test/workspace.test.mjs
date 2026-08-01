@@ -67,6 +67,44 @@ test("terminal session identity survives panel creation and project moves", () =
   assert.equal(store.state.terminalSessions["session-a"].id, "session-a");
 });
 
+test("project close cascades panels and terminal session records", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const viewId = store.state.viewOrder[0];
+  assert.equal(store.apply({ commandId: "project-a", command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } }).ok, true);
+  assert.equal(store.apply({ commandId: "project-b", command: { type: "project.create", projectId: "project-b", viewId, root: "/tmp/b", name: "B" } }).ok, true);
+  assert.equal(store.apply({ commandId: "terminal", command: { type: "terminal.createPanel", sessionId: "session-a", projectId: "project-a", panelId: "panel-terminal", title: "Terminal 1", cwd: "/tmp/a", createdAt: 1 } }).ok, true);
+  assert.equal(store.apply({ commandId: "file-panel", command: { type: "panel.create", panel: { id: "panel-file", projectId: "project-a", type: "file", path: "README.md", createdAt: 2 } } }).ok, true);
+
+  const closed = store.apply({ commandId: "close-project-a", command: { type: "project.close", projectId: "project-a" } });
+
+  assert.equal(closed.ok, true);
+  assert.equal(store.state.projects["project-a"], undefined);
+  assert.equal(store.state.panels["panel-terminal"], undefined);
+  assert.equal(store.state.panels["panel-file"], undefined);
+  assert.equal(store.state.terminalSessions["session-a"], undefined);
+  assert.deepEqual(store.state.views[viewId].projectIds, ["project-b"]);
+  assert.equal(store.state.views[viewId].activeProjectId, "project-b");
+  validateWorkspace(store.state);
+});
+
+test("terminal panel close removes the terminal session record", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const viewId = store.state.viewOrder[0];
+  assert.equal(store.apply({ commandId: "project", command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } }).ok, true);
+  assert.equal(store.apply({ commandId: "terminal-1", command: { type: "terminal.createPanel", sessionId: "session-1", projectId: "project-a", panelId: "panel-1", title: "Terminal 1", cwd: "/tmp/a", createdAt: 1 } }).ok, true);
+  assert.equal(store.apply({ commandId: "terminal-2", command: { type: "terminal.createPanel", sessionId: "session-2", projectId: "project-a", panelId: "panel-2", title: "Terminal 2", cwd: "/tmp/a", createdAt: 2 } }).ok, true);
+  assert.equal(store.apply({ commandId: "terminal-3", command: { type: "terminal.createPanel", sessionId: "session-3", projectId: "project-a", panelId: "panel-3", title: "Terminal 3", cwd: "/tmp/a", createdAt: 3 } }).ok, true);
+
+  const closed = store.apply({ commandId: "close-panel-2", command: { type: "panel.close", panelId: "panel-2" } });
+
+  assert.equal(closed.ok, true);
+  assert.equal(store.state.panels["panel-2"], undefined);
+  assert.equal(store.state.terminalSessions["session-2"], undefined);
+  assert.deepEqual(store.state.projects["project-a"].panelIds, ["panel-1", "panel-3"]);
+  assert.deepEqual(Object.keys(store.state.terminalSessions).sort(), ["session-1", "session-3"]);
+  validateWorkspace(store.state);
+});
+
 test("two client command streams get one ordered commit and one explicit stale conflict", () => {
   const store = new WorkspaceStore(createInitialWorkspace("server-a"));
   const defaultView = store.state.viewOrder[0];

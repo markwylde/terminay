@@ -13,6 +13,7 @@ function memoryCatalog() {
     ["/project/document.pdf", { isFile: true, size: 9, mtimeMs: 14 }],
     ["/project/blob.bin", { isFile: true, size: 3, mtimeMs: 15 }],
     ["/project/bad.md", { isFile: true, size: 1, mtimeMs: 15 }],
+    ["/project/notes.customunknown", { isFile: true, size: 24, mtimeMs: 15 }],
     ["/project/huge.txt", { isFile: true, size: 100 * 1024 * 1024 + 1, mtimeMs: 16 }],
     ["/project/node_modules", { isDirectory: true, size: 0 }],
     ["/project/node_modules/ignored.js", { isFile: true, size: 99 }],
@@ -43,6 +44,7 @@ function memoryCatalog() {
         "/project/document.pdf": new TextEncoder().encode("%PDF-1.7\n"),
         "/project/blob.bin": new Uint8Array([0, 1, 2]),
         "/project/bad.md": new Uint8Array([0xff]),
+        "/project/notes.customunknown": new TextEncoder().encode("unknown but valid text\n"),
       };
       return (contents[path] ?? new Uint8Array()).slice(offset, offset + length);
     },
@@ -135,6 +137,12 @@ test("catalog preview metadata is canonical, bounded, and content-free", async (
   const malformed = await catalog.previewMetadata("bad.md");
   assert.equal(malformed.previewKind, "hex");
   assert.equal(malformed.canEditText, false);
+
+  const unknownText = await catalog.previewMetadata("notes.customunknown");
+  assert.equal(unknownText.previewKind, "unsupported");
+  assert.equal(unknownText.safePreview, false);
+  assert.equal(unknownText.preferredMode, "hex");
+  assert.equal(unknownText.canEditText, true);
 
   const huge = await catalog.previewMetadata("huge.txt");
   assert.equal(huge.isLargeFile, true);

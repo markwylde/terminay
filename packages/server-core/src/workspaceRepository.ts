@@ -23,7 +23,12 @@ export class WorkspaceRepository {
     if (this.loaded && this.store !== undefined) return this.store.state;
     const raw = await this.backend.load();
     const state = raw === undefined ? migrateWorkspaceState({ schemaVersion: 0, serverId: this.serverId, projects: {} }, this.serverId) : migrateWorkspaceState(raw, this.serverId);
-    validateWorkspace(state); this.store = new WorkspaceStore(state); this.loaded = true; return this.store.state;
+    validateWorkspace(state);
+    // A fresh server must persist its canonical workspace immediately. An
+    // empty renderer layout is not a recoverable source of truth, so after
+    // this point reloads always have a server-owned snapshot to migrate from.
+    if (raw === undefined) await this.backend.commit(state);
+    this.store = new WorkspaceStore(state); this.loaded = true; return this.store.state;
   }
 
   async apply(command: Parameters<WorkspaceStore["apply"]>[0]): Promise<RepositoryCommitResult> {

@@ -476,7 +476,7 @@ function parseEnvelope(serialized: string, expectedServerId: string): VaultEnvel
   const keyEnvelope = value.keyEnvelope as Record<string, unknown>;
   const manifest = value.manifest as Record<string, unknown>;
   if (!keyEnvelope || keyEnvelope.protector !== HEADLESS_VAULT_PROTECTOR || keyEnvelope.version !== 1 || keyEnvelope.cipher !== HEADLESS_VAULT_CIPHER || typeof keyEnvelope.salt !== "string" || typeof keyEnvelope.nonce !== "string" || typeof keyEnvelope.tag !== "string" || typeof keyEnvelope.ciphertext !== "string" || !keyEnvelope.kdf || JSON.stringify(keyEnvelope.kdf) !== JSON.stringify(SCRYPT)) throw new HeadlessVaultError("vault envelope is invalid");
-  if (!manifest || manifest.version !== 1 || manifest.cipher !== HEADLESS_VAULT_CIPHER || typeof manifest.nonce !== "string" || typeof manifest.tag !== "string" || typeof manifest.ciphertext !== "string") throw new HeadlessVaultError("vault envelope is invalid");
+  if (manifest?.version !== 1 || manifest.cipher !== HEADLESS_VAULT_CIPHER || typeof manifest.nonce !== "string" || typeof manifest.tag !== "string" || typeof manifest.ciphertext !== "string") throw new HeadlessVaultError("vault envelope is invalid");
   decodeBase64(keyEnvelope.salt, SCRYPT.saltBytes).fill(0);
   decodeBase64(keyEnvelope.nonce, 12).fill(0);
   decodeBase64(keyEnvelope.tag, 16).fill(0);

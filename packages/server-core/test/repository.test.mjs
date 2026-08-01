@@ -14,7 +14,7 @@ test("workspace repository migrates, backs up before commit, and keeps revision 
   const viewId = initial.viewOrder[0];
   const result = await repository.apply({ commandId: "project", expectedRevision: 0, command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } });
   assert.equal(result.ok, true);
-  assert.deepEqual(calls, [["backup", 0], ["commit", 1]]);
+  assert.deepEqual(calls, [["commit", 0], ["backup", 0], ["commit", 1]]);
   const conflict = await repository.apply({ commandId: "stale", expectedRevision: 0, command: { type: "view.rename", viewId, name: "Old" } });
   assert.equal(conflict.ok, false);
   assert.equal(repository.state.revision, 1);

@@ -4,6 +4,7 @@ import {
   type DesktopHostContext,
   validateDesktopHostAction,
 } from "../main/hostBridge.js";
+import { normalizeDesktopPresentationMetadata } from "../presentation.js";
 
 export const DESKTOP_HOST_GET_CONTEXT_CHANNEL = "terminay:desktop-host:get-context";
 export const DESKTOP_HOST_REQUEST_CHANNEL = "terminay:desktop-host:request";
@@ -24,11 +25,12 @@ function copyContext(value: unknown): DesktopHostContext {
   if (context.version !== DESKTOP_HOST_BRIDGE_VERSION || typeof context.windowId !== "string" || typeof context.connectionId !== "string" || typeof context.profileLabel !== "string" || typeof context.capabilities !== "object" || context.capabilities === null || Array.isArray(context.capabilities)) throw new TypeError("desktop host context is invalid");
   const capabilities = context.capabilities as Record<string, unknown>;
   const normalized: Record<string, boolean> = {};
-  for (const key of ["nativeWindows", "secureStorage", "notifications", "filePicker", "clipboard", "serverExposure", "connectionProfiles"]) {
+  for (const key of ["nativeWindows", "secureStorage", "notifications", "filePicker", "clipboard", "serverExposure", "connectionProfiles", "updater", "osIntegration"]) {
     if (capabilities[key] !== undefined && typeof capabilities[key] !== "boolean") throw new TypeError("desktop host capability is invalid");
     if (capabilities[key] === true) normalized[key] = true;
   }
-  return Object.freeze({ version: DESKTOP_HOST_BRIDGE_VERSION, windowId: context.windowId, connectionId: context.connectionId, profileLabel: context.profileLabel, capabilities: Object.freeze(normalized) });
+  const presentation = normalizeDesktopPresentationMetadata(context.presentation);
+  return Object.freeze({ version: DESKTOP_HOST_BRIDGE_VERSION, windowId: context.windowId, connectionId: context.connectionId, profileLabel: context.profileLabel, capabilities: Object.freeze(normalized), presentation });
 }
 
 export function createDesktopPreloadBridge(invoker: DesktopPreloadInvoker): DesktopPreloadBridge {
@@ -47,9 +49,23 @@ export interface DesktopPreloadExposeTarget {
   exposeInMainWorld(name: string, value: unknown): void;
 }
 
+/**
+ * The preload entry must never forward an implementation object directly into
+ * an untrusted server bundle.  Keeping this projection explicit makes the
+ * exposed shape an authority boundary: adding a helper to the preload bridge
+ * implementation cannot silently grant it to renderer code.
+ */
+function projectDesktopPreloadBridge(bridge: DesktopPreloadBridge): DesktopPreloadBridge {
+  return Object.freeze({
+    version: DESKTOP_HOST_BRIDGE_VERSION,
+    getContext: () => bridge.getContext(),
+    requestAction: (action: DesktopHostAction, options?: { readonly userGesture?: boolean }) => bridge.requestAction(action, options),
+  });
+}
+
 /** Hosts call this from the privileged preload entry. Subframes do not receive
  * the bridge, even if their document is supplied by the same server. */
 export function installDesktopPreloadBridge(target: DesktopPreloadExposeTarget, bridge: DesktopPreloadBridge, isMainFrame = true): void {
   if (!isMainFrame) return;
-  target.exposeInMainWorld("terminayHost", bridge);
+  target.exposeInMainWorld("terminayHost", projectDesktopPreloadBridge(bridge));
 }

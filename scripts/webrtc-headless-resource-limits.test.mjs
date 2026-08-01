@@ -387,7 +387,7 @@ async function importWebRtcHost() {
   const outputPath = join(tempDir, 'WebRtcHost.mjs')
   await build({
     bundle: true,
-    entryPoints: [new URL('../src/remote/WebRtcHost.tsx', import.meta.url).pathname],
+    entryPoints: [new URL('./support/webRtcHostRuntime.ts', import.meta.url).pathname],
     format: 'esm',
     outfile: outputPath,
     platform: 'node',

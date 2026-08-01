@@ -1,7 +1,8 @@
 import { scopeAllows } from "../auth.js";
 import type { AuthScope, JsonValue } from "@terminay/protocol";
-import type { CommandRequest, QueryRequest } from "../types.js";
+import type { BinaryQueryHandlerResult, CommandRequest, QueryHandler, QueryRequest } from "../types.js";
 import { FileContentError, FileContentStreamService, type FileContentHexRange, type FileContentPreview, type FileContentRange, type FileContentTextRange } from "./contentStream.js";
+import { ServerTextIndex } from "./textIndex.js";
 
 /** Application-protocol operation names for bounded file content transfers. */
 export const FILE_CONTENT_OPERATIONS = Object.freeze({
@@ -10,6 +11,8 @@ export const FILE_CONTENT_OPERATIONS = Object.freeze({
   readText: "files.content-text",
   readHex: "files.content-hex",
   readPreview: "files.content-preview",
+  textMetadata: "file.text-metadata",
+  textLines: "file.text-lines",
 } as const);
 
 export interface FileContentProjectContext {
@@ -45,6 +48,7 @@ export interface FileContentRequest {
 export class ServerFileContentAdapter {
   readonly serverId: string;
   private readonly options: FileContentAdapterOptions;
+  private readonly textIndexes = new Map<string, ServerTextIndex>();
 
   constructor(options: FileContentAdapterOptions) {
     if (typeof options?.serverId !== "string" || !validId(options.serverId)) throw new TypeError("file content server id is invalid");
@@ -57,8 +61,9 @@ export class ServerFileContentAdapter {
     return asJson(await this.authorizedContent(request, "read").capabilities(request.path, request.signal));
   }
 
-  async readRange(request: FileContentRequest & { readonly offset: number; readonly length: number }): Promise<JsonValue> {
-    return serializeRange(await this.authorizedContent(request, "read").readRange(request.path, request.offset, request.length, request.signal));
+  async readRange(request: FileContentRequest & { readonly offset: number; readonly length: number }): Promise<BinaryQueryHandlerResult> {
+    const value = await this.authorizedContent(request, "read").readRange(request.path, request.offset, request.length, request.signal);
+    return { result: serializeRangeMetadata(value), body: value.bytes };
   }
 
   async readText(request: FileContentRequest & { readonly offset: number; readonly length: number }): Promise<JsonValue> {
@@ -73,7 +78,15 @@ export class ServerFileContentAdapter {
     return serializePreview(await this.authorizedContent(request, "read").readPreview(request.path, request.signal));
   }
 
-  operations(): { readonly queries: Readonly<Record<string, (request: QueryRequest) => JsonValue | Promise<JsonValue>>>; readonly commands: Readonly<Record<string, (request: CommandRequest) => JsonValue | Promise<JsonValue>>> } {
+  async textMetadata(request: FileContentRequest): Promise<JsonValue> {
+    return asJson(await this.textIndex(request).metadata(request.path, request.signal));
+  }
+
+  async textLines(request: FileContentRequest & { readonly startLine: number; readonly lineCount: number }): Promise<JsonValue> {
+    return asJson(await this.textIndex(request).lines(request.path, request.startLine, request.lineCount, request.signal));
+  }
+
+  operations(): { readonly queries: Readonly<Record<string, QueryHandler>>; readonly commands: Readonly<Record<string, (request: CommandRequest) => JsonValue | Promise<JsonValue>>> } {
     return {
       queries: {
         [FILE_CONTENT_OPERATIONS.capabilities]: (request) => this.capabilities(this.pathRequest(request)),
@@ -81,6 +94,8 @@ export class ServerFileContentAdapter {
         [FILE_CONTENT_OPERATIONS.readText]: (request) => this.readText(this.rangeRequest(request)),
         [FILE_CONTENT_OPERATIONS.readHex]: (request) => this.readHex(this.hexRequest(request)),
         [FILE_CONTENT_OPERATIONS.readPreview]: (request) => this.readPreview(this.pathRequest(request)),
+        [FILE_CONTENT_OPERATIONS.textMetadata]: (request) => this.textMetadata(this.pathRequest(request)),
+        [FILE_CONTENT_OPERATIONS.textLines]: (request) => this.textLines(this.textLinesRequest(request)),
       },
       commands: {},
     };
@@ -100,6 +115,17 @@ export class ServerFileContentAdapter {
       : (this.options.projects as Readonly<Record<string, FileContentProjectContext>>)[projectId];
     if (project === undefined || project.projectId !== projectId || !(project.content instanceof FileContentStreamService)) throw new FileContentError("storage_unavailable", "file project is unavailable");
     return project.content;
+  }
+
+  private textIndex(request: FileContentRequest): ServerTextIndex {
+    const content = this.authorizedContent(request, "read");
+    const projectId = request.projectId ?? request.authorization.projectId!;
+    let index = this.textIndexes.get(projectId);
+    if (index === undefined) {
+      index = new ServerTextIndex(content);
+      this.textIndexes.set(projectId, index);
+    }
+    return index;
   }
 
   private authorization(request: QueryRequest | CommandRequest): FileContentAuthorization {
@@ -127,9 +153,14 @@ export class ServerFileContentAdapter {
     const bytesPerRow = payload.bytesPerRow === undefined ? undefined : uintField(payload.bytesPerRow, "bytesPerRow");
     return { ...this.rangeRequest(request), ...(bytesPerRow === undefined ? {} : { bytesPerRow }) };
   }
+
+  private textLinesRequest(request: QueryRequest): FileContentRequest & { readonly startLine: number; readonly lineCount: number } {
+    const payload = this.payload(request);
+    return { ...this.pathRequest(request), startLine: uintField(payload.startLine, "startLine"), lineCount: positiveUintField(payload.lineCount, "lineCount", 512) };
+  }
 }
 
-function serializeRange(value: FileContentRange): JsonValue { return asJson({ ...value, bytes: bytesToBase64(value.bytes) }); }
+function serializeRangeMetadata({ bytes: _bytes, ...value }: FileContentRange): JsonValue { return asJson({ ...value, bodyLength: _bytes.byteLength }); }
 function serializeText(value: FileContentTextRange): JsonValue { return asJson({ ...value, bytes: bytesToBase64(value.bytes), text: value.text, invalidEncoding: value.invalidEncoding }); }
 function serializeHex(value: FileContentHexRange): JsonValue { return asJson({ ...value, bytes: bytesToBase64(value.bytes), rows: value.rows }); }
 function serializePreview(value: FileContentPreview): JsonValue { return asJson({ ...value, bytes: bytesToBase64(value.bytes) }); }
@@ -137,6 +168,7 @@ function bytesToBase64(bytes: Uint8Array): string { let value = ""; for (const b
 function requiredPath(value: unknown): string { if (typeof value !== "string" || value.length === 0 || value.length > 4096 || value.includes("\0") || value.includes("\\") || value.startsWith("/")) throw invalidRequest("file path is invalid"); return value; }
 function optionalProject(value: unknown): string | undefined { if (value === undefined) return undefined; if (typeof value !== "string" || value.length === 0 || value.length > 256 || value.includes("\0")) throw invalidRequest("project id is invalid"); return value; }
 function uintField(value: unknown, name: string): number { if (!Number.isSafeInteger(value) || (value as number) < 0) throw invalidRequest(`${name} is invalid`); return value as number; }
+function positiveUintField(value: unknown, name: string, maximum: number): number { const parsed = uintField(value, name); if (parsed < 1 || parsed > maximum) throw invalidRequest(`${name} is invalid`); return parsed; }
 function claimsProject(value: unknown): string | undefined { return typeof value === "object" && value !== null && !Array.isArray(value) && typeof (value as Record<string, unknown>).projectId === "string" ? (value as Record<string, string>).projectId : undefined; }
 function invalidRequest(message: string): FileContentError { return new FileContentError("invalid_path", message); }
 function asJson(value: unknown): JsonValue { return value as JsonValue; }

@@ -1,3 +1,11 @@
+import type {
+	FileObservationClient,
+	FileViewerClient,
+	FolderMarkdownTaskFile,
+	FolderMarkdownTaskItem,
+	FolderMarkdownTaskSection,
+} from '@terminay/client-core';
+import type { IDockviewPanelProps } from 'dockview';
 import {
 	Copy,
 	FileEdit,
@@ -7,16 +15,28 @@ import {
 	Terminal,
 	Trash2,
 } from 'lucide-react';
-import { ContextMenu, type ContextMenuItem } from '../ContextMenu';
+import {
+	type CSSProperties,
+	type MouseEvent,
+	useCallback,
+	useContext,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from 'react';
 import { FileTypeIcon } from '../../fileIcons';
-import type { IDockviewPanelProps } from 'dockview';
-import { type CSSProperties, type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTerminalSettings } from '../../hooks/useTerminalSettings';
 import { getPathRelativeToRoot } from '../../pathUtils';
-import { terminayFileGateway } from '../../services/fileViewer';
+import { useOptionalDisconnectedFileCompatibility } from '../../services/fileViewer/DisconnectedFileCompatibilityProvider';
 import type { FileViewerMode } from '../../types/fileViewer';
-import { parseTasks } from '../file-viewer/tasks/parseTasks';
-import { FolderTasksViewer, type FolderTaskDocument } from './FolderTasksViewer';
+import { ContextMenu, type ContextMenuItem } from '../ContextMenu';
+import type { TaskSection } from '../file-viewer/tasks/parseTasks';
+import { TerminalPanelClientContext } from '../TerminalPanel';
+import {
+	type FolderTaskDocument,
+	FolderTasksViewer,
+} from './FolderTasksViewer';
 import type {
 	FolderDirectoryNode,
 	FolderFileNode,
@@ -42,21 +62,95 @@ const IMAGE_EXTENSIONS = new Set([
 	'.webp',
 ]);
 
-const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd']);
-
 const FOLDER_SIZE_DEADLINE_MS = 5000;
+const FOLDER_TASK_SCAN_DEADLINE_MS = 8000;
 
 type FolderSizeEntry =
 	| { status: 'pending' }
 	| { status: 'done'; size: number }
 	| { status: 'timeout' };
 
-type ListSortKey = 'name' | 'type' | 'size' | 'modified' | 'created' | 'permissions';
+type ListSortKey =
+	| 'name'
+	| 'type'
+	| 'size'
+	| 'modified'
+	| 'created'
+	| 'permissions';
 
 type ListSort = {
 	direction: 'asc' | 'desc';
 	key: ListSortKey;
 };
+
+async function observeServerFolderSize(
+	client: FileObservationClient,
+	projectId: string,
+	projectRootPath: string,
+	targetPath: string,
+	signal: AbortSignal,
+	onProgress?: (entryCount: number, size: number) => void,
+): Promise<{ entryCount: number; size: number }> {
+	const handle = await client.startFolderSize(
+		projectId,
+		toRelativePath(projectRootPath, targetPath),
+	);
+	return new Promise((resolve, reject) => {
+		let unsubscribe: (() => void) | undefined;
+		const finish = (callback: () => void) => {
+			signal.removeEventListener('abort', onAbort);
+			unsubscribe?.();
+			callback();
+		};
+		const onAbort = () => {
+			void client.cancelFolderSize(handle.jobId).catch(() => undefined);
+			finish(() =>
+				reject(
+					new DOMException(
+						'Folder size calculation was cancelled.',
+						'AbortError',
+					),
+				),
+			);
+		};
+		signal.addEventListener('abort', onAbort, { once: true });
+		void client
+			.subscribeFolderSize(
+				handle,
+				(event) => {
+					const entryCount = (event.files ?? 0) + (event.directories ?? 0);
+					const size = event.bytes ?? 0;
+					onProgress?.(entryCount, size);
+					if (event.phase === 'completed')
+						finish(() => resolve({ entryCount, size }));
+					if (event.phase === 'cancelled')
+						finish(() =>
+							reject(
+								new DOMException(
+									'Folder size calculation was cancelled.',
+									'AbortError',
+								),
+							),
+						);
+					if (event.phase === 'failed')
+						finish(() => reject(new Error('Folder size calculation failed.')));
+				},
+				() =>
+					finish(() =>
+						reject(
+							new Error('Folder size event stream requires resynchronization.'),
+						),
+					),
+			)
+			.then(
+				(dispose) => {
+					unsubscribe = dispose;
+					if (signal.aborted) onAbort();
+				},
+				(error) => finish(() => reject(error)),
+			);
+	});
+}
 
 function getListSortValue(
 	node: FolderTreeNode,
@@ -348,8 +442,8 @@ function getExtension(name: string): string {
 }
 
 function toRelativePath(rootPath: string, candidatePath: string): string {
-	const normalizedRoot = normalizePath(rootPath);
-	const normalizedCandidate = normalizePath(candidatePath);
+	const normalizedRoot = comparableMacPath(normalizePath(rootPath));
+	const normalizedCandidate = comparableMacPath(normalizePath(candidatePath));
 
 	if (normalizedCandidate === normalizedRoot) {
 		return '.';
@@ -363,6 +457,12 @@ function toRelativePath(rootPath: string, candidatePath: string): string {
 	}
 
 	return normalizedCandidate;
+}
+
+function comparableMacPath(path: string): string {
+	return path.startsWith('/private/var/')
+		? path.slice('/private'.length)
+		: path;
 }
 
 function getRelativeDirectory(relativePath: string): string {
@@ -380,33 +480,24 @@ function parseIgnoredDirectoryPatterns(value: string): string[] {
 		.filter(Boolean);
 }
 
-function shouldIgnoreDirectory(
-	rootPath: string,
-	entry: { name: string; path: string },
-	ignoredPatterns: string[],
-): boolean {
-	const name = entry.name.toLowerCase();
-	const relativePath = normalizePath(toRelativePath(rootPath, entry.path)).toLowerCase();
+const MAX_SERVER_TASK_IGNORED_DIRECTORIES = 128;
 
-	return ignoredPatterns.some((pattern) => {
-		if (pattern.includes('/')) {
-			return relativePath === pattern || relativePath.startsWith(`${pattern}/`);
+function serverTaskIgnoredDirectories(patterns: readonly string[]): string[] {
+	const seen = new Set<string>();
+	for (const pattern of patterns) {
+		if (
+			pattern.length === 0 ||
+			pattern.length > 128 ||
+			pattern.includes('/') ||
+			pattern.includes('\\') ||
+			pattern.includes('\0')
+		) {
+			continue;
 		}
-		return name === pattern;
-	});
-}
-
-function sortEntriesByTypeAndName(
-	a: { isDirectory: boolean; name: string },
-	b: { isDirectory: boolean; name: string },
-) {
-	if (a.isDirectory !== b.isDirectory) {
-		return a.isDirectory ? -1 : 1;
+		seen.add(pattern);
+		if (seen.size >= MAX_SERVER_TASK_IGNORED_DIRECTORIES) break;
 	}
-	return a.name.localeCompare(b.name, undefined, {
-		sensitivity: 'base',
-		numeric: true,
-	});
+	return [...seen];
 }
 
 type FolderTaskScanResult = {
@@ -415,87 +506,177 @@ type FolderTaskScanResult = {
 	ignoredDirectoryCount: number;
 	scannedDirectoryCount: number;
 	scannedMarkdownCount: number;
+	truncated: boolean;
 	watchedDirectories: string[];
 };
 
 async function scanFolderTasks(
 	rootPath: string,
+	projectRootPath: string,
 	ignoredPatterns: string[],
+	fileViewerClient?: FileViewerClient,
+	projectId?: string,
+	signal?: AbortSignal,
 ): Promise<FolderTaskScanResult> {
-	const documents: FolderTaskDocument[] = [];
-	const watchedDirectories: string[] = [];
-	let ignoredDirectoryCount = 0;
-	let scannedMarkdownCount = 0;
-	let firstErrorText: string | null = null;
-
-	const scanDirectory = async (directoryPath: string) => {
-		watchedDirectories.push(directoryPath);
-
-		let entries: Awaited<ReturnType<typeof window.terminay.listDirectory>>;
-		try {
-			entries = await window.terminay.listDirectory(directoryPath);
-		} catch (error) {
-			firstErrorText ??= error instanceof Error ? error.message : String(error);
-			return;
-		}
-
-		entries.sort(sortEntriesByTypeAndName);
-
-		for (const entry of entries) {
-			if (!entry.isDirectory) {
-				continue;
-			}
-			if (entry.isSymbolicLink || shouldIgnoreDirectory(rootPath, entry, ignoredPatterns)) {
-				ignoredDirectoryCount += 1;
-				continue;
-			}
-			await scanDirectory(entry.path);
-		}
-
-		for (const entry of entries) {
-			if (entry.isDirectory || !MARKDOWN_EXTENSIONS.has(getExtension(entry.name))) {
-				continue;
-			}
-
-			scannedMarkdownCount += 1;
-
-			try {
-				const text = await terminayFileGateway.readFileText(entry.path);
-				const tree = parseTasks(text);
-				if (tree.stats.total === 0) {
-					continue;
-				}
-
-				const relativePath = toRelativePath(rootPath, entry.path);
-				documents.push({
-					name: entry.name,
-					path: entry.path,
-					relativeDirectory: getRelativeDirectory(relativePath),
-					relativePath,
-					tree,
-				});
-			} catch (error) {
-				firstErrorText ??= error instanceof Error ? error.message : String(error);
-			}
-		}
-	};
-
-	await scanDirectory(rootPath);
-	documents.sort((a, b) =>
-		a.relativePath.localeCompare(b.relativePath, undefined, {
-			numeric: true,
-			sensitivity: 'base',
-		}),
+	if (fileViewerClient === undefined || projectId === undefined) {
+		throw new Error('The connected server file client is unavailable.');
+	}
+	const relativePath = toRelativePath(projectRootPath, rootPath);
+	const result = await withDeadline(
+		fileViewerClient.getFolderMarkdownTasks(
+			relativePath,
+			projectId,
+			{
+				ignoredDirectories: serverTaskIgnoredDirectories(ignoredPatterns),
+			},
+			{
+				deadlineMs: FOLDER_TASK_SCAN_DEADLINE_MS,
+				...(signal === undefined ? {} : { signal }),
+			},
+		),
+		FOLDER_TASK_SCAN_DEADLINE_MS,
+		`Task scan timed out for ${relativePath}.`,
 	);
+	const documents = result.files
+		.filter((file) => file.stats.total > 0)
+		.map((file) => toFolderTaskDocument(rootPath, result.root, file));
 
 	return {
 		documents,
-		errorText: firstErrorText,
-		ignoredDirectoryCount,
-		scannedDirectoryCount: watchedDirectories.length,
-		scannedMarkdownCount,
-		watchedDirectories,
+		errorText: result.truncated
+			? 'Task scan reached a server bound; results are partial.'
+			: null,
+		ignoredDirectoryCount: 0,
+		scannedDirectoryCount: countTaskDirectories(result.files),
+		scannedMarkdownCount: result.scannedFiles,
+		truncated: result.truncated,
+		watchedDirectories: collectTaskWatchDirectories(
+			rootPath,
+			result.root,
+			result.files,
+		),
 	};
+}
+
+function withDeadline<T>(
+	promise: Promise<T>,
+	deadlineMs: number,
+	message: string,
+): Promise<T> {
+	let timeoutId: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<never>((_, reject) => {
+		timeoutId = setTimeout(() => reject(new Error(message)), deadlineMs);
+	});
+	return Promise.race([promise, timeout]).finally(() => {
+		if (timeoutId !== undefined) clearTimeout(timeoutId);
+	});
+}
+
+function toFolderTaskDocument(
+	rootPath: string,
+	aggregationRoot: string,
+	file: FolderMarkdownTaskFile,
+): FolderTaskDocument {
+	const displayRelativePath = relativePathWithinAggregationRoot(
+		aggregationRoot,
+		file.relativePath,
+	);
+	const rootTasks = file.tasks.filter((task) => task.sectionPath.length === 0);
+	return {
+		name: getNameFromPath(file.relativePath),
+		path: joinProjectPath(rootPath, displayRelativePath),
+		relativeDirectory: getRelativeDirectory(displayRelativePath),
+		relativePath: displayRelativePath,
+		tree: {
+			root: {
+				id: `${file.relativePath}:section-root`,
+				title: null,
+				level: 0,
+				tasks: rootTasks.map(toTaskItem),
+				children: file.sections.map(toTaskSection),
+			},
+			stats: {
+				completed: file.stats.completed,
+				completedInDiff: 0,
+				remaining: file.stats.remaining,
+				total: file.stats.total,
+			},
+		},
+	};
+}
+
+function toTaskSection(section: FolderMarkdownTaskSection): TaskSection {
+	return {
+		id: section.id,
+		title: section.title,
+		level: section.level,
+		tasks: section.tasks.map(toTaskItem),
+		children: section.children.map(toTaskSection),
+	};
+}
+
+function toTaskItem(task: FolderMarkdownTaskItem) {
+	return {
+		id: task.id,
+		label: task.label,
+		checked: task.checked,
+		depth: task.depth,
+		lineNumber: task.lineNumber,
+		completedInDiff: false,
+	};
+}
+
+function relativePathWithinAggregationRoot(
+	aggregationRoot: string,
+	relativePath: string,
+): string {
+	if (aggregationRoot === '.' || aggregationRoot.length === 0) {
+		return relativePath;
+	}
+	const prefix = `${aggregationRoot}/`;
+	return relativePath.startsWith(prefix)
+		? relativePath.slice(prefix.length)
+		: relativePath;
+}
+
+function joinProjectPath(rootPath: string, relativePath: string): string {
+	if (relativePath === '.' || relativePath.length === 0) {
+		return normalizePath(rootPath);
+	}
+	return `${normalizePath(rootPath)}/${relativePath}`;
+}
+
+function countTaskDirectories(
+	files: readonly FolderMarkdownTaskFile[],
+): number {
+	const directories = new Set<string>(['.']);
+	for (const file of files) {
+		let directory = getRelativeDirectory(file.relativePath);
+		while (directory !== '.') {
+			directories.add(directory);
+			directory = getRelativeDirectory(directory);
+		}
+	}
+	return directories.size;
+}
+
+function collectTaskWatchDirectories(
+	rootPath: string,
+	aggregationRoot: string,
+	files: readonly FolderMarkdownTaskFile[],
+): string[] {
+	const directories = new Set<string>([normalizePath(rootPath)]);
+	for (const file of files) {
+		const relativePath = relativePathWithinAggregationRoot(
+			aggregationRoot,
+			file.relativePath,
+		);
+		const directory = getRelativeDirectory(relativePath);
+		if (directory !== '.') {
+			directories.add(joinProjectPath(rootPath, directory));
+		}
+	}
+	return [...directories];
 }
 
 function toFileUrl(path: string): string {
@@ -511,45 +692,49 @@ function toFileUrl(path: string): string {
 async function listDirectoryNodes(
 	rootPath: string,
 	targetPath: string,
+	fileViewerClient?: FileViewerClient,
+	projectId?: string,
 ): Promise<FolderTreeNode[]> {
-	const entries = await window.terminay.listDirectory(targetPath);
-	entries.sort(sortEntriesByTypeAndName);
-
-	return entries.map((entry) => {
-		const relativePath = toRelativePath(rootPath, entry.path);
-		const stats: FolderNodeStats = {
-			createdAtMs: entry.createdAtMs ?? null,
-			mode: entry.mode ?? null,
-			modifiedAtMs: entry.modifiedAtMs ?? null,
-			size: entry.size ?? null,
-		};
-
-		if (entry.isDirectory) {
-			const directoryNode: FolderDirectoryNode = {
-				kind: 'directory',
-				children: [],
-				childrenLoaded: false,
-				isSymbolicLink: entry.isSymbolicLink,
-				name: entry.name,
-				path: entry.path,
-				relativePath,
-				stats,
+	if (fileViewerClient !== undefined) {
+		const page = await fileViewerClient.listFolder(
+			projectId === undefined
+				? targetPath
+				: toRelativePath(rootPath, targetPath),
+			projectId,
+		);
+		return page.entries.map((entry) => {
+			const path = joinProjectPath(rootPath, entry.relativePath);
+			const stats: FolderNodeStats = {
+				createdAtMs: entry.mtimeMs ?? null,
+				mode: entry.mode ?? null,
+				modifiedAtMs: entry.mtimeMs ?? null,
+				size: entry.size,
 			};
-			return directoryNode;
-		}
-
-		const extension = getExtension(entry.name);
-		const fileNode: FolderFileNode = {
-			kind: 'file',
-			extension,
-			isImage: IMAGE_EXTENSIONS.has(extension),
-			name: entry.name,
-			path: entry.path,
-			relativePath,
-			stats,
-		};
-		return fileNode;
-	});
+			if (entry.kind === 'directory') {
+				return {
+					kind: 'directory',
+					children: [],
+					childrenLoaded: false,
+					isSymbolicLink: entry.isSymbolicLink,
+					name: entry.name,
+					path,
+					relativePath: toRelativePath(rootPath, path),
+					stats,
+				} satisfies FolderDirectoryNode;
+			}
+			const extension = getExtension(entry.name);
+			return {
+				kind: 'file',
+				extension,
+				isImage: IMAGE_EXTENSIONS.has(extension),
+				name: entry.name,
+				path,
+				relativePath: toRelativePath(rootPath, path),
+				stats,
+			} satisfies FolderFileNode;
+		});
+	}
+	throw new Error('The file viewer client is unavailable.');
 }
 
 function upsertDirectoryNode(
@@ -596,7 +781,11 @@ function TreeNode({
 	onOpenFile: (path: string) => void;
 	onOpenFolder: (path: string) => void;
 	onExpandDirectory: (path: string) => void;
-	onContextMenu: (event: MouseEvent, path: string, isDirectory: boolean) => void;
+	onContextMenu: (
+		event: MouseEvent,
+		path: string,
+		isDirectory: boolean,
+	) => void;
 }) {
 	if (node.kind === 'file') {
 		return (
@@ -695,11 +884,14 @@ function FileGridCard({
 	mode: 'thumbnail' | 'gallery';
 	onOpenFile: (path: string) => void;
 	onOpenFolder: (path: string) => void;
-	onContextMenu: (event: MouseEvent, path: string, isDirectory: boolean) => void;
+	onContextMenu: (
+		event: MouseEvent,
+		path: string,
+		isDirectory: boolean,
+	) => void;
 }) {
 	const isDirectory = node.kind === 'directory';
-	const previewUrl =
-		!isDirectory && node.isImage ? toFileUrl(node.path) : null;
+	const previewUrl = !isDirectory && node.isImage ? toFileUrl(node.path) : null;
 
 	return (
 		<button
@@ -765,7 +957,10 @@ function FolderSizeCell({
 
 	if (entry?.status === 'pending') {
 		return (
-			<span className="folder-viewer__size-pending" title="Calculating folder size">
+			<span
+				className="folder-viewer__size-pending"
+				title="Calculating folder size"
+			>
 				…
 			</span>
 		);
@@ -789,9 +984,12 @@ function FolderSizeCell({
 
 function dispatchOpenFile(path: string, initialMode?: FileViewerMode) {
 	window.dispatchEvent(
-		new CustomEvent<{ initialMode?: FileViewerMode; path: string }>('terminay-open-file', {
-			detail: { initialMode, path },
-		}),
+		new CustomEvent<{ initialMode?: FileViewerMode; path: string }>(
+			'terminay-open-file',
+			{
+				detail: { initialMode, path },
+			},
+		),
 	);
 }
 
@@ -809,6 +1007,10 @@ export function FolderPanel(
 		}
 	>,
 ) {
+	const disconnectedFileCompatibility =
+		useOptionalDisconnectedFileCompatibility();
+	const disconnectedFolderCompatibility =
+		disconnectedFileCompatibility?.folderPanel;
 	const {
 		folderPath,
 		color,
@@ -821,7 +1023,20 @@ export function FolderPanel(
 		onCopyPath,
 		onCopyRelativePath,
 		projectRootPath,
+		projectId,
 	} = props.params;
+	const terminalClientContext = useContext(TerminalPanelClientContext);
+	const desktopFileViewerClient = useMemo(() => {
+		if (terminalClientContext?.fileViewerClient !== undefined) return undefined;
+		if (terminalClientContext !== null) return undefined;
+		return disconnectedFileCompatibility?.folderPanel.createClient();
+	}, [
+		disconnectedFileCompatibility,
+		terminalClientContext,
+		terminalClientContext?.fileViewerClient,
+	]);
+	const fileViewerClient =
+		terminalClientContext?.fileViewerClient ?? desktopFileViewerClient;
 	const { settings } = useTerminalSettings();
 	const [treeRoot, setTreeRoot] = useState<FolderDirectoryNode | null>(null);
 	const [viewMode, setViewMode] = useState<FolderViewMode>('tree');
@@ -831,8 +1046,12 @@ export function FolderPanel(
 	const [taskScanRefreshNonce, setTaskScanRefreshNonce] = useState(0);
 	const [taskDocuments, setTaskDocuments] = useState<FolderTaskDocument[]>([]);
 	const [isTaskScanLoading, setIsTaskScanLoading] = useState(false);
-	const [taskScanErrorText, setTaskScanErrorText] = useState<string | null>(null);
-	const [taskWatchedDirectories, setTaskWatchedDirectories] = useState<string[]>([]);
+	const [taskScanErrorText, setTaskScanErrorText] = useState<string | null>(
+		null,
+	);
+	const [taskWatchedDirectories, setTaskWatchedDirectories] = useState<
+		string[]
+	>([]);
 	const [taskScanStats, setTaskScanStats] = useState({
 		ignoredDirectoryCount: 0,
 		scannedDirectoryCount: 0,
@@ -849,9 +1068,15 @@ export function FolderPanel(
 		path: string;
 		isDirectory: boolean;
 	} | null>(null);
+	const sizeModalAbortRef = useRef<AbortController | null>(null);
 
-	const [folderSizes, setFolderSizes] = useState<Record<string, FolderSizeEntry>>({});
-	const [listSort, setListSort] = useState<ListSort>({ direction: 'asc', key: 'name' });
+	const [folderSizes, setFolderSizes] = useState<
+		Record<string, FolderSizeEntry>
+	>({});
+	const [listSort, setListSort] = useState<ListSort>({
+		direction: 'asc',
+		key: 'name',
+	});
 
 	const handleToggleListSort = useCallback((key: ListSortKey) => {
 		setListSort((current) =>
@@ -877,7 +1102,11 @@ export function FolderPanel(
 	const autoSizeTreeRef = useRef<FolderDirectoryNode | null>(null);
 
 	useEffect(() => {
-		if (viewMode !== 'list' || !treeRoot || autoSizeTreeRef.current === treeRoot) {
+		if (
+			viewMode !== 'list' ||
+			!treeRoot ||
+			autoSizeTreeRef.current === treeRoot
+		) {
 			return;
 		}
 		autoSizeTreeRef.current = treeRoot;
@@ -890,17 +1119,64 @@ export function FolderPanel(
 		}
 
 		const activeJobIds = new Map<string, string>();
+		const activeControllers = new Map<string, AbortController>();
 		setFolderSizes(
-			Object.fromEntries(directories.map((directory) => [directory.path, { status: 'pending' as const }])),
+			Object.fromEntries(
+				directories.map((directory) => [
+					directory.path,
+					{ status: 'pending' as const },
+				]),
+			),
 		);
 
 		for (const directory of directories) {
 			const jobId = crypto.randomUUID();
 			activeJobIds.set(directory.path, jobId);
-			void window.terminay
-				.calculateFolderSize({ jobId, path: directory.path })
+			const usesServerClient =
+				terminalClientContext?.fileObservationClient !== undefined &&
+				projectId !== undefined &&
+				projectRootPath !== undefined;
+			const controller = new AbortController();
+			if (usesServerClient) activeControllers.set(directory.path, controller);
+			const folderCompatibility = disconnectedFolderCompatibility;
+			if (!usesServerClient && folderCompatibility === undefined) {
+				activeJobIds.delete(directory.path);
+				setFolderSizes((current) => ({
+					...current,
+					[directory.path]: { status: 'timeout' },
+				}));
+				continue;
+			}
+			let calculation: Promise<{
+				cancelled: boolean;
+				entryCount: number;
+				size: number;
+			}>;
+			if (usesServerClient) {
+				calculation = observeServerFolderSize(
+					terminalClientContext!.fileObservationClient!,
+					projectId!,
+					projectRootPath!,
+					directory.path,
+					controller.signal,
+				).then((result) => ({ cancelled: false, ...result }));
+			} else if (folderCompatibility !== undefined) {
+				calculation = folderCompatibility.calculateSize({
+					jobId,
+					path: directory.path,
+				});
+			} else {
+				activeJobIds.delete(directory.path);
+				setFolderSizes((current) => ({
+					...current,
+					[directory.path]: { status: 'timeout' },
+				}));
+				continue;
+			}
+			void calculation
 				.then((result) => {
 					activeJobIds.delete(directory.path);
+					activeControllers.delete(directory.path);
 					setFolderSizes((current) => ({
 						...current,
 						[directory.path]: result.cancelled
@@ -910,6 +1186,7 @@ export function FolderPanel(
 				})
 				.catch(() => {
 					activeJobIds.delete(directory.path);
+					activeControllers.delete(directory.path);
 					setFolderSizes((current) => ({
 						...current,
 						[directory.path]: { status: 'timeout' },
@@ -918,31 +1195,58 @@ export function FolderPanel(
 		}
 
 		const deadlineId = window.setTimeout(() => {
-			for (const jobId of activeJobIds.values()) {
-				void window.terminay.cancelFolderSize(jobId);
+			for (const [path, jobId] of activeJobIds) {
+				activeControllers.get(path)?.abort();
+				if (!activeControllers.has(path)) {
+					void disconnectedFolderCompatibility?.cancelSize(jobId);
+				}
 			}
 		}, FOLDER_SIZE_DEADLINE_MS);
 
 		return () => {
 			window.clearTimeout(deadlineId);
-			for (const jobId of activeJobIds.values()) {
-				void window.terminay.cancelFolderSize(jobId);
+			for (const [path, jobId] of activeJobIds) {
+				activeControllers.get(path)?.abort();
+				if (!activeControllers.has(path)) {
+					void disconnectedFolderCompatibility?.cancelSize(jobId);
+				}
 			}
 		};
-	}, [treeRoot, viewMode]);
+	}, [
+		disconnectedFolderCompatibility,
+		projectId,
+		projectRootPath,
+		terminalClientContext?.fileObservationClient,
+		treeRoot,
+		viewMode,
+	]);
 
 	const handleCancelSizeModal = useCallback(() => {
+		sizeModalAbortRef.current?.abort();
+		sizeModalAbortRef.current = null;
 		setSizeModal((current) => {
 			if (current) {
-				void window.terminay.cancelFolderSize(current.jobId);
+				if (terminalClientContext?.fileObservationClient === undefined) {
+					void disconnectedFolderCompatibility?.cancelSize(current.jobId);
+				}
 			}
 			return null;
 		});
-	}, []);
+	}, [
+		disconnectedFolderCompatibility,
+		terminalClientContext?.fileObservationClient,
+	]);
 
 	const sizeModalJobId = sizeModal?.jobId;
 	useEffect(() => {
-		if (!sizeModalJobId) {
+		if (
+			!sizeModalJobId ||
+			terminalClientContext?.fileObservationClient !== undefined
+		) {
+			return;
+		}
+		const folderCompatibility = disconnectedFolderCompatibility;
+		if (folderCompatibility === undefined) {
 			return;
 		}
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -952,40 +1256,104 @@ export function FolderPanel(
 			}
 		};
 		window.addEventListener('keydown', onKeyDown);
-		const unsubscribe = window.terminay.onFolderSizeProgress((message) => {
-			if (message.jobId !== sizeModalJobId) {
-				return;
-			}
-			setSizeModal((current) =>
-				current?.jobId === message.jobId
-					? { ...current, entryCount: message.entryCount, size: message.size }
-					: current,
-			);
-		});
+		const unsubscribe = folderCompatibility.subscribeSize((message) => {
+				if (message.jobId !== sizeModalJobId) {
+					return;
+				}
+				setSizeModal((current) =>
+					current?.jobId === message.jobId
+						? { ...current, entryCount: message.entryCount, size: message.size }
+						: current,
+				);
+			});
 		return () => {
 			window.removeEventListener('keydown', onKeyDown);
-			unsubscribe();
+			unsubscribe?.();
 		};
-	}, [handleCancelSizeModal, sizeModalJobId]);
+	}, [
+		disconnectedFolderCompatibility,
+		handleCancelSizeModal,
+		sizeModalJobId,
+		terminalClientContext?.fileObservationClient,
+	]);
 
-	const handleRecalculateFolderSize = useCallback((node: FolderDirectoryNode) => {
-		const jobId = crypto.randomUUID();
-		setSizeModal({ entryCount: 0, jobId, name: node.name, path: node.path, size: 0 });
-		void window.terminay
-			.calculateFolderSize({ jobId, path: node.path })
-			.then((result) => {
-				if (!result.cancelled) {
-					setFolderSizes((current) => ({
-						...current,
-						[node.path]: { size: result.size, status: 'done' },
-					}));
-				}
-				setSizeModal((current) => (current?.jobId === jobId ? null : current));
-			})
-			.catch(() => {
-				setSizeModal((current) => (current?.jobId === jobId ? null : current));
+	const handleRecalculateFolderSize = useCallback(
+		(node: FolderDirectoryNode) => {
+			const jobId = crypto.randomUUID();
+			setSizeModal({
+				entryCount: 0,
+				jobId,
+				name: node.name,
+				path: node.path,
+				size: 0,
 			});
-	}, []);
+			const controller = new AbortController();
+			const observationClient = terminalClientContext?.fileObservationClient;
+			let calculation: Promise<{
+				cancelled: boolean;
+				entryCount: number;
+				size: number;
+			}>;
+			if (
+				observationClient !== undefined &&
+				projectId !== undefined &&
+				projectRootPath !== undefined
+			) {
+				sizeModalAbortRef.current = controller;
+				calculation = observeServerFolderSize(
+					observationClient,
+					projectId,
+					projectRootPath,
+					node.path,
+					controller.signal,
+					(entryCount, size) => {
+						setSizeModal((current) =>
+							current?.jobId === jobId
+								? { ...current, entryCount, size }
+								: current,
+						);
+					},
+				).then((result) => ({ cancelled: false, ...result }));
+			} else if (disconnectedFolderCompatibility !== undefined) {
+				calculation = disconnectedFolderCompatibility.calculateSize({
+					jobId,
+					path: node.path,
+				});
+			} else {
+				setFolderSizes((current) => ({
+					...current,
+					[node.path]: { status: 'timeout' },
+				}));
+				setSizeModal(null);
+				return;
+			}
+			void calculation
+				.then((result) => {
+					if (!result.cancelled) {
+						setFolderSizes((current) => ({
+							...current,
+							[node.path]: { size: result.size, status: 'done' },
+						}));
+					}
+					sizeModalAbortRef.current = null;
+					setSizeModal((current) =>
+						current?.jobId === jobId ? null : current,
+					);
+				})
+				.catch(() => {
+					sizeModalAbortRef.current = null;
+					setSizeModal((current) =>
+						current?.jobId === jobId ? null : current,
+					);
+				});
+		},
+		[
+			disconnectedFolderCompatibility,
+			projectId,
+			projectRootPath,
+			terminalClientContext?.fileObservationClient,
+		],
+	);
 
 	const handleContextMenu = (
 		event: MouseEvent,
@@ -1004,17 +1372,23 @@ export function FolderPanel(
 
 	const folderTitle = useMemo(() => getNameFromPath(folderPath), [folderPath]);
 	const ignoredDirectoryPatterns = useMemo(
-		() => parseIgnoredDirectoryPatterns(settings.fileViewer.folderTaskIgnoredDirectories),
+		() =>
+			parseIgnoredDirectoryPatterns(
+				settings.fileViewer.folderTaskIgnoredDirectories,
+			),
 		[settings.fileViewer.folderTaskIgnoredDirectories],
 	);
-	const folderTaskRefreshIntervalMs = Math.max(1, settings.fileViewer.refreshIntervalSeconds) * 1000;
+	const folderTaskRefreshIntervalMs =
+		Math.max(1, settings.fileViewer.refreshIntervalSeconds) * 1000;
 
 	const summaryText = useMemo(() => {
 		if (!treeRoot) {
 			return 'Scanning...';
 		}
 		const files = treeRoot.children.filter((c) => c.kind === 'file').length;
-		const folders = treeRoot.children.filter((c) => c.kind === 'directory').length;
+		const folders = treeRoot.children.filter(
+			(c) => c.kind === 'directory',
+		).length;
 		return `${files} files · ${folders} folders`;
 	}, [treeRoot]);
 
@@ -1036,7 +1410,11 @@ export function FolderPanel(
 
 	useEffect(() => {
 		let isMounted = true;
-		const requestId = refreshNonce;
+		// Folder navigation can change while the previous catalog request is
+		// still resolving. A refresh nonce alone is not unique across paths, so
+		// use a monotonic request id to prevent an older folder response from
+		// replacing the newly selected path.
+		const requestId = treeLoadRequestRef.current + 1;
 		treeLoadRequestRef.current = requestId;
 		setIsTreeLoading(true);
 		setTreeErrorText(null);
@@ -1051,7 +1429,12 @@ export function FolderPanel(
 			relativePath: '.',
 		};
 
-		void listDirectoryNodes(folderPath, folderPath)
+		void listDirectoryNodes(
+			projectRootPath ?? folderPath,
+			folderPath,
+			fileViewerClient,
+			projectId,
+		)
 			.then((children) => {
 				if (!isMounted || treeLoadRequestRef.current !== requestId) {
 					return;
@@ -1067,7 +1450,9 @@ export function FolderPanel(
 					return;
 				}
 				setTreeRoot(null);
-				setTreeErrorText(error instanceof Error ? error.message : String(error));
+				setTreeErrorText(
+					error instanceof Error ? error.message : String(error),
+				);
 			})
 			.finally(() => {
 				if (isMounted && treeLoadRequestRef.current === requestId) {
@@ -1078,7 +1463,7 @@ export function FolderPanel(
 		return () => {
 			isMounted = false;
 		};
-	}, [folderPath, refreshNonce]);
+	}, [fileViewerClient, folderPath, projectId, projectRootPath, refreshNonce]);
 
 	useEffect(() => {
 		if (viewMode !== 'tasks') {
@@ -1086,10 +1471,18 @@ export function FolderPanel(
 		}
 
 		let isMounted = true;
+		const controller = new AbortController();
 		setIsTaskScanLoading(true);
 		setTaskScanErrorText(null);
 
-		void scanFolderTasks(folderPath, ignoredDirectoryPatterns)
+		void scanFolderTasks(
+			folderPath,
+			projectRootPath ?? folderPath,
+			ignoredDirectoryPatterns,
+			fileViewerClient,
+			projectId,
+			controller.signal,
+		)
 			.then((result) => {
 				if (!isMounted) {
 					return;
@@ -1109,7 +1502,9 @@ export function FolderPanel(
 				}
 				setTaskDocuments([]);
 				setTaskWatchedDirectories([]);
-				setTaskScanErrorText(error instanceof Error ? error.message : String(error));
+				setTaskScanErrorText(
+					error instanceof Error ? error.message : String(error),
+				);
 				setTaskScanStats({
 					ignoredDirectoryCount: 0,
 					scannedDirectoryCount: 0,
@@ -1124,8 +1519,17 @@ export function FolderPanel(
 
 		return () => {
 			isMounted = false;
+			controller.abort();
 		};
-	}, [folderPath, ignoredDirectoryPatterns, taskScanRefreshNonce, viewMode]);
+	}, [
+		fileViewerClient,
+		folderPath,
+		ignoredDirectoryPatterns,
+		projectId,
+		projectRootPath,
+		taskScanRefreshNonce,
+		viewMode,
+	]);
 
 	useEffect(() => {
 		if (viewMode !== 'tasks' || taskWatchedDirectories.length === 0) {
@@ -1155,27 +1559,87 @@ export function FolderPanel(
 			}, delay);
 		};
 
-		const unsubscribe = window.terminay.onFileExplorerWatchEvent((event) => {
-			if (!watchedDirectorySet.has(event.path)) {
-				return;
-			}
+		if (
+			terminalClientContext?.fileObservationClient !== undefined &&
+			projectId !== undefined &&
+			projectRootPath !== undefined
+		) {
+			let disposed = false;
+			const cleanups: Array<() => void> = [];
+			void Promise.all(
+				watchedDirectories.map(async (directoryPath) => {
+					const handle =
+						await terminalClientContext.fileObservationClient!.startWatch(
+							projectId,
+							toRelativePath(projectRootPath, directoryPath),
+						);
+					if (disposed) {
+						await terminalClientContext.fileObservationClient!.stopWatch(
+							handle.subscriptionId,
+						);
+						return;
+					}
+					const unsubscribe =
+						await terminalClientContext.fileObservationClient!.subscribeWatch(
+							handle,
+							scheduleRefresh,
+							scheduleRefresh,
+						);
+					cleanups.push(() => {
+						unsubscribe();
+						void terminalClientContext.fileObservationClient!.stopWatch(
+							handle.subscriptionId,
+						);
+					});
+				}),
+			).catch(scheduleRefresh);
+			return () => {
+				disposed = true;
+				for (const cleanup of cleanups) cleanup();
+				if (refreshTimeoutId !== null) window.clearTimeout(refreshTimeoutId);
+			};
+		}
+
+		const folderCompatibility = disconnectedFolderCompatibility;
+		if (folderCompatibility === undefined) {
 			scheduleRefresh();
-		});
+			return () => {
+				if (refreshTimeoutId !== null) {
+					window.clearTimeout(refreshTimeoutId);
+				}
+			};
+		}
+		const unsubscribe = folderCompatibility.subscribeWatches(
+			(event: { path: string }) => {
+				if (!watchedDirectorySet.has(event.path)) {
+					return;
+				}
+				scheduleRefresh();
+			},
+		);
 
 		for (const directoryPath of watchedDirectories) {
-			void window.terminay.watchDirectory(directoryPath);
+			void folderCompatibility.watchDirectory(directoryPath);
 		}
 
 		return () => {
 			if (refreshTimeoutId !== null) {
 				window.clearTimeout(refreshTimeoutId);
 			}
-			unsubscribe();
+			unsubscribe?.();
 			for (const directoryPath of watchedDirectories) {
-				void window.terminay.unwatchDirectory(directoryPath);
+				void folderCompatibility.unwatchDirectory(directoryPath);
 			}
 		};
-	}, [folderTaskRefreshIntervalMs, taskWatchedDirectories, viewMode]);
+	}, [
+		disconnectedFolderCompatibility,
+		folderTaskRefreshIntervalMs,
+		projectId,
+		projectRootPath,
+		taskWatchedDirectories,
+		terminalClientContext?.fileObservationClient,
+		viewMode,
+	]);
 
 	const handleExpandDirectory = useCallback(
 		(directoryPath: string) => {
@@ -1199,7 +1663,12 @@ export function FolderPanel(
 				});
 			});
 
-			void listDirectoryNodes(folderPath, directoryPath)
+			void listDirectoryNodes(
+				projectRootPath ?? folderPath,
+				directoryPath,
+				fileViewerClient,
+				projectId,
+			)
 				.then((children) => {
 					setTreeRoot((currentRoot) => {
 						if (!currentRoot) {
@@ -1227,7 +1696,7 @@ export function FolderPanel(
 					});
 				});
 		},
-		[folderPath],
+		[fileViewerClient, folderPath, projectId, projectRootPath],
 	);
 
 	const handleOpenFolder = useCallback(
@@ -1291,7 +1760,9 @@ export function FolderPanel(
 		if (treeErrorText) {
 			return (
 				<div className="folder-viewer__state">
-					<div className="folder-viewer__state-title">Unable to load folder</div>
+					<div className="folder-viewer__state-title">
+						Unable to load folder
+					</div>
 					<div className="folder-viewer__state-copy">{treeErrorText}</div>
 					<button
 						type="button"
@@ -1340,7 +1811,11 @@ export function FolderPanel(
 		const nodes = treeRoot.children;
 
 		if (viewMode === 'list') {
-			const sortButton = (label: string, key: ListSortKey, alignRight = false) => (
+			const sortButton = (
+				label: string,
+				key: ListSortKey,
+				alignRight = false,
+			) => (
 				<button
 					type="button"
 					className={`folder-viewer__list-sort${alignRight ? ' folder-viewer__list-sort--right' : ''}`}
@@ -1393,10 +1868,14 @@ export function FolderPanel(
 								..
 							</div>
 							<div className="folder-viewer__list-cell">folder</div>
-							<div className="folder-viewer__list-cell folder-viewer__list-cell--right">—</div>
+							<div className="folder-viewer__list-cell folder-viewer__list-cell--right">
+								—
+							</div>
 							<div className="folder-viewer__list-cell">—</div>
 							<div className="folder-viewer__list-cell">—</div>
-							<div className="folder-viewer__list-cell folder-viewer__list-cell--mono">—</div>
+							<div className="folder-viewer__list-cell folder-viewer__list-cell--mono">
+								—
+							</div>
 						</div>
 					) : null}
 					{sortedListNodes.map((node) => {
@@ -1412,18 +1891,26 @@ export function FolderPanel(
 										: dispatchOpenFile(node.path)
 								}
 								onMouseDown={suppressDoubleClickSelection}
-								onContextMenu={(e) => handleContextMenu(e, node.path, isDirectory)}
+								onContextMenu={(e) =>
+									handleContextMenu(e, node.path, isDirectory)
+								}
 								title={node.path}
 							>
 								<div className="folder-viewer__list-name">
 									<span
 										className={`folder-viewer__tree-icon${isDirectory ? ' folder-viewer__tree-icon--directory' : ''}`}
 									>
-										{isDirectory ? <FolderIcon /> : <FileTypeIcon name={node.name} />}
+										{isDirectory ? (
+											<FolderIcon />
+										) : (
+											<FileTypeIcon name={node.name} />
+										)}
 									</span>
 									{node.name}
 								</div>
-								<div className="folder-viewer__list-cell">{getMimeLabel(node)}</div>
+								<div className="folder-viewer__list-cell">
+									{getMimeLabel(node)}
+								</div>
 								<div className="folder-viewer__list-cell folder-viewer__list-cell--right">
 									{node.kind === 'directory' ? (
 										<FolderSizeCell
@@ -1477,7 +1964,9 @@ export function FolderPanel(
 	return (
 		<div
 			className="folder-viewer"
-			style={{ '--tab-color': color ?? projectColor ?? '#717b85' } as CSSProperties}
+			style={
+				{ '--tab-color': color ?? projectColor ?? '#717b85' } as CSSProperties
+			}
 		>
 			<div className="folder-viewer__toolbar">
 				<div className="folder-viewer__toolbar-left">
@@ -1557,11 +2046,16 @@ export function FolderPanel(
 						<div className="folder-viewer__size-modal-title">
 							Calculating folder size
 						</div>
-						<div className="folder-viewer__size-modal-path">{sizeModal.path}</div>
+						<div className="folder-viewer__size-modal-path">
+							{sizeModal.path}
+						</div>
 						<div className="folder-viewer__size-modal-progress">
-							<span className="folder-viewer__size-modal-spinner" aria-hidden="true" />
-							{formatFileSize(sizeModal.size)} · {sizeModal.entryCount.toLocaleString()}{' '}
-							items scanned
+							<span
+								className="folder-viewer__size-modal-spinner"
+								aria-hidden="true"
+							/>
+							{formatFileSize(sizeModal.size)} ·{' '}
+							{sizeModal.entryCount.toLocaleString()} items scanned
 						</div>
 						<div className="project-edit-actions">
 							<button type="button" onClick={handleCancelSizeModal}>
@@ -1577,67 +2071,72 @@ export function FolderPanel(
 					x={contextMenu.x}
 					y={contextMenu.y}
 					onClose={() => setContextMenu(null)}
-					items={[
-						...(contextMenu.isDirectory
-							? [
-									{
-										label: 'New File',
-										icon: <PlusSquare size={14} />,
-										onClick: () => onNewFile?.(contextMenu.path),
-									},
-									{
-										label: 'New Folder',
-										icon: <FolderPlus size={14} />,
-										onClick: () => onNewFolder?.(contextMenu.path),
-									},
-									{ separator: true },
-								]
-							: []),
-						{
-							label: 'Rename',
-							icon: <FileEdit size={14} />,
-							onClick: () => onRename?.(contextMenu.path),
-						},
-						{
-							label: 'Delete',
-							icon: <Trash2 size={14} />,
-							danger: true,
-							onClick: () => onDelete?.(contextMenu.path),
-						},
-						{ separator: true },
-						{
-							label: 'Copy path',
-							icon: <Copy size={14} />,
-							onClick: () =>
-								onCopyPath
-									? onCopyPath(contextMenu.path)
-									: void window.terminay.writeClipboardText(contextMenu.path),
-						},
-						{
-							label: 'Copy relative path',
-							icon: <Copy size={14} />,
-							onClick: () =>
-								onCopyRelativePath
-									? onCopyRelativePath(contextMenu.path)
-									: void window.terminay.writeClipboardText(
-											getPathRelativeToRoot(
+					items={
+						[
+							...(contextMenu.isDirectory
+								? [
+										{
+											label: 'New File',
+											icon: <PlusSquare size={14} />,
+											onClick: () => onNewFile?.(contextMenu.path),
+										},
+										{
+											label: 'New Folder',
+											icon: <FolderPlus size={14} />,
+											onClick: () => onNewFolder?.(contextMenu.path),
+										},
+										{ separator: true },
+									]
+								: []),
+							{
+								label: 'Rename',
+								icon: <FileEdit size={14} />,
+								onClick: () => onRename?.(contextMenu.path),
+							},
+							{
+								label: 'Delete',
+								icon: <Trash2 size={14} />,
+								danger: true,
+								onClick: () => onDelete?.(contextMenu.path),
+							},
+							{ separator: true },
+							{
+								label: 'Copy path',
+								icon: <Copy size={14} />,
+								onClick: () =>
+									onCopyPath
+										? onCopyPath(contextMenu.path)
+										: void window.terminayClipboardHost?.writeText(
 												contextMenu.path,
-												projectRootPath ?? folderPath,
 											),
-										),
-						},
-						{ separator: true },
-						{
-							label: 'Open shell in folder',
-							icon: <Terminal size={14} />,
-							onClick: () => onOpenTerminal?.(contextMenu.path),
-						},
-						{
-							label: 'Reveal in OS',
-							icon: <FolderOpen size={14} />,
-							onClick: () => void window.terminay.revealInOS(contextMenu.path),
-						},
-					].filter(Boolean) as ContextMenuItem[]}
+							},
+							{
+								label: 'Copy relative path',
+								icon: <Copy size={14} />,
+								onClick: () =>
+									onCopyRelativePath
+										? onCopyRelativePath(contextMenu.path)
+										: void window.terminayClipboardHost?.writeText(
+												getPathRelativeToRoot(
+													contextMenu.path,
+													projectRootPath ?? folderPath,
+												),
+											),
+							},
+							{ separator: true },
+							{
+								label: 'Open shell in folder',
+								icon: <Terminal size={14} />,
+								onClick: () => onOpenTerminal?.(contextMenu.path),
+							},
+							{
+								label: 'Reveal in OS',
+								icon: <FolderOpen size={14} />,
+								onClick: () =>
+									void window.terminayRevealHost?.reveal(contextMenu.path),
+							},
+						].filter(Boolean) as ContextMenuItem[]
+					}
 				/>
 			)}
 		</div>

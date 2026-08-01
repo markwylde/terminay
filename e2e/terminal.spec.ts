@@ -1,634 +1,998 @@
-import type { Page } from '@playwright/test'
-import { expect, test } from './fixtures'
-import { sendAppCommand } from './support/app'
-import { cancelEditWindow, contextMenuItem, openTerminalEditWindow, submitEditWindow } from './support/ui'
+import type { Page } from '@playwright/test';
+import { expect, test } from './fixtures';
+import { sendAppCommand } from './support/app';
+import {
+	cancelEditWindow,
+	contextMenuItem,
+	openTerminalEditWindow,
+	submitEditWindow,
+} from './support/ui';
 
 async function getActiveSessionId(page: Page): Promise<string> {
-  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
+	const sessionId = await page
+		.locator('.terminal-panel')
+		.first()
+		.getAttribute('data-terminay-terminal-session-id');
 
-  if (!sessionId) {
-    throw new Error('Active terminal session id is unavailable')
-  }
+	if (!sessionId) {
+		throw new Error('Active terminal session id is unavailable');
+	}
 
-  return sessionId
+	return sessionId;
 }
 
 async function writeToTerminal(page: Page, data: string): Promise<void> {
-  const sessionId = await getActiveSessionId(page)
-  await writeToTerminalSession(page, sessionId, data)
+	const sessionId = await getActiveSessionId(page);
+	await writeToTerminalSession(page, sessionId, data);
 }
 
-async function writeToTerminalSession(page: Page, sessionId: string, data: string): Promise<void> {
-  await page.evaluate(({ nextData, nextSessionId }) => {
-    window.terminay.writeTerminal(nextSessionId, nextData)
-  }, { nextData: data, nextSessionId: sessionId })
+async function writeToTerminalSession(
+	page: Page,
+	sessionId: string,
+	data: string,
+): Promise<void> {
+	await page.evaluate(
+		async ({ nextData, nextSessionId }) => {
+			await window.terminayTest!.writeServerTerminal(nextSessionId, nextData);
+		},
+		{ nextData: data, nextSessionId: sessionId },
+	);
 }
 
-async function readCssVariableFromStyle(locator: ReturnType<Page['locator']>, variableName: string): Promise<string> {
-  const style = await locator.getAttribute('style')
-  const match = style?.match(new RegExp(`${variableName}:\\s*([^;]+)`))
+async function readCssVariableFromStyle(
+	locator: ReturnType<Page['locator']>,
+	variableName: string,
+): Promise<string> {
+	const style = await locator.getAttribute('style');
+	const match = style?.match(new RegExp(`${variableName}:\\s*([^;]+)`));
 
-  if (!match?.[1]) {
-    throw new Error(`Missing ${variableName} in style attribute: ${style ?? '(none)'}`)
-  }
+	if (!match?.[1]) {
+		throw new Error(
+			`Missing ${variableName} in style attribute: ${style ?? '(none)'}`,
+		);
+	}
 
-  return match[1].trim()
+	return match[1].trim();
 }
 
 async function expectTerminalInputFocused(page: Page): Promise<void> {
-  await expect
-    .poll(async () =>
-      page.evaluate(() => document.activeElement?.classList.contains('xterm-helper-textarea') ?? false),
-    )
-    .toBe(true)
+	await expect
+		.poll(async () =>
+			page.evaluate(
+				() =>
+					document.activeElement?.classList.contains('xterm-helper-textarea') ??
+					false,
+			),
+		)
+		.toBe(true);
 }
 
 async function expectNoRenderedTerminalSelection(page: Page): Promise<void> {
-  await expect.poll(async () => page.locator('.terminal-panel .xterm-selection > div').count()).toBe(0)
+	await expect
+		.poll(async () =>
+			page.locator('.terminal-panel .xterm-selection > div').count(),
+		)
+		.toBe(0);
+}
+
+async function expectRenderedTerminalSelection(
+	page: Page,
+	sessionId: string,
+): Promise<void> {
+	await expect
+		.poll(async () =>
+			page
+				.locator(
+					`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"] .xterm-selection > div`,
+				)
+				.count(),
+		)
+		.toBeGreaterThan(0);
 }
 
 test.describe('terminal behavior', () => {
-  test('terminal tab context menu closes the selected tab', async ({ mainWindow }) => {
-    await sendAppCommand(mainWindow, 'new-terminal')
-    const terminalTabs = mainWindow.locator('.project-workspace--active .terminal-tab-content')
-    await expect(terminalTabs).toHaveCount(2)
-
-    await terminalTabs.nth(1).click({ button: 'right' })
-    await expect(contextMenuItem(mainWindow, 'Close')).toBeVisible()
-    await expect(contextMenuItem(mainWindow, 'Open Settings')).toBeVisible()
-    await expect(contextMenuItem(mainWindow, 'Move to project')).toBeVisible()
-
-    await contextMenuItem(mainWindow, 'Close').click()
-    await expect(terminalTabs).toHaveCount(1)
-  })
-
-  test('terminal tab context menu adds an editable note above the terminal', async ({ mainWindow }) => {
-    const terminalTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
-    const terminalPanel = mainWindow.locator('.project-workspace--active .terminal-panel').first()
-    const note = terminalPanel.getByRole('textbox', { name: 'Terminal note' })
-
-    const tabColor = await readCssVariableFromStyle(terminalTab, '--tab-color')
-
-    await terminalTab.click({ button: 'right' })
-    await expect(contextMenuItem(mainWindow, 'Add Note')).toBeVisible()
-    await contextMenuItem(mainWindow, 'Add Note').click()
-
-    await expect(note).toBeVisible()
-    await expect(note).toBeFocused()
-    await expect(readCssVariableFromStyle(terminalPanel, '--terminal-note-color')).resolves.toBe(tabColor)
-
-    await note.fill('Running the long build\nWatch for package warnings')
-    await expect(note).toHaveValue('Running the long build\nWatch for package warnings')
-
-    await terminalTab.click({ button: 'right' })
-    await contextMenuItem(mainWindow, 'Remove Note').click()
-    await expect(note).toHaveCount(0)
-  })
-
-  test('terminal tab context menu opens settings and moves a tab to another project', async ({
-    appHarness,
-    mainWindow,
-  }) => {
-    const settingsWindow = await appHarness.openChildWindow(async () => {
-      await mainWindow.locator('.project-workspace--active .terminal-tab-content').first().click({ button: 'right' })
-      await contextMenuItem(mainWindow, 'Open Settings').click()
-    })
-
-    await expect(settingsWindow.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
-    await settingsWindow.getByPlaceholder('Terminal name').fill('Move Me')
-    await submitEditWindow(settingsWindow)
-    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-title')).toHaveText('Move Me')
-
-    await mainWindow.getByLabel('Add project tab').click()
-    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
-    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(1)
-
-    await mainWindow.locator('.project-tab').filter({ hasText: 'Project 1' }).click()
-    const tabToMove = mainWindow
-      .locator('.project-workspace--active .terminal-tab-content')
-      .filter({ hasText: 'Move Me' })
-      .first()
-    await expect(tabToMove).toBeVisible()
-
-    await tabToMove.click({ button: 'right' })
-    await contextMenuItem(mainWindow, 'Move to project').click()
-    await expect(contextMenuItem(mainWindow, 'Project 2')).toBeVisible()
-    await contextMenuItem(mainWindow, 'Project 2').click()
-
-    await expect(mainWindow.locator('.project-tab')).toHaveCount(2)
-    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
-    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
-    await expect(
-      mainWindow.locator('.project-workspace--active .terminal-tab-content').filter({ hasText: 'Move Me' }),
-    ).toHaveCount(1)
-  })
-
-  test('preserves terminal scrollback when moving a tab to another project', async ({ mainWindow }) => {
-    const marker = 'SCROLLBACK_MARKER_4242'
-
-    // Emit a known line into the terminal so it lands in the main-process buffer.
-    await writeToTerminal(mainWindow, `echo ${marker}\r`)
-    await expect(mainWindow.locator('.project-workspace--active .xterm-rows')).toContainText(marker, {
-      timeout: 15000,
-    })
-
-    // Move the terminal to a new project — its xterm panel is destroyed and
-    // recreated, which must restore scrollback from the buffer (not start blank).
-    await mainWindow.getByLabel('Add project tab').click()
-    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
-    await mainWindow.locator('.project-tab').filter({ hasText: 'Project 1' }).click()
-
-    const tabToMove = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
-    await tabToMove.click({ button: 'right' })
-    await contextMenuItem(mainWindow, 'Move to project').click()
-    await contextMenuItem(mainWindow, 'Project 2').click()
-
-    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
-    await expect(mainWindow.locator('.project-workspace--active .xterm-rows')).toContainText(marker, {
-      timeout: 15000,
-    })
-  })
-
-  test('new terminals inherit the active project tab color by default', async ({ mainWindow }) => {
-    const activeProjectTab = mainWindow.locator('.project-tab--active')
-    const terminalTabs = mainWindow.locator('.terminal-tab-content')
-    const initialTerminal = terminalTabs.first()
-
-    const projectColor = await readCssVariableFromStyle(activeProjectTab, '--project-color')
-    const initialTerminalColor = await readCssVariableFromStyle(initialTerminal, '--tab-color')
-
-    expect(initialTerminalColor).toBe(projectColor)
-
-    await sendAppCommand(mainWindow, 'new-terminal')
-    await expect(terminalTabs).toHaveCount(2)
-
-    const secondTerminalColor = await readCssVariableFromStyle(terminalTabs.nth(1), '--tab-color')
-    expect(secondTerminalColor).toBe(projectColor)
-  })
-
-  test('edits the active terminal tab title and hue', async ({ mainWindow }) => {
-    const terminalTabs = mainWindow.locator('.terminal-tab-content')
-    const initialTabCount = await terminalTabs.count()
-
-    const editWindow = await openTerminalEditWindow(mainWindow)
-    await expect(editWindow.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
-    await expect(terminalTabs).toHaveCount(initialTabCount)
-
-    await editWindow.getByPlaceholder('Terminal name').fill('Build Shell')
-    await editWindow.getByLabel('Tab icon').fill('B')
-    await editWindow.locator('.hue-slider').fill('30')
-    await submitEditWindow(editWindow)
-
-    const updatedTab = mainWindow.locator('.terminal-tab-content').first()
-    await expect(updatedTab.locator('.terminal-tab-title')).toHaveText('Build Shell')
-    await expect(updatedTab.locator('.terminal-tab-emoji')).toHaveText('B')
-    await expect(updatedTab).toHaveAttribute('data-has-color', 'true')
-    await expectTerminalInputFocused(mainWindow)
-  })
-
-  test('terminal edit window focuses the title and saves it with Enter', async ({ mainWindow }) => {
-    const editWindow = await openTerminalEditWindow(mainWindow)
-    const titleInput = editWindow.getByPlaceholder('Terminal name')
-
-    await expect(editWindow.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
-    await expect(titleInput).toBeFocused()
-    await expect
-      .poll(async () =>
-        titleInput.evaluate((input) => {
-          const title = input as HTMLInputElement
-          return title.selectionStart === 0 && title.selectionEnd === title.value.length
-        }),
-      )
-      .toBe(true)
-
-    await titleInput.fill('Keyboard Shell')
-    const closePromise = editWindow.waitForEvent('close')
-    try {
-      await titleInput.press('Enter')
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (!message.includes('Target page, context or browser has been closed')) {
-        throw error
-      }
-    }
-    await closePromise
-
-    await expect(mainWindow.locator('.terminal-tab-content').first().locator('.terminal-tab-title')).toHaveText(
-      'Keyboard Shell',
-    )
-    await expectTerminalInputFocused(mainWindow)
-  })
-
-  test('terminal edit window keeps the icon input to one character and cancel leaves the tab unchanged', async ({ mainWindow }) => {
-    const firstTab = mainWindow.locator('.terminal-tab-content').first()
-    const originalTitle = (await firstTab.locator('.terminal-tab-title').textContent())?.trim() ?? 'Terminal 1'
-    const originalIcon = ((await firstTab.locator('.terminal-tab-emoji').textContent().catch(() => null)) ?? '').trim()
-
-    const editWindow = await openTerminalEditWindow(mainWindow)
-    const iconInput = editWindow.getByLabel('Tab icon')
-
-    await expect(editWindow.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
-    await iconInput.fill('ZZ')
-    await expect(iconInput).toHaveValue('Z')
-    await editWindow.getByPlaceholder('Terminal name').fill('Should Not Save')
-    await cancelEditWindow(editWindow)
-
-    await expect(firstTab.locator('.terminal-tab-title')).toHaveText(originalTitle)
-    if (originalIcon) {
-      await expect(firstTab.locator('.terminal-tab-emoji')).toHaveText(originalIcon)
-    } else {
-      await expect(firstTab.locator('.terminal-tab-emoji')).toHaveCount(0)
-    }
-  })
-
-  test('double-clicking a terminal tab opens one edit window for the active project tab', async ({
-    appHarness,
-    electronApp,
-    mainWindow,
-  }) => {
-    const firstProjectEditWindow = await openTerminalEditWindow(mainWindow)
-    await firstProjectEditWindow.getByPlaceholder('Terminal name').fill('Wrong Project Shell')
-    await submitEditWindow(firstProjectEditWindow)
-
-    await mainWindow.getByLabel('Add project tab').click()
-    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
-
-    const activeTerminalTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
-    await expect(activeTerminalTab.locator('.terminal-tab-title')).toHaveText('Terminal 1')
-
-    const windowCountBeforeEdit = await electronApp.evaluate(
-      ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
-    )
-
-    const editWindow = await appHarness.openChildWindow(async () => {
-      await activeTerminalTab.dblclick()
-    })
-
-    await expect(editWindow.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
-    await expect(editWindow.getByPlaceholder('Terminal name')).toHaveValue('Terminal 1')
-    await mainWindow.waitForTimeout(500)
-    await expect
-      .poll(async () => electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length))
-      .toBe(windowCountBeforeEdit + 1)
-
-    await cancelEditWindow(editWindow)
-  })
-
-  test('opens terminal search and navigates between matches', async ({ mainWindow }) => {
-    await mainWindow.locator('.terminal-panel').first().click()
-    await writeToTerminal(
-      mainWindow,
-      "printf '\\164\\145\\162\\155\\151\\156\\141\\171\\055\\163\\145\\141\\162\\143\\150\\055\\150\\151\\164\\nother-line\\n\\164\\145\\162\\155\\151\\156\\141\\171\\055\\163\\145\\141\\162\\143\\150\\055\\150\\151\\164\\n'\r",
-    )
-
-    await mainWindow.locator('.terminal-panel').first().click()
-    await mainWindow.keyboard.press('Meta+F')
-
-    const search = mainWindow.getByRole('search', { name: 'Search terminal output' })
-    await expect(search).toBeVisible()
-
-    const input = search.getByLabel('Find in terminal')
-    await input.fill('terminay-search-hit')
-
-    const initialCount = await expect
-      .poll(async () => await search.locator('.terminal-search-count').textContent())
-      .toMatch(/^[12]\/2$/)
-      .then(() => search.locator('.terminal-search-count').textContent())
-
-    const currentMatch = initialCount ?? '1/2'
-    const nextMatch = currentMatch === '1/2' ? '2/2' : '1/2'
-
-    await search.getByLabel('Next match').click()
-    await expect(search.locator('.terminal-search-count')).toHaveText(nextMatch)
-
-    await search.getByLabel('Previous match').click()
-    await expect(search.locator('.terminal-search-count')).toHaveText(currentMatch)
-
-    await search.getByLabel('Close search').click()
-    await expect(search).toBeHidden()
-  })
-
-  test('terminal links only open on modifier click', async ({ electronApp, mainWindow }) => {
-    const sessionId = await getActiveSessionId(mainWindow)
-    const linkUrl = 'https://example.com/terminay-link-test'
-    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
-
-    await electronApp.evaluate(({ ipcMain }) => {
-      const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
-      state.__terminayOpenedExternalLinks = []
-      ipcMain.removeHandler('shell:open-external')
-      ipcMain.handle('shell:open-external', (_event, url: string) => {
-        state.__terminayOpenedExternalLinks?.push(url)
-      })
-    })
-
-    await electronApp.evaluate(
-      ({ BrowserWindow }, payload) => {
-        const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed())
-        window?.webContents.send('terminal:data', payload)
-      },
-      { data: `\r\n${linkUrl}\r\n`, id: sessionId },
-    )
-
-    const link = mainWindow.locator('.xterm-rows').getByText(linkUrl)
-    await expect(link).toBeVisible()
-    const linkBox = await link.boundingBox()
-    const terminalBox = await mainWindow.locator('.terminal-panel').first().boundingBox()
-    if (!linkBox || !terminalBox) {
-      throw new Error('Terminal link location is unavailable')
-    }
-    const linkCenter = {
-      x: linkBox.x + linkBox.width / 2,
-      y: linkBox.y + linkBox.height / 2,
-    }
-    const moveTarget = {
-      x: Math.min(terminalBox.x + terminalBox.width - 20, linkCenter.x + 240),
-      y: Math.min(terminalBox.y + terminalBox.height - 20, linkCenter.y + 60),
-    }
-
-    await mainWindow.mouse.click(linkCenter.x, linkCenter.y)
-    await expect
-      .poll(async () =>
-        electronApp.evaluate(() => {
-          const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
-          return state.__terminayOpenedExternalLinks ?? []
-        }),
-      )
-      .toEqual([])
-
-    await mainWindow.keyboard.down(modifier)
-    await mainWindow.mouse.click(linkCenter.x, linkCenter.y)
-    await mainWindow.keyboard.up(modifier)
-    await expect
-      .poll(async () =>
-        electronApp.evaluate(() => {
-          const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
-          return state.__terminayOpenedExternalLinks ?? []
-        }),
-      )
-      .toEqual([linkUrl])
-
-    await mainWindow.mouse.move(moveTarget.x, moveTarget.y)
-    await mainWindow.evaluate(
-      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-    )
-    await expectNoRenderedTerminalSelection(mainWindow)
-  })
-
-  test('modifier-clicking OSC links does not leave terminal selection armed', async ({ electronApp, mainWindow }) => {
-    const sessionId = await getActiveSessionId(mainWindow)
-    const linkUrl = 'https://example.com/terminay-osc-link-test'
-    const linkText = linkUrl
-    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
-
-    await electronApp.evaluate(({ ipcMain }) => {
-      const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
-      state.__terminayOpenedExternalLinks = []
-      ipcMain.removeHandler('shell:open-external')
-      ipcMain.handle('shell:open-external', (_event, url: string) => {
-        state.__terminayOpenedExternalLinks?.push(url)
-      })
-    })
-
-    await electronApp.evaluate(
-      ({ BrowserWindow }, payload) => {
-        const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed())
-        window?.webContents.send('terminal:data', payload)
-      },
-      {
-        data: `\r\n\x1b]8;;${linkUrl}\x07${linkText}\x1b]8;;\x07\r\nplain text after osc link\r\n`,
-        id: sessionId,
-      },
-    )
-
-    const link = mainWindow.locator('.xterm-rows').getByText(linkText)
-    await expect(link).toBeVisible()
-    const linkBox = await link.boundingBox()
-    const terminalBox = await mainWindow.locator('.terminal-panel').first().boundingBox()
-    if (!linkBox || !terminalBox) {
-      throw new Error('Terminal OSC link location is unavailable')
-    }
-
-    const linkCenter = {
-      x: linkBox.x + linkBox.width / 2,
-      y: linkBox.y + linkBox.height / 2,
-    }
-    const moveTarget = {
-      x: Math.min(terminalBox.x + terminalBox.width - 20, linkCenter.x + 240),
-      y: Math.min(terminalBox.y + terminalBox.height - 20, linkCenter.y + 60),
-    }
-
-    await mainWindow.keyboard.down(modifier)
-    await mainWindow.mouse.click(linkCenter.x, linkCenter.y)
-    await mainWindow.keyboard.up(modifier)
-    await expect
-      .poll(async () =>
-        electronApp.evaluate(() => {
-          const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
-          return state.__terminayOpenedExternalLinks ?? []
-        }),
-      )
-      .toEqual([linkUrl])
-
-    await mainWindow.mouse.move(moveTarget.x, moveTarget.y)
-    await mainWindow.evaluate(
-      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-    )
-    await expectNoRenderedTerminalSelection(mainWindow)
-  })
-
-  test('external renderer navigations open outside the app', async ({ electronApp, mainWindow }) => {
-    const linkUrl = 'https://example.com/terminay-navigation-test'
-
-    await electronApp.evaluate(({ shell }) => {
-      const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
-      state.__terminayOpenedExternalLinks = []
-      shell.openExternal = ((url: string) => {
-        state.__terminayOpenedExternalLinks?.push(url)
-        return Promise.resolve()
-      }) as typeof shell.openExternal
-    })
-
-    const initialUrl = mainWindow.url()
-    await mainWindow.evaluate((url) => {
-      window.location.href = url
-    }, linkUrl)
-
-    await expect
-      .poll(async () =>
-        electronApp.evaluate(() => {
-          const state = globalThis as typeof globalThis & { __terminayOpenedExternalLinks?: string[] }
-          return state.__terminayOpenedExternalLinks ?? []
-        }),
-      )
-      .toEqual([linkUrl])
-    await expect.poll(async () => mainWindow.url()).toBe(initialUrl)
-  })
-
-  test('terminal activity overview jumps to inactive terminals across projects', async ({ mainWindow }) => {
-    await sendAppCommand(mainWindow, 'new-terminal')
-    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
-    const backgroundSessionId = await getActiveSessionId(mainWindow)
-
-    await mainWindow
-      .locator('.project-workspace--active .terminal-tab-content')
-      .filter({ hasText: 'Terminal 1' })
-      .click()
-
-    await mainWindow.getByLabel('Add project tab').click()
-    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
-    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(1)
-
-    await mainWindow.waitForTimeout(1_100)
-    await writeToTerminalSession(mainWindow, backgroundSessionId, "printf 'overview-activity-hit\\n'\r")
-
-    const activityButton = mainWindow.getByRole('button', { name: 'Open terminal activity menu' })
-    await expect(activityButton).toBeVisible()
-    await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveText('1')
-    await expect(mainWindow.locator('.terminal-activity-pill--recent')).toHaveCount(0)
-
-    await activityButton.click()
-    const activityMenu = mainWindow.getByRole('menu', { name: 'Terminal activity menu' })
-    await expect(activityMenu).toBeVisible()
-
-    const backgroundItem = activityMenu.locator('.terminal-activity-menu__item').filter({
-      hasText: 'Terminal 2',
-    })
-    await expect(backgroundItem).toContainText('Project 1')
-    await expect(
-      backgroundItem.locator('.agent-status-indicator[data-agent-state="done"]'),
-    ).toHaveAttribute('aria-label', 'Terminal done')
-
-    await backgroundItem.click()
-
-    await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 1')
-    await expect(
-      mainWindow.locator('.project-workspace--active .terminal-tab-content--active .terminal-tab-title'),
-    ).toHaveText('Terminal 2')
-    await expect(activityMenu).toHaveCount(0)
-    await expect(activityButton).toHaveCount(0)
-  })
-
-  test('terminal activity overview uses the same recent-input suppression as tab status dots', async ({
-    mainWindow,
-  }) => {
-    await sendAppCommand(mainWindow, 'new-terminal')
-    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
-
-    const quickTab = mainWindow
-      .locator('.project-workspace--active .terminal-tab-content')
-      .filter({ hasText: 'Terminal 2' })
-    const firstTab = mainWindow
-      .locator('.project-workspace--active .terminal-tab-content')
-      .filter({ hasText: 'Terminal 1' })
-
-    await quickTab.click()
-    const quickSessionId = await getActiveSessionId(mainWindow)
-    await mainWindow.evaluate((sessionId) => {
-      window.dispatchEvent(
-        new CustomEvent('terminay-terminal-user-input', {
-          detail: { sessionId },
-        }),
-      )
-    }, quickSessionId)
-
-    await firstTab.click()
-    await writeToTerminalSession(mainWindow, quickSessionId, "printf 'quick-activity-suppressed\\n'\r")
-
-    await mainWindow.waitForTimeout(250)
-    await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed')
-    await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
-
-    await mainWindow.waitForTimeout(1_100)
-    await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed')
-    await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
-  })
-
-  test('terminal activity ignores output immediately after leaving a tab', async ({ mainWindow }) => {
-    await sendAppCommand(mainWindow, 'new-terminal')
-    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
-
-    const quietTab = mainWindow
-      .locator('.project-workspace--active .terminal-tab-content')
-      .filter({ hasText: 'Terminal 2' })
-    const firstTab = mainWindow
-      .locator('.project-workspace--active .terminal-tab-content')
-      .filter({ hasText: 'Terminal 1' })
-
-    await quietTab.click()
-    const quietSessionId = await getActiveSessionId(mainWindow)
-    await mainWindow.waitForTimeout(1_100)
-
-    await firstTab.click()
-    await writeToTerminalSession(mainWindow, quietSessionId, "printf 'focus-change-noise\\n'\r")
-
-    await mainWindow.waitForTimeout(250)
-    await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed')
-    await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
-  })
-
-  test('terminal tab settings can disable activity indicators for one tab', async ({ appHarness, mainWindow }) => {
-    await sendAppCommand(mainWindow, 'new-terminal')
-    await expect(mainWindow.locator('.project-workspace--active .terminal-tab-content')).toHaveCount(2)
-
-    const quietTab = mainWindow
-      .locator('.project-workspace--active .terminal-tab-content')
-      .filter({ hasText: 'Terminal 2' })
-    const firstTab = mainWindow
-      .locator('.project-workspace--active .terminal-tab-content')
-      .filter({ hasText: 'Terminal 1' })
-
-    await quietTab.click()
-    const quietSessionId = await getActiveSessionId(mainWindow)
-
-    const settingsWindow = await appHarness.openChildWindow(async () => {
-      await quietTab.click({ button: 'right' })
-      await contextMenuItem(mainWindow, 'Open Settings').click()
-    })
-    const activitySwitch = settingsWindow.getByLabel('Enable activity indicators')
-    await expect(activitySwitch).toBeChecked()
-    await activitySwitch.uncheck()
-    await submitEditWindow(settingsWindow)
-
-    await firstTab.click()
-    await mainWindow.waitForTimeout(1_100)
-    await writeToTerminalSession(mainWindow, quietSessionId, "printf 'quiet-activity-hidden\\n'\r")
-
-    await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed')
-    await expect(mainWindow.getByRole('button', { name: 'Open terminal activity menu' })).toHaveCount(0)
-  })
-
-  test('active terminal tabs show only the finished activity status dot by default', async ({ mainWindow }) => {
-    const activeTab = mainWindow.locator('.project-workspace--active .terminal-tab-content--active').first()
-    const finishedIndicator = activeTab.locator(
-      '.agent-status-indicator[data-agent-state="done"]',
-    )
-
-    await mainWindow.locator('.terminal-panel').first().click()
-    await mainWindow.keyboard.type('sleep 2')
-    await mainWindow.keyboard.press('Enter')
-
-    await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed')
-    await expect(finishedIndicator).toHaveCount(0)
-
-    await expect(activeTab).toHaveAttribute('data-terminal-activity', 'unviewed')
-    await expect(finishedIndicator).toHaveAttribute('aria-label', 'Terminal finished')
-  })
-
-  test('auto-closes a terminal tab on successful exit when enabled', async ({ mainWindow }) => {
-    await mainWindow.evaluate(async () => {
-      const settings = await window.terminay.getTerminalSettings()
-      await window.terminay.updateTerminalSettings({
-        ...settings,
-        autoCloseTerminalOnExitZero: true,
-      })
-    })
-
-    await sendAppCommand(mainWindow, 'new-terminal')
-    await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2)
-
-    await writeToTerminal(mainWindow, 'exit\r')
-
-    await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(1)
-  })
-})
+	test('terminal tab context menu closes the selected tab', async ({
+		mainWindow,
+	}) => {
+		await sendAppCommand(mainWindow, 'new-terminal');
+		const terminalTabs = mainWindow.locator(
+			'.project-workspace--active .terminal-tab-content',
+		);
+		await expect(terminalTabs).toHaveCount(2);
+
+		await terminalTabs.nth(1).click({ button: 'right' });
+		await expect(contextMenuItem(mainWindow, 'Close')).toBeVisible();
+		await expect(contextMenuItem(mainWindow, 'Open Settings')).toBeVisible();
+		await expect(contextMenuItem(mainWindow, 'Move to project')).toBeVisible();
+
+		await contextMenuItem(mainWindow, 'Close').click();
+		await expect(terminalTabs).toHaveCount(1);
+	});
+
+	test('terminal tab context menu adds an editable note above the terminal', async ({
+		mainWindow,
+	}) => {
+		const terminalTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.first();
+		const terminalPanel = mainWindow
+			.locator('.project-workspace--active .terminal-panel')
+			.first();
+		const note = terminalPanel.getByRole('textbox', { name: 'Terminal note' });
+
+		const tabColor = await readCssVariableFromStyle(terminalTab, '--tab-color');
+
+		await terminalTab.click({ button: 'right' });
+		await expect(contextMenuItem(mainWindow, 'Add Note')).toBeVisible();
+		await contextMenuItem(mainWindow, 'Add Note').click();
+
+		await expect(note).toBeVisible();
+		await expect(note).toBeFocused();
+		await expect(
+			readCssVariableFromStyle(terminalPanel, '--terminal-note-color'),
+		).resolves.toBe(tabColor);
+
+		await note.fill('Running the long build\nWatch for package warnings');
+		await expect(note).toHaveValue(
+			'Running the long build\nWatch for package warnings',
+		);
+
+		await terminalTab.click({ button: 'right' });
+		await contextMenuItem(mainWindow, 'Remove Note').click();
+		await expect(note).toHaveCount(0);
+	});
+
+	test('terminal tab context menu opens settings and moves a tab to another project', async ({
+		appHarness,
+		mainWindow,
+	}) => {
+		const settingsWindow = await appHarness.openChildWindow(async () => {
+			await mainWindow
+				.locator('.project-workspace--active .terminal-tab-content')
+				.first()
+				.click({ button: 'right' });
+			await contextMenuItem(mainWindow, 'Open Settings').click();
+		});
+
+		await expect(
+			settingsWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+		).toBeVisible();
+		await settingsWindow.getByPlaceholder('Terminal name').fill('Move Me');
+		await submitEditWindow(settingsWindow);
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-title'),
+		).toHaveText('Move Me');
+
+		await mainWindow.getByLabel('Add project tab').click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(1);
+
+		await mainWindow
+			.locator('.project-tab')
+			.filter({ hasText: 'Project 1' })
+			.click();
+		const tabToMove = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.filter({ hasText: 'Move Me' })
+			.first();
+		await expect(tabToMove).toBeVisible();
+
+		await tabToMove.click({ button: 'right' });
+		await contextMenuItem(mainWindow, 'Move to project').click();
+		await expect(contextMenuItem(mainWindow, 'Project 2')).toBeVisible();
+		await contextMenuItem(mainWindow, 'Project 2').click();
+
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(2);
+		await expect(
+			mainWindow
+				.locator('.project-workspace--active .terminal-tab-content')
+				.filter({ hasText: 'Move Me' }),
+		).toHaveCount(1);
+	});
+
+	test('preserves terminal scrollback when moving a tab to another project', async ({
+		mainWindow,
+	}) => {
+		const marker = 'SCROLLBACK_MARKER_4242';
+		const movedSessionId = await getActiveSessionId(mainWindow);
+
+		// Emit a known line into the terminal so it lands in the main-process buffer.
+		await writeToTerminal(mainWindow, `echo ${marker}\r`);
+		await expect(
+			mainWindow.locator(
+				`.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${movedSessionId}"] .xterm-rows`,
+			),
+		).toContainText(marker, {
+			timeout: 15000,
+		});
+
+		// Move the terminal to a new project — its xterm panel is destroyed and
+		// recreated, which must restore scrollback from the buffer (not start blank).
+		await mainWindow.getByLabel('Add project tab').click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await mainWindow
+			.locator('.project-tab')
+			.filter({ hasText: 'Project 1' })
+			.click();
+
+		const tabToMove = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.first();
+		await tabToMove.click({ button: 'right' });
+		await contextMenuItem(mainWindow, 'Move to project').click();
+		await contextMenuItem(mainWindow, 'Project 2').click();
+
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await expect(
+			mainWindow.locator(
+				`.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${movedSessionId}"] .xterm-rows`,
+			),
+		).toContainText(marker, {
+			timeout: 15000,
+		});
+	});
+
+	test('new terminals inherit the active project tab color by default', async ({
+		mainWindow,
+	}) => {
+		const activeProjectTab = mainWindow.locator('.project-tab--active');
+		const terminalTabs = mainWindow.locator('.terminal-tab-content');
+		const initialTerminal = terminalTabs.first();
+
+		const projectColor = await readCssVariableFromStyle(
+			activeProjectTab,
+			'--project-color',
+		);
+		const initialTerminalColor = await readCssVariableFromStyle(
+			initialTerminal,
+			'--tab-color',
+		);
+
+		expect(initialTerminalColor).toBe(projectColor);
+
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await expect(terminalTabs).toHaveCount(2);
+
+		const secondTerminalColor = await readCssVariableFromStyle(
+			terminalTabs.nth(1),
+			'--tab-color',
+		);
+		expect(secondTerminalColor).toBe(projectColor);
+	});
+
+	test('selects terminal text with a plain drag', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const sessionId = await getActiveSessionId(mainWindow);
+		const marker = 'terminay-selectable-text-424242';
+		const modifier = process.platform === 'darwin' ? 'Meta' : 'Control+Shift';
+
+		await electronApp.evaluate(({ clipboard }) => {
+			clipboard.writeText('');
+		});
+
+		await writeToTerminalSession(
+			mainWindow,
+			sessionId,
+			`printf '\\r\\n${marker}\\r\\n'\r`,
+		);
+
+		const line = mainWindow
+			.locator('.xterm-rows')
+			.getByText(marker, { exact: true });
+		await expect(line).toBeVisible();
+		const box = await line.boundingBox();
+		if (!box) {
+			throw new Error('Terminal selectable text location is unavailable');
+		}
+
+		await mainWindow.mouse.move(box.x + 2, box.y + box.height / 2);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(box.x + box.width - 2, box.y + box.height / 2, {
+			steps: 8,
+		});
+		await mainWindow.mouse.up();
+
+		await expectRenderedTerminalSelection(mainWindow, sessionId);
+		await mainWindow.keyboard.press(`${modifier}+C`);
+		await expect
+			.poll(() => electronApp.evaluate(({ clipboard }) => clipboard.readText()))
+			.toContain('terminay-selectable-text');
+	});
+
+	test('accepts keyboard input after a terminal click', async ({ mainWindow }) => {
+		const marker = 'terminay-click-type-424242';
+		await mainWindow.evaluate(() => {
+			if (document.activeElement instanceof HTMLElement) {
+				document.activeElement.blur();
+			}
+		});
+
+		await mainWindow.locator('.terminal-panel').first().click();
+		await expectTerminalInputFocused(mainWindow);
+		await mainWindow.keyboard.type(marker);
+
+		await expect(mainWindow.locator('.project-workspace--active .xterm-rows')).toContainText(marker);
+	});
+
+	test('edits the active terminal tab title and hue', async ({
+		mainWindow,
+	}) => {
+		const terminalTabs = mainWindow.locator('.terminal-tab-content');
+		const initialTabCount = await terminalTabs.count();
+
+		const editWindow = await openTerminalEditWindow(mainWindow);
+		await expect(
+			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+		).toBeVisible();
+		await expect(terminalTabs).toHaveCount(initialTabCount);
+
+		await editWindow.getByPlaceholder('Terminal name').fill('Build Shell');
+		await editWindow.getByLabel('Tab icon').fill('B');
+		await editWindow.locator('.hue-slider').fill('30');
+		await submitEditWindow(editWindow);
+
+		const updatedTab = mainWindow.locator('.terminal-tab-content').first();
+		await expect(updatedTab.locator('.terminal-tab-title')).toHaveText(
+			'Build Shell',
+		);
+		await expect(updatedTab.locator('.terminal-tab-emoji')).toHaveText('B');
+		await expect(updatedTab).toHaveAttribute('data-has-color', 'true');
+		await expectTerminalInputFocused(mainWindow);
+	});
+
+	test('terminal edit window focuses the title and saves it with Enter', async ({
+		mainWindow,
+	}) => {
+		const editWindow = await openTerminalEditWindow(mainWindow);
+		const titleInput = editWindow.getByPlaceholder('Terminal name');
+
+		await expect(
+			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+		).toBeVisible();
+		await expect(titleInput).toBeFocused();
+		await expect
+			.poll(async () =>
+				titleInput.evaluate((input) => {
+					const title = input as HTMLInputElement;
+					return (
+						title.selectionStart === 0 &&
+						title.selectionEnd === title.value.length
+					);
+				}),
+			)
+			.toBe(true);
+
+		await titleInput.fill('Keyboard Shell');
+		const closePromise = editWindow.waitForEvent('close');
+		try {
+			await titleInput.press('Enter');
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (
+				!message.includes('Target page, context or browser has been closed')
+			) {
+				throw error;
+			}
+		}
+		await closePromise;
+
+		await expect(
+			mainWindow
+				.locator('.terminal-tab-content')
+				.first()
+				.locator('.terminal-tab-title'),
+		).toHaveText('Keyboard Shell');
+		await expectTerminalInputFocused(mainWindow);
+	});
+
+	test('terminal edit window keeps the icon input to one character and cancel leaves the tab unchanged', async ({
+		mainWindow,
+	}) => {
+		const firstTab = mainWindow.locator('.terminal-tab-content').first();
+		const originalTitle =
+			(await firstTab.locator('.terminal-tab-title').textContent())?.trim() ??
+			'Terminal 1';
+		const originalIcon = (
+			(await firstTab
+				.locator('.terminal-tab-emoji')
+				.textContent()
+				.catch(() => null)) ?? ''
+		).trim();
+
+		const editWindow = await openTerminalEditWindow(mainWindow);
+		const iconInput = editWindow.getByLabel('Tab icon');
+
+		await expect(
+			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+		).toBeVisible();
+		await iconInput.fill('ZZ');
+		await expect(iconInput).toHaveValue('Z');
+		await editWindow.getByPlaceholder('Terminal name').fill('Should Not Save');
+		await cancelEditWindow(editWindow);
+
+		await expect(firstTab.locator('.terminal-tab-title')).toHaveText(
+			originalTitle,
+		);
+		if (originalIcon) {
+			await expect(firstTab.locator('.terminal-tab-emoji')).toHaveText(
+				originalIcon,
+			);
+		} else {
+			await expect(firstTab.locator('.terminal-tab-emoji')).toHaveCount(0);
+		}
+	});
+
+	test('double-clicking a terminal tab opens one edit window for the active project tab', async ({
+		appHarness,
+		electronApp,
+		mainWindow,
+	}) => {
+		const firstProjectEditWindow = await openTerminalEditWindow(mainWindow);
+		await firstProjectEditWindow
+			.getByPlaceholder('Terminal name')
+			.fill('Wrong Project Shell');
+		await submitEditWindow(firstProjectEditWindow);
+
+		await mainWindow.getByLabel('Add project tab').click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+
+		const activeTerminalTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.first();
+		await expect(activeTerminalTab.locator('.terminal-tab-title')).toHaveText(
+			'Terminal 1',
+		);
+
+		const windowCountBeforeEdit = await electronApp.evaluate(
+			({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+		);
+
+		const editWindow = await appHarness.openChildWindow(async () => {
+			await activeTerminalTab.dblclick();
+		});
+
+		await expect(
+			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+		).toBeVisible();
+		await expect(editWindow.getByPlaceholder('Terminal name')).toHaveValue(
+			'Terminal 1',
+		);
+		await mainWindow.waitForTimeout(500);
+		await expect
+			.poll(async () =>
+				electronApp.evaluate(
+					({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
+				),
+			)
+			.toBe(windowCountBeforeEdit + 1);
+
+		await cancelEditWindow(editWindow);
+	});
+
+	test('opens terminal search and navigates between matches', async ({
+		mainWindow,
+	}) => {
+		await mainWindow.locator('.terminal-panel').first().click();
+		await writeToTerminal(
+			mainWindow,
+			"printf '\\164\\145\\162\\155\\151\\156\\141\\171\\055\\163\\145\\141\\162\\143\\150\\055\\150\\151\\164\\nother-line\\n\\164\\145\\162\\155\\151\\156\\141\\171\\055\\163\\145\\141\\162\\143\\150\\055\\150\\151\\164\\n'\r",
+		);
+
+		await mainWindow.locator('.terminal-panel').first().click();
+		await mainWindow.keyboard.press('Meta+F');
+
+		const search = mainWindow.getByRole('search', {
+			name: 'Search terminal output',
+		});
+		await expect(search).toBeVisible();
+
+		const input = search.getByLabel('Find in terminal');
+		await input.fill('terminay-search-hit');
+
+		const initialCount = await expect
+			.poll(
+				async () =>
+					await search.locator('.terminal-search-count').textContent(),
+			)
+			.toMatch(/^[12]\/2$/)
+			.then(() => search.locator('.terminal-search-count').textContent());
+
+		const currentMatch = initialCount ?? '1/2';
+		const nextMatch = currentMatch === '1/2' ? '2/2' : '1/2';
+
+		await search.getByLabel('Next match').click();
+		await expect(search.locator('.terminal-search-count')).toHaveText(
+			nextMatch,
+		);
+
+		await search.getByLabel('Previous match').click();
+		await expect(search.locator('.terminal-search-count')).toHaveText(
+			currentMatch,
+		);
+
+		await search.getByLabel('Close search').click();
+		await expect(search).toBeHidden();
+	});
+
+	test('terminal links only open on modifier click', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const sessionId = await getActiveSessionId(mainWindow);
+		const linkUrl = 'https://example.com/terminay-link-test';
+		const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & {
+				__terminayOpenedExternalLinks?: string[];
+			};
+			state.__terminayOpenedExternalLinks = [];
+			ipcMain.removeHandler('desktop:external-host:open');
+			ipcMain.handle(
+				'desktop:external-host:open',
+				(_event, payload: { url?: unknown }) => {
+					if (typeof payload?.url === 'string')
+						state.__terminayOpenedExternalLinks?.push(payload.url);
+				},
+			);
+		});
+
+		await writeToTerminalSession(
+			mainWindow,
+			sessionId,
+			`printf '\\r\\n${linkUrl}\\r\\n'\r`,
+		);
+
+		const link = mainWindow
+			.locator('.xterm-rows')
+			.getByText(linkUrl, { exact: true });
+		await expect(link).toBeVisible();
+		const linkBox = await link.boundingBox();
+		const terminalBox = await mainWindow
+			.locator('.terminal-panel')
+			.first()
+			.boundingBox();
+		if (!linkBox || !terminalBox) {
+			throw new Error('Terminal link location is unavailable');
+		}
+		const linkCenter = {
+			x: linkBox.x + linkBox.width / 2,
+			y: linkBox.y + linkBox.height / 2,
+		};
+		const moveTarget = {
+			x: Math.min(terminalBox.x + terminalBox.width - 20, linkCenter.x + 240),
+			y: Math.min(terminalBox.y + terminalBox.height - 20, linkCenter.y + 60),
+		};
+
+		await mainWindow.mouse.click(linkCenter.x, linkCenter.y);
+		await expect
+			.poll(async () =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__terminayOpenedExternalLinks?: string[];
+					};
+					return state.__terminayOpenedExternalLinks ?? [];
+				}),
+			)
+			.toEqual([]);
+
+		await mainWindow.keyboard.down(modifier);
+		await mainWindow.mouse.click(linkCenter.x, linkCenter.y);
+		await mainWindow.keyboard.up(modifier);
+		await expect
+			.poll(async () =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__terminayOpenedExternalLinks?: string[];
+					};
+					return state.__terminayOpenedExternalLinks ?? [];
+				}),
+			)
+			.toEqual([linkUrl]);
+
+		await mainWindow.mouse.move(moveTarget.x, moveTarget.y);
+		await mainWindow.evaluate(
+			() =>
+				new Promise<void>((resolve) =>
+					requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+				),
+		);
+		await expectNoRenderedTerminalSelection(mainWindow);
+	});
+
+	test('modifier-clicking OSC links does not leave terminal selection armed', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const sessionId = await getActiveSessionId(mainWindow);
+		const linkUrl = 'https://example.com/terminay-osc-link-test';
+		const linkText = linkUrl;
+		const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+
+		await electronApp.evaluate(({ ipcMain }) => {
+			const state = globalThis as typeof globalThis & {
+				__terminayOpenedExternalLinks?: string[];
+			};
+			state.__terminayOpenedExternalLinks = [];
+			ipcMain.removeHandler('desktop:external-host:open');
+			ipcMain.handle(
+				'desktop:external-host:open',
+				(_event, payload: { url?: unknown }) => {
+					if (typeof payload?.url === 'string')
+						state.__terminayOpenedExternalLinks?.push(payload.url);
+				},
+			);
+		});
+
+		await writeToTerminalSession(
+			mainWindow,
+			sessionId,
+			`printf '\\r\\n\\033]8;;${linkUrl}\\007${linkText}\\033]8;;\\007\\r\\nplain text after osc link\\r\\n'\r`,
+		);
+
+		const link = mainWindow
+			.locator('.xterm-rows')
+			.getByText(linkText, { exact: true });
+		await expect(link).toBeVisible();
+		const linkBox = await link.boundingBox();
+		const terminalBox = await mainWindow
+			.locator('.terminal-panel')
+			.first()
+			.boundingBox();
+		if (!linkBox || !terminalBox) {
+			throw new Error('Terminal OSC link location is unavailable');
+		}
+
+		const linkCenter = {
+			x: linkBox.x + linkBox.width / 2,
+			y: linkBox.y + linkBox.height / 2,
+		};
+		const moveTarget = {
+			x: Math.min(terminalBox.x + terminalBox.width - 20, linkCenter.x + 240),
+			y: Math.min(terminalBox.y + terminalBox.height - 20, linkCenter.y + 60),
+		};
+
+		await mainWindow.keyboard.down(modifier);
+		await mainWindow.mouse.click(linkCenter.x, linkCenter.y);
+		await mainWindow.keyboard.up(modifier);
+		await expect
+			.poll(async () =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__terminayOpenedExternalLinks?: string[];
+					};
+					return state.__terminayOpenedExternalLinks ?? [];
+				}),
+			)
+			.toEqual([linkUrl]);
+
+		await mainWindow.mouse.move(moveTarget.x, moveTarget.y);
+		await mainWindow.evaluate(
+			() =>
+				new Promise<void>((resolve) =>
+					requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+				),
+		);
+		await expectNoRenderedTerminalSelection(mainWindow);
+	});
+
+	test('external renderer navigations are denied without invoking the native shell', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		const linkUrl = 'https://example.com/terminay-navigation-test';
+
+		await electronApp.evaluate(({ shell }) => {
+			const state = globalThis as typeof globalThis & {
+				__terminayOpenedExternalLinks?: string[];
+			};
+			state.__terminayOpenedExternalLinks = [];
+			shell.openExternal = ((url: string) => {
+				state.__terminayOpenedExternalLinks?.push(url);
+				return Promise.resolve();
+			}) as typeof shell.openExternal;
+		});
+
+		const initialUrl = mainWindow.url();
+		await mainWindow.evaluate((url) => {
+			window.location.href = url;
+		}, linkUrl);
+
+		await expect
+			.poll(async () =>
+				electronApp.evaluate(() => {
+					const state = globalThis as typeof globalThis & {
+						__terminayOpenedExternalLinks?: string[];
+					};
+					return state.__terminayOpenedExternalLinks ?? [];
+				}),
+			)
+			.toEqual([]);
+		await expect.poll(async () => mainWindow.url()).toBe(initialUrl);
+	});
+
+	test('terminal activity overview jumps to inactive terminals across projects', async ({
+		mainWindow,
+	}) => {
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(2);
+		await mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.filter({ hasText: 'Terminal 2' })
+			.click();
+		const backgroundSessionId = await mainWindow
+			.getByRole('textbox', { name: 'Terminal input' })
+			.evaluate((input) =>
+				input
+					.closest('.terminal-panel')
+					?.getAttribute('data-terminay-terminal-session-id'),
+			);
+		if (!backgroundSessionId)
+			throw new Error('Terminal 2 session id is unavailable');
+
+		await mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.filter({ hasText: 'Terminal 1' })
+			.click();
+
+		await mainWindow.getByLabel('Add project tab').click();
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 2',
+		);
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(1);
+
+		await mainWindow.waitForTimeout(1_100);
+		await writeToTerminalSession(
+			mainWindow,
+			backgroundSessionId,
+			"sleep 2.1; printf 'overview-activity-hit\\n'; printf '\\033]9;4;0;\\007'\r",
+		);
+		await expect
+			.poll(() =>
+				mainWindow.evaluate(
+					(sessionId) =>
+						window.terminayTest!.getServerTerminalActivity(sessionId),
+					backgroundSessionId,
+				),
+			)
+			.toMatchObject({
+				acknowledged: false,
+				status: 'idle',
+			});
+
+		const activityButton = mainWindow.getByRole('button', {
+			name: 'Open terminal activity menu',
+		});
+		await expect(activityButton).toBeVisible();
+		await expect(
+			mainWindow.locator('.terminal-activity-pill--unviewed'),
+		).toHaveText('1');
+		await expect(
+			mainWindow.locator('.terminal-activity-pill--recent'),
+		).toHaveCount(0);
+
+		await activityButton.click();
+		const activityMenu = mainWindow.getByRole('menu', {
+			name: 'Terminal activity menu',
+		});
+		await expect(activityMenu).toBeVisible();
+
+		const backgroundItem = activityMenu
+			.locator('.terminal-activity-menu__item')
+			.filter({
+				hasText: 'Terminal 2',
+			});
+		await expect(backgroundItem).toContainText('Project 1');
+		await expect(
+			backgroundItem.locator(
+				'.agent-status-indicator[data-agent-state="done"]',
+			),
+		).toHaveAttribute('aria-label', 'Terminal done');
+
+		await backgroundItem.click();
+
+		await expect(mainWindow.locator('.project-tab--active')).toContainText(
+			'Project 1',
+		);
+		await expect(
+			mainWindow.locator(
+				'.project-workspace--active .terminal-tab-content--active .terminal-tab-title',
+			),
+		).toHaveText('Terminal 2');
+		await expect(activityMenu).toHaveCount(0);
+		await expect(activityButton).toHaveCount(0);
+	});
+
+	test('terminal activity overview uses the same recent-input suppression as tab status dots', async ({
+		mainWindow,
+	}) => {
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(2);
+
+		const quickTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.filter({ hasText: 'Terminal 2' });
+		const firstTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.filter({ hasText: 'Terminal 1' });
+
+		await quickTab.click();
+		const quickSessionId = await getActiveSessionId(mainWindow);
+		await mainWindow.evaluate((sessionId) => {
+			window.dispatchEvent(
+				new CustomEvent('terminay-terminal-user-input', {
+					detail: { sessionId },
+				}),
+			);
+		}, quickSessionId);
+
+		await firstTab.click();
+		await writeToTerminalSession(
+			mainWindow,
+			quickSessionId,
+			"printf 'quick-activity-suppressed\\n'\r",
+		);
+
+		await mainWindow.waitForTimeout(250);
+		await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed');
+		await expect(
+			mainWindow.getByRole('button', { name: 'Open terminal activity menu' }),
+		).toHaveCount(0);
+
+		await mainWindow.waitForTimeout(1_100);
+		await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed');
+		await expect(
+			mainWindow.getByRole('button', { name: 'Open terminal activity menu' }),
+		).toHaveCount(0);
+	});
+
+	test('terminal activity ignores output immediately after leaving a tab', async ({
+		mainWindow,
+	}) => {
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(2);
+
+		const quietTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.filter({ hasText: 'Terminal 2' });
+		const firstTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.filter({ hasText: 'Terminal 1' });
+
+		await quietTab.click();
+		const quietSessionId = await getActiveSessionId(mainWindow);
+		await mainWindow.waitForTimeout(1_100);
+
+		await firstTab.click();
+		await writeToTerminalSession(
+			mainWindow,
+			quietSessionId,
+			"printf 'focus-change-noise\\n'\r",
+		);
+
+		await mainWindow.waitForTimeout(250);
+		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
+		await expect(
+			mainWindow.getByRole('button', { name: 'Open terminal activity menu' }),
+		).toHaveCount(0);
+	});
+
+	test('terminal tab settings can disable activity indicators for one tab', async ({
+		appHarness,
+		mainWindow,
+	}) => {
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
+		).toHaveCount(2);
+
+		const quietTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.filter({ hasText: 'Terminal 2' });
+		const firstTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.filter({ hasText: 'Terminal 1' });
+
+		await quietTab.click();
+		const quietSessionId = await getActiveSessionId(mainWindow);
+
+		const settingsWindow = await appHarness.openChildWindow(async () => {
+			await quietTab.click({ button: 'right' });
+			await contextMenuItem(mainWindow, 'Open Settings').click();
+		});
+		const activitySwitch = settingsWindow.getByLabel(
+			'Enable activity indicators',
+		);
+		await expect(activitySwitch).toBeChecked();
+		await activitySwitch.uncheck();
+		await submitEditWindow(settingsWindow);
+
+		await firstTab.click();
+		await mainWindow.waitForTimeout(1_100);
+		await writeToTerminalSession(
+			mainWindow,
+			quietSessionId,
+			"printf 'quiet-activity-hidden\\n'\r",
+		);
+
+		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
+		await expect(
+			mainWindow.getByRole('button', { name: 'Open terminal activity menu' }),
+		).toHaveCount(0);
+	});
+
+	test('active terminal tabs show only the finished activity status dot by default', async ({
+		mainWindow,
+	}) => {
+		const activeTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content--active')
+			.first();
+		const finishedIndicator = activeTab.locator(
+			'.agent-status-indicator[data-agent-state="done"]',
+		);
+
+		await mainWindow.locator('.terminal-panel').first().click();
+		await mainWindow.keyboard.type("sleep 2.1; printf '\\033]9;4;0;\\007'");
+		await mainWindow.keyboard.press('Enter');
+
+		await expect(activeTab).toHaveAttribute('data-terminal-activity', 'viewed');
+		await expect(finishedIndicator).toHaveCount(0);
+
+		await expect(activeTab).toHaveAttribute(
+			'data-terminal-activity',
+			'unviewed',
+		);
+		await expect(finishedIndicator).toHaveAttribute(
+			'aria-label',
+			'Terminal finished',
+		);
+	});
+
+	test('auto-closes a terminal tab on successful exit when enabled', async ({
+		mainWindow,
+	}) => {
+		await mainWindow.evaluate(async () => {
+			const settings =
+				await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings();
+			await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings(
+				{
+					...settings,
+					autoCloseTerminalOnExitZero: true,
+				},
+			);
+		});
+
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2);
+
+		await writeToTerminal(mainWindow, 'exit\r');
+
+		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(1);
+	});
+});

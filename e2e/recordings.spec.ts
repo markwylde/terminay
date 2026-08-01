@@ -217,13 +217,10 @@ test.describe('recordings UI', () => {
     tempDir,
   }) => {
     const recordingDir = path.join(tempDir, 'ui-recordings')
-    const existingRecordingIds = new Set(
-      await mainWindow.evaluate(() => window.terminay.listTerminalRecordings().then((items) => items.map((item) => item.recordingId))),
-    )
     await mkdir(recordingDir, { recursive: true })
     await mainWindow.evaluate(async (nextRecordingDir) => {
-      const settings = await window.terminay.getTerminalSettings()
-      await window.terminay.updateTerminalSettings({
+      const settings = await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()
+      await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings({
         ...settings,
         recording: {
           ...settings.recording,
@@ -249,40 +246,23 @@ test.describe('recordings UI', () => {
     await expect(contextMenuItem(mainWindow, 'Reveal Last Recording')).toBeVisible()
     await mainWindow.keyboard.press('Escape')
 
-    await expect
-      .poll(async () => mainWindow.evaluate(
-        (knownIds) => window.terminay.listTerminalRecordings()
-          .then((items) => items.filter((item) => !knownIds.includes(item.recordingId)).length),
-        [...existingRecordingIds],
-      ))
-      .toBe(1)
-
     const recordingsWindow = await appHarness.openChildWindow(async () => {
       await mainWindow.evaluate(async () => {
-        await window.terminay.openRecordingsWindow()
+        await window.terminayRecordingsHost!.open()
       })
     })
 
     await expect(recordingsWindow.getByRole('heading', { name: 'Recordings' })).toBeVisible()
     expect(
       await recordingsWindow.evaluate(async () => {
-        const serializedRecordings = JSON.stringify(await window.terminay.listTerminalRecordings())
         return {
-          boundedRead: typeof window.terminay.readTerminalRecordingChunk === 'function',
-          hasCastPath: serializedRecordings.includes('"castPath"'),
-          hasMetadataPath: serializedRecordings.includes('"metadataPath"'),
-          legacyDelete: 'deleteTerminalRecording' in window.terminay,
-          legacyRead: 'readTerminalRecording' in window.terminay,
-          legacyReveal: 'revealTerminalRecording' in window.terminay,
+          boundedRead: typeof window.terminayRecordingServiceHost?.readTerminalRecordingChunk === 'function',
+          broadPreloadPresent: Reflect.has(window, 'terminay'),
         }
       }),
     ).toEqual({
       boundedRead: true,
-      hasCastPath: false,
-      hasMetadataPath: false,
-      legacyDelete: false,
-      legacyRead: false,
-      legacyReveal: false,
+      broadPreloadPresent: false,
     })
     await expect(recordingsWindow.getByPlaceholder('Search recordings')).toBeVisible()
     await expect(recordingsWindow.locator('.recordings-list-item').first()).toBeVisible()

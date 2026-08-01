@@ -651,6 +651,26 @@ export interface TerminayTestApi {
   createServerTerminal: (options?: { cwd?: string; projectId?: string }) => Promise<{ id: string }>
   /** Test-only input through the canonical embedded server terminal authority. */
   writeServerTerminal: (sessionId: string, data: string) => Promise<void>
+  getServerTerminalCwd: (sessionId: string) => Promise<{
+    cwd: string
+    source: 'observed' | 'spawn'
+    observationError?: 'unavailable' | 'failed' | 'timeout'
+  } | null>
+  getServerGitWorkspace: (sessionId: string) => Promise<{
+    projectId: string
+    projectRoot: string | null
+    binding: {
+      projectRoot: string
+      repositoryRoot: string | null
+      state: string
+      worktreeRoot: string | null
+    } | null
+    worktrees: {
+      repositoryRoot: string | null
+      state: string
+      paths: string[]
+    }
+  } | null>
   getServerTerminalActivity: (sessionId: string) => Promise<{
     status: 'working' | 'idle'
     acknowledged: boolean

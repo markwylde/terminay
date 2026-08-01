@@ -3,11 +3,12 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, test, type Browser } from '@playwright/test'
-import { runHost, type HostApi, type HostConfig } from '../src/remote/WebRtcHost'
+import { runHost, type HostApi, type HostConfig } from '../scripts/support/webRtcHostRuntime'
 
 const dependencyRoot = process.env.TERMINAY_WEBRTC_SPIKE_ROOT
 const turnConfigPath = process.env.TERMINAY_TURN_CONFIG_PATH
 const turnPort = Number(process.env.TERMINAY_TURN_PORT)
+const turnRouteOnly = process.env.TERMINAY_TURN_ROUTE_ONLY === '1'
 test.skip(
   !dependencyRoot || !turnConfigPath || !Number.isInteger(turnPort),
   'requires the isolated secure-Werift and coturn proof wrapper',
@@ -135,7 +136,7 @@ async function selectedPair(peer: RTCPeerConnection): Promise<{
     ? stats.get(transport.selectedCandidatePairId)
     : entries.find((entry) =>
       entry.type === 'candidate-pair' && entry.nominated && entry.state === 'succeeded')
-  if (!pair || !pair.nominated || pair.state !== 'succeeded') return null
+  if (!pair?.nominated || pair.state !== 'succeeded') return null
   const local = stats.get(pair.localCandidateId)
   const remote = stats.get(pair.remoteCandidateId)
   if (!local || !remote) return null
@@ -170,6 +171,7 @@ async function exerciseRoute(
   await page.exposeFunction('terminayRouteSignal', emitToHost)
   await page.evaluate(({ iceServers, policy, roomId }) => {
     type RouteWindow = Window & {
+      routeCandidateErrors?: Array<Record<string, unknown>>
       routePeer?: RTCPeerConnection
       receiveRouteSignal?: (message: Record<string, unknown>) => Promise<void>
       terminayRouteSignal?: (message: Record<string, unknown>) => Promise<void>
@@ -177,6 +179,7 @@ async function exerciseRoute(
     const routeWindow = window as RouteWindow
     const peer = new RTCPeerConnection({ iceServers, iceTransportPolicy: policy })
     routeWindow.routePeer = peer
+    routeWindow.routeCandidateErrors = []
     const pendingHostIce: RTCIceCandidateInit[] = []
     const pendingClientIce: RTCIceCandidateInit[] = []
     let remoteDescriptionInstalled = false
@@ -191,6 +194,14 @@ async function exerciseRoute(
       if (answerSent) sendCandidate(candidate)
       else pendingClientIce.push(candidate)
     }
+    peer.addEventListener('icecandidateerror', (event) => {
+      const failure = event as RTCPeerConnectionIceErrorEvent
+      routeWindow.routeCandidateErrors?.push({
+        errorCode: failure.errorCode,
+        errorText: failure.errorText,
+        url: failure.url,
+      })
+    })
     peer.ondatachannel = (event) => {
       if (event.channel.label !== 'terminal') return
       event.channel.onopen = () => {
@@ -302,7 +313,11 @@ async function exerciseRoute(
         await expect.poll(() => terminalPayload, { timeout: 20_000 }).toBe('route-ok')
       } catch (error) {
         const browserState = await page.evaluate(async () => {
-          const peer = (window as Window & { routePeer?: RTCPeerConnection }).routePeer
+          const routeWindow = window as Window & {
+            routeCandidateErrors?: Array<Record<string, unknown>>
+            routePeer?: RTCPeerConnection
+          }
+          const peer = routeWindow.routePeer
           if (!peer) return null
           const stats = [...(await peer.getStats()).values()]
           return {
@@ -312,6 +327,7 @@ async function exerciseRoute(
               protocol: entry.protocol,
               type: entry.type,
             })),
+            candidateErrors: routeWindow.routeCandidateErrors ?? [],
             connectionState: peer.connectionState,
             iceConnectionState: peer.iceConnectionState,
             iceGatheringState: peer.iceGatheringState,
@@ -543,13 +559,15 @@ test('secure Werift selects direct and authenticated TURN-only routes', async ({
   const now = Math.floor(Date.now() / 1_000)
   const turnUrl = `turn:127.0.0.1:${turnPort}?transport=udp`
 
-  const direct = await exerciseRoute(browser, [], 'all', true)
-  expect(direct.hostPair?.localType).toBe('host')
-  expect(['host', 'prflx', 'srflx']).toContain(direct.hostPair?.remoteType)
-  expect(direct.browserPair?.localType).toBe('host')
-  expect(['host', 'prflx', 'srflx']).toContain(direct.browserPair?.remoteType)
+  if (!turnRouteOnly) {
+    const direct = await exerciseRoute(browser, [], 'all', true)
+    expect(direct.hostPair?.localType).toBe('host')
+    expect(['host', 'prflx', 'srflx']).toContain(direct.hostPair?.remoteType)
+    expect(direct.browserPair?.localType).toBe('host')
+    expect(['host', 'prflx', 'srflx']).toContain(direct.browserPair?.remoteType)
+  }
 
-  const relayed = await exerciseWeriftRoute([{
+  const relayed = await exerciseRoute(browser, [{
     urls: turnUrl,
     ...turnCredentials(secret, now + 60, 'valid-route'),
   }], 'relay', true)
@@ -558,7 +576,7 @@ test('secure Werift selects direct and authenticated TURN-only routes', async ({
     protocol: 'udp',
     remoteType: 'relay',
   })
-  expect(relayed.clientPair).toEqual({
+  expect(relayed.browserPair).toEqual({
     localType: 'relay',
     protocol: 'udp',
     remoteType: 'relay',

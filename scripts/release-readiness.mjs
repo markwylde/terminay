@@ -3,12 +3,17 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { checkWorkspace } from './check-workspace-boundaries.mjs'
 
 const execFileAsync = promisify(execFile)
 
 export async function inspectReleaseInputs(root = process.cwd()) {
   const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
   const lockfile = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'))
+  const webrtcRuntimeSelection = JSON.parse(
+    await readFile(join(root, 'build', 'webrtc-runtime', 'selection.json'), 'utf8'),
+  )
+  assertSelectedWebRtcRuntime(webrtcRuntimeSelection)
   if (lockfile.lockfileVersion !== 3) throw new Error('package-lock.json must use lockfileVersion 3')
   if (lockfile.packages?.['']?.name !== packageJson.name) throw new Error('lockfile root package does not match package.json')
   if (lockfile.packages?.['']?.version !== packageJson.version) throw new Error('lockfile root version does not match package.json')
@@ -23,7 +28,49 @@ export async function inspectReleaseInputs(root = process.cwd()) {
     .map((key) => key.split('node_modules/').at(-1))
     .filter((name) => name && /(?:node-pty|node-datachannel|wrtc|werift|electron|esbuild)/iu.test(name))
     .sort()
-  return { packageJson, lockfile, workspaces: [...new Set(workspaces)].sort(), nativePackages }
+  const boundary = checkWorkspace(root)
+  const importBoundaryEvidence = createImportBoundaryEvidence(root, boundary)
+  if (importBoundaryEvidence.violationCount > 0) {
+    throw new Error(`workspace import boundary violations: ${importBoundaryEvidence.violationCount}`)
+  }
+  return {
+    packageJson,
+    lockfile,
+    workspaces: [...new Set(workspaces)].sort(),
+    nativePackages,
+    webrtcRuntimeSelection,
+    importBoundaryEvidence,
+  }
+}
+
+export function createImportBoundaryEvidence(root, boundary) {
+  const relativePath = (path) => path.startsWith(`${resolve(root)}/`) ? path.slice(resolve(root).length + 1).replaceAll('\\', '/') : path
+  const packages = boundary.records
+    .map((record) => ({
+      name: record.name,
+      kind: record.kind,
+      source: relativePath(record.source),
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name))
+  const violations = boundary.violations
+    .map((violation) => ({
+      file: relativePath(violation.file),
+      line: violation.line,
+      column: violation.column,
+      message: violation.message,
+    }))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+  const payload = {
+    schemaVersion: 1,
+    checker: 'scripts/check-workspace-boundaries.mjs',
+    packages,
+    violations,
+  }
+  return {
+    ...payload,
+    violationCount: violations.length,
+    sha256: sha256(JSON.stringify(payload)),
+  }
 }
 
 export function createSbom(inputs) {
@@ -88,6 +135,30 @@ export function createReleaseManifest(inputs, sbom) {
       webrtcRuntime: 'scripts/build-secure-werift-candidate.mjs',
       sourceCorrespondence: 'git commit and locked package manifest are required at release time',
     },
+    webrtcRuntime: inputs.webrtcRuntimeSelection,
+    importBoundaryEvidence: inputs.importBoundaryEvidence,
+  }
+}
+
+function assertSelectedWebRtcRuntime(selection) {
+  if (
+    selection?.schemaVersion !== 1 ||
+    selection.runtime !== 'secure-werift' ||
+    selection.artifactFormat !== 'terminay-secure-werift-v1' ||
+    selection.package?.name !== '@terminay/werift-runtime-proof' ||
+    selection.package?.version !== '0.24.1-candidate.1' ||
+    selection.upstream?.npmPackage !== 'werift@0.24.1' ||
+    selection.upstream?.gitHead !== '243fd7e24c39fbe03fb855928daddd793fc8d4fa' ||
+    selection.patches?.length !== 1 ||
+    selection.patches[0]?.sha256 !==
+      '34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211' ||
+    selection.integrity?.payloadManifest !== 'SHA256SUMS' ||
+    selection.integrity?.rejectSymlinks !== true ||
+    selection.integrity?.rejectExtraFiles !== true ||
+    selection.runtimePolicy?.fallback !== 'disabled' ||
+    selection.runtimePolicy?.legacyNodeDataChannelFallback !== false
+  ) {
+    throw new Error('selected WebRTC runtime manifest is invalid')
   }
 }
 

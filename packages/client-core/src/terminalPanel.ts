@@ -22,6 +22,7 @@ export interface TerminalPanelAttachment {
   readonly initialEvents: readonly TerminalStreamEvent[];
   readonly position: number;
   readonly closed: boolean;
+  readonly onEvent: (listener: (event: TerminalStreamEvent) => void) => () => void;
   readonly onOutput: (listener: (event: TerminalStreamOutputEvent) => void) => () => void;
   readonly onExit: (listener: (event: TerminalStreamExitEvent) => void) => () => void;
   readonly onResync: (listener: (event: TerminalStreamResyncEvent) => void) => () => void;
@@ -63,6 +64,11 @@ class PanelAttachmentView implements TerminalPanelAttachment {
   get initialEvents(): readonly TerminalStreamEvent[] { return this.attachment.initialEvents; }
   get position(): number { return this.attachment.position; }
   get closed(): boolean { return this.attachment.closed; }
+
+  onEvent(listener: (event: TerminalStreamEvent) => void): () => void {
+    if (typeof listener !== "function") throw new TypeError("terminal event listener must be a function");
+    return this.attachment.onEvent(listener);
+  }
 
   onOutput(listener: (event: TerminalStreamOutputEvent) => void): () => void {
     if (typeof listener !== "function") throw new TypeError("terminal output listener must be a function");

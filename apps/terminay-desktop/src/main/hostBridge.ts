@@ -1,4 +1,5 @@
 import type { HostCapabilitySet } from "@terminay/client-core";
+import { normalizeDesktopPresentationMetadata, type DesktopPresentationMetadata } from "../presentation.js";
 
 export const DESKTOP_HOST_BRIDGE_VERSION = 1 as const;
 
@@ -43,6 +44,8 @@ export interface DesktopHostContext {
   readonly connectionId: string;
   readonly profileLabel: string;
   readonly capabilities: HostCapabilitySet;
+  /** Presentation metadata only; server settings and host state stay local. */
+  readonly presentation: DesktopPresentationMetadata;
 }
 
 export interface DesktopHostBridgeHandlers {
@@ -68,7 +71,8 @@ export interface DesktopHostBinding {
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const COMMAND_PATTERN = /^[a-z][a-z0-9._:-]{0,127}$/;
 const FILE_TOKEN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
-const CAPABILITY_NAMES = new Set(["nativeWindows", "secureStorage", "notifications", "filePicker", "clipboard", "serverExposure", "connectionProfiles"]);
+const CAPABILITY_NAMES = new Set(["nativeWindows", "secureStorage", "notifications", "filePicker", "clipboard", "serverExposure", "connectionProfiles", "updater", "osIntegration"]);
+const EXTERNAL_URL_MAX_LENGTH = 16_384;
 
 function assertId(value: unknown, name: string): asserts value is string {
   if (typeof value !== "string" || !ID_PATTERN.test(value)) throw new TypeError(`${name} is invalid`);
@@ -125,13 +129,7 @@ export function validateDesktopHostAction(value: unknown): DesktopHostAction {
       return Object.freeze({ type: "file.choose", ...(action.multiple === undefined ? {} : { multiple: action.multiple }) });
     case "external.open":
       if (!exactKeys(action, ["type", "url"]) || typeof action.url !== "string") throw new TypeError("external.open payload is invalid");
-      try {
-        const url = new URL(action.url);
-        if (url.protocol !== "https:") throw new Error();
-      } catch {
-        throw new TypeError("external.open only accepts HTTPS URLs");
-      }
-      return Object.freeze({ type: "external.open", url: action.url });
+      return Object.freeze({ type: "external.open", url: normalizeExternalUrl(action.url) });
     case "reveal":
       if (!exactKeys(action, ["type", "fileId"]) || typeof action.fileId !== "string" || !FILE_TOKEN_PATTERN.test(action.fileId)) throw new TypeError("reveal payload is invalid");
       return Object.freeze({ type: "reveal", fileId: action.fileId });
@@ -160,24 +158,31 @@ function requiresGesture(_action: DesktopHostAction): boolean {
   return true;
 }
 
-function requiredCapability(action: DesktopHostAction): keyof HostCapabilitySet | undefined {
+function requiredCapabilities(action: DesktopHostAction): readonly (keyof HostCapabilitySet)[] {
   switch (action.type) {
     case "window.open":
     case "window.focus":
     case "window.close":
+      return ["nativeWindows"];
     case "menu.command":
-    case "external.open":
+      // Menu dispatch crosses both the native-window and operating-system
+      // boundary. A server UI must not be able to use a stale presentation
+      // advertisement to regain OS integration after it was withdrawn.
+      return ["nativeWindows", "osIntegration"];
     case "reveal":
-      return "nativeWindows";
+    case "external.open":
+      return ["osIntegration"];
     case "clipboard.read":
     case "clipboard.write":
-      return "clipboard";
+      return ["clipboard"];
     case "file.choose":
-      return "filePicker";
+      return ["filePicker"];
     case "update.status":
-      return undefined;
+      return ["updater"];
     case "notification.show":
-      return "notifications";
+      return ["notifications"];
+    default:
+      return [];
   }
 }
 
@@ -196,7 +201,8 @@ export class DesktopHostBridgeRouter {
       if (!CAPABILITY_NAMES.has(name) || typeof enabled !== "boolean") throw new TypeError("host capability declaration is invalid");
     }
     if (this.bindings.has(binding.sourceId)) throw new Error(`host source already registered: ${binding.sourceId}`);
-    this.bindings.set(binding.sourceId, Object.freeze({ ...binding, context: Object.freeze({ ...binding.context, capabilities: Object.freeze({ ...binding.context.capabilities }) }) }));
+    const presentation = normalizeDesktopPresentationMetadata(binding.context.presentation);
+    this.bindings.set(binding.sourceId, Object.freeze({ ...binding, context: Object.freeze({ ...binding.context, capabilities: Object.freeze({ ...binding.context.capabilities }), presentation }) }));
   }
 
   unregister(sourceId: string): void {
@@ -214,8 +220,9 @@ export class DesktopHostBridgeRouter {
     if (requiresGesture(request.action) && !request.userGesture) throw new Error("host action requires a user gesture");
     const { context, handlers } = binding;
     const action = request.action;
-    const capability = requiredCapability(action);
-    if (capability !== undefined && context.capabilities[capability] !== true) throw new Error(`host capability is unavailable: ${capability}`);
+    for (const capability of requiredCapabilities(action)) {
+      if (context.capabilities[capability] !== true) throw new Error(`host capability is unavailable: ${capability}`);
+    }
     switch (action.type) {
       case "window.open":
         if (action.profileId !== context.connectionId) throw new Error("host cannot open a different connection through a server UI bridge");
@@ -226,7 +233,19 @@ export class DesktopHostBridgeRouter {
       case "window.close":
         if (action.windowId !== undefined && action.windowId !== context.windowId) throw new Error("host cannot close an unrelated native window");
         return handlers.windowClose?.(action, context);
-      case "menu.command": return handlers.menuCommand?.(action, context);
+      case "menu.command": {
+        // Menu command ids are host-owned presentation metadata. A server
+        // bundle may request one of the commands the current native shell
+        // advertised, but it cannot turn this bridge into an arbitrary
+        // command dispatcher merely by supplying a well-formed identifier.
+        if (!context.presentation.osIntegration.nativeMenu) {
+          throw new Error("native menu integration is unavailable");
+        }
+        if (!context.presentation.accelerators.some((entry) => entry.command === action.command)) {
+          throw new Error("menu command is not available in this native host");
+        }
+        return handlers.menuCommand?.(action, context);
+      }
       case "clipboard.read": return handlers.clipboardRead?.(context);
       case "clipboard.write": return handlers.clipboardWrite?.(action, context);
       case "file.choose": return handlers.fileChoose?.(action, context);
@@ -242,6 +261,25 @@ export class DesktopHostBridgeRouter {
     if (binding === undefined) throw new Error("unknown host bridge source");
     return binding;
   }
+}
+
+/** Normalize a renderer-requested URL before it reaches the operating-system
+ * URL handler. HTTPS alone is not sufficient: credentials in an URL are
+ * ambient authority and must never be forwarded to an external application. */
+export function normalizeExternalUrl(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > EXTERNAL_URL_MAX_LENGTH || hasControlCharacter(value)) {
+    throw new TypeError("external.open URL is invalid");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new TypeError("external.open only accepts HTTPS URLs");
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+    throw new TypeError("external.open only accepts credential-free HTTPS URLs");
+  }
+  return parsed.toString();
 }
 
 function hasControlCharacter(value: string): boolean {
