@@ -42,12 +42,12 @@ async function tagExists(tag) {
   }
 }
 
-async function createGitHubRelease(tag) {
+async function createGitHubRelease(tag, targetCommitish) {
   const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN
   const repository = process.env.GITHUB_REPOSITORY
 
   if (!token || !repository) {
-    return
+    return false
   }
 
   const releaseResponse = await fetch(`https://api.github.com/repos/${repository}/releases`, {
@@ -61,6 +61,7 @@ async function createGitHubRelease(tag) {
     },
     body: JSON.stringify({
       tag_name: tag,
+      target_commitish: targetCommitish,
       name: tag,
       body: 'Release in progress.',
       draft: false,
@@ -70,11 +71,19 @@ async function createGitHubRelease(tag) {
   })
 
   if (releaseResponse.ok) {
-    return
+    return true
   }
 
   if (releaseResponse.status === 422) {
-    return
+    const existingRelease = await fetch(`https://api.github.com/repos/${repository}/releases/tags/${tag}`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'User-Agent': 'terminay-release-script',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    })
+    if (existingRelease.ok) return true
   }
 
   const error = await releaseResponse.text()
@@ -100,8 +109,11 @@ if (await tagExists(tag)) {
   process.exit(0)
 }
 
+const targetCommitish = await run('git', ['rev-parse', 'HEAD'])
 await run('git', ['tag', tag])
-await run('git', ['push', 'origin', tag])
-await createGitHubRelease(tag)
+const publishedWithGitHubToken = await createGitHubRelease(tag, targetCommitish)
+if (!publishedWithGitHubToken) {
+  await run('git', ['push', 'origin', tag])
+}
 
 console.log(`Created release ${tag}`)
