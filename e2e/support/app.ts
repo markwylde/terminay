@@ -42,6 +42,9 @@ export async function openChildWindow(
   electronApp: ElectronApplication,
   action: () => Promise<void>,
 ): Promise<Page> {
+  // Consume the initial Desktop window before listening for an auxiliary one.
+  // On slower Linux runners the launch event can otherwise satisfy this wait.
+  await electronApp.firstWindow()
   const nextWindowPromise = electronApp.waitForEvent('window')
   await action()
   const nextWindow = await nextWindowPromise
