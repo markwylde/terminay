@@ -172,6 +172,7 @@ jobs:
               --target "$TARGET" \
               --node-archive "$NODE_ARCHIVE" \
               --runtime-modules node_modules \
+              --ui-bundle dist-web \
               --webrtc-runtime build/webrtc-runtime \
               --output-dir "$output"
           done
