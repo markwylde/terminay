@@ -15,6 +15,7 @@ if (!/^\d+\.\d+\.\d+$/.test(rawVersion)) {
 
 const packageJsonPath = resolve(process.cwd(), 'package.json')
 const packageLockPath = resolve(process.cwd(), 'package-lock.json')
+const serverPackageJsonPath = resolve(process.cwd(), 'apps/terminay-server/package.json')
 
 async function syncJsonVersion(filePath) {
   const raw = await readFile(filePath, 'utf8')
@@ -26,8 +27,10 @@ async function syncJsonVersion(filePath) {
 
   parsed.version = rawVersion
 
-  if (parsed.packages?.['']) {
-    parsed.packages[''].version = rawVersion
+  for (const packagePath of ['', 'apps/terminay-server']) {
+    if (parsed.packages?.[packagePath]) {
+      parsed.packages[packagePath].version = rawVersion
+    }
   }
 
   await writeFile(filePath, `${JSON.stringify(parsed, null, 2)}\n`)
@@ -36,8 +39,9 @@ async function syncJsonVersion(filePath) {
 
 const packageJsonChanged = await syncJsonVersion(packageJsonPath)
 const packageLockChanged = await syncJsonVersion(packageLockPath)
+const serverPackageJsonChanged = await syncJsonVersion(serverPackageJsonPath)
 
-if (!packageJsonChanged && !packageLockChanged) {
+if (!packageJsonChanged && !packageLockChanged && !serverPackageJsonChanged) {
   console.log(`Package metadata already uses version ${rawVersion}`)
   process.exit(0)
 }

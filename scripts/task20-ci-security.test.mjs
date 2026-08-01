@@ -255,8 +255,8 @@ test("standalone server release artifact is built from the immutable tag and ver
     "standalone package job must verify the checked-out immutable source commit");
   assert.match(job, /npm pack --workspace @terminay\/server --json --pack-destination/u,
     "standalone package job must create a real npm pack artifact");
-  assert.match(job, /apps\/terminay-server\/package\.json/u,
-    "standalone package manifest version must be synchronized to the release tag");
+  assert.match(job, /node scripts\/sync-package-version\.mjs "\$VERSION"/u,
+    "standalone package manifest version must use the tested release-tag synchronizer");
   assert.match(job, /node "\$EXTRACTED\/package\/dist\/cli\.js" --version \| grep -Fx "\$VERSION"/u,
     "extracted package CLI version must match the release tag before publication");
   assert.match(job, /release-checksum\.mjs write "\$ARCHIVE" "\$ARCHIVE\.sha256"/u,

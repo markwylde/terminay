@@ -407,6 +407,12 @@ The current evidence boundary is recorded in
     a successful release-runner execution. Evidence:
     `.github/workflows/trigger-release.yml` and
     `scripts/task20-ci-security.test.mjs`.
+  - [x] Synchronize root and standalone-server package versions through one
+    JSON-aware script before release packaging, including their lockfile
+    entries. Inline shell-embedded JSON rewrites are forbidden because escaped
+    newline text can corrupt the package manifest. Evidence:
+    `scripts/sync-package-version.mjs`, `.github/workflows/trigger-release.yml`,
+    and `scripts/release-config.test.mjs`.
   - [x] Require the release job itself to select exactly one newly created
     canonical semantic-version tag, rather than reusing any prior tag that
     happens to point at `HEAD`, and prove that new tag still resolves to the
