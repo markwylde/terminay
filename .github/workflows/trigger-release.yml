@@ -309,12 +309,24 @@ jobs:
       - name: Verify macOS signed and notarized release DMG
         if: matrix.os == 'macos-latest'
         env:
+          APPLE_ID: ${{ vars.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           VERSION="${TAG#v}"
           DMG="release/$VERSION/Terminay-Mac-$VERSION-Installer.dmg"
           test -f "$DMG"
+
+          # electron-builder notarizes the application before it creates the
+          # DMG. Submit the final container separately so the exact published
+          # bytes receive a ticket that can be stapled and checked offline.
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
 
           MOUNT_POINT="$RUNNER_TEMP/terminay-release-dmg"
           mkdir -p "$MOUNT_POINT"

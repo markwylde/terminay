@@ -500,6 +500,14 @@ test("macOS release DMGs are verified for signing, team identity, Gatekeeper, an
     "macOS verification must derive its candidate from the release-created tag");
   assert.match(verificationStep, /DMG="release\/\$VERSION\/Terminay-Mac-\$VERSION-Installer\.dmg"/u,
     "macOS verification must inspect the deterministic selected DMG path");
+  assert.match(verificationStep, /APPLE_ID: \$\{\{ vars\.APPLE_ID \}\}/u,
+    "final-DMG notarization must receive the configured Apple account only in its verification step");
+  assert.match(verificationStep, /APPLE_APP_SPECIFIC_PASSWORD: \$\{\{ secrets\.APPLE_APP_SPECIFIC_PASSWORD \}\}/u,
+    "final-DMG notarization must receive its app-specific password only in its verification step");
+  assert.match(verificationStep, /xcrun notarytool submit "\$DMG"[\s\S]*--wait/u,
+    "the exact final DMG must be submitted to Apple and awaited before publication");
+  assert.match(verificationStep, /xcrun stapler staple "\$DMG"/u,
+    "the accepted final DMG must receive its notarization ticket");
   assert.doesNotMatch(verificationStep, /find release -type f -name '\*\.dmg'/u,
     "macOS verification must not inspect whichever DMG happens to be discovered first");
   assert.match(verificationStep, /hdiutil attach "\$DMG" -nobrowse -readonly/u,
