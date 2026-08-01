@@ -165,12 +165,15 @@ duplicate every new feature and produce incompatible behaviour.
     remote renderer contains neither raw socket sends nor `WebSocket`
     construction. Evidence: `scripts/terminal-authority-boundary.test.mjs`.
 - [ ] Make the production Electron and web hosts render the same extracted
-  workspace component tree. The current Electron host still supplies
-  `src/App.tsx` as `legacyFallback`, while the web host supplies
-  `ServerWorkspaceSurface`; sharing a route marker, content frame, shell
-  model, or renderer-neutral panel contracts is not component-tree reuse.
-  Evidence reset:
-  `specs/decisions/evidence/task16-production-ui-parity-reset.md` and
+  workspace component tree. Electron and authenticated web now both enter the
+  `ConnectedRendererWorkspace -> App` production tree, and the retired
+  `ServerWorkspaceSurface` path is deleted. This parent remains open until the
+  route-marker/`legacyFallback` wrapper is replaced by the extracted shared
+  route tree and strict visual proof closes the parity gate. Evidence:
+  `src/rendererRuntime.tsx`, `src/web/main.tsx`,
+  `src/web/ConnectedWebRendererWorkspace.tsx`,
+  `src/shared/ConnectedRendererWorkspace.tsx`,
+  `scripts/web-shared-workspace.test.mjs`, and
   `scripts/task16-production-ui-parity-gate.test.mjs`.
 - [x] Split `src/App.tsx` into feature-owned components/stores without
   recreating separate desktop/mobile application trees. Project tabs,
@@ -186,7 +189,7 @@ duplicate every new feature and produce incompatible behaviour.
 
 ### Responsive workspace
 
-- [ ] Render projects, logical workspace views, Dockview panels, sidebars,
+- [x] Render projects, logical workspace views, Dockview panels, sidebars,
   terminal/file/folder tabs, agents, Git, settings, recordings, macros, and
   command surfaces from one server model.
   - [x] Hydrate the production shared `App` project collection—including each
@@ -200,28 +203,51 @@ duplicate every new feature and produce incompatible behaviour.
     `src/shared/WorkspaceSnapshotStore.ts`,
     `packages/client-core/src/workspace.ts`, and
     `scripts/workspace-project-collection-authority.test.mjs`.
-  - [ ] Prove the rebuilt browser Explorer can list the selected server project
+  - [x] Prove the rebuilt browser Explorer can list the selected server project
     root, open/edit a file through `FileViewerClient`, and render Git/worktree
     state through `TerminayGitClient`. An empty `rootFolder` must not silently
-    turn Explorer and Git into blank panels.
-  - [ ] Make browser restart recovery persistent and truthful: protocol 502 or
+    turn Explorer and Git into blank panels. Evidence:
+    `scripts/connected-browser-explorer-file-git.test.mjs`.
+  - [x] Make browser restart recovery persistent and truthful: protocol 502 or
     event-stream loss must leave the connected presentation, show an
     unreachable/reconnecting state, retry with bounded backoff until the server
     returns or the user cancels, and then restore the server-owned workspace
-    and terminal state. One retry after 750 ms is insufficient.
-  - [ ] Prevent the Explorer/sidebar from triggering an `activity.snapshot`
+    and terminal state. One retry after 750 ms is insufficient. Evidence:
+    `src/web/main.tsx`, `scripts/web-reconnect-attempt-lifecycle.test.mjs`,
+    `scripts/task16-web-auth-retry-suppression.test.mjs`, and the final
+    `npm run smoke:docker-compose-web-server` run.
+  - [x] Prevent the Explorer/sidebar from triggering an `activity.snapshot`
     render/effect feedback loop. Toggling or resizing the sidebar must keep
     activity refreshes bounded, must not create hundreds of pending protocol
-    requests, and must not crash or exhaust Chrome.
-  - [ ] Restore smooth connected-browser command menu interaction. Scrolling
+    requests, and must not crash or exhaust Chrome. Evidence:
+    `scripts/sidebar-activity-snapshot-loop.test.mjs`,
+    `scripts/production-browser-stability-budget.test.mjs`, and the
+    30-second live sidebar stability run recorded below.
+  - [x] Restore smooth connected-browser command menu interaction. Scrolling
     the Cmd+L menu must stay responsive under the shared App renderer, avoid
     a render/effect feedback loop, and keep paint/event-processing jank within
-    the shared browser stability budget.
+    the shared browser stability budget. Evidence: `src/App.tsx` now uses a
+    single bounded list `scrollTop` adjustment instead of smooth animated
+    `scrollIntoView`, `src/App.css` removes command-surface backdrop blur, and
+    `scripts/web-shared-workspace.test.mjs` guards that regression.
   - [x] Restore Cmd+R / command-menu project-root updates from the active
     terminal working directory in connected browser mode. Selecting
     "Set project root folder to working directory" after `cd web` must persist
     the server-owned project root to that exact active terminal CWD and refresh
     Explorer/Git consumers without stale-root presentation.
+  - [x] Restore Local Electron Git loading after Cmd+L/Cmd+R project-root
+    changes. Project-root updates must rebind the server Git service to the
+    canonical root, and Local Electron must fall back to the Electron
+    `terminayGitWorktreeHost` statuses/worktrees bridge when the server Git
+    projection reports an empty/non-repository state for an inspectable local
+    folder. The controller must avoid clearing Git state during root/project
+    churn and render a stable empty Git projection instead of indefinite
+    `Loading...` when Git is unavailable. Evidence:
+    `apps/terminay-server/src/cli.ts`,
+    `src/workspace/useFileExplorerController.ts`, `electron/preload.ts`,
+    `electron/main.ts`, `electron/fileViewer/gitDiffService.ts`,
+    `scripts/standalone-project-root-git-binding.test.mjs`, and
+    `scripts/file-explorer-git-status-stability.test.mjs`.
   - [x] Simplify and fix the connected-browser file Explorer sidebar resize
     boundary. The sidebar must behave like the Electron app: one resizable left
     panel directly adjacent to Dockview, smooth drag, configured min/max width,
@@ -234,38 +260,62 @@ duplicate every new feature and produce incompatible behaviour.
     `src/shared/WorkspaceSplitLayout.css`,
     `scripts/workspace-split-layout-computed.test.mjs`,
     `scripts/web-shared-workspace.test.mjs`).
-  - [ ] Add a fail-fast browser stability budget before any further live
+  - [x] Add a fail-fast browser stability budget before any further live
     acceptance run. Instrument shared-App/ProjectWorkspace renders, protocol
     request starts/completions, pending requests, console resource errors, and
     long-task/CPU-facing activity; abort the scenario immediately when a
     bounded threshold is exceeded and retain diagnostics instead of allowing
-    Chrome or the host machine to become unresponsive.
-  - [ ] Make saved reconnect credentials survive a normal server-container
+    Chrome or the host machine to become unresponsive. Evidence:
+    `scripts/acceptance/shared-app-production-parity.spec.ts` races the real
+    production-browser parity scenario against a fail-fast browser stability
+    budget for console errors, page/resource failures, protocol request count,
+    pending protocol requests, and long tasks; threshold breaches retain
+    `web-runtime-diagnostics.json`. Guarded by
+    `scripts/production-browser-stability-budget.test.mjs`.
+  - [x] Make saved reconnect credentials survive a normal server-container
     restart. A valid persisted reconnect grant must complete its challenge and
     proof flow after restart; an actually invalid or revoked proof must stop
     retrying, clear stale connected state, and ask for a fresh pairing URL.
-  - [ ] Make connection status atomic and truthful across refresh/restart.
+    Evidence: `src/web/main.tsx`,
+    `scripts/web-reconnect-attempt-lifecycle.test.mjs`,
+    `scripts/task16-web-auth-retry-suppression.test.mjs`, and the final
+    `npm run smoke:docker-compose-web-server` server-restart reconnect path.
+  - [x] Make connection status atomic and truthful across refresh/restart.
     Success, reconnecting, unreachable, invalid-proof, and fresh-pairing
     messages must be mutually exclusive; a profile must never say `connected`
     beside a reconnect error or retain stale `Switched to ...` success text.
-  - [ ] Verify refresh and automatic reconnect repeatedly in the real Chrome
+    Evidence: `src/web/main.tsx`,
+    `scripts/web-reconnect-attempt-lifecycle.test.mjs`, and
+    `scripts/docker-compose-web-server-smoke.mjs` assertion of no fresh-pairing
+    dialog or generic transport-error surface during refresh/restart recovery.
+  - [x] Verify refresh and automatic reconnect repeatedly in the real Chrome
     production page. Refreshing while connected must restore the shared
     workspace without reopening the connection dialog, duplicating clients,
-    flooding requests, or requiring a new pairing URL.
-  - [ ] Accept both supported local browser origins in the production Compose
+    flooding requests, or requiring a new pairing URL. Evidence: final
+    `npm run smoke:docker-compose-web-server` run and
+    `scripts/docker-compose-web-server-smoke.mjs`.
+  - [x] Accept both supported local browser origins in the production Compose
     path. Opening the web host at `http://localhost:8080` or
     `http://127.0.0.1:8080` must use the same bounded protocol authorization
     path and must not produce `/protocol` 403s solely because of the loopback
-    hostname.
-  - [ ] Stop retry and reload storms after permanent protocol authorization
+    hostname. Evidence: `apps/terminay-server/src/cliOptions.ts`,
+    `apps/terminay-server/src/cli.ts`,
+    `apps/terminay-server/test/cli-options.test.mjs`, and
+    `apps/terminay-server/test/local-ui-server.test.mjs`.
+  - [x] Stop retry and reload storms after permanent protocol authorization
     failures. A 400/401/403/404 handshake, reconnect, or protocol failure must
     transition to one stable fresh-pairing/error state, clear stale reconnect
     state when appropriate, and stop repeated `/protocol` requests until the
-    user submits a new pairing URL or selects a valid saved profile.
-  - [ ] Remove production browser console regressions. The built web host must
+    user submits a new pairing URL or selects a valid saved profile. Evidence:
+    `src/web/main.tsx`, `scripts/task16-web-auth-retry-suppression.test.mjs`,
+    and `scripts/web-reconnect-attempt-lifecycle.test.mjs`.
+  - [x] Remove production browser console regressions. The built web host must
     load all referenced module assets and satisfy its CSP in supported
     browsers; refresh must not emit inline-script CSP violations, failed
     module loads, repeated navigations, or generic transport-error banners.
+    Evidence: final `npm run smoke:docker-compose-web-server` run and
+    `scripts/docker-compose-web-server-smoke.mjs` console/resource/CSP
+    stability budget.
   - [x] Expose the browser Explorer file-watch protocol used by the shared
     App. The connected web UI must not show
     `Terminal error: Failed to watch files: ClientError: unknown operation
@@ -279,7 +329,7 @@ duplicate every new feature and produce incompatible behaviour.
     `src/workspace/useFileExplorerController.ts`,
     `scripts/task16-file-explorer-bounded-load.test.mjs`, and
     `apps/terminay-server/test/standalone-http-transport.test.mjs`.
-  - [ ] Restore connected browser terminal typing. The active terminal panel
+  - [x] Restore connected browser terminal typing. The active terminal panel
     must keep keyboard focus, accept normal text and control keys, send each
     input event through the exact attached server-owned session, and render the
     resulting PTY output without requiring a click outside the terminal or a
@@ -291,16 +341,24 @@ duplicate every new feature and produce incompatible behaviour.
     `packages/client-core/test/terminal-client.test.mjs`,
     `packages/client-core/test/http-byte-transport.test.mjs`,
     `scripts/terminal-panel-context.test.mjs`, and
-    `scripts/terminal-panel-input-queue.test.mjs`.
-  - [ ] Stop Explorer folder double-click crashes in connected web mode. Opening
+    `scripts/terminal-panel-input-queue.test.mjs`. Final evidence:
+    `scripts/docker-compose-web-server-smoke.mjs` types into the active
+    connected-browser terminal before and after server restart and observes PTY
+    output.
+  - [x] Stop Explorer folder double-click crashes in connected web mode. Opening
     a folder from the browser Explorer must use connected file clients only and
     must never throw `disconnected file compatibility provider is unavailable`,
     blank the app, or fall back to Desktop-only disconnected file providers.
-  - [ ] Deduplicate loopback saved-server profiles and reconnect credentials.
+    Evidence: `scripts/connected-browser-folder-open.test.mjs`.
+  - [x] Deduplicate loopback saved-server profiles and reconnect credentials.
     `localhost:4317` and `127.0.0.1:4317` must resolve to the same local
     server profile/credential identity, refresh must reconnect automatically,
     and the dialog must not show one loopback profile as `connected` while the
-    other says `unreachable` or asks for a fresh pairing URL.
+    other says `unreachable` or asks for a fresh pairing URL. Evidence:
+    `src/web/main.tsx`, `scripts/web-reconnect-attempt-lifecycle.test.mjs`,
+    `scripts/task16-web-auth-retry-suppression.test.mjs`, and the final
+    compose smoke using `http://127.0.0.1:8080` with
+    `http://localhost:4317`.
   - [x] Mount the intended project workspace into the local server container,
     set the canonical server project root to that mount, and include the Git
     runtime required by the Git/worktree panels. Do not expose an inaccessible
@@ -311,17 +369,25 @@ duplicate every new feature and produce incompatible behaviour.
     `workspace.snapshot`, `files.list`, and `git.status` queries against this
     checkout. Evidence: `scripts/docker-compose-web-server-smoke.test.mjs` and
     `specs/decisions/evidence/docker-compose-web-server-smoke.md`.
-  - [ ] Make Explorer expansion and loading stable. Expanding a directory must
+  - [x] Make Explorer expansion and loading stable. Expanding a directory must
     resolve once, replace its `Loading...` row, render children without
     duplicate requests, and preserve expansion/scroll state through ordinary
-    sidebar renders.
+    sidebar renders. Evidence:
+    `scripts/connected-browser-explorer-expansion.test.mjs`.
   - [x] Stabilize Explorer Git status rendering through ordinary sidebar
     refresh and connected-client churn. Transient Git/server refresh failures
     must preserve the last good projection, identical Git/worktree projections
-    must not trigger repaint state updates, and Git state may only clear on a
-    real project/root switch. Evidence:
-    `src/workspace/useFileExplorerController.ts` and
-    `scripts/file-explorer-git-status-stability.test.mjs`.
+    must not trigger repaint state updates, Git state may only clear on a real
+    project/root switch, and idle connected workspaces must use
+    `workspace.changed` subscription/resync rather than sidebar/full-snapshot
+    polling. Evidence: `src/workspace/useFileExplorerController.ts`,
+    `src/shared/WorkspaceSnapshotStore.ts`,
+    `src/shared/rendererServerClient.ts`,
+    `scripts/file-explorer-git-status-stability.test.mjs`,
+    `scripts/workspace-change-subscription.test.mjs`, and a live Playwright
+    run against web `8081` + server `4319` that observed the Explorer/Git
+    sidebar for 30 seconds with zero DOM/class/text/color changes, zero console
+    errors, and zero protocol requests during the idle window.
   - [x] Fix wide sidebar resizing in the actual browser App. Dragging the
     workspace separator must continuously resize the sidebar and Dockview
     content, honor the configured min/max width, persist the committed width,
@@ -340,19 +406,29 @@ duplicate every new feature and produce incompatible behaviour.
     resized widths, including 352px, 280px, and 640px, and verifies the content
     left edge equals the navigation right edge while the 6px resize hit target
     overlays that boundary.
-  - [ ] Fix vertical sidebar pane sizing. Explorer, Agents, and Git panes must
+  - [x] Fix vertical sidebar pane sizing. Explorer, Agents, and Git panes must
     share the available height without large unexplained blank regions; their
     horizontal splitters must resize and persist pane heights without clipping
-    the Git/worktree content below the viewport.
-  - [ ] Make new terminal tabs work in the connected browser App. The `+`
+    the Git/worktree content below the viewport. Evidence:
+    `src/components/sidebar/SidebarSplit.tsx`,
+    `src/components/sidebar/SidebarPanelStack.tsx`,
+    `src/components/sidebar/sidebar.css`, and
+    `scripts/web-shared-workspace.test.mjs`.
+  - [x] Make new terminal tabs work in the connected browser App. The `+`
     control must create exactly one server-owned session in the active
     canonical project, attach it once, select its Dockview tab, accept input,
     and survive refresh/reconnect without a duplicate or empty local tab.
-  - [ ] Make new project tabs work in the connected browser App. The project
+    Evidence: `src/App.tsx`,
+    `src/workspace/useTerminalAdoptionController.ts`, and final
+    `npm run smoke:docker-compose-web-server`.
+  - [x] Make new project tabs work in the connected browser App. The project
     `+` control must create exactly one project through `WorkspaceClient`,
     reconcile its canonical id/root/name into the shared tab strip, select it,
     create/open its initial terminal as designed, and survive refresh without
-    reverting to a synthetic local project.
+    reverting to a synthetic local project. Evidence:
+    `packages/server-core/src/workspaceProtocol.ts`,
+    `src/workspace/useTerminalAdoptionController.ts`, and final
+    `npm run smoke:docker-compose-web-server`.
   - [x] Make project tab close server-owned and cascading. Closing a project
     must close its panels/tabs, terminate its project-owned terminal sessions,
     remove terminal session records from the workspace snapshot, delete the
@@ -363,25 +439,59 @@ duplicate every new feature and produce incompatible behaviour.
     `packages/server-core/src/composition.ts`,
     `packages/server-core/test/workspace.test.mjs`, and
     `packages/server-core/test/server-composition.test.mjs`.
-  - [ ] Make terminal input, resize, and output remain responsive while the
+  - [x] Make panel/tab close server-owned for connected workspaces. Closing
+    terminal, file, or folder Dockview tabs must call the canonical
+    `WorkspaceClient.closePanel` path; terminal panel close must remove the
+    associated terminal session record, terminate the live PTY, select a
+    remaining panel, and survive refresh/reconnect without resurrecting the
+    closed tab. Server-owned terminal Dockview panels must keep the canonical
+    server panel id instead of synthetic local ids so close commands address
+    the real server panel. Evidence:
+    `src/workspace/useTerminalAdoptionController.ts`,
+    `src/workspace/useTerminalCreationController.ts`,
+    `src/workspace/useDockviewPanelLifecycle.ts`,
+    `src/shared/WorkspaceSnapshotStore.ts`, `src/App.tsx`,
+    `packages/server-core/src/workspace.ts`,
+    `packages/server-core/src/workspaceProtocol.ts`,
+    `packages/server-core/src/composition.ts`,
+    `packages/server-core/test/workspace.test.mjs`,
+    `packages/server-core/test/server-composition.test.mjs`, and
+    `scripts/terminal-panel-migration.test.mjs`,
+    `scripts/connected-browser-create-lifecycle.test.mjs`.
+  - [x] Make terminal input, resize, and output remain responsive while the
     sidebar is opened, resized, expanded, or refreshed. No sidebar interaction
     may leave terminal protocol requests pending or surface generic
-    `HTTP transport request failed` banners.
-  - [ ] Fix CMD+L command-surface scroll jank. Opening and scrolling the
+    `HTTP transport request failed` banners. Evidence:
+    `scripts/docker-compose-web-server-smoke.mjs` opens, expands, resizes, and
+    refreshes Explorer, then creates and drives a terminal under the bounded
+    protocol/console stability budget.
+  - [x] Fix CMD+L command-surface scroll jank. Opening and scrolling the
     command-surface menu in the production browser App must not cause repeated
     refresh/paint churn, long main-thread event-processing delays, or visible
     scroll lag; add a focused regression or bounded profiler-style smoke check
-    before marking this complete.
-  - [ ] Restore CMD+R/set-root-to-CWD in connected browser mode. Running the
+    before marking this complete. Evidence: `src/App.tsx`, `src/App.css`, and
+    `scripts/web-shared-workspace.test.mjs`.
+  - [x] Restore CMD+R/set-root-to-CWD in connected browser mode. Running the
     command-surface action after `cd` in the active terminal must query the
     exact server-owned terminal cwd, update the canonical project root, refresh
     Explorer/Git/workspace projections to that root, and preserve terminal
-    attachment/input without stale root labels.
-  - [ ] Add a real production-browser regression covering connect, refresh,
+    attachment/input without stale root labels. Evidence:
+    `apps/terminay-server/src/processCwd.ts` and
+    `apps/terminay-server/src/cli.ts` wire standalone node-pty cwd observation
+    into `terminal.cwd`; `scripts/standalone-project-root-git-binding.test.mjs`
+    guards the resolver and root/Git rebinding. A live built-web run connected
+    to a fresh standalone server, ran `cd /tmp`, selected
+    "Set project root folder to working directory", observed Explorer listing
+    `/tmp` with `GIT 0 Not a git repository`, then ran `cd
+    /Users/mark/Documents/Projects/terminay/terminay-server-client-architecture`
+    and observed Explorer repo files plus Git worktree/status entries.
+  - [x] Add a real production-browser regression covering connect, refresh,
     Explorer toggle/resize/directory expansion, file open, Git ready state,
     terminal command/output, server restart, automatic reconnect, and a second
     refresh. Assert bounded request counts, no browser console/resource errors,
     no contradictory status text, and no generic transport-error banner.
+    Evidence: `scripts/docker-compose-web-server-smoke.mjs` and final
+    `npm run smoke:docker-compose-web-server`.
   - [x] Define one shared, renderer-neutral Dockview panel/sidebar navigator
     for wide and narrow hosts. It consumes bounded server-owned panel entries,
     preserves accessible listbox selection, rejects stale or disabled selected
@@ -599,7 +709,10 @@ duplicate every new feature and produce incompatible behaviour.
     `e2e/shared-auxiliary-routes.spec.ts`.
 - [ ] Render the complete shared route components in the actual Electron and
   web production trees, replacing host-specific feature bodies rather than
-  testing renderer-neutral models or fixture-only route surfaces.
+  testing renderer-neutral models or fixture-only route surfaces. The old web
+  `ServerWorkspaceSurface` duplicate is gone; this remains open for replacing
+  the remaining route-marker/`legacyFallback` wrapper and proving the actual
+  production bodies visually.
 	- [x] Wire the production browser Recordings route to canonical
 	  `RecordingsClient` list/delete operations through the authenticated
 	  `TerminayClient`, with loading, empty, error, selection, refresh, and

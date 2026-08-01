@@ -224,6 +224,9 @@ export class DictationCaptureClient {
 		}
 		this.mimeTypeValue = mimeType;
 		this.statusValue = 'ready';
+		// The returned request owns its copied audio buffer. Do not retain the
+		// capture-side byte accounting after handing that buffer to transport.
+		this.bytesValue = 0;
 		const request = Object.freeze({
 			requestId: this.requestIdValue as string,
 			target: copyTarget(this.targetValue as DictationTargetIdentity),

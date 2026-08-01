@@ -561,7 +561,12 @@ function runCli(options: {
 		try {
 			child = spawn(options.command, options.args, {
 				cwd: options.cwd,
-				env: options.environment,
+				// ProviderEnvironment is deliberately stricter than Node's
+				// ProcessEnv (all retained values are bounded strings). The
+				// application ambient declaration adds required Vite keys to
+				// ProcessEnv, but headless provider subprocesses neither need
+				// nor synthesize those renderer-only variables.
+				env: options.environment as unknown as NodeJS.ProcessEnv,
 				stdio: ['pipe', 'pipe', 'pipe'],
 				windowsHide: true,
 			}) as ChildProcessWithoutNullStreams;

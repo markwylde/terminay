@@ -6,7 +6,8 @@
  */
 export const desktopApplicationBoundary = "@terminay/desktop";
 
+export * from "./presentation.js";
+export * from "./main/shellHeader.js";
 export * from "./main/index.js";
 export * from "./preload/index.js";
 export * from "./renderer/index.js";
-export * from "./compatibility/index.js";

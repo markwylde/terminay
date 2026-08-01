@@ -190,10 +190,11 @@ export function buildManagedHookScript(): string {
   return [
     "#!/bin/sh",
     "payload=$(cat)",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: POSIX shell parameter expansion, not a JavaScript template placeholder.
     "provider=${1:-}",
     "if [ -z \"$payload\" ] || [ -z \"$provider\" ]; then exit 0; fi",
     "if [ -z \"$TERMINAY_SESSION_ID\" ] || [ -z \"$TERMINAY_AGENT_HOOK_ENDPOINT\" ] || [ -z \"$TERMINAY_AGENT_HOOK_TOKEN\" ]; then exit 0; fi",
-    'case "$TERMINAY_AGENT_HOOK_ENDPOINT" in http://127.0.0.1:*|http://localhost:*|http://\[::1\]:*) ;; *) exit 0 ;; esac',
+    String.raw`case "$TERMINAY_AGENT_HOOK_ENDPOINT" in http://127.0.0.1:*|http://localhost:*|http://\[::1\]:*) ;; *) exit 0 ;; esac`,
     "printf '%s' \"$payload\" | curl -sS -X POST \"$TERMINAY_AGENT_HOOK_ENDPOINT\" --connect-timeout 0.5 --max-time 1.5 --noproxy '*' -H 'Content-Type: application/json' -H \"X-Terminay-Agent-Hook-Token: $TERMINAY_AGENT_HOOK_TOKEN\" -H \"X-Terminay-Session-Id: $TERMINAY_SESSION_ID\" -H \"X-Terminay-Agent-Provider: $provider\" --data-binary @- >/dev/null 2>&1 || true",
     "exit 0",
     "",
@@ -248,7 +249,7 @@ export function reconcileManagedDefinition(definitions: unknown, command: string
     for (const hook of definition.hooks) {
       if (!isPlainObject(hook) || !isManagedCommand(hook.command)) {
         hooks.push(hook as Record<string, unknown>);
-      } else if (!retained) {
+      } else if (!retained && definitionMatcherMatches(definition, matcher)) {
         hooks.push({ type: "command", command, timeout: MANAGED_HOOK_TIMEOUT_SECONDS });
         retained = true;
       }
@@ -296,12 +297,20 @@ export function getManagedEventPresence(config: HooksConfig, events: readonly Ma
   const hooks = getHookRecord(config);
   const installedEvents: string[] = [];
   const missingEvents: string[] = [];
-  for (const { eventName } of events) {
+  for (const { eventName, matcher } of events) {
     const definitions = Array.isArray(hooks[eventName]) ? hooks[eventName] : [];
-    const installed = definitions.some((definition) => isPlainObject(definition) && Array.isArray(definition.hooks) && definition.hooks.some((hook) => isPlainObject(hook) && isManagedCommand(hook.command)));
+    const installed = definitions.some((definition) => isPlainObject(definition)
+      && definitionMatcherMatches(definition, matcher)
+      && Array.isArray(definition.hooks)
+      && definition.hooks.some((hook) => isPlainObject(hook) && isManagedCommand(hook.command)));
     (installed ? installedEvents : missingEvents).push(eventName);
   }
   return { installedEvents, missingEvents };
+}
+
+/** A managed command is valid only in the provider event scope it was installed for. */
+function definitionMatcherMatches(definition: Record<string, unknown>, matcher: string | undefined): boolean {
+  return matcher === undefined ? definition.matcher === undefined : definition.matcher === matcher;
 }
 
 export function quotePosix(value: string): string {

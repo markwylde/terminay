@@ -1,4 +1,4 @@
-import { assertJsonValue, type JsonValue } from "@terminay/protocol";
+import { type JsonValue } from "@terminay/protocol";
 import type { CommandOptions, QueryOptions } from "./types.js";
 import type { QueryCommandTransport } from "./queryCommand.js";
 
@@ -54,14 +54,6 @@ export interface RecordingListItem {
   readonly format: "asciicast";
   readonly formatVersion: 3;
   readonly errorMessage: string | null;
-  /** Optional display metadata retained by compatibility adapters. These
-   * fields are server-owned snapshots, never filesystem paths. */
-  readonly cols?: number;
-  readonly rows?: number;
-  readonly projectTitle?: string | null;
-  readonly projectColor?: string | null;
-  readonly projectEmoji?: string | null;
-  readonly theme?: JsonValue | null;
 }
 
 export interface RecordingListResult {
@@ -96,6 +88,8 @@ export interface RecordingStartInput {
   readonly projectName?: string;
   readonly title?: string;
   readonly note?: string;
+  readonly color?: string;
+  readonly emoji?: string;
   readonly captureInput?: boolean;
   readonly sensitiveInputPolicy?: SensitiveInputPolicy;
 }
@@ -132,7 +126,21 @@ export class RecordingsClient {
 
   async start(sessionId: string, input: RecordingStartInput = {}, commandOptions: CommandOptions = {}): Promise<RecordingState> {
     const session = boundedText(sessionId, "sessionId");
-    const payload = { sessionId: session, ...(input.projectId === undefined ? {} : { projectId: boundedId(input.projectId, "projectId") }), ...(input.projectName === undefined ? {} : { projectName: boundedDisplay(input.projectName, "projectName") }), ...(input.title === undefined ? {} : { title: boundedDisplay(input.title, "title") }), ...(input.note === undefined ? {} : { note: boundedDisplay(input.note, "note") }), ...(input.captureInput === undefined ? {} : { captureInput: typeof input.captureInput === "boolean" ? input.captureInput : invalid("captureInput") }), ...(input.sensitiveInputPolicy === undefined ? {} : { sensitiveInputPolicy: boundedPolicy(input.sensitiveInputPolicy) }) };
+    const metadata = {
+      ...(input.projectId === undefined ? {} : { projectId: boundedId(input.projectId, "projectId") }),
+      ...(input.projectName === undefined ? {} : { projectName: boundedDisplay(input.projectName, "projectName") }),
+      ...(input.title === undefined ? {} : { title: boundedDisplay(input.title, "title") }),
+      ...(input.note === undefined ? {} : { note: boundedDisplay(input.note, "note") }),
+      ...(input.color === undefined ? {} : { color: boundedDisplay(input.color, "color") }),
+      ...(input.emoji === undefined ? {} : { emoji: boundedDisplay(input.emoji, "emoji") }),
+      ...(input.captureInput === undefined ? {} : { captureInput: typeof input.captureInput === "boolean" ? input.captureInput : invalid("captureInput") }),
+      ...(input.sensitiveInputPolicy === undefined ? {} : { sensitiveInputPolicy: boundedPolicy(input.sensitiveInputPolicy) }),
+    };
+    const payload = {
+      sessionId: session,
+      ...(metadata.projectId === undefined ? {} : { projectId: metadata.projectId }),
+      ...(Object.keys(metadata).length === 0 ? {} : { metadata }),
+    };
     this.invalidate();
     const result = await this.transport.command<JsonValue>(RECORDINGS_OPERATIONS.start, payload, commandOptions);
     return validateState(result);
@@ -185,25 +193,12 @@ function validateItem(value: JsonValue): RecordingListItem {
   const inputPolicy = value.inputPolicy === "none" || value.inputPolicy === "record-with-sensitive-filter" ? value.inputPolicy : invalid("inputPolicy");
   const sensitiveInputPolicy = boundedPolicy(value.sensitiveInputPolicy);
   if (!isNullableString(value.serverId) || !isNullableString(value.projectId) || !isNullableString(value.projectName) || !isNullableString(value.note) || !isNullableString(value.color) || !isNullableString(value.emoji) || !isNullableString(value.endedAt) || !isNullableString(value.cwdLabel) || !isNullableString(value.shellName) || !isNullableString(value.errorMessage) || typeof value.title !== "string" || value.title.length > 512 || typeof value.startedAt !== "string" || typeof value.capturedInput !== "boolean" || typeof value.castAvailable !== "boolean" || !safeUInt(value.eventCount) || !safeUInt(value.bytesWritten) || !safeUInt(value.castSize) || !isNullableNumber(value.durationMs) || !isNullableNumber(value.exitCode) || !isNullableNumber(value.signal) || value.format !== "asciicast" || value.formatVersion !== 3) throw new TypeError("recording list item is invalid");
-  const presentation = validatePresentationMetadata(value);
-  return Object.freeze({ recordingId, sessionId, serverId: value.serverId, projectId: value.projectId, projectName: value.projectName, title: value.title, note: value.note, color: value.color, emoji: value.emoji, startedAt: value.startedAt, endedAt: value.endedAt, durationMs: value.durationMs, exitCode: value.exitCode, signal: value.signal, recordingState, capturedInput: value.capturedInput, inputPolicy, sensitiveInputPolicy, eventCount: value.eventCount, bytesWritten: value.bytesWritten, castSize: value.castSize, castAvailable: value.castAvailable, cwdLabel: value.cwdLabel, shellName: value.shellName, format: "asciicast", formatVersion: 3, errorMessage: value.errorMessage, ...presentation });
-}
-
-function validatePresentationMetadata(value: Record<string, JsonValue>): Pick<RecordingListItem, "cols" | "rows" | "projectTitle" | "projectColor" | "projectEmoji" | "theme"> {
-  if (value.cols !== undefined && (!safeUInt(value.cols) || value.cols < 1 || value.cols > 1000)) throw new TypeError("recording columns are invalid");
-  if (value.rows !== undefined && (!safeUInt(value.rows) || value.rows < 1 || value.rows > 500)) throw new TypeError("recording rows are invalid");
-  if (value.projectTitle !== undefined && !isNullableString(value.projectTitle)) throw new TypeError("recording project title is invalid");
-  if (value.projectColor !== undefined && !isNullableString(value.projectColor)) throw new TypeError("recording project color is invalid");
-  if (value.projectEmoji !== undefined && !isNullableString(value.projectEmoji)) throw new TypeError("recording project emoji is invalid");
-  if (value.theme !== undefined && value.theme !== null) assertJsonValue(value.theme);
-  return {
-    ...(value.cols === undefined ? {} : { cols: value.cols }),
-    ...(value.rows === undefined ? {} : { rows: value.rows }),
-    ...(value.projectTitle === undefined ? {} : { projectTitle: value.projectTitle }),
-    ...(value.projectColor === undefined ? {} : { projectColor: value.projectColor }),
-    ...(value.projectEmoji === undefined ? {} : { projectEmoji: value.projectEmoji }),
-    ...(value.theme === undefined ? {} : { theme: value.theme }),
-  };
+  // Older Desktop recording adapters included layout and theme fragments in
+  // this response. They are not part of the canonical recording contract:
+  // host presentation belongs to the shared UI, not an individual recording.
+  // Ignore unknown legacy fields so an old server remains readable without
+  // letting that compatibility shape re-enter renderer state.
+  return Object.freeze({ recordingId, sessionId, serverId: value.serverId, projectId: value.projectId, projectName: value.projectName, title: value.title, note: value.note, color: value.color, emoji: value.emoji, startedAt: value.startedAt, endedAt: value.endedAt, durationMs: value.durationMs, exitCode: value.exitCode, signal: value.signal, recordingState, capturedInput: value.capturedInput, inputPolicy, sensitiveInputPolicy, eventCount: value.eventCount, bytesWritten: value.bytesWritten, castSize: value.castSize, castAvailable: value.castAvailable, cwdLabel: value.cwdLabel, shellName: value.shellName, format: "asciicast", formatVersion: 3, errorMessage: value.errorMessage });
 }
 
 function validateChunk(value: JsonValue): RecordingChunk {

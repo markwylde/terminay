@@ -1,6 +1,6 @@
 # Secure Werift production-runtime evidence
 
-Date: 2026-07-27
+Date: 2026-07-28
 
 This record evaluates the smallest supportable alternative to the blocked
 `node-datachannel@0.32.3` prebuilds. It proves a candidate path; it does not
@@ -22,8 +22,10 @@ shape:
 
 An integrity-pinned candidate repacks that ESM output with only those imports.
 Its isolated production dependency graph reports zero critical or high npm
-advisories. The same artifact completes Terminay's production hosted-service
-flow.
+advisories. The same artifact completes the isolated legacy
+bootstrap/terminal compatibility flow when the sibling integration proof is
+explicitly enabled; it does not prove the sibling peer owner's canonical
+four-channel bridge.
 
 This result removes the known high advisory from the executable graph. It is
 not a claim that `npm audit` proves the TypeScript WebRTC implementation free
@@ -35,6 +37,16 @@ Run:
 
 ```sh
 npm run test:spike-production-headless-webrtc-secure-werift
+```
+
+The default command always builds, compares, audits, imports, and
+fail-closed-verifies the candidate. It reports the sibling-dependent browser
+proof as an explicit skip. Run that integration only after the sibling peer
+owner installs the ticket-bound canonical bridge:
+
+```sh
+TERMINAY_RUN_SIBLING_WEBRTC_BRIDGE_PROOF=1 \
+  npm run test:spike-production-headless-webrtc-secure-werift
 ```
 
 [`scripts/build-secure-werift-candidate.mjs`](../../../scripts/build-secure-werift-candidate.mjs)
@@ -60,7 +72,10 @@ perform the following work outside the repository dependency graph:
 10. imports the same artifact from a real Electron main process and from its
     `ELECTRON_RUN_AS_NODE` server child;
 11. runs the existing production remote service and coordinator against the
-   real hosted signaling service and browser client; and
+   real hosted signaling service and Chromium's native `RTCPeerConnection`,
+   including explicit six-digit browser enrollment, terminal data-channel
+   input/output, PIN-free saved-grant reconnect, and denial after device
+   revocation; and
 12. removes both complete temporary projects after natural process exit.
 
 Exact upstream identity:
@@ -117,13 +132,15 @@ The candidate therefore does not invent or distribute a misleading map.
 `SOURCE_MAP_POLICY.md` records that choice; the pinned npm tarball and git
 commit remain the source correspondence.
 
-## Production-flow result
+## Isolated compatibility-flow result
 
 The runtime-neutral
 [`e2e/webrtc-headless-node-host.spec.ts`](../../../e2e/webrtc-headless-node-host.spec.ts)
 uses the same production `RemoteAccessService`, `runHost` coordinator, hosted
 signaling service, and browser client for both native and Werift candidates.
-The secure Werift artifact proves:
+The secure Werift artifact proves the legacy bootstrap/terminal compatibility
+flow, not installation of the sibling peer owner's ticket-bound canonical
+four-channel application bridge:
 
 - displayless first pairing through the hosted service;
 - origin-bound device-private-key storage;
@@ -211,12 +228,42 @@ The candidate is not a selected release artifact. Selection remains open until:
   selected candidate-pair evidence;
 - native Linux x64 and arm64 production runs pass on the supported Node floor;
 - real multi-peer pressure and memory/CPU ceilings pass;
-- unused media code is either intentionally retained and reviewed or removed
-  by a deterministic data-channel-only build;
+- `MEDIA_SURFACE_POLICY.md` governs intentional retention of the exact upstream
+  closure after an `RTCPeerConnection`-only tree-shaken build twice failed the
+  full Chromium connection proof; the privileged runtime loader instead
+  projects a frozen capability whose only key is `RTCPeerConnection`;
 - the candidate builder and generated metadata are integrated into the actual
-  Server/Desktop packaging and provenance-attestation pipeline; and
-- a clean, network-independent rebuild consumes mirrored copies of every
-  integrity-pinned source input.
+  Server/Desktop packaging and provenance-attestation pipeline.
+
+The clean rebuild contract is now implemented by
+`scripts/prove-secure-werift-offline-rebuild.mjs`. A distinct acquisition step
+populates an npm content-addressed cache plus the pinned upstream license and
+writes the exact candidate, package-integrity, tarball, git-head, and license
+pins into `mirror.json`. The proof step starts two clean build roots, enables
+npm offline mode, reads the license only from the verified mirror, and requires
+identical payload hashes and npm archives. CI keeps acquisition and proof as
+separate named steps. This is a checked-in, locally executed contract; it is
+not a claim that the workflow has run on GitHub-hosted infrastructure.
+
+## Deterministic release metadata and signing hook
+
+The candidate builder emits a fixed CycloneDX 1.6 SBOM, complete retained
+license texts and notices, a pinned runtime lock, source correspondence bound
+to the npm integrity/tarball digest/git head, deterministic in-toto/SLSA
+provenance, and an exact `SHA256SUMS` manifest covering every payload file.
+Verification rejects extra files, symlinks, malformed or incomplete checksum
+rows, altered provenance subjects, and material drift.
+
+`signSecureWeriftArchive` now provides a detached Ed25519 release hook over the
+exact deterministic npm archive without putting a signing key or signature
+inside the reproducible payload. Its verifier binds the artifact basename and
+SHA-256 before checking the signature, and fails closed for payload mutation or
+an unrelated key. Coverage:
+`scripts/secure-werift-release-contract.test.mjs`.
+
+This is a locally testable release contract, not evidence that a production
+signing key, transparency service, hosted offline rebuild, or published
+artifact exists.
 
 Werift has recent releases and repository activity, but no detected
 `SECURITY.md` or published security support window. Terminay therefore owns

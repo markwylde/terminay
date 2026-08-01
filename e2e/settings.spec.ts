@@ -25,8 +25,8 @@ async function getActiveTerminalSessionId(page: Page): Promise<string> {
 
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
   const sessionId = await getActiveTerminalSessionId(page)
-  await page.evaluate(({ nextData, nextSessionId }) => {
-    window.terminay.writeTerminal(nextSessionId, nextData)
+  await page.evaluate(async ({ nextData, nextSessionId }) => {
+    await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
   }, { nextData: data, nextSessionId: sessionId })
 }
 
@@ -84,7 +84,7 @@ test('shows recording settings and saves recording defaults', async ({ appHarnes
   await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
 
   const savedRecordingSettings = await mainWindow.evaluate(async () => {
-    return (await window.terminay.getTerminalSettings()).recording
+    return (await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()).recording
   })
 
   expect(savedRecordingSettings).toMatchObject({
@@ -178,7 +178,7 @@ test('saves custom file extension default tabs in settings', async ({ appHarness
   await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
 
   const savedFileViewerSettings = await mainWindow.evaluate(async () => {
-    return (await window.terminay.getTerminalSettings()).fileViewer
+    return (await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()).fileViewer
   })
 
   expect(savedFileViewerSettings.customFileExtensions).toContainEqual({

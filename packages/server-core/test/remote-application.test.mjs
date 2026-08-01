@@ -160,6 +160,48 @@ test("application handshake bounds protocol, nonce, and device proof before admi
   assert.deepEqual(fixture.manager.snapshot().peers, []);
 });
 
+test("application handshake rejects cross-server and cross-origin proofs before verifier work", async () => {
+  const fixture = createFixture();
+
+  await assert.rejects(
+    fixture.gateway.authenticate(fixture.request("ticket-other-server", {
+      proof: {
+        ...fixture.request().proof,
+        ticketId: "ticket-other-server",
+        serverId: "server-b",
+      },
+    })),
+    /remote authentication failed/,
+  );
+  await assert.rejects(
+    fixture.gateway.authenticate(fixture.request("ticket-other-origin", {
+      proof: {
+        ...fixture.request().proof,
+        ticketId: "ticket-other-origin",
+        sessionOrigin: "https://other.example.test",
+      },
+    })),
+    /remote authentication failed/,
+  );
+
+  assert.deepEqual(fixture.verifierCalls, []);
+  assert.deepEqual(fixture.manager.snapshot().peers, []);
+});
+
+test("application handshake rejects a consumed ticket before verifier work", async () => {
+  const fixture = createFixture();
+  await fixture.gateway.authenticate(fixture.request("ticket-replayed"));
+  const verifierCallsAfterAdmission = [...fixture.verifierCalls];
+
+  await assert.rejects(
+    fixture.gateway.authenticate(fixture.request("ticket-replayed")),
+    /remote authentication failed/,
+  );
+
+  assert.deepEqual(fixture.verifierCalls, verifierCallsAfterAdmission);
+  assert.equal(fixture.manager.snapshot().peers.length, 1);
+});
+
 test("resume returns a bounded canonical snapshot when the workspace delta is no longer retained", async () => {
   const fixture = createFixture({ maxHistory: 1 });
   const connection = await fixture.gateway.authenticate(fixture.request());

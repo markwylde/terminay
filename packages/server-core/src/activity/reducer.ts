@@ -15,6 +15,7 @@ import type {
 const DEFAULT_MAX_EVENTS = 1024;
 const DEFAULT_RAW_ACTIVITY_MS = 1000;
 const DEFAULT_PROGRESS_STALE_MS = 15_000;
+const INPUT_QUIET_COMPLETION_MS = 2_000;
 
 interface MutableSession {
   readonly sessionId: string;
@@ -38,6 +39,7 @@ interface MutableSession {
   explicitSeen: boolean;
   rawActivityAt?: number;
   lastUserInputAt?: number;
+  inputQuietDeadline?: number;
   providerSequence?: number;
 }
 
@@ -132,14 +134,22 @@ export class TerminalActivityReducer {
       case "progress":
         session.authority = "structured";
         session.source = "structured:progress";
+        // State 0 is itself an explicit protocol completion marker. Latch the
+        // session even when it is the first observed marker so raw bytes from
+        // the same PTY chunk cannot immediately replace canonical idle state.
+        session.explicitSeen = true;
         if (signal.state === 0) {
           const hadProgress = session.progressBusy;
           session.progressBusy = false;
           session.progressDeadline = undefined;
-          if (hadProgress && !recentInput(session, at)) session.acknowledged = false;
+          if (
+            !recentInput(session, at) &&
+            (hadProgress || session.lastUserInputAt !== undefined)
+          ) {
+            session.acknowledged = false;
+          }
         } else {
           session.progressBusy = true;
-          session.explicitSeen = true;
           session.progressDeadline = at + this.progressStaleMs;
           if (!recentInput(session, at)) session.acknowledged = false;
         }
@@ -156,7 +166,12 @@ export class TerminalActivityReducer {
           // not describe a command that actually ran.
           if (session.commandExecuting) {
             session.exitCode = signal.exitCode;
-            if (!recentInput(session, at)) session.acknowledged = false;
+          }
+          // Some shell integrations omit C but still emit D when the prompt
+          // returns. Preserve the direct B -> D suppression above while
+          // treating a delayed marker as genuine finished activity.
+          if (session.commandExecuting || !recentInput(session, at)) {
+            session.acknowledged = false;
           }
           session.commandExecuting = false;
         } else {
@@ -166,6 +181,13 @@ export class TerminalActivityReducer {
       case "foreground":
         session.authority = "structured";
         session.source = "structured:foreground";
+        if (
+          session.foregroundBusy &&
+          !signal.busy &&
+          !recentInput(session, at)
+        ) {
+          session.acknowledged = false;
+        }
         session.foregroundBusy = signal.busy;
         session.foregroundProcess = signal.processName;
         break;
@@ -179,6 +201,7 @@ export class TerminalActivityReducer {
       case "userInput":
         session.source = "structured:user-input";
         session.lastUserInputAt = at;
+        session.inputQuietDeadline = at + INPUT_QUIET_COMPLETION_MS;
         session.attention = false;
         session.acknowledged = true;
         break;
@@ -264,11 +287,29 @@ export class TerminalActivityReducer {
     const at = normalizeTime(options.now ?? this.now());
     if (!matchesProject(session, options.projectId) || isStale(session, at)) return undefined;
     this.expire(session, at);
+    // An acknowledgement is a state transition, not a heartbeat. Multiple
+    // authenticated clients may acknowledge the same attention state at nearly
+    // the same time; after the first one wins, later acknowledgements must not
+    // advance lastUserInputAt or publish a second canonical revision.
+    if (
+      session.acknowledged &&
+      !session.attention &&
+      session.rawActivityAt === undefined
+    ) return undefined;
     const before = snapshotOf(session);
+    // Viewing a terminal consumes any raw fallback output already on screen.
+    // Without clearing its pending deadline, an initial shell prompt can turn
+    // into a new "finished" item after the user has focused the terminal.
+    if (session.provider === undefined) {
+      session.rawActivityAt = undefined;
+    }
     session.attention = false;
     session.acknowledged = true;
     session.lastUserInputAt = at;
     session.source = session.provider === undefined ? "structured:acknowledge" : session.source;
+    if (session.provider === undefined) {
+      derive(session, at, this.rawActivityMs);
+    }
     return this.commitIfChanged(session, before);
   }
 
@@ -326,6 +367,7 @@ export class TerminalActivityReducer {
     for (const session of this.sessionsById.values()) {
       if (session.progressDeadline !== undefined) deadline = minDefined(deadline, session.progressDeadline);
       if (session.rawActivityAt !== undefined) deadline = minDefined(deadline, session.rawActivityAt + this.rawActivityMs);
+      if (session.inputQuietDeadline !== undefined) deadline = minDefined(deadline, session.inputQuietDeadline);
     }
     return deadline ?? null;
   }
@@ -388,6 +430,18 @@ export class TerminalActivityReducer {
     }
     if (session.rawActivityAt !== undefined && at >= session.rawActivityAt + this.rawActivityMs) {
       session.rawActivityAt = undefined;
+    }
+    if (session.inputQuietDeadline !== undefined && at >= session.inputQuietDeadline) {
+      session.inputQuietDeadline = undefined;
+      if (
+        session.provider === undefined &&
+        !session.progressBusy &&
+        !session.commandExecuting &&
+        !session.foregroundBusy
+      ) {
+        session.source = "structured:input-quiet";
+        session.acknowledged = false;
+      }
     }
   }
 
@@ -468,7 +522,13 @@ function createSession(sessionId: string, projectId: string | undefined, at: num
 }
 
 function derive(session: MutableSession, at: number, rawActivityMs: number): void {
-  const rawWorking = session.rawActivityAt !== undefined && at < session.rawActivityAt + rawActivityMs;
+  // Once an explicit progress/command protocol claims the session, prior raw
+  // shell echo must stop contributing immediately. Otherwise a completion
+  // marker can remain permanently "working" until some unrelated later call
+  // happens to expire the raw timer.
+  const rawWorking = !session.explicitSeen
+    && session.rawActivityAt !== undefined
+    && at < session.rawActivityAt + rawActivityMs;
   const working = session.progressBusy || session.commandExecuting || (session.foregroundBusy && !session.explicitSeen) || rawWorking;
   session.status = working ? "working" : "idle";
   session.claimed = session.provider !== undefined || session.explicitSeen;

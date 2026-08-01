@@ -624,6 +624,97 @@ part of the completed project-scoped parity or cleanup checkboxes.
     The legacy module, compatibility global name, and both hidden import edges
     are absent (`scripts/task19-remote-pairing-pin-capability.test.mjs`,
     `scripts/task19-hidden-compatibility-imports.test.mjs`).
+  - [x] Re-audit every remaining production `window.terminay*Host` call in
+    `src/App.tsx`, `src/rendererRuntime.tsx`, `src/workspace/**`, and
+    `src/components/**`. Classify each one as server data/query/command
+    authority to move to the `TerminayClient` protocol, native presentation
+    capability to keep as a narrow host bridge, or disconnected/local
+    compatibility fallback to delete after parity. Current audit:
+    `terminayConnectionHost`, `terminayHost`,
+    `terminayServerConnectionHost`, `terminayFileViewerCompatibilityHost`,
+    `terminayFileExplorerHost`, `terminayTerminalSettingsCompatibilityHost`,
+    `terminayMacroSettingsCompatibilityHost`, `terminayRecordingServiceHost`,
+    `terminayAiMetadataHost`, and `terminayDictationHost` still include
+    connected/Desktop data, query, command, or compatibility authority and are
+    covered by the migration checkboxes below. `terminayClipboardHost`,
+    `terminayRevealHost`, `terminayExternalHost`, `terminayAppCommandHost`,
+    `terminayUpdateHost`, `terminayWindowLifecycleHost`,
+    `terminayProjectTabHost`, `terminayWorkspaceTransferHost`,
+    `terminayTerminalPresentationHost`, `terminaySettingsWindowHost`,
+    `terminayRemotePairingPinHost`, `terminayRemoteAccessStatusHost`,
+    `terminayEditWindowHost`, `terminayQuickPushHost`, and
+    `terminayMcpInstallHost` are native presentation or explicitly versioned
+    Desktop capability bridges to keep narrow unless a later data-authority
+    audit proves otherwise. Evidence: an `rg` audit of
+    `window\\.terminay[A-Za-z0-9]*Host` across `src/App.tsx`,
+    `src/rendererRuntime.tsx`, `src/workspace`, and `src/components`, plus
+    `src/rendererRuntime.tsx`, `src/App.tsx`, and the boundary tests named in
+    the following cleanup items.
+  - [x] Move Electron file explorer and Git fallback data reads/mutations off
+    `terminayFileExplorerHost` and `terminayGitWorktreeHost` and onto
+    server-owned `FileViewerClient`/`TerminayGitClient` operations. Native
+    reveal/copy actions may remain narrow host capabilities, but path-based
+    file, status, worktree, pull, move, and remove authority must not come
+    from renderer preload hosts in connected Desktop. Evidence:
+    `src/workspace/useFileExplorerController.ts` performs folder list/create,
+    rename, delete, and search through `FileViewerClient` and status,
+    worktree, pull, move, and remove through `TerminayGitClient`;
+    `src/App.tsx` injects the server file/Git clients from
+    `terminalClientContext`; `scripts/git-worktree-host-bridge.test.mjs`
+    proves `terminayGitWorktreeHost` is absent from app, preload, and
+    declarations; `scripts/file-explorer-git-status-stability.test.mjs` proves
+    connected Git loading uses the server Git client.
+  - [x] Remove the disconnected file-viewer compatibility gateway and legacy
+    file-viewer transport from the normal connected Desktop path. Sparse save,
+    metadata, diff, preview, directory task, and watcher state should be
+    server-client protocol operations or explicit disconnected-only surfaces.
+    Evidence: `src/App.tsx` now creates the disconnected file client only when
+    no server connection context exists; `src/components/file-viewer/FilePanel.tsx`
+    gates the disconnected panel compatibility on `terminalClientContext === null`,
+    omits `compatibilityGateway` from connected `createServerFileGateway`, and
+    fails sparse-save revision lookup closed in connected mode; and
+    `src/components/folder-viewer/FolderPanel.tsx` gates its disconnected file
+    client the same way. Covered by `scripts/file-viewer-shared-client.test.mjs`,
+    `scripts/task19-preload-compatibility-boundary.test.mjs`,
+    `scripts/task19-file-viewer-capability.test.mjs`,
+    `scripts/folder-tasks-server-client.test.mjs`, and
+    `scripts/task16-connected-folder-panel-capability.test.mjs`.
+  - [ ] Move legacy settings, macro, recordings, AI metadata, and dictation
+    data paths out of Electron preload compatibility clients and into
+    server-owned protocol clients for connected Desktop. Settings-window
+    launch/focus and microphone permission may remain native host actions, but
+    model metadata, secrets, transcription, recordings state, macro
+    persistence, and terminal setting persistence should be server-owned.
+  - [ ] Replace `legacyFallback` in `src/rendererRuntime.tsx` and
+    `ResponsiveWorkspaceEntry` with the extracted shared route tree. Web and
+    Electron now both enter `ConnectedRendererWorkspace -> App`; the remaining
+    cleanup is the route-marker/fallback wrapper itself, so production Electron
+    should no longer wrap connected workspace features as a legacy body.
+  - [ ] Split the remaining native presentation actions into explicit
+    versioned host capabilities with no durable project data authority:
+    clipboard, reveal, external URL, app/menu commands, terminal presentation
+    zoom/size, project tab drag/popout, workspace transfer, window lifecycle,
+    and native dialogs. Add boundary tests proving these bridges cannot list,
+    read, write, or mutate project/server data except by dispatching typed
+    server-client commands.
+  - [ ] Remove terminal/server-frame compatibility bootstrap from normal
+    Electron startup after the shared framed client is the only connection
+    path. Keep any recovery or historical harnesses outside the production
+    module graph with exact allowlist coverage.
+  - [x] Tighten boundary tests for the one-server-model baseline, hidden
+    compatibility imports, preload compatibility boundary, and renderer
+    preload boundary so any new connected-renderer import or call of a
+    legacy/preload data host fails. Allow only named native presentation
+    capabilities and explicit disconnected-mode compatibility. Evidence:
+    `scripts/one-server-model-boundary.test.mjs`,
+    `scripts/task19-hidden-compatibility-imports.test.mjs`,
+    `scripts/task19-preload-compatibility-boundary.test.mjs`, and
+    `scripts/task19-public-preload-residual.test.mjs`.
+  - [ ] Add acceptance coverage proving both web and Electron production
+    clients load project, file, Git, settings, recordings, macro, and
+    dictation data through the same server-owned clients. In Electron test
+    mode, remove or poison preload compatibility data hosts and verify the
+    connected UI still works.
 - [x] Verify feature specifications remain present-tense product contracts;
   migration-progress qualifiers were removed from the recording and
   server-runtime compatibility contracts; progress remains in this task

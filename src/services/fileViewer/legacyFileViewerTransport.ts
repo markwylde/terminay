@@ -1,34 +1,76 @@
 import type { QueryCommandTransport } from '@terminay/client-core'
 import type { JsonValue } from '@terminay/protocol'
 import type { FileViewerSparseFileEdit } from '../../types/terminay'
+import type { LegacyFileGatewayApi } from './terminayFileGateway'
 
 /**
  * Compatibility-only adapter for the one file-viewer query still hosted by
- * Electron preload. Shared UI code talks to FileViewerClient; this boundary
- * is the only place that translates the legacy bridge during migration.
+ * Electron preload. Shared UI code talks to FileViewerClient; named
+ * compatibility callers must pass the narrow host capability they adapt.
  */
-export function createLegacyFileViewerTransport(): QueryCommandTransport {
+export type LegacyFileViewerApi = Pick<
+  LegacyFileGatewayApi,
+  'deleteEntry' | 'getFileInfo' | 'getGitDiff' | 'getFileTextMetadata' | 'listDirectory' | 'mkdir' | 'readFileTextLines' | 'renameEntry' | 'saveSparseFile'
+>
+
+export function createLegacyFileViewerTransport(api: LegacyFileViewerApi): QueryCommandTransport {
   return {
     async query<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}): Promise<T> {
       const record = readRecord(payload)
+      if (operation === 'files.preview-metadata') {
+        const path = readPath(record)
+        return (await createLegacyPreviewMetadata(api, path)) as T
+      }
       if (operation === 'file.get-git-diff') {
         const path = readPath(record)
-        return (await window.terminay.getGitDiff(path)) as unknown as T
+        return (await api.getGitDiff(path)) as unknown as T
       }
       if (operation === 'file.text-metadata') {
-        return (await window.terminay.getFileTextMetadata({ path: readString(record.path, 'file path'), projectRoot: readString(record.projectRoot, 'project root') })) as unknown as T
+        return (await api.getFileTextMetadata({ path: readString(record.path, 'file path'), projectRoot: readString(record.projectRoot, 'project root') })) as unknown as T
       }
       if (operation === 'file.text-lines') {
         const startLine = readUInt(record.startLine, 'start line')
         const lineCount = readUInt(record.lineCount, 'line count')
         if (lineCount < 1 || lineCount > 512) throw new RangeError('line count is invalid')
-        return (await window.terminay.readFileTextLines({ lineCount, path: readString(record.path, 'file path'), projectRoot: readString(record.projectRoot, 'project root'), startLine })) as unknown as T
+        return (await api.readFileTextLines({ lineCount, path: readString(record.path, 'file path'), projectRoot: readString(record.projectRoot, 'project root'), startLine })) as unknown as T
+      }
+      if (operation === 'files.list') {
+        const path = readPath(record)
+        const entries = await api.listDirectory(path)
+        return {
+          root: path,
+          offset: 0,
+          entries: entries.map((entry) => ({
+            name: entry.name,
+            relativePath: entry.path,
+            kind: entry.isDirectory ? 'directory' : 'file',
+            isSymbolicLink: entry.isSymbolicLink,
+            accessible: true,
+            size: entry.size ?? 0,
+            ...(entry.modifiedAtMs == null ? {} : { mtimeMs: entry.modifiedAtMs }),
+            ...(entry.mode == null ? {} : { mode: entry.mode }),
+          })),
+          truncated: false,
+        } as unknown as T
       }
       throw new Error(`legacy file query is unsupported: ${operation}`)
     },
     async command<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}): Promise<T> {
-      if (operation !== 'file.save-sparse') throw new Error(`legacy file command is unsupported: ${operation}`)
       const record = readRecord(payload)
+      if (operation === 'files.create-directory') {
+        await api.mkdir(readPath(record))
+        return null as T
+      }
+      if (operation === 'files.rename') {
+        await api.renameEntry(readPath(record), readString(record.destination, 'destination path'))
+        return null as T
+      }
+      if (operation === 'files.delete') {
+        if (record.recursive !== true) throw new TypeError('legacy file deletion must be recursive')
+        await api.deleteEntry(readPath(record))
+        return null as T
+      }
+      if (operation !== 'file.save-sparse') throw new Error(`legacy file command is unsupported: ${operation}`)
       const edits = record.edits
       if (!Array.isArray(edits) || edits.length > 4096) throw new TypeError('file edits are invalid')
       const request = {
@@ -39,10 +81,60 @@ export function createLegacyFileViewerTransport(): QueryCommandTransport {
         path: readString(record.path, 'file path'),
         projectRoot: readString(record.projectRoot, 'project root'),
       }
-      await window.terminay.saveSparseFile(request)
+      await api.saveSparseFile(request)
       return null as T
     },
   }
+}
+
+async function createLegacyPreviewMetadata(api: LegacyFileViewerApi, path: string): Promise<JsonValue> {
+  const info = await api.getFileInfo(path)
+  const extension = info.extension.toLowerCase()
+  const mimeType = mimeTypeForExtension(extension)
+  const previewKind = extension === '.pdf'
+    ? 'pdf'
+    : mimeType?.startsWith('image/') === true
+      ? 'image'
+      : ['.md', '.markdown', '.mdown', '.mkd'].includes(extension)
+        ? 'markdown'
+        : isTextExtension(extension)
+          ? 'text'
+          : 'hex'
+  const isBinary = info.isFile && (previewKind === 'hex' || previewKind === 'image' || previewKind === 'pdf')
+  const canEditText = info.isFile && !isBinary
+  const canEditHex = info.isFile
+  const safePreview = info.size <= 8 * 1024 * 1024 && ['markdown', 'image', 'pdf', 'text'].includes(previewKind)
+  return {
+    relativePath: path,
+    size: info.size,
+    ...(info.mtimeMs === null ? {} : { mtimeMs: info.mtimeMs }),
+    ...(mimeType === undefined ? {} : { mimeType }),
+    previewKind,
+    preferredMode: safePreview ? 'preview' : canEditText ? 'text' : 'hex',
+    isBinary,
+    isLargeFile: info.size > 100 * 1024 * 1024,
+    safePreview,
+    canEditText,
+    canEditHex,
+    inspectedBytes: 0,
+    inspectionTruncated: info.size > 0,
+  }
+}
+
+function isTextExtension(extension: string): boolean {
+  return ['.c', '.cc', '.conf', '.cpp', '.css', '.csv', '.env', '.go', '.graphql', '.h', '.html', '.ini', '.java', '.js', '.jsx', '.json', '.log', '.mjs', '.py', '.rb', '.rs', '.sh', '.sql', '.svg', '.toml', '.ts', '.tsx', '.txt', '.xml', '.yaml', '.yml'].includes(extension)
+}
+
+function mimeTypeForExtension(extension: string): string | undefined {
+  if (['.jpg', '.jpeg'].includes(extension)) return 'image/jpeg'
+  if (extension === '.png') return 'image/png'
+  if (extension === '.gif') return 'image/gif'
+  if (extension === '.svg') return 'image/svg+xml'
+  if (extension === '.pdf') return 'application/pdf'
+  if (['.md', '.markdown', '.mdown', '.mkd'].includes(extension)) return 'text/markdown'
+  if (extension === '.json') return 'application/json'
+  if (isTextExtension(extension)) return 'text/plain'
+  return undefined
 }
 
 function readPath(payload: JsonValue): string {

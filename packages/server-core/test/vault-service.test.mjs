@@ -9,7 +9,7 @@ import {
 
 function createAdapter() {
   let state = "locked";
-  let entries = new Map();
+  const entries = new Map();
   const calls = [];
   return {
     backend: "custom",

@@ -11,6 +11,12 @@ export interface UiBundleManifest {
   readonly entryPath: string;
   readonly protocolVersion: string;
   readonly serverVersion: string;
+  /**
+   * The browser policy required for a server-bundled session. This is
+   * normalized and validated at the server boundary rather than left to a
+   * host shell to infer from the asset contents.
+   */
+  readonly contentSecurityPolicy: string;
   readonly assets: readonly UiBundleAsset[];
 }
 

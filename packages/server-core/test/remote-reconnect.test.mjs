@@ -66,6 +66,31 @@ test("reconnect grants keep opaque secret material out of records and prove one 
   );
 });
 
+test("persisted reconnect records restore proof verification without restoring a grant secret", () => {
+  const first = fixture();
+  const issued = first.store.issue({ deviceId: "durable-device", lifetime: "until-revoked" });
+  const records = first.store.list();
+  assert.equal(JSON.stringify(records).includes(issued.grant), false);
+
+  const restored = fixture({ initialRecords: records }).store;
+  const pending = restored.createChallenge({
+    handle: issued.handle,
+    origin: issued.sessionOrigin,
+    clientNonce: "durable-client-nonce",
+  });
+  assert.equal(restored.verifyProof({
+    attemptId: pending.challenge.attemptId,
+    handle: issued.handle,
+    origin: issued.sessionOrigin,
+    clientNonce: "durable-client-nonce",
+    proof: createRemoteReconnectProof(issued.grant, pending.signingInput),
+  }).deviceId, "durable-device");
+  assert.throws(
+    () => fixture({ initialRecords: [{ ...records[0], serverId: "other-server" }] }),
+    /persisted reconnect grant record is invalid/,
+  );
+});
+
 test("reconnect challenges are exact-origin, retryable after forged proof, and expire", () => {
   const fixtureValue = fixture({ challengeTtlMs: 20 });
   const issued = fixtureValue.store.issue({ deviceId: "device-b" });
@@ -125,6 +150,44 @@ test("reconnect challenges are exact-origin, retryable after forged proof, and e
   );
 });
 
+test("a throwing device-proof verifier consumes only its reconnect challenge", () => {
+  const { store } = fixture({ maxChallenges: 1 });
+  const issued = store.issue({ deviceId: "device-proof-verifier" });
+  const first = store.createChallenge({
+    handle: issued.handle,
+    origin: issued.sessionOrigin,
+    clientNonce: "device-proof-first",
+  });
+  const proof = createRemoteReconnectProof(issued.grant, first.signingInput);
+
+  assert.throws(
+    () => store.verifyProof({
+      attemptId: first.challenge.attemptId,
+      handle: issued.handle,
+      origin: issued.sessionOrigin,
+      clientNonce: "device-proof-first",
+      proof,
+      verifyDeviceProof: () => { throw new Error("verifier unavailable"); },
+    }),
+    /verification failed/,
+  );
+  assert.throws(
+    () => store.verifyProof({
+      attemptId: first.challenge.attemptId,
+      handle: issued.handle,
+      origin: issued.sessionOrigin,
+      clientNonce: "device-proof-first",
+      proof,
+    }),
+    /unavailable/,
+  );
+  assert.doesNotThrow(() => store.createChallenge({
+    handle: issued.handle,
+    origin: issued.sessionOrigin,
+    clientNonce: "device-proof-retry",
+  }));
+});
+
 test("rotation and revocation fence reconnect grants without affecting another device", () => {
   const { store } = fixture();
   const first = store.issue({ deviceId: "device-c", lifetime: "7d" });
@@ -144,6 +207,34 @@ test("rotation and revocation fence reconnect grants without affecting another d
     handle: other.handle,
     origin: other.sessionOrigin,
     clientNonce: "other-client",
+  }));
+});
+
+test("revocation and rotation release obsolete pending reconnect challenge capacity immediately", () => {
+  const { store } = fixture({ maxChallenges: 1 });
+  const first = store.issue({ deviceId: "device-cleanup" });
+  store.createChallenge({
+    handle: first.handle,
+    origin: first.sessionOrigin,
+    clientNonce: "cleanup-first-client",
+  });
+  assert.equal(store.revokeDevice("device-cleanup"), 1);
+
+  const replacement = store.issue({ deviceId: "device-cleanup" });
+  assert.doesNotThrow(() => store.createChallenge({
+    handle: replacement.handle,
+    origin: replacement.sessionOrigin,
+    clientNonce: "cleanup-revoked-client",
+  }));
+
+  const rotated = store.rotate({
+    handle: replacement.handle,
+    origin: replacement.sessionOrigin,
+  });
+  assert.doesNotThrow(() => store.createChallenge({
+    handle: rotated.handle,
+    origin: rotated.sessionOrigin,
+    clientNonce: "cleanup-rotated-client",
   }));
 });
 

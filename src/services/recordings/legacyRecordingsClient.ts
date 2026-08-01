@@ -5,11 +5,10 @@ import {
 } from '@terminay/client-core'
 import type { CommandResultEnvelope, JsonValue, QueryResultEnvelope } from '@terminay/protocol'
 import type {
-  TerminayApi,
   TerminalRecordingListItem,
   TerminalRecordingStartMetadata,
+  TerminalRecordingState,
 } from '../../types/terminay'
-import type { TerminalThemeSettings } from '../../types/settings'
 
 /**
  * Compatibility-only surface for the legacy Electron preload. The timeline
@@ -17,20 +16,79 @@ import type { TerminalThemeSettings } from '../../types/settings'
  * this adapter is the only place that knows the old method names while the
  * server protocol migration is in progress.
  */
-export type LegacyRecordingsApi = Pick<
-  TerminayApi,
-  | 'listTerminalRecordings'
-  | 'readTerminalRecordingChunk'
-  | 'deleteTerminalRecordingById'
-  | 'revealTerminalRecordingById'
-  | 'getTerminalRecordingState'
-  | 'startTerminalRecording'
-  | 'stopTerminalRecording'
->
+export type LegacyRecordingsApi = Readonly<{
+  deleteTerminalRecordingById(recordingId: string): Promise<void>
+  getTerminalRecordingState(sessionId: string): Promise<TerminalRecordingState>
+  listTerminalRecordings(): Promise<TerminalRecordingListItem[]>
+  onTerminalRecordingChanged(listener: (message: import('../../types/terminay').TerminalRecordingChangeMessage) => void): () => void
+  readTerminalRecordingChunk(request: import('../../types/terminay').TerminalRecordingChunkRequest): Promise<import('../../types/terminay').TerminalRecordingChunk>
+  revealTerminalRecordingById(recordingId: string): Promise<void>
+  startTerminalRecording(sessionId: string, metadata?: TerminalRecordingStartMetadata): Promise<TerminalRecordingState>
+  stopTerminalRecording(sessionId: string): Promise<TerminalRecordingState>
+}>
 
-export function createLegacyRecordingsClient(api: LegacyRecordingsApi = window.terminay): RecordingsClient {
-  const transport = createLegacyRecordingsEnvelopeTransport(api)
-  return new RecordingsClient(new TerminayClientFacade(transport))
+export type LegacyRecordingsClient = RecordingsClient & {
+  /** Compatibility-only state hydration while the server query is adopted. */
+  getState: (sessionId: string) => Promise<TerminalRecordingState>
+  /** Compatibility-only lifecycle stream while the shared event is adopted. */
+  onStateChanged: (listener: (state: TerminalRecordingState) => void) => () => void
+}
+
+/**
+ * Capture only the named legacy recordings operations. Composition callers
+ * pass the exact preload capability directly, and this snapshot
+ * ensures the adapter never keeps broad host authority or observes later
+ * method replacement.
+ */
+export function captureLegacyRecordingsCapability(api: LegacyRecordingsApi): LegacyRecordingsApi {
+  const {
+    deleteTerminalRecordingById,
+    getTerminalRecordingState,
+    listTerminalRecordings,
+    onTerminalRecordingChanged,
+    readTerminalRecordingChunk,
+    revealTerminalRecordingById,
+    startTerminalRecording,
+    stopTerminalRecording,
+  } = api
+  for (const [name, value] of Object.entries({
+    deleteTerminalRecordingById,
+    getTerminalRecordingState,
+    listTerminalRecordings,
+    onTerminalRecordingChanged,
+    readTerminalRecordingChunk,
+    revealTerminalRecordingById,
+    startTerminalRecording,
+    stopTerminalRecording,
+  })) {
+    if (typeof value !== 'function') throw new TypeError(`legacy recordings capability ${name} is unavailable`)
+  }
+  return Object.freeze({
+    deleteTerminalRecordingById: (recordingId) => deleteTerminalRecordingById(recordingId),
+    getTerminalRecordingState: (sessionId) => getTerminalRecordingState(sessionId),
+    listTerminalRecordings: () => listTerminalRecordings(),
+    onTerminalRecordingChanged: (listener) => onTerminalRecordingChanged(listener),
+    readTerminalRecordingChunk: (request) => readTerminalRecordingChunk(request),
+    revealTerminalRecordingById: (recordingId) => revealTerminalRecordingById(recordingId),
+    startTerminalRecording: (sessionId, metadata) => startTerminalRecording(sessionId, metadata),
+    stopTerminalRecording: (sessionId) => stopTerminalRecording(sessionId),
+  })
+}
+
+/**
+ * Compatibility callers must name the host capability they are adapting.
+ * Keeping this explicit prevents an incidental renderer import from silently
+ * reacquiring the broad preload object as a second authority.
+ */
+export function createLegacyRecordingsClient(api: LegacyRecordingsApi): LegacyRecordingsClient {
+  const capability = captureLegacyRecordingsCapability(api)
+  const transport = createLegacyRecordingsEnvelopeTransport(capability)
+  const client = new RecordingsClient(new TerminayClientFacade(transport))
+  return Object.assign(client, {
+    getState: (sessionId: string) => capability.getTerminalRecordingState(sessionId),
+    onStateChanged: (listener: (state: TerminalRecordingState) => void) =>
+      capability.onTerminalRecordingChanged(({ state }) => listener(state)),
+  })
 }
 
 /** Convert the validated shared DTO to the legacy timeline view model while
@@ -42,7 +100,10 @@ export function toLegacyRecordingMetadata(item: RecordingListItem): TerminalReco
     castAvailable: item.castAvailable,
     capturedInput: item.capturedInput,
     color: item.color,
-    cols: item.cols ?? 80,
+		// The canonical recording DTO deliberately carries no host presentation
+		// metadata. The legacy timeline retains its historical shape with safe
+		// defaults while it is migrated off this adapter.
+    cols: 80,
     cwdLabel: item.cwdLabel,
     durationMs: item.durationMs,
     endedAt: item.endedAt,
@@ -50,19 +111,19 @@ export function toLegacyRecordingMetadata(item: RecordingListItem): TerminalReco
     eventCount: item.eventCount,
     exitCode: item.exitCode,
     inputPolicy: item.inputPolicy,
-    projectColor: item.projectColor ?? null,
-    projectEmoji: item.projectEmoji ?? null,
+    projectColor: null,
+    projectEmoji: item.emoji,
     projectId: item.projectId,
-    projectTitle: item.projectTitle ?? item.projectName,
+    projectTitle: item.projectName,
     recordingId: item.recordingId,
     recordingState: item.recordingState,
-    rows: item.rows ?? 24,
+    rows: 24,
     sensitiveInputPolicy: item.sensitiveInputPolicy,
     sessionId: item.sessionId,
     shellName: item.shellName,
     signal: item.signal,
     startedAt: item.startedAt,
-    theme: toTheme(item.theme),
+    theme: null,
     title: item.title,
   }
 }
@@ -105,7 +166,9 @@ async function commandLegacy(api: LegacyRecordingsApi, operation: string, payloa
   switch (operation) {
     case 'recordings.start': {
       const sessionId = readString(record.sessionId, 'sessionId')
-      const metadata = readOptionalStartMetadata(record)
+      const metadata = readOptionalStartMetadata(
+        record.metadata === undefined ? record : readRecord(record.metadata),
+      )
       return (await api.startTerminalRecording(sessionId, metadata)) as unknown as JsonValue
     }
     case 'recordings.stop':
@@ -153,12 +216,6 @@ function toCanonicalItem(recording: TerminalRecordingListItem): RecordingListIte
     format: 'asciicast',
     formatVersion: 3,
     errorMessage: recording.errorMessage ?? null,
-    cols: recording.cols,
-    rows: recording.rows,
-    projectTitle: recording.projectTitle,
-    projectColor: recording.projectColor,
-    projectEmoji: recording.projectEmoji,
-    theme: recording.theme,
   }
 }
 
@@ -183,6 +240,7 @@ function readOptionalStartMetadata(record: Record<string, JsonValue>): TerminalR
       metadata[key] = value
     }
   }
+  if (typeof record.projectName === 'string') metadata.projectTitle = record.projectName
   return Object.keys(metadata).length === 0 ? undefined : metadata
 }
 
@@ -199,17 +257,4 @@ function readString(value: JsonValue | undefined, name: string): string {
 function readUInt(value: JsonValue, name: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} is invalid`)
   return value
-}
-
-const THEME_KEYS = [
-  'foreground', 'background', 'cursor', 'cursorAccent', 'selectionBackground', 'selectionInactiveBackground', 'selectionForeground',
-  'scrollbarSliderBackground', 'scrollbarSliderHoverBackground', 'scrollbarSliderActiveBackground', 'black', 'red', 'green',
-  'yellow', 'blue', 'magenta', 'cyan', 'white', 'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue',
-  'brightMagenta', 'brightCyan', 'brightWhite',
-] as const
-
-function toTheme(value: JsonValue | null | undefined): TerminalThemeSettings | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
-  if (THEME_KEYS.some((key) => typeof value[key] !== 'string')) return null
-  return value as unknown as TerminalThemeSettings
 }

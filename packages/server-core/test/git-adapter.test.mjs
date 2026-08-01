@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -127,6 +127,77 @@ test('Git protocol adapter lists canonical worktrees and delegates opaque worktr
 		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('Git protocol adapter lazily binds a workspace project root before listing worktrees', async () => {
+	const { GitService, ServerGitAdapter } =
+		await import('../dist/gitService/index.js');
+	const root = await mkdtemp(join(tmpdir(), 'terminay-git-adapter-lazy-bind-'));
+	try {
+		await initialise(root);
+		const canonicalRoot = await realpath(root);
+		const git = new GitService();
+		const adapter = new ServerGitAdapter({
+			serverId: 'server-a',
+			git,
+			resolveProjectRoot: (projectId) =>
+				projectId === 'project-a' ? root : null,
+		});
+		const listed = await adapter.list({
+			authorization: authorization('read'),
+			projectId: 'project-a',
+		});
+		assert.equal(listed.repositoryRoot, canonicalRoot);
+		assert.equal(listed.state, 'ready');
+		assert.equal(listed.defaultBranch, 'main');
+		assert.equal(listed.worktrees.length, 1);
+		assert.equal(git.getBinding('project-a')?.projectRoot, canonicalRoot);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('Git protocol adapter rebinds Git when the workspace project root changes', async () => {
+	const { GitService, ServerGitAdapter } =
+		await import('../dist/gitService/index.js');
+	const plainRoot = await mkdtemp(
+		join(tmpdir(), 'terminay-git-adapter-plain-root-'),
+	);
+	const repoRoot = await mkdtemp(
+		join(tmpdir(), 'terminay-git-adapter-repo-root-'),
+	);
+	try {
+		await initialise(repoRoot);
+		const canonicalRepoRoot = await realpath(repoRoot);
+		let currentRoot = plainRoot;
+		const git = new GitService();
+		await git.bindProject('project-a', plainRoot);
+		const adapter = new ServerGitAdapter({
+			serverId: 'server-a',
+			git,
+			resolveProjectRoot: (projectId) =>
+				projectId === 'project-a' ? currentRoot : null,
+		});
+		const initial = await adapter.list({
+			authorization: authorization('read'),
+			projectId: 'project-a',
+		});
+		assert.equal(initial.state, 'not-repository');
+
+		currentRoot = repoRoot;
+		const rebound = await adapter.list({
+			authorization: authorization('read'),
+			projectId: 'project-a',
+		});
+		assert.equal(rebound.repositoryRoot, canonicalRepoRoot);
+		assert.equal(rebound.state, 'ready');
+		assert.equal(rebound.defaultBranch, 'main');
+		assert.equal(rebound.worktrees.length, 1);
+		assert.equal(git.getBinding('project-a')?.projectRoot, canonicalRepoRoot);
+	} finally {
+		await rm(plainRoot, { recursive: true, force: true });
+		await rm(repoRoot, { recursive: true, force: true });
 	}
 });
 

@@ -1,31 +1,125 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
-import type { TerminalPanelAttachment } from '@terminay/client-core'
-import type { IDockviewPanelProps } from 'dockview'
-import { Terminal } from '@xterm/xterm'
-import type { ILinkHandler } from '@xterm/xterm'
+import type {
+  ActivityClient,
+  AgentStatusClient,
+  FileObservationClient,
+  FileViewerClient,
+  RecordingsClient,
+  TerminalClientIdentity,
+  TerminalPanelAttachment,
+  TerminalStreamEvent,
+  TerminalStreamResyncEvent,
+  TerminayClient,
+  TerminayGitClient,
+  TerminayTerminalClient,
+} from '@terminay/client-core'
+import { TerminayTerminalPanelClient } from '@terminay/client-core'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { buildTerminalOptions, resolveTerminalTheme } from '../terminalSettings'
+import type { ILinkHandler } from '@xterm/xterm'
+import { Terminal } from '@xterm/xterm'
+import type { IDockviewPanelProps } from 'dockview'
+import type { CSSProperties } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
-import type { TerminalPanelParams } from './TerminalTab'
-import type { TerminalSettings } from '../types/settings'
+import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore'
 import { formatBracketedPaste } from '../terminalInput'
-import { DictationOverlay } from './DictationOverlay'
+import { buildTerminalOptions, resolveTerminalTheme } from '../terminalSettings'
+import type { TerminalSettings } from '../types/settings'
 import type { DictationOverlayProps } from './DictationOverlay'
+import { DictationOverlay } from './DictationOverlay'
+import { ContextMenu } from './ContextMenu'
+import type { TerminalPanelParams } from './TerminalTab'
+import { clearTerminalViewport, shouldClearTerminalForSession } from './terminalClearInteraction'
+import { copyTerminalSelection } from './terminalClipboardInteraction'
+import { escapeTerminalPathForShell, getTerminalDropText, shouldInterceptTerminalDrop } from './terminalDropInteraction'
+import { formatTerminalExitNotice } from './terminalExitInteraction'
+import { shouldRestoreTerminalFocusAfterWindowActivation } from './terminalFocusInteraction'
+import { createTerminalLinkInteraction } from './terminalLinkInteraction'
+import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInteraction'
+import { shouldReturnFocusToTerminalFromNote } from './terminalNoteInteraction'
+import { ServerTerminalInputQueue } from './terminalPanelInputQueue'
+import { pasteTerminalClipboard } from './terminalPasteInteraction'
+import { publishTerminalPresentationMetadata } from './terminalPresentationHost'
+import { buildTerminalPresentationOptions } from './terminalPresentationInteraction'
+import { getTerminalScrollbackAction } from './terminalScrollbackInteraction'
+import { isTerminalSearchShortcut } from './terminalSearchInteraction'
+import { getTerminalSwitcherDirection } from './terminalSwitcherInteraction'
+import { resolveTerminalZoomedFontSize } from './terminalZoomInteraction'
+
+/**
+ * Connection-scoped terminal authority supplied by a host shell. The client
+ * must be stable for the lifetime of the connection so its attachment cursor
+ * and reconnect high-water marks remain meaningful across panels.
+ */
+export interface TerminalPanelClientContextValue {
+  readonly applicationClient?: TerminayClient
+  readonly client: TerminayTerminalClient
+  /** Optional canonical activity projection for this connection. It is kept
+   * separate from the panel stream so non-terminal routes can share it. */
+  readonly activityClient?: ActivityClient
+  /** Optional reduced server-owned agent projection for this connection. */
+  readonly agentStatusClient?: AgentStatusClient
+  /** Authenticated connection-wide workspace projection. */
+  readonly workspaceSnapshotStore?: WorkspaceSnapshotStore
+  /** Closes all connection-scoped subscriptions before the protocol transport. */
+  readonly dispose?: () => Promise<void>
+  /** Server-backed catalog client shared with folder/file panels. */
+  readonly fileViewerClient?: FileViewerClient
+  /** Server-owned project-scoped filesystem watch and folder-size events. */
+  readonly fileObservationClient?: FileObservationClient
+  readonly recordingsClient?: RecordingsClient
+  /** Server-owned Git/worktree and reviewed Quick Push commands. */
+  readonly gitClient?: TerminayGitClient
+  readonly serverId: string
+  readonly projectId: string
+  readonly clientId: string
+  /** Host-owned display metadata for the authenticated current server. */
+  readonly connectionLabel?: string
+  readonly serverCapabilities?: readonly string[]
+}
+
+export const TerminalPanelClientContext = createContext<TerminalPanelClientContextValue | null>(null)
+
+export type TerminalPanelClientResolution = {
+  readonly panelClient?: TerminayTerminalPanelClient
+  readonly identity?: Pick<TerminalClientIdentity, 'serverId' | 'projectId'>
+  readonly clientId?: string
+}
+
+/** Resolve panel params with the connection context as the production path.
+ * Explicit params remain useful for moved/embedded panels and tests; a null
+ * result intentionally selects the legacy preload compatibility path. */
+export function resolveTerminalPanelClient(
+  params: Pick<TerminalPanelParams, 'terminalPanelClient' | 'terminalClientIdentity' | 'terminalClientId'>,
+  context: TerminalPanelClientContextValue | null,
+  contextPanelClient?: TerminayTerminalPanelClient,
+): TerminalPanelClientResolution {
+  return {
+    panelClient:
+      params.terminalPanelClient ??
+      contextPanelClient ??
+      (context === null ? undefined : new TerminayTerminalPanelClient(context.client)),
+    identity:
+      params.terminalClientIdentity ??
+      (context === null ? undefined : { serverId: context.serverId, projectId: context.projectId }),
+    clientId: params.terminalClientId ?? context?.clientId,
+  }
+}
 
 const OPEN_TERMINAL_SWITCHER_EVENT = 'terminay-open-terminal-switcher'
 const DROP_FILE_EXPLORER_PATH_EVENT = 'terminay-drop-file-explorer-path'
 const CLEAR_TERMINAL_EVENT = 'terminay-clear-terminal'
 const COPY_TERMINAL_EVENT = 'terminay-copy-terminal'
+export const TERMINAL_PANEL_INPUT_EVENT = 'terminay-terminal-panel-input'
+export const TERMINAL_PANEL_OUTPUT_EVENT = 'terminay-terminal-panel-output'
+export const TERMINAL_PANEL_EXIT_EVENT = 'terminay-terminal-panel-exit'
 const TERMINAL_CONTEXT_MAX_LINES = 200
 const TERMINAL_CONTEXT_MAX_CHARS = 20_000
+const MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES = 64 * 1024
 const REMOTE_TERMINAL_SCALE_PROPERTY = '--terminal-remote-scale'
 const EMPTY_TERMINAL_ROOT_SIZE = { height: 0, width: 0 }
-const LINK_OPEN_DEDUPE_WINDOW_MS = 500
-
 const searchOptions = {
   incremental: true,
   decorations: {
@@ -39,15 +133,11 @@ const searchOptions = {
 } as const
 
 function applyTerminalSettings(terminal: Terminal, settings: TerminalSettings, tabColor?: string, zoomLevel = 0) {
-  Object.assign(terminal.options, {
-    ...buildTerminalOptions(settings),
-    fontSize: Math.max(6, (settings.fontSize ?? 13) + zoomLevel),
-    theme: resolveTerminalTheme(settings, tabColor),
-  })
+  Object.assign(terminal.options, buildTerminalPresentationOptions(settings, tabColor, zoomLevel))
 }
 
 function updateRemoteViewportMetadata(sessionId: string, root: HTMLElement) {
-  window.terminay.updateTerminalRemoteMetadata(sessionId, {
+  publishTerminalPresentationMetadata(sessionId, {
     viewportHeight: Math.max(0, Math.round(root.clientHeight)),
     viewportWidth: Math.max(0, Math.round(root.clientWidth)),
   })
@@ -128,46 +218,6 @@ function getTerminalRootSize(root: HTMLElement) {
   }
 }
 
-function escapePathForShell(path: string): string {
-  if (path.length === 0) {
-    return "''"
-  }
-
-  return `'${path.replace(/'/g, `'\\''`)}'`
-}
-
-function getDroppedFileText(dataTransfer: DataTransfer): string | null {
-  const customPath = dataTransfer.getData('terminay/path')
-  if (customPath) {
-    return escapePathForShell(customPath)
-  }
-
-  const textData = dataTransfer.getData('text/plain')
-  if (textData && (textData.startsWith('/') || textData.startsWith('~/') || textData.includes('\\'))) {
-    return escapePathForShell(textData)
-  }
-
-  if (dataTransfer.files.length > 0) {
-    const paths = Array.from(dataTransfer.files)
-      .map((file) => window.terminay.getPathForFile(file))
-      .filter((path): path is string => typeof path === 'string' && path.length > 0)
-
-    if (paths.length > 0) {
-      return paths.map(escapePathForShell).join(' ')
-    }
-  }
-
-  return null
-}
-
-function shouldInterceptTerminalDrop(dataTransfer: DataTransfer): boolean {
-  if (dataTransfer.types.includes('terminay/path') || dataTransfer.types.includes('Files')) {
-    return true
-  }
-
-  return getDroppedFileText(dataTransfer) !== null
-}
-
 function getRecentTerminalOutput(terminal: Terminal): string {
   const buffer = terminal.buffer.active
   const startLine = Math.max(0, buffer.length - TERMINAL_CONTEXT_MAX_LINES)
@@ -191,31 +241,63 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
+  const hoveredLinkRef = useRef<string | null>(null)
   const terminalPanelResizeRef = useRef<(cols: number, rows: number) => void>(() => {})
   const tabColorRef = useRef(props.params.color)
   const zoomLevelRef = useRef(0)
   const remoteSizeOverrideRef = useRef<{ cols: number; rows: number } | null>(null)
   const { settings } = useTerminalSettings()
+  const terminalClientContext = useContext(TerminalPanelClientContext)
+  const contextPanelClient = useMemo(
+    () => (terminalClientContext === null ? undefined : new TerminayTerminalPanelClient(terminalClientContext.client)),
+    [terminalClientContext?.client],
+  )
+  const resolvedTerminalClient = useMemo(
+    () => resolveTerminalPanelClient(props.params, terminalClientContext, contextPanelClient),
+    [
+      contextPanelClient,
+      props.params.terminalClientId,
+      props.params.terminalClientIdentity,
+      props.params.terminalPanelClient,
+      terminalClientContext,
+    ],
+  )
   const settingsRef = useRef(settings)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isRemoteSizeOverrideActive, setIsRemoteSizeOverrideActive] = useState(false)
+  const [isTerminalHydrating, setIsTerminalHydrating] = useState(true)
+  const [serverTerminalError, setServerTerminalError] = useState<string | null>(null)
+  // Incrementing this is the only user-initiated way to rebuild a failed
+  // server attachment. Keeping it separate from panel identity prevents a
+  // failed write from quietly falling back to preload authority.
+  const [serverConnectionAttempt, setServerConnectionAttempt] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchSummary, setSearchSummary] = useState<{ index: number; count: number }>({
+  const [searchSummary, setSearchSummary] = useState<{
+    index: number
+    count: number
+  }>({
     index: 0,
     count: 0,
   })
-  const [dictationOverlay, setDictationOverlay] =
-    useState<DictationOverlayProps | null>(null)
+  const [dictationOverlay, setDictationOverlay] = useState<DictationOverlayProps | null>(null)
+  const [terminalContextMenu, setTerminalContextMenu] = useState<{
+    x: number
+    y: number
+    link: string | null
+    hasSelection: boolean
+  } | null>(null)
   const hasTerminalNote = typeof props.params.terminalNote === 'string'
 
   tabColorRef.current = props.params.color
 
   useEffect(() => {
     const handleDictationOverlay = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        overlay: DictationOverlayProps | null
-        sessionId: string
-      }>).detail
+      const detail = (
+        event as CustomEvent<{
+          overlay: DictationOverlayProps | null
+          sessionId: string
+        }>
+      ).detail
       if (detail?.sessionId !== props.params.sessionId) {
         return
       }
@@ -263,30 +345,24 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     root.innerHTML = ''
 
     const isMac = navigator.platform.toLowerCase().includes('mac')
-    let lastOpenedLink: { uri: string; openedAt: number } | undefined
-    const openTerminalLink = (event: MouseEvent, uri: string) => {
-      const modifierKey = isMac ? event.metaKey : event.ctrlKey
-      if (!modifierKey) {
-        return
-      }
-
-      event.preventDefault()
-
-      const now = performance.now()
-      if (lastOpenedLink?.uri === uri && now - lastOpenedLink.openedAt < LINK_OPEN_DEDUPE_WINDOW_MS) {
-        return
-      }
-
-      lastOpenedLink = { uri, openedAt: now }
-      void window.terminay.openExternal(uri)
+    const terminalLinkInteraction = createTerminalLinkInteraction({
+      isMac,
+      // Opening a terminal link is an explicit operating-system action. Keep
+      // it on the narrow, versioned host bridge rather than giving the
+      // workspace's terminal renderer the broad compatibility preload API.
+      openExternal: (uri) => window.terminayExternalHost?.open(uri),
+      pointerTarget: document.body,
+    })
+    const openTerminalLink = terminalLinkInteraction.activate
+    const linkHover = (_event: MouseEvent, uri: string) => {
+      hoveredLinkRef.current = uri
+      terminalLinkInteraction.hover()
     }
-
-    const linkHover = () => {
-      document.body.style.cursor = 'pointer'
-    }
-
-    const linkLeave = () => {
-      document.body.style.cursor = ''
+    const linkLeave = (_event: MouseEvent, uri: string) => {
+      if (hoveredLinkRef.current === uri) {
+        hoveredLinkRef.current = null
+      }
+      terminalLinkInteraction.leave()
     }
 
     const oscLinkHandler: ILinkHandler = {
@@ -340,47 +416,48 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
     screenElement?.addEventListener('mousedown', preventModifierLinkSelection)
 
-    const panelClient = props.params.terminalPanelClient
-    const panelIdentity = props.params.terminalClientIdentity
-    const panelClientId = props.params.terminalClientId
+    const panelClient = resolvedTerminalClient.panelClient
+    const panelIdentity = resolvedTerminalClient.identity
+    const panelClientId = resolvedTerminalClient.clientId
     const useServerTerminal = panelClient !== undefined && panelIdentity !== undefined && panelClientId !== undefined
+    const resolveDesktopDroppedFilePath = useServerTerminal
+      ? undefined
+      : (file: unknown) => window.terminayFileExplorerHost?.resolveDroppedFilePath(file as File)
+    let serverAttachmentFailed = false
+    if (useServerTerminal) {
+      setServerTerminalError(null)
+      setIsTerminalHydrating(true)
+    } else {
+      setIsTerminalHydrating(false)
+    }
     let panelAttachment: TerminalPanelAttachment | null = null
-    let pendingPanelInput: string[] = []
-    let pendingPanelInputLength = 0
     let pendingPanelResize: { cols: number; rows: number } | null = null
+    const failServerTransport = (error: unknown) => {
+      if (serverAttachmentFailed || dataReplayDisposed) return
+      serverAttachmentFailed = true
+      serverInputQueue?.close()
+      const attachmentToDetach = panelAttachment
+      panelAttachment = null
+      if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
+      setIsTerminalHydrating(false)
+      setServerTerminalError(error instanceof Error ? error.message : 'The server terminal connection failed.')
+    }
+    let serverInputQueue = useServerTerminal ? new ServerTerminalInputQueue(failServerTransport) : null
 
     const writePanelInput = (data: string) => {
-      if (!useServerTerminal) {
-        window.terminay.writeTerminal(sessionId, data)
-        return
-      }
-
-      if (panelAttachment === null) {
-        if (pendingPanelInputLength + data.length <= 64 * 1024) {
-          pendingPanelInput.push(data)
-          pendingPanelInputLength += data.length
-        }
-        return
-      }
-
-      void panelAttachment.write(data).catch((error: unknown) => {
-        console.error('Server terminal input failed', error)
-      })
+      if (!useServerTerminal || serverAttachmentFailed) return
+      serverInputQueue?.enqueue(data)
     }
 
     const resizePanel = (cols: number, rows: number) => {
-      if (!useServerTerminal) {
-        window.terminay.resizeTerminal(sessionId, cols, rows)
-        return
-      }
-
+      if (!useServerTerminal || serverAttachmentFailed) return
       pendingPanelResize = { cols, rows }
       if (panelAttachment !== null) {
         const next = pendingPanelResize
         pendingPanelResize = null
-        void panelAttachment.resize(next).catch((error: unknown) => {
-          console.error('Server terminal resize failed', error)
-        })
+        // Resize ownership can legitimately belong to another presentation.
+        // A rejected viewport claim must not detach this terminal stream.
+        void panelAttachment.resize(next).catch(() => {})
       }
     }
 
@@ -392,8 +469,19 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return false
       }
 
-      void window.terminay.writeClipboardText(selectedText)
+      void copyTerminalSelection(selectedText, (text) => window.terminayClipboardHost?.writeText(text))
       return true
+    }
+
+    const openTerminalContextMenu = (event: MouseEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      setTerminalContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        link: hoveredLinkRef.current,
+        hasSelection: terminal.hasSelection(),
+      })
     }
 
     terminal.attachCustomKeyEventHandler((event) => {
@@ -426,44 +514,66 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           return false
         }
 
-        void window.terminay.smartPasteClipboard().then((pasted) => {
-          if (pasted.length === 0) {
-            return
-          }
-
-          announceTerminalUserInput()
-          terminal.paste(pasted)
+        void pasteTerminalClipboard(() => window.terminayClipboardHost?.readText() ?? Promise.resolve(''), {
+          // xterm emits this paste through onData, so both local and
+          // server-backed panels use writePanelInput below. Do not call a
+          // terminal preload write method from this UI-only clipboard path.
+          announceInput: announceTerminalUserInput,
+          paste: (text) => terminal.paste(text),
+          focus: () => terminal.focus(),
         })
 
         return false
       }
 
-      if (event.altKey && !event.ctrlKey && !event.metaKey && event.key === 'Tab') {
+      const terminalSwitcherDirection = getTerminalSwitcherDirection(event)
+      if (terminalSwitcherDirection !== null) {
         event.preventDefault()
         event.stopPropagation()
         if (event.type !== 'keydown') {
           return false
         }
 
-        if (event.repeat) {
-          return false
-        }
-
         window.dispatchEvent(
           new CustomEvent(OPEN_TERMINAL_SWITCHER_EVENT, {
-            detail: { direction: event.shiftKey ? -1 : 1 },
+            detail: { direction: terminalSwitcherDirection },
           }),
         )
         return false
       }
 
-      if (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'f') {
+      const terminalScrollbackAction = getTerminalScrollbackAction(event)
+      if (terminalScrollbackAction !== null) {
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.type !== 'keydown') {
+          return false
+        }
+
+        switch (terminalScrollbackAction) {
+          case 'page-up':
+            terminal.scrollPages(-1)
+            break
+          case 'page-down':
+            terminal.scrollPages(1)
+            break
+          case 'top':
+            terminal.scrollToTop()
+            break
+          case 'bottom':
+            terminal.scrollToBottom()
+            break
+        }
+        return false
+      }
+
+      if (isTerminalSearchShortcut(event, { isMac })) {
         event.preventDefault()
         setIsSearchOpen(true)
         return false
       }
 
-      if (event.key === 'Enter' && (event.shiftKey || event.altKey)) {
+      if (shouldInsertTerminalMultilineNewline(event)) {
         event.preventDefault()
         if (event.type !== 'keydown') {
           return false
@@ -488,11 +598,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       resizeFrame = null
 
       const nextRootSize = getTerminalRootSize(root)
-      if (
-        !force &&
-        nextRootSize.width === lastFitSize.width &&
-        nextRootSize.height === lastFitSize.height
-      ) {
+      if (!force && nextRootSize.width === lastFitSize.width && nextRootSize.height === lastFitSize.height) {
         updateRemoteViewportMetadata(sessionId, root)
         return
       }
@@ -538,26 +644,39 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     fitAndResize(true)
 
     let dataReplayDisposed = false
-    let terminalDataDisposer: (() => void) | null = null
-    let panelOutputDisposer: (() => void) | null = null
-    let panelExitDisposer: (() => void) | null = null
-    let panelResyncDisposer: (() => void) | null = null
-    let terminalExitDisposer: (() => void) = () => {}
+    let panelEventDisposer: (() => void) | null = null
 
     const renderTerminalExit = (exitCode: number, signal: number | null) => {
-      if (
-        settingsRef.current.autoCloseTerminalOnExitZero &&
-        exitCode === 0 &&
-        signal == null
-      ) {
+      window.dispatchEvent(
+        new CustomEvent(TERMINAL_PANEL_EXIT_EVENT, {
+          detail: {
+            autoCloseOnSuccessfulExit: settingsRef.current.autoCloseTerminalOnExitZero,
+            exitCode,
+            sessionId,
+            signal,
+          },
+        }),
+      )
+      const notice = formatTerminalExitNotice({
+        autoCloseOnSuccessfulExit: settingsRef.current.autoCloseTerminalOnExitZero,
+        exitCode,
+        signal,
+      })
+      if (notice === null) {
         return
       }
+      terminal.write(notice)
+    }
 
-      const exitDescription =
-        signal == null
-          ? `code ${exitCode}`
-          : `signal ${signal} (code ${exitCode})`
-      terminal.write(`\r\n\x1b[31m[process exited with ${exitDescription}]\x1b[0m\r\n`)
+    const renderTerminalOutput = (bytes: Uint8Array, nextPosition: number, attachment: TerminalPanelAttachment) => {
+      terminal.write(bytes, () => {
+        window.dispatchEvent(
+          new CustomEvent(TERMINAL_PANEL_OUTPUT_EVENT, {
+            detail: { nextPosition, sessionId },
+          }),
+        )
+        void attachment.ack(nextPosition).catch(failServerTransport)
+      })
     }
 
     const renderTerminalResync = () => {
@@ -571,112 +690,134 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         projectId: panelIdentity.projectId,
         sessionId,
         clientId: panelClientId,
-        ...(props.params.terminalClientFromPosition === undefined ? {} : { fromPosition: props.params.terminalClientFromPosition }),
+        maxInitialReplayBytes: MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES,
+        ...(props.params.terminalClientFromPosition === undefined
+          ? {}
+          : { fromPosition: props.params.terminalClientFromPosition }),
       }
-      void (mode === 'resume' ? panelClient.resume(request) : panelClient.attach(request)).then((attachment) => {
-        if (dataReplayDisposed) {
-          void attachment.detach().catch(() => {})
-          return
-        }
+      let resyncing = false
+      const attachServerTerminal = (fromPosition: number | undefined, forceResume: boolean) => {
+        const nextRequest = fromPosition === undefined ? request : { ...request, fromPosition }
+        void (forceResume || mode === 'resume' ? panelClient.resume(nextRequest) : panelClient.attach(nextRequest))
+          .then((attachment) => {
+            if (dataReplayDisposed) {
+              void attachment.detach().catch(() => {})
+              return
+            }
 
-        panelAttachment = attachment
-        for (const event of attachment.initialEvents) {
-          if (event.type === 'output') {
-            terminal.write(event.bytes, () => {
-              void attachment.ack(event.nextPosition).catch(() => {})
-            })
-          } else if (event.type === 'exit') {
-            renderTerminalExit(event.exitCode, event.signal)
-          } else {
-            renderTerminalResync()
-          }
-        }
-        panelOutputDisposer = attachment.onOutput((event) => {
-          terminal.write(event.bytes, () => {
-            void attachment.ack(event.nextPosition).catch(() => {})
-          })
-        })
-        panelExitDisposer = attachment.onExit((event) => renderTerminalExit(event.exitCode, event.signal))
-        panelResyncDisposer = attachment.onResync(() => renderTerminalResync())
+            panelAttachment = attachment
+            const renderServerEvent = (event: TerminalStreamEvent) => {
+              if (event.type === 'output') {
+                renderTerminalOutput(event.bytes, event.nextPosition, attachment)
+              } else if (event.type === 'exit') {
+                renderTerminalExit(event.exitCode, event.signal)
+              } else {
+                beginTerminalResync(event)
+              }
+            }
+            // Install one catch-all listener before consuming initialEvents. Three
+            // sequential filtered listeners leave a handoff window in which a fast
+            // exit can be delivered to the output listener and discarded.
+            panelEventDisposer = (
+              attachment as TerminalPanelAttachment & {
+                onEvent(listener: (event: TerminalStreamEvent) => void): () => void
+              }
+            ).onEvent(renderServerEvent)
+            for (const event of attachment.initialEvents) {
+              renderServerEvent(event)
+              if (event.type === 'resync_required') break
+            }
+            if (serverAttachmentFailed || resyncing) return
+            setIsTerminalHydrating(false)
 
-        const queuedInput = pendingPanelInput
-        pendingPanelInput = []
-        pendingPanelInputLength = 0
-        for (const input of queuedInput) writePanelInput(input)
-        if (pendingPanelResize !== null) {
-          const resize = pendingPanelResize
-          pendingPanelResize = null
-          void attachment.resize(resize).catch((error: unknown) => {
-            console.error('Server terminal resize failed', error)
+            serverInputQueue?.attach(attachment)
+            if (pendingPanelResize !== null) {
+              const resize = pendingPanelResize
+              pendingPanelResize = null
+              void attachment.resize(resize).catch(() => {})
+            }
+            // The initial focus call runs before the asynchronous attachment is ready.
+            // During browser connection setup Dockview/layout work can return focus to
+            // body, leaving xterm's hidden textarea unable to receive the first key.
+            // Restore it only when focus is still unclaimed (or already in this panel)
+            // so a user who deliberately selected another control is not interrupted.
+            const activeElement = document.activeElement
+            if (
+              props.api.isActive &&
+              (activeElement === null || activeElement === document.body || root.contains(activeElement))
+            ) {
+              terminal.focus()
+              announceTerminalFocus()
+            }
+            resyncing = false
           })
-        }
-      }).catch((error: unknown) => {
-        if (!dataReplayDisposed) console.error('Server terminal attachment failed', error)
-      })
+          .catch((error: unknown) => {
+            if (dataReplayDisposed) return
+            failServerTransport(error)
+          })
+      }
+      const beginTerminalResync = (event: TerminalStreamResyncEvent) => {
+        if (dataReplayDisposed || resyncing || serverAttachmentFailed) return
+        resyncing = true
+        setIsTerminalHydrating(true)
+        panelEventDisposer?.()
+        panelEventDisposer = null
+        const staleAttachment = panelAttachment
+        panelAttachment = null
+        serverInputQueue?.close()
+        serverInputQueue = new ServerTerminalInputQueue(failServerTransport)
+        terminal.clear()
+        renderTerminalResync()
+        void staleAttachment?.detach().catch(() => {})
+        attachServerTerminal(event.replayFrom, true)
+      }
+      attachServerTerminal(request.fromPosition, false)
     } else {
-      // Compatibility path while the existing preload bridge is still the
-      // host's source of Local terminal data. The panel above can switch to
-      // the server contract without changing xterm setup or interaction UX.
-      const subscribeToTerminalData = () => {
-        terminalDataDisposer = window.terminay.onTerminalData((message) => {
-          if (message.id !== sessionId) return
-          terminal.write(message.data)
-        })
-      }
-
-      void window.terminay
-        .getTerminalBuffer(sessionId)
-        .then((buffer) => {
-          if (dataReplayDisposed) return
-          if (buffer) terminal.write(buffer)
-          subscribeToTerminalData()
-        })
-        .catch(() => {
-          if (!dataReplayDisposed) subscribeToTerminalData()
-        })
-
-      terminalExitDisposer = window.terminay.onTerminalExit((message) => {
-        if (message.id === sessionId) renderTerminalExit(message.exitCode, message.signal ?? null)
-      })
+      // A terminal surface is a detachable server client. There is no Local
+      // Electron IPC fallback: doing so would make the renderer a second PTY
+      // authority when a server connection is absent or being replaced.
+      setIsTerminalHydrating(false)
+      setServerTerminalError('The server terminal client is unavailable.')
     }
 
-    const zoomDisposer = window.terminay.onTerminalZoomChanged((message) => {
+    const zoomDisposer = window.terminayTerminalPresentationHost?.subscribeZoom((message) => {
       zoomLevelRef.current = message.zoomLevel
       const baseFontSize = settingsRef.current.fontSize ?? 13
-      const newFontSize = baseFontSize + message.zoomLevel
-      terminal.options.fontSize = Math.max(6, newFontSize)
+      terminal.options.fontSize = resolveTerminalZoomedFontSize(baseFontSize, message.zoomLevel)
       fitAndResize(true)
     })
 
-    const remoteSizeOverrideDisposer = window.terminay.onTerminalRemoteSizeOverrideChanged((message) => {
-      if (message.id !== sessionId) {
-        return
-      }
+    const remoteSizeOverrideDisposer = window.terminayTerminalPresentationHost?.subscribeRemoteSizeOverride(
+      (message) => {
+        if (message.id !== sessionId) {
+          return
+        }
 
-      if (!message.active) {
-        remoteSizeOverrideRef.current = null
-        setIsRemoteSizeOverrideActive(false)
-        fitAndResize(true)
-        return
-      }
+        if (!message.active) {
+          remoteSizeOverrideRef.current = null
+          setIsRemoteSizeOverrideActive(false)
+          fitAndResize(true)
+          return
+        }
 
-      const cols = Math.max(2, Math.floor(message.cols))
-      const rows = Math.max(1, Math.floor(message.rows))
-      remoteSizeOverrideRef.current = { cols, rows }
-      setIsRemoteSizeOverrideActive(true)
-      applyRemoteTerminalSize(root, terminal, cols, rows, () => {
-        const currentOverride = remoteSizeOverrideRef.current
-        return terminalRef.current === terminal && currentOverride?.cols === cols && currentOverride.rows === rows
-      })
-      updateRemoteViewportMetadata(sessionId, root)
-    })
+        const cols = Math.max(2, Math.floor(message.cols))
+        const rows = Math.max(1, Math.floor(message.rows))
+        remoteSizeOverrideRef.current = { cols, rows }
+        setIsRemoteSizeOverrideActive(true)
+        applyRemoteTerminalSize(root, terminal, cols, rows, () => {
+          const currentOverride = remoteSizeOverrideRef.current
+          return terminalRef.current === terminal && currentOverride?.cols === cols && currentOverride.rows === rows
+        })
+        updateRemoteViewportMetadata(sessionId, root)
+      },
+    )
 
-    void window.terminay.getTerminalZoom().then((zoomLevel) => {
+    void window.terminayTerminalPresentationHost?.getZoom().then((zoomLevel) => {
       if (terminalRef.current !== terminal) {
         return
       }
 
-      terminal.options.fontSize = Math.max(6, (settingsRef.current.fontSize ?? 13) + zoomLevel)
+      terminal.options.fontSize = resolveTerminalZoomedFontSize(settingsRef.current.fontSize, zoomLevel)
       zoomLevelRef.current = zoomLevel
       fitAndResize(true)
     })
@@ -736,7 +877,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     const handleWindowRefocus = () => {
       // macOS delivers the activating pointerdown just before this focus event, so
       // a fresh timestamp means this panel is the one under the click.
-      if (Date.now() - pointerDownInsideAt > 600) {
+      if (!shouldRestoreTerminalFocusAfterWindowActivation(pointerDownInsideAt, Date.now())) {
         return
       }
       // Re-assert immediately and across the next frame/tick to beat the
@@ -758,6 +899,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       }, 0)
     }
 
+    const repaintTerminalOnWindowFocus = () => {
+      window.requestAnimationFrame(() => {
+        if (terminalRef.current !== terminal) return
+        fitAndResize(true)
+        if (terminal.rows > 0) terminal.refresh(0, terminal.rows - 1)
+      })
+    }
+
     const focusTerminal = (event: Event) => {
       const customEvent = event as CustomEvent<{ sessionId?: string }>
       if (customEvent.detail?.sessionId && customEvent.detail.sessionId !== sessionId) {
@@ -770,13 +919,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     const clearTerminal = (event: Event) => {
       const customEvent = event as CustomEvent<{ sessionId?: string }>
-      if (customEvent.detail?.sessionId !== sessionId) {
+      if (!shouldClearTerminalForSession(customEvent.detail?.sessionId, sessionId)) {
         return
       }
 
-      terminal.clear()
-      terminal.focus()
-      announceTerminalFocus()
+      clearTerminalViewport({
+        clear: () => terminal.clear(),
+        focus: () => terminal.focus(),
+        announceFocus: announceTerminalFocus,
+      })
     }
 
     const copyTerminal = (event: Event) => {
@@ -804,12 +955,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
 
     const handleExplorerPathDrop = (event: Event) => {
-      const customEvent = event as CustomEvent<{ path?: string; sessionId?: string }>
+      const customEvent = event as CustomEvent<{
+        path?: string
+        sessionId?: string
+      }>
       if (customEvent.detail?.sessionId !== sessionId || !customEvent.detail.path) {
         return
       }
 
-      writePanelInput(`${escapePathForShell(customEvent.detail.path)} `)
+      writePanelInput(`${escapeTerminalPathForShell(customEvent.detail.path)} `)
       terminal.focus()
       announceTerminalFocus()
     }
@@ -826,7 +980,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
 
     const handleDragEnter = (event: DragEvent) => {
-      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer)) {
+      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer, resolveDesktopDroppedFilePath)) {
         return
       }
 
@@ -836,7 +990,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
 
     const handleDragOver = (event: DragEvent) => {
-      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer)) {
+      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer, resolveDesktopDroppedFilePath)) {
         return
       }
 
@@ -850,7 +1004,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return
       }
 
-      const droppedText = getDroppedFileText(event.dataTransfer)
+      const droppedText = getTerminalDropText(event.dataTransfer, resolveDesktopDroppedFilePath)
       if (!droppedText) {
         return
       }
@@ -862,6 +1016,19 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       writePanelInput(`${droppedText} `)
       terminal.focus()
       announceTerminalFocus()
+    }
+
+    // Commands initiated by another renderer surface (for example dictation)
+    // must use this panel's exact attachment when it is server-backed. The
+    // panel owns the ordered input queue, so this cannot bypass its transport
+    // failure handling or fall back to broad terminal IPC.
+    const handlePanelInput = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: unknown; data?: unknown }>).detail
+      if (detail?.sessionId !== sessionId || typeof detail.data !== 'string') {
+        return
+      }
+
+      writePanelInput(detail.data)
     }
 
     const dragListenerOptions = { capture: true } as const
@@ -877,15 +1044,17 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     root.addEventListener('dragover', handleDragOver, dragListenerOptions)
     root.addEventListener('drop', handleDrop, dragListenerOptions)
     root.addEventListener('paste', announceTerminalUserInput)
-    root.addEventListener('pointerdown', announceTerminalFocus)
+    root.addEventListener('contextmenu', openTerminalContextMenu)
     root.addEventListener('pointerdown', announceTerminalUserInput)
     root.addEventListener('pointerdown', markPointerDownInside)
     window.addEventListener('focus', handleWindowRefocus)
+    window.addEventListener('focus', repaintTerminalOnWindowFocus)
     window.addEventListener('terminay-focus-terminal', focusTerminal)
     window.addEventListener('terminay-focus-terminal-note', focusTerminalNote)
     window.addEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
     window.addEventListener(COPY_TERMINAL_EVENT, copyTerminal)
     window.addEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
+    window.addEventListener(TERMINAL_PANEL_INPUT_EVENT, handlePanelInput)
     terminal.focus()
     announceTerminalFocus()
 
@@ -899,10 +1068,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       root.removeEventListener('dragover', handleDragOver, dragListenerOptions)
       root.removeEventListener('drop', handleDrop, dragListenerOptions)
       root.removeEventListener('paste', announceTerminalUserInput)
-      root.removeEventListener('pointerdown', announceTerminalFocus)
+      root.removeEventListener('contextmenu', openTerminalContextMenu)
       root.removeEventListener('pointerdown', announceTerminalUserInput)
       root.removeEventListener('pointerdown', markPointerDownInside)
       window.removeEventListener('focus', handleWindowRefocus)
+      window.removeEventListener('focus', repaintTerminalOnWindowFocus)
       if (refocusFrame !== null) {
         window.cancelAnimationFrame(refocusFrame)
       }
@@ -914,6 +1084,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       window.removeEventListener(CLEAR_TERMINAL_EVENT, clearTerminal)
       window.removeEventListener(COPY_TERMINAL_EVENT, copyTerminal)
       window.removeEventListener(DROP_FILE_EXPLORER_PATH_EVENT, handleExplorerPathDrop)
+      window.removeEventListener(TERMINAL_PANEL_INPUT_EVENT, handlePanelInput)
       activeDisposer.dispose()
       if (activeFocusFrame !== null) {
         window.cancelAnimationFrame(activeFocusFrame)
@@ -924,29 +1095,37 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       resizeDisposer.dispose()
       keyDisposer.dispose()
       dataDisposer.dispose()
-      terminalExitDisposer()
-      panelOutputDisposer?.()
-      panelExitDisposer?.()
-      panelResyncDisposer?.()
+      panelEventDisposer?.()
       dataReplayDisposed = true
-      terminalDataDisposer?.()
+      serverInputQueue?.close()
       const attachmentToDetach = panelAttachment
       panelAttachment = null
       terminalPanelResizeRef.current = () => {}
-      pendingPanelInput = []
-      pendingPanelInputLength = 0
       pendingPanelResize = null
       if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
       contextReaderDisposer?.()
-      zoomDisposer()
-      remoteSizeOverrideDisposer()
+      zoomDisposer?.()
+      remoteSizeOverrideDisposer?.()
       screenElement?.removeEventListener('mousedown', preventModifierLinkSelection)
       searchAddonRef.current = null
       fitAddonRef.current = null
       terminalRef.current = null
+      hoveredLinkRef.current = null
       terminal.dispose()
     }
-  }, [announceTerminalFocus, props.api, props.params.registerTerminalContextReader, props.params.sessionId, props.params.terminalClientFromPosition, props.params.terminalClientId, props.params.terminalClientIdentity, props.params.terminalClientMode, props.params.terminalPanelClient])
+  }, [
+    announceTerminalFocus,
+    props.api,
+    props.params.registerTerminalContextReader,
+    props.params.sessionId,
+    props.params.terminalClientFromPosition,
+    props.params.terminalClientId,
+    props.params.terminalClientIdentity,
+    props.params.terminalClientMode,
+    props.params.terminalPanelClient,
+    resolvedTerminalClient,
+    serverConnectionAttempt,
+  ])
 
   useEffect(() => {
     settingsRef.current = settings
@@ -973,16 +1152,28 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       return
     }
 
-    clearRemoteTerminalElementSize(root, terminal)
-    fitAddon.fit()
-    const useServerTerminal = props.params.terminalPanelClient !== undefined && props.params.terminalClientIdentity !== undefined && props.params.terminalClientId !== undefined
-    if (useServerTerminal) {
-      terminalPanelResizeRef.current(terminal.cols, terminal.rows)
-    } else {
-      window.terminay.resizeTerminal(props.params.sessionId, terminal.cols, terminal.rows)
-    }
-    updateRemoteViewportMetadata(props.params.sessionId, root)
-  }, [props.params.color, props.params.sessionId, props.params.terminalClientId, props.params.terminalClientIdentity, props.params.terminalPanelClient, settings])
+    const refreshFrame = window.requestAnimationFrame(() => {
+      if (terminalRef.current !== terminal || root.clientWidth <= 0 || root.clientHeight <= 0) {
+        return
+      }
+      // Font metrics settle asynchronously inside xterm. Refreshing in the
+      // settings update turn can leave its retained buffer intact while the
+      // row renderer remains empty. Re-fit and repaint after those metrics
+      // have committed; this never replays server bytes.
+      clearRemoteTerminalElementSize(root, terminal)
+      fitAddon.fit()
+      if (terminal.rows > 0) terminal.refresh(0, terminal.rows - 1)
+      const useServerTerminal =
+        resolvedTerminalClient.panelClient !== undefined &&
+        resolvedTerminalClient.identity !== undefined &&
+        resolvedTerminalClient.clientId !== undefined
+      if (useServerTerminal) {
+        terminalPanelResizeRef.current(terminal.cols, terminal.rows)
+      }
+      updateRemoteViewportMetadata(props.params.sessionId, root)
+    })
+    return () => window.cancelAnimationFrame(refreshFrame)
+  }, [props.params.color, props.params.sessionId, resolvedTerminalClient, settings])
 
   useEffect(() => {
     const note = noteRef.current
@@ -1069,6 +1260,34 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     '--terminal-note-color': props.params.color || settings.theme.cursor,
   } as CSSProperties
 
+  const copyContextMenuSelection = () => {
+    const selectedText = terminalRef.current?.getSelection() ?? ''
+    void copyTerminalSelection(selectedText, (text) => window.terminayClipboardHost?.writeText(text))
+  }
+
+  const pasteFromContextMenu = () => {
+    const terminal = terminalRef.current
+    if (!terminal) {
+      return
+    }
+
+    void pasteTerminalClipboard(() => window.terminayClipboardHost?.readText() ?? Promise.resolve(''), {
+      announceInput: () => {
+        window.dispatchEvent(
+          new CustomEvent('terminay-terminal-user-input', {
+            detail: { sessionId: props.params.sessionId },
+          }),
+        )
+      },
+      paste: (text) => terminal.paste(text),
+      focus: () => terminal.focus(),
+    })
+  }
+
+  const copyContextMenuLink = (link: string) => {
+    void copyTerminalSelection(link, (text) => window.terminayClipboardHost?.writeText(text))
+  }
+
   return (
     <div
       className={`terminal-panel${hasTerminalNote ? ' terminal-panel--has-note' : ''}${
@@ -1098,6 +1317,16 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             }}
             onPointerDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
+              if (shouldReturnFocusToTerminalFromNote(event)) {
+                event.preventDefault()
+                event.stopPropagation()
+                terminalRef.current?.focus()
+                announceTerminalFocus()
+                return
+              }
+
+              // Notes are workspace metadata, never terminal input. Keep all
+              // ordinary editor keystrokes out of Dockview/xterm as well.
               event.stopPropagation()
             }}
           />
@@ -1139,7 +1368,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           <span className="terminal-search-count" aria-live="polite">
             {searchSummary.count > 0 ? `${searchSummary.index}/${searchSummary.count}` : '0 results'}
           </span>
-          <button type="button" className="terminal-search-button" onClick={goToPreviousResult} aria-label="Previous match">
+          <button
+            type="button"
+            className="terminal-search-button"
+            onClick={goToPreviousResult}
+            aria-label="Previous match"
+          >
             ↑
           </button>
           <button type="button" className="terminal-search-button" onClick={goToNextResult} aria-label="Next match">
@@ -1151,7 +1385,56 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         </search>
       ) : null}
       <div className="terminal-panel-root" ref={xtermRootRef} />
+      {serverTerminalError ? (
+        <div className="terminal-panel-connection-error" role="alert">
+          <p>{serverTerminalError}</p>
+          <button type="button" onClick={() => setServerConnectionAttempt((attempt) => attempt + 1)}>
+            Retry connection
+          </button>
+        </div>
+      ) : null}
+      {isTerminalHydrating && serverTerminalError === null ? (
+        <div className="terminal-panel-loading" role="status" aria-busy="true">
+          <div className="terminal-panel-loading__content">
+            <img className="terminal-panel-loading__logo" src="terminay.svg" alt="" aria-hidden="true" />
+            <p>Loading terminal…</p>
+          </div>
+        </div>
+      ) : null}
       {dictationOverlay ? <DictationOverlay {...dictationOverlay} /> : null}
+      {terminalContextMenu ? (
+        <ContextMenu
+          x={terminalContextMenu.x}
+          y={terminalContextMenu.y}
+          items={[
+            {
+              key: 'terminal-copy',
+              label: 'Copy',
+              disabled: !terminalContextMenu.hasSelection,
+              onClick: copyContextMenuSelection,
+            },
+            {
+              key: 'terminal-paste',
+              label: 'Paste',
+              disabled: window.terminayClipboardHost === undefined,
+              onClick: pasteFromContextMenu,
+            },
+            ...(terminalContextMenu.link
+              ? [
+                  {
+                    key: 'terminal-copy-link',
+                    label: 'Copy Link',
+                    onClick: () => copyContextMenuLink(terminalContextMenu.link as string),
+                  },
+                ]
+              : []),
+          ]}
+          onClose={() => {
+            setTerminalContextMenu(null)
+            terminalRef.current?.focus()
+          }}
+        />
+      ) : null}
     </div>
   )
 }

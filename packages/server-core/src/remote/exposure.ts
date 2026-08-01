@@ -13,18 +13,32 @@ import {
   type RemotePairingRoomMetadata,
 } from "./pairing.js";
 import {
-  RemoteHeadlessWebRtcFactory,
-  type HeadlessWebRtcRuntime,
+	type RemoteHeadlessSessionHost,
+	type HeadlessWebRtcRuntime,
   type RemoteHeadlessSession,
   type RemoteHeadlessSessionSnapshot,
 } from "./headless.js";
+import { RemoteAuditLog, RemoteRateLimiter } from "./lifecycle.js";
 
 export interface RemoteExposureControllerOptions {
-  readonly manager: RemoteConnectionManager;
-  readonly pairing: RemotePairingStore;
-  readonly headless?: RemoteHeadlessWebRtcFactory;
+	readonly manager: RemoteConnectionManager;
+	readonly pairing: RemotePairingStore;
+  readonly headless?: RemoteHeadlessSessionHost;
   readonly now?: () => number;
   readonly defaultLifetimeMs?: number;
+  readonly audit?: RemoteAuditLog;
+  readonly pairingRateLimiter?: RemoteRateLimiter;
+}
+
+export interface RemoteExposureService {
+	readonly status: RemoteExposureStatus;
+	readonly shutdown: () => void | Promise<void>;
+}
+
+export interface RemoteCleanupReport {
+	readonly pairingRooms: number;
+	readonly usedTickets: number;
+	readonly rateLimitWindows: number;
 }
 
 export interface RemotePairingHandoff {
@@ -54,9 +68,11 @@ export interface RemoteExposureStatus {
 export class RemoteExposureController {
   private readonly manager: RemoteConnectionManager;
   private readonly pairing: RemotePairingStore;
-  private readonly headless: RemoteHeadlessWebRtcFactory | undefined;
+	private readonly headless: RemoteHeadlessSessionHost | undefined;
   private readonly now: () => number;
   private readonly defaultLifetimeMs: number;
+	private readonly audit: RemoteAuditLog;
+	private readonly pairingRateLimiter: RemoteRateLimiter;
 
   constructor(options: RemoteExposureControllerOptions) {
     this.manager = options.manager;
@@ -64,10 +80,16 @@ export class RemoteExposureController {
     this.headless = options.headless;
     this.now = options.now ?? (() => Date.now());
     this.defaultLifetimeMs = positive(options.defaultLifetimeMs ?? 5 * 60 * 1000, "defaultLifetimeMs");
+	this.audit = options.audit ?? new RemoteAuditLog({ serverId: this.manager.serverId, now: this.now });
+	this.pairingRateLimiter = options.pairingRateLimiter ?? new RemoteRateLimiter({ now: this.now });
     if (this.manager.serverId !== this.pairing.serverId || this.manager.sessionOrigin !== this.pairing.sessionOrigin) {
       throw new TypeError("remote exposure identity does not match pairing identity");
     }
   }
+
+	get auditLog(): RemoteAuditLog {
+		return this.audit;
+	}
 
   get status(): RemoteExposureStatus {
     const exposure = this.manager.exposure;
@@ -77,7 +99,7 @@ export class RemoteExposureController {
       exposure,
       pairing,
       peers: this.manager.snapshot().peers,
-      sessions: this.headless?.snapshot() ?? [],
+		sessions: this.headless?.listSessions() ?? [],
     });
   }
 
@@ -86,7 +108,9 @@ export class RemoteExposureController {
     if (this.manager.exposure.state === "exposed") throw new Error("remote exposure is already active");
     const exposure = this.manager.expose(expiresAt);
     try {
-      return this.createPairing(exposure.expiresAt);
+      const handoff = this.createPairing(exposure.expiresAt);
+		this.audit.record({ action: "exposure-started", roomId: handoff.roomId });
+		return handoff;
     } catch (error) {
       this.manager.stopExposure();
       throw error;
@@ -98,7 +122,9 @@ export class RemoteExposureController {
     if (this.manager.exposure.state !== "exposed") throw new Error("remote exposure is not active");
     const exposure = this.manager.rotateExposure(expiresAt);
     try {
-      return this.createPairing(exposure.expiresAt, true);
+      const handoff = this.createPairing(exposure.expiresAt, true);
+		this.audit.record({ action: "exposure-rotated", roomId: handoff.roomId });
+		return handoff;
     } catch (error) {
       this.manager.stopExposure();
       throw error;
@@ -110,11 +136,26 @@ export class RemoteExposureController {
     if (this.manager.exposure.state !== "exposed" || expiresAt === undefined) throw new Error("remote exposure is not active");
     if (expiresAt > (this.manager.exposure.expiresAt ?? expiresAt)) throw new RangeError("pairing expiry exceeds exposure expiry");
     const room = rotate ? this.pairing.rotate(expiresAt) : this.pairing.create(expiresAt);
+	this.audit.record({ action: "pairing-created", roomId: room.roomId });
     return toHandoff(room);
   }
 
   consumePairing(attempt: RemotePairingAttempt): RemotePairingAdmission {
-    return this.pairing.consume(attempt);
+    // A pairing attempt is clipboard/client supplied data. Its rate-limit
+    // bucket must therefore be derived only from server-owned room identity;
+    // accepting a caller-provided bucket lets repeated guesses evade the
+    // bounded admission window by changing that field on every request.
+    const key = `pairing:${attempt.roomId}`;
+    try {
+		this.pairingRateLimiter.consume(key);
+		const admission = this.pairing.consume(attempt);
+		this.pairingRateLimiter.reset(key);
+		this.audit.record({ action: "pairing-consumed", roomId: admission.roomId });
+		return admission;
+	} catch (error) {
+		this.audit.record({ action: "pairing-rejected", roomId: attempt.roomId, reason: error instanceof Error && error.message.includes("rate limit") ? "rate-limited" : "invalid" });
+		throw error;
+	}
   }
 
   /** Consume the one-time room and then establish all isolated headless
@@ -127,23 +168,55 @@ export class RemoteExposureController {
   ): Promise<RemoteHeadlessSession> {
     if (this.manager.exposure.state !== "exposed") throw new Error("remote exposure is not active");
     if (this.headless === undefined) throw new Error("headless WebRTC runtime is unavailable");
-    this.pairing.consume(attempt);
-    return this.headless.connect(runtime, proof, signal);
+    this.consumePairing(attempt);
+	this.audit.record({ action: "peer-connect-started", deviceId: proof.deviceId });
+	try {
+		const session = await this.headless.connect(runtime, proof, signal);
+		this.audit.record({ action: "peer-connected", peerId: session.peerId, deviceId: session.deviceId });
+		return session;
+	} catch (error) {
+		this.audit.record({ action: "peer-connect-failed", deviceId: proof.deviceId, reason: "transport" });
+		throw error;
+	}
   }
+
+	async revokeDevice(deviceId: ProtocolId): Promise<number> {
+		const count = this.headless === undefined
+			? this.manager.revokeDevice(deviceId)
+			: await this.headless.revokeDevice(deviceId);
+		this.audit.record({ action: "device-revoked", deviceId });
+		return count;
+	}
 
   /** Stop accepting new remote pairing/reconnect attempts. Existing peers
    * remain connected so Local/server-owned work is not interrupted. */
   stopExposure(): RemoteExposureStatus {
+    const wasExposed = this.manager.exposure.state === "exposed";
+		// A half-negotiated peer has consumed admission but is not an established
+		// remote session. Fence it while preserving existing sessions, which remain
+		// usable until disconnect, revocation, or shutdown.
+		this.headless?.abortPendingConnections();
     this.manager.stopExposure();
     this.pairing.disable();
+    if (wasExposed) this.audit.record({ action: "exposure-stopped" });
     return this.status;
   }
 
+	cleanup(): RemoteCleanupReport {
+		const report = {
+			pairingRooms: this.pairing.cleanup(),
+			usedTickets: this.manager.cleanup(),
+			rateLimitWindows: this.pairingRateLimiter.cleanup(),
+		};
+		this.audit.record({ action: "cleanup" });
+		return Object.freeze(report);
+	}
+
   /** Full host shutdown, including live headless channels. */
-  async shutdown(): Promise<void> {
-    await this.headless?.closeAll();
-    this.stopExposure();
-  }
+	async shutdown(): Promise<void> {
+		await this.headless?.closeAll();
+		this.stopExposure();
+	}
 }
 
 function toHandoff(room: RemotePairingRoom): RemotePairingHandoff {

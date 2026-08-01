@@ -167,7 +167,7 @@ test("typed terminal adapter bounds parameters and preserves scope errors", asyn
   const denied = await dispatch({ id: "denied", version: 1, op: "write_terminal", params: { terminal: "worker", text: "ok" } }, { ...baseContext, scope: "read" });
   assert.equal(denied.ok, false);
   assert.equal(denied.error.code, "forbidden");
-  const malformed = await dispatch({ id: "malformed", version: 1, op: "wait_for_idle", params: { terminal: "worker", seconds: 0 } }, baseContext);
+  const malformed = await dispatch({ id: "malformed", version: 1, op: "wait_for_idle", params: { terminal: "worker", seconds: -1 } }, baseContext);
   assert.equal(malformed.ok, false);
   assert.equal(malformed.error.code, "bad_request");
 });

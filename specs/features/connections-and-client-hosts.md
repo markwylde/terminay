@@ -46,7 +46,17 @@ The menu contains:
   exposure;
 - retry, disconnect, forget, and revoke actions with distinct language; and
 - diagnostics that distinguish server offline, relay unavailable, WebRTC
-  route failure, expired grant, revoked device, and incompatible version.
+  route failure, expired grant, revoked device, incompatible version, and
+  failed switch actions. Failed switch actions keep the selector visible and
+  show the host-provided failure reason instead of logging only to the native
+  terminal.
+
+The exposure control reports mode capability separately from runtime state.
+It must not label an unavailable mode **Ready**, offer **Expose & show QR**, or
+wait for a start-time exception when the host already knows that the required
+listener, WebRTC runtime, or authenticated signaling authority is absent.
+Unavailable modes remain visible for diagnosis and link to their configuration
+or build requirement, but their start actions are disabled.
 
 The shared browser-safe UI package projects this model into an accessible
 `menuitemradio` list with stable ordering, position/set-size metadata, and
@@ -78,12 +88,24 @@ status must not be conflated with terminal or agent attention.
 - Selecting a profile focuses an existing window for that connection/view when
   appropriate or opens a new sandboxed window. Rebinding the current window is
   an explicit action, not an accidental side effect of menu selection.
+- A newly opened Desktop connection window remains in the normal loading state
+  until its own local or remote server connection is ready; the originating
+  window keeps its existing server binding during that handoff.
 - Multiple windows may target the same server and different logical workspace
   views. Other windows may simultaneously target other servers.
 - Local server startup, shutdown, crash recovery, and update are host actions.
   Remote server shutdown/update is never implied by closing its window.
 - Desktop stores non-secret profiles locally and credentials through OS-backed
   secure storage where available.
+- A Desktop connection created from a one-time standalone application URL uses
+  that authenticated first session to enroll reconnect material before saving
+  the profile as switchable. One-time URLs are never stored or reused for later
+  switching.
+- A remote HTTP event feed is a replayable projection channel, not the command
+  transport's lifetime signal. If that feed ends unexpectedly, Desktop and Web
+  reconnect it from the last observed revision while keeping independent
+  query/command responses live; an event-stream interruption must not turn an
+  in-flight command into an unknown outcome.
 
 The Desktop host foundation keeps the connection manager deliberately separate
 from server workspace state. A profile record contains only its stable server
@@ -266,9 +288,20 @@ separate operation against that origin.
 - Native-only window operations are capability-gated. Web clients manage
   server-owned logical workspace views through in-page navigation rather than
   requiring popup windows.
-- Settings/recordings/edit surfaces use shared routes/components. Electron may
-  present a route in a native auxiliary window; the web host presents it
-  in-page.
+- Settings, macros, recordings, and edit-tab surfaces use shared
+  routes/components. Electron may present a route in a native auxiliary window;
+  the web host presents the same route in-page with equivalent open, focus,
+  save, cancel, and close semantics.
+- Project-tab and terminal-tab double-click editing is a shared command. On
+  Desktop it may open the native modal edit window. In web it opens the
+  in-page edit-tab surface and returns focus to the edited project or terminal
+  after save/cancel without depending on popup windows.
+- Browser hosts expose an in-page application menu bar for the shared
+  workspace. It contains File, Edit, View, and Help menus with the same
+  command vocabulary as the Desktop native menu where the browser has an
+  equivalent capability. Native-only entries such as OS window management,
+  Desktop update installation, native file dialogs, and DevTools remain absent
+  or disabled unless the host capability exists.
 
 ## Connection persistence and privacy
 

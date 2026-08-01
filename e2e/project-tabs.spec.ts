@@ -22,6 +22,42 @@ async function expectTerminalInputFocused(page: Page): Promise<void> {
 }
 
 test.describe('project tabs', () => {
+  test('native project popout adopts its live workspace in a new window', async ({ electronApp, mainWindow }) => {
+    const sessionId = await mainWindow.locator('.terminal-panel').first()
+      .getAttribute('data-terminay-terminal-session-id')
+    if (!sessionId) throw new Error('Expected the active server terminal identity')
+
+    const nextWindow = electronApp.waitForEvent('window')
+    const result = await mainWindow.evaluate(async (activeSessionId) =>
+      window.terminayWorkspaceTransferHost?.popoutProject({
+        project: {
+          id: 'project-1',
+          title: 'Project 1',
+          color: '#4db5ff',
+          emoji: '',
+          fileExplorerWidth: 320,
+          isFileExplorerOpen: false,
+          isExplorerPaneCollapsed: false,
+          isAgentsPaneCollapsed: false,
+          isGitPaneCollapsed: false,
+          expandedAgentEntryIds: [],
+          sidebarAgentsHeight: 240,
+          sidebarExplorerHeight: 240,
+          sidebarGitHeight: 240,
+          sidebarPanelOrder: ['explorer', 'agents', 'git'],
+          rootFolder: '',
+        },
+        terminals: [{ sessionId: activeSessionId, title: 'Terminal 1' }],
+        activeSessionId,
+      }, 100, 100), sessionId)
+    expect(result?.ok).toBe(true)
+
+    const adoptedWindow = await nextWindow
+    await adoptedWindow.waitForLoadState('domcontentloaded')
+    await expect(adoptedWindow.locator('.project-tab--active')).toContainText('Project 1')
+    await expect(adoptedWindow.getByLabel('Close terminal')).toHaveCount(1)
+  })
+
   test('adds, edits, switches, and closes project tabs', async ({ createWorkspace, mainWindow }) => {
     const workspace = await createWorkspace({ name: 'project-tab-root' })
     const initialProjectTab = mainWindow.locator('.project-tab').first()

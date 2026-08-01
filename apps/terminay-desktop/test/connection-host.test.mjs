@@ -94,6 +94,20 @@ test("Local starts offline without a remote transport factory", async () => {
   await host.stop();
 });
 
+test("current bundle loading is bound to the authenticated connection and rejects late responses", async () => {
+  const profiles = new ConnectionProfileStore();
+  const host = new DesktopConnectionHost({ localServer: server("local-bundle", "http://127.0.0.1:4317"), profiles });
+  await host.start();
+  let resolveBundle;
+  const pending = new Promise((resolve) => { resolveBundle = resolve; });
+  const load = host.loadCurrentServerBundle(async () => pending);
+  await Promise.resolve();
+  await host.disconnect("local:local-bundle");
+  resolveBundle({ status: 200, finalUrl: "http://127.0.0.1:4317/manifest.json", bytes: new TextEncoder().encode("{}") });
+  await assert.rejects(load, /current connection changed/);
+  await host.stop();
+});
+
 test("Desktop host restores remembered profiles before Local becomes ready", async () => {
   let stored = [];
   const storage = {
@@ -115,24 +129,58 @@ test("Desktop host restores remembered profiles before Local becomes ready", asy
 
 test("Desktop host keeps one Local and three remote windows isolated while focusing repeats", async () => {
   const profiles = new ConnectionProfileStore();
-  const host = new DesktopConnectionHost({ localServer: server("local-multi", "http://127.0.0.1:4313"), profiles, transports: { connect: async (profile) => transport(profile.serverId) } });
+  const remoteTransportRequests = [];
+  const host = new DesktopConnectionHost({
+    localServer: server("local-multi", "http://127.0.0.1:4313"),
+    profiles,
+    transports: {
+      connect: async (profile) => {
+        remoteTransportRequests.push({ id: profile.id, serverId: profile.serverId, origin: profile.origin });
+        return transport(profile.serverId);
+      },
+    },
+  });
   await host.start();
   const local = await host.openProfileWindow("local:local-multi", "view-local", { createWindowId: () => "window-local" });
   assert.equal(local.selection.action, "open");
 
   const remotes = ["one", "two", "three"].map((name) => profiles.add(createRemoteProfile({ id: `remote-${name}`, serverId: `srv-${name}`, origin: `https://${name}.example`, label: name, now: "2026-01-01T00:00:00.000Z" })));
+  const opened = [local];
   for (const [index, profile] of remotes.entries()) {
-    const opened = await host.openProfileWindow(profile.id, `view-${profile.id}`, { createWindowId: () => `window-${index}` });
-    assert.equal(opened.selection.action, "open");
-    assert.equal(opened.connection.server.serverId, profile.serverId);
+    const next = await host.openProfileWindow(profile.id, `view-${profile.id}`, { createWindowId: () => `window-${index}` });
+    assert.equal(next.selection.action, "open");
+    assert.equal(next.connection.server.serverId, profile.serverId);
+    opened.push(next);
   }
+
   assert.equal(host.windows.list().length, 4);
-  assert.deepEqual(new Set(host.windows.list().map((binding) => binding.connectionId)), new Set(["local:local-multi", "remote-one", "remote-two", "remote-three"]));
+  assert.deepEqual(host.windows.list().map(({ windowId, connectionId, workspaceViewId }) => ({ windowId, connectionId, workspaceViewId })), [
+    { windowId: "window-local", connectionId: "local:local-multi", workspaceViewId: "view-local" },
+    { windowId: "window-0", connectionId: "remote-one", workspaceViewId: "view-remote-one" },
+    { windowId: "window-1", connectionId: "remote-two", workspaceViewId: "view-remote-two" },
+    { windowId: "window-2", connectionId: "remote-three", workspaceViewId: "view-remote-three" },
+  ]);
+  assert.deepEqual(remoteTransportRequests, remotes.map((profile) => ({ id: profile.id, serverId: profile.serverId, origin: profile.origin })));
+  assert.equal(new Set(opened.map(({ connection }) => connection.client)).size, 4);
+  assert.deepEqual(opened.map(({ connection }) => ({ profileId: connection.profile.id, serverId: connection.server.serverId })), [
+    { profileId: "local:local-multi", serverId: "local-multi" },
+    { profileId: "remote-one", serverId: "srv-one" },
+    { profileId: "remote-two", serverId: "srv-two" },
+    { profileId: "remote-three", serverId: "srv-three" },
+  ]);
+  assert.deepEqual(host.profiles.list().map(({ id, origin, status }) => ({ id, origin, status })).sort((left, right) => left.id.localeCompare(right.id)), [
+    { id: "local:local-multi", origin: "http://127.0.0.1:4313", status: "connected" },
+    { id: "remote-one", origin: "https://one.example", status: "connected" },
+    { id: "remote-three", origin: "https://three.example", status: "connected" },
+    { id: "remote-two", origin: "https://two.example", status: "connected" },
+  ]);
   assert.equal(JSON.stringify(host.profiles.serialize()).includes("reconnectGrant"), false);
   assert.equal(JSON.stringify(host.windows.list()).includes("private"), false);
 
   const focused = await host.openProfileWindow("remote-one", "view-remote-one", { createWindowId: () => "must-not-open" });
   assert.equal(focused.selection.action, "focus");
+  assert.strictEqual(focused.connection, opened[1].connection);
+  assert.equal(focused.selection.binding.windowId, "window-0");
   assert.equal(host.windows.list().length, 4);
   const secondView = await host.openProfileWindow("remote-one", "view-remote-one-second", { createWindowId: () => "window-remote-one-second" });
   assert.equal(secondView.selection.action, "open");
@@ -299,6 +347,66 @@ test("window registry focuses matching connection/view and requires explicit reb
   assert.deepEqual(windows.select("local:one", "view-a", { createWindowId: () => "window-b" }), { action: "focus", binding: { windowId: "window-a", connectionId: "local:one", workspaceViewId: "view-a" } });
   assert.deepEqual(windows.select("remote:two", "view-b", { currentWindowId: "window-a", createWindowId: () => "window-c" }), { action: "open", binding: { windowId: "window-c", connectionId: "remote:two", workspaceViewId: "view-b" } });
   assert.throws(() => windows.bind({ windowId: "window-a", connectionId: "remote:two", workspaceViewId: "view-b" }), /explicit rebind/);
+});
+
+test("Desktop host maps logical server views to native bindings independently of native window tokens", async () => {
+  const profiles = new ConnectionProfileStore();
+  const host = new DesktopConnectionHost({
+    localServer: server("local-view-map", "http://127.0.0.1:4319"),
+    profiles,
+  });
+  await host.start();
+
+  const first = await host.openProfileWindow("local:local-view-map", "workspace-view-alpha", {
+    createWindowId: () => "native-window-token-a",
+  });
+  const focused = await host.openProfileWindow("local:local-view-map", "workspace-view-alpha", {
+    createWindowId: () => "native-window-token-b",
+  });
+  assert.equal(first.selection.action, "open");
+  assert.equal(focused.selection.action, "focus");
+  assert.equal(focused.selection.binding.windowId, "native-window-token-a");
+  assert.equal(focused.selection.binding.workspaceViewId, "workspace-view-alpha");
+
+  const secondView = await host.openProfileWindow("local:local-view-map", "workspace-view-beta", {
+    createWindowId: () => "native-window-token-b",
+  });
+  assert.equal(secondView.selection.action, "open");
+  assert.deepEqual(host.windows.list().map(({ windowId, connectionId, workspaceViewId }) => ({ windowId, connectionId, workspaceViewId })), [
+    { windowId: "native-window-token-a", connectionId: "local:local-view-map", workspaceViewId: "workspace-view-alpha" },
+    { windowId: "native-window-token-b", connectionId: "local:local-view-map", workspaceViewId: "workspace-view-beta" },
+  ]);
+  await host.stop();
+});
+
+test("closing a native window detaches only its view binding and preserves the shared client", async () => {
+  const profiles = new ConnectionProfileStore();
+  const host = new DesktopConnectionHost({
+    localServer: server("local-window-close", "http://127.0.0.1:4318"),
+    profiles,
+  });
+  await host.start();
+
+  const first = await host.openProfileWindow("local:local-window-close", "view-first", { createWindowId: () => "window-first" });
+  const second = await host.openProfileWindow("local:local-window-close", "view-second", { createWindowId: () => "window-second" });
+  assert.strictEqual(second.connection, first.connection);
+
+  const closed = host.closeWindow("window-first");
+  assert.deepEqual(closed, {
+    binding: { windowId: "window-first", connectionId: "local:local-window-close", workspaceViewId: "view-first" },
+    logicalViewDeleted: false,
+  });
+  assert.equal(host.windows.get("window-first"), undefined);
+  assert.deepEqual(host.windows.get("window-second"), { windowId: "window-second", connectionId: "local:local-window-close", workspaceViewId: "view-second" });
+  assert.strictEqual(host.getConnection("local:local-window-close"), first.connection);
+  assert.equal(first.connection.client.state, "connected");
+
+  const reopened = await host.openProfileWindow("local:local-window-close", "view-first", { createWindowId: () => "window-first-reopened" });
+  assert.equal(reopened.selection.action, "open");
+  assert.equal(reopened.selection.binding.workspaceViewId, "view-first");
+  assert.strictEqual(reopened.connection, first.connection);
+  assert.equal(host.closeWindow("missing-window"), undefined);
+  await host.stop();
 });
 
 test("window registry persists host-local mapping and bounded geometry atomically", async () => {

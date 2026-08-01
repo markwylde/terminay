@@ -10,7 +10,6 @@ import { promises as fs } from 'node:fs'
 import https from 'node:https'
 import os from 'node:os'
 import path from 'node:path'
-import type { App } from 'electron'
 import QRCode from 'qrcode'
 import { WebSocketServer } from 'ws'
 import WebSocket from 'ws'
@@ -22,7 +21,7 @@ import {
   type RemoteServerMessage,
   type RemoteSessionSnapshot,
   type RemoteSessionSummary,
-} from '../../src/remote/protocol'
+} from './legacyTerminalProtocol'
 import { ChallengeStore, serializeDeviceChallenge } from './challengeStore'
 import { AuditStore } from './auditStore'
 import {
@@ -38,6 +37,7 @@ import { readJsonBody } from './jsonBody'
 import { ReconnectGrantStore, resolveReconnectGrantLifetime, type ReconnectGrantRecord } from './reconnectGrantStore'
 import { ensureTlsMaterial } from './tls'
 import { WebRtcPairingManager } from './webrtc'
+import { parseSignalingMessage, serializeSignalingMessage } from './signalingBoundary'
 
 type TerminalRemoteMetadata = {
   color: string
@@ -68,11 +68,19 @@ type RemoteSizeOverride =
       rows: number
     }
 
+/**
+ * The retired compatibility service deliberately has no Electron runtime
+ * import.  Its only historical use of `app` was resolving the per-user remote
+ * data directory; server-hosted migration harnesses can provide that concrete
+ * path directly.  Keep the structural `app` fallback only for the untouched
+ * legacy Desktop composition while its final WebRTC parity gate remains open.
+ */
 type RemoteAccessServiceOptions = {
-  app: App
+  app?: { getPath: (name: 'userData') => string }
   createWebRtcHostWindow: (ownerId: number) => {
     close: () => void
     closeTerminal: (channelId: string, reason?: string) => void
+    onDestroyed?: (listener: () => void) => () => void
     sendConfig: (config: WebRtcHostConfig) => void
     sendSignalMessage: (message: unknown) => void
     sendTerminalMessage: (channelId: string, message: string) => void
@@ -80,13 +88,18 @@ type RemoteAccessServiceOptions = {
   }
   getControllableSession: (
     sessionId: string,
-  ) => { close: () => void; resize: (cols: number, rows: number) => void; write: (data: string) => void } | null
+  ) => {
+    close: () => void | Promise<void>
+    resize: (cols: number, rows: number) => void | Promise<void>
+    write: (data: string) => void | Promise<void>
+  } | null
   getRemoteAccessSettings: () => RemoteAccessSettings
   notifyTerminalRemoteSizeOverride: (sessionId: string, override: RemoteSizeOverride) => void
   onStatusChanged: (status: RemoteAccessStatus) => void
   publicDir: string
   rendererDistDir: string
   saveGeneratedTlsPaths: (paths: { certPath: string; keyPath: string }) => Promise<void> | void
+  userDataPath?: string
 }
 
 type JsonResponse = Record<string, unknown>
@@ -121,6 +134,7 @@ type WebRtcHostRuntime = {
   pendingSignalMessages: string[]
   phase: 'waiting' | 'pairing' | 'connected' | 'failed'
   ready: boolean
+  removeDestroyedListener?: () => void
   signalSocket: WebSocket | null
 }
 
@@ -365,8 +379,8 @@ function getContentType(filePath: string): string {
 }
 
 export class RemoteAccessService {
-  private readonly app: App
   private readonly auditStore: AuditStore
+  private readonly clientOperationQueues = new Map<string, Promise<void>>()
   private readonly challengeStore = new ChallengeStore()
   private readonly connectionStore = new ConnectionStore()
   private readonly createWebRtcHostWindow: RemoteAccessServiceOptions['createWebRtcHostWindow']
@@ -402,13 +416,17 @@ export class RemoteAccessService {
   private readonly webRtcHostRuntimesByWebContentsId = new Map<number, WebRtcHostRuntime>()
   private readonly webRtcReconnectAvailabilityBySessionId = new Map<string, WebRtcReconnectAvailabilityRuntime>()
   private readonly webRtcReconnectAttemptsById = new Map<string, PendingWebRtcReconnect>()
+  private readonly webRtcReconnectAuthorizedDevices = new Map<string, number>()
   private readonly webRtcTerminalConnectionsByChannelId = new Map<string, string>()
   private webRtcStatus: RemoteAccessStatus['webRtcStatus'] = 'not-configured'
   private webRtcStatusMessage: string | null = null
   private readonly wsServer = new WebSocketServer({ noServer: true })
 
   constructor(options: RemoteAccessServiceOptions) {
-    this.app = options.app
+    const userDataPath = options.userDataPath ?? options.app?.getPath('userData')
+    if (typeof userDataPath !== 'string' || userDataPath.length === 0) {
+      throw new TypeError('remote access user data path is required')
+    }
     this.createWebRtcHostWindow = options.createWebRtcHostWindow
     this.getControllableSession = options.getControllableSession
     this.getRemoteAccessSettings = options.getRemoteAccessSettings
@@ -417,7 +435,7 @@ export class RemoteAccessService {
     this.publicDir = options.publicDir
     this.rendererDistDir = options.rendererDistDir
     this.saveGeneratedTlsPaths = options.saveGeneratedTlsPaths
-    this.remoteDir = path.join(this.app.getPath('userData'), 'remote-access')
+    this.remoteDir = path.join(userDataPath, 'remote-access')
     this.auditStore = new AuditStore(path.join(this.remoteDir, 'audit-log.json'))
     this.deviceStore = new DeviceStore(path.join(this.remoteDir, 'devices.json'))
     this.reconnectGrantStore = new ReconnectGrantStore(path.join(this.remoteDir, 'reconnect-grants.json'))
@@ -1100,6 +1118,13 @@ export class RemoteAccessService {
         signalSalt,
         signalAuthWithoutSalt,
       )
+      // The browser has just proved possession of both the reconnect grant
+      // and its paired device key. Permit exactly one subsequent API
+      // authentication without asking for the human PIN again.
+      this.webRtcReconnectAuthorizedDevices.set(
+        `${attempt.origin}\0${grant.deviceId}`,
+        Date.now() + 60_000,
+      )
       socket.send(JSON.stringify({
         type: 'reconnect-accepted',
       }))
@@ -1159,9 +1184,6 @@ export class RemoteAccessService {
   private createWebRtcSignalingUrl(appOrigin: string): string {
     const url = new URL(appOrigin)
     url.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:'
-    if (url.hostname.endsWith('.localhost')) {
-      url.hostname = 'localhost'
-    }
     url.pathname = '/signal'
     url.search = ''
     url.hash = ''
@@ -1239,7 +1261,7 @@ export class RemoteAccessService {
         if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !== socket) return
         let message: unknown
         try {
-          message = JSON.parse(raw.toString())
+          message = parseSignalingMessage(raw.toString())
         } catch {
           return
         }
@@ -1307,13 +1329,17 @@ export class RemoteAccessService {
       signalingUrl: options.signalingUrl,
     }
     this.webRtcHostConfigByWebContentsId.set(hostWindow.webContentsId, hostConfig)
-    this.webRtcHostRuntimesByWebContentsId.set(hostWindow.webContentsId, {
+    const runtime: WebRtcHostRuntime = {
       hostWindow,
       ownsSignalSocket: true,
       pendingSignalMessages: [],
       phase: 'waiting',
       ready: false,
       signalSocket: null,
+    }
+    this.webRtcHostRuntimesByWebContentsId.set(hostWindow.webContentsId, runtime)
+    runtime.removeDestroyedListener = hostWindow.onDestroyed?.(() => {
+      this.handleWebRtcHostDestroyed(hostWindow.webContentsId)
     })
     this.webRtcActivePairingWebContentsId = hostWindow.webContentsId
     this.webRtcStatus = 'registering'
@@ -1351,13 +1377,17 @@ export class RemoteAccessService {
       signalingUrl: options.signalingUrl,
     }
     this.webRtcHostConfigByWebContentsId.set(hostWindow.webContentsId, hostConfig)
-    this.webRtcHostRuntimesByWebContentsId.set(hostWindow.webContentsId, {
+    const runtime: WebRtcHostRuntime = {
       hostWindow,
       ownsSignalSocket: false,
       pendingSignalMessages: [],
       phase: 'waiting',
       ready: false,
       signalSocket: options.signalingSocket,
+    }
+    this.webRtcHostRuntimesByWebContentsId.set(hostWindow.webContentsId, runtime)
+    runtime.removeDestroyedListener = hostWindow.onDestroyed?.(() => {
+      this.handleWebRtcHostDestroyed(hostWindow.webContentsId)
     })
     hostWindow.sendConfig(hostConfig)
     return hostWindow.webContentsId
@@ -1394,7 +1424,7 @@ export class RemoteAccessService {
       if (runtime.signalSocket !== socket) return
       let message: unknown
       try {
-        message = JSON.parse(raw.toString())
+        message = parseSignalingMessage(raw.toString())
       } catch {
         return
       }
@@ -1440,7 +1470,7 @@ export class RemoteAccessService {
     const socket = runtime?.signalSocket ?? null
     let serializedMessage: string
     try {
-      serializedMessage = JSON.stringify(message)
+      serializedMessage = serializeSignalingMessage(message)
     } catch {
       this.handleWebRtcHostStatus(webContentsId, {
         detail: 'The WebRTC signaling message was not serializable.',
@@ -1544,6 +1574,8 @@ export class RemoteAccessService {
     const runtime = this.webRtcHostRuntimesByWebContentsId.get(webContentsId)
     if (!runtime) return
 
+    runtime.removeDestroyedListener?.()
+    runtime.removeDestroyedListener = undefined
     this.closeWebRtcSignalSocket(runtime, reason)
     this.webRtcHostRuntimesByWebContentsId.delete(webContentsId)
     this.webRtcHostConfigByWebContentsId.delete(webContentsId)
@@ -1551,6 +1583,20 @@ export class RemoteAccessService {
       this.webRtcActivePairingWebContentsId = null
     }
     runtime.hostWindow.close()
+  }
+
+  handleWebRtcHostDestroyed(webContentsId: number): void {
+    const wasActivePairingHost = this.webRtcActivePairingWebContentsId === webContentsId
+    for (const [attemptId, attempt] of this.webRtcReconnectAttemptsById) {
+      if (attempt.webContentsId === webContentsId) this.closeWebRtcReconnectAttempt(attemptId)
+    }
+    this.closeWebRtcHostRuntime(webContentsId, 'WebRTC host renderer was destroyed')
+    if (wasActivePairingHost) {
+      this.webRtcStatus = 'error'
+      this.webRtcStatusMessage =
+        'The WebRTC host renderer closed unexpectedly. Retry to advertise a fresh pairing room.'
+      this.emitStatus()
+    }
   }
 
   private getPinFailureLimit(): number {
@@ -1927,11 +1973,17 @@ export class RemoteAccessService {
         Buffer.from(String(body.deviceSignature ?? ''), 'base64url'),
       )
       if (!verifiedDeviceSignature) throw new Error('The paired device key signature was invalid.')
-      await this.assertPairingPinForDevice({
-        deviceId: device.id,
-        failureMessage: 'Remote PIN was missing or incorrect.',
-        pairingPin: String(body.pairingPin ?? ''),
-      })
+      const reconnectAuthorization = `${origin}\0${device.id}`
+      const reconnectAuthorizationExpiresAt =
+        this.webRtcReconnectAuthorizedDevices.get(reconnectAuthorization) ?? 0
+      this.webRtcReconnectAuthorizedDevices.delete(reconnectAuthorization)
+      if (reconnectAuthorizationExpiresAt <= Date.now()) {
+        await this.assertPairingPinForDevice({
+          deviceId: device.id,
+          failureMessage: 'Remote PIN was missing or incorrect.',
+          pairingPin: String(body.pairingPin ?? ''),
+        })
+      }
       await this.deviceStore.updateAuthentication(device.id)
       await this.auditStore.append({
         action: 'auth-verified',
@@ -1989,7 +2041,7 @@ export class RemoteAccessService {
       if (connection) this.send(connection.socket, { message: 'Invalid remote message.', type: 'error' })
       return
     }
-    this.handleClientMessage(connectionId, parsed)
+    void this.handleClientMessage(connectionId, parsed)
   }
 
   closeWebRtcTerminal(channelId: string, reason = 'WebRTC terminal channel closed.'): void {
@@ -1998,6 +2050,7 @@ export class RemoteAccessService {
     const connection = this.connectionStore.get(connectionId)
     this.webRtcTerminalConnectionsByChannelId.delete(channelId)
     this.clearRemoteSizeOverridesForConnection(connectionId)
+    this.clientOperationQueues.delete(connectionId)
     this.connectionStore.unregister(connectionId)
     void this.auditStore.append({
       action: 'connection-closed',
@@ -2131,12 +2184,13 @@ export class RemoteAccessService {
         return
       }
 
-      this.handleClientMessage(connectionId, parsed)
+      void this.handleClientMessage(connectionId, parsed)
     })
 
     socket.on('close', () => {
       const connection = this.connectionStore.get(connectionId)
       this.clearRemoteSizeOverridesForConnection(connectionId)
+      this.clientOperationQueues.delete(connectionId)
       this.connectionStore.unregister(connectionId)
       void this.auditStore
         .append({
@@ -2150,7 +2204,27 @@ export class RemoteAccessService {
     })
   }
 
-  private handleClientMessage(connectionId: string, message: RemoteClientMessage): void {
+  private handleClientMessage(connectionId: string, message: RemoteClientMessage): Promise<void> {
+    const previous = this.clientOperationQueues.get(connectionId) ?? Promise.resolve()
+    const operation = previous
+      .catch(() => undefined)
+      .then(() => this.processClientMessage(connectionId, message))
+      .catch(() => {
+        const connection = this.connectionStore.get(connectionId)
+        if (connection) {
+          this.send(connection.socket, { message: 'Remote terminal operation failed.', type: 'error' })
+        }
+      })
+    this.clientOperationQueues.set(connectionId, operation)
+    void operation.finally(() => {
+      if (this.clientOperationQueues.get(connectionId) === operation) {
+        this.clientOperationQueues.delete(connectionId)
+      }
+    })
+    return operation
+  }
+
+  private async processClientMessage(connectionId: string, message: RemoteClientMessage): Promise<void> {
     const connection = this.connectionStore.get(connectionId)
     if (!connection) {
       return
@@ -2199,7 +2273,17 @@ export class RemoteAccessService {
           return
         }
 
-        this.getControllableSession(message.sessionId)?.write(message.payload)
+        const controllableSession = this.getControllableSession(message.sessionId)
+        if (!controllableSession) {
+          this.send(connection.socket, { message: 'That terminal session is no longer controllable.', type: 'error' })
+          return
+        }
+
+        try {
+          await controllableSession.write(message.payload)
+        } catch {
+          this.send(connection.socket, { message: 'Terminal input was rejected.', type: 'error' })
+        }
         return
       }
       case 'resize': {
@@ -2216,9 +2300,16 @@ export class RemoteAccessService {
 
         const cols = Math.max(2, Math.floor(message.cols))
         const rows = Math.max(1, Math.floor(message.rows))
-        controllableSession.resize(cols, rows)
-        this.updateSessionSize(message.sessionId, cols, rows)
-        this.setRemoteSizeOverrideOwner(message.sessionId, connection.connectionId, cols, rows)
+        try {
+          await controllableSession.resize(cols, rows)
+        } catch {
+          this.send(connection.socket, { message: 'Terminal resize was rejected.', type: 'error' })
+          return
+        }
+
+        if (this.connectionStore.get(connectionId) === connection) {
+          this.setRemoteSizeOverrideOwner(message.sessionId, connection.connectionId, cols, rows)
+        }
         return
       }
       case 'ping':

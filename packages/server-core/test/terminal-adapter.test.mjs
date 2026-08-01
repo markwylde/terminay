@@ -13,6 +13,7 @@ function fakePty() {
     spawn() {
       const data = new Set();
       const exits = new Set();
+      const foreground = new Set();
       const process = {
         pid: 9000 + processes.length,
         write() {},
@@ -20,12 +21,16 @@ function fakePty() {
         kill() {},
         onData(listener) { data.add(listener); return () => data.delete(listener); },
         onExit(listener) { exits.add(listener); return () => exits.delete(listener); },
+        onForegroundProcess(listener) { foreground.add(listener); return () => foreground.delete(listener); },
         emit(value) {
           const bytes = new TextEncoder().encode(value);
           for (const listener of data) listener(bytes);
         },
         exit(value = {}) {
           for (const listener of exits) listener(value);
+        },
+        emitForegroundProcess(processName, shellForeground = false) {
+          for (const listener of foreground) listener({ processName, shellForeground });
         },
       };
       processes.push(process);
@@ -46,7 +51,7 @@ function textEvents(events) {
   }));
 }
 
-test("terminal adapter detaches and resumes at each client/session high-water mark", async () => {
+test("terminal adapter keeps reconnect watermarks while honoring a fresh display replay cursor", async () => {
   const pty = fakePty();
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty, maxReplayBytes: 64 });
   const session = await service.createSession({ projectId: "project-a", sessionId: "session-a", cols: 80, rows: 24 });
@@ -73,12 +78,15 @@ test("terminal adapter detaches and resumes at each client/session high-water ma
     { clientId: "client-a", identity, authorization: read, fromPosition: 0 },
     { onEvent: (event) => resumedEvents.push(event) },
   );
-  assert.equal(resumed.snapshot().fromPosition, 3, "stale reconnect cursor is advanced to the known position");
-  assert.deepEqual(textEvents(resumed.initialEvents), [{ position: 3, nextPosition: 6, text: "def", replay: true }]);
-  assert.deepEqual(textEvents(resumedEvents), [{ position: 3, nextPosition: 6, text: "def", replay: true }]);
+  assert.equal(resumed.snapshot().fromPosition, 0);
+  assert.deepEqual(textEvents(resumed.initialEvents), [
+    { position: 0, nextPosition: 3, text: "abc", replay: true },
+    { position: 3, nextPosition: 6, text: "def", replay: true },
+  ]);
+  assert.deepEqual(textEvents(resumedEvents), textEvents(resumed.initialEvents));
 
   // A separate client has an independent cursor and receives the retained
-  // snapshot from zero; client-a never receives abc a second time.
+  // snapshot from zero; both fresh display surfaces receive retained bytes.
   const otherEvents = [];
   const other = adapter.attach(
     { clientId: "client-b", identity, authorization: read, fromPosition: 0 },
@@ -93,6 +101,13 @@ test("terminal adapter detaches and resumes at each client/session high-water ma
   assert.deepEqual(textEvents(otherEvents).at(-1), { position: 6, nextPosition: 7, text: "g", replay: false });
   resumed.detach();
   other.detach();
+  const reconnect = adapter.resume(
+    { clientId: "client-a", identity, authorization: read },
+    { onEvent: () => {} },
+  );
+  assert.equal(reconnect.snapshot().fromPosition, 7);
+  assert.deepEqual(reconnect.initialEvents, []);
+  reconnect.detach();
   assert.equal(adapter.size, 0);
   assert.equal(session.status, "running");
 });
@@ -113,4 +128,66 @@ test("terminal adapter preserves exact identity authorization and surfaces retai
     (error) => error instanceof TerminalServiceError && error.code === "replay_gap" && error.details?.replayFrom === 3,
   );
   assert.equal(session.status, "running");
+});
+
+test("foreground lifecycle signals never enter terminal output, replay, or attachment streams", async () => {
+  const pty = fakePty();
+  const service = new TerminalService({ serverId: "server-a", ptyFactory: pty, maxReplayBytes: 64 });
+  const session = await service.createSession({ projectId: "project-a", sessionId: "session-a", cols: 80, rows: 24 });
+  const serviceEvents = [];
+  const unsubscribeService = service.onEvent((event) => serviceEvents.push(event));
+  const direct = service.subscribe(identity, { authorization: read });
+  const adapter = new TerminalServiceAdapter(service);
+  const attachmentEvents = [];
+  const attachment = adapter.attach(
+    { clientId: "client-a", identity, authorization: read },
+    { onEvent: (event) => attachmentEvents.push(event) },
+  );
+
+  pty.processes[0].emitForegroundProcess("codex", false);
+  pty.processes[0].emitForegroundProcess("zsh", true);
+
+  assert.deepEqual(serviceEvents, []);
+  assert.deepEqual(direct.drain(), []);
+  assert.deepEqual(attachmentEvents, []);
+  assert.equal(session.outputPosition, 0);
+  assert.equal(direct.position, 0);
+  assert.equal(attachment.position, 0);
+
+  attachment.detach();
+  const resumedEvents = [];
+  const resumed = adapter.resume(
+    { clientId: "client-a", identity, authorization: read, fromPosition: 0 },
+    { onEvent: (event) => resumedEvents.push(event) },
+  );
+  assert.deepEqual(resumed.initialEvents, []);
+
+  // Normal PTY output still reaches direct subscribers, attachments, and replay.
+  pty.processes[0].emit("ok");
+  assert.deepEqual(textEvents(direct.drain()), [
+    { position: 0, nextPosition: 2, text: "ok", replay: false },
+  ]);
+  assert.deepEqual(textEvents(attachmentEvents), []);
+  assert.deepEqual(textEvents(resumedEvents), [
+    { position: 0, nextPosition: 2, text: "ok", replay: false },
+  ]);
+  assert.deepEqual(textEvents(serviceEvents), [
+    { position: 0, nextPosition: 2, text: "ok", replay: false },
+  ]);
+
+  resumed.detach();
+  const replayedEvents = [];
+  const replayed = adapter.resume(
+    { clientId: "client-b", identity, authorization: read, fromPosition: 0 },
+    { onEvent: (event) => replayedEvents.push(event) },
+  );
+  assert.deepEqual(textEvents(replayed.initialEvents), [
+    { position: 0, nextPosition: 2, text: "ok", replay: true },
+  ]);
+  assert.deepEqual(textEvents(replayedEvents), [
+    { position: 0, nextPosition: 2, text: "ok", replay: true },
+  ]);
+  replayed.detach();
+  direct.close();
+  unsubscribeService();
 });
