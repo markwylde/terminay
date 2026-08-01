@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import test from 'node:test'
 import { getNextVersion, getReleaseType, incrementVersion } from './release-utils.mjs'
+
+const execFileAsync = promisify(execFile)
 
 test('returns no release when there are zero commits', () => {
   assert.equal(getReleaseType([]), null)
@@ -81,6 +87,34 @@ test('syncs package metadata to the release tag before packaging', () => {
   assert.match(workflow, /name:\s+Sync package version to release tag/)
   assert.match(workflow, /TARGET_VERSION="\$\{TAG#v\}"/)
   assert.match(workflow, /node scripts\/sync-package-version\.mjs "\$TARGET_VERSION"/)
+  assert.doesNotMatch(workflow, /pkg\.version = process\.argv\[1\]/)
+})
+
+test('version sync keeps root and standalone server package metadata valid and aligned', async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'terminay-version-sync-'))
+  try {
+    await mkdir(join(fixture, 'apps/terminay-server'), { recursive: true })
+    await writeFile(join(fixture, 'package.json'), JSON.stringify({ name: 'terminay', version: '0.0.0' }))
+    await writeFile(join(fixture, 'apps/terminay-server/package.json'), JSON.stringify({ name: '@terminay/server', version: '0.0.0' }))
+    await writeFile(join(fixture, 'package-lock.json'), JSON.stringify({
+      name: 'terminay',
+      version: '0.0.0',
+      packages: {
+        '': { name: 'terminay', version: '0.0.0' },
+        'apps/terminay-server': { name: '@terminay/server', version: '0.0.0' },
+      },
+    }))
+
+    await execFileAsync(process.execPath, [resolve('scripts/sync-package-version.mjs'), '2.0.0'], { cwd: fixture })
+    assert.equal(JSON.parse(await readFile(join(fixture, 'package.json'), 'utf8')).version, '2.0.0')
+    assert.equal(JSON.parse(await readFile(join(fixture, 'apps/terminay-server/package.json'), 'utf8')).version, '2.0.0')
+    const lock = JSON.parse(await readFile(join(fixture, 'package-lock.json'), 'utf8'))
+    assert.equal(lock.version, '2.0.0')
+    assert.equal(lock.packages[''].version, '2.0.0')
+    assert.equal(lock.packages['apps/terminay-server'].version, '2.0.0')
+  } finally {
+    await rm(fixture, { recursive: true, force: true })
+  }
 })
 
 test('release notes prompt requires the exact release diff range', () => {
