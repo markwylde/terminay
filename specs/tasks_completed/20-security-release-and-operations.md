@@ -106,8 +106,13 @@ The current evidence boundary is recorded in
   - [x] Ensure every GitHub Actions checkout removes its token from the runner
     Git configuration (`persist-credentials: false`); release mutation uses
     only explicit, step-scoped `GITHUB_TOKEN`/`GH_TOKEN` environment values.
+    The release script supplies the immutable source commit as the GitHub
+    Releases API `target_commitish`, so GitHub creates the release tag without
+    relying on a credential persisted by checkout; a direct `git push` remains
+    only as the non-Actions fallback when no API token/repository is present.
     Evidence: all `.github/workflows/*.yml` checkout steps and
-    `scripts/task20-ci-security.test.mjs`.
+    `scripts/task20-ci-security.test.mjs` plus
+    `scripts/release-config.test.mjs`.
   - [x] Scope the optional AI release-notes provider credential to its
     availability probe and generation step rather than exposing it to the
     complete release job. The public release path receives only a boolean
