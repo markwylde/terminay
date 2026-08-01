@@ -103,8 +103,6 @@ const args = [
   'openrouter/anthropic/claude-haiku-4.5',
   '-f',
   promptPath,
-  '--',
-  message,
 ]
 
 const permission = {
@@ -121,12 +119,13 @@ const permission = {
 }
 
 const child = spawn('npx', args, {
-  stdio: 'inherit',
+  stdio: ['pipe', 'inherit', 'inherit'],
   env: {
     ...process.env,
     OPENCODE_PERMISSION: JSON.stringify(permission),
   },
 })
+child.stdin.end(message)
 
 const exitCode = await new Promise((resolveExit) => {
   child.on('close', resolveExit)
