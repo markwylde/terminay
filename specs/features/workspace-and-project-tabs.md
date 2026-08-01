@@ -10,6 +10,8 @@ turning a terminal title into an identity boundary.
 ## User contract
 
 - Users can create, rename, reorder, close, and colour/icon project tabs.
+- Project creation commits its initial colour and icon atomically with the
+  server-owned project so rapid creation cannot reuse an uncommitted colour.
 - A project root can be selected directly or derived from the active terminal's
   working directory. Closing the final panel closes the project; closing the
   first project does not unexpectedly quit the app.
