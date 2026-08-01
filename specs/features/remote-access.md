@@ -257,6 +257,12 @@ The exact session origin stores its non-extractable device private key and
 reconnect material using IndexedDB and WebCrypto. Terminay Desktop stores its
 equivalent credentials using OS-backed secure storage where available.
 
+Desktop automation uses an explicit test-process-only credential protector. It
+encrypts and authenticates records with an ephemeral in-memory key, cannot
+survive an application restart, and is never selected outside
+`TERMINAY_TEST=1`. Production continues to fail closed when OS-backed secure
+storage is unavailable or reports Electron's insecure `basic_text` backend.
+
 The following never appear in connection-manager localStorage, query strings,
 cross-origin host messages, referrers, analytics, clipboard history, or normal
 logs:
