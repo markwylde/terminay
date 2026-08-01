@@ -257,8 +257,10 @@ test("standalone server release artifact is built from the immutable tag and ver
     "standalone package job must create a real npm pack artifact");
   assert.match(job, /node scripts\/sync-package-version\.mjs "\$VERSION"/u,
     "standalone package manifest version must use the tested release-tag synchronizer");
-  assert.match(job, /node "\$EXTRACTED\/package\/dist\/cli\.js" --version \| grep -Fx "\$VERSION"/u,
-    "extracted package CLI version must match the release tag before publication");
+  assert.match(job, /node scripts\/standalone-artifact\.mjs "\$EXTRACTED\/package" "\$MANIFEST"/u,
+    "the extracted package must pass non-executing payload inspection");
+  assert.match(job, /require\(process\.argv\[1\]\)\.package\.version/u,
+    "the inspected package version must match the release tag before publication");
   assert.match(job, /release-checksum\.mjs write "\$ARCHIVE" "\$ARCHIVE\.sha256"/u,
     "standalone package checksum must be written by the regular-file verifier");
   assert.match(job, /release-checksum\.mjs verify "\$ARCHIVE" "\$ARCHIVE\.sha256"/u,
@@ -737,6 +739,23 @@ test("release notes are not published until every immutable Desktop asset and ch
     "verification must require the Linux checksum sidecar");
   assert.match(verificationStep, /test "\$ASSET_NAMES" = "\$EXPECTED_ASSET_NAMES"/u,
     "the release attachment list must exactly equal the reviewed set, rather than allowing extra assets beside required names");
+});
+
+test("standalone npm payload is inspected without executing unresolved package dependencies", () => {
+  const release = workflows.get("trigger-release.yml");
+  assert.ok(release, "trigger-release.yml must exist");
+
+  const verifyStart = release.indexOf("- name: Verify extracted standalone server payload before checksumming");
+  const checksumStart = release.indexOf("- name: Write and verify standalone server checksum");
+  assert.ok(verifyStart >= 0 && checksumStart > verifyStart,
+    "standalone payload verification must precede checksumming");
+  const verification = release.slice(verifyStart, checksumStart);
+  assert.match(verification, /node scripts\/standalone-artifact\.mjs "\$EXTRACTED\/package" "\$MANIFEST"/u,
+    "the extracted npm package must use the non-executing artifact inspector");
+  assert.match(verification, /require\(process\.argv\[1\]\)\.package\.version/u,
+    "the inspected package version must equal the release tag version");
+  assert.doesNotMatch(verification, /dist\/cli\.js" --version/u,
+    "the raw npm payload must not execute before its declared dependencies are installed");
 });
 
 test("release notes verify downloaded GitHub Release bytes against their published checksum sidecars", () => {
