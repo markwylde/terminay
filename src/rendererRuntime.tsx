@@ -8,6 +8,7 @@ import {
 	RecordingsClient,
 	SettingsClient,
 	TerminayClientFacade,
+	TerminayTerminalPanelClient,
 } from '@terminay/client-core';
 import { createDesktopWorkspaceRouteRenderModel } from '../apps/terminay-desktop/src/renderer/index.ts';
 import type { AppProps } from './App.tsx';
@@ -33,6 +34,11 @@ import { captureLegacyFileViewerCapability } from './services/fileViewer/termina
 import { captureLegacyMacroSettingsCapability } from './services/macros/legacyMacroSettingsCapability.ts';
 import { createLegacySettingsClient } from './services/settings/legacySettingsClient.ts';
 import { ConnectedRendererWorkspace } from './shared/ConnectedRendererWorkspace.tsx';
+import { SharedAgentRouteBody } from './shared/SharedAgentRouteBody.tsx';
+import { SharedConnectionsRouteBody } from './shared/SharedConnectionsRouteBody.tsx';
+import { SharedFolderRouteBody } from './shared/SharedFolderRouteBody.tsx';
+import { SharedGitRouteBody } from './shared/SharedGitRouteBody.tsx';
+import { SharedTerminalRouteBody } from './shared/SharedTerminalRouteBody.tsx';
 import { captureLegacyServerConnectionLifecycleCapability } from './shared/legacyServerConnectionLifecycleCapability.ts';
 import { captureLegacyServerFrameCapability } from './shared/legacyServerFrameCapability.ts';
 import {
@@ -428,7 +434,75 @@ export function RendererEntry() {
 	);
 
 	const legacyContent = (() => {
+		const workspaceSnapshot =
+			terminalClientContext?.workspaceSnapshotStore?.snapshot;
+		const sharedProjectId =
+			workspaceSnapshot == null
+				? undefined
+				: Object.keys(workspaceSnapshot.projects)[0];
 		switch (view) {
+			case 'connections':
+				return (
+					<SharedConnectionsRouteBody
+						state={terminalClientContext === undefined ? 'loading' : 'ready'}
+						activeConnectionId={terminalClientContext?.serverId}
+						connections={
+							terminalClientContext === undefined
+								? []
+								: [
+										{
+											id: terminalClientContext.serverId,
+											label:
+												terminalClientContext.connectionLabel ??
+												terminalClientContext.serverId,
+											status: 'connected',
+										},
+									]
+						}
+					/>
+				);
+			case 'git':
+				return (
+					<SharedGitRouteBody
+						capabilityAvailable={
+							terminalClientContext?.serverCapabilities?.includes('git') === true
+						}
+						gitClient={terminalClientContext?.gitClient}
+						projectId={sharedProjectId}
+					/>
+				);
+			case 'agents':
+				return (
+					<SharedAgentRouteBody
+						client={terminalClientContext?.agentStatusClient}
+						loading={terminalClientContext === undefined}
+					/>
+				);
+			case 'folder':
+				return (
+					<SharedFolderRouteBody
+						client={terminalClientContext?.fileViewerClient}
+						loading={terminalClientContext === undefined}
+						projectId={sharedProjectId}
+					/>
+				);
+			case 'terminal':
+				return (
+					<SharedTerminalRouteBody
+						clientId={terminalClientContext?.clientId}
+						loading={terminalClientContext === undefined}
+						panelClient={
+							terminalClientContext?.applicationClient === undefined
+								? undefined
+								: new TerminayTerminalPanelClient(
+										terminalClientContext.client,
+									)
+						}
+						projectId={sharedProjectId}
+						serverId={terminalClientContext?.serverId}
+						terminalClient={terminalClientContext?.client}
+					/>
+				);
 			case 'settings':
 				return serverSettingsClient === undefined ? (
 					serverConnectionError === undefined ? (

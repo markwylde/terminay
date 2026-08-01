@@ -1721,7 +1721,10 @@ const ProjectWorkspace = forwardRef<
 					? undefined
 					: (sessionId) => {
 							void serverActivityClient
-								.acknowledge({ projectId: project.id, sessionId })
+								.acknowledge(
+									{ projectId: project.id, sessionId },
+									{ fence: false },
+								)
 								.catch(() => undefined);
 						},
 			applyPanelState: (sessionId, state) => {
@@ -1851,10 +1854,25 @@ const ProjectWorkspace = forwardRef<
 					) {
 						continue;
 					}
-					applyTerminalActivityEvaluation(
-						snapshot.sessionId,
-						serverActivityEvaluation(snapshot),
-					);
+					const isFocusedSession =
+						isActive &&
+						dockviewApiRef.current?.activePanel?.params?.sessionId ===
+							snapshot.sessionId;
+					if (isFocusedSession && !snapshot.acknowledged) {
+						// PTY output can arrive after the tab-selection acknowledgement.
+						// While this project and panel remain visibly active, fold it back
+						// into canonical acknowledgement instead of showing a phantom item.
+						applyTerminalActivityEvaluation(snapshot.sessionId, {
+							state: 'viewed',
+							nextDeadline: null,
+						});
+						markTerminalActivityViewed(snapshot.sessionId);
+					} else {
+						applyTerminalActivityEvaluation(
+							snapshot.sessionId,
+							serverActivityEvaluation(snapshot),
+						);
+					}
 					const exitCode =
 						typeof snapshot.exitCode === 'number' ? snapshot.exitCode : null;
 					recordTerminalControlActivity(
@@ -1878,6 +1896,8 @@ const ProjectWorkspace = forwardRef<
 		}, [
 			applyTerminalActivityEvaluation,
 			getPanelForSession,
+			isActive,
+			markTerminalActivityViewed,
 			project.id,
 			serverActivityClient,
 		]);

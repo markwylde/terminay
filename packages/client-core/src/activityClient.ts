@@ -65,11 +65,16 @@ export class ActivityClient {
     return this.store.applyReplay(replay);
   }
 
-  async acknowledge(identity: { readonly projectId: string; readonly sessionId: string }): Promise<void> {
+  async acknowledge(
+    identity: { readonly projectId: string; readonly sessionId: string },
+    options: { readonly fence?: boolean } = {},
+  ): Promise<void> {
     const snapshot = this.store.snapshot.sessions[identity.sessionId];
     await this.transport.command(ACTIVITY_OPERATIONS.acknowledge, {
       ...identity,
-      ...(snapshot === undefined ? {} : { expectedUpdatedAt: snapshot.updatedAt }),
+      ...(snapshot === undefined || options.fence === false
+        ? {}
+        : { expectedUpdatedAt: snapshot.updatedAt }),
     });
   }
 

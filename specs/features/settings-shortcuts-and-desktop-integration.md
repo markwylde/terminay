@@ -74,6 +74,10 @@ forwarding paths, provider messages, or plaintext.
 - Keyboard accelerators reject reserved/invalid combinations and do not conflict
   with text entry unexpectedly.
 - Desktop actions preserve window/project/session boundaries.
+- Embedded Desktop AI metadata failures cross the authenticated server bridge
+  as bounded, user-facing provider errors. The bridge does not expose raw
+  provider stdout or stderr and does not collapse actionable errors into an
+  opaque command-dispatch failure.
 - Web menu actions and tab/project double-click editing open the in-page
   settings, macros, recordings, or edit-tab route instead of no-oping when
   native windows are unavailable.

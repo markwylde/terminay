@@ -1,5 +1,12 @@
 # PTY runtime distribution evidence
 
+> Superseded by the v2 server-owned architecture. The historical evidence
+> below describes the removed Electron `ptyHost` child and remains only as a
+> record of the earlier distribution decision. Current Desktop and standalone
+> release lanes package and exercise `@terminay/server` plus server-core's
+> node-pty adapter; they must not restore this former second PTY/activity
+> authority.
+
 This record narrows the PTY portion of
 [the server architecture decision spikes](../tasks_completed/3-server-architecture-decision-spikes.md).
 It does not establish that the complete standalone server is distributable.
