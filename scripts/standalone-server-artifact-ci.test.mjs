@@ -9,6 +9,15 @@ test('CI constructs the isolated standalone server archive twice on each support
 	const workflow = await readFile(resolve(root, '.github/workflows/ci.yml'), 'utf8');
 	const builder = await readFile(resolve(root, 'scripts/build-standalone-server-artifact.mjs'), 'utf8');
 	assert.match(workflow, /standalone-server-artifact:/u);
+	const artifactJob = workflow.slice(
+		workflow.indexOf('  standalone-server-artifact:'),
+		workflow.indexOf('\n  smoke:', workflow.indexOf('  standalone-server-artifact:')),
+	);
+	assert.match(artifactJob, /Prepare versioned checkout[\s\S]*apt-get install --yes --no-install-recommends ca-certificates git/u);
+	assert.ok(
+		artifactJob.indexOf('Prepare versioned checkout') < artifactJob.indexOf('Check out code'),
+		'the slim release container must install git before actions/checkout so native evidence has repository provenance',
+	);
 	assert.match(workflow, /target:\s+linux-x64/u);
 	assert.match(workflow, /target:\s+linux-arm64/u);
 	assert.match(workflow, /build-standalone-server-artifact\.mjs/u);

@@ -124,6 +124,11 @@ jobs:
             target: linux-arm64
 
     steps:
+      - name: Prepare versioned checkout
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates git
+
       - name: Check out code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
