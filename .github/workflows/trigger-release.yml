@@ -146,18 +146,19 @@ jobs:
           fi
 
       - name: Generate AI release notes
+        id: generate_release_notes
         if: steps.release_tag.outputs.no_release != 'true' && steps.release_notes_credential.outputs.available == 'true'
+        continue-on-error: true
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: node scripts/generate-release-notes.mjs "${{ steps.release_tag.outputs.tag }}"
 
-      - name: Skip AI release notes without API key
-        if: steps.release_tag.outputs.no_release != 'true' && steps.release_notes_credential.outputs.available != 'true'
+      - name: Use fallback release notes
+        if: steps.release_tag.outputs.no_release != 'true' && (steps.release_notes_credential.outputs.available != 'true' || steps.generate_release_notes.outcome != 'success')
         run: |
           cat <<EOF > RELEASE.md
           ## Release Notes
 
-          Release notes are not yet generated automatically.
           This release was created successfully without AI-assisted release notes.
           EOF
 

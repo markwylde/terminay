@@ -117,8 +117,12 @@ The current evidence boundary is recorded in
     availability probe and generation step rather than exposing it to the
     complete release job. The public release path receives only a boolean
     availability output; the credential-free fallback never receives the
-    secret. Evidence: `.github/workflows/trigger-release.yml` and
-    `scripts/task20-ci-security.test.mjs`.
+    secret. Large release context is streamed to the generator over stdin
+    instead of a size-limited process argument, and an unavailable or failed
+    optional generator selects the fallback without blocking verified release
+    artifacts. Evidence: `.github/workflows/trigger-release.yml`,
+    `scripts/generate-release-notes.mjs`, `scripts/release-config.test.mjs`,
+    and `scripts/task20-ci-security.test.mjs`.
   - [x] Require every release-workflow shell step to run under a workflow-wide
     fail-closed `bash -euo pipefail` contract, so command, unset-variable, and
     pipeline failures cannot silently continue into packaging or publication.

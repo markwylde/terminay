@@ -99,6 +99,18 @@ test('AI release notes generator passes bounded git context to the model', () =>
   assert.match(script, /Commits in range:/)
   assert.match(script, /Changed files in range:/)
   assert.match(script, /Do not include features, fixes, or dependency updates from earlier releases/)
+  assert.match(script, /stdio: \['pipe', 'inherit', 'inherit'\]/)
+  assert.match(script, /child\.stdin\.end\(message\)/)
+  assert.doesNotMatch(script, /'--',\s+message/)
+})
+
+test('optional AI release notes fall back without blocking release artifacts', () => {
+  const workflow = readFileSync(resolve('.github/workflows/trigger-release.yml'), 'utf8')
+
+  assert.match(workflow, /name:\s+Generate AI release notes\n\s+id:\s+generate_release_notes/)
+  assert.match(workflow, /continue-on-error:\s+true/)
+  assert.match(workflow, /name:\s+Use fallback release notes/)
+  assert.match(workflow, /steps\.generate_release_notes\.outcome != 'success'/)
 })
 
 test('release publication creates the tag through the step-scoped GitHub API token', () => {

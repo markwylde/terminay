@@ -353,7 +353,7 @@ test("AI release-notes credentials are scoped only to the steps that require the
 
   const credentialProbe = release.indexOf("- name: Detect AI release-notes credential");
   const generator = release.indexOf("- name: Generate AI release notes");
-  const fallback = release.indexOf("- name: Skip AI release notes without API key");
+  const fallback = release.indexOf("- name: Use fallback release notes");
   assert.ok(credentialProbe >= 0, "release must probe AI credential availability in a dedicated step");
   assert.ok(generator > credentialProbe, "AI note generation must run after its credential probe");
   assert.ok(fallback > generator, "the credential-free fallback must remain after generation");
@@ -371,6 +371,10 @@ test("AI release-notes credentials are scoped only to the steps that require the
     "generation must depend on the non-secret availability output");
   assert.doesNotMatch(fallbackStep, /OPENROUTER_API_KEY/u,
     "the fallback must not receive an unused AI provider credential");
+  assert.match(generatorStep, /continue-on-error: true/u,
+    "optional AI notes must not block verified release artifacts");
+  assert.match(fallbackStep, /steps\.generate_release_notes\.outcome != 'success'/u,
+    "failed AI notes must select the credential-free fallback");
 });
 
 test("release workflow verifies every checksum sidecar before either upload path", () => {
