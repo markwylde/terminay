@@ -1,0 +1,127 @@
+{
+  "config": {
+    "argv": [
+      "/Users/mark/.nvm/versions/node/v24.14.0/bin/node",
+      "/Users/mark/Documents/Projects/terminay/terminay-server-client-architecture/node_modules/.bin/playwright",
+      "test",
+      "-c",
+      "scripts/task7-playwright.config.ts"
+    ],
+    "configFile": "/Users/mark/Documents/Projects/terminay/terminay-server-client-architecture/scripts/task7-playwright.config.ts",
+    "rootDir": "/Users/mark/Documents/Projects/terminay/terminay-server-client-architecture/scripts",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/Users/mark/Documents/Projects/terminay/terminay-server-client-architecture/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/Users/mark/Documents/Projects/terminay/terminay-server-client-architecture/scripts",
+        "testIgnore": [],
+        "testMatch": [
+          "task7-remote-connection-e2e.spec.ts"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "line",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "scripts/.task7-remote-connection-e2e-results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.62.0",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "task7-remote-connection-e2e.spec.ts",
+      "file": "task7-remote-connection-e2e.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "Desktop remote connection modal returns before a real standalone handshake and switches authority",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 60000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 10719,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-28T06:44:40.595Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "task7-stage.txt",
+                      "contentType": "text/plain",
+                      "body": "d2FpdCBmb3IgdGhlIHJlcXVlc3RlZCByZW1vdGUgYXV0aG9yaXR5"
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "c8cd373d047dbee21ae7-9a5b33cb6ac6605ba635",
+          "file": "task7-remote-connection-e2e.spec.ts",
+          "line": 12,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-07-28T06:44:40.398Z",
+    "duration": 10935.159,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

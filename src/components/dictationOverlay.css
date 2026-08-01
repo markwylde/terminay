@@ -224,6 +224,19 @@
 	color: rgba(220, 226, 240, 0.72);
 }
 
+.server-dictation-capture {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.server-dictation-capture__transcript {
+	max-width: min(420px, 60vw);
+	color: rgba(240, 246, 252, 0.82);
+	font-size: 12px;
+	line-height: 1.4;
+}
+
 @keyframes dictation-pulse {
 	0%,
 	100% {

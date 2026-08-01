@@ -429,6 +429,40 @@ export function selectAgentStatusesForTerminal(
 	);
 }
 
+function isEndedAgentStatusEntry(entry: AgentStatusEntry): boolean {
+	return (
+		!entry.active &&
+		(entry.lastEventKind === 'session.stopped' ||
+			entry.lastEventKind === 'agent.exited' ||
+			entry.lastEventKind === 'subagent.stopped')
+	);
+}
+
+/** Select live roster entries while retaining completed history in the snapshot. */
+export function selectLiveAgentStatusesForTerminal(
+	snapshot: AgentStatusSnapshot,
+	activationTerminalSessionId: string,
+): readonly AgentStatusEntry[] {
+	const entries = selectAgentStatusesForTerminal(
+		snapshot,
+		activationTerminalSessionId,
+	);
+	const endedRootEntryIds = new Set(
+		entries
+			.filter(
+				(entry) =>
+					entry.kind === 'root' && isEndedAgentStatusEntry(entry),
+			)
+			.map((entry) => entry.entryId),
+	);
+
+	return entries.filter(
+		(entry) =>
+			!isEndedAgentStatusEntry(entry) &&
+			(entry.kind === 'root' || !endedRootEntryIds.has(entry.parentEntryId)),
+	);
+}
+
 export function selectAgentStatusesByState(
 	snapshot: AgentStatusSnapshot,
 	state: AgentState,

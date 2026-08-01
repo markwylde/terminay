@@ -12,7 +12,7 @@ type PreviewViewerProps = {
 }
 
 export function PreviewViewer({ file, previewSourceUrl, text }: PreviewViewerProps) {
-  const previewKind = detectPreviewKind(file)
+  const previewKind = file.viewerCapabilities?.previewKind ?? detectPreviewKind(file)
   const fileUrl = previewSourceUrl ?? `file://${file.path}`
   const basePath = file.path.replace(/[/\\][^/\\]+$/, '')
   const language = languageFromFilePath(file.path)

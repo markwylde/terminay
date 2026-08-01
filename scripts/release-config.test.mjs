@@ -58,13 +58,21 @@ test('derives a patch first release from a 0.0.0 baseline', () => {
 test('wires Apple signing secrets into the release workflow', () => {
   const workflow = readFileSync(resolve('.github/workflows/trigger-release.yml'), 'utf8')
 
-  assert.match(workflow, /uses:\s+apple-actions\/import-codesign-certs@v3/)
+  assert.match(
+    workflow,
+    /uses:\s+apple-actions\/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d\s+# v3/,
+  )
+  assert.doesNotMatch(workflow, /uses:\s+apple-actions\/import-codesign-certs@v3(?:\s|$)/)
   assert.match(workflow, /MACOS_CERTIFICATE_P12/)
   assert.match(workflow, /MACOS_CERTIFICATE_PASSWORD/)
   assert.match(workflow, /APPLE_ID:\s+\$\{\{\s+matrix\.os\s*==\s*'macos-latest'\s*&&\s+vars\.APPLE_ID\s*\|\|\s*''\s+\}\}/)
   assert.match(workflow, /APPLE_APP_SPECIFIC_PASSWORD/)
   assert.match(workflow, /APPLE_TEAM_ID:\s+\$\{\{\s+matrix\.os\s*==\s*'macos-latest'\s*&&\s+vars\.APPLE_TEAM_ID\s*\|\|\s*''\s+\}\}/)
   assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY:\s+\$\{\{\s+matrix\.os\s*==\s*'macos-latest'\s*&&\s*'true'\s*\|\|\s*'false'\s+\}\}/)
+  assert.match(workflow, /Refusing to publish an unsigned or unnotarized macOS release/)
+  assert.match(workflow, /exit 1/)
+  assert.doesNotMatch(workflow, /has_certs/)
+  assert.match(workflow, /name:\s+Import Apple signing certificate\n\s+if:\s+matrix\.os == 'macos-latest'/)
 })
 
 test('syncs package metadata to the release tag before packaging', () => {

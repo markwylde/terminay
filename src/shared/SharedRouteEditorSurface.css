@@ -1,0 +1,9 @@
+.shared-route-editor { box-sizing: border-box; max-width: 100%; overflow-wrap: anywhere; }
+.shared-route-editor--wide { padding: 1rem; }
+.shared-route-editor--medium { padding: .875rem; }
+.shared-route-editor--narrow { padding: .75rem; }
+.shared-route-editor form { display: grid; gap: .75rem; max-width: 100%; }
+.shared-route-editor label { display: grid; gap: .25rem; }
+.shared-route-editor input, .shared-route-editor textarea { box-sizing: border-box; inline-size: 100%; max-inline-size: 100%; }
+.shared-route-editor textarea { min-block-size: 7rem; resize: vertical; }
+.shared-route-editor__actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: 1rem; }

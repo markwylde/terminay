@@ -13,6 +13,13 @@ export interface McpInstallModalProps {
 	onClose: () => void;
 }
 
+function requireMcpInstallHost(): NonNullable<Window['terminayMcpInstallHost']> {
+	if (!window.terminayMcpInstallHost) {
+		throw new Error('MCP installation is only available in the Desktop host.')
+	}
+	return window.terminayMcpInstallHost
+}
+
 export function McpInstallModal({
 	open,
 	onClose,
@@ -31,7 +38,7 @@ export function McpInstallModal({
 		setIsLoading(true);
 		setLoadError(null);
 		try {
-			const nextStatus = await window.terminay.getMcpInstallStatus();
+			const nextStatus = await requireMcpInstallHost().getStatus();
 			setStatus(nextStatus);
 		} catch (error) {
 			setLoadError(
@@ -51,8 +58,8 @@ export function McpInstallModal({
 
 		setIsLoading(true);
 		setLoadError(null);
-		void window.terminay
-			.getMcpInstallStatus()
+		void requireMcpInstallHost()
+			.getStatus()
 			.then((nextStatus) => {
 				if (!isMounted) {
 					return;
@@ -114,8 +121,8 @@ export function McpInstallModal({
 
 			try {
 				const result = installed
-					? await window.terminay.uninstallMcpAgent(agent)
-					: await window.terminay.installMcpAgent(agent);
+					? await requireMcpInstallHost().uninstall(agent)
+					: await requireMcpInstallHost().install(agent);
 
 				if (!result.ok) {
 					setRowErrors((previous) => ({

@@ -1,0 +1,15 @@
+.shared-workspace-route {
+	box-sizing: border-box;
+	display: grid;
+	gap: 12px;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.shared-workspace-route--narrow {
+	gap: 10px;
+}
+
+.shared-workspace-route--medium {
+	gap: 11px;
+}

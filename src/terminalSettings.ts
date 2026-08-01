@@ -375,12 +375,13 @@ export const defaultTerminalSettings: TerminalSettings = {
 	wordSeparator: ' ()[]{}\',"`',
 	fileViewer: {
 		customFileExtensions: [],
+		diffLayout: 'side-by-side',
 		folderTaskIgnoredDirectories: DEFAULT_FOLDER_TASK_IGNORED_DIRECTORIES,
 		refreshIntervalSeconds: 5,
 	},
 	keyboardShortcuts: defaultKeyboardShortcuts,
 	recording: {
-		captureInput: true,
+		captureInput: false,
 		directory: '~/Documents/TerminaySessions',
 		openTimelineAfterSaving: false,
 		recordNewTerminals: false,
@@ -409,6 +410,8 @@ export const defaultTerminalSettings: TerminalSettings = {
 		defaultGitState: 'expanded',
 		defaultWidth: 280,
 		defaultExplorerPaneHeight: 320,
+		defaultAgentsPaneHeight: 200,
+		defaultGitPaneHeight: 200,
 		panelOrder: [...SIDEBAR_PANEL_IDS],
 	},
 	theme: {
@@ -985,7 +988,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				key: 'remoteAccess.webRtcIceServers',
 				label: 'WebRTC ICE servers',
 				description:
-					'Comma-separated STUN or TURN server URLs used by the WebRTC host.',
+					'Comma-separated STUN/TURN URLs, or a JSON array of ICE server objects with urls and optional TURN username/credential.',
 				sectionId: 'remote-access-host',
 				categoryId: 'remote',
 				input: 'text',
@@ -1240,7 +1243,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				key: 'sidebar.defaultExplorerPaneHeight',
 				label: 'Default Explorer pane height',
 				description:
-					'Initial height in pixels of the Explorer pane above the Git pane in new projects.',
+					'Initial height in pixels of the Explorer pane in new projects.',
 				sectionId: 'sidebar',
 				categoryId: 'files',
 				input: 'number',
@@ -1250,6 +1253,45 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				keywords: [
 					'sidebar',
 					'explorer',
+					'git',
+					'height',
+					'splitter',
+					'divider',
+					'default',
+				],
+			}),
+			makeField({
+				key: 'sidebar.defaultAgentsPaneHeight',
+				label: 'Default Agents pane height',
+				description:
+					'Initial height in pixels of the Agents pane in new projects.',
+				sectionId: 'sidebar',
+				categoryId: 'files',
+				input: 'number',
+				min: 80,
+				max: 1000,
+				step: 10,
+				keywords: [
+					'sidebar',
+					'agents',
+					'height',
+					'splitter',
+					'divider',
+					'default',
+				],
+			}),
+			makeField({
+				key: 'sidebar.defaultGitPaneHeight',
+				label: 'Default Git pane height',
+				description: 'Initial height in pixels of the Git pane in new projects.',
+				sectionId: 'sidebar',
+				categoryId: 'files',
+				input: 'number',
+				min: 80,
+				max: 1000,
+				step: 10,
+				keywords: [
+					'sidebar',
 					'git',
 					'height',
 					'splitter',
@@ -2554,6 +2596,11 @@ export function normalizeTerminalSettings(
 							) === index,
 						)
 				: defaultTerminalSettings.fileViewer.customFileExtensions,
+			diffLayout:
+				fileViewerInput.diffLayout === 'unified' ||
+				fileViewerInput.diffLayout === 'side-by-side'
+					? fileViewerInput.diffLayout
+					: defaultTerminalSettings.fileViewer.diffLayout,
 			folderTaskIgnoredDirectories:
 				typeof fileViewerInput.folderTaskIgnoredDirectories === 'string'
 					? fileViewerInput.folderTaskIgnoredDirectories
@@ -2706,6 +2753,18 @@ export function normalizeTerminalSettings(
 			defaultExplorerPaneHeight: clampNumber(
 				Number(sidebarInput.defaultExplorerPaneHeight),
 				defaultTerminalSettings.sidebar.defaultExplorerPaneHeight,
+				80,
+				2000,
+			),
+			defaultAgentsPaneHeight: clampNumber(
+				Number(sidebarInput.defaultAgentsPaneHeight),
+				defaultTerminalSettings.sidebar.defaultAgentsPaneHeight,
+				80,
+				2000,
+			),
+			defaultGitPaneHeight: clampNumber(
+				Number(sidebarInput.defaultGitPaneHeight),
+				defaultTerminalSettings.sidebar.defaultGitPaneHeight,
 				80,
 				2000,
 			),
