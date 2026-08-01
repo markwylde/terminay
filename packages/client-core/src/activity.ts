@@ -102,6 +102,9 @@ export class ActivitySnapshotStore {
   /** Reset explicitly when reconnecting to a newly restarted server. */
   reset(snapshot: ActivitySnapshot): ActivityApplyResult {
     const next = this.normalizeSnapshot(snapshot);
+    if (next.revision === this.current.revision && next.cursor === this.current.cursor && sameSessions(next.sessions, this.current.sessions)) {
+      return { kind: "ignored", revision: this.current.revision, changed: false };
+    }
     this.current = next;
     const result: ActivityApplyResult = { kind: "applied", revision: next.revision, changed: true };
     this.publish(result);

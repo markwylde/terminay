@@ -12,6 +12,14 @@ const BUNDLE_ID = /^[A-Za-z0-9_-]{8,128}$/;
 const SHA256_BASE64URL = /^[A-Za-z0-9_-]{43}$/;
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/;
 
+/**
+ * The only CSP accepted for a server-bundled workspace. Keeping this in the
+ * verified manifest contract means Local, standalone, and host-shell serving
+ * cannot silently drift to different browser policies.
+ */
+export const DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY =
+	"default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+
 export class UiBundleError extends Error {
   readonly code: UiBundleErrorCode;
   constructor(code: UiBundleErrorCode, message: string) {
@@ -33,6 +41,15 @@ export function validateUiBundleManifest(value: unknown, options: UiBundleLimits
   const bundleId = stringField(value.bundleId, "bundleId", BUNDLE_ID);
   const protocolVersion = stringField(value.protocolVersion, "protocolVersion", VERSION);
   const serverVersion = stringField(value.serverVersion, "serverVersion", VERSION);
+  // Older on-disk manifests are accepted for migration, but every verified
+  // manifest is emitted with the canonical policy. A supplied policy must
+  // match exactly so a bundle cannot weaken the host's browser boundary.
+  const contentSecurityPolicy = value.contentSecurityPolicy === undefined
+    ? DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY
+    : stringField(value.contentSecurityPolicy, "contentSecurityPolicy");
+  if (contentSecurityPolicy !== DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY) {
+    throw new UiBundleError("validation", "UI bundle content security policy is not supported");
+  }
   if (!Array.isArray(value.assets) || value.assets.length === 0) throw new UiBundleError("validation", "UI bundle manifest must contain assets");
   if (value.assets.length > limits.maxAssets) throw new UiBundleError("limit", "UI bundle asset count exceeds the limit");
 
@@ -58,9 +75,17 @@ export function validateUiBundleManifest(value: unknown, options: UiBundleLimits
   const entryPath = stringField(value.entryPath, "entryPath");
   assertBundlePath(entryPath, bundleId, limits.maxPathBytes);
   if (!seen.has(entryPath)) throw new UiBundleError("validation", "UI bundle entry path is not present in assets");
+  const entry = assets.find((asset) => asset.path === entryPath);
+  // The entry point is the document that establishes the isolated session UI.
+  // Do not let a manifest claim an arbitrary binary/style asset as that
+  // document: doing so would bypass the complete executable/style graph check
+  // below and leave the host with an invalid browser launch target.
+  if (entry === undefined || !isHtmlContentType(entry.contentType)) {
+    throw new UiBundleError("validation", "UI bundle entry path must declare an HTML document");
+  }
   const derivedBundleId = deriveUiBundleId(assets, bundleId);
   if (derivedBundleId !== bundleId) throw new UiBundleError("integrity", "UI bundle id does not match its asset hashes");
-  return Object.freeze({ schemaVersion: 1, bundleId, entryPath, protocolVersion, serverVersion, assets: Object.freeze(assets) });
+  return Object.freeze({ schemaVersion: 1, bundleId, entryPath, protocolVersion, serverVersion, contentSecurityPolicy, assets: Object.freeze(assets) });
 }
 
 /** Derive the deterministic id used in asset paths and manifests. */
@@ -85,6 +110,7 @@ export async function verifyUiBundle(value: unknown, reader: UiBundleAssetReader
     if (hash !== asset.hash) throw new UiBundleError("integrity", `UI bundle asset hash mismatch for ${asset.path}`);
     bytesByPath.set(asset.path, new Uint8Array(raw));
   }
+  assertEntryDocumentAssetsAreDeclared(manifest, bytesByPath);
   return Object.freeze({
     manifest,
     read(path: string): Uint8Array {
@@ -93,6 +119,54 @@ export async function verifyUiBundle(value: unknown, reader: UiBundleAssetReader
       return new Uint8Array(bytes);
     },
   });
+}
+
+/**
+ * A verified entry document must not be able to load an undeclared script or
+ * stylesheet. This closes the gap between checking every listed byte and
+ * proving that the browser-visible application graph is actually represented
+ * by the content-addressed manifest.
+ *
+ * Deliberately only executable/style document references are considered here.
+ * Images, anchors, and data/blob URLs are governed by CSP and may be dynamic
+ * application content rather than part of the application code graph.
+ */
+function assertEntryDocumentAssetsAreDeclared(manifest: UiBundleManifest, bytesByPath: ReadonlyMap<string, Uint8Array>): void {
+  const entry = bytesByPath.get(manifest.entryPath);
+  if (entry === undefined) throw new UiBundleError("integrity", "UI bundle entry document is unavailable");
+  const entryAsset = manifest.assets.find((asset) => asset.path === manifest.entryPath);
+  if (entryAsset === undefined || !isHtmlContentType(entryAsset.contentType)) {
+    throw new UiBundleError("integrity", "UI bundle entry document is invalid");
+  }
+
+  let document: string;
+  try {
+    document = new TextDecoder("utf-8", { fatal: true }).decode(entry);
+  } catch {
+    throw new UiBundleError("integrity", "UI bundle entry document is not valid UTF-8");
+  }
+  const references = document.matchAll(/<(?:script\b[^>]*\bsrc|link\b[^>]*\brel\s*=\s*["']?stylesheet["']?[^>]*\bhref)\s*=\s*(["'])([^"']+)\1/giu);
+  for (const match of references) {
+    const reference = match[2];
+    if (reference === undefined || reference.startsWith("data:") || reference.startsWith("blob:")) continue;
+    const resolved = resolveEntryAssetReference(manifest, reference);
+    if (!bytesByPath.has(resolved)) {
+      throw new UiBundleError("integrity", `UI bundle entry document references an undeclared asset: ${reference}`);
+    }
+  }
+}
+
+function resolveEntryAssetReference(manifest: UiBundleManifest, reference: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/iu.test(reference) || reference.startsWith("//")) {
+    throw new UiBundleError("integrity", `UI bundle entry document references an external asset: ${reference}`);
+  }
+  const withoutFragment = reference.split(/[?#]/u, 1)[0] ?? "";
+  if (withoutFragment.length === 0) throw new UiBundleError("integrity", "UI bundle entry document references an empty asset");
+  if (withoutFragment.startsWith(`/remote-app/${manifest.bundleId}/`)) return withoutFragment;
+  // Vite emits root-relative asset URLs (`/assets/...`). LocalUiServer maps
+  // those at request time into this verified bundle namespace.
+  if (withoutFragment.startsWith("/")) return `/remote-app/${manifest.bundleId}${withoutFragment}`;
+  return new URL(withoutFragment, `http://ui-bundle.invalid${manifest.entryPath}`).pathname;
 }
 
 function resolveLimits(options: UiBundleLimits): Required<UiBundleLimits> {
@@ -125,6 +199,10 @@ function stringField(value: unknown, name: string, pattern?: RegExp): string {
 function unsignedInteger(value: unknown, name: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) throw new UiBundleError("validation", `invalid UI bundle ${name}`);
   return value as number;
+}
+
+function isHtmlContentType(value: string): boolean {
+  return /^text\/html(?:\s*;|\s*$)/iu.test(value);
 }
 
 function byteLength(value: string): number { return new TextEncoder().encode(value).byteLength; }

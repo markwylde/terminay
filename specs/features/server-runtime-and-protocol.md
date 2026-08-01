@@ -103,6 +103,10 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
   engine, required CLI/MCP entrypoints, payload hashes, and absence of Electron
   imports before publication. Native OS/architecture/ABI probes remain release
   evidence; this manifest check does not claim signing or notarization.
+- A clean dependency install normalizes the executable mode of node-pty's
+  platform `spawn-helper` before development, tests, or artifact staging. The
+  normalization is bounded to that named helper inside the installed node-pty
+  package and is idempotent.
 
 ## Server identity and storage
 
@@ -221,14 +225,15 @@ inspect the application protocol.
   shared client/server hello envelopes. The response binds the client id to
   the server identity, negotiated capabilities, protocol limits, and the
   authenticated scope before workspace access.
-- After that handshake, the local origin exposes bounded `POST /protocol/query`
-  and `POST /protocol/command` routes for registered
-  server-core operations. They accept only validated shared envelopes,
-  dispatch through the canonical operation registry, and return the same
-  result envelopes used by framed transports. Request bodies and deadlines
-  are capped by local limits, command replay is idempotent per authenticated
-  client, and client identity is carried only in the authenticated protocol
-  context rather than URL parameters or operation payloads.
+- After that handshake, the local origin exposes `POST /protocol/query` and
+  `POST /protocol/command` routes for registered server-core operations. They
+  accept only validated shared envelopes, dispatch through the canonical
+  operation registry, and return the same result envelopes and body budget used
+  by framed transports. The HTTP boundary must not impose a smaller
+  transport-specific operation cap; command replay is idempotent per
+  authenticated client, and client identity is carried only in the
+  authenticated protocol context rather than URL parameters or operation
+  payloads.
 - The shared client package provides a fetch-based HTTP `ByteTransport` adapter
   for this local protocol. It sends the handshake as JSON, sends framed
   operation bodies when binary data is present, and re-encodes JSON responses
@@ -322,7 +327,8 @@ endpoint, log-sink, and matching-UI-bundle values, with `TERMINAY_*`
 environment variables as fallbacks. Command-line values take precedence over
 environment values. `--status` returns only redacted phase, identity, version,
 runtime-mode, and configured-resource metadata; readiness output is local
-operator output and may identify the configured paths. `SIGINT` and `SIGTERM`
+operator output and may identify the configured paths, bound protocol endpoint,
+and one short-lived pairing handoff for that listener. `SIGINT` and `SIGTERM`
 use the bounded graceful shutdown path.
 
 The supported operator paths, service-manager examples, pairing/revocation

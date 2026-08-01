@@ -115,6 +115,8 @@ remain explicit parity work.
 
 - The current project shows the correct repository/worktree state without
   confusing it with another project or window.
+- Switching the project root immediately refreshes the Git sidebar for the new
+  root, even when an earlier Git status request is still pending.
 - Worktree lifecycle actions preserve the main worktree and present Git errors
   accurately.
 - Quick Push produces a reviewable plan before commits, pushes, or PR creation,

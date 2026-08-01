@@ -19,17 +19,21 @@ function createPtyFactory() {
     spawn(options) {
       const dataListeners = new Set();
       const exitListeners = new Set();
+      const foregroundProcessListeners = new Set();
       const process = {
         pid: 7000 + processes.length,
         options,
         writes: [],
         resizes: [],
         kills: [],
+        currentCwd: options.cwd,
+        getCwd() { return this.currentCwd; },
         write(bytes) { this.writes.push(new Uint8Array(bytes)); },
         resize(dimensions) { this.resizes.push({ ...dimensions }); },
         kill(signal) { this.kills.push(signal); },
         onData(listener) { dataListeners.add(listener); return () => dataListeners.delete(listener); },
         onExit(listener) { exitListeners.add(listener); return () => exitListeners.delete(listener); },
+        onForegroundProcess(listener) { foregroundProcessListeners.add(listener); return () => foregroundProcessListeners.delete(listener); },
         emitData(value) {
           const bytes = typeof value === "string" ? new TextEncoder().encode(value) : new Uint8Array(value);
           for (const listener of dataListeners) listener(bytes);
@@ -37,10 +41,71 @@ function createPtyFactory() {
         emitExit(exit = {}) {
           for (const listener of exitListeners) listener(exit);
         },
+        emitForegroundProcess(event) {
+          for (const listener of foregroundProcessListeners) listener(event);
+        },
+        get foregroundProcessListenerCount() { return foregroundProcessListeners.size; },
       };
       processes.push(process);
       return process;
     },
+  };
+}
+
+test("TerminalService observes live cwd without mutating immutable spawn cwd", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({ serverId: "server-a", ptyFactory: pty });
+  const session = await service.createSession({ projectId: "project-a", cwd: "/spawn", cols: 80, rows: 24 });
+  pty.processes[0].currentCwd = "/live";
+  assert.deepEqual(await service.currentCwd(session.snapshot(), {
+    serverId: "server-a", projectId: "project-a", sessionId: session.sessionId, scope: "read",
+  }), { cwd: "/live", source: "observed" });
+  assert.equal(session.snapshot().cwd, "/spawn");
+});
+
+test("TerminalService aborts a cwd observer when its bounded deadline expires", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({ serverId: "server-a", ptyFactory: pty });
+  const session = await service.createSession({ projectId: "project-a", cwd: "/spawn", cols: 80, rows: 24 });
+  let aborted = false;
+  pty.processes[0].getCwd = (signal) => new Promise((resolve) => {
+    signal.addEventListener("abort", () => {
+      aborted = true;
+      resolve(null);
+    }, { once: true });
+  });
+  assert.deepEqual(await service.currentCwd(session.snapshot(), {
+    serverId: "server-a", projectId: "project-a", sessionId: session.sessionId, scope: "read",
+  }, 5), { cwd: "/spawn", source: "spawn", observationError: "timeout" });
+  assert.equal(aborted, true);
+});
+
+function createInactivityTimer() {
+  let now = 0;
+  let nextId = 0;
+  const scheduled = new Map();
+  return {
+    setTimeout(callback, delayMs) {
+      const id = ++nextId;
+      scheduled.set(id, { at: now + delayMs, callback });
+      return id;
+    },
+    clearTimeout(id) { scheduled.delete(id); },
+    advanceBy(milliseconds) {
+      const target = now + milliseconds;
+      while (true) {
+        const next = [...scheduled.entries()]
+          .filter(([, timer]) => timer.at <= target)
+          .sort(([, left], [, right]) => left.at - right.at || left - right)[0];
+        if (next === undefined) break;
+        const [id, timer] = next;
+        scheduled.delete(id);
+        now = timer.at;
+        timer.callback();
+      }
+      now = target;
+    },
+    get size() { return scheduled.size; },
   };
 }
 
@@ -92,6 +157,7 @@ test("TerminalService owns PTY lifecycle and enforces exact server/project/sessi
     serverId: "server-a",
     projectId: "project-a",
     sessionId: "session-a",
+    cwd: "/tmp",
     status: "running",
     createdAt: 100,
     outputPosition: 0,
@@ -134,6 +200,143 @@ test("TerminalService owns PTY lifecycle and enforces exact server/project/sessi
   // A late adapter callback cannot publish a second exit or revive the PTY.
   process.emitExit({ exitCode: 9, signal: 9 });
   assert.equal(subscription.drain().length, 0);
+});
+
+test("TerminalService forwards optional foreground process events with exact identity and disposes them on exit", async () => {
+  const pty = createPtyFactory();
+  const foregroundEvents = [];
+  const service = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    now: () => 100,
+    sessionLifecycle: {
+      prepareTerminalSession: () => ({}),
+      terminalExited() {},
+      foregroundProcessChanged(session, event) { foregroundEvents.push({ session, event }); },
+    },
+  });
+  const handle = await service.createSession({ projectId: "project-a", sessionId: "session-a", cols: 80, rows: 24 });
+  const process = pty.processes[0];
+
+  assert.equal(process.foregroundProcessListenerCount, 1);
+  process.emitForegroundProcess({ processName: "codex", shellForeground: false });
+  assert.deepEqual(foregroundEvents, [{
+    session: identity(),
+    event: { processName: "codex", shellForeground: false },
+  }]);
+
+  process.emitExit({ exitCode: 0, signal: null });
+  assert.equal(handle.status, "exited");
+  assert.equal(process.foregroundProcessListenerCount, 0);
+  process.emitForegroundProcess({ processName: "sh", shellForeground: true });
+  assert.equal(foregroundEvents.length, 1);
+});
+
+test("TerminalService waits for output-only inactivity and resets the quiet window on accepted output", async () => {
+  const pty = createPtyFactory();
+  const timer = createInactivityTimer();
+  const service = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    inactivityTimer: timer,
+  });
+  const handle = await service.createSession({ projectId: "project-a", sessionId: "session-a", cols: 80, rows: 24 });
+  const process = pty.processes[0];
+  const write = writeAuthorization();
+
+  let firstResolved = false;
+  const first = handle.waitForInactivity(100).then(() => { firstResolved = true; });
+  timer.advanceBy(25);
+  process.emitData("");
+  await handle.input("input is not output", write);
+  await handle.resize({ cols: 100, rows: 30 }, write);
+  handle.attach().close();
+  timer.advanceBy(75);
+  await first;
+  assert.equal(firstResolved, true, "empty output, input, resize, and attachment do not reset inactivity");
+
+  let secondResolved = false;
+  const second = service.waitForInactivity(handle.identity, 100).then(() => { secondResolved = true; });
+  timer.advanceBy(99);
+  process.emitData("accepted PTY output");
+  timer.advanceBy(1);
+  await Promise.resolve();
+  assert.equal(secondResolved, false, "accepted output restarts the quiet window");
+  timer.advanceBy(99);
+  await second;
+  assert.equal(secondResolved, true);
+  assert.equal(timer.size, 0);
+});
+
+test("TerminalService resolves inactivity waits on exit and abort cleans up only its own wait", async () => {
+  const pty = createPtyFactory();
+  const timer = createInactivityTimer();
+  const service = new TerminalService({ serverId: "server-a", ptyFactory: pty, inactivityTimer: timer });
+  const handle = await service.createSession({ projectId: "project-a", sessionId: "session-a", cols: 80, rows: 24 });
+  const process = pty.processes[0];
+
+  const exitFirst = handle.waitForInactivity(100);
+  const exitSecond = handle.waitForInactivity(200);
+  assert.equal(timer.size, 2);
+  process.emitExit({ exitCode: 0, signal: null });
+  await Promise.all([exitFirst, exitSecond]);
+  assert.equal(timer.size, 0, "exit clears every outstanding inactivity timer");
+
+  const live = await service.createSession({ projectId: "project-a", sessionId: "session-b", cols: 80, rows: 24 });
+  const controller = new AbortController();
+  const aborted = live.waitForInactivity(100, { signal: controller.signal });
+  const remaining = live.waitForInactivity(200);
+  assert.equal(timer.size, 2);
+  const reason = new DOMException("cancelled", "AbortError");
+  controller.abort(reason);
+  await assert.rejects(aborted, (error) => error === reason);
+  assert.equal(timer.size, 1, "aborting one wait clears only its own timer");
+  timer.advanceBy(200);
+  await remaining;
+  assert.equal(timer.size, 0);
+});
+
+test("TerminalService kill finalizes a session exactly once when the PTY reports duplicate exits", async () => {
+  const pty = createPtyFactory();
+  const lifecycleExits = [];
+  const service = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    now: () => 100,
+    sessionLifecycle: {
+      prepareTerminalSession: () => ({}),
+      terminalExited(session, exit) { lifecycleExits.push({ session, exit }); },
+    },
+  });
+  const handle = await service.createSession({ projectId: "project-a", sessionId: "session-a", cols: 80, rows: 24 });
+  const subscription = handle.attach();
+  const process = pty.processes[0];
+
+  await handle.kill(writeAuthorization());
+  assert.deepEqual(process.kills, [undefined]);
+  assert.equal(handle.status, "running", "the authoritative finalization waits for the PTY exit");
+
+  process.emitExit({ exitCode: 137, signal: 9 });
+  process.emitExit({ exitCode: 137, signal: 9 });
+
+  assert.deepEqual(handle.exit, { exitCode: 137, signal: 9, reason: "killed", at: 100 });
+  assert.equal(handle.status, "exited");
+  assert.deepEqual(lifecycleExits, [{
+    session: identity(),
+    exit: { exitCode: 137, signal: "9" },
+  }]);
+  assert.deepEqual(subscription.drain().filter((event) => event.type === "exit"), [{
+    type: "exit",
+    ...identity(),
+    metadata: { exitCode: 137, signal: 9, reason: "killed", at: 100 },
+    exitCode: 137,
+    signal: 9,
+  }]);
+
+  await assert.rejects(
+    () => handle.kill(writeAuthorization()),
+    (error) => error instanceof TerminalServiceError && error.code === "session_exited",
+  );
 });
 
 test("server PTY adapter has no window owner and detach/resume reuses one process", async () => {
@@ -199,6 +402,40 @@ test("server PTY adapter has no window owner and detach/resume reuses one proces
   await handle.resize({ cols: 100, rows: 30 });
   assert.deepEqual(child.writes, ["hi"]);
   assert.deepEqual(child.resizes, [{ cols: 100, rows: 30 }]);
+
+  // The service foreground observer polls while a terminal is live.  This
+  // fixture deliberately never emits a node-pty exit, so finish its
+  // server-owned lifecycle explicitly rather than leaving that poll alive
+  // after the assertion completes.
+  resumed.close();
+  await service.shutdown();
+});
+
+test("TerminalService merges host defaults, caller values, and server lifecycle credentials in that order", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({
+    serverId: "server-a",
+    ptyFactory: pty,
+    defaultEnvironment: { PATH: "/host/bin", TERM: "host-term", HOST_ONLY: "yes" },
+    sessionLifecycle: {
+      prepareTerminalSession: () => ({ TERM: "server-term", TERMINAY_AGENT_HOOK_TOKEN: "server-only" }),
+      terminalExited() {},
+    },
+  });
+  await service.createSession({
+    projectId: "project-a",
+    sessionId: "session-a",
+    cols: 80,
+    rows: 24,
+    env: { TERM: "client-term", CLIENT_ONLY: "yes", TERMINAY_AGENT_HOOK_TOKEN: "spoofed" },
+  });
+  assert.deepEqual(pty.processes[0].options.env, {
+    PATH: "/host/bin",
+    TERM: "server-term",
+    HOST_ONLY: "yes",
+    CLIENT_ONLY: "yes",
+    TERMINAY_AGENT_HOOK_TOKEN: "server-only",
+  });
 });
 
 test("TerminalService splits output into bounded chunks, retains bounded replay, and closes slow pull subscribers", async () => {
@@ -306,7 +543,47 @@ test("node-pty adapter supervises a real shell and preserves server-owned exit/o
   }
 });
 
-test("two authorized clients compete on one PTY while replay cursors suppress duplicates", async () => {
+test("TerminalService disposal releases node-pty foreground polling when shutdown precedes PTY exit", async () => {
+  const intervals = new Map();
+  let nextIntervalId = 0;
+  const exits = new Set();
+  const child = {
+    pid: 9911,
+    process: "sh",
+    write() {},
+    resize() {},
+    kill() {},
+    onData() {},
+    onExit(listener) {
+      exits.add(listener);
+      return { dispose: () => exits.delete(listener) };
+    },
+  };
+  const service = new TerminalService({
+    serverId: "server-foreground-disposal",
+    ptyFactory: createNodePtyFactory(
+      { spawn: () => child },
+      {
+        foregroundPolling: {
+          setInterval(callback, delayMs) {
+            const id = ++nextIntervalId;
+            intervals.set(id, { callback, delayMs });
+            return id;
+          },
+          clearInterval(id) { intervals.delete(id); },
+        },
+      },
+    ),
+  });
+  const session = await service.createSession({ projectId: "project-foreground-disposal", shellPath: "/bin/sh", cols: 80, rows: 24 });
+
+  assert.equal(intervals.size, 1, "the service foreground subscription starts the adapter poll");
+  await service.shutdown();
+  assert.equal(session.status, "interrupted");
+  assert.equal(intervals.size, 0, "authoritative shutdown disposes the adapter poll without waiting for node-pty exit");
+});
+
+test("two authorized clients compete on one PTY while an explicit display cursor replays retained output", async () => {
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty, maxReplayBytes: 64 });
   const session = await service.createSession({ projectId: "project-a", sessionId: "session-a", cols: 80, rows: 24 });
@@ -323,8 +600,8 @@ test("two authorized clients compete on one PTY while replay cursors suppress du
   pty.processes[0].emitData("two");
   const resumed = adapter.resume({ clientId: "client-a", identity: session.identity, authorization: firstIdentity, fromPosition: 0 }, { onEvent: (event) => firstEvents.push(event) });
 
-  assert.deepEqual(outputText(firstEvents), ["one", "two"]);
-  assert.deepEqual(outputText(resumed.initialEvents), ["two"]);
+  assert.deepEqual(outputText(firstEvents), ["one", "one", "two"]);
+  assert.deepEqual(outputText(resumed.initialEvents), ["one", "two"]);
   assert.deepEqual(outputText(secondEvents), ["one", "two"]);
 
   const writeA = { ...session.identity, clientId: "client-a", scope: "write" };

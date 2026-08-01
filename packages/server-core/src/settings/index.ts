@@ -6,3 +6,4 @@ export * from "./repository.js";
 export * from "./vault.js";
 export * from "./vaultImport.js";
 export * from "./headlessVault.js";
+export * from "./protocol.js";

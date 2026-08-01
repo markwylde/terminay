@@ -1,13 +1,14 @@
 import {
   decodeFrame,
   encodeFrame,
+  DEFAULT_PROTOCOL_LIMITS,
   negotiateVersion,
   type ByteTransport,
+  type CancelEnvelope,
   type ClientHello,
   type CommandResultEnvelope,
   type Envelope,
   type JsonValue,
-  type ProtocolLimits,
   type QueryResultEnvelope,
   type ServerHello,
 } from "@terminay/protocol";
@@ -18,6 +19,7 @@ import {
   type ClientCommandResult,
   type ClientEvent,
   type ClientQueryResult,
+  type ClientBinaryQueryResult,
   type ClientSubscription,
   type CommandOptions,
   type ConnectionSnapshot,
@@ -31,18 +33,21 @@ import {
   type TerminayClientOptions,
 } from "./types.js";
 
-type Pending<T> = { readonly resolve: (value: T) => void; readonly reject: (error: unknown) => void };
-
-const DEFAULT_LIMITS: ProtocolLimits = {
-  maxFrameBytes: 8 * 1024 * 1024,
-  maxHeaderBytes: 64 * 1024,
-  maxBodyBytes: 8 * 1024 * 1024 - 64 * 1024,
-  maxQueuedBytes: 16 * 1024 * 1024,
-  maxStreamChunkBytes: 256 * 1024,
-  maxBinaryChunkBytes: 1024 * 1024,
-  maxCapabilities: 256,
-  maxEventsPerBatch: 256,
+type Pending<T> = {
+  readonly resolve: (value: T) => void;
+  readonly reject: (error: unknown) => void;
+  readonly settled: boolean;
 };
+
+type EventSubscriptionState = {
+  readonly listeners: Set<(event: ClientEvent) => void>;
+  readonly resyncListeners: Set<(resync: import("./types.js").ClientSubscriptionResync) => void>;
+  readonly buffered: ClientEvent[];
+  overflow: Error | undefined;
+  resync: import("./types.js").ClientSubscriptionResync | undefined;
+};
+
+const MAX_PRE_LISTENER_EVENTS = 1_024;
 
 function id(prefix: string): string {
   const random = typeof globalThis.crypto?.randomUUID === "function"
@@ -75,13 +80,19 @@ function resultError(result: { readonly ok: boolean; readonly error?: { readonly
   });
 }
 
+function isExpectedDisconnect(error: unknown): boolean {
+  return error instanceof ClientDisconnectedError ||
+    error instanceof CommandOutcomeUnknownError ||
+    (error instanceof ClientError && error.code === "disconnected");
+}
+
 /** Transport-neutral application client. Hosts provide only a ByteTransport. */
 export class TerminayClient {
   private readonly transport: ByteTransport;
   private readonly options: TerminayClientOptions;
   private readonly listeners = new Set<(change: ConnectionStateChange) => void>();
-  private readonly events = new Map<string, Set<(event: ClientEvent) => void>>();
-  private readonly pending = new Map<string, Pending<QueryResultEnvelope | CommandResultEnvelope>>();
+  private readonly events = new Map<string, EventSubscriptionState>();
+  private readonly pending = new Map<string, Pending<{ readonly envelope: QueryResultEnvelope | CommandResultEnvelope; readonly body: Uint8Array }>>();
   private current: ConnectionSnapshot = { state: "idle", revision: 0, cursor: "0", stale: false, reconnectAttempt: 0 };
   private readerStarted = false;
   private handshake: (Pending<ServerHello> & { readonly promise: Promise<ServerHello> }) | undefined;
@@ -113,15 +124,18 @@ export class TerminayClient {
       protocolMax: 1,
       clientId: this.options.clientId ?? id("client"),
       clientVersion: this.options.clientVersion ?? "0.0.0",
-      capabilities: [...(this.options.capabilities ?? [])],
-      limits: { ...(this.options.limits ?? DEFAULT_LIMITS) },
+      // The capability gates the additive event_resync envelope so older v1
+      // peers continue to receive only envelopes they understand.
+      capabilities: [...new Set([...(this.options.capabilities ?? []), "events.resync"])],
+      limits: { ...(this.options.limits ?? DEFAULT_PROTOCOL_LIMITS) },
     };
-    this.handshake = this.pendingPromise<ServerHello>();
+    const handshake = this.pendingPromise<ServerHello>();
+    this.handshake = handshake;
     try {
-      await this.transport.send(encodeFrame(hello, new Uint8Array(), this.options.limits ?? DEFAULT_LIMITS), { signal });
-      const server = await withAbort(this.handshake.promise, signal);
+      await this.transport.send(encodeFrame(hello, new Uint8Array(), this.options.limits ?? DEFAULT_PROTOCOL_LIMITS), { signal });
+      const server = await withAbort(handshake.promise, signal);
       negotiateVersion(hello.protocolMin, hello.protocolMax, server.protocolVersion, server.protocolVersion);
-      this.setState("connected", { server, negotiated: { version: server.protocolVersion, limits: this.options.limits ?? DEFAULT_LIMITS, capabilities: server.capabilities } });
+      this.setState("connected", { server, negotiated: { version: server.protocolVersion, limits: this.options.limits ?? DEFAULT_PROTOCOL_LIMITS, capabilities: server.capabilities } });
       return server;
     } catch (error) {
       this.handshake = undefined;
@@ -134,22 +148,46 @@ export class TerminayClient {
   async query<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}, options: QueryOptions = {}): Promise<ClientQueryResult<T>> {
     this.requireConnected();
     const queryId = options.queryId ?? id("query");
-    const result = await this.sendRequest<QueryResultEnvelope>({ type: "query", queryId, operation, payload, ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }) }, options.signal);
+    const response = await this.sendRequest<QueryResultEnvelope>({ type: "query", queryId, operation, payload, ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }) }, options.signal);
+    const result = response.envelope;
     const error = resultError(result);
     if (error !== undefined) throw error;
+    if (response.body.byteLength !== 0) throw new ClientError("invalid_response", "JSON query returned an unexpected binary body");
     return result as ClientQueryResult<T>;
   }
 
-  async command<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}, options: CommandOptions = {}): Promise<ClientCommandResult<T>> {
+  async queryWithBody<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}, options: QueryOptions = {}): Promise<ClientBinaryQueryResult<T>> {
     this.requireConnected();
+    const queryId = options.queryId ?? id("query");
+    const response = await this.sendRequest<QueryResultEnvelope>({ type: "query", queryId, operation, payload, ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }) }, options.signal);
+    const result = response.envelope;
+    const error = resultError(result);
+    if (error !== undefined) throw error;
+    if (result.bodyLength === undefined || result.bodyLength !== response.body.byteLength) throw new ClientError("invalid_response", "binary query body length is invalid");
+    return { envelope: result as ClientQueryResult<T>, body: response.body };
+  }
+
+  async command<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}, options: CommandOptions = {}): Promise<ClientCommandResult<T>> {
+    return this.commandWithBody<T>(operation, payload, new Uint8Array(), options);
+  }
+
+  /**
+   * Send a command with a bounded binary body.  The JSON envelope remains the
+   * operation metadata; callers use this for server-owned uploads such as
+   * dictation audio without base64 expansion or exposing a provider API.
+   */
+  async commandWithBody<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}, body = new Uint8Array(), options: CommandOptions = {}): Promise<ClientCommandResult<T>> {
+    this.requireConnected();
+    if (!(body instanceof Uint8Array)) throw new TypeError("command body must be Uint8Array");
     const commandId = options.commandId ?? `${this.options.clientId ?? "client"}-${(++this.commandCounter).toString(36)}-${id("cmd")}`.slice(0, 128);
     const correlationId = id("correlation");
     try {
-      const result = await this.sendRequest<CommandResultEnvelope>({
+      const response = await this.sendRequest<CommandResultEnvelope>({
         type: "command", commandId, correlationId, operation, payload,
         ...(options.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }),
         ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
-      }, options.signal);
+      }, options.signal, body);
+      const result = response.envelope;
       const error = resultError(result);
       if (error !== undefined) throw error;
       return result as ClientCommandResult<T>;
@@ -177,17 +215,56 @@ export class TerminayClient {
   async subscribe<T = JsonValue>(event: string | undefined, options: SubscriptionOptions = {}): Promise<ClientSubscription<T>> {
     this.requireConnected();
     const subscriptionId = options.subscriptionId ?? id("subscription");
-    if (options.operation !== false) await this.command(options.operation ?? "events.subscribe", { subscriptionId, event: event ?? null, fromRevision: options.fromRevision ?? this.current.revision, cursor: options.cursor ?? this.current.cursor, ...(options.payload === undefined ? {} : { payload: options.payload }) }, { signal: options.signal });
-    const listeners = new Set<(value: ClientEvent<T>) => void>();
-    this.events.set(subscriptionId, listeners as Set<(value: ClientEvent) => void>);
-    const unsubscribe = async () => { this.events.delete(subscriptionId); if (options.operation !== false) await this.command("events.unsubscribe", { subscriptionId }, { signal: options.signal }); };
+    const state: EventSubscriptionState = { listeners: new Set(), resyncListeners: new Set(), buffered: [], overflow: undefined, resync: undefined };
+    this.events.set(subscriptionId, state);
+    try {
+      // A server may emit replay/live frames in the same turn as the command
+      // result. Reserve and buffer the route before asking it to activate.
+      if (options.operation !== false) await this.command(options.operation ?? "events.subscribe", { subscriptionId, event: event ?? null, fromRevision: options.fromRevision ?? this.current.revision, cursor: options.cursor ?? this.current.cursor, ...(options.payload === undefined ? {} : { payload: options.payload }) }, { signal: options.signal });
+    } catch (error) {
+      this.events.delete(subscriptionId);
+      throw error;
+    }
+    let unsubscribed = false;
+    const unsubscribe = async () => {
+      if (unsubscribed) return;
+      unsubscribed = true;
+      this.events.delete(subscriptionId);
+      if (options.operation === false) return;
+      if (this.current.state !== "connected") return;
+      try {
+        await this.command("events.unsubscribe", { subscriptionId }, { signal: options.signal });
+      } catch (error) {
+        if (isExpectedDisconnect(error)) return;
+        throw error;
+      }
+    };
     if (options.signal !== undefined) options.signal.addEventListener("abort", () => { void unsubscribe(); }, { once: true });
-    return { id: subscriptionId, ...(event === undefined ? {} : { event }), fromRevision: options.fromRevision ?? this.current.revision, unsubscribe, onEvent: (listener) => { listeners.add(listener); return () => listeners.delete(listener); } };
+    return {
+      id: subscriptionId,
+      ...(event === undefined ? {} : { event }),
+      fromRevision: options.fromRevision ?? this.current.revision,
+      unsubscribe,
+      onEvent: (listener) => {
+        if (state.overflow !== undefined) throw state.overflow;
+        if (state.resync !== undefined) return () => undefined;
+        state.listeners.add(listener as unknown as (event: ClientEvent) => void);
+        const buffered = state.buffered.splice(0).sort((left, right) => left.revision - right.revision);
+        for (const queued of buffered) listener(queued as ClientEvent<T>);
+        return () => state.listeners.delete(listener as unknown as (event: ClientEvent) => void);
+      },
+      onResync: (listener) => {
+        state.resyncListeners.add(listener);
+        if (state.resync !== undefined) listener(state.resync);
+        return () => state.resyncListeners.delete(listener);
+      },
+    };
   }
 
   async close(): Promise<void> {
     this.closed = true;
     this.setState("closing");
+    this.events.clear();
     for (const pending of this.pending.values()) pending.reject(new ClientDisconnectedError("client is closing"));
     this.pending.clear();
     this.handshake?.reject(new ClientDisconnectedError("client is closing"));
@@ -197,40 +274,117 @@ export class TerminayClient {
 
   private pendingPromise<T>(): Pending<T> & { readonly promise: Promise<T> } {
     let resolve!: (value: T) => void; let reject!: (error: unknown) => void;
-    const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
-    return { resolve, reject, promise };
+    let settled = false;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+      resolve = (value) => { if (settled) return; settled = true; resolvePromise(value); };
+      reject = (error) => { if (settled) return; settled = true; rejectPromise(error); };
+    });
+    return { resolve, reject, promise, get settled() { return settled; } };
   }
 
-  private async sendRequest<T extends QueryResultEnvelope | CommandResultEnvelope>(envelope: Envelope, signal?: AbortSignal): Promise<T> {
+  private async sendRequest<T extends QueryResultEnvelope | CommandResultEnvelope>(envelope: Envelope, signal?: AbortSignal, body = new Uint8Array()): Promise<{ readonly envelope: T; readonly body: Uint8Array }> {
     const key = envelope.type === "query" ? envelope.queryId : envelope.type === "command" ? envelope.correlationId : "";
-    const pending = this.pendingPromise<T>();
-    this.pending.set(key, pending as unknown as Pending<QueryResultEnvelope | CommandResultEnvelope>);
+    const pending = this.pendingPromise<{ readonly envelope: T; readonly body: Uint8Array }>();
+    this.pending.set(key, pending as unknown as Pending<{ readonly envelope: QueryResultEnvelope | CommandResultEnvelope; readonly body: Uint8Array }>);
+    const frame = encodeFrame(envelope, body, this.options.limits ?? DEFAULT_PROTOCOL_LIMITS);
+    let accepted = false;
+    let cancellationSent = false;
+    const sendCancellation = (): void => {
+      if (envelope.type !== "command" || !accepted || pending.settled || cancellationSent) return;
+      cancellationSent = true;
+      const cancel: CancelEnvelope = { type: "cancel", correlationId: envelope.correlationId, reason: "client-abort" };
+      try {
+        void this.transport.send(encodeFrame(cancel, new Uint8Array(), this.options.limits ?? DEFAULT_PROTOCOL_LIMITS)).catch(() => undefined);
+      } catch {
+        // A local abort remains authoritative if the transport is already
+        // unavailable while the best-effort cancel is being queued.
+      }
+    };
+    const abortSignal = signal;
+    const onAbort = envelope.type === "command" && abortSignal !== undefined ? sendCancellation : undefined;
     try {
-      await withAbort(this.transport.send(encodeFrame(envelope, new Uint8Array(), this.options.limits ?? DEFAULT_LIMITS), { signal }), signal);
+      const preAbort = abortError(signal);
+      if (preAbort !== undefined) throw preAbort;
+      if (abortSignal !== undefined && onAbort !== undefined) abortSignal.addEventListener("abort", onAbort, { once: true });
+      const sendPromise = this.transport.send(frame, { signal });
+      // Keep the acceptance continuation alive even when the local abort
+      // wins first; a transport may accept the frame after its signal fires.
+      void sendPromise.then(() => {
+        accepted = true;
+        if (signal?.aborted) sendCancellation();
+      }, () => undefined);
+      await withAbort(sendPromise, signal);
+      accepted = true;
+      // A transport may resolve send() after observing an abort. In that
+      // case the command frame was accepted, so still cancel the server work.
+      if (signal?.aborted) sendCancellation();
       return await withAbort(pending.promise, signal);
-    } finally { this.pending.delete(key); }
+    } finally {
+      if (abortSignal !== undefined && onAbort !== undefined) abortSignal.removeEventListener("abort", onAbort);
+      this.pending.delete(key);
+    }
   }
 
   private requireConnected(): void { if (this.current.state !== "connected") throw new ClientDisconnectedError(); }
 
   private async readLoop(): Promise<void> {
+    let framesThisTurn = 0;
     try {
       for await (const bytes of this.transport.incoming) {
-        const frame = decodeFrame(bytes, this.options.limits ?? DEFAULT_LIMITS);
-        this.process(frame.envelope);
+        const frame = decodeFrame(bytes, this.options.limits ?? DEFAULT_PROTOCOL_LIMITS);
+        this.process(frame.envelope, frame.body);
+        // MessagePort delivery and immediately-resolved async iterators can
+        // otherwise form an unbounded microtask chain. Yield periodically so
+        // connection deadlines, renderer input, and diagnostics remain live
+        // even if a peer produces an event storm.
+        framesThisTurn += 1;
+        if (framesThisTurn >= 128) {
+          framesThisTurn = 0;
+          await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+        }
       }
       if (!this.closed) this.failDisconnected(new Error("transport closed"));
     } catch (error) { if (!this.closed) this.failDisconnected(error); }
   }
 
-  private process(envelope: Envelope): void {
+  private process(envelope: Envelope, body: Uint8Array = new Uint8Array()): void {
+    const diagnostic = (globalThis as typeof globalThis & {
+      __terminayClientDiagnostic?: (phase: string) => void;
+    }).__terminayClientDiagnostic;
+    diagnostic?.(`client.process.${envelope.type}`);
     if (envelope.type === "server_hello") { this.handshake?.resolve(envelope); this.handshake = undefined; return; }
-    if (envelope.type === "query_result" || envelope.type === "command_result") { this.pending.get(envelope.type === "query_result" ? envelope.queryId : envelope.correlationId)?.resolve(envelope); return; }
+    if (envelope.type === "query_result" || envelope.type === "command_result") {
+      this.pending.get(envelope.type === "query_result" ? envelope.queryId : envelope.correlationId)?.resolve({ envelope, body });
+      diagnostic?.(`client.complete.${envelope.type}`);
+      return;
+    }
     if (envelope.type === "error") { if (envelope.correlationId !== undefined) this.pending.get(envelope.correlationId)?.reject(new ClientError(envelope.error.code, envelope.error.message, { ...(envelope.error.retryable === undefined ? {} : { retryable: envelope.error.retryable }), ...(envelope.error.details === undefined ? {} : { details: envelope.error.details }) })); return; }
     if (envelope.type === "event") {
       this.setState("connected", { revision: envelope.revision, cursor: envelope.cursor });
-      const listeners = this.events.get(envelope.subscriptionId);
-      if (listeners !== undefined) for (const listener of listeners) listener(envelope);
+      const subscription = this.events.get(envelope.subscriptionId);
+      if (subscription === undefined) return;
+      if (subscription.resync !== undefined) return;
+      if (subscription.listeners.size === 0) {
+        if (subscription.buffered.length >= MAX_PRE_LISTENER_EVENTS) {
+          subscription.overflow = new ClientError("resync_required", "subscription received too many events before a listener was attached", { retryable: true });
+          subscription.buffered.length = 0;
+        } else {
+          subscription.buffered.push(envelope);
+        }
+        return;
+      }
+      for (const listener of subscription.listeners) listener(envelope);
+      diagnostic?.("client.complete.event");
+    }
+    if (envelope.type === "event_resync") {
+      const subscription = this.events.get(envelope.subscriptionId);
+      if (subscription === undefined) return;
+      if (subscription.resync !== undefined) return;
+      this.setState("connected", { revision: envelope.revision, cursor: envelope.cursor, stale: true });
+      const resync = { subscriptionId: envelope.subscriptionId, revision: envelope.revision, cursor: envelope.cursor, ...(envelope.snapshot === undefined ? {} : { snapshot: envelope.snapshot }) };
+      subscription.resync = resync;
+      subscription.buffered.length = 0;
+      for (const listener of subscription.resyncListeners) listener(resync);
     }
   }
 
@@ -245,7 +399,7 @@ export class TerminayClient {
 
   private setState(state: ConnectionState, patch: Partial<ConnectionSnapshot> = {}): void {
     const previous = this.current;
-    this.current = { ...previous, ...patch, state, ...(state === "connected" ? { stale: false } : {}) };
+    this.current = { ...previous, ...patch, state, ...(state === "connected" && patch.stale === undefined ? { stale: false } : {}) };
     if (previous.state === this.current.state && previous.revision === this.current.revision && previous.cursor === this.current.cursor && previous.error === this.current.error) return;
     const change: ConnectionStateChange = { previous, current: this.current };
     for (const listener of this.listeners) listener(change);

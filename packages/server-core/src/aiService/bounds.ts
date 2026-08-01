@@ -34,6 +34,7 @@ const OSC_PATTERN = new RegExp(`${ESC}\\][^${BEL}]*(?:${BEL}|${ESC}\\\\)`, "g");
 const CSI_PATTERN = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, "g");
 const CSI8_PATTERN = new RegExp(`${CSI8}[0-?]*[ -/]*[@-~]`, "g");
 const ESC_PATTERN = new RegExp(`${ESC}[@-_]`, "g");
+// biome-ignore lint/complexity/useRegexLiterals: the constructor keeps control bytes escaped in source for auditability.
 const CONTROL_PATTERN = new RegExp("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]", "g");
 
 /** Remove ANSI/OSC controls and other non-printing controls before text is

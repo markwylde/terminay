@@ -22,11 +22,13 @@ type HostileProof = {
 };
 
 type ProofWindow = {
+	capabilities?: { connectionProfiles?: boolean; serverExposure?: boolean };
 	expectedOrigin: string;
 	hostPartitionKey: string;
 	initialUrl: string;
 	label: string;
 	profileId: string;
+	profiles?: readonly unknown[];
 	show: boolean;
 };
 
@@ -104,6 +106,16 @@ test.beforeAll(async () => {
 			initialUrl: `${hostileOrigin}/?profile=a`,
 			label: 'Profile A',
 			profileId: 'profile-a',
+			capabilities: { connectionProfiles: true, serverExposure: true },
+			profiles: [
+				{
+					id: 'profile-a',
+					serverId: 'server-a',
+					label: 'Profile A',
+					origin: hostileOrigin,
+					status: 'connected',
+				},
+			],
 			show: true,
 		},
 		{
@@ -130,14 +142,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	if (app) {
-		await app
-			.evaluate(({ BrowserWindow, app: electronApp }) => {
-				for (const window of BrowserWindow.getAllWindows()) {
-					window.destroy();
-				}
-				electronApp.exit(0);
-			})
-			.catch(() => undefined);
+		app.process().kill('SIGKILL');
 		await app.close().catch(() => undefined);
 	}
 	await closeServer(hostileServer);
@@ -165,12 +170,24 @@ test('server UI has only the minimal bound host bridge and no Node or generic IP
 	});
 
 	await expect(readHostContext(profileA)).resolves.toEqual({
+		capabilities: { connectionProfiles: true, serverExposure: true },
 		hostKind: 'desktop',
 		profile: { id: 'profile-a', label: 'Profile A' },
+		profiles: [
+			{
+				id: 'profile-a',
+				serverId: 'server-a',
+				label: 'Profile A',
+				origin: hostileOrigin,
+				status: 'connected',
+			},
+		],
 	});
 	await expect(readHostContext(profileB)).resolves.toEqual({
+		capabilities: { connectionProfiles: false, serverExposure: false },
 		hostKind: 'desktop',
 		profile: { id: 'profile-b', label: 'Profile B' },
+		profiles: [],
 	});
 
 	const preferences = await app.evaluate(({ BrowserWindow }) =>
@@ -220,6 +237,50 @@ test('server UI has only the minimal bound host bridge and no Node or generic IP
 			}
 		}),
 	).resolves.toBe('rejected');
+});
+
+test('server UI connection actions stay profile-scoped and pairing secrets are consumed by the host', async () => {
+	const [profileA] = pagesByTitle();
+	await profileA.evaluate(async () => {
+		const bridge = (
+			window as Window & {
+				terminayHost?: { requestAction(action: unknown): Promise<void> };
+			}
+		).terminayHost;
+		if (!bridge) throw new Error('Host bridge unavailable');
+		await bridge.requestAction({
+			type: 'connection.select',
+			profileId: 'profile-a',
+		});
+		await bridge.requestAction({
+			type: 'connection.rename',
+			profileId: 'profile-a',
+			label: 'Renamed',
+		});
+		await bridge.requestAction({
+			type: 'connection.expose',
+			profileId: 'profile-a',
+		});
+		await bridge.requestAction({
+			type: 'connection.pair',
+			pairingUrl: 'https://pair.example/session#one-time-secret',
+		});
+	});
+	const actions = await app.evaluate(
+		() =>
+			(
+				globalThis as typeof globalThis & {
+					__terminayServerUiActionProofs?: unknown[];
+				}
+			).__terminayServerUiActionProofs,
+	);
+	expect(actions).toEqual([
+		{ type: 'connection.select', profileId: 'profile-a' },
+		{ type: 'connection.rename', profileId: 'profile-a', label: 'Renamed' },
+		{ type: 'connection.expose', profileId: 'profile-a' },
+		{ type: 'connection.pair', pairingHost: 'pair.example' },
+	]);
+	expect(JSON.stringify(actions)).not.toContain('one-time-secret');
 });
 
 test('server UI cannot open windows or gain permissions', async () => {

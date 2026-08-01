@@ -32,6 +32,7 @@ export type DictationTranscribeResult = {
 
 type DictationServiceOptions = {
 	apiKeyProvider: DictationApiKeyProvider;
+	readonly openaiFactory?: (apiKey: string) => Pick<OpenAI, 'audio'>;
 };
 
 type UploadFileHandle = {
@@ -178,9 +179,11 @@ function readTranscriptText(response: unknown): string {
 
 export class DictationService {
 	private readonly apiKeyProvider: DictationApiKeyProvider;
+	private readonly openaiFactory: (apiKey: string) => Pick<OpenAI, 'audio'>;
 
 	constructor(options: DictationServiceOptions) {
 		this.apiKeyProvider = options.apiKeyProvider;
+		this.openaiFactory = options.openaiFactory ?? ((apiKey) => new OpenAI({ apiKey }));
 	}
 
 	async transcribe(
@@ -207,7 +210,7 @@ export class DictationService {
 		const uploadFile = await createUploadFile(audio, mimeType, fileName);
 
 		try {
-			const openai = new OpenAI({ apiKey });
+			const openai = this.openaiFactory(apiKey);
 			const transcription = await openai.audio.transcriptions.create({
 				file: uploadFile.file,
 				language: trimOptional(request.language),

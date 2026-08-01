@@ -169,6 +169,11 @@ export class RemoteApplicationGateway {
     if (request.proof.serverId !== this.manager.serverId || request.proof.sessionOrigin !== this.manager.sessionOrigin) {
       throw new Error("remote authentication failed");
     }
+    try {
+      this.manager.assertTicketAvailable(request.proof.ticketId);
+    } catch {
+      throw new Error("remote authentication failed");
+    }
 
     let verified = false;
     try {

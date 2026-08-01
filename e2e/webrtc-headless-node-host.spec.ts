@@ -6,13 +6,14 @@ import { pathToFileURL } from 'node:url'
 import { expect, test } from '@playwright/test'
 import { createPairingPinHash } from '../electron/remote/pin'
 import { RemoteAccessService } from '../electron/remote/service'
-import { runHost, type HostApi, type HostConfig } from '../src/remote/WebRtcHost'
+import { runHost, type HostApi, type HostConfig } from '../scripts/support/webRtcHostRuntime'
 import { startHostedServer } from './support/hosted-server'
 
 const runtimeName = process.env.TERMINAY_WEBRTC_SPIKE_RUNTIME ?? 'node-datachannel'
 const dependencyRoot =
   process.env.TERMINAY_WEBRTC_SPIKE_ROOT ??
   process.env.TERMINAY_NODE_DATACHANNEL_SPIKE_ROOT
+const stagedWeriftRuntimeRoot = process.env.TERMINAY_WEBRTC_STAGED_RUNTIME_ROOT
 test.skip(!dependencyRoot, 'requires an isolated headless WebRTC proof runtime')
 test.skip(
   runtimeName !== 'node-datachannel' && runtimeName !== 'werift',
@@ -33,10 +34,12 @@ const nodeDataChannelPolyfill = runtimeName === 'node-datachannel'
   : null
 const weriftRuntime = runtimeName === 'werift' && dependencyRoot
   ? await import(pathToFileURL(path.join(
-    dependencyRoot,
-    'node_modules',
-    '@terminay',
-    'werift-runtime-proof',
+    stagedWeriftRuntimeRoot ?? path.join(
+      dependencyRoot,
+      'node_modules',
+      '@terminay',
+      'werift-runtime-proof',
+    ),
     'lib',
     'index.mjs',
   )).href)
@@ -53,7 +56,16 @@ function createHeadlessPeerConnection(configuration: RTCConfiguration): RTCPeerC
   }
   const peer = new HeadlessPeerConnection(
     runtimeName === 'werift'
-      ? { ...configuration, maxMessageSize: 1024 * 1024 } as RTCConfiguration
+      ? {
+          ...configuration,
+          // The production proof runs both peers on this machine. Make that
+          // deterministic instead of relying on Werift to infer a routable
+          // interface candidate from the host environment.
+          iceAdditionalHostAddresses: ['127.0.0.1'],
+          iceUseIpv4: true,
+          iceUseIpv6: false,
+          maxMessageSize: 1024 * 1024,
+        } as RTCConfiguration
       : configuration,
   )
   if (runtimeName !== 'werift') return peer
@@ -127,7 +139,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-function waitFor<T>(read: () => T | null | undefined, timeoutMs = 30_000): Promise<T> {
+function waitFor<T>(
+  read: () => T | null | undefined,
+  timeoutMs = 30_000,
+  phase = 'headless WebRTC condition',
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now()
     const poll = () => {
@@ -137,7 +153,7 @@ function waitFor<T>(read: () => T | null | undefined, timeoutMs = 30_000): Promi
         return
       }
       if (Date.now() - startedAt >= timeoutMs) {
-        reject(new Error('Timed out waiting for the headless WebRTC condition.'))
+        reject(new Error(`Timed out waiting for ${phase}.`))
         return
       }
       setTimeout(poll, 20)
@@ -146,7 +162,7 @@ function waitFor<T>(read: () => T | null | undefined, timeoutMs = 30_000): Promi
   })
 }
 
-test(`production remote service pairs, reconnects, and revokes through a plain-Node ${runtimeName} host`, async ({
+test(`Chromium pairs, reconnects, and revokes through a plain-Node ${runtimeName} host`, async ({
   browser,
 }) => {
   test.setTimeout(240_000)
@@ -254,9 +270,7 @@ test(`production remote service pairs, reconnects, and revokes through a plain-N
   }
 
   service = new RemoteAccessService({
-    app: {
-      getPath: () => userDataDir,
-    } as never,
+    userDataPath: userDataDir,
     createWebRtcHostWindow: createHostWindow,
     getControllableSession: () => ({
       close() {},
@@ -328,14 +342,49 @@ test(`production remote service pairs, reconnects, and revokes through a plain-N
     const pairingUrl = await waitFor(() => {
       const status = service.getStatus()
       return status.webRtcStatus === 'pairing-ready' ? status.webRtcPairingUrl : null
+    }, 30_000, 'the WebRTC pairing URL').catch((error) => {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)} ` +
+        `statuses=${JSON.stringify(statuses.map((status) => ({
+          message: status.webRtcStatusMessage,
+          state: status.webRtcStatus,
+        })))} hosts=${JSON.stringify(hostWindows.map((host) => ({
+          client: host.evidence.clientSignals.map((message) => message.type),
+          host: host.evidence.hostSignals.map((message) => message.type),
+          status: host.evidence.statusMessages,
+        })))}`,
+      )
     })
     const sessionOrigin = new URL(pairingUrl).origin
     const sessionId = new URL(pairingUrl).hostname.replace(/\.localhost$/, '')
 
     const page = await context.newPage()
     await page.goto(pairingUrl, { waitUntil: 'domcontentloaded' })
+    // This must be the browser's native WebRTC implementation.  A stubbed
+    // constructor would make the headless runtime proof look interoperable
+    // without exercising Chromium's SDP/data-channel implementation.
+    const browserWebRtc = await page.evaluate(() => ({
+      constructorSource: Function.prototype.toString.call(window.RTCPeerConnection),
+      hasDataChannel: typeof window.RTCPeerConnection?.prototype.createDataChannel === 'function',
+      hasSetRemoteDescription: typeof window.RTCPeerConnection?.prototype.setRemoteDescription === 'function',
+    }))
+    expect(browserWebRtc.constructorSource).toMatch(/\[native code\]/)
+    expect(browserWebRtc.hasDataChannel).toBe(true)
+    expect(browserWebRtc.hasSetRemoteDescription).toBe(true)
+    const connectDialog = page.getByRole('dialog', { name: 'Connect to Remote Server' })
+    await expect(connectDialog).toBeVisible({ timeout: 45_000 })
+    const handedOffPairingUrl = new URL(
+      await connectDialog.getByRole('textbox', { name: 'Pairing URL' }).inputValue(),
+    )
+    expect(handedOffPairingUrl.origin).toBe(sessionOrigin)
+    expect(handedOffPairingUrl.searchParams.get('transport')).toBe('webrtc')
+    expect(handedOffPairingUrl.searchParams.get('sessionId')).toBe(sessionId)
+    expect(new URLSearchParams(handedOffPairingUrl.hash.slice(1)).get('pairingToken')).toEqual(
+      expect.any(String),
+    )
+    await connectDialog.getByRole('button', { name: 'Connect', exact: true }).click()
     try {
-      await expect(page.getByRole('textbox', { name: 'Pairing PIN' })).toBeVisible({ timeout: 45_000 })
+      await expect(page.getByLabel('Pairing PIN')).toBeVisible({ timeout: 45_000 })
     } catch (error) {
       const browserEvidence = await page.evaluate(() => ({
         signalLog: (window as Window & {
@@ -353,9 +402,14 @@ test(`production remote service pairs, reconnects, and revokes through a plain-N
         `browser=${JSON.stringify(browserEvidence)}\nhost=${JSON.stringify(hostEvidence)}`,
       )
     }
-    await page.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456')
-    await page.getByRole('button', { name: 'Pair Device' }).click()
-    await expect(page.locator('.app-container')).toBeVisible({ timeout: 60_000 })
+    await page.getByLabel('Pairing PIN').fill('123456')
+    await page.getByRole('button', { name: 'Pair and connect' }).click()
+    await expect(page.locator('.app-container')).toBeVisible({ timeout: 60_000 }).catch(async (error) => {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)} ` +
+        `page=${JSON.stringify(await page.locator('body').innerText().catch(() => ''))}`,
+      )
+    })
     await expect(page.locator('.xterm-rows')).toContainText('headless-host-ready', { timeout: 30_000 })
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
 
@@ -432,11 +486,14 @@ test(`production remote service pairs, reconnects, and revokes through a plain-N
     const reconnectPage = await context.newPage()
     await reconnectPage.goto(`${sessionOrigin}/v1/`, { waitUntil: 'domcontentloaded' })
     await expect(reconnectPage.locator('.app-container')).toBeVisible({ timeout: 60_000 })
-    await expect(reconnectPage.getByRole('textbox', { name: 'Pairing PIN' })).toHaveCount(0)
+    await expect(reconnectPage.getByLabel('Pairing PIN')).toHaveCount(0)
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
 
     const reconnectRuntime = await waitFor(() => hostWindows.find((host) =>
-      host.evidence.hostSignals.some((message) => message.type === 'reconnect-offer'))).catch(
+      host.evidence.hostSignals.some((message) => message.type === 'reconnect-offer')),
+    30_000,
+    'the signed reconnect offer',
+    ).catch(
       async (error) => {
         const browserStatus = await reconnectPage.locator('#status').textContent().catch(() => null)
         throw new Error(

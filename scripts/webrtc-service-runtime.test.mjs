@@ -114,6 +114,15 @@ test('RemoteAccessService distinguishes registering, ready, relay-loss, and prem
           this.closed = true
         },
         closeTerminal() {},
+        destroy() {
+          this.destroyedListener?.()
+        },
+        onDestroyed(listener) {
+          this.destroyedListener = listener
+          return () => {
+            if (this.destroyedListener === listener) this.destroyedListener = undefined
+          }
+        },
         sendConfig(config) {
           this.configs.push(config)
         },
@@ -218,6 +227,17 @@ test('RemoteAccessService distinguishes registering, ready, relay-loss, and prem
   })
   assert.equal(service.getStatus().webRtcStatus, 'error')
   assert.equal(service.getStatus().webRtcStatusMessage, 'Relay registration rejected.')
+
+  fourthWindow.destroy()
+  fourthWindow.destroy()
+  assert.equal(fourthWindow.closed, true)
+  assert.equal(service.webRtcHostRuntimesByWebContentsId.has(fourthWindow.webContentsId), false)
+  assert.equal(service.webRtcHostConfigByWebContentsId.has(fourthWindow.webContentsId), false)
+  assert.equal(service.getStatus().webRtcStatus, 'error')
+  assert.equal(
+    service.getStatus().webRtcStatusMessage,
+    'The WebRTC host renderer closed unexpectedly. Retry to advertise a fresh pairing room.',
+  )
 })
 
 test('RemoteAccessService keeps the fresh advertised room healthy when pairing peers lose signaling', async () => {
@@ -718,7 +738,7 @@ test('RemoteAccessService forwards one authorized remote input payload to the co
   service.ensureSession('terminal-1')
   connection.attachedSessionIds.add('terminal-1')
 
-  service.handleClientMessage('connection-1', {
+  await service.handleClientMessage('connection-1', {
     connectionId: 'connection-1',
     payload: 'remote payload',
     seq: 1,
@@ -729,6 +749,90 @@ test('RemoteAccessService forwards one authorized remote input payload to the co
   assert.deepEqual(writes, [{ data: 'remote payload', sessionId: 'terminal-1' }])
 })
 
+test('RemoteAccessService serializes accepted remote writes for one connection', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-remote-operation-order-test-'))
+  const calls = []
+  let releaseFirstWrite
+  const firstWrite = new Promise((resolve) => { releaseFirstWrite = resolve })
+  const service = createTestService({
+    getControllableSession: () => ({
+      close() {},
+      resize() {},
+      async write(data) {
+        calls.push(`start:${data}`)
+        if (data === 'first') await firstWrite
+        calls.push(`finish:${data}`)
+      },
+    }),
+    pairingPinHash: '',
+    tempDir,
+  })
+  const connection = service.connectionStore.register({
+    close() {},
+    getReadyState: () => 1,
+    send() {},
+  }, 'connection-1', 'device-1')
+  service.ensureSession('terminal-1')
+  connection.attachedSessionIds.add('terminal-1')
+
+  const first = service.handleClientMessage('connection-1', {
+    connectionId: 'connection-1', payload: 'first', seq: 1, sessionId: 'terminal-1', type: 'write',
+  })
+  const second = service.handleClientMessage('connection-1', {
+    connectionId: 'connection-1', payload: 'second', seq: 2, sessionId: 'terminal-1', type: 'write',
+  })
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(calls, ['start:first'])
+
+  releaseFirstWrite()
+  await Promise.all([first, second])
+  assert.deepEqual(calls, ['start:first', 'finish:first', 'start:second', 'finish:second'])
+})
+
+test('RemoteAccessService updates remote resize ownership only after accepted resize', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-remote-resize-acceptance-test-'))
+  const overrides = []
+  const sent = []
+  let rejectResize = true
+  const service = createTestService({
+    getControllableSession: () => ({
+      close() {},
+      async resize() {
+        if (rejectResize) throw new Error('rejected by authority')
+      },
+      write() {},
+    }),
+    pairingPinHash: '',
+    tempDir,
+  })
+  service.notifyTerminalRemoteSizeOverride = (sessionId, override) => overrides.push({ sessionId, override })
+  const connection = service.connectionStore.register({
+    close() {},
+    getReadyState: () => 1,
+    send(message) { sent.push(JSON.parse(message)) },
+  }, 'connection-1', 'device-1')
+  service.ensureSession('terminal-1')
+  connection.attachedSessionIds.add('terminal-1')
+
+  await service.handleClientMessage('connection-1', {
+    cols: 120, connectionId: 'connection-1', rows: 40, seq: 1, sessionId: 'terminal-1', type: 'resize',
+  })
+  assert.deepEqual(overrides, [])
+  assert.equal(service.remoteSizeOverrideOwners.has('terminal-1'), false)
+  assert.equal(service.sessions.get('terminal-1').cols, 80)
+  assert.equal(sent.at(-1).message, 'Terminal resize was rejected.')
+
+  rejectResize = false
+  await service.handleClientMessage('connection-1', {
+    cols: 120, connectionId: 'connection-1', rows: 40, seq: 2, sessionId: 'terminal-1', type: 'resize',
+  })
+  assert.deepEqual(overrides, [{
+    override: { active: true, cols: 120, rows: 40 }, sessionId: 'terminal-1',
+  }])
+  assert.equal(service.sessions.get('terminal-1').cols, 80)
+})
+
 function createTestService({
   getControllableSession = () => null,
   hostWindows,
@@ -737,9 +841,7 @@ function createTestService({
   tempDir,
 }) {
   return new RemoteAccessService({
-    app: {
-      getPath: () => tempDir,
-    },
+    userDataPath: tempDir,
     createWebRtcHostWindow: () => {
       const hostWindow = {
         close() {},

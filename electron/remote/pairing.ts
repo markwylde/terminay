@@ -79,9 +79,15 @@ export class PairingManager {
     this.currentCreatedSessionId = sessionId
 
     const pairingUrl = new URL(origin)
-    pairingUrl.searchParams.set('pairingSessionId', sessionId)
-    pairingUrl.searchParams.set('pairingToken', token)
-    pairingUrl.searchParams.set('pairingExpiresAt', new Date(expiresAt).toISOString())
+    // A pairing token is a one-time credential. Keep it in the fragment so it
+    // is not sent to the server, retained in ordinary request logs, or exposed
+    // in a Referer header. Both the server runtime and web host use this exact
+    // fragment contract.
+    pairingUrl.hash = new URLSearchParams({
+      pairingSessionId: sessionId,
+      pairingToken: token,
+      pairingExpiresAt: new Date(expiresAt).toISOString(),
+    }).toString()
 
     return {
       host: pairingUrl.host,

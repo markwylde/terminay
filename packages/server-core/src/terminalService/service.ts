@@ -14,9 +14,13 @@ import type {
   TerminalExitEvent,
   TerminalExitMetadata,
   TerminalExitReason,
+  TerminalInactivityOptions,
+  TerminalInactivityTimer,
+  PtyForegroundProcess,
   TerminalIdentity,
   TerminalOutputEvent,
   TerminalServiceLimits,
+  TerminalSessionLifecycle,
   TerminalServiceOptions,
   TerminalSessionSnapshot,
   TerminalSessionStatus,
@@ -54,10 +58,12 @@ interface ReplayChunk {
 
 interface MutableSession {
   readonly identity: TerminalIdentity;
+  readonly cwd: string;
   readonly createdAt: number;
   readonly dimensions: { cols: number; rows: number };
   readonly replay: ReplayChunk[];
   readonly subscribers: Set<TerminalSubscription>;
+  readonly inactivityWaiters: Set<InactivityWaiter>;
   status: TerminalSessionStatus;
   outputPosition: number;
   replayFrom: number;
@@ -67,6 +73,17 @@ interface MutableSession {
   pendingExitReason?: TerminalExitReason;
   dataUnsubscribe?: Unsubscribe;
   exitUnsubscribe?: Unsubscribe;
+  foregroundProcessUnsubscribe?: Unsubscribe;
+}
+
+interface InactivityWaiter {
+  readonly durationMs: number;
+  readonly signal: AbortSignal | undefined;
+  readonly resolve: () => void;
+  readonly reject: (reason: unknown) => void;
+  timer: unknown;
+  abortListener?: () => void;
+  settled: boolean;
 }
 
 /**
@@ -211,11 +228,17 @@ export class TerminalService {
   readonly limits: Readonly<NormalizedLimits>;
 
   private readonly ptyFactory: PtyFactory;
+  private readonly defaultEnvironment: Readonly<Record<string, string | undefined>> | undefined;
   private readonly now: () => number;
   private readonly generateSessionIdHook: ((projectId: string) => string) | undefined;
   private readonly eventListener: TerminalEventListener | undefined;
+  private readonly sessionLifecycle: TerminalSessionLifecycle | undefined;
+  private readonly inactivityTimer: TerminalInactivityTimer;
   private readonly sessionsById = new Map<string, MutableSession>();
   private readonly listeners = new Set<TerminalEventListener>();
+  private readonly inputListeners = new Set<
+    (identity: TerminalIdentity, bytes: Uint8Array) => void
+  >();
   private sessionCounter = 0;
   private subscriptionCounter = 0;
   private stopping = false;
@@ -230,9 +253,12 @@ export class TerminalService {
     if (!options.ptyFactory || (typeof options.ptyFactory !== "function" && typeof options.ptyFactory.spawn !== "function")) throw new TypeError("ptyFactory must provide spawn");
     this.serverId = options.serverId;
     this.ptyFactory = options.ptyFactory;
+    this.defaultEnvironment = options.defaultEnvironment;
     this.now = options.now ?? (() => Date.now());
     this.generateSessionIdHook = options.generateSessionId;
     this.eventListener = options.onEvent;
+    this.sessionLifecycle = options.sessionLifecycle;
+    this.inactivityTimer = options.inactivityTimer ?? defaultInactivityTimer;
     this.limits = Object.freeze(normalizeLimits(options));
     if (this.eventListener !== undefined) this.listeners.add(this.eventListener);
   }
@@ -246,6 +272,12 @@ export class TerminalService {
     return () => this.listeners.delete(listener);
   }
 
+  onInput(listener: (identity: TerminalIdentity, bytes: Uint8Array) => void): Unsubscribe {
+    if (typeof listener !== "function") throw new TypeError("terminal input listener must be a function");
+    this.inputListeners.add(listener);
+    return () => this.inputListeners.delete(listener);
+  }
+
   getSession(session: string | TerminalIdentity): TerminalSessionSnapshot | undefined {
     const sessionId = typeof session === "string" ? session : session.sessionId;
     const value = this.sessionsById.get(sessionId);
@@ -256,6 +288,45 @@ export class TerminalService {
 
   listSessions(): readonly TerminalSessionSnapshot[] { return [...this.sessionsById.values()].map(snapshotOf); }
   sessions(): readonly TerminalSessionSnapshot[] { return this.listSessions(); }
+
+  async currentCwd(
+    session: string | TerminalIdentity,
+    authorization?: TerminalAuthorization,
+    timeoutMs = 1_000,
+  ): Promise<import("./types.js").TerminalCurrentCwd> {
+    const mutable = this.requireSession(session);
+    this.authorize(mutable, authorization, "read");
+    if (mutable.process?.getCwd === undefined) {
+      return { cwd: mutable.cwd, source: "spawn", observationError: "unavailable" };
+    }
+    try {
+      const controller = new AbortController();
+      let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+      const observed = await Promise.race([
+        Promise.resolve(mutable.process.getCwd(controller.signal)).finally(() => {
+          if (timer !== undefined) globalThis.clearTimeout(timer);
+        }),
+        new Promise<never>((_resolve, reject) => {
+          timer = globalThis.setTimeout(() => {
+            reject(new Error("cwd observation timeout"));
+            controller.abort(new Error("cwd observation timeout"));
+          }, timeoutMs);
+        }),
+      ]);
+      return typeof observed === "string" && observed.length > 0 && observed.length <= 4_096
+        ? { cwd: observed, source: "observed" }
+        : { cwd: mutable.cwd, source: "spawn", observationError: "failed" };
+    } catch (error) {
+      return {
+        cwd: mutable.cwd,
+        source: "spawn",
+        observationError:
+          error instanceof Error && error.message === "cwd observation timeout"
+            ? "timeout"
+            : "failed",
+      };
+    }
+  }
 
   async createSession(options: TerminalCreateOptions): Promise<TerminalSessionHandle> {
     if (this.stopping) throw new TerminalServiceError("service_shutdown", "terminal service is shutting down");
@@ -269,12 +340,16 @@ export class TerminalService {
     const createdAt = options.createdAt ?? this.now();
     if (!Number.isSafeInteger(createdAt) || createdAt < 0) throw new TypeError("createdAt must be a non-negative safe integer");
     const identity: TerminalIdentity = Object.freeze({ serverId: this.serverId, projectId: options.projectId, sessionId });
+    const lifecycleEnvironment = this.sessionLifecycle?.prepareTerminalSession(identity);
+    const cwd = options.cwd ?? ".";
     const mutable: MutableSession = {
       identity,
+      cwd,
       createdAt,
       dimensions: { ...dimensions },
       replay: [],
       subscribers: new Set(),
+      inactivityWaiters: new Set(),
       status: "running",
       outputPosition: 0,
       replayFrom: 0,
@@ -284,8 +359,10 @@ export class TerminalService {
       shellPath: options.shellPath ?? defaultShell(),
       shell: options.shellPath ?? defaultShell(),
       args: [...(options.args ?? [])],
-      cwd: options.cwd ?? ".",
-      ...(options.env === undefined ? {} : { env: options.env }),
+      cwd,
+      ...(this.defaultEnvironment === undefined && options.env === undefined && lifecycleEnvironment === undefined
+        ? {}
+        : { env: { ...(this.defaultEnvironment ?? {}), ...(options.env ?? {}), ...(lifecycleEnvironment ??{}) } }),
       ...(options.name === undefined ? {} : { name: options.name }),
       ...dimensions,
     };
@@ -342,9 +419,64 @@ export class TerminalService {
     if (bytes.byteLength > this.limits.maxInputBytes) throw new TerminalServiceError("input_too_large", "terminal input exceeds the configured limit", { max: this.limits.maxInputBytes, actual: bytes.byteLength });
     if (mutable.process === undefined) throw new TerminalServiceError("session_exited", "terminal process is unavailable");
     await mutable.process.write(copyBytes(bytes));
+    if (bytes.byteLength > 0) {
+      for (const listener of this.inputListeners) {
+        try {
+          listener({ ...mutable.identity }, copyBytes(bytes));
+        } catch {
+          // Observers cannot retroactively reject accepted PTY input.
+        }
+      }
+      try {
+        this.sessionLifecycle?.terminalInput?.(mutable.identity);
+      } catch {
+        // Observers cannot retroactively reject input already accepted by the PTY.
+      }
+    }
   }
 
   write(session: string | TerminalIdentity, data: Uint8Array | string, authorization?: TerminalAuthorization): Promise<void> { return this.input(session, data, authorization); }
+
+  /**
+   * Resolve after a session has produced no non-empty PTY output for the
+   * requested period. Input, resize, focus, and client attachment do not
+   * count as activity. Terminal exit resolves outstanding waits immediately.
+   */
+  waitForInactivity(
+    session: string | TerminalIdentity,
+    durationMs: number,
+    options: TerminalInactivityOptions = {},
+  ): Promise<void> {
+    const mutable = this.requireLiveSession(session);
+    this.authorize(mutable, options.authorization, "read");
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+      return Promise.reject(new RangeError("durationMs must be a finite non-negative number"));
+    }
+    if (options.signal?.aborted === true) return Promise.reject(abortReason(options.signal));
+    if (durationMs === 0) return Promise.resolve();
+
+    return new Promise<void>((resolve, reject) => {
+      const signal = options.signal;
+      const waiter: InactivityWaiter = {
+        durationMs,
+        signal,
+        resolve,
+        reject,
+        timer: undefined,
+        settled: false,
+      };
+      if (signal !== undefined) {
+        waiter.abortListener = () => this.rejectInactivityWaiter(mutable, waiter, abortReason(signal));
+        signal.addEventListener("abort", waiter.abortListener, { once: true });
+      }
+      mutable.inactivityWaiters.add(waiter);
+      try {
+        this.armInactivityWaiter(mutable, waiter);
+      } catch (error) {
+        this.rejectInactivityWaiter(mutable, waiter, error);
+      }
+    });
+  }
 
   async resize(session: string | TerminalIdentity, dimensions: TerminalDimensions, authorization?: TerminalAuthorization): Promise<void> {
     const mutable = this.requireLiveSession(session);
@@ -435,12 +567,24 @@ export class TerminalService {
       mutable.pendingExitReason = undefined;
       this.finish(mutable, normalizeExit(exit), reason, this.now());
     };
+    const onForegroundProcess = (event: PtyForegroundProcess) => {
+      if (mutable.status !== "running") return;
+      try {
+        this.sessionLifecycle?.foregroundProcessChanged?.(mutable.identity, event);
+      } catch {
+        // Lifecycle observers cannot change PTY supervision or output.
+      }
+    };
     mutable.dataUnsubscribe = normalizeUnsubscribe(process.onData(onData));
     mutable.exitUnsubscribe = normalizeUnsubscribe(process.onExit(onExit));
+    if (process.onForegroundProcess !== undefined) {
+      mutable.foregroundProcessUnsubscribe = normalizeUnsubscribe(process.onForegroundProcess(onForegroundProcess));
+    }
   }
 
   private appendOutput(mutable: MutableSession, bytes: Uint8Array): void {
     if (bytes.byteLength === 0 || mutable.status !== "running") return;
+    this.resetInactivityWaiters(mutable);
     // Split, rather than truncate, so every PTY byte is retained and every
     // stream frame remains bounded for WebRTC/local transports.
     for (let offset = 0; offset < bytes.byteLength; offset += this.limits.maxOutputChunkBytes) {
@@ -464,8 +608,10 @@ export class TerminalService {
     mutable.exit = metadata;
     mutable.status = reason === "interrupted" || reason === "shutdown" ? "interrupted" : "exited";
     mutable.pendingExitReason = undefined;
+    for (const waiter of [...mutable.inactivityWaiters]) this.resolveInactivityWaiter(mutable, waiter);
     mutable.dataUnsubscribe?.();
     mutable.exitUnsubscribe?.();
+    mutable.foregroundProcessUnsubscribe?.();
     try {
       const disposeResult = mutable.process?.dispose?.();
       if (disposeResult !== undefined) void Promise.resolve(disposeResult).catch(() => undefined);
@@ -473,6 +619,14 @@ export class TerminalService {
       // Disposal is best effort after the authoritative exit event.
     }
     const event = exitEvent(mutable);
+    try {
+      this.sessionLifecycle?.terminalExited(mutable.identity, {
+        exitCode: metadata.exitCode,
+        ...(metadata.signal === null ? {} : { signal: String(metadata.signal) }),
+      });
+    } catch {
+      // Lifecycle observers cannot change the authoritative terminal exit.
+    }
     this.emit(event);
     for (const subscription of [...mutable.subscribers]) subscription.deliverEvent(event);
   }
@@ -508,6 +662,51 @@ export class TerminalService {
     for (const listener of this.listeners) {
       try { listener(copyEvent(event)); } catch { /* observers cannot affect the PTY */ }
     }
+  }
+
+  private resetInactivityWaiters(mutable: MutableSession): void {
+    for (const waiter of [...mutable.inactivityWaiters]) {
+      if (waiter.settled) continue;
+      this.clearInactivityTimer(waiter);
+      try {
+        this.armInactivityWaiter(mutable, waiter);
+      } catch (error) {
+        this.rejectInactivityWaiter(mutable, waiter, error);
+      }
+    }
+  }
+
+  private armInactivityWaiter(mutable: MutableSession, waiter: InactivityWaiter): void {
+    if (waiter.settled || mutable.status !== "running" || !mutable.inactivityWaiters.has(waiter)) return;
+    waiter.timer = this.inactivityTimer.setTimeout(() => this.resolveInactivityWaiter(mutable, waiter), waiter.durationMs);
+  }
+
+  private resolveInactivityWaiter(mutable: MutableSession, waiter: InactivityWaiter): void {
+    if (!this.disposeInactivityWaiter(mutable, waiter)) return;
+    waiter.resolve();
+  }
+
+  private rejectInactivityWaiter(mutable: MutableSession, waiter: InactivityWaiter, reason: unknown): void {
+    if (!this.disposeInactivityWaiter(mutable, waiter)) return;
+    waiter.reject(reason);
+  }
+
+  private disposeInactivityWaiter(mutable: MutableSession, waiter: InactivityWaiter): boolean {
+    if (waiter.settled) return false;
+    waiter.settled = true;
+    this.clearInactivityTimer(waiter);
+    if (waiter.signal !== undefined && waiter.abortListener !== undefined) {
+      waiter.signal.removeEventListener("abort", waiter.abortListener);
+      waiter.abortListener = undefined;
+    }
+    mutable.inactivityWaiters.delete(waiter);
+    return true;
+  }
+
+  private clearInactivityTimer(waiter: InactivityWaiter): void {
+    if (waiter.timer === undefined) return;
+    this.inactivityTimer.clearTimeout(waiter.timer);
+    waiter.timer = undefined;
   }
 
   private nextSessionId(projectId: string): string {
@@ -553,6 +752,7 @@ export class TerminalSessionHandle {
   resize(dimensions: TerminalDimensions, authorization?: TerminalAuthorization): Promise<void> { return this.service.resize(this.identity, dimensions, authorization); }
   kill(authorization?: TerminalAuthorization, signal?: number | string): Promise<void> { return this.service.kill(this.identity, authorization, signal); }
   interrupt(authorization?: TerminalAuthorization, at?: number): Promise<void> { return this.service.interrupt(this.identity, authorization, at); }
+  waitForInactivity(durationMs: number, options: TerminalInactivityOptions = {}): Promise<void> { return this.service.waitForInactivity(this.identity, durationMs, options); }
 }
 
 function normalizeLimits(options: TerminalServiceOptions): NormalizedLimits {
@@ -625,6 +825,7 @@ function resyncEvent(session: MutableSession): TerminalEvent {
 function snapshotOf(session: MutableSession): TerminalSessionSnapshot {
   return Object.freeze({
     ...session.identity,
+    cwd: session.cwd,
     status: session.status,
     createdAt: session.createdAt,
     outputPosition: session.outputPosition,
@@ -651,7 +852,14 @@ function copyEvent(event: TerminalEvent): TerminalEvent {
   return { ...event };
 }
 
-function normalizeUnsubscribe(value: Unsubscribe | void): Unsubscribe | undefined { return typeof value === "function" ? value : undefined; }
+function normalizeUnsubscribe(value: Unsubscribe | undefined): Unsubscribe | undefined { return typeof value === "function" ? value : undefined; }
+const defaultInactivityTimer: TerminalInactivityTimer = {
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+};
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+}
 function defaultShell(): string {
   // Keep the service deterministic in non-shell hosts; adapters may ignore it
   // and server launchers can always supply an explicit shellPath.

@@ -1,16 +1,31 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
+import { createHash, sign, verify } from 'node:crypto'
 import {
   cp,
+  lstat,
+  mkdtemp,
   mkdir,
-  readFile,
   readdir,
+  readFile,
+  rm,
   writeFile,
 } from 'node:fs/promises'
+import { builtinModules } from 'node:module'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { build as bundleWithEsbuild, version as ESBUILD_VERSION } from 'esbuild'
+
+const NODE_BUILTINS = new Set(
+  builtinModules.flatMap((specifier) => [
+    specifier,
+    specifier.startsWith('node:') ? specifier.slice('node:'.length) : `node:${specifier}`,
+  ]),
+)
 
 export const WERIFT_VERSION = '0.24.1'
+export const WERIFT_CANDIDATE_VERSION = `${WERIFT_VERSION}-candidate.1`
 export const WERIFT_GIT_HEAD = '243fd7e24c39fbe03fb855928daddd793fc8d4fa'
 export const WERIFT_TARBALL_INTEGRITY =
   'sha512-8Mpf0FWO2pkd9UQyZ0Hb1CcimydlNh8KCvZGD2X/D0ucVY6ubJxX91cndOpTOnPA7wleopop044VSNZeCEwgeA=='
@@ -18,6 +33,11 @@ export const WERIFT_TARBALL_SHA512 =
   'f0ca5fd0558eda991df544326741dbd427229b2765361f0a0af6460f65ff0f4b9c558eae6c9c57f7572774ea533a73c0ef095ea29a29d38e1548d65e084c2078'
 export const WERIFT_LICENSE_SHA256 =
   'b83683f3f71b5971e6c2e33a8b894a49d752fd24c11b8ae08b53ca20f594fca5'
+export const WERIFT_TURN_REFRESH_PATCH_SHA256 =
+  '34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211'
+const WERIFT_TURN_REFRESH_PATCH = fileURLToPath(
+  new URL('./patches/werift-0.24.1-abort-turn-refresh.patch', import.meta.url),
+)
 
 export const DIRECT_RUNTIME_DEPENDENCIES = {
   '@fidm/x509': '1.2.1',
@@ -67,6 +87,86 @@ export const RETAINED_RUNTIME_PACKAGES = {
   'node_modules/tsyringe': ['4.10.0', 'sha512-axr3IdNuVIxnaK5XGEUFTu3YmAQ6lllgrvqfEoR16g/HGnYY/6We4oWENtAnzK6/LpJ2ur9PAb80RBt7/U4ugw==', 'MIT'],
   'node_modules/tsyringe/node_modules/tslib': ['1.14.1', 'sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg==', '0BSD'],
   'node_modules/tweetnacl': ['1.0.3', 'sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw==', 'Unlicense'],
+}
+
+function sourceMirrorManifest() {
+  return {
+    schemaVersion: 1,
+    candidateVersion: WERIFT_CANDIDATE_VERSION,
+    upstream: {
+      gitHead: WERIFT_GIT_HEAD,
+      integrity: WERIFT_TARBALL_INTEGRITY,
+      licenseSha256: WERIFT_LICENSE_SHA256,
+      package: `werift@${WERIFT_VERSION}`,
+      tarballSha512: WERIFT_TARBALL_SHA512,
+    },
+    retainedPackages: Object.fromEntries(
+      Object.entries(RETAINED_RUNTIME_PACKAGES).map(
+        ([installPath, [version, integrity]]) => [installPath, { integrity, version }],
+      ),
+    ),
+  }
+}
+
+export async function prepareSecureWeriftSourceMirror(mirrorRoot) {
+  await mkdir(mirrorRoot, { recursive: true })
+  const temporary = await mkdtemp(path.join(tmpdir(), 'terminay-werift-mirror-'))
+  try {
+    await writeFile(path.join(temporary, 'package.json'), `${JSON.stringify({
+      dependencies: DIRECT_RUNTIME_DEPENDENCIES,
+      private: true,
+    }, null, 2)}\n`)
+    const cache = path.join(mirrorRoot, 'npm-cache')
+    const environment = {
+      ...process.env,
+      npm_config_audit: 'false',
+      npm_config_cache: cache,
+      npm_config_fund: 'false',
+    }
+    const install = await run(
+      process.platform === 'win32' ? 'npm.cmd' : 'npm',
+      ['install', '--ignore-scripts', '--omit=dev', '--package-lock=true'],
+      { cwd: temporary, env: environment },
+    )
+    assert.equal(install.code, 0, install.stderr || install.stdout)
+    const packed = await run(
+      process.platform === 'win32' ? 'npm.cmd' : 'npm',
+      ['pack', `werift@${WERIFT_VERSION}`, '--json'],
+      { cwd: temporary, env: environment },
+    )
+    assert.equal(packed.code, 0, packed.stderr || packed.stdout)
+    const [packResult] = JSON.parse(packed.stdout)
+    assert.equal(packResult.integrity, WERIFT_TARBALL_INTEGRITY)
+    const tarball = await readFile(path.join(temporary, packResult.filename))
+    assert.equal(createHash('sha512').update(tarball).digest('hex'), WERIFT_TARBALL_SHA512)
+
+    const licenseResponse = await fetch(
+      `https://raw.githubusercontent.com/shinyoshiaki/werift-webrtc/${WERIFT_GIT_HEAD}/LICENSE`,
+    )
+    assert.equal(licenseResponse.status, 200)
+    const license = Buffer.from(await licenseResponse.arrayBuffer())
+    assert.equal(createHash('sha256').update(license).digest('hex'), WERIFT_LICENSE_SHA256)
+    await writeFile(path.join(mirrorRoot, 'werift.LICENSE'), license)
+    await writeFile(
+      path.join(mirrorRoot, 'mirror.json'),
+      `${JSON.stringify(sourceMirrorManifest(), null, 2)}\n`,
+    )
+    return sourceMirrorManifest()
+  } finally {
+    await rm(temporary, { force: true, recursive: true })
+  }
+}
+
+async function verifySecureWeriftSourceMirror(mirrorRoot) {
+  const manifest = JSON.parse(await readFile(path.join(mirrorRoot, 'mirror.json'), 'utf8'))
+  assert.deepEqual(manifest, sourceMirrorManifest(), 'Secure Werift source mirror pins differ.')
+  const license = await readFile(path.join(mirrorRoot, 'werift.LICENSE'))
+  assert.equal(
+    createHash('sha256').update(license).digest('hex'),
+    WERIFT_LICENSE_SHA256,
+    'Secure Werift mirrored license integrity mismatch.',
+  )
+  return { cache: path.join(mirrorRoot, 'npm-cache'), license }
 }
 
 function run(command, args, options = {}) {
@@ -127,8 +227,14 @@ async function listFiles(root, prefix = '') {
   const files = []
   for (const entry of names) {
     const relativePath = path.posix.join(prefix, entry.name)
+    const absolutePath = path.join(root, relativePath)
+    const metadata = await lstat(absolutePath)
+    assert.equal(metadata.isSymbolicLink(), false, `Candidate artifacts cannot contain symlinks: ${relativePath}`)
     if (entry.isDirectory()) files.push(...await listFiles(root, relativePath))
-    else files.push(relativePath)
+    else {
+      assert.equal(metadata.isFile(), true, `Candidate artifact entry must be a regular file: ${relativePath}`)
+      files.push(relativePath)
+    }
   }
   return files
 }
@@ -140,6 +246,24 @@ async function fileHashMap(root) {
     result[relativePath] = createHash('sha256').update(content).digest('hex')
   }
   return result
+}
+
+async function runtimeExternalSpecifiers(source) {
+  const parsed = await bundleWithEsbuild({
+    bundle: false,
+    format: 'esm',
+    logLevel: 'silent',
+    metafile: true,
+    stdin: {
+      contents: source,
+      loader: 'js',
+      sourcefile: 'verified-runtime.mjs',
+    },
+    write: false,
+  })
+  return Object.values(parsed.metafile.outputs)
+    .flatMap((output) => output.imports)
+    .map(({ path: specifier }) => specifier)
 }
 
 function assertPinnedRuntimeGraph(lock) {
@@ -190,10 +314,10 @@ function createCycloneDx(lock) {
     components,
     metadata: {
       component: {
-        'bom-ref': `pkg:npm/%40terminay/werift-runtime-candidate@${WERIFT_VERSION}-candidate.0`,
+        'bom-ref': `pkg:npm/%40terminay/werift-runtime-candidate@${WERIFT_CANDIDATE_VERSION}`,
         name: '@terminay/werift-runtime-candidate',
         type: 'library',
-        version: `${WERIFT_VERSION}-candidate.0`,
+        version: WERIFT_CANDIDATE_VERSION,
       },
       timestamp: '2026-07-27T00:00:00.000Z',
     },
@@ -203,7 +327,135 @@ function createCycloneDx(lock) {
   }
 }
 
-export async function buildSecureWeriftCandidate(workRoot) {
+function createDeterministicProvenance(subjects) {
+  return {
+    '_type': 'https://in-toto.io/Statement/v1',
+    predicate: {
+      buildDefinition: {
+        buildType: 'https://terminay.com/builds/secure-werift-candidate/v1',
+        externalParameters: {
+          dependencyScripts: 'disabled',
+          node: '>=22',
+          package: `werift@${WERIFT_VERSION}`,
+        },
+        internalParameters: {
+          bundler: `esbuild@${ESBUILD_VERSION}`,
+          candidateVersion: WERIFT_CANDIDATE_VERSION,
+          runtimeLayout: 'self-contained-single-file',
+          sourceMaps: 'omitted',
+        },
+        resolvedDependencies: [
+          {
+            digest: { sha512: WERIFT_TARBALL_SHA512 },
+            name: `pkg:npm/werift@${WERIFT_VERSION}`,
+            uri: `npm:werift@${WERIFT_VERSION}`,
+          },
+          {
+            digest: { sha1: WERIFT_GIT_HEAD },
+            name: 'werift source correspondence',
+            uri: `git+https://github.com/shinyoshiaki/werift-webrtc@${WERIFT_GIT_HEAD}`,
+          },
+          {
+            digest: { sha256: WERIFT_TURN_REFRESH_PATCH_SHA256 },
+            name: 'Terminay abortable TURN refresh patch',
+            uri: 'terminay:scripts/patches/werift-0.24.1-abort-turn-refresh.patch',
+          },
+          ...Object.entries(RETAINED_RUNTIME_PACKAGES)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([installPath, [version, integrity]]) => ({
+              digest: { sha512: Buffer.from(integrity.slice('sha512-'.length), 'base64').toString('hex') },
+              name: installPath,
+              uri: `pkg:npm/${packageNameFromInstallPath(installPath)}@${version}`,
+            })),
+        ],
+      },
+      runDetails: {
+        builder: { id: 'https://terminay.com/builders/secure-werift-candidate/v1' },
+        metadata: {
+          // A fixed build identifier is deliberate: release evidence must not
+          // encode runner time, host names, or other non-reproducible data.
+          invocationId: `secure-werift-${WERIFT_CANDIDATE_VERSION}`,
+        },
+      },
+    },
+    predicateType: 'https://slsa.dev/provenance/v1',
+    subject: subjects.map(([name, digest]) => ({
+      digest: { sha256: digest },
+      name,
+    })),
+  }
+}
+
+/**
+ * Verify a candidate before it is used as runtime or release evidence.  This
+ * intentionally treats the candidate as untrusted filesystem input: no
+ * symlinks, extra files, altered manifests, or detached provenance subjects
+ * may slip through merely because the candidate was produced locally once.
+ */
+export async function verifySecureWeriftCandidate(artifactRoot) {
+  const actualFiles = await listFiles(artifactRoot)
+  assert.ok(actualFiles.includes('SHA256SUMS'), 'Candidate checksum manifest is required.')
+  assert.ok(actualFiles.includes('provenance.intoto.json'), 'Candidate provenance is required.')
+
+  const checksums = await readFile(path.join(artifactRoot, 'SHA256SUMS'), 'utf8')
+  const expectedHashes = {}
+  for (const line of checksums.trimEnd().split('\n')) {
+    const match = /^([a-f0-9]{64}) {2}([A-Za-z0-9@._/-]+)$/u.exec(line)
+    assert.ok(match, `Malformed candidate checksum row: ${line}`)
+    const [, hash, relativePath] = match
+    assert.equal(relativePath.startsWith('/'), false, 'Candidate checksum path must be relative.')
+    assert.equal(relativePath.split('/').includes('..'), false, 'Candidate checksum path must stay inside candidate.')
+    assert.equal(Object.hasOwn(expectedHashes, relativePath), false, `Duplicate candidate checksum path: ${relativePath}`)
+    expectedHashes[relativePath] = hash
+  }
+
+  const actualHashes = await fileHashMap(artifactRoot)
+  const payloadHashes = Object.fromEntries(
+    Object.entries(actualHashes).filter(([relativePath]) => relativePath !== 'SHA256SUMS'),
+  )
+  assert.deepEqual(
+    Object.keys(expectedHashes).sort(),
+    Object.keys(payloadHashes).sort(),
+    'Candidate checksum manifest must cover exactly every non-manifest file.',
+  )
+  assert.deepEqual(expectedHashes, payloadHashes, 'Candidate payload checksum mismatch.')
+
+  const provenance = JSON.parse(await readFile(
+    path.join(artifactRoot, 'provenance.intoto.json'),
+    'utf8',
+  ))
+  const provenanceSubjects = Object.entries(payloadHashes)
+    .filter(([relativePath]) => relativePath !== 'provenance.intoto.json')
+    .sort(([left], [right]) => left.localeCompare(right))
+  assert.deepEqual(
+    provenance,
+    createDeterministicProvenance(provenanceSubjects),
+    'Candidate provenance must exactly bind the reviewed payload and materials.',
+  )
+
+  const packageManifest = JSON.parse(await readFile(
+    path.join(artifactRoot, 'package.json'),
+    'utf8',
+  ))
+  assert.deepEqual(
+    packageManifest.dependencies,
+    undefined,
+    'Candidate runtime must not require registry-installed dependencies.',
+  )
+  const runtimeSource = await readFile(path.join(artifactRoot, 'lib', 'index.mjs'), 'utf8')
+  const externalSpecifiers = await runtimeExternalSpecifiers(runtimeSource)
+  assert.deepEqual(
+    externalSpecifiers.filter((specifier) => !NODE_BUILTINS.has(specifier)),
+    [],
+    'Candidate runtime may import only Node built-ins outside its verified payload.',
+  )
+  return { fileHashes: actualHashes }
+}
+
+export async function buildSecureWeriftCandidate(workRoot, { sourceMirror } = {}) {
+  const mirror = sourceMirror
+    ? await verifySecureWeriftSourceMirror(sourceMirror)
+    : undefined
   await mkdir(workRoot, { recursive: true })
   const packageJson = {
     dependencies: DIRECT_RUNTIME_DEPENDENCIES,
@@ -224,6 +476,10 @@ export async function buildSecureWeriftCandidate(workRoot) {
       env: {
         ...process.env,
         npm_config_audit: 'false',
+        ...(mirror ? {
+          npm_config_cache: mirror.cache,
+          npm_config_offline: 'true',
+        } : {}),
         npm_config_fund: 'false',
       },
     },
@@ -242,6 +498,10 @@ export async function buildSecureWeriftCandidate(workRoot) {
       env: {
         ...process.env,
         npm_config_audit: 'false',
+        ...(mirror ? {
+          npm_config_cache: mirror.cache,
+          npm_config_offline: 'true',
+        } : {}),
         npm_config_fund: 'false',
       },
     },
@@ -258,26 +518,44 @@ export async function buildSecureWeriftCandidate(workRoot) {
     WERIFT_TARBALL_SHA512,
   )
 
-  const registryMetadata = await run(
-    process.platform === 'win32' ? 'npm.cmd' : 'npm',
-    ['view', `werift@${WERIFT_VERSION}`, 'gitHead', '--json'],
-    { cwd: workRoot },
-  )
-  assert.equal(registryMetadata.signal, null)
-  assert.equal(registryMetadata.code, 0, registryMetadata.stderr || registryMetadata.stdout)
-  assert.equal(JSON.parse(registryMetadata.stdout), WERIFT_GIT_HEAD)
+  if (!mirror) {
+    const registryMetadata = await run(
+      process.platform === 'win32' ? 'npm.cmd' : 'npm',
+      ['view', `werift@${WERIFT_VERSION}`, 'gitHead', '--json'],
+      { cwd: workRoot },
+    )
+    assert.equal(registryMetadata.signal, null)
+    assert.equal(registryMetadata.code, 0, registryMetadata.stderr || registryMetadata.stdout)
+    assert.equal(JSON.parse(registryMetadata.stdout), WERIFT_GIT_HEAD)
+  }
 
   const upstreamRoot = path.join(workRoot, 'upstream')
   await mkdir(upstreamRoot)
   const extracted = await run('tar', ['-xzf', tarballPath, '-C', upstreamRoot])
   assert.equal(extracted.signal, null)
   assert.equal(extracted.code, 0, extracted.stderr || extracted.stdout)
-
-  const upstreamLicenseResponse = await fetch(
-    `https://raw.githubusercontent.com/shinyoshiaki/werift-webrtc/${WERIFT_GIT_HEAD}/LICENSE`,
+  const patchBytes = await readFile(WERIFT_TURN_REFRESH_PATCH)
+  assert.equal(
+    createHash('sha256').update(patchBytes).digest('hex'),
+    WERIFT_TURN_REFRESH_PATCH_SHA256,
   )
-  assert.equal(upstreamLicenseResponse.status, 200)
-  const upstreamLicense = Buffer.from(await upstreamLicenseResponse.arrayBuffer())
+  const patched = await run(
+    'patch',
+    ['--batch', '--forward', '--fuzz=0', '-p1', '--input', WERIFT_TURN_REFRESH_PATCH],
+    { cwd: path.join(upstreamRoot, 'package') },
+  )
+  assert.equal(patched.signal, null)
+  assert.equal(patched.code, 0, patched.stderr || patched.stdout)
+
+  const upstreamLicense = mirror
+    ? mirror.license
+    : Buffer.from(await (async () => {
+      const response = await fetch(
+        `https://raw.githubusercontent.com/shinyoshiaki/werift-webrtc/${WERIFT_GIT_HEAD}/LICENSE`,
+      )
+      assert.equal(response.status, 200)
+      return response.arrayBuffer()
+    })())
   assert.equal(
     createHash('sha256').update(upstreamLicense).digest('hex'),
     WERIFT_LICENSE_SHA256,
@@ -287,14 +565,46 @@ export async function buildSecureWeriftCandidate(workRoot) {
   const licensesRoot = path.join(artifactRoot, 'LICENSES')
   await mkdir(path.join(artifactRoot, 'lib'), { recursive: true })
   await mkdir(licensesRoot)
-  await cp(
-    path.join(upstreamRoot, 'package', 'lib', 'index.mjs'),
-    path.join(artifactRoot, 'lib', 'index.mjs'),
+  const upstreamEntry = path.join(upstreamRoot, 'package', 'lib', 'index.mjs')
+  const bundleResult = await bundleWithEsbuild({
+    absWorkingDir: workRoot,
+    banner: {
+      js: "import { createRequire as __createNodeRequire } from 'node:module';\n"
+        + 'const require = __createNodeRequire(import.meta.url);',
+    },
+    bundle: true,
+    entryPoints: [upstreamEntry],
+    external: ['node:*'],
+    format: 'esm',
+    legalComments: 'none',
+    metafile: true,
+    outfile: path.join(artifactRoot, 'lib', 'index.mjs'),
+    platform: 'node',
+    sourcemap: false,
+    target: 'node22',
+  })
+  const bundledInputs = Object.keys(bundleResult.metafile.inputs)
+  assert.ok(
+    bundledInputs.some((input) =>
+      input.replaceAll('\\', '/').endsWith('upstream/package/lib/index.mjs')
+    ),
+    'Werift entry point must be included in the runtime closure.',
   )
+  for (const dependency of Object.keys(DIRECT_RUNTIME_DEPENDENCIES)) {
+    assert.ok(
+      bundledInputs.some((input) =>
+        input.replaceAll('\\', '/').includes(`node_modules/${dependency}/`)
+      ),
+      `Runtime closure must include ${dependency}.`,
+    )
+  }
   const bundledSource = await readFile(path.join(artifactRoot, 'lib', 'index.mjs'), 'utf8')
   assert.match(bundledSource, /from "node:net"/)
-  assert.doesNotMatch(bundledSource, /from "ip"/)
-  assert.doesNotMatch(bundledSource, /from "werift-ice"/)
+  const bundledExternalSpecifiers = await runtimeExternalSpecifiers(bundledSource)
+  assert.deepEqual(
+    bundledExternalSpecifiers.filter((specifier) => !NODE_BUILTINS.has(specifier)),
+    [],
+  )
   assert.doesNotMatch(bundledSource, /sourceMappingURL/)
 
   await writeFile(path.join(licensesRoot, `werift-${WERIFT_VERSION}.txt`), upstreamLicense)
@@ -342,8 +652,10 @@ export async function buildSecureWeriftCandidate(workRoot) {
     path.join(artifactRoot, 'SOURCE-CORRESPONDENCE.json'),
     `${JSON.stringify({
       buildPolicy: {
+        bundler: `esbuild@${ESBUILD_VERSION}`,
         dependencyScripts: 'disabled',
-        sourceMaps: 'omitted: upstream npm ESM output contains no source map or sourceMappingURL; exact npm tarball and gitHead provide source correspondence',
+        runtimeLayout: 'self-contained-single-file; no registry-installed runtime dependencies',
+        sourceMaps: 'omitted: upstream npm ESM output contains no source map or sourceMappingURL; exact npm tarball, gitHead, and governed patch provide source correspondence',
       },
       upstream: {
         gitHead: WERIFT_GIT_HEAD,
@@ -353,6 +665,11 @@ export async function buildSecureWeriftCandidate(workRoot) {
         npmPackage: `werift@${WERIFT_VERSION}`,
         tarballSha512: WERIFT_TARBALL_SHA512,
       },
+      patches: [{
+        path: 'scripts/patches/werift-0.24.1-abort-turn-refresh.patch',
+        sha256: WERIFT_TURN_REFRESH_PATCH_SHA256,
+        purpose: 'Abort the pending TURN allocation refresh timer during peer close.',
+      }],
     }, null, 2)}\n`,
   )
   await writeFile(
@@ -360,22 +677,48 @@ export async function buildSecureWeriftCandidate(workRoot) {
     '# Source map policy\n\n'
       + 'This candidate does not distribute a source map. The pinned upstream npm ESM '
       + 'output contains neither a map nor a `sourceMappingURL`. The exact npm tarball, '
-      + 'registry `gitHead`, source license, runtime lock, SBOM, and file hashes preserve '
+      + 'registry `gitHead`, governed patch, source license, runtime lock, SBOM, and file hashes preserve '
       + 'source correspondence without implying a nonexistent map.\n',
+  )
+  await writeFile(
+    path.join(artifactRoot, 'MEDIA_SURFACE_POLICY.md'),
+    '# Media surface policy\n\n'
+      + 'Terminay uses this runtime only for ordered WebRTC data channels. The exact patched '
+      + 'upstream ESM closure is intentionally retained because standards-compliant peer '
+      + 'negotiation shares SDP, ICE, DTLS, RTP/RTCP, certificate, decorator-registration, '
+      + 'and transport internals even when no audio or video track is created. A deterministic '
+      + '`RTCPeerConnection`-only tree-shaken entry imported successfully and exchanged signed '
+      + 'SDP/ICE, but failed the full Chromium data-channel connection proof twice; stripping '
+      + 'that closure is therefore not considered safe evidence. Terminay instead constrains '
+      + 'capability at `loadSelectedSecureWeriftRuntime`, which returns a frozen object whose '
+      + 'only key is `RTCPeerConnection`. Server code never receives upstream media exports and '
+      + 'never calls `addTrack`, `addTransceiver`, or media-source APIs; application admission '
+      + 'accepts exactly the four named data-channel lanes. Any future media use requires a '
+      + 'candidate identity update and the full release gate rerun.\n',
   )
   await writeFile(
     path.join(artifactRoot, 'package.json'),
     `${JSON.stringify({
-      dependencies: DIRECT_RUNTIME_DEPENDENCIES,
-      description: `Auditable candidate repack of werift ${WERIFT_VERSION} ESM output`,
+      description: `Auditable self-contained patched candidate of werift ${WERIFT_VERSION} ESM output`,
       engines: { node: '>=22' },
       exports: './lib/index.mjs',
       license: 'MIT',
       name: '@terminay/werift-runtime-proof',
       private: true,
       type: 'module',
-      version: `${WERIFT_VERSION}-candidate.0`,
+      version: WERIFT_CANDIDATE_VERSION,
     }, null, 2)}\n`,
+  )
+
+  // Bind every distributable payload file to a deterministic in-toto/SLSA
+  // statement before writing the checksum manifest. SHA256SUMS then covers
+  // this provenance file as well, so neither its subjects nor materials can
+  // be substituted independently of the candidate artifact.
+  const provenanceSubjects = Object.entries(await fileHashMap(artifactRoot))
+    .sort(([left], [right]) => left.localeCompare(right))
+  await writeFile(
+    path.join(artifactRoot, 'provenance.intoto.json'),
+    `${JSON.stringify(createDeterministicProvenance(provenanceSubjects), null, 2)}\n`,
   )
 
   const preChecksumHashes = await fileHashMap(artifactRoot)
@@ -383,6 +726,8 @@ export async function buildSecureWeriftCandidate(workRoot) {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([relativePath, hash]) => `${hash}  ${relativePath}`)
   await writeFile(path.join(artifactRoot, 'SHA256SUMS'), `${checksumLines.join('\n')}\n`)
+
+  await verifySecureWeriftCandidate(artifactRoot)
 
   const artifactNodeModulesRoot = path.join(workRoot, 'node_modules', '@terminay')
   await mkdir(artifactNodeModulesRoot, { recursive: true })
@@ -397,4 +742,78 @@ export async function buildSecureWeriftCandidate(workRoot) {
     auditRoot: workRoot,
     fileHashes: await fileHashMap(artifactRoot),
   }
+}
+
+/**
+ * Produce the exact npm archive that a release workflow could distribute.
+ * Callers compare independent outputs before accepting it as reproducible.
+ */
+export async function packSecureWeriftCandidate(artifactRoot) {
+  await verifySecureWeriftCandidate(artifactRoot)
+  const packed = await run(
+    process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    ['pack', '--json', '--ignore-scripts'],
+    {
+      cwd: artifactRoot,
+      env: {
+        ...process.env,
+        npm_config_audit: 'false',
+        npm_config_fund: 'false',
+      },
+    },
+  )
+  assert.equal(packed.signal, null)
+  assert.equal(packed.code, 0, packed.stderr || packed.stdout)
+  const [archive] = JSON.parse(packed.stdout)
+  assert.equal(archive.name, '@terminay/werift-runtime-proof')
+  assert.equal(archive.version, WERIFT_CANDIDATE_VERSION)
+  const archivePath = path.join(artifactRoot, archive.filename)
+  const bytes = await readFile(archivePath)
+  // `npm pack` writes into its working directory. The archive is evidence
+  // returned to the caller, not a candidate payload; retaining it would make
+  // an otherwise verified candidate appear to have an unchecked extra file.
+  await rm(archivePath, { force: true })
+  return {
+    bytes,
+    filename: archive.filename,
+    integrity: archive.integrity,
+  }
+}
+
+/** Detached release-signing hook for the exact deterministic npm archive.
+ * Signing keys remain outside the candidate build so CI/HSM policy does not
+ * make unsigned local builds impure. */
+export function signSecureWeriftArchive({ bytes, filename }, privateKey, keyId) {
+  assert.ok(bytes instanceof Uint8Array, 'Secure Werift archive bytes are required.')
+  assert.equal(filename, `terminay-werift-runtime-proof-${WERIFT_CANDIDATE_VERSION}.tgz`)
+  assert.match(keyId, /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u)
+  return Object.freeze({
+    algorithm: 'Ed25519',
+    artifact: filename,
+    keyId,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    signature: sign(null, bytes, privateKey).toString('base64'),
+  })
+}
+
+export function verifySecureWeriftArchiveSignature({ bytes, filename }, record, publicKey) {
+  assert.ok(bytes instanceof Uint8Array, 'Secure Werift archive bytes are required.')
+  assert.deepEqual(
+    Object.keys(record).sort(),
+    ['algorithm', 'artifact', 'keyId', 'sha256', 'signature'],
+    'Secure Werift signature metadata shape is invalid.',
+  )
+  assert.equal(record.algorithm, 'Ed25519')
+  assert.equal(record.artifact, filename)
+  assert.equal(
+    record.sha256,
+    createHash('sha256').update(bytes).digest('hex'),
+    'Secure Werift archive SHA-256 verification failed.',
+  )
+  assert.equal(
+    verify(null, bytes, publicKey, Buffer.from(record.signature, 'base64')),
+    true,
+    'Secure Werift detached signature verification failed.',
+  )
+  return true
 }

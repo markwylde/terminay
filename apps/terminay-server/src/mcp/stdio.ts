@@ -16,6 +16,13 @@ import {
 	type ControlResponse,
 	encodeControlMessage,
 } from './controlEndpoint.js';
+import { SERVER_MCP_ENTRY } from './compatibility.js';
+
+export {
+	MCP_COMPATIBILITY_METADATA,
+	MCP_COMPATIBILITY_SCHEMA_VERSION,
+	SERVER_MCP_ENTRY,
+} from './compatibility.js';
 
 const MAX_TEXT_BYTES = 64 * 1024;
 const MAX_TERMINAL_REF_CHARS = 256;
@@ -39,6 +46,11 @@ const CONTROL_ERROR_CODES: ReadonlySet<ControlErrorCode> = new Set([
 	'not_found',
 	'internal',
 ]);
+const READ_ONLY_TOOL_ANNOTATIONS = Object.freeze({
+	readOnlyHint: true,
+	destructiveHint: false,
+	openWorldHint: false,
+});
 
 /** Stable, bounded error returned by the headless adapter for a control reply. */
 export class ServerMcpControlError extends Error {
@@ -85,7 +97,7 @@ export async function runServerMcpStdio(
 	const client = createLocalControlClient(options.socketPath, options.token);
 	const server = new McpServer({
 		name: 'terminay',
-		version: options.version ?? '0.0.0',
+		version: options.version ?? SERVER_MCP_ENTRY.protocolVersion,
 	});
 	const call = async (
 		operation: ControlOperation,
@@ -155,6 +167,7 @@ function registerTools(
 		{
 			description: 'List sibling terminals in the calling project.',
 			inputSchema: {},
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 		},
 		async () => call('list_terminals', {}),
 	);
@@ -162,6 +175,7 @@ function registerTools(
 		'read_terminal',
 		{
 			description: 'Read bounded terminal output.',
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: {
 				terminal,
 				lines: z.number().int().positive().max(4096).optional(),
@@ -177,6 +191,7 @@ function registerTools(
 		'get_terminal_status',
 		{
 			description: 'Read canonical terminal status.',
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: { terminal },
 		},
 		async ({ terminal: target }) =>
@@ -245,6 +260,7 @@ function registerTools(
 		'wait_for_idle',
 		{
 			description: 'Wait for canonical terminal inactivity.',
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: {
 				terminal,
 				seconds: z.number().finite().nonnegative().max(MAX_WAIT_SECONDS),
@@ -257,6 +273,7 @@ function registerTools(
 		'wait_for_command',
 		{
 			description: 'Wait for the next command completion.',
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: { terminal, timeout },
 		},
 		async (params) => call('wait_for_command', params),
@@ -265,6 +282,7 @@ function registerTools(
 		'wait_for_attention',
 		{
 			description: 'Wait for canonical terminal attention.',
+			annotations: READ_ONLY_TOOL_ANNOTATIONS,
 			inputSchema: { terminal, timeout },
 		},
 		async (params) => call('wait_for_attention', params),
@@ -366,7 +384,12 @@ function createLocalControlClient(
 		string,
 		{ resolve: (value: unknown) => void; reject: (error: Error) => void }
 	>();
-	const reject = (error: Error): void => {
+	// Socket callbacks can arrive after a replacement connection has already
+	// been created.  Only the socket that raised the failure may clear/reject
+	// the active client state; otherwise a late close from a poisoned socket
+	// could take down a later, healthy MCP request.
+	const reject = (error: Error, source?: Socket): void => {
+		if (source !== undefined && socket !== source) return;
 		for (const waiter of pending.values()) waiter.reject(error);
 		pending.clear();
 		socket = undefined;
@@ -374,13 +397,13 @@ function createLocalControlClient(
 	const ensure = (): Socket => {
 		if (socket !== undefined) return socket;
 		const decoder = new ControlFrameDecoder(CONTROL_MAX_RESPONSE_BYTES);
-		socket = connect(socketPath);
-		socket.on('data', (chunk: Buffer) => {
+		const candidate = connect(socketPath);
+		socket = candidate;
+		candidate.on('data', (chunk: Buffer) => {
 			let values: unknown[];
 			try {
 				values = decoder.push(chunk);
 			} catch (error) {
-				const currentSocket = socket;
 				reject(
 					new ServerMcpControlError({
 						code: 'internal',
@@ -389,8 +412,9 @@ function createLocalControlClient(
 								? error.message
 								: 'Malformed control response',
 					}),
+					candidate,
 				);
-				currentSocket?.destroy();
+				candidate.destroy();
 				return;
 			}
 			for (const value of values) {
@@ -401,8 +425,9 @@ function createLocalControlClient(
 							code: 'internal',
 							message: 'Malformed control response.',
 						}),
+						candidate,
 					);
-					socket?.destroy();
+					candidate.destroy();
 					return;
 				}
 				const waiter = pending.get(response.id);
@@ -412,11 +437,12 @@ function createLocalControlClient(
 				else waiter.reject(new ServerMcpControlError(response.error));
 			}
 		});
-		socket.on('error', (error) => reject(error));
-		socket.on('close', () => {
-			if (!closed) reject(new Error('Terminay control socket closed'));
+		candidate.on('error', (error) => reject(error, candidate));
+		candidate.on('close', () => {
+			if (!closed)
+				reject(new Error('Terminay control socket closed'), candidate);
 		});
-		return socket;
+		return candidate;
 	};
 	return {
 		request(operation, params) {

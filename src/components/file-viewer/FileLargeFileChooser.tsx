@@ -1,4 +1,5 @@
 import type { FileViewerEngine } from '../../types/fileViewer'
+import { MAX_MONACO_FILE_BYTES } from '../../services/fileViewer/capabilities'
 
 type FileLargeFileChooserProps = {
   fileName: string
@@ -19,6 +20,8 @@ export function FileLargeFileChooser({
   fileSize,
   onChoose,
 }: FileLargeFileChooserProps) {
+  const maxMonacoFileSize = formatFileSize(MAX_MONACO_FILE_BYTES)
+
   return (
     <div className="large-file-open-chooser">
       <div className="large-file-open-chooser__eyebrow">Large file</div>
@@ -26,7 +29,8 @@ export function FileLargeFileChooser({
         <h3>Choose how to open this file</h3>
         <p>
           <strong>{fileName}</strong> is {formatFileSize(fileSize)}. Performant mode keeps the viewer lighter, while
-          Monaco opens the full editor.
+          Monaco opens the full editor. Files above {maxMonacoFileSize} stay in Performant mode so the rich editor
+          never loads an unbounded text model.
         </p>
       </div>
       <div className="large-file-open-chooser__options">

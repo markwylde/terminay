@@ -1,0 +1,34 @@
+--- a/lib/index.mjs
++++ b/lib/index.mjs
+@@ -7966,6 +7966,7 @@
+     });
+   }
+   refresh = (exp) => {
++    this.refreshAbortController = new AbortController();
+     this.refreshHandle = cancelable(async (_, __, onCancel) => {
+       let run = true;
+       onCancel.once(() => {
+@@ -7974,7 +7975,14 @@
+       while (run) {
+         const delay = 5 / 6 * exp * 1e3;
+         log21("refresh delay", delay, { exp });
+-        await setTimeout4(delay);
++        try {
++          await setTimeout4(delay, void 0, {
++            signal: this.refreshAbortController.signal
++          });
++        } catch (error) {
++          if (error?.name === "AbortError") break;
++          throw error;
++        }
+         const request = new Message(4 /* REFRESH */, 0 /* REQUEST */);
+         request.setAttribute("LIFETIME", exp);
+         try {
+@@ -8110,6 +8118,7 @@
+     await this.send(message.bytes, addr);
+   }
+   async close() {
++    this.refreshAbortController?.abort();
+     this.refreshHandle?.resolve?.();
+     await this.transport.close();
+   }

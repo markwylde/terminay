@@ -142,21 +142,23 @@ export async function aggregateMarkdownTasks(
   let readBytes = 0;
   let discoveredTasks = 0;
   let truncated = false;
+  let stopTraversal = false;
 
   if (rootStat.isFile === true) {
     if (isMarkdownPath(root)) {
       scannedFiles = 1;
       const parsed = await readMarkdownFile(root || basename(canonical), canonical, storage, Math.min(maxFileBytes, maxBytes), maxTaskLabelLength, signal);
       readBytes = Math.min(parsed.bytesRead, maxBytes);
-      files.push(makeFile(root || basename(canonical), parsed, rootStat.size, rootStat.mtimeMs, maxBytes < parsed.bytesRead));
-      discoveredTasks = files[0]?.tasks.length ?? 0;
+      const file = makeFile(root || basename(canonical), parsed, rootStat.size, rootStat.mtimeMs, maxBytes < parsed.bytesRead);
+      if (file.tasks.length > 0) files.push(file);
+      discoveredTasks = file.tasks.length;
       truncated = parsed.truncated || parsed.bytesRead > maxBytes;
     }
   } else if (rootStat.isDirectory === true) {
     pending.push({ relativePath: root, depth: 0, canonical });
   }
 
-  while (pending.length > 0 && !truncated) {
+  while (pending.length > 0 && !stopTraversal) {
     throwIfAborted(signal);
     const current = pending.shift();
     if (current === undefined) break;
@@ -166,11 +168,16 @@ export async function aggregateMarkdownTasks(
     } catch {
       continue;
     }
-    for (const raw of entries) {
+    // Host directory enumeration order is not a stable API. Sort before
+    // applying any bounds so a partial aggregate is reproducible across
+    // filesystems and reconnects, not merely sorted after the walk completes.
+    const orderedEntries = [...entries].sort((left, right) => compareNames(left.name, right.name));
+    for (const raw of orderedEntries) {
       throwIfAborted(signal);
       scannedEntries += 1;
       if (scannedEntries > maxEntries) {
         truncated = true;
+        stopTraversal = true;
         break;
       }
       const name = validEntryName(raw.name);
@@ -191,6 +198,7 @@ export async function aggregateMarkdownTasks(
       if (stat.isDirectory === true || raw.isDirectory === true) {
         if (current.depth >= maxDepth) {
           truncated = true;
+          stopTraversal = true;
           break;
         }
         pending.push({ relativePath, depth: current.depth + 1, canonical: childCanonical });
@@ -201,35 +209,42 @@ export async function aggregateMarkdownTasks(
       scannedFiles += 1;
       if (scannedFiles > maxFiles) {
         truncated = true;
+        stopTraversal = true;
         break;
       }
       const remainingBytes = maxBytes - readBytes;
       if (remainingBytes <= 0) {
         truncated = true;
+        stopTraversal = true;
         break;
       }
       const parsed = await readMarkdownFile(relativePath, childCanonical, storage, Math.min(maxFileBytes, remainingBytes), maxTaskLabelLength, signal);
       readBytes += parsed.bytesRead;
       const file = makeFile(relativePath, parsed, stat.size, stat.mtimeMs, parsed.bytesRead < safeSize(stat.size));
-      files.push(file);
+      if (file.tasks.length > 0) files.push(file);
       discoveredTasks += file.tasks.length;
-      if (parsed.truncated || parsed.bytesRead < safeSize(stat.size)) truncated = true;
+      if (parsed.truncated) truncated = true;
+      if (parsed.bytesRead < safeSize(stat.size)) {
+        truncated = true;
+        stopTraversal = true;
+      }
       if (discoveredTasks > maxTasks) {
         truncated = true;
+        stopTraversal = true;
         break;
       }
     }
   }
 
   files.sort((left, right) => compareNames(left.relativePath, right.relativePath));
-  const taskList = files.flatMap((file) => file.tasks);
-  const tasks = taskList.slice(0, maxTasks);
-  if (taskList.length > tasks.length) truncated = true;
-  const tree = buildDirectoryTree(root || ".", files);
+  const limited = limitFilesToTasks(files, maxTasks);
+  if (limited.truncated) truncated = true;
+  const tasks = limited.files.flatMap((file) => file.tasks);
+  const tree = buildDirectoryTree(root || ".", limited.files);
   return Object.freeze({
     root: root || ".",
     tree,
-    files: Object.freeze(files),
+    files: Object.freeze(limited.files),
     tasks: Object.freeze(tasks),
     stats: statsForTasks(tasks),
     scannedEntries,
@@ -327,6 +342,51 @@ function flattenSections(sections: readonly MarkdownTaskSection[], output: Markd
 function makeFile(relativePath: string, parsed: { readonly parsed: ParsedFile; readonly truncated: boolean; readonly bytesRead: number }, size: number | undefined, mtimeMs: number | undefined, truncated: boolean): MarkdownTaskFile {
   const tasks = Object.freeze([...parsed.parsed.tasks]);
   return Object.freeze({ relativePath, size: safeSize(size), ...(finite(mtimeMs) ? { mtimeMs } : {}), sections: parsed.parsed.sections, tasks, stats: statsForTasks(tasks), truncated: truncated || parsed.truncated, invalidEncoding: parsed.parsed.invalidEncoding === true });
+}
+
+function limitFilesToTasks(files: readonly MarkdownTaskFile[], maxTasks: number): { readonly files: readonly MarkdownTaskFile[]; readonly truncated: boolean } {
+  const limited: MarkdownTaskFile[] = [];
+  let remaining = maxTasks;
+  let truncated = false;
+  for (const file of files) {
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    if (file.tasks.length <= remaining) {
+      limited.push(file);
+      remaining -= file.tasks.length;
+      continue;
+    }
+    const tasks = Object.freeze(file.tasks.slice(0, remaining));
+    const taskIds = new Set(tasks.map((task) => task.id));
+    const sections = Object.freeze(trimSections(file.sections, taskIds));
+    limited.push(Object.freeze({
+      ...file,
+      sections,
+      tasks,
+      stats: statsForTasks(tasks),
+      truncated: true,
+    }));
+    remaining = 0;
+    truncated = true;
+  }
+  return { files: Object.freeze(limited), truncated };
+}
+
+function trimSections(sections: readonly MarkdownTaskSection[], taskIds: ReadonlySet<string>): readonly MarkdownTaskSection[] {
+  const trimmed: MarkdownTaskSection[] = [];
+  for (const section of sections) {
+    const tasks = Object.freeze(section.tasks.filter((task) => taskIds.has(task.id)));
+    const children = Object.freeze(trimSections(section.children, taskIds));
+    if (tasks.length === 0 && children.length === 0) continue;
+    trimmed.push(Object.freeze({
+      ...section,
+      tasks,
+      children,
+    }));
+  }
+  return trimmed;
 }
 
 function buildDirectoryTree(root: string, files: readonly MarkdownTaskFile[]): MarkdownTaskDirectory {

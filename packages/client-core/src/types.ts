@@ -157,6 +157,16 @@ export interface ClientSubscription<T = JsonValue> {
   readonly fromRevision: number;
   readonly unsubscribe: () => Promise<void>;
   readonly onEvent: (listener: (event: ClientEvent<T>) => void) => () => void;
+  /** Bounded journal replay could not satisfy this subscription. Refresh the
+   * feature snapshot, then create a new subscription from that cursor. */
+  readonly onResync: (listener: (resync: ClientSubscriptionResync) => void) => () => void;
+}
+
+export interface ClientSubscriptionResync {
+  readonly subscriptionId: ProtocolId;
+  readonly revision: number;
+  readonly cursor: string;
+  readonly snapshot?: JsonValue;
 }
 
 export interface TerminayClientOptions {
@@ -182,6 +192,11 @@ export type ClientQueryResult<T extends JsonValue = JsonValue> = QueryResultEnve
   readonly result?: T;
 };
 
+export interface ClientBinaryQueryResult<T extends JsonValue = JsonValue> {
+  readonly envelope: ClientQueryResult<T>;
+  readonly body: Uint8Array;
+}
+
 export type ClientCommandResult<T extends JsonValue = JsonValue> = CommandResultEnvelope & {
   readonly result?: T;
 };
@@ -200,6 +215,9 @@ export interface HostCapabilitySet {
   readonly clipboard?: boolean;
   readonly serverExposure?: boolean;
   readonly connectionProfiles?: boolean;
+  /** Desktop-owned presentation capabilities; never server settings. */
+  readonly updater?: boolean;
+  readonly osIntegration?: boolean;
 }
 
 export type HostCapability = keyof HostCapabilitySet;

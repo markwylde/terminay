@@ -199,3 +199,10 @@
 	line-height: 16px;
 	text-align: center;
 }
+
+@media (prefers-reduced-motion: reduce) {
+	.agents-sidebar__row,
+	.agents-sidebar__disclosure-chevron {
+		transition: none;
+	}
+}

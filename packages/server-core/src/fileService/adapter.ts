@@ -249,11 +249,11 @@ export class ServerFileAdapter {
         [FILE_OPERATIONS.readText]: async (request) => asJson(serializeText(await this.readText(this.rangeRequest(request)))),
       },
       commands: {
-        [FILE_OPERATIONS.edit]: async (request) => asJson(await this.edit(this.editRequest(request))),
-        [FILE_OPERATIONS.save]: async (request) => asJson(await this.save(this.saveRequest(request))),
-        [FILE_OPERATIONS.reload]: async (request) => asJson(await this.reload(this.reloadRequest(request))),
-        [FILE_OPERATIONS.keepLocal]: async (request) => asJson(await this.keepLocal(this.sessionRequest(request))),
-        [FILE_OPERATIONS.close]: async (request) => asJson(await this.close(this.closeRequest(request))),
+        [FILE_OPERATIONS.edit]: async (request) => serializeMutation(await this.edit(this.editRequest(request))),
+        [FILE_OPERATIONS.save]: async (request) => serializeMutation(await this.save(this.saveRequest(request))),
+        [FILE_OPERATIONS.reload]: async (request) => serializeMutation(await this.reload(this.reloadRequest(request))),
+        [FILE_OPERATIONS.keepLocal]: async (request) => serializeMutation(await this.keepLocal(this.sessionRequest(request))),
+        [FILE_OPERATIONS.close]: async (request) => serializeMutation(await this.close(this.closeRequest(request))),
       },
     };
   }
@@ -344,6 +344,26 @@ function serializeText(range: FileTextRange): JsonValue { return { ...serializeR
 function bytesToBase64(bytes: Uint8Array): string { let value = ""; for (const byte of bytes) value += String.fromCharCode(byte); return btoa(value); }
 function textBytes(value: string): Uint8Array { return new TextEncoder().encode(value); }
 function asJson(value: unknown): JsonValue { return value as JsonValue; }
+
+/**
+ * File-session mutations are transported as JSON, not as in-process Error
+ * objects.  Error.message is non-enumerable, so forwarding FileServiceError
+ * directly makes HTTP failures lose their message/details (and violates the
+ * protocol value boundary).  Preserve the same structured rejection contract
+ * for framed and local HTTP callers.
+ */
+function serializeMutation<T>(result: FileMutationResult<T>): JsonValue {
+  if (result.ok) return { ok: true, value: asJson(result.value) };
+  const { error } = result;
+  return {
+    ok: false,
+    error: {
+      code: error.code,
+      message: error.message,
+      ...(error.details === undefined ? {} : { details: asJson(error.details) }),
+    },
+  };
+}
 function invalidRequest(message: string): FileServiceError { return new FileServiceError("invalid_path", message); }
 function validId(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value); }
 function positive(value: number, name: string): number { if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive safe integer`); return value; }

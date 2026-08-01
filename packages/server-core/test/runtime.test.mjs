@@ -73,3 +73,50 @@ test("runtime composes settings and vault metadata without creating a secret tra
   await assert.rejects(() => resolveMacroSecret({ ...target, sessionId: "other" }, "provider.key"), /exact terminal/);
   assert.equal(JSON.stringify(runtime.diagnostics()).includes("runtime-secret-sentinel"), false);
 });
+
+test("runtime attempts every privileged teardown even when one service fails", async () => {
+  const calls = [];
+  const runtime = new ServerRuntime({
+    serverId: "runtime-cleanup", serverVersion: "1.0.0", dataRoot: "/tmp/runtime-cleanup", runtimeMode: "standalone",
+    services: {
+      agents: { async start() {}, async stop() { calls.push("agents"); throw new Error("agent stop failed"); } },
+      remoteExposure: { async shutdown() { calls.push("remote"); } },
+      terminal: { async shutdown() { calls.push("terminal"); }, listSessions() { return []; } },
+    },
+  }, { stopServices: () => { calls.push("hooks"); } });
+  await runtime.start();
+  await assert.rejects(() => runtime.stop(), /shutdown failed/u);
+  assert.deepEqual(calls, ["remote", "terminal", "agents", "hooks"]);
+  assert.equal(runtime.state, "stopped");
+});
+
+test("stopping a never-started runtime still withdraws remote exposure", async () => {
+  let shutdowns = 0;
+  const runtime = new ServerRuntime({
+    serverId: "runtime-created-stop", serverVersion: "1.0.0", dataRoot: "/tmp/runtime-created-stop", runtimeMode: "standalone",
+    services: { remoteExposure: { async shutdown() { shutdowns += 1; } } },
+  });
+  await runtime.stop();
+  assert.equal(shutdowns, 1);
+  assert.equal(runtime.state, "stopped");
+});
+
+test("stop during startup cannot publish a ready runtime after teardown", async () => {
+  let release;
+  let stopped = 0;
+  const runtime = new ServerRuntime({
+    serverId: "runtime-start-stop", serverVersion: "1.0.0", dataRoot: "/tmp/runtime-start-stop", runtimeMode: "standalone",
+  }, {
+    startServices: () => new Promise((resolve) => { release = resolve; }),
+    stopServices: () => { stopped += 1; },
+  });
+  const starting = runtime.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  const stopping = runtime.stop();
+  release();
+  const health = await starting;
+  await stopping;
+  assert.equal(health.ready, false);
+  assert.equal(runtime.state, "stopped");
+  assert.equal(stopped, 1);
+});

@@ -107,11 +107,11 @@ export async function setMonacoValue(page: Page, value: string): Promise<void> {
 }
 
 export async function openRemoteMenu(page: Page): Promise<void> {
-  const menu = page.getByRole('menu', { name: 'Remote access menu' })
+  const menu = page.getByRole('menu', { name: 'Connection menu' })
   if (await menu.isVisible().catch(() => false)) {
     return
   }
 
-  await page.getByLabel('Open remote access menu').click()
+  await page.getByLabel('Open connection menu').click()
   await expect(menu).toBeVisible()
 }

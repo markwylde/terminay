@@ -15,14 +15,20 @@ import type {
   OperationRegistries,
   OperationPolicy,
   QueryHandler,
+  BinaryQueryHandlerResult,
   QueryRequest,
   RequestContext,
 } from "./types.js";
 
 /** The transport-neutral operation boundary shared by framed and HTTP clients. */
 export interface OperationDispatcher {
-  readonly query: (request: QueryRequest) => Promise<QueryResultEnvelope>;
+  readonly query: (request: QueryRequest) => Promise<QueryDispatchResult>;
   readonly command: (request: CommandRequest) => Promise<CommandResultEnvelope>;
+}
+
+export interface QueryDispatchResult {
+  readonly envelope: QueryResultEnvelope;
+  readonly body: Uint8Array;
 }
 
 export interface OperationDispatcherOptions extends OperationRegistries {
@@ -47,20 +53,24 @@ export function createOperationDispatcher(options: OperationDispatcherOptions = 
   const policyLookup = makeLookup<OperationPolicy>(options.policies);
   const ledgers = new Map<ProtocolId, CommandLedger>();
 
-  const query = async (request: QueryRequest): Promise<QueryResultEnvelope> => {
+  const query = async (request: QueryRequest): Promise<QueryDispatchResult> => {
     const { envelope } = request;
     validateRequestContext(request.context);
-    if (request.body.byteLength > maxBodyBytes) return { type: "query_result", queryId: envelope.queryId, ok: false, error: resourceError("query body exceeds the server limit") };
+    if (request.body.byteLength > maxBodyBytes) return queryEnvelope({ type: "query_result", queryId: envelope.queryId, ok: false, error: resourceError("query body exceeds the server limit") });
     const policy = policyLookup(envelope.operation);
     const handler = queryLookup(envelope.operation) ?? policy?.query;
-    if (handler === undefined) return { type: "query_result", queryId: envelope.queryId, ok: false, error: unknownOperationError(envelope.operation) };
+    if (handler === undefined) return queryEnvelope({ type: "query_result", queryId: envelope.queryId, ok: false, error: unknownOperationError(envelope.operation) });
     const required = policy?.scope ?? options.defaultQueryScope;
-    if (required !== undefined && !scopeAllows(request.context.authScope, required)) return { type: "query_result", queryId: envelope.queryId, ok: false, error: forbiddenError(envelope.operation, required) };
+    if (required !== undefined && !scopeAllows(request.context.authScope, required)) return queryEnvelope({ type: "query_result", queryId: envelope.queryId, ok: false, error: forbiddenError(envelope.operation, required) });
     try {
-      const result = await invoke(handler, request);
-      return { type: "query_result", queryId: envelope.queryId, ok: true, result };
+      const value = await invoke(handler, request);
+      if (isBinaryQueryResult(value)) {
+        if (value.body.byteLength > maxBodyBytes) return queryEnvelope({ type: "query_result", queryId: envelope.queryId, ok: false, error: resourceError("query result body exceeds the server limit") });
+        return { envelope: { type: "query_result", queryId: envelope.queryId, ok: true, result: value.result, bodyLength: value.body.byteLength }, body: value.body };
+      }
+      return queryEnvelope({ type: "query_result", queryId: envelope.queryId, ok: true, result: value });
     } catch (error) {
-      return { type: "query_result", queryId: envelope.queryId, ok: false, error: dispatchError(error, "query failed") };
+      return queryEnvelope({ type: "query_result", queryId: envelope.queryId, ok: false, error: dispatchError(error, "query failed") });
     }
   };
 
@@ -102,6 +112,11 @@ export function createOperationDispatcher(options: OperationDispatcherOptions = 
   return { query, command };
 }
 
+function queryEnvelope(envelope: QueryResultEnvelope): QueryDispatchResult { return { envelope, body: new Uint8Array() }; }
+function isBinaryQueryResult(value: JsonValue | BinaryQueryHandlerResult): value is BinaryQueryHandlerResult {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && "body" in value && value.body instanceof Uint8Array && "result" in value;
+}
+
 function makeLookup<T>(collection: ReadonlyMap<string, T> | Record<string, T> | undefined): (key: string) => T | undefined {
   if (collection === undefined) return () => undefined;
   if (typeof (collection as ReadonlyMap<string, T>).get === "function") return (key) => (collection as ReadonlyMap<string, T>).get(key);
@@ -113,7 +128,7 @@ function asHandlerResult(value: JsonValue | { readonly result?: JsonValue; reado
   return { result: value as JsonValue };
 }
 
-async function invoke<T extends QueryHandler | CommandHandler>(handler: T, request: QueryRequest | CommandRequest): Promise<JsonValue | { readonly result?: JsonValue; readonly revision?: number }> {
+async function invoke<T extends QueryHandler | CommandHandler>(handler: T, request: QueryRequest | CommandRequest): Promise<JsonValue | BinaryQueryHandlerResult | { readonly result?: JsonValue; readonly revision?: number }> {
   const parent = request.context.signal;
   if (parent.aborted) throw cancelledError();
   const controller = new AbortController();
@@ -121,13 +136,16 @@ async function invoke<T extends QueryHandler | CommandHandler>(handler: T, reque
   let removeAbort = (): void => undefined;
   let rejectAbort: ((error: ProtocolError) => void) | undefined;
   const interrupted = new Promise<never>((_, reject) => { rejectAbort = reject; });
-  const onAbort = (): void => { controller.abort(parent.reason); rejectAbort?.(cancelledError()); };
+  // Reject the caller before notifying the handler. A handler is allowed to
+  // synchronously resolve from its abort listener; letting that resolution win
+  // the race would turn a cancelled request into a successful result.
+  const onAbort = (): void => { rejectAbort?.(cancelledError()); controller.abort(parent.reason); };
   parent.addEventListener("abort", onAbort, { once: true });
   removeAbort = () => parent.removeEventListener("abort", onAbort);
   const remaining = request.context.deadline === undefined ? undefined : request.context.deadline - Date.now();
   if (remaining !== undefined && remaining <= 0) { removeAbort(); throw deadlineError(); }
   if (remaining !== undefined) {
-    timeout = setTimeout(() => { controller.abort("deadline"); rejectAbort?.(deadlineError()); }, remaining);
+    timeout = setTimeout(() => { rejectAbort?.(deadlineError()); controller.abort("deadline"); }, remaining);
   }
   const boundedRequest = { ...request, context: { ...request.context, signal: controller.signal } } as QueryRequest & CommandRequest;
   try {
@@ -148,7 +166,14 @@ function cancelledError(): ProtocolError { return { code: "cancelled", message: 
 function deadlineError(): ProtocolError { return { code: "deadline", message: "operation deadline exceeded", retryable: true }; }
 
 function dispatchError(error: unknown, fallback: string): ProtocolError {
-  if (isProtocolError(error)) return { ...error, message: error.message.slice(0, 4096) };
+  if (isProtocolError(error)) return {
+    code: error.code,
+    message: error.message.slice(0, 4096),
+    ...(error.details === undefined ? {} : { details: error.details }),
+    ...(error.retryable === undefined ? {} : { retryable: error.retryable }),
+    ...(error.supportedMin === undefined ? {} : { supportedMin: error.supportedMin }),
+    ...(error.supportedMax === undefined ? {} : { supportedMax: error.supportedMax }),
+  };
   if (error instanceof Error) return { code: "internal", message: fallback, retryable: false };
   return { code: "internal", message: fallback, retryable: false };
 }

@@ -4,10 +4,16 @@
 export interface DesktopBundleResponse {
   readonly status: number;
   readonly contentType?: string;
+  /** The URL after redirects, supplied by the privileged fetch adapter. */
+  readonly finalUrl: string;
   readonly bytes: Uint8Array;
 }
 
 export type DesktopBundleFetcher = (url: string) => Promise<DesktopBundleResponse>;
+
+/** Keep a compromised/misconfigured server from forcing an unbounded native
+ * host allocation while its bundle is being materialized. */
+export const DESKTOP_MAX_BUNDLE_BYTES = 32 * 1024 * 1024;
 
 export interface SelectedDesktopConnection {
   readonly connectionId: string;
@@ -81,9 +87,12 @@ export class DesktopHostShellPolicy {
     const selected = this.requireSelected();
     const url = bundleUrl(selected.origin, assetPath);
     const response = await fetcher(url);
+    if (typeof response !== "object" || response === null || Array.isArray(response)) throw new TypeError("selected server bundle response is invalid");
     if (!Number.isSafeInteger(response.status) || response.status < 200 || response.status > 299) throw new Error(`selected server bundle request failed: ${response.status}`);
+    const finalUrl = normalizeBundleResponseUrl(response.finalUrl, selected.origin);
     if (!(response.bytes instanceof Uint8Array)) throw new TypeError("selected server bundle response is invalid");
-    return Object.freeze({ ...response, bytes: new Uint8Array(response.bytes), connectionId: selected.connectionId, origin: selected.origin, url });
+    if (response.bytes.byteLength > DESKTOP_MAX_BUNDLE_BYTES) throw new Error("selected server bundle exceeds the host size limit");
+    return Object.freeze({ ...response, finalUrl, bytes: new Uint8Array(response.bytes), connectionId: selected.connectionId, origin: selected.origin, url });
   }
 
   evaluate(request: DesktopHostShellRequest): DesktopHostShellDecision {
@@ -142,6 +151,20 @@ function parseSafeUrl(rawUrl: string): URL | undefined {
   } catch {
     return undefined;
   }
+}
+
+function normalizeBundleResponseUrl(rawUrl: unknown, selectedOrigin: string): string {
+  if (typeof rawUrl !== "string" || rawUrl.length === 0 || rawUrl.length > 16_384) throw new TypeError("selected server bundle response URL is invalid");
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new TypeError("selected server bundle response URL is invalid");
+  }
+  if (parsed.origin !== selectedOrigin || parsed.username || parsed.password || parsed.search || parsed.hash || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+    throw new Error("selected server bundle response left the selected origin");
+  }
+  return parsed.href;
 }
 
 function explicitDecision(callback: ((request: DesktopHostShellRequest) => boolean) | undefined, request: DesktopHostShellRequest, reason: string): DesktopHostShellDecision {

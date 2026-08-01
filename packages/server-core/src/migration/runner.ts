@@ -6,6 +6,7 @@ import {
   type LegacyMigrationSource,
   type MigrationBackend,
   type MigrationBackup,
+  type MigrationBackupRecoveryResult,
   type MigrationRollbackResult,
   type MigrationRunResult,
   type MigrationStep,
@@ -42,6 +43,12 @@ export class MigrationRunner {
     }
     const existing = await this.backend.loadMarker();
     if (existing?.status === "complete") return { marker: existing, resumed: true };
+    if (existing?.rollbackState === "recovery-required") {
+      throw new MigrationError("rollback_requires_backup_recovery", "recover the backup before retrying this migration");
+    }
+    if (existing?.serverCommitState === "unknown" || existing?.serverCommitState === "committed") {
+      throw new MigrationError("backup_recovery_unavailable", "server-only migration commit is committed or uncertain; recover the backup before retrying");
+    }
     const resumed = existing !== undefined;
     let marker = existing ?? {
       schemaVersion: MIGRATION_SCHEMA_VERSION,
@@ -59,11 +66,40 @@ export class MigrationRunner {
         redactedSource: redactSource(source),
       };
       const backupId = await this.backend.backup(backup);
-      marker = { ...marker, status: "running", backupId, rollbackState: "available" };
+      marker = {
+        ...marker,
+        status: "running",
+        backupId,
+        rollbackState: "available",
+        ...(this.backend.commitServerOnlyMutations === undefined ? {} : { serverCommitState: "uncommitted" as const }),
+      };
       await this.backend.saveMarker(marker);
     } else if (marker.status === "pending") {
-      marker = { ...marker, status: "running" };
+      marker = {
+        ...marker,
+        status: "running",
+        ...(this.backend.commitServerOnlyMutations === undefined
+          ? {}
+          : { serverCommitState: marker.serverCommitState ?? "uncommitted" }),
+      };
       await this.backend.saveMarker(marker);
+    }
+
+    if (this.backend.captureElectronState !== undefined && marker.electronStateBackupId === undefined) {
+      const electronStateBackupId = await this.backend.captureElectronState();
+      marker = { ...marker, electronStateBackupId };
+      await this.backend.saveMarker(marker);
+    }
+
+    try {
+      await this.backend.beginServerOnlyMutations?.();
+    } catch (error) {
+      const failure = error instanceof MigrationError
+        ? error
+        : new MigrationError("step_failed", `server-only transaction setup failed: ${safeFailureMessage(error)}`, undefined, error);
+      marker = { ...marker, status: "failed", failureCode: failure.code, rollbackState: "available" };
+      await this.backend.saveMarker(marker);
+      throw failure;
     }
 
     const completed = new Set(marker.completedSteps);
@@ -89,7 +125,44 @@ export class MigrationRunner {
       };
       await this.backend.saveMarker(marker);
     }
-    marker = { ...marker, status: "complete", completedSteps: STEPS, completedAt: this.now(), failedStep: undefined, failureCode: undefined, rollbackState: marker.backupId === undefined ? undefined : "available" };
+
+    if (this.backend.commitServerOnlyMutations !== undefined) {
+      // Persist the uncertain boundary before invoking the server commit. A
+      // crash at any point in the hook must not make a later process believe
+      // Electron is still safe to restore automatically.
+      marker = { ...marker, status: "running", serverCommitState: "unknown" };
+      await this.backend.saveMarker(marker);
+    }
+    try {
+      await this.backend.commitServerOnlyMutations?.();
+    } catch (error) {
+      const failure = error instanceof MigrationError
+        ? error
+        : new MigrationError("step_failed", `server-only commit failed: ${safeFailureMessage(error)}`, undefined, error);
+      // A failed commit has an unknown outcome. Treat it as committed for
+      // host rollback purposes and require the explicit server-backup path.
+      marker = {
+        ...marker,
+        status: "failed",
+        failureCode: failure.code,
+        rollbackState: "recovery-required",
+        ...(this.backend.commitServerOnlyMutations === undefined ? {} : { serverCommitState: "unknown" as const }),
+      };
+      await this.backend.saveMarker(marker);
+      throw failure;
+    }
+    marker = {
+      ...marker,
+      status: "complete",
+      completedSteps: STEPS,
+      completedAt: this.now(),
+      failedStep: undefined,
+      failureCode: undefined,
+      rollbackState: marker.backupId === undefined ? undefined : "available",
+      ...(this.backend.commitServerOnlyMutations === undefined
+        ? {}
+        : { serverCommitState: "committed" as const, serverCommitAt: this.now() }),
+    };
     await this.backend.saveMarker(marker);
     return { marker, resumed };
   }
@@ -115,10 +188,29 @@ export class MigrationRunner {
     if (marker === undefined || marker.backupId === undefined) {
       throw new MigrationError("rollback_unavailable", "migration backup is unavailable");
     }
+    if (
+      marker.serverCommitState === "committed" ||
+      marker.serverCommitState === "unknown" ||
+      (marker.serverCommitState === undefined && marker.status === "complete")
+    ) {
+      const recoveryMarker = {
+        ...marker,
+        rollbackState: "recovery-required" as const,
+      };
+      await this.backend.saveMarker(recoveryMarker);
+      throw new MigrationError("rollback_requires_backup_recovery", "server-only migration mutations are committed or uncertain; use explicit backup recovery");
+    }
     if (this.backend.restoreBackup === undefined) {
       throw new MigrationError("rollback_unavailable", "migration backend does not support rollback");
     }
+    if (marker.electronStateBackupId !== undefined && this.backend.restoreElectronState === undefined) {
+      throw new MigrationError("rollback_unavailable", "migration backend cannot restore pre-migration Electron state");
+    }
+    await this.backend.rollbackServerOnlyMutations?.();
     await this.backend.restoreBackup(marker.backupId);
+    if (marker.electronStateBackupId !== undefined) {
+      await this.backend.restoreElectronState?.(marker.electronStateBackupId);
+    }
     const reset: typeof marker = {
       ...marker,
       status: "pending",
@@ -128,9 +220,54 @@ export class MigrationRunner {
       rollbackState: "restored",
       rollbackAt: this.now(),
       completedAt: undefined,
+      serverCommitState: "uncommitted",
     };
     await this.backend.saveMarker(reset);
-    return { marker: reset, restored: true };
+    return {
+      marker: reset,
+      restored: true,
+      electronRestored: marker.electronStateBackupId !== undefined,
+      serverOnlyCommitted: false,
+      backupRecoveryRequired: false,
+    };
+  }
+
+  /** Explicit operator recovery after the server-only commit boundary. This
+   * restores only the opaque migration backup; Electron state is deliberately
+   * not restored after commit. */
+  async recoverBackup(): Promise<MigrationBackupRecoveryResult> {
+    const marker = await this.backend.loadMarker();
+    if (marker === undefined || marker.backupId === undefined) {
+      throw new MigrationError("backup_recovery_unavailable", "migration backup is unavailable");
+    }
+    if (marker.serverCommitState !== "committed" && marker.serverCommitState !== "unknown") {
+      throw new MigrationError("backup_recovery_unavailable", "explicit backup recovery is available only after server-only commit");
+    }
+    if (this.backend.restoreBackup === undefined) {
+      throw new MigrationError("backup_recovery_unavailable", "migration backend does not support backup recovery");
+    }
+    await this.backend.restoreBackup(marker.backupId);
+    const recovered = {
+      ...marker,
+      status: "failed" as const,
+      completedSteps: [],
+      failedStep: undefined,
+      failureCode: undefined,
+      // Server state is restored, but Electron state remains a deliberate
+      // operator decision because the commit boundary was crossed.
+      rollbackState: "recovery-required" as const,
+      backupRecoveryAt: this.now(),
+      serverCommitState: "unknown" as const,
+      completedAt: undefined,
+    };
+    await this.backend.saveMarker(recovered);
+    return {
+      marker: recovered,
+      recovered: true,
+      serverRestored: true,
+      electronRestored: false,
+      ...(marker.electronStateBackupId === undefined ? {} : { electronStateBackupId: marker.electronStateBackupId }),
+    };
   }
 
   private async runStep(step: MigrationStep, source: LegacyMigrationSource): Promise<void> {

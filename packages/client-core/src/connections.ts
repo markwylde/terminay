@@ -126,6 +126,13 @@ export class ConnectionProfileStore {
     if (!isRecord(input)) throw new TypeError("connection profile metadata is invalid");
     for (const key of Object.keys(input)) {
       if (FORBIDDEN_PROFILE_KEYS.has(key.toLowerCase())) throw new TypeError("connection profile contains forbidden credential data");
+      // Migration is allowed to carry only this host-local profile DTO.  A
+      // permissive import used to silently discard old renderer workspace,
+      // terminal, and server-trust fields.  That made a compatibility adapter
+      // look harmless while still accepting a second authority-shaped record.
+      // Reject it instead: callers must explicitly migrate each authority to
+      // its owning server store before remembering the connection metadata.
+      if (!PROFILE_IMPORT_KEYS.has(key)) throw new TypeError("connection profile contains unsupported compatibility data");
     }
     return this.remember(input as unknown as ConnectionProfileInput);
   }
@@ -295,4 +302,11 @@ const STATUSES: ReadonlySet<string> = new Set<ConnectionStatus>([
 
 const FORBIDDEN_PROFILE_KEYS: ReadonlySet<string> = new Set([
   "pairingurl", "pairingfragment", "pin", "devicekey", "privatekey", "reconnectgrant", "proofkey", "signalingkey", "ticket", "token", "secret", "password",
+]);
+
+/** The exact persisted host-local DTO.  Server trust, credentials, workspace
+ * state, terminal state, and presentation state are deliberately absent. */
+const PROFILE_IMPORT_KEYS: ReadonlySet<string> = new Set([
+  "id", "serverId", "label", "origin", "status", "createdAt",
+  "lastOpenedAt", "lastConnectedAt", "archived", "isLocal",
 ]);

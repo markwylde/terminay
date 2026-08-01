@@ -53,7 +53,11 @@ project-relative child before reading, skips configured ignored directories and
 symlinks, parses checkbox tasks outside fenced code, and returns heading/file
 metadata with deterministic progress statistics. Traversal, decoded bytes,
 files, labels, and task output are bounded; ranged reads are sequential and
-cancellable so a large folder cannot exhaust host resources.
+cancellable so a large folder cannot exhaust host resources. The application
+protocol carries the complete bounded aggregate outside the small JSON envelope,
+so normal folder task views are not capped to a preview-sized partial result;
+only explicit traversal, byte, file, label, task, or cancellation bounds may
+mark the result partial.
 
 Watch delivery is also server-owned. A watch subscription is keyed by the
 server, project, canonical project-relative resource, and client subscription;

@@ -288,7 +288,7 @@ export class GitDiffService {
       cwd: workingDirectory,
     })
 
-    const worktrees = parseWorktreeList(stdout, repoRoot)
+    const worktrees = parseWorktreeList(stdout, repoRoot).sort(currentWorktreeFirst)
     const defaultBranch = await this.resolveDefaultBranch(workingDirectory)
 
     const withEntries = await Promise.all(
@@ -787,6 +787,12 @@ function parseWorktreeList(output: string, currentRepoRoot: string): GitWorktree
       },
     ]
   })
+}
+
+function currentWorktreeFirst(left: GitWorktreeStatus, right: GitWorktreeStatus): number {
+  if (left.isCurrent !== right.isCurrent) return left.isCurrent ? -1 : 1
+  if (left.isMain !== right.isMain) return left.isMain ? 1 : -1
+  return left.name.localeCompare(right.name)
 }
 
 function normalizeWorktreeBranch(refName: string): string | null {

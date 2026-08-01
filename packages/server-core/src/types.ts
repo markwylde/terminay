@@ -59,9 +59,14 @@ export interface CommandRequest {
   readonly context: RequestContext;
 }
 
+export interface BinaryQueryHandlerResult {
+  readonly result: JsonValue;
+  readonly body: Uint8Array;
+}
+
 export type QueryHandler = (
   request: QueryRequest,
-) => JsonValue | Promise<JsonValue>;
+) => JsonValue | BinaryQueryHandlerResult | Promise<JsonValue | BinaryQueryHandlerResult>;
 
 export interface CommandHandlerResult {
   readonly result?: JsonValue;
@@ -124,6 +129,11 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
   readonly maxConnections?: number;
   readonly defaultQueryScope?: AuthScope;
   readonly defaultCommandScope?: AuthScope;
+  /** Optional server-owned projection applied immediately before a journal
+   * event is replayed or sent to an authenticated client. */
+  readonly projectEvent?: (event: OrderedEvent, client: AuthenticatedClient | undefined) => OrderedEvent | undefined;
+  /** Host-owned cleanup for connection-scoped protocol adapters. */
+  readonly onConnectionClosed?: (clientId: ProtocolId) => void;
 }
 
 export interface OrderedEventJournalLike {
@@ -138,6 +148,9 @@ export interface ConnectionOptions {
   readonly connectionId?: ProtocolId;
   readonly signal?: AbortSignal;
   readonly handshakeTimeoutMs?: number;
+	/** Internal lifecycle observer; runs exactly once even for unauthenticated
+	 * handshakes so connection limits and host tracking cannot leak. */
+	readonly onClosed?: () => void;
 }
 
 export interface ServerConnectionLike {

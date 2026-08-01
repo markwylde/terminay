@@ -22,7 +22,7 @@ This task selects viable architecture and packaging approaches. It does not
 certify the final release matrix. Native release-runner results, oldest-OS
 compatibility, signed installers, sustained capacity, SBOM/attestation, and
 clean-machine release acceptance remain explicit gates in
-[security, release, and operations](../tasks/20-security-release-and-operations.md).
+[security, release, and operations](20-security-release-and-operations.md).
 
 ## Dependencies
 

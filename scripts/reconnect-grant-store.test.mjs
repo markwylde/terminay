@@ -326,6 +326,43 @@ test('ReconnectGrantStore caps pending attempts per session and prunes them by T
   )
 })
 
+test('ReconnectGrantStore filters malformed persisted reconnect state without losing valid grants', async () => {
+  const clock = { value: Date.parse('2026-05-16T10:00:00.000Z') }
+  const { filePath, store } = await createStore(clock)
+  const issued = await store.issueGrant({
+    deviceId: 'device-persisted',
+    origin: 'https://session-persisted.terminay.com#transport=webrtc:https://session-persisted.terminay.com',
+    sessionId: 'session-persisted',
+  })
+  const persisted = JSON.parse(await readFile(filePath, 'utf8'))
+  await writeFile(filePath, JSON.stringify({
+    grants: [
+      persisted.grants[0],
+      { ...persisted.grants[0], id: 'not-a-uuid', handle: 'attacker-handle' },
+      { ...persisted.grants[0], id: '5d210a86-f152-4a2c-9dc1-64ef88ff00b5' },
+      { ...persisted.grants[0], id: '8e6fbf7e-66b1-43f7-86be-13d89e781f63', proofVerifier: 'invalid' },
+    ],
+    hostRegistrationTokens: {
+      'session-persisted': 'a'.repeat(43),
+      '': 'b'.repeat(43),
+      'session-invalid-token': 'not-a-token',
+    },
+  }), 'utf8')
+
+  const reloaded = new ReconnectGrantStore(filePath, () => new Date(clock.value))
+  await reloaded.load()
+  assert.equal(reloaded.listActive().length, 1)
+  const challenge = await reloaded.createChallenge({
+    clientNonce: 'persisted-client',
+    handle: issued.handle,
+    origin: issued.origin,
+    sessionId: issued.sessionId,
+  })
+  assert.equal(challenge.payload.handle, issued.handle)
+  assert.equal(await reloaded.getOrCreateHostRegistrationToken('session-persisted'), 'a'.repeat(43))
+  assert.match(await reloaded.getOrCreateHostRegistrationToken('session-invalid-token'), /^[A-Za-z0-9_-]{43}$/)
+})
+
 async function createStore(clock = { value: Date.parse('2026-05-16T10:00:00.000Z') }) {
   const tempDir = await mkdtemp(join(tmpdir(), 'terminay-reconnect-grant-test-'))
   const filePath = join(tempDir, 'reconnect-grants.json')

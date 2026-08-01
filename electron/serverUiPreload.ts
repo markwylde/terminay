@@ -23,7 +23,11 @@ function normalizeAction(value: ServerUiHostAction): ServerUiHostAction {
 	}
 
 	if (
-		value.type === 'open-connection' &&
+		(value.type === 'open-connection' ||
+			value.type === 'connection.select' ||
+			value.type === 'connection.forget' ||
+			value.type === 'connection.revoke' ||
+			value.type === 'connection.expose') &&
 		keys.length === 2 &&
 		keys[0] === 'profileId' &&
 		keys[1] === 'type' &&
@@ -35,6 +39,18 @@ function normalizeAction(value: ServerUiHostAction): ServerUiHostAction {
 			type: value.type,
 		});
 	}
+	if (
+		value.type === 'connection.rename' &&
+		keys.join(',') === 'label,profileId,type'
+	)
+		return Object.freeze({ ...value });
+	if (value.type === 'connection.pair' && keys.join(',') === 'pairingUrl,type')
+		return Object.freeze({ ...value });
+	if (value.type === 'connection.remember' && keys.join(',') === 'profile,type')
+		return Object.freeze({
+			type: value.type,
+			profile: Object.freeze({ ...value.profile }),
+		});
 
 	throw new Error('That host action is not allowed.');
 }
@@ -46,10 +62,14 @@ const bridge: Readonly<ServerUiHostBridge> = Object.freeze({
 		)) as ServerUiHostContext;
 		return Object.freeze({
 			hostKind: context.hostKind,
+			capabilities: Object.freeze({ ...context.capabilities }),
 			profile: Object.freeze({
 				id: context.profile.id,
 				label: context.profile.label,
 			}),
+			profiles: Object.freeze(
+				context.profiles.map((profile) => Object.freeze({ ...profile })),
+			),
 		});
 	},
 	requestAction: async (action) => {

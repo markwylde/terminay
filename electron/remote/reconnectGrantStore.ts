@@ -68,6 +68,9 @@ const PROTOCOL_VERSION = 'v1'
 const RECONNECT_CHALLENGE_DOMAIN = 'terminay\u0000v1\u0000reconnect-challenge\u0000'
 const MAX_PENDING_ATTEMPTS = 64
 const MAX_PENDING_ATTEMPTS_PER_SESSION = 4
+const BASE64URL_32_BYTE_PATTERN = /^[A-Za-z0-9_-]{43}$/
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const MAX_PERSISTED_TEXT_LENGTH = 4_096
 
 const LIFETIME_MS: Record<Exclude<ReconnectGrantLifetime, 'until-revoked'>, number> = {
   '1h': 60 * 60 * 1000,
@@ -136,6 +139,50 @@ function compareBase64Url(expected: string, actual: string): boolean {
   return expectedBytes.byteLength === actualBytes.byteLength && timingSafeEqual(expectedBytes, actualBytes)
 }
 
+function isBoundedText(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_PERSISTED_TEXT_LENGTH
+}
+
+function isBoundedLabel(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= MAX_PERSISTED_TEXT_LENGTH
+}
+
+function isValidTimestamp(value: unknown): value is string {
+  return isBoundedText(value) && Number.isFinite(Date.parse(value))
+}
+
+function isPersistedGrant(value: unknown): value is ReconnectGrantRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const grant = value as Partial<ReconnectGrantRecord>
+  if (
+    !isValidTimestamp(grant.createdAt) ||
+    !isValidTimestamp(grant.updatedAt) ||
+    !isBoundedText(grant.deviceId) ||
+    !isBoundedText(grant.origin) ||
+    !isBoundedText(grant.sessionId) ||
+    !isBoundedLabel(grant.label) ||
+    !UUID_PATTERN.test(grant.id ?? '') ||
+    !BASE64URL_32_BYTE_PATTERN.test(grant.handle ?? '') ||
+    !BASE64URL_32_BYTE_PATTERN.test(grant.grantHash ?? '') ||
+    !BASE64URL_32_BYTE_PATTERN.test(grant.proofVerifier ?? '') ||
+    grant.protocolVersion !== PROTOCOL_VERSION
+  ) {
+    return false
+  }
+  if (grant.expiresAt !== null && !isValidTimestamp(grant.expiresAt)) return false
+  if (grant.lastUsedAt !== null && !isValidTimestamp(grant.lastUsedAt)) return false
+  if (grant.revokedAt !== null && !isValidTimestamp(grant.revokedAt)) return false
+  if (
+    grant.rotatedFromHandle !== null &&
+    (typeof grant.rotatedFromHandle !== 'string' || !BASE64URL_32_BYTE_PATTERN.test(grant.rotatedFromHandle))
+  ) return false
+  return true
+}
+
+function isPersistedHostRegistrationToken(value: unknown): value is string {
+  return typeof value === 'string' && BASE64URL_32_BYTE_PATTERN.test(value)
+}
+
 export class ReconnectGrantStore {
   private readonly attempts = new Map<string, PendingReconnectAttempt>()
   private grants = new Map<string, ReconnectGrantRecord>()
@@ -153,10 +200,16 @@ export class ReconnectGrantStore {
         | ReconnectGrantRecord[]
         | { grants?: ReconnectGrantRecord[]; hostRegistrationTokens?: Record<string, string> }
       const grants = Array.isArray(parsed) ? parsed : parsed.grants
-      this.grants = new Map(Array.isArray(grants) ? grants.map((grant) => [grant.id, grant]) : [])
+      const validGrants = Array.isArray(grants) ? grants.filter(isPersistedGrant) : []
+      const uniqueGrants = validGrants.filter((grant, index, records) =>
+        records.findIndex((candidate) => candidate.id === grant.id || candidate.handle === grant.handle) === index,
+      )
+      this.grants = new Map(uniqueGrants.map((grant) => [grant.id, grant]))
       this.hostRegistrationTokens = new Map(
         !Array.isArray(parsed) && parsed.hostRegistrationTokens
-          ? Object.entries(parsed.hostRegistrationTokens)
+          ? Object.entries(parsed.hostRegistrationTokens).filter(([sessionId, token]) =>
+            isBoundedText(sessionId) && isPersistedHostRegistrationToken(token),
+          )
           : [],
       )
     } catch {

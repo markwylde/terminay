@@ -4,8 +4,9 @@ import { sendAppCommand } from './support/app'
 
 async function getActiveSessionId(page: Page): Promise<string> {
   const sessionId = await page
-    .locator('.terminal-panel')
-    .first()
+    .locator(
+      '.project-workspace--active .terminal-panel:has(.xterm-helper-textarea:focus)',
+    )
     .getAttribute('data-terminay-terminal-session-id')
 
   if (!sessionId) {
@@ -17,10 +18,18 @@ async function getActiveSessionId(page: Page): Promise<string> {
 
 async function writeToSession(page: Page, sessionId: string, data: string): Promise<void> {
   await page.evaluate(
-    ({ nextData, nextSessionId }) => {
-      window.terminay.writeTerminal(nextSessionId, nextData)
+    async ({ nextData, nextSessionId }) => {
+      await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
     },
     { nextData: data, nextSessionId: sessionId },
+  )
+}
+
+async function serverActivity(page: Page, sessionId: string) {
+  return page.evaluate(
+    async (nextSessionId) =>
+      window.terminayTest!.getServerTerminalActivity(nextSessionId),
+    sessionId,
   )
 }
 
@@ -58,16 +67,23 @@ test.describe('terminal activity signals', () => {
     const { sessionId, tab } = await withBackgroundTerminal(mainWindow)
 
     // Agent turn begins (progress indeterminate) then ends (progress cleared).
-    await writeToSession(mainWindow, sessionId, "printf '\\033]9;4;3;\\007'\r")
-    await writeToSession(mainWindow, sessionId, "printf '\\033]9;4;0;\\007'\r")
+    await writeToSession(
+      mainWindow,
+      sessionId,
+      "sleep 2.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'; sleep 1; printf 'Tip: try the thing\\n'; printf 'Tip: try the other thing\\n'\r",
+    )
 
+    await expect.poll(() => serverActivity(mainWindow, sessionId)).toMatchObject({
+      status: 'idle',
+      acknowledged: false,
+      claimed: true,
+      source: 'structured:progress',
+    })
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
 
     // The agent keeps repainting a spinner / tips bar after the turn — a claimed
     // session must ignore that raw output and stay "finished", not flicker.
-    await writeToSession(mainWindow, sessionId, "printf 'Tip: try the thing\\n'\r")
-    await writeToSession(mainWindow, sessionId, "printf 'Tip: try the other thing\\n'\r")
-    await mainWindow.waitForTimeout(600)
+    await mainWindow.waitForTimeout(1_600)
 
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
     await expect(mainWindow.locator('.terminal-activity-pill--unviewed')).toHaveText('1')
@@ -78,13 +94,21 @@ test.describe('terminal activity signals', () => {
   }) => {
     const { sessionId, tab } = await withBackgroundTerminal(mainWindow)
 
-    await writeToSession(mainWindow, sessionId, "printf '\\033]133;C\\007'\r")
-    await writeToSession(mainWindow, sessionId, "printf '\\033]133;D;0\\007'\r")
+    await writeToSession(
+      mainWindow,
+      sessionId,
+      "sleep 2.1; printf '\\033]133;C\\007'; printf '\\033]133;D;0\\007'; sleep 1; printf 'trailing output\\n'\r",
+    )
 
+    await expect.poll(() => serverActivity(mainWindow, sessionId)).toMatchObject({
+      status: 'idle',
+      acknowledged: false,
+      claimed: true,
+      source: 'structured:command',
+    })
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
 
-    await writeToSession(mainWindow, sessionId, "printf 'trailing output\\n'\r")
-    await mainWindow.waitForTimeout(600)
+    await mainWindow.waitForTimeout(1_600)
 
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
   })

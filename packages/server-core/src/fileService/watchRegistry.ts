@@ -66,6 +66,7 @@ export interface FileWatchPublishResult {
   readonly deduplicated: boolean;
   readonly sequence?: number;
   readonly subscribers: number;
+  readonly subscriptions: readonly FileWatchSubscription[];
 }
 
 interface SubscriptionState {
@@ -100,7 +101,7 @@ export class FileWatchRegistry {
   private readonly subscriptionsByKey = new Map<string, string>();
   private readonly eventHistory: FileWatchEvent[] = [];
   private readonly recentFingerprints = new Set<string>();
-  private readonly recentFingerprintOrder: string[] = [];
+  private fingerprintClearScheduled = false;
   private sequenceValue = 0;
   private subscriptionSequence = 0;
 
@@ -178,7 +179,7 @@ export class FileWatchRegistry {
     if (revision !== undefined && (!Number.isSafeInteger(revision) || revision < 0)) throw new RangeError("file watch revision is invalid");
     const metadata = normalizeMetadata(input.metadata);
     const fingerprint = JSON.stringify([projectId, resource, input.kind, relatedResource ?? null, revision ?? null, metadata ?? null]);
-    if (this.recentFingerprints.has(fingerprint)) return { accepted: false, deduplicated: true, subscribers: 0 };
+    if (this.recentFingerprints.has(fingerprint)) return { accepted: false, deduplicated: true, subscribers: 0, subscriptions: [] };
     this.rememberFingerprint(fingerprint);
     if (this.sequenceValue >= Number.MAX_SAFE_INTEGER) throw new Error("file watch sequence exhausted");
     this.sequenceValue += 1;
@@ -195,12 +196,14 @@ export class FileWatchRegistry {
     this.eventHistory.push(event);
     while (this.eventHistory.length > this.maxQueueEvents * 2) this.eventHistory.shift();
     let subscribers = 0;
+    const subscriptions: FileWatchSubscription[] = [];
     for (const state of this.subscriptions.values()) {
       if (state.key.projectId !== projectId || !resourceMatches(state.key.resource, resource)) continue;
       subscribers += 1;
+      subscriptions.push(state.subscription);
       this.enqueue(state, event);
     }
-    return { accepted: true, deduplicated: false, sequence: event.sequence, subscribers };
+    return { accepted: true, deduplicated: false, sequence: event.sequence, subscribers, subscriptions: Object.freeze(subscriptions) };
   }
 
   async read(subscriptionId: string, options: { readonly limit?: number; readonly signal?: AbortSignal } = {}): Promise<FileWatchBatch> {
@@ -222,7 +225,7 @@ export class FileWatchRegistry {
     for (const subscriptionId of [...this.subscriptions.keys()]) this.unsubscribe(subscriptionId);
     this.eventHistory.length = 0;
     this.recentFingerprints.clear();
-    this.recentFingerprintOrder.length = 0;
+    this.fingerprintClearScheduled = false;
   }
 
   private enqueue(state: SubscriptionState, event: FileWatchEvent): void {
@@ -252,12 +255,12 @@ export class FileWatchRegistry {
 
   private rememberFingerprint(fingerprint: string): void {
     this.recentFingerprints.add(fingerprint);
-    this.recentFingerprintOrder.push(fingerprint);
-    const limit = Math.max(this.maxQueueEvents * 2, 32);
-    while (this.recentFingerprintOrder.length > limit) {
-      const oldest = this.recentFingerprintOrder.shift();
-      if (oldest !== undefined) this.recentFingerprints.delete(oldest);
-    }
+    if (this.fingerprintClearScheduled) return;
+    this.fingerprintClearScheduled = true;
+    queueMicrotask(() => {
+      this.recentFingerprints.clear();
+      this.fingerprintClearScheduled = false;
+    });
   }
 }
 

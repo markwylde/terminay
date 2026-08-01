@@ -8,9 +8,7 @@ import {
   Pause,
   Palette,
   Play,
-  RefreshCw,
   RotateCcw,
-  Search,
   Trash2,
 } from 'lucide-react'
 import { buildTerminalOptions, defaultTerminalSettings, resolveTerminalTheme } from '../terminalSettings'
@@ -25,6 +23,9 @@ import {
   type ReplayIndex,
 } from '../recordingReplay'
 import { createLegacyRecordingsClient, toLegacyRecordingMetadata } from '../services/recordings/legacyRecordingsClient'
+import { SharedRecordingsLibraryPane } from '../shared/SharedRecordingsLibraryPane'
+import { SharedRecordingsRouteBody } from '../shared/SharedRecordingsRouteBody'
+import type { RecordingsClient } from '@terminay/client-core'
 import '../settings.css'
 import '../recordings.css'
 
@@ -409,9 +410,20 @@ function measureReplayTerminal(root: HTMLElement): ElementSize {
   }
 }
 
-export function RecordingsWindow() {
+function missingRecordingsClient(): never {
+  throw new Error('Recording service capability is unavailable')
+}
+
+export function RecordingsWindow({ client }: { readonly client?: RecordingsClient } = {}) {
   const { settings } = useTerminalSettings()
-  const recordingsClient = useMemo(() => createLegacyRecordingsClient(), [])
+  const legacyRecordingsClient = useMemo(() => {
+    if (client !== undefined) return undefined
+    if (window.terminayRecordingServiceHost === undefined) {
+      throw new Error('Desktop recording service capability is unavailable')
+    }
+    return createLegacyRecordingsClient(window.terminayRecordingServiceHost)
+  }, [client])
+  const recordingsClient: RecordingsClient = client ?? legacyRecordingsClient ?? missingRecordingsClient()
   const readRecordingChunk = useCallback(
     (request: { recordingId: string; start?: number; maxBytes?: number }) => recordingsClient.replay(request.recordingId, request),
     [recordingsClient],
@@ -941,48 +953,18 @@ export function RecordingsWindow() {
   }
 
   return (
-    <div className="recordings-window">
-      <aside className="recordings-sidebar">
-        <header className="recordings-header">
-          <div>
-            <h1>Recordings</h1>
-            <p>{recordings.length} saved session{recordings.length === 1 ? '' : 's'}</p>
-          </div>
-          <button type="button" className="recordings-icon-button" onClick={() => void loadRecordings()} aria-label="Refresh recordings">
-            <RefreshCw size={16} />
-          </button>
-        </header>
-        <label className="recordings-search">
-          <Search size={15} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search recordings" />
-        </label>
-        <div className="recordings-list">
-          {isLoading ? <div className="recordings-empty">Loading recordings...</div> : null}
-          {!isLoading && groupedRecordings.length === 0 ? <div className="recordings-empty">No recordings found.</div> : null}
-          {groupedRecordings.map(([date, items]) => (
-            <section key={date} className="recordings-group">
-              <h2>{date}</h2>
-              {items.map((recording) => (
-                <button
-                  key={recording.recordingId}
-                  type="button"
-                  className={`recordings-list-item${recording.recordingId === selectedRecordingId ? ' recordings-list-item--selected' : ''}`}
-                  onClick={() => setSelectedRecordingId(recording.recordingId)}
-                >
-                  <span className="recordings-list-item__title">{getRecordingDisplayTitle(recording)}</span>
-                  <span className="recordings-list-item__meta">
-                    {(recording.cwdLabel ?? 'Unknown folder')} · {formatDuration(recording.durationMs)}
-                  </span>
-                  <span className={`recordings-list-item__state recordings-list-item__state--${recording.recordingState}`}>
-                    {recording.recordingState}
-                  </span>
-                </button>
-              ))}
-            </section>
-          ))}
-        </div>
-      </aside>
-      <main className="recordings-main">
+    <SharedRecordingsRouteBody library={<SharedRecordingsLibraryPane
+        groupedRecordings={groupedRecordings}
+        isLoading={isLoading}
+        onQueryChange={setQuery}
+        onRefresh={() => void loadRecordings()}
+        onSelect={setSelectedRecordingId}
+        query={query}
+        recordings={recordings}
+        selectedRecordingId={selectedRecordingId}
+        titleFor={getRecordingDisplayTitle}
+        durationFor={formatDuration}
+      />}>
         {errorText ? <div className="recordings-error" role="alert">{errorText}</div> : null}
         {isReplayLoading ? <div className="recordings-empty" role="status">Preparing replay…</div> : null}
         {replayWarning ? <div className="recordings-warning" role="status">{replayWarning}</div> : null}
@@ -1123,7 +1105,6 @@ export function RecordingsWindow() {
             </div>
           </div>
         </footer>
-      </main>
-    </div>
+    </SharedRecordingsRouteBody>
   )
 }

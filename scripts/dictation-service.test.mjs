@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { build } from 'esbuild'
@@ -52,6 +52,51 @@ test('rejects valid audio when the OpenAI API key is missing', async () => {
     () => service.transcribe({ audioBase64: Buffer.from('audio').toString('base64'), mimeType: 'audio/webm' }),
     /API key is not configured/i,
   )
+})
+
+test('removes file-backed temporary audio after provider success and failure', async () => {
+  const originalFile = globalThis.File
+  globalThis.File = undefined
+  try {
+    let successfulPath
+    const successfulService = new DictationService({
+      apiKeyProvider: () => 'test-key',
+      openaiFactory: () => ({
+        audio: {
+          transcriptions: {
+            async create({ file }) {
+              successfulPath = file.path
+              return { text: 'safe transcript' }
+            },
+          },
+        },
+      }),
+    })
+    const request = { audioBase64: Buffer.from('audio').toString('base64'), mimeType: 'audio/webm' }
+    assert.equal((await successfulService.transcribe(request)).text, 'safe transcript')
+    assert.equal(typeof successfulPath, 'string')
+    await assert.rejects(stat(successfulPath), /ENOENT/u)
+
+    let failedPath
+    const failingService = new DictationService({
+      apiKeyProvider: () => 'test-key',
+      openaiFactory: () => ({
+        audio: {
+          transcriptions: {
+            async create({ file }) {
+              failedPath = file.path
+              throw new Error('provider failed')
+            },
+          },
+        },
+      }),
+    })
+    await assert.rejects(() => failingService.transcribe(request), /provider failed/u)
+    assert.equal(typeof failedPath, 'string')
+    await assert.rejects(stat(failedPath), /ENOENT/u)
+  } finally {
+    globalThis.File = originalFile
+  }
 })
 
 async function importTransformed(relativePath) {

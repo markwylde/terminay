@@ -65,3 +65,53 @@ test("task aggregation bounds bytes/depth and honours cancellation", async () =>
   await assert.rejects(() => catalog.aggregateMarkdownTasks(".", { signal: controller.signal }), /aborted/i);
   await assert.rejects(() => catalog.aggregateMarkdownTasks("../outside"), (error) => error instanceof FileServiceError && error.code === "path_escape");
 });
+
+test("bounded task aggregation is independent of directory enumeration order", async () => {
+  const contents = new Map([
+    ["/project/alpha.md", "- [ ] alpha\n"],
+    ["/project/zeta.md", "- [x] zeta\n"],
+  ]);
+  const entries = new Map([
+    ["/project", { isDirectory: true, size: 0 }],
+    ...[...contents].map(([path, text]) => [path, { isFile: true, size: new TextEncoder().encode(text).byteLength }]),
+  ]);
+  let reverse = false;
+  const storage = {
+    realpath(path) {
+      if (!entries.has(path)) throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
+      return path;
+    },
+    stat(path) {
+      const value = entries.get(path);
+      if (!value) throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
+      return { ...value, isFile: value.isFile === true, isDirectory: value.isDirectory === true };
+    },
+    lstat(path) {
+      if (!entries.has(path)) throw Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
+      return { isSymbolicLink: false };
+    },
+    readDirectory() {
+      const children = [
+        { name: "zeta.md", isFile: true },
+        { name: "alpha.md", isFile: true },
+      ];
+      return reverse ? children.reverse() : children;
+    },
+    readRange(path, offset, length) {
+      return new TextEncoder().encode(contents.get(path) ?? "").slice(offset, offset + length);
+    },
+  };
+  const resolver = new CanonicalProjectPathResolver("/project", storage);
+  const catalog = new FileCatalog(resolver, storage, { maxEntries: 8, maxDepth: 4 });
+
+  const first = await catalog.aggregateMarkdownTasks(".", { maxFiles: 1 });
+  reverse = true;
+  const second = await catalog.aggregateMarkdownTasks(".", { maxFiles: 1 });
+
+  assert.equal(first.truncated, true);
+  assert.equal(second.truncated, true);
+  assert.deepEqual(first.files.map((file) => file.relativePath), ["alpha.md"]);
+  assert.deepEqual(second.files.map((file) => file.relativePath), ["alpha.md"]);
+  assert.deepEqual(first.tasks.map((task) => task.label), ["alpha"]);
+  assert.deepEqual(second.tasks.map((task) => task.label), ["alpha"]);
+});

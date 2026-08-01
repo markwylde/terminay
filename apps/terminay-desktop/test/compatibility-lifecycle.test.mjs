@@ -1,30 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { TerminayTerminalClient } from "@terminay/client-core";
+import { createInMemoryTransportPair } from "@terminay/protocol-conformance";
 import { decodeFrame, encodeFrame } from "@terminay/protocol";
-import { createDesktopIpcClient, ServerScopedIpcMessagePort } from "../dist/compatibility/index.js";
+import { TerminayClient } from "@terminay/client-core";
 import { WindowViewRegistry } from "../dist/main/index.js";
 import { createDesktopRendererContext } from "../dist/renderer/index.js";
 
-function ports() {
-  const a = { onmessage: null, onmessageerror: null, postMessage(value) { queueMicrotask(() => b.onmessage?.({ data: clone(value) })); }, start() {}, close() {} };
-  const b = { onmessage: null, onmessageerror: null, postMessage(value) { queueMicrotask(() => a.onmessage?.({ data: clone(value) })); }, start() {}, close() {} };
-  return [a, b];
-}
-
-function clone(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
-  const packet = value;
-  return { ...packet, ...(packet.frame instanceof Uint8Array ? { frame: packet.frame.slice() } : {}) };
-}
-
-function serverPeer(rawPort) {
-  const port = new ServerScopedIpcMessagePort(rawPort, "server-lifecycle");
+function serverPeer(transport) {
   let attachmentCount = 0;
-  port.onmessage = (event) => {
-    const decoded = decodeFrame(event.data);
+  return (async () => {
+    for await (const frame of transport.incoming) {
+      const decoded = decodeFrame(frame);
     if (decoded.envelope.type === "client_hello") {
-      port.postMessage(encodeFrame({
+      await transport.send(encodeFrame({
         type: "server_hello",
         protocolVersion: 1,
         serverId: "server-lifecycle",
@@ -34,7 +23,7 @@ function serverPeer(rawPort) {
         limits: { maxFrameBytes: 1024, maxHeaderBytes: 1024, maxBodyBytes: 1024, maxQueuedBytes: 1024, maxStreamChunkBytes: 1024, maxBinaryChunkBytes: 1024, maxCapabilities: 8, maxEventsPerBatch: 8 },
         authScope: "write",
       }));
-      return;
+      continue;
     }
     if (decoded.envelope.type !== "command") return;
     const command = decoded.envelope;
@@ -43,14 +32,16 @@ function serverPeer(rawPort) {
       attachmentCount += 1;
       result = { attachmentId: `attachment-${attachmentCount}`, fromPosition: command.payload.fromPosition, position: command.payload.fromPosition, events: [] };
     }
-    port.postMessage(encodeFrame({ type: "command_result", commandId: command.commandId, correlationId: command.correlationId, ok: true, result }));
-  };
+      await transport.send(encodeFrame({ type: "command_result", commandId: command.commandId, correlationId: command.correlationId, ok: true, result }));
+    }
+  })();
 }
 
 test("renderer reload and window close detach views without replacing the server/client/terminal identity", async () => {
-  const [rendererPort, serverPort] = ports();
-  serverPeer(serverPort);
-  const client = createDesktopIpcClient({ port: rendererPort, serverId: "server-lifecycle", clientId: "client-lifecycle" });
+  const pair = createInMemoryTransportPair();
+  const serverTask = serverPeer(pair.server);
+  await pair.open();
+  const client = new TerminayClient({ transport: pair.client, clientId: "client-lifecycle" });
   const server = await client.connect();
   const terminal = new TerminayTerminalClient(client);
   const identity = { serverId: server.serverId, projectId: "project-lifecycle", sessionId: "session-lifecycle", clientId: "client-lifecycle" };
@@ -70,4 +61,5 @@ test("renderer reload and window close detach views without replacing the server
   assert.equal(attachment.identity.serverId, "server-lifecycle");
   await attachment.detach();
   await client.close();
+  await serverTask;
 });

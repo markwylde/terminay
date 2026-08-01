@@ -171,7 +171,7 @@ test("receiver binds a real HTTP endpoint to loopback and revokes exited session
 });
 
 test("missing hooks recover, terminal exit is scoped, and a restarted receiver requires a new lease", async () => {
-  let now = 100;
+  const now = 100;
   let hooksAvailable = false;
   let tokenCounter = 0;
   const service = new TerminalActivityService({ serverId: "server-a", now: () => now });

@@ -22,6 +22,8 @@ export interface TerminalActivityServiceOptions {
   readonly maxSessions?: number;
   readonly parser?: { readonly maxPayloadBytes?: number };
   readonly reducer?: ConstructorParameters<typeof TerminalActivityReducer>[0];
+  readonly setTimeout?: (handler: () => void, milliseconds: number) => unknown;
+  readonly clearTimeout?: (handle: unknown) => void;
 }
 
 export class TerminalActivityServiceError extends Error {
@@ -57,11 +59,22 @@ export class TerminalActivityService {
   private readonly maxSessions: number;
   private readonly sessions = new Map<string, SessionState>();
   private readonly reducer: TerminalActivityReducer;
+  private readonly scheduleTimeout: (handler: () => void, milliseconds: number) => unknown;
+  private readonly cancelTimeout: (handle: unknown) => void;
+  private deadlineTimer: unknown;
+  private deadlineAt: number | null = null;
+  private stopped = false;
 
   constructor(private readonly options: TerminalActivityServiceOptions) {
     assertId(options.serverId, "server id");
     this.now = options.now ?? (() => Date.now());
     this.maxSessions = positive(options.maxSessions ?? 4096, "maxSessions");
+    this.scheduleTimeout = options.setTimeout ?? ((handler, milliseconds) => {
+      const timer = setTimeout(handler, milliseconds);
+      timer.unref?.();
+      return timer;
+    });
+    this.cancelTimeout = options.clearTimeout ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
     this.reducer = new TerminalActivityReducer({
       ...options.reducer,
       now: this.now,
@@ -95,21 +108,27 @@ export class TerminalActivityService {
     }
     const fallback = this.reducer.applyRawOutput(identity.sessionId, { projectId: identity.projectId, now: this.now() });
     if (fallback) events.push(fallback);
+    this.reconcileDeadline();
     return Object.freeze(events);
   }
 
   ingestSignal(identity: ActivitySessionIdentity, signal: TerminalActivitySignal): ActivityEvent | undefined {
     this.requireActive(identity);
-    return this.reducer.applySignal(identity.sessionId, signal, { projectId: identity.projectId, now: this.now() });
+    const event = this.reducer.applySignal(identity.sessionId, signal, { projectId: identity.projectId, now: this.now() });
+    this.reconcileDeadline();
+    return event;
   }
 
   ingestProvider(identity: ActivitySessionIdentity, update: ProviderActivityUpdate): ActivityEvent | undefined {
     this.requireActive(identity);
-    return this.reducer.applyProviderActivity(identity.sessionId, update, { projectId: identity.projectId, now: this.now() });
+    const event = this.reducer.applyProviderActivity(identity.sessionId, update, { projectId: identity.projectId, now: this.now() });
+    this.reconcileDeadline();
+    return event;
   }
 
-  acknowledge(identity: ActivitySessionIdentity): ActivityEvent | undefined {
+  acknowledge(identity: ActivitySessionIdentity, expectedUpdatedAt?: number): ActivityEvent | undefined {
     this.requireActive(identity);
+    if (expectedUpdatedAt !== undefined && this.reducer.get(identity.sessionId)?.updatedAt !== expectedUpdatedAt) return undefined;
     return this.reducer.acknowledge(identity.sessionId, { projectId: identity.projectId, now: this.now() });
   }
 
@@ -119,6 +138,7 @@ export class TerminalActivityService {
     state.exited = true;
     state.parser.reset();
     const event = this.reducer.markTerminalExit(identity.sessionId, { now: this.now() });
+    this.reconcileDeadline();
     return event;
   }
 
@@ -129,8 +149,52 @@ export class TerminalActivityService {
 
   snapshot(): ActivitySnapshot { return this.reducer.snapshot(); }
   replay(afterRevision = 0): ActivityReplay { return this.reducer.replay(afterRevision); }
-  tick(at = this.now()): readonly ActivityEvent[] { return this.reducer.tick(at); }
+  snapshotForProject(projectId: string | undefined): ActivitySnapshot {
+    return filterActivitySnapshot(this.snapshot(), projectId);
+  }
+  replayForProject(afterRevision = 0, projectId: string | undefined): ActivityReplay {
+    const replay = this.replay(afterRevision);
+    if (projectId === undefined) return replay;
+    if (replay.kind === "resync") {
+      return { kind: "resync", events: [], snapshot: filterActivitySnapshot(replay.snapshot ?? this.snapshot(), projectId) };
+    }
+    return {
+      kind: "events",
+      events: replay.events.filter((event) => event.snapshot?.projectId === projectId || this.projectIdForSession(event.sessionId) === projectId),
+    };
+  }
+  projectIdForSession(sessionId: string): string | undefined { return this.sessions.get(sessionId)?.projectId; }
+  tick(at = this.now()): readonly ActivityEvent[] {
+    const events = this.reducer.tick(at);
+    this.reconcileDeadline();
+    return events;
+  }
   subscribe(listener: ActivityListener): () => void { return this.reducer.subscribe(listener); }
+
+  shutdown(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    if (this.deadlineTimer !== undefined) this.cancelTimeout(this.deadlineTimer);
+    this.deadlineTimer = undefined;
+    this.deadlineAt = null;
+  }
+
+  private reconcileDeadline(): void {
+    if (this.stopped) return;
+    const next = this.reducer.nextDeadline();
+    if (next === this.deadlineAt) return;
+    if (this.deadlineTimer !== undefined) this.cancelTimeout(this.deadlineTimer);
+    this.deadlineTimer = undefined;
+    this.deadlineAt = next;
+    if (next === null) return;
+    this.deadlineTimer = this.scheduleTimeout(() => {
+      this.deadlineTimer = undefined;
+      this.deadlineAt = null;
+      if (this.stopped) return;
+      this.reducer.tick(this.now());
+      this.reconcileDeadline();
+    }, Math.max(0, next - this.now()));
+  }
 
   private requireActive(identity: ActivitySessionIdentity): SessionState {
     const state = this.requireIdentity(identity);
@@ -161,6 +225,13 @@ export class TerminalActivityService {
     return snapshot;
   }
 }
+
+function filterActivitySnapshot(snapshot: ActivitySnapshot, projectId: string | undefined): ActivitySnapshot {
+  if (projectId === undefined) return snapshot;
+  const sessions = Object.fromEntries(Object.entries(snapshot.sessions).filter(([, session]) => session.projectId === projectId));
+  return Object.freeze({ ...snapshot, sessions: Object.freeze(sessions) });
+}
+
 
 function assertId(value: string, name: string): void {
   if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)) {

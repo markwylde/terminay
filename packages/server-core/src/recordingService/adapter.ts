@@ -82,6 +82,11 @@ export class ServerRecordingAdapter implements RecordingAdapter {
     this.requireServer(request.authorization);
     const projectId = request.projectId ?? request.metadata?.projectId ?? request.authorization.projectId;
     this.requireProject(request.authorization, projectId ?? null);
+    if (this.options.resolveSessionProject !== undefined) {
+      const owner = this.options.resolveSessionProject(request.sessionId);
+      if (owner === undefined) throw new RecordingServiceError("not_found", "Terminal session does not exist.");
+      if (projectId !== undefined && owner !== projectId) throw forbidden("recording is outside the terminal project");
+    }
     const metadata: RecordingStartOptions = {
       ...(request.metadata ?? {}),
       ...(projectId === undefined ? {} : { projectId }),

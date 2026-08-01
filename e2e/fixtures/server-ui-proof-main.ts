@@ -7,6 +7,9 @@ import {
 
 type ProofWindow = Omit<CreateServerUiWindowOptions, 'preloadPath'>;
 
+const actionProofs: unknown[] = [];
+Object.assign(globalThis, { __terminayServerUiActionProofs: actionProofs });
+
 async function start(): Promise<void> {
 	await app.whenReady();
 	const windows = JSON.parse(
@@ -17,6 +20,16 @@ async function start(): Promise<void> {
 	for (const options of windows) {
 		createServerUiWindow({
 			...options,
+			onHostAction: (action) => {
+				actionProofs.push(
+					action.type === 'connection.pair'
+						? {
+								type: action.type,
+								pairingHost: new URL(action.pairingUrl).host,
+							}
+						: action,
+				);
+			},
 			preloadPath,
 		});
 	}

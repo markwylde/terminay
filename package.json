@@ -24,6 +24,7 @@
 		"iOS >= 17.4"
 	],
 	"scripts": {
+		"postinstall": "node scripts/ensure-node-pty-helper-mode.mjs",
 		"dev": "vite",
 		"dev:electron": "tsc && vite build && electron-builder --dir --mac --arm64 && open \"release/$npm_package_version/mac-arm64/Terminay.app\"",
 		"build:app": "npm run build:shared && npm run build --workspace @terminay/server && tsc && vite build && node scripts/build-ui-bundle-manifest.mjs dist $npm_package_version 1",
@@ -86,7 +87,7 @@
 		"test:task20-artifact-contract": "node --test scripts/task20-release-artifact.test.mjs scripts/task20-release-lifecycle.test.mjs",
 		"test:docker-pairing-smoke": "node --test scripts/docker-pairing-smoke.test.mjs",
 		"test:docker-compose-web-server-smoke": "node --test scripts/docker-compose-web-server-smoke.test.mjs",
-		"test:http-client-transport": "npm run build:shared && npm run build --workspace @terminay/server && node --test scripts/http-byte-transport-e2e.test.mjs",
+		"test:remote-stream-transport": "npm run build:shared && npm run build --workspace @terminay/server && node --test scripts/websocket-byte-transport-e2e.test.mjs",
 		"smoke:docker-pairing": "node scripts/docker-pairing-smoke.mjs",
 		"smoke:docker-compose-web-server": "node scripts/docker-compose-web-server-smoke.mjs",
 		"test:desktop-mcp-artifact": "npm run build:app && node --test scripts/desktop-mcp-artifact.test.mjs",
@@ -118,6 +119,7 @@
 		"test:remote-webrtc-service": "node --test scripts/webrtc-service-runtime.test.mjs",
 		"test:remote-webrtc-host": "node --test scripts/webrtc-host-revocation.test.mjs",
 		"test:remote-webrtc": "node --test scripts/webrtc-pairing.test.mjs",
+		"test:remote-lan-exposure": "node --test scripts/embedded-lan-exposure.test.mjs",
 		"test:spike-headless-webrtc": "node --test scripts/headless-webrtc-werift.test.mjs",
 		"test:spike-headless-webrtc-node-datachannel": "node --test scripts/headless-webrtc-node-datachannel.test.mjs",
 		"test:spike-production-headless-webrtc": "node --test scripts/production-headless-webrtc-node-datachannel.test.mjs",

@@ -12,6 +12,30 @@ import {
 
 const auth = (scope, projectId) => ({ serverId: "server-a", scope, ...(projectId === undefined ? {} : { projectId }) });
 
+test("recording start resolves the canonical terminal project and rejects forged session scope", async () => {
+  const home = await mkdtemp(join(tmpdir(), "terminay-recording-session-scope-"));
+  try {
+    const service = new RecordingService({ homeDirectory: home, recordingRoot: join(home, "recordings"), serverId: "server-a" });
+    const adapter = new ServerRecordingAdapter(service, {
+      serverId: "server-a",
+      resolveSessionProject: (sessionId) => sessionId === "session-a" ? "project-a" : undefined,
+    });
+    assert.throws(
+      () => adapter.start({ authorization: auth("write", "project-a"), sessionId: "unknown", projectId: "project-a" }),
+      (error) => error instanceof RecordingServiceError && error.code === "not_found",
+    );
+    assert.throws(
+      () => adapter.start({ authorization: auth("admin"), sessionId: "session-a", projectId: "project-b" }),
+      (error) => error instanceof RecordingServiceError && error.code === "forbidden",
+    );
+    assert.equal(adapter.start({
+      authorization: auth("write", "project-a"),
+      sessionId: "session-a",
+      projectId: "project-a",
+    }).status, "recording");
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
 test("protocol-facing recording adapter keeps capture alive across client loss and bounds opaque replay", async () => {
   const home = await mkdtemp(join(tmpdir(), "terminay-recording-adapter-"));
   try {

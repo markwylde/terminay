@@ -15,6 +15,20 @@ test("structured signals reduce to ordered revisions and progress expires", () =
   assert.equal(reducer.snapshot().sessions["session-a"].status, "idle");
 });
 
+test("an isolated OSC progress completion claims canonical idle against raw fallback", () => {
+  const reducer = createTerminalActivityReducer({ now: () => 0 });
+  const completion = reducer.applySignal("session-a", { kind: "progress", state: 0 }, {
+    projectId: "project-a",
+    now: 1,
+  });
+  assert.equal(completion.snapshot.status, "idle");
+  assert.equal(completion.snapshot.claimed, true);
+  assert.equal(completion.snapshot.authority, "structured");
+  assert.equal(completion.snapshot.source, "structured:progress");
+  assert.equal(reducer.applyRawOutput("session-a", { projectId: "project-a", now: 1 }), undefined);
+  assert.equal(reducer.snapshot().sessions["session-a"].status, "idle");
+});
+
 test("provider activity has precedence over structured and raw fallback", () => {
   const reducer = createTerminalActivityReducer({ now: () => 0 });
   const provider = reducer.applyProviderActivity("session-a", {

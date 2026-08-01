@@ -1,6 +1,16 @@
-import type { FileInfo, FilePreviewCapabilities, FileViewerMode } from '../../types/fileViewer'
+import type {
+  FileInfo,
+  FilePreviewCapabilities,
+  FileViewerEngine,
+  FileViewerMode,
+} from '../../types/fileViewer'
 
 export const LARGE_FILE_THRESHOLD_BYTES = 100 * 1024 * 1024
+/**
+ * Monaco is a complete in-memory text model. Keep that opt-in path bounded;
+ * files beyond the shared content-transfer ceiling remain ranged/virtualized.
+ */
+export const MAX_MONACO_FILE_BYTES = 128 * 1024 * 1024
 
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd'])
 const IMAGE_EXTENSIONS = new Set([
@@ -87,20 +97,30 @@ export function isTextLikeFile(file: FileInfo): boolean {
 }
 
 export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities {
-  const previewKind = detectPreviewKind(file)
-  const canPreview = previewKind !== 'unsupported'
+  const serverCapabilities = file.viewerCapabilities
+  const previewKind = serverCapabilities?.previewKind ?? detectPreviewKind(file)
+  const canPreview = serverCapabilities === undefined
+    ? previewKind !== 'unsupported'
+    : serverCapabilities.safePreview || previewKind === 'unsupported'
   const canTasks = previewKind === 'markdown'
   const textLike = isTextLikeFile(file)
-  const canUseMonaco = !file.isDirectory
-  const canEditText = !file.isDirectory
-  const canEditHex = !file.isDirectory
+  const canEditText = !file.isDirectory && (serverCapabilities?.canEditText ?? true)
+  const canUseMonaco = canEditText && file.size <= MAX_MONACO_FILE_BYTES
+  const canEditHex = !file.isDirectory && (serverCapabilities?.canEditHex ?? true)
   const canDiff = !file.isDirectory
 
-  const defaultMode: FileViewerMode = canPreview
+  const preferredMode = serverCapabilities?.preferredMode
+  const defaultMode: FileViewerMode = preferredMode === 'preview' && canPreview
     ? 'preview'
-    : textLike
+    : preferredMode === 'text' && canEditText
       ? 'text'
-      : 'hex'
+      : preferredMode === 'hex' && canEditHex
+        ? 'hex'
+        : canPreview
+          ? 'preview'
+          : textLike && canEditText
+            ? 'text'
+            : 'hex'
 
   return {
     canDiff,
@@ -114,4 +134,56 @@ export function detectFileCapabilities(file: FileInfo): FilePreviewCapabilities 
     previewKind,
     shouldPromptForEngineChoice: file.size > LARGE_FILE_THRESHOLD_BYTES && canUseMonaco,
   }
+}
+
+export function isFileViewerModeAvailable(
+  capabilities: FilePreviewCapabilities,
+  mode: FileViewerMode,
+): boolean {
+  switch (mode) {
+    case 'preview':
+      return capabilities.canPreview
+    case 'tasks':
+      return capabilities.canTasks
+    case 'text':
+      return capabilities.canEditText
+    case 'hex':
+      return capabilities.canEditHex
+    case 'diff':
+      return capabilities.canDiff
+  }
+}
+
+export function resolveFileViewerMode(
+  capabilities: FilePreviewCapabilities,
+  requestedMode: FileViewerMode,
+): FileViewerMode {
+  return isFileViewerModeAvailable(capabilities, requestedMode)
+    ? requestedMode
+    : capabilities.fallbackMode
+}
+
+/** Resolve the engine without allowing an unbounded whole-file Monaco read. */
+export function resolveFileViewerEngine(
+  file: FileInfo,
+  capabilities: FilePreviewCapabilities,
+  requestedEngine: FileViewerEngine,
+): FileViewerEngine {
+  if (!capabilities.canEditText) {
+    return requestedEngine === 'performant' ? 'performant' : 'auto'
+  }
+
+  if (requestedEngine === 'performant') {
+    return 'performant'
+  }
+
+  if (requestedEngine === 'monaco') {
+    return capabilities.canUseMonaco ? 'monaco' : 'performant'
+  }
+
+  if (capabilities.shouldPromptForEngineChoice) {
+    return 'auto'
+  }
+
+  return file.size > LARGE_FILE_THRESHOLD_BYTES && !capabilities.canUseMonaco ? 'performant' : 'monaco'
 }

@@ -56,6 +56,24 @@ test("content stream rejects oversized ranges, unsafe paths, and unsupported pre
   await assert.rejects(() => service.readPreview("huge.png"), (error) => error instanceof FileContentError && error.code === "preview_too_large");
 });
 
+test("default content range cap fits the framed 2 MiB response budget", async () => {
+  const cap = 2 * 1024 * 1024;
+  const storage = {
+    realpath(path) { return path; },
+    stat(path) { return path === "/project" ? { isDirectory: true, size: 0 } : { isFile: true, size: cap + 1 }; },
+    readRange(_path, _offset, length) { return new Uint8Array(length); },
+  };
+  const service = new FileContentStreamService(
+    new CanonicalProjectPathResolver("/project", storage),
+    storage,
+  );
+  assert.equal((await service.readRange("large.txt", 0, cap)).bytes.byteLength, cap);
+  await assert.rejects(
+    () => service.readRange("large.txt", 0, cap + 1),
+    (error) => error instanceof FileContentError && error.code === "range_too_large",
+  );
+});
+
 test("content stream enforces concurrent read and cancellation limits", async () => {
   const options = { waitForRead: true };
   const { service } = memoryContent(options);

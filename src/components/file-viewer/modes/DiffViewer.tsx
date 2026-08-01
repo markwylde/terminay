@@ -206,6 +206,7 @@ export function DiffViewer({
       <div
         ref={viewportRef}
         className="file-viewer-virtual-surface file-diff-viewer__viewport"
+        data-testid="file-diff-virtual-surface"
         data-row-count={rows.length}
         onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
       >
@@ -213,7 +214,7 @@ export function DiffViewer({
           {visibleRows.map((row, index) => (
             <div
               key={row.key}
-              className="file-viewer-virtual-surface__row"
+              className="file-viewer-virtual-surface__row file-diff-virtual-row"
               style={{
                 height: DIFF_ROW_HEIGHT,
                 transform: `translateY(${(visibleRange.startIndex + index) * DIFF_ROW_HEIGHT}px)`,

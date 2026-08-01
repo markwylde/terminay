@@ -23,6 +23,17 @@ await build({
 
 const { createFileDraftBuffer } = require(outputPath)
 
+const transitionOutputPath = path.join(bundleDirectory, 'shared-draft-transition.cjs')
+await build({
+  bundle: true,
+  entryPoints: ['src/components/file-viewer/modes/sharedDraftTransition.ts'],
+  format: 'cjs',
+  logLevel: 'silent',
+  outfile: transitionOutputPath,
+  platform: 'node',
+})
+const { materializePerformantDraft } = require(transitionOutputPath)
+
 test.after(async () => {
   await rm(bundleDirectory, { force: true, recursive: true })
 })
@@ -53,4 +64,17 @@ test('preserves byte edits while converting through text mode', () => {
   assert.equal(draft.getText(), 'Switch Me\n')
   assert.equal(draft.getPayload().kind, 'binary')
   assert.equal(draft.isDirty(), true)
+})
+
+test('materializes a Performant sparse draft into Monaco without losing edits or dirty state', () => {
+  const result = materializePerformantDraft('alpha\n雪 beta\nomega\n', [{
+    dataBase64: Buffer.from('changed 雪', 'utf8').toString('base64'),
+    end: Buffer.byteLength('alpha\n雪 beta', 'utf8'),
+    start: Buffer.byteLength('alpha\n', 'utf8'),
+  }])
+
+  assert.equal(result.text, 'alpha\nchanged 雪\nomega\n')
+  assert.equal(result.dirty, true)
+  assert.deepEqual(materializePerformantDraft('unchanged', []).text, 'unchanged')
+  assert.equal(materializePerformantDraft('unchanged', []).dirty, false)
 })

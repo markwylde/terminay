@@ -72,6 +72,8 @@ export type SidebarSettings = {
 	defaultGitState: SidebarPaneState;
 	defaultWidth: number;
 	defaultExplorerPaneHeight: number;
+	defaultAgentsPaneHeight: number;
+	defaultGitPaneHeight: number;
 	panelOrder: SidebarPanelId[];
 };
 

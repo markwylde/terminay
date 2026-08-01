@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -45,10 +46,12 @@ test('headless MCP rejects non-local sockets and malformed inherited capabilitie
 test('server-owned MCP stdio entry registers tools and uses the local control socket', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'terminay-server-mcp-'));
 	const socketPath = join(root, 'control.sock');
+	const receivedOperations = [];
 	const control = createServer((socket) => {
 		const decoder = new ControlFrameDecoder();
 		socket.on('data', (chunk) => {
 			for (const request of decoder.push(chunk)) {
+				receivedOperations.push(request.op);
 				assert.equal(request.token, 'test-token');
 				if (request.op === 'read_terminal') {
 					socket.write(
@@ -80,7 +83,7 @@ test('server-owned MCP stdio entry registers tools and uses the local control so
 	await new Promise((resolve) => control.listen(socketPath, resolve));
 	const transport = new StdioClientTransport({
 		command: process.execPath,
-		args: ['dist/mcpEntry.js'],
+		args: [fileURLToPath(new URL('../dist/mcpEntry.js', import.meta.url))],
 		env: {
 			...process.env,
 			TERMINAY_CONTROL_SOCKET: socketPath,
@@ -99,6 +102,14 @@ test('server-owned MCP stdio entry registers tools and uses the local control so
 		const readSchema = tools.tools.find(
 			(tool) => tool.name === 'read_terminal',
 		)?.inputSchema;
+		const listTool = tools.tools.find(
+			(tool) => tool.name === 'list_terminals',
+		);
+		assert.deepEqual(listTool?.annotations, {
+			readOnlyHint: true,
+			destructiveHint: false,
+			openWorldHint: false,
+		});
 		assert.equal(readSchema?.properties?.lines?.maximum, 4096);
 		const writeSchema = tools.tools.find(
 			(tool) => tool.name === 'write_terminal',
@@ -140,6 +151,88 @@ test('server-owned MCP stdio entry registers tools and uses the local control so
 			invalidArguments.content.find((item) => item.type === 'text')?.text ?? '',
 			/Input validation error/,
 		);
+		const oversizedUtf8Text = await client.callTool({
+			name: 'write_terminal',
+			arguments: { terminal: 'sibling', text: 'é'.repeat(32_769) },
+		});
+		assert.equal(oversizedUtf8Text.isError, true);
+		assert.match(
+			oversizedUtf8Text.content.find((item) => item.type === 'text')?.text ?? '',
+			/Input validation error/,
+		);
+		assert.equal(
+			receivedOperations.includes('write_terminal'),
+			false,
+			'UTF-8-byte-invalid MCP arguments must not reach the local control socket',
+		);
+	} finally {
+		await client.close().catch(() => {});
+		await new Promise((resolve) => control.close(resolve));
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test('headless MCP recovers after a malformed local control response closes its prior socket', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'terminay-server-mcp-recovery-'));
+	const socketPath = join(root, 'control.sock');
+	let connections = 0;
+	const control = createServer((socket) => {
+		connections += 1;
+		const connection = connections;
+		const decoder = new ControlFrameDecoder();
+		socket.on('data', (chunk) => {
+			for (const request of decoder.push(chunk)) {
+				if (connection === 1) {
+					// Valid JSON framing but not a valid ControlResponse. The MCP
+					// client must reject this request, discard only this socket, and
+					// allow the next call to establish a new local connection.
+					socket.write(encodeControlMessage({ id: request.id, ok: false }));
+					continue;
+				}
+				socket.write(
+					encodeControlMessage({
+						id: request.id,
+						ok: true,
+						result: { terminals: [{ id: 'recovered', busy: false }] },
+					}),
+				);
+			}
+		});
+	});
+	await new Promise((resolve) => control.listen(socketPath, resolve));
+	const transport = new StdioClientTransport({
+		command: process.execPath,
+		args: [fileURLToPath(new URL('../dist/mcpEntry.js', import.meta.url))],
+		env: {
+			...process.env,
+			TERMINAY_CONTROL_SOCKET: socketPath,
+			TERMINAY_CONTROL_TOKEN: 'test-token',
+		},
+		stderr: 'pipe',
+	});
+	const client = new Client({ name: 'server-mcp-recovery-test', version: '1.0.0' });
+	try {
+		await client.connect(transport);
+		const malformed = await client.callTool({
+			name: 'list_terminals',
+			arguments: {},
+		});
+		assert.equal(malformed.isError, true);
+		assert.match(
+			malformed.content.find((item) => item.type === 'text')?.text ?? '',
+			/^internal:/,
+		);
+
+		const recovered = await client.callTool({
+			name: 'list_terminals',
+			arguments: {},
+		});
+		assert.notEqual(recovered.isError, true, JSON.stringify(recovered));
+		assert.match(
+			recovered.content.find((item) => item.type === 'text')?.text ?? '',
+			/recovered/,
+		);
+		assert.equal(connections, 2);
 	} finally {
 		await client.close().catch(() => {});
 		await new Promise((resolve) => control.close(resolve));

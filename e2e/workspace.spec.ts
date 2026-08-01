@@ -1,7 +1,11 @@
+import { execFile } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import type { ElectronApplication, Page } from '@playwright/test'
 import { expect, test } from './fixtures'
-import { openProjectEditWindow } from './support/ui'
+import { openFileExplorer, openProjectEditWindow } from './support/ui'
+
+const execFileAsync = promisify(execFile)
 
 async function getActiveSessionId(page: Page): Promise<string> {
   const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
@@ -15,8 +19,8 @@ async function getActiveSessionId(page: Page): Promise<string> {
 
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
   const sessionId = await getActiveSessionId(page)
-  await page.evaluate(({ nextData, nextSessionId }) => {
-    window.terminay.writeTerminal(nextSessionId, nextData)
+  await page.evaluate(async ({ nextData, nextSessionId }) => {
+    await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
   }, { nextData: data, nextSessionId: sessionId })
 }
 
@@ -139,14 +143,36 @@ test.describe('workspace shell', () => {
     electronApp,
     mainWindow,
   }) => {
-    const workspace = await createWorkspace({ name: 'shortcut-project-root' })
+    const workspace = await createWorkspace({
+      name: 'shortcut-project-root',
+      seed: {
+        files: {
+          'README.md': 'initial readme\n',
+        },
+      },
+    })
     const expectedRoot = await realpath(workspace.rootDir)
     const sessionId = await getActiveSessionId(mainWindow)
 
-    await writeToActiveTerminal(mainWindow, `cd ${JSON.stringify(workspace.rootDir)}\r`)
+    await execFileAsync('git', ['init'], { cwd: workspace.rootDir })
+    await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: workspace.rootDir })
+    await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: workspace.rootDir })
+    await execFileAsync('git', ['add', '.'], { cwd: workspace.rootDir })
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
+
+    const cwdReady = `cwd-ready-${sessionId}`
+    await writeToActiveTerminal(
+      mainWindow,
+      `cd ${JSON.stringify(workspace.rootDir)} && printf ${JSON.stringify(cwdReady)}\r`,
+    )
+    await expect(mainWindow.locator('.terminal-panel').filter({ hasText: cwdReady })).toBeVisible()
     await expect
-      .poll(async () => mainWindow.evaluate((id) => window.terminay.getTerminalCwd(id), sessionId))
-      .toBe(expectedRoot)
+      .poll(async () => {
+        return mainWindow.evaluate(async (nextSessionId) => {
+          return window.terminayTest!.getServerTerminalCwd(nextSessionId)
+        }, sessionId)
+      })
+      .toMatchObject({ cwd: expectedRoot, source: 'observed' })
 
     await mainWindow.bringToFront()
     await mainWindow.locator('.terminal-panel').first().click()
@@ -158,5 +184,15 @@ test.describe('workspace shell', () => {
     const editWindow = await openProjectEditWindow(mainWindow)
     await expect(editWindow.getByPlaceholder('Enter folder path')).toHaveValue(expectedRoot)
     await editWindow.close()
+
+    await openFileExplorer(mainWindow)
+    const gitPane = mainWindow
+      .locator('.sidebar-pane')
+      .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+    const worktree = gitPane.locator('.worktrees-panel__worktree').first()
+    await expect(worktree.locator('.worktrees-panel__worktree-name')).toContainText('shortcut-project-root', {
+      timeout: 6000,
+    })
+    await expect(gitPane.locator('.git-panel__message').filter({ hasText: 'Not a git repository' })).toHaveCount(0)
   })
 })

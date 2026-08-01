@@ -82,3 +82,36 @@ test('rejects cross-application, deep, renderer-host, and quarantine bypasses', 
     assert.match(messages, /legacy services may only be reached/);
   });
 });
+
+test('allows only Desktop main to compose the exact packaged Server application', async () => {
+  await withFixture([
+    {
+      kind: 'app',
+      directory: 'terminay-desktop',
+      name: '@terminay/desktop',
+      dependencies: { '@terminay/server': '1.0.0' },
+      files: {
+        'src/main/embeddedRuntime.ts': "import '@terminay/server';",
+        'src/preload/index.ts': "import '@terminay/server';",
+        'src/renderer/index.ts': "import '@terminay/server';",
+      },
+    },
+    { kind: 'app', directory: 'terminay-server', name: '@terminay/server', files: { 'src/index.ts': '' } },
+  ], async (root) => {
+    const result = checkWorkspace(root);
+    assert.equal(
+      result.violations.some((item) => item.file.endsWith('/src/main/embeddedRuntime.ts')),
+      false,
+    );
+    assert.deepEqual(
+      result.violations
+        .filter((item) => /application packages cannot depend on one another/.test(item.message))
+        .map((item) => item.file.replace(root, ''))
+        .sort(),
+      [
+        '/apps/terminay-desktop/src/preload/index.ts',
+        '/apps/terminay-desktop/src/renderer/index.ts',
+      ],
+    );
+  });
+});

@@ -1,17 +1,12 @@
 import { SettingsClient, SETTINGS_EVENTS, SETTINGS_OPERATIONS, type SettingsEventTransport } from '@terminay/client-core'
 import type { JsonValue } from '@terminay/protocol'
-import type { TerminayApi } from '../../types/terminay'
 import type { TerminalSettings } from '../../types/settings'
+import { captureLegacySettingsCapability, type LegacySettingsApi } from './legacySettingsCapability'
 
 /** Compatibility-only bridge for the settings hook. Shared UI calls
  * SettingsClient; preload methods and event payloads stay in this adapter. */
-export type LegacySettingsApi = Pick<
-  TerminayApi,
-  'getTerminalSettings' | 'updateTerminalSettings' | 'resetTerminalSettings' | 'onTerminalSettingsChanged'
->
-
-export function createLegacySettingsClient(api: LegacySettingsApi = window.terminay): SettingsClient {
-  return new SettingsClient(createLegacySettingsTransport(api))
+export function createLegacySettingsClient(api: LegacySettingsApi): SettingsClient {
+  return new SettingsClient(createLegacySettingsTransport(captureLegacySettingsCapability(api)))
 }
 
 export function createLegacySettingsTransport(api: LegacySettingsApi): SettingsEventTransport {

@@ -1,7 +1,37 @@
-import { createHostCapabilityProvider, type HostActions, type HostCapabilityProvider, type TerminayClient, type TerminayHost } from "@terminay/client-core";
-import type { ConnectionSnapshot } from "@terminay/client-core";
+import { createHostCapabilityProvider, type HostActions, type HostCapabilityProvider, type TerminayClient } from "@terminay/client-core";
+import { createResponsiveUiProvider, createSharedFileSelectionModel, createSharedWorkspaceRouteRenderModel, type ResponsiveUiContext, type SharedWorkspaceRoute, type SharedWorkspaceRouteRenderModel } from "@terminay/responsive-ui";
+import type { DesktopPresentationMetadata } from "../presentation.js";
+import {
+  createDesktopProfileWindowCommandClient,
+  type DesktopProfileWindowCommandClient,
+} from "./profileWindowCommands.js";
+
+export {
+  createDesktopProfileWindowCommandClient,
+  type DesktopProfileWindowCommandClient,
+  type DesktopProfileWindowHost,
+  type OpenCurrentProfileWindowRequest,
+} from "./profileWindowCommands.js";
 
 export const desktopRendererBoundary = "desktop-renderer";
+
+/** Desktop advertises the native picker only when the bound host context says
+ * it is available; otherwise shared UI uses its in-page File-route fallback. */
+export function createDesktopFileSelectionActionModel(
+  capabilities: HostCapabilityProvider = createHostCapabilityProvider(),
+) {
+  return createSharedFileSelectionModel(capabilities);
+}
+
+/** Desktop uses the same route component contract as web and opts into a
+ * native auxiliary presentation only when the host advertises native
+ * windows. The component regions themselves never change with the host. */
+export function createDesktopWorkspaceRouteRenderModel(
+  route: SharedWorkspaceRoute,
+  capabilities: HostCapabilityProvider = createHostCapabilityProvider({ nativeWindows: true }),
+): SharedWorkspaceRouteRenderModel {
+  return createSharedWorkspaceRouteRenderModel(route, capabilities);
+}
 
 /** Structural view of the native bridge. The renderer imports this type only;
  * it does not import Electron, preload, or Desktop main modules. */
@@ -12,15 +42,24 @@ export interface DesktopRendererHostApi {
     readonly connectionId: string;
     readonly profileLabel: string;
     readonly capabilities: Record<string, boolean>;
+    readonly presentation: DesktopPresentationMetadata;
   }>;
   readonly requestAction: (action: unknown, options?: { readonly userGesture?: boolean }) => Promise<unknown>;
 }
 
-export interface DesktopRendererContext {
-  readonly client: TerminayClient;
-  readonly host: TerminayHost;
-  readonly connection: ConnectionSnapshot;
+/** Build the renderer's profile/window capability from the generic preload
+ * transport in one place. Shared UI receives the typed facade, not a
+ * profile-id-bearing native operation. */
+export function createDesktopProfileWindowCommands(
+  hostApi: DesktopRendererHostApi,
+): DesktopProfileWindowCommandClient {
+  return createDesktopProfileWindowCommandClient({
+    getContext: hostApi.getContext,
+    openWindow: async (action) => hostApi.requestAction(action, { userGesture: true }),
+  });
 }
+
+export interface DesktopRendererContext extends ResponsiveUiContext {}
 
 export interface DesktopRendererContextOptions {
   readonly client: TerminayClient;
@@ -33,10 +72,15 @@ export interface DesktopRendererContextOptions {
  * consumed by shared UI. The action objects remain narrow and versioned at the
  * native boundary. */
 export function createDesktopRendererActions(hostApi: DesktopRendererHostApi): HostActions {
+  const profileWindows = createDesktopProfileWindowCommands(hostApi);
   return Object.freeze({
     openWindow: async (request: { readonly view?: string; readonly serverId?: string }) => {
       if (request.serverId === undefined) throw new Error("native window open requires a connection id");
-      await hostApi.requestAction({ type: "window.open", profileId: request.serverId, ...(request.view === undefined ? {} : { workspaceViewId: request.view }) }, { userGesture: true });
+      const context = await hostApi.getContext();
+      if (request.serverId !== context.connectionId) throw new Error("native window open is outside the bound connection");
+      await profileWindows.openCurrentProfileWindow(
+        request.view === undefined ? {} : { workspaceViewId: request.view },
+      );
     },
     chooseFile: async (request: { readonly multiple?: boolean } = {}) => {
       const result = await hostApi.requestAction({ type: "file.choose", ...(request.multiple === undefined ? {} : { multiple: request.multiple }) }, { userGesture: true });
@@ -79,9 +123,9 @@ export function createDesktopRendererContext(options: DesktopRendererContextOpti
   const capabilities = options.capabilities ?? createHostCapabilityProvider();
   const actions = options.actions ?? (options.hostApi === undefined ? undefined : createDesktopRendererActions(options.hostApi));
   const guardedActions = actions === undefined ? undefined : guardDesktopRendererActions(actions, capabilities);
-  return Object.freeze({
+  return createResponsiveUiProvider({
     client: options.client,
-    host: Object.freeze({ capabilities, ...(guardedActions === undefined ? {} : { actions: guardedActions }) }),
-    connection: options.client.snapshot,
+    capabilities,
+    ...(guardedActions === undefined ? {} : { actions: guardedActions }),
   });
 }

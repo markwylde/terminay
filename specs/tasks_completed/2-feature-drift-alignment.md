@@ -75,32 +75,32 @@ affected service extraction task begins.
   - File access still accepts a renderer-supplied project-root compatibility
     value rather than a canonical server-owned project session. That authority
     seam moves to
-    [server files and file viewer](../tasks/11-server-files-and-file-viewer.md).
+    [server files and file viewer](./11-server-files-and-file-viewer.md).
   - Renderer destruction still terminates renderer-owned PTYs. Moving PTY and
     capture ownership into the server, including renderer-independent lifetime,
-    belongs to [server recordings](../tasks/13-server-recordings.md) and
-    [server terminal service](../tasks/8-server-terminal-service.md).
+    belongs to [server recordings](./13-server-recordings.md) and
+    [server terminal service](./8-server-terminal-service.md).
   - The MCP control endpoint remains an Electron-main-to-renderer forwarding
     bridge rather than a headless canonical-server operation surface. Removing
     that routing/authority seam belongs to
-    [server MCP control](../tasks/10-server-mcp-control.md).
+    [server MCP control](./10-server-mcp-control.md).
   - Provider configuration replacement is atomic, preserves existing modes,
     and refuses to replace a changed Terminay entry. Provider status still
     reports only installed/not-installed rather than the full
     changed/unavailable/error states, and installation does not yet manage a
     separately versioned MCP entry artifact. Those lifecycle and status
     requirements remain in
-    [server MCP control](../tasks/10-server-mcp-control.md).
+    [server MCP control](./10-server-mcp-control.md).
 - The interaction fixes in this task deliberately do not claim that extraction
   is already complete:
   - the file draft and filesystem operations move behind canonical server
     sessions and authorization in
-    [server files and file viewer](../tasks/11-server-files-and-file-viewer.md);
+    [server files and file viewer](./11-server-files-and-file-viewer.md);
   - recording capture/storage move from Electron into the server PTY boundary
-    in [server recordings](../tasks/13-server-recordings.md); and
+    in [server recordings](./13-server-recordings.md); and
   - the control socket, provider-install lifecycle, and renderer forwarding
     move behind canonical server state in
-    [server MCP control](../tasks/10-server-mcp-control.md).
+    [server MCP control](./10-server-mcp-control.md).
 - MCP: `scripts/mcp-stdio.test.mjs`,
   `scripts/mcp-install-providers.test.mjs`, and `e2e/mcp-server.spec.ts`.
   The reproducible suite validates serialization of the synthetic launch

@@ -6,7 +6,10 @@ export * from "./dispatcher.js";
 export * from "./workspace.js";
 export * from "./workspaceRecovery.js";
 export * from "./runtime.js";
+export * from "./composition.js";
+export * from "./platform.js";
 export * from "./workspaceRepository.js";
+export * from "./workspaceProtocol.js";
 export * from "./activity/index.js";
 export * from "./control/index.js";
 export * from "./settings/index.js";
@@ -28,6 +31,9 @@ export {
   ServerFileCatalogAdapter,
   FILE_OPERATIONS,
   FILE_CATALOG_OPERATIONS,
+  FILE_OBSERVATION_OPERATIONS,
+  ServerFileObservationAdapter,
+  createFileObservationEventProjector,
 } from "./fileService/index.js";
 export type {
   PathStat,
@@ -116,6 +122,8 @@ export type {
   FileCatalogAuthorization,
   FileCatalogAdapterOptions,
   FileCatalogRequest,
+  FileObservationHost,
+  FileObservationAdapterOptions,
 } from "./fileService/index.js";
 export * from "./aiService/index.js";
 export * from "./terminalService/index.js";

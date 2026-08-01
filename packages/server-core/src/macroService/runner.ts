@@ -52,6 +52,13 @@ export class MacroRunner {
 
   list(): readonly MacroRunSnapshot[] { return [...this.activeRuns.values()].map(snapshotOf); }
 
+  cancel(runId: string): boolean {
+    const run = this.activeRuns.get(runId);
+    if (run === undefined) return false;
+    run.controller.abort();
+    return true;
+  }
+
   /** Apply each run's documented policy when its launching client disconnects. */
   clientDisconnected(launcherId: string): void {
     for (const run of this.activeRuns.values()) {

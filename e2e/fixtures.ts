@@ -14,6 +14,7 @@ import {
 } from './support/app'
 import { createDialogController, type DialogController } from './support/dialogs'
 import { createFixtureWorkspace, type FixtureWorkspace, type WorkspaceOptions } from './support/workspace'
+import { stageImmutableRendererArtifact } from '../scripts/immutable-renderer-artifact.mjs'
 
 type ElectronFixtures = {
   appHarness: {
@@ -44,9 +45,7 @@ const contentTypes: Record<string, string> = {
   '.webp': 'image/webp',
 }
 
-async function createStaticServer(): Promise<{ close: () => Promise<void>; url: string }> {
-  const distRoot = path.resolve('dist')
-  const publicRoot = path.resolve('public')
+async function createStaticServer(distRoot: string): Promise<{ close: () => Promise<void>; url: string }> {
 
   const server: Server = createServer(async (request, response) => {
     try {
@@ -55,7 +54,7 @@ async function createStaticServer(): Promise<{ close: () => Promise<void>; url: 
       const relativePath = decodeURIComponent(pathname).replace(/^\/+/, '')
       let filePath: string | null = null
 
-      for (const root of [distRoot, publicRoot]) {
+      for (const root of [distRoot]) {
         const candidate = path.resolve(root, relativePath)
         if (!candidate.startsWith(root)) {
           continue
@@ -126,17 +125,25 @@ async function closeElectronAppGracefully(electronApp: ElectronApplication): Pro
   }
 
   try {
-    await electronApp.evaluate(({ BrowserWindow, app }) => {
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) {
-          window.destroy()
+    // A blocked `before-quit` handler can also block the Playwright main-process
+    // RPC itself. Keep this best-effort forced shutdown bounded so it cannot
+    // prevent the process-level fallback below from running.
+    await raceWithTimeout(
+      electronApp.evaluate(({ BrowserWindow, app }) => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) {
+            window.destroy()
+          }
         }
-      }
 
-      app.exit(0)
-    })
+        app.exit(0)
+      }),
+      closeTimeoutMs,
+      'Timed out forcing Electron to exit after graceful shutdown stalled.',
+    )
   } catch {
-    // If the main process is already gone, the process kill fallback below will no-op.
+    // If the main process is already gone or its control channel is blocked,
+    // the process kill fallback below remains authoritative for test teardown.
   }
 
   if (electronApp.process().exitCode !== null) {
@@ -176,8 +183,12 @@ export const test = base.extend<ElectronFixtures>({
     await use(tempDir)
   },
 
-  electronApp: async ({ tempDir, userDataDir }, use) => {
-    const staticServer = await createStaticServer()
+  electronApp: async ({ tempDir, userDataDir }, use, testInfo) => {
+    const rendererArtifact = await stageImmutableRendererArtifact({
+      sourceRoot: path.resolve('dist'),
+      destinationParent: path.join(tempDir, 'immutable-build'),
+    })
+    const staticServer = await createStaticServer(rendererArtifact.rootDirectory)
     const electronApp = await electron.launch({
       args: ['.'],
       env: {
@@ -186,6 +197,9 @@ export const test = base.extend<ElectronFixtures>({
         TEMP: tempDir,
         TERMINAY_E2E_TEMP_DIR: tempDir,
         TERMINAY_TEST: '1',
+        ...(path.basename(testInfo.file) === 'remote-access.spec.ts'
+          ? { TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1' }
+          : {}),
         TERMINAY_USER_DATA_DIR: userDataDir,
         TMP: tempDir,
         TMPDIR: tempDir,
@@ -198,6 +212,7 @@ export const test = base.extend<ElectronFixtures>({
     } finally {
       await closeElectronAppGracefully(electronApp)
       await staticServer.close()
+      await rendererArtifact.assertUnchanged()
     }
   },
 

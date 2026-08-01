@@ -40,6 +40,20 @@ test("frames enforce magic, kind, lengths, canonical headers, and bounded bodies
   assert.throws(() => encodeFrame(command, new Uint8Array(DEFAULT_PROTOCOL_LIMITS.maxBodyBytes + 1)), /body/);
 });
 
+test("query result frames bind declared binary bodies exactly at default limits", () => {
+  for (const size of [2 * 1024 * 1024, 4 * 1024 * 1024]) {
+    const body = new Uint8Array(size).fill(0xa5);
+    const envelope = { type: "query_result", queryId: `binary-query-${size}`, ok: true, result: { bodyLength: body.byteLength }, bodyLength: body.byteLength };
+    const decoded = decodeFrame(encodeFrame(envelope, body));
+    assert.equal(decoded.body.byteLength, body.byteLength);
+    assert.equal(decoded.body.at(-1), 0xa5);
+  }
+  const body = new Uint8Array(2 * 1024 * 1024);
+  const envelope = { type: "query_result", queryId: "binary-query-mismatch", ok: true, result: { bodyLength: body.byteLength }, bodyLength: body.byteLength };
+  assert.throws(() => encodeFrame({ ...envelope, bodyLength: body.byteLength - 1 }, body), /body length mismatch/);
+  assert.throws(() => encodeFrame({ type: "query_result", queryId: "undeclared-query", ok: true, result: {} }, new Uint8Array([1])), /undeclared/);
+});
+
 test("closed envelope validation rejects extra fields and inconsistent result status", () => {
   assert.deepEqual(validateEnvelope(hello), hello);
   assert.throws(() => validateEnvelope({ ...hello, injected: true }), /unknown/);

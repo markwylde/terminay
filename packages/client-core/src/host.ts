@@ -8,6 +8,8 @@ const HOST_CAPABILITY_NAMES: readonly HostCapability[] = [
   "clipboard",
   "serverExposure",
   "connectionProfiles",
+  "updater",
+  "osIntegration",
 ];
 
 /** Make a safe, immutable capability provider from a host's plain capability

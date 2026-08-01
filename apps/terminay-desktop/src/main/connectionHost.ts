@@ -1,8 +1,11 @@
 import {
   createHostCapabilityProvider,
+  WorkspaceClient,
   TerminayClient,
   type HostCapabilityProvider,
+  type ProjectMoveResult,
   type TerminayHost,
+  type WorkspaceCommandOptions,
 } from "@terminay/client-core";
 import type { ByteTransport, ProtocolId, ServerHello } from "@terminay/protocol";
 import {
@@ -14,7 +17,9 @@ import {
   type ConnectionProfileStatus,
   type RemoteProfileInput,
 } from "./connectionProfiles.js";
-import { WindowViewRegistry, type WindowSelection } from "./windowRegistry.js";
+import { DesktopHostShellPolicy, type DesktopBundleFetcher, type DesktopBundleResource } from "./hostShell.js";
+import { WindowViewRegistry, type WindowSelection, type WorkspaceViewBinding } from "./windowRegistry.js";
+import { createDesktopShellHeaderModel, type DesktopShellHeaderModel } from "./shellHeader.js";
 
 export type LocalServerState = "created" | "starting" | "ready" | "migrating" | "failed" | "crashed" | "restarting" | "stopping" | "stopped";
 
@@ -27,6 +32,53 @@ export interface DesktopLocalMode {
 }
 
 export const DESKTOP_LOCAL_MODE: DesktopLocalMode = Object.freeze({ transport: "loopback", internetRequired: false, usesWebRTC: false });
+
+export interface WorkspaceAdoptionRequest {
+  readonly connectionId: string;
+  readonly projectId: ProtocolId;
+  readonly targetViewId: ProtocolId;
+  readonly currentWindowId?: string;
+  readonly rebindCurrent?: boolean;
+  readonly createWindowId?: () => string;
+  readonly index?: number;
+  readonly commandId?: ProtocolId;
+  readonly expectedRevision?: number;
+  readonly deadlineMs?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface WorkspaceAdoptionResult {
+  readonly move: ProjectMoveResult;
+  readonly selection: WindowSelection;
+}
+
+export interface WorkspaceProjectPopoutRequest extends WorkspaceAdoptionRequest {
+  readonly targetViewName: string;
+  readonly createViewCommandId?: ProtocolId;
+  readonly rollbackViewCommandId?: ProtocolId;
+}
+
+export interface WorkspaceProjectPopoutResult extends WorkspaceAdoptionResult {
+  readonly view: {
+    readonly viewId: ProtocolId;
+    readonly revision: number;
+    readonly cursor: string;
+  };
+}
+
+export interface CloseWorkspaceViewRequest {
+  readonly connectionId: string;
+  readonly viewId: ProtocolId;
+  readonly commandId?: ProtocolId;
+  readonly expectedRevision?: number;
+  readonly deadlineMs?: number;
+  readonly signal?: AbortSignal;
+}
+
+export interface CloseWorkspaceViewResult {
+  readonly command: { readonly revision: number; readonly cursor: string };
+  readonly detachedBindings: readonly WorkspaceViewBinding[];
+}
 
 export interface LocalServerReadiness {
   readonly serverId: ProtocolId;
@@ -41,6 +93,8 @@ export interface LocalServerReadiness {
    * intentionally never copied into a connection profile or host state DTO.
    */
   readonly bootstrapCredential?: string;
+  /** Epoch milliseconds after which the private bootstrap credential is invalid. */
+  readonly bootstrapCredentialExpiresAt?: number;
   /** Safe diagnostic digest; the credential itself must not be logged. */
   readonly credentialDigest?: string;
 }
@@ -63,6 +117,7 @@ export interface LocalTransportContext {
   readonly origin: string;
   readonly endpoint?: string;
   readonly bootstrapCredential?: string;
+  readonly bootstrapCredentialExpiresAt?: number;
   readonly credentialDigest?: string;
 }
 
@@ -97,6 +152,13 @@ export interface DesktopConnectionHeader {
 export interface DesktopWindowOpenResult {
   readonly connection: DesktopConnection;
   readonly selection: WindowSelection;
+}
+
+export interface DesktopWindowCloseResult {
+  /** The host-local presentation binding that was detached. */
+  readonly binding: WorkspaceViewBinding;
+  /** Closing a native window never deletes the server logical view. */
+  readonly logicalViewDeleted: false;
 }
 
 export interface DesktopConnectionHostState {
@@ -142,7 +204,7 @@ export class DesktopConnectionHost {
     this.clientVersion = options.clientVersion;
     this.capabilities = options.capabilities;
     this.windows = options.windows ?? new WindowViewRegistry();
-    const capabilityProvider = options.hostCapabilities ?? createHostCapabilityProvider({ nativeWindows: true, connectionProfiles: true, secureStorage: false });
+    const capabilityProvider = options.hostCapabilities ?? createHostCapabilityProvider({ nativeWindows: true, connectionProfiles: true, secureStorage: false, updater: true, osIntegration: true });
     this.host = Object.freeze({ capabilities: capabilityProvider });
     this.localStateUnsubscribe = options.localServer.onStateChange?.((state) => this.onLocalState(state));
     if (options.localServer.state !== undefined) this.localServerState = options.localServer.state;
@@ -161,6 +223,24 @@ export class DesktopConnectionHost {
     const profile = (selectedId === undefined ? undefined : this.profiles.get(selectedId)) ?? (localId === undefined ? undefined : this.profiles.get(localId));
     if (profile === undefined) return undefined;
     return Object.freeze({ profileId: profile.id, serverId: profile.serverId, label: profile.label, kind: profile.kind, status: profile.status, local: profile.kind === "local" });
+  }
+
+  /**
+   * Single host-owned projection for the native header, connection menu,
+   * native lifecycle status, and window/view mapping. The renderer workspace
+   * remains the authority for workspace state; only opaque view ids cross this
+   * boundary.
+   */
+  get shellHeader(): DesktopShellHeaderModel {
+    const currentConnection = this.currentConnectionHeader;
+    return createDesktopShellHeaderModel({
+      ...(currentConnection === undefined ? {} : { currentConnection }),
+      state: this.state,
+      profiles: this.profiles.list(),
+      windows: this.windows.list(),
+      canManageConnections: this.host.capabilities.has("connectionProfiles"),
+      canExposeServer: this.host.capabilities.has("serverExposure"),
+    });
   }
 
   onStateChange(listener: (change: DesktopConnectionStateChange) => void): () => void {
@@ -314,6 +394,19 @@ export class DesktopConnectionHost {
     }
   }
 
+  /** Load a server bundle only for the currently authenticated connection.
+   * The identity is checked again after the fetch so a late response cannot be
+   * rendered in a window that has switched profiles or lost its connection. */
+  async loadCurrentServerBundle(fetcher: DesktopBundleFetcher, assetPath = "/manifest.json"): Promise<DesktopBundleResource> {
+    const connection = this.currentConnection;
+    if (connection === undefined) throw new Error("no connected current connection");
+    const policy = new DesktopHostShellPolicy();
+    policy.selectConnection({ connectionId: connection.profile.id, origin: connection.profile.origin });
+    const resource = await policy.loadSelectedBundle(fetcher, assetPath);
+    if (this.currentConnection?.profile.id !== connection.profile.id) throw new Error("current connection changed while loading bundle");
+    return resource;
+  }
+
   /** Open a connection and select its native window/view as one host action.
    * Existing `(connection, workspaceView)` bindings focus instead of creating
    * duplicate windows; a distinct logical view gets its own binding. */
@@ -339,6 +432,125 @@ export class DesktopConnectionHost {
     }
   }
 
+  /**
+   * Adopt a project into another logical server view and present that view in
+   * the requested native window. The project move is authenticated by the
+   * selected server connection; the native binding is only a reversible host
+   * presentation update.
+   */
+  async adoptProjectWindow(
+    profileId: string,
+    request: Omit<WorkspaceAdoptionRequest, "connectionId">,
+  ): Promise<DesktopWindowOpenResult & Pick<WorkspaceAdoptionResult, "move">> {
+    const connection = await this.openProfile(profileId);
+    const previousBinding = request.currentWindowId === undefined
+      ? undefined
+      : this.windows.get(request.currentWindowId);
+    const selection = this.windows.select(profileId, request.targetViewId, windowSelectionOptions(request));
+    try {
+      const move = await new WorkspaceClient(connection.client).moveProject(
+        {
+          projectId: request.projectId,
+          targetViewId: request.targetViewId,
+          ...(request.index === undefined ? {} : { index: request.index }),
+        },
+        workspaceCommandOptions(request),
+      );
+      return Object.freeze({ connection, selection, move });
+    } catch (error) {
+      restoreFailedWindowSelection(this.windows, selection, previousBinding);
+      throw error;
+    }
+  }
+
+  /**
+   * Pop out a project by creating a server-owned logical workspace view and
+   * moving the project into it before presenting that view in a native window.
+   * Failed server mutations restore the host-local native binding.
+   */
+  async popoutProjectWindow(
+    profileId: string,
+    request: Omit<WorkspaceProjectPopoutRequest, "connectionId">,
+  ): Promise<DesktopWindowOpenResult & WorkspaceProjectPopoutResult> {
+    const connection = await this.openProfile(profileId);
+    const workspace = new WorkspaceClient(connection.client);
+    const previousBinding = request.currentWindowId === undefined
+      ? undefined
+      : this.windows.get(request.currentWindowId);
+    const selection = this.windows.select(profileId, request.targetViewId, windowSelectionOptions(request));
+    let view: WorkspaceProjectPopoutResult["view"] | undefined;
+    try {
+      const created = await workspace.createView(
+        { viewId: request.targetViewId, name: request.targetViewName },
+        {
+          ...(request.createViewCommandId === undefined ? {} : { commandId: request.createViewCommandId }),
+          ...(request.expectedRevision === undefined ? {} : { expectedRevision: request.expectedRevision }),
+          ...(request.deadlineMs === undefined ? {} : { deadlineMs: request.deadlineMs }),
+          ...(request.signal === undefined ? {} : { signal: request.signal }),
+        },
+      );
+      view = Object.freeze({ viewId: request.targetViewId, ...created });
+      const move = await workspace.moveProject(
+        {
+          projectId: request.projectId,
+          targetViewId: request.targetViewId,
+          ...(request.index === undefined ? {} : { index: request.index }),
+        },
+        workspaceCommandOptions({ ...request, expectedRevision: view.revision }),
+      );
+      return Object.freeze({ connection, selection, view, move });
+    } catch (error) {
+      restoreFailedWindowSelection(this.windows, selection, previousBinding);
+      if (view !== undefined) {
+        await workspace.closeView(request.targetViewId, {
+          commandId: request.rollbackViewCommandId ?? rollbackWorkspaceViewCommandId(request.targetViewId),
+          expectedRevision: view.revision,
+        }).catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Explicitly close a logical server view through the authenticated
+   * workspace command. Native bindings for that view are detached only after
+   * the server accepts the command; closing a native window alone never calls
+   * this method.
+   */
+  async closeWorkspaceView(
+    profileId: string,
+    request: Omit<CloseWorkspaceViewRequest, "connectionId">,
+  ): Promise<{ readonly connection: DesktopConnection } & CloseWorkspaceViewResult> {
+    const connection = await this.openProfile(profileId);
+    const command = await new WorkspaceClient(connection.client).closeView(
+      request.viewId,
+      workspaceCommandOptions(request),
+    );
+    const detachedBindings = this.windows
+      .list(profileId)
+      .filter((binding) => binding.workspaceViewId === request.viewId);
+    for (const binding of detachedBindings) this.windows.unbind(binding.windowId);
+    return Object.freeze({
+      connection,
+      command,
+      detachedBindings: Object.freeze([...detachedBindings]),
+    });
+  }
+
+  /**
+   * Detach one native window from its server connection/view presentation.
+   *
+   * The connection is shared by windows targeting the same profile, so a
+   * native close must not close that client. The workspace view id is returned
+   * as an opaque server identity; deleting it or closing its terminals is an
+   * explicit server command, never an effect of native-window cleanup.
+   */
+  closeWindow(windowId: string): DesktopWindowCloseResult | undefined {
+    const binding = this.windows.unbind(windowId);
+    if (binding === undefined) return undefined;
+    return Object.freeze({ binding, logicalViewDeleted: false as const });
+  }
+
   async disconnect(profileId: string): Promise<void> {
     const connection = this.active.get(profileId);
     if (connection !== undefined) {
@@ -358,10 +570,8 @@ export class DesktopConnectionHost {
    * fragment. Pairing protocol completion happens separately against the
    * exact origin; this host method only remembers sanitized metadata. */
   importPairingUrl(rawUrl: string, metadata: Omit<RemoteProfileInput, "origin">): ConnectionProfile {
-    const parsed = parsePairingUrl(rawUrl);
-    const origin = parsed.origin;
-    parsed.hash = "";
-    return this.profiles.add(createRemoteProfile({ ...metadata, origin }));
+    const parsed = normalizePairingDeepLink(rawUrl);
+    return this.profiles.add(createRemoteProfile({ ...metadata, origin: parsed.origin }));
   }
 
   get currentConnection(): DesktopConnection | undefined {
@@ -425,7 +635,15 @@ export function localProfileFromReadiness(readiness: LocalServerReadiness): Conn
   return createLocalProfile({ serverId: readiness.serverId, origin: readiness.origin, ...(readiness.fingerprint === undefined ? {} : { fingerprint: readiness.fingerprint }) });
 }
 
-function parsePairingUrl(rawUrl: string): URL {
+export interface PairingDeepLinkMetadata {
+  readonly origin: string;
+  readonly path: string;
+  readonly fragmentLength: number;
+}
+
+/** Validate a user-supplied pairing deep link without returning or retaining
+ * its one-time fragment. Only the exact HTTPS origin is profile metadata. */
+export function normalizePairingDeepLink(rawUrl: string): PairingDeepLinkMetadata {
   if (typeof rawUrl !== "string" || rawUrl.length > 16_384) throw new TypeError("pairing URL is invalid");
   let parsed: URL;
   try {
@@ -436,7 +654,60 @@ function parsePairingUrl(rawUrl: string): URL {
   if (parsed.protocol !== "https:") throw new TypeError("pairing URL must use HTTPS");
   if (parsed.username || parsed.password || parsed.search) throw new TypeError("pairing URL contains credentials or query data");
   if (parsed.hash.length < 2 || parsed.hash.length > 8193) throw new TypeError("pairing URL fragment is invalid");
-  return parsed;
+  let decodedFragment: string;
+  try {
+    decodedFragment = decodeURIComponent(parsed.hash.slice(1));
+  } catch {
+    throw new TypeError("pairing URL fragment is invalid");
+  }
+  if (hasControlCharacter(decodedFragment)) throw new TypeError("pairing URL fragment is invalid");
+  return Object.freeze({ origin: parsed.origin, path: parsed.pathname, fragmentLength: parsed.hash.length - 1 });
+}
+
+function windowSelectionOptions(
+  request: Pick<WorkspaceAdoptionRequest, "currentWindowId" | "rebindCurrent" | "createWindowId">,
+): {
+  readonly currentWindowId?: string;
+  readonly rebindCurrent?: boolean;
+  readonly createWindowId?: () => string;
+} {
+  return {
+    ...(request.currentWindowId === undefined ? {} : { currentWindowId: request.currentWindowId }),
+    ...(request.rebindCurrent === true ? { rebindCurrent: true } : {}),
+    ...(request.createWindowId === undefined ? {} : { createWindowId: request.createWindowId }),
+  };
+}
+
+function workspaceCommandOptions(
+  request: Pick<WorkspaceAdoptionRequest, "commandId" | "expectedRevision" | "deadlineMs" | "signal">,
+): WorkspaceCommandOptions {
+  return {
+    ...(request.commandId === undefined ? {} : { commandId: request.commandId }),
+    ...(request.expectedRevision === undefined ? {} : { expectedRevision: request.expectedRevision }),
+    ...(request.deadlineMs === undefined ? {} : { deadlineMs: request.deadlineMs }),
+    ...(request.signal === undefined ? {} : { signal: request.signal }),
+  };
+}
+
+function restoreFailedWindowSelection(
+  windows: WindowViewRegistry,
+  selection: WindowSelection,
+  previousBinding: WorkspaceViewBinding | undefined,
+): void {
+  if (selection.action !== "open") return;
+  windows.unbind(selection.binding.windowId);
+  if (previousBinding !== undefined) windows.bind(previousBinding);
+}
+
+function rollbackWorkspaceViewCommandId(viewId: ProtocolId): ProtocolId {
+  return `rollback-${viewId}`.slice(0, 128);
+}
+
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code < 0x20 || code === 0x7f;
+  });
 }
 
 function localTransportContext(readiness: LocalServerReadiness): LocalTransportContext {
@@ -446,6 +717,7 @@ function localTransportContext(readiness: LocalServerReadiness): LocalTransportC
     origin: readiness.origin,
     ...(readiness.endpoint === undefined ? {} : { endpoint: readiness.endpoint }),
     ...(readiness.bootstrapCredential === undefined ? {} : { bootstrapCredential: readiness.bootstrapCredential }),
+    ...(readiness.bootstrapCredentialExpiresAt === undefined ? {} : { bootstrapCredentialExpiresAt: readiness.bootstrapCredentialExpiresAt }),
     ...(readiness.credentialDigest === undefined ? {} : { credentialDigest: readiness.credentialDigest }),
   });
 }

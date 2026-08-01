@@ -210,6 +210,42 @@ test("GitService removes only a revalidated clean non-main worktree", async () =
   }
 });
 
+test("GitService moves only a clean reviewed worktree to a safe sibling name", async () => {
+  const { GitService, GitServiceError } = await import("../dist/gitService/index.js");
+  const root = await mkdtemp(join(tmpdir(), "terminay-server-git-move-"));
+  const feature = join(root, "feature");
+  try {
+    await git(["init", "-b", "main"], root);
+    await git(["config", "user.email", "test@example.invalid"], root);
+    await git(["config", "user.name", "Terminay Test"], root);
+    await writeFile(join(root, "file.txt"), "base\n");
+    await git(["add", "file.txt"], root);
+    await git(["commit", "-m", "initial"], root);
+    await git(["worktree", "add", feature, "-b", "feature"], root);
+    const service = new GitService();
+    const binding = await service.bindProject("project", root);
+    const listing = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    const selected = listing.worktrees.find((worktree) => worktree.path.endsWith("/feature"));
+    assert.ok(selected);
+    await assert.rejects(() => service.moveWorktree({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: selected.id, name: "../escape" }), (error) => error instanceof GitServiceError);
+    await mkdir(join(root, "occupied"));
+    await assert.rejects(() => service.moveWorktree({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: selected.id, name: "occupied" }), (error) => error instanceof GitServiceError && /already exists/u.test(error.message));
+    await writeFile(join(feature, "dirty.txt"), "dirty\n");
+    await assert.rejects(() => service.moveWorktree({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: selected.id, name: "renamed" }), (error) => error instanceof GitServiceError && error.code === "worktree-dirty");
+    await git(["clean", "-fd"], feature);
+    const moved = await service.moveWorktree({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: selected.id, name: "renamed", expectedHead: selected.head });
+    assert.equal(moved.applied, true);
+    assert.equal(moved.state, "moved");
+    assert.equal(moved.path.endsWith("/renamed"), true);
+    assert.notEqual(moved.worktreeId, selected.id);
+    const after = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    assert.equal(after.worktrees.some((worktree) => worktree.id === selected.id), false);
+    assert.equal(after.worktrees.some((worktree) => worktree.id === moved.worktreeId), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function git(args, cwd) {
   await execFileAsync("git", args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
 }

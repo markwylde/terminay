@@ -242,6 +242,9 @@ export interface RecordingRevealResult {
 
 export interface RecordingAdapterOptions {
   readonly serverId: string;
+  /** Resolve the canonical terminal owner before starting capture. A supplied
+   * resolver fails closed for unknown or cross-project session ids. */
+  readonly resolveSessionProject?: (sessionId: string) => string | undefined;
   /** Optional project ACL. A missing callback means server-wide authorization. */
   readonly authorizeProject?: (authorization: RecordingAuthorization, projectId: string | null) => boolean;
   /** True only for a client representing the server machine, never from a raw client flag. */

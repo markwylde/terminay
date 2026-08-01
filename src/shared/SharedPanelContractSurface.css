@@ -1,0 +1,67 @@
+.shared-panel-contract {
+	box-sizing: border-box;
+	min-width: 0;
+	border: 1px solid #253342;
+	border-radius: 12px;
+	background: #101924;
+	padding: 16px;
+	color: #e8eef8;
+}
+
+.shared-panel-contract h2 {
+	margin: 0;
+	font-size: 1rem;
+}
+
+.shared-panel-contract p {
+	margin: 8px 0 0;
+	color: #a9b8ca;
+}
+
+.shared-panel-contract__detail,
+.shared-panel-contract__status {
+	font-size: .875rem;
+}
+
+.shared-panel-contract__output-region {
+	box-sizing: border-box;
+	min-height: 1px;
+	min-width: 0;
+}
+
+.shared-panel-contract__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 14px;
+}
+
+.shared-panel-contract__action {
+	box-sizing: border-box;
+	border: 1px solid #2f5c70;
+	border-radius: 8px;
+	background: #132436;
+	color: #e8eef8;
+	padding: 8px 12px;
+}
+
+.shared-panel-contract__list {
+	display: grid;
+	gap: 8px;
+	margin: 14px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.shared-panel-contract__list li {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.shared-panel-contract--narrow .shared-panel-contract__actions {
+	align-items: stretch;
+	flex-direction: column;
+}

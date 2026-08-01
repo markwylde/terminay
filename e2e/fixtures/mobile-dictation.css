@@ -1,0 +1,4 @@
+body { margin: 0; font-family: system-ui, sans-serif; }
+.mobile-dictation { box-sizing: border-box; max-width: 100%; padding: 16px; }
+.mobile-dictation__actions { display: grid; gap: 12px; }
+.mobile-dictation button { min-height: 44px; min-width: 44px; width: 100%; }

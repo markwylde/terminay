@@ -23,6 +23,23 @@ test("profile import rejects credentials, fragments, and token-like fields", () 
   assert.throws(() => store.import({ id: "bad", serverId: "srv", label: "Bad", origin: "https://example.test", reconnectGrant: "secret" }), /origin|credential|invalid/);
 });
 
+test("profile import fails closed on legacy authority-shaped metadata", () => {
+  const store = new ConnectionProfileStore({ local: false });
+  const profile = {
+    id: "remote-a",
+    serverId: "server-a",
+    label: "Remote A",
+    origin: "https://remote-a.example.test",
+  };
+  assert.deepEqual(store.import(profile), {
+    ...profile,
+    status: "offline",
+    createdAt: store.get("remote-a").createdAt,
+  });
+  for (const field of ["workspaceSnapshot", "terminalSessions", "trustedDevice", "serverCapabilities", "layout"])
+    assert.throws(() => store.import({ ...profile, id: `bad-${field}`, [field]: {} }), /unsupported compatibility data/);
+});
+
 test("forget requires explicit confirmation and never revokes server access implicitly", () => {
   const store = new ConnectionProfileStore();
   store.remember({ id: "home", serverId: "srv-home", label: "Home", origin: "https://home.example.test" });

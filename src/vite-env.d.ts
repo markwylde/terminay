@@ -18,12 +18,17 @@ declare global {
 					id: string;
 					isLocal?: boolean;
 					label: string;
+					origin: string;
+					serverId: string;
 					selected: boolean;
 					status: string;
 				}>;
 			}>;
 			open(url: string, pairingPin?: string): Promise<void>;
 			select(profileId: string): Promise<void>;
+			rename(profileId: string, label: string): Promise<void>;
+			forget(profileId: string): Promise<void>;
+			revoke(profileId: string): Promise<void>;
 		};
 		/** Bounded Desktop remote-access service control and status boundary. */
 		terminayRemoteAccessStatusHost: {
@@ -123,26 +128,6 @@ declare global {
 			open(
 				draft: import('./types/terminay').TerminalEditWindowDraft,
 			): Promise<import('./types/terminay').TerminalEditWindowResult | null>;
-		};
-		terminayGitWorktreeHost?: {
-			readonly version: 1;
-			getStatuses(
-				path: string,
-			): Promise<import('./types/terminay').FileExplorerGitStatuses>;
-			getWorktrees(
-				path: string,
-			): Promise<import('./types/terminay').WorktreePanelStatus>;
-			move(request: {
-				repoPath: string;
-				worktreePath: string;
-				newPath: string;
-			}): Promise<void>;
-			remove(request: {
-				force?: boolean;
-				repoPath: string;
-				worktreePath: string;
-			}): Promise<void>;
-			pull(path: string): Promise<void>;
 		};
 		/** Native microphone, credential-store, and transcription capability. */
 		terminayDictationHost?: {

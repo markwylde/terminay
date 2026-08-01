@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { terminayFileGateway } from '../../../services/fileViewer'
 import { useResizeObserver } from '../../../hooks/useResizeObserver'
 import type { FileViewerSparseFileEdit } from '../../../types/terminay'
 import { getProjectedSize, readProjectedRange } from '../../../services/fileViewer/sparseProjection'
@@ -10,12 +9,15 @@ type HexViewerProps = {
   fileSize: number
   onChangeByte: (offset: number, value: number, originalValue: number) => void
   onValidationChange: (isValid: boolean) => void
+  readFileBytes: (offset: number, length: number) => Promise<string>
   sparseEdits?: readonly FileViewerSparseFileEdit[]
 }
 
 const ROW_HEIGHT = 34
 const MIN_BYTES_PER_ROW = 4
 const MAX_BYTES_PER_ROW = 32
+const RANGE_READ_ATTEMPTS = 3
+const RANGE_READ_RETRY_MS = 75
 type BytesPerRowPreference = 'auto' | 8 | 16 | 32
 
 function toHex(value: number): string {
@@ -41,6 +43,7 @@ export function HexViewer({
   onChangeByte,
   onValidationChange,
   sparseEdits,
+  readFileBytes,
 }: HexViewerProps) {
   const [viewportElement, setViewportElement] = useState<HTMLDivElement | null>(null)
   const viewportRef = useCallback((element: HTMLDivElement | null) => {
@@ -60,6 +63,8 @@ export function HexViewer({
   const invalidOffsetsRef = useRef<Set<number>>(new Set())
   const previousPageLayoutKeyRef = useRef<string | null>(null)
   const previousFilePathRef = useRef<string | null>(null)
+  const readFileBytesRef = useRef(readFileBytes)
+  readFileBytesRef.current = readFileBytes
   const automaticBytesPerRow = useMemo(() => {
     const availableWidth = Math.max(0, viewportWidth - 142) // 110px offset + 2 * 16px gaps
     const hexPaneWidth = availableWidth * 0.75
@@ -199,6 +204,26 @@ export function HexViewer({
       return
     }
 
+    const readOriginal = async (offset: number, length: number) => {
+      let lastError: unknown
+      for (let attempt = 0; attempt < RANGE_READ_ATTEMPTS; attempt += 1) {
+        if (cancelled) {
+          throw new DOMException('HEX range read cancelled', 'AbortError')
+        }
+        try {
+          return decodeBase64(await readFileBytesRef.current(offset, length))
+        } catch (error) {
+          lastError = error
+          if (attempt + 1 < RANGE_READ_ATTEMPTS) {
+            await new Promise<void>((resolve) => {
+              window.setTimeout(resolve, RANGE_READ_RETRY_MS * (attempt + 1))
+            })
+          }
+        }
+      }
+      throw lastError
+    }
+
     void Promise.all(
       missingPageOffsets.map(async (offset) => {
         const length = Math.min(pageSize, Math.max(0, effectiveFileSize - offset))
@@ -208,22 +233,9 @@ export function HexViewer({
               sparseEdits,
               offset,
               length,
-              async (originalOffset, originalLength) => {
-                const response = await terminayFileGateway.readFileBytes(filePath, {
-                  length: originalLength,
-                  offset: originalOffset,
-                })
-                return decodeBase64(response.base64)
-              },
+              readOriginal,
             )
-          : decodeBase64(
-              (
-                await terminayFileGateway.readFileBytes(filePath, {
-                  length,
-                  offset,
-                })
-              ).base64,
-            )
+          : await readOriginal(offset, length)
         return {
           bytes,
           offset,
@@ -325,6 +337,11 @@ export function HexViewer({
           </label>
         </span>
       </div>
+      {selectionStart !== null && selectionEnd !== null ? (
+        <div className="file-hex-viewer__selection">
+          Selected {selectionEnd - selectionStart + 1} bytes
+        </div>
+      ) : null}
       {loadError ? <div className="file-preview-unsupported">Unable to load HEX data: {loadError}</div> : null}
       <div
         ref={viewportRef}

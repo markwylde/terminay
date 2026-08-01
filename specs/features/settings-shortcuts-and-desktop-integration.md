@@ -23,8 +23,13 @@ configurable keyboard accelerators.
 - The Command Bar searches built-in commands and saved macros. Built-ins honour
   the active panel/project requirement and display user-configured shortcuts.
 - Terminay opens dedicated native windows for settings, macros, recordings, and
-  tab/project editing. Native menus, macOS/Linux integration, external links,
-  reveal actions, and application lifecycle are coordinated by Electron.
+  tab/project editing on Desktop. Browser hosts present the same settings,
+  macros, recordings, and edit-tab routes in-page with modal or route
+  semantics appropriate to the viewport.
+- Native menus, macOS/Linux integration, external links, reveal actions, and
+  application lifecycle are coordinated by Electron. Browser hosts provide a
+  visible in-page menu bar for File, Edit, View, and Help so shared commands
+  remain discoverable without native application menus.
 - The app periodically checks the GitHub release endpoint and surfaces available
   updates without downloading or installing software implicitly.
 
@@ -69,5 +74,8 @@ forwarding paths, provider messages, or plaintext.
 - Keyboard accelerators reject reserved/invalid combinations and do not conflict
   with text entry unexpectedly.
 - Desktop actions preserve window/project/session boundaries.
+- Web menu actions and tab/project double-click editing open the in-page
+  settings, macros, recordings, or edit-tab route instead of no-oping when
+  native windows are unavailable.
 - Server setting changes are revisioned and reach every authorized connected
   client without exposing secret values.

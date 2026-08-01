@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -195,11 +195,23 @@ test('sidebar filters by project, nests subagents, and keeps unread separate fro
 	assert.doesNotMatch(markup, /agent-status-indicator--attention/);
 	assert.ok(markup.indexOf('Lead agent') < markup.indexOf('Researcher'));
 	assert.match(markup, /Collapse 1 subagent for Lead agent/);
+	assert.match(
+		markup,
+		/aria-controls="agents-sidebar-subagents-root-entry"[\s\S]*id="agents-sidebar-subagents-root-entry"/u,
+	);
 	assert.match(markup, /Research the implementation/);
 	assert.match(markup, /Terminal 7 · Codex · gpt-5/);
 	assert.doesNotMatch(
 		markup,
 		/aria-label="Focus Researcher terminal"(?:(?!<\/button>).)*agents-sidebar__metadata/s,
+	);
+});
+
+test('sidebar disables its row and disclosure animation when reduced motion is requested', async () => {
+	const stylesheet = await readFile('src/components/AgentsSidebar.css', 'utf8');
+	assert.match(
+		stylesheet,
+		/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.agents-sidebar__row,[\s\S]*\.agents-sidebar__disclosure-chevron \{[\s\S]*transition: none;/u,
 	);
 });
 

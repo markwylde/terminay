@@ -39,6 +39,15 @@ class FakeChannel {
 	}
 }
 
+class CloseDuringStateRegistrationChannel extends FakeChannel {
+	onStateChange(listener) {
+		const remove = super.onStateChange(listener);
+		this.readyState = 'closed';
+		listener('closed');
+		return remove;
+	}
+}
+
 function fixture({ maxFrameBytes = 4, maxBufferedBytes = 8 } = {}) {
 	let now = 100;
 	const manager = new RemoteConnectionManager({
@@ -178,6 +187,23 @@ test('headless factory rejects unavailable runtimes, cross-origin proofs, and ma
 	assert.equal(malformedManager.snapshot().peers.length, 0);
 });
 
+test('a channel closed while session lifecycle listeners register is never published', async () => {
+	const fixtureValue = fixture();
+	const terminal = new CloseDuringStateRegistrationChannel('terminal');
+	fixtureValue.channels.set('terminal', terminal);
+
+	await assert.rejects(
+		fixtureValue.factory.connect('custom', fixtureValue.proof),
+		/session listener registration/,
+	);
+	assert.equal(fixtureValue.manager.snapshot().peers.length, 0);
+	assert.equal(fixtureValue.factory.snapshot().length, 0);
+	assert.equal(terminal.readyState, 'closed');
+	for (const channel of fixtureValue.channels.values()) {
+		assert.equal(channel.readyState, 'closed');
+	}
+});
+
 test('closing one headless session tears down all channels and the admitted peer', async () => {
 	const fixtureValue = fixture();
 	const session = await fixtureValue.factory.connect(
@@ -201,4 +227,58 @@ test('device revocation fences an admitted headless session before another send'
 	assert.throws(() => session.send('control', new Uint8Array([1])), /closed/);
 	assert.equal(session.state, 'closed');
 	assert.equal(fixtureValue.channels.get('control').readyState, 'closed');
+});
+
+test('device revocation aborts an in-flight headless negotiation before it can publish a session', async () => {
+	const fixtureValue = fixture();
+	let resolveConnect;
+	const pendingChannels = new Promise((resolve) => {
+		resolveConnect = resolve;
+	});
+	const factory = new RemoteHeadlessWebRtcFactory({
+		manager: fixtureValue.manager,
+		runtimes: [{ runtime: 'custom', connect: async () => pendingChannels }],
+	});
+
+	const pending = factory.connect('custom', fixtureValue.proof);
+	await Promise.resolve();
+	assert.equal(await factory.revokeDevice('device-1'), 1);
+	assert.deepEqual(
+		fixtureValue.manager.snapshot().peers,
+		[],
+		'revocation immediately releases an admitted negotiation even if its runtime never observes abort',
+	);
+	resolveConnect(fixtureValue.channels);
+
+	await assert.rejects(pending, /aborted/);
+	assert.equal(factory.snapshot().length, 0);
+	assert.equal(fixtureValue.manager.snapshot().peers.length, 0);
+	for (const channel of fixtureValue.channels.values()) {
+		assert.equal(channel.readyState, 'closed');
+	}
+});
+
+test('caller cancellation releases an admitted headless negotiation and closes late channels', async () => {
+	const fixtureValue = fixture();
+	let resolveConnect;
+	const pendingChannels = new Promise((resolve) => {
+		resolveConnect = resolve;
+	});
+	const factory = new RemoteHeadlessWebRtcFactory({
+		manager: fixtureValue.manager,
+		runtimes: [{ runtime: 'custom', connect: async () => pendingChannels }],
+	});
+	const controller = new AbortController();
+	const pending = factory.connect('custom', fixtureValue.proof, controller.signal);
+	await Promise.resolve();
+
+	controller.abort();
+	resolveConnect(fixtureValue.channels);
+
+	await assert.rejects(pending, /aborted/);
+	assert.equal(factory.snapshot().length, 0);
+	assert.equal(fixtureValue.manager.snapshot().peers.length, 0);
+	for (const channel of fixtureValue.channels.values()) {
+		assert.equal(channel.readyState, 'closed');
+	}
 });
