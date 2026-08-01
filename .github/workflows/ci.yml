@@ -128,6 +128,7 @@ jobs:
         run: |
           apt-get update
           apt-get install --yes --no-install-recommends ca-certificates git
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Check out code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

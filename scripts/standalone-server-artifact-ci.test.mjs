@@ -14,6 +14,7 @@ test('CI constructs the isolated standalone server archive twice on each support
 		workflow.indexOf('\n  smoke:', workflow.indexOf('  standalone-server-artifact:')),
 	);
 	assert.match(artifactJob, /Prepare versioned checkout[\s\S]*apt-get install --yes --no-install-recommends ca-certificates git/u);
+	assert.match(artifactJob, /git config --global --add safe\.directory "\$GITHUB_WORKSPACE"/u);
 	assert.ok(
 		artifactJob.indexOf('Prepare versioned checkout') < artifactJob.indexOf('Check out code'),
 		'the slim release container must install git before actions/checkout so native evidence has repository provenance',
