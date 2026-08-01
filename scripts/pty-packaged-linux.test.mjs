@@ -106,7 +106,7 @@ test(
 			const initialHostPids = new Set(await findPtyHostPids(mainPid));
 			const interactiveId = await mainWindow.evaluate(
 				async () =>
-					(await window.terminay.createTerminal({ cwd: '/tmp' })).id,
+					(await window.terminayTest.createServerTerminal({ cwd: '/tmp' })).id,
 			);
 			const interactiveHost = await waitForNewHost(mainPid, initialHostPids);
 			assert.ok(
@@ -130,7 +130,7 @@ test(
 					sessionId,
 					180,
 				);
-				window.terminay.writeTerminal(
+				window.terminayTest.writeServerTerminal(
 					sessionId,
 					"printf 'PACKAGED_QUIET:start\\n'; sleep 0.12; printf 'PACKAGED_QUIET:end\\n'\r",
 				);
@@ -182,7 +182,7 @@ test(
 							resolveProof({ activities, exit: message, output });
 						});
 						window.terminay.resizeTerminal(sessionId, 99, 33);
-						window.terminay.writeTerminal(
+						window.terminayTest.writeServerTerminal(
 							sessionId,
 							'printf \'PACKAGED_CWD:%s\\n\' "$PWD"; ' +
 								"printf 'PACKAGED_UTF8:✓-雪\\n'; " +
@@ -219,7 +219,7 @@ test(
 			const beforeSignalPids = new Set(await findPtyHostPids(mainPid));
 			const signalId = await mainWindow.evaluate(
 				async () =>
-					(await window.terminay.createTerminal({ cwd: '/tmp' })).id,
+					(await window.terminayTest.createServerTerminal({ cwd: '/tmp' })).id,
 			);
 			const signalHost = await waitForNewHost(mainPid, beforeSignalPids);
 			await waitForPackagedShell(mainWindow, signalId);
@@ -240,7 +240,7 @@ test(
 							dispose();
 							resolveExit(message);
 						});
-						window.terminay.writeTerminal(
+						window.terminayTest.writeServerTerminal(
 							sessionId,
 							"exec /bin/sh -c 'kill -TERM $$'\r",
 						);
@@ -256,7 +256,7 @@ test(
 			const beforeCleanupPids = new Set(await findPtyHostPids(mainPid));
 			const cleanupId = await mainWindow.evaluate(
 				async () =>
-					(await window.terminay.createTerminal({ cwd: '/tmp' })).id,
+					(await window.terminayTest.createServerTerminal({ cwd: '/tmp' })).id,
 			);
 			const cleanupHost = await waitForNewHost(mainPid, beforeCleanupPids);
 			await waitForPackagedShell(mainWindow, cleanupId);
@@ -287,7 +287,7 @@ test(
 							dispose();
 							resolvePid(Number.parseInt(match[1], 10));
 						});
-						window.terminay.writeTerminal(
+						window.terminayTest.writeServerTerminal(
 							sessionId,
 							'sleep 30 & child=$!; printf "PACKAGED_TREE:%s\\n" "$child"; wait\r',
 						);
@@ -482,7 +482,7 @@ async function waitForPackagedShell(page, sessionId) {
 					dispose();
 					resolveReady();
 				});
-				window.terminay.writeTerminal(
+				window.terminayTest.writeServerTerminal(
 					nextSessionId,
 					"printf 'PACKAGED_READY\\n'\r",
 				);

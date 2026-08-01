@@ -115,6 +115,10 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 		y: number;
 		worktree: GitWorktreeStatus;
 	} | null>(null);
+	const worktreePathSignature =
+		status?.repoRoot == null
+			? ''
+			: status.worktrees.map((worktree) => worktree.path).join('\n');
 
 	useEffect(() => {
 		if (!status?.repoRoot) {
@@ -142,7 +146,7 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 			return next;
 		});
 		initializedWorktreesRef.current = currentPaths;
-	}, [status]);
+	}, [status?.repoRoot, worktreePathSignature]);
 
 	const toggleWorktree = (worktreePath: string) => {
 		setCollapsedWorktrees((prev) => {
@@ -445,14 +449,14 @@ function buildWorktreeContextMenuItems(options: {
 			label: 'Copy path',
 			icon: <Copy size={14} />,
 			disabled: unavailable,
-			onClick: () => void window.terminay.writeClipboardText(worktree.path),
+			onClick: () => void window.terminayClipboardHost?.writeText(worktree.path),
 		},
 		{
 			label: 'Copy relative path',
 			icon: <Copy size={14} />,
 			disabled: unavailable,
 			onClick: () =>
-				void window.terminay.writeClipboardText(
+				void window.terminayClipboardHost?.writeText(
 					getPathRelativeToRoot(worktree.path, rootPath),
 				),
 		},

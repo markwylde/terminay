@@ -1,3 +1,4 @@
+import { MAX_FILE_CONTENT_RANGE_BYTES } from "@terminay/protocol";
 import { CanonicalProjectPathResolver } from "./pathResolver.js";
 import type { CanonicalPathAdapter, MaybePromise } from "./types.js";
 
@@ -17,7 +18,7 @@ export interface FileContentStreamOptions {
 }
 
 export type FileContentKind = "text" | "markdown" | "image" | "pdf" | "binary";
-export type FileContentErrorCode = "invalid_path" | "not_file" | "invalid_range" | "range_too_large" | "unsupported_preview" | "preview_too_large" | "concurrency_limit" | "storage_unavailable";
+export type FileContentErrorCode = "invalid_path" | "not_file" | "invalid_range" | "range_too_large" | "invalid_encoding" | "unsupported_preview" | "preview_too_large" | "concurrency_limit" | "storage_unavailable";
 
 export class FileContentError extends Error {
   readonly code: FileContentErrorCode;
@@ -68,7 +69,7 @@ export interface FileContentPreview extends FileContentRange {
   readonly decodedImagePixelLimit: number;
 }
 
-const DEFAULT_MAX_RANGE_BYTES = 1024 * 1024;
+const DEFAULT_MAX_RANGE_BYTES = MAX_FILE_CONTENT_RANGE_BYTES;
 const DEFAULT_MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_TEXT_BYTES = 1024 * 1024;
 const DEFAULT_MAX_HEX_ROWS = 16_384;

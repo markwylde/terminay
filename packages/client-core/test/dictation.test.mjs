@@ -56,6 +56,7 @@ test('dictation binds an immutable target and disclosure to one bounded request'
 	assert.equal(Object.isFrozen(request.target), true);
 	assert.equal(Object.isFrozen(request.disclosure), true);
 	assert.equal(client.snapshot().status, 'ready');
+	assert.equal(client.snapshot().bytes, 0);
 });
 
 test('dictation enforces MIME, byte, duration, and cancellation boundaries', () => {

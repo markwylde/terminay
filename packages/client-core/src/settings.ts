@@ -11,7 +11,12 @@ export const SETTINGS_OPERATIONS = Object.freeze({
 export const SETTINGS_EVENTS = Object.freeze({ changed: "settings.changed" } as const);
 
 export interface SettingsEventTransport extends QueryCommandTransport {
-  subscribe?(event: string, listener: (payload: JsonValue) => void): () => void;
+  /**
+   * Settings are server-owned state.  A transport which cannot surface the
+   * canonical change stream must not leave a renderer quietly displaying a
+   * stale host-side projection as if it were authoritative.
+   */
+  subscribe(event: string, listener: (payload: JsonValue) => void): () => void;
 }
 
 /** Transport-neutral settings facade. Hosts may bridge the event subscription
@@ -33,6 +38,9 @@ export class SettingsClient {
 
   onChanged(listener: (settings: JsonValue) => void): () => void {
     if (typeof listener !== "function") throw new TypeError("settings listener is required");
-    return this.transport.subscribe?.(SETTINGS_EVENTS.changed, listener) ?? (() => undefined);
+    if (typeof this.transport.subscribe !== "function") {
+      throw new Error("settings change subscription is unavailable");
+    }
+    return this.transport.subscribe(SETTINGS_EVENTS.changed, listener);
   }
 }

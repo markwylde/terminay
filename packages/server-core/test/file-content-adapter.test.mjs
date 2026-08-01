@@ -31,7 +31,8 @@ test("content adapter exposes bounded JSON-safe capabilities, ranges, HEX, and p
   assert.equal(capabilities.kind, "markdown");
   assert.equal("bytes" in capabilities, false);
   const range = await adapter.readRange({ authorization: authorization(), path: "README.md", offset: 0, length: 4 });
-  assert.equal(range.bytes, "IyBIZQ==");
+  assert.equal(range.result.bodyLength, 4);
+  assert.deepEqual([...range.body], [...new TextEncoder().encode("# He")]);
   const text = await adapter.readText({ authorization: authorization(), path: "README.md", offset: 0, length: 4 });
   assert.equal(text.text, "# He");
   const hex = await adapter.readHex({ authorization: authorization(), path: "blob.bin", offset: 0, length: 4, bytesPerRow: 2 });
@@ -39,6 +40,8 @@ test("content adapter exposes bounded JSON-safe capabilities, ranges, HEX, and p
   const preview = await adapter.readPreview({ authorization: authorization(), path: "README.md" });
   assert.equal(preview.kind, "markdown");
   assert.equal(typeof preview.bytes, "string");
+  const metadata = await adapter.textMetadata({ authorization: authorization(), path: "README.md" });
+  assert.deepEqual({ path: metadata.path, indexed: metadata.indexedByteLength, lines: metadata.lineCount, complete: metadata.isComplete }, { path: "README.md", indexed: 8, lines: 2, complete: true });
 });
 
 test("content adapter binds operations to authenticated project claims and propagates cancellation", async () => {
@@ -53,6 +56,24 @@ test("content adapter binds operations to authenticated project claims and propa
     context,
   });
   assert.equal(result.text, "# He");
+  const metadata = await operations.queries[FILE_CONTENT_OPERATIONS.textMetadata]({
+    envelope: { type: "query", queryId: "query-text-index", operation: FILE_CONTENT_OPERATIONS.textMetadata, payload: { path: "README.md" } },
+    body: new Uint8Array(), context,
+  });
+  assert.equal(metadata.path, "README.md");
+  const lines = await operations.queries[FILE_CONTENT_OPERATIONS.textLines]({
+    envelope: { type: "query", queryId: "query-text-lines", operation: FILE_CONTENT_OPERATIONS.textLines, payload: { path: "README.md", startLine: 0, lineCount: 2 } },
+    body: new Uint8Array(), context,
+  });
+  assert.deepEqual(lines.lines.map((line) => [line.start, line.end, line.text, line.eol]), [
+    [0, 7, "# Hello", "\n"],
+    [8, 8, "", ""],
+  ]);
+  assert.equal(lines.windowComplete, true);
+  await assert.rejects(() => operations.queries[FILE_CONTENT_OPERATIONS.textMetadata]({
+    envelope: { type: "query", queryId: "query-cross-project", operation: FILE_CONTENT_OPERATIONS.textMetadata, payload: { projectId: "project-b", path: "README.md" } },
+    body: new Uint8Array(), context,
+  }), /authorized project/u);
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(() => operations.queries[FILE_CONTENT_OPERATIONS.readRange]({

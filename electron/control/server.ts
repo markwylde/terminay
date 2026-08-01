@@ -1,18 +1,19 @@
-// ControlServer: bridges the MCP server's local Unix socket to the renderer.
+// ControlServer: bridges the MCP server's local Unix socket to a server-owned
+// control dispatcher. Electron keeps this only as a compatibility socket host.
 //
 // Runs in the Electron main process. The `terminay mcp` subcommand connects to
 // a local Unix domain socket and sends newline-delimited JSON ControlRequests.
 // We validate the per-terminal capability token, resolve the calling terminal's
-// scope, forward the operation to the owning renderer, and write back a
-// ControlResponse. Correlation is by request id, so requests on a single
+// scope, dispatch the operation without a renderer round-trip, and write back
+// a ControlResponse. Correlation is by request id, so requests on a single
 // connection are handled concurrently and may complete out of order.
 
 import { createServer, type Server, type Socket } from 'node:net'
 import { chmod, unlink } from 'node:fs/promises'
 import type { ControlError, ControlOp } from './protocol'
 
-// Wire response shape. We keep `result` as unknown here because the renderer
-// produces the op-specific payload; the socket only needs to serialize it.
+// Wire response shape. We keep `result` as unknown because operation payloads
+// are typed at the server-owned dispatcher boundary.
 type ControlResponseWire =
   | { id: string; ok: true; result: unknown }
   | { id: string; ok: false; error: ControlError }

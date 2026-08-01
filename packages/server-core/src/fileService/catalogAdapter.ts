@@ -1,9 +1,16 @@
 import { scopeAllows } from "../auth.js";
 import type { AuthScope, JsonValue } from "@terminay/protocol";
-import type { CommandRequest, QueryRequest } from "../types.js";
+import type { BinaryQueryHandlerResult, CommandRequest, QueryHandler, QueryRequest } from "../types.js";
 import { FileCatalog, type FileCatalogListOptions, type FileCatalogSearchOptions, type FileCatalogSizeOptions, type FileCatalogPreviewOptions } from "./catalog.js";
 import { FileServiceError } from "./types.js";
 import type { MarkdownTaskAggregationOptions } from "./tasks.js";
+
+const PROTOCOL_TASK_LIMITS = Object.freeze({
+  maxBytes: 16 * 1024 * 1024,
+  maxFiles: 5_000,
+  maxTasks: 10_000,
+  maxTaskLabelLength: 4_096,
+});
 
 /** Server-owned catalog operation names. Payload paths are always project-relative. */
 export const FILE_CATALOG_OPERATIONS = Object.freeze({
@@ -81,9 +88,10 @@ export class ServerFileCatalogAdapter {
     return asJson(await catalog.previewMetadata(requiredPath(request.path), withSignal(request.options, request.signal)));
   }
 
-  async tasks(request: FileCatalogRequest & { readonly options?: MarkdownTaskAggregationOptions }): Promise<JsonValue> {
+  async tasks(request: FileCatalogRequest & { readonly options?: MarkdownTaskAggregationOptions }): Promise<BinaryQueryHandlerResult> {
     const catalog = this.authorizedCatalog(request, "read");
-    return asJson(await catalog.aggregateMarkdownTasks(request.path ?? ".", withSignal(request.options, request.signal)));
+    const { tree: _tree, ...result } = await catalog.aggregateMarkdownTasks(request.path ?? ".", withSignal(compactTaskOptions(request.options), request.signal));
+    return jsonBody(result);
   }
 
   async createFile(request: FileCatalogRequest & { readonly bytes: Uint8Array }): Promise<null> {
@@ -112,7 +120,7 @@ export class ServerFileCatalogAdapter {
     return null;
   }
 
-  operations(): { readonly queries: Readonly<Record<string, (request: QueryRequest) => JsonValue | Promise<JsonValue>>>; readonly commands: Readonly<Record<string, (request: CommandRequest) => JsonValue | Promise<JsonValue>>> } {
+  operations(): { readonly queries: Readonly<Record<string, QueryHandler>>; readonly commands: Readonly<Record<string, (request: CommandRequest) => JsonValue | Promise<JsonValue>>> } {
     return {
       queries: {
         [FILE_CATALOG_OPERATIONS.list]: (request) => this.list(this.listRequest(request)),
@@ -209,6 +217,23 @@ function claimsProject(value: unknown): string | undefined { return typeof value
 function withSignal<T extends object>(options: T | undefined, signal: AbortSignal | undefined): T & { readonly signal?: AbortSignal } {
   return { ...(options ?? {}), ...(signal === undefined ? {} : { signal }) } as T & { readonly signal?: AbortSignal };
 }
+function compactTaskOptions(options: MarkdownTaskAggregationOptions | undefined): MarkdownTaskAggregationOptions {
+  return {
+    ...(options ?? {}),
+    maxBytes: Math.min(positiveOption(options?.maxBytes ?? PROTOCOL_TASK_LIMITS.maxBytes, "maxBytes"), PROTOCOL_TASK_LIMITS.maxBytes),
+    maxFiles: Math.min(positiveOption(options?.maxFiles ?? PROTOCOL_TASK_LIMITS.maxFiles, "maxFiles"), PROTOCOL_TASK_LIMITS.maxFiles),
+    maxTasks: Math.min(positiveOption(options?.maxTasks ?? PROTOCOL_TASK_LIMITS.maxTasks, "maxTasks"), PROTOCOL_TASK_LIMITS.maxTasks),
+    maxTaskLabelLength: Math.min(positiveOption(options?.maxTaskLabelLength ?? PROTOCOL_TASK_LIMITS.maxTaskLabelLength, "maxTaskLabelLength"), PROTOCOL_TASK_LIMITS.maxTaskLabelLength),
+  };
+}
+function positiveOption(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) throw invalidRequest(`${name} is invalid`);
+  return value;
+}
 function invalidRequest(message: string): FileServiceError { return new FileServiceError("invalid_path", message); }
 function asJson(value: unknown): JsonValue { return value as JsonValue; }
+function jsonBody(value: unknown): BinaryQueryHandlerResult {
+  const body = new TextEncoder().encode(JSON.stringify(value));
+  return { result: { contentType: "application/json", bodyLength: body.byteLength }, body };
+}
 function validId(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value); }

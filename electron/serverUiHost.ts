@@ -34,6 +34,8 @@ export type CreateServerUiWindowOptions = {
 	hostPartitionKey: string;
 	initialUrl: string;
 	label: string;
+	profiles?: readonly ServerUiHostContext['profiles'][number][];
+	capabilities?: Partial<ServerUiHostContext['capabilities']>;
 	onHostAction?: ServerUiBinding['onHostAction'];
 	preloadPath: string;
 	profileId: string;
@@ -103,7 +105,11 @@ function normalizeAction(value: unknown): ServerUiHostAction {
 	}
 
 	if (
-		action.type === 'open-connection' &&
+		(action.type === 'open-connection' ||
+			action.type === 'connection.select' ||
+			action.type === 'connection.forget' ||
+			action.type === 'connection.revoke' ||
+			action.type === 'connection.expose') &&
 		keys.length === 2 &&
 		keys[0] === 'profileId' &&
 		keys[1] === 'type' &&
@@ -115,8 +121,81 @@ function normalizeAction(value: unknown): ServerUiHostAction {
 			type: action.type,
 		});
 	}
+	if (
+		action.type === 'connection.rename' &&
+		keys.join(',') === 'label,profileId,type' &&
+		typeof action.profileId === 'string' &&
+		PROFILE_ID_PATTERN.test(action.profileId) &&
+		typeof action.label === 'string' &&
+		action.label.trim().length > 0 &&
+		action.label.length <= 128
+	)
+		return Object.freeze({
+			type: action.type,
+			profileId: action.profileId,
+			label: action.label.trim(),
+		});
+	if (
+		action.type === 'connection.pair' &&
+		keys.join(',') === 'pairingUrl,type' &&
+		typeof action.pairingUrl === 'string' &&
+		action.pairingUrl.length <= 16_384
+	) {
+		const pairing = new URL(action.pairingUrl);
+		if (
+			pairing.protocol !== 'https:' ||
+			pairing.username ||
+			pairing.password ||
+			pairing.search ||
+			pairing.hash.length < 2
+		)
+			throw new Error('The pairing URL is invalid.');
+		return Object.freeze({ type: action.type, pairingUrl: action.pairingUrl });
+	}
+	if (
+		action.type === 'connection.remember' &&
+		keys.join(',') === 'profile,type'
+	) {
+		return Object.freeze({
+			type: action.type,
+			profile: normalizeConnectionProfile(action.profile),
+		});
+	}
 
 	throw new Error('That host action is not allowed.');
+}
+
+function normalizeConnectionProfile(
+	value: unknown,
+): ServerUiHostContext['profiles'][number] {
+	if (!value || typeof value !== 'object' || Array.isArray(value))
+		throw new Error('The connection profile is invalid.');
+	const profile = value as Record<string, unknown>;
+	const id = String(profile.id ?? '');
+	const serverId = String(profile.serverId ?? '');
+	if (!PROFILE_ID_PATTERN.test(id) || !PROFILE_ID_PATTERN.test(serverId))
+		throw new Error('The connection profile identity is invalid.');
+	const label = String(profile.label ?? '').trim();
+	if (!label || label.length > 128)
+		throw new Error('The connection profile label is invalid.');
+	const origin = parseOrigin(
+		String(profile.origin ?? ''),
+		'The connection profile origin',
+	);
+	if (
+		!['connected', 'connecting', 'offline', 'revoked', 'unreachable'].includes(
+			String(profile.status),
+		)
+	)
+		throw new Error('The connection profile status is invalid.');
+	return Object.freeze({
+		id,
+		serverId,
+		label,
+		origin,
+		status: profile.status as ServerUiHostContext['profiles'][number]['status'],
+		...(profile.isLocal === true ? { isLocal: true } : {}),
+	});
 }
 
 function bindingForEvent(event: IpcMainInvokeEvent): ServerUiBinding {
@@ -154,6 +233,33 @@ function installIpcHandlers(): void {
 		async (event, value: unknown) => {
 			const binding = bindingForEvent(event);
 			const action = normalizeAction(value);
+			if (
+				action.type.startsWith('connection.') &&
+				binding.context.capabilities.connectionProfiles !== true
+			) {
+				throw new Error('Connection profile management is unavailable.');
+			}
+			if (
+				action.type === 'connection.expose' &&
+				binding.context.capabilities.serverExposure !== true
+			) {
+				throw new Error('Server exposure is unavailable.');
+			}
+			if ('profileId' in action && action.type.startsWith('connection.')) {
+				const profile = binding.context.profiles.find(
+					(candidate) => candidate.id === action.profileId,
+				);
+				if (profile === undefined)
+					throw new Error(
+						'The connection profile is outside this host context.',
+					);
+				if (
+					action.type === 'connection.expose' &&
+					profile.id !== binding.context.profile.id
+				) {
+					throw new Error('Only the current connection can be exposed.');
+				}
+			}
 			await binding.onHostAction?.(action, binding.context);
 		},
 	);
@@ -214,7 +320,14 @@ export function createServerUiWindow(
 
 	const context: ServerUiHostContext = Object.freeze({
 		hostKind: 'desktop',
+		capabilities: Object.freeze({
+			connectionProfiles: options.capabilities?.connectionProfiles === true,
+			serverExposure: options.capabilities?.serverExposure === true,
+		}),
 		profile: normalizeProfile(options.profileId, options.label),
+		profiles: Object.freeze(
+			(options.profiles ?? []).map(normalizeConnectionProfile),
+		),
 	});
 	const windowOptions: BrowserWindowConstructorOptions = {
 		height: options.height ?? 900,

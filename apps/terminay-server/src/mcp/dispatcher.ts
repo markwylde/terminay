@@ -363,11 +363,22 @@ function parseSplitTerminal(value: Record<string, unknown>): ParseResult<SplitTe
 function parseWaitForIdle(value: Record<string, unknown>, maxWaitSeconds: number): ParseResult<WaitForIdleParams> {
   const terminal = parseTerminalOnly(value);
   if (isControlFailure(terminal)) return terminal;
-  const seconds = requiredPositive(value.seconds, "seconds", maxWaitSeconds);
+  // A zero-duration idle wait is meaningful: it asks whether the canonical
+  // terminal is idle now, without adding an artificial delay.  The MCP stdio
+  // schema advertises zero as valid, so the server dispatcher must accept the
+  // same bounded contract rather than rejecting the request after validation.
+  const seconds = requiredNonNegative(value.seconds, "seconds", maxWaitSeconds);
   if (isControlFailure(seconds)) return seconds;
   const timeout = optionalPositive(value.timeout, "timeout", maxWaitSeconds);
   if (isControlFailure(timeout)) return timeout;
   return { ...terminal, seconds, ...(timeout === undefined ? {} : { timeout }) };
+}
+
+function requiredNonNegative(value: unknown, name: string, maximum: number): number | ControlFailure {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > maximum) {
+    return badRequest(`${name} must be a finite number between 0 and ${maximum}`);
+  }
+  return value;
 }
 
 function parseWait(value: Record<string, unknown>, maxWaitSeconds: number): ParseResult<WaitParams> {

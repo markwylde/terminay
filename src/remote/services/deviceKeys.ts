@@ -185,6 +185,32 @@ export async function savePairing(pairing: PairingRecord): Promise<void> {
   }
 }
 
+/** Store a device registration and its reconnect material in one IndexedDB
+ * transaction. Re-pairing removes old reconnect material when none is issued. */
+export async function saveEstablishedPairing(pairing: PairingRecord, issued?: IssuedReconnectGrant): Promise<void> {
+  if (issued !== undefined && issued.origin !== pairing.origin) throw new Error('Reconnect grant belongs to another origin.')
+  const reconnectKeys = issued === undefined ? undefined : await createReconnectKeys(issued.grant)
+  const database = await openDatabase()
+  try {
+    const transaction = database.transaction([PAIRINGS_STORE, RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
+    const complete = transactionComplete(transaction)
+    const requests: Promise<unknown>[] = [
+      transactionRequest(transaction.objectStore(PAIRINGS_STORE).put({ deviceId: pairing.deviceId, deviceName: pairing.deviceName, origin: pairing.origin, privateKey: pairing.privateKey, publicKeyPem: pairing.publicKeyPem })),
+    ]
+    if (issued === undefined) {
+      requests.push(transactionRequest(transaction.objectStore(RECONNECT_GRANTS_STORE).delete(pairing.origin)))
+      requests.push(transactionRequest(transaction.objectStore(RECONNECT_HANDLES_STORE).delete(pairing.origin)))
+    } else {
+      const keys = reconnectKeys!
+      requests.push(transactionRequest(transaction.objectStore(RECONNECT_GRANTS_STORE).put({ expiresAt: issued.expiresAt, issuedAt: issued.issuedAt, origin: issued.origin, proofKey: keys.proofKey, signalingKey: keys.signalingKey, protocolVersion: issued.protocolVersion, sessionId: issued.sessionId })))
+      requests.push(transactionRequest(transaction.objectStore(RECONNECT_HANDLES_STORE).put({ handle: issued.handle, origin: issued.origin, sessionId: issued.sessionId })))
+    }
+    await Promise.all([...requests, complete])
+  } finally {
+    database.close()
+  }
+}
+
 export async function loadPairing(origin: string): Promise<PairingRecord | null> {
   const database = await openDatabase()
   const transaction = database.transaction(PAIRINGS_STORE, 'readonly')

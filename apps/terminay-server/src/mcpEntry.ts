@@ -1,4 +1,7 @@
 import { runServerMcpStdio } from "./mcp/stdio.js";
+import { assertStandaloneReleaseIntegrity } from "./releaseIntegrity.js";
+
+await assertStandaloneReleaseIntegrity();
 
 const socketPath = process.env.TERMINAY_CONTROL_SOCKET;
 const token = process.env.TERMINAY_CONTROL_TOKEN ?? "";

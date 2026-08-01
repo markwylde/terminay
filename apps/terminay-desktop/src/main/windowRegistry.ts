@@ -1,4 +1,7 @@
 import type { ProtocolId } from "@terminay/protocol";
+import { normalizeWindowGeometry, type WindowGeometry } from "../presentation.js";
+
+export type { WindowGeometry } from "../presentation.js";
 
 export interface WorkspaceViewBinding {
   readonly windowId: string;
@@ -10,14 +13,6 @@ export interface WorkspaceViewBinding {
 /** Host-local native geometry. It is deliberately not part of the server
  * workspace model and is bounded before it can reach persistence or a native
  * window adapter. */
-export interface WindowGeometry {
-  readonly x?: number;
-  readonly y?: number;
-  readonly width: number;
-  readonly height: number;
-  readonly maximized?: boolean;
-}
-
 export interface WindowViewStorage {
   load(): readonly unknown[] | Promise<readonly unknown[]>;
   save(bindings: readonly WorkspaceViewBinding[]): void | Promise<void>;
@@ -34,28 +29,6 @@ function assertId(value: string, name: string): void {
   if (!WINDOW_ID_PATTERN.test(value)) throw new TypeError(`${name} is invalid`);
 }
 
-function normalizeGeometry(value: unknown): WindowGeometry {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError("window geometry is invalid");
-  const input = value as Record<string, unknown>;
-  const allowed = new Set(["x", "y", "width", "height", "maximized"]);
-  for (const key of Object.keys(input)) if (!allowed.has(key)) throw new TypeError(`window geometry field is not allowed: ${key}`);
-  const coordinate = (candidate: unknown, name: string): number | undefined => {
-    if (candidate === undefined) return undefined;
-    if (!Number.isSafeInteger(candidate) || (candidate as number) < -100_000 || (candidate as number) > 100_000) throw new TypeError(`${name} is invalid`);
-    return candidate as number;
-  };
-  const dimension = (candidate: unknown, name: string): number => {
-    if (!Number.isSafeInteger(candidate) || (candidate as number) < 1 || (candidate as number) > 10_000) throw new TypeError(`${name} is invalid`);
-    return candidate as number;
-  };
-  const x = coordinate(input.x, "window x");
-  const y = coordinate(input.y, "window y");
-  const width = dimension(input.width, "window width");
-  const height = dimension(input.height, "window height");
-  if (input.maximized !== undefined && typeof input.maximized !== "boolean") throw new TypeError("window maximized flag is invalid");
-  return Object.freeze({ ...(x === undefined ? {} : { x }), ...(y === undefined ? {} : { y }), width, height, ...(input.maximized === undefined ? {} : { maximized: input.maximized }) });
-}
-
 function normalizeBinding(value: unknown): WorkspaceViewBinding {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("window binding is required");
   const input = value as Record<string, unknown>;
@@ -69,7 +42,7 @@ function normalizeBinding(value: unknown): WorkspaceViewBinding {
     if (typeof input.workspaceViewId !== "string") throw new TypeError("workspace view id is invalid");
     assertId(input.workspaceViewId, "workspace view id");
   }
-  const geometry = input.geometry === undefined ? undefined : normalizeGeometry(input.geometry);
+  const geometry = input.geometry === undefined ? undefined : normalizeWindowGeometry(input.geometry);
   return Object.freeze({
     windowId: input.windowId,
     connectionId: input.connectionId,

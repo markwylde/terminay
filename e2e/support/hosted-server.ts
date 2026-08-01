@@ -14,6 +14,27 @@ type HostedServer = {
   stop: () => Promise<void>
 }
 
+const HOSTED_E2E_POSTGRES_LABEL = 'com.terminay.e2e-hosted-pairing=true'
+
+async function removeHostedE2ePostgres(containerName: string): Promise<void> {
+  await execFileAsync('docker', ['rm', '--force', containerName]).catch(() => undefined)
+}
+
+/**
+ * A timed-out Playwright worker cannot run its normal finally block. Reap only
+ * containers that this harness explicitly labelled, never arbitrary local
+ * PostgreSQL containers.
+ */
+async function removeOrphanedHostedE2ePostgres(): Promise<void> {
+  const { stdout } = await execFileAsync('docker', [
+    'ps', '-aq', '--filter', `label=${HOSTED_E2E_POSTGRES_LABEL}`,
+  ]).catch(() => ({ stdout: '' }))
+  const containerIds = stdout.split(/\s+/u).filter(Boolean)
+  await Promise.all(containerIds.map((containerId) =>
+    execFileAsync('docker', ['rm', '--force', containerId]).catch(() => undefined),
+  ))
+}
+
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -107,38 +128,49 @@ export async function startHostedServer(): Promise<HostedServer> {
   const port = await getFreePort()
   const containerName = `terminay-e2e-postgres-${Date.now()}-${Math.random().toString(16).slice(2)}`
   let serverProcess: ChildProcessWithoutNullStreams | null = null
+  let ownsPostgresContainer = false
   const logs: string[] = []
 
-  await execFileAsync('npm', ['run', 'build:app'], { cwd: repoDir })
-  for (const file of ['index.html', 'main.js', 'protocol.js']) {
-    if (!existsSync(path.join(staticDir, file))) {
-      throw new Error(`Terminay hosted app build did not create app/dist/${file}.`)
-    }
-  }
-
-  if (!externalDatabaseUrl) {
-    await execFileAsync('docker', [
-      'run',
-      '--rm',
-      '--name',
-      containerName,
-      '-e',
-      'POSTGRES_DB=terminay_app',
-      '-e',
-      'POSTGRES_USER=terminay',
-      '-e',
-      'POSTGRES_PASSWORD=terminay',
-      '-p',
-      `127.0.0.1:${pgPort}:5432`,
-      '-d',
-      'postgres:17-alpine',
-    ])
-    await waitForPostgres(containerName)
-  }
-  await waitForHostPort(pgPort)
-  await new Promise((resolve) => setTimeout(resolve, 1_000))
-
   try {
+    await removeOrphanedHostedE2ePostgres()
+    await execFileAsync('npm', ['run', 'build:app'], { cwd: repoDir })
+    for (const file of ['index.html', 'main.js', 'protocol.js']) {
+      if (!existsSync(path.join(staticDir, file))) {
+        throw new Error(`Terminay hosted app build did not create app/dist/${file}.`)
+      }
+    }
+
+    if (!externalDatabaseUrl) {
+      await execFileAsync('docker', [
+        'run',
+        '--rm',
+        '--name',
+        containerName,
+        '--label',
+        HOSTED_E2E_POSTGRES_LABEL,
+        '-e',
+        'POSTGRES_DB=terminay_app',
+        '-e',
+        'POSTGRES_USER=terminay',
+        '-e',
+        'POSTGRES_PASSWORD=terminay',
+        // The hosted-service proof needs a fresh disposable database. Keep its
+        // state off Docker's persistent volume store so this local test neither
+        // retains credentials nor depends on reclaiming unrelated image/volume
+        // cache space.
+        '--tmpfs',
+        '/var/lib/postgresql/data:rw,noexec,nosuid,size=128m',
+        '-p',
+        `127.0.0.1:${pgPort}:5432`,
+        '-d',
+        'postgres:17-alpine',
+      ])
+      ownsPostgresContainer = true
+      await waitForPostgres(containerName)
+    }
+    await waitForHostPort(pgPort)
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+
     serverProcess = spawn(process.execPath, ['server/index.js'], {
       cwd: repoDir,
       env: {
@@ -167,8 +199,8 @@ export async function startHostedServer(): Promise<HostedServer> {
             setTimeout(resolve, 5_000)
           })
         }
-        if (!externalDatabaseUrl) {
-          await execFileAsync('docker', ['rm', '-f', containerName]).catch(() => undefined)
+        if (ownsPostgresContainer) {
+          await removeHostedE2ePostgres(containerName)
         }
       },
     }
@@ -176,8 +208,8 @@ export async function startHostedServer(): Promise<HostedServer> {
     if (serverProcess && serverProcess.exitCode === null) {
       serverProcess.kill('SIGTERM')
     }
-    if (!externalDatabaseUrl) {
-      await execFileAsync('docker', ['rm', '-f', containerName]).catch(() => undefined)
+    if (ownsPostgresContainer) {
+      await removeHostedE2ePostgres(containerName)
     }
     throw error
   }

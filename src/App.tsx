@@ -103,6 +103,10 @@ import { createLegacyAiTabMetadataClient } from './services/ai/legacyAiTabMetada
 import { useOptionalDisconnectedFileCompatibility } from './services/fileViewer/DisconnectedFileCompatibilityProvider';
 import { createLegacyRecordingsClient } from './services/recordings/legacyRecordingsClient';
 import {
+	type AuxiliaryRouteController,
+	createAuxiliaryRouteController,
+} from './shared/auxiliaryRoutes';
+import {
 	adaptServerAgentSnapshot,
 	subscribeServerAgentSnapshots,
 } from './shared/rendererAgentConnection';
@@ -142,7 +146,10 @@ import {
 	type ConnectionSwitcherEntry,
 	RemoteAccessConnectionMenu,
 } from './workspace/RemoteAccessConnectionMenu';
-import { RemoteConnectionModal } from './workspace/RemoteConnectionModal';
+import {
+	type ManagedDesktopConnection,
+	RemoteConnectionModal,
+} from './workspace/RemoteConnectionModal';
 import {
 	buildTerminalActivityOverview,
 	type LegacyTerminalActivityOverviewState,
@@ -386,8 +393,13 @@ type DockPanelTabAppearance = {
 };
 
 type ProjectWorkspaceHandle = {
-	acceptMovedTerminal: (terminal: MovedTerminalTab) => void;
-	acceptServerTerminal: (sessionId: string, title?: string) => void;
+	acceptMovedTerminal: (terminal: MovedTerminalTab) => boolean;
+	acceptServerTerminal: (
+		panelId: string,
+		sessionId: string,
+		title?: string,
+		cwd?: string,
+	) => boolean;
 	activateTerminal: (panelId: string, sessionId: string) => void;
 	executeCommand: (command: AppCommand) => Promise<void>;
 	exportTerminalForMove: (panelId: string) => MovedTerminalTab | null;
@@ -410,6 +422,7 @@ type ProjectWorkspaceHandle = {
 };
 
 type ProjectWorkspaceProps = {
+	auxiliaryRoutes: AuxiliaryRouteController;
 	isActive: boolean;
 	isMac: boolean;
 	macros: MacroDefinition[];
@@ -437,8 +450,6 @@ type ProjectWorkspaceProps = {
 	adoptedTerminals?: MovedTerminalTab[];
 };
 
-const MIN_FILE_EXPLORER_WIDTH = 180;
-const MAX_FILE_EXPLORER_WIDTH = 520;
 const MIN_SIDEBAR_PANE_HEIGHT = 80;
 const DOCKVIEW_SASH_ACTIVITY_DEFER_MS = 300;
 
@@ -1147,6 +1158,7 @@ const ProjectWorkspace = forwardRef<
 	(
 		{
 			agentStatusSnapshot,
+			auxiliaryRoutes,
 			isActive,
 			isMac,
 			macros,
@@ -1184,6 +1196,10 @@ const ProjectWorkspace = forwardRef<
 					terminalClientContext?.serverId,
 					terminalClientContext?.clientId,
 					terminalClientContext?.workspaceSnapshotStore,
+					terminalClientContext?.fileObservationClient,
+					terminalClientContext?.fileViewerClient,
+					terminalClientContext?.gitClient,
+					terminalClientContext?.recordingsClient,
 				],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;
@@ -1219,6 +1235,7 @@ const ProjectWorkspace = forwardRef<
 		const macroSettingsCapability = useLegacyMacroSettingsCapability();
 		const serverFileViewerClient = terminalClientContext?.fileViewerClient;
 		const disconnectedFileViewerClient = useMemo(() => {
+			if (terminalClientContext !== undefined) return undefined;
 			if (serverFileViewerClient !== undefined) return undefined;
 			if (disconnectedFileCompatibility === null) {
 				throw new Error(
@@ -1226,9 +1243,17 @@ const ProjectWorkspace = forwardRef<
 				);
 			}
 			return disconnectedFileCompatibility.filePanel.createClient();
-		}, [disconnectedFileCompatibility, serverFileViewerClient]);
-		const fileViewerClient =
-			serverFileViewerClient ?? disconnectedFileViewerClient!;
+		}, [
+			disconnectedFileCompatibility,
+			serverFileViewerClient,
+			terminalClientContext,
+		]);
+		const fileViewerClient = serverFileViewerClient ?? disconnectedFileViewerClient;
+		if (fileViewerClient === undefined) {
+			throw new Error(
+				'Connected file viewer client is unavailable for this project.',
+			);
+		}
 		const fileClientPath = useCallback(
 			(path: string) =>
 				serverFileViewerClient === undefined
@@ -2071,7 +2096,12 @@ const ProjectWorkspace = forwardRef<
 					} else {
 						hydrateRecordingStateForSession(sessionId);
 					}
-					await terminalPanelClientContext.workspaceSnapshotStore?.refresh();
+					const synchronized = await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
+						(snapshot) => sessionId in snapshot.terminalSessions,
+					);
+					if (synchronized === null) {
+						throw new Error('Server did not publish a terminal panel for the created session.');
+					}
 					const startedAt = performance.now();
 					await new Promise<void>((resolve) => {
 						const activateServerPanel = () => {
@@ -2134,7 +2164,7 @@ const ProjectWorkspace = forwardRef<
 			handleSwitchProjectRootToWorktree,
 			loadingPaths,
 			refreshFileExplorerTree,
-			refreshGitStatuses,
+			refreshGitStatusesForRoot,
 			submitFileExplorerNameDialog,
 			toggleDirectory,
 			worktreePanelStatus,
@@ -2269,16 +2299,16 @@ const ProjectWorkspace = forwardRef<
 
 				const workspaceSnapshotStore =
 					terminalPanelClientContext?.workspaceSnapshotStore;
-				const committedRootFolder =
-					workspaceSnapshotStore === undefined
-						? nextRootFolder
-						: (
-								await workspaceSnapshotStore.setProjectRoot({
-									projectId: project.id,
-									root: nextRootFolder,
-								})
-							).root;
-				onUpdateProject(project.id, { rootFolder: committedRootFolder });
+				if (workspaceSnapshotStore === undefined) {
+					onUpdateProject(project.id, { rootFolder: nextRootFolder });
+					void refreshGitStatusesForRoot(nextRootFolder, true);
+				} else {
+					const committed = await workspaceSnapshotStore.setProjectRoot({
+						projectId: project.id,
+						root: nextRootFolder,
+					});
+					void refreshGitStatusesForRoot(committed.root, true);
+				}
 				setErrorText(null);
 				setIsMacroLauncherOpen(false);
 				setMacroQuery('');
@@ -2291,6 +2321,7 @@ const ProjectWorkspace = forwardRef<
 			getServerTerminalCwd,
 			onUpdateProject,
 			project.id,
+			refreshGitStatusesForRoot,
 			terminalPanelClientContext?.workspaceSnapshotStore,
 		]);
 
@@ -2512,17 +2543,20 @@ const ProjectWorkspace = forwardRef<
 				const sessionId = panel.params?.sessionId ?? null;
 
 				try {
-					const result = await window.terminayTerminalEditHost?.open({
-						activityIndicatorsEnabled: areTerminalActivityIndicatorsEnabled(
-							panel.params,
-						),
-						color: getEffectiveTerminalTabColor(panel.params, project.color),
-						emoji: panel.params?.emoji ?? '',
-						inheritsProjectColor:
-							panel.params?.inheritsProjectColor ??
-							panel.params?.color === project.color,
-						projectColor: project.color,
-						title: panel.title ?? 'Tab',
+					const result = await auxiliaryRoutes.editTerminalTab({
+						kind: 'terminal',
+						draft: {
+							activityIndicatorsEnabled: areTerminalActivityIndicatorsEnabled(
+								panel.params,
+							),
+							color: getEffectiveTerminalTabColor(panel.params, project.color),
+							emoji: panel.params?.emoji ?? '',
+							inheritsProjectColor:
+								panel.params?.inheritsProjectColor ??
+								panel.params?.color === project.color,
+							projectColor: project.color,
+							title: panel.title ?? 'Tab',
+						},
 					});
 					if (!result) {
 						return;
@@ -2571,6 +2605,7 @@ const ProjectWorkspace = forwardRef<
 			},
 			[
 				activateTerminal,
+				auxiliaryRoutes,
 				focusActiveTerminal,
 				project.color,
 				project.id,
@@ -2789,25 +2824,31 @@ const ProjectWorkspace = forwardRef<
 			});
 		}, [onUpdateProject, project.id, project.isFileExplorerOpen]);
 
-			const addTerminal = useTerminalCreationController({
-				apiRef: dockviewApiRef,
-				createSession:
-					terminalPanelClientContext === null
-						? null
-						: async (request) => {
-								const session =
-									await terminalPanelClientContext.client.create(request);
-								await terminalPanelClientContext.workspaceSnapshotStore?.refresh();
-								return session;
-							},
-				getTerminalCwd: getServerTerminalCwd,
-				hydrateRecording: hydrateRecordingStateForSession,
-				onError: setErrorText,
+		const addTerminal = useTerminalCreationController({
+			apiRef: dockviewApiRef,
+			createSession:
+				terminalPanelClientContext === null
+					? null
+					: async (request) => {
+							const session =
+								await terminalPanelClientContext.client.create(request);
+							return session;
+						},
+			getTerminalCwd: getServerTerminalCwd,
+			hydrateRecording: hydrateRecordingStateForSession,
+			onError: setErrorText,
 			projectId: project.id,
 			recordNewTerminals: settings.recording.recordNewTerminals,
 			sendInput: sendTerminalPanelInput,
 			startRecording: startRecordingForSession,
 			suppressInitialActivity: suppressInitialTerminalActivity,
+			waitForCreatedTerminal:
+				terminalPanelClientContext === null
+					? undefined
+					: async (sessionId) =>
+							(await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
+								(snapshot) => sessionId in snapshot.terminalSessions,
+							)) !== null,
 		});
 
 		const runGitPushAgent = useCallback(
@@ -2867,7 +2908,7 @@ const ProjectWorkspace = forwardRef<
 				setErrorText(
 					'Choose a Git Push agent in Settings → AI → Git Push Agent first.',
 				);
-				void window.terminaySettingsWindowHost?.open('git-push-agent');
+				void auxiliaryRoutes.openSettings('git-push-agent');
 			},
 			onLaunchAgent: runGitPushAgent,
 		});
@@ -3047,7 +3088,7 @@ const ProjectWorkspace = forwardRef<
 						isMac,
 					),
 					onSelect: () => {
-						void window.terminayRecordingsHost?.open();
+						void auxiliaryRoutes.openRecordings();
 					},
 				},
 				{
@@ -3166,6 +3207,7 @@ const ProjectWorkspace = forwardRef<
 				.map(({ macro }) => macro);
 		}, [
 			addTerminal,
+			auxiliaryRoutes,
 			clearActiveTerminal,
 			createProject,
 			isMac,
@@ -3211,9 +3253,9 @@ const ProjectWorkspace = forwardRef<
 				saveActiveDockviewPanel({
 					api: dockviewApiRef.current,
 					onError: setErrorText,
-					onSaved: () => void refreshGitStatuses(),
+					onSaved: () => undefined,
 				}),
-			[refreshGitStatuses],
+			[],
 		);
 
 		const popoutActivePanel = useCallback(
@@ -3263,7 +3305,7 @@ const ProjectWorkspace = forwardRef<
 						await startDictation();
 						break;
 					case 'open-recordings':
-						void window.terminayRecordingsHost?.open();
+						await auxiliaryRoutes.openRecordings();
 						break;
 					case 'toggle-file-explorer-sidebar':
 						toggleFileExplorerSidebar();
@@ -3277,6 +3319,7 @@ const ProjectWorkspace = forwardRef<
 			},
 			[
 				addTerminal,
+				auxiliaryRoutes,
 				clearActiveTerminal,
 				closeActivePanel,
 				onAddProject,
@@ -3487,7 +3530,12 @@ const ProjectWorkspace = forwardRef<
 						(panel) => panel.sessionId === session.id,
 					);
 					if (serverPanel === undefined) continue;
-					acceptServerTerminal(session.id, serverPanel.title);
+					acceptServerTerminal(
+						serverPanel.id,
+						session.id,
+						serverPanel.title,
+						serverPanel.cwd,
+					);
 				}
 				window.terminayBootstrapDiagnostic?.record('app.workspace.seed.end', 1);
 				return;
@@ -3922,24 +3970,28 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-			const list = macroLauncherListRef.current;
-			const activeItem = activeMacroId
-				? macroLauncherItemRefs.current.get(activeMacroId)
-				: null;
+				const list = macroLauncherListRef.current;
+				const activeItem = activeMacroId
+					? macroLauncherItemRefs.current.get(activeMacroId)
+					: null;
 			if (!list || !activeItem) {
 				return;
-			}
+				}
 
-			const animationFrameId = window.requestAnimationFrame(() => {
-				activeItem.scrollIntoView({
-					block: 'nearest',
-					inline: 'nearest',
-					behavior: window.matchMedia('(prefers-reduced-motion: reduce)')
-						.matches
-						? 'auto'
-						: 'smooth',
+				const animationFrameId = window.requestAnimationFrame(() => {
+					const listRect = list.getBoundingClientRect();
+					const activeRect = activeItem.getBoundingClientRect();
+					const padding = 12;
+					if (activeRect.top < listRect.top + padding) {
+						list.scrollTop = Math.max(
+							0,
+							list.scrollTop + activeRect.top - listRect.top - padding,
+						);
+					} else if (activeRect.bottom > listRect.bottom - padding) {
+						list.scrollTop =
+							list.scrollTop + activeRect.bottom - listRect.bottom + padding;
+					}
 				});
-			});
 
 			return () => {
 				window.cancelAnimationFrame(animationFrameId);
@@ -4108,6 +4160,12 @@ const ProjectWorkspace = forwardRef<
 		return (
 			<section
 				className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
+				data-terminay-git-client={
+					terminalClientContext?.gitClient === undefined
+						? 'unavailable'
+						: 'server'
+				}
+				data-terminay-project-root={project.rootFolder}
 				data-new-terminal-shortcut={getCommandShortcut(
 					settings.keyboardShortcuts,
 					'new-terminal',
@@ -4121,10 +4179,6 @@ const ProjectWorkspace = forwardRef<
 					className="project-workspace-body"
 					isNavigationVisible={project.isFileExplorerOpen}
 					navigationWidth={project.fileExplorerWidth}
-					maximumNavigationWidth={Math.max(
-						MIN_FILE_EXPLORER_WIDTH,
-						MAX_FILE_EXPLORER_WIDTH,
-					)}
 					onNavigationWidthChange={(width) =>
 						onUpdateProject(project.id, { fileExplorerWidth: width })
 					}
@@ -4147,11 +4201,13 @@ const ProjectWorkspace = forwardRef<
 										});
 									}}
 									onHeightCommit={(id, height) => {
-										if (id === 'explorer') {
-											updateSidebarSettings({
-												defaultExplorerPaneHeight: height,
-											});
-										}
+										updateSidebarSettings(
+											id === 'explorer'
+												? { defaultExplorerPaneHeight: height }
+												: id === 'agents'
+													? { defaultAgentsPaneHeight: height }
+													: { defaultGitPaneHeight: height },
+										);
 									}}
 									onReorder={(orderedIds) => {
 										const reorderedVisibleIds = orderedIds.filter(
@@ -4589,6 +4645,7 @@ const isAdoptWindow =
 	new URLSearchParams(window.location.search).get('adopt') === '1';
 
 export type AppProps = {
+	auxiliaryRoutes?: AuxiliaryRouteController;
 	/** Connection-scoped shared client supplied by a migrated host shell. */
 	terminalClientContext?: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	/** Narrow Desktop host client injected at the renderer composition root. */
@@ -4600,7 +4657,9 @@ export type AppProps = {
 export const TERMINAY_APP_COMPONENT_ID =
 	'src/App.tsx#App/ProjectWorkspace/Dockview@1';
 
-function normalizeConnectionSwitcherEntries(value: unknown): ConnectionSwitcherEntry[] {
+function normalizeConnectionSwitcherEntries(
+	value: unknown,
+): ConnectionSwitcherEntry[] {
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
 		return [];
 	}
@@ -4613,7 +4672,11 @@ function normalizeConnectionSwitcherEntries(value: unknown): ConnectionSwitcherE
 	if (!Array.isArray(context.profiles)) return [];
 	return context.profiles
 		.flatMap((profile): ConnectionSwitcherEntry[] => {
-			if (typeof profile !== 'object' || profile === null || Array.isArray(profile)) {
+			if (
+				typeof profile !== 'object' ||
+				profile === null ||
+				Array.isArray(profile)
+			) {
 				return [];
 			}
 			const candidate = profile as {
@@ -4623,31 +4686,49 @@ function normalizeConnectionSwitcherEntries(value: unknown): ConnectionSwitcherE
 				selected?: unknown;
 				status?: unknown;
 			};
-			if (typeof candidate.id !== 'string' || typeof candidate.label !== 'string') {
+			if (
+				typeof candidate.id !== 'string' ||
+				typeof candidate.label !== 'string'
+			) {
 				return [];
 			}
-			return [{
-				id: candidate.id,
-				isLocal: candidate.isLocal === true,
-				label: candidate.isLocal === true ? 'Local' : candidate.label,
-				selected:
-					candidate.selected === true ||
-					(selectedId !== null && candidate.id === selectedId),
-				status:
-					typeof candidate.status === 'string'
-						? candidate.status
-						: 'known',
-			}];
+			return [
+				{
+					id: candidate.id,
+					isLocal: candidate.isLocal === true,
+					label: candidate.isLocal === true ? 'Local' : candidate.label,
+					selected:
+						candidate.selected === true ||
+						(selectedId !== null && candidate.id === selectedId),
+					status:
+						typeof candidate.status === 'string' ? candidate.status : 'known',
+				},
+			];
 		})
-		.sort((left, right) => Number(right.isLocal) - Number(left.isLocal) || left.label.localeCompare(right.label));
+		.sort(
+			(left, right) =>
+				Number(right.isLocal) - Number(left.isLocal) ||
+				left.label.localeCompare(right.label),
+		);
+}
+
+function describeConnectionHostError(cause: unknown): string {
+	return cause instanceof Error
+		? cause.message
+		: 'Unable to switch Terminay servers.';
 }
 
 function App({
+	auxiliaryRoutes,
 	onDisconnect,
 	onOpenConnectionManager,
 	quickPushClient,
 	terminalClientContext,
 }: AppProps) {
+	const auxiliaryRouteController = useMemo(
+		() => auxiliaryRoutes ?? createAuxiliaryRouteController(),
+		[auxiliaryRoutes],
+	);
 	const legacySettingsClient = useTerminalSettingsClient();
 	const legacyMacroSettingsCapability = useLegacyMacroSettingsCapability();
 	recordBoundedRendererRender(
@@ -4723,7 +4804,8 @@ function App({
 		defaultProjectRoot:
 			terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects[
 				Object.keys(
-					terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects ?? {},
+					terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects ??
+						{},
 				)[0] ?? ''
 			]?.root ?? '',
 		isAdoptWindow,
@@ -4803,6 +4885,21 @@ function App({
 	const [connectionSwitcherEntries, setConnectionSwitcherEntries] = useState<
 		ConnectionSwitcherEntry[]
 	>([]);
+	const [connectionSwitcherError, setConnectionSwitcherError] = useState<
+		string | null
+	>(null);
+	const [managedDesktopConnections, setManagedDesktopConnections] = useState<
+		ManagedDesktopConnection[]
+	>([]);
+	const refreshManagedDesktopConnections = useCallback(async () => {
+		const host = window.terminayConnectionHost;
+		if (host === undefined) {
+			setManagedDesktopConnections([]);
+			return;
+		}
+		const snapshot = await host.list();
+		setManagedDesktopConnections(snapshot.profiles);
+	}, []);
 	const refreshConnectionSwitcherEntries = useCallback(() => {
 		void (async () => {
 			try {
@@ -4835,7 +4932,7 @@ function App({
 	}, [isRemoteMenuOpen, refreshConnectionSwitcherEntries]);
 	const selectConnectionProfile = useCallback(
 		(profileId: string) => {
-			setIsRemoteMenuOpen(false);
+			setConnectionSwitcherError(null);
 			const select =
 				window.terminayConnectionHost?.select ??
 				((id: string) =>
@@ -4844,8 +4941,16 @@ function App({
 						profileId: id,
 					}) ?? Promise.resolve());
 			void select(profileId)
-				.then(refreshConnectionSwitcherEntries)
-				.catch(() => refreshConnectionSwitcherEntries());
+				.then(() => {
+					setIsRemoteMenuOpen(false);
+					setConnectionSwitcherError(null);
+					refreshConnectionSwitcherEntries();
+				})
+				.catch((cause: unknown) => {
+					setConnectionSwitcherError(describeConnectionHostError(cause));
+					setIsRemoteMenuOpen(true);
+					refreshConnectionSwitcherEntries();
+				});
 		},
 		[refreshConnectionSwitcherEntries, setIsRemoteMenuOpen],
 	);
@@ -4865,6 +4970,12 @@ function App({
 		submit: submitRemoteConnection,
 		url: remoteConnectionUrl,
 	} = useRemoteConnectionForm(closeRemoteMenu);
+	useEffect(() => {
+		if (!isRemoteConnectionModalOpen) return;
+		void refreshManagedDesktopConnections().catch(() =>
+			setManagedDesktopConnections([]),
+		);
+	}, [isRemoteConnectionModalOpen, refreshManagedDesktopConnections]);
 	const [appUpdateStatus, setAppUpdateStatus] =
 		useState<AppUpdateStatus | null>(null);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
@@ -4919,9 +5030,15 @@ function App({
 
 		let disposed = false;
 		let reconcileFrame: number | null = null;
-		const presentedSessionIds = new Set<string>();
+		let reconcileRetryTimer: number | null = null;
+		let reconcileRetryRevision = -1;
+		let reconcileRetryDeadline = 0;
 		const reconcile = (snapshot: NonNullable<typeof store.snapshot>) => {
 			if (disposed) return;
+			if (snapshot.revision !== reconcileRetryRevision) {
+				reconcileRetryRevision = snapshot.revision;
+				reconcileRetryDeadline = performance.now() + 2_000;
+			}
 			window.terminayBootstrapDiagnostic?.record(
 				'app.workspace.reconcile',
 				Object.keys(snapshot.terminalSessions).length,
@@ -4933,20 +5050,42 @@ function App({
 				);
 				reconcileFrame = null;
 				if (disposed) return;
+				let pendingPresentations = 0;
 				for (const session of Object.values(snapshot.terminalSessions)) {
-					if (presentedSessionIds.has(session.id)) continue;
 					const workspace = workspaceRefs.current.get(session.projectId);
-					if (workspace == null) continue;
+					if (workspace == null) {
+						pendingPresentations += 1;
+						continue;
+					}
 					if (workspace.ownsControlSession(session.id)) {
-						presentedSessionIds.add(session.id);
 						continue;
 					}
 					const panel = Object.values(snapshot.panels).find(
 						(candidate) => candidate.sessionId === session.id,
 					);
-					if (panel === undefined) continue;
-					workspace.acceptServerTerminal(session.id, panel.title);
-					presentedSessionIds.add(session.id);
+					if (panel === undefined) {
+						pendingPresentations += 1;
+						continue;
+					}
+					const accepted = workspace.acceptServerTerminal(
+						panel.id,
+						session.id,
+						panel.title,
+						panel.cwd,
+					);
+					if (!accepted) {
+						pendingPresentations += 1;
+					}
+				}
+				if (
+					pendingPresentations > 0 &&
+					reconcileRetryTimer === null &&
+					performance.now() < reconcileRetryDeadline
+				) {
+					reconcileRetryTimer = window.setTimeout(() => {
+						reconcileRetryTimer = null;
+						reconcile(snapshot);
+					}, 50);
 				}
 			});
 			window.terminayBootstrapDiagnostic?.record('app.workspace.reconcile.end');
@@ -4956,6 +5095,9 @@ function App({
 			disposed = true;
 			unsubscribe();
 			if (reconcileFrame !== null) window.cancelAnimationFrame(reconcileFrame);
+			if (reconcileRetryTimer !== null) {
+				window.clearTimeout(reconcileRetryTimer);
+			}
 		};
 	}, [terminalClientContext?.workspaceSnapshotStore]);
 
@@ -4970,6 +5112,7 @@ function App({
 	);
 	const openEditProjectWindow = useProjectEditor({
 		applicationClient: terminalClientContext?.applicationClient,
+		auxiliaryRoutes: auxiliaryRouteController,
 		focusProject: focusProjectTerminal,
 		homePath,
 		projects,
@@ -5268,6 +5411,7 @@ function App({
 						connectionSwitcherEntries={connectionSwitcherEntries}
 						currentServerId={currentServerId}
 						currentServerLabel={currentServerLabel}
+						errorMessage={connectionSwitcherError}
 						isOpen={isRemoteMenuOpen}
 						isToggling={isTogglingRemoteAccess}
 						menuRef={remoteMenuRef}
@@ -5282,6 +5426,7 @@ function App({
 						onToggleExposure={() => void toggleRemoteAccess()}
 						onToggleMenu={() => {
 							setIsActivityMenuOpen(false);
+							setConnectionSwitcherError(null);
 							refreshConnectionSwitcherEntries();
 							setIsRemoteMenuOpen((current) => !current);
 						}}
@@ -5302,7 +5447,10 @@ function App({
 					</div>
 				) : null}
 				{projectCreationError !== null ? (
-					<div className="workspace-empty-state workspace-empty-state--error" role="alert">
+					<div
+						className="workspace-empty-state workspace-empty-state--error"
+						role="alert"
+					>
 						{projectCreationError}
 					</div>
 				) : null}
@@ -5313,6 +5461,7 @@ function App({
 							workspaceRefs.current.set(project.id, instance);
 						}}
 						agentStatusSnapshot={agentStatusSnapshot}
+						auxiliaryRoutes={auxiliaryRouteController}
 						isActive={project.id === activeProjectId}
 						isMac={isMac}
 						macros={macros}
@@ -5338,10 +5487,30 @@ function App({
 					isOpening={isOpeningRemoteConnection}
 					notice={remoteConnectionNotice}
 					onClose={closeRemoteConnectionModal}
+					onForget={async (profileId) => {
+						await window.terminayConnectionHost.forget(profileId);
+						await refreshManagedDesktopConnections();
+						refreshConnectionSwitcherEntries();
+					}}
 					onPairingPinChange={(value) => {
 						setRemoteConnectionPairingPin(value);
 						setRemoteConnectionError(null);
 						setRemoteConnectionNotice(null);
+					}}
+					onRename={async (profileId, label) => {
+						await window.terminayConnectionHost.rename(profileId, label);
+						await refreshManagedDesktopConnections();
+						refreshConnectionSwitcherEntries();
+					}}
+					onRevoke={async (profileId) => {
+						await window.terminayConnectionHost.revoke(profileId);
+						await refreshManagedDesktopConnections();
+						refreshConnectionSwitcherEntries();
+					}}
+					onSelect={async (profileId) => {
+						await window.terminayConnectionHost.select(profileId);
+						await refreshManagedDesktopConnections();
+						refreshConnectionSwitcherEntries();
 					}}
 					onSubmit={submitRemoteConnection}
 					onUrlChange={(value) => {
@@ -5350,6 +5519,7 @@ function App({
 						setRemoteConnectionNotice(null);
 					}}
 					pairingPin={remoteConnectionPairingPin}
+					profiles={managedDesktopConnections}
 					url={remoteConnectionUrl}
 				/>
 			) : null}

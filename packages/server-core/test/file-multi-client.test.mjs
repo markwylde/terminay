@@ -14,8 +14,6 @@ function memoryFile(initial = "base") {
   return { storage, get bytes() { return bytes; }, get writes() { return writes; } };
 }
 
-const auth = (clientId) => ({ serverId: "server-a", projectId: "project-a", sessionId: "file-session", clientId, scope: "write" });
-
 test("two clients share one canonical draft, observe conflicts, and save only after explicit keep-local", async () => {
   const disk = memoryFile();
   const sessions = new FileSessionRegistry();

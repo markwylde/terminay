@@ -51,6 +51,7 @@ export type TerminalTabMoveProject = {
 
 export type TerminalPanelParams = {
   sessionId: string
+  cwd?: string
   /** Optional server-owned stream used by the incremental panel migration. */
   terminalPanelClient?: import('@terminay/client-core').TerminayTerminalPanelClient
   terminalClientIdentity?: Pick<TerminalClientIdentity, 'serverId' | 'projectId'>

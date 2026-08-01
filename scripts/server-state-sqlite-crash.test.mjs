@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  chmod,
   copyFile,
   mkdir,
   mkdtemp,
@@ -42,6 +43,17 @@ function openConnection(databasePath, busyTimeoutMs = 5_000) {
   const database = new DatabaseSync(databasePath)
   try {
     configureConnection(database, busyTimeoutMs)
+    return database
+  } catch (error) {
+    database.close()
+    throw error
+  }
+}
+
+function openReadOnlyConnection(databasePath) {
+  const database = new DatabaseSync(databasePath, { readOnly: true })
+  try {
+    configureConnection(database)
     return database
   } catch (error) {
     database.close()
@@ -545,6 +557,109 @@ if (process.argv[2] === '--child') {
       assert.equal(state.integrity.integrity_check, 'ok')
     } finally {
       if (holdingWriter) await killChild(holdingWriter.child)
+      await rm(directory, { force: true, recursive: true })
+    }
+  })
+
+  test('a read-only recovered state remains queryable and rejects a complete revision without partial writes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'terminay-sqlite-read-only-'))
+    const databasePath = join(directory, 'server-state.sqlite')
+    try {
+      seedRevision(databasePath)
+      const before = readState(databasePath)
+      const database = openReadOnlyConnection(databasePath)
+      try {
+        const visible = database
+          .prepare('SELECT revision, value FROM workspace_state WHERE id = ?')
+          .get('workspace')
+        assert.deepEqual({ ...visible }, { revision: 1, value: 'revision-1' })
+        assert.throws(
+          () => commitRevision(database, 1, 2, 'must-not-persist'),
+          /readonly|read-only/i,
+          'a read-only state must fail before a revision can be committed',
+        )
+      } finally {
+        database.close()
+      }
+      assert.deepEqual(
+        readState(databasePath),
+        before,
+        'a rejected read-only write must leave the canonical state byte-for-byte equivalent at the logical boundary',
+      )
+    } finally {
+      await rm(directory, { force: true, recursive: true })
+    }
+  })
+
+  test('filesystem permissions reject SQLite mutation without changing canonical state', async (context) => {
+    if (process.platform === 'win32') {
+      context.skip('POSIX permission enforcement is covered on supported macOS/Linux hosts')
+      return
+    }
+    const directory = await mkdtemp(join(tmpdir(), 'terminay-sqlite-permissions-'))
+    const databasePath = join(directory, 'server-state.sqlite')
+    try {
+      seedRevision(databasePath)
+      const before = readState(databasePath)
+      await chmod(databasePath, 0o444)
+      await chmod(directory, 0o555)
+      assert.throws(
+        () => {
+          const database = openConnection(databasePath)
+          try {
+            commitRevision(database, 1, 2, 'must-not-persist')
+          } finally {
+            database.close()
+          }
+        },
+        /readonly|read-only|permission|access/i,
+      )
+      await chmod(directory, 0o755)
+      await chmod(databasePath, 0o644)
+      assert.deepEqual(readState(databasePath), before)
+    } finally {
+      await chmod(directory, 0o755).catch(() => undefined)
+      await chmod(databasePath, 0o644).catch(() => undefined)
+      await rm(directory, { force: true, recursive: true })
+    }
+  })
+
+  test('a deterministic full-disk SQLite boundary rolls back the complete revision and recovers after capacity returns', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'terminay-sqlite-full-disk-'))
+    const databasePath = join(directory, 'server-state.sqlite')
+    try {
+      seedRevision(databasePath)
+      const before = readState(databasePath)
+      const constrained = openConnection(databasePath)
+      try {
+        const pageCount = constrained.prepare('PRAGMA page_count').get().page_count
+        constrained.exec(`PRAGMA max_page_count = ${pageCount}`)
+        assert.throws(
+          () => commitRevision(constrained, 1, 2, 'x'.repeat(1_048_576)),
+          /full|space|disk/i,
+          'a capacity-constrained state must fail before a complete revision can commit',
+        )
+        constrained.exec('PRAGMA max_page_count = 1073741823')
+        assert.deepEqual(
+          commitRevision(constrained, 1, 2, 'recovered-after-capacity'),
+          { kind: 'committed', revision: 2 },
+          'removing the deterministic capacity limit must permit a fresh complete revision',
+        )
+      } finally {
+        constrained.close()
+      }
+      const after = readState(databasePath)
+      assert.deepEqual(after.workspace, {
+        revision: 2,
+        value: 'recovered-after-capacity',
+      })
+      assert.deepEqual(after.revisions, [
+        { revision: 1, value: 'revision-1' },
+        { revision: 2, value: 'recovered-after-capacity' },
+      ])
+      assert.equal(after.integrity.integrity_check, 'ok')
+      assert.notDeepEqual(after, before, 'only the later recovered revision may mutate canonical state')
+    } finally {
       await rm(directory, { force: true, recursive: true })
     }
   })

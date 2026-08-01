@@ -176,17 +176,31 @@ export function DictationOverlay({
 							) : null}
 						</>
 					) : (
-						<button
-							type="button"
-							className="dictation-overlay__button dictation-overlay__button--stop"
-							onClick={onStop}
-							disabled={isStopDisabled}
-							aria-label="Stop dictation"
-							title="Stop dictation"
-						>
-							<Square size={13} aria-hidden="true" fill="currentColor" />
-							<span>Stop</span>
-						</button>
+						<>
+							<button
+								type="button"
+								className="dictation-overlay__button dictation-overlay__button--stop"
+								onClick={onStop}
+								disabled={isStopDisabled}
+								aria-label="Stop dictation"
+								title="Stop dictation"
+							>
+								<Square size={13} aria-hidden="true" fill="currentColor" />
+								<span>Stop</span>
+							</button>
+							{onCancel ? (
+								<button
+									type="button"
+									className="dictation-overlay__button dictation-overlay__button--ghost"
+									onClick={onCancel}
+									aria-label="Cancel dictation"
+									title="Cancel dictation"
+								>
+									<X size={14} aria-hidden="true" />
+									<span>Cancel</span>
+								</button>
+							) : null}
+						</>
 					)}
 				</div>
 			</div>

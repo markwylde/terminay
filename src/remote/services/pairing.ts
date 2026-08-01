@@ -14,10 +14,16 @@ function normalizePairingInput(input: string): string {
 function parseFromUrl(candidate: string): PairingBootstrap | null {
   try {
     const url = new URL(candidate)
+    // Pairing material is a one-time fragment. Query credentials leak through
+    // history, referrers, proxies, and Desktop profile parsing, so do not
+    // accept a compatibility query form here.
+    if (url.searchParams.has('pairingSessionId') || url.searchParams.has('pairingToken') || url.searchParams.has('pairingExpiresAt')) {
+      throw new Error('Pairing credentials must be in the URL fragment.')
+    }
     const fragmentParams = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.hash)
-    const pairingSessionId = fragmentParams.get('pairingSessionId') || url.searchParams.get('pairingSessionId')
-    const pairingToken = fragmentParams.get('pairingToken') || url.searchParams.get('pairingToken')
-    const pairingExpiresAt = fragmentParams.get('pairingExpiresAt') || url.searchParams.get('pairingExpiresAt')
+    const pairingSessionId = readSinglePairingField(fragmentParams, 'pairingSessionId', 256)
+    const pairingToken = readSinglePairingField(fragmentParams, 'pairingToken', 4_096)
+    const pairingExpiresAt = readSinglePairingField(fragmentParams, 'pairingExpiresAt', 128)
 
     if (!pairingSessionId || !pairingToken || !pairingExpiresAt) {
       return null
@@ -28,9 +34,29 @@ function parseFromUrl(candidate: string): PairingBootstrap | null {
       pairingSessionId,
       pairingToken,
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && (error.message === 'Pairing credentials must be in the URL fragment.' || error.message.startsWith('Pairing frame contains '))) throw error
     return null
   }
+}
+
+/**
+ * A pairing fragment is a one-time authenticated frame. Never let repeated
+ * fields acquire browser-specific first/last-value semantics: a clipboard,
+ * deep link, or relay must describe exactly one session, token, and expiry.
+ */
+function readSinglePairingField(params: URLSearchParams, name: string, maximumLength: number): string | null {
+  const values = params.getAll(name)
+  if (values.length > 1) throw new Error(`Pairing frame contains repeated ${name}.`)
+  const value = values[0]
+  if (value === undefined || value.length === 0) return null
+  if (value.length > maximumLength || [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0
+    return code < 0x20 || code === 0x7f
+  })) {
+    throw new Error(`Pairing frame contains an invalid ${name}.`)
+  }
+  return value
 }
 
 export function parsePairingBootstrap(input: string): PairingBootstrap {
@@ -44,7 +70,6 @@ export function parsePairingBootstrap(input: string): PairingBootstrap {
     return fromUrl
   }
 
-  const currentUrl = new URL(window.location.href)
   if (trimmed.startsWith('{')) {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>
     if (
@@ -57,31 +82,6 @@ export function parsePairingBootstrap(input: string): PairingBootstrap {
         pairingSessionId: parsed.pairingSessionId,
         pairingToken: parsed.pairingToken,
       }
-    }
-  }
-
-  if (
-    currentUrl.searchParams.has('pairingSessionId') &&
-    currentUrl.searchParams.has('pairingToken') &&
-    currentUrl.searchParams.has('pairingExpiresAt')
-  ) {
-    return {
-      pairingExpiresAt: currentUrl.searchParams.get('pairingExpiresAt') ?? '',
-      pairingSessionId: currentUrl.searchParams.get('pairingSessionId') ?? '',
-      pairingToken: currentUrl.searchParams.get('pairingToken') ?? '',
-    }
-  }
-
-  const currentFragmentParams = new URLSearchParams(window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash)
-  if (
-    currentFragmentParams.has('pairingSessionId') &&
-    currentFragmentParams.has('pairingToken') &&
-    currentFragmentParams.has('pairingExpiresAt')
-  ) {
-    return {
-      pairingExpiresAt: currentFragmentParams.get('pairingExpiresAt') ?? '',
-      pairingSessionId: currentFragmentParams.get('pairingSessionId') ?? '',
-      pairingToken: currentFragmentParams.get('pairingToken') ?? '',
     }
   }
 

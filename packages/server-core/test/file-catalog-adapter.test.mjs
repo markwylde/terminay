@@ -40,15 +40,105 @@ function project() {
 
 const authorization = (scope = "read", projectId = "project-a", serverId = "server-a") => ({ scope, projectId, serverId });
 
+function decodeTaskBody(response) {
+  assert.ok(response.body instanceof Uint8Array);
+  return JSON.parse(new TextDecoder().decode(response.body));
+}
+
 test("catalog adapter exposes authenticated list, preview, and task queries", async () => {
   const adapter = new ServerFileCatalogAdapter({ serverId: "server-a", projects: { "project-a": project().context } });
   const page = await adapter.list({ authorization: authorization(), path: "." });
   assert.deepEqual(page.entries.map((entry) => entry.relativePath), ["src", "README.md"]);
   const preview = await adapter.previewMetadata({ authorization: authorization(), path: "README.md" });
   assert.equal(preview.previewKind, "markdown");
-  const tasks = await adapter.tasks({ authorization: authorization(), path: "." });
+  const tasks = decodeTaskBody(await adapter.tasks({ authorization: authorization(), path: "." }));
   assert.equal(tasks.stats.total, 1);
   assert.equal("bytes" in preview, false);
+});
+
+test("catalog adapter compacts recursive task responses for protocol transport", async () => {
+  const files = new Map([["/project", { isDirectory: true, size: 0 }]]);
+  const children = new Map([["/project", []]]);
+  const contents = new Map();
+  const encoder = new TextEncoder();
+  const bigPath = "/project/aaa-big-task-file.md";
+  const bigBytes = encoder.encode(`# Big file\n${Array.from({ length: 200 }, (_, index) => `- [${index % 2 === 0 ? " " : "x"}] ${"large section task ".repeat(20)}${index}`).join("\n")}\n`);
+  files.set(bigPath, { isFile: true, size: bigBytes.byteLength, mtimeMs: 1 });
+  contents.set(bigPath, bigBytes);
+  children.get("/project").push({ name: "aaa-big-task-file.md", isFile: true });
+  for (let index = 0; index < 1_700; index += 1) {
+    const path = `/project/task-${String(index).padStart(4, "0")}.md`;
+    const bytes = encoder.encode(`# Heading ${index}\n- [ ] ${"long task label ".repeat(40)}${index}\n`);
+    files.set(path, { isFile: true, size: bytes.byteLength, mtimeMs: index });
+    contents.set(path, bytes);
+    children.get("/project").push({ name: path.slice("/project/".length), isFile: true });
+  }
+  for (let index = 0; index < 50; index += 1) {
+    const path = `/project/notes-${String(index).padStart(4, "0")}.md`;
+    const bytes = encoder.encode(`# Notes ${index}\nNo checkboxes here.\n`);
+    files.set(path, { isFile: true, size: bytes.byteLength, mtimeMs: index });
+    contents.set(path, bytes);
+    children.get("/project").push({ name: path.slice("/project/".length), isFile: true });
+  }
+  const missing = (path) => Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
+  const storage = {
+    realpath(path) { if (!files.has(path)) throw missing(path); return path; },
+    stat(path) { const stat = files.get(path); if (!stat) throw missing(path); return { ...stat, isFile: stat.isFile === true, isDirectory: stat.isDirectory === true }; },
+    lstat(path) { if (!files.has(path)) throw missing(path); return { isSymbolicLink: false }; },
+    readDirectory(path) { return children.get(path) ?? (() => { throw missing(path); })(); },
+    readRange(path, offset, length) { return (contents.get(path) ?? new Uint8Array()).slice(offset, offset + length); },
+  };
+  const resolver = new CanonicalProjectPathResolver("/project", storage);
+  const context = { projectId: "project-a", catalog: new FileCatalog(resolver, storage, { maxEntries: 5_000 }) };
+  const adapter = new ServerFileCatalogAdapter({ serverId: "server-a", projects: { "project-a": context } });
+  const response = await adapter.tasks({ authorization: authorization(), path: ".", options: { maxTasks: 100_000, maxTaskLabelLength: 4_096 } });
+  const tasks = decodeTaskBody(response);
+  assert.equal("tree" in tasks, false);
+  assert.equal(response.result.contentType, "application/json");
+  assert.equal(tasks.truncated, false);
+  assert.equal(tasks.tasks.length, 1_900);
+  assert.ok(tasks.files.length <= 5_000);
+  assert.equal(tasks.files.some((file) => file.tasks.length === 0), false);
+  assert.equal(tasks.files.flatMap((file) => file.tasks).length, tasks.tasks.length);
+  assert.ok(Buffer.byteLength(JSON.stringify({ type: "query_result", queryId: "query-tasks", ok: true, result: response.result, bodyLength: response.body.byteLength })) < 64 * 1024);
+  assert.equal(response.body.byteLength, Buffer.byteLength(JSON.stringify(tasks)));
+});
+
+test("catalog adapter task label compaction does not stop sibling directory scans", async () => {
+  const encoder = new TextEncoder();
+  const contents = new Map([
+    ["/project/active/long.md", `# Active\n- [ ] ${"long label ".repeat(40)}\n`],
+    ["/project/completed/done.md", "# Done\n- [x] sibling directory task\n"],
+  ]);
+  const files = new Map([
+    ["/project", { isDirectory: true, size: 0 }],
+    ["/project/active", { isDirectory: true, size: 0 }],
+    ["/project/completed", { isDirectory: true, size: 0 }],
+    ...[...contents].map(([path, text]) => [path, { isFile: true, size: encoder.encode(text).byteLength, mtimeMs: 1 }]),
+  ]);
+  const children = new Map([
+    ["/project", [{ name: "active", isDirectory: true }, { name: "completed", isDirectory: true }]],
+    ["/project/active", [{ name: "long.md", isFile: true }]],
+    ["/project/completed", [{ name: "done.md", isFile: true }]],
+  ]);
+  const missing = (path) => Object.assign(new Error(`ENOENT ${path}`), { code: "ENOENT" });
+  const storage = {
+    realpath(path) { if (!files.has(path)) throw missing(path); return path; },
+    stat(path) { const stat = files.get(path); if (!stat) throw missing(path); return { ...stat, isFile: stat.isFile === true, isDirectory: stat.isDirectory === true }; },
+    lstat(path) { if (!files.has(path)) throw missing(path); return { isSymbolicLink: false }; },
+    readDirectory(path) { return children.get(path) ?? (() => { throw missing(path); })(); },
+    readRange(path, offset, length) { return encoder.encode(contents.get(path) ?? "").slice(offset, offset + length); },
+  };
+  const resolver = new CanonicalProjectPathResolver("/project", storage);
+  const context = { projectId: "project-a", catalog: new FileCatalog(resolver, storage) };
+  const adapter = new ServerFileCatalogAdapter({ serverId: "server-a", projects: { "project-a": context } });
+
+  const tasks = decodeTaskBody(await adapter.tasks({ authorization: authorization(), path: ".", options: { maxTaskLabelLength: 16 } }));
+
+  assert.equal(tasks.truncated, true);
+  assert.deepEqual(tasks.files.map((file) => file.relativePath), ["active/long.md", "completed/done.md"]);
+  assert.deepEqual(tasks.stats, { total: 2, completed: 1, remaining: 1 });
+  assert.equal(tasks.scannedFiles, 2);
 });
 
 test("catalog adapter operation handlers keep project authorization in authenticated claims", async () => {

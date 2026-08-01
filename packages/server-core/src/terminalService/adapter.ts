@@ -80,19 +80,22 @@ export class TerminalServiceAdapter {
     const priorId = this.byClientSession.get(key);
     if (priorId !== undefined) this.detach(priorId);
 
-    const requested = request.fromPosition ?? 0;
-    validatePosition(requested);
     const highWatermark = this.highWatermarks.get(key) ?? 0;
-    // A reconnect may only move forward. Passing a stale cursor must never
-    // cause already delivered output to be sent a second time.
-    const fromPosition = Math.max(requested, highWatermark);
+    // The client resolves an omitted cursor to its reconnect watermark before
+    // crossing the protocol. An explicit earlier cursor belongs to a fresh
+    // display surface and must reach retained replay unchanged.
+    const fromPosition = request.fromPosition ?? highWatermark;
+    validatePosition(fromPosition);
     const initialEvents: TerminalEvent[] = [];
     const id = this.nextAttachmentId(request.clientId);
     let mutable: MutableAttachment | undefined;
+    let deliveredPosition = fromPosition;
     const onEvent = (event: TerminalEvent): void => {
       if (event.type === "output") {
-        const known = this.highWatermarks.get(key) ?? 0;
-        if (event.nextPosition <= known) return;
+        if (event.nextPosition <= deliveredPosition) return;
+        if (event.position < deliveredPosition) throw new Error("terminal output overlaps the display cursor");
+        if (event.position > deliveredPosition) throw new Error("terminal output has a display replay gap");
+        deliveredPosition = event.nextPosition;
         this.rememberPosition(key, event.nextPosition);
         if (mutable !== undefined) mutable.position = event.nextPosition;
       }
@@ -115,7 +118,7 @@ export class TerminalServiceAdapter {
       subscription,
       fromPosition,
       closed: false,
-      position: this.highWatermarks.get(key) ?? fromPosition,
+      position: deliveredPosition,
     };
     // Initial replay was delivered synchronously above. It must remain
     // visible in the returned attachment even though the sink already saw it.

@@ -104,9 +104,6 @@ function createChannelUrl(channelId: string, hostedDomain?: string): URL {
 function createSignalingUrl(appOrigin: string): string {
 	const url = new URL(appOrigin);
 	url.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
-	if (url.hostname.endsWith('.localhost')) {
-		url.hostname = 'localhost';
-	}
 	url.pathname = '/signal';
 	url.search = '';
 	url.hash = '';

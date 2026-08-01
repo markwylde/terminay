@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { ElectronApplication, Page } from '@playwright/test'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +8,7 @@ import { openFileExplorer } from './support/ui'
 
 async function getActiveSessionId(page: Page): Promise<string> {
   const sessionId = await page
-    .locator('.terminal-panel')
+    .locator('.terminal-panel:visible')
     .first()
     .getAttribute('data-terminay-terminal-session-id')
   if (!sessionId) {
@@ -36,6 +36,53 @@ async function emitHook(
     { payload: nativePayload, sessionId: terminalSessionId },
   )
 }
+
+/**
+ * Playwright's Page.close can enter Chromium's native close-confirmation path
+ * for an auxiliary Electron window after a settings write. The Settings
+ * BrowserWindow has no user-owned document state to preserve, so close the
+ * exact test auxiliary window through Electron instead. This keeps the test
+ * focused on the integration setting rather than an OS alert modal.
+ */
+async function destroySettingsWindow(electronApp: ElectronApplication): Promise<void> {
+  await electronApp.evaluate(({ BrowserWindow }) => {
+    const settingsWindow = BrowserWindow.getAllWindows().find(
+      (window) =>
+        !window.isDestroyed() &&
+        new URL(window.webContents.getURL()).searchParams.get('view') === 'settings',
+    )
+    if (!settingsWindow) {
+      throw new Error('Settings window is unavailable')
+    }
+    settingsWindow.destroy()
+  })
+}
+
+test('canonical server working state projects to the Terminal 2 tab indicator', async ({
+  mainWindow,
+}) => {
+  await sendAppCommand(mainWindow, 'new-terminal')
+  const agentTerminalSessionId = await getActiveSessionId(mainWindow)
+  const agentTab = mainWindow
+    .locator('.terminal-tab-content')
+    .filter({ hasText: 'Terminal 2' })
+
+  await mainWindow
+    .locator('.terminal-tab-content')
+    .filter({ hasText: 'Terminal 1' })
+    .click()
+
+  await emitHook(mainWindow, agentTerminalSessionId, {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'codex-terminal-two',
+    prompt: 'Project this working state into Terminal 2',
+    model: 'gpt-test-codex',
+  })
+
+  await expect(
+    agentTab.locator('.agent-status-indicator[data-agent-state="working"]'),
+  ).toBeVisible()
+})
 
 test('native agent lifecycle drives stable tabs, notifications, hierarchy, and focus', async ({
   mainWindow,
@@ -186,9 +233,12 @@ test('native agent lifecycle drives stable tabs, notifications, hierarchy, and f
     agentTab.locator('.agent-status-indicator[data-agent-state="done"]'),
   ).toBeVisible()
 
-  await mainWindow.evaluate((sessionId) => {
-    window.terminay.writeTerminal(sessionId, "printf 'trailing repaint\\n'\r")
-  }, agentTerminalSessionId)
+  await agentTab.click()
+  const agentTerminalInput = mainWindow
+    .locator(`.terminal-panel[data-terminay-terminal-session-id="${agentTerminalSessionId}"]`)
+    .getByRole('textbox', { name: 'Terminal input' })
+  await agentTerminalInput.pressSequentially("printf 'trailing repaint\\n'")
+  await agentTerminalInput.press('Enter')
   await mainWindow.waitForTimeout(400)
   await expect(
     agentTab.locator('.agent-status-indicator[data-agent-state="done"]'),
@@ -314,6 +364,7 @@ test('sidebar panels can be reordered vertically', async ({ mainWindow }) => {
 
 test('agent integration setting disables and restores the full agent surface', async ({
   appHarness,
+  electronApp,
   mainWindow,
 }) => {
   const settingsWindow = await appHarness.openSettingsWindow({
@@ -330,7 +381,7 @@ test('agent integration setting disables and restores the full agent surface', a
   })
   await expect(integrationToggle).not.toBeChecked()
   await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
-  await settingsWindow.close()
+  await destroySettingsWindow(electronApp)
 
   await openFileExplorer(mainWindow)
   await expect(
@@ -353,7 +404,7 @@ test('agent integration setting disables and restores the full agent surface', a
   await expect(
     restoredSettingsWindow.locator('.settings-status'),
   ).toContainText('Saved')
-  await restoredSettingsWindow.close()
+  await destroySettingsWindow(electronApp)
 
   const sessionId = await getActiveSessionId(mainWindow)
   await emitHook(mainWindow, sessionId, {

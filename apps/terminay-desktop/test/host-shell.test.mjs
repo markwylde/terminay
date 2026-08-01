@@ -10,16 +10,26 @@ test("selected connection loads only its server bundle origin", async () => {
   const requested = [];
   const loaded = await policy.loadSelectedBundle(async (url) => {
     requested.push(url);
-    return { status: 200, contentType: "application/json", bytes: new TextEncoder().encode('{"entry":"/remote-app/test/index.html"}') };
+    return { status: 200, contentType: "application/json", finalUrl: url, bytes: new TextEncoder().encode('{"entry":"/remote-app/test/index.html"}') };
   });
   assert.deepEqual(requested, ["http://127.0.0.1:4311/manifest.json"]);
   assert.equal(loaded.connectionId, local.connectionId);
   assert.equal(loaded.origin, local.origin);
   assert.equal(loaded.url, "http://127.0.0.1:4311/manifest.json");
+  assert.equal(loaded.finalUrl, loaded.url);
   assert.equal(Object.isFrozen(loaded), true);
   assert.throws(() => policy.bundleUrl("https://other.example/evil"), /asset path/);
   assert.throws(() => policy.bundleUrl("/remote-app/../outside"), /asset path/);
   await assert.rejects(policy.loadSelectedBundle(async () => ({ status: 503, bytes: new Uint8Array() })), /request failed/);
+});
+
+test("bundle responses must prove same-origin final URL and remain bounded", async () => {
+  const policy = new DesktopHostShellPolicy();
+  policy.selectConnection(local);
+  await assert.rejects(policy.loadSelectedBundle(async () => ({ status: 200, finalUrl: "https://evil.example/manifest.json", bytes: new Uint8Array() })), /left the selected origin/);
+  await assert.rejects(policy.loadSelectedBundle(async () => ({ status: 200, finalUrl: "http://127.0.0.1:4311/manifest.json?credential=secret", bytes: new Uint8Array() })), /left the selected origin/);
+  await assert.rejects(policy.loadSelectedBundle(async () => ({ status: 200, finalUrl: "http://127.0.0.1:4311/manifest.json", bytes: new Uint8Array(32 * 1024 * 1024 + 1) })), /size limit/);
+  await assert.rejects(policy.loadSelectedBundle(async () => ({ status: 200, bytes: new Uint8Array() })), /response URL/);
 });
 
 test("navigation is scoped to the selected connection and rejects unsafe URL state", () => {
@@ -46,7 +56,7 @@ test("privileged host callbacks explicitly opt in to one guarded request", () =>
   const policy = new DesktopHostShellPolicy({
     allowNewWindow: (request) => request.userGesture === true && request.url === "https://docs.example/help",
     allowDownload: (request) => request.url === "https://downloads.example/approved.zip",
-    allowPermission: (request) => request.permission === "microphone" && request.url === local.origin + "/dictation",
+    allowPermission: (request) => request.permission === "microphone" && request.url === `${local.origin}/dictation`,
     allowProtocol: (request) => request.url.startsWith("mailto:"),
   });
   policy.selectConnection(local);

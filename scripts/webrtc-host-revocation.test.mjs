@@ -40,6 +40,34 @@ test('WebRTC host closes the terminal data channel when the desktop revokes the 
   cleanup()
 })
 
+test('WebRTC host accepts bounded UTF-8 byte-view messages from a non-browser peer', async () => {
+  const api = createHostApi()
+  const assetChannel = new MockDataChannel('asset')
+  const terminalChannel = new MockDataChannel('terminal')
+  const peer = new MockPeerConnection()
+  peer.createDataChannel = (label) => label === 'asset'
+    ? assetChannel
+    : label === 'terminal'
+      ? terminalChannel
+      : new MockDataChannel(label)
+  api.getAssetManifest = async () => ({ assets: [{ path: '/remote-app/bundle/remote.html' }] })
+
+  const cleanup = await runHost(createHostConfig(), {
+    api,
+    createPeerConnection: () => peer,
+  })
+  const encode = (value) => new TextEncoder().encode(JSON.stringify(value))
+  assetChannel.dispatchMessage(encode({ id: 'manifest', type: 'asset:get-manifest' }))
+  await waitFor(() => assetChannel.sent.some((raw) => JSON.parse(raw).id === 'manifest'))
+
+  terminalChannel.dispatchMessage(encode({ ticket: 'ticket-1', type: 'terminal-auth' }))
+  await api.waitForAttach()
+  terminalChannel.dispatchMessage(new TextEncoder().encode('byte-view-terminal-input'))
+  await waitFor(() => api.terminalMessages.some(({ message }) => message === 'byte-view-terminal-input'))
+
+  cleanup()
+})
+
 test('WebRTC host owns relay registration and sends an offer after client join', async () => {
   const api = createHostApi()
 
@@ -528,7 +556,7 @@ async function importWebRtcHost() {
   const outputPath = join(tempDir, 'WebRtcHost.mjs')
   await build({
     bundle: true,
-    entryPoints: [new URL('../src/remote/WebRtcHost.tsx', import.meta.url).pathname],
+    entryPoints: [new URL('./support/webRtcHostRuntime.ts', import.meta.url).pathname],
     format: 'esm',
     outfile: outputPath,
     platform: 'node',

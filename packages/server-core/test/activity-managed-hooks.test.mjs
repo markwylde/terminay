@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
-  CODEX_MANAGED_HOOK_EVENTS,
-  CLAUDE_CODE_MANAGED_HOOK_EVENTS,
-  MANAGED_HOOK_MARKER,
   buildManagedHookScript,
+  CLAUDE_CODE_MANAGED_HOOK_EVENTS,
+  CODEX_MANAGED_HOOK_EVENTS,
   claudeCodeManagedHookReconciler,
   codexManagedHookReconciler,
   createManagedHookReconcilers,
   isManagedCommand,
+  MANAGED_HOOK_MARKER,
 } from "../dist/activity/index.js";
 
 function memoryFileSystem(initial = {}) {
@@ -110,6 +114,35 @@ test("managed hook uninstall is scoped, idempotent, and fails closed on malforme
   assert.equal(malformedFs.files.size, 1);
 });
 
+test("managed reconciliation repairs wrong matcher placement without duplicating or removing user hooks", async () => {
+  const codexPath = pathFor("codex");
+  const fs = memoryFileSystem({
+    [codexPath]: JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          { matcher: "Write", hooks: [{ type: "command", command: `${MANAGED_HOOK_MARKER} /bin/sh '/old hook' codex` }] },
+          { matcher: "Write", hooks: [{ type: "command", command: "user-write-hook" }] },
+        ],
+      },
+    }),
+  });
+  const options = { homeDir: "/fixture home", scriptDir: "/fixture scripts", fileSystem: fs };
+
+  const before = await codexManagedHookReconciler.status(options);
+  assert.equal(before.state, "not-installed");
+  assert.equal(before.missingEvents.includes("PreToolUse"), true);
+
+  const after = await codexManagedHookReconciler.install(options);
+  assert.equal(after.state, "installed");
+  const config = JSON.parse(fs.files.get(codexPath));
+  const definitions = config.hooks.PreToolUse;
+  const managed = definitions.flatMap((definition) => (definition.hooks ?? []).map((hook) => ({ definition, hook })))
+    .filter(({ hook }) => isManagedCommand(hook.command));
+  assert.equal(managed.length, 1);
+  assert.equal(managed[0].definition.matcher, "*");
+  assert.equal(definitions.some((definition) => definition.matcher === "Write" && definition.hooks.some((hook) => hook.command === "user-write-hook")), true);
+});
+
 test("managed script is bounded, environment-scoped, and never persists credentials", () => {
   const script = buildManagedHookScript();
   assert.match(script, /TERMINAY_SESSION_ID/);
@@ -119,4 +152,37 @@ test("managed script is bounded, environment-scoped, and never persists credenti
   assert.match(script, /localhost/);
   assert.doesNotMatch(script, /service-secret|raw-provider-token|fixture-token/i);
   assert.deepEqual(Object.keys(createManagedHookReconcilers()).sort(), ["claude-code", "codex"]);
+});
+
+test("managed script admits literal IPv6 loopback without widening its host glob", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "terminay-managed-hook-loopback-"));
+  const marker = join(directory, "delivered");
+  try {
+    const script = buildManagedHookScript()
+      .split("\n")
+      .map((line) => line.startsWith("printf '%s' \"$payload\" | curl ")
+        ? "printf delivered > \"$TERMINAY_TEST_MARKER\""
+        : line)
+      .join("\n");
+    const run = (endpoint) => spawnSync("/bin/sh", ["-c", script, "terminay-hook", "codex"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TERMINAY_AGENT_HOOK_ENDPOINT: endpoint,
+        TERMINAY_AGENT_HOOK_TOKEN: "test-token",
+        TERMINAY_SESSION_ID: "test-session",
+        TERMINAY_TEST_MARKER: marker,
+      },
+      input: "{}",
+    });
+
+    assert.equal(run("http://[::1]:43123/v1/agent-events").status, 0);
+    assert.equal(await readFile(marker, "utf8"), "delivered");
+    await rm(marker, { force: true });
+
+    assert.equal(run("http://1:43123/v1/agent-events").status, 0);
+    await assert.rejects(readFile(marker, "utf8"), (error) => error?.code === "ENOENT");
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
 });

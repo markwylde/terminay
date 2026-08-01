@@ -159,5 +159,9 @@ test("server terminal adapter waits on canonical activity transitions with bound
   assert.deepEqual(await attentionPending, { terminal: "caller", attention: true, timedOut: false, exitCode: 3 });
 
   activity.ingestSignal(identity, { kind: "userInput" });
+  assert.deepEqual(
+    await request("zero-idle", "wait_for_idle", { terminal: "caller", seconds: 0 }),
+    { terminal: "caller", idle: true, timedOut: false, exitCode: 3 },
+  );
   assert.deepEqual(await request("timeout", "wait_for_attention", { terminal: "caller", timeout: 0.01 }), { terminal: "caller", attention: false, timedOut: true });
 });

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute, normalize, relative, resolve } from "node:path";
+import { dirname, isAbsolute, normalize, relative, resolve } from "node:path";
 import {
   DEFAULT_GIT_SERVICE_LIMITS,
   GitServiceError,
@@ -28,6 +28,10 @@ import {
   type GitWorktreeListResult,
   type GitWorktreeRemoveRequest,
   type GitWorktreeRemoveResult,
+  type GitWorktreeMoveRequest,
+  type GitWorktreeMoveResult,
+  type GitWorktreePullRequest,
+  type GitWorktreePullResult,
   type GitWorktreeSummary,
 } from "./types.js";
 import { NodeGitCommandRunner } from "./runner.js";
@@ -42,6 +46,7 @@ export class NodeGitPathAdapter implements GitPathAdapter {
 }
 
 type GitTargetRequest = Omit<GitReadOnlyRequest, "operation">;
+type GitStatusPollTimer = ReturnType<typeof setTimeout>;
 
 interface Discovery {
   readonly state: GitDiscoveryState;
@@ -61,12 +66,16 @@ export class GitService {
   private readonly runner: GitCommandRunner;
   private readonly pathAdapter: GitPathAdapter;
   private readonly limits: Required<GitServiceLimits>;
+  private readonly statusPollIntervalMs: number | false;
   private readonly bindings = new Map<string, GitProjectBinding>();
   private readonly listeners = new Set<GitServiceListener>();
+  private readonly worktreeMutations = new Set<string>();
   private readonly events: GitServiceEvent[] = [];
   private readonly maxEvents: number;
+  private readonly statusPollTimers = new Map<string, GitStatusPollTimer>();
   private revisionValue = 0;
   private readonly statusFingerprints = new Map<string, string>();
+  private closed = false;
 
   constructor(options: GitServiceOptions = {}) {
     this.runner = options.runner ?? new NodeGitCommandRunner();
@@ -75,6 +84,8 @@ export class GitService {
     validateLimits(this.limits);
     this.maxEvents = options.maxEvents ?? 1024;
     if (!Number.isSafeInteger(this.maxEvents) || this.maxEvents <= 0) throw new RangeError("maxEvents must be positive");
+    this.statusPollIntervalMs = options.statusPollIntervalMs ?? 10_000;
+    if (this.statusPollIntervalMs !== false && (!Number.isSafeInteger(this.statusPollIntervalMs) || this.statusPollIntervalMs < 1_000 || this.statusPollIntervalMs > 300_000)) throw new RangeError("statusPollIntervalMs must be false or between 1000 and 300000");
   }
 
   get revision(): number { return this.revisionValue; }
@@ -107,10 +118,20 @@ export class GitService {
       state: discovered.state,
     };
     this.bindings.set(projectId, binding);
+    this.startStatusPoll(projectId);
     return binding;
   }
 
-  unbindProject(projectId: string): boolean { return this.bindings.delete(projectId); }
+  unbindProject(projectId: string): boolean {
+    this.stopStatusPoll(projectId);
+    return this.bindings.delete(projectId);
+  }
+
+  close(): void {
+    this.closed = true;
+    for (const projectId of [...this.statusPollTimers.keys()]) this.stopStatusPoll(projectId);
+    this.listeners.clear();
+  }
 
   getBinding(projectId: string): GitProjectBinding | undefined { return this.bindings.get(projectId); }
 
@@ -234,19 +255,26 @@ export class GitService {
       const id = worktreeId(discovery.repositoryId as GitRepositoryId, canonicalPath);
       let entries: readonly import("./types.js").GitStatusEntry[] = [];
       let error: GitErrorInfo | undefined;
+      let statusBounded = false;
+      let branch: GitBranchStatus = { name: record.branch, detached: record.detached, head: record.head, upstream: null, upstreamState: "none", ahead: null, behind: null };
       let state = worktreeState(entries, record.detached, record.isPrunable);
+      let discoveryState: GitDiscoveryState = "ready";
       if (!record.isBare && !record.isPrunable) {
         const statusResult = await this.runGit(["status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all", "--ignored=no"], record.path, target.signal);
         if (statusResult.exitCode === 0 && !statusResult.truncated) {
           const parsed = parseStatus(statusResult.stdout, this.limits.maxStatusEntries);
           entries = parsed.entries;
+          statusBounded = parsed.bounded;
+          branch = { ...parsed.branch, name: parsed.branch.name ?? record.branch, detached: parsed.branch.detached || record.detached, head: record.head };
           state = worktreeState(entries, parsed.branch.detached || record.detached, false);
         } else {
           state = "unknown";
+          discoveryState = "command-error";
+          statusBounded = statusResult.truncated;
           error = commandError("status", statusResult, statusResult.truncated ? "Worktree status output exceeded the configured limit." : "Worktree status failed.");
         }
       }
-      summaries.push({
+      const summary = {
         id,
         repositoryId: discovery.repositoryId as GitRepositoryId,
         path: canonicalPath,
@@ -260,6 +288,20 @@ export class GitService {
         state,
         entries,
         ...(error === undefined ? {} : { error }),
+      } satisfies GitWorktreeSummary;
+      summaries.push(summary);
+      this.publishStatusChange({
+        projectId: target.projectId,
+        repositoryId: discovery.repositoryId,
+        repositoryRoot: discovery.repositoryRoot,
+        worktreeId: id,
+        worktreeRoot: canonicalPath,
+        state: discoveryState,
+        branch,
+        entries,
+        head: record.head,
+        bounded: statusBounded,
+        ...(error === undefined ? {} : { error }),
       });
     }
     return { ...empty, state: "ready", defaultBranch, worktrees: summaries, bounded };
@@ -267,6 +309,41 @@ export class GitService {
 
   listWorktrees(request: GitTargetRequest | string, signal?: AbortSignal): Promise<GitWorktreeListResult> {
     return this.worktrees(request, signal);
+  }
+
+  async moveWorktree(request: GitWorktreeMoveRequest): Promise<GitWorktreeMoveResult> {
+    validateProjectId(request.projectId);
+    const name = validateWorktreeDirectoryName(request.name);
+    const mutationKey = `${request.projectId}\0${request.repositoryId}\0${request.worktreeId}`;
+    if (this.worktreeMutations.has(mutationKey)) throw new GitServiceError("mutation-failed", "a worktree mutation is already in progress", { worktreeId: request.worktreeId });
+    this.worktreeMutations.add(mutationKey);
+    try {
+      const listing = await this.worktrees({ projectId: request.projectId, repositoryId: request.repositoryId, signal: request.signal });
+      const base = { operation: "move" as const, projectId: request.projectId, repositoryId: request.repositoryId, worktreeIdBefore: request.worktreeId };
+      if (listing.state !== "ready" || listing.repositoryId !== request.repositoryId) return { ...base, worktreeId: request.worktreeId, applied: false, state: "command-error", headBefore: null, headAfter: null, path: null, error: listing.error ?? { code: "repository-mismatch", message: "worktree repository is no longer bound to this project", operation: "worktree.move" } };
+      const selected = listing.worktrees.find((value) => value.id === request.worktreeId);
+      if (selected === undefined) throw new GitServiceError("worktree-not-found", "worktree is not part of the project repository");
+      if (selected.isMain || selected.isBare || selected.locked || selected.isPrunable) throw new GitServiceError("mutation-failed", "worktree cannot be moved in its current state", { worktreeId: request.worktreeId });
+      if (request.expectedHead !== undefined && selected.head !== request.expectedHead) throw new GitServiceError("stale-revision", "worktree HEAD changed since the move was reviewed", { expectedHead: request.expectedHead, actualHead: selected.head });
+      const fresh = await this.status({ projectId: request.projectId, repositoryId: request.repositoryId, worktreeId: request.worktreeId, signal: request.signal });
+      if (fresh.state !== "ready" || fresh.entries.length > 0) throw new GitServiceError("worktree-dirty", "refusing to move a dirty or unmerged worktree", { worktreeId: request.worktreeId });
+      const destination = resolve(dirname(selected.path), name);
+      if (dirname(destination) !== dirname(selected.path) || samePath(destination, selected.path)) throw new GitServiceError("mutation-failed", "worktree destination is invalid");
+      if (listing.worktrees.some((value) => samePath(value.path, destination))) throw new GitServiceError("mutation-failed", "worktree destination already exists");
+      if (await filesystemPathExists(destination)) throw new GitServiceError("mutation-failed", "worktree destination already exists");
+      const binding = this.getBinding(request.projectId);
+      const cwd = binding?.repositoryRoot ?? binding?.projectRoot;
+      if (cwd === undefined) return { ...base, worktreeId: request.worktreeId, applied: false, state: "command-error", headBefore: selected.head, headAfter: selected.head, path: selected.path, error: { code: "invalid-project", message: "project is no longer bound to this server", operation: "worktree.move" } };
+      const moved = await this.runGit(["worktree", "move", "--", selected.path, destination], cwd, request.signal);
+      if (moved.exitCode !== 0 || moved.truncated) return { ...base, worktreeId: request.worktreeId, applied: false, state: "command-error", headBefore: selected.head, headAfter: selected.head, path: selected.path, error: commandError("worktree.move", moved, moved.truncated ? "Git worktree move exceeded the configured output limit." : "Git worktree move failed.") };
+      const after = await this.worktrees({ projectId: request.projectId, repositoryId: request.repositoryId, signal: request.signal });
+      const canonicalDestination = await this.canonicalWorktreePath(destination);
+      const replacement = after.worktrees.find((value) => samePath(value.path, canonicalDestination));
+      if (after.state !== "ready" || replacement === undefined || after.worktrees.some((value) => value.id === request.worktreeId)) return { ...base, worktreeId: request.worktreeId, applied: false, state: "command-error", headBefore: selected.head, headAfter: null, path: null, error: { code: "mutation-failed", message: "Git reported movement but canonical registration did not change", operation: "worktree.move" } };
+      return { ...base, worktreeId: replacement.id, applied: true, state: "moved", headBefore: selected.head, headAfter: replacement.head, path: replacement.path };
+    } finally {
+      this.worktreeMutations.delete(mutationKey);
+    }
   }
 
   /**
@@ -373,6 +450,38 @@ export class GitService {
     }
     return { ...base, applied: true, state: "removed", headBefore: selected.head };
   }
+
+  /** Pull one clean, attached worktree using its configured upstream. The
+   * caller supplies only opaque identities; the canonical path is re-read
+   * immediately before Git mutates it and status is verified afterwards. */
+  async pullWorktree(request: GitWorktreePullRequest): Promise<GitWorktreePullResult> {
+    validateProjectId(request.projectId);
+    const base = { operation: "pull" as const, projectId: request.projectId, repositoryId: request.repositoryId, worktreeId: request.worktreeId };
+    const listing = await this.worktrees({ projectId: request.projectId, repositoryId: request.repositoryId, ...(request.signal === undefined ? {} : { signal: request.signal }) });
+    if (listing.state !== "ready" || listing.repositoryId !== request.repositoryId) {
+      return { ...base, applied: false, state: "command-error", headBefore: null, headAfter: null, error: listing.error ?? { code: "repository-mismatch", message: "worktree repository is no longer bound to this project", operation: "worktree.pull" } };
+    }
+    const selected = listing.worktrees.find((worktree) => worktree.id === request.worktreeId);
+    if (selected === undefined) throw new GitServiceError("worktree-not-found", "worktree is not part of the project repository");
+    if (selected.isBare) throw new GitServiceError("worktree-bare", "refusing to pull a bare worktree", { worktreeId: request.worktreeId });
+    if (selected.isPrunable || selected.locked) throw new GitServiceError("worktree-locked", "refusing to pull a locked or prunable worktree", { worktreeId: request.worktreeId });
+    if (selected.detached || selected.branch === null) throw new GitServiceError("mutation-failed", "refusing to pull a detached worktree", { worktreeId: request.worktreeId });
+    if (request.expectedHead !== undefined && request.expectedHead !== selected.head) throw new GitServiceError("stale-revision", "worktree HEAD changed since the pull was reviewed", { worktreeId: request.worktreeId, expectedHead: request.expectedHead, actualHead: selected.head });
+
+    const fresh = await this.status({ projectId: request.projectId, repositoryId: request.repositoryId, worktreeId: request.worktreeId, ...(request.signal === undefined ? {} : { signal: request.signal }) });
+    if (fresh.state !== "ready") return { ...base, applied: false, state: "command-error", headBefore: selected.head, headAfter: fresh.head, error: fresh.error ?? { code: "mutation-failed", message: "worktree status could not be revalidated", operation: "worktree.pull" } };
+    if (fresh.entries.some((entry) => entry.unmerged || entry.unstaged || entry.staged)) throw new GitServiceError("worktree-dirty", "refusing to pull a dirty or unmerged worktree", { worktreeId: request.worktreeId });
+    if (!headsMatch(selected.head, fresh.head) || (request.expectedHead !== undefined && !headsMatch(request.expectedHead, fresh.head))) throw new GitServiceError("stale-revision", "worktree changed since the pull was reviewed", { worktreeId: request.worktreeId, expectedHead: request.expectedHead ?? selected.head, actualHead: fresh.head });
+    if (fresh.branch.upstreamState !== "configured") return { ...base, applied: false, state: "command-error", headBefore: fresh.head, headAfter: fresh.head, error: { code: "command-error", message: fresh.branch.upstreamState === "missing" ? "worktree upstream remote is unavailable" : "worktree has no configured upstream remote", operation: "worktree.pull" } };
+
+    const result = await this.runGit(["pull", "--ff-only"], selected.path, request.signal);
+    if (result.exitCode !== 0 || result.truncated) return { ...base, applied: false, state: "command-error", headBefore: fresh.head, headAfter: fresh.head, error: commandError("worktree.pull", result, result.truncated ? "Git pull output exceeded the configured limit." : "Git pull failed.") };
+    const after = await this.status({ projectId: request.projectId, repositoryId: request.repositoryId, worktreeId: request.worktreeId, ...(request.signal === undefined ? {} : { signal: request.signal }) });
+    if (after.state !== "ready" || after.entries.some((entry) => entry.unmerged || entry.unstaged || entry.staged)) return { ...base, applied: false, state: "command-error", headBefore: fresh.head, headAfter: after.head, error: after.error ?? { code: "mutation-failed", message: "Git pull did not leave a clean worktree", operation: "worktree.pull" } };
+    return { ...base, applied: true, state: "pulled", headBefore: fresh.head, headAfter: after.head };
+  }
+
+  pullWorktreeFromOrigin(request: GitWorktreePullRequest): Promise<GitWorktreePullResult> { return this.pullWorktree(request); }
 
   async readOnly(request: GitReadOnlyRequest): Promise<GitStatusResult | GitBranchResult | GitDiffResult | GitWorktreeListResult> {
     if (request.operation === "status") return this.status(request);
@@ -606,6 +715,27 @@ export class GitService {
       try { listener(event); } catch { /* observer failures cannot roll back Git state */ }
     }
   }
+
+  private startStatusPoll(projectId: string): void {
+    if (this.statusPollIntervalMs === false || this.statusPollTimers.has(projectId) || this.closed) return;
+    const schedule = (): void => {
+      if (this.statusPollIntervalMs === false || this.closed || !this.bindings.has(projectId)) return;
+      const timer = setTimeout(() => {
+        this.statusPollTimers.delete(projectId);
+        if (this.closed || !this.bindings.has(projectId)) return;
+        void this.worktrees({ projectId }).catch(() => undefined).finally(schedule);
+      }, this.statusPollIntervalMs);
+      timer.unref?.();
+      this.statusPollTimers.set(projectId, timer);
+    };
+    schedule();
+  }
+
+  private stopStatusPoll(projectId: string): void {
+    const timer = this.statusPollTimers.get(projectId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.statusPollTimers.delete(projectId);
+  }
 }
 
 export { GitService as ServerGitService, GitService as GitRepositoryService };
@@ -625,6 +755,21 @@ function normalizeTarget(value: GitTargetRequest | string, signal?: AbortSignal)
 
 function validateProjectId(projectId: string): void {
   if (typeof projectId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(projectId)) throw new GitServiceError("invalid-project", "project id is invalid");
+}
+
+function validateWorktreeDirectoryName(value: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 255 || value === "." || value === ".." || /[/\\\0\r\n]/u.test(value) || value.trim() !== value) {
+    throw new GitServiceError("mutation-failed", "worktree directory name is invalid");
+  }
+  return value;
+}
+
+async function filesystemPathExists(path: string): Promise<boolean> {
+  try { await stat(path); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
+    throw new GitServiceError("mutation-failed", "worktree destination could not be inspected");
+  }
 }
 
 function validateRelativePath(value: string, maxBytes: number): void {
@@ -660,6 +805,11 @@ function digest(value: string): string { return createHash("sha256").update(valu
 
 function samePath(first: string, second: string): boolean { return resolve(first) === resolve(second); }
 function isWithin(root: string, candidate: string): boolean { const rest = relative(resolve(root), resolve(candidate)); return rest === "" || (rest.length > 0 && !rest.startsWith("..") && !isAbsolute(rest)); }
+function headsMatch(first: string | null | undefined, second: string | null | undefined): boolean {
+  if (first === second) return true;
+  if (first === null || first === undefined || second === null || second === undefined) return false;
+  return first.startsWith(second) || second.startsWith(first);
+}
 
 function classifyDiscoveryError(result: GitCommandResult, truncated: boolean, gitMetadataPresent = false): GitDiscoveryState {
   if (truncated) return "command-error";

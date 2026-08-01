@@ -127,7 +127,10 @@ export type WorkspaceCommand =
   | { readonly type: "view.rename"; readonly viewId: ProtocolId; readonly name: string }
   | { readonly type: "view.close"; readonly viewId: ProtocolId }
   | { readonly type: "project.create"; readonly projectId: ProtocolId; readonly viewId: ProtocolId; readonly root: string; readonly name: string }
+  | { readonly type: "project.root.update"; readonly projectId: ProtocolId; readonly root: string }
+  | { readonly type: "project.activate"; readonly projectId: ProtocolId }
   | { readonly type: "project.rename"; readonly projectId: ProtocolId; readonly name: string }
+  | { readonly type: "project.update"; readonly projectId: ProtocolId; readonly name: string; readonly root: string; readonly color?: string; readonly icon?: string }
   | { readonly type: "project.move"; readonly projectId: ProtocolId; readonly targetViewId: ProtocolId; readonly index?: number }
   | { readonly type: "project.close"; readonly projectId: ProtocolId }
   | { readonly type: "panel.create"; readonly panel: WorkspacePanel }
@@ -138,6 +141,7 @@ export type WorkspaceCommand =
   | { readonly type: "panel.move"; readonly panelId: ProtocolId; readonly targetProjectId: ProtocolId; readonly index?: number }
   | { readonly type: "panel.close"; readonly panelId: ProtocolId }
   | { readonly type: "terminal.create"; readonly sessionId: ProtocolId; readonly projectId: ProtocolId; readonly createdAt?: number }
+  | { readonly type: "terminal.createPanel"; readonly sessionId: ProtocolId; readonly projectId: ProtocolId; readonly panelId: ProtocolId; readonly title?: string; readonly cwd?: string; readonly createdAt?: number }
   | { readonly type: "terminal.markInterrupted"; readonly sessionId: ProtocolId; readonly at?: number };
 
 export interface WorkspaceCommandEnvelope { readonly commandId: ProtocolId; readonly expectedRevision?: number; readonly command: WorkspaceCommand; }
@@ -265,17 +269,92 @@ export class WorkspaceStore {
       case "view.rename": { const view = requireView(state, command.viewId); state.views[command.viewId] = { ...view, name: boundedName(command.name) }; changed.push(command.viewId); break; }
       case "view.close": { const view = requireView(state, command.viewId); if (view.projectIds.length > 0) throw new Error("view must be empty before close"); if (state.viewOrder.length <= 1) throw new Error("cannot close the last view"); delete state.views[command.viewId]; state.viewOrder = state.viewOrder.filter((id) => id !== command.viewId); changed.push(command.viewId); break; }
       case "project.create": { assertId(command.projectId, "projectId"); if (state.projects[command.projectId] !== undefined) throw new Error("project already exists"); const view = requireView(state, command.viewId); const project: WorkspaceProject = { id: command.projectId, serverId: state.serverId, viewId: command.viewId, root: boundedPath(command.root), name: boundedName(command.name), panelIds: [], layout: stack([]) }; state.projects[command.projectId] = project; state.views[command.viewId] = { ...view, projectIds: [...view.projectIds, command.projectId], activeProjectId: command.projectId }; changed.push(command.projectId, command.viewId); break; }
+      case "project.root.update": { const project = requireProject(state, command.projectId); state.projects[command.projectId] = { ...project, root: boundedPath(command.root) }; changed.push(command.projectId); break; }
+      case "project.activate": { const project = requireProject(state, command.projectId); const view = requireView(state, project.viewId); state.views[view.id] = { ...view, activeProjectId: project.id }; changed.push(project.id, view.id); break; }
       case "project.rename": { const project = requireProject(state, command.projectId); state.projects[command.projectId] = { ...project, name: boundedName(command.name) }; changed.push(command.projectId); break; }
+      case "project.update": {
+        const project = requireProject(state, command.projectId);
+        state.projects[command.projectId] = {
+          ...project,
+          name: boundedName(command.name),
+          root: boundedPath(command.root),
+          ...(command.color === undefined ? {} : { color: boundedPresentation(command.color, "color") }),
+          ...(command.icon === undefined ? {} : { icon: boundedPresentation(command.icon, "icon") }),
+        };
+        changed.push(command.projectId);
+        break;
+      }
       case "project.move": { const project = requireProject(state, command.projectId); const from = requireView(state, project.viewId); const to = requireView(state, command.targetViewId); state.views[project.viewId] = { ...from, projectIds: from.projectIds.filter((id) => id !== project.id), activeProjectId: from.activeProjectId === project.id ? from.projectIds.find((id) => id !== project.id) : from.activeProjectId }; const ids = to.projectIds.filter((id) => id !== project.id); ids.splice(indexAt(command.index, ids.length), 0, project.id); state.views[command.targetViewId] = { ...to, projectIds: ids, activeProjectId: project.id }; state.projects[project.id] = { ...project, viewId: command.targetViewId }; changed.push(project.id, from.id, to.id); break; }
-      case "project.close": { const project = requireProject(state, command.projectId); if (project.panelIds.length > 0) throw new Error("project must be empty before close"); const view = requireView(state, project.viewId); delete state.projects[project.id]; state.views[view.id] = { ...view, projectIds: view.projectIds.filter((id) => id !== project.id), activeProjectId: view.activeProjectId === project.id ? undefined : view.activeProjectId }; changed.push(project.id, view.id); break; }
+      case "project.close": {
+        const project = requireProject(state, command.projectId);
+        const view = requireView(state, project.viewId);
+        for (const panelId of project.panelIds) {
+          delete state.panels[panelId];
+          changed.push(panelId);
+        }
+        for (const [sessionId, session] of Object.entries(state.terminalSessions)) {
+          if (session.projectId !== project.id) continue;
+          delete state.terminalSessions[sessionId];
+          changed.push(sessionId);
+        }
+        delete state.projects[project.id];
+        const remainingProjectIds = view.projectIds.filter((id) => id !== project.id);
+        state.views[view.id] = {
+          ...view,
+          projectIds: remainingProjectIds,
+          activeProjectId: view.activeProjectId === project.id ? remainingProjectIds[0] : view.activeProjectId,
+        };
+        changed.push(project.id, view.id);
+        break;
+      }
       case "panel.create": { const panel = command.panel; assertId(panel.id, "panelId"); if (state.panels[panel.id] !== undefined) throw new Error("panel already exists"); const project = requireProject(state, panel.projectId); if (panel.type === "terminal") { const session = state.terminalSessions[panel.sessionId]; if (session === undefined || session.projectId !== panel.projectId) throw new Error("terminal session is outside project"); } state.panels[panel.id] = clone(panel); const ids = [...project.panelIds, panel.id]; state.projects[project.id] = { ...project, panelIds: ids, activePanelId: panel.id, layout: stack(ids, panel.id) }; changed.push(panel.id, project.id); break; }
       case "panel.update": { const panel = requirePanel(state, command.panelId); if (typeof command.patch !== "object" || command.patch === null || Array.isArray(command.patch)) throw new Error("panel patch must be an object"); const patch = command.patch as Record<string, JsonValue>; if ("projectId" in patch || "id" in patch || "type" in patch) throw new Error("panel ownership/type is immutable"); state.panels[panel.id] = { ...panel, ...(patch as Partial<WorkspacePanel>) } as WorkspacePanel; changed.push(panel.id); break; }
       case "panel.reorder": { const project = requireProject(state, command.projectId); if (command.panelIds.length !== project.panelIds.length || new Set(command.panelIds).size !== project.panelIds.length || command.panelIds.some((id) => !project.panelIds.includes(id))) throw new Error("panel reorder crosses project boundary"); state.projects[project.id] = { ...project, panelIds: [...command.panelIds], layout: stack(command.panelIds, project.activePanelId) }; changed.push(project.id, ...command.panelIds); break; }
       case "panel.split": { const project = requireProject(state, command.projectId); if (!project.panelIds.includes(command.panelId)) throw new Error("panel is outside project"); state.projects[project.id] = { ...project, layout: { kind: "split", direction: command.direction, weight: command.weight ?? 0.5, first: stack([command.panelId], command.panelId), second: stack(project.panelIds.filter((id) => id !== command.panelId)) } }; changed.push(project.id, command.panelId); break; }
       case "panel.activate": { const project = requireProject(state, command.projectId); if (!project.panelIds.includes(command.panelId)) throw new Error("panel is outside project"); state.projects[project.id] = { ...project, activePanelId: command.panelId, layout: project.layout.kind === "stack" ? stack(project.panelIds, command.panelId) : project.layout }; changed.push(project.id, command.panelId); break; }
       case "panel.move": { const panel = requirePanel(state, command.panelId); const from = requireProject(state, panel.projectId); const to = requireProject(state, command.targetProjectId); const sourceIds = from.panelIds.filter((id) => id !== panel.id); const targetIds = to.panelIds.filter((id) => id !== panel.id); targetIds.splice(indexAt(command.index, targetIds.length), 0, panel.id); state.projects[from.id] = { ...from, panelIds: sourceIds, activePanelId: from.activePanelId === panel.id ? sourceIds[0] : from.activePanelId, layout: stack(sourceIds) }; state.projects[to.id] = { ...to, panelIds: targetIds, activePanelId: panel.id, layout: stack(targetIds, panel.id) }; state.panels[panel.id] = { ...panel, projectId: to.id } as WorkspacePanel; if (panel.type === "terminal") { const session = state.terminalSessions[panel.sessionId]; if (session === undefined) throw new Error("terminal session not found"); state.terminalSessions[panel.sessionId] = { ...session, projectId: to.id }; } changed.push(panel.id, from.id, to.id); break; }
-      case "panel.close": { const panel = requirePanel(state, command.panelId); const project = requireProject(state, panel.projectId); delete state.panels[panel.id]; state.projects[project.id] = { ...project, panelIds: project.panelIds.filter((id) => id !== panel.id), activePanelId: project.activePanelId === panel.id ? undefined : project.activePanelId, layout: stack(project.panelIds.filter((id) => id !== panel.id)) }; changed.push(panel.id, project.id); break; }
+      case "panel.close": {
+        const panel = requirePanel(state, command.panelId);
+        const project = requireProject(state, panel.projectId);
+        delete state.panels[panel.id];
+        if (panel.type === "terminal") {
+          delete state.terminalSessions[panel.sessionId];
+          changed.push(panel.sessionId);
+        }
+        const panelIds = project.panelIds.filter((id) => id !== panel.id);
+        state.projects[project.id] = {
+          ...project,
+          panelIds,
+          activePanelId: project.activePanelId === panel.id ? panelIds[0] : project.activePanelId,
+          layout: stack(panelIds, project.activePanelId === panel.id ? panelIds[0] : project.activePanelId),
+        };
+        changed.push(panel.id, project.id);
+        break;
+      }
       case "terminal.create": { assertId(command.sessionId, "sessionId"); if (state.terminalSessions[command.sessionId] !== undefined) throw new Error("terminal session already exists"); const project = requireProject(state, command.projectId); state.terminalSessions[command.sessionId] = { id: command.sessionId, serverId: state.serverId, projectId: project.id, status: "running", createdAt: command.createdAt ?? Date.now(), outputPosition: 0 }; changed.push(command.sessionId, project.id); break; }
+      case "terminal.createPanel": {
+        assertId(command.sessionId, "sessionId");
+        assertId(command.panelId, "panelId");
+        if (state.terminalSessions[command.sessionId] !== undefined) throw new Error("terminal session already exists");
+        if (state.panels[command.panelId] !== undefined) throw new Error("panel already exists");
+        const project = requireProject(state, command.projectId);
+        const createdAt = command.createdAt ?? Date.now();
+        state.terminalSessions[command.sessionId] = { id: command.sessionId, serverId: state.serverId, projectId: project.id, status: "running", createdAt, outputPosition: 0 };
+        const panel: TerminalPanel = {
+          id: command.panelId,
+          projectId: project.id,
+          type: "terminal",
+          sessionId: command.sessionId,
+          title: boundedName(command.title ?? "Terminal"),
+          createdAt,
+          ...(command.cwd === undefined ? {} : { cwd: boundedPath(command.cwd) }),
+        };
+        state.panels[panel.id] = panel;
+        const ids = [...project.panelIds, panel.id];
+        state.projects[project.id] = { ...project, panelIds: ids, activePanelId: panel.id, layout: stack(ids, panel.id) };
+        changed.push(command.sessionId, panel.id, project.id);
+        break;
+      }
       case "terminal.markInterrupted": { const session = state.terminalSessions[command.sessionId]; if (session === undefined) throw new Error("terminal session not found"); if (session.status === "running") state.terminalSessions[session.id] = { ...session, status: "interrupted", interruptedAt: command.at ?? Date.now() }; changed.push(session.id); break; }
     }
   }
@@ -283,6 +362,7 @@ export class WorkspaceStore {
 
 function boundedName(value: string): string { if (typeof value !== "string" || value.trim().length === 0 || value.length > 256) throw new Error("name is invalid"); return value.trim(); }
 function boundedPath(value: string): string { if (typeof value !== "string" || value.length === 0 || value.length > 4096 || value.includes("\0")) throw new Error("root/path is invalid"); return value; }
+function boundedPresentation(value: string, name: string): string { if (typeof value !== "string" || value.length > 128 || value.includes("\0")) throw new Error(`${name} is invalid`); return value; }
 function requireView(state: WorkspaceState, id: ProtocolId): WorkspaceView { assertId(id, "viewId"); const value = state.views[id]; if (value === undefined) throw new Error("view not found"); return value; }
 function requireProject(state: WorkspaceState, id: ProtocolId): WorkspaceProject { assertId(id, "projectId"); const value = state.projects[id]; if (value === undefined) throw new Error("project not found"); return value; }
 function requirePanel(state: WorkspaceState, id: ProtocolId): WorkspacePanel { assertId(id, "panelId"); const value = state.panels[id]; if (value === undefined) throw new Error("panel not found"); return value; }
