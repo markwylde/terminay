@@ -557,19 +557,36 @@ export class ServerTerminalAuthority {
 		const recentOutput = new TextDecoder().decode(
 			this.buffers.get(sessionId) ?? new Uint8Array(),
 		);
-		const result = await service.generate({
-			context: {
-				currentTitle: panel.title ?? 'Terminal',
-				existingNote: '',
-				projectRoot: project.root,
-				projectTitle: project.name,
-				recentOutput,
-				sessionId,
-			},
-			model,
-			provider: provider === 'claude-code' ? 'claudeCode' : 'codex',
-			target: targetType,
-		});
+		let result: AiTabMetadataGenerateResult;
+		try {
+			result = await service.generate({
+				context: {
+					currentTitle: panel.title ?? 'Terminal',
+					existingNote: '',
+					projectRoot: project.root,
+					projectTitle: project.name,
+					recentOutput,
+					sessionId,
+				},
+				model,
+				provider: provider === 'claude-code' ? 'claudeCode' : 'codex',
+				target: targetType,
+			});
+		} catch (error) {
+			// This local embedded adapter has already reduced provider output to a
+			// user-facing Error. Preserve that bounded message through the framed
+			// protocol instead of letting the dispatcher replace it with the opaque
+			// "command failed" fallback. Raw stdout/stderr never enters this value.
+			const message =
+				error instanceof Error
+					? error.message.replace(/[\0\r\n]+/gu, ' ').slice(0, 256)
+					: 'AI metadata provider failed.';
+			throw {
+				code: 'unavailable',
+				message: message || 'AI metadata provider failed.',
+				retryable: true,
+			};
+		}
 		return { text: result.text };
 	}
 

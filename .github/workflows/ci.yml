@@ -75,8 +75,8 @@ jobs:
       - name: Build and smoke the foreground server
         run: npm run test:standalone-server
 
-  pty-runtime-artifact:
-    name: PTY Runtime Artifact (${{ matrix.target }})
+  server-owned-pty-runtime:
+    name: Server-owned PTY Runtime (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     container:
       image: node:22.23.1-bookworm-slim
@@ -84,10 +84,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
-            target: linux-x64
-          - os: ubuntu-24.04-arm
-            target: linux-arm64
+          - arch: x64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
 
     steps:
       - name: Check out code
@@ -95,87 +95,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install baseline build dependencies and native PTY assets
+      - name: Install native PTY build dependencies
         run: |
           apt-get update
-          apt-get install --yes --no-install-recommends \
-            build-essential ca-certificates curl git python3 xz-utils
+          apt-get install --yes --no-install-recommends build-essential python3
           npm ci
 
-      - name: Test PTY exit compatibility
-        run: node --test scripts/pty-exit-protocol.test.mjs
-
-      - name: Build PTY host
-        run: npm run build:app
-
-      - name: Download pinned artifact runtime
-        env:
-          TARGET: ${{ matrix.target }}
+      - name: Exercise the canonical server PTY authority
         run: |
-          case "$TARGET" in
-            linux-x64)
-              NODE_ARCHIVE=node-v22.23.1-linux-x64.tar.xz
-              ;;
-            linux-arm64)
-              NODE_ARCHIVE=node-v22.23.1-linux-arm64.tar.xz
-              ;;
-            *)
-              echo "Unsupported target: $TARGET"
-              exit 1
-              ;;
-          esac
-          curl --fail --location --silent --show-error \
-            --output "$RUNNER_TEMP/$NODE_ARCHIVE" \
-            "https://nodejs.org/dist/v22.23.1/$NODE_ARCHIVE"
-          echo "NODE_ARCHIVE=$RUNNER_TEMP/$NODE_ARCHIVE" >> "$GITHUB_ENV"
-
-      - name: Build deterministic artifact twice
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          node scripts/build-pty-runtime-artifact.mjs \
-            --target "$TARGET" \
-            --node-archive "$NODE_ARCHIVE" \
-            --output-dir "$RUNNER_TEMP/pty-artifact-one"
-          node scripts/build-pty-runtime-artifact.mjs \
-            --target "$TARGET" \
-            --node-archive "$NODE_ARCHIVE" \
-            --output-dir "$RUNNER_TEMP/pty-artifact-two"
-
-          ARCHIVE_ONE="$(find "$RUNNER_TEMP/pty-artifact-one" -name '*.tar.gz' -type f)"
-          ARCHIVE_TWO="$(find "$RUNNER_TEMP/pty-artifact-two" -name '*.tar.gz' -type f)"
-          test -n "$ARCHIVE_ONE"
-          test -n "$ARCHIVE_TWO"
-          test "$(sha256sum "$ARCHIVE_ONE" | cut -d ' ' -f 1)" = \
-            "$(sha256sum "$ARCHIVE_TWO" | cut -d ' ' -f 1)"
-          echo "PTY_RUNTIME_ARCHIVE=$ARCHIVE_ONE" >> "$GITHUB_ENV"
-
-      - name: Remove target-machine build tools
-        run: |
-          apt-get purge --yes build-essential gcc g++ make python3
-          apt-get autoremove --yes
-          ! command -v cc
-          ! command -v c++
-          ! command -v gcc
-          ! command -v g++
-          ! command -v make
-          ! command -v python3
-
-      - name: Probe extracted artifact on the Debian 12 baseline
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.36"
-          node scripts/pty-runtime-artifact-probe.mjs \
-            --target "$TARGET" \
-            --archive "$PTY_RUNTIME_ARCHIVE"
-
-      - name: Upload proven artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: terminay-pty-runtime-${{ matrix.target }}
-          path: ${{ env.PTY_RUNTIME_ARCHIVE }}
-          if-no-files-found: error
+          npm run build:shared
+          node --test \
+            packages/server-core/test/node-pty-adapter.test.mjs \
+            packages/server-core/test/terminal-service.test.mjs \
+            scripts/pty-exit-protocol.test.mjs
 
   standalone-server-artifact:
     name: Standalone Server Artifact (${{ matrix.target }})
@@ -353,6 +285,7 @@ jobs:
         run: |
           npm run build --workspace @terminay/server
           node --test scripts/standalone-artifact.test.mjs scripts/pty-exit-protocol.test.mjs
+          mkdir -p release-evidence
           npm pack --workspace @terminay/server --json --pack-destination release-evidence > "$RUNNER_TEMP/terminay-server-pack.json"
           node --input-type=module -e '
             import { readFile } from "node:fs/promises";
@@ -378,7 +311,7 @@ jobs:
           if-no-files-found: error
 
   pty-packaged-linux:
-    name: Packaged Desktop PTY (GNU/Linux x64)
+    name: Packaged Desktop Embedded Server (GNU/Linux x64)
     runs-on: ubuntu-24.04
     container:
       image: node:22.23.1-bookworm-slim
@@ -389,36 +322,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install baseline build and Electron runtime dependencies
+      - name: Install baseline build dependencies
         run: |
           apt-get update
           apt-get install --yes --no-install-recommends \
-            build-essential ca-certificates git python3 xz-utils
+            build-essential ca-certificates git python3
           npm ci
-          npx playwright install-deps chromium
 
-      - name: Build the GNU/Linux x64 AppImage
+      - name: Exercise the extracted Desktop server dependency closure
         run: |
-          npm run build:app
-          npx electron-builder --linux AppImage --x64 --publish never
-
-      - name: Remove target-machine build tools
-        run: |
-          apt-get purge --yes build-essential gcc g++ make python3
-          apt-get autoremove --yes
-          ! command -v cc
-          ! command -v c++
-          ! command -v gcc
-          ! command -v g++
-          ! command -v make
-          ! command -v python3
-
-      - name: Exercise the packaged PTY payload on the Debian 12 baseline
-        env:
-          TERMINAY_PACKAGED_APPIMAGE: release/0.0.0/Terminay-Linux-0.0.0.AppImage
-        run: |
-          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.36"
-          xvfb-run --auto-servernum node --test scripts/pty-packaged-linux.test.mjs
+          npm run build:applications
+          node --test apps/terminay-desktop/test/embedded-runtime-artifact.test.mjs
 
   production-headless-webrtc:
     name: Production Headless WebRTC (${{ matrix.arch }})
@@ -618,7 +532,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
 
       - name: Run end-to-end tests
         run: xvfb-run -a npm run test:e2e

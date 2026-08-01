@@ -67,7 +67,10 @@ export async function stageSelectedSecureWeriftRuntime(
 		const staged = join(destination, 'artifact');
 		await rm(next, { force: true, recursive: true });
 		await mkdir(destination, { recursive: true });
-		await cp(selectionPath, join(destination, 'selection.json'));
+		const destinationSelectionPath = join(destination, 'selection.json');
+		if (resolve(selectionPath) !== resolve(destinationSelectionPath)) {
+			await cp(selectionPath, destinationSelectionPath);
+		}
 		await cp(first.artifactRoot, next, { recursive: true, dereference: false });
 		await verifySecureWeriftCandidate(next);
 		await rm(staged, { force: true, recursive: true });
