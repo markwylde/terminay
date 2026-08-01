@@ -732,6 +732,8 @@ function embeddedMacroKeyBytes(key: string): Uint8Array {
 
 serverTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
+	aiMetadata: aiTabMetadataService,
+	saveSparseFile: (request) => fileBufferService.saveSparseFile(request),
 	recordings: serverRecordingAdapter,
 	settings: embeddedServerSettings,
 	macros: {
