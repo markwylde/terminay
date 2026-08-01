@@ -100,3 +100,13 @@ test('AI release notes generator passes bounded git context to the model', () =>
   assert.match(script, /Changed files in range:/)
   assert.match(script, /Do not include features, fixes, or dependency updates from earlier releases/)
 })
+
+test('release publication creates the tag through the step-scoped GitHub API token', () => {
+  const script = readFileSync(resolve('scripts/create-release.mjs'), 'utf8')
+
+  assert.match(script, /process\.env\.GITHUB_TOKEN \?\? process\.env\.GH_TOKEN/)
+  assert.match(script, /target_commitish: targetCommitish/)
+  assert.match(script, /const targetCommitish = await run\('git', \['rev-parse', 'HEAD'\]\)/)
+  assert.match(script, /const publishedWithGitHubToken = await createGitHubRelease\(tag, targetCommitish\)/)
+  assert.match(script, /if \(!publishedWithGitHubToken\) \{\s+await run\('git', \['push', 'origin', tag\]\)\s+\}/)
+})
