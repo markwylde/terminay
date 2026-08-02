@@ -5,6 +5,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, test } from '@playwright/test'
 import { createPairingPinHash } from '../electron/remote/pin'
+import { PrivilegedWebRtcExposure } from '../electron/remote/privilegedWebRtcExposure'
 import { RemoteAccessService } from '../electron/remote/service'
 import { runHost, type HostApi, type HostConfig } from '../scripts/support/webRtcHostRuntime'
 import { startHostedServer } from './support/hosted-server'
@@ -14,6 +15,7 @@ const dependencyRoot =
   process.env.TERMINAY_WEBRTC_SPIKE_ROOT ??
   process.env.TERMINAY_NODE_DATACHANNEL_SPIKE_ROOT
 const stagedWeriftRuntimeRoot = process.env.TERMINAY_WEBRTC_STAGED_RUNTIME_ROOT
+const selectedWeriftRuntimeRoot = process.env.TERMINAY_WEBRTC_SELECTED_RUNTIME_ROOT
 const hostedProofScope = process.env.TERMINAY_HOSTED_PROOF_SCOPE ?? 'full'
 test.skip(!dependencyRoot, 'requires an isolated headless WebRTC proof runtime')
 test.skip(
@@ -184,6 +186,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
   const terminalWrites: string[] = []
   let nextHostId = 1
   let service: RemoteAccessService
+  let privilegedExposure: PrivilegedWebRtcExposure | null = null
 
   const createHostWindow = (): HeadlessHostWindow => {
     const webContentsId = nextHostId
@@ -276,9 +279,8 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     return hostWindow
   }
 
-  service = new RemoteAccessService({
+  const serviceOptions = {
     userDataPath: userDataDir,
-    createWebRtcHostWindow: createHostWindow,
     getControllableSession: () => ({
       close() {},
       resize() {},
@@ -304,7 +306,19 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     publicDir: path.resolve('public'),
     rendererDistDir: path.resolve('dist'),
     saveGeneratedTlsPaths: () => {},
-  })
+  }
+  if (runtimeName === 'werift' && selectedWeriftRuntimeRoot) {
+    privilegedExposure = new PrivilegedWebRtcExposure(
+      selectedWeriftRuntimeRoot,
+      serviceOptions,
+    )
+    service = privilegedExposure.service
+  } else {
+    service = new RemoteAccessService({
+      ...serviceOptions,
+      createWebRtcHostWindow: createHostWindow,
+    })
+  }
   service.ensureSession('terminal-1')
   service.updateSessionMetadata('terminal-1', { title: 'Headless production proof' })
   service.appendSessionData('terminal-1', 'headless-host-ready\r\n')
@@ -344,7 +358,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     }
   })
   try {
-    const started = await service.toggle()
+    const started = privilegedExposure
+      ? await privilegedExposure.toggle()
+      : await service.toggle()
     expect(started.isRunning).toBe(true)
     const pairingUrl = await waitFor(() => {
       const status = service.getStatus()
@@ -387,15 +403,31 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       expect(installedUrl.searchParams.get('sessionId')).toBe(sessionId)
       expect(installedUrl.hash).toBe('')
 
-      const firstRuntime = await waitFor(() => hostWindows.find((host) =>
-        host.evidence.hostSignals.some((message) => message.type === 'offer') &&
-        host.evidence.clientSignals.some((message) => message.type === 'answer')),
-      30_000,
-      'the authenticated hosted offer and answer',
-      )
+      const signals = privilegedExposure
+        ? await page.evaluate(() =>
+          (window as Window & {
+            __terminayHeadlessSignalLog?: Array<{
+              data?: Record<string, unknown>
+              direction: string
+            }>
+          }).__terminayHeadlessSignalLog ?? [])
+        : [
+            ...((await waitFor(() => hostWindows.find((host) =>
+              host.evidence.hostSignals.some((message) => message.type === 'offer') &&
+              host.evidence.clientSignals.some((message) => message.type === 'answer')),
+            30_000,
+            'the authenticated hosted offer and answer')).evidence.hostSignals.map((data) => ({
+              data,
+              direction: 'in',
+            }))),
+            ...hostWindows.flatMap((host) => host.evidence.clientSignals.map((data) => ({
+              data,
+              direction: 'out',
+            }))),
+          ]
       for (const signal of [
-        firstRuntime.evidence.hostSignals.find((message) => message.type === 'offer'),
-        firstRuntime.evidence.clientSignals.find((message) => message.type === 'answer'),
+        signals.find((entry) => entry.direction === 'in' && entry.data?.type === 'offer')?.data,
+        signals.find((entry) => entry.direction === 'out' && entry.data?.type === 'answer')?.data,
       ]) {
         expect(signal?.nonce).toEqual(expect.any(String))
         expect(signal?.signature).toEqual(expect.any(String))
@@ -497,15 +529,28 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     await page.keyboard.type(terminalInput)
     await expect.poll(() => terminalWrites.join('')).toContain(terminalInput)
 
+    const initialSignalLog = await page.evaluate(() =>
+      (window as Window & {
+        __terminayHeadlessSignalLog?: Array<{
+          data?: Record<string, unknown>
+          direction: string
+        }>
+      }).__terminayHeadlessSignalLog ?? [])
     const firstRuntime = hostWindows.find((host) =>
       host.evidence.hostSignals.some((message) => message.type === 'offer'))
-    expect(firstRuntime).toBeTruthy()
-    const signedOffer = firstRuntime?.evidence.hostSignals.find((message) => message.type === 'offer')
-    const signedAnswer = firstRuntime?.evidence.clientSignals.find((message) => message.type === 'answer')
-    const signedIce = [
-      ...(firstRuntime?.evidence.hostSignals ?? []),
-      ...(firstRuntime?.evidence.clientSignals ?? []),
-    ].find((message) => message.type === 'ice')
+    if (!privilegedExposure) expect(firstRuntime).toBeTruthy()
+    const signedOffer = privilegedExposure
+      ? initialSignalLog.find((entry) => entry.direction === 'in' && entry.data?.type === 'offer')?.data
+      : firstRuntime?.evidence.hostSignals.find((message) => message.type === 'offer')
+    const signedAnswer = privilegedExposure
+      ? initialSignalLog.find((entry) => entry.direction === 'out' && entry.data?.type === 'answer')?.data
+      : firstRuntime?.evidence.clientSignals.find((message) => message.type === 'answer')
+    const signedIce = privilegedExposure
+      ? initialSignalLog.find((entry) => entry.data?.type === 'ice')?.data
+      : [
+          ...(firstRuntime?.evidence.hostSignals ?? []),
+          ...(firstRuntime?.evidence.clientSignals ?? []),
+        ].find((message) => message.type === 'ice')
     for (const signal of [signedOffer, signedAnswer, signedIce]) {
       expect(signal?.nonce).toEqual(expect.any(String))
       expect(signal?.signature).toEqual(expect.any(String))
@@ -520,11 +565,13 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     await expect(reconnectPage.getByLabel('Pairing PIN')).toHaveCount(0)
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
 
-    const reconnectRuntime = await waitFor(() => hostWindows.find((host) =>
-      host.evidence.hostSignals.some((message) => message.type === 'reconnect-offer')),
-    30_000,
-    'the signed reconnect offer',
-    ).catch(
+    const reconnectRuntime = privilegedExposure
+      ? null
+      : await waitFor(() => hostWindows.find((host) =>
+        host.evidence.hostSignals.some((message) => message.type === 'reconnect-offer')),
+      30_000,
+      'the signed reconnect offer',
+      ).catch(
       async (error) => {
         const browserStatus = await reconnectPage.locator('#status').textContent().catch(() => null)
         throw new Error(
@@ -537,12 +584,27 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         )
       },
     )
-    const reconnectOffer = reconnectRuntime.evidence.hostSignals.find(
-      (message) => message.type === 'reconnect-offer',
-    )
-    const reconnectAnswer = reconnectRuntime.evidence.clientSignals.find(
-      (message) => message.type === 'reconnect-answer',
-    )
+    const privilegedReconnectSignals = privilegedExposure
+      ? await reconnectPage.evaluate(() =>
+        (window as Window & {
+          __terminayHeadlessSignalLog?: Array<{
+            data?: Record<string, unknown>
+            direction: string
+          }>
+        }).__terminayHeadlessSignalLog ?? [])
+      : []
+    const reconnectOffer = privilegedExposure
+      ? privilegedReconnectSignals.find((entry) =>
+        entry.direction === 'in' && entry.data?.type === 'reconnect-offer')?.data
+      : reconnectRuntime?.evidence.hostSignals.find(
+        (message) => message.type === 'reconnect-offer',
+      )
+    const reconnectAnswer = privilegedExposure
+      ? privilegedReconnectSignals.find((entry) =>
+        entry.direction === 'out' && entry.data?.type === 'reconnect-answer')?.data
+      : reconnectRuntime?.evidence.clientSignals.find(
+        (message) => message.type === 'reconnect-answer',
+      )
     expect(reconnectOffer).toMatchObject({
       attemptId: expect.any(String),
       nonce: expect.any(String),
@@ -597,7 +659,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     expect(service.getStatus().pairedDeviceCount).toBe(0)
   } finally {
     await context.close().catch(() => undefined)
-    if (service.getStatus().isRunning) {
+    if (privilegedExposure) {
+      await privilegedExposure.shutdown().catch(() => undefined)
+    } else if (service.getStatus().isRunning) {
       await service.toggle().catch(() => undefined)
     }
     for (const hostWindow of hostWindows) hostWindow.close()
