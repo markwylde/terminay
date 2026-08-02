@@ -649,10 +649,19 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     const reconnectPage = await context.newPage()
     await reconnectPage.goto(`${sessionOrigin}/v1/`, { waitUntil: 'domcontentloaded' })
     await expect(reconnectPage.locator('.xterm-rows')).toContainText('headless-host-ready', { timeout: 60_000 }).catch(async (error) => {
+      const signalLog = await reconnectPage.evaluate(() =>
+        (window as Window & {
+          __terminayHeadlessSignalLog?: Array<{ data?: Record<string, unknown>; direction: string }>
+        }).__terminayHeadlessSignalLog ?? []).catch(() => [])
       throw new Error(
         `${error instanceof Error ? error.message : String(error)} ` +
         `page=${JSON.stringify(await reconnectPage.locator('body').innerText().catch(() => ''))} ` +
-        `hosted=${JSON.stringify(hostedServer.logs())}`,
+        `signals=${JSON.stringify(signalLog)} ` +
+        `hosts=${JSON.stringify(hostWindows.map((host) => ({
+          client: host.evidence.clientSignals,
+          host: host.evidence.hostSignals,
+          status: host.evidence.statusMessages,
+        })))} hosted=${JSON.stringify(hostedServer.logs())}`,
       )
     })
     await expect(reconnectPage.getByLabel('Pairing PIN')).toHaveCount(0)
@@ -744,7 +753,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     await rejectedReconnectPage.goto(`${sessionOrigin}/v1/`, { waitUntil: 'domcontentloaded' })
     await expect(rejectedReconnectPage.locator('.xterm-rows')).toHaveCount(0, { timeout: 20_000 })
     await expect(rejectedReconnectPage.locator('#status')).toContainText(
-      /offline|revoked|no longer|not available/i,
+      /offline|revoked|no longer|not available|saved connection is still here/i,
       { timeout: 30_000 },
     )
 

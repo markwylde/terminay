@@ -35,6 +35,7 @@ import {
 	type BrowserConnectionAttempt,
 	BrowserConnectionAttemptGate,
 } from './reconnectAttempt';
+import { createBrowserWebRtcTransport } from './browserWebRtcTransport';
 import './index.css';
 
 function openWindow(url: string, target: '_self' | '_blank'): void {
@@ -333,6 +334,7 @@ export default function WebManagerApp() {
 	}, []);
 
 	useEffect(() => {
+		if (window.__TERMINAY_BROWSER_ENROLLMENT__ !== undefined) return;
 		if (activeConnection !== null || isConnecting)
 			return;
 		if (new URLSearchParams(window.location.hash.slice(1)).has('pairingToken'))
@@ -857,11 +859,18 @@ export default function WebManagerApp() {
 					},
 				);
 				const clientId = `web-${Date.now().toString(36)}`;
+				const bridge = window.__TERMINAY_REMOTE_WEBRTC__;
+				const transport =
+					bridge?.getChannel === undefined
+						? new WebSocketByteTransport({
+								origin: endpoint,
+								authToken: completion.ticket,
+							})
+						: await createBrowserWebRtcTransport((name) =>
+								bridge.getChannel!(name, completion.ticket),
+							);
 				const client = new TerminayClient({
-					transport: new WebSocketByteTransport({
-						origin: endpoint,
-						authToken: completion.ticket,
-					}),
+					transport,
 					clientId,
 					clientVersion: '0.0.0',
 					capabilities: [
