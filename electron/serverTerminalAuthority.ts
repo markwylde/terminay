@@ -39,6 +39,7 @@ import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter
 import { GitService } from '../packages/server-core/src/gitService/service';
 import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
+import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
 import type {
 	BinaryQueryHandlerResult,
 	CommandRequest,
@@ -189,6 +190,9 @@ export interface ServerTerminalAuthorityOptions {
 	readonly recordings?: ServerCoreCompositionOptions['recordings'];
 	/** Durable server settings shared by Desktop and browser renderers. */
 	readonly settings?: ServerSettingsRepository;
+	/** Server-owned shell catalogue and target revalidation authority. */
+	readonly shellProfiles?: ShellProfileCatalogueService;
+	readonly defaultProjectRoot?: () => string;
 	/** Desktop provider adapter retained behind the server protocol while the
 	 * canonical AI target registry is wired to workspace presentation state. */
 	readonly aiMetadata?: {
@@ -388,6 +392,9 @@ export class ServerTerminalAuthority {
 		this.composition = createServerCoreComposition({
 			serverId: options.serverId,
 			serverVersion: 'desktop-local',
+			...(options.terminalService !== undefined && options.shellProfiles === undefined
+				? { allowUnresolvedTestSessions: true }
+				: {}),
 			capabilities: ['terminal', 'workspace', 'files', 'agents', 'git'],
 			authenticate: ({ hello }) => ({
 				clientId: hello.clientId,
@@ -407,6 +414,14 @@ export class ServerTerminalAuthority {
 				? {}
 				: { recordings: options.recordings }),
 			...(options.settings === undefined ? {} : { settings: options.settings }),
+			...(options.shellProfiles === undefined
+				? {}
+				: {
+						shellProfiles: options.shellProfiles,
+						terminalProfiles: options.shellProfiles,
+						terminalLaunchEnvironment: process.env,
+						terminalEnvironmentCaseInsensitive: process.platform === 'win32',
+					}),
 			operations: {
 				queries: {
 					...fileSessionOperations.queries,
@@ -732,10 +747,17 @@ export class ServerTerminalAuthority {
 	async create(
 		options: Omit<TerminalCreateOptions, 'serverId'> & {
 			readonly projectId: string;
+			readonly profileId?: string;
+			readonly activePanelId?: string;
+			readonly projectRootOrigin?: 'explicit' | 'server-default';
 		},
 	): Promise<ServerTerminalAuthoritySession> {
 		await this.composition.start();
-		this.ensureWorkspaceProject(options.projectId, options.cwd);
+		this.ensureWorkspaceProject(
+			options.projectId,
+			options.cwd,
+			options.projectRootOrigin,
+		);
 		const project = this.workspace.state.projects[options.projectId];
 		if (project === undefined)
 			throw new Error('workspace project was not created');
@@ -743,11 +765,44 @@ export class ServerTerminalAuthority {
 		const requestedId = options.sessionId;
 		if (requestedId !== undefined)
 			this.buffers.set(requestedId, new Uint8Array());
-		const handle = await this.service.createSession(options);
+		const resolver = this.composition.terminalLaunchResolver;
+		if (resolver === undefined && this.options.terminalService === undefined) {
+			throw new Error('canonical terminal launch resolution is unavailable');
+		}
+		let resolvedShellPath: string | null = null;
+		// Only an explicitly injected low-level test service may use the legacy
+		// unresolved creator. Production Desktop always supplies shellProfiles.
+		const handle = resolver === undefined
+			? await this.service.createSession(options)
+			: await (async () => {
+					const identity = this.service.allocateIdentity(
+						options.projectId,
+						options.sessionId,
+					);
+					const resolved = await resolver.resolve({
+						identity,
+						...(options.profileId === undefined
+							? {}
+							: { explicitProfileId: options.profileId }),
+						...(options.cwd === undefined ? {} : { explicitCwd: options.cwd }),
+						...(options.activePanelId === undefined
+							? {}
+							: { activePanelId: options.activePanelId }),
+						cols: options.cols,
+						rows: options.rows,
+					});
+					resolvedShellPath = resolved.shellPath;
+					return this.service.createResolvedSession({
+						...resolved,
+						...(options.env === undefined
+							? {}
+							: { env: Object.freeze({ ...resolved.env, ...options.env }) }),
+					});
+				})();
 		const session: AuthoritySession = {
 			id: handle.sessionId,
 			projectId: handle.projectId,
-			shellPath: options.shellPath ?? null,
+			shellPath: resolvedShellPath ?? options.shellPath ?? null,
 		};
 		this.sessions.set(handle.sessionId, session);
 		if (!this.buffers.has(handle.sessionId))
@@ -763,6 +818,9 @@ export class ServerTerminalAuthority {
 					title: this.nextTerminalPanelTitle(handle.projectId),
 					cwd: handle.snapshot().cwd,
 					createdAt: handle.snapshot().createdAt,
+					...(handle.snapshot().launch === undefined
+						? {}
+						: { launch: handle.snapshot().launch }),
 				},
 				this.workspace.state.revision,
 			);
@@ -1128,6 +1186,9 @@ export class ServerTerminalAuthority {
 	private ensureWorkspaceProject(
 		projectId: string,
 		cwd: string | undefined,
+		rootOrigin: 'explicit' | 'server-default' = cwd === undefined
+			? 'server-default'
+			: 'explicit',
 	): void {
 		if (this.workspace.state.projects[projectId] !== undefined) return;
 		const viewId = this.workspace.state.viewOrder[0];
@@ -1139,7 +1200,8 @@ export class ServerTerminalAuthority {
 				type: 'project.create',
 				projectId,
 				viewId,
-				root: cwd ?? '.',
+				root: cwd ?? this.options.defaultProjectRoot?.() ?? '',
+				rootOrigin,
 				name: projectId === 'default' ? 'Project' : projectId,
 			},
 		});

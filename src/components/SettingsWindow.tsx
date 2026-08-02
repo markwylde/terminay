@@ -1,6 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { Terminal } from '@xterm/xterm';
+import type { ShellProfilesClient } from '@terminay/client-core';
 import type { ReactNode } from 'react';
 import {
 	type FormEvent,
@@ -54,6 +55,7 @@ import type {
 	RemoteAccessStatus,
 } from '../types/terminay';
 import '../settings.css';
+import { ShellProfilesSettings } from './ShellProfilesSettings';
 
 type CategoryId = (typeof terminalSettingsCategories)[number]['id'];
 
@@ -527,11 +529,15 @@ export function SettingsWindow({
 	initialSectionId,
 	remoteAccessStatusClient,
 	settingsClient: settingsClientOverride,
+	shellProfilesClient,
+	serverIdentity = 'Connected server',
 }: Readonly<{
 	aiTabMetadataClient?: AiTabMetadataClient;
 	initialSectionId?: string;
 	remoteAccessStatusClient: RemoteAccessStatusClient;
 	settingsClient?: TerminalSettingsClient;
+	shellProfilesClient?: ShellProfilesClient;
+	serverIdentity?: string;
 }>) {
 	const aiTabMetadataClient = useMemo(
 		() => {
@@ -3096,6 +3102,9 @@ export function SettingsWindow({
 									) : null}
 								</div>
 								<div className="settings-group">
+									{section.id === 'shell-launch' ? (
+										shellProfilesClient ? <ShellProfilesSettings client={shellProfilesClient} serverIdentity={serverIdentity} /> : <div className="shell-profiles-loading" role="status">Connect to a server to manage shell profiles.</div>
+									) : null}
 									{section.fields.filter(isFieldVisible).map((field) => (
 										<div
 											key={field.key}

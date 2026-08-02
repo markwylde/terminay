@@ -220,7 +220,7 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
 	{
 		id: 'shell',
 		label: 'Shell',
-		description: 'Shell program, startup mode, and launch arguments.',
+		description: 'Server-owned shell profiles and terminal launch behaviour.',
 	},
 	{
 		id: 'files',
@@ -1055,54 +1055,9 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 	{
 		id: 'shell-launch',
 		categoryId: 'shell',
-		title: 'Launch',
-		description: 'Choose which shell to run and how Terminay starts it.',
-		fields: [
-			makeField({
-				key: 'shell.program',
-				label: 'Shell program',
-				description:
-					'Executable path or command name. Leave blank to use your system default shell.',
-				sectionId: 'shell-launch',
-				categoryId: 'shell',
-				input: 'text',
-				placeholder: '/bin/zsh',
-				keywords: [
-					'zsh',
-					'bash',
-					'fish',
-					'nushell',
-					'default shell',
-					'executable',
-				],
-			}),
-			makeField({
-				key: 'shell.startupMode',
-				label: 'Startup mode',
-				description:
-					'Auto uses a login shell on macOS so tools from Homebrew and other login PATH setup are available.',
-				sectionId: 'shell-launch',
-				categoryId: 'shell',
-				input: 'select',
-				options: [
-					{ label: 'Auto', value: 'auto' },
-					{ label: 'Login shell', value: 'login' },
-					{ label: 'Non-login shell', value: 'non-login' },
-				],
-				keywords: ['login shell', 'path', 'homebrew', 'gh', 'zprofile'],
-			}),
-			makeField({
-				key: 'shell.extraArgs',
-				label: 'Extra arguments',
-				description:
-					'Optional arguments appended after Terminay-managed shell flags.',
-				sectionId: 'shell-launch',
-				categoryId: 'shell',
-				input: 'text',
-				placeholder: '--no-rcs',
-				keywords: ['args', 'arguments', 'flags', 'rc'],
-			}),
-		],
+		title: 'Shell Profiles',
+		description: 'Choose defaults and manage profiles available on the connected server.',
+		fields: [],
 	},
 	{
 		id: 'shell-lifecycle',

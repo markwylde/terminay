@@ -1,4 +1,10 @@
 import type { JsonValue } from "@terminay/protocol";
+import {
+  normalizeShellProfilesSettings,
+  parseLegacyShellArguments,
+  shellProfilesSettingsAsJson,
+  type ShellProfileDefinition,
+} from "../shellProfiles/index.js";
 import { DEFAULT_SERVER_SETTINGS, isJsonValue } from "./defaults.js";
 import { classifySetting, isServerSettingPath, partitionSettings } from "./classification.js";
 import {
@@ -26,9 +32,46 @@ export function normalizeServerSettings(input: unknown): SettingsObject {
 export function normalizeSettingsAndSecrets(input: unknown): NormalizedSettings {
   const raw = unwrapSettings(input);
   const partitioned = partitionSettings(raw);
-  const settings = mergeKnownDefaults(DEFAULT_SERVER_SETTINGS, partitioned.server);
+  const candidate = migrateLegacyShellSettings(input, partitioned.server);
+  const settings = mergeKnownDefaults(DEFAULT_SERVER_SETTINGS, candidate);
   const references = collectSecretReferences(input, raw);
   return { settings, secretReferences: references };
+}
+
+const MIGRATED_SHELL_PROFILE_ID = "migrated-shell";
+
+/** Upgrade the v1 shell tuple once. Existing v2 snapshots are never remigrated,
+ * even when they retain the legacy compatibility fields for older clients. */
+function migrateLegacyShellSettings(input: unknown, settings: SettingsObject): SettingsObject {
+  const source = isSettingsObject(input) ? input : {};
+  if (source.schemaVersion === SETTINGS_SCHEMA_VERSION || settings.shellProfiles !== undefined) return settings;
+  const legacy = isSettingsObject(settings.shell) ? settings.shell : {};
+  const program = typeof legacy.program === "string" ? legacy.program.trim() : "";
+  const mode = legacy.startupMode === "login" || legacy.startupMode === "non-login" ? legacy.startupMode : "default";
+  const extraArgs = typeof legacy.extraArgs === "string" ? legacy.extraArgs : "";
+  if (program === "" && mode === "default" && extraArgs.trim() === "") {
+    return { ...settings, shellProfiles: shellProfilesSettingsAsJson(normalizeShellProfilesSettings(DEFAULT_SERVER_SETTINGS.shellProfiles)) };
+  }
+  const parsed = parseLegacyShellArguments(extraArgs);
+  const invalidProgram = program.length > 4096 || program.includes("\0") || /[\r\n]/.test(program);
+  const profile: ShellProfileDefinition = {
+    id: MIGRATED_SHELL_PROFILE_ID,
+    name: "Migrated shell",
+    target: program === "" || invalidProgram ? { kind: "system" } : { kind: "executable", executable: program },
+    args: parsed.args,
+    startupMode: mode,
+    environment: {},
+    ...(parsed.requiresReview || invalidProgram ? { requiresReview: true } : {}),
+  };
+  return {
+    ...settings,
+    shellProfiles: shellProfilesSettingsAsJson(normalizeShellProfilesSettings({
+      defaultProfileId: profile.id,
+      cwdPolicy: "current",
+      profiles: [profile],
+      order: [profile.id],
+    })),
+  };
 }
 
 /** Idempotent migration for old Electron JSON and revisioned server snapshots. */
@@ -112,7 +155,9 @@ function mergeKnownDefaults(defaults: SettingsObject, candidate: SettingsObject)
   for (const [key, value] of Object.entries(candidate)) {
     if (!isServerSettingPath(key)) continue;
     const fallback = result[key];
-    result[key] = normalizeValue(value, fallback, key);
+    result[key] = key === "shellProfiles"
+      ? shellProfilesSettingsAsJson(normalizeShellProfilesSettings(value))
+      : normalizeValue(value, fallback, key);
   }
   return result;
 }

@@ -15,6 +15,7 @@ type UseTerminalDockviewWindowControllerOptions = {
 	draggingTransferRef: MutableRefObject<DraggingDockviewTransfer | null>;
 	isActive: boolean;
 	openTerminalEditWindow: (panelId: string) => Promise<unknown>;
+	openProfileChooser: () => Promise<void>;
 	popoutUrl: string;
 	runAiTabMetadataRef: MutableRefObject<
 		(target: AiTabMetadataTarget, panelId?: string) => Promise<unknown>
@@ -27,6 +28,7 @@ export function useTerminalDockviewWindowController({
 	draggingTransferRef,
 	isActive,
 	openTerminalEditWindow,
+	openProfileChooser,
 	popoutUrl,
 	runAiTabMetadataRef,
 }: UseTerminalDockviewWindowControllerOptions): void {
@@ -216,6 +218,13 @@ export function useTerminalDockviewWindowController({
             </svg>
           `;
 				container.appendChild(button);
+				const profileButton = targetWindow.document.createElement('button');
+				profileButton.type = 'button';
+				profileButton.className = 'terminay-add-tab-button terminay-add-profile-tab-button';
+				profileButton.setAttribute('aria-label', 'New terminal with profile');
+				profileButton.title = 'New terminal with profile';
+				profileButton.innerHTML = '<svg aria-hidden="true" width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+				container.appendChild(profileButton);
 			}
 		};
 
@@ -228,6 +237,12 @@ export function useTerminalDockviewWindowController({
 
 			const onClick = (event: PointerEvent) => {
 				const target = event.target as HTMLElement | null;
+				if (target?.closest('.terminay-add-profile-tab-button')) {
+					event.preventDefault();
+					event.stopPropagation();
+					void openProfileChooser();
+					return;
+				}
 				let addTabButton = target?.closest('.terminay-add-tab-button');
 				if (!addTabButton) {
 					const emptyHeaderSpace = target?.closest(
@@ -274,6 +289,13 @@ export function useTerminalDockviewWindowController({
 
 				addTerminalInHeaderSpace(targetWindow, target, point);
 			};
+			const onContextMenu = (event: globalThis.MouseEvent) => {
+				const target = event.target as HTMLElement | null;
+				if (!target?.closest('.terminay-add-tab-button')) return;
+				event.preventDefault();
+				event.stopPropagation();
+				void openProfileChooser();
+			};
 
 			const onEditTerminal = (event: Event) => {
 				const customEvent = event as CustomEvent<{ panelId: string }>;
@@ -288,6 +310,7 @@ export function useTerminalDockviewWindowController({
 					void runAiTabMetadataRef.current('title', customEvent.detail.panelId);
 				}
 			};
+			const onNewTerminalWithProfile = () => { void openProfileChooser(); };
 
 			const onDragStart = () => {
 				targetWindow.requestAnimationFrame(() => {
@@ -338,17 +361,20 @@ export function useTerminalDockviewWindowController({
 
 			targetWindow.addEventListener('click', onClick, true);
 			targetWindow.addEventListener('dblclick', onDblClick, true);
+			targetWindow.addEventListener('contextmenu', onContextMenu, true);
 			targetWindow.addEventListener('terminay-edit-terminal', onEditTerminal);
 			targetWindow.addEventListener(
 				'terminay-generate-tab-title',
 				onGenerateTabTitle,
 			);
+			targetWindow.addEventListener('terminay-new-terminal-with-profile', onNewTerminalWithProfile);
 			targetWindow.addEventListener('dragstart', onDragStart, true);
 			targetWindow.addEventListener('dragend', onDragEnd, true);
 
 			cleanupByWindow.set(targetWindow, () => {
 				targetWindow.removeEventListener('click', onClick, true);
 				targetWindow.removeEventListener('dblclick', onDblClick, true);
+				targetWindow.removeEventListener('contextmenu', onContextMenu, true);
 				targetWindow.removeEventListener(
 					'terminay-edit-terminal',
 					onEditTerminal,
@@ -357,6 +383,7 @@ export function useTerminalDockviewWindowController({
 					'terminay-generate-tab-title',
 					onGenerateTabTitle,
 				);
+				targetWindow.removeEventListener('terminay-new-terminal-with-profile', onNewTerminalWithProfile);
 				targetWindow.removeEventListener('dragstart', onDragStart, true);
 				targetWindow.removeEventListener('dragend', onDragEnd, true);
 			});
@@ -434,6 +461,7 @@ export function useTerminalDockviewWindowController({
 		draggingTransferRef,
 		isActive,
 		openTerminalEditWindow,
+		openProfileChooser,
 		popoutUrl,
 		runAiTabMetadataRef,
 	]);

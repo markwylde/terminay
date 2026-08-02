@@ -544,7 +544,7 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Run end-to-end tests
-        run: xvfb-run -a npm run test:e2e
+        run: xvfb-run -a npm run test:e2e:host
 
       - name: Run AI tab metadata tests with real Codex
         env:

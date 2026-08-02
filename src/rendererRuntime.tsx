@@ -7,6 +7,7 @@ import {
 	MacroClient,
 	RecordingsClient,
 	SettingsClient,
+	ShellProfilesClient,
 	TerminayClientFacade,
 	TerminayTerminalPanelClient,
 } from '@terminay/client-core';
@@ -432,6 +433,10 @@ export function RendererEntry() {
 					),
 		[activeApplicationClient],
 	);
+	const shellProfilesClient = useMemo(
+		() => activeApplicationClient === undefined ? undefined : new ShellProfilesClient(new TerminayClientFacade(activeApplicationClient)),
+		[activeApplicationClient],
+	);
 
 	const legacyContent = (() => {
 		const workspaceSnapshot =
@@ -516,6 +521,8 @@ export function RendererEntry() {
 					<SettingsWindow
 						remoteAccessStatusClient={window.terminayRemoteAccessStatusHost}
 						settingsClient={serverSettingsClient}
+						shellProfilesClient={shellProfilesClient}
+						serverIdentity={terminalClientContext?.connectionLabel ?? terminalClientContext?.serverId ?? auxiliaryClientContext?.serverId ?? 'Local'}
 					/>
 				);
 			case 'macros':
