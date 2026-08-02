@@ -229,6 +229,7 @@ export class TerminalService {
 
   private readonly ptyFactory: PtyFactory;
   private readonly defaultEnvironment: Readonly<Record<string, string | undefined>> | undefined;
+  private readonly resolveDefaultShell: TerminalServiceOptions["resolveDefaultShell"];
   private readonly now: () => number;
   private readonly generateSessionIdHook: ((projectId: string) => string) | undefined;
   private readonly eventListener: TerminalEventListener | undefined;
@@ -254,6 +255,7 @@ export class TerminalService {
     this.serverId = options.serverId;
     this.ptyFactory = options.ptyFactory;
     this.defaultEnvironment = options.defaultEnvironment;
+    this.resolveDefaultShell = options.resolveDefaultShell;
     this.now = options.now ?? (() => Date.now());
     this.generateSessionIdHook = options.generateSessionId;
     this.eventListener = options.onEvent;
@@ -340,6 +342,11 @@ export class TerminalService {
     const createdAt = options.createdAt ?? this.now();
     if (!Number.isSafeInteger(createdAt) || createdAt < 0) throw new TypeError("createdAt must be a non-negative safe integer");
     const identity: TerminalIdentity = Object.freeze({ serverId: this.serverId, projectId: options.projectId, sessionId });
+    const defaultShellOptions = options.shellPath === undefined
+      ? this.resolveDefaultShell?.() ?? { shellPath: defaultShell() }
+      : undefined;
+    const shellPath = options.shellPath ?? defaultShellOptions?.shellPath;
+    if (typeof shellPath !== "string" || shellPath.trim().length === 0) throw new TypeError("default shell path is invalid");
     const lifecycleEnvironment = this.sessionLifecycle?.prepareTerminalSession(identity);
     const cwd = options.cwd ?? ".";
     const mutable: MutableSession = {
@@ -356,9 +363,9 @@ export class TerminalService {
     };
     this.sessionsById.set(sessionId, mutable);
     const spawnOptions: PtySpawnOptions = {
-      shellPath: options.shellPath ?? defaultShell(),
-      shell: options.shellPath ?? defaultShell(),
-      args: [...(options.args ?? [])],
+      shellPath,
+      shell: shellPath,
+      args: [...(options.args ?? defaultShellOptions?.args ?? [])],
       cwd,
       ...(this.defaultEnvironment === undefined && options.env === undefined && lifecycleEnvironment === undefined
         ? {}

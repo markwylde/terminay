@@ -735,6 +735,7 @@ function embeddedMacroKeyBytes(key: string): Uint8Array {
 
 serverTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
+	resolveDefaultShell: () => resolvePtyShellOptions(readTerminalSettings()),
 	aiMetadata: aiTabMetadataService,
 	saveSparseFile: (request) => fileBufferService.saveSparseFile(request),
 	recordings: serverRecordingAdapter,
@@ -2461,11 +2462,23 @@ async function buildPtySpawnOptions(
 	cwd: string;
 	env: NodeJS.ProcessEnv;
 }> {
-	const shells = getConfiguredShells(settings);
 	const spawnCwd = await normalizeSpawnCwd(cwd);
 	const spawnEnv = getTerminalSpawnEnv(controlEnv);
-	const extraArgs = parseCommandLineArgs(settings.shell.extraArgs);
+	const shell = resolvePtyShellOptions(settings);
 
+	return {
+		shellPath: shell.shellPath,
+		args: shell.args,
+		cwd: spawnCwd,
+		env: spawnEnv,
+	};
+}
+
+function resolvePtyShellOptions(settings: TerminalSettings): {
+	shellPath: string;
+	args: string[];
+} {
+	const shells = getConfiguredShells(settings);
 	for (const shellPath of shells) {
 		if (
 			process.platform !== 'win32' &&
@@ -2479,10 +2492,8 @@ async function buildPtySpawnOptions(
 			shellPath,
 			args: [
 				...getShellStartupArgs(shellPath, settings.shell.startupMode),
-				...extraArgs,
+				...parseCommandLineArgs(settings.shell.extraArgs),
 			],
-			cwd: spawnCwd,
-			env: spawnEnv,
 		};
 	}
 
@@ -5268,7 +5279,6 @@ ipcMain.handle(
 		await closeRemoteConnectionsForProfile(request.profileId);
 		rememberedRemoteConnections.delete(request.profileId);
 		saveRememberedRemoteConnections();
-		postLocalServerConnection(event.sender, true);
 	},
 );
 
@@ -5291,7 +5301,6 @@ ipcMain.handle(
 			rememberedRemoteConnections.delete(profile.id);
 			saveRememberedRemoteConnections();
 		}
-		postLocalServerConnection(event.sender, true);
 	},
 );
 
