@@ -106,7 +106,7 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 
 		await openRemoteMenu(mainWindow);
 		await mainWindow
-			.getByRole('button', { name: /Manage connections/u })
+			.getByRole('button', { name: /Add connection/u })
 			.click();
 		const dialog = mainWindow.getByRole('dialog', {
 			name: 'Connections',
