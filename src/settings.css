@@ -690,54 +690,57 @@
 
 /* Server-owned shell profile manager. Kept inside the shared settings route so
  * Desktop auxiliary windows and browser dialogs render the same controls. */
-.shell-profiles { display: grid; gap: 18px; }
-.shell-profiles-server { display: grid; gap: 3px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--accent-color, #8b5cf6) 35%, transparent); border-radius: 10px; background: color-mix(in srgb, var(--accent-color, #8b5cf6) 8%, transparent); }
-.shell-profiles-server__eyebrow { color: var(--text-secondary); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.shell-profiles-server > span:last-child, .shell-profiles-defaults small { color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
-.shell-profiles-error, .shell-profile-field-error { color: #ff8f8f; }
-.shell-profiles-error { padding: 10px 12px; border: 1px solid color-mix(in srgb, #ef4444 45%, transparent); border-radius: 8px; background: color-mix(in srgb, #ef4444 10%, transparent); }
-.shell-profiles-defaults { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.shell-profiles-defaults label, .shell-profile-editor label, .shell-profile-delete label { display: grid; gap: 7px; font-size: 13px; font-weight: 600; }
-.shell-profiles select, .shell-profiles input { box-sizing: border-box; width: 100%; min-height: 36px; border: 1px solid var(--border-color); border-radius: 7px; padding: 7px 9px; background: var(--input-bg, #111418); color: inherit; font: inherit; }
-.shell-profiles-toolbar { display: flex; gap: 8px; align-items: center; }
+.settings-shell-profile-container { min-width: 0; }
+.shell-profiles { display: grid; gap: 24px; }
+.shell-profiles-overview { overflow: hidden; }
+.shell-profiles-error, .shell-profile-field-error { color: var(--settings-danger); }
+.shell-profiles-error { padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--settings-danger) 45%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--settings-danger) 10%, transparent); font-size: 12px; }
+.shell-profiles-defaults__control { width: min(360px, 42vw); }
+.shell-profile-editor label, .shell-profile-delete label { display: grid; gap: 7px; font-size: 13px; font-weight: 600; }
+.shell-profile-editor select, .shell-profile-editor input, .shell-profile-delete select, .shell-profile-delete input { box-sizing: border-box; width: 100%; min-height: 36px; border: 1px solid var(--settings-border); border-radius: 6px; padding: 7px 9px; background: var(--settings-bg); color: var(--settings-text); font: inherit; outline: none; }
+.shell-profile-editor select:focus, .shell-profile-editor input:focus, .shell-profile-delete select:focus, .shell-profile-delete input:focus { border-color: var(--settings-accent); }
+.shell-profiles-toolbar { display: flex; gap: 12px; align-items: center; padding: 0 16px; }
 .shell-profiles-search { min-width: 180px; flex: 1; }
-.settings-primary-button, .settings-danger-button { min-height: 34px; border: 0; border-radius: 7px; padding: 7px 13px; color: white; font-weight: 650; cursor: pointer; }
-.settings-primary-button { background: var(--accent-color, #7c3aed); }
-.settings-danger-button { background: #b4232d; }
-.settings-primary-button:disabled, .settings-danger-button:disabled { cursor: default; opacity: .55; }
-.shell-profile-groups { display: grid; gap: 20px; }
-.shell-profile-group h4 { margin: 0 0 8px; color: var(--text-secondary); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
-.shell-profile-list { display: grid; gap: 8px; }
-.shell-profile-card { display: flex; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--border-color); border-radius: 9px; background: color-mix(in srgb, var(--panel-bg, #14171b) 88%, transparent); }
-.shell-profile-card--unavailable { border-color: color-mix(in srgb, #f59e0b 48%, transparent); }
+.shell-profiles-toolbar__actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.settings-primary-button--small { padding: 4px 10px; font-size: 11px; }
+.shell-profile-groups { display: grid; gap: 24px; }
+.shell-profile-group .settings-section-title { margin-bottom: 8px; }
+.shell-profile-list { overflow: hidden; }
+.shell-profile-card { display: flex; gap: 16px; align-items: center; min-height: 64px; padding: 12px 16px; border-bottom: 1px solid var(--settings-border); background: var(--settings-card-bg); }
+.shell-profile-card:last-child { border-bottom: 0; }
+.shell-profile-card--unavailable { box-shadow: inset 3px 0 color-mix(in srgb, #f59e0b 72%, transparent); }
 .shell-profile-card__body { min-width: 0; flex: 1; }
 .shell-profile-card__title, .shell-profile-card__meta, .shell-profile-card__actions { display: flex; align-items: center; gap: 7px; }
-.shell-profile-card__summary { overflow: hidden; margin: 4px 0; color: var(--text-secondary); font-family: var(--font-mono, monospace); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.shell-profile-card__meta { color: var(--text-secondary); font-size: 11px; }
+.shell-profile-card__title { color: var(--settings-text); }
+.shell-profile-card__summary { overflow: hidden; margin: 4px 0; color: var(--settings-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.shell-profile-card__meta { color: var(--settings-text-muted); font-size: 11px; }
 .shell-profile-card__meta span + span::before { content: '·'; margin-right: 7px; }
-.shell-profile-card__meta .is-available { color: #66c787; }
+.shell-profile-card__meta .is-available { color: var(--settings-success); }
 .shell-profile-card__meta .is-unavailable { color: #f1b65c; }
-.shell-profile-badge { border-radius: 999px; padding: 2px 7px; background: color-mix(in srgb, var(--accent-color, #7c3aed) 18%, transparent); color: var(--text-secondary); font-size: 10px; font-weight: 700; }
+.shell-profile-badge { border-radius: 4px; padding: 2px 6px; background: var(--settings-code-bg); color: var(--settings-text-muted); font-size: 10px; font-weight: 700; }
 .shell-profile-card__actions { flex-wrap: wrap; justify-content: flex-end; }
-.shell-profile-card__actions button, .shell-profile-rows button { min-height: 32px; border: 1px solid var(--border-color); border-radius: 6px; padding: 5px 9px; background: transparent; color: inherit; cursor: pointer; }
+.shell-profile-card__actions button, .shell-profile-rows button { min-height: 28px; }
+.shell-profile-card__move { width: 28px; padding-inline: 0; }
 .shell-profile-card__actions button:disabled { cursor: default; opacity: .45; }
-.shell-profiles-empty, .shell-profiles-loading { padding: 24px; color: var(--text-secondary); text-align: center; }
+.shell-profile-rows > div > button { border: 1px solid var(--settings-border); border-radius: 6px; padding: 5px 9px; background: transparent; color: var(--settings-text); cursor: pointer; }
+.shell-profile-rows > div > button:hover { background: var(--settings-nav-hover); }
+.shell-profiles-empty, .shell-profiles-loading { padding: 24px; color: var(--settings-text-muted); text-align: center; }
 .shell-profile-editor-backdrop { position: fixed; z-index: 1200; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / 62%); }
-.shell-profile-editor, .shell-profile-delete { width: min(720px, 100%); max-height: min(760px, calc(100vh - 40px)); overflow: auto; border: 1px solid var(--border-color); border-radius: 12px; background: var(--panel-bg, #121519); box-shadow: 0 24px 70px rgb(0 0 0 / 45%); }
-.shell-profile-editor > header { display: flex; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid var(--border-color); }
+.shell-profile-editor, .shell-profile-delete { width: min(720px, 100%); max-height: min(760px, calc(100vh - 40px)); overflow: auto; border: 1px solid var(--settings-border); border-radius: 10px; background: var(--settings-card-bg); color: var(--settings-text); box-shadow: 0 24px 70px rgb(0 0 0 / 45%); }
+.shell-profile-editor > header { display: flex; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid var(--settings-border); }
 .shell-profile-editor > header h3, .shell-profile-delete h3 { margin: 0; }
-.shell-profile-editor > header p, .shell-profile-delete p { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; }
+.shell-profile-editor > header p, .shell-profile-delete p { margin: 6px 0 0; color: var(--settings-text-muted); font-size: 12px; }
 .shell-profile-editor > header > button { align-self: start; border: 0; background: transparent; color: inherit; font-size: 22px; cursor: pointer; }
 .shell-profile-editor__fields { display: grid; gap: 14px; padding: 20px; }
 .shell-profile-editor__row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.shell-profile-editor__hint { margin: 0; color: var(--text-secondary); font-size: 12px; }
-.shell-profile-editor > footer { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border-color); background: var(--panel-bg, #121519); }
-.shell-profile-advanced { border: 1px solid var(--border-color); border-radius: 8px; }
+.shell-profile-editor__hint { margin: 0; color: var(--settings-text-muted); font-size: 12px; }
+.shell-profile-editor > footer { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--settings-border); background: var(--settings-card-bg); }
+.shell-profile-advanced { border: 1px solid var(--settings-border); border-radius: 8px; }
 .shell-profile-advanced > summary { padding: 11px 12px; cursor: pointer; font-weight: 650; }
 .shell-profile-advanced__body { display: grid; gap: 18px; padding: 2px 12px 14px; }
 .shell-profile-rows { display: grid; gap: 8px; margin: 0; border: 0; padding: 0; }
 .shell-profile-rows legend { margin-bottom: 6px; font-size: 13px; font-weight: 650; }
-.shell-profile-rows > p { margin: -4px 0 2px; color: var(--text-secondary); font-size: 11px; }
+.shell-profile-rows > p { margin: -4px 0 2px; color: var(--settings-text-muted); font-size: 11px; }
 .shell-profile-rows > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .shell-profile-rows .shell-profile-environment-row { grid-template-columns: minmax(100px, .65fr) minmax(130px, 1fr) auto auto; align-items: center; }
 .shell-profile-environment-row label { display: flex; gap: 5px; align-items: center; white-space: nowrap; }
@@ -747,8 +750,8 @@
 .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; }
 
 @media (max-width: 680px) {
-	.shell-profiles-defaults, .shell-profile-editor__row { grid-template-columns: 1fr; }
 	.shell-profiles-toolbar { align-items: stretch; flex-direction: column; }
+	.shell-profiles-toolbar__actions { justify-content: flex-start; }
 	.shell-profile-card { align-items: stretch; flex-direction: column; }
 	.shell-profile-card__actions { justify-content: flex-start; }
 	.shell-profile-rows .shell-profile-environment-row { grid-template-columns: 1fr; }
