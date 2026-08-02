@@ -1192,9 +1192,10 @@ const ProjectWorkspace = forwardRef<
 				() =>
 					terminalClientContext === undefined
 						? null
-						: { ...terminalClientContext, projectId: project.id },
+						: { ...terminalClientContext, projectId: project.id, projectRoot: project.rootFolder },
 				[
 					project.id,
+					project.rootFolder,
 					terminalClientContext?.client,
 					terminalClientContext?.serverId,
 					terminalClientContext?.clientId,
