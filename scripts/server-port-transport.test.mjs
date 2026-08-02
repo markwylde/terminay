@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { MessageChannel } from 'node:worker_threads'
 import { join } from 'node:path'
 import test from 'node:test'
-import { build } from 'esbuild'
+import { MessageChannel } from 'node:worker_threads'
 import { TerminayTerminalPanelClient } from '@terminay/client-core'
 import {
   AgentStatusService,
@@ -11,8 +10,11 @@ import {
   TerminalActivityService,
   WorkspaceRepository,
 } from '@terminay/server-core'
+import { build } from 'esbuild'
 
-const outputDirectory = await mkdtemp(join(process.cwd(), 'scripts', '.server-port-transport-'))
+const outputDirectory = await mkdtemp(
+  join(process.cwd(), 'scripts', '.server-port-transport-'),
+)
 const outputFile = join(outputDirectory, 'serverPortTransport.mjs')
 const rendererClientFile = join(outputDirectory, 'rendererServerClient.mjs')
 
@@ -35,8 +37,11 @@ await build({
   platform: 'node',
 })
 
-const { ServerPortTransport, ServerScopedMessagePort } = await import(outputFile)
-const { connectRendererServerClient, createConnectedServerClientContext } = await import(rendererClientFile)
+const { ServerPortTransport, ServerScopedMessagePort } = await import(
+  outputFile
+)
+const { connectRendererServerClient, createConnectedServerClientContext } =
+  await import(rendererClientFile)
 globalThis.window = globalThis
 
 test.after(async () => {
@@ -45,14 +50,18 @@ test.after(async () => {
 
 test('server-scoped MessagePorts carry only framed bytes for the selected server', async () => {
   const { port1, port2 } = new MessageChannel()
-  const left = new ServerPortTransport(new ServerScopedMessagePort(port1, 'desktop-local'))
-  const right = new ServerPortTransport(new ServerScopedMessagePort(port2, 'desktop-local'))
+  const left = new ServerPortTransport(
+    new ServerScopedMessagePort(port1, 'desktop-local'),
+  )
+  const right = new ServerPortTransport(
+    new ServerScopedMessagePort(port2, 'desktop-local'),
+  )
 
   try {
     await Promise.all([left.open(), right.open()])
     const received = right.incoming[Symbol.asyncIterator]().next()
     await left.send(new Uint8Array([1, 2, 3]))
-    assert.deepEqual([...((await received).value)], [1, 2, 3])
+    assert.deepEqual([...(await received).value], [1, 2, 3])
     assert.equal(left.state, 'open')
     assert.equal(right.state, 'open')
   } finally {
@@ -62,7 +71,9 @@ test('server-scoped MessagePorts carry only framed bytes for the selected server
 
 test('normal peer closure terminates incoming work and releases a server connection slot', async () => {
   const { port1, port2 } = new MessageChannel()
-  const transport = new ServerPortTransport(new ServerScopedMessagePort(port1, 'desktop-local'))
+  const transport = new ServerPortTransport(
+    new ServerScopedMessagePort(port1, 'desktop-local'),
+  )
   const core = createServerCoreComposition({
     allowUnresolvedTestSessions: true,
     serverId: 'desktop-local',
@@ -96,12 +107,14 @@ test('a frame from another server is rejected before it reaches the transport', 
   const scoped = new ServerScopedMessagePort(port1, 'desktop-local')
   const transport = new ServerPortTransport(scoped)
   let errors = 0
-  scoped.onmessageerror = () => { errors += 1 }
+  scoped.onmessageerror = () => {
+    errors += 1
+  }
 
   try {
     await transport.open()
     port2.postMessage({
-      type: 'terminay.server-frame',
+      type: 'terminay.host-byte',
       version: 1,
       serverId: 'other-server',
       frame: new Uint8Array([1]),
@@ -118,8 +131,11 @@ test('the renderer connector aborts a server handshake that never replies', asyn
   const { port1, port2 } = new MessageChannel()
   try {
     await assert.rejects(
-      connectRendererServerClient('desktop-local', port2, { connectionTimeoutMs: 10 }),
-      (error) => error?.message === 'connection handshake failed' &&
+      connectRendererServerClient('desktop-local', port2, {
+        connectionTimeoutMs: 10,
+      }),
+      (error) =>
+        error?.message === 'connection handshake failed' &&
         error.cause?.message === 'server handshake timed out after 10ms',
     )
   } finally {
@@ -131,11 +147,17 @@ test('the renderer connector aborts a server handshake that never replies', asyn
 test('canonical renderer setup closes a client whose subscription never settles', async () => {
   let closed = 0
   const client = {
-    close: async () => { closed += 1 },
+    close: async () => {
+      closed += 1
+    },
     subscribe: async () => new Promise(() => {}),
   }
   await assert.rejects(
-    createConnectedServerClientContext(client, { clientId: 'client', serverId: 'desktop-local' }, { setupTimeoutMs: 10 }),
+    createConnectedServerClientContext(
+      client,
+      { clientId: 'client', serverId: 'desktop-local' },
+      { setupTimeoutMs: 10 },
+    ),
     /activity subscription timed out after 10ms/u,
   )
   assert.equal(closed, 1)
@@ -152,7 +174,9 @@ for (const [phase, stall] of setupPhaseCases) {
   test(`canonical renderer setup reports and cleans up a stalled ${phase}`, async () => {
     let closed = 0
     const client = {
-      close: async () => { closed += 1 },
+      close: async () => {
+        closed += 1
+      },
       subscribe: async (event) => {
         if (stall.stalledSubscription === event) return new Promise(() => {})
         return {
@@ -164,7 +188,14 @@ for (const [phase, stall] of setupPhaseCases) {
       query: async (operation) => {
         if (stall.stalledQuery === operation) return new Promise(() => {})
         if (operation === 'activity.snapshot') {
-          return { result: { serverId: 'desktop-local', revision: 0, cursor: '0', sessions: {} } }
+          return {
+            result: {
+              serverId: 'desktop-local',
+              revision: 0,
+              cursor: '0',
+              sessions: {},
+            },
+          }
         }
         if (operation === 'agent.snapshot') {
           return { result: { revision: 0, cursor: '0', entries: {} } }
@@ -208,10 +239,13 @@ test('the production renderer connector attaches through the server-owned compos
     activity,
     receiver: { tokenFactory: () => 'server-port-agent-token' },
   })
-  const workspace = new WorkspaceRepository({
-    load: async () => undefined,
-    commit: async () => {},
-  }, 'desktop-local')
+  const workspace = new WorkspaceRepository(
+    {
+      load: async () => undefined,
+      commit: async () => {},
+    },
+    'desktop-local',
+  )
   await workspace.load()
   const composition = createServerCoreComposition({
     allowUnresolvedTestSessions: true,
@@ -230,28 +264,52 @@ test('the production renderer connector attaches through the server-owned compos
           options,
           writes: [],
           resizes: [],
-          write(bytes) { this.writes.push(new Uint8Array(bytes)) },
-          resize(dimensions) { this.resizes.push({ ...dimensions }) },
+          write(bytes) {
+            this.writes.push(new Uint8Array(bytes))
+          },
+          resize(dimensions) {
+            this.resizes.push({ ...dimensions })
+          },
           kill() {},
-          onData(listener) { dataListeners.add(listener); return () => dataListeners.delete(listener) },
-          onExit(listener) { exitListeners.add(listener); return () => exitListeners.delete(listener) },
+          onData(listener) {
+            dataListeners.add(listener)
+            return () => dataListeners.delete(listener)
+          },
+          onExit(listener) {
+            exitListeners.add(listener)
+            return () => exitListeners.delete(listener)
+          },
           emitData(value) {
-            const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value
+            const bytes =
+              typeof value === 'string'
+                ? new TextEncoder().encode(value)
+                : value
             for (const listener of dataListeners) listener(bytes)
           },
-          emitExit(value = {}) { for (const listener of exitListeners) listener(value) },
+          emitExit(value = {}) {
+            for (const listener of exitListeners) listener(value)
+          },
         }
         processes.push(process)
         return process
       },
     },
-    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: 'admin' }),
+    authenticate: ({ hello }) => ({
+      clientId: hello.clientId,
+      authScope: 'admin',
+    }),
     terminalOptions: { generateSessionId: () => 'session-renderer' },
   })
   await composition.start()
-  const session = await composition.terminal.createSession({ projectId: 'project-renderer', cols: 80, rows: 24 })
+  const session = await composition.terminal.createSession({
+    projectId: 'project-renderer',
+    cols: 80,
+    rows: 24,
+  })
   const { port1, port2 } = new MessageChannel()
-  const serverTransport = new ServerPortTransport(new ServerScopedMessagePort(port1, 'desktop-local'))
+  const serverTransport = new ServerPortTransport(
+    new ServerScopedMessagePort(port1, 'desktop-local'),
+  )
   const server = composition.core.accept(serverTransport)
   const serverTask = server.start()
   let context
@@ -272,7 +330,10 @@ test('the production renderer connector attaches through the server-owned compos
     await panel.ack(event.nextPosition)
     await panel.write('echo from renderer')
     await panel.resize({ cols: 100, rows: 30 })
-    assert.deepEqual([...processes[0].writes[0]], [...new TextEncoder().encode('echo from renderer')])
+    assert.deepEqual(
+      [...processes[0].writes[0]],
+      [...new TextEncoder().encode('echo from renderer')],
+    )
     assert.deepEqual(processes[0].resizes, [{ cols: 100, rows: 30 }])
     await panel.detach()
   } finally {
