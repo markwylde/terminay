@@ -5268,7 +5268,6 @@ ipcMain.handle(
 		await closeRemoteConnectionsForProfile(request.profileId);
 		rememberedRemoteConnections.delete(request.profileId);
 		saveRememberedRemoteConnections();
-		postLocalServerConnection(event.sender, true);
 	},
 );
 
@@ -5291,7 +5290,6 @@ ipcMain.handle(
 			rememberedRemoteConnections.delete(profile.id);
 			saveRememberedRemoteConnections();
 		}
-		postLocalServerConnection(event.sender, true);
 	},
 );
 
