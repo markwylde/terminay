@@ -3192,9 +3192,9 @@ async function connectRemoteByteTransport(
 		try {
 			for await (const frame of rendererTransport.incoming) {
 				if (isClosed) return;
-				// Decode before forwarding so a malformed renderer frame cannot be
-				// used to smuggle an unrelated operation into the remote server.
-				decodeFrame(frame);
+				// The selected server bundle owns the application protocol. The
+				// privileged host validates only the bounded byte endpoint and forwards
+				// feature frames without decoding operation names or payloads.
 				await remoteTransport.send(frame);
 			}
 			if (!isClosed) fail(new Error('Remote client transport closed.'));
@@ -3207,14 +3207,18 @@ async function connectRemoteByteTransport(
 		try {
 			for await (const frame of remoteTransport.incoming) {
 				if (isClosed) return;
-				const envelope = decodeFrame(frame).envelope;
 				await rendererTransport.send(frame);
-				if (envelope.type === 'server_hello' && !handshakeSettled) {
-					handshakeSettled = true;
-					resolveHandshake();
-				} else if (envelope.type === 'error' && !handshakeSettled) {
-					handshakeSettled = true;
-					rejectHandshake(new Error(envelope.error.message));
+				// Bootstrap negotiation is the one stable envelope the host owns. Once
+				// established, all application frames remain opaque to Desktop.
+				if (!handshakeSettled) {
+					const envelope = decodeFrame(frame).envelope;
+					if (envelope.type === 'server_hello') {
+						handshakeSettled = true;
+						resolveHandshake();
+					} else if (envelope.type === 'error') {
+						handshakeSettled = true;
+						rejectHandshake(new Error(envelope.error.message));
+					}
 				}
 			}
 			if (!isClosed) fail(new Error('Remote server transport closed.'));
