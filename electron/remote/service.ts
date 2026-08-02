@@ -6,6 +6,7 @@ import {
   randomUUID,
   verify as verifySignature,
 } from 'node:crypto'
+import { lookup as dnsLookup } from 'node:dns'
 import { promises as fs } from 'node:fs'
 import https from 'node:https'
 import os from 'node:os'
@@ -179,6 +180,51 @@ const MAX_SESSION_SNAPSHOT_BUFFER_LENGTH = 50_000
 const RECONNECT_LEASE_MS = 5 * 60 * 1000
 const RECONNECT_REFRESH_MIN_MS = 45 * 1000
 const RECONNECT_REFRESH_JITTER_MS = 30 * 1000
+
+type DnsLookupOptions = {
+  all?: boolean
+  family?: number
+  hints?: number
+  verbatim?: boolean
+}
+
+type DnsLookupCallback = (
+  error: NodeJS.ErrnoException | null,
+  address: string | Array<{ address: string; family: number }>,
+  family?: number,
+) => void
+
+function resolveSessionLocalhost(
+  hostname: string,
+  options: DnsLookupOptions,
+  callback: DnsLookupCallback,
+): void {
+  if (hostname.toLowerCase().endsWith('.localhost')) {
+    if (options.all) {
+      callback(null, [{ address: '127.0.0.1', family: 4 }])
+    } else {
+      callback(null, '127.0.0.1', 4)
+    }
+    return
+  }
+
+  return (dnsLookup as (
+    hostname: string,
+    options: DnsLookupOptions,
+    callback: DnsLookupCallback,
+  ) => void)(hostname, options, callback)
+}
+
+export function createWebRtcSignalingSocketOptions(signalingUrl: string, origin: string) {
+  const options = { origin } as WebSocket.ClientOptions & {
+    lookup?: typeof resolveSessionLocalhost
+  }
+  const url = new URL(signalingUrl)
+  if (url.protocol === 'ws:' && url.hostname.toLowerCase().endsWith('.localhost')) {
+    options.lookup = resolveSessionLocalhost
+  }
+  return options
+}
 
 export function createReconnectLeaseTiming(
   now = Date.now(),
@@ -1243,7 +1289,7 @@ export class RemoteAccessService {
       const signalingUrl = this.createWebRtcSignalingUrl(appOrigin)
       const reconnectRegistrationToken =
         await this.reconnectGrantStore.getOrCreateHostRegistrationToken(sessionId)
-      const socket = new WebSocket(signalingUrl, { origin: appOrigin })
+      const socket = new WebSocket(signalingUrl, createWebRtcSignalingSocketOptions(signalingUrl, appOrigin))
       let resolveInitialRegistration: (() => void) | null = null
       let rejectInitialRegistration: ((error: Error) => void) | null = null
       const initialRegistration = new Promise<void>((resolve, reject) => {
@@ -1460,7 +1506,10 @@ export class RemoteAccessService {
     }
 
     this.closeWebRtcSignalSocket(runtime)
-    const socket = new WebSocket(config.signalingUrl, { origin: config.appOrigin })
+    const socket = new WebSocket(
+      config.signalingUrl,
+      createWebRtcSignalingSocketOptions(config.signalingUrl, config.appOrigin),
+    )
     runtime.signalSocket = socket
 
     socket.on('open', () => {
