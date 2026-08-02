@@ -720,13 +720,14 @@ part of the completed project-scoped parity or cleanup checkboxes.
   server-runtime compatibility contracts; progress remains in this task
   (`scripts/task19-20-audit.test.mjs`).
 
-External integration follow-up (not a project checkbox): update the
-authenticated browser peer owner in the sibling `terminay.com` project to
-install a ticket-bound `getChannel` bridge for four distinct
-control/application/terminal/assets lanes, then run the isolated secure-Werift
-hosted proof. This repository rejects swapped or aliased lanes and contains no
-terminal-protocol fallback; the sibling peer's private channel ownership is
-outside this worktree, so no external proof is claimed here.
+Cross-repository compatibility evidence follows the ownership boundary. Public
+Terminay CI runs its selected secure-Werift runtime against an in-repository
+mock signaling peer and native Chromium on every pull request and `main`; it
+never checks out, mirrors, or receives credentials for the proprietary hosted
+service. The sibling `terminay.com` CI owns the full integration proof against
+its real browser peer, using a reviewed public Terminay revision and the
+ticket-bound four-channel bridge. This repository still rejects swapped or
+aliased lanes and contains no terminal-protocol fallback.
 
 ## Acceptance checks
 

@@ -10,8 +10,8 @@ const turnConfigPath = process.env.TERMINAY_TURN_CONFIG_PATH
 const turnPort = Number(process.env.TERMINAY_TURN_PORT)
 const turnRouteOnly = process.env.TERMINAY_TURN_ROUTE_ONLY === '1'
 test.skip(
-  !dependencyRoot || !turnConfigPath || !Number.isInteger(turnPort),
-  'requires the isolated secure-Werift and coturn proof wrapper',
+  !dependencyRoot,
+  'requires the isolated secure-Werift proof wrapper',
 )
 
 const weriftRuntime = dependencyRoot
@@ -532,7 +532,17 @@ async function exerciseWeriftRoute(
   }
 }
 
+test('secure Werift connects to native Chromium through a mock hosted signaling peer', async ({ browser }) => {
+  test.setTimeout(90_000)
+  const direct = await exerciseRoute(browser, [], 'all', true)
+  expect(direct.hostPair?.localType).toBe('host')
+  expect(['host', 'prflx', 'srflx']).toContain(direct.hostPair?.remoteType)
+  expect(direct.browserPair?.localType).toBe('host')
+  expect(['host', 'prflx', 'srflx']).toContain(direct.browserPair?.remoteType)
+})
+
 test('secure Werift rejects invalid and expired TURN credentials', async () => {
+  test.skip(!turnConfigPath || !Number.isInteger(turnPort), 'requires the isolated coturn proof wrapper')
   test.setTimeout(90_000)
   const secret = parseTurnSecret(await readFile(turnConfigPath!, 'utf8'))
   const now = Math.floor(Date.now() / 1_000)
@@ -554,6 +564,7 @@ test('secure Werift rejects invalid and expired TURN credentials', async () => {
 })
 
 test('secure Werift selects direct and authenticated TURN-only routes', async ({ browser }) => {
+  test.skip(!turnConfigPath || !Number.isInteger(turnPort), 'requires the isolated coturn proof wrapper')
   test.setTimeout(90_000)
   const secret = parseTurnSecret(await readFile(turnConfigPath!, 'utf8'))
   const now = Math.floor(Date.now() / 1_000)
