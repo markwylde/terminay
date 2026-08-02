@@ -99,7 +99,10 @@ stop. Loopback HTTP is permitted only for local development; non-loopback
 exposure requires HTTPS.
 For local hosted-transport compatibility tests, HTTP names beneath the reserved
 `.localhost` suffix are loopback origins. Each session subdomain remains a
-distinct origin and must not be canonicalized to bare `localhost`.
+distinct origin and must not be canonicalized to bare `localhost`. The
+desktop-owned local signaling socket resolves session `.localhost` subdomains to
+loopback without changing the canonical signaling URL, Host header, or
+application origin.
 
 Stopping WebRTC exposure does not stop an independently enabled direct listener,
 and stopping the direct listener does not stop WebRTC or the private Local
@@ -165,6 +168,10 @@ host-owned boundaries around this primitive.
 When the relay reports reconnect completion, the host retires only the
 short-lived reconnect-attempt metadata and leaves the newly established WebRTC
 runtime open.
+After issuing a saved-session reconnect grant, the desktop treats reconnect
+availability as established only after the hosted relay acknowledges the
+initial reconnect-host registration. A fast browser reconnect must not race
+ahead of relay-visible availability.
 Browser-host reconnect on a WebRTC session origin uses the same authenticated
 four-lane application transport as initial pairing; it does not downgrade the
 server-bundled UI to a direct WebSocket connection.
