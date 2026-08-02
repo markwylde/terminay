@@ -33,7 +33,7 @@ import { ContextMenu } from './ContextMenu'
 import type { TerminalPanelParams } from './TerminalTab'
 import { clearTerminalViewport, shouldClearTerminalForSession } from './terminalClearInteraction'
 import { copyTerminalSelection } from './terminalClipboardInteraction'
-import { escapeTerminalPathForShell, getTerminalDropText, shouldInterceptTerminalDrop } from './terminalDropInteraction'
+import { escapeTerminalPathForShell, getTerminalDropText, shouldInterceptTerminalDrop, uploadBrowserTerminalDrop } from './terminalDropInteraction'
 import { formatTerminalExitNotice } from './terminalExitInteraction'
 import { shouldRestoreTerminalFocusAfterWindowActivation } from './terminalFocusInteraction'
 import { createTerminalLinkInteraction } from './terminalLinkInteraction'
@@ -74,6 +74,7 @@ export interface TerminalPanelClientContextValue {
   readonly gitClient?: TerminayGitClient
   readonly serverId: string
   readonly projectId: string
+  readonly projectRoot?: string
   readonly clientId: string
   /** Host-owned display metadata for the authenticated current server. */
   readonly connectionLabel?: string
@@ -420,9 +421,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     const panelIdentity = resolvedTerminalClient.identity
     const panelClientId = resolvedTerminalClient.clientId
     const useServerTerminal = panelClient !== undefined && panelIdentity !== undefined && panelClientId !== undefined
-    const resolveDesktopDroppedFilePath = useServerTerminal
+    const resolveDesktopDroppedFilePath = window.terminayFileExplorerHost === undefined
       ? undefined
       : (file: unknown) => window.terminayFileExplorerHost?.resolveDroppedFilePath(file as File)
+    const canUploadBrowserFiles = resolveDesktopDroppedFilePath === undefined && terminalClientContext?.fileViewerClient !== undefined && terminalClientContext.projectRoot !== undefined
     let serverAttachmentFailed = false
     if (useServerTerminal) {
       setServerTerminalError(null)
@@ -980,7 +982,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
 
     const handleDragEnter = (event: DragEvent) => {
-      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer, resolveDesktopDroppedFilePath)) {
+      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer, resolveDesktopDroppedFilePath, canUploadBrowserFiles)) {
         return
       }
 
@@ -990,7 +992,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
 
     const handleDragOver = (event: DragEvent) => {
-      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer, resolveDesktopDroppedFilePath)) {
+      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer, resolveDesktopDroppedFilePath, canUploadBrowserFiles)) {
         return
       }
 
@@ -999,19 +1001,30 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       event.dataTransfer.dropEffect = 'copy'
     }
 
-    const handleDrop = (event: DragEvent) => {
+    const handleDrop = async (event: DragEvent) => {
       if (!event.dataTransfer) {
-        return
-      }
-
-      const droppedText = getTerminalDropText(event.dataTransfer, resolveDesktopDroppedFilePath)
-      if (!droppedText) {
         return
       }
 
       // We handle the event here so xterm doesn't get it
       event.preventDefault()
       event.stopPropagation()
+
+      let droppedText = getTerminalDropText(event.dataTransfer, resolveDesktopDroppedFilePath)
+      if (!droppedText && canUploadBrowserFiles && terminalClientContext?.fileViewerClient && terminalClientContext.projectRoot) {
+        try {
+          droppedText = await uploadBrowserTerminalDrop(
+            event.dataTransfer.files,
+            terminalClientContext.projectRoot,
+            (path, bytes) => terminalClientContext.fileViewerClient!.createFile(path, bytes, terminalClientContext.projectId),
+          )
+        } catch (error) {
+          console.error('Browser file drop upload failed', error)
+          terminal.write('\r\n\x1b[31m[file drop failed: the file could not be uploaded]\x1b[0m\r\n')
+          return
+        }
+      }
+      if (!droppedText) return
 
       writePanelInput(`${droppedText} `)
       terminal.focus()
