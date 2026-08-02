@@ -56,12 +56,11 @@ An administrator uses **Expose this server…** to:
 - inspect relay health, paired devices, and live connections;
 - revoke devices or stop accepting remote connections.
 
-Desktop reports exposure availability before an administrator starts it. A
-mode is selectable and described as ready only when its complete privileged
-transport composition is present. A build without the selected WebRTC runtime,
-authenticated per-peer signaling registrar, or required hosted-service
-contract shows WebRTC Relay as unavailable and does not invite a start action.
-Availability failures never allocate a pairing room or publish a pairing URL.
+Desktop reports WebRTC exposure availability before an administrator starts
+it. A build without the selected WebRTC runtime, authenticated per-peer
+signaling registrar, or required hosted-service contract shows WebRTC as
+unavailable and does not invite a start action. Availability failures never
+allocate a pairing room, bind a substitute LAN port, or publish a pairing URL.
 
 The same exposure and trust model applies to an embedded Local server and a
 standalone `terminay-server` process. The standalone CLI prints the secure
@@ -82,20 +81,29 @@ state and rejects new pairing or reconnect admissions. Already-connected peers
 remain transport-connected until they disconnect or are explicitly revoked, so
 expiry does not interrupt server-owned work.
 
-An optional Local Network endpoint exposes the same protocol directly over
-authenticated HTTPS/WebSocket transport on a user-selected interface. It uses
-the same device, authorization, and audit rules and never starts implicitly.
-WebRTC exposure does not bind a LAN listener.
+An optional advanced **Direct network listener** exposes the same protocol
+directly over authenticated HTTPS/WebSocket transport on a user-selected
+interface. It uses the same device, authorization, and audit rules, has its own
+explicit start/stop state and origin-bound handoff, and never starts implicitly.
+It is not a QR type, WebRTC fallback, or alternate meaning of **Expose this
+server…**. WebRTC exposure does not bind a LAN listener, and enabling the direct
+listener does not claim that WebRTC is available.
 
-For an embedded Local server, starting Local Network exposure binds the
+For an embedded Local server, starting the direct network listener binds the
 configured interface and port to the embedded server's canonical
 `ServerCore`. It does not create a second workspace, terminal authority, or
-standalone server process. The listener starts only after an explicit exposure
-action, stops with exposure, rolls back pairing state when binding or TLS setup
-fails, and rejects remote traffic after stop. Loopback HTTP is permitted only
-for local development; non-loopback exposure requires HTTPS.
+standalone server process. The listener starts only after its explicit advanced
+action, stops only through its own lifecycle or server shutdown, rolls back its
+pairing state when binding or TLS setup fails, and rejects remote traffic after
+stop. Loopback HTTP is permitted only for local development; non-loopback
+exposure requires HTTPS.
 
-The Local Network pairing URL is usable by the shared Desktop/browser pairing
+Stopping WebRTC exposure does not stop an independently enabled direct listener,
+and stopping the direct listener does not stop WebRTC or the private Local
+connection. Each route reports its own admission, origin, expiry, and error
+state while sharing server-owned device authorization and audit policy.
+
+The direct-network pairing URL is usable by the shared Desktop/browser pairing
 flow. The listener validates the one-time fragment material and pairing PIN,
 enrolls a device, issues origin-bound reconnect material, and then carries the
 same framed application protocol used by Local. A generated URL must never be
@@ -186,6 +194,28 @@ distribution.
   serial, and Bluetooth permissions.
 - `web.terminay.com` remains a connection host; it is not a separately evolving
   full workspace application.
+
+The stable browser host contains only connection management, pairing/reconnect,
+compatible signaling/WebRTC bootstrap, verified bundle installation, and safe
+launch/failure UI. After it establishes the authenticated asset channel, the
+selected server supplies the full workspace implementation and matching
+application client. The installed bundle executes in that server's exact
+isolated session origin rather than the manager origin.
+
+Terminay Desktop follows the same remote bootstrap and bundle-install flow. It
+keeps protected credentials and transport authority in the main process,
+launches the verified server bundle in a sandboxed origin/profile partition,
+and supplies an opaque byte endpoint plus a separately negotiated native host
+bridge. The renderer never receives reconnect grants, signaling secrets, or
+generic Electron IPC.
+
+The host need not understand the server bundle's feature-level application
+protocol. Cross-version connection depends only on compatible
+pairing/reconnect and signaling bootstrap, byte transport, bundle
+manifest/transfer, execution runtime, and required host-bridge contracts. A
+missing optional native capability uses browser-equivalent presentation; a
+missing required compatibility boundary fails before launch with a typed
+upgrade requirement.
 
 The server-provided UI receives no ambient Electron, Node, connection-manager,
 or cross-origin credential authority. Desktop loads it in a sandboxed,
