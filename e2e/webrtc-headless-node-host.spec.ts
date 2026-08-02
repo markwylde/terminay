@@ -462,7 +462,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
           client: host.evidence.clientSignals.map((message) => message.type),
           host: host.evidence.hostSignals.map((message) => message.type),
           status: host.evidence.statusMessages,
-        })))}`,
+        })))} hosted=${JSON.stringify(hostedServer.logs())}`,
       )
     })
     const sessionOrigin = new URL(pairingUrl).origin
