@@ -208,11 +208,12 @@ function resolveSessionLocalhost(
     return
   }
 
-  return (dnsLookup as (
+  const lookup = dnsLookup as (
     hostname: string,
     options: DnsLookupOptions,
     callback: DnsLookupCallback,
-  ) => void)(hostname, options, callback)
+  ) => void
+  lookup(hostname, options, callback)
 }
 
 export function createWebRtcSignalingSocketOptions(signalingUrl: string, origin: string) {
