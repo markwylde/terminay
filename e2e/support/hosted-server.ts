@@ -91,11 +91,11 @@ async function waitForPostgres(containerName: string): Promise<void> {
   throw new Error('Timed out waiting for local Terminay PostgreSQL container.')
 }
 
-async function waitForHostPort(port: number): Promise<void> {
+async function waitForHostPort(host: string, port: number): Promise<void> {
   const startedAt = Date.now()
   while (Date.now() - startedAt < 30_000) {
     const connected = await new Promise<boolean>((resolve) => {
-      const socket = net.connect(port, '127.0.0.1')
+      const socket = net.connect(port, host)
       socket.once('connect', () => {
         socket.destroy()
         resolve(true)
@@ -122,8 +122,12 @@ export async function startHostedServer(): Promise<HostedServer> {
   const repoDir = resolveHostedServerRepo()
   const staticDir = path.join(repoDir, 'app/dist')
   const externalDatabaseUrl = process.env.TERMINAY_E2E_DATABASE_URL
-  const pgPort = externalDatabaseUrl
-    ? Number(new URL(externalDatabaseUrl).port || '5432')
+  const externalDatabase = externalDatabaseUrl
+    ? new URL(externalDatabaseUrl)
+    : null
+  const pgHost = externalDatabase?.hostname ?? '127.0.0.1'
+  const pgPort = externalDatabase
+    ? Number(externalDatabase.port || '5432')
     : await getFreePort()
   const port = await getFreePort()
   const containerName = `terminay-e2e-postgres-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -168,7 +172,7 @@ export async function startHostedServer(): Promise<HostedServer> {
       ownsPostgresContainer = true
       await waitForPostgres(containerName)
     }
-    await waitForHostPort(pgPort)
+    await waitForHostPort(pgHost, pgPort)
     await new Promise((resolve) => setTimeout(resolve, 1_000))
 
     serverProcess = spawn(process.execPath, ['server/index.js'], {

@@ -25,7 +25,7 @@
 	],
 	"scripts": {
 		"postinstall": "node scripts/ensure-node-pty-helper-mode.mjs",
-		"dev": "npm run build:server-ui && vite",
+		"dev": "npm run build:server-ui && vite build && node scripts/stage-selected-secure-werift-runtime.mjs && TERMINAY_WEBRTC_RUNTIME_ROOT=\"$PWD/build/webrtc-runtime\" vite",
 		"dev:electron": "tsc && vite build && electron-builder --dir --mac --arm64 && open \"release/$npm_package_version/mac-arm64/Terminay.app\"",
 		"build:app": "npm run build:shared && npm run build --workspace @terminay/server && npm run build:server-ui && tsc && vite build && node scripts/build-ui-bundle-manifest.mjs dist $npm_package_version 1",
 		"build": "npm run build:app && electron-builder --publish never",
