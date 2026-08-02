@@ -16,13 +16,21 @@ the same source as the desktop experience. A browser or desktop connection
 therefore runs the UI version shipped with that server instead of depending on
 an independently deployed latest workspace build.
 
+The bundle contains the application-protocol client that matches its server.
+Desktop and browser hosts establish authentication and an opaque byte
+transport, verify and launch the bundle, and then stay outside application
+protocol interpretation. This lets one host connect across server application
+versions while keeping its smaller bootstrap, transport, bundle-format,
+execution-runtime, and native-host-bridge compatibility boundaries explicit.
+
 ## Product topology
 
 Terminay has four distinct runtime roles:
 
 1. **Terminay Server** owns workspace and machine authority.
 2. **Terminay Desktop** owns native application windows, local-server
-   supervision, OS integration, and connection credentials.
+   supervision, OS integration, connection credentials, verified bundle
+   installation, and opaque local/remote transport delivery.
 3. **The web connection host** at `web.terminay.com` owns browser-local
    connection metadata and launches or embeds an origin-isolated server UI.
 4. **The hosted bootstrap/signaling service** owns only static bootstrap,
@@ -37,8 +45,11 @@ client publication, and the previous hosted revision is retired only after
 those clients are covered by the new window.
 
 These are deployable roles, not four independent product implementations. The
-server-bundled workspace UI, client library, protocol schemas, and responsive
-components are shared.
+server-bundled workspace UI and its matching application client are one
+artifact. The browser and Desktop shells share connection/bootstrap contracts
+and host-capability schemas without becoming independent workspace clients.
+The exact ownership and compatibility split is recorded in
+[server-bundled clients and protocol-blind hosts](../decisions/server-bundled-client-hosts.md).
 
 ## Runtime modes
 
@@ -49,9 +60,10 @@ components are shared.
 - The embedded composition boundary accepts a host-injected platform path
   snapshot and privileged service factory; the server runtime never calls
   Electron path APIs.
-- The server binds only to an authenticated loopback or OS-local endpoint until
-  the user explicitly exposes it.
-- Desktop receives readiness, endpoint, server identity, and a short-lived
+- The server accepts only Desktop's private authenticated local byte transport
+  until the user explicitly exposes a remote route. Embedded startup does not
+  require or publish a network listener.
+- Desktop receives readiness, private endpoint metadata, server identity, and a short-lived
   bootstrap credential through a private parent/child channel.
 - Desktop keeps that credential in a private local-transport context only; it is
   never copied into connection profiles, host state, logs, or normal readiness
@@ -60,8 +72,8 @@ components are shared.
 - Closing or reloading an individual renderer does not terminate PTYs.
 - Desktop supervises unexpected server exit and presents recovery rather than
   silently starting a second authority over the same data directory.
-- Local HTTP listeners use an OS-assigned loopback port (`127.0.0.1:0`) so
-  concurrent authorities do not rely on a probe-then-bind race.
+- An explicitly enabled direct network listener claims its configured socket
+  atomically and remains separate from the private Local transport.
 - The embedded server uses a dedicated data directory and imports supported
   legacy Desktop state exactly once.
 
@@ -166,26 +178,61 @@ Protocol types and runtime validators live in a dependency-light shared
 package. UI code consumes a `TerminayClient` interface and does not call
 Electron IPC, WebRTC, WebSocket, or server internals directly.
 
-Feature-owned client facades may reduce the shared query/command envelope to
-typed feature results. A host-local compatibility adapter may satisfy that
-same query/command contract from the legacy preload bridge; the adapter is not
-part of the shared UI authority or protocol model. A bounded cleanup report may
-identify renderer-preload, terminal-only-remote, recording-preload, and
-file-viewer-preload adapters as `retain-until-parity`; the report contains no
-legacy payloads and never treats those adapters as server authority.
+## Client and host compatibility boundaries
 
-The Desktop compatibility transport wraps each framed byte message in a
-versioned `{serverId, frame}` packet before it reaches
-`TerminayClient`. The privileged host fixes the server id when constructing the
-adapter; inbound packets for another server or with an invalid shape are
-rejected, and the renderer receives no raw MessagePort or transport authority.
+Every selected server supplies its matching workspace bundle and
+application-protocol client. The host supplies two independent boundaries:
+
+- an opaque framed byte transport connected to the authenticated server; and
+- a versioned, capability-negotiated presentation bridge for optional native
+  host actions.
+
+The host forwards valid bounded frames without decoding feature operations,
+workspace DTOs, or application events. Authentication material, reconnect
+grants, private keys, signaling credentials, and transport handles remain in
+the host's privileged connection runtime; the workspace renderer receives only
+the scoped byte endpoint and sanitized connection identity needed to construct
+its bundled `TerminayClient`.
+
+The presentation bridge declares a bounded bridge version, host kind, and
+individual capabilities such as native secondary windows, native menus,
+approved file selection, clipboard write, notifications, updates, and guarded
+OS integration. Capability selection is injected by the trusted host after
+binding the exact window/source and server profile. It is never selected by a
+URL parameter, renderer setting, server response, or generic Electron IPC.
+
+Application feature evolution does not require a matching Desktop release.
+Compatibility is gated independently for:
+
+- pairing/reconnect and signaling bootstrap;
+- the framed byte-transport ABI and resource limits;
+- the signed/content-addressed bundle manifest and asset transfer protocol;
+- the host bridge version and required versus optional capabilities; and
+- the host execution runtime, including minimum supported Chromium features.
+
+An unsupported optional host capability falls back to the browser-equivalent
+in-page behavior or a clear disabled action. An incompatible required bridge,
+bundle format, transport/bootstrap version, or execution runtime fails before
+the bundle is launched or connection state is committed and identifies the
+component that must be upgraded.
+
+Feature-owned client facades inside the server bundle may reduce the shared
+query/command envelope to typed feature results. A host bridge never satisfies
+an application query/command facade and never manufactures server feature
+state.
+
+The Desktop byte endpoint wraps each framed byte message in a stable versioned
+packet bound to the exact server identity before it reaches `TerminayClient`.
+The privileged host fixes that identity when constructing the endpoint;
+inbound packets for another server or with an invalid bounded shape are
+rejected, while feature-level frame contents remain opaque to the host. The
+renderer receives no raw native transport or credential authority.
 
 ## Transports
 
 The application protocol is transport-neutral:
 
-- embedded Local connections use an authenticated loopback or OS-local
-  transport;
+- embedded Local connections use a private authenticated host transport;
 - exposed remote connections use isolated WebRTC data channels;
 - test transports run in memory and must pass the same conformance suite.
 
@@ -214,6 +261,10 @@ inspect the application protocol.
 - The manifest is schema-versioned and gives each bundle a deterministic id,
   exact entry path, content type, byte length, and SHA-256 content hash. Asset
   paths remain inside the bundle's `/remote-app/<bundle-id>/` namespace.
+- The manifest declares its application protocol, bundle format, minimum
+  execution runtime, supported host-bridge range, and required/optional host
+  capabilities. Optional native capabilities never become requirements merely
+  because the bundle is running inside Desktop.
 - The privileged server validates the manifest before serving or transferring
   it: traversal, duplicate paths, namespace escapes, malformed versions,
   oversized bundles, and hash/byte-length mismatches are rejected. Verified
@@ -224,31 +275,15 @@ inspect the application protocol.
   (with WSS for remote transport), no objects or framing, no referrer, and no
   camera, microphone, geolocation, payment, USB, serial, or Bluetooth
   permissions.
-- Local clients can load the bundle from the authenticated local server.
-- The local origin exposes a bounded `POST /protocol/handshake` using the
-  shared client/server hello envelopes. The response binds the client id to
-  the server identity, negotiated capabilities, protocol limits, and the
-  authenticated scope before workspace access.
-- After that handshake, the local origin exposes `POST /protocol/query` and
-  `POST /protocol/command` routes for registered server-core operations. They
-  accept only validated shared envelopes, dispatch through the canonical
-  operation registry, and return the same result envelopes and body budget used
-  by framed transports. The HTTP boundary must not impose a smaller
-  transport-specific operation cap; command replay is idempotent per
-  authenticated client, and client identity is carried only in the
-  authenticated protocol context rather than URL parameters or operation
-  payloads.
-- The shared client package provides a fetch-based HTTP `ByteTransport` adapter
-  for this local protocol. It sends the handshake as JSON, sends framed
-  operation bodies when binary data is present, and re-encodes JSON responses
-  into protocol frames before `TerminayClient` consumes them. The adapter is
-  browser/Electron-compatible and keeps the bearer credential out of endpoint
-  URLs; host integration still owns secure credential delivery.
-- The local origin can replay ordered output/application events from a bounded
-  server journal and open an authenticated event subscription. If the cursor
-  is older than retained history, the server returns a bounded canonical
-  snapshot for resync; the journal remains outside the UI process so a local
-  HTTP listener restart does not discard it.
+- Local Desktop obtains the bundle from its pinned embedded-server artifact and
+  launches it through the same verification and host-context contract used for
+  remote bundles; this does not require opening a network listener.
+- Local and remote workspace application traffic uses the canonical framed
+  `ServerConnection` protocol. Local Desktop provides a private MessagePort
+  byte transport; remote Desktop and browser hosts provide an authenticated
+  WebRTC byte transport. HTTP remains limited to bootstrap, health, pairing,
+  reconnect, and static asset delivery where required and is not an alternate
+  query/command/event application protocol.
 - WebRTC clients obtain and hash-verify the bundle through the existing
   origin-isolated asset-install flow.
 - The hosted bootstrap refuses incomplete, oversized, path-unsafe, or
@@ -256,6 +291,9 @@ inspect the application protocol.
 - A server UI remains usable when opened directly at its session origin.
 - `web.terminay.com` is not a second independently evolving full workspace
   build. It is a stable connection host around the selected server's bundle.
+- A Desktop remote connection downloads and commits the selected server's
+  bundle before opening its sandboxed connection window. Desktop does not run
+  its embedded server's UI against a different remote server version.
 
 ## Authentication and authorization
 
