@@ -465,6 +465,18 @@ export class LocalUiServer {
 				);
 				return;
 			}
+			// The verified, immutable UI bundle is public bootstrap material. A
+			// browser navigation cannot attach a Bearer header, and URL fragments are
+			// intentionally never sent to HTTP. Keep application streams and
+			// reconnect enrollment credential-gated, while allowing the matching UI
+			// to boot and consume the one-time fragment in renderer memory.
+			if (
+				(method === 'GET' || method === 'HEAD') &&
+				!isProtocolPath(url.pathname)
+			) {
+				await this.handleAsset(url.pathname, response, method === 'HEAD');
+				return;
+			}
 			const token = bearerToken(request.headers.authorization);
 			if (token === null || !(await this.matchesToken(token))) {
 				sendText(response, 401, 'local UI authorization required', {

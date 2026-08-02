@@ -1,4 +1,5 @@
 const PAIRING_QUERY_KEYS = ['pairingSessionId', 'pairingToken', 'pairingExpiresAt'] as const
+const PAIRING_FRAGMENT_KEYS = [...PAIRING_QUERY_KEYS, 'pairingFlow'] as const
 const MAX_PAIRING_FRAGMENT_LENGTH = 4096
 
 /**
@@ -51,8 +52,12 @@ export function normalizeRemoteConnectionUrl(rawUrl: unknown): string {
     if (pairingKeysPresent.length !== PAIRING_QUERY_KEYS.length) {
       throw new TypeError('The pairing URL is missing required pairing details.')
     }
-    if ([...fragmentParams.keys()].some((key) => !(PAIRING_QUERY_KEYS as readonly string[]).includes(key))) {
+    if ([...fragmentParams.keys()].some((key) => !(PAIRING_FRAGMENT_KEYS as readonly string[]).includes(key))) {
       throw new TypeError('The pairing URL contains unsupported fragment data.')
+    }
+    const pairingFlow = fragmentParams.get('pairingFlow')
+    if (pairingFlow !== null && pairingFlow !== 'device') {
+      throw new TypeError('The pairing URL contains an unsupported pairing flow.')
     }
     const pairingExpiresAt = fragmentParams.get('pairingExpiresAt')?.trim() ?? ''
     if (!pairingExpiresAt || !fragmentParams.get('pairingSessionId')?.trim() || !fragmentParams.get('pairingToken')?.trim()) {
@@ -75,7 +80,7 @@ export function normalizeRemoteConnectionUrl(rawUrl: unknown): string {
 export function isRemoteAccessPairingUrl(normalizedUrl: string): boolean {
   const parsed = new URL(normalizedUrl)
   const fragment = new URLSearchParams(parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash)
-  return PAIRING_QUERY_KEYS.every((key) => fragment.has(key))
+  return fragment.get('pairingFlow') === 'device' && PAIRING_QUERY_KEYS.every((key) => fragment.has(key))
 }
 
 /** Convert Chromium navigation failures into an actionable user-facing error. */

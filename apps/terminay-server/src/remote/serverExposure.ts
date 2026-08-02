@@ -65,7 +65,10 @@ export interface ServerRemoteExposureOptions {
 	) => NodeDataChannelHeadlessHost;
 	readonly cleanupIntervalMs?: number;
 	/** Hosted `/v1/` QR links use one raw derivation secret; Local HTTP uses named fields. */
-	readonly pairingUrlFormat?: 'standalone' | 'hosted-compact';
+	readonly pairingUrlFormat?:
+		| 'standalone'
+		| 'direct-device'
+		| 'hosted-compact';
 }
 
 export interface ServerRemoteCleanupReport extends RemoteCleanupReport {
@@ -107,7 +110,10 @@ export class ServerRemoteExposure {
 	private readonly cleanupTimer: ReturnType<typeof setInterval> | undefined;
 	private shutdownPromise: Promise<void> | undefined;
 	private activePairingHandoff: ServerPairingHandoff | undefined;
-	private readonly pairingUrlFormat: 'standalone' | 'hosted-compact';
+	private readonly pairingUrlFormat:
+		| 'standalone'
+		| 'direct-device'
+		| 'hosted-compact';
 
 	constructor(options: ServerRemoteExposureOptions) {
 		const now = options.now ?? (() => Date.now());
@@ -349,7 +355,7 @@ export function createServerRemoteExposure(
 
 function toServerPairingHandoff(
 	handoff: RemotePairingHandoff,
-	format: 'standalone' | 'hosted-compact',
+	format: 'standalone' | 'direct-device' | 'hosted-compact',
 ): ServerPairingHandoff {
 	const pairingExpiresAt = new Date(handoff.expiresAt).toISOString();
 	const pairingSessionId = handoff.roomId;
@@ -363,6 +369,7 @@ function toServerPairingHandoff(
 	} else {
 		url.pathname = '/';
 		url.hash = new URLSearchParams({
+			...(format === 'direct-device' ? { pairingFlow: 'device' } : {}),
 			pairingExpiresAt,
 			pairingSessionId,
 			pairingToken,
