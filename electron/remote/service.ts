@@ -167,6 +167,7 @@ type WebRtcReconnectAvailabilityRuntime = {
   appOrigin: string
   iceServers: RTCIceServer[]
   reconnectRegistrationToken: string
+  registered: boolean
   refreshTimer: NodeJS.Timeout | null
   sessionId: string
   signalingUrl: string
@@ -1218,6 +1219,7 @@ export class RemoteAccessService {
   private async syncWebRtcReconnectAvailability(): Promise<void> {
     const settings = this.getRemoteAccessSettings()
     const grantsBySessionId = new Map<string, ReconnectGrantRecord>()
+    const initialRegistrations: Promise<void>[] = []
 
     for (const grant of this.reconnectGrantStore.listActive()) {
       if (!grantsBySessionId.has(grant.sessionId)) {
@@ -1242,10 +1244,27 @@ export class RemoteAccessService {
       const reconnectRegistrationToken =
         await this.reconnectGrantStore.getOrCreateHostRegistrationToken(sessionId)
       const socket = new WebSocket(signalingUrl, { origin: appOrigin })
+      let resolveInitialRegistration: (() => void) | null = null
+      let rejectInitialRegistration: ((error: Error) => void) | null = null
+      const initialRegistration = new Promise<void>((resolve, reject) => {
+        resolveInitialRegistration = resolve
+        rejectInitialRegistration = reject
+      })
+      const initialRegistrationTimer = setTimeout(() => {
+        rejectInitialRegistration?.(new Error('Timed out advertising saved-session reconnect availability.'))
+        resolveInitialRegistration = null
+        rejectInitialRegistration = null
+        if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket === socket) {
+          this.closeWebRtcReconnectAvailability(sessionId)
+        }
+      }, 10_000)
+      initialRegistrationTimer.unref?.()
+      initialRegistrations.push(initialRegistration)
       const runtime: WebRtcReconnectAvailabilityRuntime = {
         appOrigin,
         iceServers: parseWebRtcIceServers(settings.webRtcIceServers),
         reconnectRegistrationToken,
+        registered: false,
         refreshTimer: null,
         sessionId,
         signalingUrl,
@@ -1278,6 +1297,18 @@ export class RemoteAccessService {
         if (!this.isReconnectRelayMessage(message)) {
           return
         }
+        if (message.type === 'reconnect-host-registered') {
+          const registeredSessionIds = Array.isArray(message.sessionIds)
+            ? message.sessionIds.map((value) => String(value))
+            : []
+          if (registeredSessionIds.includes(sessionId)) {
+            runtime.registered = true
+            clearTimeout(initialRegistrationTimer)
+            resolveInitialRegistration?.()
+            resolveInitialRegistration = null
+            rejectInitialRegistration = null
+          }
+        }
 
         const config: WebRtcHostConfig = {
           appOrigin: runtime.appOrigin,
@@ -1305,14 +1336,28 @@ export class RemoteAccessService {
           }
           this.webRtcReconnectAvailabilityBySessionId.delete(sessionId)
         }
+        if (!runtime.registered) {
+          clearTimeout(initialRegistrationTimer)
+          rejectInitialRegistration?.(new Error('Hosted reconnect availability closed before registration.'))
+          resolveInitialRegistration = null
+          rejectInitialRegistration = null
+        }
       })
 
       socket.on('error', () => {
         if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !== socket) return
         this.webRtcStatusMessage = 'Could not advertise saved-session reconnect availability.'
         this.emitStatus()
+        if (!runtime.registered) {
+          clearTimeout(initialRegistrationTimer)
+          rejectInitialRegistration?.(new Error('Could not advertise saved-session reconnect availability.'))
+          resolveInitialRegistration = null
+          rejectInitialRegistration = null
+        }
       })
     }
+
+    await Promise.all(initialRegistrations)
   }
 
   private openWebRtcPairingHost(options: {

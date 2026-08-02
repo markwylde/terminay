@@ -165,6 +165,10 @@ host-owned boundaries around this primitive.
 When the relay reports reconnect completion, the host retires only the
 short-lived reconnect-attempt metadata and leaves the newly established WebRTC
 runtime open.
+After issuing a saved-session reconnect grant, the desktop treats reconnect
+availability as established only after the hosted relay acknowledges the
+initial reconnect-host registration. A fast browser reconnect must not race
+ahead of relay-visible availability.
 Browser-host reconnect on a WebRTC session origin uses the same authenticated
 four-lane application transport as initial pairing; it does not downgrade the
 server-bundled UI to a direct WebSocket connection.
