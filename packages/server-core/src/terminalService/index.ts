@@ -6,3 +6,4 @@ export * from "./adapter.js";
 export * from "./inputSources.js";
 export * from "./protocol.js";
 export * from "./consumers.js";
+export * from "./launchResolver.js";

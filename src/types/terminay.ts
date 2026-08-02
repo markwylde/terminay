@@ -585,12 +585,14 @@ export type QuickPushApplyResult = {
 
 export type ProjectEditWindowDraft = {
   color: string
+	defaultShellProfileId: string | null
   emoji: string
   rootFolder: string
+	shellProfileOptions: Array<{ id: string; name: string; available: boolean }>
   title: string
 }
 
-export type ProjectEditWindowResult = ProjectEditWindowDraft
+export type ProjectEditWindowResult = Omit<ProjectEditWindowDraft, 'shellProfileOptions'>
 
 export type TerminalEditWindowDraft = {
   activityIndicatorsEnabled: boolean

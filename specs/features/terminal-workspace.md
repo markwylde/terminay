@@ -9,10 +9,11 @@ protocol.
 
 ## Behaviour
 
-- New sessions resolve the configured shell and launch mode, including sessions
-  created through the server-owned workspace protocol for new projects, tabs,
-  and splits. They inherit a sensible working directory from the active
-  terminal/project when applicable.
+- New sessions resolve a server-owned shell profile and working directory
+  through the canonical
+  [shell profiles and terminal launch](./shell-profiles-and-terminal-launch.md)
+  policy. Startup, new-project, new-tab, split, local, and remote creation do
+  not maintain separate shell or cwd fallbacks.
 - Terminals support splits, search, copy/paste including bracketed-paste-aware
   input, dropped paths, guarded external links, resizing, scrollback, zoom, and
   exit handling.
@@ -118,5 +119,7 @@ longer blocks another client from claiming the session.
   a live session.
 - Reconnect resumes from a known output position without duplicating the PTY or
   replaying acknowledged output.
-- Every Desktop terminal creation path launches the current configured shell,
-  or the host's system-shell fallback when no shell is configured.
+- Every terminal-creation route resolves the same profile and cwd for the same
+  server, project, active panel, and explicit user choices.
+- System-default resolution happens on the server machine that will own the PTY;
+  Desktop and remote clients do not supply their host shell as a fallback.
