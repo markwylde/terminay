@@ -41,7 +41,7 @@ jobs:
           npm run test:hosted-deployment-order
           npm run test:security-fuzz
           npm run test:security-boundaries
-          node --test scripts/task20-supply-chain-audit.test.mjs scripts/task20-release-lifecycle.test.mjs scripts/repository-ownership-release.test.mjs scripts/task20-direct-ui-mismatch.test.mjs scripts/task20-native-runner-contract.test.mjs
+          node --test scripts/task20-supply-chain-audit.test.mjs scripts/task20-release-lifecycle.test.mjs scripts/repository-ownership-release.test.mjs scripts/task20-direct-ui-mismatch.test.mjs scripts/task20-native-runner-contract.test.mjs scripts/production-headless-webrtc-ci.test.mjs
           node --test scripts/task20-responsiveness.test.mjs
           node scripts/task20-supply-chain-audit.mjs --npm-audit
           npm audit --omit=dev --audit-level=high
@@ -342,10 +342,7 @@ jobs:
           node --test apps/terminay-desktop/test/embedded-runtime-artifact.test.mjs
 
   production-headless-webrtc:
-    name: Production Headless WebRTC (${{ matrix.arch }})
-    # The two repositories must expose the same hardened signaling protocol.
-    # Enable this matrix only after publishing that hosted-service revision.
-    if: ${{ vars.TERMINAY_HOSTED_WEBRTC_REF != '' }}
+    name: Headless WebRTC Mock Compatibility (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -363,25 +360,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check out hosted signaling service
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: markwylde/terminay.com
-          ref: ${{ vars.TERMINAY_HOSTED_WEBRTC_REF }}
-          path: terminay-hosted-service
-          persist-credentials: false
-
-      - name: Verify immutable hosted signaling revision
-        env:
-          EXPECTED_HOSTED_REF: ${{ vars.TERMINAY_HOSTED_WEBRTC_REF }}
-        run: |
-          # A branch or tag could advance after the Terminay commit is reviewed.
-          # Production interoperability evidence must always name the exact
-          # hosted signaling source revision it exercised.
-          [[ "$EXPECTED_HOSTED_REF" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git -C terminay-hosted-service rev-parse HEAD)" = "$EXPECTED_HOSTED_REF"
-          test -z "$(git -C terminay-hosted-service status --porcelain)"
-
       - name: Set up pinned Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -391,16 +369,14 @@ jobs:
       - name: Install production proof dependencies
         run: |
           npm ci
-          npm ci --prefix terminay-hosted-service
           npx playwright install --with-deps --only-shell chromium
 
-      - name: Prove production WebRTC on native Linux
-        env:
-          TERMINAY_HOSTED_SERVER_REPO: ${{ github.workspace }}/terminay-hosted-service
-          TERMINAY_PROOF_EXPECT_ARCH: ${{ matrix.arch }}
+      - name: Prove native WebRTC against the in-repository mock hosted peer
         run: |
           env -u DISPLAY -u WAYLAND_DISPLAY \
-            node --test scripts/production-headless-webrtc-secure-werift.test.mjs
+            node scripts/webrtc-compatibility-proof.mjs \
+              --mock \
+              --expected-arch=${{ matrix.arch }}
 
       - name: Measure selected WebRTC runtime under direct and relay-only load
         env:

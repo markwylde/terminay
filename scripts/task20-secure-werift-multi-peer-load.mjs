@@ -358,9 +358,13 @@ export async function runSelectedWeriftMultiPeerLoad(options) {
 		await Promise.all(pairs.map(closePair));
 	}
 
+	const hasLiveNetworkOrTimer = () =>
+		process
+			.getActiveResourcesInfo()
+			.some((name) => /UDP|Socket|Timeout/iu.test(name));
 	await waitFor(
-		() => !process.getActiveResourcesInfo().some((name) => /^UDP/u.test(name)),
-		'selected Werift UDP sockets to close',
+		() => !hasLiveNetworkOrTimer(),
+		'selected Werift network and timer resources to close',
 		5_000,
 	);
 	const cpu = process.cpuUsage(cpuBefore);
@@ -374,11 +378,7 @@ export async function runSelectedWeriftMultiPeerLoad(options) {
 		rssGrowthBytes <= options.maxRssGrowthBytes,
 		`RSS growth ${rssGrowthBytes} exceeded ${options.maxRssGrowthBytes}`,
 	);
-	assert.equal(
-		process.getActiveResourcesInfo().filter((name) => /^UDP/u.test(name))
-			.length,
-		0,
-	);
+	assert.equal(hasLiveNetworkOrTimer(), false);
 	return {
 		...metrics,
 		channelsPerPair: CHANNEL_LABELS.length,

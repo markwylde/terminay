@@ -124,7 +124,10 @@ import {
 import { registerQuickPushIpcHandlers } from './quickPush/ipc';
 import { QuickPushService } from './quickPush/service';
 import { TerminalRecordingService } from './recording/service';
-import { normalizeRemoteConnectionUrl } from './remote/connectionUrl';
+import {
+	isRemoteAccessPairingUrl,
+	normalizeRemoteConnectionUrl,
+} from './remote/connectionUrl';
 import { resolveDesktopConnectionIntent } from './remote/desktopConnectionIntent';
 import { establishDesktopDevicePairing } from './remote/desktopPairing';
 import { createDesktopReconnectTransport } from './remote/desktopReconnect';
@@ -174,6 +177,7 @@ if (customUserDataPath) {
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron');
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist');
+export const SERVER_UI_DIST = path.join(process.env.APP_ROOT, 'dist-web');
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 	? path.join(process.env.APP_ROOT, 'public')
@@ -881,6 +885,7 @@ const embeddedLanExposure = new EmbeddedLanExposure({
 	remoteDirectory: path.join(app.getPath('userData'), 'remote-access'),
 	serverId: serverTerminalAuthority.service.serverId,
 	serverVersion: app.getVersion(),
+	uiBundleDirectory: SERVER_UI_DIST,
 });
 const desktopRemoteExposure = new DesktopServerOwnedExposure({
 	serverId: serverTerminalAuthority.service.serverId,
@@ -3053,6 +3058,11 @@ async function connectRemoteServer(
 	pairingPin?: string,
 ): Promise<void> {
 	const pairingUrl = normalizeRemoteConnectionUrl(rawUrl);
+	if (isRemoteAccessPairingUrl(pairingUrl) && pairingPin === undefined) {
+		throw new Error(
+			'Enter the six-digit Remote Access pairing PIN for this device link.',
+		);
+	}
 	// A server URL copied from the standalone server's readiness log is the
 	// application-protocol handoff and must continue to connect with no extra
 	// field.  Device pairing is an explicit PIN-bearing flow: its URL has the
