@@ -372,12 +372,11 @@ jobs:
           npx playwright install --with-deps --only-shell chromium
 
       - name: Prove native WebRTC against the in-repository mock hosted peer
-        env:
-          TERMINAY_PROOF_EXPECT_ARCH: ${{ matrix.arch }}
-          TERMINAY_RUN_MOCK_WEBRTC_BRIDGE_PROOF: "1"
         run: |
           env -u DISPLAY -u WAYLAND_DISPLAY \
-            node --test scripts/production-headless-webrtc-secure-werift.test.mjs
+            node scripts/webrtc-compatibility-proof.mjs \
+              --mock \
+              --expected-arch=${{ matrix.arch }}
 
       - name: Measure selected WebRTC runtime under direct and relay-only load
         env:
