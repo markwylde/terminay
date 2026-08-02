@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildSecureWeriftCandidate } from './build-secure-werift-candidate.mjs';
@@ -52,6 +52,10 @@ try {
 		});
 	}
 	const candidate = await buildSecureWeriftCandidate(path.join(proofRoot, 'runtime'));
+	await copyFile(
+		path.join(process.cwd(), 'build', 'webrtc-runtime', 'selection.json'),
+		path.join(candidate.auditRoot, 'selection.json'),
+	);
 	const specification = mock
 		? 'e2e/webrtc-production-turn-routes.spec.ts'
 		: 'e2e/webrtc-headless-node-host.spec.ts';
@@ -74,6 +78,7 @@ try {
 			} : {}),
 			TERMINAY_WEBRTC_SPIKE_ROOT: candidate.auditRoot,
 			TERMINAY_WEBRTC_SPIKE_RUNTIME: 'werift',
+			TERMINAY_WEBRTC_SELECTED_RUNTIME_ROOT: candidate.auditRoot,
 			TERMINAY_WEBRTC_STAGED_RUNTIME_ROOT: candidate.artifactRoot,
 		},
 		timeoutMs: hostedRepo ? 300_000 : 120_000,
