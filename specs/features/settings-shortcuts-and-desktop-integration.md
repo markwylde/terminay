@@ -17,9 +17,12 @@ configurable keyboard accelerators.
   classified device override (currently the dictation microphone device) wins
   only in that device's effective read; host, transient, and unknown values
   are ignored and never persisted into the server snapshot.
-- Users can configure shell/startup arguments; xterm appearance, scrolling,
-  accessibility, paste/cursor behaviour, theme and tab hue; file defaults;
-  sidebar defaults; and shortcut bindings.
+- Users manage server-owned
+  [shell profiles and terminal launch](./shell-profiles-and-terminal-launch.md),
+  including server/project defaults, structured arguments and environment,
+  discovered profile availability, and new-terminal cwd policy; they also
+  configure xterm appearance, scrolling, accessibility, paste/cursor behaviour,
+  theme and tab hue, file defaults, sidebar defaults, and shortcut bindings.
 - The Command Bar searches built-in commands and saved macros. Built-ins honour
   the active panel/project requirement and display user-configured shortcuts.
 - Terminay opens dedicated native windows for settings, macros, recordings, and
