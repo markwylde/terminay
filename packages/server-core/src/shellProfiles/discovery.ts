@@ -13,6 +13,7 @@ import {
   type ShellProfileValidationResult,
 } from "./types.js";
 import { isProtectedTerminalEnvironmentName } from "./normalize.js";
+import { supportsShellStartupMode } from "./startupMode.js";
 
 type MaybePromise<T> = T | PromiseLike<T>;
 
@@ -116,7 +117,6 @@ const DEFAULT_HOST_CALL_TIMEOUT_MS = 2_000;
 const ENVIRONMENT_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const COLOR = /^(?:#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8}|[A-Za-z][A-Za-z0-9-]{0,63})$/u;
 const SECRET_LIKE_ENVIRONMENT_KEY = /(?:^|_)(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|PRIVATE_KEY|CREDENTIALS?)(?:_|$)/iu;
-const KNOWN_LOGIN_SHELLS = new Set(["bash", "dash", "fish", "ksh", "sh", "zsh"]);
 
 /** Server-owned, deterministic shell capability discovery and validation. */
 export class ShellProfileDiscoveryService {
@@ -145,7 +145,7 @@ export class ShellProfileDiscoveryService {
     if (isStructurallyRecognizableProfile(profile)) {
       const typed = profile as ShellProfileDefinition;
       const executable = executableForStartupValidation(typed, discovery);
-      if (typed.startupMode !== "default" && (executable === null || !supportsStartupMode(executable))) {
+      if (typed.startupMode !== "default" && (executable === null || !supportsShellStartupMode(executable))) {
         issues.push(issue("unsupported-startup-mode", "startupMode", "The selected target does not support this startup mode."));
       }
       if (typed.target.kind === "system" && discovery !== undefined && discovery.systemExecutable === null) {
@@ -438,11 +438,6 @@ function executableForStartupValidation(profile: ShellProfileDefinition, discove
   if (profile.target.kind === "executable") return profile.target.executable;
   if (profile.target.kind === "system") return discovery?.systemExecutable ?? null;
   return profile.target.shellPath ?? null;
-}
-
-function supportsStartupMode(executable: string): boolean {
-  const name = portableBasename(executable).replace(/\.exe$/iu, "").toLocaleLowerCase("en-US");
-  return KNOWN_LOGIN_SHELLS.has(name);
 }
 
 function parseEtcShells(value: string | null): readonly string[] {
