@@ -15,6 +15,14 @@ export type TerminalServiceErrorCode =
   | "queue_overflow"
   | "session_limit"
   | "spawn_failed"
+  | "invalid_cwd"
+  | "missing_project_root"
+  | "unsafe_cwd"
+  | "unsafe_legacy_root"
+  | "profile_not_found"
+  | "profile_unavailable"
+  | "unsupported_startup_mode"
+  | "invalid_environment"
   | "service_shutdown";
 
 export interface TerminalServiceErrorDetails {
@@ -41,4 +49,3 @@ export class TerminalServiceError extends Error {
     this.details = details;
   }
 }
-

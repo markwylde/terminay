@@ -5,6 +5,7 @@ type SplitDirection = Extract<Direction, 'below' | 'right'>;
 
 export type AddTerminalOptions = {
 	cwd?: string | null;
+	profileId?: string;
 	direction?: SplitDirection;
 	groupId?: string;
 	initialInput?: string;
@@ -28,48 +29,26 @@ type UseTerminalCreationControllerOptions = {
 	apiRef: MutableRefObject<DockviewApi | null>;
 	createSession:
 		| ((request: {
+				activePanelId?: string;
 				cwd?: string;
+				profileId?: string;
 				projectId: string;
 		  }) => Promise<{ sessionId: string }>)
 		| null;
-	getTerminalCwd: (sessionId: string) => Promise<string | null>;
 	hydrateRecording: (sessionId: string) => void;
 	onError: (message: string | null) => void;
 	projectId: string;
 	recordNewTerminals: boolean;
 	sendInput: (sessionId: string, data: string) => void;
 	startRecording: (sessionId: string) => Promise<unknown>;
+	splitPanel?: (request: {
+		projectId: string;
+		panelId: string;
+		direction: 'horizontal' | 'vertical';
+	}) => Promise<void>;
 	suppressInitialActivity: (sessionId: string) => void;
 	waitForCreatedTerminal?: (sessionId: string) => Promise<boolean>;
 };
-
-function parentDirectory(filePath: string): string {
-	const separator = Math.max(
-		filePath.lastIndexOf('/'),
-		filePath.lastIndexOf('\\'),
-	);
-	return filePath.substring(0, separator) || filePath;
-}
-
-async function readTerminalCwdWithFallback(
-	getTerminalCwd: (sessionId: string) => Promise<string | null>,
-	sessionId: string,
-	fallback: string | null,
-): Promise<string | null> {
-	let timeout: number | undefined;
-	try {
-		return await Promise.race([
-			getTerminalCwd(sessionId),
-			new Promise<string | null>((resolve) => {
-				timeout = window.setTimeout(() => resolve(fallback), 250);
-			}),
-		]);
-	} catch {
-		return fallback;
-	} finally {
-		if (timeout !== undefined) window.clearTimeout(timeout);
-	}
-}
 
 async function activateCreatedTerminalPresentation(
 	apiRef: MutableRefObject<DockviewApi | null>,
@@ -118,13 +97,13 @@ async function activateCreatedTerminalPresentation(
 export function useTerminalCreationController({
 	apiRef,
 	createSession,
-	getTerminalCwd,
 	hydrateRecording,
 	onError,
 	projectId,
 	recordNewTerminals,
 	sendInput,
 	startRecording,
+	splitPanel,
 	suppressInitialActivity,
 	waitForCreatedTerminal,
 }: UseTerminalCreationControllerOptions) {
@@ -132,7 +111,7 @@ export function useTerminalCreationController({
 		async (
 			options?: AddTerminalOptions,
 		): Promise<CreatedTerminalPresentation | null> => {
-			const activeParams = apiRef.current?.activePanel?.params;
+			const activePanel = apiRef.current?.activePanel;
 			const splitPlacement =
 				options?.direction === undefined ||
 				apiRef.current?.activePanel === undefined
@@ -147,32 +126,17 @@ export function useTerminalCreationController({
 			}
 
 			try {
-				let inheritedCwd: string | null = null;
-				const panelCwd =
-					typeof activeParams?.cwd === 'string' && activeParams.cwd.length > 0
-						? activeParams.cwd
-						: null;
-				if (activeParams?.sessionId) {
-					inheritedCwd = await readTerminalCwdWithFallback(
-						getTerminalCwd,
-						activeParams.sessionId,
-						panelCwd,
-					);
-				} else if (typeof activeParams?.folderPath === 'string') {
-					inheritedCwd = activeParams.folderPath;
-				} else if (typeof activeParams?.filePath === 'string') {
-					inheritedCwd = parentDirectory(activeParams.filePath);
-				} else {
-					inheritedCwd = panelCwd;
-				}
 				if (!createSession) {
 					throw new Error('The server terminal client is unavailable.');
 				}
 
-				const targetCwd = options?.cwd ?? inheritedCwd;
 				const { sessionId } = await createSession({
 					projectId,
-					...(targetCwd ? { cwd: targetCwd } : {}),
+					...(activePanel === undefined ? {} : { activePanelId: activePanel.id }),
+					...(typeof options?.cwd === 'string' && options.cwd.length > 0
+						? { cwd: options.cwd }
+						: {}),
+					...(options?.profileId === undefined ? {} : { profileId: options.profileId }),
 				});
 				suppressInitialActivity(sessionId);
 				window.terminayBootstrapDiagnostic?.record(
@@ -198,6 +162,13 @@ export function useTerminalCreationController({
 				if (didSynchronize === false) {
 					throw new Error('Server did not publish a terminal panel for the created session.');
 				}
+				if (options?.direction !== undefined && splitPanel !== undefined) {
+					await splitPanel({
+						projectId,
+						panelId: `p:${sessionId}`.slice(0, 128),
+						direction: options.direction === 'below' ? 'vertical' : 'horizontal',
+					});
+				}
 				const presented = await activateCreatedTerminalPresentation(
 					apiRef,
 					sessionId,
@@ -221,13 +192,13 @@ export function useTerminalCreationController({
 		[
 			apiRef,
 			createSession,
-			getTerminalCwd,
 			hydrateRecording,
 			onError,
 			projectId,
 			recordNewTerminals,
 			sendInput,
-			startRecording,
+		startRecording,
+		splitPanel,
 			suppressInitialActivity,
 			waitForCreatedTerminal,
 		],

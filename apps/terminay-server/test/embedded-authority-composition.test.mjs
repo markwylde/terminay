@@ -24,6 +24,7 @@ test("the server application exports the embedded Desktop authority boundary", a
     serverVersion: "1.0.0",
     capabilities: ["desktop"],
     ptyFactory: createPtyFactory(),
+    allowUnresolvedTestSessions: true,
   });
   assert.equal(typeof authority.core.accept, "function");
   assert.equal(authority.coreOptions.commands.get("terminal.input") !== undefined, true);

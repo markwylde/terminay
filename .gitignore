@@ -41,6 +41,7 @@ test-results/
 *.tsbuildinfo
 /tmp/
 /temp/
+.docker-cache/
 
 # Environment and local config
 .env

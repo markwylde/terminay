@@ -58,6 +58,7 @@ export function SharedEditTabRouteBody({ state, onCancel, onSubmit }: SharedEdit
   const [emoji, setEmoji] = useState(state.draft.emoji)
   const [color, setColor] = useState(state.draft.color)
   const [rootFolder, setRootFolder] = useState(state.kind === 'project' ? state.draft.rootFolder : '')
+	const [defaultShellProfileId, setDefaultShellProfileId] = useState(state.kind === 'project' ? state.draft.defaultShellProfileId : null)
   const [inheritsProjectColor, setInheritsProjectColor] = useState(state.kind === 'terminal' ? state.draft.inheritsProjectColor : false)
   const [projectColor] = useState(state.kind === 'terminal' ? state.draft.projectColor : '#717b85')
   const [activityIndicatorsEnabled, setActivityIndicatorsEnabled] = useState(state.kind === 'terminal' ? state.draft.activityIndicatorsEnabled : true)
@@ -82,7 +83,7 @@ export function SharedEditTabRouteBody({ state, onCancel, onSubmit }: SharedEdit
     setIsSaving(true)
     try {
       await onSubmit(state.kind === 'project'
-        ? { color, emoji: takeSingleEditTabCharacter(emoji), rootFolder, title }
+        ? { color, defaultShellProfileId, emoji: takeSingleEditTabCharacter(emoji), rootFolder, title }
         : { activityIndicatorsEnabled, color, emoji: takeSingleEditTabCharacter(emoji), inheritsProjectColor, projectColor, title })
     } finally { setIsSaving(false) }
   }
@@ -106,6 +107,7 @@ export function SharedEditTabRouteBody({ state, onCancel, onSubmit }: SharedEdit
         </div>
       </div>
       {state.kind === 'project' ? <label className="edit-window-field"><span>Root Folder</span><input type="text" value={rootFolder} onChange={(event) => setRootFolder(event.target.value)} placeholder="Enter folder path" disabled={disabled} /></label> : null}
+		{state.kind === 'project' ? <label className="edit-window-field"><span>Default shell profile</span><select value={defaultShellProfileId ?? ''} onChange={(event) => setDefaultShellProfileId(event.target.value || null)} disabled={disabled}><option value="">Use server default</option>{state.draft.shellProfileOptions.map((profile) => <option key={profile.id} value={profile.id} disabled={!profile.available}>{profile.name}{profile.available ? '' : ' — unavailable'}</option>)}</select><small>Applies to new terminals in this project. Existing terminals do not change.</small></label> : null}
       {state.kind === 'terminal' ? <div className="edit-window-setting-row"><div className="edit-window-setting-copy"><span>Enable activity indicators</span><p>Show this tab in the top activity menu and color its activity underline.</p></div><label className="settings-switch" aria-label="Enable activity indicators"><input type="checkbox" checked={activityIndicatorsEnabled} onChange={(event) => setActivityIndicatorsEnabled(event.target.checked)} disabled={disabled} /><span className="settings-slider" /></label></div> : null}
       <div className="edit-window-preview-section"><div className="edit-window-preview-label">Preview</div><div className="edit-window-preview-container">
         {state.kind === 'project' ? <div className="tab-preview-project" style={{ '--project-color': previewColor } as CSSProperties}><span className="tab-preview-project-main">{previewEmoji ? <span className="tab-preview-project-emoji" aria-hidden="true">{previewEmoji}</span> : null}<span className="tab-preview-project-title">{previewTitle}</span></span><PreviewClose className="tab-preview-project-close" /></div>

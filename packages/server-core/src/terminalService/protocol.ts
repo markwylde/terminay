@@ -9,6 +9,7 @@ import type {
   TerminalIdentity,
   TerminalSessionSnapshot,
 } from "./types.js";
+import type { TerminalLaunchResolver } from "./launchResolver.js";
 import type {
   CommandRequest,
   OperationRegistries,
@@ -22,6 +23,11 @@ const TERMINAL_EVENT = "terminal";
 
 export interface TerminalOperationRegistryOptions {
   readonly service: TerminalService;
+  /** Canonical privileged launch boundary. Hosts without profiles may omit it
+   * only for compatibility tests and must provide fully trusted create data. */
+  readonly launchResolver?: TerminalLaunchResolver;
+	/** @internal Explicit escape hatch for low-level PTY protocol tests only. */
+	readonly allowUnresolvedTestSessions?: boolean;
   readonly attachments?: TerminalServiceAdapter;
   readonly inputSources?: TerminalInputSourceAdapter;
   /** The journal must also be installed on the transport's server core. */
@@ -120,6 +126,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       projectId: payload.projectId,
       sessionId: payload.sessionId,
     };
+    assertProjectClaim(request, identity.projectId);
     return {
       ...identity,
       ...(await options.service.currentCwd(
@@ -155,13 +162,28 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     if (typeof projectId !== "string" || !ID_PATTERN.test(projectId)) {
       throw new TerminalServiceError("invalid_identity", "project id is invalid");
     }
+    assertProjectClaim(request, projectId);
     const cwd = payload.cwd;
     if (cwd !== undefined && (typeof cwd !== "string" || cwd.length === 0 || cwd.length > 4_096)) {
       throw new TerminalServiceError("invalid_identity", "terminal cwd is invalid");
     }
+    const profileId = optionalId(payload.profileId, "shell profile id");
+    const activePanelId = optionalId(payload.activePanelId, "active panel id");
     const cols = payload.cols === undefined ? 80 : positiveDimension(payload.cols, "cols");
     const rows = payload.rows === undefined ? 24 : positiveDimension(payload.rows, "rows");
-    const session = await options.service.createSession({ projectId, ...(cwd === undefined ? {} : { cwd }), cols, rows });
+    if (options.launchResolver === undefined && options.allowUnresolvedTestSessions !== true) {
+			throw new TerminalServiceError("service_shutdown", "canonical terminal launch resolution is unavailable");
+		}
+    const session = options.launchResolver === undefined
+      ? await options.service.createSession({ projectId, ...(cwd === undefined ? {} : { cwd }), cols, rows })
+      : await options.service.createResolvedSession(await options.launchResolver.resolve({
+          identity: options.service.allocateIdentity(projectId),
+          ...(profileId === undefined ? {} : { explicitProfileId: profileId }),
+          ...(cwd === undefined ? {} : { explicitCwd: cwd }),
+          ...(activePanelId === undefined ? {} : { activePanelId }),
+          cols,
+          rows,
+        }));
     const snapshot = session.snapshot();
     try {
       options.onSessionCreated?.(snapshot);
@@ -179,8 +201,33 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       outputPosition: snapshot.outputPosition,
       replayFrom: snapshot.replayFrom,
       dimensions: { ...snapshot.dimensions },
+      ...(snapshot.launch === undefined ? {} : { launch: { ...snapshot.launch } }),
       ...(snapshot.pid === undefined ? {} : { pid: snapshot.pid }),
     };
+  }
+
+  function optionalId(value: unknown, name: string): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== "string" || !ID_PATTERN.test(value)) {
+      throw new TerminalServiceError("invalid_identity", `${name} is invalid`);
+    }
+    return value;
+  }
+
+  function assertProjectClaim(request: QueryRequest | CommandRequest, projectId: string): void {
+    const claims = request.context.claims;
+    const claimedProjectId = typeof claims === "object" && claims !== null && !Array.isArray(claims)
+      && typeof claims.projectId === "string" ? claims.projectId : undefined;
+    if (claimedProjectId !== undefined && claimedProjectId !== projectId) {
+      throw new TerminalServiceError("forbidden", "terminal project is outside the authenticated project boundary");
+    }
+		if (
+			request.envelope.operation === "terminal.create" &&
+			typeof claims === "object" && claims !== null && !Array.isArray(claims) &&
+			typeof claims.sessionId === "string"
+		) {
+			throw new TerminalServiceError("forbidden", "session-scoped authorization cannot create another terminal");
+		}
   }
 
   function attach(request: CommandRequest): JsonValue {
@@ -292,10 +339,14 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     if (request.context.authScope === "none") throw new TerminalServiceError("forbidden", "terminal listing requires read access");
     const projectId = objectPayload(request.envelope.payload).projectId;
     if (typeof projectId !== "string" || !ID_PATTERN.test(projectId)) throw new TerminalServiceError("invalid_identity", "project id is invalid");
+    assertProjectClaim(request, projectId);
+    const claims = request.context.claims;
+    const claimedSessionId = typeof claims === "object" && claims !== null && !Array.isArray(claims)
+      && typeof claims.sessionId === "string" ? claims.sessionId : undefined;
     return {
       serverId: options.service.serverId,
       projectId,
-      sessions: options.service.listSessions().filter((session) => session.projectId === projectId).map((session) => ({
+      sessions: options.service.listSessions().filter((session) => session.projectId === projectId && (claimedSessionId === undefined || session.sessionId === claimedSessionId)).map((session) => ({
         serverId: session.serverId,
         projectId: session.projectId,
         sessionId: session.sessionId,
@@ -305,6 +356,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         outputPosition: session.outputPosition,
         replayFrom: session.replayFrom,
         dimensions: { ...session.dimensions },
+        ...(session.launch === undefined ? {} : { launch: { ...session.launch } }),
         ...(session.pid === undefined ? {} : { pid: session.pid }),
         ...(session.exit === undefined ? {} : { exit: { ...session.exit } }),
       })),
@@ -328,6 +380,15 @@ function authorizationFor(identity: TerminalIdentity, request: CommandRequest | 
   const scope = request.context.authScope;
   const allowed = required === "read" ? scope !== "none" : scope === "write" || scope === "admin";
   if (!allowed) throw new TerminalServiceError("forbidden", "terminal operation is not authorized");
+  const claims = request.context.claims;
+  if (typeof claims === "object" && claims !== null && !Array.isArray(claims)) {
+    if (typeof claims.projectId === "string" && claims.projectId !== identity.projectId) {
+      throw new TerminalServiceError("forbidden", "terminal project is outside the authenticated project boundary");
+    }
+    if (typeof claims.sessionId === "string" && claims.sessionId !== identity.sessionId) {
+      throw new TerminalServiceError("forbidden", "terminal session is outside the authenticated session boundary");
+    }
+  }
   return { ...identity, clientId: request.context.clientId, scope: scope === "admin" ? "admin" : scope === "write" ? "write" : "read" };
 }
 

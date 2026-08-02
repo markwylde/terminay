@@ -20,6 +20,11 @@ import type {
   PtyFactory,
   TerminalServiceOptions,
 } from "./terminalService/types.js";
+import {
+  TerminalLaunchResolver,
+  type ShellProfileLaunchAuthority,
+  type TerminalLaunchPathAuthority,
+} from "./terminalService/launchResolver.js";
 import type {
   CommandHandler,
   OperationPolicy,
@@ -42,6 +47,7 @@ import type { RecordingAdapter } from "./recordingService/adapter.js";
 import { createSettingsOperationRegistry, type SettingsOperationRegistry } from "./settings/protocol.js";
 import type { ServerSettingsRepository } from "./settings/repository.js";
 import { createFileObservationEventProjector, type ServerFileObservationAdapter } from "./fileService/observationAdapter.js";
+import { createShellProfileOperationRegistry, type ShellProfileCatalogueService } from "./shellProfiles/index.js";
 
 /**
  * Internal lifecycle evidence emitted by a host PTY adapter when foreground
@@ -90,6 +96,16 @@ export interface ServerCoreCompositionOptions
   readonly ptyFactory?: PtyFactory;
   /** Additional TerminalService limits/hooks, excluding its identity/factory. */
   readonly terminalOptions?: Omit<TerminalServiceOptions, "serverId" | "ptyFactory">;
+  /** Server-owned shell catalogue used to build the canonical launch resolver. */
+  readonly terminalProfiles?: ShellProfileLaunchAuthority;
+  /** Concrete server profile authority. When supplied its privileged
+   * catalogue/mutation operations are composed alongside terminal launch. */
+  readonly shellProfiles?: ShellProfileCatalogueService;
+  readonly terminalLaunchPathAuthority?: TerminalLaunchPathAuthority;
+  readonly terminalLaunchEnvironment?: Readonly<Record<string, string | undefined>>;
+  readonly terminalEnvironmentCaseInsensitive?: boolean;
+	/** @internal Explicit escape hatch for low-level composition tests only. */
+	readonly allowUnresolvedTestSessions?: boolean;
   /** Optional adapters supplied by a host; defaults are server-owned. */
   readonly terminalAttachments?: TerminalServiceAdapter;
   readonly terminalInputSources?: TerminalInputSourceAdapter;
@@ -151,6 +167,7 @@ export interface ServerCoreComposition {
   readonly operations: CompleteServerCoreOperationRegistry;
   readonly eventJournal: OrderedEventJournalLike;
   readonly terminal: TerminalService;
+  readonly terminalLaunchResolver?: TerminalLaunchResolver;
   readonly workspace?: WorkspaceStore;
   readonly activity?: TerminalActivityService;
   readonly agents?: AgentStatusService;
@@ -159,6 +176,7 @@ export interface ServerCoreComposition {
   readonly terminalOperations: TerminalOperationRegistry;
   readonly macroOperations?: MacroOperationRegistry;
   readonly settingsOperations?: SettingsOperationRegistry;
+  readonly shellProfileOperations?: ReturnType<typeof createShellProfileOperationRegistry>;
   readonly workspaceOperations?: import("./workspaceProtocol.js").WorkspaceOperationRegistry;
   /** Start host-facing services that must be live before a terminal is
    * created. The composition, not ServerRuntime, owns these instances. */
@@ -182,6 +200,26 @@ export function createServerCoreComposition(
   }
 
   const eventJournal = options.eventJournal ?? new OrderedEventJournal();
+  if (options.terminalProfiles !== undefined && options.workspace === undefined) {
+    throw new TypeError("workspace is required for canonical terminal launch resolution");
+  }
+  const terminalLaunchResolver = options.terminalProfiles === undefined || options.workspace === undefined
+    ? undefined
+    : new TerminalLaunchResolver({
+        serverId: options.serverId,
+        profiles: options.terminalProfiles,
+        workspaceSnapshot: () => options.workspace?.state as import("./workspace.js").WorkspaceState,
+        observeTerminalCwd: async (sessionId) => {
+          const session = terminal.getSession(sessionId);
+          return session === undefined ? null : (await terminal.currentCwd(session)).cwd;
+        },
+        ...(options.terminalLaunchPathAuthority === undefined ? {} : { pathAuthority: options.terminalLaunchPathAuthority }),
+        ...(options.terminalLaunchEnvironment === undefined ? {} : { defaultEnvironment: options.terminalLaunchEnvironment }),
+        ...(options.terminalEnvironmentCaseInsensitive === undefined ? {} : { environmentCaseInsensitive: options.terminalEnvironmentCaseInsensitive }),
+      });
+	if (terminalLaunchResolver === undefined && options.allowUnresolvedTestSessions !== true) {
+		throw new TypeError("terminalProfiles and workspace are required for production terminal composition");
+	}
   const unsubscribeGitEvents =
     typeof options.git?.subscribeEvents === "function"
       ? options.git.subscribeEvents((event) => {
@@ -200,6 +238,7 @@ export function createServerCoreComposition(
           await options.workspaceOperations?.closeProjectTerminalSessions?.(sessionIds);
         },
         eventJournal,
+        ...(options.shellProfiles === undefined ? {} : { shellProfileExists: (profileId: string) => options.shellProfiles?.isDurableProfile(profileId) ?? false }),
       });
   const macroOperations = options.macros === undefined ? undefined : createMacroOperationRegistry({
     serverId: options.serverId,
@@ -211,6 +250,8 @@ export function createServerCoreComposition(
   const terminalOperations = createTerminalOperationRegistry({
     service: terminal,
     eventJournal,
+    ...(terminalLaunchResolver === undefined ? {} : { launchResolver: terminalLaunchResolver }),
+		...(options.allowUnresolvedTestSessions === true ? { allowUnresolvedTestSessions: true } : {}),
     ...(options.workspace === undefined
       ? {}
       : {
@@ -249,6 +290,7 @@ export function createServerCoreComposition(
                   title: `Terminal ${panelCount + 1}`,
                   cwd: session.cwd,
                   createdAt: session.createdAt,
+                  ...(session.launch === undefined ? {} : { launch: session.launch }),
                 },
               );
               if (created === undefined) throw new Error("workspace operation registry is unavailable");
@@ -307,6 +349,9 @@ export function createServerCoreComposition(
   const settingsOperations = options.settings === undefined
     ? undefined
     : createSettingsOperationRegistry(options.settings, eventJournal);
+  const shellProfileOperations = options.shellProfiles === undefined
+    ? undefined
+    : createShellProfileOperationRegistry(options.shellProfiles);
   const operations = mergeOperationRegistries(
     mergeOperationRegistries(mergeOperationRegistries(
       mergeOperationRegistries(
@@ -318,7 +363,10 @@ export function createServerCoreComposition(
       ),
       mergeOperationRegistries(activityOperations?.operations ?? {}, agentOperations?.operations ?? {}),
     ), mergeOperationRegistries(aiOperations ?? {}, gitOperations ?? {})),
-    mergeOperationRegistries(recordingOperations ?? {}, settingsOperations?.operations ?? {}),
+    mergeOperationRegistries(
+      mergeOperationRegistries(recordingOperations ?? {}, settingsOperations?.operations ?? {}),
+      shellProfileOperations?.operations ?? {},
+    ),
   );
   const completeOperations = mergeOperationRegistries(
     operations,
@@ -369,6 +417,7 @@ export function createServerCoreComposition(
 		lifecycle = "starting";
 		startPromise = (async () => {
 			try {
+				await options.settings?.load();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
 				if (lifecycle === "starting") lifecycle = "ready";
@@ -424,8 +473,10 @@ export function createServerCoreComposition(
     ...(activityOperations === undefined ? {} : { activityOperations }),
     ...(agentOperations === undefined ? {} : { agentOperations }),
     terminalOperations,
+    ...(terminalLaunchResolver === undefined ? {} : { terminalLaunchResolver }),
     ...(macroOperations === undefined ? {} : { macroOperations }),
     ...(settingsOperations === undefined ? {} : { settingsOperations }),
+    ...(shellProfileOperations === undefined ? {} : { shellProfileOperations }),
     start,
     shutdown,
   };
@@ -570,6 +621,7 @@ function uniqueCapabilities(options: ServerCoreCompositionOptions): readonly str
     ...(options.git === undefined ? [] : ["git"]),
     ...(options.recordings === undefined ? [] : ["recordings"]),
     ...(options.settings === undefined ? [] : ["settings"]),
+    ...(options.shellProfiles === undefined ? [] : ["shell-profiles"]),
     ...(options.fileObservations === undefined ? [] : ["files.observe"]),
   ])]) as readonly string[];
 }

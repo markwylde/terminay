@@ -13,11 +13,13 @@ export type ServerWorkspaceProject = Readonly<{
 	serverId: string
 	name: string
 	root: string
+	rootOrigin: 'explicit' | 'server-default' | 'legacy-unverified'
 	color?: string
 	icon?: string
 	viewId: string
 	panelIds: readonly string[]
 	activePanelId?: string
+	defaultShellProfileId?: string
 }>
 
 export type ServerWorkspaceView = Readonly<{
@@ -63,7 +65,7 @@ export function reconcileServerWorkspaceSelection(snapshot: ServerWorkspaceSnaps
 export function parseServerWorkspaceSnapshot(value: unknown, expectedServerId: string, previous?: ServerWorkspaceSnapshot | null): ServerWorkspaceSnapshot {
 	if (!isRecord(value)) throw new Error('The server returned an incompatible workspace snapshot.')
 	const { schemaVersion, serverId, revision, cursor, viewOrder, views, projects, panels, terminalSessions } = value
-	if (schemaVersion !== 1 || serverId !== expectedServerId || typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0 || typeof cursor !== 'string' || cursor !== String(revision) || !isStringArray(viewOrder) || !isRecord(views) || !isRecord(projects) || !isRecord(panels) || !isRecord(terminalSessions)) throw new Error('The server returned an incompatible workspace snapshot.')
+	if (schemaVersion !== 2 || serverId !== expectedServerId || typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0 || typeof cursor !== 'string' || cursor !== String(revision) || !isStringArray(viewOrder) || !isRecord(views) || !isRecord(projects) || !isRecord(panels) || !isRecord(terminalSessions)) throw new Error('The server returned an incompatible workspace snapshot.')
 	const snapshot = value as unknown as ServerWorkspaceSnapshot
 	if (previous !== undefined && previous !== null && (snapshot.revision < previous.revision || (snapshot.revision === previous.revision && snapshot.cursor !== previous.cursor))) throw new Error('The server returned a stale workspace snapshot.')
 	if (new Set(snapshot.viewOrder).size !== snapshot.viewOrder.length || snapshot.viewOrder.some((id) => snapshot.views[id]?.id !== id)) throw new Error('The server returned invalid workspace view references.')
@@ -72,7 +74,7 @@ export function parseServerWorkspaceSnapshot(value: unknown, expectedServerId: s
 		if (view.activeProjectId !== undefined && !view.projectIds.includes(view.activeProjectId)) throw new Error('The server returned an invalid active project.')
 	}
 	for (const [id, project] of Object.entries(snapshot.projects)) {
-		if (project.id !== id || project.serverId !== expectedServerId || typeof project.name !== 'string' || typeof project.root !== 'string' || (project.color !== undefined && typeof project.color !== 'string') || (project.icon !== undefined && typeof project.icon !== 'string') || snapshot.views[project.viewId]?.projectIds.includes(project.id) !== true || !isStringArray(project.panelIds) || new Set(project.panelIds).size !== project.panelIds.length || project.panelIds.some((panelId) => snapshot.panels[panelId]?.id !== panelId || snapshot.panels[panelId]?.projectId !== project.id)) throw new Error('The server returned invalid workspace panel references.')
+		if (project.id !== id || project.serverId !== expectedServerId || typeof project.name !== 'string' || typeof project.root !== 'string' || !['explicit', 'server-default', 'legacy-unverified'].includes(project.rootOrigin) || (project.color !== undefined && typeof project.color !== 'string') || (project.icon !== undefined && typeof project.icon !== 'string') || (project.defaultShellProfileId !== undefined && typeof project.defaultShellProfileId !== 'string') || snapshot.views[project.viewId]?.projectIds.includes(project.id) !== true || !isStringArray(project.panelIds) || new Set(project.panelIds).size !== project.panelIds.length || project.panelIds.some((panelId) => snapshot.panels[panelId]?.id !== panelId || snapshot.panels[panelId]?.projectId !== project.id)) throw new Error('The server returned invalid workspace panel references.')
 		if (project.activePanelId !== undefined && !project.panelIds.includes(project.activePanelId)) throw new Error('The server returned an invalid active panel.')
 	}
 	for (const [id, panel] of Object.entries(snapshot.panels)) {

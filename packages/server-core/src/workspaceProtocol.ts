@@ -14,6 +14,9 @@ export const WORKSPACE_OPERATIONS = Object.freeze({
   command: "workspace.command",
   projectMove: "project.move",
   projectRootUpdate: "project.root.update",
+  projectShellProfileSet: "project.shell-profile.set",
+  projectShellProfileClear: "project.shell-profile.clear",
+  projectShellProfileReplace: "project.shell-profile.replace",
 } as const);
 export const WORKSPACE_EVENT = "workspace.changed";
 
@@ -29,6 +32,7 @@ export interface WorkspaceOperationRegistryOptions {
   readonly closeTerminalSessions?: (sessionIds: readonly string[]) => Promise<void> | void;
   readonly closeProjectTerminalSessions?: (sessionIds: readonly string[]) => Promise<void> | void;
   readonly eventJournal?: OrderedEventJournalLike;
+  readonly shellProfileExists?: (profileId: string) => boolean | Promise<boolean>;
 }
 
 export interface WorkspaceOperationRegistry {
@@ -65,6 +69,9 @@ export function createWorkspaceOperationRegistry(workspace: WorkspaceStore, opti
       ...(optionalUInt(objectPayload(request.envelope.payload).index) === undefined ? {} : { index: optionalUInt(objectPayload(request.envelope.payload).index) }),
     }),
     [WORKSPACE_OPERATIONS.projectRootUpdate]: (request: CommandRequest) => updateProjectRoot(workspace, options, request),
+    [WORKSPACE_OPERATIONS.projectShellProfileSet]: (request: CommandRequest) => updateProjectShellProfile(workspace, options, request, "set"),
+    [WORKSPACE_OPERATIONS.projectShellProfileClear]: (request: CommandRequest) => updateProjectShellProfile(workspace, options, request, "clear"),
+    [WORKSPACE_OPERATIONS.projectShellProfileReplace]: (request: CommandRequest) => replaceProjectShellProfiles(workspace, options, request),
   };
 
   const policies = {
@@ -73,6 +80,9 @@ export function createWorkspaceOperationRegistry(workspace: WorkspaceStore, opti
     [WORKSPACE_OPERATIONS.command]: { scope: "write" as const },
     [WORKSPACE_OPERATIONS.projectMove]: { scope: "write" as const },
     [WORKSPACE_OPERATIONS.projectRootUpdate]: { scope: "write" as const },
+    [WORKSPACE_OPERATIONS.projectShellProfileSet]: { scope: "write" as const },
+    [WORKSPACE_OPERATIONS.projectShellProfileClear]: { scope: "write" as const },
+    [WORKSPACE_OPERATIONS.projectShellProfileReplace]: { scope: "write" as const },
   };
 
   return {
@@ -84,6 +94,48 @@ export function createWorkspaceOperationRegistry(workspace: WorkspaceStore, opti
       return applied;
     },
   };
+}
+
+async function updateProjectShellProfile(
+  workspace: WorkspaceStore,
+  options: WorkspaceOperationRegistryOptions,
+  request: CommandRequest,
+  action: "set" | "clear",
+): Promise<{ readonly result: JsonValue; readonly revision: number }> {
+  const payload = objectPayload(request.envelope.payload);
+  const projectId = stringField(payload.projectId, "projectId");
+  const claim = projectClaim(request);
+  if (claim !== undefined && claim !== projectId) throw protocolError("forbidden", "project shell profile update is outside the authenticated project scope");
+  let command: WorkspaceCommand;
+  if (action === "set") {
+    const profileId = stringField(payload.profileId, "profileId");
+    if (options.shellProfileExists === undefined || !(await options.shellProfileExists(profileId))) {
+      throw protocolError("validation", "shell profile does not exist on this server");
+    }
+    command = { type: "project.shellProfile.set", projectId, profileId };
+  } else command = { type: "project.shellProfile.clear", projectId };
+  return applyCommand(workspace, options, request, command);
+}
+
+async function replaceProjectShellProfiles(
+  workspace: WorkspaceStore,
+  options: WorkspaceOperationRegistryOptions,
+  request: CommandRequest,
+): Promise<{ readonly result: JsonValue; readonly revision: number }> {
+  if (projectClaim(request) !== undefined) throw protocolError("forbidden", "bulk profile replacement requires server scope");
+  const payload = objectPayload(request.envelope.payload);
+  const fromProfileId = stringField(payload.fromProfileId, "fromProfileId");
+  const toProfileId = payload.toProfileId === null || payload.toProfileId === undefined
+    ? undefined
+    : stringField(payload.toProfileId, "toProfileId");
+  if (toProfileId !== undefined && (options.shellProfileExists === undefined || !(await options.shellProfileExists(toProfileId)))) {
+    throw protocolError("validation", "replacement shell profile does not exist on this server");
+  }
+  return applyCommand(workspace, options, request, {
+    type: "project.shellProfile.replace",
+    fromProfileId,
+    ...(toProfileId === undefined ? {} : { toProfileId }),
+  });
 }
 
 async function updateProjectRoot(
@@ -200,7 +252,7 @@ function terminalSessionIdsClosedBy(state: WorkspaceState, command: WorkspaceCom
 }
 
 function enforceProjectClaim(request: CommandRequest, command: WorkspaceCommand): void {
-  const projectId = command.type === "project.move" || command.type === "project.activate" || command.type === "project.rename" || command.type === "project.close" || command.type === "project.root.update" || command.type === "terminal.create" || command.type === "terminal.createPanel" || command.type === "panel.activate" || command.type === "panel.reorder" || command.type === "panel.split"
+  const projectId = command.type === "project.move" || command.type === "project.activate" || command.type === "project.rename" || command.type === "project.close" || command.type === "project.root.update" || command.type === "project.shellProfile.set" || command.type === "project.shellProfile.clear" || command.type === "terminal.create" || command.type === "terminal.createPanel" || command.type === "panel.activate" || command.type === "panel.reorder" || command.type === "panel.split"
     ? command.projectId
     : undefined;
   const claimedProjectId = projectClaim(request);
@@ -265,6 +317,9 @@ function commandPayload(value: JsonValue): WorkspaceCommand {
   if (typeof command.type !== "string") throw protocolError("validation", "workspace command type is required");
   if (command.type === WORKSPACE_OPERATIONS.projectRootUpdate) {
     throw protocolError("validation", "project root updates require the named operation");
+  }
+  if (command.type === "project.shellProfile.set" || command.type === "project.shellProfile.clear" || command.type === "project.shellProfile.replace") {
+    throw protocolError("validation", "project shell profile defaults require the named operations");
   }
   return command as unknown as WorkspaceCommand;
 }

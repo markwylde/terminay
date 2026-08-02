@@ -47,6 +47,7 @@ function createPtyFactory() {
 test("composition owns TerminalService and exposes a complete merged registry", async () => {
   const pty = createPtyFactory();
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "embedded-server",
     serverVersion: "1.0.0",
     capabilities: ["workspace"],
@@ -112,6 +113,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
     ...Object.keys(recordingOperations.commands).map((name) => [name, { scope: "write" }]),
   ]);
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "surface-server",
     serverVersion: "1.0.0",
     capabilities: [],
@@ -169,6 +171,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
 
 test("composition does not advertise optional authorities that are absent", async () => {
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "minimal-surface-server",
     serverVersion: "1.0.0",
     capabilities: [],
@@ -193,6 +196,7 @@ test("the composed core serves terminal operations through its transport-neutral
   const pty = createPtyFactory();
   const closedClients = [];
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "message-port-server",
     serverVersion: "1.0.0",
     capabilities: ["desktop"],
@@ -270,6 +274,7 @@ test("terminal.create commits a server-owned terminal panel before publishing wo
     true,
   );
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "workspace-terminal-server",
     serverVersion: "1.0.0",
     capabilities: ["workspace"],
@@ -317,6 +322,7 @@ test("project.close terminates project terminal sessions and removes their works
   assert.equal(workspace.apply({ commandId: "project-a", command: { type: "project.create", projectId: "project-a", viewId, root: "/repo/a", name: "Project A" } }).ok, true);
   const pty = createPtyFactory();
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "workspace-close-server",
     serverVersion: "1.0.0",
     capabilities: ["workspace"],
@@ -365,6 +371,7 @@ test("panel.close terminates a terminal session and removes it from the workspac
   const viewId = workspace.state.viewOrder[0];
   assert.equal(workspace.apply({ commandId: "project-a", command: { type: "project.create", projectId: "project-a", viewId, root: "/repo/a", name: "A" } }).ok, true);
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "workspace-panel-close-server",
     serverVersion: "1.0.0",
     capabilities: ["workspace"],
@@ -413,6 +420,7 @@ test("composition feeds PTY bytes into the activity service and serves its snaps
   const pty = createPtyFactory();
   const activity = new TerminalActivityService({ serverId: "activity-server" });
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "activity-server",
     serverVersion: "1.0.0",
     capabilities: ["desktop"],
@@ -451,6 +459,7 @@ test("framed activity snapshots preserve OSC progress and command completion for
   const pty = createPtyFactory();
   const activity = new TerminalActivityService({ serverId: "activity-completion-server" });
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "activity-completion-server",
     serverVersion: "1.0.0",
     capabilities: ["desktop"],
@@ -499,6 +508,7 @@ test("composition is the single owner of agent and PTY lifecycle", async () => {
     await stop();
   };
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "agent-lifecycle-server",
     serverVersion: "1.0.0",
     capabilities: ["agents"],
@@ -529,6 +539,7 @@ test("composition coalesces concurrent lifecycle calls and cannot restart after 
   agents.start = async () => { starts += 1; await start(); };
   agents.stop = async () => { stops += 1; await stop(); };
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "composition-lifecycle-server", serverVersion: "1.0.0", capabilities: ["agents"],
     ptyFactory: createPtyFactory(), activity, agents,
   });
@@ -543,6 +554,7 @@ test("activity acknowledgement survives a real client reconnect and remains proj
   const pty = createPtyFactory();
   const activity = new TerminalActivityService({ serverId: "activity-reconnect-server" });
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "activity-reconnect-server",
     serverVersion: "1.0.0",
     capabilities: ["desktop"],
@@ -606,6 +618,7 @@ test("two clients receive one canonical reduced agent sequence and reconnect to 
   const agents = new AgentStatusService({ activity, now: () => 100, receiver: { tokenFactory: () => "agent-sequence-token" } });
   await agents.start();
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "agent-sequence-server",
     serverVersion: "1.0.0",
     capabilities: ["agents"],
@@ -670,6 +683,7 @@ test("composed missing provider hooks leave agent state empty while terminal fal
   const activity = new TerminalActivityService({ serverId: "agent-missing-hook-server", now: () => 100 });
   const agents = new AgentStatusService({ activity, now: () => 100, receiver: { tokenFactory: () => "missing-hook-token" } });
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "agent-missing-hook-server",
     serverVersion: "1.0.0",
     capabilities: ["agents"],
@@ -726,6 +740,7 @@ test("project-scoped clients receive only their own agent snapshots and live eve
   const agents = new AgentStatusService({ activity, now: () => 100, receiver: { tokenFactory: () => `scope-${++token}` } });
   await agents.start();
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "agent-scope-server",
     serverVersion: "1.0.0",
     capabilities: ["agents"],
@@ -788,6 +803,7 @@ test("the composition modules have no Electron dependency", async () => {
 test("duplicate operation names are rejected during composition", () => {
   assert.throws(
     () => createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
       serverId: "collision-server",
       serverVersion: "1.0.0",
       capabilities: [],

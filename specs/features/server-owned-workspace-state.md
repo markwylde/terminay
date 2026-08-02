@@ -16,8 +16,8 @@ without tying process lifetime to any renderer.
 - A **server** is one authority, data root, trust domain, and machine context.
 - A **workspace view** is a server-owned logical grouping of projects that can
   be presented as an Electron native window or as an in-browser view/tab.
-- A **project** has a stable id, root folder, name, colour, icon, sidebar state,
-  ordered panels, and logical layout.
+- A **project** has a stable id, root folder, name, colour, icon, optional
+  default shell-profile id, sidebar state, ordered panels, and logical layout.
 - A **panel** has a stable id, type, project ownership, presentation metadata,
   and type-specific state.
 - A **terminal session** has an immutable server-issued id and PTY lifecycle
@@ -36,7 +36,8 @@ workspace view are separate actions.
 The server persists and publishes:
 
 - ordered workspace views and their active project;
-- projects, roots, names, colours, icons, and sidebar configuration;
+- projects, roots, names, colours, icons, default shell-profile references, and
+  sidebar configuration;
 - logical panel layout, active panel, splits, order, notes, and appearance;
 - terminal identity, lifecycle, metadata, bounded output position, activity,
   and recording state;

@@ -42,11 +42,12 @@ function createPtyFactory() {
   const processes = []
   return {
     processes,
-    spawn() {
+    spawn(options) {
       const exitListeners = new Set()
       const dataListeners = new Set()
       const process = {
         pid: 7_000 + processes.length,
+        options,
         writes: [],
         resizes: [],
         write(bytes) { this.writes.push(new Uint8Array(bytes)) },
@@ -63,6 +64,45 @@ function createPtyFactory() {
     },
   }
 }
+
+function systemShellProfiles(shellPath = '/bin/zsh', environment = {}) {
+  const definition = {
+    id: 'system', name: 'System default', target: { kind: 'system' }, args: [], startupMode: 'login', environment,
+  }
+  const profile = {
+    ...definition, kind: 'system', readOnly: true, source: 'system', availability: { available: true },
+    projectReferences: [], environmentEntryCount: 0, hasEnvironmentOverlay: false,
+  }
+  return {
+    async catalogue() { return { settingsRevision: 3, defaultProfileId: 'system', cwdPolicy: 'current', entries: [profile] } },
+    async resolveProfile(_id, catalogue) { return { profile, definition, settingsRevision: catalogue.settingsRevision, target: { kind: 'executable', executable: shellPath } } },
+  }
+}
+
+test('Desktop authority resolves every compatibility-created PTY through the canonical profile and cwd boundary', async () => {
+  const pty = createPtyFactory()
+  process.env.PROFILE_LAYER_TEST = 'host'
+  const authority = new ServerTerminalAuthority({
+    serverId: 'desktop-launch',
+    terminalService: new TerminalService({ serverId: 'desktop-launch', ptyFactory: pty }),
+    shellProfiles: systemShellProfiles('/bin/zsh', { PROFILE_LAYER_TEST: 'profile' }),
+  })
+  try {
+    const cwd = process.cwd()
+    const first = await authority.create({ projectId: 'project-a', cwd, cols: 80, rows: 24 })
+    const second = await authority.create({ projectId: 'project-a', cwd, cols: 100, rows: 30 })
+    assert.equal(first.cwd, cwd)
+    assert.equal(second.cwd, cwd)
+    assert.deepEqual(pty.processes.map((process) => ({ shellPath: process.options.shellPath, args: process.options.args, cwd: process.options.cwd })), [
+      { shellPath: '/bin/zsh', args: ['-l'], cwd },
+      { shellPath: '/bin/zsh', args: ['-l'], cwd },
+    ])
+    assert.equal(pty.processes[0].options.env.PROFILE_LAYER_TEST, 'profile')
+  } finally {
+    delete process.env.PROFILE_LAYER_TEST
+    await authority.shutdown()
+  }
+})
 
 function writeAuthorization() {
   return { serverId: 'authority-server', projectId: 'authority-project', sessionId: 'authority-session', scope: 'write' }

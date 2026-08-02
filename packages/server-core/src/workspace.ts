@@ -1,11 +1,12 @@
 import type { JsonValue, ProtocolId } from '@terminay/protocol';
 
-export const WORKSPACE_SCHEMA_VERSION = 1;
+export const WORKSPACE_SCHEMA_VERSION = 2;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 export type PanelType = 'terminal' | 'file' | 'folder';
 export type TerminalStatus = 'running' | 'exited' | 'interrupted';
 export type SplitDirection = 'horizontal' | 'vertical';
+export type ProjectRootOrigin = 'explicit' | 'server-default' | 'legacy-unverified';
 
 export interface PanelBase {
 	readonly id: ProtocolId;
@@ -57,9 +58,11 @@ export interface WorkspaceProject {
 	readonly serverId: ProtocolId;
 	readonly viewId: ProtocolId;
 	readonly root: string;
+	readonly rootOrigin: ProjectRootOrigin;
 	readonly name: string;
 	readonly color?: string;
 	readonly icon?: string;
+	readonly defaultShellProfileId?: ProtocolId;
 	readonly panelIds: readonly ProtocolId[];
 	readonly activePanelId?: ProtocolId;
 	readonly layout: LayoutNode;
@@ -71,8 +74,19 @@ export interface TerminalSession {
 	readonly status: TerminalStatus;
 	readonly createdAt: number;
 	readonly outputPosition: number;
+	readonly launch?: TerminalLaunchMetadata;
 	readonly exitCode?: number;
 	readonly interruptedAt?: number;
+}
+export interface TerminalLaunchMetadata {
+	readonly profileId: ProtocolId;
+	readonly profileRevision: number;
+	readonly profileName: string;
+	readonly targetSummary: string;
+	readonly workspaceRevision: number;
+	readonly settingsRevision: number;
+	readonly icon?: string;
+	readonly color?: string;
 }
 
 export interface WorkspaceState {
@@ -115,9 +129,11 @@ export function canonicalizeWorkspaceState(
 			serverId: project.serverId,
 			viewId: project.viewId,
 			root: project.root,
+			rootOrigin: project.rootOrigin,
 			name: project.name,
 			...(project.color === undefined ? {} : { color: project.color }),
 			...(project.icon === undefined ? {} : { icon: project.icon }),
+			...(project.defaultShellProfileId === undefined ? {} : { defaultShellProfileId: project.defaultShellProfileId }),
 			panelIds: [...project.panelIds],
 			...(project.activePanelId === undefined
 				? {}
@@ -165,6 +181,7 @@ export function canonicalizeWorkspaceState(
 			status: session.status,
 			createdAt: session.createdAt,
 			outputPosition: session.outputPosition,
+			...(session.launch === undefined ? {} : { launch: structuredClone(session.launch) }),
 			...(session.exitCode === undefined ? {} : { exitCode: session.exitCode }),
 			...(session.interruptedAt === undefined
 				? {}
@@ -232,6 +249,7 @@ export type WorkspaceCommand =
 			readonly projectId: ProtocolId;
 			readonly viewId: ProtocolId;
 			readonly root: string;
+			readonly rootOrigin?: Exclude<ProjectRootOrigin, 'legacy-unverified'>;
 			readonly name: string;
 			readonly color?: string;
 			readonly icon?: string;
@@ -241,6 +259,9 @@ export type WorkspaceCommand =
 			readonly projectId: ProtocolId;
 			readonly root: string;
 	  }
+	| { readonly type: 'project.shellProfile.set'; readonly projectId: ProtocolId; readonly profileId: ProtocolId }
+	| { readonly type: 'project.shellProfile.clear'; readonly projectId: ProtocolId }
+	| { readonly type: 'project.shellProfile.replace'; readonly fromProfileId: ProtocolId; readonly toProfileId?: ProtocolId }
 	| { readonly type: 'project.activate'; readonly projectId: ProtocolId }
 	| {
 			readonly type: 'project.rename';
@@ -297,6 +318,7 @@ export type WorkspaceCommand =
 			readonly sessionId: ProtocolId;
 			readonly projectId: ProtocolId;
 			readonly createdAt?: number;
+			readonly launch?: TerminalLaunchMetadata;
 	  }
 	| {
 			readonly type: 'terminal.createPanel';
@@ -306,6 +328,7 @@ export type WorkspaceCommand =
 			readonly title?: string;
 			readonly cwd?: string;
 			readonly createdAt?: number;
+			readonly launch?: TerminalLaunchMetadata;
 	  }
 	| {
 			readonly type: 'terminal.markInterrupted';
@@ -406,6 +429,9 @@ export function validateWorkspace(state: WorkspaceState): void {
 			state.views[project.viewId] === undefined
 		)
 			throw new TypeError('project crosses server/view boundary');
+		if (project.rootOrigin !== 'explicit' && project.rootOrigin !== 'server-default' && project.rootOrigin !== 'legacy-unverified')
+			throw new TypeError('project root origin is invalid');
+		if (project.defaultShellProfileId !== undefined) assertId(project.defaultShellProfileId, 'defaultShellProfileId');
 		if (
 			project.panelIds.some(
 				(panelId) => state.panels[panelId]?.projectId !== id,
@@ -439,6 +465,7 @@ export function validateWorkspace(state: WorkspaceState): void {
 			session.outputPosition < 0
 		)
 			throw new TypeError('invalid terminal session');
+		if (session.launch !== undefined) validateLaunchMetadata(session.launch);
 	}
 }
 
@@ -454,6 +481,10 @@ export function migrateWorkspaceState(
 	const value = input as Record<string, unknown>;
 	if (value.schemaVersion === WORKSPACE_SCHEMA_VERSION) {
 		return canonicalizeWorkspaceState(value as unknown as WorkspaceState);
+	}
+	if (value.schemaVersion === 1) {
+		const projects = Object.fromEntries(Object.entries((value.projects ?? {}) as Record<string, WorkspaceProject>).map(([id, project]) => [id, { ...project, rootOrigin: 'legacy-unverified' as const }]));
+		return canonicalizeWorkspaceState({ ...(value as unknown as WorkspaceState), schemaVersion: WORKSPACE_SCHEMA_VERSION, projects });
 	}
 	if (value.schemaVersion !== 0)
 		throw new Error('unsupported workspace schema');
@@ -482,6 +513,7 @@ export function migrateWorkspaceState(
 			serverId,
 			viewId: defaultViewId,
 			root: project.root,
+			rootOrigin: 'legacy-unverified',
 			name,
 			panelIds: [],
 			layout: stack([]),
@@ -734,6 +766,7 @@ export class WorkspaceStore {
 					serverId: state.serverId,
 					viewId: command.viewId,
 					root: boundedPath(command.root),
+					rootOrigin: command.rootOrigin ?? 'explicit',
 					name: boundedName(command.name),
 					panelIds: [],
 					layout: stack([]),
@@ -760,6 +793,33 @@ export class WorkspaceStore {
 					root: boundedPath(command.root),
 				};
 				changed.push(command.projectId);
+				break;
+			}
+			case 'project.shellProfile.set': {
+				assertId(command.profileId, 'profileId');
+				const project = requireProject(state, command.projectId);
+				state.projects[command.projectId] = { ...project, defaultShellProfileId: command.profileId };
+				changed.push(command.projectId);
+				break;
+			}
+			case 'project.shellProfile.clear': {
+				const project = requireProject(state, command.projectId);
+				const { defaultShellProfileId: _removed, ...withoutDefault } = project;
+				state.projects[command.projectId] = withoutDefault;
+				changed.push(command.projectId);
+				break;
+			}
+			case 'project.shellProfile.replace': {
+				assertId(command.fromProfileId, 'fromProfileId');
+				if (command.toProfileId !== undefined) assertId(command.toProfileId, 'toProfileId');
+				for (const [projectId, project] of Object.entries(state.projects)) {
+					if (project.defaultShellProfileId !== command.fromProfileId) continue;
+					if (command.toProfileId === undefined) {
+						const { defaultShellProfileId: _removed, ...withoutDefault } = project;
+						state.projects[projectId] = withoutDefault;
+					} else state.projects[projectId] = { ...project, defaultShellProfileId: command.toProfileId };
+					changed.push(projectId);
+				}
 				break;
 			}
 			case 'project.activate': {
@@ -1013,6 +1073,7 @@ export class WorkspaceStore {
 					status: 'running',
 					createdAt: command.createdAt ?? Date.now(),
 					outputPosition: 0,
+					...(command.launch === undefined ? {} : { launch: validateLaunchMetadata(command.launch) }),
 				};
 				changed.push(command.sessionId, project.id);
 				break;
@@ -1033,6 +1094,7 @@ export class WorkspaceStore {
 					status: 'running',
 					createdAt,
 					outputPosition: 0,
+					...(command.launch === undefined ? {} : { launch: validateLaunchMetadata(command.launch) }),
 				};
 				const panel: TerminalPanel = {
 					id: command.panelId,
@@ -1096,6 +1158,27 @@ function boundedPresentation(value: string, name: string): string {
 	if (typeof value !== 'string' || value.length > 128 || value.includes('\0'))
 		throw new Error(`${name} is invalid`);
 	return value;
+}
+function validateLaunchMetadata(value: TerminalLaunchMetadata): TerminalLaunchMetadata {
+	assertId(value.profileId, 'profileId');
+	for (const [name, revision] of [
+		['profileRevision', value.profileRevision],
+		['workspaceRevision', value.workspaceRevision],
+		['settingsRevision', value.settingsRevision],
+	] as const) {
+		if (!Number.isSafeInteger(revision) || revision < 0)
+			throw new Error(`${name} is invalid`);
+	}
+	return {
+		profileId: value.profileId,
+		profileRevision: value.profileRevision,
+		profileName: boundedName(value.profileName),
+		targetSummary: boundedName(value.targetSummary),
+		workspaceRevision: value.workspaceRevision,
+		settingsRevision: value.settingsRevision,
+		...(value.icon === undefined ? {} : { icon: boundedPresentation(value.icon, 'launch icon') }),
+		...(value.color === undefined ? {} : { color: boundedPresentation(value.color, 'launch color') }),
+	};
 }
 function requireView(state: WorkspaceState, id: ProtocolId): WorkspaceView {
 	assertId(id, 'viewId');

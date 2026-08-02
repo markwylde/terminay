@@ -1,5 +1,6 @@
 import type { JsonValue } from "@terminay/protocol";
 import type { SettingsObject } from "./types.js";
+import { DEFAULT_SHELL_PROFILES_SETTINGS, shellProfilesSettingsAsJson } from "../shellProfiles/normalize.js";
 
 /** Defaults owned by Terminay Server. Device/rendering settings are excluded. */
 export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
@@ -75,6 +76,7 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
   scrollSensitivity: 1,
   smoothScrollDuration: 0,
   shell: { program: "", startupMode: "auto", extraArgs: "" },
+  shellProfiles: shellProfilesSettingsAsJson(DEFAULT_SHELL_PROFILES_SETTINGS),
   tabStopWidth: 8,
   terminayMcp: { enabled: true },
   wordSeparator: " ()[]{}',\"`",

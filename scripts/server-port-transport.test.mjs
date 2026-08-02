@@ -64,6 +64,7 @@ test('normal peer closure terminates incoming work and releases a server connect
   const { port1, port2 } = new MessageChannel()
   const transport = new ServerPortTransport(new ServerScopedMessagePort(port1, 'desktop-local'))
   const core = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: 'desktop-local',
     serverVersion: 'test',
     capabilities: [],
@@ -213,6 +214,7 @@ test('the production renderer connector attaches through the server-owned compos
   }, 'desktop-local')
   await workspace.load()
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: 'desktop-local',
     serverVersion: 'test',
     capabilities: ['terminal'],
