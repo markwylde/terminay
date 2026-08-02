@@ -3,9 +3,10 @@
 ## Summary
 
 Terminay organizes work as project tabs. A project has an optional root folder,
-name, colour, icon, per-project navigation state, and a Dockview layout holding
-terminal, file, and folder panels. Projects and panels are movable without
-turning a terminal title into an identity boundary.
+name, colour, icon, default shell-profile override, per-project navigation
+state, and a Dockview layout holding terminal, file, and folder panels. Projects
+and panels are movable without turning a terminal title into an identity
+boundary.
 
 ## User contract
 
@@ -18,6 +19,10 @@ turning a terminal title into an identity boundary.
 - New terminals open in the active project. Tabs can split the active layout
   horizontally or vertically, be reordered, moved to another project, or moved
   into another workspace view.
+- A project can use the server's default shell profile or select a project
+  default under the canonical
+  [shell profiles and terminal launch](./shell-profiles-and-terminal-launch.md)
+  policy. That selection affects future sessions only.
 - Desktop presents workspace views as native windows. Project tabs can be
   dragged between them; web clients manage the same views in-page. Moving a
   project preserves its panels, live PTYs, scrollback, and service identities.
