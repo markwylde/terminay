@@ -41,6 +41,7 @@ jobs:
           npm run test:hosted-deployment-order
           npm run test:security-fuzz
           npm run test:security-boundaries
+          node --test scripts/task23-privileged-webrtc-exposure.test.mjs
           node --test scripts/task20-supply-chain-audit.test.mjs scripts/task20-release-lifecycle.test.mjs scripts/repository-ownership-release.test.mjs scripts/task20-direct-ui-mismatch.test.mjs scripts/task20-native-runner-contract.test.mjs scripts/production-headless-webrtc-ci.test.mjs
           node --test scripts/task20-responsiveness.test.mjs
           node scripts/task20-supply-chain-audit.mjs --npm-audit
