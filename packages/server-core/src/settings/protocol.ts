@@ -1,5 +1,6 @@
 import type { JsonValue, ProtocolError } from "@terminay/protocol";
 import type { OperationRegistries, OrderedEventJournalLike, CommandRequest, QueryRequest } from "../types.js";
+import { cloneDefaultServerSettings } from "./defaults.js";
 import { ServerSettingsRepository } from "./repository.js";
 import { isSettingsObject } from "./types.js";
 
@@ -56,12 +57,14 @@ export function createSettingsOperationRegistry(
     if (path !== undefined && (typeof path !== "string" || path.length === 0 || path.length > 512)) {
       throw protocolError("validation", "settings reset path is invalid");
     }
-    if (path === undefined || path === "shellProfiles" || path.startsWith("shellProfiles.")) throw protocolError("validation", "shell profiles require the dedicated profile reset operation");
-    const result = await repository.reset({
-      expectedRevision: request.envelope.expectedRevision,
-      commandId: request.envelope.commandId,
-      ...(path === undefined ? {} : { path }),
-    });
+    if (path === "shellProfiles" || path?.startsWith("shellProfiles.")) throw protocolError("validation", "shell profiles require the dedicated profile reset operation");
+    const result = path === undefined
+      ? await repository.update(defaultSettingsWithoutShellProfiles(), request.envelope.expectedRevision, request.envelope.commandId)
+      : await repository.reset({
+          expectedRevision: request.envelope.expectedRevision,
+          commandId: request.envelope.commandId,
+          path,
+        });
     return applied(result);
   }
 
@@ -76,6 +79,12 @@ export function createSettingsOperationRegistry(
     eventJournal.append(SETTINGS_EVENTS.changed, state);
     return { result: state, revision: result.revision };
   }
+}
+
+function defaultSettingsWithoutShellProfiles() {
+  return Object.fromEntries(
+    Object.entries(cloneDefaultServerSettings()).filter(([key]) => key !== "shellProfiles"),
+  );
 }
 
 /** Environment overlay values are available only through the privileged

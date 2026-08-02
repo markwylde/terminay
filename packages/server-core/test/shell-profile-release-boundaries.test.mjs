@@ -206,7 +206,7 @@ test("discovered defaults and deletion of every referenced custom profile are re
 });
 
 test("generic settings and workspace operations cannot bypass dedicated shell-profile mutations", async () => {
-  const { settings } = await fixture();
+  const { settings, dispatcher } = await fixture();
   const settingsDispatcher = createOperationDispatcher(createSettingsOperationRegistry(settings, new OrderedEventJournal()).operations);
 
   for (const [index, settingsPatch] of [
@@ -217,12 +217,27 @@ test("generic settings and workspace operations cannot bypass dedicated shell-pr
     assert.equal(result.ok, false);
     assert.equal(result.error.code, "validation");
   }
-  for (const [index, path] of [undefined, "shellProfiles", "shellProfiles.defaultProfileId"].entries()) {
-    const result = await command(settingsDispatcher, "settings.reset", path === undefined ? {} : { path }, `settings-reset-bypass-${index}`, 0);
+  for (const [index, path] of ["shellProfiles", "shellProfiles.defaultProfileId"].entries()) {
+    const result = await command(settingsDispatcher, "settings.reset", { path }, `settings-reset-bypass-${index}`, 0);
     assert.equal(result.ok, false);
     assert.equal(result.error.code, "validation");
   }
   assert.equal(settings.revision, 0);
+
+  const created = await command(dispatcher, "shell-profiles.create", { profile: customProfile() }, "reset-preservation-create", 0);
+  assert.equal(created.ok, true);
+  const profileId = created.result.entries.find((entry) => entry.kind === "custom").id;
+  const selected = await command(dispatcher, "shell-profiles.set-default", { profileId }, "reset-preservation-default", 1);
+  assert.equal(selected.ok, true);
+  const changed = await command(settingsDispatcher, "settings.update", { settings: { scrollback: 9001 } }, "reset-preservation-update", 2);
+  assert.equal(changed.ok, true);
+  const profilesBeforeReset = structuredClone(settings.settings.shellProfiles);
+
+  const reset = await command(settingsDispatcher, "settings.reset", {}, "reset-preserving-profiles", 3);
+  assert.equal(reset.ok, true);
+  assert.equal(reset.result.settings.scrollback, 5000);
+  assert.deepEqual(settings.settings.shellProfiles, profilesBeforeReset);
+  assert.equal(settings.revision, 4);
 
   const workspace = new WorkspaceStore(createInitialWorkspace("server-release"));
   const workspaceDispatcher = createOperationDispatcher(createWorkspaceOperationRegistry(workspace, {
