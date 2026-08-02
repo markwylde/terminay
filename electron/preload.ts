@@ -1094,7 +1094,7 @@ contextBridge.exposeInMainWorld(
 				typeof draft !== 'object' ||
 				draft === null ||
 				Array.isArray(draft) ||
-				Object.keys(draft).length !== 5
+				Object.keys(draft).length !== 7
 			) {
 				throw new TypeError('project edit draft is invalid');
 			}
@@ -1102,12 +1102,17 @@ contextBridge.exposeInMainWorld(
 			if (
 				typeof candidate.color !== 'string' ||
 				candidate.color.length > 128 ||
+				(candidate.defaultShellProfileId !== null && (typeof candidate.defaultShellProfileId !== 'string' || candidate.defaultShellProfileId.length === 0 || candidate.defaultShellProfileId.length > 128)) ||
 				typeof candidate.projectId !== 'string' ||
 				candidate.projectId.length > 128 ||
 				typeof candidate.emoji !== 'string' ||
 				candidate.emoji.length > 64 ||
 				typeof candidate.rootFolder !== 'string' ||
 				candidate.rootFolder.length > 32_768 ||
+				!Array.isArray(candidate.shellProfileOptions) ||
+				candidate.shellProfileOptions.length > 65 ||
+				candidate.shellProfileOptions.some((option) => typeof option !== 'object' || option === null || Array.isArray(option) || Object.keys(option).length !== 3 || typeof (option as Record<string, unknown>).id !== 'string' || ((option as Record<string, unknown>).id as string).length === 0 || ((option as Record<string, unknown>).id as string).length > 128 || typeof (option as Record<string, unknown>).name !== 'string' || ((option as Record<string, unknown>).name as string).length === 0 || ((option as Record<string, unknown>).name as string).length > 128 || typeof (option as Record<string, unknown>).available !== 'boolean') ||
+				new Set(candidate.shellProfileOptions.map((option) => (option as Record<string, unknown>).id)).size !== candidate.shellProfileOptions.length ||
 				typeof candidate.title !== 'string' ||
 				candidate.title.length > 512
 			) {
@@ -1116,8 +1121,10 @@ contextBridge.exposeInMainWorld(
 			return ipcRenderer.invoke('desktop:project-edit-host:open', {
 				draft: {
 					color: candidate.color,
+					defaultShellProfileId: candidate.defaultShellProfileId,
 					emoji: candidate.emoji,
 					rootFolder: candidate.rootFolder,
+					shellProfileOptions: candidate.shellProfileOptions,
 					title: candidate.title,
 				},
 				projectId: candidate.projectId,

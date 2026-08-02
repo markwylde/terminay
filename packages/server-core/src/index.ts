@@ -13,6 +13,7 @@ export * from "./workspaceProtocol.js";
 export * from "./activity/index.js";
 export * from "./control/index.js";
 export * from "./settings/index.js";
+export * from "./shellProfiles/index.js";
 export * from "./macroService/index.js";
 export {
   FileServiceError,

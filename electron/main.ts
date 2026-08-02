@@ -45,6 +45,11 @@ import {
 } from '../packages/server-core/src/recordingService/index';
 import type { RemoteReconnectGrantRecord } from '../packages/server-core/src/remote/reconnect';
 import { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
+import {
+	createNodeShellDiscoveryHost,
+	ShellProfileCatalogueService,
+	ShellProfileDiscoveryService,
+} from '../packages/server-core/src/shellProfiles/index';
 import type { TerminalEvent } from '../packages/server-core/src/terminalService/index';
 import {
 	findCommandForKeyboardEvent,
@@ -665,6 +670,19 @@ const embeddedServerSettings = new ServerSettingsRepository({
 			throw error;
 		}
 	},
+	backup: async (source) => {
+		const backupPath = `${embeddedServerSettingsPath}.pre-migration.json`;
+		await mkdir(path.dirname(backupPath), { recursive: true, mode: 0o700 });
+		try {
+			await writeFile(backupPath, JSON.stringify(source), {
+				encoding: 'utf8',
+				flag: 'wx',
+				mode: 0o600,
+			});
+		} catch (error) {
+			if ((error as { code?: string }).code !== 'EEXIST') throw error;
+		}
+	},
 	commit: async (state) => {
 		await mkdir(path.dirname(embeddedServerSettingsPath), {
 			recursive: true,
@@ -682,6 +700,18 @@ const embeddedServerSettings = new ServerSettingsRepository({
 			await rm(temporary, { force: true }).catch(() => undefined);
 		}
 	},
+});
+const embeddedShellProfiles = new ShellProfileCatalogueService({
+	settings: embeddedServerSettings,
+	discovery: new ShellProfileDiscoveryService(
+		await createNodeShellDiscoveryHost(process.env),
+	),
+	projectReferences: (profileId) =>
+		serverTerminalAuthority === null
+			? []
+			: Object.values(serverTerminalAuthority.workspace.state.projects)
+					.filter((project) => project.defaultShellProfileId === profileId)
+					.map((project) => project.id),
 });
 const embeddedMacroPath = path.join(
 	app.getPath('userData'),
@@ -735,7 +765,8 @@ function embeddedMacroKeyBytes(key: string): Uint8Array {
 
 serverTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
-	resolveDefaultShell: () => resolvePtyShellOptions(readTerminalSettings()),
+	defaultProjectRoot: () => app.getPath('home'),
+	shellProfiles: embeddedShellProfiles,
 	aiMetadata: aiTabMetadataService,
 	saveSparseFile: (request) => fileBufferService.saveSparseFile(request),
 	recordings: serverRecordingAdapter,
@@ -943,6 +974,8 @@ async function createServerOwnedTerminalSession(
 	webContentsId: number,
 	projectId: string,
 	cwd?: string,
+	projectRootOrigin?: 'explicit' | 'server-default',
+	activePanelId?: string,
 ): Promise<Awaited<ReturnType<ServerTerminalAuthority['create']>>> {
 	const id = randomUUID();
 	const settings = readTerminalSettings();
@@ -951,37 +984,27 @@ async function createServerOwnedTerminalSession(
 		const token = registerControlToken(id, webContentsId);
 		controlEnv = { socketPath: getControlSocketPath(), token };
 	}
-	let spawnOptions: Awaited<ReturnType<typeof buildPtySpawnOptions>>;
 	try {
-		spawnOptions = await buildPtySpawnOptions(settings, cwd, controlEnv);
-	} catch (error) {
-		removeControlToken(id);
-		throw error;
-	}
-
-	try {
-		// Start recording before the server creates the PTY: a fast shell can
-		// emit or exit before create() resolves.
+		const session = await serverTerminalAuthority!.create({
+			sessionId: id,
+			projectId,
+			...(cwd === undefined ? {} : { cwd }),
+			...(projectRootOrigin === undefined ? {} : { projectRootOrigin }),
+			...(activePanelId === undefined ? {} : { activePanelId }),
+			env: getTerminalSpawnEnv(controlEnv),
+			cols: 80,
+			rows: 24,
+		});
 		if (settings.recording.recordNewTerminals) {
 			try {
 				recordingService.start(id, {
-					cwd: spawnOptions.cwd,
-					shell: spawnOptions.shellPath,
+					cwd: session.cwd,
+					shell: session.shellPath ?? 'System default',
 				});
 			} catch {
 				// Recording storage failure never prevents the PTY from starting.
 			}
 		}
-		const session = await serverTerminalAuthority!.create({
-			sessionId: id,
-			projectId,
-			shellPath: spawnOptions.shellPath,
-			args: spawnOptions.args,
-			cwd: spawnOptions.cwd,
-			env: spawnOptions.env,
-			cols: 80,
-			rows: 24,
-		});
 		return session;
 	} catch (error) {
 		removeControlToken(id);
@@ -997,7 +1020,8 @@ async function ensureLocalWorkspaceSeed(webContentsId: number): Promise<void> {
 	localWorkspaceSeedPromise ??= createServerOwnedTerminalSession(
 		webContentsId,
 		'default',
-		undefined,
+		app.getPath('home'),
+		'server-default',
 	)
 		.then(() => undefined)
 		.catch((error) => {
@@ -1901,110 +1925,14 @@ function ensureNodePtySpawnHelperIsExecutable(): void {
 	}
 }
 
-function getCandidateShells(): string[] {
-	if (process.platform === 'win32') {
-		return [process.env.ComSpec || 'powershell.exe'];
-	}
-
-	return [process.env.SHELL || '', '/bin/zsh', '/bin/bash', '/bin/sh'].filter(
-		(value, index, list) => value.length > 0 && list.indexOf(value) === index,
-	);
-}
-
-function getConfiguredShells(settings: TerminalSettings): string[] {
-	if (settings.shell.program.trim().length > 0) {
-		return [settings.shell.program.trim()];
-	}
-
-	return getCandidateShells();
-}
-
-function getShellBaseName(shellPath: string): string {
-	return path.basename(shellPath).toLowerCase();
-}
-
-function getShellStartupArgs(
-	shellPath: string,
-	startupMode: TerminalSettings['shell']['startupMode'],
-): string[] {
-	const resolvedMode =
-		startupMode === 'auto'
-			? process.platform === 'darwin'
-				? 'login'
-				: 'non-login'
-			: startupMode;
-
-	if (resolvedMode !== 'login') {
-		return [];
-	}
-
-	const shellBaseName = getShellBaseName(shellPath);
-	if (['zsh', 'bash', 'sh', 'ksh', 'fish'].includes(shellBaseName)) {
-		return ['-l'];
-	}
-
-	return [];
-}
-
-function parseCommandLineArgs(value: string): string[] {
-	const args: string[] = [];
-	let current = '';
-	let quote: '"' | "'" | null = null;
-	let escaping = false;
-
-	for (const char of value) {
-		if (escaping) {
-			current += char;
-			escaping = false;
-			continue;
-		}
-
-		if (char === '\\') {
-			escaping = true;
-			continue;
-		}
-
-		if (quote) {
-			if (char === quote) {
-				quote = null;
-			} else {
-				current += char;
-			}
-			continue;
-		}
-
-		if (char === '"' || char === "'") {
-			quote = char;
-			continue;
-		}
-
-		if (/\s/.test(char)) {
-			if (current.length > 0) {
-				args.push(current);
-				current = '';
-			}
-			continue;
-		}
-
-		current += char;
-	}
-
-	if (escaping) {
-		current += '\\';
-	}
-
-	if (current.length > 0) {
-		args.push(current);
-	}
-
-	return args;
-}
-
 function getTerminalSpawnEnv(controlEnv?: {
 	socketPath: string;
 	token: string;
-}): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env };
+}): Record<string, string | undefined> {
+	// The canonical resolver already starts from the host environment and then
+	// applies the selected profile. Keep this overlay to server-protected,
+	// per-session values so it cannot accidentally overwrite profile variables.
+	const env: Record<string, string | undefined> = {};
 
 	// xterm.js renders true color, but many CLI tools only enable 24-bit output
 	// when COLORTERM explicitly advertises it.
@@ -2020,7 +1948,11 @@ function getTerminalSpawnEnv(controlEnv?: {
 		return env;
 	}
 
-	const utf8Locale = env.LC_ALL || env.LC_CTYPE || env.LANG || 'en_US.UTF-8';
+	const utf8Locale =
+		process.env.LC_ALL ||
+		process.env.LC_CTYPE ||
+		process.env.LANG ||
+		'en_US.UTF-8';
 	const normalizedLocale = utf8Locale.toUpperCase().includes('UTF-8')
 		? utf8Locale
 		: 'en_US.UTF-8';
@@ -2030,21 +1962,6 @@ function getTerminalSpawnEnv(controlEnv?: {
 	env.LC_CTYPE = normalizedLocale;
 
 	return env;
-}
-
-async function normalizeSpawnCwd(cwd?: string): Promise<string> {
-	const fallbackCwd = app.getPath('home');
-
-	if (!cwd) {
-		return fallbackCwd;
-	}
-
-	try {
-		const cwdStats = await stat(cwd);
-		return cwdStats.isDirectory() ? cwd : fallbackCwd;
-	} catch {
-		return fallbackCwd;
-	}
 }
 
 async function getChildProcessIds(pid: number): Promise<number[]> {
@@ -2318,10 +2235,20 @@ async function dispatchServerControlRequest(
 				await service.kill(target!, authorization);
 				return { ok: true, result: { id: target!.sessionId, closed: true } };
 			case 'open_terminal': {
+				const activePanelId = Object.values(
+					serverTerminalAuthority!.workspace.state.panels,
+				).find(
+					(panel) =>
+						panel.type === 'terminal' &&
+						panel.projectId === caller.projectId &&
+						panel.sessionId === caller.id,
+				)?.id;
 				const opened = await createServerOwnedTerminalSession(
 					0,
 					caller.projectId,
 					readOptionalControlString(params, 'cwd'),
+					undefined,
+					activePanelId,
 				);
 				return {
 					ok: true,
@@ -2450,56 +2377,6 @@ function applyControlServerSetting(): void {
 	} else {
 		void stopControlServer();
 	}
-}
-
-async function buildPtySpawnOptions(
-	settings: TerminalSettings,
-	cwd?: string,
-	controlEnv?: { socketPath: string; token: string },
-): Promise<{
-	shellPath: string;
-	args: string[];
-	cwd: string;
-	env: NodeJS.ProcessEnv;
-}> {
-	const spawnCwd = await normalizeSpawnCwd(cwd);
-	const spawnEnv = getTerminalSpawnEnv(controlEnv);
-	const shell = resolvePtyShellOptions(settings);
-
-	return {
-		shellPath: shell.shellPath,
-		args: shell.args,
-		cwd: spawnCwd,
-		env: spawnEnv,
-	};
-}
-
-function resolvePtyShellOptions(settings: TerminalSettings): {
-	shellPath: string;
-	args: string[];
-} {
-	const shells = getConfiguredShells(settings);
-	for (const shellPath of shells) {
-		if (
-			process.platform !== 'win32' &&
-			shellPath.startsWith('/') &&
-			!existsSync(shellPath)
-		) {
-			continue;
-		}
-
-		return {
-			shellPath,
-			args: [
-				...getShellStartupArgs(shellPath, settings.shell.startupMode),
-				...parseCommandLineArgs(settings.shell.extraArgs),
-			],
-		};
-	}
-
-	throw new Error(
-		`Unable to start a terminal shell. Tried: ${shells.join(', ')}`,
-	);
 }
 
 function detachSessionsForWebContents(webContentsId: number): void {
@@ -5381,13 +5258,18 @@ ipcMain.handle(
 		}
 		const draft = request.draft as Record<string, unknown>;
 		if (
-			Object.keys(draft).length !== 4 ||
+			Object.keys(draft).length !== 6 ||
 			typeof draft.color !== 'string' ||
 			draft.color.length > 128 ||
+			(draft.defaultShellProfileId !== null && (typeof draft.defaultShellProfileId !== 'string' || draft.defaultShellProfileId.length === 0 || draft.defaultShellProfileId.length > 128)) ||
 			typeof draft.emoji !== 'string' ||
 			draft.emoji.length > 64 ||
 			typeof draft.rootFolder !== 'string' ||
 			draft.rootFolder.length > 32_768 ||
+			!Array.isArray(draft.shellProfileOptions) ||
+			draft.shellProfileOptions.length > 65 ||
+			draft.shellProfileOptions.some((option) => typeof option !== 'object' || option === null || Array.isArray(option) || Object.keys(option).length !== 3 || typeof (option as Record<string, unknown>).id !== 'string' || ((option as Record<string, unknown>).id as string).length === 0 || ((option as Record<string, unknown>).id as string).length > 128 || typeof (option as Record<string, unknown>).name !== 'string' || ((option as Record<string, unknown>).name as string).length === 0 || ((option as Record<string, unknown>).name as string).length > 128 || typeof (option as Record<string, unknown>).available !== 'boolean') ||
+			new Set(draft.shellProfileOptions.map((option) => (option as Record<string, unknown>).id)).size !== draft.shellProfileOptions.length ||
 			typeof draft.title !== 'string' ||
 			draft.title.length > 512
 		) {
@@ -5451,6 +5333,15 @@ ipcMain.handle(
 			throw new Error(
 				`Mismatched edit window result kind: expected ${pending.state.kind}, received ${result.kind}.`,
 			);
+		}
+		if (result.kind === 'project') {
+			const candidate = result.result as unknown;
+			if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) throw new TypeError('project edit result is invalid');
+			const value = candidate as Record<string, unknown>;
+			if (Object.keys(value).length !== 5 || typeof value.color !== 'string' || value.color.length > 128 || (value.defaultShellProfileId !== null && (typeof value.defaultShellProfileId !== 'string' || value.defaultShellProfileId.length === 0 || value.defaultShellProfileId.length > 128)) || typeof value.emoji !== 'string' || value.emoji.length > 64 || typeof value.rootFolder !== 'string' || value.rootFolder.length > 32_768 || typeof value.title !== 'string' || value.title.length > 512) throw new TypeError('project edit result is invalid');
+			const shellProfileOptions = pending.state.kind === 'project' ? pending.state.draft.shellProfileOptions : [];
+			const originalProfileId = pending.state.kind === 'project' ? pending.state.draft.defaultShellProfileId : null;
+			if (value.defaultShellProfileId !== null && !shellProfileOptions.some((profile) => profile.id === value.defaultShellProfileId && (profile.available || profile.id === originalProfileId))) throw new TypeError('project shell profile selection is invalid');
 		}
 
 		pending.resolve(result.result);

@@ -34,6 +34,7 @@ async function createAdoptionFixture() {
   assert.equal(workspace.apply({ commandId: "create-panel", expectedRevision: 3, command: { type: "panel.create", panel: { id: "panel-adopted", projectId: "project-adopted", type: "terminal", sessionId: "session-adopted", createdAt: 1 } } }).ok, true);
 
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "desktop-adoption",
     serverVersion: "test",
     capabilities: ["workspace"],

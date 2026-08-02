@@ -1,4 +1,5 @@
 import { TerminalServiceError } from "./errors.js";
+import type { TerminalResolvedLaunch } from "./launchResolver.js";
 import type {
   PtyDataListener,
   PtyExit,
@@ -61,6 +62,7 @@ interface MutableSession {
   readonly cwd: string;
   readonly createdAt: number;
   readonly dimensions: { cols: number; rows: number };
+  readonly launch?: TerminalSessionSnapshot["launch"];
   readonly replay: ReplayChunk[];
   readonly subscribers: Set<TerminalSubscription>;
   readonly inactivityWaiters: Set<InactivityWaiter>;
@@ -291,6 +293,16 @@ export class TerminalService {
   listSessions(): readonly TerminalSessionSnapshot[] { return [...this.sessionsById.values()].map(snapshotOf); }
   sessions(): readonly TerminalSessionSnapshot[] { return this.listSessions(); }
 
+  /** Allocate a bounded identity before canonical launch resolution. The
+   * eventual createResolvedSession call still performs the authoritative
+   * duplicate/session-limit checks immediately before spawn. */
+  allocateIdentity(projectId: string, requestedSessionId?: string): TerminalIdentity {
+    assertId(projectId, "projectId");
+    const sessionId = requestedSessionId ?? this.nextSessionId(projectId);
+    assertId(sessionId, "sessionId");
+    return Object.freeze({ serverId: this.serverId, projectId, sessionId });
+  }
+
   async currentCwd(
     session: string | TerminalIdentity,
     authorization?: TerminalAuthorization,
@@ -330,6 +342,12 @@ export class TerminalService {
     }
   }
 
+  /**
+   * @internal Low-level unresolved spawn retained for TerminalService unit tests
+   * and explicitly opted-in legacy test compositions. Production hosts and
+   * protocol routes must resolve a TerminalResolvedLaunch and call
+   * createResolvedSession instead.
+   */
   async createSession(options: TerminalCreateOptions): Promise<TerminalSessionHandle> {
     if (this.stopping) throw new TerminalServiceError("service_shutdown", "terminal service is shutting down");
     if (options.serverId !== undefined && options.serverId !== this.serverId) throw new TerminalServiceError("forbidden", "terminal belongs to another server", { serverId: this.serverId, actual: options.serverId });
@@ -385,6 +403,79 @@ export class TerminalService {
     return new TerminalSessionHandle(this, mutable);
   }
 
+  /** Spawn an already-resolved immutable launch snapshot. This is the only
+   * creation entry point used by production protocol and host composition;
+   * shell/profile/cwd policy deliberately lives in TerminalLaunchResolver. */
+  async createResolvedSession(launch: TerminalResolvedLaunch): Promise<TerminalSessionHandle> {
+    if (this.stopping) throw new TerminalServiceError("service_shutdown", "terminal service is shutting down");
+    if (launch.identity.serverId !== this.serverId) throw new TerminalServiceError("forbidden", "terminal belongs to another server");
+    assertId(launch.identity.projectId, "projectId");
+    assertId(launch.identity.sessionId, "sessionId");
+    if (this.sessionsById.has(launch.identity.sessionId)) throw new TerminalServiceError("session_exists", "terminal session already exists", { sessionId: launch.identity.sessionId });
+    if (this.sessionsById.size >= this.limits.maxSessions) throw new TerminalServiceError("session_limit", "terminal session limit reached", { max: this.limits.maxSessions });
+    const dimensions = validateDimensions(launch, this.limits);
+    if (!Number.isSafeInteger(launch.createdAt) || launch.createdAt < 0) throw new TypeError("createdAt must be a non-negative safe integer");
+    if (typeof launch.shellPath !== "string" || launch.shellPath.trim().length === 0) throw new TypeError("resolved shell path is invalid");
+    if (typeof launch.cwd !== "string" || launch.cwd.length === 0) throw new TypeError("resolved terminal cwd is invalid");
+    const identity = Object.freeze({ ...launch.identity });
+    const lifecycleEnvironment = this.sessionLifecycle?.prepareTerminalSession(identity);
+    const mutable: MutableSession = {
+      identity,
+      cwd: launch.cwd,
+      createdAt: launch.createdAt,
+      dimensions: { ...dimensions },
+      launch: Object.freeze({
+        profileId: launch.profile.id,
+        profileRevision: launch.profile.revision,
+        profileName: launch.profile.name,
+        targetSummary: launch.profile.targetSummary,
+        ...(launch.profile.icon === undefined ? {} : { icon: launch.profile.icon }),
+        ...(launch.profile.color === undefined ? {} : { color: launch.profile.color }),
+        workspaceRevision: launch.workspaceRevision,
+        settingsRevision: launch.settingsRevision,
+      }),
+      replay: [],
+      subscribers: new Set(),
+      inactivityWaiters: new Set(),
+      status: "running",
+      outputPosition: 0,
+      replayFrom: 0,
+    };
+    const spawnOptions: PtySpawnOptions = {
+      shellPath: launch.shellPath,
+      shell: launch.shellPath,
+      args: [...launch.args],
+      cwd: launch.cwd,
+      env: { ...launch.env, ...(lifecycleEnvironment ?? {}) },
+      ...dimensions,
+    };
+    try {
+      const process = await spawn(this.ptyFactory, spawnOptions);
+      mutable.process = process;
+      if (typeof process.pid === "number" && Number.isSafeInteger(process.pid) && process.pid > 0) mutable.pid = process.pid;
+      this.sessionsById.set(identity.sessionId, mutable);
+      this.attachProcess(mutable, process);
+      return new TerminalSessionHandle(this, mutable);
+    } catch (error) {
+			this.sessionsById.delete(identity.sessionId);
+			const process = mutable.process;
+			if (process !== undefined) {
+				try { await process.kill(); } catch { /* best-effort rollback */ }
+				try { await process.dispose?.(); } catch { /* best-effort rollback */ }
+			}
+      try {
+        this.sessionLifecycle?.terminalExited(identity, { exitCode: 1 });
+      } catch { /* lifecycle cleanup cannot replace the bounded spawn error */ }
+      throw new TerminalServiceError("spawn_failed", "The terminal process could not be started.", {
+        serverId: identity.serverId,
+        projectId: identity.projectId,
+        sessionId: identity.sessionId,
+        reason: error instanceof Error ? error.name : "spawn",
+      });
+    }
+  }
+
+  /** @internal Alias for the unresolved test-only creation seam. */
   create(options: TerminalCreateOptions): Promise<TerminalSessionHandle> { return this.createSession(options); }
 
   subscribe(session: string | TerminalIdentity, options: TerminalSubscriptionOptions = {}): TerminalSubscription {
@@ -833,6 +924,7 @@ function snapshotOf(session: MutableSession): TerminalSessionSnapshot {
   return Object.freeze({
     ...session.identity,
     cwd: session.cwd,
+    ...(session.launch === undefined ? {} : { launch: session.launch }),
     status: session.status,
     createdAt: session.createdAt,
     outputPosition: session.outputPosition,

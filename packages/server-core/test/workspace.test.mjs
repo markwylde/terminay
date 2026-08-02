@@ -57,7 +57,8 @@ test("terminal session identity survives panel creation and project moves", () =
   const store = new WorkspaceStore(createInitialWorkspace("server-a"));
   const viewId = store.state.viewOrder[0];
   assert.equal(store.apply({ commandId: "project", command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } }).ok, true);
-  assert.equal(store.apply({ commandId: "session", command: { type: "terminal.create", sessionId: "session-a", projectId: "project-a", createdAt: 1 } }).ok, true);
+  const launch = { profileId: "profile-zsh", profileRevision: 4, profileName: "Zsh", targetSummary: "zsh", workspaceRevision: 1, settingsRevision: 4, icon: "terminal", color: "#112233" };
+  assert.equal(store.apply({ commandId: "session", command: { type: "terminal.create", sessionId: "session-a", projectId: "project-a", createdAt: 1, launch } }).ok, true);
   const panel = { id: "panel-a", projectId: "project-a", type: "terminal", sessionId: "session-a", createdAt: 1 };
   assert.equal(store.apply({ commandId: "panel", command: { type: "panel.create", panel } }).ok, true);
   assert.equal(store.apply({ commandId: "view", command: { type: "view.create", viewId: "view-b", name: "B" } }).ok, true);
@@ -65,6 +66,7 @@ test("terminal session identity survives panel creation and project moves", () =
   assert.equal(store.state.panels["panel-a"].projectId, "project-a");
   assert.equal(store.state.panels["panel-a"].sessionId, "session-a");
   assert.equal(store.state.terminalSessions["session-a"].id, "session-a");
+  assert.deepEqual(store.state.terminalSessions["session-a"].launch, launch);
 });
 
 test("project close cascades panels and terminal session records", () => {
@@ -119,7 +121,7 @@ test("two client command streams get one ordered commit and one explicit stale c
 
 test("v0 workspace snapshots migrate idempotently without terminal content", () => {
   const migrated = migrateWorkspaceState({ schemaVersion: 0, serverId: "server-a", projects: { "project-a": { root: "/tmp/a", name: "A", output: "must-not-copy" } } }, "fallback");
-  assert.equal(migrated.schemaVersion, 1);
+  assert.equal(migrated.schemaVersion, 2);
   assert.equal(migrated.projects["project-a"].root, "/tmp/a");
   assert.equal(Object.keys(migrated.terminalSessions).length, 0);
   assert.deepEqual(migrateWorkspaceState(migrated, "fallback"), migrated);

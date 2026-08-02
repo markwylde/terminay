@@ -27,6 +27,7 @@ import {
 	CanonicalProjectPathResolver,
 	createInitialWorkspace,
 	createNodePtyFactory,
+	createNodeShellDiscoveryHost,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
 	ExactTerminalTargetRegistry,
@@ -47,6 +48,8 @@ import {
 	ServerGitAdapter,
 	ServerRecordingAdapter,
 	ServerSettingsRepository,
+	ShellProfileCatalogueService,
+	ShellProfileDiscoveryService,
 	TerminalActivityService,
 	TerminalReplayRegistry,
 	WorkspaceStore,
@@ -74,6 +77,7 @@ import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
 declare const process: {
 	readonly argv: readonly string[];
 	readonly env: Readonly<Record<string, string | undefined>>;
+	readonly platform: NodeJS.Platform;
 	readonly stdout: { write(value: string): void };
 	readonly stderr: { write(value: string): void };
 	cwd(): string;
@@ -131,7 +135,7 @@ else if (options.command === 'mcp') {
 			handoff.pairingToken,
 			handoff.expiresAt,
 		);
-		const composition = createServerComposition(options, () => {
+		const composition = await createServerComposition(options, () => {
 			if (runtime === undefined)
 				throw new Error('server runtime is not composed');
 			return runtimeHealth(runtime, protocolReady);
@@ -262,10 +266,10 @@ function createRemoteExposure(
 	});
 }
 
-function createServerComposition(
+async function createServerComposition(
 	options: ServerCliOptions,
 	health: () => JsonValue,
-): ServerCoreComposition {
+): Promise<ServerCoreComposition> {
 	const eventJournal = new OrderedEventJournal();
 	const activity = new TerminalActivityService({ serverId: options.serverId });
 	const agents = new AgentStatusService({
@@ -295,6 +299,16 @@ function createServerComposition(
 		gitService,
 	);
 	const settings = createStandaloneSettingsRepository(options.dataRoot);
+	const shellProfiles = new ShellProfileCatalogueService({
+		settings,
+		discovery: new ShellProfileDiscoveryService(
+			await createNodeShellDiscoveryHost(process.env),
+		),
+		projectReferences: (profileId) =>
+			Object.values(workspace.state.projects)
+				.filter((project) => project.defaultShellProfileId === profileId)
+				.map((project) => project.id),
+	});
 	const macros = createStandaloneMacroRepository(options.dataRoot);
 	const recordings = new ServerRecordingAdapter(
 		new RecordingService({
@@ -349,6 +363,10 @@ function createServerComposition(
 		},
 		fileObservations: files.observations,
 		settings,
+		terminalProfiles: shellProfiles,
+		shellProfiles,
+		terminalLaunchEnvironment: process.env,
+		terminalEnvironmentCaseInsensitive: process.platform === 'win32',
 		recordings,
 		git,
 		...(ai === undefined ? {} : { ai }),
@@ -455,6 +473,19 @@ function createStandaloneSettingsRepository(
 			} catch (error) {
 				if ((error as { code?: string }).code === 'ENOENT') return undefined;
 				throw error;
+			}
+		},
+		backup: async (source) => {
+			const backupPath = `${path}.pre-migration.json`;
+			await mkdir(dirname(backupPath), { recursive: true, mode: 0o700 });
+			try {
+				await writeFile(backupPath, JSON.stringify(source), {
+					encoding: 'utf8',
+					mode: 0o600,
+					flag: 'wx',
+				});
+			} catch (error) {
+				if ((error as { code?: string }).code !== 'EEXIST') throw error;
 			}
 		},
 		commit: async (state) => {
@@ -925,8 +956,8 @@ function createProtocolServer(
 		...(composition.coreOptions.limits === undefined
 			? {}
 			: { limits: composition.coreOptions.limits }),
-		});
-	}
+	});
+}
 
 interface ProtocolCredentials {
 	readonly accept: (token: string) => boolean;
@@ -1020,14 +1051,15 @@ async function ensureDefaultTerminalSession(
 			)
 	)
 		return;
-	await composition.terminal.createSession({
-		projectId: 'default',
-		sessionId: 'default',
-		cwd: composition.workspace?.state.projects.default?.root ?? process.cwd(),
+	const resolver = composition.terminalLaunchResolver;
+	if (resolver === undefined)
+		throw new Error('canonical terminal launch resolver is unavailable');
+	const launch = await resolver.resolve({
+		identity: composition.terminal.allocateIdentity('default', 'default'),
 		cols: 100,
 		rows: 30,
-		env: process.env,
 	});
+	await composition.terminal.createResolvedSession(launch);
 }
 
 /**

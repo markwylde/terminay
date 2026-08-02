@@ -22,3 +22,4 @@ export * from "./settings.js";
 export * from "./macros.js";
 export * from "./health.js";
 export * from "./mcpServerControl.js";
+export * from "./shellProfiles.js";

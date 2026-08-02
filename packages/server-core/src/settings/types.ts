@@ -7,7 +7,7 @@ export type SettingAuthority =
   | "device-override"
   | "transient";
 
-export const SETTINGS_SCHEMA_VERSION = 1;
+export const SETTINGS_SCHEMA_VERSION = 2;
 
 export type SettingsObject = { readonly [key: string]: JsonValue };
 
@@ -33,7 +33,9 @@ export interface ServerSettingsState {
 export interface SettingsBackend {
   load(): Promise<unknown | undefined>;
   commit(state: ServerSettingsState): Promise<void>;
-  backup?(state: ServerSettingsState): Promise<void>;
+  /** Persist the exact pre-migration source before the canonical replacement. */
+  backup?(source: unknown): Promise<void>;
+  audit?(outcome: { readonly action: "migration"; readonly ok: boolean; readonly fromSchema: number | null; readonly toSchema: number }): void | Promise<void>;
 }
 
 export interface SettingsConflict {

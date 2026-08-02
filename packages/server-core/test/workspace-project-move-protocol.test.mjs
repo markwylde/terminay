@@ -36,6 +36,7 @@ async function connect(composition, clientId) {
 test("protocol terminal creation registers its project and session with the workspace authority", async () => {
   const workspace = new WorkspaceStore(createInitialWorkspace("terminal-workspace-server"));
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "terminal-workspace-server",
     serverVersion: "test",
     capabilities: ["workspace"],
@@ -71,6 +72,7 @@ test("authenticated WorkspaceClient project.move commits through the real server
   assert.equal(workspace.apply({ commandId: "panel-create", expectedRevision: 3, command: { type: "panel.create", panel: { id: "panel-a", projectId: "project-a", type: "terminal", sessionId: "session-a", createdAt: 1 } } }).ok, true);
 
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "move-server",
     serverVersion: "test",
     capabilities: ["workspace"],
@@ -102,6 +104,7 @@ test("project.move is denied to an authenticated read client", async () => {
   assert.ok(viewId);
   assert.equal(workspace.apply({ commandId: "project-create", expectedRevision: 0, command: { type: "project.create", projectId: "project-a", viewId, root: "/repo/a", name: "A" } }).ok, true);
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "move-auth-server",
     serverVersion: "test",
     capabilities: ["workspace"],
@@ -131,6 +134,7 @@ test("project.root.update atomically commits canonical catalog binding and works
   const catalogRoots = new Map([["project-a", "/old/a"], ["project-b", "/old/b"]]);
   const prepared = [];
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "root-server",
     serverVersion: "test",
     capabilities: ["workspace", "files"],
@@ -215,6 +219,7 @@ test("project-scoped workspace queries never disclose sibling project or termina
     { commandId: "session-b", command: { type: "terminal.create", sessionId: "session-b", projectId: "project-b", createdAt: 1 } },
   ]) assert.equal(workspace.apply({ ...command, expectedRevision: workspace.state.revision }).ok, true);
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "scope-server", serverVersion: "test", capabilities: ["workspace"], ptyFactory: createPtyFactory(), workspace,
     authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read", claims: { projectId: "project-a" } }),
   });

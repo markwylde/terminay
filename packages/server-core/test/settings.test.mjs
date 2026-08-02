@@ -39,7 +39,7 @@ test("settings classification keeps server state separate from host, device, and
 
 test("legacy settings normalize to defaults and expose metadata-only secret references", () => {
   const migrated = migrateServerSettings({ shell: { startupMode: "login" }, openAiApiKey: "do-not-return" });
-  assert.equal(migrated.schemaVersion, 1);
+  assert.equal(migrated.schemaVersion, 2);
   assert.equal(migrated.settings.shell.startupMode, "login");
   assert.equal(migrated.settings.shell.program, DEFAULT_SERVER_SETTINGS.shell.program);
   assert.equal(migrated.secretReferences.openAiApiKey.configured, true);
@@ -93,4 +93,26 @@ test("device overrides win only in an effective read and never mutate shared ser
   assert.equal(effective.shell.program, "/bin/zsh");
   assert.equal("window" in effective, false);
   assert.equal(server.dictation.microphoneDeviceId, "server-mic");
+});
+
+test("repository backs up the exact legacy source before migration and retries deterministically", async () => {
+  const legacy = { shell: { program: "/bin/zsh", startupMode: "login", extraArgs: '"two words"' }, scrollback: 1234 };
+  const calls = [];
+  let persisted = structuredClone(legacy);
+  const repository = new ServerSettingsRepository({
+    async load() { return structuredClone(persisted); },
+    async backup(source) { calls.push(["backup", structuredClone(source)]); },
+    async commit(state) { calls.push(["commit", state.schemaVersion]); persisted = structuredClone(state); },
+    async audit(outcome) { calls.push(["audit", structuredClone(outcome)]); },
+  });
+  const migrated = await repository.load();
+  assert.deepEqual(calls[0], ["backup", legacy]);
+  assert.deepEqual(calls[1], ["commit", 2]);
+  assert.deepEqual(calls[2], ["audit", { action: "migration", ok: true, fromSchema: null, toSchema: 2 }]);
+  assert.deepEqual(migrateServerSettings(migrated), migrated);
+});
+
+test("persisted settings migration refuses to overwrite without recoverable backup support", async () => {
+  const repository = new ServerSettingsRepository({ async load() { return { shell: { program: "/bin/zsh" } }; }, async commit() { assert.fail("must not commit"); } });
+  await assert.rejects(repository.load(), /requires recoverable backup/);
 });

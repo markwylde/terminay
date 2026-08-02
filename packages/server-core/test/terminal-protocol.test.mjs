@@ -50,7 +50,7 @@ test("terminal operation registry binds the client contract to one server-owned 
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty, generateSessionId: () => "session-a" });
   const session = await service.createSession({ projectId: "project-a", cols: 80, rows: 24 });
   const journal = new OrderedEventJournal();
-  const registry = createTerminalOperationRegistry({ service, eventJournal: journal });
+  const registry = createTerminalOperationRegistry({ service, eventJournal: journal, allowUnresolvedTestSessions: true });
   const dispatcher = createOperationDispatcher(registry.operations);
   const identity = { serverId: "server-a", projectId: "project-a", sessionId: session.sessionId };
 
@@ -82,7 +82,7 @@ test("terminal attach clamps initial replay to the requested byte budget", async
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-replay-budget", ptyFactory: pty, generateSessionId: () => "session-replay-budget", maxReplayBytes: 128 });
   const session = await service.createSession({ projectId: "project-replay-budget", cols: 80, rows: 24 });
-  const registry = createTerminalOperationRegistry({ service, eventJournal: new OrderedEventJournal() });
+  const registry = createTerminalOperationRegistry({ service, eventJournal: new OrderedEventJournal(), allowUnresolvedTestSessions: true });
   const dispatcher = createOperationDispatcher(registry.operations);
   const identity = { serverId: "server-replay-budget", projectId: "project-replay-budget", sessionId: session.sessionId };
 
@@ -111,7 +111,7 @@ test("protocol client close releases its resize lease without terminating the se
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-resize-close", ptyFactory: pty, generateSessionId: () => "session-resize-close" });
   const session = await service.createSession({ projectId: "project-resize-close", cols: 80, rows: 24 });
-  const registry = createTerminalOperationRegistry({ service, eventJournal: new OrderedEventJournal() });
+  const registry = createTerminalOperationRegistry({ service, eventJournal: new OrderedEventJournal(), allowUnresolvedTestSessions: true });
   const dispatcher = createOperationDispatcher(registry.operations);
   const identity = { serverId: "server-resize-close", projectId: "project-resize-close", sessionId: session.sessionId };
 
@@ -141,7 +141,7 @@ test("protocol client close releases its resize lease without terminating the se
 test("terminal detach releases its resize lease for the next authenticated client", async () => {
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-resize-detach", ptyFactory: pty, generateSessionId: () => "session-resize-detach" });
-  const registry = createTerminalOperationRegistry({ service, eventJournal: new OrderedEventJournal() });
+  const registry = createTerminalOperationRegistry({ service, eventJournal: new OrderedEventJournal(), allowUnresolvedTestSessions: true });
   const dispatcher = createOperationDispatcher(registry.operations);
   const session = await service.createSession({ projectId: "project-resize-detach", cols: 80, rows: 24 });
   const identity = { serverId: "server-resize-detach", projectId: "project-resize-detach", sessionId: session.sessionId };
@@ -173,7 +173,7 @@ test("terminal detach releases its resize lease for the next authenticated clien
 test("terminal creation is a write-scoped server operation with a server-owned session id", async () => {
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-create", ptyFactory: pty, generateSessionId: () => "session-created" });
-  const registry = createTerminalOperationRegistry({ service, eventJournal: new OrderedEventJournal() });
+  const registry = createTerminalOperationRegistry({ service, eventJournal: new OrderedEventJournal(), allowUnresolvedTestSessions: true });
   const dispatcher = createOperationDispatcher(registry.operations);
 
   const created = await dispatcher.command(request("terminal.create", { projectId: "project-create", cwd: "/workspace", cols: 120, rows: 40 }, "create-1"));
@@ -193,7 +193,7 @@ test("framed ServerConnection exposes server-owned terminal operations through t
   const service = new TerminalService({ serverId: "server-framed", ptyFactory: pty, generateSessionId: () => "session-framed" });
   const session = await service.createSession({ projectId: "project-framed", cols: 80, rows: 24 });
   const journal = new OrderedEventJournal();
-  const registry = createTerminalOperationRegistry({ service, eventJournal: journal });
+  const registry = createTerminalOperationRegistry({ service, eventJournal: journal, allowUnresolvedTestSessions: true });
   const pair = createInMemoryTransportPair();
   const server = createServerCore({
     serverId: "server-framed",

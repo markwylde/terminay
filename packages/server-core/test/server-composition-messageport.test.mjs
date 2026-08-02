@@ -160,6 +160,7 @@ async function closeQuietly(client, server, serverTask, transports) {
 test("server-core composition dispatches terminal operations through a MessagePort-shaped boundary", async () => {
   const pty = createPtyFactory();
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "embedded-server",
     serverVersion: "test",
     capabilities: ["terminal"],
@@ -274,6 +275,7 @@ test("server-core composition dispatches terminal operations through a MessagePo
 test("composition shutdown closes active transport connections before the PTY authority", async () => {
   const pty = createPtyFactory();
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "shutdown-server",
     serverVersion: "test",
     capabilities: [],

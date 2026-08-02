@@ -34,6 +34,12 @@ export interface PanelActivationRequest {
 	readonly projectId: string;
 	readonly panelId: string;
 }
+export interface PanelSplitRequest {
+	readonly projectId: string;
+	readonly panelId: string;
+	readonly direction: 'horizontal' | 'vertical';
+	readonly weight?: number;
+}
 export interface PanelUpdateRequest {
 	readonly panelId: string;
 	readonly patch: Readonly<{
@@ -90,6 +96,10 @@ export interface ProjectPresentationUpdateRequest {
 	readonly root: string;
 	readonly color: string;
 	readonly icon: string;
+}
+export interface ProjectShellProfileUpdateRequest {
+	readonly projectId: string;
+	readonly profileId?: string;
 }
 
 /** Feature-owned workspace facade over the transport-neutral client. It keeps
@@ -155,6 +165,25 @@ export class WorkspaceClient {
 			},
 			options,
 		);
+	}
+
+	async splitPanel(
+		request: PanelSplitRequest,
+		options: WorkspaceCommandOptions = {},
+	): Promise<void> {
+		if (!isBoundedId(request.projectId) || !isBoundedId(request.panelId) ||
+			(request.direction !== 'horizontal' && request.direction !== 'vertical') ||
+			(request.weight !== undefined && (!Number.isFinite(request.weight) || request.weight <= 0 || request.weight >= 1)))
+			throw new TypeError('panel split request is invalid');
+		await this.client.command('workspace.command', {
+			command: {
+				type: 'panel.split',
+				projectId: request.projectId,
+				panelId: request.panelId,
+				direction: request.direction,
+				...(request.weight === undefined ? {} : { weight: request.weight }),
+			},
+		}, options);
 	}
 
 	async createProject(
@@ -446,6 +475,20 @@ export class WorkspaceClient {
 			},
 			options,
 		);
+	}
+
+	async setProjectShellProfile(
+		request: ProjectShellProfileUpdateRequest,
+		options: WorkspaceCommandOptions = {},
+	): Promise<WorkspaceViewCommandResult> {
+		if (!isBoundedId(request.projectId) || (request.profileId !== undefined && !isBoundedId(request.profileId)))
+			throw new TypeError('project shell profile update is invalid');
+		const response = await this.client.command<JsonValue>(
+			request.profileId === undefined ? 'project.shell-profile.clear' : 'project.shell-profile.set',
+			{ projectId: request.projectId, ...(request.profileId === undefined ? {} : { profileId: request.profileId }) },
+			options,
+		);
+		return asWorkspaceViewCommandResult(response.result);
 	}
 
 	/** Native window compatibility can create a logical view, but it must not
