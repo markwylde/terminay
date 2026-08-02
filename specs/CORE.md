@@ -57,21 +57,31 @@ process. One runtime-validated application protocol carries commands, events,
 terminal streams, and bounded content over authenticated local or WebRTC
 transports.
 
-Every server bundles the complete responsive workspace UI that matches its
-runtime and protocol version.
+Every server bundles the complete responsive workspace UI and matching client
+library for its runtime and application-protocol version. That bundle is the
+only full workspace application: browser and Desktop hosts bootstrap, verify,
+and run the selected server's bundle instead of supplying an independently
+versioned workspace renderer.
 
 ### Client hosts
 
-Terminay Desktop and `web.terminay.com` are connection hosts around the shared
-server-bundled workspace UI.
+Terminay Desktop and `web.terminay.com` are protocol-blind connection hosts
+around the shared server-bundled workspace UI. They own connection bootstrap,
+credential protection, verified bundle installation, and host presentation;
+they do not interpret or persist application-protocol workspace state.
 
 Desktop adds native windows, embedded-server supervision, application updates,
 operating-system integration, and secure credential storage. It opens on the
 embedded server connection named **Local** and can open other server
-connections in separate windows.
+connections in separate windows. Every Local or remote connection window runs
+the selected server's exact verified bundle over an opaque host-provided byte
+transport. A separate, capability-negotiated host bridge provides optional
+native presentation without becoming a server or workspace API.
 
-The web host has no local server. It adds, remembers, opens, and manages remote
-connections in the browser.
+The web host has no local server. Its stable shell adds, remembers, opens, and
+manages remote connections, establishes the compatible bootstrap transport,
+and installs the selected server's bundle into an isolated session origin. It
+does not ship a second full workspace build.
 
 ### Hosted services
 

@@ -1,3 +1,5 @@
+import type { TerminayHostCompatibilityRequirements } from "@terminay/protocol";
+
 export interface UiBundleAsset {
   readonly contentType: string;
   readonly hash: string;
@@ -17,6 +19,10 @@ export interface UiBundleManifest {
    * host shell to infer from the asset contents.
    */
   readonly contentSecurityPolicy: string;
+  /** Present on current manifests and included in the bundle identity. Legacy
+   * manifests remain readable only for bounded migration/recovery paths. */
+  readonly bundleFormatVersion?: 1;
+  readonly hostCompatibility?: TerminayHostCompatibilityRequirements;
   readonly assets: readonly UiBundleAsset[];
 }
 
@@ -26,6 +32,16 @@ export interface UiBundleLimits {
   readonly maxTotalBytes?: number;
   readonly maxPathBytes?: number;
   readonly maxContentTypeBytes?: number;
+  /** Launch boundaries set this true. Store migration may read a legacy
+   * manifest without treating it as launch-compatible. */
+  readonly requireHostCompatibility?: boolean;
+}
+
+export interface UiBundleIdentityMetadata {
+  readonly bundleFormatVersion: 1;
+  readonly protocolVersion: string;
+  readonly serverVersion: string;
+  readonly hostCompatibility: TerminayHostCompatibilityRequirements;
 }
 
 export interface UiBundleAssetReader {
@@ -37,4 +53,8 @@ export interface VerifiedUiBundle {
   read(path: string): Uint8Array;
 }
 
-export type UiBundleErrorCode = "validation" | "limit" | "not_found" | "integrity";
+export type UiBundleErrorCode =
+  | "validation"
+  | "limit"
+  | "not_found"
+  | "integrity";

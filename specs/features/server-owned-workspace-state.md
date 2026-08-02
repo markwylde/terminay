@@ -70,6 +70,21 @@ device:
 Client-local state must not be required to recover project membership, panel
 identity, or a live terminal after reconnect.
 
+Desktop persistence is allowlisted to non-secret connection profiles,
+OS-protected device credentials, native window geometry, exact
+window-to-server/view bindings, verified content-addressed bundle caches,
+application update state, OS permission decisions, and explicitly
+device-specific preferences. It does not persist workspace snapshots,
+application-protocol DTOs, project roots, panel state, terminal state, server
+settings, or server capability projections as a second authority. A cached
+projection used while connected is disposable and is always resynchronized
+from the selected server.
+
+Browser connection-host persistence follows the same ownership rule. Manager
+storage contains only sanitized profiles; origin-bound credentials, verified
+bundle caches, and ephemeral renderer state remain partitioned by the exact
+server session origin.
+
 The temporary Desktop compatibility lifecycle test recreates a renderer context
 and removes its native-window binding while retaining one server-scoped
 `TerminayClient` and terminal attachment. The client remains connected and the
@@ -131,6 +146,12 @@ application protocol:
 Client hosts retain native-only operations such as BrowserWindow lifecycle,
 application updates, operating-system clipboard/dialogs, external-link
 confirmation, and local credential storage.
+
+The host may map a local native window or browser tab to a server-owned logical
+view, but that mapping is presentation metadata only. Opening, focusing, or
+closing a native window does not create, mutate, transfer, or delete server
+workspace state unless the user separately invokes the corresponding typed
+workspace command.
 
 Dictation is split deliberately: the client captures microphone audio after
 local permission, while server policy, provider credentials, transcription,
@@ -238,6 +259,8 @@ interrupted or exited.
 - No durable persistence of every ephemeral UI interaction.
 - No dependence on Electron window ids, browser tab ids, tab titles, or current
   focus for authorization.
+- No Electron-owned mirror of server workspace state or feature-specific
+  compatibility database.
 
 ## Acceptance outcomes
 

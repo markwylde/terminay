@@ -31,6 +31,18 @@ duplicate every new feature and produce incompatible behaviour.
 - [Server settings, secrets, and macros](../tasks_completed/14-server-settings-secrets-and-macros.md)
 - [Server AI metadata and dictation](../tasks_completed/15-server-ai-and-dictation.md)
 
+## Coordination
+
+[Task 27](./27-server-bundle-host-contracts.md),
+[Task 28](./28-desktop-server-bundle-host-and-state.md), and
+[Task 29](./29-browser-host-and-cross-version-convergence.md) own the stable
+bundle/host contracts, adoption of the verified server bundle by normal
+Desktop/web startup, host-state reduction, cross-version evidence, and deletion
+of the legacy Electron bootstrap. This task continues to own the one shared
+responsive component tree and visual/feature parity gates. Completion evidence
+must exercise that tree through those production server-bundle launch paths
+rather than a separate fixture or compatibility renderer.
+
 ## Work slices
 
 ### Client architecture
@@ -165,11 +177,13 @@ duplicate every new feature and produce incompatible behaviour.
     remote renderer contains neither raw socket sends nor `WebSocket`
     construction. Evidence: `scripts/terminal-authority-boundary.test.mjs`.
 - [ ] Make the production Electron and web hosts render the same extracted
-  workspace component tree. Electron and authenticated web now both enter the
+  workspace component tree from the selected server's exact verified bundle.
+  Electron and authenticated web now both enter the
   `ConnectedRendererWorkspace -> App` production tree, and the retired
   `ServerWorkspaceSurface` path is deleted. This parent remains open until the
   route-marker/`legacyFallback` wrapper is replaced by the extracted shared
-  route tree and strict visual proof closes the parity gate. Evidence:
+  route tree, Tasks 28–29 make that bundle the normal Desktop/web launch path,
+  and strict visual proof closes the parity gate. Evidence:
   `src/rendererRuntime.tsx`, `src/web/main.tsx`,
   `src/web/ConnectedWebRendererWorkspace.tsx`,
   `src/shared/ConnectedRendererWorkspace.tsx`,

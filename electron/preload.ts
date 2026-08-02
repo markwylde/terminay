@@ -1,3 +1,7 @@
+import {
+	createTerminayHostBytePacket,
+	parseTerminayHostBytePacket,
+} from '@terminay/protocol';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { MacroDefinition } from '../src/types/macros';
 import type { TerminalSettings } from '../src/types/settings';
@@ -229,20 +233,13 @@ ipcRenderer.on(
 				listener(null);
 		};
 		port.onmessage = (portEvent) => {
-			const packet = portEvent.data as {
-				readonly type?: unknown;
-				readonly version?: unknown;
-				readonly serverId?: unknown;
-				readonly frame?: unknown;
-			};
-			const frame = asServerFrame(packet.frame);
-			if (
-				packet.type !== 'terminay.server-frame' ||
-				packet.version !== 1 ||
-				packet.serverId !== connection.serverId ||
-				frame === undefined ||
-				frame.byteLength === 0
-			) {
+			let frame: Uint8Array;
+			try {
+				frame = parseTerminayHostBytePacket(
+					portEvent.data,
+					connection.serverId,
+				).frame;
+			} catch {
 				for (const listener of serverFrameListeners.get(connection.serverId) ??
 					[])
 					listener(null);
@@ -900,12 +897,7 @@ contextBridge.exposeInMainWorld(
 			) {
 				throw new TypeError('server frame must be bounded non-empty bytes');
 			}
-			port.postMessage({
-				type: 'terminay.server-frame',
-				version: 1,
-				serverId,
-				frame: bytes,
-			});
+			port.postMessage(createTerminayHostBytePacket(serverId, bytes));
 		},
 		onServerFrame: (serverId: unknown, listener: unknown) => {
 			if (
