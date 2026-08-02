@@ -150,6 +150,18 @@ export interface TerminalExitMetadata {
 export interface TerminalSessionSnapshot extends TerminalIdentity {
 	/** Canonical server-owned working directory selected at process creation. */
 	readonly cwd: string;
+	/** Safe immutable launch metadata. Environment values are intentionally not
+	 * retained in this snapshot. */
+	readonly launch?: Readonly<{
+		profileId: string;
+		profileRevision: number;
+		profileName: string;
+		targetSummary: string;
+		icon?: string;
+		color?: string;
+		workspaceRevision: number;
+		settingsRevision: number;
+	}>;
 	readonly status: TerminalSessionStatus;
   readonly createdAt: number;
   readonly outputPosition: number;
@@ -227,9 +239,8 @@ export interface TerminalServiceOptions extends TerminalServiceLimits {
   /** Host-owned base environment for every terminal. It is never client input;
    * per-session values and lifecycle credentials are merged over it. */
   readonly defaultEnvironment?: Readonly<Record<string, string | undefined>>;
-  /** Host-resolved shell used when a trusted caller does not specify one.
-   * Keeping this callback host-owned lets Desktop apply current settings while
-   * server-core remains independent of the operating system and settings UI. */
+  /** @internal Compatibility hook for low-level TerminalService tests only.
+   * Production launch policy belongs to TerminalLaunchResolver. */
   readonly resolveDefaultShell?: () => Readonly<{
     shellPath: string;
     args?: readonly string[];
