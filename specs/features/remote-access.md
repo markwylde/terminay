@@ -99,7 +99,10 @@ stop. Loopback HTTP is permitted only for local development; non-loopback
 exposure requires HTTPS.
 For local hosted-transport compatibility tests, HTTP names beneath the reserved
 `.localhost` suffix are loopback origins. Each session subdomain remains a
-distinct origin and must not be canonicalized to bare `localhost`.
+distinct origin and must not be canonicalized to bare `localhost`. The
+desktop-owned local signaling socket resolves session `.localhost` subdomains to
+loopback without changing the canonical signaling URL, Host header, or
+application origin.
 
 Stopping WebRTC exposure does not stop an independently enabled direct listener,
 and stopping the direct listener does not stop WebRTC or the private Local
