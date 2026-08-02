@@ -91,6 +91,8 @@ test("web host starts disconnected, persists only profile metadata, and opens th
   assert.deepEqual(opened.at(-1), { url: WEB_MANAGER_ORIGIN, target: "_blank" });
   const localHttp = host.addConnection({ id: "local-http", serverId: "srv-local", label: "Loopback", origin: "http://127.0.0.1:4317" });
   assert.equal(localHttp.origin, "http://localhost:4317");
+  const localSession = host.addConnection({ id: "local-session", serverId: "srv-session", label: "Loopback session", origin: "http://session-a.localhost:4317" });
+  assert.equal(localSession.origin, "http://session-a.localhost:4317");
   assert.throws(() => host.addConnection({ id: "plain-http", serverId: "srv", label: "Plain", origin: "http://server.example.test" }), /HTTPS or loopback HTTP/);
 });
 

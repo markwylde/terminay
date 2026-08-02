@@ -853,10 +853,7 @@ function requireReconnectOrigin(value: string): string {
 	} catch {
 		throw new TypeError('reconnect origin is invalid');
 	}
-	const loopback =
-		parsed.hostname === 'localhost' ||
-		parsed.hostname === '127.0.0.1' ||
-		parsed.hostname === '[::1]';
+	const loopback = isLoopbackHostname(parsed.hostname);
 	if (
 		(parsed.protocol !== 'https:' &&
 			!(parsed.protocol === 'http:' && loopback)) ||
@@ -889,7 +886,7 @@ function requireReconnectSigningOrigin(value: string): string {
 
 function reconnectOriginAliases(origin: string): readonly string[] {
 	const parsed = new URL(origin);
-	if (parsed.protocol !== 'http:' || !isLoopbackHostname(parsed.hostname))
+	if (parsed.protocol !== 'http:' || !isLoopbackAddressAlias(parsed.hostname))
 		return [origin];
 	const port = parsed.port === '' ? '' : `:${parsed.port}`;
 	return [
@@ -1151,13 +1148,22 @@ function requireSessionOrigin(value: string): string {
 }
 
 function canonicalBrowserServerOrigin(parsed: URL): string {
-	if (parsed.protocol !== 'http:' || !isLoopbackHostname(parsed.hostname))
+	if (parsed.protocol !== 'http:' || !isLoopbackAddressAlias(parsed.hostname))
 		return parsed.origin;
 	const port = parsed.port === '' ? '' : `:${parsed.port}`;
 	return `http://localhost${port}`;
 }
 
 function isLoopbackHostname(hostname: string): boolean {
+	return (
+		hostname === 'localhost' ||
+		hostname.endsWith('.localhost') ||
+		hostname === '127.0.0.1' ||
+		hostname === '[::1]'
+	);
+}
+
+function isLoopbackAddressAlias(hostname: string): boolean {
 	return (
 		hostname === 'localhost' ||
 		hostname === '127.0.0.1' ||
