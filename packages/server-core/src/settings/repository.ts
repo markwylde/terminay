@@ -29,8 +29,21 @@ export class ServerSettingsRepository {
     this.current = state;
     this.loaded = true;
     if (raw !== undefined && !sameJson(raw, state)) {
-      if (this.backend.backup !== undefined) await this.backend.backup(state);
-      await this.backend.commit(state);
+      if (this.backend.backup === undefined) {
+        this.current = undefined;
+        this.loaded = false;
+        throw new Error("settings migration requires recoverable backup support");
+      }
+      const fromSchema = typeof raw === "object" && raw !== null && !Array.isArray(raw) && Number.isSafeInteger((raw as Record<string, unknown>).schemaVersion)
+        ? ((raw as Record<string, number>).schemaVersion as number) : null;
+      try {
+        await this.backend.backup(cloneSettings(raw));
+        await this.backend.commit(state);
+        await this.backend.audit?.({ action: "migration", ok: true, fromSchema, toSchema: SETTINGS_SCHEMA_VERSION });
+      } catch (error) {
+        await this.backend.audit?.({ action: "migration", ok: false, fromSchema, toSchema: SETTINGS_SCHEMA_VERSION });
+        throw error;
+      }
     }
     return cloneSettings(state);
   }
@@ -44,6 +57,12 @@ export class ServerSettingsRepository {
   get settings(): SettingsObject { return this.state.settings; }
 
   snapshot(): ServerSettingsState { return this.state; }
+
+  commandOutcome(commandId: string | undefined): SettingsApplyResult | undefined {
+    if (commandId === undefined) return undefined;
+    const outcome = this.outcomes.get(commandId);
+    return outcome === undefined ? undefined : cloneSettings(outcome);
+  }
 
   /** Subscribe to committed server-setting snapshots. Observer failures are
    * isolated so a policy consumer cannot roll back a persisted update. */

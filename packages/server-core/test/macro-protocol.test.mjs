@@ -95,6 +95,7 @@ for (const kind of ["local", "remote"]) {
     const repository = new MacroRepository(createMemoryBackend());
     const runner = new MacroRunner({ maxDelayMs: 10_000 });
     const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
       serverId: target.serverId,
       serverVersion: "test",
       capabilities: ["macros"],
@@ -180,6 +181,7 @@ test("macro disconnect policy is applied by the server connection cleanup", asyn
   const repository = new MacroRepository(createMemoryBackend());
   const runner = new MacroRunner({ maxDelayMs: 10_000 });
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: target.serverId,
     serverVersion: "test",
     capabilities: ["macros"],

@@ -39,12 +39,13 @@ export function createSettingsOperationRegistry(
   };
 
   async function get(_request: QueryRequest): Promise<JsonValue> {
-    return asJson(await repository.load());
+    return asJson(publicSettingsState(await repository.load()));
   }
 
   async function update(request: CommandRequest): Promise<{ result: JsonValue; revision: number }> {
     const payload = objectPayload(request.envelope.payload);
     if (!isSettingsObject(payload.settings)) throw protocolError("validation", "settings update payload is invalid");
+    if (Reflect.has(payload.settings, "shellProfiles")) throw protocolError("validation", "shell profiles require the dedicated profile operations");
     const result = await repository.update(payload.settings, request.envelope.expectedRevision, request.envelope.commandId);
     return applied(result);
   }
@@ -55,6 +56,7 @@ export function createSettingsOperationRegistry(
     if (path !== undefined && (typeof path !== "string" || path.length === 0 || path.length > 512)) {
       throw protocolError("validation", "settings reset path is invalid");
     }
+    if (path === undefined || path === "shellProfiles" || path.startsWith("shellProfiles.")) throw protocolError("validation", "shell profiles require the dedicated profile reset operation");
     const result = await repository.reset({
       expectedRevision: request.envelope.expectedRevision,
       commandId: request.envelope.commandId,
@@ -70,10 +72,24 @@ export function createSettingsOperationRegistry(
         currentCursor: result.conflict.currentCursor,
       }, true);
     }
-    const state = asJson(result.state);
+    const state = asJson(publicSettingsState(result.state));
     eventJournal.append(SETTINGS_EVENTS.changed, state);
     return { result: state, revision: result.revision };
   }
+}
+
+/** Environment overlay values are available only through the privileged
+ * shellProfiles.detail operation, never broad settings snapshots/events. */
+function publicSettingsState(state: Awaited<ReturnType<ServerSettingsRepository["load"]>>) {
+  const cloned = structuredClone(state);
+  const shellProfiles = cloned.settings.shellProfiles;
+  if (isSettingsObject(shellProfiles) && Array.isArray(shellProfiles.profiles)) {
+    (cloned.settings as Record<string, JsonValue>).shellProfiles = {
+      ...shellProfiles,
+      profiles: shellProfiles.profiles.map((profile) => isSettingsObject(profile) ? { ...profile, environment: {} } : profile),
+    };
+  }
+  return cloned;
 }
 
 function objectPayload(value: JsonValue): Record<string, JsonValue> {

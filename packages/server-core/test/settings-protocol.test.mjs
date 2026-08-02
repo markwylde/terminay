@@ -62,6 +62,6 @@ test("settings protocol exposes revisioned state and publishes committed changes
     context,
   });
   assert.equal(conflict.ok, false);
-  assert.equal(conflict.error.code, "conflict");
+  assert.equal(conflict.error.code, "validation");
   assert.equal(repository.revision, 1);
 });
