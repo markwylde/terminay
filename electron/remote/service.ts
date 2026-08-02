@@ -75,7 +75,7 @@ type RemoteSizeOverride =
  * path directly.  Keep the structural `app` fallback only for the untouched
  * legacy Desktop composition while its final WebRTC parity gate remains open.
  */
-type RemoteAccessServiceOptions = {
+export type RemoteAccessServiceOptions = {
   app?: { getPath: (name: 'userData') => string }
   createWebRtcHostWindow: (ownerId: number) => {
     close: () => void
