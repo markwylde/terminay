@@ -19,6 +19,11 @@ its embedded server so other desktop or browser clients can pair with it.
   server identity/fingerprint, last-opened time, and status.
 - A **connection window** is an Electron window or browser view bound to one
   server and optionally one logical workspace view.
+- A **host shell** owns connection bootstrap, protected credentials, verified
+  bundle installation, and native/browser presentation. It does not implement
+  workspace features or interpret the application protocol.
+- A **host capability** is one optional, versioned presentation or OS action
+  supplied by a trusted shell to a bound server-bundled renderer.
 - **Expose this server** makes an authorized server available for remote
   pairing/reconnect. It does not change which server the current window renders.
 - **Disconnect** closes the client transport. It does not stop the server or
@@ -51,12 +56,14 @@ The menu contains:
   show the host-provided failure reason instead of logging only to the native
   terminal.
 
-The exposure control reports mode capability separately from runtime state.
-It must not label an unavailable mode **Ready**, offer **Expose & show QR**, or
-wait for a start-time exception when the host already knows that the required
-listener, WebRTC runtime, or authenticated signaling authority is absent.
-Unavailable modes remain visible for diagnosis and link to their configuration
-or build requirement, but their start actions are disabled.
+The primary exposure control represents server-owned WebRTC availability. It
+must not label WebRTC **Ready**, offer **Expose & show QR**, silently substitute
+a LAN listener, or wait for a start-time exception when the host already knows
+that the WebRTC runtime or authenticated signaling authority is absent. An
+unavailable route remains visible for diagnosis and links to its configuration
+or build requirement, but its start action is disabled. Optional direct-network
+listening is an independent advanced control, not a QR type or alternate
+meaning of **Expose this server…**.
 
 The shared browser-safe UI package projects this model into an accessible
 `menuitemradio` list with stable ordering, position/set-size metadata, and
@@ -81,11 +88,17 @@ status must not be conflated with terminal or agent attention.
 
 - Startup supervises the embedded server and opens/focuses a window bound to
   its **Local** profile.
+- Desktop launches the exact verified workspace bundle owned by that selected
+  server for every Local and remote connection window. Local obtains the bytes
+  from its pinned embedded-server artifact; remote obtains them through the
+  authenticated server asset channel. Desktop never runs its independently
+  packaged Local workspace renderer against a different remote server.
 - The initial native window is explicitly bound to immutable Local and the
   header reports the selected profile label/status (including Local failure or
-  offline state), never a transport name. Local uses authenticated loopback
-  transport and does not require internet access, hosted signaling, or WebRTC;
-  remote profiles require their own selected transport.
+  offline state), never a transport name. Local uses the private authenticated
+  Desktop host transport and does not require a network listener, internet
+  access, hosted signaling, or WebRTC; remote profiles require their own
+  selected transport.
 - A Desktop installation has one embedded Local server identity and may
   remember any number of remote profiles.
 - A native window is bound to exactly one server at a time. Its title and
@@ -106,11 +119,10 @@ status must not be conflated with terminal or agent attention.
   that authenticated first session to enroll reconnect material before saving
   the profile as switchable. One-time URLs are never stored or reused for later
   switching.
-- A remote HTTP event feed is a replayable projection channel, not the command
-  transport's lifetime signal. If that feed ends unexpectedly, Desktop and Web
-  reconnect it from the last observed revision while keeping independent
-  query/command responses live; an event-stream interruption must not turn an
-  in-flight command into an unknown outcome.
+- Desktop keeps application traffic opaque after bootstrap. Its local and
+  remote adapters provide bounded byte transports to the server-bundled
+  client; they do not decode, translate, persist, or synthesize feature
+  commands, results, workspace snapshots, or events.
 
 The Desktop host foundation keeps the connection manager deliberately separate
 from server workspace state. A profile record contains only its stable server
@@ -134,14 +146,23 @@ does not replace, reconnect, or resynchronize that window's Local client. Its
 projects, terminal attachments, and in-flight protocol operations continue
 without interruption.
 
-Native actions are exposed through a versioned, source-bound host bridge. Each
-request is checked against its bound window and current connection, rejects
-unknown payload fields, and requires a user gesture for actions that can read
-or change native state. The bridge surface is limited to window/view focus and
-close, menu commands, clipboard, approved file selection, HTTPS external
-links, server-owned reveal tokens, update status, and notifications. Server-bundled renderers
-receive a `TerminayClient` and capability provider rather than Electron or
-generic IPC imports.
+Native actions are exposed through a versioned, source-bound host bridge. The
+host injects a frozen context containing the bridge version, host kind, exact
+bound server/profile identity, and individually negotiated capabilities. A
+renderer cannot enable Desktop behavior with a URL/query parameter, server
+payload, local setting, or claimed mode. Each request is checked against its
+bound window and current connection, rejects unknown payload fields, and
+requires a user gesture for actions that can read or change native state.
+
+The bridge surface is limited to semantic window/view focus, route
+presentation and close, menu commands, clipboard write, approved file
+selection, HTTPS external links, server-owned reveal tokens, update status,
+notifications, and explicitly declared OS integration. A shared UI requests a
+route with a presentation disposition; Desktop may open/focus a native window,
+while a browser uses an in-page route or browser tab. The bridge never exposes
+`BrowserWindow`, arbitrary paths, raw transport handles, generic IPC, or server
+application commands. Server-bundled renderers receive a `TerminayClient` byte
+endpoint and capability provider rather than Electron APIs.
 
 A normal arrangement may therefore be one Local window plus three windows
 connected to three remote servers.
@@ -162,11 +183,9 @@ The Web manager renders the same action body through `WebConnectionHost`;
 profile metadata remains at the exact manager origin, storage events rebuild
 the sanitized projection in other tabs, and one-time pairing fragments never
 enter localStorage. The connected shared workspace enables the Connections
-route with those same persisted callbacks. Desktop exposes a tested
-`createDesktopServerUiWindow` composition seam, but the current legacy
-Electron bootstrap has no server-bundle window caller to adopt it yet; that
-authority replacement remains explicit parity work rather than creating a
-second BrowserWindow owner.
+route with those same persisted callbacks. Desktop uses the same production
+server-UI window composition for normal Local and remote startup; there is no
+parallel legacy workspace-window owner.
 
 ## Web connection host
 
@@ -176,6 +195,10 @@ second BrowserWindow owner.
   profiles, offline/revoked status, and clear recovery.
 - Selecting a profile opens it in the current browser view; an explicit action
   can open another browser tab.
+- The host shell contains connection management, origin-isolated credential
+  bootstrap, WebRTC/signaling compatibility, bundle verification/installation,
+  and safe launch/failure UI only. It does not contain a full fallback
+  workspace application.
 - The host stores only non-secret connection metadata in localStorage or an
   equivalent browser store.
 - Origin-bound device keys and reconnect grants remain in IndexedDB/WebCrypto
@@ -242,6 +265,12 @@ credentials/query state, new windows, downloads, permission prompts, and custom
 protocol handlers are denied by default. A privileged host may explicitly allow
 one guarded request through the native policy boundary.
 
+The bundle manifest declares a compatible host-bridge range, minimum execution
+runtime, and required/optional host capabilities. Missing optional capabilities
+use browser-equivalent in-page behavior or a clear unavailable action. Missing
+required compatibility blocks launch before committing connection state and
+identifies whether the host or server must be upgraded.
+
 ## Adding and pairing a connection
 
 1. The user chooses **Add connection…** and pastes/opens a secure pairing URL,
@@ -275,15 +304,25 @@ separate operation against that origin.
 
 ## Exposing a server
 
-- Embedded Local servers are loopback-only and not advertised by default.
+- Embedded Local servers accept only the private Desktop transport and are not
+  advertised by default.
 - **Expose this server…** is available only with server administrative
   capability.
 - The flow configures/validates the PIN or approval policy, starts WebRTC
   availability, and shows a short-lived pairing URL/QR, expiry, relay state,
   paired devices, live connections, and revoke/stop controls.
+- The current Local MessagePort remains connected throughout exposure and is
+  never presented as a selectable exposure route.
+- The visible server/session origin is non-secret metadata. **Copy pairing
+  link** and the QR contain the complete short-lived fragment credential and
+  expiry; the UI does not present the bare origin as a usable connection URL.
+- An optional **Direct network listener** is configured and started/stopped
+  separately in advanced settings. It may publish its own origin-bound pairing
+  handoff, but cannot replace or masquerade as WebRTC exposure.
 - Generating a fresh pairing room does not disconnect existing clients.
-- Stopping exposure prevents new remote reconnect/pairing but does not stop the
-  Local server or its local workspace.
+- Stopping WebRTC exposure prevents new WebRTC reconnect/pairing but does not
+  stop the Local server, its private local workspace, or an independently
+  enabled direct network listener.
 - Standalone server CLI and UI use the same exposure/trust model.
 
 ## Responsive workspace behaviour
@@ -352,6 +391,9 @@ Forbidden in connection-manager localStorage, URLs, host messages, and logs:
 - No requirement that browser UI use native popup windows.
 - No independently versioned full workspace application at
   `web.terminay.com`.
+- No renderer-selected `mode=electron` or equivalent privilege switch.
+- No Desktop feature client or persisted workspace mirror used to translate
+  between remote server application versions.
 
 ## Acceptance outcomes
 
@@ -363,6 +405,12 @@ Forbidden in connection-manager localStorage, URLs, host messages, and logs:
   Local option.
 - Direct server URLs and host-embedded sessions run the server's exact bundled
   responsive UI.
+- Local Desktop, remote Desktop, and browser sessions launched against one
+  server report the same verified bundle id; only their transport and declared
+  host capabilities differ.
+- A Desktop shell whose bootstrap, bundle format, byte transport, execution
+  runtime, and required bridge are compatible can connect without understanding
+  that server's application-protocol feature version.
 - Forgetting a profile does not claim to revoke server access; revoking a
   device closes it server-side.
 - Forgetting or revoking an unrelated remote profile leaves an active Local

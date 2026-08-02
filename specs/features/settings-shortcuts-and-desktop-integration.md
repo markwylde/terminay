@@ -25,10 +25,12 @@ configurable keyboard accelerators.
   theme and tab hue, file defaults, sidebar defaults, and shortcut bindings.
 - The Command Bar searches built-in commands and saved macros. Built-ins honour
   the active panel/project requirement and display user-configured shortcuts.
-- Terminay opens dedicated native windows for settings, macros, recordings, and
-  tab/project editing on Desktop. Browser hosts present the same settings,
-  macros, recordings, and edit-tab routes in-page with modal or route
-  semantics appropriate to the viewport.
+- The server-bundled UI requests semantic secondary-route presentation.
+  Desktop opens dedicated native windows for settings, macros, recordings, and
+  tab/project editing only when its negotiated `nativeWindows` capability is
+  present. Browser hosts and compatible Desktop shells without that capability
+  present the same routes in-page with modal or route semantics appropriate to
+  the viewport.
 - Native menus, macOS/Linux integration, external links, reveal actions, and
   application lifecycle are coordinated by Electron. Browser hosts provide a
   visible in-page menu bar for File, Edit, View, and Help so shared commands
@@ -51,9 +53,9 @@ Terminay Desktop continues to own native menus, windows, updater, clipboard,
 dialogs, and OS credential storage. Shared settings/recordings/edit components
 can render as native auxiliary windows on Desktop or in-page routes on web.
 The shared terminal-settings hook reads and observes server settings through
-the transport-neutral `SettingsClient`; a host compatibility adapter may bridge
-legacy preload calls during migration, but shared components do not subscribe
-to preload events directly.
+the transport-neutral `SettingsClient` bundled with the selected server UI;
+the host bridge never answers or translates server settings operations. Shared
+components do not subscribe to preload events directly.
 File-panel diff-layout changes use the same settings command facade and remain
 server-authoritative across the shared UI hosts.
 
