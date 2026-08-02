@@ -14,6 +14,13 @@ export type TerminalDroppedFilePathResolver = (file: unknown) => string | undefi
 export type TerminalDroppedFileUploader = (path: string, bytes: Uint8Array<ArrayBuffer>) => Promise<void>
 export const MAX_TERMINAL_DROP_UPLOAD_BYTES = 4 * 1024 * 1024
 
+function hasControlCharacters(value: string): boolean {
+  return Array.from(value).some(character => {
+    const codePoint = character.codePointAt(0) ?? 0
+    return codePoint <= 31 || codePoint === 127
+  })
+}
+
 export function escapeTerminalPathForShell(path: string): string {
   if (path.length === 0) {
     return "''"
@@ -79,7 +86,7 @@ export async function uploadBrowserTerminalDrop(
     const file = value as { name?: unknown; size?: unknown; arrayBuffer?: unknown }
     if (
       typeof file.name !== 'string' || file.name.length === 0 || file.name.length > 255 ||
-      file.name === '.' || file.name === '..' || file.name.includes('/') || file.name.includes('\\') || /[\u0000-\u001f\u007f]/u.test(file.name) ||
+      file.name === '.' || file.name === '..' || file.name.includes('/') || file.name.includes('\\') || hasControlCharacters(file.name) ||
       typeof file.size !== 'number' || file.size < 0 || file.size > MAX_TERMINAL_DROP_UPLOAD_BYTES ||
       typeof file.arrayBuffer !== 'function'
     ) {
