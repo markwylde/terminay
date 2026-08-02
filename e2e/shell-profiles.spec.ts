@@ -79,10 +79,11 @@ test.describe('shell profiles', () => {
 
 		const settingsWindow = await openShellSettings(appHarness, mainWindow);
 		await expect(
-			settingsWindow.getByText(
-				'Executables and environment values run only on this server.',
-			),
-		).toBeVisible();
+			settingsWindow.locator('.shell-profiles-overview'),
+		).toHaveClass(/settings-group/);
+		await expect(
+			settingsWindow.locator('.shell-profile-list').first(),
+		).toHaveClass(/settings-group/);
 		await expect(
 			settingsWindow.getByLabel('Default shell profile'),
 		).toHaveValue('system');
@@ -280,13 +281,14 @@ test.describe('shell profiles', () => {
 			.poll(
 				async () =>
 					await settingsWindow
-						.locator('.shell-profiles-defaults')
+						.locator('.shell-profiles-overview .settings-row')
+						.first()
 						.evaluate(
 							(element) =>
-								getComputedStyle(element).gridTemplateColumns.split(' ').length,
+								getComputedStyle(element).flexDirection,
 						),
 			)
-			.toBe(1);
+			.toBe('column');
 		await expect(
 			settingsWindow.locator('.shell-profile-card').first(),
 		).toHaveCSS('flex-direction', 'column');
