@@ -11,6 +11,8 @@ export interface TerminalDropData {
 }
 
 export type TerminalDroppedFilePathResolver = (file: unknown) => string | undefined
+export type TerminalDroppedFileUploader = (path: string, bytes: Uint8Array<ArrayBuffer>) => Promise<void>
+export const MAX_TERMINAL_DROP_UPLOAD_BYTES = 4 * 1024 * 1024
 
 export function escapeTerminalPathForShell(path: string): string {
   if (path.length === 0) {
@@ -52,17 +54,45 @@ export function getTerminalDropText(
 export function shouldInterceptTerminalDrop(
   dataTransfer: TerminalDropData,
   resolveDesktopFilePath?: TerminalDroppedFilePathResolver,
+  canUploadBrowserFiles = false,
 ): boolean {
   if (dataTransfer.types.includes('terminay/path')) {
     return true
   }
 
-  // A raw File can only be handled when a privileged Desktop resolver was
-  // explicitly supplied. This prevents browser/server panels from claiming a
-  // drop they cannot turn into a safe terminal path.
-  if (dataTransfer.types.includes('Files') && resolveDesktopFilePath) {
+  // Desktop resolves a native path; web clients must have a server-scoped
+  // uploader before claiming a browser-local File drop.
+  if (dataTransfer.types.includes('Files') && (resolveDesktopFilePath || canUploadBrowserFiles)) {
     return true
   }
 
   return getTerminalDropText(dataTransfer, resolveDesktopFilePath) !== null
+}
+
+export async function uploadBrowserTerminalDrop(
+  files: ArrayLike<unknown>,
+  projectRoot: string,
+  upload: TerminalDroppedFileUploader,
+): Promise<string | null> {
+  const prepared: Array<{ name: string; bytes: Uint8Array<ArrayBuffer> }> = []
+  for (const value of Array.from(files)) {
+    const file = value as { name?: unknown; size?: unknown; arrayBuffer?: unknown }
+    if (
+      typeof file.name !== 'string' || file.name.length === 0 || file.name.length > 255 ||
+      file.name === '.' || file.name === '..' || file.name.includes('/') || file.name.includes('\\') || /[\u0000-\u001f\u007f]/u.test(file.name) ||
+      typeof file.size !== 'number' || file.size < 0 || file.size > MAX_TERMINAL_DROP_UPLOAD_BYTES ||
+      typeof file.arrayBuffer !== 'function'
+    ) {
+      throw new Error('Dropped file cannot be uploaded (maximum 4 MB per file).')
+    }
+    const bytes = new Uint8Array(await (file.arrayBuffer as () => Promise<ArrayBuffer>)())
+    if (bytes.byteLength !== file.size || bytes.byteLength > MAX_TERMINAL_DROP_UPLOAD_BYTES) {
+      throw new Error('Dropped file changed or exceeded the upload limit while being read.')
+    }
+    prepared.push({ name: file.name, bytes })
+  }
+  if (prepared.length === 0) return null
+  for (const file of prepared) await upload(file.name, file.bytes)
+  const separator = projectRoot.endsWith('/') || projectRoot.endsWith('\\') ? '' : '/'
+  return prepared.map(file => escapeTerminalPathForShell(`${projectRoot}${separator}${file.name}`)).join(' ')
 }
