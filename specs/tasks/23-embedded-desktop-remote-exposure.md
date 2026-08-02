@@ -74,14 +74,16 @@ evidence.
   PIN/device enrollment, the embedded authority's live terminal sessions, and
   the embedded server's verified UI bundle. It must not create a hidden
   Electron renderer or expose a renderer preload capability.
-- [x] Update `npm run dev` to deterministically stage and explicitly select the
-  approved runtime. Packaged builds continue to resolve only the staged
-  `resources/webrtc-runtime` directory.
-- [ ] Replace the bootstrap compatibility peer's `api`/`asset`/`terminal`
+- [x] Update `npm run dev` to build the shared workspace dependencies and
+  server-owned UI from a clean checkout before deterministically staging and
+  explicitly selecting the approved runtime. Packaged builds continue to
+  resolve only the staged `resources/webrtc-runtime` directory.
+- [x] Replace the bootstrap compatibility peer's `api`/`asset`/`terminal`
   channels with the canonical `control`/`application`/`terminal`/`assets`
-  session after device authentication. Until that cutover is complete, the
-  compatibility peer is a privileged transport adapter and must not be
-  described as full canonical application conformance.
+  application session after device authentication. The legacy `api` and
+  `asset` bootstrap lanes remain narrowly scoped to enrollment and verified UI
+  installation; the authenticated ticket is consumed exactly once before the
+  embedded `ServerCore` accepts the application lane.
 - [ ] Verify real hosted WebRTC pairing, full workspace/terminal traffic,
   reconnect, revocation, exposure stop, direct ICE, and TURN-required routing
   against the deployed signaling compatibility window. A second Desktop and a
@@ -109,6 +111,9 @@ evidence.
 - A WebRTC-capable build passes the same full application assertions over
   direct and TURN-relayed routes without a fallback to HTTP or legacy Electron
   renderer hosting.
+- The private hosted compatibility gate enters the pairing PIN and completes a
+  canonical application handshake. Stopping at the enrollment dialog is only
+  a bootstrap asset/signaling check and cannot satisfy this acceptance gate.
 
 ## Definition of done
 
