@@ -109,7 +109,7 @@ export class DesktopServerOwnedExposure {
 					serverId: this.serverId,
 					sessionOrigin,
 					pairingUrlFormat:
-						pairingMode === 'webrtc' ? 'hosted-compact' : 'standalone',
+						pairingMode === 'webrtc' ? 'hosted-compact' : 'direct-device',
 					reconnect: {
 						initialRecords: (options.initialReconnectRecords ?? []).filter(
 							(record) =>

@@ -29,6 +29,8 @@ export interface EmbeddedLanExposureOptions {
 	readonly core: unknown;
 	readonly getSettings: () => RemoteAccessSettings;
 	readonly remoteDirectory: string;
+	/** Exact verified browser workspace bundle shipped by this embedded server. */
+	readonly uiBundleDirectory: string;
 	readonly serverId: string;
 	readonly serverVersion: string;
 	readonly onReconnectRecordsChanged?: (
@@ -105,6 +107,7 @@ export class EmbeddedLanExposure {
 				input.exposure.pairing.metadata(input.handoff.roomId)?.state ===
 				'active',
 			acceptCredential: credentials.accept,
+			rootDirectory: this.options.uiBundleDirectory,
 			allowedWebOrigins: [input.sessionOrigin],
 			host: settings.bindAddress.trim() || '0.0.0.0',
 			port,

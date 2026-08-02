@@ -42,6 +42,10 @@ evidence.
   bounded credential handling from that listener.
 - [x] Make listener start/stop/rotation atomic and fail closed; bind, TLS, or
   protocol startup failure must publish no usable pairing URL.
+- [x] Direct-network pairing boots the exact verified browser workspace bundle
+  without requiring an impossible navigation-time Bearer header. The complete
+  fragment-bearing pairing link is visible and copyable, and another Desktop
+  exposes an explicit **Add connection…** action that accepts that link.
 - [x] Persist only the permitted embedded device/reconnect records beneath the
   Desktop data root and restore them against the exact server identity and
   origin.

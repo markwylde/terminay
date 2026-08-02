@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import { createServer } from 'node:net';
 import { expect, test } from './fixtures';
 import { openRemoteMenu } from './support/ui';
 
@@ -7,6 +8,21 @@ function remoteOriginInput(page: Page) {
 		.locator('#section-remote-access-host .settings-row')
 		.filter({ hasText: 'Remote origin' })
 		.locator('input');
+}
+
+async function reserveLoopbackPort(): Promise<number> {
+	const server = createServer();
+	await new Promise<void>((resolve, reject) => {
+		server.once('error', reject);
+		server.listen(0, '127.0.0.1', resolve);
+	});
+	const address = server.address();
+	if (address === null || typeof address === 'string')
+		throw new Error('Unable to reserve a loopback port.');
+	await new Promise<void>((resolve, reject) =>
+		server.close((error) => (error ? reject(error) : resolve())),
+	);
+	return address.port;
 }
 
 async function configureWebRtcHostedDomain(
@@ -223,6 +239,78 @@ test('asks for a Remote Access PIN before generating the QR code', async ({
 	await mainWindow
 		.getByRole('button', { name: /^Stop exposing this server/ })
 		.click();
+});
+
+test('a copied direct pairing link boots the server UI, enrolls, and connects', async ({
+	mainWindow,
+	page,
+}) => {
+	const port = await reserveLoopbackPort();
+	const pairingUrl = await mainWindow.evaluate(async (selectedPort) => {
+		const settings =
+			await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings();
+		await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings(
+			{
+				...settings,
+				remoteAccess: {
+					...settings.remoteAccess,
+					bindAddress: '127.0.0.1',
+					origin: `http://localhost:${selectedPort}`,
+					pairingMode: 'lan',
+				},
+			},
+		);
+		await window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
+			'123456',
+		);
+		const status = await window.terminayRemoteAccessStatusHost.toggleServer();
+		if (!status.lanPairingUrl)
+			throw new Error('Direct exposure did not publish a pairing URL.');
+		return status.lanPairingUrl;
+	}, port);
+
+	expect(pairingUrl).toContain('pairingFlow=device');
+	const previousClipboard = await mainWindow.evaluate(() =>
+		window.terminayClipboardHost?.readText(),
+	);
+	try {
+		await openRemoteMenu(mainWindow);
+		await mainWindow
+			.getByRole('button', { name: 'Show Pairing QR' })
+			.click();
+		const pairingDialog = mainWindow.getByRole('dialog', {
+			name: 'Pair device',
+		});
+		await expect(
+			pairingDialog.locator('.remote-pairing-modal__address-text'),
+		).toHaveText(pairingUrl);
+		await pairingDialog.getByRole('button', { name: 'Copy Link' }).click();
+		await expect
+			.poll(() =>
+				mainWindow.evaluate(() => window.terminayClipboardHost?.readText()),
+			)
+			.toBe(pairingUrl);
+		await pairingDialog
+			.getByRole('button', { name: 'Close Pair Device' })
+			.click();
+	} finally {
+		if (typeof previousClipboard === 'string' && previousClipboard.length > 0)
+			await mainWindow.evaluate(
+				(value) => window.terminayClipboardHost?.writeText(value),
+				previousClipboard,
+			);
+	}
+	await page.goto(pairingUrl);
+	await expect(
+		page.getByRole('dialog', { name: 'Enroll browser device' }),
+	).toBeVisible();
+	expect(page.url()).not.toContain('#');
+	await page.getByLabel('Device name').fill('Direct browser');
+	await page.getByLabel('Pairing PIN').fill('123456');
+	await page.getByRole('button', { name: 'Pair and connect' }).click();
+	await expect(page.locator('.connected-web-renderer-workspace')).toBeVisible({
+		timeout: 20_000,
+	});
 });
 
 test('starts WebRTC remote access from the host menu start button', async ({

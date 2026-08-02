@@ -24,6 +24,12 @@ import {
 } from '../shared/SharedConnectionsRouteBody';
 import '../shared/SharedProductionRoutes.css';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
+import { establishDevicePairing } from '../remote/services/devicePairingFlow';
+import {
+	generateDeviceKeyPair,
+	saveEstablishedPairing,
+} from '../remote/services/deviceKeys';
+import { parsePairingBootstrap } from '../remote/services/pairing';
 import { enrollBrowserDevice } from './deviceEnrollment';
 import {
 	type BrowserConnectionAttempt,
@@ -246,20 +252,28 @@ async function reconnectRequest<T>(
 export default function WebManagerApp() {
 	const [host, setHost] = useState(createHost);
 	const connectModalRef = useRef<HTMLElement | null>(null);
+	const initialPairingUrlRef = useRef<string | null>(null);
 	// A browser reconnect has several asynchronous protocol steps. Keep the
 	// most recent user intent so forgetting a profile (or choosing another one)
 	// cannot let an older attempt revive a discarded server afterwards.
 	const connectionAttemptGate = useRef(new BrowserConnectionAttemptGate());
 	const [, rerender] = useState(0);
-	const [serverUrl, setServerUrl] = useState(() =>
-		window.location.hash.length > 1 ? window.location.href : '',
-	);
+	const [serverUrl, setServerUrl] = useState(() => {
+		if (window.location.hash.length <= 1) return '';
+		const pairingUrl = window.location.href;
+		initialPairingUrlRef.current = pairingUrl;
+		const visible = new URL(pairingUrl);
+		visible.hash = '';
+		window.history.replaceState(null, '', visible);
+		return pairingUrl;
+	});
 	const [error, setError] = useState<string | null>(null);
 	const [status, setStatus] = useState<string | null>(null);
 	const [isConnecting, setIsConnecting] = useState(false);
 	const [pairingRequest, setPairingRequest] = useState<{
 		attempt: BrowserConnectionAttempt;
 		deviceName: string;
+		mode: 'direct' | 'webrtc';
 		origin: string;
 		pairingUrl: string;
 	} | null>(null);
@@ -436,33 +450,43 @@ export default function WebManagerApp() {
 	}
 
 	async function connectServer(
-		event: React.FormEvent<HTMLFormElement>,
+		event?: Pick<React.FormEvent<HTMLFormElement>, 'preventDefault'>,
 	): Promise<void> {
-		event.preventDefault();
+		event?.preventDefault();
 		setError(null);
 		setStatus(null);
 		setIsConnecting(true);
 		let explicitWebRtcUrl: URL | null = null;
+		let explicitDirectDeviceUrl: URL | null = null;
 		try {
 			const pairingUrl = new URL(serverUrl);
 			if (pairingUrl.searchParams.get('transport') === 'webrtc')
 				explicitWebRtcUrl = pairingUrl;
+			if (
+				new URLSearchParams(pairingUrl.hash.slice(1)).get('pairingFlow') ===
+				'device'
+			)
+				explicitDirectDeviceUrl = pairingUrl;
 		} catch {
 			// The generic parser below owns ordinary invalid URL diagnostics.
 		}
-		if (explicitWebRtcUrl !== null) {
+		if (explicitWebRtcUrl !== null || explicitDirectDeviceUrl !== null) {
 			try {
 				// Validate the complete one-time bootstrap before presenting a PIN
 				// form. Generic token parsing must not weaken this transaction.
-				const enrollmentBridge = window.__TERMINAY_BROWSER_ENROLLMENT__;
-				enrollmentBridge?.validatePairingUrl(serverUrl);
+				parsePairingBootstrap(serverUrl);
+				const pairingUrl = explicitWebRtcUrl ?? explicitDirectDeviceUrl!;
 				const attempt = beginConnectionAttempt(
-					`pairing:${explicitWebRtcUrl.origin}`,
+					`pairing:${pairingUrl.origin}`,
 				);
 				setPairingRequest({
 					attempt,
 					deviceName: 'Terminay Remote Browser',
-					origin: `${explicitWebRtcUrl.origin}#transport=webrtc:${explicitWebRtcUrl.origin}`,
+					mode: explicitWebRtcUrl === null ? 'direct' : 'webrtc',
+					origin:
+						explicitWebRtcUrl === null
+							? pairingUrl.origin
+							: `${pairingUrl.origin}#transport=webrtc:${pairingUrl.origin}`,
 					pairingUrl: serverUrl,
 				});
 				setPairingPin('');
@@ -612,6 +636,14 @@ export default function WebManagerApp() {
 		}
 	}
 
+	useEffect(() => {
+		if (initialPairingUrlRef.current === null) return;
+		initialPairingUrlRef.current = null;
+		void connectServer();
+		// The initial fragment is a one-shot bootstrap captured before first render.
+		// State changes from the connection attempt must never replay it.
+	}, []);
+
 	async function submitBrowserEnrollment(
 		event: React.FormEvent<HTMLFormElement>,
 	): Promise<void> {
@@ -624,6 +656,64 @@ export default function WebManagerApp() {
 		}
 		setIsConnecting(true);
 		try {
+			if (pairingRequest.mode === 'direct') {
+				const origin = new URL(pairingRequest.origin).origin;
+				let profile: ConnectionProfile | undefined;
+				await establishDevicePairing({
+					api: {
+						async postJson<TResponse>(pathname: string, body: unknown) {
+							const response = await fetch(new URL(pathname, origin), {
+								body: JSON.stringify(body),
+								headers: { 'content-type': 'application/json' },
+								method: 'POST',
+							});
+							const payload = (await response.json().catch(() => ({}))) as {
+								error?: string;
+							} & TResponse;
+							if (!response.ok)
+								throw new Error(payload.error ?? 'Device pairing failed.');
+							return payload;
+						},
+					},
+					bootstrap: parsePairingBootstrap(pairingRequest.pairingUrl),
+					credentials: {
+						saveEstablishedPairing: async ({ pairing, reconnectGrant }) => {
+								await saveEstablishedPairing(pairing, reconnectGrant);
+								if (reconnectGrant === undefined)
+									throw new Error(
+										'This server did not issue reconnect credentials.',
+									);
+								await reconnectVault.enroll({
+									origin,
+									handle: reconnectGrant.handle,
+									grant: reconnectGrant.grant,
+									signingOrigin: reconnectGrant.origin,
+								});
+							},
+					},
+					deviceName: pairingRequest.deviceName,
+					generateKeyPair: generateDeviceKeyPair,
+					origin,
+					pairingPin,
+				});
+				if (!connectionAttemptGate.current.isCurrent(pairingRequest.attempt))
+					throw new Error('This pairing attempt is no longer active.');
+				profile = host.profiles
+					.snapshot()
+					.profiles.find((candidate) => candidate.origin === origin);
+				profile ??= host.addConnection({
+					id: createProfileId(new URL(origin).hostname),
+					serverId: new URL(origin).hostname,
+					label: new URL(origin).host,
+					origin,
+					status: 'connecting',
+				});
+				setPairingPin('');
+				setPairingRequest(null);
+				refresh();
+				await openConnection(profile.id);
+				return;
+			}
 			await enrollBrowserDevice({
 				deviceName: pairingRequest.deviceName,
 				isCurrent: () =>

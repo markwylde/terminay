@@ -5754,20 +5754,26 @@ function App({
 									</div>
 
 									<div className="remote-pairing-modal__address-section">
+										<div className="remote-pairing-modal__address-label">
+											Pairing link
+										</div>
 										<div className="remote-pairing-modal__address-box">
 											<div className="remote-pairing-modal__address-text">
-												{preferredRemoteAddress || 'No address available yet.'}
+												{selectedPairingUrl || 'No pairing link available yet.'}
 											</div>
 											{selectedPairingUrl && (
 												<button
 													type="button"
 													className="remote-pairing-modal__copy-btn"
 													onClick={() => {
-														void navigator.clipboard.writeText(
+														void (window.terminayClipboardHost?.writeText(
 															selectedPairingUrl,
-														);
-														setIsLinkCopied(true);
-														setTimeout(() => setIsLinkCopied(false), 2000);
+														) ?? navigator.clipboard.writeText(selectedPairingUrl))
+															.then(() => {
+																setIsLinkCopied(true);
+																setTimeout(() => setIsLinkCopied(false), 2000);
+															})
+															.catch(() => setIsLinkCopied(false));
 													}}
 												>
 													{isLinkCopied ? 'Copied' : 'Copy Link'}
