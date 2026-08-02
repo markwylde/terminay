@@ -14,11 +14,18 @@ const dependencyRoot =
   process.env.TERMINAY_WEBRTC_SPIKE_ROOT ??
   process.env.TERMINAY_NODE_DATACHANNEL_SPIKE_ROOT
 const stagedWeriftRuntimeRoot = process.env.TERMINAY_WEBRTC_STAGED_RUNTIME_ROOT
+const hostedProofScope = process.env.TERMINAY_HOSTED_PROOF_SCOPE ?? 'full'
 test.skip(!dependencyRoot, 'requires an isolated headless WebRTC proof runtime')
 test.skip(
   runtimeName !== 'node-datachannel' && runtimeName !== 'werift',
   'requires a supported headless WebRTC proof runtime',
 )
+if (hostedProofScope !== 'bootstrap' && hostedProofScope !== 'full') {
+  throw new Error('TERMINAY_HOSTED_PROOF_SCOPE must be bootstrap or full.')
+}
+const hostedProofDescription = hostedProofScope === 'bootstrap'
+  ? 'installs the server UI through authenticated hosted signaling'
+  : 'pairs, reconnects, and revokes'
 
 const requireFromSpike = dependencyRoot
   ? createRequire(path.join(dependencyRoot, 'package.json'))
@@ -162,7 +169,7 @@ function waitFor<T>(
   })
 }
 
-test(`Chromium pairs, reconnects, and revokes through a plain-Node ${runtimeName} host`, async ({
+test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} host`, async ({
   browser,
 }) => {
   test.setTimeout(240_000)
@@ -371,6 +378,30 @@ test(`Chromium pairs, reconnects, and revokes through a plain-Node ${runtimeName
     expect(browserWebRtc.constructorSource).toMatch(/\[native code\]/)
     expect(browserWebRtc.hasDataChannel).toBe(true)
     expect(browserWebRtc.hasSetRemoteDescription).toBe(true)
+    if (hostedProofScope === 'bootstrap') {
+      const enrollmentDialog = page.getByRole('dialog', { name: 'Enroll browser device' })
+      await expect(enrollmentDialog).toBeVisible({ timeout: 45_000 })
+      const installedUrl = new URL(page.url())
+      expect(installedUrl.origin).toBe(sessionOrigin)
+      expect(installedUrl.searchParams.get('transport')).toBe('webrtc')
+      expect(installedUrl.searchParams.get('sessionId')).toBe(sessionId)
+      expect(installedUrl.hash).toBe('')
+
+      const firstRuntime = await waitFor(() => hostWindows.find((host) =>
+        host.evidence.hostSignals.some((message) => message.type === 'offer') &&
+        host.evidence.clientSignals.some((message) => message.type === 'answer')),
+      30_000,
+      'the authenticated hosted offer and answer',
+      )
+      for (const signal of [
+        firstRuntime.evidence.hostSignals.find((message) => message.type === 'offer'),
+        firstRuntime.evidence.clientSignals.find((message) => message.type === 'answer'),
+      ]) {
+        expect(signal?.nonce).toEqual(expect.any(String))
+        expect(signal?.signature).toEqual(expect.any(String))
+      }
+      return
+    }
     const connectDialog = page.getByRole('dialog', { name: 'Connect to Remote Server' })
     await expect(connectDialog).toBeVisible({ timeout: 45_000 })
     const handedOffPairingUrl = new URL(
