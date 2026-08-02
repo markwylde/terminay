@@ -6,7 +6,7 @@ test('Electron exposes the connection manager with immutable Local', async ({
 	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
 	await mainWindow.getByLabel('Open connection menu').click();
 	await mainWindow
-		.getByRole('button', { name: 'Manage connections…' })
+		.getByRole('button', { name: 'Add connection…' })
 		.click();
 
 	const manager = mainWindow.getByRole('dialog', { name: 'Connections' });
