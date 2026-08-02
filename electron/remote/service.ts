@@ -418,6 +418,7 @@ export class RemoteAccessService {
   private readonly webRtcReconnectAttemptsById = new Map<string, PendingWebRtcReconnect>()
   private readonly webRtcReconnectAuthorizedDevices = new Map<string, number>()
   private readonly webRtcTerminalConnectionsByChannelId = new Map<string, string>()
+  private readonly webRtcApplicationConnectionsByChannelId = new Map<string, string>()
   private webRtcStatus: RemoteAccessStatus['webRtcStatus'] = 'not-configured'
   private webRtcStatusMessage: string | null = null
   private readonly wsServer = new WebSocketServer({ noServer: true })
@@ -1126,6 +1127,10 @@ export class RemoteAccessService {
         Date.now() + 60_000,
       )
       socket.send(JSON.stringify({
+        attemptId,
+        protocolVersion: 'v1',
+        reconnectHandle: attempt.handle,
+        sessionId: grant.sessionId,
         type: 'reconnect-accepted',
       }))
       socket.send(JSON.stringify({
@@ -2029,6 +2034,45 @@ export class RemoteAccessService {
     })
     this.webRtcStatusMessage = 'Browser connected over WebRTC. A fresh pairing QR remains available for another browser.'
     this.sendSessionList(connection.socket, connection.connectionId)
+    this.emitStatus()
+  }
+
+  async attachWebRtcApplication(
+    webContentsId: number,
+    channelId: string,
+    ticket: string,
+    closePeer: (reason?: string) => void,
+  ): Promise<void> {
+    const ticketInfo = this.connectionStore.consumeTicket(ticket)
+    const device = this.deviceStore.get(ticketInfo.deviceId)
+    if (!device) throw new Error('This device is no longer trusted.')
+    const runtime = this.getWebRtcHostRuntime(webContentsId)
+    if (!runtime) throw new Error('The WebRTC host connection is no longer available.')
+    const peer: RemoteConnectionPeer = {
+      close: (_code, reason) => closePeer(reason || 'Remote connection closed by Terminay.'),
+      getReadyState: () => WebSocket.OPEN,
+      // Canonical application events travel through ServerCore on the framed
+      // application lane; the legacy connection store is lifecycle-only here.
+      send: () => undefined,
+    }
+    const connection = this.connectionStore.register(peer, ticketInfo.connectionId, ticketInfo.deviceId)
+    runtime.phase = 'connected'
+    this.webRtcApplicationConnectionsByChannelId.set(channelId, connection.connectionId)
+    await this.auditStore.append({
+      action: 'connection-opened',
+      connectionId: connection.connectionId,
+      deviceId: connection.deviceId,
+      deviceName: device.name,
+    })
+    this.webRtcStatusMessage = 'Browser connected over WebRTC. A fresh pairing QR remains available for another browser.'
+    this.emitStatus()
+  }
+
+  closeWebRtcApplication(channelId: string): void {
+    const connectionId = this.webRtcApplicationConnectionsByChannelId.get(channelId)
+    if (!connectionId) return
+    this.webRtcApplicationConnectionsByChannelId.delete(channelId)
+    this.connectionStore.unregister(connectionId)
     this.emitStatus()
   }
 

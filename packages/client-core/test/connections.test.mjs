@@ -2,6 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ConnectionProfileStore } from "../dist/connections.js";
 
+test("loopback session subdomains remain distinct connection origins", () => {
+  const store = new ConnectionProfileStore({ local: false });
+  const profile = store.remember({
+    id: "local-session",
+    serverId: "server-local-session",
+    label: "Local session",
+    origin: "http://session-a.localhost:4317",
+  });
+  assert.equal(profile.origin, "http://session-a.localhost:4317");
+  assert.throws(() => store.remember({
+    id: "plain-http",
+    serverId: "server-plain-http",
+    label: "Plain HTTP",
+    origin: "http://session.example.test:4317",
+  }), /HTTPS or loopback HTTP/);
+});
+
 test("connection profiles keep Local immutable and separate status from activity", () => {
   let now = 100;
   const store = new ConnectionProfileStore({ now: () => now });

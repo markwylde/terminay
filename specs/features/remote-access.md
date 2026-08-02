@@ -97,6 +97,9 @@ action, stops only through its own lifecycle or server shutdown, rolls back its
 pairing state when binding or TLS setup fails, and rejects remote traffic after
 stop. Loopback HTTP is permitted only for local development; non-loopback
 exposure requires HTTPS.
+For local hosted-transport compatibility tests, HTTP names beneath the reserved
+`.localhost` suffix are loopback origins. Each session subdomain remains a
+distinct origin and must not be canonicalized to bare `localhost`.
 
 Stopping WebRTC exposure does not stop an independently enabled direct listener,
 and stopping the direct listener does not stop WebRTC or the private Local

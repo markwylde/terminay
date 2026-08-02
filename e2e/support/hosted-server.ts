@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile)
 
 type HostedServer = {
   hostedDomain: string
+  logs: () => string
   origin: string
   port: number
   stop: () => Promise<void>
@@ -185,6 +186,7 @@ export async function startHostedServer(): Promise<HostedServer> {
         STATIC_DIR: staticDir,
         TERMINAY_HOSTED_DOMAIN: 'localhost',
         TERMINAY_MANAGER_HOST: 'app.localhost',
+        TERMINAY_OPERATIONAL_LOGS: '1',
       },
     })
     serverProcess.stdout.on('data', (chunk) => logs.push(chunk.toString()))
@@ -193,6 +195,7 @@ export async function startHostedServer(): Promise<HostedServer> {
 
     return {
       hostedDomain: `http://localhost:${port}`,
+      logs: () => logs.join(''),
       origin: `http://localhost:${port}`,
       port,
       stop: async () => {
