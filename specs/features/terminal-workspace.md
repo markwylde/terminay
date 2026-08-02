@@ -17,6 +17,11 @@ protocol.
 - Terminals support splits, search, copy/paste including bracketed-paste-aware
   input, dropped paths, guarded external links, resizing, scrollback, zoom, and
   exit handling.
+- Dropping operating-system files onto a Desktop terminal inserts their native
+  paths without copying the files. Dropping browser-local files onto a web
+  terminal uploads bounded file contents into the selected server project's
+  root and inserts the resulting server paths. Browser clients never receive
+  or infer a local absolute path.
 - A tab can be renamed and styled manually with colour, emoji, terminal-theme
   controls, and an optional note. Tab context actions expose terminal-specific
   actions such as recording and moving it to another project.
