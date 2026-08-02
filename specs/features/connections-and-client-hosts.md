@@ -129,6 +129,10 @@ display metadata, archive hides a remote profile without deleting its saved
 origin, forget removes host-local metadata only after confirmation, and revoke
 marks remote access unavailable only after separate confirmation. None of these
 actions can rename, archive, forget, or revoke the immutable Local profile.
+Forgetting or revoking a remote profile that is not bound to the current window
+does not replace, reconnect, or resynchronize that window's Local client. Its
+projects, terminal attachments, and in-flight protocol operations continue
+without interruption.
 
 Native actions are exposed through a versioned, source-bound host bridge. Each
 request is checked against its bound window and current connection, rejects
@@ -361,5 +365,7 @@ Forbidden in connection-manager localStorage, URLs, host messages, and logs:
   responsive UI.
 - Forgetting a profile does not claim to revoke server access; revoking a
   device closes it server-side.
+- Forgetting or revoking an unrelated remote profile leaves an active Local
+  workspace connected and its terminals usable without a retry.
 - A malicious or compromised server bundle cannot obtain Electron Node access
   or another session origin's credentials through the host bridge.

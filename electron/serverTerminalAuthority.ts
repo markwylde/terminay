@@ -52,6 +52,7 @@ import {
 	type TerminalDimensions,
 	type TerminalEvent,
 	type TerminalService,
+	type TerminalServiceOptions,
 	type TerminalSubscription,
 	type Unsubscribe,
 } from '../packages/server-core/src/terminalService/index';
@@ -174,6 +175,8 @@ export interface ServerTerminalAuthorityOptions {
 	readonly serverId: string;
 	/** Test/host injection; production uses the embedded node-pty factory. */
 	readonly terminalService?: TerminalService;
+	/** Desktop-owned current shell settings for protocol-created sessions. */
+	readonly resolveDefaultShell?: TerminalServiceOptions['resolveDefaultShell'];
 	readonly maxReplayBytes?: number;
 	readonly onEvent?: (event: TerminalEvent) => void;
 	/** Host-only observer for input that server-core has already accepted. */
@@ -443,6 +446,9 @@ export class ServerTerminalAuthority {
 						),
 						terminalOptions: {
 							maxReplayBytes: this.maxReplayBytes,
+							...(options.resolveDefaultShell === undefined
+								? {}
+								: { resolveDefaultShell: options.resolveDefaultShell }),
 						},
 						...(options.macros === undefined ? {} : { macros: options.macros }),
 					}

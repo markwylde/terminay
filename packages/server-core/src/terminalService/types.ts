@@ -227,6 +227,13 @@ export interface TerminalServiceOptions extends TerminalServiceLimits {
   /** Host-owned base environment for every terminal. It is never client input;
    * per-session values and lifecycle credentials are merged over it. */
   readonly defaultEnvironment?: Readonly<Record<string, string | undefined>>;
+  /** Host-resolved shell used when a trusted caller does not specify one.
+   * Keeping this callback host-owned lets Desktop apply current settings while
+   * server-core remains independent of the operating system and settings UI. */
+  readonly resolveDefaultShell?: () => Readonly<{
+    shellPath: string;
+    args?: readonly string[];
+  }>;
   readonly now?: () => number;
   readonly generateSessionId?: (projectId: string) => string;
   /** Optional host-neutral timer implementation for inactivity supervision. */
