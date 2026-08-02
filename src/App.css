@@ -1651,6 +1651,7 @@
   background: var(--tab-bg-hover);
   color: var(--tab-text-active);
 }
+.terminay-add-profile-tab-button { width: 24px; }
 
 .project-tab-close svg,
 .terminal-tab-close svg,
