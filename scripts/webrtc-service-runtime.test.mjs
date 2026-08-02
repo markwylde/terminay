@@ -674,6 +674,14 @@ test('RemoteAccessService reconnect requires both the grant and its bound device
   assert.match(sent.at(-1).salt, /^[A-Za-z0-9_-]{43}$/)
   assert.equal(hostWindows.length, 1)
   assert.notEqual(hostWindows[0].configs[0].signalingAuthToken, proofMessage.proof)
+  await service.handleWebRtcReconnectRelayMessage(config, socket, {
+    attemptId: proofMessage.attemptId,
+    protocolVersion: 'v1',
+    reconnectHandle: issued.handle,
+    sessionId: issued.sessionId,
+    type: 'reconnect-complete',
+  })
+  assert.equal(hostWindows[0].closed, false)
 })
 
 function serializeReconnectChallengeForTest(challenge) {
@@ -844,7 +852,8 @@ function createTestService({
     userDataPath: tempDir,
     createWebRtcHostWindow: () => {
       const hostWindow = {
-        close() {},
+        closed: false,
+        close() { this.closed = true },
         closeTerminal() {},
         configs: [],
         sendConfig(config) {
