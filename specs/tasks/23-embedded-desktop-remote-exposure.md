@@ -69,9 +69,19 @@ evidence.
 - [ ] Compose the integrity-pinned Werift runtime in packaged and development
   Desktop builds only when the same authenticated hosted registrar supplies
   both room registration and per-peer SDP/ICE signaling.
-- [ ] Update `npm run dev` to stage/select the approved runtime once that
-  registrar contract is available; no test-only or legacy hidden-renderer
-  fallback may become a production path.
+- [x] Restore the deployed `v1` hosted bootstrap as an in-process privileged
+  Werift peer. It uses the selected runtime, authenticated room signaling,
+  PIN/device enrollment, the embedded authority's live terminal sessions, and
+  the embedded server's verified UI bundle. It must not create a hidden
+  Electron renderer or expose a renderer preload capability.
+- [x] Update `npm run dev` to deterministically stage and explicitly select the
+  approved runtime. Packaged builds continue to resolve only the staged
+  `resources/webrtc-runtime` directory.
+- [ ] Replace the bootstrap compatibility peer's `api`/`asset`/`terminal`
+  channels with the canonical `control`/`application`/`terminal`/`assets`
+  session after device authentication. Until that cutover is complete, the
+  compatibility peer is a privileged transport adapter and must not be
+  described as full canonical application conformance.
 - [ ] Verify real hosted WebRTC pairing, full workspace/terminal traffic,
   reconnect, revocation, exposure stop, direct ICE, and TURN-required routing
   against the deployed signaling compatibility window. A second Desktop and a
