@@ -285,7 +285,9 @@ test('Desktop main routes connection-menu exposure controls to server ownership'
 		/pairingMode: \(\) => readTerminalSettings\(\)\.remoteAccess\.pairingMode/,
 	);
 	assert.match(source, /resolveSessionOrigin: \(\) =>/);
-	assert.match(source, /return desktopRemoteExposure\.getStatus\(\)/);
+	assert.match(source, /function currentRemoteAccessStatus\(\)/);
+	assert.match(source, /privilegedWebRtcExposure!\.service\.getStatus\(\)/);
+	assert.match(source, /desktopRemoteExposure\.getStatus\(\)/);
 	assert.match(source, /await desktopRemoteExposure\.toggle\(\)/);
 	assert.match(source, /broadcastRemoteAccessStatus\(\)/);
 	assert.match(
@@ -302,6 +304,7 @@ test('Desktop main routes connection-menu exposure controls to server ownership'
 	);
 	assert.match(source, /ensureWebRtcRuntimeAvailable: \(\) =>/);
 	assert.match(source, /Desktop WebRTC runtime is unavailable in this build/u);
+	assert.match(source, /new PrivilegedWebRtcExposure\(/u);
 	assert.match(
 		source,
 		/window\.isDestroyed\(\)\s*\|\|\s*window\.webContents\.isDestroyed\(\)/,
