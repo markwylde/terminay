@@ -6,7 +6,7 @@ import {
 	submitEditWindow,
 } from './support/ui';
 
-const profileName = 'E2E isolated zsh';
+const profileName = 'E2E isolated shell';
 const profileSecret = 'not-visible-in-catalogue';
 
 function profileCard(page: Page, name: string): Locator {
@@ -48,14 +48,12 @@ async function createProfile(
 	});
 	await expect(editor).toBeVisible();
 	await editor.getByLabel('Name').fill(name);
-	await editor
-		.getByRole('textbox', { name: 'Executable', exact: true })
-		.fill('/bin/zsh');
+	await editor.getByLabel('Target type').selectOption('system');
 	await editor.getByText('Advanced launch options').click();
 	await editor.getByRole('button', { name: 'Add argument' }).click();
 	await editor
 		.getByRole('textbox', { name: 'Arguments 1', exact: true })
-		.fill('--no-rcs');
+		.fill('-i');
 	await editor
 		.getByRole('button', { name: 'Add environment variable' })
 		.click();
@@ -117,6 +115,7 @@ test.describe('shell profiles', () => {
 
 		await createProfile(settingsWindow);
 		const card = profileCard(settingsWindow, profileName);
+		await expect(card).toContainText('Available');
 		await expect(card).toContainText('1 argument');
 		await expect(card).toContainText('1 environment');
 		await expect(card).not.toContainText(profileSecret);
@@ -131,6 +130,10 @@ test.describe('shell profiles', () => {
 		);
 		await editor.getByRole('button', { name: 'Cancel' }).click();
 
+		const defaultOption = settingsWindow
+			.getByLabel('Default shell profile')
+			.getByRole('option', { name: profileName, exact: true });
+		await expect(defaultOption).toBeEnabled();
 		await settingsWindow
 			.getByLabel('Default shell profile')
 			.selectOption({ label: profileName });
