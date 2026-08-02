@@ -162,6 +162,15 @@ challenge available for a bounded retry; a valid proof consumes it once.
 Rotation, device revocation, and expiry fence later challenges. Durable
 storage, signaling transport, and concrete WebRTC runtime adapters remain
 host-owned boundaries around this primitive.
+When the relay reports reconnect completion, the host retires only the
+short-lived reconnect-attempt metadata and leaves the newly established WebRTC
+runtime open.
+Browser-host reconnect on a WebRTC session origin uses the same authenticated
+four-lane application transport as initial pairing; it does not downgrade the
+server-bundled UI to a direct WebSocket connection.
+When a hosted WebRTC bootstrap provides the browser enrollment bridge, that
+bridge owns initial reconnection for the mounted server UI; saved-profile
+auto-restore must not start a competing reconnect attempt in the same page.
 
 For the local static-browser host, enrollment derives a non-extractable
 WebCrypto HMAC proof key in IndexedDB, partitioned by the selected server

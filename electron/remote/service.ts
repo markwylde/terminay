@@ -1153,7 +1153,7 @@ export class RemoteAccessService {
     }
 
     if (message.type === 'reconnect-complete') {
-      this.closeWebRtcReconnectAttempt(String(message.attemptId ?? ''))
+      this.completeWebRtcReconnectAttempt(String(message.attemptId ?? ''))
       return
     }
 
@@ -1180,6 +1180,11 @@ export class RemoteAccessService {
     if (attempt.webContentsId) {
       this.closeWebRtcHostRuntime(attempt.webContentsId, 'Reconnect attempt completed')
     }
+  }
+
+  private completeWebRtcReconnectAttempt(attemptId: string): void {
+    if (!this.webRtcReconnectAttemptsById.delete(attemptId)) return
+    this.reconnectGrantStore.cancelChallenge(attemptId)
   }
 
   private getWebRtcGrantAppOrigin(grant: ReconnectGrantRecord): string {
