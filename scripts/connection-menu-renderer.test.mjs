@@ -121,3 +121,30 @@ test('standalone connection action reaches a real HTTP client session through th
 	assert.doesNotMatch(preload, /openRemoteConnection:/u);
 	assert.doesNotMatch(main, /app:open-remote-connection/u);
 });
+
+test('managing an unrelated remote profile does not replace the Local protocol connection', () => {
+	const forgetHandler = main.slice(
+		main.indexOf("'desktop:connection-host:forget'"),
+		main.indexOf("'desktop:connection-host:revoke'"),
+	);
+	const revokeHandler = main.slice(
+		main.indexOf("'desktop:connection-host:revoke'"),
+		main.indexOf('/**\n * Native file reveal'),
+	);
+
+	assert.match(forgetHandler, /closeRemoteConnectionsForProfile/u);
+	assert.match(revokeHandler, /closeRemoteConnectionsForProfile/u);
+	assert.doesNotMatch(forgetHandler, /postLocalServerConnection/u);
+	assert.doesNotMatch(revokeHandler, /postLocalServerConnection/u);
+});
+
+test('Desktop protocol-created terminals use the current configured shell resolver', () => {
+	assert.match(
+		main,
+		/resolveDefaultShell:\s*\(\)\s*=>\s*resolvePtyShellOptions\(readTerminalSettings\(\)\)/u,
+	);
+	assert.match(
+		main,
+		/function resolvePtyShellOptions\(settings: TerminalSettings\)/u,
+	);
+});
