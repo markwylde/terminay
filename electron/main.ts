@@ -83,6 +83,7 @@ import type {
 	FolderSizeResult,
 	ProjectEditWindowDraft,
 	ProjectEditWindowResult,
+	RemoteAccessStatus,
 	TerminalEditWindowDraft,
 	TerminalEditWindowResult,
 	TerminalRecordingStartMetadata,
@@ -133,10 +134,12 @@ import { establishDesktopDevicePairing } from './remote/desktopPairing';
 import { createDesktopReconnectTransport } from './remote/desktopReconnect';
 import { enrollDesktopReconnectCredential } from './remote/desktopReconnectEnrollment';
 import { createDesktopBootstrappedWebRtcTransport } from './remote/desktopWebRtcBootstrap';
+import { resolveDesktopWebRtcRuntimeRoot } from './remote/desktopWebRtcRuntimeRoot';
 import { createEphemeralTestProtectedValueCodec, DesktopDeviceCredentialStore } from './remote/deviceCredentialStore';
 import { EmbeddedLanExposure } from './remote/embeddedLanExposure';
 import { createHostedSignalingRoomRegistrar } from './remote/hostedSignalingRegistration';
 import { createPairingPinHash } from './remote/pin';
+import { PrivilegedWebRtcExposure } from './remote/privilegedWebRtcExposure';
 import { DesktopServerOwnedExposure } from './remote/serverOwnedExposure';
 import {
 	ServerTerminalAuthority,
@@ -342,6 +345,8 @@ function resetZoom(): void {
 }
 
 let serverTerminalAuthority: ServerTerminalAuthority | null = null;
+let privilegedWebRtcExposure: PrivilegedWebRtcExposure | null = null;
+const privilegedWebRtcSessions = new Set<string>();
 let localWorkspaceSeedPromise: Promise<void> | null = null;
 let appliedAgentIntegrationSetting: boolean | null = null;
 let applyAgentIntegrationPromise = Promise.resolve();
@@ -624,6 +629,11 @@ const recordingService = new TerminalRecordingService({
 function handleServerTerminalEvent(event: TerminalEvent): void {
 	if (event.type === 'output') {
 		const data = new TextDecoder().decode(event.bytes);
+		if (!privilegedWebRtcSessions.has(event.sessionId)) {
+			privilegedWebRtcSessions.add(event.sessionId);
+			privilegedWebRtcExposure?.service.ensureSession(event.sessionId);
+		}
+		privilegedWebRtcExposure?.service.appendSessionData(event.sessionId, data);
 		try {
 			recordingService.appendOutput(event.sessionId, data);
 		} catch {
@@ -633,6 +643,12 @@ function handleServerTerminalEvent(event: TerminalEvent): void {
 	}
 
 	if (event.type === 'exit') {
+		privilegedWebRtcSessions.delete(event.sessionId);
+		privilegedWebRtcExposure?.service.markSessionExit(
+			event.sessionId,
+			event.exitCode,
+			event.signal,
+		);
 		removeControlToken(event.sessionId);
 		recordingService.finalize(event.sessionId, event.exitCode, event.signal);
 	}
@@ -930,6 +946,37 @@ const desktopRemoteExposure = new DesktopServerOwnedExposure({
 		return hosted.toString();
 	},
 });
+
+const desktopWebRtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
+	isPackaged: app.isPackaged,
+	resourcesPath: process.resourcesPath,
+	environment: process.env,
+});
+if (desktopWebRtcRuntimeRoot !== undefined) {
+	privilegedWebRtcExposure = new PrivilegedWebRtcExposure(
+		desktopWebRtcRuntimeRoot,
+		{
+			getControllableSession: (sessionId) => {
+				const authority = serverTerminalAuthority;
+				const session = authority?.get(sessionId);
+				if (authority === null || authority === undefined || session === undefined)
+					return null;
+				return {
+					close: () => authority.kill(sessionId),
+					resize: (cols, rows) => authority.resize(sessionId, { cols, rows }),
+					write: (data) => authority.write(sessionId, data),
+				};
+			},
+			getRemoteAccessSettings: () => readTerminalSettings().remoteAccess,
+			notifyTerminalRemoteSizeOverride: () => undefined,
+			onStatusChanged: () => broadcastRemoteAccessStatus(),
+			publicDir: process.env.VITE_PUBLIC ?? RENDERER_DIST,
+			rendererDistDir: RENDERER_DIST,
+			saveGeneratedTlsPaths: () => undefined,
+			userDataPath: app.getPath('userData'),
+		},
+	);
+}
 
 function readEmbeddedReconnectRecords(
 	file: string,
@@ -5367,11 +5414,24 @@ ipcMain.handle(
 
 ipcMain.handle('remote:get-status', async (event) => {
 	assertTrustedAppSender(event);
-	return desktopRemoteExposure.getStatus();
+	return currentRemoteAccessStatus();
 });
 
+function usesPrivilegedWebRtcExposure(): boolean {
+	return (
+		readTerminalSettings().remoteAccess.pairingMode === 'webrtc' &&
+		privilegedWebRtcExposure !== null
+	);
+}
+
+function currentRemoteAccessStatus(): RemoteAccessStatus {
+	return usesPrivilegedWebRtcExposure()
+		? privilegedWebRtcExposure!.service.getStatus()
+		: desktopRemoteExposure.getStatus();
+}
+
 function broadcastRemoteAccessStatus(): void {
-	const status = desktopRemoteExposure.getStatus();
+	const status = currentRemoteAccessStatus();
 	for (const window of BrowserWindow.getAllWindows()) {
 		if (!window.isDestroyed() && !window.webContents.isDestroyed())
 			window.webContents.send('remote:status-changed', status);
@@ -5380,7 +5440,25 @@ function broadcastRemoteAccessStatus(): void {
 
 ipcMain.handle('remote:toggle-server', async (event) => {
 	assertTrustedAppSender(event);
-	const status = await desktopRemoteExposure.toggle();
+	let status: RemoteAccessStatus;
+	if (usesPrivilegedWebRtcExposure()) {
+		for (const session of serverTerminalAuthority?.list() ?? []) {
+			if (!privilegedWebRtcSessions.has(session.id)) {
+				privilegedWebRtcSessions.add(session.id);
+				privilegedWebRtcExposure!.service.ensureSession(session.id);
+			}
+			const dimensions = serverTerminalAuthority?.service.getSession(session.id)?.dimensions;
+			if (dimensions !== undefined)
+				privilegedWebRtcExposure!.service.updateSessionSize(
+					session.id,
+					dimensions.cols,
+					dimensions.rows,
+				);
+		}
+		status = await privilegedWebRtcExposure!.toggle();
+	} else {
+		status = await desktopRemoteExposure.toggle();
+	}
 	broadcastRemoteAccessStatus();
 	return status;
 });
@@ -5389,7 +5467,9 @@ ipcMain.handle(
 	'remote:revoke-device',
 	async (event, payload: { deviceId: string }) => {
 		assertTrustedAppSender(event);
-		const status = await desktopRemoteExposure.revokeDevice(payload.deviceId);
+		const status = usesPrivilegedWebRtcExposure()
+			? await privilegedWebRtcExposure!.service.revokeDevice(payload.deviceId)
+			: await desktopRemoteExposure.revokeDevice(payload.deviceId);
 		broadcastRemoteAccessStatus();
 		return status;
 	},
@@ -5399,7 +5479,9 @@ ipcMain.handle(
 	'remote:close-connection',
 	async (event, payload: { connectionId: string }) => {
 		assertTrustedAppSender(event);
-		const status = desktopRemoteExposure.closeConnection(payload.connectionId);
+		const status = usesPrivilegedWebRtcExposure()
+			? await privilegedWebRtcExposure!.service.closeConnection(payload.connectionId)
+			: desktopRemoteExposure.closeConnection(payload.connectionId);
 		broadcastRemoteAccessStatus();
 		return status;
 	},
@@ -5409,7 +5491,9 @@ ipcMain.handle(
 	'remote:set-pairing-address',
 	async (event, payload: { address: string }) => {
 		assertTrustedAppSender(event);
-		const status = desktopRemoteExposure.setPairingAddress(payload.address);
+		const status = usesPrivilegedWebRtcExposure()
+			? await privilegedWebRtcExposure!.service.setPairingAddress(payload.address)
+			: desktopRemoteExposure.setPairingAddress(payload.address);
 		broadcastRemoteAccessStatus();
 		return status;
 	},
@@ -5426,6 +5510,7 @@ ipcMain.handle('remote:set-pairing-pin', (event, payload: { pin: string }) => {
 		},
 	});
 	broadcastTerminalSettings(settings);
+	privilegedWebRtcExposure?.service.notifyStatusChanged();
 	createAppMenu(settings);
 	return settings;
 });
@@ -5887,6 +5972,7 @@ const handleBeforeQuit = createGracefulQuitHandler({
 		activeRemoteByteConnectionsByWebContents.clear();
 		await Promise.all([
 			...remoteConnections.map((connection) => connection.close()),
+			privilegedWebRtcExposure?.shutdown(),
 			desktopRemoteExposure.shutdown(),
 			serverTerminalAuthority?.shutdown(),
 			stopControlServer(),
