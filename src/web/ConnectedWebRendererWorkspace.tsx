@@ -1,6 +1,7 @@
 import {
 	RecordingsClient,
 	SettingsClient,
+	ShellProfilesClient,
 	TerminayClientFacade,
 } from '@terminay/client-core';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
@@ -120,6 +121,10 @@ export function ConnectedWebRendererWorkspace({
 		},
 		[applicationClient, settingsClient],
 	);
+	const shellProfilesClient = useMemo(() => {
+		if (applicationClient === undefined) throw new Error('Connected browser workspace requires its canonical application client');
+		return new ShellProfilesClient(new TerminayClientFacade(applicationClient));
+	}, [applicationClient]);
 	const remoteAccessStatusClient = useMemo(
 		createUnavailableRemoteAccessClient,
 		[],
@@ -226,6 +231,8 @@ export function ConnectedWebRendererWorkspace({
 										initialSectionId={auxiliaryRoute.sectionId}
 										remoteAccessStatusClient={remoteAccessStatusClient}
 										settingsClient={serverSettingsClient}
+										shellProfilesClient={shellProfilesClient}
+										serverIdentity={terminalClientContext.connectionLabel ?? terminalClientContext.serverId}
 									/>
 								) : auxiliaryRoute.kind === 'macros' ? (
 									<MacrosWindow macroSettingsClient={macroCapability} />

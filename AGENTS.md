@@ -9,3 +9,7 @@ specified in `specs/`; read the relevant feature before changing code.
   PTY, secrets, Git, and network services stay in `electron/`.
 - Preserve the project/window and terminal-session boundaries. They are security
   boundaries for remote access, MCP, and agent status.
+- Agents must run Electron end-to-end tests through `npm run test:e2e`, which
+  isolates Electron, Chromium, and Xvfb in Docker. Never run Playwright's
+  Electron suite directly on the host unless the user explicitly requests it;
+  `npm run test:e2e:host` is reserved for isolated CI runners.
