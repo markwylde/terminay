@@ -3101,9 +3101,9 @@ export function SettingsWindow({
 										</button>
 									) : null}
 								</div>
-								<div className="settings-group">
+								<div className={section.id === 'shell-launch' ? 'settings-shell-profile-container' : 'settings-group'}>
 									{section.id === 'shell-launch' ? (
-										shellProfilesClient ? <ShellProfilesSettings client={shellProfilesClient} serverIdentity={serverIdentity} /> : <div className="shell-profiles-loading" role="status">Connect to a server to manage shell profiles.</div>
+										shellProfilesClient ? <ShellProfilesSettings client={shellProfilesClient} serverIdentity={serverIdentity} /> : <div className="settings-group shell-profiles-loading" role="status">Connect to a server to manage shell profiles.</div>
 									) : null}
 									{section.fields.filter(isFieldVisible).map((field) => (
 										<div
