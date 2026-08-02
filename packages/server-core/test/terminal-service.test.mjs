@@ -52,6 +52,31 @@ function createPtyFactory() {
   };
 }
 
+test("TerminalService resolves the host default shell for every implicit session", async () => {
+  const pty = createPtyFactory();
+  let configuredShell = { shellPath: "/bin/zsh", args: ["-l"] };
+  const service = new TerminalService({
+    serverId: "server-default-shell",
+    ptyFactory: pty,
+    resolveDefaultShell: () => configuredShell,
+  });
+
+  await service.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  configuredShell = { shellPath: "/bin/fish", args: ["-l"] };
+  await service.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  await service.createSession({ projectId: "project-a", shellPath: "/bin/bash", args: ["--noprofile"], cols: 80, rows: 24 });
+
+  assert.deepEqual(
+    pty.processes.map(({ options }) => ({ shellPath: options.shellPath, shell: options.shell, args: options.args })),
+    [
+      { shellPath: "/bin/zsh", shell: "/bin/zsh", args: ["-l"] },
+      { shellPath: "/bin/fish", shell: "/bin/fish", args: ["-l"] },
+      { shellPath: "/bin/bash", shell: "/bin/bash", args: ["--noprofile"] },
+    ],
+  );
+  await service.shutdown();
+});
+
 test("TerminalService observes live cwd without mutating immutable spawn cwd", async () => {
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty });
