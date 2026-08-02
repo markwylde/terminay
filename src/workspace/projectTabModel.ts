@@ -4,6 +4,7 @@ import type { SidebarPanelId, SidebarSettings } from '../types/settings';
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
 
 export type ProjectTab = {
+	defaultShellProfileId?: string;
 	id: string;
 	title: string;
 	color: string;
