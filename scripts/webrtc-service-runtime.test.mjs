@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createServer, connect } from 'node:net'
 import { build } from 'esbuild'
+import { WebSocketServer } from 'ws'
 import {
   constants,
   createHmac,
@@ -15,6 +16,7 @@ import {
 } from 'node:crypto'
 
 const {
+  createWebRtcSignalingSocketOptions,
   createReconnectLeaseTiming,
   parseWebRtcIceServers,
   RemoteAccessService,
@@ -91,6 +93,88 @@ test('reconnect availability refreshes well inside each authenticated lease', ()
     now += lease.refreshDelayMs
   }
   assert.equal(now >= Date.parse('2030-01-01T00:05:00.000Z'), true)
+})
+
+test('WebRTC local session signaling keeps the session host and resolves it to loopback', async () => {
+  const origin = 'http://session123.localhost:18080'
+  const localOptions = createWebRtcSignalingSocketOptions('ws://session123.localhost:18080/signal', origin)
+  assert.equal(localOptions.origin, origin)
+  assert.equal(typeof localOptions.lookup, 'function')
+
+  const lookupResult = await new Promise((resolve, reject) => {
+    localOptions.lookup('session123.localhost', {}, (error, address, family) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve({ address, family })
+    })
+  })
+  assert.deepEqual(lookupResult, { address: '127.0.0.1', family: 4 })
+  const lookupAllResult = await new Promise((resolve, reject) => {
+    localOptions.lookup('session123.localhost', { all: true }, (error, addresses) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve(addresses)
+    })
+  })
+  assert.deepEqual(lookupAllResult, [{ address: '127.0.0.1', family: 4 }])
+
+  const remoteOptions = createWebRtcSignalingSocketOptions('wss://session123.terminay.com/signal', 'https://session123.terminay.com')
+  assert.equal(remoteOptions.origin, 'https://session123.terminay.com')
+  assert.equal(remoteOptions.lookup, undefined)
+})
+
+test('RemoteAccessService waits for hosted reconnect availability registration before returning', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-reconnect-availability-test-'))
+  const port = await getUnusedPort()
+  const server = new WebSocketServer({ host: '127.0.0.1', port })
+  await new Promise((resolve) => server.once('listening', resolve))
+  const received = []
+  let releaseRegistration
+  const registrationGate = new Promise((resolve) => { releaseRegistration = resolve })
+
+  server.on('connection', (socket) => {
+    socket.on('message', (raw) => {
+      const message = JSON.parse(raw.toString())
+      received.push(message)
+      if (message.type !== 'reconnect-host-ready') return
+      void registrationGate.then(() => {
+        socket.send(JSON.stringify({
+          sessionIds: message.sessionIds,
+          type: 'reconnect-host-registered',
+        }))
+      })
+    })
+  })
+
+  try {
+    const service = createTestService({ pairingPinHash: '', tempDir })
+    await service.reconnectGrantStore.load()
+    await service.reconnectGrantStore.issueGrant({
+      deviceId: 'device-1',
+      label: 'Test device',
+      lifetime: '24h',
+      origin: `http://127.0.0.1:${port}#transport=webrtc:http://127.0.0.1:${port}`,
+      sessionId: 'session123',
+    })
+
+    const sync = service.syncWebRtcReconnectAvailability()
+    await waitFor(() => received.some((message) => message.type === 'reconnect-host-ready'))
+    const runtimeBeforeAck = service.webRtcReconnectAvailabilityBySessionId.get('session123')
+    assert.equal(runtimeBeforeAck?.registered, false)
+
+    releaseRegistration()
+    await sync
+
+    const runtimeAfterAck = service.webRtcReconnectAvailabilityBySessionId.get('session123')
+    assert.equal(runtimeAfterAck?.registered, true)
+  } finally {
+    for (const client of server.clients) client.close()
+    await new Promise((resolve) => server.close(resolve))
+  }
 })
 
 test('RemoteAccessService distinguishes registering, ready, relay-loss, and premature-close states', async () => {
