@@ -15,7 +15,10 @@ test('mock WebRTC compatibility proof cannot silently skip on PRs or main', () =
 	);
 	assert.doesNotMatch(job, /^\s+if:/mu);
 	assert.match(job, /name: Headless WebRTC Mock Compatibility \(\$\{\{ matrix\.arch \}\}\)/u);
-	assert.match(job, /TERMINAY_RUN_MOCK_WEBRTC_BRIDGE_PROOF: "1"/u);
+	assert.match(job, /node scripts\/webrtc-compatibility-proof\.mjs/u);
+	assert.match(job, /--mock/u);
+	assert.match(job, /--expected-arch=\$\{\{ matrix\.arch \}\}/u);
+	assert.doesNotMatch(job, /production-headless-webrtc-secure-werift\.test\.mjs/u);
 	assert.doesNotMatch(job, /TERMINAY_RUN_SIBLING_WEBRTC_BRIDGE_PROOF/u);
 	assert.doesNotMatch(job, /terminay\.com|HOSTED_(?:GITHUB|GITEA)|secrets\./u);
 	assert.deepEqual(
