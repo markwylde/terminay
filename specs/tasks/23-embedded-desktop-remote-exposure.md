@@ -52,6 +52,10 @@ evidence.
 - [x] Add explicit per-mode availability to the Desktop status/host contract.
   The menu disables start/QR actions and says **Unavailable in this build**
   when a mode lacks its complete privileged composition.
+- [x] Keep the private hosted-service compatibility gate explicit about its
+  current boundary: real authenticated signaling, native browser WebRTC, and
+  verified server-bundle installation. It must not claim canonical application
+  traffic until the full WebRTC composition below is complete.
 - [ ] Replace **QR Type: Local Network / WebRTC Relay** with one primary WebRTC
   **Expose this server…** lifecycle and an independently labelled advanced
   **Direct network listener** lifecycle.
