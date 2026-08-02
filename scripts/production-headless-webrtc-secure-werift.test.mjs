@@ -398,11 +398,15 @@ test('a minimized Werift candidate is deterministic, auditable, and importable',
     await proveElectronMainAndChildImport(first.auditRoot)
 
     const routeOnly = process.env.TERMINAY_TURN_ROUTE_ONLY === '1'
+    const mockBridgeProof =
+      process.env.TERMINAY_RUN_MOCK_WEBRTC_BRIDGE_PROOF === '1'
     const siblingBridgeProof =
       process.env.TERMINAY_RUN_SIBLING_WEBRTC_BRIDGE_PROOF === '1'
     const playwrightSpecs = []
     if (!routeOnly && siblingBridgeProof) {
       playwrightSpecs.push('e2e/webrtc-headless-node-host.spec.ts')
+    } else if (!routeOnly && mockBridgeProof) {
+      playwrightSpecs.push('e2e/webrtc-production-turn-routes.spec.ts')
     } else if (!routeOnly) {
       await t.test('sibling peer-owner canonical browser bridge proof', {
         skip: 'requires TERMINAY_RUN_SIBLING_WEBRTC_BRIDGE_PROOF=1 and a sibling terminay.com peer owner that installs the ticket-bound four-channel bridge',
@@ -427,6 +431,9 @@ test('a minimized Werift candidate is deterministic, auditable, and importable',
         playwrightArguments.push(
           '--config=scripts/support/playwright-headless-webrtc-linux.config.mjs',
         )
+      }
+      if (mockBridgeProof && !siblingBridgeProof && !process.env.TERMINAY_TURN_CONFIG_PATH) {
+        playwrightArguments.push('--grep=mock hosted signaling peer')
       }
       const proof = await run(
         process.platform === 'win32' ? 'npx.cmd' : 'npx',
@@ -454,6 +461,8 @@ test('a minimized Werift candidate is deterministic, auditable, and importable',
         proof.stdout,
         routeOnly
           ? /2 passed/
+          : mockBridgeProof && !siblingBridgeProof && !process.env.TERMINAY_TURN_CONFIG_PATH
+            ? /mock hosted signaling peer[\s\S]*1 passed/
           : process.env.TERMINAY_TURN_CONFIG_PATH
             ? /3 passed/
             : /Chromium pairs, reconnects, and revokes through a plain-Node werift host[\s\S]*1 passed/,
@@ -467,7 +476,9 @@ test('a minimized Werift candidate is deterministic, auditable, and importable',
       gitHead: WERIFT_GIT_HEAD,
       node22CloseDurationMs: node22.closeDurationMs,
       retainedPackages: Object.keys(RETAINED_RUNTIME_PACKAGES).length,
-      routeTests: process.env.TERMINAY_TURN_CONFIG_PATH ? 2 : 0,
+      routeTests: process.env.TERMINAY_TURN_CONFIG_PATH
+        ? (routeOnly ? 2 : 3)
+        : (mockBridgeProof || siblingBridgeProof ? 1 : 0),
       runtimeOnly: false,
       tarballSha512: WERIFT_TARBALL_SHA512,
       version: WERIFT_VERSION,
