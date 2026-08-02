@@ -7,6 +7,51 @@ import { build } from 'esbuild'
 
 const { runHost } = await importWebRtcHost()
 
+test('WebRTC host authenticates the canonical four-lane application session before use', async () => {
+  const api = createHostApi()
+  const channels = new Map()
+  const peer = new MockPeerConnection()
+  peer.createDataChannel = (label) => {
+    const channel = new MockDataChannel(label)
+    channels.set(label, channel)
+    return channel
+  }
+
+  const cleanup = await runHost(createHostConfig(), {
+    api,
+    createPeerConnection: () => peer,
+  })
+
+  assert.deepEqual([...channels.keys()], [
+    'api',
+    'asset',
+    'control',
+    'application',
+    'terminal',
+    'assets',
+  ])
+  channels.get('control').dispatchMessage(JSON.stringify({
+    id: 'auth-1',
+    ticket: 'ticket-1',
+    type: 'application-auth',
+  }))
+  await api.waitForApplicationAttach()
+
+  assert.equal(api.applicationTicket, 'ticket-1')
+  assert.equal(api.applicationChannel.label, 'application')
+  assert.deepEqual(JSON.parse(channels.get('control').sent[0]), {
+    id: 'auth-1',
+    ok: true,
+    type: 'application-authenticated',
+  })
+  channels.get('application').close()
+  assert.deepEqual(api.closedApplications, [{
+    channelId: api.applicationChannelId,
+    reason: 'WebRTC application channel closed.',
+  }])
+  cleanup()
+})
+
 test('WebRTC host closes the terminal data channel when the desktop revokes the connection', async () => {
   const api = createHostApi()
   const terminalChannel = new MockDataChannel('terminal')
@@ -413,10 +458,18 @@ function createHostApi() {
   const attachPromise = new Promise((resolve) => {
     attachResolve = resolve
   })
+  let applicationAttachResolve
+  const applicationAttachPromise = new Promise((resolve) => {
+    applicationAttachResolve = resolve
+  })
   const closeRequestListeners = new Set()
   const signalListeners = new Set()
   return {
     attachedChannelId: null,
+    applicationChannel: null,
+    applicationChannelId: null,
+    applicationTicket: null,
+    closedApplications: [],
     closedTerminals: [],
     signalMessages: [],
     signalOpened: false,
@@ -424,6 +477,15 @@ function createHostApi() {
     async attachTerminal(channelId) {
       this.attachedChannelId = channelId
       attachResolve()
+    },
+    async attachApplication(channelId, ticket, channel) {
+      this.applicationChannel = channel
+      this.applicationChannelId = channelId
+      this.applicationTicket = ticket
+      applicationAttachResolve()
+    },
+    closeApplication(channelId, reason) {
+      this.closedApplications.push({ channelId, reason })
     },
     closeTerminal(channelId, reason) {
       this.closedTerminals.push({ channelId, reason })
@@ -462,6 +524,7 @@ function createHostApi() {
       this.statusMessages.push(message)
     },
     waitForAttach: () => attachPromise,
+    waitForApplicationAttach: () => applicationAttachPromise,
   }
 }
 
