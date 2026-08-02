@@ -14,6 +14,7 @@ import {
   LoaderCircle,
   Settings,
   Sparkles,
+	SquarePlus,
   Trash2,
   XCircle,
 } from 'lucide-react'
@@ -261,6 +262,10 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
     target.dispatchEvent(customEvent)
   }
 
+	const dispatchNewTerminalWithProfileEvent = (target: HTMLElement) => {
+		target.dispatchEvent(new CustomEvent('terminay-new-terminal-with-profile', { bubbles: true }))
+	}
+
   const onDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -327,6 +332,11 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
   const hasTerminalNote = typeof params?.terminalNote === 'string'
   const recordingId = params?.recordingId
   const contextMenuItems: ContextMenuItem[] = [
+	{
+		label: 'New Terminal with Profile…',
+		icon: <SquarePlus size={14} />,
+		onClick: () => dispatchNewTerminalWithProfileEvent(contextMenuTargetRef.current ?? document.body),
+	},
     {
       label: 'Close',
       icon: <XCircle size={14} />,

@@ -4,6 +4,8 @@ import {
 	MacroClient,
 	RecordingsClient as ServerRecordingsClient,
 	SettingsClient,
+	type ShellProfileCatalogueEntry,
+	ShellProfilesClient,
 	TerminayAiClient,
 	TerminayClientFacade,
 } from '@terminay/client-core';
@@ -2422,6 +2424,58 @@ const ProjectWorkspace = forwardRef<
 			projectRoot: project.rootFolder,
 			setErrorText,
 		});
+		const shellProfilesClient = useMemo(
+			() => terminalPanelClientContext?.applicationClient === undefined ? null : new ShellProfilesClient(new TerminayClientFacade(terminalPanelClientContext.applicationClient)),
+			[terminalPanelClientContext?.applicationClient],
+		);
+		const [profileChooserEntries, setProfileChooserEntries] = useState<readonly ShellProfileCatalogueEntry[] | null>(null);
+		const [profileChooserQuery, setProfileChooserQuery] = useState('');
+		const profileChooserRef = useRef<HTMLDivElement>(null);
+		const profileChooserSearchRef = useRef<HTMLInputElement>(null);
+		const profileChooserReturnFocusRef = useRef<HTMLElement | null>(null);
+		const openProfileChooser = useCallback(async () => {
+			if (!shellProfilesClient) {
+				setErrorText('Shell profiles are unavailable on this server.');
+				return;
+			}
+			profileChooserReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+			setIsMacroLauncherOpen(false);
+			setMacroQuery('');
+			try {
+				const catalogue = await shellProfilesClient.catalogue();
+				setProfileChooserEntries(catalogue.entries.filter((entry) => entry.availability.available));
+				setProfileChooserQuery('');
+				setErrorText(null);
+			} catch (error) {
+				setErrorText(`Unable to load shell profiles: ${error instanceof Error ? error.message : String(error)}`);
+			}
+		}, [setIsMacroLauncherOpen, setMacroQuery, shellProfilesClient]);
+		const filteredProfileChooserEntries = useMemo(() => {
+			const normalized = profileChooserQuery.trim().toLocaleLowerCase();
+			return (profileChooserEntries ?? []).filter((entry) => !normalized || `${entry.name} ${entry.source}`.toLocaleLowerCase().includes(normalized));
+		}, [profileChooserEntries, profileChooserQuery]);
+		useEffect(() => {
+			if (profileChooserEntries === null) return;
+			const focusFrame = window.requestAnimationFrame(() => {
+				profileChooserSearchRef.current?.focus();
+			});
+			const onKeyDown = (event: KeyboardEvent) => {
+				if (event.key === 'Escape') {
+					event.preventDefault();
+					setProfileChooserEntries(null);
+					return;
+				}
+				if (event.key !== 'Tab') return;
+				const focusable = [...(profileChooserRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])') ?? [])].filter((element) => element.offsetParent !== null);
+				if (focusable.length === 0) return;
+				const first = focusable[0]!;
+				const last = focusable[focusable.length - 1]!;
+				if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+				else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+			};
+			window.addEventListener('keydown', onKeyDown);
+			return () => { window.cancelAnimationFrame(focusFrame); window.removeEventListener('keydown', onKeyDown); const target = profileChooserReturnFocusRef.current; profileChooserReturnFocusRef.current = null; window.requestAnimationFrame(() => target?.isConnected && target.offsetParent !== null && target.closest('[aria-hidden="true"], [inert], .macro-launcher-overlay') === null ? target.focus() : focusActiveTerminal()); };
+		}, [focusActiveTerminal, profileChooserEntries]);
 		const {
 			isOpen: isTerminalSwitcherOpen,
 			items: terminalSwitcherItems,
@@ -2886,13 +2940,16 @@ const ProjectWorkspace = forwardRef<
 								await terminalPanelClientContext.client.create(request);
 							return session;
 						},
-			getTerminalCwd: getServerTerminalCwd,
 			hydrateRecording: hydrateRecordingStateForSession,
 			onError: setErrorText,
 			projectId: project.id,
 			recordNewTerminals: settings.recording.recordNewTerminals,
 			sendInput: sendTerminalPanelInput,
 			startRecording: startRecordingForSession,
+			splitPanel:
+				terminalPanelClientContext?.workspaceSnapshotStore === undefined
+					? undefined
+					: (request) => terminalPanelClientContext.workspaceSnapshotStore!.splitPanel(request),
 			suppressInitialActivity: suppressInitialTerminalActivity,
 			waitForCreatedTerminal:
 				terminalPanelClientContext === null
@@ -3041,6 +3098,15 @@ const ProjectWorkspace = forwardRef<
 						setMacroQuery('');
 						void addTerminal({});
 					},
+				},
+				{
+					group: 'Terminal',
+					icon: <Terminal size={18} strokeWidth={2.1} />,
+					id: 'create-terminal-with-profile',
+					title: 'New Terminal with Profile…',
+					description: 'Choose one shell profile for this terminal without changing defaults.',
+					searchText: 'new terminal shell profile one time choose discovered',
+					onSelect: () => { void openProfileChooser(); },
 				},
 				{
 					group: 'Workspace',
@@ -3272,6 +3338,7 @@ const ProjectWorkspace = forwardRef<
 			runMacro,
 			settings.keyboardShortcuts,
 			setProjectRootFolderToWorkingDirectory,
+			openProfileChooser,
 			startDictation,
 			toggleFileExplorerSidebar,
 		]);
@@ -3882,6 +3949,7 @@ const ProjectWorkspace = forwardRef<
 			draggingTransferRef,
 			isActive,
 			openTerminalEditWindow,
+			openProfileChooser,
 			popoutUrl,
 			runAiTabMetadataRef,
 		});
@@ -4325,7 +4393,8 @@ const ProjectWorkspace = forwardRef<
 				<McpInstallModal
 					open={isMcpInstallModalOpen}
 					onClose={() => setIsMcpInstallModalOpen(false)}
-				/>
+			/>
+				{profileChooserEntries ? <div className="macro-launcher-overlay" onClick={() => setProfileChooserEntries(null)}><div ref={profileChooserRef} className="shell-profile-chooser" role="dialog" aria-modal="true" aria-labelledby="shell-profile-chooser-title" onClick={(event) => event.stopPropagation()}><header><div><h2 id="shell-profile-chooser-title">New Terminal with Profile</h2><p>This choice applies once and does not change the server or project default.</p></div><button type="button" aria-label="Close shell profile chooser" onClick={() => setProfileChooserEntries(null)}>×</button></header><label><span className="sr-only">Search shell profiles</span><input ref={profileChooserSearchRef} type="search" autoFocus value={profileChooserQuery} onChange={(event) => setProfileChooserQuery(event.target.value)} placeholder="Search shell profiles" /></label><div className="shell-profile-chooser__list">{filteredProfileChooserEntries.map((entry) => <button type="button" key={entry.id} onClick={() => { setProfileChooserEntries(null); void addTerminal({ profileId: entry.id }); }}><span aria-hidden="true">{entry.icon || '›_'}</span><span><strong>{entry.name}</strong><small>{entry.kind === 'discovered' ? `Discovered · ${entry.source}` : entry.kind === 'system' ? 'System default' : 'Custom profile'}</small></span></button>)}{filteredProfileChooserEntries.length === 0 ? <p>No available profiles match your search.</p> : null}</div></div></div> : null}
 				{quickPushClient !== undefined &&
 				quickPushAction &&
 				settings.gitPushAgent.provider !== 'disabled' ? (

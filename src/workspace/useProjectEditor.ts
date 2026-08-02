@@ -1,6 +1,8 @@
 import {
 	ClientError,
+	ShellProfilesClient,
 	type TerminayClient,
+	TerminayClientFacade,
 	WorkspaceClient,
 } from '@terminay/client-core';
 import { useCallback } from 'react';
@@ -38,14 +40,21 @@ export function useProjectEditor({
 			const project = projects.find((candidate) => candidate.id === projectId);
 			if (!project) return;
 			try {
+				const serverProject = workspaceSnapshotStore?.snapshot?.projects[projectId];
+				const currentDefaultShellProfileId = serverProject?.defaultShellProfileId ?? project.defaultShellProfileId ?? null;
+				const shellProfileCatalogue = applicationClient === undefined
+					? null
+					: await new ShellProfilesClient(new TerminayClientFacade(applicationClient)).catalogue();
 				const result = await auxiliaryRoutes.editProjectTab({
 					kind: 'project',
 					projectId,
-					draft: {
-						color: project.color,
-						emoji: project.emoji,
-						rootFolder: project.rootFolder,
-						title: project.title,
+						draft: {
+							color: project.color,
+							defaultShellProfileId: currentDefaultShellProfileId,
+							emoji: project.emoji,
+							rootFolder: project.rootFolder,
+							shellProfileOptions: (shellProfileCatalogue?.entries ?? []).filter((profile) => profile.kind !== 'discovered').map((profile) => ({ id: profile.id, name: profile.name, available: profile.availability.available })),
+							title: project.title,
 					},
 				});
 				if (!result) return;
@@ -53,6 +62,19 @@ export function useProjectEditor({
 				let canonicalRoot = root;
 				if (applicationClient) {
 					const client = new WorkspaceClient(applicationClient);
+					if (result.defaultShellProfileId !== currentDefaultShellProfileId) {
+						const updateShellProfile = (expectedRevision?: number) => client.setProjectShellProfile(
+							{ projectId, ...(result.defaultShellProfileId === null ? {} : { profileId: result.defaultShellProfileId }) },
+							{ commandId: crypto.randomUUID(), ...(expectedRevision === undefined ? {} : { expectedRevision }) },
+						);
+						try { await updateShellProfile(workspaceSnapshotStore?.snapshot?.revision); }
+						catch (error) {
+							if (!(error instanceof ClientError) || error.code !== 'conflict') throw error;
+							const refreshed = await workspaceSnapshotStore?.refresh();
+							await updateShellProfile(refreshed?.revision);
+						}
+						await workspaceSnapshotStore?.refresh();
+					}
 					if (root !== project.rootFolder) {
 						const updateRoot = (expectedRevision?: number) =>
 							client.updateProjectRoot(
@@ -105,6 +127,7 @@ export function useProjectEditor({
 					await workspaceSnapshotStore?.refresh();
 				}
 				updateProject(projectId, {
+					...(result.defaultShellProfileId === null ? { defaultShellProfileId: undefined } : { defaultShellProfileId: result.defaultShellProfileId }),
 					title: result.title.trim() || 'Untitled Project',
 					emoji: result.emoji.trim(),
 					color: result.color,

@@ -53,6 +53,26 @@ npm run smoke
 
 `smoke` runs Biome linting and the renderer/main TypeScript plus Vite build.
 
+## Shell profiles
+
+New terminals use server-owned shell profiles. **System default** follows the
+connected server account shell, while custom profiles can select an executable
+or WSL distribution, preserve argument boundaries, apply an environment
+overlay, and carry optional presentation metadata. Server, project, and
+one-terminal choices are separate; changing a profile affects only terminals
+created afterward.
+
+Configure profiles and the default working-directory policy under **Settings →
+Terminal → Shell Profiles**. Discovered shells can be used once or copied into
+a durable custom profile. Environment values are available only in the
+write-authorized editor and are omitted from catalogue, workspace, session,
+recording, diagnostic, and remote-summary data.
+
+Version-1 `shell.program`, `shell.startupMode`, and `shell.extraArgs` settings
+are imported once through a recoverable migration. They are no longer exposed
+as production settings; the migration reader remains temporarily for existing
+installations.
+
 ## Terminal recordings
 
 Terminal recording is off by default. Enable **Record new terminals** in Settings, or right-click a terminal tab and choose **Start Recording** for one session. Recordings are local asciicast v3 `.cast` files saved under `~/Documents/TerminaySessions/YYYY-MM-DD/` by default, with Terminay metadata stored beside each cast file.
