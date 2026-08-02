@@ -59,6 +59,22 @@ test('browser pairing requires explicit device name and six-digit PIN enrollment
 	).toBeEnabled();
 });
 
+test('opening a direct device link consumes its fragment and asks for the PIN immediately', async ({
+	page,
+}) => {
+	const fragment = new URLSearchParams({
+		pairingFlow: 'device',
+		pairingExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+		pairingSessionId: 'direct-device-browser-pin',
+		pairingToken: 'direct-device-token-browser-pin-0123456789',
+	});
+	await page.goto(`${fixture.origin}/web.html#${fragment}`);
+	await expect(
+		page.getByRole('dialog', { name: 'Enroll browser device' }),
+	).toBeVisible();
+	expect(page.url()).not.toContain('#');
+});
+
 test('cancelling PIN enrollment persists neither pairing material nor a profile', async ({
 	page,
 }) => {

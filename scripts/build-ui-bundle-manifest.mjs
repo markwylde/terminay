@@ -191,13 +191,14 @@ if (
   const serverVersion = process.argv[3];
   if (serverVersion === undefined || serverVersion.length === 0) {
     throw new Error(
-      "usage: build-ui-bundle-manifest.mjs [root-directory] <server-version> [protocol-version]",
+      "usage: build-ui-bundle-manifest.mjs [root-directory] <server-version> [protocol-version] [entry-file]",
     );
   }
   const manifest = await buildUiBundleManifest({
     rootDirectory,
     serverVersion,
     protocolVersion: process.argv[4] ?? "1",
+    entryFile: process.argv[5] ?? "index.html",
   });
   process.stdout.write(`${manifest.bundleId}\n`);
 }

@@ -49,7 +49,9 @@ test('Desktop header uses the current-server connection menu', () => {
 	assert.match(connectionMenu, /Connection Error/u);
 	assert.match(connectionMenu, /Current Server/);
 	assert.match(connectionMenu, /Connected/);
-	assert.match(connectionMenu, /Manage connections…/);
+	assert.match(connectionMenu, /Add connection…/);
+	assert.match(app, /terminayClipboardHost\?\.writeText\(/u);
+	assert.match(app, /selectedPairingUrl \|\| 'No pairing link available yet\.'/u);
 	assert.match(app, /openRemoteConnection/);
 	assert.match(connectionMenu, /Expose At/);
 	assert.match(connectionMenu, /Expose this server…/);
@@ -96,7 +98,8 @@ test('standalone connection action reaches a real HTTP client session through th
 	assert.match(main, /normalizeRemoteConnectionUrl/);
 	// A standalone protocol URL may also carry a fragment credential; the framed stream
 	// transport, not fragment shape, is authoritative for this flow.
-	assert.doesNotMatch(main, /isRemoteAccessPairingUrl\(pairingUrl\)/u);
+	assert.match(main, /isRemoteAccessPairingUrl\(pairingUrl\)/u);
+	assert.match(main, /Enter the six-digit Remote Access pairing PIN/u);
 	assert.match(main, /establishDesktopDevicePairing/u);
 	assert.match(main, /enrollDesktopReconnectCredential/u);
 	assert.match(main, /DesktopDeviceCredentialStore/u);
