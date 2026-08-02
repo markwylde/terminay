@@ -294,7 +294,7 @@ test('a copied direct pairing link boots the server UI, enrolls, and connects', 
 			.getByRole('button', { name: 'Close Pair Device' })
 			.click();
 	} finally {
-		if (previousClipboard !== undefined)
+		if (typeof previousClipboard === 'string' && previousClipboard.length > 0)
 			await mainWindow.evaluate(
 				(value) => window.terminayClipboardHost?.writeText(value),
 				previousClipboard,
