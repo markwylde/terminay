@@ -4,3 +4,4 @@ export * from "./discovery.js";
 export * from "./catalogue.js";
 export * from "./nodeHost.js";
 export * from "./protocol.js";
+export * from "./startupMode.js";

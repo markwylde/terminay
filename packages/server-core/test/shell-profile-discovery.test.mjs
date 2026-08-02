@@ -199,6 +199,16 @@ test("validation rejects malformed WSL targets, unsupported startup modes, revie
   assert.equal(tooMany.issues.some((entry) => entry.code === "profile-limit"), true);
 });
 
+test("validation and launch share startup-mode support for PowerShell executables", () => {
+  const service = new ShellProfileDiscoveryService(fixtureHost({ platform: "win32", executables: [] }).host);
+  const result = service.validate(profile({
+    target: { kind: "executable", executable: "C:\\Program Files\\PowerShell\\7\\pwsh.exe" },
+    startupMode: "login",
+  }));
+
+  assert.equal(result.valid, true);
+});
+
 test("launch resolution revalidates executable availability and returns bounded metadata-only errors", async () => {
   const fixture = fixtureHost({ platform: "darwin", executables: [["/bin/zsh", "/private/canonical/zsh"]] });
   const service = new ShellProfileDiscoveryService(fixture.host);

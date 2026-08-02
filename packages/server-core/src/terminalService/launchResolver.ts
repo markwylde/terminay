@@ -5,6 +5,7 @@ import type { ProtocolId } from "@terminay/protocol";
 import {
   SYSTEM_SHELL_PROFILE_ID,
   isProtectedTerminalEnvironmentName,
+  shellStartupModeFamily,
   type NewTerminalCwdPolicy,
   type ResolvedShellProfile,
   type ShellProfileCatalogue,
@@ -287,11 +288,11 @@ function shellPathForMode(profile: ResolvedShellProfile): string {
 
 function startupModeArgs(shellPath: string, mode: ShellStartupMode): readonly string[] {
   if (mode === "default") return [];
-  const shell = basename(shellPath).toLowerCase().replace(/\.exe$/u, "");
-  if (["bash", "zsh", "sh", "ksh", "fish"].includes(shell)) {
+  const family = shellStartupModeFamily(shellPath);
+  if (family === "posix") {
     return mode === "login" ? ["-l"] : [];
   }
-  if (["pwsh", "powershell"].includes(shell)) {
+  if (family === "powershell") {
     return mode === "login" ? ["-Login"] : [];
   }
   throw new TerminalServiceError(

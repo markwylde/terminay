@@ -53,9 +53,9 @@ function profiles(entries, options = {}) {
       const selected = byId.get(id);
       if (selected === undefined) throw new Error("not found");
       if (!selected.availability.available) throw new Error("unavailable");
-      const target = selected.target.kind === "wsl"
+      const target = options.resolvedTargets?.[id] ?? (selected.target.kind === "wsl"
         ? { ...selected.target, executable: "C:\\Windows\\System32\\wsl.exe" }
-        : selected.target;
+        : selected.target);
       return { profile: selected, definition: selected, settingsRevision: catalogue.settingsRevision, target };
     },
   };
@@ -109,6 +109,28 @@ test("launch resolver preserves argv boundaries, translates login mode, and laye
   assert.equal(launch.shellPath, "/bin/zsh");
   assert.deepEqual(launch.args, ["-l", "--no-globalrcs", "two words"]);
   assert.deepEqual(launch.env, { BASE: "profile", TERMINAY_SERVER: "trusted", ADDED: "$NOT_EXPANDED" });
+});
+
+test("launch resolver supports login and non-login startup modes for POSIX sh implementations", async () => {
+  const dash = profile("dash", {
+    target: { kind: "executable", executable: "/usr/bin/dash" },
+    startupMode: "login",
+  });
+  const sh = profile("sh", {
+    target: { kind: "executable", executable: "/bin/sh" },
+    startupMode: "non-login",
+    args: ["-i"],
+  });
+  const entries = [profile("system"), dash, sh];
+
+  const login = await resolver({ entries }).resolve(intent({ explicitProfileId: "dash" }));
+  const nonLogin = await resolver({
+    entries,
+    catalogue: { resolvedTargets: { sh: { kind: "executable", executable: "/usr/bin/dash" } } },
+  }).resolve(intent({ explicitProfileId: "sh" }));
+
+  assert.deepEqual(login.args, ["-l"]);
+  assert.deepEqual(nonLogin.args, ["-i"]);
 });
 
 test("Windows environment layering is case-insensitive and protected aliases are rejected", async () => {
