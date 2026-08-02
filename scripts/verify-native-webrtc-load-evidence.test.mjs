@@ -10,16 +10,17 @@ const patch =
 	'34ea60bd991256adb2cd50bfe0ef9011cfc79054aff686b9ec35ef4703de4211';
 
 function profile(mode, routeType, peerPairs) {
+	const replacementRoute = {
+		localType: routeType,
+		protocol: 'udp',
+		remoteType: mode === 'direct' ? 'prflx' : routeType,
+	};
 	return {
 		bytesSent: 4096,
 		channelsPerPair: 4,
 		cpuMs: 10,
 		framesSent: 1,
-		crashReplacementRoute: {
-			localType: routeType,
-			protocol: 'udp',
-			remoteType: routeType,
-		},
+		crashReplacementRoute: replacementRoute,
 		maxApplicationQueue: 128,
 		maxBufferedAmount: 4096,
 		mode,
@@ -29,10 +30,10 @@ function profile(mode, routeType, peerPairs) {
 		platform: 'linux-x64',
 		queueRejects: 0,
 		resourcesAfter: ['PipeWrap'],
-		routes: Array.from({ length: peerPairs }, () => ({
+		routes: Array.from({ length: peerPairs + 1 }, (_, index) => ({
 			localType: routeType,
 			protocol: 'udp',
-			remoteType: routeType,
+			remoteType: mode === 'direct' && index === peerPairs ? 'prflx' : routeType,
 		})),
 		rssGrowthBytes: 0,
 		runtime: 'secure-werift',
