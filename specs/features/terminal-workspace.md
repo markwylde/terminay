@@ -9,8 +9,10 @@ protocol.
 
 ## Behaviour
 
-- New sessions resolve the configured shell and launch mode. They inherit a
-  sensible working directory from the active terminal/project when applicable.
+- New sessions resolve the configured shell and launch mode, including sessions
+  created through the server-owned workspace protocol for new projects, tabs,
+  and splits. They inherit a sensible working directory from the active
+  terminal/project when applicable.
 - Terminals support splits, search, copy/paste including bracketed-paste-aware
   input, dropped paths, guarded external links, resizing, scrollback, zoom, and
   exit handling.
@@ -116,3 +118,5 @@ longer blocks another client from claiming the session.
   a live session.
 - Reconnect resumes from a known output position without duplicating the PTY or
   replaying acknowledged output.
+- Every Desktop terminal creation path launches the current configured shell,
+  or the host's system-shell fallback when no shell is configured.

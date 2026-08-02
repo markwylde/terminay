@@ -137,3 +137,14 @@ test('managing an unrelated remote profile does not replace the Local protocol c
 	assert.doesNotMatch(forgetHandler, /postLocalServerConnection/u);
 	assert.doesNotMatch(revokeHandler, /postLocalServerConnection/u);
 });
+
+test('Desktop protocol-created terminals use the current configured shell resolver', () => {
+	assert.match(
+		main,
+		/resolveDefaultShell:\s*\(\)\s*=>\s*resolvePtyShellOptions\(readTerminalSettings\(\)\)/u,
+	);
+	assert.match(
+		main,
+		/function resolvePtyShellOptions\(settings: TerminalSettings\)/u,
+	);
+});
