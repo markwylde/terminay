@@ -71,6 +71,10 @@ test('web image has an explicit static health and SPA fallback contract', async 
 	assert.match(dockerfile, /vite\.web\.config\.ts web\.html remote\.html/u);
 	assert.match(
 		dockerfile,
+		/COPY scripts\/build-ui-bundle-manifest\.mjs \.\/scripts\/build-ui-bundle-manifest\.mjs/u,
+	);
+	assert.match(
+		dockerfile,
 		/--mount=type=cache,id=terminay-npm-cache-node22,target=\/root\/\.npm,sharing=locked/u,
 	);
 	assert.ok(
