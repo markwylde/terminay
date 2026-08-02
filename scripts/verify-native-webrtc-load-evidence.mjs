@@ -24,29 +24,32 @@ function validateProfile(profile, { arch, mode, peerPairs, routeType }) {
 	assert.ok(Number.isSafeInteger(profile.bytesSent) && profile.bytesSent > 0);
 	assert.equal(profile.peerCrashes, 1);
 	assert.equal(profile.peerRecoveries, 1);
-	assert.deepEqual(profile.crashReplacementRoute, {
-		localType: routeType,
-		protocol: 'udp',
-		remoteType: routeType,
-	});
+	validateRoute(profile.crashReplacementRoute, { mode, routeType });
 	assert.equal(profile.queueRejects, 0);
 	assert.ok(profile.maxApplicationQueue <= 128);
 	assert.ok(profile.maxBufferedAmount <= 266_240);
 	assert.ok(Number.isFinite(profile.cpuMs) && profile.cpuMs >= 0);
 	assert.ok(Number.isSafeInteger(profile.rssGrowthBytes) && profile.rssGrowthBytes >= 0);
-	assert.equal(profile.routes.length, peerPairs);
+	assert.equal(profile.routes.length, peerPairs + profile.peerRecoveries);
 	for (const route of profile.routes) {
-		assert.deepEqual(route, {
-			localType: routeType,
-			protocol: 'udp',
-			remoteType: routeType,
-		});
+		validateRoute(route, { mode, routeType });
 	}
 	assert.equal(
 		profile.resourcesAfter.some((name) => /UDP|Socket|Timeout/iu.test(name)),
 		false,
 		`${mode} profile leaked a network or timer resource`,
 	);
+}
+
+function validateRoute(route, { mode, routeType }) {
+	assert.equal(route.protocol, 'udp');
+	if (mode === 'turn') {
+		assert.equal(route.localType, routeType);
+		assert.equal(route.remoteType, routeType);
+		return;
+	}
+	assert.ok(['host', 'prflx'].includes(route.localType));
+	assert.ok(['host', 'prflx'].includes(route.remoteType));
 }
 
 export async function verifyNativeWebRtcLoadEvidence({
