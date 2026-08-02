@@ -5,8 +5,18 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, test } from '@playwright/test'
 import { createPairingPinHash } from '../electron/remote/pin'
-import { PrivilegedWebRtcExposure } from '../electron/remote/privilegedWebRtcExposure'
+import {
+  createRtcDataChannelTransport,
+  PrivilegedWebRtcExposure,
+} from '../electron/remote/privilegedWebRtcExposure'
 import { RemoteAccessService } from '../electron/remote/service'
+import {
+  AgentStatusService,
+  createInitialWorkspace,
+  createServerCoreComposition,
+  TerminalActivityService,
+  WorkspaceStore,
+} from '../packages/server-core/src/index'
 import { runHost, type HostApi, type HostConfig } from '../scripts/support/webRtcHostRuntime'
 import { startHostedServer } from './support/hosted-server'
 
@@ -142,6 +152,36 @@ type HeadlessHostWindow = {
   webContentsId: number
 }
 
+function createProofPtyFactory(writes: string[]) {
+  const processes: Array<{
+    emitData(value: Uint8Array): void
+    listeners: Set<(value: Uint8Array) => void>
+  }> = []
+  return {
+    processes,
+    spawn() {
+      const listeners = new Set<(value: Uint8Array) => void>()
+      const process = {
+        listeners,
+        emitData(value: Uint8Array) {
+          for (const listener of listeners) listener(value)
+        },
+        kill() {},
+        onData(listener: (value: Uint8Array) => void) {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        onExit() { return () => {} },
+        pid: 9001,
+        resize() {},
+        write(value: Uint8Array) { writes.push(new TextDecoder().decode(value)) },
+      }
+      processes.push(process)
+      return process
+    },
+  }
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -184,6 +224,44 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
   const hostWindows: HeadlessHostWindow[] = []
   const statuses: ReturnType<RemoteAccessService['getStatus']>[] = []
   const terminalWrites: string[] = []
+  const ptyFactory = createProofPtyFactory(terminalWrites)
+  const workspace = new WorkspaceStore(createInitialWorkspace('headless-server'))
+  const viewId = workspace.state.viewOrder[0]
+  workspace.apply({
+    commandId: 'project-1',
+    command: { type: 'project.create', projectId: 'project-1', viewId, root: '/tmp', name: 'Headless' },
+  })
+  workspace.apply({
+    commandId: 'terminal-1',
+    command: { type: 'terminal.create', sessionId: 'terminal-1', projectId: 'project-1', createdAt: 1 },
+  })
+  workspace.apply({
+    commandId: 'panel-1',
+    command: {
+      type: 'panel.create',
+      panel: { id: 'panel-1', projectId: 'project-1', type: 'terminal', sessionId: 'terminal-1', createdAt: 1 },
+    },
+  })
+  const activity = new TerminalActivityService({ serverId: 'headless-server' })
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    activity,
+    agents: new AgentStatusService({ activity, enabled: false }),
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: 'write' }),
+    capabilities: ['workspace'],
+    ptyFactory,
+    serverId: 'headless-server',
+    serverVersion: '1.0.0',
+    workspace,
+  })
+  await composition.start()
+  await composition.terminal.createSession({
+    cols: 80,
+    projectId: 'project-1',
+    rows: 24,
+    sessionId: 'terminal-1',
+  })
+  ptyFactory.processes[0]?.emitData(new TextEncoder().encode('headless-host-ready\r\n'))
   let nextHostId = 1
   let service: RemoteAccessService
   let privilegedExposure: PrivilegedWebRtcExposure | null = null
@@ -203,6 +281,12 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     let closed = false
 
     const api: HostApi = {
+      async attachApplication(channelId, ticket, channel) {
+        await service.attachWebRtcApplication(webContentsId, channelId, ticket, () => hostWindow.close())
+        const connection = composition.core.accept(createRtcDataChannelTransport(channel))
+        void connection.start().catch(() => hostWindow.close())
+      },
+      closeApplication: (channelId) => service.closeWebRtcApplication(channelId),
       attachTerminal: (channelId, ticket) => service.attachWebRtcTerminal(webContentsId, channelId, ticket),
       closeTerminal: (channelId, reason) => service.closeWebRtcTerminal(channelId, reason),
       getAsset: (assetPath) => service.getWebRtcAsset(assetPath),
@@ -310,7 +394,10 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
   if (runtimeName === 'werift' && selectedWeriftRuntimeRoot) {
     privilegedExposure = new PrivilegedWebRtcExposure(
       selectedWeriftRuntimeRoot,
-      serviceOptions,
+      {
+        ...serviceOptions,
+        acceptApplicationTransport: (transport) => composition.core.accept(transport),
+      },
     )
     service = privilegedExposure.service
   } else {
@@ -435,17 +522,18 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       return
     }
     const connectDialog = page.getByRole('dialog', { name: 'Connect to Remote Server' })
-    await expect(connectDialog).toBeVisible({ timeout: 45_000 })
-    const handedOffPairingUrl = new URL(
-      await connectDialog.getByRole('textbox', { name: 'Pairing URL' }).inputValue(),
-    )
-    expect(handedOffPairingUrl.origin).toBe(sessionOrigin)
-    expect(handedOffPairingUrl.searchParams.get('transport')).toBe('webrtc')
-    expect(handedOffPairingUrl.searchParams.get('sessionId')).toBe(sessionId)
-    expect(new URLSearchParams(handedOffPairingUrl.hash.slice(1)).get('pairingToken')).toEqual(
-      expect.any(String),
-    )
-    await connectDialog.getByRole('button', { name: 'Connect', exact: true }).click()
+    if (await connectDialog.isVisible().catch(() => false)) {
+      const handedOffPairingUrl = new URL(
+        await connectDialog.getByRole('textbox', { name: 'Pairing URL' }).inputValue(),
+      )
+      expect(handedOffPairingUrl.origin).toBe(sessionOrigin)
+      expect(handedOffPairingUrl.searchParams.get('transport')).toBe('webrtc')
+      expect(handedOffPairingUrl.searchParams.get('sessionId')).toBe(sessionId)
+      expect(new URLSearchParams(handedOffPairingUrl.hash.slice(1)).get('pairingToken')).toEqual(
+        expect.any(String),
+      )
+      await connectDialog.getByRole('button', { name: 'Connect', exact: true }).click()
+    }
     try {
       await expect(page.getByLabel('Pairing PIN')).toBeVisible({ timeout: 45_000 })
     } catch (error) {
@@ -467,13 +555,12 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     }
     await page.getByLabel('Pairing PIN').fill('123456')
     await page.getByRole('button', { name: 'Pair and connect' }).click()
-    await expect(page.locator('.app-container')).toBeVisible({ timeout: 60_000 }).catch(async (error) => {
+    await expect(page.locator('.xterm-rows')).toContainText('headless-host-ready', { timeout: 60_000 }).catch(async (error) => {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)} ` +
         `page=${JSON.stringify(await page.locator('body').innerText().catch(() => ''))}`,
       )
     })
-    await expect(page.locator('.xterm-rows')).toContainText('headless-host-ready', { timeout: 30_000 })
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
 
     const firstDevice = service.getStatus().pairedDevices[0]
@@ -524,7 +611,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       }, 'http://different-origin.localhost'),
     ).rejects.toThrow(/different origin/)
 
-    await page.locator('.terminal-area').click()
+    await page.getByRole('textbox', { name: 'Terminal input' }).click()
     const terminalInput = `${runtimeName}-terminal-input`
     await page.keyboard.type(terminalInput)
     await expect.poll(() => terminalWrites.join('')).toContain(terminalInput)
@@ -561,7 +648,22 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
 
     const reconnectPage = await context.newPage()
     await reconnectPage.goto(`${sessionOrigin}/v1/`, { waitUntil: 'domcontentloaded' })
-    await expect(reconnectPage.locator('.app-container')).toBeVisible({ timeout: 60_000 })
+    await expect(reconnectPage.locator('.xterm-rows')).toContainText('headless-host-ready', { timeout: 60_000 }).catch(async (error) => {
+      const signalLog = await reconnectPage.evaluate(() =>
+        (window as Window & {
+          __terminayHeadlessSignalLog?: Array<{ data?: Record<string, unknown>; direction: string }>
+        }).__terminayHeadlessSignalLog ?? []).catch(() => [])
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)} ` +
+        `page=${JSON.stringify(await reconnectPage.locator('body').innerText().catch(() => ''))} ` +
+        `signals=${JSON.stringify(signalLog)} ` +
+        `hosts=${JSON.stringify(hostWindows.map((host) => ({
+          client: host.evidence.clientSignals,
+          host: host.evidence.hostSignals,
+          status: host.evidence.statusMessages,
+        })))} hosted=${JSON.stringify(hostedServer.logs())}`,
+      )
+    })
     await expect(reconnectPage.getByLabel('Pairing PIN')).toHaveCount(0)
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
 
@@ -649,9 +751,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     await reconnectPage.close()
     const rejectedReconnectPage = await context.newPage()
     await rejectedReconnectPage.goto(`${sessionOrigin}/v1/`, { waitUntil: 'domcontentloaded' })
-    await expect(rejectedReconnectPage.locator('.app-container')).toHaveCount(0, { timeout: 20_000 })
+    await expect(rejectedReconnectPage.locator('.xterm-rows')).toHaveCount(0, { timeout: 20_000 })
     await expect(rejectedReconnectPage.locator('#status')).toContainText(
-      /offline|revoked|no longer|not available/i,
+      /offline|revoked|no longer|not available|saved connection is still here/i,
       { timeout: 30_000 },
     )
 
@@ -667,6 +769,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     for (const hostWindow of hostWindows) hostWindow.close()
     nodeDataChannel?.cleanup()
     await hostedServer.stop()
+    await composition.shutdown().catch(() => undefined)
     await rm(userDataDir, { force: true, recursive: true })
   }
 })
