@@ -209,6 +209,14 @@ The Shell settings page begins with the server default profile and **New
 terminals start in** controls. Most users can leave both at **System default**
 and **Current terminal or panel**.
 
+Shell profile controls use the same section headers, grouped setting rows,
+inputs, buttons, spacing, colours, and responsive behaviour as every other
+Settings category. The page does not repeat the currently connected server,
+because all Settings are scoped to that server. Server locality is explained
+only where it affects an operation, such as executable discovery or profile
+validation. Profile catalogues use contiguous grouped rows rather than visually
+independent dashboard cards.
+
 The profile manager lists System default, discovered profiles, and custom
 profiles with availability, source, and default/project-use status. Users can
 create, copy, rename, reorder, edit, validate, and delete custom profiles. The
