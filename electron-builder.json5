@@ -15,6 +15,7 @@
   },
   "files": [
     "dist",
+    "dist-web",
     "dist-electron"
   ],
   // The selection record is always packaged. Release preparation stages the

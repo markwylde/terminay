@@ -2870,9 +2870,14 @@ export function SettingsWindow({
 											type="button"
 											className="settings-remote-copy-button"
 											onClick={() => {
-												void navigator.clipboard.writeText(selectedPairingUrl);
-												setIsLinkCopied(true);
-												setTimeout(() => setIsLinkCopied(false), 2000);
+												void (window.terminayClipboardHost?.writeText(
+													selectedPairingUrl,
+												) ?? navigator.clipboard.writeText(selectedPairingUrl))
+													.then(() => {
+														setIsLinkCopied(true);
+														setTimeout(() => setIsLinkCopied(false), 2000);
+													})
+													.catch(() => setIsLinkCopied(false));
 											}}
 										>
 											{isLinkCopied ? 'Copied' : 'Copy Link'}

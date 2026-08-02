@@ -175,7 +175,7 @@ test("embedded Local stays loopback-only and unexposed until an explicit exposur
   assert.equal(exposure.status.exposure.state, "disabled");
 });
 
-test("embedded Local composes the shared runtime and authenticated responsive UI listener", async () => {
+test("embedded Local composes the shared runtime with public UI assets and authenticated protocol access", async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-embedded-ui-"));
   const port = await reserveLoopbackPort();
   const index = Buffer.from("<!doctype html><title>Embedded Terminay</title>");
@@ -216,7 +216,11 @@ test("embedded Local composes the shared runtime and authenticated responsive UI
     assert.equal(bootstrap.runtime.config.runtimeMode, "embedded");
     assert.equal(ready.origin, origin);
     const unauthenticatedManifest = await fetch(`${origin}/manifest.json`);
-    assert.equal(unauthenticatedManifest.status, 401);
+    assert.equal(unauthenticatedManifest.status, 200);
+    assert.equal((await unauthenticatedManifest.json()).bundleId, bundleId);
+    const unauthenticatedProtocol = await fetch(`${origin}/protocol/stream`);
+    assert.equal(unauthenticatedProtocol.status, 401);
+    assert.equal(unauthenticatedProtocol.headers.get("www-authenticate"), "Bearer");
     const manifest = await fetch(`${origin}/manifest.json`, {
       headers: { Authorization: `Bearer ${ready.bootstrapCredential}` },
     });
