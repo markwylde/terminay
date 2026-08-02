@@ -17,6 +17,7 @@ RUN --mount=type=cache,id=terminay-npm-cache-node22,target=/root/.npm,sharing=lo
   npm ci --ignore-scripts
 
 COPY tsconfig.base.json tsconfig.json tsconfig.node.json tsconfig.web.json vite.web.config.ts web.html remote.html ./
+COPY scripts/build-ui-bundle-manifest.mjs ./scripts/build-ui-bundle-manifest.mjs
 COPY public ./public
 COPY src ./src
 COPY apps ./apps
