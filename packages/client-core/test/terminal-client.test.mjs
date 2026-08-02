@@ -256,6 +256,8 @@ test('TerminayTerminalClient creates a server-owned terminal session', async () 
 	const client = new TerminayTerminalClient(transport);
 	const session = await client.create({
 		projectId: 'project-a',
+		profileId: 'profile-zsh',
+		activePanelId: 'panel-a',
 		cwd: '/workspace',
 		cols: 120,
 		rows: 40,
@@ -263,6 +265,14 @@ test('TerminayTerminalClient creates a server-owned terminal session', async () 
 	assert.equal(session.sessionId, 'server-session');
 	assert.deepEqual(session.dimensions, { cols: 120, rows: 40 });
 	assert.equal(transport.calls[0][0], 'terminal.create');
+	assert.deepEqual(transport.calls[0][1], {
+		projectId: 'project-a',
+		profileId: 'profile-zsh',
+		activePanelId: 'panel-a',
+		cwd: '/workspace',
+		cols: 120,
+		rows: 40,
+	});
 });
 
 test('TerminayTerminalClient waits on canonical server inactivity with exact identity', async () => {

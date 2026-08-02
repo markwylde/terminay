@@ -91,6 +91,7 @@ test("file explorer, folder tasks, and FileViewerClient use one TerminayClient s
   });
   const adapterOperations = mergeOperationRecords(catalogAdapter.operations(), contentAdapter.operations(), fileAdapter.operations());
   const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
     serverId: "file-e2e-server",
     serverVersion: "test",
     capabilities: ["files"],

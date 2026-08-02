@@ -32,6 +32,11 @@ export interface TerminalClientAttachRequest extends TerminalClientIdentity {
 
 export interface TerminalClientCreateRequest {
 	readonly projectId: string;
+	/** One-off server-owned profile selection. No executable or environment is
+	 * accepted at this boundary. */
+	readonly profileId?: string;
+	/** Authoritative panel identity used by the server cwd policy. */
+	readonly activePanelId?: string;
 	readonly cwd?: string;
 	readonly cols?: number;
 	readonly rows?: number;
@@ -39,6 +44,16 @@ export interface TerminalClientCreateRequest {
 
 export interface TerminalClientSession extends TerminalClientIdentity {
 	readonly cwd: string;
+	readonly launch?: Readonly<{
+		profileId: string;
+		profileRevision: number;
+		profileName: string;
+		targetSummary: string;
+		workspaceRevision: number;
+		settingsRevision: number;
+		icon?: string;
+		color?: string;
+	}>;
 	readonly status: 'running' | 'exited' | 'interrupted';
 	readonly createdAt: number;
 	readonly outputPosition: number;
@@ -212,6 +227,18 @@ export class TerminayTerminalClient {
 				request.cwd.length > 4_096)
 		)
 			throw new TypeError('terminal cwd is invalid');
+		for (const [name, value] of [
+			['profileId', request.profileId],
+			['activePanelId', request.activePanelId],
+		] as const) {
+			if (
+				value !== undefined &&
+				(typeof value !== 'string' ||
+					value.length === 0 ||
+					hasInvalidIdentityCharacters(value))
+			)
+				throw new TypeError(`terminal ${name} is invalid`);
+		}
 		const dimensions =
 			request.cols === undefined && request.rows === undefined
 				? undefined
@@ -223,6 +250,12 @@ export class TerminayTerminalClient {
 			'terminal.create',
 			{
 				projectId: request.projectId,
+				...(request.profileId === undefined
+					? {}
+					: { profileId: request.profileId }),
+				...(request.activePanelId === undefined
+					? {}
+					: { activePanelId: request.activePanelId }),
 				...(request.cwd === undefined ? {} : { cwd: request.cwd }),
 				...(dimensions === undefined ? {} : dimensions),
 			},
@@ -761,6 +794,28 @@ function validateCreatedSession(value: TerminalClientSession): void {
 		(!Number.isSafeInteger(value.pid) || value.pid <= 0)
 	)
 		throw new TypeError('created terminal pid is invalid');
+	if (value.launch !== undefined) {
+		const launch = value.launch;
+		if (
+			!isBoundedIdentity(launch.profileId) ||
+			!boundedWireText(launch.profileName, 256) ||
+			!boundedWireText(launch.targetSummary, 256) ||
+			![launch.profileRevision, launch.workspaceRevision, launch.settingsRevision].every(
+				(revision) => Number.isSafeInteger(revision) && revision >= 0,
+			) ||
+			(launch.icon !== undefined && !boundedWireText(launch.icon, 128)) ||
+			(launch.color !== undefined && !boundedWireText(launch.color, 128))
+		)
+			throw new TypeError('created terminal launch metadata is invalid');
+	}
+}
+
+function boundedWireText(value: unknown, maximum: number): value is string {
+	return typeof value === 'string' && value.length > 0 && value.length <= maximum && !value.includes('\0');
+}
+
+function isBoundedIdentity(value: unknown): value is string {
+	return typeof value === 'string' && value.length > 0 && value.length <= 128 && !hasInvalidIdentityCharacters(value);
 }
 
 function decodeEvent(
