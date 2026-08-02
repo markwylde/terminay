@@ -37,7 +37,7 @@ function validateProfile(profile, { arch, mode, peerPairs, routeType }) {
 	assert.equal(
 		profile.resourcesAfter.some((name) => /UDP|Socket|Timeout/iu.test(name)),
 		false,
-		`${mode} profile leaked a network or timer resource`,
+		`${mode} profile leaked a network or timer resource: ${profile.resourcesAfter.join(', ')}`,
 	);
 }
 
