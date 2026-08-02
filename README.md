@@ -97,8 +97,14 @@ Ordinary shells and agents without working lifecycle hooks continue to use termi
 
 ### Run end-to-end tests
 
+Local Electron tests run inside the pinned Linux Docker environment, so they
+cannot open windows or steal focus from the host desktop. Optional Playwright
+file, line, and grep arguments are forwarded into the container. Reports and
+failure traces are copied to `.docker-cache/e2e/<run>/`.
+
 ```bash
 npm run test:e2e
+npm run test:e2e -- e2e/settings.spec.ts:212
 ```
 
 ### Build the app locally
