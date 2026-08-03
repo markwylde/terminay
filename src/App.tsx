@@ -126,6 +126,7 @@ import type {
 } from './types/agentStatus';
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
+import type { ServerWorkspacePanel } from './shared/serverWorkspaceReconciliation';
 import type {
 	SidebarPanelId,
 	SidebarSettings,
@@ -402,6 +403,7 @@ type ProjectWorkspaceHandle = {
 		title?: string,
 		cwd?: string,
 	) => boolean;
+	reconcileServerPanels: (panels: readonly ServerWorkspacePanel[]) => void;
 	activateTerminal: (panelId: string, sessionId: string) => void;
 	executeCommand: (command: AppCommand) => Promise<void>;
 	exportTerminalForMove: (panelId: string) => MovedTerminalTab | null;
@@ -2678,6 +2680,21 @@ const ProjectWorkspace = forwardRef<
 							: (panel.title ?? 'Tab');
 					const nextEmoji = result.emoji.trim();
 					const nextColor = result.color;
+					const workspaceStore =
+						terminalClientContext?.workspaceSnapshotStore;
+					if (workspaceStore !== undefined) {
+						await workspaceStore.updatePanel({
+							panelId,
+							patch: {
+								title: nextTitle,
+								emoji: nextEmoji,
+								color: nextColor,
+								inheritsProjectColor: result.inheritsProjectColor,
+								activityIndicatorsEnabled:
+									result.activityIndicatorsEnabled,
+							},
+						});
+					}
 
 					panel.api.setTitle(nextTitle);
 					setTerminalTitleRevision((revision) => revision + 1);
@@ -2722,6 +2739,7 @@ const ProjectWorkspace = forwardRef<
 				project.title,
 				project.emoji,
 				publishTerminalActivityOverview,
+				terminalClientContext?.workspaceSnapshotStore,
 			],
 		);
 
@@ -3080,6 +3098,38 @@ const ProjectWorkspace = forwardRef<
 				terminalCounterRef,
 				terminalServerIdentity: terminalPanelClientContext,
 			});
+
+		const reconcileServerPanels = useCallback(
+			(panels: readonly ServerWorkspacePanel[]) => {
+				const api = dockviewApiRef.current;
+				if (!api) return;
+				const canonicalById = new Map(panels.map((panel) => [panel.id, panel]));
+				const canonicalBySessionId = new Map(
+					panels.flatMap((panel) =>
+						panel.sessionId === undefined ? [] : [[panel.sessionId, panel] as const],
+					),
+				);
+				for (const [panelId, sessionId] of panelSessionMapRef.current) {
+					const canonical =
+						canonicalById.get(panelId) ?? canonicalBySessionId.get(sessionId);
+					const panel = api.getPanel(panelId);
+					if (canonical === undefined) {
+						if (panel) api.removePanel(panel);
+						continue;
+					}
+					if (!panel) continue;
+					if (canonical.title !== undefined && panel.title !== canonical.title)
+						panel.api.setTitle(canonical.title);
+					panel.api.updateParameters({
+						...(canonical.emoji === undefined ? {} : { emoji: canonical.emoji }),
+						...(canonical.color === undefined ? {} : { color: canonical.color }),
+						...(canonical.inheritsProjectColor === undefined ? {} : { inheritsProjectColor: canonical.inheritsProjectColor }),
+						...(canonical.activityIndicatorsEnabled === undefined ? {} : { activityIndicatorsEnabled: canonical.activityIndicatorsEnabled }),
+					});
+				}
+			},
+			[],
+		);
 
 		const filteredMacros = useMemo(() => {
 			const normalizedQuery = macroQuery.trim().toLowerCase();
@@ -3529,6 +3579,7 @@ const ProjectWorkspace = forwardRef<
 			() => ({
 				acceptMovedTerminal,
 				acceptServerTerminal,
+				reconcileServerPanels,
 				activateTerminal,
 				executeCommand(command: AppCommand) {
 					return executeAppCommand(command);
@@ -3542,6 +3593,7 @@ const ProjectWorkspace = forwardRef<
 			[
 				acceptMovedTerminal,
 				acceptServerTerminal,
+				reconcileServerPanels,
 				activateTerminal,
 				executeAppCommand,
 				exportTerminalForMove,
@@ -5220,6 +5272,17 @@ function App({
 					if (!accepted) {
 						pendingPresentations += 1;
 					}
+				}
+				const canonicalTerminalPanels = Object.values(snapshot.panels).filter(
+					(panel) => panel.type === 'terminal',
+				);
+				// Desktop moves and popouts can present a live server panel in another
+				// local workspace without changing its canonical project ownership.
+				// Reconcile against global panel existence so those presentations survive;
+				// a real close removes the canonical panel from this complete list.
+				for (const workspace of workspaceRefs.current.values()) {
+					if (workspace == null) continue;
+					workspace.reconcileServerPanels(canonicalTerminalPanels);
 				}
 				if (
 					pendingPresentations > 0 &&
