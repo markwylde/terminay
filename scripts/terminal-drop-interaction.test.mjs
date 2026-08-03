@@ -91,4 +91,5 @@ test('TerminalPanel selects Desktop resolution or browser upload at the host bou
   assert.doesNotMatch(panel, /window\.terminay\.getPathForFile/u)
   assert.match(panel, /getTerminalDropText\(event\.dataTransfer, resolveDesktopDroppedFilePath\)/u)
   assert.match(panel, /uploadBrowserTerminalDrop/u)
+  assert.match(panel, /const handleDrop = async[\s\S]*shouldInterceptTerminalDrop[\s\S]*event\.preventDefault\(\)/u)
 })

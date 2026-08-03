@@ -124,6 +124,37 @@ test.describe('terminal behavior', () => {
 		]);
 	});
 
+	test('docks a terminal into a right-hand pane', async ({ mainWindow }) => {
+		await sendAppCommand(mainWindow, 'new-terminal');
+		const workspace = mainWindow.locator(
+			'.project-workspace--active .workspace',
+		);
+		const terminalTabs = workspace.locator('.terminal-tab-content');
+		await expect(terminalTabs).toHaveCount(2);
+		await expect(workspace.locator('.dv-groupview')).toHaveCount(1);
+
+		const tabBox = await terminalTabs.nth(1).boundingBox();
+		const workspaceBox = await workspace.boundingBox();
+		if (!tabBox || !workspaceBox) {
+			throw new Error('Terminal docking geometry is unavailable');
+		}
+
+		await mainWindow.mouse.move(
+			tabBox.x + tabBox.width / 2,
+			tabBox.y + tabBox.height / 2,
+		);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(
+			workspaceBox.x + workspaceBox.width * 0.85,
+			workspaceBox.y + workspaceBox.height / 2,
+			{ steps: 12 },
+		);
+		await mainWindow.mouse.up();
+
+		await expect(workspace.locator('.dv-groupview')).toHaveCount(2);
+		await expect(workspace.locator('.terminal-panel:visible')).toHaveCount(2);
+	});
+
 	test('terminal tab context menu closes the selected tab', async ({
 		mainWindow,
 	}) => {
