@@ -19,6 +19,10 @@ import type { OrderedEventJournalLike } from "../types.js";
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MAX_INPUT_BYTES = 1024 * 1024;
+// Terminal replay is base64-encoded in the command-result header. Keep the raw
+// replay below half of the default 64 KiB header budget so the envelope and
+// metadata cannot turn a valid attach into a protocol-limit failure.
+const MAX_INITIAL_REPLAY_BYTES = 32 * 1024;
 const TERMINAL_EVENT = "terminal";
 
 export interface TerminalOperationRegistryOptions {
@@ -235,9 +239,12 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     const identity = parseIdentity(payload.identity, options.service.serverId);
     const clientId = assertClient(request.context.clientId, payload.clientId);
     const requestedFromPosition = position(payload.fromPosition ?? 0);
-    const maxInitialReplayBytes = payload.maxInitialReplayBytes === undefined
+    const requestedInitialReplayBytes = payload.maxInitialReplayBytes === undefined
       ? undefined
       : position(payload.maxInitialReplayBytes);
+    const maxInitialReplayBytes = requestedInitialReplayBytes === undefined
+      ? MAX_INITIAL_REPLAY_BYTES
+      : Math.min(requestedInitialReplayBytes, MAX_INITIAL_REPLAY_BYTES);
     const authorization = authorizationFor(identity, request, "read");
     const snapshot = options.service.getSession(identity);
     const fromPosition = snapshot === undefined || maxInitialReplayBytes === undefined
@@ -267,7 +274,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       attachmentId: attachment.attachmentId,
       fromPosition: attachment.snapshot().fromPosition,
       position: attachment.position,
-      events: attachment.initialEvents.map((event) => terminalEventPayload(event, attachment.attachmentId, clientId)),
+      events: compactInitialEvents(attachment.initialEvents).map((event) => terminalEventPayload(event, attachment.attachmentId, clientId)),
     };
   }
 
@@ -433,6 +440,28 @@ function terminalEventPayload(event: TerminalEvent, attachmentId: string, client
   if (event.type === "output") return { clientId, attachmentId, type: "output", serverId: event.serverId, projectId: event.projectId, sessionId: event.sessionId, position: event.position, nextPosition: event.nextPosition, replay: event.replay, bytes: encodeBase64(event.bytes) };
   if (event.type === "exit") return { clientId, attachmentId, type: "exit", serverId: event.serverId, projectId: event.projectId, sessionId: event.sessionId, exitCode: event.exitCode, signal: event.signal, reason: event.metadata.reason, at: event.metadata.at };
   return { clientId, attachmentId, type: "resync_required", serverId: event.serverId, projectId: event.projectId, sessionId: event.sessionId, fromPosition: event.fromPosition, replayFrom: event.replayFrom, outputPosition: event.outputPosition };
+}
+
+function compactInitialEvents(events: readonly TerminalEvent[]): TerminalEvent[] {
+  const compacted: TerminalEvent[] = [];
+  for (const event of events) {
+    const previous = compacted.at(-1);
+    if (event.type !== "output" || previous?.type !== "output" || previous.nextPosition !== event.position) {
+      compacted.push(event);
+      continue;
+    }
+    const bytes = new Uint8Array(previous.bytes.byteLength + event.bytes.byteLength);
+    bytes.set(previous.bytes);
+    bytes.set(event.bytes, previous.bytes.byteLength);
+    compacted[compacted.length - 1] = Object.freeze({
+      ...previous,
+      nextPosition: event.nextPosition,
+      bytes,
+      data: bytes,
+      replay: previous.replay && event.replay,
+    });
+  }
+  return compacted;
 }
 
 function encodeBase64(bytes: Uint8Array): string {
