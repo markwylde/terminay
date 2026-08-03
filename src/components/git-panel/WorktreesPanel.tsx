@@ -312,6 +312,8 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 													-{worktree.lineDeletions ?? 0}
 												</span>
 											</>
+										) : hasUnmergedOrUncommittedWork ? (
+											<span className="worktrees-panel__changed">changed</span>
 										) : (
 											<span className="worktrees-panel__clean">clean</span>
 										)}

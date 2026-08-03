@@ -57,6 +57,12 @@ interface Discovery {
   readonly error?: GitErrorInfo;
 }
 
+interface NumstatDelta {
+  readonly additions: number;
+  readonly deletions: number;
+  readonly hasChanges: boolean;
+}
+
 /**
  * Server-owned, read-only Git operations. Every command is selected by this
  * class, receives a canonical project/worktree cwd, and uses a bounded runner.
@@ -258,6 +264,10 @@ export class GitService {
       let statusBounded = false;
       let branch: GitBranchStatus = { name: record.branch, detached: record.detached, head: record.head, upstream: null, upstreamState: "none", ahead: null, behind: null };
       let state = worktreeState(entries, record.detached, record.isPrunable);
+      let aheadOfDefaultBranchCount: number | null = null;
+      let lineAdditions: number | null = null;
+      let lineDeletions: number | null = null;
+      let hasCommittedChanges: boolean | null = null;
       let discoveryState: GitDiscoveryState = "ready";
       if (!record.isBare && !record.isPrunable) {
         const statusResult = await this.runGit(["status", "--porcelain=v1", "-z", "--branch", "--untracked-files=all", "--ignored=no"], record.path, target.signal);
@@ -267,6 +277,11 @@ export class GitService {
           statusBounded = parsed.bounded;
           branch = { ...parsed.branch, name: parsed.branch.name ?? record.branch, detached: parsed.branch.detached || record.detached, head: record.head };
           state = worktreeState(entries, parsed.branch.detached || record.detached, false);
+          const delta = await this.worktreeDelta(record.path, defaultBranch, target.signal);
+          aheadOfDefaultBranchCount = delta.aheadCount;
+          lineAdditions = delta.additions;
+          lineDeletions = delta.deletions;
+          hasCommittedChanges = delta.hasCommittedChanges;
         } else {
           state = "unknown";
           discoveryState = "command-error";
@@ -286,6 +301,10 @@ export class GitService {
         isPrunable: record.isPrunable,
         locked: record.locked,
         state,
+        aheadOfDefaultBranchCount,
+        lineAdditions,
+        lineDeletions,
+        hasCommittedChanges,
         entries,
         ...(error === undefined ? {} : { error }),
       } satisfies GitWorktreeSummary;
@@ -623,6 +642,72 @@ export class GitService {
     return branches.stdout.split(/\r?\n/u).map((value) => value.trim()).find((value) => value.length > 0) ?? null;
   }
 
+  private async worktreeDelta(cwd: string, defaultBranch: string | null, signal?: AbortSignal): Promise<{
+    readonly aheadCount: number | null;
+    readonly additions: number | null;
+    readonly deletions: number | null;
+    readonly hasCommittedChanges: boolean | null;
+  }> {
+    const ahead = defaultBranch === null
+      ? null
+      : await this.runGit(["rev-list", "--count", `${defaultBranch}..HEAD`], cwd, signal);
+    const aheadCount = ahead !== null && ahead.exitCode === 0 && !ahead.truncated
+      ? parseNonNegativeInteger(ahead.stdout)
+      : null;
+    const branchDelta = await this.committedDelta(cwd, defaultBranch, signal);
+    const workingDelta = await this.numstat(cwd, ["diff", "--numstat", "HEAD"], signal);
+    if (branchDelta === null && workingDelta === null) {
+      return { aheadCount, additions: null, deletions: null, hasCommittedChanges: null };
+    }
+    return {
+      aheadCount,
+      additions: (branchDelta?.additions ?? 0) + (workingDelta?.additions ?? 0),
+      deletions: (branchDelta?.deletions ?? 0) + (workingDelta?.deletions ?? 0),
+      hasCommittedChanges: branchDelta?.hasChanges ?? null,
+    };
+  }
+
+  private async committedDelta(cwd: string, defaultBranch: string | null, signal?: AbortSignal): Promise<NumstatDelta | null> {
+    if (defaultBranch === null) return null;
+    const [defaultTree, mergedTree] = await Promise.all([
+      this.runGit(["rev-parse", `${defaultBranch}^{tree}`], cwd, signal),
+      this.runGit(["merge-tree", "--write-tree", "--no-messages", defaultBranch, "HEAD"], cwd, signal),
+    ]);
+    const defaultTreeId = validObjectId(defaultTree);
+    const mergedTreeId = validObjectId(mergedTree);
+    if (defaultTreeId !== null && mergedTreeId !== null) {
+      if (defaultTreeId === mergedTreeId) return { additions: 0, deletions: 0, hasChanges: false };
+      return this.numstat(cwd, ["diff", "--numstat", defaultTreeId, mergedTreeId], signal);
+    }
+    return this.numstat(cwd, ["diff", "--numstat", `${defaultBranch}...HEAD`], signal);
+  }
+
+  private async numstat(cwd: string, args: readonly string[], signal?: AbortSignal): Promise<NumstatDelta | null> {
+    const result = await this.runGit(args, cwd, signal);
+    if (result.exitCode !== 0 || result.truncated) return null;
+    let additions = 0;
+    let deletions = 0;
+    let hasChanges = false;
+    for (const line of result.stdout.split(/\r?\n/u)) {
+      if (line.length === 0) continue;
+      hasChanges = true;
+      const [rawAdditions, rawDeletions] = line.split("\t", 3);
+      if (rawAdditions === undefined || rawDeletions === undefined) return null;
+      if (rawAdditions !== "-") {
+        const value = parseNonNegativeInteger(rawAdditions);
+        if (value === null) return null;
+        additions += value;
+      }
+      if (rawDeletions !== "-") {
+        const value = parseNonNegativeInteger(rawDeletions);
+        if (value === null) return null;
+        deletions += value;
+      }
+      if (!Number.isSafeInteger(additions) || !Number.isSafeInteger(deletions)) return null;
+    }
+    return { additions, deletions, hasChanges };
+  }
+
   private async runGit(args: readonly string[], cwd: string, signal?: AbortSignal, maxOutputBytes = this.limits.maxOutputBytes): Promise<GitCommandResult> {
     try {
       return await this.runner.run(args, cwd, { signal, maxOutputBytes });
@@ -778,6 +863,18 @@ function validateRelativePath(value: string, maxBytes: number): void {
 
 function validateLimits(limits: Required<GitServiceLimits>): void {
   for (const value of Object.values(limits)) if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError("Git service limits must be positive safe integers");
+}
+
+function parseNonNegativeInteger(value: string): number | null {
+  if (!/^\d+$/u.test(value.trim())) return null;
+  const parsed = Number.parseInt(value.trim(), 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function validObjectId(result: GitCommandResult): string | null {
+  if (result.exitCode !== 0 || result.truncated) return null;
+  const value = result.stdout.trim();
+  return /^[0-9a-f]{40,64}$/iu.test(value) ? value : null;
 }
 
 function assertRemovableWorktree(worktree: GitWorktreeSummary, expectedHead: string | null | undefined): void {

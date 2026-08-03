@@ -451,6 +451,12 @@
 	font-weight: 600;
 }
 
+.worktrees-panel__changed {
+	flex: 0 0 auto;
+	color: #f14c4c;
+	font-weight: 600;
+}
+
 .worktrees-panel__deleting {
 	flex: 0 0 auto;
 	color: rgba(220, 226, 240, 0.72);

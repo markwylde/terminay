@@ -83,7 +83,7 @@ function toWorktree(
 ): GitWorktreeStatus {
 	const branch = value.branch === null ? null : text(value.branch, 'branch');
 	const detached = boolean(value.detached, 'detached state');
-	const state = text(value.state, 'worktree state');
+	text(value.state, 'worktree state');
 	const error =
 		value.error === undefined
 			? undefined
@@ -97,11 +97,23 @@ function toWorktree(
 				.pop() ?? path,
 		branch,
 		head: value.head === null ? null : text(value.head, 'head'),
-		aheadOfMainCount: null,
-		lineAdditions: null,
-		lineDeletions: null,
+		aheadOfMainCount: nullableNonNegativeInteger(
+			value.aheadOfDefaultBranchCount,
+			'ahead-of-default-branch count',
+		),
+		lineAdditions: nullableNonNegativeInteger(
+			value.lineAdditions,
+			'line additions',
+		),
+		lineDeletions: nullableNonNegativeInteger(
+			value.lineDeletions,
+			'line deletions',
+		),
 		lastChangedAt: null,
-		isDirtyBranch: state === 'dirty' || state === 'unmerged',
+		isDirtyBranch: nullableBoolean(
+			value.hasCommittedChanges,
+			'committed-change state',
+		) ?? false,
 		isCurrent: path === repositoryRoot,
 		isMain: boolean(value.isMain, 'main worktree state'),
 		isBare: boolean(value.isBare, 'bare worktree state'),
@@ -175,6 +187,26 @@ function text(value: JsonValue | undefined, label: string): string {
 	if (typeof value !== 'string' || value.length === 0) {
 		throw new TypeError(`${label} is invalid.`);
 	}
+	return value;
+}
+
+function nullableNonNegativeInteger(
+	value: JsonValue | undefined,
+	label: string,
+): number | null {
+	if (value === null) return null;
+	if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+		throw new TypeError(`${label} is invalid.`);
+	}
+	return value;
+}
+
+function nullableBoolean(
+	value: JsonValue | undefined,
+	label: string,
+): boolean | null {
+	if (value === null) return null;
+	if (typeof value !== 'boolean') throw new TypeError(`${label} is invalid.`);
 	return value;
 }
 
