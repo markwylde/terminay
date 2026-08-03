@@ -42,6 +42,9 @@ export interface TerminalLaunchResolverOptions {
   readonly defaultEnvironment?: Readonly<Record<string, string | undefined>>;
   /** Windows environment names are case-insensitive. */
   readonly environmentCaseInsensitive?: boolean;
+  /** Host policy for the reserved System default profile. Explicit profile
+   * startup modes remain authoritative. */
+  readonly systemDefaultStartupMode?: ShellStartupMode;
   readonly now?: () => number;
 }
 
@@ -121,7 +124,11 @@ export class TerminalLaunchResolver {
     );
     assertWslLaunchCanRepresentProfile(resolvedProfile);
     const { shellPath, prefixArgs, targetSummary } = executableLaunch(resolvedProfile);
-    const startupArgs = startupModeArgs(shellPathForMode(resolvedProfile), resolvedProfile.definition.startupMode);
+    const startupMode = resolvedProfile.profile.id === SYSTEM_SHELL_PROFILE_ID
+      && resolvedProfile.definition.startupMode === "default"
+      ? this.options.systemDefaultStartupMode ?? "default"
+      : resolvedProfile.definition.startupMode;
+    const startupArgs = startupModeArgs(shellPathForMode(resolvedProfile), startupMode);
     const env = applyProfileEnvironment(
       this.options.defaultEnvironment,
       resolvedProfile.definition.environment,

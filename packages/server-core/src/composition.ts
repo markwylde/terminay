@@ -47,7 +47,11 @@ import type { RecordingAdapter } from "./recordingService/adapter.js";
 import { createSettingsOperationRegistry, type SettingsOperationRegistry } from "./settings/protocol.js";
 import type { ServerSettingsRepository } from "./settings/repository.js";
 import { createFileObservationEventProjector, type ServerFileObservationAdapter } from "./fileService/observationAdapter.js";
-import { createShellProfileOperationRegistry, type ShellProfileCatalogueService } from "./shellProfiles/index.js";
+import {
+  createShellProfileOperationRegistry,
+  type ShellProfileCatalogueService,
+  type ShellStartupMode,
+} from "./shellProfiles/index.js";
 
 /**
  * Internal lifecycle evidence emitted by a host PTY adapter when foreground
@@ -104,6 +108,7 @@ export interface ServerCoreCompositionOptions
   readonly terminalLaunchPathAuthority?: TerminalLaunchPathAuthority;
   readonly terminalLaunchEnvironment?: Readonly<Record<string, string | undefined>>;
   readonly terminalEnvironmentCaseInsensitive?: boolean;
+  readonly terminalSystemDefaultStartupMode?: ShellStartupMode;
 	/** @internal Explicit escape hatch for low-level composition tests only. */
 	readonly allowUnresolvedTestSessions?: boolean;
   /** Optional adapters supplied by a host; defaults are server-owned. */
@@ -216,6 +221,7 @@ export function createServerCoreComposition(
         ...(options.terminalLaunchPathAuthority === undefined ? {} : { pathAuthority: options.terminalLaunchPathAuthority }),
         ...(options.terminalLaunchEnvironment === undefined ? {} : { defaultEnvironment: options.terminalLaunchEnvironment }),
         ...(options.terminalEnvironmentCaseInsensitive === undefined ? {} : { environmentCaseInsensitive: options.terminalEnvironmentCaseInsensitive }),
+        ...(options.terminalSystemDefaultStartupMode === undefined ? {} : { systemDefaultStartupMode: options.terminalSystemDefaultStartupMode }),
       });
 	if (terminalLaunchResolver === undefined && options.allowUnresolvedTestSessions !== true) {
 		throw new TypeError("terminalProfiles and workspace are required for production terminal composition");
