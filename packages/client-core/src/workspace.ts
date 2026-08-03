@@ -34,6 +34,10 @@ export interface PanelActivationRequest {
 	readonly projectId: string;
 	readonly panelId: string;
 }
+export interface PanelReorderRequest {
+	readonly projectId: string;
+	readonly panelIds: readonly string[];
+}
 export interface PanelSplitRequest {
 	readonly projectId: string;
 	readonly panelId: string;
@@ -161,6 +165,30 @@ export class WorkspaceClient {
 					type: 'panel.activate',
 					projectId: request.projectId,
 					panelId: request.panelId,
+				},
+			},
+			options,
+		);
+	}
+
+	async reorderPanels(
+		request: PanelReorderRequest,
+		options: WorkspaceCommandOptions = {},
+	): Promise<void> {
+		if (
+			!isBoundedId(request.projectId) ||
+			request.panelIds.length === 0 ||
+			request.panelIds.some((panelId) => !isBoundedId(panelId)) ||
+			new Set(request.panelIds).size !== request.panelIds.length
+		)
+			throw new TypeError('panel reorder ids are invalid');
+		await this.client.command(
+			'workspace.command',
+			{
+				command: {
+					type: 'panel.reorder',
+					projectId: request.projectId,
+					panelIds: [...request.panelIds],
 				},
 			},
 			options,
