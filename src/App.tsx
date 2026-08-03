@@ -3584,6 +3584,24 @@ const ProjectWorkspace = forwardRef<
 			[project.id, terminalClientContext?.workspaceSnapshotStore],
 		);
 
+		const commitServerPanelOrder = useCallback(
+			(panelIds: readonly string[]) => {
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				const canonicalIds = store?.snapshot?.projects[project.id]?.panelIds;
+				if (
+					store === undefined ||
+					canonicalIds === undefined ||
+					panelIds.length !== canonicalIds.length ||
+					panelIds.some((panelId) => !canonicalIds.includes(panelId)) ||
+					panelIds.every((panelId, index) => panelId === canonicalIds[index])
+				) return;
+				void store.reorderPanels({ projectId: project.id, panelIds }).catch((error: unknown) => {
+					setErrorText(error instanceof Error ? error.message : 'Unable to reorder these tabs on the server.');
+				});
+			},
+			[project.id, terminalClientContext?.workspaceSnapshotStore],
+		);
+
 		const handleDockviewReady = useDockviewPanelLifecycle({
 			apiRef: dockviewApiRef,
 			cancelMacroRunsForSession,
@@ -3591,6 +3609,7 @@ const ProjectWorkspace = forwardRef<
 				terminalActivityStoreRef.current.deleteSession(sessionId),
 			clearMacroRunsForSession,
 			closeServerPanel,
+			commitPanelOrder: commitServerPanelOrder,
 			filePathPanelMapRef,
 			focusedSessionIdRef,
 			folderPathPanelMapRef,
