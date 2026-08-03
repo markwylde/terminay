@@ -3,6 +3,10 @@ export type ServerWorkspacePanel = Readonly<{
 	projectId: string
 	type: 'terminal' | 'file' | 'folder'
 	title?: string
+	emoji?: string
+	color?: string
+	inheritsProjectColor?: boolean
+	activityIndicatorsEnabled?: boolean
 	sessionId?: string
 	cwd?: string
 	path?: string
@@ -78,7 +82,7 @@ export function parseServerWorkspaceSnapshot(value: unknown, expectedServerId: s
 		if (project.activePanelId !== undefined && !project.panelIds.includes(project.activePanelId)) throw new Error('The server returned an invalid active panel.')
 	}
 	for (const [id, panel] of Object.entries(snapshot.panels)) {
-		if (panel.id !== id || !['terminal', 'file', 'folder'].includes(panel.type) || snapshot.projects[panel.projectId] === undefined || (panel.type === 'terminal' && (panel.sessionId === undefined || snapshot.terminalSessions[panel.sessionId]?.projectId !== panel.projectId))) throw new Error('The server returned an invalid workspace panel.')
+		if (panel.id !== id || !['terminal', 'file', 'folder'].includes(panel.type) || snapshot.projects[panel.projectId] === undefined || (panel.title !== undefined && typeof panel.title !== 'string') || (panel.emoji !== undefined && typeof panel.emoji !== 'string') || (panel.color !== undefined && typeof panel.color !== 'string') || (panel.inheritsProjectColor !== undefined && typeof panel.inheritsProjectColor !== 'boolean') || (panel.activityIndicatorsEnabled !== undefined && typeof panel.activityIndicatorsEnabled !== 'boolean') || (panel.type === 'terminal' && (panel.sessionId === undefined || snapshot.terminalSessions[panel.sessionId]?.projectId !== panel.projectId))) throw new Error('The server returned an invalid workspace panel.')
 	}
 	for (const [id, session] of Object.entries(snapshot.terminalSessions)) {
 		if (session.id !== id || session.serverId !== expectedServerId || snapshot.projects[session.projectId] === undefined) throw new Error('The server returned an invalid terminal session.')
