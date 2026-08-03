@@ -178,6 +178,12 @@ server-bundled UI to a direct WebSocket connection.
 When a hosted WebRTC bootstrap provides the browser enrollment bridge, that
 bridge owns initial reconnection for the mounted server UI; saved-profile
 auto-restore must not start a competing reconnect attempt in the same page.
+Refreshing a cached server-bundle entry first returns through that bootstrap;
+the cached entry never executes without a newly authenticated WebRTC bridge.
+After the server UI is mounted, a failed peer or a disconnect that outlasts a
+short ICE-recovery grace period returns through the same saved-session
+bootstrap. An offline browser waits for the network to return, then reconnects
+with its origin-bound device key and grant without replaying the pairing URL.
 
 For the local static-browser host, enrollment derives a non-extractable
 WebCrypto HMAC proof key in IndexedDB, partitioned by the selected server
@@ -414,6 +420,9 @@ leaving Local and other devices available.
   Desktop or a browser using the same server-side trust model.
 - A paired device reconnects from the stable session origin without rescanning
   a QR code while its grant remains valid.
+- Refreshing the mounted browser UI and switching or temporarily losing the
+  browser network recreate the hosted WebRTC bridge and reconnect with the
+  saved grant; neither path reuses or requests the one-time pairing URL.
 - A pairing room is single-use, but issuing another pairing URL does not disturb
   the session origin or existing peers.
 - WebRTC carries the full application protocol and exact server-bundled
