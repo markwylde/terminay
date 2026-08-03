@@ -97,6 +97,12 @@ action, stops only through its own lifecycle or server shutdown, rolls back its
 pairing state when binding or TLS setup fails, and rejects remote traffic after
 stop. Loopback HTTP is permitted only for local development; non-loopback
 exposure requires HTTPS.
+For local hosted-transport compatibility tests, HTTP names beneath the reserved
+`.localhost` suffix are loopback origins. Each session subdomain remains a
+distinct origin and must not be canonicalized to bare `localhost`. The
+desktop-owned local signaling socket resolves session `.localhost` subdomains to
+loopback without changing the canonical signaling URL, Host header, or
+application origin.
 
 Stopping WebRTC exposure does not stop an independently enabled direct listener,
 and stopping the direct listener does not stop WebRTC or the private Local
@@ -159,6 +165,19 @@ challenge available for a bounded retry; a valid proof consumes it once.
 Rotation, device revocation, and expiry fence later challenges. Durable
 storage, signaling transport, and concrete WebRTC runtime adapters remain
 host-owned boundaries around this primitive.
+When the relay reports reconnect completion, the host retires only the
+short-lived reconnect-attempt metadata and leaves the newly established WebRTC
+runtime open.
+After issuing a saved-session reconnect grant, the desktop treats reconnect
+availability as established only after the hosted relay acknowledges the
+initial reconnect-host registration. A fast browser reconnect must not race
+ahead of relay-visible availability.
+Browser-host reconnect on a WebRTC session origin uses the same authenticated
+four-lane application transport as initial pairing; it does not downgrade the
+server-bundled UI to a direct WebSocket connection.
+When a hosted WebRTC bootstrap provides the browser enrollment bridge, that
+bridge owns initial reconnection for the mounted server UI; saved-profile
+auto-restore must not start a competing reconnect attempt in the same page.
 
 For the local static-browser host, enrollment derives a non-extractable
 WebCrypto HMAC proof key in IndexedDB, partitioned by the selected server

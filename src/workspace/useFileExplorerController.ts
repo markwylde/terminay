@@ -55,7 +55,7 @@ type Options = {
 	gitClient?: TerminayGitClient;
 	isServerFileViewer: boolean;
 	onOpenFile: OpenFile;
-	onOpenTerminalAt: (path: string) => unknown;
+	onOpenTerminalAt: (path: string, isDirectory?: boolean) => unknown;
 	onSetError: (message: string | null) => void;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
 	project: ProjectTab;
@@ -72,6 +72,13 @@ function parentPath(path: string): string {
 	const slash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
 	if (slash <= 0) return slash === 0 ? trimmed.slice(0, 1) : '';
 	return trimmed.slice(0, slash);
+}
+
+export function openTerminalAtWorktree(
+	worktree: GitWorktreeStatus,
+	onOpenTerminalAt: (path: string, isDirectory?: boolean) => unknown,
+): void {
+	void onOpenTerminalAt(worktree.path, true);
 }
 
 function sameGitStatuses(
@@ -631,7 +638,8 @@ export function useFileExplorerController({
 		void window.terminayRevealHost?.reveal(worktree.path);
 	}, []);
 	const handleOpenTerminalAtWorktree = useCallback(
-		(worktree: GitWorktreeStatus) => void onOpenTerminalAt(worktree.path),
+		(worktree: GitWorktreeStatus) =>
+			openTerminalAtWorktree(worktree, onOpenTerminalAt),
 		[onOpenTerminalAt],
 	);
 	const handleOpenGitEntry = useCallback(

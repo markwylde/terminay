@@ -3,6 +3,14 @@ import {
 	type SecureWeriftRuntimeModule,
 } from '../../apps/terminay-server/src/remote/secureWeriftRuntime';
 import {
+	DEFAULT_PROTOCOL_LIMITS,
+	validateTransportFrame,
+	type ByteTransport,
+	type TransportCloseReason,
+	type TransportState,
+} from '@terminay/protocol';
+import type { ServerConnectionLike } from '../../packages/server-core/src/types';
+import {
 	runHost,
 	type HostApi,
 	type HostConfig,
@@ -15,6 +23,13 @@ import {
 type PeerConnectionConstructor = new (
 	configuration?: RTCConfiguration,
 ) => RTCPeerConnection;
+
+type PrivilegedWebRtcExposureOptions = Omit<
+	RemoteAccessServiceOptions,
+	'createWebRtcHostWindow'
+> & {
+	acceptApplicationTransport: (transport: ByteTransport) => ServerConnectionLike;
+};
 
 /**
  * Main-process-only adapter for the deployed v1 hosted bootstrap protocol.
@@ -32,7 +47,7 @@ export class PrivilegedWebRtcExposure {
 
 	constructor(
 		private readonly runtimeRoot: string,
-		options: Omit<RemoteAccessServiceOptions, 'createWebRtcHostWindow'>,
+		private readonly options: PrivilegedWebRtcExposureOptions,
 	) {
 		this.service = new RemoteAccessService({
 			...options,
@@ -54,6 +69,7 @@ export class PrivilegedWebRtcExposure {
 	private createPeer(): ReturnType<RemoteAccessServiceOptions['createWebRtcHostWindow']> {
 		const id = this.sequence++;
 		const peer = new PrivilegedPeer({
+			acceptApplicationTransport: this.options.acceptApplicationTransport,
 			id,
 			runtime: () => this.loadRuntime(),
 			service: () => this.service,
@@ -70,6 +86,8 @@ export class PrivilegedWebRtcExposure {
 }
 
 class PrivilegedPeer {
+	private applicationChannelId: string | undefined;
+	private applicationConnection: ServerConnectionLike | undefined;
 	private readonly configListeners = new Set<(config: HostConfig) => void>();
 	private readonly signalListeners = new Set<(message: unknown) => void>();
 	private readonly terminalListeners = new Set<
@@ -87,6 +105,7 @@ class PrivilegedPeer {
 
 	constructor(
 		private readonly options: Readonly<{
+			acceptApplicationTransport: (transport: ByteTransport) => ServerConnectionLike;
 			id: number;
 			runtime: () => Promise<SecureWeriftRuntimeModule>;
 			service: () => RemoteAccessService;
@@ -127,6 +146,13 @@ class PrivilegedPeer {
 		this.startSequence += 1;
 		this.cleanup?.();
 		this.cleanup = undefined;
+		const applicationChannelId = this.applicationChannelId;
+		this.applicationChannelId = undefined;
+		void this.applicationConnection?.close();
+		this.applicationConnection = undefined;
+		if (applicationChannelId !== undefined) {
+			this.options.service().closeWebRtcApplication(applicationChannelId);
+		}
 		this.configListeners.clear();
 		this.signalListeners.clear();
 		this.terminalListeners.clear();
@@ -146,6 +172,9 @@ class PrivilegedPeer {
 			if (this.closed || sequence !== this.startSequence) return;
 			const service = this.options.service();
 			const api: HostApi = {
+				attachApplication: (channelId, ticket, channel) =>
+					this.attachApplication(channelId, ticket, channel),
+				closeApplication: (channelId) => this.closeApplication(channelId),
 				attachTerminal: (channelId, ticket) =>
 					service.attachWebRtcTerminal(this.options.id, channelId, ticket),
 				closeTerminal: (channelId, reason) =>
@@ -190,9 +219,176 @@ class PrivilegedPeer {
 		}
 	}
 
+	private async attachApplication(
+		channelId: string,
+		ticket: string,
+		channel: RTCDataChannel,
+	): Promise<void> {
+		if (this.closed) throw new Error('The WebRTC peer is closed.');
+		if (this.applicationConnection !== undefined) {
+			throw new Error('The canonical application transport is already authenticated.');
+		}
+		await this.options.service().attachWebRtcApplication(
+			this.options.id,
+			channelId,
+			ticket,
+			(reason) => this.closeWithReason(reason),
+		);
+		this.applicationChannelId = channelId;
+		try {
+			const transport = createRtcDataChannelTransport(channel);
+			const connection = this.options.acceptApplicationTransport(transport);
+			this.applicationConnection = connection;
+			void connection.start().catch((error) => {
+				if (!this.closed) {
+					this.options.service().handleWebRtcHostStatus(this.options.id, {
+						detail: error instanceof Error ? error.message : 'Canonical application connection failed.',
+						type: 'error',
+					});
+					this.close();
+				}
+			});
+		} catch (error) {
+			this.options.service().closeWebRtcApplication(channelId);
+			this.applicationChannelId = undefined;
+			throw error;
+		}
+	}
+
+	private closeWithReason(_reason?: string): void {
+		this.close();
+	}
+
+	private closeApplication(channelId: string): void {
+		if (channelId !== this.applicationChannelId) return;
+		this.applicationChannelId = undefined;
+		void this.applicationConnection?.close();
+		this.applicationConnection = undefined;
+		this.options.service().closeWebRtcApplication(channelId);
+	}
+
 	private subscribe<T>(listeners: Set<(value: T) => void>, listener: (value: T) => void): () => void {
 		listeners.add(listener);
 		return () => listeners.delete(listener);
+	}
+}
+
+export function createRtcDataChannelTransport(channel: RTCDataChannel): ByteTransport {
+	return new RtcDataChannelTransport(channel);
+}
+
+type IncomingWaiter = Readonly<{
+	resolve: (result: IteratorResult<Uint8Array>) => void;
+	reject: (reason?: unknown) => void;
+}>;
+
+class RtcDataChannelTransport implements ByteTransport {
+	private currentState: TransportState;
+	private readonly inbound: Uint8Array[] = [];
+	private readonly waiters: IncomingWaiter[] = [];
+	private readonly listeners = new Set<
+		(state: TransportState, reason?: TransportCloseReason) => void
+	>();
+
+	constructor(private readonly channel: RTCDataChannel) {
+		this.currentState = channel.readyState === 'open' ? 'open' : 'opening';
+		channel.binaryType = 'arraybuffer';
+		channel.addEventListener('open', () => this.setState('open'));
+		channel.addEventListener('message', (event) => this.receive(event.data));
+		channel.addEventListener('close', () => this.finish({ code: 'unavailable', message: 'WebRTC application channel closed.' }));
+		channel.addEventListener('error', () => this.finish({ code: 'unavailable', message: 'WebRTC application channel failed.' }, true));
+	}
+
+	get state(): TransportState { return this.currentState; }
+	get queuedBytes(): number { return this.channel.bufferedAmount; }
+	get bufferedBytes(): number {
+		return this.inbound.reduce((total, frame) => total + frame.byteLength, 0);
+	}
+	get incoming(): AsyncIterable<Uint8Array> {
+		return { [Symbol.asyncIterator]: () => ({ next: () => this.next() }) };
+	}
+
+	async open(signal?: AbortSignal): Promise<void> {
+		if (signal?.aborted) throw signal.reason;
+		while (this.currentState === 'opening') {
+			await new Promise<void>((resolve) => setTimeout(resolve, 5));
+			if (signal?.aborted) throw signal.reason;
+		}
+		if (this.currentState !== 'open') throw new Error('WebRTC application transport is closed.');
+	}
+
+	async send(frame: Uint8Array, options: { readonly signal?: AbortSignal } = {}): Promise<void> {
+		if (options.signal?.aborted) throw options.signal.reason;
+		validateTransportFrame(frame, DEFAULT_PROTOCOL_LIMITS.maxFrameBytes);
+		await this.waitForWritable(frame.byteLength, options.signal);
+		this.channel.send(frame.slice());
+	}
+
+	async waitForWritable(requiredBytes = 1, signal?: AbortSignal): Promise<void> {
+		if (!Number.isSafeInteger(requiredBytes) || requiredBytes < 1 || requiredBytes > DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes) {
+			throw new RangeError('WebRTC writable size is invalid.');
+		}
+		while (this.channel.bufferedAmount + requiredBytes > DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes) {
+			if (this.currentState !== 'open') throw new Error('WebRTC application transport is closed.');
+			if (signal?.aborted) throw signal.reason;
+			await new Promise<void>((resolve) => setTimeout(resolve, 5));
+		}
+		if (this.currentState !== 'open') throw new Error('WebRTC application transport is closed.');
+	}
+
+	async close(reason: TransportCloseReason = { code: 'normal' }): Promise<void> {
+		if (this.currentState === 'closed' || this.currentState === 'failed') return;
+		this.setState('closing', reason);
+		this.channel.close();
+		this.finish(reason);
+	}
+
+	onStateChange(listener: (state: TransportState, reason?: TransportCloseReason) => void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
+	}
+
+	private receive(value: unknown): void {
+		const frame = value instanceof ArrayBuffer
+			? new Uint8Array(value)
+			: ArrayBuffer.isView(value)
+				? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+				: undefined;
+		if (frame === undefined) {
+			this.finish({ code: 'protocol_error', message: 'WebRTC application frame must be binary.' }, true);
+			return;
+		}
+		try {
+			validateTransportFrame(frame, DEFAULT_PROTOCOL_LIMITS.maxFrameBytes);
+		} catch {
+			this.finish({ code: 'protocol_error', message: 'WebRTC application frame is invalid.' }, true);
+			return;
+		}
+		const waiter = this.waiters.shift();
+		if (waiter) waiter.resolve({ done: false, value: frame.slice() });
+		else this.inbound.push(frame.slice());
+	}
+
+	private next(): Promise<IteratorResult<Uint8Array>> {
+		const frame = this.inbound.shift();
+		if (frame) return Promise.resolve({ done: false, value: frame });
+		if (this.currentState === 'closed') return Promise.resolve({ done: true, value: undefined });
+		if (this.currentState === 'failed') return Promise.reject(new Error('WebRTC application transport failed.'));
+		return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
+	}
+
+	private finish(reason: TransportCloseReason, failed = false): void {
+		if (this.currentState === 'closed' || this.currentState === 'failed') return;
+		this.setState(failed ? 'failed' : 'closed', reason);
+		for (const waiter of this.waiters.splice(0)) {
+			if (failed) waiter.reject(new Error(reason.message ?? 'WebRTC application transport failed.'));
+			else waiter.resolve({ done: true, value: undefined });
+		}
+	}
+
+	private setState(state: TransportState, reason?: TransportCloseReason): void {
+		this.currentState = state;
+		for (const listener of this.listeners) listener(state, reason);
 	}
 }
 

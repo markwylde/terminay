@@ -2111,30 +2111,33 @@ const ProjectWorkspace = forwardRef<
 		);
 
 		const handleOpenTerminalAt = useCallback(
-			async (path: string) => {
+			async (path: string, isDirectory = false) => {
 				const api = dockviewApiRef.current;
 				if (!api) {
 					return;
 				}
 
-				// If it's a file, get the parent directory
 				let cwd = path;
-				try {
-					const info = await fileViewerClient.listFolder(
-						fileClientPath(path),
-						fileClientProjectId,
-					);
-					if (info.root !== fileClientPath(path)) {
+				if (!isDirectory) {
+					// If it's a file, get the parent directory.
+					try {
+						const clientPath = fileClientPath(path);
+						const info = await fileViewerClient.listFolder(
+							clientPath,
+							fileClientProjectId,
+						);
+						if (info.root !== clientPath) {
+							cwd = path.substring(
+								0,
+								Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
+							);
+						}
+					} catch {
 						cwd = path.substring(
 							0,
 							Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
 						);
 					}
-				} catch {
-					cwd = path.substring(
-						0,
-						Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
-					);
 				}
 
 				try {
@@ -3636,6 +3639,24 @@ const ProjectWorkspace = forwardRef<
 			[project.id, terminalClientContext?.workspaceSnapshotStore],
 		);
 
+		const commitServerPanelOrder = useCallback(
+			(panelIds: readonly string[]) => {
+				const store = terminalClientContext?.workspaceSnapshotStore;
+				const canonicalIds = store?.snapshot?.projects[project.id]?.panelIds;
+				if (
+					store === undefined ||
+					canonicalIds === undefined ||
+					panelIds.length !== canonicalIds.length ||
+					panelIds.some((panelId) => !canonicalIds.includes(panelId)) ||
+					panelIds.every((panelId, index) => panelId === canonicalIds[index])
+				) return;
+				void store.reorderPanels({ projectId: project.id, panelIds }).catch((error: unknown) => {
+					setErrorText(error instanceof Error ? error.message : 'Unable to reorder these tabs on the server.');
+				});
+			},
+			[project.id, terminalClientContext?.workspaceSnapshotStore],
+		);
+
 		const handleDockviewReady = useDockviewPanelLifecycle({
 			apiRef: dockviewApiRef,
 			cancelMacroRunsForSession,
@@ -3643,6 +3664,7 @@ const ProjectWorkspace = forwardRef<
 				terminalActivityStoreRef.current.deleteSession(sessionId),
 			clearMacroRunsForSession,
 			closeServerPanel,
+			commitPanelOrder: commitServerPanelOrder,
 			filePathPanelMapRef,
 			focusedSessionIdRef,
 			folderPathPanelMapRef,

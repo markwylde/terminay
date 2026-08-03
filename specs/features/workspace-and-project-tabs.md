@@ -19,6 +19,9 @@ boundary.
 - New terminals open in the active project. Tabs can split the active layout
   horizontally or vertically, be reordered, moved to another project, or moved
   into another workspace view.
+- Dropping a terminal, file, or folder tab at a new position commits that panel
+  order to canonical workspace state in both desktop and web clients; a later
+  workspace refresh or reconnect preserves the dropped order.
 - A project can use the server's default shell profile or select a project
   default under the canonical
   [shell profiles and terminal launch](./shell-profiles-and-terminal-launch.md)

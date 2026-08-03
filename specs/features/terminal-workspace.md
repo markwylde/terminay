@@ -81,6 +81,13 @@ detach and stale resume cursors cannot deliver duplicate output. Local sockets,
 browser transports, and WebRTC only provide the underlying command and event
 transport; they do not own the PTY.
 
+Initial attach and resume replay is capped independently of the retained server
+window so its base64 command-result representation always fits the default
+protocol header budget. The server enforces the cap even when a client omits or
+overstates its requested replay budget, and coalesces contiguous replay chunks
+to avoid per-event metadata exhausting that budget. Live output continues on
+the ordered terminal event stream after attachment.
+
 The incremental panel migration uses `TerminayTerminalPanelClient`, a
 transport-neutral view over that attachment. It exposes raw-byte output,
 exit/resync notifications, and attachment-scoped input, resize, kill, and

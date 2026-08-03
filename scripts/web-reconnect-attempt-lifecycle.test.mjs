@@ -72,7 +72,7 @@ test('invalid persisted reconnect proofs stop retrying and require fresh pairing
 test('browser auto-restore reconnects HTTPS and loopback profiles in-page', () => {
 	assert.match(source, /function isBrowserReconnectOrigin\(origin: string\): boolean/u)
 	assert.match(source, /parsed\.protocol === 'https:'/u)
-	assert.match(source, /parsed\.protocol === 'http:'[\s\S]*parsed\.hostname === 'localhost'[\s\S]*parsed\.hostname === '127\.0\.0\.1'[\s\S]*parsed\.hostname === '\[::1\]'/u)
+	assert.match(source, /parsed\.protocol === 'http:'[\s\S]*parsed\.hostname === 'localhost'[\s\S]*parsed\.hostname\.endsWith\('\.localhost'\)[\s\S]*parsed\.hostname === '127\.0\.0\.1'[\s\S]*parsed\.hostname === '\[::1\]'/u)
 	assert.match(source, /if \(isBrowserReconnectOrigin\(profile\.origin\)\) \{/u)
 	assert.match(source, /const credential = await reconnectVault\.credential\(profile\.origin\)/u)
 	assert.match(source, /profile\.status === 'connected' \|\| recovering/u)

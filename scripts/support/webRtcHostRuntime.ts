@@ -17,6 +17,8 @@ export type HostConfig = {
 }
 
 export type HostApi = {
+  attachApplication?(channelId: string, ticket: string, channel: RTCDataChannel): Promise<void>
+  closeApplication?(channelId: string, reason?: string): void
   attachTerminal(channelId: string, ticket: string): Promise<void>
   closeTerminal(channelId: string, reason?: string): void
   getAsset(path: string): Promise<unknown>
@@ -311,12 +313,17 @@ export async function runHost(
   const channels = {
     api: peer.createDataChannel('api'),
     asset: peer.createDataChannel('asset'),
+    control: peer.createDataChannel('control'),
+    application: peer.createDataChannel('application'),
     terminal: peer.createDataChannel('terminal'),
+    assets: peer.createDataChannel('assets'),
   }
+  const applicationChannelId = crypto.randomUUID()
   const terminalChannelId = crypto.randomUUID()
   const assetTransfers = new Map<string, AssetTransfer>()
   const activeAssetRequestIds = new Set<string>()
   let terminalClosed = false
+  let applicationClosed = false
   let terminalCloseReason = 'WebRTC terminal channel closed.'
   let terminalAuthenticated = false
   const seenSignalNonces = new Set<string>()
@@ -324,6 +331,11 @@ export async function runHost(
     if (terminalClosed) return
     terminalClosed = true
     api.closeTerminal(terminalChannelId, reason)
+  }
+  const closeApplication = (reason = 'WebRTC application channel closed.') => {
+    if (applicationClosed) return
+    applicationClosed = true
+    api.closeApplication?.(applicationChannelId, reason)
   }
 
   peer.addEventListener('icecandidate', (event) => {
@@ -412,6 +424,37 @@ export async function runHost(
     })()
   })
 
+  channels.control.addEventListener('message', (event) => {
+    void (async () => {
+      const request = parseJson(event.data)
+      if (
+        request?.type !== 'application-auth' ||
+        typeof request.id !== 'string' ||
+        typeof request.ticket !== 'string'
+      ) return
+      try {
+        if (!api.attachApplication) {
+          throw new Error('The canonical application host is unavailable.')
+        }
+        await api.attachApplication(applicationChannelId, request.ticket, channels.application)
+        channels.control.send(JSON.stringify({
+          id: request.id,
+          ok: true,
+          type: 'application-authenticated',
+        }))
+      } catch (error) {
+        channels.control.send(JSON.stringify({
+          error: error instanceof Error ? error.message : 'Application authentication failed.',
+          id: request.id,
+          ok: false,
+          type: 'application-authenticated',
+        }))
+      }
+    })()
+  })
+  channels.application.addEventListener('close', () => closeApplication())
+  channels.application.addEventListener('error', () => closeApplication('WebRTC application channel failed.'))
+
   channels.terminal.addEventListener('message', (event) => {
     const request = parseJson(event.data)
     if (request?.type === 'terminal-auth' && typeof request.ticket === 'string') {
@@ -435,12 +478,14 @@ export async function runHost(
 
   peer.addEventListener('connectionstatechange', () => {
     if (peer.connectionState === 'closed' || peer.connectionState === 'disconnected' || peer.connectionState === 'failed') {
+      closeApplication(`WebRTC peer connection ${peer.connectionState}.`)
       closeTerminal(`WebRTC peer connection ${peer.connectionState}.`)
     }
   })
 
   peer.addEventListener('iceconnectionstatechange', () => {
     if (peer.iceConnectionState === 'closed' || peer.iceConnectionState === 'disconnected' || peer.iceConnectionState === 'failed') {
+      closeApplication(`WebRTC ICE connection ${peer.iceConnectionState}.`)
       closeTerminal(`WebRTC ICE connection ${peer.iceConnectionState}.`)
     }
   })
@@ -513,6 +558,7 @@ export async function runHost(
     stopSignalMessages()
     stopTerminalMessages()
     stopTerminalCloseRequests()
+    closeApplication('WebRTC host window stopped.')
     closeTerminal('WebRTC host window stopped.')
     for (const transfer of assetTransfers.values()) {
       transfer.cancelled = true

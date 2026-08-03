@@ -6,6 +6,7 @@ import {
   randomUUID,
   verify as verifySignature,
 } from 'node:crypto'
+import { lookup as dnsLookup } from 'node:dns'
 import { promises as fs } from 'node:fs'
 import https from 'node:https'
 import os from 'node:os'
@@ -167,6 +168,7 @@ type WebRtcReconnectAvailabilityRuntime = {
   appOrigin: string
   iceServers: RTCIceServer[]
   reconnectRegistrationToken: string
+  registered: boolean
   refreshTimer: NodeJS.Timeout | null
   sessionId: string
   signalingUrl: string
@@ -178,6 +180,52 @@ const MAX_SESSION_SNAPSHOT_BUFFER_LENGTH = 50_000
 const RECONNECT_LEASE_MS = 5 * 60 * 1000
 const RECONNECT_REFRESH_MIN_MS = 45 * 1000
 const RECONNECT_REFRESH_JITTER_MS = 30 * 1000
+
+type DnsLookupOptions = {
+  all?: boolean
+  family?: number
+  hints?: number
+  verbatim?: boolean
+}
+
+type DnsLookupCallback = (
+  error: NodeJS.ErrnoException | null,
+  address: string | Array<{ address: string; family: number }>,
+  family?: number,
+) => void
+
+function resolveSessionLocalhost(
+  hostname: string,
+  options: DnsLookupOptions,
+  callback: DnsLookupCallback,
+): void {
+  if (hostname.toLowerCase().endsWith('.localhost')) {
+    if (options.all) {
+      callback(null, [{ address: '127.0.0.1', family: 4 }])
+    } else {
+      callback(null, '127.0.0.1', 4)
+    }
+    return
+  }
+
+  const lookup = dnsLookup as (
+    hostname: string,
+    options: DnsLookupOptions,
+    callback: DnsLookupCallback,
+  ) => void
+  lookup(hostname, options, callback)
+}
+
+export function createWebRtcSignalingSocketOptions(signalingUrl: string, origin: string) {
+  const options = { origin } as WebSocket.ClientOptions & {
+    lookup?: typeof resolveSessionLocalhost
+  }
+  const url = new URL(signalingUrl)
+  if (url.protocol === 'ws:' && url.hostname.toLowerCase().endsWith('.localhost')) {
+    options.lookup = resolveSessionLocalhost
+  }
+  return options
+}
 
 export function createReconnectLeaseTiming(
   now = Date.now(),
@@ -418,6 +466,7 @@ export class RemoteAccessService {
   private readonly webRtcReconnectAttemptsById = new Map<string, PendingWebRtcReconnect>()
   private readonly webRtcReconnectAuthorizedDevices = new Map<string, number>()
   private readonly webRtcTerminalConnectionsByChannelId = new Map<string, string>()
+  private readonly webRtcApplicationConnectionsByChannelId = new Map<string, string>()
   private webRtcStatus: RemoteAccessStatus['webRtcStatus'] = 'not-configured'
   private webRtcStatusMessage: string | null = null
   private readonly wsServer = new WebSocketServer({ noServer: true })
@@ -1126,6 +1175,10 @@ export class RemoteAccessService {
         Date.now() + 60_000,
       )
       socket.send(JSON.stringify({
+        attemptId,
+        protocolVersion: 'v1',
+        reconnectHandle: attempt.handle,
+        sessionId: grant.sessionId,
         type: 'reconnect-accepted',
       }))
       socket.send(JSON.stringify({
@@ -1148,7 +1201,7 @@ export class RemoteAccessService {
     }
 
     if (message.type === 'reconnect-complete') {
-      this.closeWebRtcReconnectAttempt(String(message.attemptId ?? ''))
+      this.completeWebRtcReconnectAttempt(String(message.attemptId ?? ''))
       return
     }
 
@@ -1175,6 +1228,11 @@ export class RemoteAccessService {
     if (attempt.webContentsId) {
       this.closeWebRtcHostRuntime(attempt.webContentsId, 'Reconnect attempt completed')
     }
+  }
+
+  private completeWebRtcReconnectAttempt(attemptId: string): void {
+    if (!this.webRtcReconnectAttemptsById.delete(attemptId)) return
+    this.reconnectGrantStore.cancelChallenge(attemptId)
   }
 
   private getWebRtcGrantAppOrigin(grant: ReconnectGrantRecord): string {
@@ -1208,6 +1266,7 @@ export class RemoteAccessService {
   private async syncWebRtcReconnectAvailability(): Promise<void> {
     const settings = this.getRemoteAccessSettings()
     const grantsBySessionId = new Map<string, ReconnectGrantRecord>()
+    const initialRegistrations: Promise<void>[] = []
 
     for (const grant of this.reconnectGrantStore.listActive()) {
       if (!grantsBySessionId.has(grant.sessionId)) {
@@ -1231,11 +1290,28 @@ export class RemoteAccessService {
       const signalingUrl = this.createWebRtcSignalingUrl(appOrigin)
       const reconnectRegistrationToken =
         await this.reconnectGrantStore.getOrCreateHostRegistrationToken(sessionId)
-      const socket = new WebSocket(signalingUrl, { origin: appOrigin })
+      const socket = new WebSocket(signalingUrl, createWebRtcSignalingSocketOptions(signalingUrl, appOrigin))
+      let resolveInitialRegistration: (() => void) | null = null
+      let rejectInitialRegistration: ((error: Error) => void) | null = null
+      const initialRegistration = new Promise<void>((resolve, reject) => {
+        resolveInitialRegistration = resolve
+        rejectInitialRegistration = reject
+      })
+      const initialRegistrationTimer = setTimeout(() => {
+        rejectInitialRegistration?.(new Error('Timed out advertising saved-session reconnect availability.'))
+        resolveInitialRegistration = null
+        rejectInitialRegistration = null
+        if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket === socket) {
+          this.closeWebRtcReconnectAvailability(sessionId)
+        }
+      }, 10_000)
+      initialRegistrationTimer.unref?.()
+      initialRegistrations.push(initialRegistration)
       const runtime: WebRtcReconnectAvailabilityRuntime = {
         appOrigin,
         iceServers: parseWebRtcIceServers(settings.webRtcIceServers),
         reconnectRegistrationToken,
+        registered: false,
         refreshTimer: null,
         sessionId,
         signalingUrl,
@@ -1268,6 +1344,18 @@ export class RemoteAccessService {
         if (!this.isReconnectRelayMessage(message)) {
           return
         }
+        if (message.type === 'reconnect-host-registered') {
+          const registeredSessionIds = Array.isArray(message.sessionIds)
+            ? message.sessionIds.map((value) => String(value))
+            : []
+          if (registeredSessionIds.includes(sessionId)) {
+            runtime.registered = true
+            clearTimeout(initialRegistrationTimer)
+            resolveInitialRegistration?.()
+            resolveInitialRegistration = null
+            rejectInitialRegistration = null
+          }
+        }
 
         const config: WebRtcHostConfig = {
           appOrigin: runtime.appOrigin,
@@ -1295,14 +1383,28 @@ export class RemoteAccessService {
           }
           this.webRtcReconnectAvailabilityBySessionId.delete(sessionId)
         }
+        if (!runtime.registered) {
+          clearTimeout(initialRegistrationTimer)
+          rejectInitialRegistration?.(new Error('Hosted reconnect availability closed before registration.'))
+          resolveInitialRegistration = null
+          rejectInitialRegistration = null
+        }
       })
 
       socket.on('error', () => {
         if (this.webRtcReconnectAvailabilityBySessionId.get(sessionId)?.socket !== socket) return
         this.webRtcStatusMessage = 'Could not advertise saved-session reconnect availability.'
         this.emitStatus()
+        if (!runtime.registered) {
+          clearTimeout(initialRegistrationTimer)
+          rejectInitialRegistration?.(new Error('Could not advertise saved-session reconnect availability.'))
+          resolveInitialRegistration = null
+          rejectInitialRegistration = null
+        }
       })
     }
+
+    await Promise.all(initialRegistrations)
   }
 
   private openWebRtcPairingHost(options: {
@@ -1405,7 +1507,10 @@ export class RemoteAccessService {
     }
 
     this.closeWebRtcSignalSocket(runtime)
-    const socket = new WebSocket(config.signalingUrl, { origin: config.appOrigin })
+    const socket = new WebSocket(
+      config.signalingUrl,
+      createWebRtcSignalingSocketOptions(config.signalingUrl, config.appOrigin),
+    )
     runtime.signalSocket = socket
 
     socket.on('open', () => {
@@ -2029,6 +2134,45 @@ export class RemoteAccessService {
     })
     this.webRtcStatusMessage = 'Browser connected over WebRTC. A fresh pairing QR remains available for another browser.'
     this.sendSessionList(connection.socket, connection.connectionId)
+    this.emitStatus()
+  }
+
+  async attachWebRtcApplication(
+    webContentsId: number,
+    channelId: string,
+    ticket: string,
+    closePeer: (reason?: string) => void,
+  ): Promise<void> {
+    const ticketInfo = this.connectionStore.consumeTicket(ticket)
+    const device = this.deviceStore.get(ticketInfo.deviceId)
+    if (!device) throw new Error('This device is no longer trusted.')
+    const runtime = this.getWebRtcHostRuntime(webContentsId)
+    if (!runtime) throw new Error('The WebRTC host connection is no longer available.')
+    const peer: RemoteConnectionPeer = {
+      close: (_code, reason) => closePeer(reason || 'Remote connection closed by Terminay.'),
+      getReadyState: () => WebSocket.OPEN,
+      // Canonical application events travel through ServerCore on the framed
+      // application lane; the legacy connection store is lifecycle-only here.
+      send: () => undefined,
+    }
+    const connection = this.connectionStore.register(peer, ticketInfo.connectionId, ticketInfo.deviceId)
+    runtime.phase = 'connected'
+    this.webRtcApplicationConnectionsByChannelId.set(channelId, connection.connectionId)
+    await this.auditStore.append({
+      action: 'connection-opened',
+      connectionId: connection.connectionId,
+      deviceId: connection.deviceId,
+      deviceName: device.name,
+    })
+    this.webRtcStatusMessage = 'Browser connected over WebRTC. A fresh pairing QR remains available for another browser.'
+    this.emitStatus()
+  }
+
+  closeWebRtcApplication(channelId: string): void {
+    const connectionId = this.webRtcApplicationConnectionsByChannelId.get(channelId)
+    if (!connectionId) return
+    this.webRtcApplicationConnectionsByChannelId.delete(channelId)
+    this.connectionStore.unregister(connectionId)
     this.emitStatus()
   }
 

@@ -27,6 +27,24 @@ test("workspace facade rejects unbounded panel activation identities before tran
   assert.deepEqual(calls, []);
 });
 
+test("workspace facade commits a bounded terminal tab order through canonical state", async () => {
+  const calls = [];
+  const workspace = new WorkspaceClient({
+    async command(operation, payload) { calls.push([operation, payload]); return { result: null }; },
+  });
+
+  await workspace.reorderPanels({ projectId: "project-a", panelIds: ["panel-b", "panel-a"] });
+  assert.deepEqual(calls, [[
+    "workspace.command",
+    { command: { type: "panel.reorder", projectId: "project-a", panelIds: ["panel-b", "panel-a"] } },
+  ]]);
+  await assert.rejects(
+    workspace.reorderPanels({ projectId: "project-a", panelIds: ["panel-a", "panel-a"] }),
+    /panel reorder ids are invalid/,
+  );
+  assert.equal(calls.length, 1);
+});
+
 test("workspace facade exposes bounded project and panel lifecycle operations", async () => {
   const calls = [];
   const workspace = new WorkspaceClient({
