@@ -91,6 +91,39 @@ async function expectRenderedTerminalSelection(
 }
 
 test.describe('terminal behavior', () => {
+	test('reorders terminal tabs when one is dragged and dropped', async ({
+		mainWindow,
+	}) => {
+		await sendAppCommand(mainWindow, 'new-terminal');
+		const terminalTabs = mainWindow.locator(
+			'.project-workspace--active .terminal-tab-content',
+		);
+		await expect(terminalTabs).toHaveCount(2);
+		const initialTitles = await terminalTabs
+			.locator('.terminal-tab-title')
+			.allTextContents();
+		const firstBox = await terminalTabs.first().boundingBox();
+		const secondBox = await terminalTabs.nth(1).boundingBox();
+		if (!firstBox || !secondBox) throw new Error('Terminal tab drag geometry is unavailable');
+
+		await mainWindow.mouse.move(
+			firstBox.x + firstBox.width / 2,
+			firstBox.y + firstBox.height / 2,
+		);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(
+			secondBox.x + secondBox.width - 4,
+			secondBox.y + secondBox.height / 2,
+			{ steps: 10 },
+		);
+		await mainWindow.mouse.up();
+
+		await expect(terminalTabs.locator('.terminal-tab-title')).toHaveText([
+			initialTitles[1]!,
+			initialTitles[0]!,
+		]);
+	});
+
 	test('terminal tab context menu closes the selected tab', async ({
 		mainWindow,
 	}) => {
@@ -272,6 +305,25 @@ test.describe('terminal behavior', () => {
 			'--tab-color',
 		);
 		expect(secondTerminalColor).toBe(projectColor);
+	});
+
+	test('new terminals advertise the same true-color capability as the initial terminal', async ({
+		mainWindow,
+	}) => {
+		const marker = 'terminay-colorterm-truecolor';
+
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2);
+		await writeToTerminal(
+			mainWindow,
+			`printf '\\r\\n${marker}=%s\\r\\n' "\${COLORTERM-unset}"\r`,
+		);
+
+		await expect(
+			mainWindow.locator(
+				'.project-workspace--active .terminal-panel .xterm-rows',
+			),
+		).toContainText(`${marker}=truecolor`);
 	});
 
 	test('selects terminal text with a plain drag', async ({
