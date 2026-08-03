@@ -370,6 +370,9 @@ async function createServerComposition(
 			COLORTERM: 'truecolor',
 		},
 		terminalEnvironmentCaseInsensitive: process.platform === 'win32',
+		...(process.platform === 'darwin'
+			? { terminalSystemDefaultStartupMode: 'login' as const }
+			: {}),
 		recordings,
 		git,
 		...(ai === undefined ? {} : { ai }),
