@@ -70,7 +70,7 @@ function paths(available = ["/project", "/other", "/home", "/live", "/explicit",
   };
 }
 
-function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false } = {}) {
+function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode } = {}) {
   return new TerminalLaunchResolver({
     serverId: "server-a",
     profiles: profiles(entries, catalogue),
@@ -80,6 +80,7 @@ function resolver({ state = workspace(), entries = [profile("system")], catalogu
     observeTerminalCwd: observe,
     now: () => 123,
     environmentCaseInsensitive,
+    systemDefaultStartupMode,
   });
 }
 
@@ -109,6 +110,27 @@ test("launch resolver preserves argv boundaries, translates login mode, and laye
   assert.equal(launch.shellPath, "/bin/zsh");
   assert.deepEqual(launch.args, ["-l", "--no-globalrcs", "two words"]);
   assert.deepEqual(launch.env, { BASE: "profile", TERMINAY_SERVER: "trusted", ADDED: "$NOT_EXPANDED" });
+});
+
+test("host policy launches only the reserved System default as a login shell", async () => {
+  const system = profile("system", {
+    target: { kind: "system" },
+  });
+  const custom = profile("custom", {
+    target: { kind: "executable", executable: "/bin/zsh" },
+  });
+  const catalogue = {
+    resolvedTargets: {
+      system: { kind: "executable", executable: "/bin/zsh" },
+    },
+  };
+  const options = { entries: [system, custom], catalogue, systemDefaultStartupMode: "login" };
+
+  const systemLaunch = await resolver(options).resolve(intent());
+  const customLaunch = await resolver(options).resolve(intent({ explicitProfileId: "custom" }));
+
+  assert.deepEqual(systemLaunch.args, ["-l"]);
+  assert.deepEqual(customLaunch.args, []);
 });
 
 test("launch resolver supports login and non-login startup modes for POSIX sh implementations", async () => {
