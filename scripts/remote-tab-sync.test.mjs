@@ -17,5 +17,5 @@ test('workspace snapshot reconciliation updates renamed tabs and removes closed 
 	assert.match(app, /reconcileServerPanels: \(panels: readonly ServerWorkspacePanel\[\]\) => void/u)
 	assert.match(app, /canonical\.title !== undefined && panel\.title !== canonical\.title\)[\s\S]*panel\.api\.setTitle\(canonical\.title\)/u)
 	assert.match(app, /canonical === undefined\)[\s\S]*api\.removePanel\(panel\)/u)
-	assert.match(app, /workspace\.reconcileServerPanels\([\s\S]*panel\.projectId === projectId && panel\.type === 'terminal'/u)
+	assert.match(app, /const canonicalTerminalPanels = Object\.values\(snapshot\.panels\)\.filter\([\s\S]*panel\.type === 'terminal'[\s\S]*workspace\.reconcileServerPanels\(canonicalTerminalPanels\)/u)
 })

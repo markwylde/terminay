@@ -5245,14 +5245,16 @@ function App({
 						pendingPresentations += 1;
 					}
 				}
-				for (const [projectId, workspace] of workspaceRefs.current) {
+				const canonicalTerminalPanels = Object.values(snapshot.panels).filter(
+					(panel) => panel.type === 'terminal',
+				);
+				// Desktop moves and popouts can present a live server panel in another
+				// local workspace without changing its canonical project ownership.
+				// Reconcile against global panel existence so those presentations survive;
+				// a real close removes the canonical panel from this complete list.
+				for (const workspace of workspaceRefs.current.values()) {
 					if (workspace == null) continue;
-					workspace.reconcileServerPanels(
-						Object.values(snapshot.panels).filter(
-							(panel) =>
-								panel.projectId === projectId && panel.type === 'terminal',
-						),
-					);
+					workspace.reconcileServerPanels(canonicalTerminalPanels);
 				}
 				if (
 					pendingPresentations > 0 &&
