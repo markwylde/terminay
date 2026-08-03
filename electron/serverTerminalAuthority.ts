@@ -419,7 +419,10 @@ export class ServerTerminalAuthority {
 				: {
 						shellProfiles: options.shellProfiles,
 						terminalProfiles: options.shellProfiles,
-						terminalLaunchEnvironment: process.env,
+						terminalLaunchEnvironment: {
+							...process.env,
+							COLORTERM: 'truecolor',
+						},
 						terminalEnvironmentCaseInsensitive: process.platform === 'win32',
 					}),
 			operations: {

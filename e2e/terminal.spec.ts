@@ -274,6 +274,25 @@ test.describe('terminal behavior', () => {
 		expect(secondTerminalColor).toBe(projectColor);
 	});
 
+	test('new terminals advertise the same true-color capability as the initial terminal', async ({
+		mainWindow,
+	}) => {
+		const marker = 'terminay-colorterm-truecolor';
+
+		await sendAppCommand(mainWindow, 'new-terminal');
+		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2);
+		await writeToTerminal(
+			mainWindow,
+			`printf '\\r\\n${marker}=%s\\r\\n' "\${COLORTERM-unset}"\r`,
+		);
+
+		await expect(
+			mainWindow.locator(
+				'.project-workspace--active .terminal-panel .xterm-rows',
+			),
+		).toContainText(`${marker}=truecolor`);
+	});
+
 	test('selects terminal text with a plain drag', async ({
 		electronApp,
 		mainWindow,
