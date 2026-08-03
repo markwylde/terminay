@@ -62,6 +62,11 @@ test("workspace mutations publish workspace.changed coverage for project and pan
   await expectEvent("project.activate", () => registry.applyHostCommand("cmd-project-activate", { type: "project.activate", projectId: "project-a" }));
   assert.equal(workspace.state.views[viewId].activeProjectId, "project-a");
   await expectEvent("panel.move", () => registry.applyHostCommand("cmd-panel-move", { type: "panel.move", panelId: "panel-a", targetProjectId: "project-b" }));
+  await expectEvent("panel.update", () => registry.applyHostCommand("cmd-panel-update", { type: "panel.update", panelId: "panel-a", patch: { title: "Renamed terminal", emoji: "⚡", color: "#123456", inheritsProjectColor: false, activityIndicatorsEnabled: false } }));
+  assert.deepEqual(
+    (({ title, emoji, color, inheritsProjectColor, activityIndicatorsEnabled }) => ({ title, emoji, color, inheritsProjectColor, activityIndicatorsEnabled }))(workspace.state.panels["panel-a"]),
+    { title: "Renamed terminal", emoji: "⚡", color: "#123456", inheritsProjectColor: false, activityIndicatorsEnabled: false },
+  );
   await expectEvent("panel.close", () => registry.applyHostCommand("cmd-panel-close", { type: "panel.close", panelId: "panel-a" }));
   await expectEvent("terminal.createPanel", () => registry.applyHostCommand("cmd-terminal-panel-b", { type: "terminal.createPanel", projectId: "project-b", sessionId: "session-b", panelId: "panel-b", title: "Terminal B", createdAt: 2 }));
 
@@ -74,6 +79,7 @@ test("workspace mutations publish workspace.changed coverage for project and pan
     "project.create target",
     "project.activate",
     "panel.move",
+    "panel.update",
     "panel.close",
     "terminal.createPanel",
   ]);
