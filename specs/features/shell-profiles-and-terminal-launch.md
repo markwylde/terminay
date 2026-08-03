@@ -203,6 +203,12 @@ but the server reads the authoritative project, profile, and panel records and
 performs final path and executable validation. Local and remote transports use
 the same command and result shape.
 
+Every xterm-backed host advertises `COLORTERM=truecolor` in the canonical
+launch environment. The initial terminal and terminals created later through
+`terminal.create` therefore expose the same colour capability to child
+programs; creation route and attachment timing must not change ANSI background
+or true-colour rendering.
+
 ## Settings experience
 
 The Shell settings page begins with the server default profile and **New
