@@ -2109,30 +2109,33 @@ const ProjectWorkspace = forwardRef<
 		);
 
 		const handleOpenTerminalAt = useCallback(
-			async (path: string) => {
+			async (path: string, isDirectory = false) => {
 				const api = dockviewApiRef.current;
 				if (!api) {
 					return;
 				}
 
-				// If it's a file, get the parent directory
 				let cwd = path;
-				try {
-					const info = await fileViewerClient.listFolder(
-						fileClientPath(path),
-						fileClientProjectId,
-					);
-					if (info.root !== fileClientPath(path)) {
+				if (!isDirectory) {
+					// If it's a file, get the parent directory.
+					try {
+						const clientPath = fileClientPath(path);
+						const info = await fileViewerClient.listFolder(
+							clientPath,
+							fileClientProjectId,
+						);
+						if (info.root !== clientPath) {
+							cwd = path.substring(
+								0,
+								Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
+							);
+						}
+					} catch {
 						cwd = path.substring(
 							0,
 							Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
 						);
 					}
-				} catch {
-					cwd = path.substring(
-						0,
-						Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')),
-					);
 				}
 
 				try {
