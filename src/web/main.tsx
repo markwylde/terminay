@@ -316,6 +316,7 @@ export default function WebManagerApp() {
 	useEffect(() => {
 		const url = new URL(window.location.href);
 		if (
+			initialPairingUrlRef.current !== null ||
 			window.__TERMINAY_BROWSER_ENROLLMENT__ === undefined ||
 			new URLSearchParams(url.hash.slice(1)).has('pairingToken')
 		)
@@ -1046,74 +1047,90 @@ export default function WebManagerApp() {
 	if (pairingRequest !== null) {
 		return (
 			<main className="browser-host-shell" data-web-host-shell="terminay">
-				<section
-					ref={connectModalRef}
-					className="connect-modal"
-					role="dialog"
-					aria-modal="true"
-					aria-label="Enroll browser device"
-				>
-					<h1>Enroll browser device</h1>
-					<form onSubmit={(event) => void submitBrowserEnrollment(event)}>
-						<label>
-							Device name
-							<input
-								autoFocus
-								value={pairingRequest.deviceName}
-								onChange={(event) =>
-									setPairingRequest((current) =>
-										current === null
-											? null
-											: { ...current, deviceName: event.target.value },
-									)
-								}
-							/>
-						</label>
-						<label>
-							Pairing PIN
-							<input
-								type="password"
-								inputMode="numeric"
-								autoComplete="one-time-code"
-								pattern="[0-9]{6}"
-								maxLength={6}
-								value={pairingPin}
-								onChange={(event) =>
-									setPairingPin(
-										event.target.value.replace(/\D/gu, '').slice(0, 6),
-									)
-								}
-							/>
-						</label>
-						<div className="connect-modal__actions">
-							<button
-								type="button"
-								className="secondary"
-								onClick={() => {
-									invalidateConnectionAttempt(
-										`pairing:${new URL(pairingRequest.pairingUrl).origin}`,
-									);
-									setPairingPin('');
-									setPairingRequest(null);
-									setServerUrl('');
-								}}
-							>
-								Cancel pairing
-							</button>
-							<button
-								type="submit"
-								disabled={isConnecting || pairingPin.length !== 6}
-							>
-								{isConnecting ? 'Pairing…' : 'Pair and connect'}
-							</button>
+				<div className="connect-modal-backdrop" role="presentation">
+					<section
+						ref={connectModalRef}
+						className="connect-modal connect-modal--enrollment"
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="enroll-browser-heading"
+						aria-describedby="enroll-browser-description"
+					>
+						<div className="connect-modal__header">
+							<h1 id="enroll-browser-heading">Enroll browser device</h1>
 						</div>
-					</form>
-					{error && (
-						<p className="error" role="alert">
-							{error}
+						<p id="enroll-browser-description" className="muted">
+							Name this browser and enter the six-digit PIN shown by the
+							Terminay server.
 						</p>
-					)}
-				</section>
+						<form
+							className="connection-form connection-form--modal"
+							onSubmit={(event) => void submitBrowserEnrollment(event)}
+						>
+							<label>
+								Device name
+								<input
+									autoFocus
+									value={pairingRequest.deviceName}
+									onChange={(event) =>
+										setPairingRequest((current) =>
+											current === null
+												? null
+												: { ...current, deviceName: event.target.value },
+										)
+									}
+								/>
+							</label>
+							<label>
+								Pairing PIN
+								<input
+									type="password"
+									inputMode="numeric"
+									autoComplete="one-time-code"
+									pattern="[0-9]{6}"
+									maxLength={6}
+									value={pairingPin}
+									onChange={(event) =>
+										setPairingPin(
+											event.target.value.replace(/\D/gu, '').slice(0, 6),
+										)
+									}
+								/>
+							</label>
+							<div className="connect-modal__actions">
+								<button
+									type="button"
+									className="secondary"
+									onClick={() => {
+										invalidateConnectionAttempt(
+											`pairing:${new URL(pairingRequest.pairingUrl).origin}`,
+										);
+										setPairingPin('');
+										setPairingRequest(null);
+										setServerUrl('');
+									}}
+								>
+									Cancel pairing
+								</button>
+								<button
+									type="submit"
+									disabled={
+										isConnecting ||
+										pairingRequest.deviceName.trim().length === 0 ||
+										pairingPin.length !== 6
+									}
+								>
+									{isConnecting ? 'Pairing…' : 'Pair and connect'}
+								</button>
+							</div>
+						</form>
+						{error && (
+							<p className="error" role="alert">
+								{error}
+							</p>
+						)}
+					</section>
+				</div>
 			</main>
 		);
 	}

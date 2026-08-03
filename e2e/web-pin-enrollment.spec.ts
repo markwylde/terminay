@@ -37,6 +37,21 @@ test('browser pairing requires explicit device name and six-digit PIN enrollment
 }) => {
 	const enrollment = await openEnrollment(page);
 	await expect(enrollment).toBeVisible();
+	await expect(enrollment).toHaveClass(/connect-modal--enrollment/);
+	const viewport = page.viewportSize();
+	const bounds = await enrollment.boundingBox();
+	expect(viewport).not.toBeNull();
+	expect(bounds).not.toBeNull();
+	expect(
+		Math.abs(bounds!.x + bounds!.width / 2 - viewport!.width / 2),
+	).toBeLessThan(2);
+	expect(
+		Math.abs(bounds!.y + bounds!.height / 2 - viewport!.height / 2),
+	).toBeLessThan(2);
+	await expect(enrollment).toContainText(
+		'enter the six-digit PIN shown by the Terminay server',
+	);
+	await expect(enrollment.getByRole('alert')).toHaveCount(0);
 	await expect(enrollment.getByLabel('Device name')).toBeEditable();
 	await expect(enrollment.getByLabel('Device name')).toBeFocused();
 	const pin = enrollment.getByLabel('Pairing PIN');
@@ -57,6 +72,10 @@ test('browser pairing requires explicit device name and six-digit PIN enrollment
 	await expect(
 		enrollment.getByRole('button', { name: 'Pair and connect' }),
 	).toBeEnabled();
+	await enrollment.getByLabel('Device name').fill('   ');
+	await expect(
+		enrollment.getByRole('button', { name: 'Pair and connect' }),
+	).toBeDisabled();
 });
 
 test('opening a direct device link consumes its fragment and asks for the PIN immediately', async ({

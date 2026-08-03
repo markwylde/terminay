@@ -291,6 +291,14 @@ identifies whether the host or server must be upgraded.
    fresh pairing without destroying the remembered non-secret profile unless
    the user forgets it.
 
+Browser connection and device-enrollment prompts use the same centered,
+responsive modal surface and form controls as the rest of the disconnected
+browser host. Enrollment explains where to find the PIN, requires a non-empty
+device name and six digits before enabling its primary action, and remains
+fully inset from the viewport at narrow sizes. Starting a fresh pairing flow
+does not show a missing-saved-credential warning; enrollment errors appear only
+after an enrollment attempt fails.
+
 Desktop may accept the pairing URL in its connection menu even when the URL
 would otherwise open a browser. Browser and Desktop flows must produce the same
 server-side device and audit semantics.
