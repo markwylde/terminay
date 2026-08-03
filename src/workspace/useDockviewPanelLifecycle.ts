@@ -13,6 +13,7 @@ type LifecycleOptions = {
 	clearActivitySession: (sessionId: string) => void;
 	clearMacroRunsForSession: (sessionId: string) => void;
 	closeServerPanel?: (panelId: string) => void;
+	commitPanelOrder?: (panelIds: readonly string[]) => void;
 	filePathPanelMapRef: MutableRefObject<Map<string, string>>;
 	focusedSessionIdRef: MutableRefObject<string | null>;
 	folderPathPanelMapRef: MutableRefObject<Map<string, string>>;
@@ -91,6 +92,16 @@ export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 				latest.setFocusedSessionId(sessionId);
 				latest.markTerminalActivityViewed(sessionId);
 			}
+		});
+
+		event.api.onDidMovePanel((move) => {
+			// A cross-group move changes split geometry and is not a tab reorder.
+			if (move.panel.group.id !== move.from.id) return;
+			const latest = optionsRef.current;
+			const panelIds = event.api.groups.flatMap((group) =>
+				group.panels.map((panel) => panel.id),
+			);
+			latest.commitPanelOrder?.(panelIds);
 		});
 	}, []);
 

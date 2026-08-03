@@ -266,7 +266,12 @@ function normalizeOrigin(raw: string): string {
   if (typeof raw !== "string" || raw.length > 2048) throw new TypeError("connection origin is invalid");
   let url: URL;
   try { url = new URL(raw); } catch { throw new TypeError("connection origin is invalid"); }
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost"))) throw new TypeError("connection origin must be HTTPS or loopback HTTP");
+  const loopbackHttp = url.protocol === "http:" && (
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "localhost" ||
+    url.hostname.endsWith(".localhost")
+  );
+  if (url.protocol !== "https:" && !loopbackHttp) throw new TypeError("connection origin must be HTTPS or loopback HTTP");
   if (url.username || url.password || url.search || url.hash) throw new TypeError("connection origin contains credentials or fragments");
   return url.origin;
 }
