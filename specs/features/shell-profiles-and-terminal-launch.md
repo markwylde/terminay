@@ -51,6 +51,13 @@ unsupported combination is rejected instead of receiving a guessed flag.
 Additional arguments remain an array and are passed directly to the program
 without shell parsing, interpolation, or command-string execution.
 
+The reserved **System default** profile follows the host's platform policy. On
+macOS it launches a supported POSIX account shell as a login shell, matching a
+normal terminal login and allowing the user's login startup files to establish
+`PATH` and related command-discovery environment. This policy does not inspect
+or hard-code installed tool paths. An explicit custom profile's **Shell
+default** mode remains the selected shell's unmodified default behaviour.
+
 A WSL profile must name an explicit Linux shell before it can use startup mode,
 arguments, or an environment overlay. Terminay translates the structured WSL
 target without treating arguments as an implicit Linux command. Windows
@@ -292,7 +299,9 @@ races.
 - App startup, a new project, a new tab, a split, and a one-off profile launch
   use the same profile and cwd resolver on Desktop and browser clients.
 - With default settings on macOS, a user whose account shell is zsh receives an
-  interactive zsh in the project or inherited cwd for every creation route.
+  interactive login zsh in the project or inherited cwd for every creation
+  route, including the login-file environment used to discover user-installed
+  commands.
 - A project opened at the user's home starts its first and subsequent terminals
   in that home directory; no implicit route starts at `/`.
 - Linux, macOS, Windows native, Windows WSL, and remote-server discovery expose
