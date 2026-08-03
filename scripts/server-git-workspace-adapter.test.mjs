@@ -48,6 +48,10 @@ test('canonical Git list maps opaque references and presentation state', async (
           isPrunable: false,
           locked: false,
           state: 'dirty',
+          aheadOfDefaultBranchCount: 2,
+          lineAdditions: 4,
+          lineDeletions: 1,
+          hasCommittedChanges: true,
           entries: [{
             path: 'src/new.ts',
             previousPath: null,
@@ -71,6 +75,9 @@ test('canonical Git list maps opaque references and presentation state', async (
   })
   assert.equal(projection.statuses['/repo/feature/src/new.ts'], 'new')
   assert.equal(projection.worktrees.worktrees[0].isDirtyBranch, true)
+  assert.equal(projection.worktrees.worktrees[0].aheadOfMainCount, 2)
+  assert.equal(projection.worktrees.worktrees[0].lineAdditions, 4)
+  assert.equal(projection.worktrees.worktrees[0].lineDeletions, 1)
   assert.equal(projection.worktrees.worktrees[0].entries[0].state, 'untracked')
 })
 

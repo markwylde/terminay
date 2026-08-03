@@ -212,6 +212,10 @@ export interface GitWorktreeSummary {
   readonly isPrunable: boolean;
   readonly locked: boolean;
   readonly state: GitWorktreeState;
+  readonly aheadOfDefaultBranchCount: number | null;
+  readonly lineAdditions: number | null;
+  readonly lineDeletions: number | null;
+  readonly hasCommittedChanges: boolean | null;
   readonly entries: readonly GitStatusEntry[];
   readonly error?: GitErrorInfo;
 }
