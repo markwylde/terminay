@@ -3101,8 +3101,14 @@ const ProjectWorkspace = forwardRef<
 				const api = dockviewApiRef.current;
 				if (!api) return;
 				const canonicalById = new Map(panels.map((panel) => [panel.id, panel]));
-				for (const [panelId] of panelSessionMapRef.current) {
-					const canonical = canonicalById.get(panelId);
+				const canonicalBySessionId = new Map(
+					panels.flatMap((panel) =>
+						panel.sessionId === undefined ? [] : [[panel.sessionId, panel] as const],
+					),
+				);
+				for (const [panelId, sessionId] of panelSessionMapRef.current) {
+					const canonical =
+						canonicalById.get(panelId) ?? canonicalBySessionId.get(sessionId);
 					const panel = api.getPanel(panelId);
 					if (canonical === undefined) {
 						if (panel) api.removePanel(panel);
