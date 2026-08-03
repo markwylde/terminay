@@ -161,6 +161,14 @@ code { border-radius: 6px; background: #0b1119; color: #d5e1ee; padding: 2px 5px
   box-shadow: 0 24px 90px rgba(0, 0, 0, .46);
 }
 
+.connect-modal--enrollment {
+  width: min(480px, 100%);
+}
+
+.connect-modal--enrollment > .error {
+  margin-bottom: 22px;
+}
+
 @supports (min-height: 100dvh) {
   :scope {
     min-height: 100dvh;
