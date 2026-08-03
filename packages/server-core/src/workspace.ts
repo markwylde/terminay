@@ -13,6 +13,10 @@ export interface PanelBase {
 	readonly projectId: ProtocolId;
 	readonly type: PanelType;
 	readonly title?: string;
+	readonly emoji?: string;
+	readonly color?: string;
+	readonly inheritsProjectColor?: boolean;
+	readonly activityIndicatorsEnabled?: boolean;
 	readonly createdAt: number;
 }
 export interface TerminalPanel extends PanelBase {
@@ -148,6 +152,10 @@ export function canonicalizeWorkspaceState(
 			projectId: panel.projectId,
 			type: panel.type,
 			...(panel.title === undefined ? {} : { title: panel.title }),
+			...(panel.emoji === undefined ? {} : { emoji: panel.emoji }),
+			...(panel.color === undefined ? {} : { color: panel.color }),
+			...(panel.inheritsProjectColor === undefined ? {} : { inheritsProjectColor: panel.inheritsProjectColor }),
+			...(panel.activityIndicatorsEnabled === undefined ? {} : { activityIndicatorsEnabled: panel.activityIndicatorsEnabled }),
 			createdAt: panel.createdAt,
 		};
 		if (panel.type === 'terminal')
