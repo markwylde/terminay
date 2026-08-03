@@ -471,7 +471,10 @@ export class TerminayTerminalClient {
 			throw new TypeError('terminal attach result position regressed');
 
 		const initialEvents: TerminalStreamEvent[] = [];
-		let position = fromPosition;
+		// The server may advance the display cursor to honor its bounded initial
+		// replay budget. Decode replay relative to that authoritative boundary,
+		// while retaining the independently tracked reconnect high-water mark.
+		let position = result.fromPosition;
 		let replayBoundary: number | undefined;
 		for (const wireEvent of result.events ?? []) {
 			const event = tryDecodeEvent(wireEvent, request, undefined);

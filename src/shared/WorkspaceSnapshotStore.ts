@@ -1,4 +1,4 @@
-import { WorkspaceClient, type PanelActivationRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectRootUpdateRequest, type TerminayClient, type WorkspaceCommandOptions } from '@terminay/client-core'
+import { WorkspaceClient, type PanelActivationRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectRootUpdateRequest, type TerminayClient, type WorkspaceCommandOptions } from '@terminay/client-core'
 import {
 	parseServerWorkspaceSnapshot,
 	type ServerWorkspaceSnapshot,
@@ -149,6 +149,11 @@ export class WorkspaceSnapshotStore {
 	async activatePanel(request: PanelActivationRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
 		if (this.closed) throw new Error('workspace snapshot store is closed')
 		await this.workspace.activatePanel(request, options)
+	}
+
+	async reorderPanels(request: PanelReorderRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.reorderPanels(request, options)
 	}
 
 	async splitPanel(request: PanelSplitRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
