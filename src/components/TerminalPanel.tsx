@@ -1003,11 +1003,19 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
 
     const handleDrop = async (event: DragEvent) => {
-      if (!event.dataTransfer) {
+      if (
+        !event.dataTransfer ||
+        !shouldInterceptTerminalDrop(
+          event.dataTransfer,
+          resolveDesktopDroppedFilePath,
+          canUploadBrowserFiles,
+        )
+      ) {
         return
       }
 
-      // We handle the event here so xterm doesn't get it
+      // Claim only terminal file/path drops. Dockview panel drags must reach
+      // Dockview's own drop target so it can reorder and split groups.
       event.preventDefault()
       event.stopPropagation()
 
