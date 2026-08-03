@@ -107,6 +107,62 @@ test("terminal attach clamps initial replay to the requested byte budget", async
   }
 });
 
+test("framed terminal attach keeps an overstated fragmented replay inside the protocol header limit", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({
+    serverId: "server-protocol-budget",
+    ptyFactory: pty,
+    generateSessionId: () => "session-protocol-budget",
+    maxReplayBytes: 128 * 1024,
+  });
+  const session = await service.createSession({ projectId: "project-protocol-budget", cols: 80, rows: 24 });
+  const journal = new OrderedEventJournal();
+  const registry = createTerminalOperationRegistry({ service, eventJournal: journal, allowUnresolvedTestSessions: true });
+  const pair = createInMemoryTransportPair();
+  const server = createServerCore({
+    serverId: "server-protocol-budget",
+    serverVersion: "test",
+    capabilities: ["terminal"],
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "write" }),
+    eventJournal: journal,
+    ...registry.operations,
+    onConnectionClosed: registry.closeClient,
+  }).accept(pair.server);
+  const serverTask = server.start();
+  const protocolClient = new TerminayClient({ transport: pair.client, clientId: "client-a", capabilities: ["terminal"] });
+  const facade = new TerminayClientFacade(protocolClient);
+  const terminal = new TerminayTerminalClient({
+    command: facade.command.bind(facade),
+    subscribe: protocolClient.subscribe.bind(protocolClient),
+  });
+
+  for (let index = 0; index < 40_000; index += 1) pty.processes[0].emitData("x");
+
+  try {
+    await pair.open();
+    await protocolClient.connect();
+    const attached = await terminal.attach({
+      serverId: "server-protocol-budget",
+      projectId: "project-protocol-budget",
+      sessionId: session.sessionId,
+      clientId: "client-a",
+      fromPosition: 0,
+      maxInitialReplayBytes: 128 * 1024,
+    });
+
+    assert.equal(attached.initialEvents.length, 1);
+    assert.equal(attached.initialEvents[0].type, "output");
+    assert.equal(attached.initialEvents[0].bytes.byteLength, 32 * 1024);
+    assert.equal(attached.initialEvents[0].position, 40_000 - (32 * 1024));
+    assert.equal(attached.position, 40_000);
+  } finally {
+    await protocolClient.close();
+    await server.close();
+    await serverTask;
+    await service.shutdown();
+  }
+});
+
 test("protocol client close releases its resize lease without terminating the server-owned PTY", async () => {
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-resize-close", ptyFactory: pty, generateSessionId: () => "session-resize-close" });
