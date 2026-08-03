@@ -118,7 +118,8 @@ export const TERMINAL_PANEL_OUTPUT_EVENT = 'terminay-terminal-panel-output'
 export const TERMINAL_PANEL_EXIT_EVENT = 'terminay-terminal-panel-exit'
 const TERMINAL_CONTEXT_MAX_LINES = 200
 const TERMINAL_CONTEXT_MAX_CHARS = 20_000
-const MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES = 64 * 1024
+// Replay is base64 in a protocol header; leave room for the result envelope.
+const MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES = 32 * 1024
 const REMOTE_TERMINAL_SCALE_PROPERTY = '--terminal-remote-scale'
 const EMPTY_TERMINAL_ROOT_SIZE = { height: 0, width: 0 }
 const searchOptions = {
