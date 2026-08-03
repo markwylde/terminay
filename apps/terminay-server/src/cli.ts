@@ -365,7 +365,10 @@ async function createServerComposition(
 		settings,
 		terminalProfiles: shellProfiles,
 		shellProfiles,
-		terminalLaunchEnvironment: process.env,
+		terminalLaunchEnvironment: {
+			...process.env,
+			COLORTERM: 'truecolor',
+		},
 		terminalEnvironmentCaseInsensitive: process.platform === 'win32',
 		recordings,
 		git,
