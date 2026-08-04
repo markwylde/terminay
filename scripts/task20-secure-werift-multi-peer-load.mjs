@@ -9,6 +9,10 @@ const CHANNEL_LABELS = ['api', 'asset', 'control', 'terminal'];
 const FRAME_BYTES = 4 * 1024;
 const CHANNEL_HIGH_WATER_BYTES = 256 * 1024;
 const APPLICATION_QUEUE_LIMIT = 128;
+const RESOURCE_CLEANUP_TIMEOUT_MS = 15_000;
+const RESOURCE_QUIESCENCE_MS = 500;
+const RESOURCE_POLL_INTERVAL_MS = 25;
+const NETWORK_OR_TIMER_RESOURCE = /UDP|Socket|Timeout/iu;
 
 const delay = (milliseconds) =>
 	new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -21,6 +25,47 @@ async function waitFor(predicate, description, timeoutMs = 20_000) {
 		}
 		await delay(10);
 	}
+}
+
+export function selectedResourceCounts(resources) {
+	const counts = new Map();
+	for (const name of resources) {
+		if (!NETWORK_OR_TIMER_RESOURCE.test(name)) continue;
+		counts.set(name, (counts.get(name) ?? 0) + 1);
+	}
+	return counts;
+}
+
+export function selectedResourceGrowth(resourcesBefore, resourcesAfter) {
+	const before = selectedResourceCounts(resourcesBefore);
+	const after = selectedResourceCounts(resourcesAfter);
+	return [...after]
+		.map(([name, count]) => [name, count - (before.get(name) ?? 0)])
+		.filter(([, count]) => count > 0);
+}
+
+async function waitForSelectedResourcesToClose(resourcesBefore) {
+	const startedAt = Date.now();
+	let quiescentSince = null;
+	let resourcesAfter = process.getActiveResourcesInfo();
+	while (Date.now() - startedAt < RESOURCE_CLEANUP_TIMEOUT_MS) {
+		resourcesAfter = process.getActiveResourcesInfo();
+		if (selectedResourceGrowth(resourcesBefore, resourcesAfter).length === 0) {
+			quiescentSince ??= Date.now();
+			if (Date.now() - quiescentSince >= RESOURCE_QUIESCENCE_MS) {
+				return resourcesAfter;
+			}
+		} else {
+			quiescentSince = null;
+		}
+		await delay(RESOURCE_POLL_INTERVAL_MS);
+	}
+	const growth = Object.fromEntries(
+		selectedResourceGrowth(resourcesBefore, resourcesAfter),
+	);
+	throw new Error(
+		`Timed out waiting for selected Werift network and timer resources to close; remaining growth: ${JSON.stringify(growth)}.`,
+	);
 }
 
 function positiveInteger(value, name, fallback) {
@@ -358,15 +403,7 @@ export async function runSelectedWeriftMultiPeerLoad(options) {
 		await Promise.all(pairs.map(closePair));
 	}
 
-	const hasLiveNetworkOrTimer = () =>
-		process
-			.getActiveResourcesInfo()
-			.some((name) => /UDP|Socket|Timeout/iu.test(name));
-	await waitFor(
-		() => !hasLiveNetworkOrTimer(),
-		'selected Werift network and timer resources to close',
-		5_000,
-	);
+	const resourcesAfter = await waitForSelectedResourcesToClose(resourcesBefore);
 	const cpu = process.cpuUsage(cpuBefore);
 	const cpuMs = (cpu.user + cpu.system) / 1_000;
 	const rssGrowthBytes = Math.max(0, process.memoryUsage().rss - rssBefore);
@@ -378,7 +415,7 @@ export async function runSelectedWeriftMultiPeerLoad(options) {
 		rssGrowthBytes <= options.maxRssGrowthBytes,
 		`RSS growth ${rssGrowthBytes} exceeded ${options.maxRssGrowthBytes}`,
 	);
-	assert.equal(hasLiveNetworkOrTimer(), false);
+	assert.deepEqual(selectedResourceGrowth(resourcesBefore, resourcesAfter), []);
 	return {
 		...metrics,
 		channelsPerPair: CHANNEL_LABELS.length,
@@ -390,7 +427,7 @@ export async function runSelectedWeriftMultiPeerLoad(options) {
 		platform: `${process.platform}-${process.arch}`,
 		routes: pairs.map((pair) => pair.route),
 		resourcesBefore,
-		resourcesAfter: process.getActiveResourcesInfo(),
+		resourcesAfter,
 		rssGrowthBytes,
 		runtime: 'secure-werift',
 	};
