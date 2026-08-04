@@ -4,6 +4,11 @@ import test from 'node:test'
 
 const source = await readFile('src/workspace/useFileExplorerController.ts', 'utf8')
 const worktreesPanelSource = await readFile('src/components/git-panel/WorktreesPanel.tsx', 'utf8')
+
+test('worktree presentation reserves clean for worktrees without committed or working changes', () => {
+  assert.match(worktreesPanelSource, /hasUnmergedOrUncommittedWork \? \(/u)
+  assert.match(worktreesPanelSource, />changed<\/span>/u)
+})
 const gitServiceSource = await readFile('packages/server-core/src/gitService/service.ts', 'utf8')
 const serverCompositionSource = await readFile('packages/server-core/src/composition.ts', 'utf8')
 const serverConnectionSource = await readFile('packages/server-core/src/connection.ts', 'utf8')
