@@ -81,6 +81,31 @@ export function openTerminalAtWorktree(
 	void onOpenTerminalAt(worktree.path, true);
 }
 
+export function assertWorktreeRemoved(result: unknown): void {
+	if (
+		typeof result === 'object' &&
+		result !== null &&
+		'applied' in result &&
+		result.applied === true &&
+		'state' in result &&
+		result.state === 'removed'
+	) {
+		return;
+	}
+
+	const error =
+		typeof result === 'object' &&
+		result !== null &&
+		'error' in result &&
+		typeof result.error === 'object' &&
+		result.error !== null &&
+		'message' in result.error &&
+		typeof result.error.message === 'string'
+			? result.error.message
+			: 'The server did not remove the worktree.';
+	throw new Error(error);
+}
+
 function sameGitStatuses(
 	left: Record<string, FileExplorerGitStatus>,
 	right: Record<string, FileExplorerGitStatus>,
@@ -598,16 +623,21 @@ export function useFileExplorerController({
 				if (gitClient === undefined || reference === undefined) {
 					throw new Error('Git worktree controls are unavailable.');
 				}
-				await gitClient.remove(reference, worktree.head);
+				const result = await gitClient.remove(reference, worktree.head);
+				assertWorktreeRemoved(result);
 				onSetError(null);
 				void loadDirectory(parentPath(worktree.path) || project.rootFolder);
 			} catch (error) {
+				onSetError(`Failed to delete worktree: ${String(error)}`);
+			} finally {
 				setDeletingWorktreePaths((current) => {
 					const next = new Set(current);
 					next.delete(worktree.path);
 					return next;
 				});
-				onSetError(`Failed to delete worktree: ${String(error)}`);
+				if (project.rootFolder) {
+					void refreshGitStatusesForRoot(project.rootFolder, true);
+				}
 			}
 		},
 		[
@@ -615,6 +645,7 @@ export function useFileExplorerController({
 			loadDirectory,
 			onSetError,
 			project.rootFolder,
+			refreshGitStatusesForRoot,
 		],
 	);
 	const handlePullWorktreeFromOrigin = useCallback(
