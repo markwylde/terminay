@@ -253,6 +253,53 @@ test("GitService removes only a revalidated clean non-main worktree", async () =
   }
 });
 
+test("GitService removes a stale worktree registration after its directory disappears", async () => {
+  const { GitService } = await import("../dist/gitService/index.js");
+  const root = await mkdtemp(join(tmpdir(), "terminay-server-git-remove-stale-"));
+  const project = join(root, "project");
+  const feature = join(root, "feature");
+  try {
+    await mkdir(project);
+    await git(["init", "-b", "main"], project);
+    await git(["config", "user.email", "test@example.invalid"], project);
+    await git(["config", "user.name", "Terminay Test"], project);
+    await writeFile(join(project, "file.txt"), "base\n");
+    await git(["add", "file.txt"], project);
+    await git(["commit", "-m", "initial"], project);
+    await git(["worktree", "add", feature, "-b", "feature"], project);
+
+    const service = new GitService();
+    const binding = await service.bindProject("project", project);
+    const before = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    const selected = before.worktrees.find((worktree) => worktree.path.endsWith("/feature"));
+    assert.ok(selected);
+
+    await rm(feature, { recursive: true, force: true });
+
+    const stale = await service.worktrees({
+      projectId: "project",
+      repositoryId: binding.repositoryId,
+      worktreeId: selected.id,
+    });
+    assert.equal(stale.state, "ready");
+    assert.equal(stale.worktrees.find((worktree) => worktree.id === selected.id)?.isPrunable, true);
+
+    const removed = await service.removeWorktree({
+      projectId: "project",
+      repositoryId: binding.repositoryId,
+      worktreeId: selected.id,
+      expectedHead: selected.head,
+    });
+    assert.equal(removed.applied, true);
+    assert.equal(removed.state, "removed");
+
+    const after = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    assert.equal(after.worktrees.some((worktree) => worktree.id === selected.id), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("GitService moves only a clean reviewed worktree to a safe sibling name", async () => {
   const { GitService, GitServiceError } = await import("../dist/gitService/index.js");
   const root = await mkdtemp(join(tmpdir(), "terminay-server-git-move-"));
