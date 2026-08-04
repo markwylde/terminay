@@ -1,0 +1,193 @@
+import type { AppCommand } from './terminay';
+
+export type KeyboardShortcutSettings = Record<AppCommand, string>;
+
+export type TerminalThemeSettings = {
+	foreground: string;
+	background: string;
+	cursor: string;
+	cursorAccent: string;
+	selectionBackground: string;
+	selectionInactiveBackground: string;
+	selectionForeground: string;
+	scrollbarSliderBackground: string;
+	scrollbarSliderHoverBackground: string;
+	scrollbarSliderActiveBackground: string;
+	black: string;
+	red: string;
+	green: string;
+	yellow: string;
+	blue: string;
+	magenta: string;
+	cyan: string;
+	white: string;
+	brightBlack: string;
+	brightRed: string;
+	brightGreen: string;
+	brightYellow: string;
+	brightBlue: string;
+	brightMagenta: string;
+	brightCyan: string;
+	brightWhite: string;
+};
+
+export type ShellSettings = {
+	program: string;
+	startupMode: 'auto' | 'login' | 'non-login';
+	extraArgs: string;
+};
+
+export type RemoteAccessSettings = {
+	bindAddress: string;
+	origin: string;
+	pairingMode: 'lan' | 'webrtc';
+	pinFailureLimit: number;
+	pairingPinHash: string;
+	reconnectGrantLifetime?: '1h' | '24h' | '7d' | 'until-revoked';
+	tlsCertPath: string;
+	tlsKeyPath: string;
+	webRtcHostedDomain: string;
+	webRtcIceServers: string;
+};
+
+export type TerminalRecordingSensitiveInputPolicy = 'drop' | 'mask';
+
+export type TerminalRecordingSettings = {
+	captureInput: boolean;
+	directory: string;
+	openTimelineAfterSaving: boolean;
+	recordNewTerminals: boolean;
+	sensitiveInputPolicy: TerminalRecordingSensitiveInputPolicy;
+};
+
+export type GitPanelViewMode = 'list' | 'tree';
+
+export type SidebarPaneState = 'expanded' | 'collapsed';
+export const SIDEBAR_PANEL_IDS = ['explorer', 'agents', 'git'] as const;
+export type SidebarPanelId = (typeof SIDEBAR_PANEL_IDS)[number];
+
+export type SidebarSettings = {
+	gitPanelViewMode: GitPanelViewMode;
+	defaultExplorerState: SidebarPaneState;
+	defaultGitState: SidebarPaneState;
+	defaultWidth: number;
+	defaultExplorerPaneHeight: number;
+	defaultAgentsPaneHeight: number;
+	defaultGitPaneHeight: number;
+	panelOrder: SidebarPanelId[];
+};
+
+export type FileViewerSettings = {
+	customFileExtensions: FileViewerCustomExtensionDefault[];
+	diffLayout: FileViewerDiffLayout;
+	folderTaskIgnoredDirectories: string;
+	refreshIntervalSeconds: number;
+};
+
+export type FileViewerDefaultMode = 'preview' | 'text' | 'hex';
+export type FileViewerDiffLayout = 'side-by-side' | 'unified';
+
+export type FileViewerCustomExtensionDefault = {
+	extension: string;
+	defaultMode: FileViewerDefaultMode;
+};
+
+export type AiTabMetadataProvider = 'disabled' | 'codex' | 'claudeCode';
+
+export type AiTabMetadataTargetSettings = {
+	provider: AiTabMetadataProvider;
+	claudeCodeModel: string;
+	codexModel: string;
+};
+
+export type AiTabMetadataSettings = {
+	title: AiTabMetadataTargetSettings;
+	note: AiTabMetadataTargetSettings;
+};
+
+export type AgentIntegrationSettings = {
+	enabled: boolean;
+};
+
+export type GitPushAgentProvider = 'disabled' | 'codex' | 'claudeCode';
+
+export type GitPushAgentSettings = {
+	provider: GitPushAgentProvider;
+	claudeCodeModel: string;
+	codexModel: string;
+	prompt: string;
+};
+
+export type TerminayMcpSettings = { enabled: boolean };
+
+export type DictationTranscriptionModel =
+	| 'gpt-4o-transcribe'
+	| 'gpt-4o-mini-transcribe';
+
+export type DictationSettings = {
+	enabled: boolean;
+	model: DictationTranscriptionModel;
+	microphoneDeviceId: string;
+	language: string;
+	prompt: string;
+	silenceStopSeconds: number;
+	maxDurationSeconds: number;
+};
+
+export type TerminalSettings = {
+	agentIntegration: AgentIntegrationSettings;
+	aiTabMetadata: AiTabMetadataSettings;
+	dictation: DictationSettings;
+	gitPushAgent: GitPushAgentSettings;
+	terminayMcp: TerminayMcpSettings;
+	allowTransparency: boolean;
+	altClickMovesCursor: boolean;
+	activityIndicators: TerminalActivityIndicatorSettings;
+	autoCloseTerminalOnExitZero: boolean;
+	convertEol: boolean;
+	cursorBlink: boolean;
+	cursorStyle: 'block' | 'underline' | 'bar';
+	cursorWidth: number;
+	cursorInactiveStyle: 'outline' | 'block' | 'bar' | 'underline' | 'none';
+	customGlyphs: boolean;
+	disableStdin: boolean;
+	drawBoldTextInBrightColors: boolean;
+	fastScrollSensitivity: number;
+	fontFamily: string;
+	fontSize: number;
+	fontWeight: string;
+	fontWeightBold: string;
+	ignoreBracketedPasteMode: boolean;
+	letterSpacing: number;
+	lineHeight: number;
+	macOptionIsMeta: boolean;
+	macOptionClickForcesSelection: boolean;
+	minimumContrastRatio: number;
+	rescaleOverlappingGlyphs: boolean;
+	rightClickSelectsWord: boolean;
+	screenReaderMode: boolean;
+	scrollback: number;
+	scrollOnEraseInDisplay: boolean;
+	scrollOnUserInput: boolean;
+	scrollSensitivity: number;
+	smoothScrollDuration: number;
+	tabStopWidth: number;
+	wordSeparator: string;
+	fileViewer: FileViewerSettings;
+	keyboardShortcuts: KeyboardShortcutSettings;
+	recording: TerminalRecordingSettings;
+	remoteAccess: RemoteAccessSettings;
+	shell: ShellSettings;
+	sidebar: SidebarSettings;
+	theme: TerminalThemeSettings;
+};
+
+export type TerminalActivityIndicatorSettings = {
+	amberDelaySeconds: number;
+	greenDelaySeconds: number;
+	showActiveTabs: boolean;
+	showFinishedTabs: boolean;
+	signalDetection: boolean;
+	progressStaleSeconds: number;
+	tabSwitchSuppressionSeconds: number;
+};

@@ -1,0 +1,148 @@
+import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import test from 'node:test'
+import { pathToFileURL } from 'node:url'
+import { build } from 'esbuild'
+
+const panel = await readFile(new URL('../src/components/TerminalPanel.tsx', import.meta.url), 'utf8')
+const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+
+test('TerminalPanel resolves the shared connection client before compatibility APIs', () => {
+  assert.match(panel, /export const TerminalPanelClientContext/)
+  assert.match(panel, /const terminalClientContext = useContext\(TerminalPanelClientContext\)/)
+  assert.match(panel, /new TerminayTerminalPanelClient\(terminalClientContext\.client\)/)
+  assert.match(panel, /resolveTerminalPanelClient\(/)
+  assert.match(panel, /params\.terminalPanelClient \?\?/)
+  assert.match(panel, /context === null \? undefined/)
+  assert.match(panel, /const panelClient = resolvedTerminalClient\.panelClient/)
+  assert.match(panel, /const panelIdentity = resolvedTerminalClient\.identity/)
+  assert.match(panel, /const panelClientId = resolvedTerminalClient\.clientId/)
+	assert.match(panel, /const \[serverConnectionAttempt, setServerConnectionAttempt\] = useState\(0\)/)
+	assert.match(panel, /serverConnectionAttempt,\s*\]/)
+	assert.match(panel, /Retry connection/)
+	assert.match(panel, /setServerConnectionAttempt\(\(attempt\) => attempt \+ 1\)/)
+})
+
+test('App provides one connection client context per project Dockview and keeps null as the fallback', () => {
+  assert.match(app, /terminalClientContext\?: Omit<TerminalPanelClientContextValue, 'projectId'>/)
+  assert.match(app, /const terminalPanelClientContext\s*=\s*useMemo<TerminalPanelClientContextValue \| null>/)
+  assert.match(app, /<TerminalPanelClientContext\.Provider\s+value=\{terminalPanelClientContext\}\s*>/)
+  assert.match(app, /terminalClientContext=\{terminalClientContext\}/)
+  assert.match(app, /terminal: TerminalPanel/)
+})
+
+test('context resolution uses the supplied shared terminal client for a real attachment', async () => {
+  const outputDirectory = await mkdtemp(join(process.cwd(), 'scripts', '.terminal-panel-context-'))
+  try {
+    const stubExports = {
+      '@xterm/xterm': 'export class Terminal {}',
+      '@xterm/addon-fit': 'export class FitAddon {}',
+      '@xterm/addon-search': 'export class SearchAddon {}',
+      '@xterm/addon-unicode11': 'export class Unicode11Addon {}',
+      '@xterm/addon-web-links': 'export class WebLinksAddon {}',
+      'lucide-react': 'export const AlertTriangle=0, Mic=0, RotateCcw=0, Square=0, X=0;',
+    }
+
+    await build({
+      absWorkingDir: process.cwd(),
+      bundle: true,
+      entryPoints: ['src/components/TerminalPanel.tsx'],
+      external: ['react', '@terminay/client-core'],
+      format: 'esm',
+      loader: { '.css': 'empty' },
+      outdir: outputDirectory,
+      platform: 'node',
+      plugins: [{
+        name: 'terminal-panel-test-stubs',
+        setup(api) {
+          api.onResolve({ filter: /^@xterm\// }, (args) => ({ path: args.path, namespace: 'test-stub' }))
+          api.onResolve({ filter: /^lucide-react$/ }, (args) => ({ path: args.path, namespace: 'test-stub' }))
+          api.onLoad({ filter: /.*/, namespace: 'test-stub' }, (args) => ({ contents: stubExports[args.path] ?? '', loader: 'js' }))
+        },
+      }],
+    })
+
+    const module = await import(pathToFileURL(join(outputDirectory, 'TerminalPanel.js')).href)
+    let capturedRequest
+    const attachmentListeners = new Set()
+    const attachment = {
+      attachmentId: 'attachment-context',
+      identity: { serverId: 'server-context', projectId: 'project-context', sessionId: 'session-context' },
+      initialEvents: [],
+      position: 0,
+      closed: false,
+      onEvent: (listener) => {
+        attachmentListeners.add(listener)
+        return () => attachmentListeners.delete(listener)
+      },
+      ack: async () => {},
+      write: async () => {},
+      resize: async () => {},
+      kill: async () => {},
+      detach: async () => {},
+    }
+    const sharedClient = {
+      attach: async (request) => {
+        capturedRequest = request
+        return attachment
+      },
+      resume: async () => attachment,
+    }
+    const resolved = module.resolveTerminalPanelClient({}, {
+      client: sharedClient,
+      serverId: 'server-context',
+      projectId: 'project-context',
+      clientId: 'client-context',
+    })
+
+    const attached = await resolved.panelClient.attach({
+      serverId: 'server-context',
+      projectId: 'project-context',
+      sessionId: 'session-context',
+      clientId: 'client-context',
+    })
+
+    assert.deepEqual(resolved.identity, { serverId: 'server-context', projectId: 'project-context' })
+    assert.equal(resolved.clientId, 'client-context')
+    assert.equal(attached.attachmentId, 'attachment-context')
+    assert.deepEqual(capturedRequest, {
+      serverId: 'server-context',
+      projectId: 'project-context',
+      sessionId: 'session-context',
+      clientId: 'client-context',
+    })
+
+    const outputEvents = []
+    const stopOutput = attached.onOutput((event) => outputEvents.push(event.bytes))
+    for (const listener of attachmentListeners) {
+      listener({
+        type: 'output',
+        serverId: 'server-context',
+        projectId: 'project-context',
+        sessionId: 'session-context',
+        position: 0,
+        nextPosition: 2,
+        bytes: new Uint8Array([0, 255]),
+        replay: false,
+      })
+      listener({
+        type: 'exit',
+        serverId: 'server-context',
+        projectId: 'project-context',
+        sessionId: 'session-context',
+        exitCode: 0,
+        signal: null,
+      })
+    }
+    stopOutput()
+    assert.deepEqual(outputEvents.map((bytes) => [...bytes]), [[0, 255]])
+
+    const compatibility = module.resolveTerminalPanelClient({}, null)
+    assert.equal(compatibility.panelClient, undefined)
+    assert.equal(compatibility.identity, undefined)
+    assert.equal(compatibility.clientId, undefined)
+  } finally {
+    await rm(outputDirectory, { recursive: true, force: true })
+  }
+})

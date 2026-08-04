@@ -1,0 +1,30 @@
+.viewport-proof-control,
+.accessibility-proof-control {
+  position: fixed;
+  right: 8px;
+  bottom: 8px;
+  z-index: 1;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.terminal-proof {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 240px;
+  overflow: hidden;
+  color: #dce8f5;
+  font: 13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.terminal-proof p {
+  margin: 0 0 8px;
+}
+
+.terminal-proof__long-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
