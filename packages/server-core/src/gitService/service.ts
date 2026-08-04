@@ -246,7 +246,10 @@ export class GitService {
       ...(discovery.error === undefined ? {} : { error: discovery.error }),
     };
     if (discovery.state !== "ready" || discovery.repositoryRoot === null) return empty;
-    const result = await this.runGit(["worktree", "list", "--porcelain"], discovery.worktreeRoot ?? discovery.repositoryRoot, target.signal);
+    // Listing is repository-scoped. The requested worktree may itself be a
+    // stale registration whose directory no longer exists, so it must never
+    // be used as the command cwd.
+    const result = await this.runGit(["worktree", "list", "--porcelain"], discovery.repositoryRoot, target.signal);
     if (result.exitCode !== 0 || result.truncated) {
       return { ...empty, state: "command-error", bounded: result.truncated, error: commandError("worktrees", result, result.truncated ? "Git worktree output exceeded the configured limit." : "Git worktree list failed.") };
     }
@@ -403,34 +406,38 @@ export class GitService {
     if (selected === undefined) throw new GitServiceError("worktree-not-found", "worktree is not part of the project repository");
     assertRemovableWorktree(selected, request.expectedHead);
 
-    // `worktrees` includes a status read, but perform a second status read
-    // directly against the selected opaque ID immediately before mutation.
-    // This closes the common stale-review window where a dirty change lands
-    // after the list response was rendered to a client.
-    const fresh = await this.status({
-      projectId: request.projectId,
-      repositoryId: request.repositoryId,
-      worktreeId: request.worktreeId,
-      ...(request.signal === undefined ? {} : { signal: request.signal }),
-    });
-    if (fresh.state !== "ready") {
-      return {
-        ...base,
-        applied: false,
-        state: "command-error",
-        headBefore: selected.head,
-        error: fresh.error ?? { code: "mutation-failed", message: "worktree status could not be revalidated", operation: "worktree.remove" },
-      };
-    }
-    if (fresh.entries.some((entry) => entry.unmerged || entry.unstaged || entry.staged)) {
-      throw new GitServiceError("worktree-dirty", "refusing to remove a dirty or unmerged worktree", { worktreeId: request.worktreeId });
-    }
-    if (request.expectedHead !== undefined && selected.head !== request.expectedHead) {
-      throw new GitServiceError("stale-revision", "worktree HEAD changed since the removal was reviewed", {
+    if (!selected.isPrunable) {
+      // `worktrees` includes a status read, but perform a second status read
+      // directly against the selected opaque ID immediately before mutation.
+      // This closes the common stale-review window where a dirty change lands
+      // after the list response was rendered to a client. A prunable entry has
+      // no directory in which status can run; Git's fresh prunable marker is
+      // the state revalidation for that cleanup case.
+      const fresh = await this.status({
+        projectId: request.projectId,
+        repositoryId: request.repositoryId,
         worktreeId: request.worktreeId,
-        expectedHead: request.expectedHead,
-        actualHead: selected.head,
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
       });
+      if (fresh.state !== "ready") {
+        return {
+          ...base,
+          applied: false,
+          state: "command-error",
+          headBefore: selected.head,
+          error: fresh.error ?? { code: "mutation-failed", message: "worktree status could not be revalidated", operation: "worktree.remove" },
+        };
+      }
+      if (fresh.entries.some((entry) => entry.unmerged || entry.unstaged || entry.staged)) {
+        throw new GitServiceError("worktree-dirty", "refusing to remove a dirty or unmerged worktree", { worktreeId: request.worktreeId });
+      }
+      if (request.expectedHead !== undefined && selected.head !== request.expectedHead) {
+        throw new GitServiceError("stale-revision", "worktree HEAD changed since the removal was reviewed", {
+          worktreeId: request.worktreeId,
+          expectedHead: request.expectedHead,
+          actualHead: selected.head,
+        });
+      }
     }
 
     const binding = this.getBinding(request.projectId);
@@ -881,7 +888,16 @@ function assertRemovableWorktree(worktree: GitWorktreeSummary, expectedHead: str
   if (worktree.isMain) throw new GitServiceError("worktree-main", "refusing to remove the repository main worktree", { worktreeId: worktree.id });
   if (worktree.isBare) throw new GitServiceError("worktree-bare", "refusing to remove a bare worktree", { worktreeId: worktree.id });
   if (worktree.locked) throw new GitServiceError("worktree-locked", "refusing to remove a locked worktree", { worktreeId: worktree.id });
-  if (worktree.isPrunable) throw new GitServiceError("worktree-locked", "refusing to remove a prunable worktree", { worktreeId: worktree.id });
+  if (worktree.isPrunable) {
+    if (expectedHead !== undefined && worktree.head !== expectedHead) {
+      throw new GitServiceError("stale-revision", "worktree HEAD changed since the removal was reviewed", {
+        worktreeId: worktree.id,
+        expectedHead,
+        actualHead: worktree.head,
+      });
+    }
+    return;
+  }
   // Detached worktrees can be removed safely when clean; only dirty and
   // unmerged state is unsafe.  Unknown state is treated conservatively.
   if (worktree.state !== "clean" && worktree.state !== "detached") {
