@@ -1,0 +1,61 @@
+#!/bin/sh
+set -eu
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker is required for local Electron end-to-end tests." >&2
+  exit 69
+fi
+if ! docker info >/dev/null 2>&1; then
+  echo "The Docker service is not available." >&2
+  exit 69
+fi
+
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+platform=${TERMINAY_E2E_PLATFORM:-}
+if [ -z "$platform" ]; then
+  case $(uname -m) in
+    arm64|aarch64) platform=linux/arm64 ;;
+    x86_64|amd64) platform=linux/amd64 ;;
+    *)
+      echo "Cannot determine a Docker platform for $(uname -m); set TERMINAY_E2E_PLATFORM." >&2
+      exit 69
+      ;;
+  esac
+fi
+image=${TERMINAY_E2E_IMAGE:-terminay-e2e:local-${platform#linux/}}
+run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
+container=terminay-e2e-$run_id
+artifact_dir=${TERMINAY_E2E_ARTIFACT_DIR:-"$repo_dir/.docker-cache/e2e/$run_id"}
+
+cleanup() {
+  docker rm --force "$container" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT HUP INT TERM
+
+docker build \
+  --pull \
+  --platform "$platform" \
+  --file "$repo_dir/Dockerfile.e2e" \
+  --tag "$image" \
+  "$repo_dir"
+
+docker create \
+  --platform "$platform" \
+  --name "$container" \
+  --init \
+  --shm-size 2g \
+  "$image" \
+  "$@" >/dev/null
+
+set +e
+docker start --attach "$container"
+status=$?
+set -e
+
+mkdir -p "$artifact_dir"
+for output in playwright-report test-results; do
+  docker cp "$container:/workspace/$output" "$artifact_dir/" >/dev/null 2>&1 || true
+done
+echo "Container E2E artifacts: $artifact_dir"
+
+exit "$status"

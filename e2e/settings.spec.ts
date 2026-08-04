@@ -1,0 +1,225 @@
+import { expect, test } from './fixtures'
+import type { Page } from '@playwright/test'
+import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
+
+function remoteOriginInput(page: Page) {
+  return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Remote origin' }).locator('input')
+}
+
+function bindAddressInput(page: Page) {
+  return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Bind address' }).locator('input')
+}
+
+function customExtensionRows(page: Page) {
+  return page.locator('#section-file-viewer-refresh .settings-custom-extensions__item')
+}
+
+async function getActiveTerminalSessionId(page: Page): Promise<string> {
+  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
+  if (!sessionId) {
+    throw new Error('Active terminal session id is unavailable')
+  }
+
+  return sessionId
+}
+
+async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
+  const sessionId = await getActiveTerminalSessionId(page)
+  await page.evaluate(async ({ nextData, nextSessionId }) => {
+    await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
+  }, { nextData: data, nextSessionId: sessionId })
+}
+
+test('opens settings focused to remote access and supports settings search', async ({ appHarness, mainWindow }) => {
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' })
+
+  await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  await expect(settingsWindow.getByRole('heading', { name: 'Host & Origin' })).toBeVisible()
+  await expect(remoteOriginInput(settingsWindow)).toHaveValue('https://localhost:9443')
+  await expect(bindAddressInput(settingsWindow)).toHaveValue('0.0.0.0')
+
+  const search = settingsWindow.getByPlaceholder('Search settings...')
+  await search.fill('scrollback')
+
+  await expect(settingsWindow.getByRole('heading', { name: 'Scrollback' })).toBeVisible()
+  await expect(settingsWindow.getByText('Scrollback lines')).toBeVisible()
+  await expect(settingsWindow.getByRole('button', { name: 'Scrolling' })).toBeVisible()
+})
+
+test('persists settings edits across reopening the settings window', async ({ appHarness, mainWindow }) => {
+  const updatedOrigin = 'https://e2e-settings.terminay.test:9443'
+
+  const firstWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' })
+
+  const originInput = remoteOriginInput(firstWindow)
+  await originInput.fill(updatedOrigin)
+  await expect(firstWindow.locator('.settings-status')).toContainText('Saved')
+  await firstWindow.close()
+
+  const secondWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' })
+
+  await expect(remoteOriginInput(secondWindow)).toHaveValue(updatedOrigin)
+})
+
+test('shows recording settings and saves recording defaults', async ({ appHarness, mainWindow, tempDir }) => {
+  const recordingDir = `${tempDir}/settings-recordings`
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'recording-defaults' })
+
+  await expect(settingsWindow.getByRole('heading', { name: 'Session Recording' })).toBeVisible()
+  await expect(settingsWindow.getByRole('button', { name: /Recording/ })).toBeVisible()
+
+  await settingsWindow.getByLabel('Record new terminals').check()
+  await settingsWindow
+    .locator('#section-recording-defaults .settings-row')
+    .filter({ hasText: 'Recording directory' })
+    .locator('input')
+    .fill(recordingDir)
+  await settingsWindow.getByLabel('Capture input').check()
+  await settingsWindow
+    .locator('#section-recording-defaults .settings-row')
+    .filter({ hasText: 'Sensitive input' })
+    .locator('select')
+    .selectOption('mask')
+  await settingsWindow.getByLabel('Open timeline after saving').check()
+  await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+
+  const savedRecordingSettings = await mainWindow.evaluate(async () => {
+    return (await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()).recording
+  })
+
+  expect(savedRecordingSettings).toMatchObject({
+    captureInput: true,
+    directory: recordingDir,
+    openTimelineAfterSaving: true,
+    recordNewTerminals: true,
+    sensitiveInputPolicy: 'mask',
+  })
+})
+
+test('normalizes custom file viewer extension defaults', () => {
+  expect(normalizeTerminalSettings({}).fileViewer).toEqual(defaultTerminalSettings.fileViewer)
+
+  expect(
+    normalizeTerminalSettings({
+      fileViewer: {
+        customFileExtensions: [
+          { extension: '  demo ', defaultMode: 'text' },
+          { extension: '.bin', defaultMode: 'hex' },
+          { extension: '.demo', defaultMode: 'preview' },
+          { extension: '.', defaultMode: 'hex' },
+          { extension: '.bad', defaultMode: 'nonsense' },
+        ],
+        diffLayout: 'unified',
+        refreshIntervalSeconds: 9,
+      },
+    }).fileViewer,
+  ).toEqual({
+    customFileExtensions: [
+      { extension: '.demo', defaultMode: 'text' },
+      { extension: '.bin', defaultMode: 'hex' },
+      { extension: '.bad', defaultMode: 'preview' },
+    ],
+    diffLayout: 'unified',
+    folderTaskIgnoredDirectories: defaultTerminalSettings.fileViewer.folderTaskIgnoredDirectories,
+    refreshIntervalSeconds: 9,
+  })
+})
+
+test('normalizes dictation settings defaults and bounds', () => {
+  expect(normalizeTerminalSettings({}).dictation).toEqual(defaultTerminalSettings.dictation)
+
+  expect(
+    normalizeTerminalSettings({
+      dictation: {
+        enabled: false,
+        language: ' en ',
+        maxDurationSeconds: 999,
+        microphoneDeviceId: ' hd-pro-webcam ',
+        model: 'gpt-4o-mini-transcribe',
+        prompt: 'Prefer terminal command names.',
+        silenceStopSeconds: 0,
+      },
+    }).dictation,
+  ).toEqual({
+    enabled: false,
+    language: 'en',
+    maxDurationSeconds: 300,
+    microphoneDeviceId: 'hd-pro-webcam',
+    model: 'gpt-4o-mini-transcribe',
+    prompt: 'Prefer terminal command names.',
+    silenceStopSeconds: 1,
+  })
+
+  expect(
+    normalizeTerminalSettings({
+      dictation: {
+        maxDurationSeconds: 2,
+        model: 'invalid',
+        silenceStopSeconds: 99,
+      },
+    }).dictation,
+  ).toMatchObject({
+    maxDurationSeconds: 5,
+    model: defaultTerminalSettings.dictation.model,
+    silenceStopSeconds: 15,
+  })
+})
+
+test('saves custom file extension default tabs in settings', async ({ appHarness, mainWindow }) => {
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'file-viewer-refresh' })
+
+  await expect(settingsWindow.getByRole('heading', { name: 'File Viewer' })).toBeVisible()
+  await settingsWindow.getByRole('button', { name: 'Add Extension' }).click()
+
+  const row = customExtensionRows(settingsWindow).first()
+  await row.getByLabel('File extension').fill('.e2eunknown')
+  await row.getByLabel('File extension').press('Enter')
+  await row.getByLabel('Default file viewer tab').selectOption('text')
+  await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+
+  const savedFileViewerSettings = await mainWindow.evaluate(async () => {
+    return (await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()).fileViewer
+  })
+
+  expect(savedFileViewerSettings.customFileExtensions).toContainEqual({
+    defaultMode: 'text',
+    extension: '.e2eunknown',
+  })
+})
+
+test('keeps the active terminal visible after changing settings and closing settings', async ({
+  appHarness,
+  mainWindow,
+}) => {
+  const sentinel = 'terminay-settings-terminal-survived'
+
+  await writeToActiveTerminal(mainWindow, `printf '${sentinel}\\n'\r`)
+  await expect(mainWindow.locator('.xterm-rows')).toContainText(sentinel)
+
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'typography' })
+  const fontSizeInput = settingsWindow
+    .locator('#section-typography .settings-row')
+    .filter({ hasText: 'Font size' })
+    .locator('input[type="number"]')
+
+  await fontSizeInput.fill('14')
+  await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+  await settingsWindow.close()
+
+  await expect(mainWindow.locator('.xterm-rows')).toContainText(sentinel)
+})
+
+test('resets settings back to defaults', async ({ appHarness, mainWindow }) => {
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' })
+  const dialogs = await appHarness.dialogs(settingsWindow)
+
+  const originInput = remoteOriginInput(settingsWindow)
+  await originInput.fill('https://reset-me.terminay.test:9443')
+  await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+
+  await dialogs.queueConfirm(true)
+  await settingsWindow.getByRole('button', { name: 'Reset to defaults' }).click()
+
+  await expect(remoteOriginInput(settingsWindow)).toHaveValue('https://localhost:9443')
+  await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+})
