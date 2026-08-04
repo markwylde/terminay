@@ -18,6 +18,11 @@ agent to propose and execute a reviewed commit, push, and pull-request flow.
   terminal at a worktree, switch the project root, copy/reveal its path, rename
   its presentation, remove a safe worktree, or pull a worktree from origin when
   Git permits it.
+- A worktree is shown as clean only when it has no effective committed changes
+  relative to the repository default branch and no displayed working-tree
+  delta. Commit ancestry alone is insufficient: a squash-merged branch whose
+  resulting tree is already present on the default branch is clean, while a
+  clean working directory with unmerged committed changes is not.
 - Operations make Git's constraints visible: detached heads, missing gitfiles,
   unmerged changes, absent remotes, and failed commands are reported rather than
   guessed around. Removing a worktree must not target the main worktree.
@@ -115,6 +120,8 @@ remain explicit parity work.
 
 - The current project shows the correct repository/worktree state without
   confusing it with another project or window.
+- Worktree clean/changed presentation reflects effective changes against the
+  default branch, including squash-merged and unmerged committed work.
 - Switching the project root immediately refreshes the Git sidebar for the new
   root, even when an earlier Git status request is still pending.
 - Worktree lifecycle actions preserve the main worktree and present Git errors

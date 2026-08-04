@@ -90,6 +90,49 @@ test("GitService keeps read-only worktree listing project-bound", async () => {
   }
 });
 
+test("GitService reports effective worktree changes against the default branch", async () => {
+  const { GitService } = await import("../dist/gitService/index.js");
+  const root = await mkdtemp(join(tmpdir(), "terminay-server-git-worktree-delta-"));
+  const project = join(root, "project");
+  const feature = join(root, "feature");
+  try {
+    await mkdir(project);
+    await git(["init", "-b", "main"], project);
+    await git(["config", "user.email", "test@example.invalid"], project);
+    await git(["config", "user.name", "Terminay Test"], project);
+    await writeFile(join(project, "shared.txt"), "base\n");
+    await git(["add", "shared.txt"], project);
+    await git(["commit", "-m", "initial"], project);
+    await git(["worktree", "add", feature, "-b", "feature"], project);
+
+    await writeFile(join(feature, "feature.txt"), "unmerged\nchange\n");
+    await git(["add", "feature.txt"], feature);
+    await git(["commit", "-m", "feature change"], feature);
+
+    const service = new GitService();
+    const binding = await service.bindProject("project", project);
+    const unmerged = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    const unmergedFeature = unmerged.worktrees.find((worktree) => !worktree.isMain);
+    assert.equal(unmergedFeature.aheadOfDefaultBranchCount, 1);
+    assert.equal(unmergedFeature.hasCommittedChanges, true);
+    assert.equal(unmergedFeature.lineAdditions, 2);
+    assert.equal(unmergedFeature.lineDeletions, 0);
+
+    await writeFile(join(project, "feature.txt"), "unmerged\nchange\n");
+    await git(["add", "feature.txt"], project);
+    await git(["commit", "-m", "squash feature"], project);
+
+    const squashMerged = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
+    const squashMergedFeature = squashMerged.worktrees.find((worktree) => !worktree.isMain);
+    assert.equal(squashMergedFeature.aheadOfDefaultBranchCount, 1);
+    assert.equal(squashMergedFeature.hasCommittedChanges, false);
+    assert.equal(squashMergedFeature.lineAdditions, 0);
+    assert.equal(squashMergedFeature.lineDeletions, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("GitService publishes bounded progress and status revisions to subscribers", async () => {
   const { GitService } = await import("../dist/gitService/index.js");
   const root = await mkdtemp(join(tmpdir(), "terminay-server-git-events-"));
