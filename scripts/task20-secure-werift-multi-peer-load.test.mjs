@@ -2,7 +2,38 @@ import assert from 'node:assert/strict';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { runSelectedWeriftMultiPeerLoad } from './task20-secure-werift-multi-peer-load.mjs';
+import {
+	runSelectedWeriftMultiPeerLoad,
+	selectedResourceCounts,
+	selectedResourceGrowth,
+} from './task20-secure-werift-multi-peer-load.mjs';
+
+test('selected resource cleanup compares bounded resource counts with the process baseline', () => {
+	assert.deepEqual(
+		[...selectedResourceCounts(['PipeWrap', 'Timeout', 'UDPSocket', 'Timeout'])],
+		[
+			['Timeout', 2],
+			['UDPSocket', 1],
+		],
+	);
+	assert.deepEqual(
+		selectedResourceGrowth(
+			['PipeWrap', 'Timeout'],
+			['PipeWrap', 'Timeout', 'Timeout', 'UDPSocket'],
+		),
+		[
+			['Timeout', 1],
+			['UDPSocket', 1],
+		],
+	);
+	assert.deepEqual(
+		selectedResourceGrowth(
+			['PipeWrap', 'Timeout', 'UDPSocket'],
+			['PipeWrap', 'Timeout'],
+		),
+		[],
+	);
+});
 
 const runtimeRoot = process.env.TERMINAY_SELECTED_WEBRTC_RUNTIME_ROOT;
 const durationMs = Number(
