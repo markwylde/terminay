@@ -1,0 +1,127 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { expect, test } from './fixtures'
+import { fileExplorerItem, openFileExplorer, setProjectRoot } from './support/ui'
+
+const execFileAsync = promisify(execFile)
+
+test('file viewer supports markdown image pdf hex and diff modes', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'file-viewer-modes',
+    seed: {
+      files: {
+        'README.md': '# Markdown Title\n\nThis is **rendered**.\n\n* [] pending\n* [x] complete\n',
+        'doc.pdf': Buffer.from(
+          '%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R>>endobj\n4 0 obj<</Length 44>>stream\nBT /F1 18 Tf 50 120 Td (Hello PDF) Tj ET\nendstream\nendobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
+          'utf8',
+        ),
+        'diff-target.tsx': 'export function Example() {\n  return <div className="start">old</div>\n}\n',
+        'large-diff.txt': `${Array.from({ length: 600 }, (_, index) => `before ${index}`).join('\n')}\n`,
+        'pixel.png': Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9pJsteUAAAAASUVORK5CYII=',
+          'base64',
+        ),
+        'switch.txt': 'switch me\n',
+      },
+    },
+  })
+
+  await execFileAsync('git', ['init'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'e2e@example.com'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'E2E'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['add', 'diff-target.tsx', 'large-diff.txt'], { cwd: workspace.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace.rootDir })
+  await workspace.writeText(
+    'diff-target.tsx',
+    'export function Example() {\n  const label = "new"\n  return <div className="updated">{label}</div>\n}\n',
+  )
+  await workspace.writeText(
+    'large-diff.txt',
+    `${Array.from({ length: 600 }, (_, index) => `after ${index}`).join('\n')}\n`,
+  )
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  await fileExplorerItem(mainWindow, 'README.md').dblclick()
+  await expect(mainWindow.locator('.file-preview-markdown')).toContainText('Markdown Title')
+  await expect(mainWindow.locator('.file-preview-markdown input[type="checkbox"]')).toHaveCount(2)
+  await expect(mainWindow.locator('.file-preview-markdown input[type="checkbox"]').first()).not.toBeChecked()
+  await expect(mainWindow.locator('.file-preview-markdown input[type="checkbox"]').nth(1)).toBeChecked()
+
+  await fileExplorerItem(mainWindow, 'pixel.png').dblclick()
+  await expect(mainWindow.locator('.file-preview-image__asset')).toBeVisible()
+
+  await fileExplorerItem(mainWindow, 'doc.pdf').dblclick()
+  await expect(mainWindow.locator('.file-preview-pdf canvas')).toBeVisible()
+
+  await fileExplorerItem(mainWindow, 'switch.txt').dblclick()
+  await mainWindow.getByRole('tab', { name: 'HEX' }).click()
+  await expect(mainWindow.locator('.file-hex-viewer')).toBeVisible()
+  const hexBytes = mainWindow.locator('.file-hex-viewer__byte')
+  await hexBytes.first().click()
+  await hexBytes.nth(3).click({ modifiers: ['Shift'] })
+  await expect(mainWindow.locator('.file-hex-viewer__selection')).toContainText('Selected 4 bytes')
+  await mainWindow.getByRole('tab', { name: 'Preview' }).click()
+  await expect(mainWindow.locator('.file-preview-text')).toContainText('switch me')
+
+  await fileExplorerItem(mainWindow, 'diff-target.tsx').dblclick()
+  await mainWindow.getByRole('tab', { name: 'Diff' }).click()
+  await expect(mainWindow.locator('.file-diff-viewer')).toBeVisible()
+  await expect(mainWindow.locator('.file-diff-viewer')).toContainText('const label = "new"')
+  await expect(mainWindow.getByRole('button', { name: 'Unified' })).toBeVisible()
+  await mainWindow.getByRole('button', { name: 'Unified' }).click()
+  await expect(mainWindow.locator('.file-diff-viewer--unified')).toBeVisible()
+  await expect(mainWindow.locator('[data-testid="file-diff-virtual-surface"]')).toBeVisible()
+  await expect(mainWindow.locator('.file-diff-viewer .file-token--keyword', { hasText: 'const' })).toHaveCount(1)
+  await expect(mainWindow.locator('.file-diff-viewer .file-token--string', { hasText: '"new"' })).toHaveCount(1)
+  await expect(mainWindow.locator('.file-diff-viewer .file-token--tag-name', { hasText: 'div' }).first()).toBeVisible()
+  await mainWindow.getByRole('button', { name: 'Side by side' }).click()
+  await expect(mainWindow.getByRole('button', { name: 'Side by side' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(mainWindow.locator('.file-diff-grid-row').first()).toBeVisible()
+  await mainWindow.getByRole('button', { name: 'Unified' }).click()
+  await expect(mainWindow.getByRole('button', { name: 'Unified' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(mainWindow.locator('.file-diff-row').first()).toBeVisible()
+  await expect(mainWindow.locator('.file-diff-grid-row')).toHaveCount(0)
+
+  const largeDiffText = Array.from({ length: 3000 }, (_, index) => `export const row${index} = ${index}\n`).join('')
+  await workspace.writeText('diff-target.tsx', largeDiffText)
+  await expect(mainWindow.locator('[data-testid="file-diff-virtual-surface"]')).toBeVisible()
+  await expect.poll(() => mainWindow.locator('.file-diff-virtual-row').count()).toBeLessThan(500)
+
+  await workspace.writeText(
+    'diff-target.tsx',
+    'export function Example() {\n  const label = "again"\n  return <section className="updated">{label}</section>\n}\n',
+  )
+  await expect(mainWindow.locator('.file-diff-viewer')).toContainText('const label = "again"')
+  await expect(mainWindow.locator('.file-diff-viewer .file-token--tag-name', { hasText: 'section' }).first()).toBeVisible()
+
+  await fileExplorerItem(mainWindow, 'large-diff.txt').dblclick()
+  await mainWindow.getByRole('tab', { name: 'Diff' }).click()
+  await expect(mainWindow.getByRole('button', { name: 'Unified' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(mainWindow.locator('.file-diff-viewer__viewport')).toHaveAttribute('data-row-count', /[1-9]\d{2,}/)
+  await expect.poll(() => mainWindow.locator('.file-viewer-virtual-surface__row').count()).toBeLessThan(100)
+})
+
+test('text mode colorizes syntax on open without needing a scroll', async ({ createWorkspace, mainWindow }) => {
+  const workspace = await createWorkspace({
+    name: 'file-viewer-text-colorize',
+    seed: {
+      files: {
+        'spec.md': '# Heading\n\nThis is **bold** text with a [link](https://example.com).\n\n- one\n- two\n',
+      },
+    },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await openFileExplorer(mainWindow)
+
+  await fileExplorerItem(mainWindow, 'spec.md').dblclick()
+  await mainWindow.getByRole('tab', { name: 'Text' }).click()
+
+  // Monaco renders every token as a span.mtk<N>; plaintext is entirely mtk1.
+  // If markdown tokenization painted, there must be visible non-mtk1 tokens
+  // straight away — without the user scrolling to force a re-render.
+  await expect(mainWindow.locator('.file-text-viewer .monaco-editor .view-line').first()).toBeVisible()
+  await expect(mainWindow.locator('.file-text-viewer .monaco-editor .view-line span:not(.mtk1)').first()).toBeVisible()
+})

@@ -1,0 +1,29 @@
+/**
+ * Clipboard paste is UI behaviour, not terminal transport authority. Keep its
+ * failure handling separate so a denied or malformed clipboard read never
+ * leaves a server-backed terminal input queue in an indeterminate state.
+ */
+export async function pasteTerminalClipboard(
+  readClipboardText: () => Promise<unknown> | unknown,
+  options: {
+    readonly announceInput: () => void
+    readonly paste: (text: string) => void
+    readonly focus: () => void
+  },
+): Promise<boolean> {
+  try {
+    const pasted = await readClipboardText()
+    if (typeof pasted !== 'string' || pasted.length === 0) {
+      return false
+    }
+
+    options.announceInput()
+    options.paste(pasted)
+    return true
+  } catch {
+    // Reading the system clipboard is recoverable. Refocus the xterm surface
+    // and leave transport delivery entirely to xterm's ordinary onData path.
+    options.focus()
+    return false
+  }
+}

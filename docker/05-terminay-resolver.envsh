@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+NGINX_RESOLVER="$(awk '/^nameserver[[:space:]]+/ { print $2; exit }' /etc/resolv.conf)"
+export NGINX_RESOLVER="${NGINX_RESOLVER:-127.0.0.11}"

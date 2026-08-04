@@ -1,0 +1,298 @@
+.workspace-shell {
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr);
+	width: 100%;
+	min-height: 100vh;
+	margin: 0;
+	padding: 0;
+	background: #0d1014;
+}
+
+@supports (min-height: 100dvh) {
+	.responsive-workspace-shell {
+		min-height: 100dvh;
+	}
+}
+
+/* Keyboard users can bypass the persistent route rail in every host layout.
+ * Keep the link out of the visual flow until focused, then make its destination
+ * the active shared tabpanel rather than a host-owned feature body. */
+.shared-workspace-skip-link {
+	position: absolute;
+	left: -10000px;
+	top: 0;
+	z-index: 2;
+	min-height: 44px;
+	padding: 10px 14px;
+	border: 1px solid #7be3c7;
+	border-radius: 0 0 10px 0;
+	background: #07131c;
+	color: #e8eef8;
+}
+
+.shared-workspace-skip-link:focus-visible {
+	left: 0;
+	outline: 2px solid #7be3c7;
+	outline-offset: 2px;
+}
+
+/* The host supplies this immutable policy. Shared rendering therefore does
+ * not depend on browser-global media queries to preserve motion safety. */
+.workspace-shell[data-shared-motion="none"],
+.workspace-shell[data-shared-motion="none"] * {
+	animation-duration: 0s !important;
+	animation-iteration-count: 1 !important;
+	scroll-behavior: auto !important;
+	transition-duration: 0s !important;
+}
+
+.workspace-shell[data-shared-forced-colors="true"] {
+	forced-color-adjust: auto;
+}
+
+.workspace-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	min-height: 58px;
+	gap: 12px;
+	border-bottom: 1px solid #252830;
+	background: #0d0f13;
+	padding: 6px 14px 0;
+}
+
+.shared-project-tabs { display: flex; min-width: 0; gap: 6px; }
+.shared-project-tab { display: flex; align-items: center; min-width: 0; min-height: 45px; border: 1px solid #25232d; border-bottom: 0; border-radius: 10px 10px 0 0; background: #17131e; color: #aba9b5; padding: 0 18px; }
+.shared-project-tab--active { border-color: #6d3c8c; background: #593470; color: #f5eff8; font-weight: 700; }
+.shared-project-tab__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shared-workspace-connection { display: flex; align-items: center; min-width: 0; gap: 10px; margin-left: auto; }
+.shared-workspace-connection__label { max-width: min(42vw, 34rem); overflow: hidden; color: #a6a8b2; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.shared-workspace-connection__action { min-height: 36px; padding: 7px 12px; white-space: nowrap; }
+
+.shared-workspace-frame {
+	display: grid;
+	grid-template-columns: 220px minmax(0, 1fr);
+	min-height: 0;
+	gap: 0;
+	margin: 0;
+}
+
+.shared-workspace-nav {
+	display: grid;
+	align-content: start;
+	gap: 8px;
+	border-right: 1px solid #252830;
+	border-radius: 0;
+	background: #111319;
+	padding: 10px;
+}
+
+.shared-workspace-nav__item {
+	display: flex;
+	justify-content: flex-start;
+	width: 100%;
+	min-height: 44px;
+	border-color: transparent;
+	background: transparent;
+	color: #9aa8ba;
+	text-align: left;
+}
+
+.shared-workspace-nav__item--current {
+	border-color: #2f5c70;
+	background: #132436;
+	color: #e8eef8;
+}
+
+.shared-workspace-nav__item:focus-visible {
+	border-color: #7be3c7;
+	box-shadow: inset 0 0 0 2px #7be3c7;
+	outline: none;
+}
+
+.shared-workspace-nav__item:disabled {
+	cursor: not-allowed;
+	opacity: .55;
+}
+
+.shared-workspace-body {
+	min-width: 0;
+	min-height: 0;
+	overflow: auto;
+	padding: 10px;
+}
+
+.shared-workspace-region-strip {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 10px;
+	color: #8fa0b5;
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: .08em;
+}
+
+.shared-workspace-region-strip span {
+	border: 1px solid #26384a;
+	border-radius: 999px;
+	padding: 4px 7px;
+}
+
+.terminal-card {
+	min-height: calc(100dvh - 116px);
+	border: 1px solid #292334;
+	border-radius: 0;
+	background: #18071e;
+	padding: 0;
+	box-shadow: none;
+}
+
+.server-workspace-projects {
+	display: flex;
+	gap: 8px;
+	margin: 0 0 10px;
+	overflow-x: auto;
+	padding-bottom: 2px;
+}
+
+.server-workspace-views {
+	display: flex;
+	gap: 8px;
+	margin: 0 0 10px;
+	overflow-x: auto;
+	padding-bottom: 2px;
+}
+
+.server-workspace-view {
+	flex: 0 0 auto;
+	min-height: 44px;
+	border-color: #26384a;
+	background: #101924;
+	color: #9aa8ba;
+}
+
+.server-workspace-view--active {
+	border-color: #2f5c70;
+	background: #132436;
+	color: #e8eef8;
+}
+
+.server-workspace-project {
+	flex: 0 0 auto;
+	border-color: #26384a;
+	background: #101924;
+	color: #9aa8ba;
+}
+
+.server-workspace-project--active {
+	border-color: #2f5c70;
+	background: #132436;
+	color: #e8eef8;
+}
+
+.server-workspace-panels {
+	display: flex;
+	gap: 6px;
+	margin: 0 0 10px;
+	overflow-x: auto;
+}
+
+.server-workspace-panel {
+	flex: 0 0 auto;
+	border-color: transparent;
+	background: transparent;
+	color: #9aa8ba;
+}
+
+.server-workspace-panel--active {
+	border-color: #26384a;
+	background: #101924;
+	color: #e8eef8;
+}
+
+.server-workspace-state {
+	margin: 0;
+	padding: 18px;
+	border: 1px solid #253342;
+	border-radius: 12px;
+	background: #050910;
+	color: #9aa8ba;
+}
+
+.server-workspace-file,
+.server-workspace-folder {
+	box-sizing: border-box;
+	min-height: 220px;
+	margin: 0;
+	padding: 16px;
+	border: 1px solid #253342;
+	border-radius: 12px;
+	background: #050910;
+	color: #d7e1f0;
+	overflow: auto;
+}
+
+.server-workspace-file {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.server-workspace-folder {
+	list-style: none;
+}
+
+.server-workspace-folder li {
+	display: flex;
+	gap: 8px;
+	padding: 4px 0;
+}
+
+/* The render model distinguishes a compact medium workspace from both the
+ * full-width desktop shell and the narrow drawer-style navigation. Keep the
+ * route rail visible here, but give the content column the room it needs for
+ * terminal and file panels. */
+@media (min-width: 721px) and (max-width: 1099px) {
+	.workspace-shell--medium {
+		width: 100%;
+	}
+
+	.workspace-shell--medium .workspace-header {
+		gap: 16px;
+	}
+
+	.workspace-shell--medium .shared-workspace-frame {
+		grid-template-columns: minmax(10rem, 12rem) minmax(0, 1fr);
+		gap: 12px;
+	}
+
+	.workspace-shell--medium .shared-workspace-nav {
+		gap: 4px;
+		padding: 8px;
+	}
+}
+
+@media (max-width: 720px) {
+	.workspace-header {
+		min-height: 52px;
+		padding-inline: 10px;
+	}
+
+	.shared-workspace-frame {
+		grid-template-columns: 1fr;
+	}
+
+	.shared-workspace-connection__label { display: none; }
+
+	.shared-workspace-nav {
+		display: flex;
+		overflow-x: auto;
+		overscroll-behavior-x: contain;
+		scroll-padding-inline: 12px;
+		touch-action: pan-x;
+	}
+
+	.shared-workspace-nav__item {
+		white-space: nowrap;
+	}
+}

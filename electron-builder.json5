@@ -1,0 +1,68 @@
+// @see - https://www.electron.build/configuration/configuration
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.terminay.app",
+  "asar": true,
+  // mcpEntry.js is launched via Electron's Node mode (ELECTRON_RUN_AS_NODE=1),
+  // which cannot load scripts from inside app.asar. Unpack the built electron
+  // dir so the headless MCP entry and any shared chunks resolve on disk.
+  "asarUnpack": [
+    "dist-electron/**"
+  ],
+  "productName": "Terminay",
+  "directories": {
+    "output": "release/${version}"
+  },
+  "files": [
+    "dist",
+    "dist-web",
+    "dist-electron"
+  ],
+  // The selection record is always packaged. Release preparation stages the
+  // verified self-contained runtime beside it; the production loader fails
+  // closed when that payload is absent or does not match the record.
+  "extraResources": [
+    {
+      "from": "build/webrtc-runtime",
+      "to": "webrtc-runtime"
+    }
+  ],
+  "mac": {
+    "icon": "public/icon.icns",
+    "hardenedRuntime": true,
+    "entitlements": "build/entitlements.mac.plist",
+    "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+    "extendInfo": {
+      "NSMicrophoneUsageDescription": "Terminay uses the microphone to record dictation and transcribe it into the active terminal."
+    },
+    "target": [
+      "dmg"
+    ],
+    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+  },
+  "win": {
+    "icon": "public/terminay.png",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "deleteAppDataOnUninstall": false
+  },
+  "linux": {
+    "icon": "public/terminay.png",
+    "target": [
+      "AppImage"
+    ],
+    "artifactName": "${productName}-Linux-${version}.${ext}"
+  }
+}
