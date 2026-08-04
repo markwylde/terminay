@@ -3,11 +3,28 @@ import test from 'node:test';
 import type { TerminayGitClient } from '@terminay/client-core';
 import type { GitWorktreeStatus } from '../types/terminay';
 import {
+	assertWorktreeRemoved,
 	beginDirectoryLoad,
 	isCurrentDirectoryLoad,
 	loadGitWorkspaceFromServer,
 	openTerminalAtWorktree,
 } from './useFileExplorerController';
+
+test('worktree removal accepts only a confirmed server removal', () => {
+	assert.doesNotThrow(() =>
+		assertWorktreeRemoved({ applied: true, state: 'removed' }),
+	);
+	assert.throws(
+		() =>
+			assertWorktreeRemoved({
+				applied: false,
+				state: 'command-error',
+				error: { message: 'Git worktree removal failed.' },
+			}),
+		/Git worktree removal failed\./,
+	);
+	assert.throws(() => assertWorktreeRemoved(null), /did not remove/);
+});
 
 test('only the newest directory refresh may reconcile its snapshot', () => {
 	const versions = new Map<string, number>();
