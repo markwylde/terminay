@@ -206,13 +206,10 @@ export function useDictationController({
 				throw error;
 				}
 				const audioTrack = stream.getAudioTracks()[0] ?? null;
-				const audioTrackSettings = audioTrack?.getSettings();
 				console.info('Dictation microphone stream opened', {
-					requestedDeviceId: selectedMicrophoneDeviceId || 'default',
-					label: audioTrack?.label,
+					requestedDevice: selectedMicrophoneDeviceId ? 'selected' : 'default',
 					muted: audioTrack?.muted,
 					readyState: audioTrack?.readyState,
-					settings: audioTrackSettings,
 				});
 				const mimeType = getDictationMimeType();
 				const recorder = mimeType
@@ -435,10 +432,8 @@ export function useDictationController({
 									? Number(recordedLevels.rms.toFixed(5))
 									: undefined,
 							speechFrameCount,
-							trackLabel: audioTrack?.label,
 							trackMuted: audioTrack?.muted,
 							trackReadyState: audioTrack?.readyState,
-							trackSettings: audioTrackSettings,
 						};
 						console.info('Dictation audio diagnostics', audioDiagnostics);
 						if (

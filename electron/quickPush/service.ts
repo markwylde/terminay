@@ -329,7 +329,9 @@ export function parseQuickPushPlan(
   const warnings = [...(options.warnings ?? [])]
   const json = extractJsonObject(raw)
   if (!json) {
-    console.warn('[quick-push] No JSON object found in model output:\n', raw.slice(0, 2000))
+    console.warn('[quick-push] model output did not contain a JSON object', {
+      outputBytes: Buffer.byteLength(raw),
+    })
     throw new Error('The AI did not return a JSON commit plan.')
   }
 
@@ -338,12 +340,12 @@ export function parseQuickPushPlan(
     parsed = JSON.parse(json)
   } catch (error) {
     console.warn(
-      '[quick-push] Failed to parse model JSON:',
-      error instanceof Error ? error.message : error,
-      '\n--- extracted ---\n',
-      json.slice(0, 2000),
-      '\n--- raw ---\n',
-      raw.slice(0, 2000),
+      '[quick-push] model output JSON parsing failed',
+      {
+        errorName: error instanceof Error ? error.name : 'NonError',
+        extractedBytes: Buffer.byteLength(json),
+        outputBytes: Buffer.byteLength(raw),
+      },
     )
     throw new Error('The AI returned a commit plan that was not valid JSON.')
   }
