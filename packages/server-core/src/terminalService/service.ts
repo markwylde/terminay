@@ -394,7 +394,10 @@ export class TerminalService {
     try {
       const process = await spawn(this.ptyFactory, spawnOptions);
       mutable.process = process;
-      if (typeof process.pid === "number" && Number.isSafeInteger(process.pid) && process.pid > 0) mutable.pid = process.pid;
+      if (typeof process.pid === "number" && Number.isSafeInteger(process.pid) && process.pid > 0) {
+        mutable.pid = process.pid;
+        try { this.sessionLifecycle?.terminalStarted?.(identity, process.pid); } catch { /* observers cannot fail PTY creation */ }
+      }
       this.attachProcess(mutable, process);
     } catch (error) {
       const message = error instanceof Error ? error.message : "PTY spawn failed";
@@ -452,7 +455,10 @@ export class TerminalService {
     try {
       const process = await spawn(this.ptyFactory, spawnOptions);
       mutable.process = process;
-      if (typeof process.pid === "number" && Number.isSafeInteger(process.pid) && process.pid > 0) mutable.pid = process.pid;
+      if (typeof process.pid === "number" && Number.isSafeInteger(process.pid) && process.pid > 0) {
+        mutable.pid = process.pid;
+        try { this.sessionLifecycle?.terminalStarted?.(identity, process.pid); } catch { /* observers cannot fail PTY creation */ }
+      }
       this.sessionsById.set(identity.sessionId, mutable);
       this.attachProcess(mutable, process);
       return new TerminalSessionHandle(this, mutable);

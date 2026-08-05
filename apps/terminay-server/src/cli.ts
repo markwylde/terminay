@@ -172,10 +172,8 @@ else if (options.command === 'mcp') {
 		const start = async (): Promise<void> => {
 			try {
 				const healthAddress = await healthServer?.start();
-				// Terminal creation injects the server-owned hook endpoint and lease.
-				// Start it before creating the default session, never in a renderer.
+				// Start journal observation before creating the default session.
 				await composition.start();
-				await applyStandaloneAgentIntegrationPolicy(composition);
 				const health = await runtime!.start();
 				await ensureDefaultTerminalSession(composition);
 				await waitForProtocolEndpoint(uiServer);
@@ -1066,30 +1064,6 @@ async function ensureDefaultTerminalSession(
 		rows: 30,
 	});
 	await composition.terminal.createResolvedSession(launch);
-}
-
-/**
- * The standalone process owns the same integration decision and provider
- * reconciliation lifecycle as the embedded authority. Managed hook files only
- * contain a static script path; per-terminal endpoint and token material stays
- * in the child process environment.
- */
-async function applyStandaloneAgentIntegrationPolicy(
-	composition: ServerCoreComposition,
-): Promise<void> {
-	const agents = composition.agents;
-	if (agents === undefined) return;
-
-	const enabled = agents.integrationEnabled;
-	agents.setIntegrationEnabled(enabled);
-	const result = await agents.drivers.reconcileHooks({
-		action: enabled ? 'install' : 'uninstall',
-	});
-	if (!result.ok) {
-		process.stderr.write(
-			`[agent-status] one or more provider hooks could not be ${enabled ? 'installed' : 'removed'}\n`,
-		);
-	}
 }
 
 function runtimeHealth(

@@ -16,11 +16,9 @@ function identity(projectId, sessionId) {
 
 async function createFixture() {
   const activity = new TerminalActivityService({ serverId: SERVER_ID, now: () => 100 })
-  let token = 0
   const agents = new AgentStatusService({
     activity,
     now: () => 100,
-    receiver: { tokenFactory: () => `task9-adapter-token-${++token}` },
   })
   await agents.start()
   const identities = new Map()
@@ -29,17 +27,15 @@ async function createFixture() {
     agentIdentity: (terminalSessionId) => identities.get(terminalSessionId),
   })
 
-  async function createUnreadRoot(value, provider = 'codex') {
+  async function createUnreadRoot(value) {
     identities.set(value.sessionId, value)
-    agents.prepareTerminalSession(value)
-    await agents.ingestHookPayload(value, provider, {
-      hook_event_name: 'SessionStart',
-      session_id: `${provider}-${value.sessionId}`,
+    activity.register(value)
+    agents.register(value)
+    await agents.ingestJournalRecord(value, 'codex', {
+      type: 'session_meta', payload: { id: `codex-${value.sessionId}` },
     })
-    await agents.ingestHookPayload(value, provider, {
-      hook_event_name: 'PermissionRequest',
-      session_id: `${provider}-${value.sessionId}`,
-      reason: 'approval required',
+    await agents.ingestJournalRecord(value, 'codex', {
+      type: 'event_msg', payload: { type: 'request_user_input' },
     })
     const entry = Object.values(agents.getSnapshot().entries)
       .find((candidate) => candidate.activationTerminalSessionId === value.sessionId)
@@ -55,7 +51,7 @@ test('server agent IPC adapter acknowledges only the scoped active entry and ter
   const fixture = await createFixture()
   try {
     const first = await fixture.createUnreadRoot(identity('project-a', 'terminal-a'))
-    const second = await fixture.createUnreadRoot(identity('project-b', 'terminal-b'), 'claude-code')
+    const second = await fixture.createUnreadRoot(identity('project-b', 'terminal-b'))
 
     assert.equal(fixture.adapter.markAcknowledged(first.entryId), true)
     assert.equal(fixture.agents.getSnapshot().entries[first.entryId].unread, false)
@@ -105,7 +101,7 @@ test('server agent IPC adapter never publishes stale or cross-project remapped s
     fixture.agents.terminalExited(staleIdentity)
 
     const liveIdentity = identity('project-b', 'terminal-live')
-    const live = await fixture.createUnreadRoot(liveIdentity, 'claude-code')
+    const live = await fixture.createUnreadRoot(liveIdentity)
     // Simulate a host map which no longer names the immutable project that
     // registered this terminal id. The store must not leak that row through
     // preload IPC merely because the session id still happens to match.
@@ -117,9 +113,8 @@ test('server agent IPC adapter never publishes stale or cross-project remapped s
 
     const published = []
     const unsubscribe = fixture.adapter.subscribe((snapshot) => published.push(snapshot))
-    await fixture.agents.ingestHookPayload(liveIdentity, 'claude-code', {
-      hook_event_name: 'Stop',
-      session_id: `claude-code-${liveIdentity.sessionId}`,
+    await fixture.agents.ingestJournalRecord(liveIdentity, 'codex', {
+      type: 'event_msg', payload: { type: 'task_complete' },
     })
     unsubscribe()
     assert.ok(published.length > 0)

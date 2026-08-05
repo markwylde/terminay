@@ -88,6 +88,8 @@ export interface TerminalSessionLifecycle {
   readonly prepareTerminalSession: (
     identity: TerminalIdentity,
   ) => Readonly<Record<string, string | undefined>>;
+  /** Called only after the host has obtained the real PTY shell PID. */
+  readonly terminalStarted?: (identity: TerminalIdentity, shellPid: number) => void;
   readonly terminalExited: (
     identity: TerminalIdentity,
     options?: { readonly exitCode?: number; readonly signal?: string },
@@ -250,7 +252,7 @@ export interface TerminalServiceOptions extends TerminalServiceLimits {
   /** Optional host-neutral timer implementation for inactivity supervision. */
   readonly inactivityTimer?: TerminalInactivityTimer;
   readonly onEvent?: TerminalEventListener;
-  /** Server-owned hooks such as agent credential injection and cleanup. */
+  /** Server-owned lifecycle observers such as agent journal tracking. */
   readonly sessionLifecycle?: TerminalSessionLifecycle;
 }
 
