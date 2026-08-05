@@ -85,7 +85,7 @@ export function formatServerHelp(): string {
     "  --remote-origin URL remote WebRTC session origin (TERMINAY_REMOTE_ORIGIN)",
     "  --log-sink PATH    structured log destination (TERMINAY_LOG_SINK)",
     "  --ui-bundle PATH   matching workspace bundle (TERMINAY_UI_BUNDLE)",
-    "  --agent-integration MODE  reconcile managed Codex/Claude hooks: enabled or disabled (TERMINAY_AGENT_INTEGRATION)",
+    "  --agent-integration MODE  observe supported agent session journals: enabled or disabled (TERMINAY_AGENT_INTEGRATION)",
     "  --ai-providers LIST  opt in to bounded server CLI providers: codex,claude-code (TERMINAY_AI_PROVIDERS)",
     "  --health-host HOST unauthenticated liveness/readiness bind host (TERMINAY_HEALTH_HOST)",
     "  --health-port PORT unauthenticated liveness/readiness port (TERMINAY_HEALTH_PORT)",

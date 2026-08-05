@@ -443,7 +443,7 @@ test("TerminalService merges host defaults, caller values, and server lifecycle 
     ptyFactory: pty,
     defaultEnvironment: { PATH: "/host/bin", TERM: "host-term", HOST_ONLY: "yes" },
     sessionLifecycle: {
-      prepareTerminalSession: () => ({ TERM: "server-term", TERMINAY_AGENT_HOOK_TOKEN: "server-only" }),
+      prepareTerminalSession: () => ({ TERM: "server-term", TERMINAY_SERVER_SCOPE: "server-only" }),
       terminalExited() {},
     },
   });
@@ -452,14 +452,14 @@ test("TerminalService merges host defaults, caller values, and server lifecycle 
     sessionId: "session-a",
     cols: 80,
     rows: 24,
-    env: { TERM: "client-term", CLIENT_ONLY: "yes", TERMINAY_AGENT_HOOK_TOKEN: "spoofed" },
+    env: { TERM: "client-term", CLIENT_ONLY: "yes", TERMINAY_SERVER_SCOPE: "spoofed" },
   });
   assert.deepEqual(pty.processes[0].options.env, {
     PATH: "/host/bin",
     TERM: "server-term",
     HOST_ONLY: "yes",
     CLIENT_ONLY: "yes",
-    TERMINAY_AGENT_HOOK_TOKEN: "server-only",
+    TERMINAY_SERVER_SCOPE: "server-only",
   });
 });
 
