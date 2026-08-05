@@ -246,6 +246,8 @@ collaborative text editing.
   and requires an explicit later save.
 - Rename, delete, atomic replace, temporarily unavailable roots, and watch
   overflow produce distinct recoverable states.
+- A failed initial metadata request replaces the loading state with
+  an accessible error and retry action; it never leaves an indefinite spinner.
 - Watch cursors replay only bounded history. A reconnect whose cursor is older
   than retained history receives `resyncRequired` and must fetch a fresh
   bounded file snapshot rather than receiving an unbounded event backlog.
