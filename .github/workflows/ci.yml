@@ -25,7 +25,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 24.14.0
           cache: npm
 
       - name: Install dependencies
@@ -51,7 +51,7 @@ jobs:
     name: Standalone Server Smoke (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     container:
-      image: node:22.23.1-bookworm-slim
+      image: node:24.14.0-bookworm-slim
     strategy:
       fail-fast: false
       matrix:
@@ -80,7 +80,7 @@ jobs:
     name: Server-owned PTY Runtime (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     container:
-      image: node:22.23.1-bookworm-slim
+      image: node:24.14.0-bookworm-slim
     strategy:
       fail-fast: false
       matrix:
@@ -114,7 +114,7 @@ jobs:
     name: Standalone Server Artifact (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     container:
-      image: node:22.23.1-bookworm-slim
+      image: node:24.14.0-bookworm-slim
     strategy:
       fail-fast: false
       matrix:
@@ -161,13 +161,13 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           case "$TARGET" in
-            linux-x64) NODE_ARCHIVE=node-v22.23.1-linux-x64.tar.xz ;;
-            linux-arm64) NODE_ARCHIVE=node-v22.23.1-linux-arm64.tar.xz ;;
+            linux-x64) NODE_ARCHIVE=node-v24.14.0-linux-x64.tar.xz ;;
+            linux-arm64) NODE_ARCHIVE=node-v24.14.0-linux-arm64.tar.xz ;;
             *) echo "Unsupported target: $TARGET" >&2; exit 1 ;;
           esac
           curl --fail --location --silent --show-error \
             --output "$RUNNER_TEMP/$NODE_ARCHIVE" \
-            "https://nodejs.org/dist/v22.23.1/$NODE_ARCHIVE"
+            "https://nodejs.org/dist/v24.14.0/$NODE_ARCHIVE"
           echo "NODE_ARCHIVE=$RUNNER_TEMP/$NODE_ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Build deterministic standalone artifact twice
@@ -273,7 +273,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22.23.1
+          node-version: 24.14.0
           cache: npm
 
       - name: Verify native release-runner architecture
@@ -322,7 +322,7 @@ jobs:
     name: Packaged Desktop Embedded Server (GNU/Linux x64)
     runs-on: ubuntu-24.04
     container:
-      image: node:22.23.1-bookworm-slim
+      image: node:24.14.0-bookworm-slim
 
     steps:
       - name: Check out code
@@ -364,7 +364,7 @@ jobs:
       - name: Set up pinned Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22.23.1
+          node-version: 24.14.0
           cache: npm
 
       - name: Install production proof dependencies
@@ -512,7 +512,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 24.14.0
           cache: npm
 
       - name: Install dependencies

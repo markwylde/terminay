@@ -17,7 +17,7 @@ test("local Electron E2E defaults to an isolated Linux container", async () => {
   assert.equal(scripts["test:e2e"], "sh scripts/run-e2e-container.sh");
   assert.equal(scripts["test:e2e:host"], "npm run build:app && playwright test");
   assert.match(agents, /must run Electron end-to-end tests through `npm run test:e2e`/u);
-  assert.match(dockerfile, /^FROM node:22\.23\.1-bookworm-slim$/mu);
+  assert.match(dockerfile, /^FROM node:24\.14\.0-bookworm-slim$/mu);
   assert.match(dockerfile, /COPY scripts\/ensure-node-pty-helper-mode\.mjs scripts\/ensure-node-pty-helper-mode\.mjs/u);
   assert.match(dockerfile, /npx playwright install --with-deps chromium/u);
   assert.match(dockerfile, /apt-get install --yes --no-install-recommends libgtk-3-0 libxss1 xauth/u);
