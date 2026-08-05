@@ -288,7 +288,7 @@ test('server runtime image includes Git for the shared Git service', async () =>
 	);
 	assert.match(
 		dockerfile,
-		/FROM node:22\.23\.1-bookworm-slim AS runtime[\s\S]*?apt-get install --yes --no-install-recommends git/u,
+		/FROM node:24\.14\.0-bookworm-slim AS runtime[\s\S]*?apt-get install --yes --no-install-recommends git/u,
 	);
 	assert.match(
 		dockerfile,
