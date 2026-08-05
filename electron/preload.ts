@@ -73,8 +73,8 @@ type ServerConnectionListener = (message: ServerConnectionMessage) => void;
 type ServerFrameListener = (frame: Uint8Array | null) => void;
 
 function hasOwn(value: object, key: PropertyKey): boolean {
-	// ES2021 is the desktop compiler target, so Object.hasOwn is unavailable here.
-	// biome-ignore lint/suspicious/noPrototypeBuiltins: calling the prototype method explicitly is safe for arbitrary objects.
+	// Calling the prototype method explicitly remains safe for arbitrary objects.
+	// biome-ignore lint/suspicious/noPrototypeBuiltins: do not trust a payload's own prototype.
 	return Object.prototype.hasOwnProperty.call(value, key);
 }
 
