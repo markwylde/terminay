@@ -9,6 +9,20 @@ test('worktree presentation reserves clean for worktrees without committed or wo
   assert.match(worktreesPanelSource, /hasUnmergedOrUncommittedWork \? \(/u)
   assert.match(worktreesPanelSource, />changed<\/span>/u)
 })
+
+test('caught worktree removal failures reach bounded renderer diagnostics', () => {
+  const handler = source.match(/const handleDeleteWorktree = useCallback\([\s\S]*?\n\t\);/u)?.[0] ?? ''
+  assert.ok(handler.length > 0, 'expected the worktree deletion handler')
+  assert.match(
+    handler,
+    /catch \(error\) \{\s*console\.error\('\[terminay\] git\.worktree\.remove failed', error\);\s*onSetError\(`Failed to delete worktree:/u,
+  )
+  assert.doesNotMatch(
+    handler,
+    /console\.error\([^\n]*(?:worktree\.path|worktree\.name|worktree\.head|reference)/u,
+    'diagnostics must not log worktree identifiers or paths',
+  )
+})
 const gitServiceSource = await readFile('packages/server-core/src/gitService/service.ts', 'utf8')
 const serverCompositionSource = await readFile('packages/server-core/src/composition.ts', 'utf8')
 const serverConnectionSource = await readFile('packages/server-core/src/connection.ts', 'utf8')
