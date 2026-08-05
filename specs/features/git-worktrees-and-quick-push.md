@@ -13,7 +13,9 @@ agent to propose and execute a reviewed commit, push, and pull-request flow.
   vertical order is user-configurable and persists across projects.
 - Git reports the current repository/branch and working-tree changes, with list
   and tree presentations. Selecting a change opens the relevant file/diff using
-  the file-viewer contract.
+  the file-viewer contract. When the change belongs to another listed worktree,
+  Terminay first switches the project to that worktree so the file read remains
+  inside the project security boundary.
 - The Worktrees panel shows known worktrees and their state. Users can open a
   terminal at a worktree, switch the project root, copy/reveal its path, rename
   its presentation, remove a safe worktree, or pull a worktree from origin when
@@ -126,6 +128,8 @@ remain explicit parity work.
   default branch, including squash-merged and unmerged committed work.
 - Switching the project root immediately refreshes the Git sidebar for the new
   root, even when an earlier Git status request is still pending.
+- Selecting a changed file in another listed worktree switches to that worktree
+  and opens the file only after the project root change is authoritative.
 - Worktree lifecycle actions preserve the main worktree and present Git errors
   accurately.
 - Deleting a prunable worktree whose folder is already absent removes its stale

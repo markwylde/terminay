@@ -34,6 +34,29 @@ test('file viewer edits and saves text files without duplicating tabs', async ({
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
 })
 
+test('file viewer replaces an out-of-scope loading failure with a retryable error', async ({
+  createWorkspace,
+  mainWindow,
+}) => {
+  const workspace = await createWorkspace({
+    name: 'file-viewer-load-error',
+    seed: { files: { 'inside.txt': 'inside project\n' } },
+  })
+
+  await setProjectRoot(mainWindow, workspace.rootDir)
+  await mainWindow.evaluate(() => {
+    window.dispatchEvent(new CustomEvent('terminay-open-file', {
+      detail: { path: '/terminay-e2e-outside-project/missing.txt' },
+    }))
+  })
+
+  const alert = mainWindow.getByRole('alert').filter({ hasText: 'Unable to load file' })
+  await expect(alert).toContainText('file path is outside the project root')
+  await alert.getByRole('button', { name: 'Retry' }).click()
+  await expect(alert).toContainText('file path is outside the project root')
+  await expect(mainWindow.locator('.file-panel--loading')).toHaveCount(0)
+})
+
 test('HEX edits share dirty state and survive Text mode switches', async ({
   appHarness,
   createWorkspace,
