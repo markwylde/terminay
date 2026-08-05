@@ -7,7 +7,6 @@ import {
 	readdir,
 	readFile,
 	rm,
-	stat,
 	writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -389,8 +388,8 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 		// This starts the extracted package in foreground mode with no inherited
 		// workspace node_modules. Startup creates the default terminal session,
 		// exercising the packaged node-pty binding rather than merely resolving
-		// the CLI module graph. Its provider hook reconciliation also has to run
-		// from the packed server-core payload, never from the developer's HOME.
+		// the CLI module graph. Agent observation must not create or modify any
+		// provider configuration in the isolated HOME.
 		const dataRoot = join(root, 'data');
 		const artifactHome = join(root, 'artifact-home');
 		const foreground = spawn(
@@ -428,33 +427,9 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 			assert.equal(readiness.ready, true, foregroundStderr);
 			assert.equal(readiness.serverId, 'packed-artifact');
 			assert.equal(readiness.protocolEndpoint, null);
-			const [codexConfig, claudeConfig, codexScript, claudeScript] =
-				await Promise.all([
-					readFile(join(artifactHome, '.codex', 'hooks.json'), 'utf8'),
-					readFile(join(artifactHome, '.claude', 'settings.json'), 'utf8'),
-					stat(
-						join(
-							artifactHome,
-							'.terminay',
-							'agent-hooks',
-							'terminay-codex-agent-hook.sh',
-						),
-					),
-					stat(
-						join(
-							artifactHome,
-							'.terminay',
-							'agent-hooks',
-							'terminay-claude-code-agent-hook.sh',
-						),
-					),
-				]);
-			for (const config of [codexConfig, claudeConfig]) {
-				assert.match(config, /TERMINAY_MANAGED_AGENT_HOOK=1/u);
-				assert.doesNotMatch(config, /TERMINAY_AGENT_HOOK_(?:ENDPOINT|TOKEN)/u);
-			}
-			assert.equal(codexScript.mode & 0o777, 0o700);
-			assert.equal(claudeScript.mode & 0o777, 0o700);
+			await assert.rejects(() => lstat(join(artifactHome, '.codex')), (error) => error?.code === 'ENOENT');
+			await assert.rejects(() => lstat(join(artifactHome, '.claude')), (error) => error?.code === 'ENOENT');
+			await assert.rejects(() => lstat(join(artifactHome, '.terminay')), (error) => error?.code === 'ENOENT');
 		} finally {
 			await stopForeground(foreground);
 		}

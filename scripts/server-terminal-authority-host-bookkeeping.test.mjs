@@ -222,10 +222,14 @@ test('embedded framed clients receive canonical agent and folder projections', a
       projectId: 'desktop',
       sessionId: created.sessionId,
     }
-    // Production composition prepares this identity before spawning the PTY.
-    // The injected TerminalService fixture deliberately has no lifecycle hook.
+    // Production composition registers this identity before spawning the PTY.
+    // The injected TerminalService fixture deliberately has no lifecycle observer.
     authority.activity.register(identity)
-    authority.agents.prepareTerminalSession(identity)
+    authority.agents.register(identity)
+    await authority.agents.ingestJournalRecord(identity, 'codex', {
+      type: 'session_meta',
+      payload: { id: 'codex-embedded-projection', model: 'gpt-test-codex' },
+    })
     const subscription = await protocol.subscribe('agent')
     const eventPromise = new Promise((resolve) => {
       const remove = subscription.onEvent((event) => {
@@ -234,22 +238,15 @@ test('embedded framed clients receive canonical agent and folder projections', a
       })
     })
 
-    authority.agents.ingestHookPayload(
-      identity,
-      'codex',
-      {
-        hook_event_name: 'UserPromptSubmit',
-        session_id: 'codex-embedded-projection',
-        prompt: 'Project canonical status',
-        model: 'gpt-test-codex',
-      },
-    )
+    await authority.agents.ingestJournalRecord(identity, 'codex', {
+      type: 'event_msg', payload: { type: 'user_message', message: 'Project canonical status', model: 'gpt-test-codex' },
+    })
 
     const event = await eventPromise
     assert.equal(Object.values(event.entries)[0].activationTerminalSessionId, created.sessionId)
-    assert.equal(Object.values(event.entries)[0].state, 'working')
     const snapshot = await protocol.query('agent.snapshot', {})
     assert.equal(Object.values(snapshot.result.entries)[0].activationTerminalSessionId, created.sessionId)
+    assert.equal(Object.values(snapshot.result.entries)[0].state, 'working')
 
     const rootUpdate = await workspace.updateProjectRoot({
       projectId: 'desktop',

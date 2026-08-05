@@ -6,12 +6,6 @@ import { AgentStatusService } from "./agentService.js";
 export const AGENT_OPERATIONS = Object.freeze({
   snapshot: "agent.snapshot",
   acknowledge: "agent.acknowledge",
-  /**
-   * Reconciles the provider-owned hook files from the same composed server
-   * authority in both standalone and embedded hosts. This is deliberately an
-   * admin command: it may write files below the server account's home.
-   */
-  reconcileHooks: "agent.hooks.reconcile",
   event: "agent",
 } as const);
 
@@ -28,8 +22,8 @@ export interface AgentOperationRegistry {
 }
 
 /**
- * Expose only reduced agent snapshots. Provider hook tokens and native hook
- * payloads never cross this boundary: AgentStatusService has already reduced
+ * Expose only reduced agent snapshots. Native journal records never cross
+ * this boundary: AgentStatusService has already reduced
  * them before publishing its immutable status snapshot.
  */
 export function createAgentOperationRegistry(options: AgentOperationRegistryOptions): AgentOperationRegistry {
@@ -44,12 +38,10 @@ export function createAgentOperationRegistry(options: AgentOperationRegistryOpti
       },
       commands: {
         [AGENT_OPERATIONS.acknowledge]: (request: CommandRequest) => acknowledge(request),
-        [AGENT_OPERATIONS.reconcileHooks]: (request: CommandRequest) => reconcileHooks(request),
       },
       policies: {
         [AGENT_OPERATIONS.snapshot]: { scope: "read" },
         [AGENT_OPERATIONS.acknowledge]: { scope: "read" },
-        [AGENT_OPERATIONS.reconcileHooks]: { scope: "admin" },
       },
     },
     close: unsubscribe,
@@ -78,24 +70,6 @@ export function createAgentOperationRegistry(options: AgentOperationRegistryOpti
     return { acknowledged, revision: current.revision, cursor: String(current.revision) } as JsonValue;
   }
 
-  async function reconcileHooks(request: CommandRequest): Promise<JsonValue> {
-    const payload = objectPayload(request.envelope.payload);
-    const action = payload.action;
-    if (action !== "install" && action !== "uninstall" && action !== "status") {
-      throw protocolError("validation", "agent hook action is invalid");
-    }
-    const provider = payload.provider;
-    if (provider !== undefined && provider !== "codex" && provider !== "claude-code") {
-      throw protocolError("validation", "agent hook provider is invalid");
-    }
-    // The server chooses its own home/profile paths. Accepting client-supplied
-    // paths here would turn a connection command into arbitrary file access.
-    const result = await options.service.drivers.reconcileHooks({
-      action,
-      ...(provider === undefined ? {} : { provider }),
-    });
-    return JSON.parse(JSON.stringify(result)) as JsonValue;
-  }
 }
 
 function asSnapshot(snapshot: ReturnType<AgentStatusService["getSnapshot"]>): JsonValue {

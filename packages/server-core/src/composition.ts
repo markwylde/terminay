@@ -122,7 +122,7 @@ export interface ServerCoreCompositionOptions
   /** Optional canonical terminal activity authority exposed through the same
    * authenticated protocol and ordered event journal as terminal streams. */
   readonly activity?: TerminalActivityService;
-  /** Optional server-owned provider-hook and agent status authority. It shares
+  /** Optional server-owned provider-journal and agent status authority. It shares
    * the terminal lifecycle with activity; it is never a renderer service. */
   readonly agents?: AgentStatusService;
   /** Other server-owned operation handlers to merge with terminal handlers. */
@@ -554,9 +554,13 @@ export function composeActivityLifecycle(
   return {
     prepareTerminalSession: (identity) => {
       if (activity !== undefined) ensureActivitySession(activity, identity);
-      const agentEnvironment = agents?.prepareTerminalSession(identity) ?? {};
+      agents?.register(identity);
       const hostEnvironment = lifecycle?.prepareTerminalSession(identity) ?? {};
-      return { ...agentEnvironment, ...hostEnvironment };
+      return { ...hostEnvironment };
+    },
+    terminalStarted: (identity, shellPid) => {
+      agents?.terminalStarted(identity, shellPid);
+      lifecycle?.terminalStarted?.(identity, shellPid);
     },
     terminalInput: (identity) => {
       lifecycle?.terminalInput?.(identity);

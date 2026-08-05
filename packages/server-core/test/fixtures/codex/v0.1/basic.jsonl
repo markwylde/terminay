@@ -1,0 +1,6 @@
+{"timestamp":"2026-08-05T10:00:00.000Z","type":"session_meta","payload":{"id":"fixture-session-v01","cli_version":"0.1.0","originator":"codex-tui","source":"cli"}}
+{"timestamp":"2026-08-05T10:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+{"timestamp":"2026-08-05T10:00:02.000Z","type":"event_msg","payload":{"type":"exec_command_begin","call_id":"call-1"}}
+{"timestamp":"2026-08-05T10:00:03.000Z","type":"event_msg","payload":{"type":"exec_command_end","call_id":"call-1","status":"success"}}
+{"timestamp":"2026-08-05T10:00:04.000Z","type":"event_msg","payload":{"type":"request_user_input"}}
+{"timestamp":"2026-08-05T10:00:05.000Z","type":"event_msg","payload":{"type":"task_complete"}}
