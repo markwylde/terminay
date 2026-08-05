@@ -138,7 +138,8 @@ application protocol:
 - filesystem listing/search/read/write/watch and file-conflict detection;
 - Git status, diff, worktree lifecycle, Quick Push, and provider CLI execution;
 - recording capture, persistence, listing, replay reads, and deletion;
-- agent hook receiver, provider normalization, trust, status, and lifecycle;
+- process-bound agent-journal discovery, versioned provider normalization,
+  status, and lifecycle;
 - MCP/control socket, per-session capability tokens, and project-scoped tools;
 - settings, macros, AI metadata generation, and secret-backed automation;
 - remote pairing, WebRTC availability, device auth, revocation, and audit.

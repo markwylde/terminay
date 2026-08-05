@@ -4,6 +4,7 @@
 
 declare class Buffer extends Uint8Array {
   static from(value: string | ArrayBuffer | ArrayLike<number> | ArrayBufferView, encoding?: string): Buffer;
+  static alloc(size: number): Buffer;
   static allocUnsafe(size: number): Buffer;
   static concat(list: readonly Uint8Array[], totalLength?: number): Buffer;
   static isBuffer(value: unknown): value is Buffer;
@@ -106,9 +107,22 @@ declare module "node:fs" {
 
 declare module "node:fs/promises" {
   interface Stats {
+    readonly size: number;
+    readonly mtimeMs: number;
     isDirectory(): boolean;
     isFile(): boolean;
   }
+  interface FileHandle {
+    read(buffer: Buffer, offset: number, length: number, position: number): Promise<{ readonly bytesRead: number; readonly buffer: Buffer }>;
+    close(): Promise<void>;
+  }
+  interface Dirent { readonly name: string; isDirectory(): boolean; isFile(): boolean; }
+  export function open(path: string, flags: string): Promise<FileHandle>;
+  export function readFile(path: string): Promise<Buffer>;
+  export function readFile(path: string, encoding: "utf8"): Promise<string>;
+  export function readlink(path: string): Promise<string>;
+  export function readdir(path: string): Promise<string[]>;
+  export function readdir(path: string, options: { readonly withFileTypes: true }): Promise<Dirent[]>;
   export function realpath(path: string): Promise<string>;
   export function stat(path: string): Promise<Stats>;
 }
