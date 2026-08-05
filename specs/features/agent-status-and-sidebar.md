@@ -72,6 +72,14 @@ provider session may reopen the same journal in another terminal; the new
 writer creates a new binding incarnation and activation terminal without
 allowing stale events from the previous incarnation to mutate it.
 
+The Codex launcher may expose a generic wrapper such as `node` as the PTY
+foreground process. Every transition away from the shell therefore starts a
+new bounded journal-discovery window even when the foreground name is not a
+recognized provider. This lets a resumed session launched long after terminal
+startup bind its reopened journal without treating the wrapper itself as an
+agent. The journal is still admitted only after a writable handle is proven
+beneath the exact PTY process tree.
+
 CWD, filename timestamps, terminal title, active tab, and “closest match” logic
 must not establish an authoritative binding. A host that cannot prove the
 writer relationship uses terminal fallback instead.
@@ -88,11 +96,14 @@ A provider journal source:
 6. emits raw records only to the selected privileged driver;
 7. stops all file/process observation when the terminal, integration, or server stops.
 
-Discovery is retried briefly because foreground observation can arrive before
-the journal is opened. Expensive open-file/process inspection is used for
-initial binding, not for every appended record. Symlinks, non-regular files,
-paths outside the canonical sessions root, oversized records, invalid JSON,
-and unbounded growth are handled defensively.
+Discovery is retried briefly after terminal startup and whenever the shell
+loses foreground because either transition can arrive before the journal is
+opened. Once a supported provider is known to be foreground, discovery remains
+armed until that incarnation is bound or leaves the foreground. Expensive
+open-file/process inspection is used for initial binding, not for every
+appended record. Symlinks, non-regular files, paths outside the canonical
+sessions root, oversized records, invalid JSON, and unbounded growth are
+handled defensively.
 
 ## Versioned driver contract
 
