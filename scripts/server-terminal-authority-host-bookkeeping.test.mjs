@@ -537,7 +537,7 @@ async function importAuthority() {
         loader: 'ts',
         resolveDir: process.cwd(),
       },
-      target: 'node22',
+      target: 'node24',
     })
     return await import(outputPath)
   } finally {

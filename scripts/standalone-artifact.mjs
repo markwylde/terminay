@@ -4,7 +4,7 @@ import { dirname, join, sep } from 'node:path'
 
 const PACKAGE_NAME = '@terminay/server'
 const REQUIRED_FILES = ['package.json', 'dist/cli.js', 'dist/index.js', 'dist/mcpEntry.js']
-const NODE_ENGINE = '22.23.1'
+const NODE_ENGINE = '24.14.0'
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
