@@ -18,7 +18,7 @@ agent to propose and execute a reviewed commit, push, and pull-request flow.
   inside the project security boundary.
 - The Worktrees panel shows known worktrees and their state. Users can open a
   terminal at a worktree, switch the project root, copy/reveal its path, rename
-  its presentation, remove a safe worktree, or pull a worktree from origin when
+  its presentation, remove a worktree, or pull a worktree from origin when
   Git permits it.
 - A worktree is shown as clean only when it has no effective committed changes
   relative to the repository default branch and no displayed working-tree
@@ -109,8 +109,11 @@ worktree listing, rechecks status immediately before invoking Git, and then
 verifies that the exact identity disappeared. If the registered worktree path
 has already disappeared and Git marks the entry prunable, removal cleans up
 that stale registration without trying to run status inside the missing path.
-Main, bare, locked, dirty, and unmerged worktrees are rejected, and a changed
-reviewed HEAD is reported as stale rather than being removed.
+Main, bare, and locked worktrees are rejected, and a changed reviewed HEAD is
+reported as stale rather than being removed. The removal confirmation explicitly
+warns that the worktree folder, including uncommitted, untracked, and unmerged
+changes, will be permanently deleted. Once the user confirms, the server uses
+Git's forced worktree removal so those visible changes do not block the action.
 
 The production shared Git route consumes `TerminayGitClient` for its current
 server-owned project. It renders bounded worktree state and exposes Pull,
@@ -132,6 +135,8 @@ remain explicit parity work.
   and opens the file only after the project root change is authoritative.
 - Worktree lifecycle actions preserve the main worktree and present Git errors
   accurately.
+- Confirming worktree deletion removes dirty and unmerged worktrees, including
+  their uncommitted and untracked files.
 - Deleting a prunable worktree whose folder is already absent removes its stale
   Git registration and does not report a worktree-list or status error.
 - Quick Push produces a reviewable plan before commits, pushes, or PR creation,
