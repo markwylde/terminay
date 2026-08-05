@@ -589,7 +589,7 @@ export async function buildSecureWeriftCandidate(workRoot, { sourceMirror } = {}
     outfile: path.join(artifactRoot, 'lib', 'index.mjs'),
     platform: 'node',
     sourcemap: false,
-    target: 'node22',
+    target: 'node24',
   })
   const bundledInputs = Object.keys(bundleResult.metafile.inputs)
   assert.ok(

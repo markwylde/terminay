@@ -23,7 +23,7 @@ COPY packages/responsive-ui/package.json ./packages/responsive-ui/package.json
 COPY packages/server-core/package.json ./packages/server-core/package.json
 COPY scripts/ensure-node-pty-helper-mode.mjs ./scripts/ensure-node-pty-helper-mode.mjs
 
-RUN --mount=type=cache,id=terminay-npm-cache-node22,target=/root/.npm,sharing=locked \
+RUN --mount=type=cache,id=terminay-npm-cache-node24,target=/root/.npm,sharing=locked \
   npm ci
 
 COPY . .

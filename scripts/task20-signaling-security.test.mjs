@@ -66,7 +66,7 @@ test('signaling depth, field-count, cyclic, and oversized relay frames are bound
 async function importBoundary() {
   const directory = await mkdtemp(join(tmpdir(), 'terminay-task20-signaling-'))
   const output = join(directory, 'signalingBoundary.mjs')
-  await build({ bundle: true, entryPoints: [new URL('../electron/remote/signalingBoundary.ts', import.meta.url).pathname], format: 'esm', outfile: output, platform: 'node', target: 'node22' })
+  await build({ bundle: true, entryPoints: [new URL('../electron/remote/signalingBoundary.ts', import.meta.url).pathname], format: 'esm', outfile: output, platform: 'node', target: 'node24' })
   const module = await import(output)
   await rm(directory, { recursive: true, force: true })
   return module

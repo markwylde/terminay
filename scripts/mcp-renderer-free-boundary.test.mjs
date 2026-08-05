@@ -31,7 +31,7 @@ test('server MCP metadata identifies the renderer-free authoritative entry', asy
       format: 'esm',
       outfile: bundlePath,
       platform: 'node',
-      target: 'node22',
+      target: 'node24',
     })
     const module = await import(bundlePath)
     assert.equal(module.SERVER_MCP_ENTRY.authority, 'server')
@@ -70,7 +70,7 @@ test('the real server MCP entry bundles without renderer or Electron forwarding 
       format: 'esm',
       outfile: bundlePath,
       platform: 'node',
-      target: 'node22',
+      target: 'node24',
     })
     const bundle = await readFile(bundlePath, 'utf8')
     assert.doesNotMatch(bundle, /(?:from|require\()\s*["']electron(?:\/|["'])/u)

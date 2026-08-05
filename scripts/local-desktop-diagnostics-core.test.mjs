@@ -424,7 +424,7 @@ async function importBundled(relativePath) {
 			format: 'esm',
 			outfile: outputPath,
 			platform: 'node',
-			target: 'node22',
+			target: 'node24',
 		});
 		return await import(outputPath);
 	} finally {

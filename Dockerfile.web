@@ -13,7 +13,7 @@ COPY packages/protocol-conformance/package.json ./packages/protocol-conformance/
 COPY packages/responsive-ui/package.json ./packages/responsive-ui/package.json
 COPY packages/server-core/package.json ./packages/server-core/package.json
 
-RUN --mount=type=cache,id=terminay-npm-cache-node22,target=/root/.npm,sharing=locked \
+RUN --mount=type=cache,id=terminay-npm-cache-node24,target=/root/.npm,sharing=locked \
   npm ci --ignore-scripts
 
 COPY tsconfig.base.json tsconfig.json tsconfig.node.json tsconfig.web.json vite.web.config.ts web.html remote.html ./
