@@ -354,6 +354,44 @@ test('git sidebar pane shows no changes for a clean repository', async ({ create
   await expect(worktree.locator('.git-panel__row')).toHaveCount(0)
 })
 
+test('git sidebar switches project root before opening a file from another worktree', async ({
+  createWorkspace,
+  mainWindow,
+}) => {
+  const mainRepo = await createWorkspace({
+    name: 'git-pane-cross-worktree-main',
+    seed: { files: { 'README.md': 'main worktree\n' } },
+  })
+  const linkedWorktree = await createWorkspace({ name: 'git-pane-cross-worktree-linked' })
+
+  await rm(linkedWorktree.rootDir, { recursive: true, force: true })
+  await execFileAsync('git', ['init'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['worktree', 'add', '-b', 'cross-worktree-file-open', linkedWorktree.rootDir], {
+    cwd: mainRepo.rootDir,
+  })
+  await linkedWorktree.writeText('30-local-desktop-diagnostics.md', '# Worktree task\n\nOpened safely.\n')
+
+  await setProjectRoot(mainWindow, mainRepo.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  const linked = gitPane
+    .locator('.worktrees-panel__worktree')
+    .filter({ hasText: 'git-pane-cross-worktree-linked' })
+  await expect(linked).toBeVisible({ timeout: 6000 })
+  await linked.locator('.worktrees-panel__worktree-toggle').click()
+  await linked.locator('.git-panel__row').filter({ hasText: '30-local-desktop-diagnostics.md' }).click()
+
+  await expect(mainWindow.locator('.file-preview-markdown')).toContainText('Opened safely.', { timeout: 6000 })
+  await expect(mainWindow.locator('.file-panel--loading')).toHaveCount(0)
+})
+
 test('git sidebar pane renders a nested tree and offers a push menu', async ({
   createWorkspace,
   mainWindow,

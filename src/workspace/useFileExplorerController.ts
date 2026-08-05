@@ -193,6 +193,10 @@ export function useFileExplorerController({
 		Set<string>
 	>(() => new Set());
 	const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
+	const [pendingGitEntryOpen, setPendingGitEntryOpen] = useState<{
+		entry: GitChangeEntry;
+		worktreeRoot: string;
+	} | null>(null);
 	const [fileExplorerNameDialog, setFileExplorerNameDialog] =
 		useState<FileExplorerNameDialogState | null>(null);
 	const referencesRef = useRef<ReadonlyMap<string, GitWorktreeReference>>(
@@ -674,13 +678,43 @@ export function useFileExplorerController({
 		[onOpenTerminalAt],
 	);
 	const handleOpenGitEntry = useCallback(
-		(entry: GitChangeEntry) =>
+		(entry: GitChangeEntry) => {
+			const owningWorktree = worktreePanelStatus?.worktrees.find((worktree) =>
+				worktree.entries.some((candidate) => candidate.path === entry.path),
+			);
+			if (owningWorktree && owningWorktree.path !== project.rootFolder) {
+				setPendingGitEntryOpen({ entry, worktreeRoot: owningWorktree.path });
+				onUpdateProject(project.id, { rootFolder: owningWorktree.path });
+				return;
+			}
 			void onOpenFile(
 				entry.path,
 				entry.state === 'untracked' ? undefined : { initialMode: 'diff' },
-			),
-		[onOpenFile],
+			);
+		},
+		[
+			onOpenFile,
+			onUpdateProject,
+			project.id,
+			project.rootFolder,
+			worktreePanelStatus,
+		],
 	);
+
+	useEffect(() => {
+		if (
+			pendingGitEntryOpen === null ||
+			project.rootFolder !== pendingGitEntryOpen.worktreeRoot
+		) {
+			return;
+		}
+		const { entry } = pendingGitEntryOpen;
+		setPendingGitEntryOpen(null);
+		void onOpenFile(
+			entry.path,
+			entry.state === 'untracked' ? undefined : { initialMode: 'diff' },
+		);
+	}, [onOpenFile, pendingGitEntryOpen, project.rootFolder]);
 
 	useEffect(
 		() => () => {

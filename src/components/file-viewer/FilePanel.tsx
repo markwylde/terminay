@@ -164,6 +164,8 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 	const [fileInfo, setFileInfo] = useState<FileInfo | null>(
 		props.params.fileInfo ?? null,
 	);
+	const [loadError, setLoadError] = useState<string | null>(null);
+	const [loadRequest, setLoadRequest] = useState(0);
 	const [draftText, setDraftText] = useState('');
 	const [engine, setEngine] = useState<FileViewerEngine>(preferredEngine);
 	const [mode, setMode] = useState(initialMode ?? 'preview');
@@ -588,11 +590,20 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 		let isMounted = true;
 
 		const load = async () => {
-			const info = await fileGateway.getFileInfo(filePath);
+			let info: FileInfo;
+			try {
+				info = await fileGateway.getFileInfo(filePath);
+			} catch (error) {
+				if (isMounted) {
+					setLoadError(error instanceof Error ? error.message : String(error));
+				}
+				return;
+			}
 			if (!isMounted) {
 				return;
 			}
 
+			setLoadError(null);
 			setFileInfo(info);
 			props.api.setTitle(info.name);
 			const capabilities = detectFileCapabilities(info);
@@ -683,6 +694,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 		fileGateway,
 		filePath,
 		isLoadingSettings,
+		loadRequest,
 		preferredEngine,
 		props.api,
 		refreshDiff,
@@ -948,6 +960,24 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 		setMode(nextMode);
 		sessionStoreRef.current?.setMode(nextMode);
 	}, []);
+
+	if (!fileInfo && loadError) {
+		return (
+			<div className="file-panel file-panel--load-error" role="alert">
+				<strong>Unable to load file</strong>
+				<span>{loadError}</span>
+				<button
+					type="button"
+					onClick={() => {
+						setLoadError(null);
+						setLoadRequest((request) => request + 1);
+					}}
+				>
+					Retry
+				</button>
+			</div>
+		);
+	}
 
 	if (!fileInfo) {
 		return <div className="file-panel file-panel--loading">Loading file…</div>;
