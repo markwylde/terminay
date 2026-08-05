@@ -428,9 +428,6 @@ export class GitService {
           error: fresh.error ?? { code: "mutation-failed", message: "worktree status could not be revalidated", operation: "worktree.remove" },
         };
       }
-      if (fresh.entries.some((entry) => entry.unmerged || entry.unstaged || entry.staged)) {
-        throw new GitServiceError("worktree-dirty", "refusing to remove a dirty or unmerged worktree", { worktreeId: request.worktreeId });
-      }
       if (request.expectedHead !== undefined && selected.head !== request.expectedHead) {
         throw new GitServiceError("stale-revision", "worktree HEAD changed since the removal was reviewed", {
           worktreeId: request.worktreeId,
@@ -451,7 +448,10 @@ export class GitService {
         error: { code: "invalid-project", message: "project is no longer bound to this server", operation: "worktree.remove" },
       };
     }
-    const result = await this.runGit(["worktree", "remove", "--", selected.path], cwd, request.signal);
+    // The client confirmation explicitly authorizes deleting uncommitted,
+    // untracked, and unmerged contents. Keep identity and HEAD checks above,
+    // then ask Git to carry out that destructive choice.
+    const result = await this.runGit(["worktree", "remove", "--force", "--", selected.path], cwd, request.signal);
     if (result.exitCode !== 0 || result.truncated) {
       return {
         ...base,
@@ -897,11 +897,6 @@ function assertRemovableWorktree(worktree: GitWorktreeSummary, expectedHead: str
       });
     }
     return;
-  }
-  // Detached worktrees can be removed safely when clean; only dirty and
-  // unmerged state is unsafe.  Unknown state is treated conservatively.
-  if (worktree.state !== "clean" && worktree.state !== "detached") {
-    throw new GitServiceError("worktree-dirty", "refusing to remove a dirty or unmerged worktree", { worktreeId: worktree.id });
   }
   if (expectedHead !== undefined && worktree.head !== expectedHead) {
     throw new GitServiceError("stale-revision", "worktree HEAD changed since the removal was reviewed", {

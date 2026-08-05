@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -181,7 +181,7 @@ test("GitService publishes bounded progress and status revisions to subscribers"
   }
 });
 
-test("GitService removes only a revalidated clean non-main worktree", async () => {
+test("GitService removes confirmed dirty or unmerged non-main worktrees", async () => {
   const { GitService, GitServiceError } = await import("../dist/gitService/index.js");
   const root = await mkdtemp(join(tmpdir(), "terminay-server-git-remove-"));
   const feature = join(root, "feature");
@@ -204,6 +204,7 @@ test("GitService removes only a revalidated clean non-main worktree", async () =
     await git(["add", "file.txt"], dirty);
     await git(["commit", "-m", "dirty branch change"], dirty);
     await git(["merge", "main"], dirty).catch(() => undefined);
+    await writeFile(join(dirty, "untracked.txt"), "discard me\n");
 
     const service = new GitService();
     const binding = await service.bindProject("project", root);
@@ -232,10 +233,14 @@ test("GitService removes only a revalidated clean non-main worktree", async () =
     const featureAfter = withDirty.worktrees.find((worktree) => worktree.path.endsWith("/feature"));
     assert.ok(dirtySummary);
     assert.ok(featureAfter);
-    await assert.rejects(
-      () => service.removeWorktree({ projectId: "project", repositoryId: binding.repositoryId, worktreeId: dirtySummary.id }),
-      (error) => error instanceof GitServiceError && error.code === "worktree-dirty",
-    );
+    const dirtyRemoved = await service.removeWorktree({
+      projectId: "project",
+      repositoryId: binding.repositoryId,
+      worktreeId: dirtySummary.id,
+      expectedHead: dirtySummary.head,
+    });
+    assert.equal(dirtyRemoved.applied, true);
+    assert.equal(dirtyRemoved.state, "removed");
 
     const removed = await service.removeWorktree({
       projectId: "project",
@@ -247,7 +252,8 @@ test("GitService removes only a revalidated clean non-main worktree", async () =
     assert.equal(removed.state, "removed");
     const final = await service.worktrees({ projectId: "project", repositoryId: binding.repositoryId });
     assert.equal(final.worktrees.some((worktree) => worktree.id === featureAfter.id), false);
-    assert.equal(final.worktrees.some((worktree) => worktree.id === dirtySummary.id), true);
+    assert.equal(final.worktrees.some((worktree) => worktree.id === dirtySummary.id), false);
+    await assert.rejects(() => access(dirty));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
