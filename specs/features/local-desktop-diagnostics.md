@@ -83,6 +83,8 @@ The normal diagnostic level records:
   and stderr that originate from Terminay application code;
 - renderer information, warnings, errors, uncaught errors, unhandled
   rejections, preload failures, failed loads, and failed navigations;
+- user-visible Git operation failures that are caught and rendered as ordinary
+  UI state, using a stable operation label and sanitized bounded error text;
 - unexpected renderer exit with Electron's reason and exit code, including
   crash, out-of-memory, killed, launch-failed, integrity-failure, and memory
   eviction outcomes;
@@ -96,7 +98,9 @@ The normal diagnostic level records:
 - diagnostic-writer, cleanup, crash-dump, and retention failures.
 
 Normal user actions and high-frequency UI state do not produce one event per
-interaction. Debug-level tracing, raw Chromium verbose logging, Chromium
+interaction. A caught successful-path error is recorded only when it becomes a
+user-visible operational failure; the event excludes repository and worktree
+paths, refs, command arguments, and raw Git output. Debug-level tracing, raw Chromium verbose logging, Chromium
 network logs, protocol frame dumps, request/response bodies, and screenshots
 are not enabled by the always-on collector.
 

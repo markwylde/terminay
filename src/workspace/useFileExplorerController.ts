@@ -632,6 +632,7 @@ export function useFileExplorerController({
 				onSetError(null);
 				void loadDirectory(parentPath(worktree.path) || project.rootFolder);
 			} catch (error) {
+				console.error('[terminay] git.worktree.remove failed', error);
 				onSetError(`Failed to delete worktree: ${String(error)}`);
 			} finally {
 				setDeletingWorktreePaths((current) => {
