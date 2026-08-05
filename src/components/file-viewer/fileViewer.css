@@ -7,6 +7,25 @@
   color: #dce2f0;
 }
 
+.file-panel--load-error {
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+}
+
+.file-panel--load-error span {
+  color: rgba(220, 226, 240, 0.72);
+}
+
+.file-panel--load-error button {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  padding: 7px 12px;
+}
+
 .file-panel__viewer {
   flex: 1;
   min-height: 0;
