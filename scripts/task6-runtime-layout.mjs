@@ -173,8 +173,8 @@ export async function inspectRuntimeDependencyResolution(root) {
 		join(rootDirectory, 'packages/server-core/src/aiService/cliProvider.ts'),
 		'utf8',
 	);
-	const managedHooks = await readFile(
-		join(rootDirectory, 'packages/server-core/src/activity/managedHooks.ts'),
+	const agentJournal = await readFile(
+		join(rootDirectory, 'packages/server-core/src/activity/agentJournal.ts'),
 		'utf8',
 	);
 
@@ -221,22 +221,8 @@ export async function inspectRuntimeDependencyResolution(root) {
 			'provider CLI commands must resolve from explicit env overrides or PATH defaults',
 		);
 	}
-	if (
-		!/const scriptName = `terminay-\$\{provider\}-agent-hook\.sh`/u.test(
-			managedHooks,
-		) ||
-		!/join\(homeDir, "\.terminay", "agent-hooks"\)/u.test(managedHooks) ||
-		!/MANAGED_HOOK_MARKER = "TERMINAY_MANAGED_AGENT_HOOK=1"/u.test(
-			managedHooks,
-		) ||
-		!/await fs\.chmod\(path, 0o700\)/u.test(managedHooks) ||
-		!/http:\/\/127\.0\.0\.1:\*\|http:\/\/localhost:\*\|http:\/\/\\\[::1\\\]:\*/u.test(
-			managedHooks,
-		)
-	) {
-		throw new Error(
-			'managed hook scripts must resolve to server-owned hook paths and loopback-only delivery',
-		);
+	if (!/findProcessBoundCodexRollout/u.test(agentJournal) || !/descendantsOf/u.test(agentJournal) || !/MAX_RECORD_BYTES/u.test(agentJournal)) {
+		throw new Error('agent journals must be process-bound and bounded');
 	}
 
 	return Object.freeze({
@@ -250,12 +236,10 @@ export async function inspectRuntimeDependencyResolution(root) {
 			claudeCode: 'TERMINAY_CLAUDE_CODE_COMMAND || claude',
 			resolution: 'server PATH/env',
 		}),
-		hooks: Object.freeze({
-			scriptDirectory: '.terminay/agent-hooks',
-			// biome-ignore lint/suspicious/noTemplateCurlyInString: provider is a documented runtime placeholder.
-			scriptPattern: 'terminay-${provider}-agent-hook.sh',
-			mode: '0700',
-			delivery: 'loopback-http',
+		agentJournals: Object.freeze({
+			provider: 'codex',
+			ownership: 'pty-process-tree',
+			delivery: 'rollout-jsonl',
 		}),
 		mcp: Object.freeze({
 			command: 'terminay-mcp',

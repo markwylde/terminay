@@ -368,45 +368,18 @@ function applyAgentIntegrationSetting(
 				serverAgents.setIntegrationEnabled(enabled);
 			}
 			if (enabled) {
-				// Disabling intentionally revokes every agent lease and clears the
-				// projection. When it is enabled again, terminals that remained alive
-				// throughout the setting change still belong to this server authority
-				// and must be registered again before they can accept fresh lifecycle
-				// events. Do this from the immutable authority list, never renderer
-				// state.
+				// Rebind terminals that remained alive while observation was disabled.
 				if (serverAgents !== undefined && serverTerminalAuthority !== null) {
 					for (const session of serverTerminalAuthority.list()) {
 						const identity = serverTerminalAuthority.agentIdentity(session.id);
 						if (identity !== undefined) {
 							serverAgents.register(identity);
+							if (session.pid !== undefined) serverAgents.terminalStarted(identity, session.pid);
 						}
-					}
-				}
-				if (process.env.TERMINAY_TEST !== '1' && serverAgents !== undefined) {
-					const result = await serverAgents.drivers.reconcileHooks({
-						action: 'install',
-					});
-					if (result !== undefined && !result.ok) {
-						console.error(
-							'[agent-status] one or more provider hooks could not be installed',
-							result.statuses,
-						);
 					}
 				}
 				appliedAgentIntegrationSetting = true;
 				return;
-			}
-
-			if (process.env.TERMINAY_TEST !== '1' && serverAgents !== undefined) {
-				const result = await serverAgents.drivers.reconcileHooks({
-					action: 'uninstall',
-				});
-				if (result !== undefined && !result.ok) {
-					console.error(
-						'[agent-status] one or more provider hooks could not be removed',
-						result.statuses,
-					);
-				}
 			}
 			appliedAgentIntegrationSetting = false;
 		})
@@ -5799,13 +5772,13 @@ if (process.env.TERMINAY_TEST === '1') {
 	);
 
 	ipcMain.handle(
-		'test:emit-agent-hook',
+		'test:emit-agent-journal-record',
 		async (
 			event,
 			payload?: {
 				provider?: unknown;
 				terminalSessionId?: unknown;
-				nativePayload?: unknown;
+				record?: unknown;
 			},
 		) => {
 			assertTrustedAppSender(event);
@@ -5819,24 +5792,24 @@ if (process.env.TERMINAY_TEST === '1') {
 				throw new Error('A terminal session id is required.');
 			}
 			if (
-				!payload.nativePayload ||
-				typeof payload.nativePayload !== 'object' ||
-				Array.isArray(payload.nativePayload)
+				!payload.record ||
+				typeof payload.record !== 'object' ||
+				Array.isArray(payload.record)
 			) {
-				throw new Error('An agent hook object is required.');
+				throw new Error('An agent journal record is required.');
 			}
 			const serverSession = serverTerminalAuthority?.get(
 				payload.terminalSessionId,
 			);
 			if (serverSession !== undefined) {
-				return serverTerminalAuthority!.agents.ingestHookPayload(
+				return serverTerminalAuthority!.agents.ingestJournalRecord(
 					{
 						serverId: serverSession.serverId,
 						projectId: serverSession.projectId,
 						sessionId: serverSession.id,
 					},
 					payload.provider,
-					payload.nativePayload as Record<string, unknown>,
+					payload.record as Record<string, unknown>,
 				);
 			}
 			throw new Error('The terminal session is not available.');
