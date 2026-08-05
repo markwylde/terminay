@@ -81,7 +81,7 @@ function run(command, args, options = {}) {
   })
 }
 
-async function proveNode22Runtime(buildRoot) {
+async function proveNode24Runtime(buildRoot) {
   const upstreamProof = await readFile(
     path.join(process.cwd(), 'scripts', 'spikes', 'headless-webrtc-werift.mjs'),
     'utf8',
@@ -93,11 +93,11 @@ async function proveNode22Runtime(buildRoot) {
       "import.meta.resolve('@terminay/werift-runtime-proof')",
     )
   assert.notEqual(candidateProof, upstreamProof)
-  const proofPath = path.join(buildRoot, 'candidate-node22-proof.mjs')
+  const proofPath = path.join(buildRoot, 'candidate-node24-proof.mjs')
   await writeFile(proofPath, candidateProof)
   const result = await run(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['--yes', '--package=node@22.23.1', '--', 'node', proofPath],
+    ['--yes', '--package=node@24.14.0', '--', 'node', proofPath],
     { cwd: buildRoot, timeoutMs: 60_000 },
   )
   assert.equal(result.signal, null)
@@ -378,7 +378,7 @@ test('a minimized Werift candidate is deterministic, auditable, and importable',
     assert.equal(auditReport.metadata.vulnerabilities.critical, 0)
     assert.equal(auditReport.metadata.vulnerabilities.high, 0)
 
-    const node22 = await proveNode22Runtime(first.auditRoot)
+    const node24 = await proveNode24Runtime(first.auditRoot)
     const runtimeOnly = process.env.TERMINAY_RUNTIME_ONLY === '1'
     if (runtimeOnly) {
       process.stdout.write(`secure-werift-candidate=${JSON.stringify({
@@ -386,7 +386,7 @@ test('a minimized Werift candidate is deterministic, auditable, and importable',
         artifactFiles: expectedFiles.length,
         audit: auditReport.metadata.vulnerabilities,
         gitHead: WERIFT_GIT_HEAD,
-        node22CloseDurationMs: node22.closeDurationMs,
+        node24CloseDurationMs: node24.closeDurationMs,
         platform: process.platform,
         retainedPackages: Object.keys(RETAINED_RUNTIME_PACKAGES).length,
         runtimeOnly: true,
@@ -474,7 +474,7 @@ test('a minimized Werift candidate is deterministic, auditable, and importable',
       artifactFiles: expectedFiles.length,
       audit: auditReport.metadata.vulnerabilities,
       gitHead: WERIFT_GIT_HEAD,
-      node22CloseDurationMs: node22.closeDurationMs,
+      node24CloseDurationMs: node24.closeDurationMs,
       retainedPackages: Object.keys(RETAINED_RUNTIME_PACKAGES).length,
       routeTests: process.env.TERMINAY_TURN_CONFIG_PATH
         ? (routeOnly ? 2 : 3)
