@@ -4,6 +4,7 @@ import {
 } from '@terminay/protocol';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { MacroDefinition } from '../src/types/macros';
+import type { RendererRootDiagnosticPayload } from '../src/types/desktopDiagnostics';
 import type { TerminalSettings } from '../src/types/settings';
 import type {
 	AdoptedProjectPayload,
@@ -110,6 +111,7 @@ const DESKTOP_AI_METADATA_COMPATIBILITY_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_EDIT_WINDOW_COMPATIBILITY_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_QUICK_PUSH_COMPATIBILITY_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_REMOTE_PAIRING_PIN_COMPATIBILITY_HOST_BRIDGE_VERSION = 1 as const;
+const DESKTOP_DIAGNOSTICS_HOST_BRIDGE_VERSION = 1 as const;
 
 let pendingServerConnection: ServerConnectionMessage | null = null;
 const serverConnectionListeners = new Set<ServerConnectionListener>();
@@ -188,6 +190,62 @@ const APP_COMMANDS = new Set<string>([
 
 function isAppCommand(value: unknown): value is AppCommand {
 	return typeof value === 'string' && APP_COMMANDS.has(value);
+}
+
+const RENDERER_ROOT_DIAGNOSTIC_LIMITS = {
+	componentStack: 3_072,
+	message: 2_048,
+	name: 128,
+	stack: 6_144,
+} as const;
+
+function hasBoundedUtf8String(
+	value: unknown,
+	maxBytes: number,
+	optional = false,
+): boolean {
+	return (
+		(optional && value === undefined) ||
+		(typeof value === 'string' &&
+			new TextEncoder().encode(value).byteLength <= maxBytes)
+	);
+}
+
+function isRendererRootDiagnosticPayload(
+	value: unknown,
+): value is RendererRootDiagnosticPayload {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return false;
+	const payload = value as Record<string, unknown>;
+	const keys = Object.keys(payload).sort();
+	if (
+		keys.some(
+			(key) =>
+				!['componentStack', 'message', 'name', 'phase', 'stack', 'version'].includes(
+					key,
+				),
+		)
+	)
+		return false;
+	return (
+		payload.version === DESKTOP_DIAGNOSTICS_HOST_BRIDGE_VERSION &&
+		(payload.phase === 'bootstrap-import' || payload.phase === 'react-root') &&
+		hasBoundedUtf8String(payload.name, RENDERER_ROOT_DIAGNOSTIC_LIMITS.name) &&
+		hasBoundedUtf8String(
+			payload.message,
+			RENDERER_ROOT_DIAGNOSTIC_LIMITS.message,
+		) &&
+		hasBoundedUtf8String(
+			payload.stack,
+			RENDERER_ROOT_DIAGNOSTIC_LIMITS.stack,
+			true,
+		) &&
+		hasBoundedUtf8String(
+			payload.componentStack,
+			RENDERER_ROOT_DIAGNOSTIC_LIMITS.componentStack,
+			true,
+		)
+	);
 }
 
 // Install this listener during preload evaluation so a fast did-finish-load
@@ -2058,6 +2116,23 @@ contextBridge.exposeInMainWorld(
 			};
 			ipcRenderer.on('app:command', wrapper);
 			return () => ipcRenderer.off('app:command', wrapper);
+		},
+	}),
+);
+
+/** Observation-only semantic reporting for failures at the shared React root. */
+contextBridge.exposeInMainWorld(
+	'terminayDiagnosticsHost',
+	Object.freeze({
+		version: DESKTOP_DIAGNOSTICS_HOST_BRIDGE_VERSION,
+		reportRootError: (payload: unknown) => {
+			if (!isRendererRootDiagnosticPayload(payload)) {
+				throw new TypeError('renderer root diagnostic payload is invalid');
+			}
+			ipcRenderer.send(
+				'desktop:diagnostics-host:report-root-error',
+				payload,
+			);
 		},
 	}),
 );

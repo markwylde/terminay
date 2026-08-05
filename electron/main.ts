@@ -27,10 +27,12 @@ import {
 	app,
 	BrowserWindow,
 	clipboard,
+	crashReporter,
 	ipcMain,
 	Menu,
 	MessageChannelMain,
 	nativeImage,
+	powerMonitor,
 	safeStorage,
 	screen,
 	shell,
@@ -109,6 +111,15 @@ import {
 } from './control/server';
 import { registerDictationIpcHandlers } from './dictation/ipc';
 import { DictationService } from './dictation/service';
+import {
+	bindAppChildDiagnostics,
+	bindWebContentsDiagnostics,
+} from './diagnostics/electronEvents';
+import { createDiagnosticsHelpMenuItems } from './diagnostics/menu';
+import {
+	bindFatalProcessDiagnostics,
+	initializeDesktopDiagnostics,
+} from './diagnostics/service';
 import { normalizeExternalHttpsUrl } from './externalUrl';
 import { FileExplorerWatchService } from './fileExplorerWatchService';
 import { FileBufferService } from './fileViewer/fileBufferService';
@@ -176,6 +187,30 @@ const customUserDataPath = process.env.TERMINAY_USER_DATA_DIR?.trim();
 if (customUserDataPath) {
 	app.setPath('userData', customUserDataPath);
 }
+
+try {
+	if (process.env.TERMINAY_TEST === '1' && customUserDataPath) {
+		app.setAppLogsPath(path.join(customUserDataPath, 'logs'));
+	} else {
+		app.setAppLogsPath();
+	}
+} catch {
+	process.stderr.write('[Terminay diagnostics] application log path setup failed\n');
+}
+app.commandLine.appendSwitch(
+	'enable-features',
+	'DocumentPolicyIncludeJSCallStacksInCrashReports',
+);
+const desktopDiagnostics = await initializeDesktopDiagnostics({
+	app,
+	crashReporter,
+});
+const unbindFatalProcessDiagnostics =
+	bindFatalProcessDiagnostics(desktopDiagnostics);
+const unbindAppChildDiagnostics = bindAppChildDiagnostics({
+	app,
+	diagnostics: desktopDiagnostics,
+});
 
 export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron');
@@ -783,6 +818,15 @@ function embeddedMacroKeyBytes(key: string): Uint8Array {
 	return new TextEncoder().encode(value);
 }
 
+await desktopDiagnostics.record(
+	{
+		component: 'local-server',
+		event: 'local-server.starting',
+		severity: 'info',
+		source: 'local-server',
+	},
+	{ channel: 'lifecycle' },
+);
 serverTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
 	defaultProjectRoot: () => app.getPath('home'),
@@ -2758,6 +2802,28 @@ function createAppMenu(
 		// Standard multi-window menu (Minimise, Zoom, Bring All to Front, window
 		// list / cycling). macOS injects its own extras (Fill, Centre, etc.).
 		{ role: 'windowMenu' },
+		{
+			label: 'Help',
+			submenu: createDiagnosticsHelpMenuItems({
+				directory: desktopDiagnostics.directory,
+				clearManagedArtifacts: () =>
+					desktopDiagnostics.clearManagedArtifacts(),
+				recordCleared: () => desktopDiagnostics.recordCleared(),
+				reportFailure: (operation, error) => {
+					void desktopDiagnostics.record(
+						{
+							component: 'diagnostics',
+							event: 'diagnostics.writer.degraded',
+							fields: { operation },
+							message: error,
+							severity: 'warning',
+							source: 'diagnostics-menu',
+						},
+						{ channel: 'lifecycle' },
+					);
+				},
+			}),
+		},
 	];
 
 	const menu = Menu.buildFromTemplate(template);
@@ -5955,7 +6021,109 @@ ipcMain.handle(
 	},
 );
 
+const rendererRootDiagnosticKeys = new Map<number, Set<string>>();
+
+function readRendererRootDiagnosticPayload(
+	value: unknown,
+):
+	| {
+			readonly phase: 'bootstrap-import' | 'react-root';
+			readonly name: string;
+			readonly message: string;
+			readonly stack?: string;
+			readonly componentStack?: string;
+	  }
+	| undefined {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return undefined;
+	const payload = value as Record<string, unknown>;
+	if (
+		Object.keys(payload).some(
+			(key) =>
+				!['componentStack', 'message', 'name', 'phase', 'stack', 'version'].includes(
+					key,
+				),
+		)
+	)
+		return undefined;
+	const bounded = (candidate: unknown, maxBytes: number, optional = false) =>
+		(optional && candidate === undefined) ||
+		(typeof candidate === 'string' &&
+			Buffer.byteLength(candidate, 'utf8') <= maxBytes);
+	if (
+		payload.version !== 1 ||
+		(payload.phase !== 'bootstrap-import' && payload.phase !== 'react-root') ||
+		!bounded(payload.name, 128) ||
+		!bounded(payload.message, 2_048) ||
+		!bounded(payload.stack, 6_144, true) ||
+		!bounded(payload.componentStack, 3_072, true)
+	)
+		return undefined;
+	return payload as {
+		readonly phase: 'bootstrap-import' | 'react-root';
+		readonly name: string;
+		readonly message: string;
+		readonly stack?: string;
+		readonly componentStack?: string;
+	};
+}
+
+ipcMain.on(
+	'desktop:diagnostics-host:report-root-error',
+	(event, value: unknown) => {
+		assertTrustedAppSender(event);
+		const payload = readRendererRootDiagnosticPayload(value);
+		if (payload === undefined) return;
+		let keys = rendererRootDiagnosticKeys.get(event.sender.id);
+		if (keys === undefined) {
+			keys = new Set();
+			rendererRootDiagnosticKeys.set(event.sender.id, keys);
+		}
+		const deduplicationKey = JSON.stringify(payload);
+		if (keys.has(deduplicationKey)) return;
+		if (keys.size >= 64) {
+			const oldest = keys.values().next().value;
+			if (oldest !== undefined) keys.delete(oldest);
+		}
+		keys.add(deduplicationKey);
+		void desktopDiagnostics.record(
+			{
+				component: 'renderer',
+				event: 'renderer.root-error',
+				fields: {
+					componentStack: payload.componentStack,
+					name: payload.name,
+					phase: payload.phase,
+				},
+				message: payload.message,
+				severity: 'error',
+				source: `renderer-${event.sender.id}`,
+				stack: payload.stack,
+			},
+			{ channel: 'lifecycle' },
+		);
+	},
+);
+
+app.on('browser-window-created', (_event, window) => {
+	void desktopDiagnostics.record(
+		{
+			component: 'main',
+			event: 'main.window.created',
+			fields: { windowId: window.id },
+			severity: 'info',
+			source: 'window-lifecycle',
+		},
+		{ channel: 'lifecycle' },
+	);
+});
+
 app.on('web-contents-created', (_event, contents) => {
+	bindWebContentsDiagnostics({
+		app,
+		contents,
+		diagnostics: desktopDiagnostics,
+	});
 	bindAppShortcuts(contents);
 
 	contents.once('destroyed', () => {
@@ -5963,6 +6131,7 @@ app.on('web-contents-created', (_event, contents) => {
 			stopProjectDragTracking();
 		}
 		tabBarRectsByWebContents.delete(contents.id);
+		rendererRootDiagnosticKeys.delete(contents.id);
 		detachSessionsForWebContents(contents.id);
 		fileExplorerWatchService.disposeSubscriber(contents.id);
 		fileWatchService.disposeSubscriber(contents.id);
@@ -5972,17 +6141,55 @@ app.on('web-contents-created', (_event, contents) => {
 const handleBeforeQuit = createGracefulQuitHandler({
 	app,
 	shutdown: async () => {
-		const remoteConnections = [
-			...activeRemoteByteConnectionsByWebContents.values(),
-		];
-		activeRemoteByteConnectionsByWebContents.clear();
-		await Promise.all([
-			...remoteConnections.map((connection) => connection.close()),
-			privilegedWebRtcExposure?.shutdown(),
-			desktopRemoteExposure.shutdown(),
-			serverTerminalAuthority?.shutdown(),
-			stopControlServer(),
-		]);
+		let clean = false;
+		try {
+			await desktopDiagnostics.record(
+				{
+					component: 'local-server',
+					event: 'local-server.stopping',
+					severity: 'info',
+					source: 'local-server',
+				},
+				{ channel: 'lifecycle' },
+			);
+			const remoteConnections = [
+				...activeRemoteByteConnectionsByWebContents.values(),
+			];
+			activeRemoteByteConnectionsByWebContents.clear();
+			await Promise.all([
+				...remoteConnections.map((connection) => connection.close()),
+				privilegedWebRtcExposure?.shutdown(),
+				desktopRemoteExposure.shutdown(),
+				serverTerminalAuthority?.shutdown(),
+				stopControlServer(),
+			]);
+			await desktopDiagnostics.record(
+				{
+					component: 'local-server',
+					event: 'local-server.stopped',
+					severity: 'info',
+					source: 'local-server',
+				},
+				{ channel: 'lifecycle' },
+			);
+			clean = true;
+		} catch (error) {
+			await desktopDiagnostics.record(
+				{
+					component: 'local-server',
+					event: 'local-server.failed',
+					message: error,
+					severity: 'error',
+					source: 'local-server',
+				},
+				{ channel: 'lifecycle' },
+			);
+			throw error;
+		} finally {
+			unbindFatalProcessDiagnostics();
+			unbindAppChildDiagnostics();
+			await desktopDiagnostics.close({ clean });
+		}
 	},
 	onShutdownError: (error) => {
 		console.error('[shutdown] graceful cleanup failed', error);
@@ -6040,10 +6247,45 @@ app.on('activate', () => {
 app.whenReady().then(async () => {
 	app.setName('Terminay');
 	app.setAboutPanelOptions({ applicationName: 'Terminay' });
+	powerMonitor.on('resume', () => {
+		void desktopDiagnostics.cleanup();
+	});
+	await desktopDiagnostics.record(
+		{
+			component: 'main',
+			event: 'main.ready',
+			severity: 'info',
+			source: 'main-lifecycle',
+		},
+		{ channel: 'lifecycle' },
+	);
 	ensureNodePtySpawnHelperIsExecutable();
 	setDockIcon();
 	createAppMenu();
-	await applyAgentIntegrationSetting(readTerminalSettings());
+	try {
+		await applyAgentIntegrationSetting(readTerminalSettings());
+		await desktopDiagnostics.record(
+			{
+				component: 'local-server',
+				event: 'local-server.ready',
+				severity: 'info',
+				source: 'local-server',
+			},
+			{ channel: 'lifecycle' },
+		);
+	} catch (error) {
+		await desktopDiagnostics.record(
+			{
+				component: 'local-server',
+				event: 'local-server.failed',
+				message: error,
+				severity: 'error',
+				source: 'local-server',
+			},
+			{ channel: 'lifecycle' },
+		);
+		throw error;
+	}
 	createWindow();
 	applyControlServerSetting();
 });

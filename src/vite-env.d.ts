@@ -5,6 +5,13 @@ import type { AppUpdateStatus, TerminayTestApi } from './types/terminay';
 
 declare global {
 	interface Window {
+		/** Observation-only reporting for failures at the shared React root. */
+		terminayDiagnosticsHost?: {
+			readonly version: 1;
+			reportRootError(
+				payload: import('./types/desktopDiagnostics').RendererRootDiagnosticPayload,
+			): void;
+		};
 		terminayBootstrapDiagnostic?: {
 			record(phase: string, count?: number): void;
 		};
