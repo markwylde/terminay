@@ -458,13 +458,13 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		categoryId: 'ai',
 		title: 'Agents',
 		description:
-			'Track supported coding agents using their native lifecycle hooks and show them in terminal and project status surfaces.',
+			'Track supported coding agents from their process-bound session journals and show them in terminal and project status surfaces.',
 		fields: [
 			makeField({
 				key: 'agentIntegration.enabled',
 				label: 'Agent status and sidebar',
 				description:
-					'Install Terminay-managed Codex and Claude Code hooks, show reliable working/attention/done status, and add the per-project Agents sidebar panel. Turning this off removes only Terminay-managed hooks.',
+					'Discover interactive Codex sessions without modifying provider configuration, show reliable working/attention/done status, and add the per-project Agents sidebar panel.',
 				sectionId: 'agent-integration',
 				categoryId: 'ai',
 				input: 'boolean',
@@ -473,7 +473,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'agent status',
 					'codex',
 					'claude',
-					'hooks',
+					'session journals',
 					'sidebar',
 					'activity',
 				],

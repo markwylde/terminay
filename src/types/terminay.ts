@@ -679,11 +679,11 @@ export interface TerminayTestApi {
     claimed: boolean
     source: string
   } | null>
-  emitAgentHook: (payload: {
+  emitAgentJournalRecord: (payload: {
     provider: import('./agentStatus').AgentProvider
     terminalSessionId: string
-    nativePayload: Record<string, unknown>
-  }) => Promise<number>
+    record: Record<string, unknown>
+  }) => Promise<boolean>
   getMcpControlEnvironment: (
     terminalSessionId: string,
   ) => Promise<{ socketPath: string; token: string }>

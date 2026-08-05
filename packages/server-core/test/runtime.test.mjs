@@ -83,10 +83,10 @@ test("runtime attempts every privileged teardown even when one service fails", a
       remoteExposure: { async shutdown() { calls.push("remote"); } },
       terminal: { async shutdown() { calls.push("terminal"); }, listSessions() { return []; } },
     },
-  }, { stopServices: () => { calls.push("hooks"); } });
+  }, { stopServices: () => { calls.push("journal"); } });
   await runtime.start();
   await assert.rejects(() => runtime.stop(), /shutdown failed/u);
-  assert.deepEqual(calls, ["remote", "terminal", "agents", "hooks"]);
+  assert.deepEqual(calls, ["remote", "terminal", "agents", "journal"]);
   assert.equal(runtime.state, "stopped");
 });
 

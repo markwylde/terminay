@@ -2091,8 +2091,8 @@ if (process.env.TERMINAY_TEST === '1') {
 			ipcRenderer.invoke('test:get-server-terminal-activity', {
 				sessionId,
 			}) as ReturnType<TerminayTestApi['getServerTerminalActivity']>,
-		emitAgentHook: (payload) =>
-			ipcRenderer.invoke('test:emit-agent-hook', payload) as Promise<number>,
+		emitAgentJournalRecord: (payload) =>
+			ipcRenderer.invoke('test:emit-agent-journal-record', payload) as Promise<boolean>,
 		getMcpControlEnvironment: (terminalSessionId) =>
 			ipcRenderer.invoke('test:get-mcp-control-environment', {
 				terminalSessionId,
