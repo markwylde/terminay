@@ -33,7 +33,7 @@ test('Docker server contract builds a non-root, read-only-root image with a boun
 	);
 	assert.match(
 		dockerfile,
-		/--mount=type=cache,id=terminay-npm-cache-node22,target=\/root\/\.npm,sharing=locked/u,
+		/--mount=type=cache,id=terminay-npm-cache-node24,target=\/root\/\.npm,sharing=locked/u,
 	);
 	assert.match(dockerfile, /npm ci/u);
 	assert.ok(

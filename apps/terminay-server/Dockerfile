@@ -19,7 +19,7 @@ RUN --mount=type=cache,id=terminay-apt-cache-bookworm,target=/var/cache/apt,shar
   rm -f /etc/apt/apt.conf.d/docker-clean \
   && apt-get update \
   && apt-get install --yes --no-install-recommends python3 make g++
-RUN --mount=type=cache,id=terminay-npm-cache-node22,target=/root/.npm,sharing=locked \
+RUN --mount=type=cache,id=terminay-npm-cache-node24,target=/root/.npm,sharing=locked \
   npm ci
 
 COPY tsconfig.base.json ./
