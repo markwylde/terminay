@@ -33,6 +33,12 @@ test("privileged Electron sources do not expose an unreviewed native dialog surf
   const sources = await electronTypeScriptSources();
   assert.ok(sources.length > 0, "the Electron source tree must be audited");
   for (const { name, source } of sources) {
+    const isReviewedDiagnosticsMenu = name.endsWith("/electron/diagnostics/menu.ts");
+    if (isReviewedDiagnosticsMenu) {
+      assert.match(source, /import\s*\{[^}]*\bdialog\b[^}]*\}\s*from\s*["']electron["']/u);
+      assert.match(source, /dialog\.showMessageBox\(/u);
+      continue;
+    }
     assert.doesNotMatch(
       source,
       /import\s*\{[^}]*\bdialog\b[^}]*\}\s*from\s*["']electron["']/u,
@@ -42,6 +48,25 @@ test("privileged Electron sources do not expose an unreviewed native dialog surf
       source,
       /require\(\s*["']electron["']\s*\)\.dialog\b/u,
       `${name} accesses Electron's native dialog capability without a reviewed boundary`,
+    );
+  }
+});
+
+test("diagnostics reveal and clear authority is not exposed through a preload bridge", async () => {
+  const preloadSources = (await electronTypeScriptSources()).filter(({ name }) =>
+    /(?:^|\/)\w*preload\.ts$/iu.test(name),
+  );
+  assert.ok(preloadSources.length > 0, "the Electron preload sources must be audited");
+  for (const { name, source } of preloadSources) {
+    assert.doesNotMatch(
+      source,
+      /Reveal Diagnostics Folder|Clear Diagnostics|diagnostics:(?:reveal|clear)|diagnostics\/menu/u,
+      `${name} exposes Desktop-owned diagnostics menu authority`,
+    );
+    assert.doesNotMatch(
+      source,
+      /import\s*\{[^}]*\bdialog\b[^}]*\}\s*from\s*["']electron["']|require\(\s*["']electron["']\s*\)\.dialog\b/u,
+      `${name} exposes Electron's native dialog capability`,
     );
   }
 });
