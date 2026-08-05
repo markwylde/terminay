@@ -5,12 +5,7 @@ import { TerminayClient } from "@terminay/client-core";
 import { createInMemoryTransportPair } from "@terminay/protocol-conformance";
 import {
   AgentStatusService,
-  AGENT_HOOK_SESSION_HEADER,
-  AGENT_HOOK_TOKEN_HEADER,
   createServerCoreComposition,
-  TERMINAY_AGENT_HOOK_ENDPOINT_ENV,
-  TERMINAY_AGENT_HOOK_TOKEN_ENV,
-  TERMINAY_SESSION_ID_ENV,
   TerminalActivityService,
   TerminalService,
   ServerSettingsRepository,
@@ -499,7 +494,6 @@ test("composition is the single owner of agent and PTY lifecycle", async () => {
   const activity = new TerminalActivityService({ serverId: "agent-lifecycle-server" });
   const agents = new AgentStatusService({
     activity,
-    receiver: { tokenFactory: () => "composition-agent-token" },
   });
   let stopCalls = 0;
   const stop = agents.stop.bind(agents);
@@ -521,7 +515,7 @@ test("composition is the single owner of agent and PTY lifecycle", async () => {
   const identity = { serverId: "agent-lifecycle-server", projectId: "project-a", sessionId: "session-a" };
   await composition.terminal.createSession({ projectId: identity.projectId, sessionId: identity.sessionId, cols: 80, rows: 24 });
   assert.equal(agents.listening, true);
-  assert.equal(pty.processes[0].options.env.TERMINAY_AGENT_HOOK_TOKEN, "composition-agent-token");
+  assert.deepEqual(pty.processes[0].options.env ?? {}, {});
 
   await composition.shutdown();
   assert.equal(composition.terminal.getSession(identity).status, "interrupted");
@@ -531,7 +525,7 @@ test("composition is the single owner of agent and PTY lifecycle", async () => {
 
 test("composition coalesces concurrent lifecycle calls and cannot restart after shutdown", async () => {
   const activity = new TerminalActivityService({ serverId: "composition-lifecycle-server" });
-  const agents = new AgentStatusService({ activity, receiver: { tokenFactory: () => "lifecycle-token" } });
+  const agents = new AgentStatusService({ activity });
   let starts = 0;
   let stops = 0;
   const start = agents.start.bind(agents);
@@ -615,7 +609,7 @@ test("activity acknowledgement survives a real client reconnect and remains proj
 test("two clients receive one canonical reduced agent sequence and reconnect to the live snapshot", async () => {
   const pty = createPtyFactory();
   const activity = new TerminalActivityService({ serverId: "agent-sequence-server", now: () => 100 });
-  const agents = new AgentStatusService({ activity, now: () => 100, receiver: { tokenFactory: () => "agent-sequence-token" } });
+  const agents = new AgentStatusService({ activity, now: () => 100 });
   await agents.start();
   const composition = createServerCoreComposition({
     allowUnresolvedTestSessions: true,
@@ -647,8 +641,8 @@ test("two clients receive one canonical reduced agent sequence and reconnect to 
   const removeFirst = firstSubscription.onEvent((event) => firstEvents.push(event.payload));
   const removeSecond = secondSubscription.onEvent((event) => secondEvents.push(event.payload));
   try {
-    await agents.ingestHookPayload(identity, "codex", { hook_event_name: "SessionStart", session_id: "codex-session", private: "never-export" });
-    await agents.ingestHookPayload(identity, "codex", { hook_event_name: "PermissionRequest", session_id: "codex-session", reason: "allow command" });
+    await agents.ingestJournalRecord(identity, "codex", { type: "session_meta", payload: { id: "codex-session", private: "never-export" } });
+    await agents.ingestJournalRecord(identity, "codex", { type: "event_msg", payload: { type: "request_user_input", private: "never-export" } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(firstEvents.length, 2);
     assert.deepEqual(firstEvents, secondEvents);
@@ -678,13 +672,13 @@ test("two clients receive one canonical reduced agent sequence and reconnect to 
   }
 });
 
-test("composed missing provider hooks leave agent state empty while terminal fallback activity remains available", async () => {
+test("a terminal without a process-bound journal keeps fallback activity", async () => {
   const pty = createPtyFactory();
-  const activity = new TerminalActivityService({ serverId: "agent-missing-hook-server", now: () => 100 });
-  const agents = new AgentStatusService({ activity, now: () => 100, receiver: { tokenFactory: () => "missing-hook-token" } });
+  const activity = new TerminalActivityService({ serverId: "agent-no-journal-server", now: () => 100 });
+  const agents = new AgentStatusService({ activity, now: () => 100 });
   const composition = createServerCoreComposition({
     allowUnresolvedTestSessions: true,
-    serverId: "agent-missing-hook-server",
+    serverId: "agent-no-journal-server",
     serverVersion: "1.0.0",
     capabilities: ["agents"],
     ptyFactory: pty,
@@ -692,10 +686,10 @@ test("composed missing provider hooks leave agent state empty while terminal fal
     agents,
     authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "write" }),
   });
-  const identity = { serverId: "agent-missing-hook-server", projectId: "project-a", sessionId: "session-a" };
+  const identity = { serverId: "agent-no-journal-server", projectId: "project-a", sessionId: "session-a" };
   const pair = createInMemoryTransportPair();
   const serverTask = composition.core.accept(pair.server).start();
-  const client = new TerminayClient({ transport: pair.client, clientId: "missing-hook-client" });
+  const client = new TerminayClient({ transport: pair.client, clientId: "no-journal-client" });
   try {
     await composition.start();
     await composition.terminal.createSession({ projectId: identity.projectId, sessionId: identity.sessionId, cols: 80, rows: 24 });
@@ -709,23 +703,6 @@ test("composed missing provider hooks leave agent state empty while terminal fal
     assert.equal(activitySnapshot.result.sessions[identity.sessionId].source, "raw:output");
     assert.equal(activitySnapshot.result.sessions[identity.sessionId].provider, undefined);
 
-    const env = pty.processes[0].options.env;
-    const response = await fetch(env[TERMINAY_AGENT_HOOK_ENDPOINT_ENV], {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        [AGENT_HOOK_TOKEN_HEADER]: env[TERMINAY_AGENT_HOOK_TOKEN_ENV],
-        [AGENT_HOOK_SESSION_HEADER]: env[TERMINAY_SESSION_ID_ENV],
-        "x-terminay-agent-provider": "codex",
-      },
-      body: JSON.stringify({ hook_event_name: "SessionStart", session_id: "recovered-codex-session", private: "must-not-cross-transport" }),
-    });
-    assert.equal(response.status, 202);
-    const recovered = await client.query("agent.snapshot");
-    const entries = Object.values(recovered.result.entries);
-    assert.equal(entries.length, 1);
-    assert.equal(entries[0].activationTerminalSessionId, identity.sessionId);
-    assert.doesNotMatch(JSON.stringify(recovered.result), /missing-hook-token|must-not-cross-transport/);
   } finally {
     await client.close().catch(() => undefined);
     await serverTask.catch(() => undefined);
@@ -736,8 +713,7 @@ test("composed missing provider hooks leave agent state empty while terminal fal
 test("project-scoped clients receive only their own agent snapshots and live events", async () => {
   const pty = createPtyFactory();
   const activity = new TerminalActivityService({ serverId: "agent-scope-server", now: () => 100 });
-  let token = 0;
-  const agents = new AgentStatusService({ activity, now: () => 100, receiver: { tokenFactory: () => `scope-${++token}` } });
+  const agents = new AgentStatusService({ activity, now: () => 100 });
   await agents.start();
   const composition = createServerCoreComposition({
     allowUnresolvedTestSessions: true,
@@ -770,8 +746,8 @@ test("project-scoped clients receive only their own agent snapshots and live eve
   const removeA = aSubscription.onEvent((event) => aEvents.push(event.payload));
   const removeB = bSubscription.onEvent((event) => bEvents.push(event.payload));
   try {
-    await agents.ingestHookPayload(projectA, "codex", { hook_event_name: "SessionStart", session_id: "agent-a" });
-    await agents.ingestHookPayload(projectB, "codex", { hook_event_name: "SessionStart", session_id: "agent-b" });
+    await agents.ingestJournalRecord(projectA, "codex", { type: "session_meta", payload: { id: "agent-a" } });
+    await agents.ingestJournalRecord(projectB, "codex", { type: "session_meta", payload: { id: "agent-b" } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     const snapshotA = await a.client.query("agent.snapshot");
     const snapshotB = await b.client.query("agent.snapshot");

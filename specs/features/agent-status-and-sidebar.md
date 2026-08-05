@@ -2,505 +2,212 @@
 
 ## Summary
 
-Terminay shows recognized Codex and Claude Code sessions as provider-neutral
-agent entries. Provider lifecycle hooks are authoritative: drivers normalize
-native hook payloads into one canonical state model, keyed to the exact
-Terminay terminal session in which the agent runs.
+Terminay observes supported coding-agent session journals and reduces their
+native records into provider-neutral agent entries. A journal is authoritative
+only after Terminay binds its live writer process to the exact server-owned PTY
+that launched it.
 
-The same model feeds:
-
-- a compact status indicator on the owning terminal tab;
-- a project-scoped **Agents** pane with root agents and in-process subagents;
-- the header notification/activity dropdown.
-
-Raw terminal signals remain available only as terminal-activity fallback. They
-must not override an authoritative agent entry. See
+The same canonical model feeds terminal-tab status, a project-scoped **Agents**
+pane with roots and in-process subagents, and the header activity dropdown.
+Raw terminal signals remain a lower-confidence fallback when a supported
+journal cannot be discovered or parsed. See
 [terminal-activity-signals.md](./terminal-activity-signals.md).
 
-## Ownership
+## Ownership and privacy
 
-The agent hook receiver, trust, drivers, canonical snapshot, acknowledgement,
-and terminal/project mapping live in Terminay Server under
-[server-owned workspace state](./server-owned-workspace-state.md). Connected
-clients subscribe to the same ordered server snapshot, so reload or another
-client cannot create a competing agent authority. Provider hooks remain scoped
-to the exact immutable server terminal session.
+Journal discovery, process binding, incremental reading, driver selection,
+provider normalization, canonical snapshots, acknowledgement, and
+terminal/project mapping live in Terminay Server. Connected clients subscribe
+to the same ordered reduced snapshot. Clients never read provider journals or
+create competing agent state.
+
+Provider journals are private privileged inputs. Their raw records, prompts,
+responses, instructions, reasoning, tool arguments, and tool output never cross
+the server boundary and are never logged by the integration.
 
 ## Product outcomes
 
-- Make it obvious which agents are working, need the user, or have finished.
-- Keep provider-specific event formats out of client components and stores.
-- Associate every root agent and child with the exact terminal the user can
-  activate.
-- Preserve user-owned provider hook configuration during install and uninstall.
-- Survive client reloads and reject stale or out-of-order lifecycle events.
-- Degrade safely when hooks are unavailable without pretending fallback guesses
-  are authoritative.
+- Running `codex` normally in an interactive Terminay terminal is discovered
+  without editing provider configuration or installing global integrations.
+- Agent state remains associated with the exact terminal the user can activate.
+- Provider file formats and versions stay out of client components and stores.
+- Newer compatible provider versions reuse the latest known mapping.
+- Unsupported, missing, malformed, or ephemeral journals degrade safely to
+  terminal activity.
 
 ## Canonical model
 
-### Providers
-
-The initial canonical provider IDs are:
-
-- `codex`
-- `claude-code`
-
-Display labels may be `Codex` and `Claude Code`. Native event names and config
-formats are driver details, not additional providers or UI states.
-
-### Operational states and RAG treatment
+The initial canonical provider is `codex`. The driver registry permits future
+providers such as `claude-code`, but Terminay does not claim Claude Code journal
+support until a driver and process-bound source are implemented and tested.
 
 | State | Meaning | Indicator |
 | --- | --- | --- |
-| `working` | The agent is processing a prompt, running a tool, or otherwise making progress. | Yellow/amber, with restrained motion. |
-| `waiting` | The agent has explicitly requested permission, an answer, or other user input. | Red. |
-| `blocked` | The agent cannot make progress because of an explicit blocking lifecycle event. | Red, with an accessible label distinct from waiting. |
-| `done` | The provider reports that the current turn or agent run has stopped. | Green. |
-| `idle` | The session exists but has no active work or pending result to emphasize. | Neutral or hidden on compact surfaces. |
+| `working` | The agent is processing a turn or performing tool/subagent work. | Yellow/amber, with restrained motion. |
+| `waiting` | The provider explicitly requests approval, an answer, or other user input. | Red. |
+| `blocked` | A supported record explicitly reports a blocking condition. | Red, with an accessible label distinct from waiting. |
+| `done` | The current turn or agent run completed, failed, or was cancelled. | Green. |
+| `idle` | The live session exists without active work or a pending result to emphasize. | Neutral or hidden on compact surfaces. |
 
-`working`, `waiting`, `blocked`, `done`, and `idle` are the only canonical
-operational states. The UI must not add inferred states such as
-“thinking”, “planning”, “tooling”, “offline”, or “success” without a later
-model change.
+Acknowledgement is independent of operational state. Viewing an entry clears
+its unread treatment without rewriting its provider-derived state. A later
+meaningful transition can make it unread again.
 
-The indicator conveys state through text/ARIA labels as well as color.
-Animation honors reduced-motion preferences.
+A root represents one live provider session bound to a Terminay PTY. A
+provider-native child is represented beneath that root and normally activates
+the same terminal. Stable native session, turn, child, and agent IDs are used
+when available; display text is never an identity key. Child transitions do
+not replace root state, and a child stop updates only that child.
 
-### Acknowledgement is orthogonal
+## Exact terminal identity
 
-Acknowledgement/unread is not an operational state. Each entry independently
-tracks whether its latest meaningful transition still needs acknowledgement.
+Terminay records the spawned shell PID for every immutable
+`serverId`/`projectId`/`sessionId` terminal identity. When a supported provider
+becomes the foreground process, the privileged host discovers journal files
+held open by that provider process or its descendants. A journal becomes
+authoritative only when its writer belongs to the exact PTY process tree.
 
-- `markAcknowledged` changes acknowledgement metadata only.
-- Acknowledging a `working` agent leaves it `working`.
-- Acknowledging a `waiting` or `blocked` agent leaves its red state intact; it
-  only removes the unread/count treatment.
-- Acknowledging `done` leaves it `done`.
-- A later meaningful lifecycle transition can make an entry unacknowledged
-  again.
+The binding is immutable for one live provider-process incarnation. A resumed
+provider session may reopen the same journal in another terminal; the new
+writer creates a new binding incarnation and activation terminal without
+allowing stale events from the previous incarnation to mutate it.
 
-This distinction prevents “viewing” an agent from lying about what the provider
-said it is doing.
+CWD, filename timestamps, terminal title, active tab, and “closest match” logic
+must not establish an authoritative binding. A host that cannot prove the
+writer relationship uses terminal fallback instead.
 
-Unread treatment is rendered separately through counts, row accents, or other
-notification chrome. A compact surface may request a red needs-attention
-variant, but that presentation does not redefine the stored operational state.
+## Journal source contract
 
-### Root entries and subagents
+A provider journal source:
 
-A root entry represents the provider process associated with a Terminay PTY.
-An in-process subagent is a child entry in that root's roster, not a new root.
+1. discovers an open native journal beneath the effective provider home;
+2. proves that its writer descends from the registered PTY shell process;
+3. reads a bounded initial window and then only appended bytes;
+4. buffers an incomplete final JSONL line until it is completed;
+5. detects truncation, replacement, writer exit, and process-incarnation change;
+6. emits raw records only to the selected privileged driver;
+7. stops all file/process observation when the terminal, integration, or server stops.
 
-At minimum, entries carry stable identity, provider, canonical state,
-acknowledgement, state timestamps, last-event timestamp, and activation
-terminal session ID. Provider/model/prompt metadata is optional and displayed
-only when the driver supplies it.
+Discovery is retried briefly because foreground observation can arrive before
+the journal is opened. Expensive open-file/process inspection is used for
+initial binding, not for every appended record. Symlinks, non-regular files,
+paths outside the canonical sessions root, oversized records, invalid JSON,
+and unbounded growth are handled defensively.
 
-Child rules:
+## Versioned driver contract
 
-- Native subagent-start/stop events or a child `agent_id` update the child
-  roster.
-- A child transition does not replace the root agent's operational state.
-- A child keeps an explicit `parentAgentId`/root relationship.
-- A child without its own PTY uses the root's
-  `activationTerminalSessionId`.
-- Stable child identity comes from the provider's child/agent ID, scoped to the
-  owning root and activation terminal; display text is never an identity key.
-- A stop event updates or retires the matching child only. It must not mark an
-  unrelated child or the root as done.
+The driver abstraction is identified by `(provider, mappingVersion)`, for
+example `(codex, 0.1)`. A driver recognizes session metadata, maps a strict
+allowlist of native records to canonical lifecycle events, and reads only
+bounded lifecycle/display metadata. It never focuses UI, infers terminal
+ownership, reads arbitrary paths, mutates the store directly, or exposes raw
+records.
 
-## Exact terminal and project identity
+Mapping versions describe Terminay parsers. Provider CLI versions are
+normalized to major/minor. The registry chooses the greatest mapping version
+less than or equal to the running provider version. A provider newer than all
+known mappings uses the newest mapping optimistically; one older than all
+mappings uses the oldest. Unknown records are ignored so additive changes are
+compatible.
 
-When Terminay creates a local PTY, it injects:
+Each mapping has provider-owned JSONL fixtures and contract tests. A
+compatibility script runs a candidate provider-version fixture against the
+mapping the registry would select. Passing means no new mapping is required;
+semantic failure requires a new mapping and fixtures without changing earlier
+mappings.
 
-- `TERMINAY_SESSION_ID`: the opaque Terminay terminal session UUID;
-- `TERMINAY_AGENT_HOOK_ENDPOINT`: the loopback lifecycle receiver URL;
-- `TERMINAY_AGENT_HOOK_TOKEN`: a receiver authentication secret.
+## Codex journal mapping
 
-Managed provider hooks inherit these values from the agent process and include
-them when delivering events. Terminay Server resolves the event by the exact
-`TERMINAY_SESSION_ID`; terminal title, CWD, provider process name, active tab,
-and “closest match” logic are forbidden for identity.
+Codex sessions live below the effective `CODEX_HOME/sessions` root; when
+`CODEX_HOME` is unset, the host account's `.codex/sessions` root is used. Shell
+snapshots are startup artifacts and are not lifecycle sources.
 
-The terminal session maps to its owning Terminay project and panel in server
-state. A root entry's `activationTerminalSessionId` is that session ID. An
-in-process child inherits it unless the provider proves the child owns a
-different Terminay PTY.
+The first supported mapping is `(codex, 0.1)`. It accepts later Codex versions
+until a divergent mapping is added. The initial `session_meta` provides the
+stable provider session ID, CLI version, source, and bounded metadata.
 
-Unknown, exited, or cross-server session IDs are rejected or ignored safely.
-The runtime must not attach such events to whichever terminal happens to be
-focused.
-
-## Event ordering and reducer behavior
-
-Drivers emit normalized lifecycle events with an event timestamp, monotonically
-increasing sequence, and stable agent identity. The store is deterministic:
-
-- accept newer events for an entry;
-- reject out-of-order events that would rewind it;
-- keep `stateStartedAt` unchanged when an event repeats the same state;
-- update `stateStartedAt` when the canonical state changes;
-- update acknowledgement independently;
-- keep root and child reductions isolated;
-- publish immutable snapshots and subscription updates.
-
-Terminal session closure or an explicit agent-exit event ends live association
-and prevents later stale hook events from resurrecting the entry. A newly
-started provider session in the same terminal must have a distinct stable
-agent/session identity.
-
-## Driver contract
-
-Provider drivers are the only modules that understand native hook payloads and
-configuration. A driver/registry exposes the focused capabilities needed by the
-runtime:
-
-1. identify its canonical provider;
-2. validate and normalize a native payload into zero or one canonical agent
-   lifecycle event;
-3. report managed-hook installation status;
-4. install the Terminay-owned hook entries idempotently;
-5. uninstall only the Terminay-owned entries.
-
-Normalization may return no event for unsupported or malformed native input.
-Drivers do not focus UI, infer projects, mutate the agent-status store directly,
-or parse terminal output.
-
-The server receiver:
-
-- listens only on loopback;
-- accepts only the intended HTTP method/path and JSON content;
-- validates the bearer/token secret and exact terminal identity;
-- caps request bodies and rejects malformed JSON;
-- sends validated payloads through the driver registry;
-- stamps or accepts ordering metadata and publishes ordered snapshots through
-  the application protocol.
-
-Secrets and full native payloads are not logged or exposed to clients.
-
-The server-core receiver binds only to a loopback address, retains a digest
-of each per-session hook token rather than the token itself, and enforces the
-exact registered server/project/session scope on every request. It rejects
-oversized or malformed JSON before normalization. A driver may inspect the
-bounded native object, but only a validated provider, agent identity, state,
-sequence, and acknowledgement update can enter the canonical snapshot; the
-native payload and caller-provided source are never published to clients.
-
-## Provider mappings
-
-Drivers map native lifecycle meaning, not message text:
-
-| Native meaning or hook | Canonical result |
+| Codex record | Canonical result |
 | --- | --- |
-| Session starts | root `idle` until the first work event |
-| Prompt/turn starts or resumes | root `working` |
-| Tool activity | corresponding root or child `working` |
-| `PermissionRequest` | corresponding entry `waiting` |
-| `request_user_input` / `AskUserQuestion` | corresponding entry `waiting` |
-| Explicit normalized blocked lifecycle event | corresponding entry `blocked` |
-| `Stop` / turn complete | corresponding entry `done` |
-| `StopFailure` | corresponding entry `done`, with available error metadata; it is not a new color/state |
-| Session stop | corresponding root `idle` and inactive |
-| Agent/terminal exit | corresponding entry `done` and inactive |
-| Subagent start/child `agent_id` | create or update child; do not replace root state |
-| Subagent stop | update/finish the matching child only |
+| `session_meta` with `originator: codex-tui` | root `session.started` / `idle` |
+| `event_msg/task_started` | root `turn.started` / `working` |
+| tool/item begin or callable response item | corresponding root or child `working` |
+| execution/patch/permission approval request | corresponding entry `waiting` |
+| `event_msg/request_user_input` or elicitation request | corresponding entry `waiting` |
+| matching response/resolution or subsequent progress | finish the wait and resume `working` |
+| `event_msg/task_complete` | corresponding entry `done` |
+| error or aborted completion | `done` with error/cancelled outcome unless explicitly blocking |
+| collaboration/subagent start, activity, wait, resume, and close | create/update the matching child |
+| `event_msg/shutdown_complete` or confirmed writer/process exit | root inactive |
 
-### Codex
+Sequence numbers come from accepted record order within one binding
+incarnation. Provider timestamps are used only when valid. Replayed initial
+windows and repeated records cannot rewind an entry.
 
-The Codex driver consumes supported native hook payloads and associates them
-with the inherited Terminay session environment. Prompt/session/tool events
-produce `working`; explicit user-input requests produce `waiting`; stop
-boundaries produce `done`; child agent IDs maintain the subagent roster. The
-managed `SessionEnd` hook retires the root session when the CLI exits.
+## Agents pane and activation
 
-Terminal spinner output and OSC/BEL notifications are not canonical Codex
-events. If managed hooks are unavailable, the existing Codex terminal-signal
-profile may provide clearly fallback-derived terminal activity.
+The **Agents** pane is an ordinary collapsible project-sidebar section beside
+Explorer and Git. It shows only roots whose exact activation terminal belongs
+to the current project and nests children beneath them. Rows use stable ordering
+and existing tree geometry. Missing metadata is omitted and prompts are bounded.
 
-### Claude Code
+Activating a row activates its exact project and terminal panel, focuses the
+terminal, and acknowledges that entry without changing operational state. No
+approximate terminal is focused if the binding is unavailable.
 
-The Claude Code driver consumes supported hook events from the managed entries
-in `~/.claude/settings.json`. Session/prompt/tool activity produces `working`;
-`PermissionRequest` and explicit question/input tools produce `waiting`;
-stop boundaries produce `done`; subagent start/stop updates children. The
-initial driver does not infer `blocked` from `StopFailure`; it records a `done`
-result with an error outcome.
+## Settings and display
 
-Claude's `OSC 9;4` progress and notifications remain fallback terminal signals,
-not canonical lifecycle authority.
+**Settings → AI → Agents → Agent status and sidebar** is persisted and enabled
+by default. It controls journal discovery and agent UI surfaces. It never
+installs, edits, trusts, or removes provider hooks or configuration.
 
-Drivers must ignore native event names they do not explicitly support rather
-than guessing a state from arbitrary payload text.
+Disabling stops watchers, clears live bindings and the reduced snapshot, and
+prevents discovery. Re-enabling discovers subsequently foregrounded providers
+and may rescan currently live ones; it does not revive stale entries.
 
-## Hook installation, preservation, and uninstall
+Bound roots render the canonical RAG glyph on terminal tabs. The header
+aggregates unacknowledged meaningful entries: waiting/blocked receive priority,
+done remains until acknowledged, and working may be shown for navigation.
 
-Initial managed configuration targets:
+## Persistence, errors, and fallback
 
-- Codex: `~/.codex/hooks.json`;
-- Claude Code: `~/.claude/settings.json`.
+The server republishes its in-memory reduced snapshot after client reload.
+Entries do not survive a server restart as Terminay history. A live provider can
+be rebound and a bounded journal tail replayed to reconstruct current state.
 
-Codex hook state is index- and hash-trusted in `~/.codex/config.toml`.
-Terminay appends new Codex groups so existing user hook indexes do not move,
-keeps an existing Terminay group at its current index, reconciles the exact
-managed hashes, and removes only its matching trust blocks on uninstall.
-
-Filesystem and home-directory paths are injectable in tests.
-
-Server-core owns the JSON hook reconciliation for both embedded and standalone
-hosts. Hosts provide the configured home and script roots through an injected
-filesystem boundary; no Electron application path is assumed. The global hook
-files contain only a static managed command and never a per-terminal endpoint,
-session ID, or receiver token.
-
-Installation is reconciliation, not replacement:
-
-- parse the existing config safely;
-- preserve every user-owned hook, matcher, setting, and unknown field;
-- add only uniquely identifiable Terminay-owned entries;
-- avoid duplicates on repeated install;
-- place the Terminay hook before user hooks when the provider format preserves
-  hook ordering;
-- use an argv/command representation that is safe for spaces and shell
-  metacharacters;
-- write through a same-directory temporary file and atomic rename where
-  practical;
-- never persist the per-terminal receiver token in global config.
-
-The managed command reads the endpoint, token, and session ID from the agent's
-inherited environment, posts a bounded JSON request to loopback, and exits
-quickly. Hook delivery failure must not block or change the provider's own hook
-chain.
-
-Uninstall:
-
-- removes only entries that can be positively identified as Terminay-owned;
-- preserves user hooks before and after those entries;
-- preserves unrelated config formatting/fields as far as the selected parser
-  permits;
-- is idempotent when no Terminay entry exists;
-- refuses destructive cleanup when ownership is ambiguous.
-
-Invalid config produces an actionable error and remains untouched. Permission,
-parse, and write failures fail closed; Terminay must not truncate or silently
-recreate an unreadable user config.
-
-## Agents pane
-
-The **Agents** pane is an ordinary collapsible section in the project sidebar,
-alongside Explorer and Git. It does not introduce a second sidebar tab or
-replace the other project tools. The pane uses presentation-only components
-over the canonical snapshot.
-
-### Filtering and order
-
-- Show only roots whose `activationTerminalSessionId` belongs to the current
-  project.
-- Show each matching root's children directly beneath it.
-- Do not leak agents from other project tabs into the active project's pane.
-- Use deterministic ordering. Active/needs-user entries may be emphasized, but
-  entries must not jump unpredictably on every metadata update.
-- Show a concise empty state when the project has no recognized agents.
-
-Each root row uses a useful driver/session description as its primary title
-when available, otherwise its terminal/tab title, prompt, or provider fallback.
-The terminal/tab title remains visible in the row metadata when it is not the
-primary title. Missing optional metadata is omitted rather than replaced by
-invented values. Child rows omit provider/model metadata inherited unchanged
-from their parent.
-
-Ended provider sessions and completed child entries remain in status history
-but are excluded from the live Agents roster. A confirmed provider-process
-return to the known terminal shell may retire a live association when hooks do
-not report session end; this fallback does not infer a completion outcome.
-
-Prompts are rendered on one ellipsized line; the full value remains available
-through the row tooltip. Root rows with children expose a disclosure control
-that shows the child count and expands/collapses that root's subagent group.
-Child groups are collapsed by default, never auto-expand when a child arrives,
-and retain their manual per-project expansion state while switching projects
-or remounting the sidebar.
-Agent rows reuse the Explorer/Git tree geometry and type scale: aligned
-16-pixel disclosure/status columns, 13-pixel primary labels, 11-pixel metadata,
-and 12 pixels of additional indentation per child depth.
-Subagent prompt/name metadata is taken directly from its lifecycle payload when
-available. When a provider's subagent-start payload omits it, the driver may
-identify the preceding launch tool so the receiver can correlate its bounded
-task metadata with the next child start event.
-For Codex, `SubagentStart` omits the task name while supplying the child
-`transcript_path`. The Codex driver reads only the bounded structured
-`session_meta` record, verifies its child and parent thread IDs, and uses the
-final `agent_path` component as the child display name.
-
-Explorer, Agents, and Git are vertically reorderable with pointer-driven header
-handles. Reordering tracks real pointer movement only on the Y axis, preserves
-collapse and split-height state, and persists the resulting order as the
-default for newly created project tabs. The drag handle also supports Up/Down arrow
-keys.
-
-### Click to focus
-
-Activating a root row:
-
-1. activates the owning project if necessary;
-2. resolves the exact `activationTerminalSessionId` to its panel;
-3. activates that Dockview panel;
-4. focuses the terminal;
-5. marks the selected entry acknowledged without changing its state.
-
-Activating an in-process child follows the same flow using the child's
-`activationTerminalSessionId`, which normally focuses the root terminal. If
-the exact session/panel no longer exists, keep the app stable, show/retain a
-non-destructive unavailable state as implemented, and do not focus an
-approximate terminal.
-
-### Settings toggle
-
-**Settings → AI → Agents → Agent status and sidebar** is a persisted boolean and is
-enabled by default.
-
-Enabling it reconciles the Terminay-managed Codex and Claude Code hook entries
-and enables the terminal-tab, project-sidebar panel, and header status surfaces. Disabling it
-removes only Terminay-managed hook entries and hides/disables those agent
-surfaces. It does not remove user-owned hooks or unrelated provider settings.
-
-The server is the runtime authority for this setting. While disabled it issues
-no new hook credentials, revokes every existing session lease, clears the
-reduced agent snapshot, and rejects subsequent hook delivery using a revoked
-lease. Re-enabling permits fresh leases for subsequently registered terminals;
-it never revives the pre-disable roster. Managed-hook reconciliation remains
-best effort: an unavailable provider configuration is reported diagnostically
-without changing the committed setting or inventing agent state.
-
-The existing Explorer/Git layout settings and the terminal-signal fallback
-settings remain independent.
-
-## Tab indicator and notification dropdown
-
-Terminal tabs with a recognized root agent render the canonical RAG status
-glyph. Canonical agent status is not encoded by repurposing the ordinary
-terminal-activity underline. Non-agent terminals keep existing fallback
-activity indicators.
-
-The header notification/activity control aggregates unacknowledged meaningful
-agent entries alongside any existing terminal-activity items:
-
-- counts are derived from acknowledgement plus canonical state, not from color
-  alone;
-- waiting/blocked items receive needs-user priority;
-- done items remain available until acknowledged;
-- working may be shown for navigation without being treated as a needs-user
-  notification;
-- selecting an item uses the same exact click-to-focus behavior as the Agents
-  pane and acknowledges only that entry;
-- entries include enough provider/project/terminal context to distinguish
-  similarly named agents;
-- acknowledged states may remain visible in the project pane while leaving the
-  unread dropdown/count.
-
-No native OS notification is required by this feature.
-
-## Persistence and freshness
-
-Terminay Server owns the canonical snapshot and republishes it after a client
-reload. This preserves lifecycle state and acknowledgement while the server
-process remains alive.
-
-Agent entries do not survive a server restart and do not provide historical
-agent runs. The persisted setting survives restart, but the operational
-snapshot begins empty. Within one server run:
-
-- the latest accepted entry remains current until a newer ordered event or
-  terminal lifecycle event arrives;
-- repeated same-state events preserve `stateStartedAt`;
-- a terminal exit emits a final inactive `done` transition for active roots;
-- the receiver rejects events for terminal sessions that are no longer active;
-- there is no timer that silently rewrites `working`, `waiting`, or `blocked`
-  merely because hooks become quiet.
-
-## Error and fallback behavior
-
-- Hook receiver errors are isolated from PTY input/output and agent execution.
-- Invalid authentication, path, method, body size, JSON, provider, event, or
-  terminal identity is rejected without changing state.
-- Driver normalization errors do not partially update a snapshot.
-- Hook-install status/error is reportable without exposing secrets.
-- Missing hooks may leave no canonical agent entry. Terminal signals can still
-  produce ordinary fallback activity for that terminal.
-- A hook-backed entry never accepts a state transition inferred from raw
-  output, process names, terminal titles, OSC payload text, or `BEL`.
-- When an exact activation terminal disappears, clicking an entry never falls
-  through to a title/CWD match.
-- Subagent payload errors cannot overwrite root identity or state.
+- Unsupported, missing, inaccessible, ephemeral, unbound, oversized, or
+  malformed journals leave the terminal on terminal-activity fallback.
+- A bound journal is authoritative; terminal output, spinner frames, BEL, and
+  OSC notifications cannot overwrite it.
+- Observation failure retains the last state until process/terminal lifecycle
+  retires it; no quiet timer invents a transition.
+- Raw journal bytes never enter snapshots, telemetry, logs, renderer APIs, or
+  remote transports. A bounded user-message preview may populate the existing
+  agent label; model output, command arguments, and tool results are discarded.
 
 ## Acceptance tests
 
-### Store and ordering
-
-1. The canonical store accepts `working → waiting → working → done`, preserves
-   `stateStartedAt` for same-state updates, and changes it on state changes.
-2. An older event cannot rewind a newer entry.
-3. `markAcknowledged` changes acknowledgement only for the target entry.
-4. A child event changes only the matching child; root and sibling states are
-   preserved.
-5. Terminal/agent exit prevents stale events from resurrecting an ended entry.
-
-### Runtime and security
-
-6. Every local PTY receives a unique exact session ID plus endpoint/token
-   environment.
-7. The loopback receiver accepts a valid bounded authenticated request and
-   rejects wrong method/path/token, malformed JSON, oversized bodies, and
-   unknown terminal IDs without mutation.
-8. Snapshot publication survives client reload and never exposes the receiver
-   token.
-9. Session cleanup removes or ends only entries for the closed terminal.
-
-### Drivers and hooks
-
-10. Codex and Claude fixture payloads normalize to the canonical mappings above.
-11. Permission/question events become `waiting`; stop events become `done`;
-    Claude Code `StopFailure` is `done` with an error outcome; an explicit canonical
-    `wait.started` with state `blocked` becomes `blocked`.
-12. Subagent start/stop and child IDs maintain stable lineage without replacing
-    the root state.
-13. Install twice creates one Terminay-owned hook set and preserves all user
-    hooks/settings.
-14. Uninstall removes only Terminay-owned entries; malformed/ambiguous configs
-    remain byte-for-byte untouched.
-15. Managed hook commands handle paths with spaces, use inherited identity and
-    a bounded timeout, and do not persist secrets.
-
-### UI
-
-16. The RAG glyph and accessible label match every canonical state; reduced
-    motion disables working animation.
-17. The Agents pane shows only the active project's roots and their children in
-    deterministic order; prompts stay on one ellipsized line and child groups
-    expose an accessible count/disclosure control. Child groups start collapsed,
-    do not auto-expand, and retain manual expansion state across project switches.
-18. Clicking a root or in-process child activates its exact terminal and
-    acknowledges it without changing operational state.
-19. A missing terminal does not activate a similarly titled terminal.
-20. Disabling the feature removes only Terminay-managed hooks, hides agent
-    surfaces, and preserves unrelated user/provider configuration; re-enabling
-    reconciles a single managed hook set.
-21. The header dropdown prioritizes unacknowledged waiting/blocked entries,
-    navigates by exact session ID, and removes an entry from unread counts after
-    acknowledgement.
-22. Driver-identified subagent launch metadata supplies the child name/prompt
-    when the provider's subagent-start payload omits it.
-23. Explorer, Agents, and Git can be reordered vertically by drag handle or
-    keyboard, and the chosen order persists.
-22. A hook-backed agent ignores spinner output, OSC progress, and bell state
-    changes; an uninstrumented terminal still uses fallback activity.
+1. Starting ordinary interactive Codex creates no provider config files and
+   requires no global hook installation.
+2. `task_started` then `task_complete` map to `working` then `done`.
+3. A journal is accepted only when its writer belongs to the exact Terminay PTY tree.
+4. Concurrent Codex terminals with the same CWD never exchange events.
+5. Approval and user-input records produce `waiting`; later progress resumes working.
+6. Subagent records update only the matching child.
+7. `(codex, 0.1)` fixtures pass; a compatible `0.2` fixture passes the
+   compatibility script without adding a mapping.
+8. A newer unknown version selects the latest known mapping and ignores unknown records.
+9. Partial lines, truncation, replacement, oversized records, malformed JSON,
+   and inaccessible files fail safely without exposing contents.
+10. Disabling clears observation and state without touching `.codex`.
+11. Client reload/project switching preserve scope and create no duplicate watchers.
+12. Electron end-to-end coverage runs only through `npm run test:e2e`.
 
 ## Non-goals
 
-- Inferring canonical states from terminal output.
-- A user-defined or third-party driver/plugin API.
-- Remote-web Agents pane parity.
-- Native desktop notifications.
-- Persisted transcripts or complete historical event logs.
-- Starting, stopping, or replying to an agent from the Agents pane.
-- Inventing separate colors for every provider-native hook.
+- Installing or reconciling provider hooks.
+- Modifying provider hook, config, or trust files.
+- Redirecting or mirroring the user's full `CODEX_HOME`.
+- Treating CWD, timestamps, titles, or active-tab state as ownership proof.
+- Exposing or indexing conversation contents beyond the bounded agent label.
+- Replacing the interactive provider TUI with an app-server frontend.
+- Claiming Claude Code support before its source and driver are implemented.

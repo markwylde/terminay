@@ -104,12 +104,10 @@ test('packaging-sensitive runtime dependencies have deterministic resolution dec
 			claudeCode: 'TERMINAY_CLAUDE_CODE_COMMAND || claude',
 			resolution: 'server PATH/env',
 		},
-		hooks: {
-			scriptDirectory: '.terminay/agent-hooks',
-			// biome-ignore lint/suspicious/noTemplateCurlyInString: provider is a documented runtime placeholder.
-			scriptPattern: 'terminay-${provider}-agent-hook.sh',
-			mode: '0700',
-			delivery: 'loopback-http',
+		agentJournals: {
+			provider: 'codex',
+			ownership: 'pty-process-tree',
+			delivery: 'rollout-jsonl',
 		},
 		mcp: {
 			command: 'terminay-mcp',
