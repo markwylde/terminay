@@ -1,15 +1,4 @@
-import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
 import type { AgentLifecycleEvent, AgentModelMetadata, AgentProvider } from "./agentTypes.js";
-import {
-  CLAUDE_CODE_MANAGED_HOOK_EVENTS,
-  CODEX_MANAGED_HOOK_EVENTS,
-  type ManagedHookOptions,
-  type ManagedHookReconciler,
-  type ManagedHookStatus,
-  claudeCodeManagedHookReconciler,
-  codexManagedHookReconciler,
-} from "./managedHooks.js";
 
 export interface AgentDriverContext {
   readonly activationTerminalSessionId: string;
@@ -18,197 +7,218 @@ export interface AgentDriverContext {
   readonly providerSessionId?: string;
 }
 
+export interface AgentJournalSession {
+  readonly providerSessionId: string;
+  readonly providerVersion?: string;
+}
+
+/** A driver is one provider journal schema at one mapping version. */
 export interface AgentDriver {
   readonly provider: AgentProvider;
+  readonly mappingVersion: string;
   readonly displayName: string;
-  readonly hooks: ManagedHookReconciler;
-  normalize(nativePayload: unknown, context: AgentDriverContext): AgentLifecycleEvent | null;
+  inspectSession(record: unknown): AgentJournalSession | null;
+  normalize(record: unknown, context: AgentDriverContext): AgentLifecycleEvent | null;
+}
+
+export interface ResolvedAgentDriver {
+  readonly driver: AgentDriver;
+  readonly requestedVersion?: string;
+  readonly mappingVersion: string;
 }
 
 export interface AgentDriverRegistry {
   readonly drivers: readonly AgentDriver[];
-  get(provider: string): AgentDriver | undefined;
-  normalize(provider: string, nativePayload: unknown, context: AgentDriverContext): AgentLifecycleEvent | null;
-  normalizeAsync(provider: string, nativePayload: unknown, context: AgentDriverContext): Promise<AgentLifecycleEvent | null>;
-  hookStatus(provider: string, options?: ManagedHookOptions): Promise<ManagedHookStatus>;
-  reconcileHooks(request: { readonly provider?: AgentProvider; readonly action: "install" | "uninstall" | "status"; readonly options?: ManagedHookOptions }): Promise<{ readonly statuses: readonly ManagedHookStatus[]; readonly ok: boolean }>;
+  resolve(provider: string, providerVersion?: string): ResolvedAgentDriver | undefined;
+  inspectSession(provider: string, record: unknown): { readonly driver: AgentDriver; readonly session: AgentJournalSession } | null;
+  normalize(provider: string, providerVersion: string | undefined, record: unknown, context: AgentDriverContext): AgentLifecycleEvent | null;
 }
 
-const INTERACTIVE_TOOLS = new Set(["askuserquestion", "request_user_input", "requestuserinput"]);
-const CODEX_EVENTS = new Set(CODEX_MANAGED_HOOK_EVENTS.map(({ eventName }) => canonical(eventName)));
-const CLAUDE_EVENTS = new Set(CLAUDE_CODE_MANAGED_HOOK_EVENTS.map(({ eventName }) => canonical(eventName)));
-const MAX_CODEX_TRANSCRIPT_BYTES = 1_048_576;
+type JsonObject = Record<string, unknown>;
 
-function plainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function object(value: unknown): JsonObject | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as JsonObject : undefined;
 }
 
-function stringValue(max: number, ...values: unknown[]): string | undefined {
-  for (const value of values) if (typeof value === "string" && value.trim()) return value.trim().slice(0, max);
-  return undefined;
+function boundedString(limit: number, ...values: unknown[]): string | undefined {
+  const value = values.find((candidate) => typeof candidate === "string" && candidate.length > 0);
+  return typeof value === "string" ? value.slice(0, limit) : undefined;
 }
 
-function numberValue(...values: unknown[]): number | undefined {
-  for (const value of values) if (typeof value === "number" && Number.isFinite(value)) return value;
-  return undefined;
+function timestamp(record: JsonObject, fallback: number): number {
+  if (typeof record.timestamp !== "string") return fallback;
+  const parsed = Date.parse(record.timestamp);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function canonical(value: string): string { return value.replace(/[^a-zA-Z0-9]/g, "").toLowerCase(); }
-
-function modelValue(value: unknown): AgentModelMetadata | undefined {
-  if (typeof value === "string" && value.trim()) return { id: value.trim().slice(0, 200) };
-  if (!plainObject(value)) return undefined;
-  const id = stringValue(200, value.id, value.model_id, value.modelId, value.name);
-  if (!id) return undefined;
-  const contextWindowTokens = numberValue(value.context_window_tokens, value.contextWindowTokens);
-  return {
+function model(payload: JsonObject): AgentModelMetadata | undefined {
+  const id = boundedString(200, payload.model);
+  return id === undefined ? undefined : {
     id,
-    ...(stringValue(200, value.display_name, value.displayName) === undefined ? {} : { displayName: stringValue(200, value.display_name, value.displayName) }),
-    ...(stringValue(100, value.reasoning_effort, value.reasoningEffort) === undefined ? {} : { reasoningEffort: stringValue(100, value.reasoning_effort, value.reasoningEffort) }),
-    ...(contextWindowTokens === undefined || contextWindowTokens < 0 ? {} : { contextWindowTokens }),
+    ...(boundedString(100, payload.effort, payload.reasoning_effort) === undefined ? {} : { reasoningEffort: boundedString(100, payload.effort, payload.reasoning_effort) }),
   };
 }
 
-function nestedString(value: unknown, key: string): string | undefined { return plainObject(value) ? stringValue(512, value[key]) : undefined; }
-
-function normalizeNative(provider: AgentProvider, nativePayload: unknown, context: AgentDriverContext, supported: ReadonlySet<string>): AgentLifecycleEvent | null {
-  if (!plainObject(nativePayload)) return null;
-  const eventName = stringValue(100, nativePayload.hook_event_name, nativePayload.hookEventName, nativePayload.event_name, nativePayload.event, nativePayload.type);
-  if (!eventName || !supported.has(canonical(eventName))) return null;
-  const sessionId = stringValue(512, nativePayload.session_id, nativePayload.sessionId, nativePayload.thread_id, nativePayload.threadId, context.providerSessionId) ?? context.activationTerminalSessionId;
-  const rawAgentId = stringValue(512, nativePayload.agent_id, nativePayload.agentId);
-  const agentId = rawAgentId !== undefined && rawAgentId !== sessionId ? rawAgentId : undefined;
-  const subagentId = stringValue(512, nativePayload.subagent_id, nativePayload.subagentId, nativePayload.agent_id, nativePayload.agentId);
-  const toolName = stringValue(200, nativePayload.tool_name, nativePayload.toolName, nestedString(nativePayload.tool, "name"));
-  const toolId = stringValue(512, nativePayload.tool_use_id, nativePayload.toolUseId, nativePayload.tool_call_id, nativePayload.toolCallId, nestedString(nativePayload.tool, "id")) ?? toolName;
-  const reason = stringValue(4_000, nativePayload.reason, nativePayload.message, nativePayload.error);
-  const summary = stringValue(8_000, nativePayload.last_assistant_message, nativePayload.lastAssistantMessage, nativePayload.summary);
-  const base = {
-    provider,
+function base(context: AgentDriverContext, record: JsonObject, payload: JsonObject) {
+  const sessionId = context.providerSessionId;
+  if (!sessionId) return null;
+  return {
+    provider: "codex" as const,
     sessionId,
     activationTerminalSessionId: context.activationTerminalSessionId,
     sequence: context.sequence,
-    occurredAt: context.occurredAt ?? Date.now(),
-    ...(stringValue(4_000, nativePayload.prompt, nativePayload.prompt_text, nativePayload.promptText, nativePayload.user_prompt, nativePayload.userPrompt) === undefined ? {} : { promptText: stringValue(4_000, nativePayload.prompt, nativePayload.prompt_text, nativePayload.promptText, nativePayload.user_prompt, nativePayload.userPrompt) }),
-    ...(modelValue(nativePayload.model) === undefined ? {} : { model: modelValue(nativePayload.model) }),
-  } as const;
-  const target = agentId === undefined ? {} : { agentId };
-  const key = canonical(eventName);
-  if (key === "sessionstart" || key === "sessionstarted") return { ...base, kind: "session.started", displayName: stringValue(200, nativePayload.display_name, nativePayload.displayName) };
-  if (key === "sessionend" || key === "sessionstop" || key === "sessionstopped") return { ...base, kind: "session.stopped", reason };
-  if (key === "subagentstart" || key === "subagentstarted") {
-    if (!subagentId) return null;
-    return { ...base, kind: "subagent.started", subagentId, parentAgentId: stringValue(512, nativePayload.parent_agent_id, nativePayload.parentAgentId), displayName: stringValue(200, nativePayload.display_name, nativePayload.displayName, nativePayload.task_name, nativePayload.taskName, nativePayload.agent_type, nativePayload.agentType) };
-  }
-  if (key === "subagentstop" || key === "subagentstopped") {
-    if (!subagentId) return null;
-    return { ...base, kind: "subagent.stopped", subagentId, outcome: completionOutcome(nativePayload), summary };
-  }
-  if (key === "permissionrequest" || key === "requestuserinput" || key === "askuserquestion" || (toolName !== undefined && INTERACTIVE_TOOLS.has(canonical(toolName)))) return { ...base, ...target, kind: "wait.started", state: "waiting", reason: reason ?? toolName };
-  if (key === "userpromptsubmit" || key === "prompt" || key === "promptsubmit" || key === "turnstart" || key === "turnstarted") return { ...base, ...target, kind: "turn.started", turnId: stringValue(512, nativePayload.turn_id, nativePayload.turnId) };
-  if (key === "pretooluse" || key === "toolstart" || key === "toolstarted" || key === "beforetool") {
-    if (!toolName) return null;
-    const launch = subagentLaunch(toolName, nativePayload.tool_input);
-    return { ...base, ...target, kind: "tool.started", tool: { id: toolId ?? toolName, name: toolName, ...(describeTool(nativePayload.tool_input) === undefined ? {} : { description: describeTool(nativePayload.tool_input) }), ...(launch === undefined ? {} : { subagentLaunch: launch }) } };
-  }
-  if (key === "posttooluse" || key === "posttoolusefailure" || key === "toolfinish" || key === "toolfinished" || key === "aftertool") {
-    if (!toolId) return null;
-    return { ...base, ...target, kind: "tool.finished", toolId, outcome: key.includes("failure") ? "error" : "success" };
-  }
-  if (key === "stop" || key === "stopfailure" || key === "turndone" || key === "turncompleted") return { ...base, ...target, kind: "agent.done", outcome: completionOutcome(nativePayload), summary };
-  if (key === "agentexit" || key === "agentexited") return { ...base, ...target, kind: "agent.exited", exitCode: numberValue(nativePayload.exit_code, nativePayload.exitCode), signal: stringValue(100, nativePayload.signal) };
-  return null;
+    occurredAt: timestamp(record, context.occurredAt ?? Date.now()),
+    ...(model(payload) === undefined ? {} : { model: model(payload) }),
+  };
 }
 
-function completionOutcome(payload: Record<string, unknown>): "success" | "error" | "cancelled" {
-  const key = canonical(stringValue(100, payload.hook_event_name, payload.event, payload.type) ?? "");
-  if (key.includes("failure") || payload.error !== undefined || payload.success === false) return "error";
-  if (payload.cancelled === true || payload.canceled === true) return "cancelled";
+function outcome(payload: JsonObject): "success" | "error" | "cancelled" {
+  const reason = boundedString(100, payload.reason, payload.status)?.toLowerCase();
+  if (reason?.includes("cancel") || reason?.includes("abort")) return "cancelled";
+  if (payload.error !== undefined || reason?.includes("error") || reason?.includes("fail")) return "error";
   return "success";
 }
 
-function describeTool(value: unknown): string | undefined {
-  if (typeof value === "string") return value.slice(0, 500);
-  if (!plainObject(value)) return undefined;
-  return stringValue(500, value.command, value.cmd, value.file_path, value.path, value.query, value.message, value.prompt, value.description);
+function toolFields(payload: JsonObject, fallbackName?: string): { readonly id: string; readonly name: string } | null {
+  const item = object(payload.item);
+  const id = boundedString(512, payload.call_id, payload.id, item?.call_id, item?.id);
+  const name = boundedString(200, payload.tool_name, payload.name, item?.name, item?.type, fallbackName);
+  return id && name ? { id, name } : null;
 }
 
-function subagentLaunch(toolName: string, input: unknown): { readonly displayName?: string; readonly promptText?: string } | undefined {
-  const key = canonical(toolName);
-  if (key !== "agent" && key !== "task" && key !== "spawnagent" && !key.endsWith("spawnagent")) return undefined;
-  if (!plainObject(input)) return {};
-  return {
-    ...(stringValue(200, input.task_name, input.taskName, input.name, input.agent_type, input.agentType) === undefined ? {} : { displayName: stringValue(200, input.task_name, input.taskName, input.name, input.agent_type, input.agentType) }),
-    ...(stringValue(4_000, input.message, input.prompt, input.description, input.task) === undefined ? {} : { promptText: stringValue(4_000, input.message, input.prompt, input.description, input.task) }),
-  };
-}
+/**
+ * Codex rollout JSONL mapping v0.1.
+ *
+ * Deliberately read only the envelope and allowlisted lifecycle fields. A
+ * bounded user-message preview supports the existing agent label; command
+ * arguments, model output, and tool results are never copied or logged.
+ */
+export const codexV01Driver: AgentDriver = Object.freeze({
+  provider: "codex",
+  mappingVersion: "0.1",
+  displayName: "Codex",
+  inspectSession(record: unknown): AgentJournalSession | null {
+    const envelope = object(record);
+    const payload = object(envelope?.payload);
+    if (envelope?.type !== "session_meta" || !payload) return null;
+    const providerSessionId = boundedString(512, payload.id, payload.session_id);
+    if (!providerSessionId) return null;
+    return {
+      providerSessionId,
+      ...(boundedString(100, payload.cli_version) === undefined ? {} : { providerVersion: boundedString(100, payload.cli_version) }),
+    };
+  },
+  normalize(record: unknown, context: AgentDriverContext): AgentLifecycleEvent | null {
+    const envelope = object(record);
+    const payload = object(envelope?.payload);
+    if (!envelope || !payload) return null;
+    const common = base(context, envelope, payload);
+    if (!common) return null;
 
-async function codexSubagentDisplayName(nativePayload: unknown): Promise<string | undefined> {
-  if (!plainObject(nativePayload) || typeof nativePayload.transcript_path !== "string" || nativePayload.transcript_path.length === 0) return undefined;
-  try {
-    const transcript = await readFile(nativePayload.transcript_path, "utf8");
-    if (Buffer.byteLength(transcript, "utf8") > MAX_CODEX_TRANSCRIPT_BYTES) return undefined;
-    for (const line of transcript.split(/\r?\n/u)) {
-      if (!line.trim()) continue;
-      let record: unknown;
-      try { record = JSON.parse(line); } catch { continue; }
-      if (!plainObject(record) || record.type !== "session_meta" || !plainObject(record.payload)) continue;
-      const source = record.payload.source;
-      const subagent = plainObject(source) && plainObject(source.subagent) ? source.subagent : undefined;
-      const spawn = subagent !== undefined && plainObject(subagent.thread_spawn) ? subagent.thread_spawn : undefined;
-      const agentPath = spawn === undefined ? undefined : stringValue(512, spawn.agent_path);
-      if (!agentPath) continue;
-      const name = basename(agentPath).trim();
-      if (name && name !== "." && name !== "/") return name.slice(0, 200);
+    if (envelope.type === "session_meta") {
+      return { ...common, kind: "session.started", displayName: "Codex" };
     }
-  } catch {
-    // Optional native metadata must not reject a provider hook or expose a transcript.
-  }
-  return undefined;
+    if (envelope.type === "turn_context") return { ...common, kind: "turn.started" };
+    if (envelope.type === "event_msg") {
+      const eventType = boundedString(100, payload.type);
+      if (eventType === "task_started" || eventType === "turn_started") {
+        return { ...common, kind: "turn.started", turnId: boundedString(512, payload.turn_id) };
+      }
+      if (eventType === "user_message") {
+        return { ...common, kind: "turn.started", promptText: boundedString(4_000, payload.message) };
+      }
+      if (eventType === "task_complete" || eventType === "turn_complete") {
+        return { ...common, kind: "agent.done", outcome: outcome(payload) };
+      }
+      if (eventType === "turn_aborted") return { ...common, kind: "agent.done", outcome: "cancelled" };
+      if (eventType === "error") return { ...common, kind: "agent.done", outcome: "error" };
+      if (eventType === "shutdown_complete") return { ...common, kind: "session.stopped", reason: "shutdown" };
+      if (eventType === "exec_approval_request" || eventType === "apply_patch_approval_request" || eventType === "request_permissions" || eventType === "request_user_input" || eventType === "elicitation_request") {
+        return { ...common, kind: "wait.started", state: "waiting", reason: eventType };
+      }
+      if (eventType === "collab_agent_spawn_begin") {
+        const subagentId = boundedString(512, payload.agent_id, payload.thread_id, payload.receiver_thread_id);
+        return subagentId ? { ...common, kind: "subagent.started", subagentId, parentAgentId: boundedString(512, payload.parent_agent_id) } : null;
+      }
+      if (eventType === "collab_agent_spawn_end" || eventType === "collab_agent_shutdown") {
+        const subagentId = boundedString(512, payload.agent_id, payload.thread_id, payload.receiver_thread_id);
+        return subagentId ? { ...common, kind: "subagent.stopped", subagentId, outcome: outcome(payload) } : null;
+      }
+      if (eventType === "sub_agent_activity") {
+        const subagentId = boundedString(512, payload.agent_thread_id);
+        const activityKind = boundedString(100, payload.kind);
+        if (!subagentId || !activityKind) return null;
+        const path = boundedString(1_000, payload.agent_path);
+        const displayName = path?.split(/[\\/]/u).filter(Boolean).pop()?.slice(0, 200);
+        return activityKind === "started"
+          ? { ...common, kind: "subagent.started", subagentId, ...(displayName ? { displayName } : {}) }
+          : activityKind === "completed" || activityKind === "stopped" || activityKind === "shutdown"
+            ? { ...common, kind: "subagent.stopped", subagentId, outcome: outcome(payload) }
+            : null;
+      }
+      if (eventType?.endsWith("_begin")) {
+        const tool = toolFields(payload, eventType.slice(0, -6));
+        return tool === null ? null : { ...common, kind: "tool.started", tool };
+      }
+      if (eventType?.endsWith("_end")) {
+        const tool = toolFields(payload, eventType.slice(0, -4));
+        return tool === null ? null : { ...common, kind: "tool.finished", toolId: tool.id, outcome: outcome(payload) };
+      }
+      return null;
+    }
+    if (envelope.type === "response_item") {
+      const itemType = boundedString(100, payload.type);
+      if (itemType === "custom_tool_call" || itemType === "function_call" || itemType === "local_shell_call") {
+        const tool = toolFields(payload);
+        return tool === null ? null : { ...common, kind: "tool.started", tool };
+      }
+      if (itemType === "custom_tool_call_output" || itemType === "function_call_output" || itemType === "local_shell_call_output") {
+        const id = boundedString(512, payload.call_id, payload.id);
+        return id ? { ...common, kind: "tool.finished", toolId: id, outcome: outcome(payload) } : null;
+      }
+    }
+    return null;
+  },
+});
+
+function versionTuple(value: string | undefined): readonly number[] | undefined {
+  if (value === undefined) return undefined;
+  const match = /^(\d+)(?:\.(\d+))?/u.exec(value.trim().replace(/^v/u, ""));
+  return match ? [Number(match[1]), Number(match[2] ?? 0)] : undefined;
 }
 
-async function enrichBuiltInCodexEvent(event: AgentLifecycleEvent | null, nativePayload: unknown): Promise<AgentLifecycleEvent | null> {
-  if (event?.kind !== "subagent.started") return event;
-  const displayName = await codexSubagentDisplayName(nativePayload);
-  return displayName === undefined ? event : { ...event, displayName };
+function compareVersion(left: string, right: string): number {
+  const a = versionTuple(left) ?? [0, 0];
+  const b = versionTuple(right) ?? [0, 0];
+  return (a[0] ?? 0) - (b[0] ?? 0) || (a[1] ?? 0) - (b[1] ?? 0);
 }
 
-const codexDriver: AgentDriver = { provider: "codex", displayName: "Codex", hooks: codexManagedHookReconciler, normalize: (payload, context) => normalizeNative("codex", payload, context, CODEX_EVENTS) };
-const claudeCodeDriver: AgentDriver = { provider: "claude-code", displayName: "Claude Code", hooks: claudeCodeManagedHookReconciler, normalize: (payload, context) => normalizeNative("claude-code", payload, context, CLAUDE_EVENTS) };
-
-export function createAgentDriverRegistry(drivers: readonly AgentDriver[] = [codexDriver, claudeCodeDriver]): AgentDriverRegistry {
-  const byProvider = new Map(drivers.map((driver) => [driver.provider, driver] as const));
-  return {
-    drivers,
-    get: (provider) => byProvider.get(provider as AgentProvider),
-    normalize: (provider, payload, context) => byProvider.get(provider as AgentProvider)?.normalize(payload, context) ?? null,
-    normalizeAsync: async (provider, payload, context) => {
-      const driver = byProvider.get(provider as AgentProvider);
-      if (driver === undefined) return null;
-      // A composed server may deliberately replace the built-in Codex driver
-      // (for example to resolve a provider runtime from its own sealed
-      // payload). That driver remains the only normalizer for its provider;
-      // transcript enrichment is an optional built-in Codex detail, never a
-      // reason to bypass the composed authority.
-      const event = driver.normalize(payload, context);
-      return provider === "codex" && driver === codexDriver
-        ? enrichBuiltInCodexEvent(event, payload)
-        : event;
-    },
-    hookStatus: async (provider, options) => {
-      const driver = byProvider.get(provider as AgentProvider);
-      if (!driver) throw new Error(`Unknown agent provider: ${provider}`);
-      return driver.hooks.status(options);
-    },
-    reconcileHooks: async (request) => {
-      const selected = request.provider ? drivers.filter((driver) => driver.provider === request.provider) : [...drivers];
-      if (selected.length === 0) throw new Error(`Unknown agent provider: ${request.provider}`);
-      const statuses = await Promise.all(selected.map((driver) => request.action === "install" ? driver.hooks.install(request.options) : request.action === "uninstall" ? driver.hooks.uninstall(request.options) : driver.hooks.status(request.options)));
-      return { statuses, ok: statuses.every((status) => request.action === "install" ? status.state === "installed" : request.action === "uninstall" ? status.state === "not-installed" : status.state !== "error") };
-    },
+export function createAgentDriverRegistry(drivers: readonly AgentDriver[] = [codexV01Driver]): AgentDriverRegistry {
+  const ordered = [...drivers].sort((left, right) => left.provider.localeCompare(right.provider) || compareVersion(left.mappingVersion, right.mappingVersion));
+  const resolve = (provider: string, providerVersion?: string): ResolvedAgentDriver | undefined => {
+    const candidates = ordered.filter((driver) => driver.provider === provider);
+    if (candidates.length === 0) return undefined;
+    const target = versionTuple(providerVersion);
+    const driver = target === undefined
+      ? candidates[candidates.length - 1]
+      : [...candidates].reverse().find((candidate) => compareVersion(candidate.mappingVersion, providerVersion ?? "") <= 0) ?? candidates[0];
+    return driver ? { driver, requestedVersion: providerVersion, mappingVersion: driver.mappingVersion } : undefined;
   };
+  return Object.freeze({
+    drivers: Object.freeze(ordered),
+    resolve,
+    inspectSession(provider: string, record: unknown) {
+      for (const driver of [...ordered].reverse()) {
+        if (driver.provider !== provider) continue;
+        const session = driver.inspectSession(record);
+        if (session) return { driver, session };
+      }
+      return null;
+    },
+    normalize(provider: string, providerVersion: string | undefined, record: unknown, context: AgentDriverContext) {
+      return resolve(provider, providerVersion)?.driver.normalize(record, context) ?? null;
+    },
+  });
 }
 
 export const agentDriverRegistry = createAgentDriverRegistry();
-export { codexDriver, claudeCodeDriver };
-export type { ManagedHookOptions, ManagedHookStatus };

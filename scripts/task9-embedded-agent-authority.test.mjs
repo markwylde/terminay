@@ -7,7 +7,7 @@ const authority = await readFile(new URL('../electron/serverTerminalAuthority.ts
 const serverAdapter = await readFile(new URL('../electron/agentStatus/serverAdapter.ts', import.meta.url), 'utf8')
 
 test('normal embedded Desktop wiring has one server-owned agent authority', () => {
-	assert.match(main, /serverAgents\.drivers\.reconcileHooks/u)
+	assert.match(main, /serverAgents\.setIntegrationEnabled\(enabled\)/u)
 	assert.doesNotMatch(main, /legacyAgentStatusService|AgentStatusService|agentDriverRegistry/u)
 	assert.doesNotMatch(main, /agent-status:(?:get-snapshot|acknowledge|acknowledge-terminal|snapshot)|registerAgentStatusIpcHandlers/u)
 	assert.match(authority, /agentStatusIpcAdapter\(\)/u)

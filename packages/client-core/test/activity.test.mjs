@@ -23,7 +23,7 @@ test("activity client applies snapshots/events, surfaces replay gaps, and resync
   store.subscribe((value, result) => changes.push({ value, result }));
 
   assert.equal(store.applySnapshot(snapshot(1, { "session-a": session("session-a") })).kind, "applied");
-  const event = { revision: 2, cursor: "2", type: "activity.changed", sessionId: "session-a", snapshot: session("session-a", "project-a", { status: "working", authority: "provider", claimed: true, source: "hook:codex", provider: "codex", providerState: "working", agentId: "agent-a", updatedAt: 2 }) };
+  const event = { revision: 2, cursor: "2", type: "activity.changed", sessionId: "session-a", snapshot: session("session-a", "project-a", { status: "working", authority: "provider", claimed: true, source: "journal:codex", provider: "codex", providerState: "working", agentId: "agent-a", updatedAt: 2 }) };
   assert.deepEqual(store.applyEvent(event), { kind: "applied", revision: 2, changed: true });
   assert.deepEqual(store.applyEvent(event), { kind: "ignored", revision: 2, changed: false });
   const gap = store.applyEvent({ ...event, revision: 4, cursor: "4" });

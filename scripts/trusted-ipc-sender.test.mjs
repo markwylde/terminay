@@ -48,7 +48,7 @@ test('legacy privileged compatibility handlers enforce trusted renderer provenan
     'test:get-mcp-control-environment',
     'test:send-app-command',
     'test:set-ai-tab-metadata-mock',
-    'test:emit-agent-hook',
+    'test:emit-agent-journal-record',
     'desktop:terminal-lifecycle-host:wait-for-inactivity',
     'desktop:mcp-install-host:get-status',
     'desktop:mcp-install-host:install',

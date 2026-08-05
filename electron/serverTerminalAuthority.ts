@@ -227,7 +227,7 @@ export class ServerTerminalAuthority {
 	/** Canonical Local activity authority exposed through the same protocol as
 	 * terminal streams; legacy renderer IPC is not its source of truth. */
 	readonly activity: TerminalActivityService;
-	/** The only hook/status authority for server-owned terminals. */
+	/** The only journal/status authority for server-owned terminals. */
 	readonly agents: AgentStatusService;
 	/** Canonical workspace authority used by the server project operations. */
 	readonly workspace: WorkspaceStore;
