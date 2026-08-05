@@ -104,9 +104,11 @@ Worktree removal is also server-owned and identity-bound. The client submits
 only the project, repository, and opaque worktree IDs (optionally the full
 HEAD it reviewed); the server obtains the canonical path from a fresh bounded
 worktree listing, rechecks status immediately before invoking Git, and then
-verifies that the exact identity disappeared. Main, bare, locked, prunable,
-dirty, and unmerged worktrees are rejected, and a changed reviewed HEAD is
-reported as stale rather than being removed.
+verifies that the exact identity disappeared. If the registered worktree path
+has already disappeared and Git marks the entry prunable, removal cleans up
+that stale registration without trying to run status inside the missing path.
+Main, bare, locked, dirty, and unmerged worktrees are rejected, and a changed
+reviewed HEAD is reported as stale rather than being removed.
 
 The production shared Git route consumes `TerminayGitClient` for its current
 server-owned project. It renders bounded worktree state and exposes Pull,
@@ -126,5 +128,7 @@ remain explicit parity work.
   root, even when an earlier Git status request is still pending.
 - Worktree lifecycle actions preserve the main worktree and present Git errors
   accurately.
+- Deleting a prunable worktree whose folder is already absent removes its stale
+  Git registration and does not report a worktree-list or status error.
 - Quick Push produces a reviewable plan before commits, pushes, or PR creation,
   and is unavailable until a provider is deliberately configured.
