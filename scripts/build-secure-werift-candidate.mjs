@@ -49,6 +49,12 @@ export const DIRECT_RUNTIME_DEPENDENCIES = {
   tweetnacl: '1.0.3',
 }
 
+// Upstream allows a range for pvutils. Keep source-mirror acquisition on the
+// audited candidate graph even when npm publishes a newer compatible release.
+export const TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES = {
+  pvutils: '1.1.5',
+}
+
 // The install path is the key because npm retains a second tslib version
 // beneath tsyringe. Version, integrity, and declared license are all pinned.
 export const RETAINED_RUNTIME_PACKAGES = {
@@ -114,6 +120,7 @@ export async function prepareSecureWeriftSourceMirror(mirrorRoot) {
   try {
     await writeFile(path.join(temporary, 'package.json'), `${JSON.stringify({
       dependencies: DIRECT_RUNTIME_DEPENDENCIES,
+      overrides: TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES,
       private: true,
     }, null, 2)}\n`)
     const cache = path.join(mirrorRoot, 'npm-cache')
@@ -460,6 +467,7 @@ export async function buildSecureWeriftCandidate(workRoot, { sourceMirror } = {}
   const packageJson = {
     dependencies: DIRECT_RUNTIME_DEPENDENCIES,
     name: 'terminay-secure-werift-candidate-build',
+    overrides: TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES,
     private: true,
     type: 'module',
     version: '0.0.0',
