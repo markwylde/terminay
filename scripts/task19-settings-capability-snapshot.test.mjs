@@ -8,7 +8,7 @@ async function loadCapabilityModule() {
     entryPoints: ['src/services/settings/legacySettingsCapability.ts'],
     format: 'esm',
     platform: 'node',
-    target: 'node22',
+    target: 'node24',
     write: false,
   })
   const source = result.outputFiles[0].text

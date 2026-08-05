@@ -19,7 +19,7 @@
     "@terminay/server": "file:../terminay-server"
   },
   "engines": {
-    "node": "22.23.1"
+    "node": "24.14.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

@@ -589,7 +589,7 @@ export async function buildSecureWeriftCandidate(workRoot, { sourceMirror } = {}
     outfile: path.join(artifactRoot, 'lib', 'index.mjs'),
     platform: 'node',
     sourcemap: false,
-    target: 'node22',
+    target: 'node24',
   })
   const bundledInputs = Object.keys(bundleResult.metafile.inputs)
   assert.ok(
@@ -708,7 +708,7 @@ export async function buildSecureWeriftCandidate(workRoot, { sourceMirror } = {}
     path.join(artifactRoot, 'package.json'),
     `${JSON.stringify({
       description: `Auditable self-contained patched candidate of werift ${WERIFT_VERSION} ESM output`,
-      engines: { node: '>=22' },
+      engines: { node: '>=24' },
       exports: './lib/index.mjs',
       license: 'MIT',
       name: '@terminay/werift-runtime-proof',

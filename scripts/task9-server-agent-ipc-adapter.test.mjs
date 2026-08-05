@@ -133,7 +133,7 @@ async function importAdapter() {
     format: 'esm',
     outfile: outputPath,
     platform: 'node',
-    target: 'node22',
+    target: 'node24',
   })
   return import(outputPath)
 }

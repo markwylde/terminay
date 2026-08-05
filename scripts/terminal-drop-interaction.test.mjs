@@ -14,7 +14,7 @@ await build({
   format: 'esm',
   outfile: outputPath,
   platform: 'node',
-  target: 'node22',
+  target: 'node24',
 })
 
 const { escapeTerminalPathForShell, getTerminalDropText, shouldInterceptTerminalDrop, uploadBrowserTerminalDrop } = await import(outputPath)

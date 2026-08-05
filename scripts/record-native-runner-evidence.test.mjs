@@ -95,7 +95,7 @@ test('native runner release evidence binds one regular archive to its target and
     await writeFile(evidencePath, `${JSON.stringify({
       artifact: digest,
       commit,
-      node: { arch: 'x64', version: 'v22.23.1' },
+      node: { arch: 'x64', version: 'v24.14.0' },
       runner: { arch: 'X64', os: 'Linux' },
       repository: { clean: true },
       schemaVersion: 1,
@@ -129,7 +129,7 @@ test('native runner release evidence rejects substituted bytes, symlinks, and cr
     const evidence = {
       artifact: digest,
       commit,
-      node: { arch: 'x64', version: 'v22.23.1' },
+      node: { arch: 'x64', version: 'v24.14.0' },
       runner: { arch: 'X64', os: 'Linux' },
       repository: { clean: true },
       schemaVersion: 1,
