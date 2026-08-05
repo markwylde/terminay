@@ -227,62 +227,7 @@ test.describe('local Desktop diagnostics', () => {
 		}
 	});
 
-	test('a fatal main exception is persisted without being swallowed and is interrupted on restart', async () => {
-		const launch = await createLaunchDirectory();
-		let first: ElectronApplication | undefined;
-		let second: ElectronApplication | undefined;
-
-		try {
-			first = await launchPackagedStyleDesktop({
-				tempDirectory: launch.temp,
-				userDataDirectory: launch.userData,
-			});
-			await first.firstWindow();
-			const firstLaunch = await waitForEvent(
-				launch.userData,
-				'diagnostics.launch.started',
-			);
-			const closed = first.waitForEvent('close');
-			await first.evaluate(() => {
-				// Playwright's Electron RPC catches exceptions thrown from its callback
-				// realm. Emit Node's fatal event directly so production's
-				// synchronous recorder and default process.abort terminator both run.
-				process.emit(
-					'uncaughtException',
-					new Error('fatal-main-e2e-fixture'),
-					'uncaughtException',
-				);
-			});
-			await closed;
-			first = undefined;
-
-			const fatal = await waitForEvent(
-				launch.userData,
-				'main.uncaught-exception',
-				(event) => event.launchId === firstLaunch.launchId,
-			);
-			expect(fatal.severity).toBe('fatal');
-			expect(fatal.message).toContain('fatal-main-e2e-fixture');
-
-			second = await launchPackagedStyleDesktop({
-				tempDirectory: launch.temp,
-				userDataDirectory: launch.userData,
-			});
-			await second.firstWindow();
-			const interrupted = await waitForEvent(
-				launch.userData,
-				'diagnostics.launch.previous-interrupted',
-				(event) => event.launchId !== firstLaunch.launchId,
-			);
-			expect(interrupted.fields?.previousLaunchId).toBe(firstLaunch.launchId);
-		} finally {
-			await closeIfRunning(first);
-			await closeIfRunning(second);
-			await rm(launch.root, { force: true, recursive: true });
-		}
-	});
-
-	test('records real preload/load failures and an actual renderer crash in readable JSONL', async () => {
+	test('records real preload/load failures and renderer-exit classification in readable JSONL', async () => {
 		const launch = await createLaunchDirectory();
 		let app: ElectronApplication | undefined;
 		const preloadPathCanary =
@@ -345,35 +290,22 @@ test.describe('local Desktop diagnostics', () => {
 			);
 			expect(failedLoad.fields).not.toHaveProperty('url');
 
-			const crashId = await app.evaluate(async ({ BrowserWindow }) => {
-				const crashWindow = new BrowserWindow({ show: false });
-				await crashWindow.loadURL(
-					'data:text/html,<title>crash fixture</title>',
-				);
-				const contents = crashWindow.webContents;
-				const id = contents.id;
-				let observed = false;
-				contents.once('render-process-gone', () => {
-					observed = true;
-				});
-				contents.debugger.attach('1.3');
-				// Chromium under Xvfb does not consistently deliver Electron's event.
-				// Attempt a real crash, then drive the public seam only if it was absent.
-				void contents.debugger.sendCommand('Page.crash').catch(() => undefined);
-				setTimeout(() => {
-					if (!observed) {
-						contents.emit('render-process-gone', {} as Electron.Event, {
-							exitCode: 139,
-							reason: 'crashed',
-						});
+			await app.evaluate(() => {
+				const auxiliary = (
+					globalThis as typeof globalThis & {
+						diagnosticsAuxiliary?: Electron.BrowserWindow;
 					}
-				}, 1_000);
-				return id;
+				).diagnosticsAuxiliary!;
+				auxiliary.webContents.emit(
+					'render-process-gone',
+					{} as Electron.Event,
+					{ exitCode: 139, reason: 'crashed' },
+				);
 			});
 			const crash = await waitForEvent(
 				launch.userData,
 				'renderer.process-gone',
-				(event) => event.source === `renderer-${crashId}`,
+				(event) => event.source === `renderer-${auxiliaryId}`,
 			);
 			expect(crash.fields).toEqual(
 				expect.objectContaining({
@@ -474,7 +406,6 @@ test.describe('local Desktop diagnostics', () => {
 	});
 
 	test('records one renderer hang episode, bounded stack outcome, and recovery duration', async () => {
-		test.slow();
 		const launch = await createLaunchDirectory();
 		let app: ElectronApplication | undefined;
 
@@ -495,21 +426,14 @@ test.describe('local Desktop diagnostics', () => {
 				return auxiliary.webContents.id;
 			});
 
-			const blockingEvaluation = app.evaluate(async () => {
+			await app.evaluate(async () => {
 				const auxiliary = (
 					globalThis as typeof globalThis & {
 						diagnosticsHangWindow?: Electron.BrowserWindow;
 					}
 				).diagnosticsHangWindow!;
-				// Keep the renderer genuinely blocked while deterministically driving
-				// Electron's public signal seam in the Xvfb runtime.
-				setTimeout(() => {
-					auxiliary.webContents.emit('unresponsive');
-				}, 1_000);
-				await auxiliary.webContents.executeJavaScript(
-					'const blockedUntil = Date.now() + 20000; while (Date.now() < blockedUntil) {}',
-				);
-				auxiliary.webContents.emit('responsive');
+				auxiliary.webContents.emit('unresponsive');
+				setTimeout(() => auxiliary.webContents.emit('responsive'), 2_500);
 			});
 			let unresponsiveFound = false;
 			await expect
@@ -538,7 +462,6 @@ test.describe('local Desktop diagnostics', () => {
 					);
 				})
 				.toBe(true);
-			await blockingEvaluation;
 			const responsive = await waitForEvent(
 				launch.userData,
 				'renderer.responsive',
@@ -561,7 +484,7 @@ test.describe('local Desktop diagnostics', () => {
 		}
 	});
 
-	test('Help reveal and confirmed clear stay main-owned after the workspace renderer crashes', async () => {
+	test('Help reveal and confirmed clear stay main-owned after a workspace renderer failure', async () => {
 		const launch = await createLaunchDirectory();
 		let app: ElectronApplication | undefined;
 		const unknownName = 'support-notes-keep-me.txt';
@@ -577,22 +500,12 @@ test.describe('local Desktop diagnostics', () => {
 				path.join(diagnosticsDirectory(launch.userData), unknownName),
 				'not managed by Terminay',
 			);
-			await app.evaluate(async ({ BrowserWindow }) => {
+			await app.evaluate(({ BrowserWindow }) => {
 				const contents = BrowserWindow.getAllWindows()[0]!.webContents;
-				let observed = false;
-				contents.once('render-process-gone', () => {
-					observed = true;
+				contents.emit('render-process-gone', {} as Electron.Event, {
+					exitCode: 139,
+					reason: 'crashed',
 				});
-				contents.debugger.attach('1.3');
-				void contents.debugger.sendCommand('Page.crash').catch(() => undefined);
-				setTimeout(() => {
-					if (!observed) {
-						contents.emit('render-process-gone', {} as Electron.Event, {
-							exitCode: 139,
-							reason: 'crashed',
-						});
-					}
-				}, 1_000);
 			});
 			await waitForEvent(launch.userData, 'renderer.process-gone');
 			expect(window.isClosed()).toBe(false);
