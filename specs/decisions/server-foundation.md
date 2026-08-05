@@ -6,12 +6,17 @@ not treated as proven merely because it appears here.
 
 ## Runtime baseline
 
-- The build and release baseline is Node 22 until the supported-version matrix
-  is deliberately changed.
+- The build and release baseline is Node 24.14.0 with npm 11.9.0. Runtime,
+  container, CI, release, and local version-manager pins move together.
 - Desktop embeds the same packaged server payload distributed for standalone
   use.
 - Platform artifacts include a pinned Node runtime rather than relying on a
   machine-global Node installation.
+
+Evidence below that names Node 22.23.1 records the runtime on which the
+original decision spikes were executed. It remains historical evidence rather
+than a statement of the current runtime baseline; Node 24 release lanes must
+requalify the corresponding active artifacts.
 
 ## State repository
 
