@@ -18,7 +18,7 @@ test('Docker server contract builds a non-root, read-only-root image with a boun
 		'utf8',
 	);
 
-	assert.match(dockerfile, /node:22\.23\.1-bookworm-slim AS build/u);
+	assert.match(dockerfile, /node:24\.14\.0-bookworm-slim AS build/u);
 	assert.match(
 		dockerfile,
 		/apt-get install --yes --no-install-recommends python3 make g\+\+/u,

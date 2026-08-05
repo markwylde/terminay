@@ -15,7 +15,7 @@
   "bin": { "terminay-server": "dist/cli.js", "terminay-mcp": "dist/mcpEntry.js" },
   "dependencies": { "@terminay/server-core": "1.0.0", "@terminay/protocol": "1.0.0", "@modelcontextprotocol/sdk": "^1.29.0", "node-pty": "^1.1.0", "ws": "^8.21.0", "zod": "^4.3.6" },
   "engines": {
-    "node": "22.23.1"
+    "node": "24.14.0"
   },
   "scripts": {
     "build": "npm run build --workspace @terminay/server-core && tsc -p tsconfig.json && node ./scripts/write-release-integrity-manifest.mjs",
