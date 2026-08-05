@@ -288,7 +288,7 @@ test('server runtime image includes Git for the shared Git service', async () =>
 	);
 	assert.match(
 		dockerfile,
-		/FROM node:22\.23\.1-bookworm-slim AS runtime[\s\S]*?apt-get install --yes --no-install-recommends git/u,
+		/FROM node:24\.14\.0-bookworm-slim AS runtime[\s\S]*?apt-get install --yes --no-install-recommends git/u,
 	);
 	assert.match(
 		dockerfile,
@@ -324,7 +324,7 @@ test('root server image caches apt and npm dependency layers before copying sour
 	);
 	assert.match(
 		dockerfile,
-		/--mount=type=cache,id=terminay-npm-cache-node22,target=\/root\/\.npm,sharing=locked/u,
+		/--mount=type=cache,id=terminay-npm-cache-node24,target=\/root\/\.npm,sharing=locked/u,
 	);
 	assert.match(dockerfile, /COPY package\.json package-lock\.json/u);
 	assert.match(dockerfile, /COPY apps\/terminay-server\/package\.json/u);

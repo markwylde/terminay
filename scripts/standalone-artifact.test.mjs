@@ -87,7 +87,7 @@ async function createFixture() {
 			name: '@terminay/server',
 			version: '1.2.3',
 			files: ['dist'],
-			engines: { node: '22.23.1' },
+			engines: { node: '24.14.0' },
 			bin: {
 				'terminay-server': 'dist/cli.js',
 				'terminay-mcp': 'dist/mcpEntry.js',
@@ -164,7 +164,7 @@ test('standalone artifact inspection rejects Electron imports and unpinned Node 
 		const packageJson = JSON.parse(
 			await readFile(join(root, 'package.json'), 'utf8'),
 		);
-		packageJson.engines.node = '>=22';
+	packageJson.engines.node = '>=24';
 		await writeFile(
 			join(root, 'package.json'),
 			`${JSON.stringify(packageJson)}\n`,

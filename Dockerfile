@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22.23.1-bookworm-slim AS build
+FROM node:24.14.0-bookworm-slim AS build
 
 WORKDIR /workspace
 
@@ -23,7 +23,7 @@ COPY packages/responsive-ui/package.json ./packages/responsive-ui/package.json
 COPY packages/server-core/package.json ./packages/server-core/package.json
 COPY scripts/ensure-node-pty-helper-mode.mjs ./scripts/ensure-node-pty-helper-mode.mjs
 
-RUN --mount=type=cache,id=terminay-npm-cache-node22,target=/root/.npm,sharing=locked \
+RUN --mount=type=cache,id=terminay-npm-cache-node24,target=/root/.npm,sharing=locked \
   npm ci
 
 COPY . .
@@ -35,7 +35,7 @@ RUN npm run build --workspace @terminay/protocol \
   && npm run build --workspace @terminay/server \
   && npm prune --omit=dev
 
-FROM node:22.23.1-bookworm-slim AS runtime
+FROM node:24.14.0-bookworm-slim AS runtime
 
 ARG OCI_VERSION=0.0.0
 ARG OCI_REVISION=unknown
