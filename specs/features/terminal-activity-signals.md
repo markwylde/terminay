@@ -4,30 +4,30 @@
 
 Terminay has two related, but different, activity systems:
 
-- **Agent status** describes the lifecycle of a recognized AI agent. Provider
-  hooks are authoritative for this state. See
+- **Agent status** describes the lifecycle of a recognized AI agent. A
+  process-bound provider journal is authoritative for this state. See
   [agent-status-and-sidebar.md](./agent-status-and-sidebar.md).
 - **Terminal activity** describes activity in any terminal, including shells,
-  builds, and agents for which authoritative hooks are unavailable.
+  builds, and agents for which authoritative journals are unavailable.
 
 Terminal escape sequences and raw PTY output are fallback evidence. They must
 never overwrite, synthesize transitions for, or otherwise compete with an
-authoritative hook-backed agent entry.
+authoritative journal-backed agent entry.
 
 ## Authority and fallback order
 
 For a terminal session, use the first available source:
 
-1. **Provider lifecycle hooks** for a recognized Codex or Claude Code session.
-   These produce canonical agent events and are the sole source of that agent's
+1. **Process-bound provider journals** for a recognized Codex session. These
+   produce canonical agent events and are the sole source of that agent's
    operational state.
-2. **Structured terminal signals** when no hook-backed agent entry exists:
+2. **Structured terminal signals** when no journal-backed agent entry exists:
    `OSC 9;4` progress, `OSC 133`/`633` shell command markers, notifications,
    `BEL`, and foreground-process changes.
 3. **Recent raw output** only when neither an authoritative agent entry nor a
    claimed structured-signal interpreter is available.
 
-Authority is scoped by the exact Terminay terminal session ID. A hook-backed
+Authority is scoped by the exact Terminay terminal session ID. A journal-backed
 agent in one terminal does not suppress fallback activity detection in another
 terminal.
 
@@ -38,10 +38,10 @@ terminal-activity UI may omit a duplicate fallback item for that session.
 
 ## Why fallback still exists
 
-Lifecycle hooks do not describe every useful terminal:
+Provider journals do not describe every useful terminal:
 
 - ordinary shells and build tools are not agents;
-- an agent's hooks may not yet be installed, may be unsupported, or may fail;
+- an agent journal may be unavailable, ephemeral, unsupported, or inaccessible;
 - structured shell integration can describe a command without knowing which
   application ran it;
 - raw output is imperfect, but remains useful for completely uninstrumented
@@ -103,7 +103,7 @@ The fallback parser recognizes:
 
 When no authoritative agent entry exists, these can set terminal attention for
 an unfocused terminal. Attention remains pending until that terminal is viewed
-or receives user input. For a hook-backed agent, provider events determine
+or receives user input. For a journal-backed agent, provider events determine
 `waiting`/`blocked`; a bell or OSC notification is not an authoritative agent
 transition.
 
@@ -114,9 +114,9 @@ shell. This is weak evidence for working and is useful for silent commands. It
 also helps select a terminal-signal interpreter, but a process name alone must
 not create an authoritative agent entry or infer a canonical provider state.
 
-For an existing hook-backed Codex or Claude Code session, a recognized
+For an existing journal-backed Codex session, a recognized
 provider process returning to the known shell may retire the live association
-after a short confirmation window. A provider hook during that window cancels
+after a short confirmation window. A journal event during that window cancels
 the retirement.
 
 ## Fallback interpretation
@@ -131,8 +131,8 @@ positives; it is not the canonical agent-driver layer.
 - The legacy Codex interpreter treats a notification as a turn boundary and
   ignores spinner output after the boundary.
 
-These profiles apply only when the session has no authoritative hook-backed
-agent entry. When hooks are missing or broken, they provide best-effort tab
+These profiles apply only when the session has no authoritative journal-backed
+agent entry. When journals are missing or unsupported, they provide best-effort tab
 activity until authoritative events resume.
 
 An interpreter that claims a session disables the raw-output timer for that
@@ -181,7 +181,7 @@ and fallback state cannot flash for one frame.
 
 The agent lifecycle service is a separate upstream source. The server chooses
 authoritative agent status for a session whenever such an entry exists; it does
-not feed provider hook events through the terminal-signal interpreters.
+not feed provider journal events through the terminal-signal interpreters.
 
 ### Client data flow
 
@@ -220,10 +220,10 @@ Existing tab-indicator settings continue to govern fallback terminal activity:
 
 Disabling terminal-signal detection restores raw-output-based terminal activity.
 It does not change the **Agent status and sidebar** setting, provider lifecycle
-hooks, or canonical agent status.
+journals, or canonical agent status.
 
 The persisted **Agent status and sidebar** setting governs the agent feature as
-a whole, including managed hook reconciliation and its status surfaces. It is
+a whole, including journal discovery and its status surfaces. It is
 independent of these terminal-fallback settings.
 
 ## Error and recovery behavior
@@ -233,8 +233,8 @@ independent of these terminal-fallback settings.
 - Parser/interpreter failures stay local to the terminal-activity fallback and
   do not invalidate canonical agent state.
 - A stalled progress signal expires; a PTY exit clears its fallback timers.
-- If authoritative hook delivery stops, the in-memory entry retains its last
-  accepted state until another hook event or terminal exit. Terminay may also
+- If authoritative journal observation stops, the in-memory entry retains its last
+  accepted state until another journal event or terminal exit. Terminay may also
   show clearly fallback-derived terminal activity, but must not silently use it
   to mutate or relabel the canonical entry.
 - If authoritative events later resume for the same terminal and agent
@@ -242,9 +242,9 @@ independent of these terminal-fallback settings.
 
 ## Acceptance tests
 
-1. A hook-backed agent remains in the state set by its latest accepted lifecycle
+1. A journal-backed agent remains in the state set by its latest accepted lifecycle
    event while its terminal prints spinner frames, bells, and OSC progress.
-2. A hook-backed agent and an ordinary shell in different terminal sessions use
+2. A journal-backed agent and an ordinary shell in different terminal sessions use
    authoritative and fallback sources independently.
 3. `OSC 9;4;3` followed by `OSC 9;4;0` produces fallback working then finished,
    and trailing output does not restart working after the interpreter claims
@@ -253,9 +253,9 @@ independent of these terminal-fallback settings.
    and captures exit code `0`.
 5. A bell on an unfocused, non-authoritative terminal produces sticky fallback
    attention until the terminal is viewed.
-6. The same bell on a hook-backed agent does not change its canonical state.
+6. The same bell on a journal-backed agent does not change its canonical state.
 7. Disabling terminal-signal detection uses raw-output fallback without
-   disabling hook-backed status.
+   disabling journal-backed status.
 8. Split sequences and both `BEL`/`ST` terminators parse correctly; malformed
    sequences do not affect the PTY stream.
 
