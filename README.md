@@ -9,7 +9,7 @@ Terminay is a desktop terminal workspace built with Electron, React, and Vite. I
 - Open multiple native shell sessions in project workspaces
 - Split terminal, file, and folder tabs horizontally or vertically with Dockview
 - Reorder tabs, pop active panels into separate windows, and close the active tab from shortcuts or menus
-- See recognized Codex and Claude Code status at a glance with hook-driven RAG indicators, a project-scoped Agents pane, and exact click-to-focus navigation
+- See recognized Codex status at a glance with journal-driven RAG indicators, a project-scoped Agents pane, and exact click-to-focus navigation
 - Keep activity indicators for ordinary terminals through structured terminal signals and raw-output fallback
 - Create project tabs with root folders, per-project file explorer state, colors, and short icons
 - Rename project and terminal tabs, set tab colors, and inherit project styling
@@ -81,17 +81,17 @@ Recording can capture terminal output, typed input, commands, file paths, tokens
 
 ## Agent status and terminal activity
 
-Terminay uses installed Codex and Claude Code lifecycle hooks as the authoritative source for recognized agents. Their terminal tabs use compact RAG indicators: yellow while working, red when waiting for input or blocked, green when done, and neutral when idle. Unread acknowledgement is tracked separately, so viewing an agent never changes the state reported by the provider.
+Terminay observes Codex session journals owned by the exact terminal process tree. Terminal tabs use compact RAG indicators: yellow while working, red when waiting for input or blocked, green when done, and neutral when idle. Unread acknowledgement is tracked separately, so viewing an agent never changes the state reported by the provider.
 
 The project sidebar includes an **Agents** pane with root agents and their in-process subagents. It shows only agents belonging to that project. Root rows use a descriptive session title when available and retain their terminal title as context without repeating inherited child metadata. Codex subagents use their structured task name (for example, `math_question_one`) when available, with numbered labels only as a fallback. Prompts stay on one compact line. Subagents are collapsed by default, never auto-expand, and each root remembers its manual expansion state while switching projects. Selecting an agent switches to its exact terminal; selecting a subagent without its own PTY focuses the parent agent's terminal.
 
 Explorer, Agents, and Git can be reordered vertically using the drag handle on each panel header (or the Up/Down arrow keys while that handle is focused). The chosen order is saved for future project tabs.
 
-**Agent status and sidebar** under **Settings → AI → Agents** is enabled by default. It installs Terminay-managed Codex and Claude Code hook entries and enables the status surfaces. Turning it off removes only Terminay-managed hook entries and preserves all other provider settings and user hooks.
+**Agent status and sidebar** under **Settings → AI → Agents** is enabled by default. It observes process-bound Codex rollout journals without modifying provider configuration. Turning it off stops observation and clears projected status.
 
 The activity control in the app header shows current working agents plus items that need acknowledgement and provides the same click-to-focus behavior. Agent identity is tied to the exact Terminay terminal session, not a tab title or working directory.
 
-Ordinary shells and agents without working lifecycle hooks continue to use terminal-activity fallback. Under **Appearance → Tab Indicators**, **Use terminal signals for activity** enables `OSC 9;4` progress, `OSC 133`/`633` command markers, `OSC 9`/`777` notifications, and terminal `BEL` before falling back to recent raw output. These signals never override hook-backed agent state.
+Ordinary shells and unsupported agents continue to use terminal-activity fallback. Under **Appearance → Tab Indicators**, **Use terminal signals for activity** enables `OSC 9;4` progress, `OSC 133`/`633` command markers, `OSC 9`/`777` notifications, and terminal `BEL` before falling back to recent raw output. These signals never override journal-backed agent state.
 
 **Progress signal timeout** (default 15 seconds) controls how long an unrefreshed fallback progress signal can keep a tab working. Escape sequences are observed for state and still pass through to the terminal unchanged.
 
