@@ -1,32 +1,9 @@
 name: Terminay Server Image
 
 on:
-  pull_request:
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - .github/workflows/server-image.yml
-      - package.json
-      - package-lock.json
-      - apps/terminay-server/**
-      - packages/server-core/**
-      - packages/protocol/**
-      - scripts/ghcr-image.test.mjs
   push:
-    branches:
-      - main
     tags:
       - "v*.*.*"
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - .github/workflows/server-image.yml
-      - package.json
-      - package-lock.json
-      - apps/terminay-server/**
-      - packages/server-core/**
-      - packages/protocol/**
-      - scripts/ghcr-image.test.mjs
 
 concurrency:
   group: terminay-server-image-${{ github.ref }}
@@ -71,7 +48,7 @@ jobs:
   publish:
     name: Publish server image to GHCR
     needs: smoke
-    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
