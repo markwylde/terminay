@@ -15,6 +15,7 @@
 - [x] Render the exact full-width conflict bar for a competing holder.
 - [x] Keep the conflict bar opaque and in layout flow so it never covers terminal content.
 - [x] Flush a fitted viewport when initial ownership or takeover succeeds.
+- [x] Publish controller-owned canonical dimensions and apply them to every observer.
 - [x] Keep presentation conflicts out of transport-error recovery UI.
 - [x] Scope terminal journal decoding to the exact attachment before validation.
 - [x] Return one wire command envelope for acquire, takeover, and renewal while preserving the handler result wrapper required by revision-bearing presentation state.
@@ -31,7 +32,7 @@
 
 - [x] Add protocol tests for first-owner, observer, takeover, and detach handoff.
 - [x] Add renderer tests for hidden local controls and the conflict bar.
-- [x] Add geometry coverage for full-panel local sizing and post-takeover resize.
+- [x] Add geometry coverage for full-panel local sizing and bidirectional post-takeover resize.
 - [x] Cover local clear while a browser observer remains attached.
 - [x] Run native tests and the Docker Electron E2E suite.
 - [ ] Push a reviewable pull request and keep PR and post-merge main CI green.
