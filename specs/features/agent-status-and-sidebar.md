@@ -135,11 +135,17 @@ snapshots are startup artifacts and are not lifecycle sources.
 
 The first supported mapping is `(codex, 0.1)`. It accepts later Codex versions
 until a divergent mapping is added. The initial `session_meta` provides the
-stable provider session ID, CLI version, source, and bounded metadata.
+stable provider session ID, CLI version, source, and bounded metadata. A
+rollout is eligible as the terminal's root only when that metadata identifies
+`originator: codex-tui` and `source: cli`. Provider-native subagent sources
+remain in-process children of that root and must not compete with root rollouts
+during process-bound discovery. When one writer holds multiple eligible root
+rollouts, such as after resume or branch, the most recently modified eligible
+root is selected.
 
 | Codex record | Canonical result |
 | --- | --- |
-| `session_meta` with `originator: codex-tui` | root `session.started` / `idle` |
+| root `session_meta` with `originator: codex-tui` and `source: cli` | root `session.started` / `idle` |
 | `event_msg/task_started` | root `turn.started` / `working` |
 | tool/item begin or callable response item | corresponding root or child `working` |
 | execution/patch/permission approval request | corresponding entry `waiting` |
