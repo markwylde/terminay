@@ -315,9 +315,12 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       attachmentId: attachment.attachmentId,
       fromPosition: attachment.snapshot().fromPosition,
       position: attachment.position,
-      events: presentationUnavailable && snapshot !== undefined
-        ? [{ clientId, attachmentId: attachment.attachmentId, type: "presentation_unavailable", ...identity, requestedFromPosition, replayFrom: snapshot.replayFrom, outputPosition: snapshot.outputPosition }]
-        : compactInitialEvents(attachment.initialEvents).map((event) => terminalEventPayload(event, attachment.attachmentId, clientId)),
+      events: [
+        ...(snapshot === undefined ? [] : [dimensionsPayload(identity, attachment.attachmentId, clientId, snapshot.dimensions.cols, snapshot.dimensions.rows)]),
+        ...(presentationUnavailable && snapshot !== undefined
+          ? [{ clientId, attachmentId: attachment.attachmentId, type: "presentation_unavailable", ...identity, requestedFromPosition, replayFrom: snapshot.replayFrom, outputPosition: snapshot.outputPosition }]
+          : compactInitialEvents(attachment.initialEvents).map((event) => terminalEventPayload(event, attachment.attachmentId, clientId))),
+      ],
       presentation: presentationPayload(presentations.state(identity), clientId, attachment.attachmentId),
     };
   }
@@ -365,6 +368,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       rows,
       authorization: authorizationFor(value.identity, request, "write"),
     });
+    publishDimensions(value.identity, cols, rows);
     return { attachmentId: value.attachment.attachmentId, cols, rows, presentation: presentationPayload(lease, value.clientId, value.attachment.attachmentId), ...(result.ownership === undefined ? {} : { leaseExpiresAt: result.ownership.leaseExpiresAt }) };
   }
 
@@ -499,6 +503,26 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       });
     }
   }
+
+  function publishDimensions(identity: TerminalIdentity, cols: number, rows: number): void {
+    for (const value of protocolAttachments.values()) {
+      if (!sameIdentity(value.identity, identity)) continue;
+      options.eventJournal.append(
+        TERMINAL_EVENT,
+        dimensionsPayload(identity, value.attachment.attachmentId, value.clientId, cols, rows),
+      );
+    }
+  }
+}
+
+function dimensionsPayload(
+  identity: TerminalIdentity,
+  attachmentId: string,
+  clientId: string,
+  cols: number,
+  rows: number,
+): Record<string, JsonValue> {
+  return { ...identity, attachmentId, clientId, type: "dimensions", cols, rows };
 }
 
 function presentationPayload(state: TerminalPresentationLeaseState, clientId: string, attachmentId: string): Record<string, JsonValue> {
