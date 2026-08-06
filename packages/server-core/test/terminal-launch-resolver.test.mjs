@@ -70,13 +70,13 @@ function paths(available = ["/project", "/other", "/home", "/live", "/explicit",
   };
 }
 
-function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode } = {}) {
+function resolver({ state = workspace(), entries = [profile("system")], catalogue = {}, observe, environmentCaseInsensitive = false, systemDefaultStartupMode, defaultEnvironment } = {}) {
   return new TerminalLaunchResolver({
     serverId: "server-a",
     profiles: profiles(entries, catalogue),
     workspaceSnapshot: () => state,
     pathAuthority: paths(),
-    defaultEnvironment: { BASE: "host", REMOVE: "host", TERMINAY_SERVER: "trusted" },
+    defaultEnvironment: defaultEnvironment ?? { BASE: "host", REMOVE: "host", TERMINAY_SERVER: "trusted", TERM: "dumb", COLORTERM: "false" },
     observeTerminalCwd: observe,
     now: () => 123,
     environmentCaseInsensitive,
@@ -109,7 +109,7 @@ test("launch resolver preserves argv boundaries, translates login mode, and laye
   const launch = await resolver({ entries: [profile("system"), selected] }).resolve(intent({ explicitProfileId: "zsh" }));
   assert.equal(launch.shellPath, "/bin/zsh");
   assert.deepEqual(launch.args, ["-l", "--no-globalrcs", "two words"]);
-  assert.deepEqual(launch.env, { BASE: "profile", TERMINAY_SERVER: "trusted", ADDED: "$NOT_EXPANDED" });
+  assert.deepEqual(launch.env, { BASE: "profile", TERMINAY_SERVER: "trusted", TERM: "xterm-256color", COLORTERM: "truecolor", ADDED: "$NOT_EXPANDED" });
 });
 
 test("host policy launches only the reserved System default as a login shell", async () => {
@@ -157,9 +157,17 @@ test("launch resolver supports login and non-login startup modes for POSIX sh im
 
 test("Windows environment layering is case-insensitive and protected aliases are rejected", async () => {
   const selected = profile("windows", { environment: { base: "profile" } });
-  const launch = await resolver({ entries: [profile("system"), selected], environmentCaseInsensitive: true }).resolve(intent({ explicitProfileId: "windows" }));
+  const launch = await resolver({
+    entries: [profile("system"), selected],
+    environmentCaseInsensitive: true,
+    defaultEnvironment: { BASE: "host", term: "dumb", ColorTerm: "false" },
+  }).resolve(intent({ explicitProfileId: "windows" }));
   assert.equal(launch.env.base, "profile");
   assert.equal("BASE" in launch.env, false);
+  assert.equal(launch.env.TERM, "xterm-256color");
+  assert.equal(launch.env.COLORTERM, "truecolor");
+  assert.equal("term" in launch.env, false);
+  assert.equal("ColorTerm" in launch.env, false);
   const protectedProfile = profile("bad", { environment: { TERM: "spoofed" } });
   await assert.rejects(
     resolver({ entries: [profile("system"), protectedProfile] }).resolve(intent({ explicitProfileId: "bad" })),
@@ -174,10 +182,17 @@ test("WSL launch keeps distribution structured, requires an explicit shell for a
     args: ["--no-rcs"],
     environment: { DEV_MODE: "1" },
   });
-  const launch = await resolver({ entries: [profile("system"), wsl] }).resolve(intent({ explicitProfileId: "wsl-zsh" }));
+  const launch = await resolver({
+    entries: [profile("system"), wsl],
+    environmentCaseInsensitive: true,
+    defaultEnvironment: { wslenv: "EXISTING/u", TERM: "dumb", COLORTERM: "false" },
+  }).resolve(intent({ explicitProfileId: "wsl-zsh" }));
   assert.equal(launch.shellPath, "C:\\Windows\\System32\\wsl.exe");
   assert.deepEqual(launch.args, ["--distribution", "Ubuntu Dev", "--exec", "/bin/zsh", "-l", "--no-rcs"]);
-  assert.equal(launch.env.WSLENV, "DEV_MODE");
+  assert.equal(launch.env.WSLENV, "EXISTING/u:DEV_MODE:TERM:COLORTERM");
+  assert.equal("wslenv" in launch.env, false);
+  assert.equal(launch.env.TERM, "xterm-256color");
+  assert.equal(launch.env.COLORTERM, "truecolor");
   const missingShell = profile("wsl-default", { target: { kind: "wsl", distribution: "Ubuntu Dev" }, args: ["--login"] });
   await assert.rejects(
     resolver({ entries: [profile("system"), missingShell] }).resolve(intent({ explicitProfileId: "wsl-default" })),
