@@ -7,6 +7,7 @@ import type { ActivitySessionIdentity } from "./service.js";
 
 const MAX_INITIAL_BYTES = 8 * 1024 * 1024;
 const MAX_RECORD_BYTES = 1024 * 1024;
+const MAX_SESSION_META_BYTES = 64 * 1024;
 const POLL_MS = 250;
 
 export interface AgentJournalObservation {
@@ -239,10 +240,35 @@ export async function findProcessBoundCodexRollout(shellPid: number, sessionsRoo
   for (const path of paths) {
     const safe = await safeJournalPath(path, sessionsRoot).catch(() => undefined);
     if (!safe || !basename(safe).startsWith("rollout-")) continue;
+    if (!await isCodexRootRollout(safe)) continue;
     const metadata = await stat(safe).catch(() => undefined);
     if (metadata?.isFile()) matches.push({ path: safe, modified: metadata.mtimeMs });
   }
   return matches.sort((left, right) => right.modified - left.modified)[0]?.path;
+}
+
+async function isCodexRootRollout(path: string): Promise<boolean> {
+  const handle = await open(path, "r").catch(() => undefined);
+  if (handle === undefined) return false;
+  try {
+    const bytes = Buffer.alloc(MAX_SESSION_META_BYTES);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    const newline = bytes.subarray(0, bytesRead).indexOf(10);
+    if (newline < 0) return false;
+    const record = JSON.parse(bytes.subarray(0, newline).toString("utf8")) as unknown;
+    if (typeof record !== "object" || record === null || Array.isArray(record)) return false;
+    const envelope = record as Record<string, unknown>;
+    const payload = envelope.payload;
+    if (envelope.type !== "session_meta" || typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+    const metadata = payload as Record<string, unknown>;
+    const sessionId = typeof metadata.id === "string" ? metadata.id : metadata.session_id;
+    return typeof sessionId === "string" && sessionId.length > 0 && sessionId.length <= 512
+      && metadata.originator === "codex-tui" && metadata.source === "cli";
+  } catch {
+    return false;
+  } finally {
+    await handle.close();
+  }
 }
 
 async function psDescendants(shellPid: number): Promise<number[]> {
