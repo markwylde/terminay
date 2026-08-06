@@ -53,6 +53,9 @@ export interface LocalUiServerOptions {
 	readonly maxAssetBytes?: number;
 	/** Canonical framed protocol core used by remote stream transports. */
 	readonly protocolCore?: ServerCore;
+	/** Host-owned bounded diagnostics for a protocol connection that failed
+	 * after its WebSocket upgrade completed. */
+	readonly onConnectionError?: (error: unknown) => void;
 	/** Accepts a short-lived protocol ticket in addition to the bootstrap
 	 * credential.  The ticket authority stays at the server boundary. */
 	readonly acceptCredential?: (token: string) => boolean | Promise<boolean>;
@@ -372,7 +375,13 @@ export class LocalUiServer {
 				`stream-${Date.now().toString(36)}`,
 			),
 		});
-		void connection.start().catch(() => undefined);
+		void connection.start().catch((error) => {
+			try {
+				this.options.onConnectionError?.(error);
+			} catch {
+				// Diagnostics must not turn a contained client failure into a host failure.
+			}
+		});
 	}
 
 	private async handle(
