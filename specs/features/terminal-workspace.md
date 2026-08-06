@@ -88,6 +88,15 @@ overstates its requested replay budget, and coalesces contiguous replay chunks
 to avoid per-event metadata exhausting that budget. Live output continues on
 the ordered terminal event stream after attachment.
 
+The command-result replay cap is not a terminal-lifetime or presentation-size
+limit. A fresh display hydrates through a bounded binary checkpoint transfer;
+it does not require the complete raw transcript to fit in a command header.
+Long-running and high-output terminals therefore remain recoverable after the
+raw replay window has advanced. Presentation-unavailable is reserved for a
+missing, invalid, or resource-exhausted authoritative checkpoint, not for an
+otherwise healthy terminal whose lifetime output exceeds an attach-header
+budget.
+
 An attach or resync begins from a valid terminal presentation boundary. The
 server never asks a fresh emulator to reconstruct a screen from an arbitrary
 byte suffix that may begin inside an escape sequence or depend on discarded
@@ -96,6 +105,14 @@ state is tied to an exact output position; live raw bytes continue from that
 position without a gap or duplicate. If no valid boundary is retained, the
 client receives an explicit unavailable/resync state instead of a plausible but
 corrupted terminal display.
+
+Workspace metadata and chrome are not terminal presentation lifecycles.
+Changing a project root, opening or closing a sidebar, resizing a window, and
+other layout-only updates preserve the mounted emulator, its attachment, and
+its rendered byte position. A surviving emulator resumes from its exact
+acknowledged position after transient transport loss. Only a genuinely new
+emulator, such as one created after renderer reload or window restoration,
+requests checkpoint hydration.
 
 The incremental panel migration uses `TerminayTerminalPanelClient`, a
 transport-neutral view over that attachment. It exposes raw-byte output,

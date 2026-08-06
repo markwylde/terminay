@@ -67,6 +67,11 @@ fresh emulator's screen and modes reliably.
   presentation contract instead of merely changing it to the current 32-KiB
   value.
 
+These items were formerly backed by a whole-transcript replay surrogate, which
+failed once output exceeded the 32-KiB command-header budget. They are now
+implemented and verified through the binary checkpoint design in
+[Task 35](./35-durable-terminal-presentation-recovery.md).
+
 ### Verification
 
 - [x] Add PTY fixtures that query colours, device attributes, status/cursor,
