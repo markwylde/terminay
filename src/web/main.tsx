@@ -61,6 +61,23 @@ function createProfileId(hostname: string): string {
 	return `web-${hostname.replace(/[^a-z0-9-]/gi, '-').toLowerCase()}-${suffix}`;
 }
 
+function recordReconnectDiagnostic(
+	phase: 'started' | 'succeeded' | 'failed' | 'stale-close-ignored',
+	attempt: number,
+): void {
+	const diagnostic = (globalThis as typeof globalThis & {
+		__terminayReconnectDiagnostic?: (value: Readonly<{
+			phase: typeof phase;
+			attempt: number;
+		}>) => void;
+	}).__terminayReconnectDiagnostic;
+	try {
+		diagnostic?.(Object.freeze({ phase, attempt }));
+	} catch {
+		// A metadata-only diagnostic sink cannot affect reconnect lifecycle.
+	}
+}
+
 type ParsedServerUrl = Readonly<{
 	displayOrigin: string;
 	isLoopbackHttp: boolean;
@@ -287,6 +304,9 @@ export default function WebManagerApp() {
 	);
 	const reconnectTimers = useRef(new Map<string, number>());
 	const reconnectAttempts = useRef(new Map<string, number>());
+	const recoveryWatermarks = useRef(
+		new Map<string, Readonly<{ revision: number; cursor: string }>>(),
+	);
 	const autoRestoreAttemptedProfileId = useRef<string | null>(null);
 	const [reconnectVault] = useState<WebReconnectVault>(
 		() => new IndexedDbWebReconnectVault(),
@@ -586,7 +606,10 @@ export default function WebManagerApp() {
 			if (!isCurrentConnectionAttempt(profile, attempt)) return;
 			host.markStatus(profile.id, 'connected');
 			const context = await createConnectedServerClientContext(client, hello, {
-				onTransportClosed: () => recoverConnection(profile.id),
+				onTransportClosed: () => {
+					if (rendererAttempt !== undefined)
+						recoverConnection(profile.id, rendererAttempt, client);
+				},
 			});
 			if (!isCurrentConnectionAttempt(profile, attempt)) {
 				await context.dispose?.();
@@ -767,7 +790,6 @@ export default function WebManagerApp() {
 		});
 		try {
 			const hello = await client.connect();
-			const context = await createConnectedServerClientContext(client, hello);
 			const displayOrigin = origin.split('#', 1)[0] ?? origin;
 			const parsed = new URL(displayOrigin);
 			const existing = host.profiles
@@ -775,13 +797,17 @@ export default function WebManagerApp() {
 				.profiles.find((profile) => profile.origin === parsed.origin);
 			const profile =
 				existing ??
-				host.addConnection({
+					host.addConnection({
 					id: createProfileId(parsed.hostname),
 					serverId: hello.serverId,
 					label: parsed.host,
 					origin: parsed.origin,
-					status: 'connected',
-				});
+						status: 'connected',
+					});
+			const context = await createConnectedServerClientContext(client, hello, {
+				onTransportClosed: () =>
+					recoverConnection(profile.id, rendererAttempt, client),
+			});
 			host.markStatus(profile.id, 'connected');
 			const labelledContext = Object.freeze({
 				...context,
@@ -870,8 +896,12 @@ export default function WebManagerApp() {
 						: await createBrowserWebRtcTransport((name) =>
 								bridge.getChannel!(name, completion.ticket),
 							);
+				const initialWatermark = recoveryWatermarks.current.get(profile.id);
 				const client = new TerminayClient({
 					transport,
+					...(initialWatermark === undefined
+						? {}
+						: { initialWatermark }),
 					clientId,
 					clientVersion: '0.0.0',
 					capabilities: [
@@ -890,7 +920,8 @@ export default function WebManagerApp() {
 						client,
 						hello,
 						{
-							onTransportClosed: () => recoverConnection(profile.id),
+							onTransportClosed: () =>
+								recoverConnection(profile.id, rendererAttempt, client),
 						},
 					);
 					if (!isCurrentConnectionAttempt(profile, attempt)) {
@@ -920,6 +951,10 @@ export default function WebManagerApp() {
 						return;
 					setActiveConnection(candidate);
 					host.markStatus(profile.id, 'connected');
+					recordReconnectDiagnostic(
+						'succeeded',
+						reconnectAttempts.current.get(profile.id) ?? 0,
+					);
 					reconnectAttempts.current.delete(profile.id);
 					setError(null);
 					setStatus(null);
@@ -962,6 +997,11 @@ export default function WebManagerApp() {
 						: 'Unable to open that server.',
 			);
 			if (recovering) scheduleRecovery(profile.id);
+			if (recovering)
+				recordReconnectDiagnostic(
+					'failed',
+					reconnectAttempts.current.get(profile.id) ?? 0,
+				);
 		}
 		refresh();
 	}
@@ -983,7 +1023,25 @@ export default function WebManagerApp() {
 		refresh();
 	}
 
-	function recoverConnection(profileId: string): void {
+	function recoverConnection(
+		profileId: string,
+		attempt: ReturnType<RendererConnectionGeneration<ActiveTerminalConnection>['begin']>,
+		client: TerminayClient,
+	): void {
+		// A close callback belongs to one exact renderer generation. Once a new
+		// attempt begins or activates, a late callback from the retired context
+		// must not dispose the replacement merely because it has the same profile.
+		if (!connectionGeneration.current.isCurrent(attempt)) {
+			recordReconnectDiagnostic(
+				'stale-close-ignored',
+				reconnectAttempts.current.get(profileId) ?? 0,
+			);
+			return;
+		}
+		recoveryWatermarks.current.set(profileId, {
+			revision: client.snapshot.revision,
+			cursor: client.snapshot.cursor,
+		});
 		void connectionGeneration.current.disposeActive(profileId);
 		setActiveConnection((current) =>
 			current?.profileId === profileId ? null : current,
@@ -999,6 +1057,7 @@ export default function WebManagerApp() {
 		if (reconnectTimers.current.has(profileId)) return;
 		const attempt = reconnectAttempts.current.get(profileId) ?? 0;
 		reconnectAttempts.current.set(profileId, attempt + 1);
+		recordReconnectDiagnostic('started', attempt + 1);
 		const delay = Math.min(10_000, 750 * 2 ** Math.min(attempt, 4));
 		const timer = window.setTimeout(() => {
 			reconnectTimers.current.delete(profileId);

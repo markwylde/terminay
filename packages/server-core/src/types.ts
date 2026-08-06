@@ -8,6 +8,7 @@ import type {
   ProtocolId,
   ProtocolLimits,
   QueryEnvelope,
+	TransportCloseCode,
 } from "@terminay/protocol";
 
 /** A canonical identity returned by the transport/application authenticator. */
@@ -151,6 +152,16 @@ export interface ConnectionOptions {
 	/** Internal lifecycle observer; runs exactly once even for unauthenticated
 	 * handshakes so connection limits and host tracking cannot leak. */
 	readonly onClosed?: () => void;
+	/** Metadata-only delivery diagnostics. Frames and application payloads are
+	 * intentionally unavailable at this boundary. */
+	readonly onDeliveryDiagnostic?: (diagnostic: ConnectionDeliveryDiagnostic) => void;
+}
+
+export interface ConnectionDeliveryDiagnostic {
+	readonly phase: "failure" | "closed";
+	readonly code: TransportCloseCode;
+	readonly queuedBytes: number;
+	readonly queuedFrames: number;
 }
 
 export interface ServerConnectionLike {

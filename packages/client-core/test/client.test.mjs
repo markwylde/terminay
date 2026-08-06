@@ -52,6 +52,11 @@ function createTransport() {
       waiter = undefined;
     },
     onStateChange: () => () => {},
+		end() {
+			closed = true;
+			waiter?.({ value: undefined, done: true });
+			waiter = undefined;
+		},
     push(envelope) {
       const frame = encodeFrame(envelope, new Uint8Array(), DEFAULT_PROTOCOL_LIMITS);
       if (waiter !== undefined) {
@@ -64,6 +69,87 @@ function createTransport() {
     },
   };
 }
+
+test("disconnect marks confirmed state stale and a fresh client resumes subscriptions from its watermark", async () => {
+	const first = await connectedClient();
+	first.transport.push({
+		type: "event",
+		subscriptionId: "unrouted",
+		revision: 7,
+		cursor: "7",
+		event: "workspace.changed",
+		payload: {},
+	});
+	await new Promise((resolve) => setImmediate(resolve));
+	first.transport.end();
+	await new Promise((resolve) => setImmediate(resolve));
+
+	assert.deepEqual(
+		{
+			state: first.client.snapshot.state,
+			stale: first.client.snapshot.stale,
+			revision: first.client.snapshot.revision,
+			cursor: first.client.snapshot.cursor,
+		},
+		{ state: "stale", stale: true, revision: 7, cursor: "7" },
+	);
+	await assert.rejects(first.client.command("workspace.mutate"), /not connected/u);
+
+	const secondTransport = createTransport();
+	const secondClient = new TerminayClient({
+		transport: secondTransport,
+		clientId: "test-client-reconnected",
+		initialWatermark: { revision: 7, cursor: "7" },
+	});
+	assert.notEqual(secondTransport, first.transport);
+	const connecting = secondClient.connect();
+	secondTransport.push({
+		type: "server_hello",
+		protocolVersion: 1,
+		serverId: "server-1",
+		serverVersion: "test",
+		clientId: "test-client-reconnected",
+		capabilities: [],
+		limits: DEFAULT_PROTOCOL_LIMITS,
+		authScope: "write",
+	});
+	await connecting;
+	const subscribing = secondClient.subscribe("workspace.changed", {
+		subscriptionId: "workspace-resume",
+	});
+	const subscribeFrame = secondTransport.frames.find(
+		({ envelope }) =>
+			envelope.type === "command" && envelope.operation === "events.subscribe",
+	);
+	assert.deepEqual(subscribeFrame.envelope.payload, {
+		subscriptionId: "workspace-resume",
+		event: "workspace.changed",
+		fromRevision: 7,
+		cursor: "7",
+	});
+	secondTransport.push({
+		type: "command_result",
+		commandId: subscribeFrame.envelope.commandId,
+		correlationId: subscribeFrame.envelope.correlationId,
+		ok: true,
+		result: { subscriptionId: "workspace-resume" },
+	});
+	await subscribing;
+	await secondClient.close();
+});
+
+test("a reconnect watermark must be canonical and internally consistent", () => {
+	for (const initialWatermark of [
+		{ revision: -1, cursor: "-1" },
+		{ revision: 4, cursor: "3" },
+		{ revision: 4, cursor: "workspace-secret" },
+	]) {
+		assert.throws(
+			() => new TerminayClient({ transport: createTransport(), initialWatermark }),
+			/initial connection watermark is invalid/u,
+		);
+	}
+});
 
 async function connectedClient() {
   const transport = createTransport();

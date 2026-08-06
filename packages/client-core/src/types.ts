@@ -178,6 +178,10 @@ export interface TerminayClientOptions {
   readonly handshakeTimeoutMs?: number;
   readonly reconnect?: ReconnectOptions | false;
   readonly hostCapabilities?: HostCapabilitySet | HostCapabilityProvider;
+	/** Last server-confirmed application watermark from a retired connection.
+	 * A reconnect creates a new client/transport and resumes subscriptions from
+	 * this point; it never reopens the retired transport. */
+	readonly initialWatermark?: Readonly<{ revision: number; cursor: string }>;
 }
 
 export interface ReconnectOptions {

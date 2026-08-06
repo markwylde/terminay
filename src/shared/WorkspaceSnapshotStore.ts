@@ -1,10 +1,16 @@
 import { WorkspaceClient, type PanelActivationRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectRootUpdateRequest, type TerminayClient, type WorkspaceCommandOptions } from '@terminay/client-core'
 import {
 	parseServerWorkspaceSnapshot,
+	parseServerWorkspaceDelta,
 	type ServerWorkspaceSnapshot,
 } from './serverWorkspaceReconciliation'
 
 export type WorkspaceSnapshotListener = (snapshot: ServerWorkspaceSnapshot) => void
+export type WorkspaceReconciliationStatus = Readonly<{
+	state: 'current' | 'stale' | 'failed'
+	error?: Error
+}>
+export type WorkspaceStatusListener = (status: WorkspaceReconciliationStatus) => void
 
 /**
  * One authenticated server connection owns one validated workspace projection.
@@ -14,10 +20,13 @@ export type WorkspaceSnapshotListener = (snapshot: ServerWorkspaceSnapshot) => v
 export class WorkspaceSnapshotStore {
 	private readonly workspace: WorkspaceClient
 	private readonly listeners = new Set<WorkspaceSnapshotListener>()
+	private readonly statusListeners = new Set<WorkspaceStatusListener>()
 	private known: ServerWorkspaceSnapshot | null = null
+	private reconciliationStatus: WorkspaceReconciliationStatus = { state: 'stale' }
 	private unsubscribeEvents: (() => Promise<void>) | undefined
 	private refreshPromise: Promise<ServerWorkspaceSnapshot> | null = null
 	private refreshAgain = false
+	private forceSnapshot = false
 	private publishing = false
 	private closed = false
 
@@ -31,11 +40,18 @@ export class WorkspaceSnapshotStore {
 	}
 
 	get snapshot(): ServerWorkspaceSnapshot | null { return this.known }
+	get status(): WorkspaceReconciliationStatus { return this.reconciliationStatus }
 
 	subscribe(listener: WorkspaceSnapshotListener): () => void {
 		this.listeners.add(listener)
 		if (this.known !== null) listener(this.known)
 		return () => this.listeners.delete(listener)
+	}
+
+	subscribeStatus(listener: WorkspaceStatusListener): () => void {
+		this.statusListeners.add(listener)
+		listener(this.reconciliationStatus)
+		return () => this.statusListeners.delete(listener)
 	}
 
 	async start(): Promise<void> {
@@ -55,11 +71,12 @@ export class WorkspaceSnapshotStore {
 				const payload = event.payload
 				if (!isWorkspaceChange(payload, this.options.serverId)) return
 				if (this.known !== null && payload.revision <= this.known.revision) return
-				void this.refresh().catch(() => undefined)
+				void this.refresh().catch((error) => this.reportBackgroundFailure(error))
 			})
 			const removeResync = subscription.onResync(() => {
-				this.known = null
-				void this.refresh().catch(() => undefined)
+				this.forceSnapshot = true
+				this.markStatus({ state: 'stale', error: new Error('Workspace event history requires resynchronization.') })
+				void this.refresh().catch((error) => this.reportBackgroundFailure(error))
 			})
 			this.unsubscribeEvents = async () => {
 				removeEvent()
@@ -79,8 +96,7 @@ export class WorkspaceSnapshotStore {
 			this.refreshAgain = true
 			return this.refreshPromise
 		}
-		this.refreshAgain = false
-		const promise = this.fetchAndPublish()
+		const promise = this.refreshUntilSettled()
 		this.refreshPromise = promise
 		try {
 			return await promise
@@ -88,11 +104,16 @@ export class WorkspaceSnapshotStore {
 			if (this.refreshPromise === promise) {
 				this.refreshPromise = null
 			}
-			if (this.refreshAgain && !this.closed) {
-				this.refreshAgain = false
-				void this.refresh().catch(() => undefined)
-			}
 		}
+	}
+
+	private async refreshUntilSettled(): Promise<ServerWorkspaceSnapshot> {
+		let snapshot: ServerWorkspaceSnapshot | null = null
+		do {
+			this.refreshAgain = false
+			snapshot = await this.fetchAndPublish()
+		} while (this.refreshAgain && !this.closed)
+		return snapshot
 	}
 
 	async waitForSnapshot(
@@ -123,14 +144,35 @@ export class WorkspaceSnapshotStore {
 
 	private async fetchAndPublish(): Promise<ServerWorkspaceSnapshot> {
 		const previous = this.known
-		const value = previous === null
-			? await this.workspace.snapshot()
-			: await this.workspace.delta(previous.revision, previous.cursor)
-		recordBootstrapDiagnostic(previous === null ? 'workspace.snapshot.received' : 'workspace.delta.received')
+		let snapshot: ServerWorkspaceSnapshot
+		if (previous === null || this.forceSnapshot) {
+			this.forceSnapshot = false
+			const value = await this.workspace.snapshot()
+			recordBootstrapDiagnostic('workspace.snapshot.received')
+			snapshot = parseServerWorkspaceSnapshot(value, this.options.serverId, previous)
+		} else {
+			try {
+				const value = await this.workspace.delta(previous.revision, previous.cursor)
+				recordBootstrapDiagnostic('workspace.delta.received')
+				snapshot = parseServerWorkspaceDelta(value, this.options.serverId, previous).state
+			} catch (error) {
+				this.markStatus({ state: 'stale', error: asError(error) })
+				recordBootstrapDiagnostic('workspace.delta.invalid')
+				try {
+					const recovery = await this.workspace.snapshot()
+					recordBootstrapDiagnostic('workspace.snapshot.recovery.received')
+					snapshot = parseServerWorkspaceSnapshot(recovery, this.options.serverId, previous)
+				} catch (recoveryError) {
+					this.markStatus({ state: 'failed', error: asError(recoveryError) })
+					recordBootstrapDiagnostic('workspace.snapshot.recovery.failed')
+					throw recoveryError
+				}
+			}
+		}
 		if (this.closed) throw new Error('workspace snapshot store is closed')
-		const snapshot = parseServerWorkspaceSnapshot(value, this.options.serverId, previous)
 		recordBootstrapDiagnostic('workspace.snapshot.normalized')
 		this.known = snapshot
+		this.markStatus({ state: 'current' })
 		if (this.listeners.size > 256) throw new Error('workspace snapshot listener budget exceeded')
 		if (this.publishing) throw new Error('workspace snapshot publish is reentrant')
 		recordBootstrapDiagnostic('workspace.listeners.publish', this.listeners.size)
@@ -142,6 +184,18 @@ export class WorkspaceSnapshotStore {
 			this.publishing = false
 		}
 		return snapshot
+	}
+
+	private markStatus(status: WorkspaceReconciliationStatus): void {
+		this.reconciliationStatus = status
+		for (const listener of [...this.statusListeners]) listener(status)
+	}
+
+	private reportBackgroundFailure(error: unknown): void {
+		const normalized = asError(error)
+		this.markStatus({ state: 'failed', error: normalized })
+		recordBootstrapDiagnostic('workspace.reconciliation.failed')
+		console.warn('workspace reconciliation failed', normalized.name)
 	}
 
 	/** Keep the only presentation mutation on the same authenticated workspace
@@ -202,7 +256,12 @@ export class WorkspaceSnapshotStore {
 		})
 		this.unsubscribeEvents = undefined
 		this.listeners.clear()
+		this.statusListeners.clear()
 	}
+}
+
+function asError(error: unknown): Error {
+	return error instanceof Error ? error : new Error('Workspace reconciliation failed.', { cause: error })
 }
 
 function recordBootstrapDiagnostic(phase: string, count?: number): void {
