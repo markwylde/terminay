@@ -146,6 +146,11 @@ function updateRemoteViewportMetadata(sessionId: string, root: HTMLElement) {
   })
 }
 
+function updateTerminalGridMetadata(root: HTMLElement, cols: number, rows: number) {
+  root.dataset.terminalCols = String(cols)
+  root.dataset.terminalRows = String(rows)
+}
+
 function clearRemoteTerminalElementSize(root: HTMLElement, terminal: Terminal) {
   root.style.removeProperty(REMOTE_TERMINAL_SCALE_PROPERTY)
 
@@ -204,6 +209,7 @@ function applyRemoteTerminalSize(
   shouldSyncAfterFrame: () => boolean,
 ) {
   terminal.resize(cols, rows)
+  updateTerminalGridMetadata(root, cols, rows)
   syncRemoteTerminalElementSize(root, terminal)
   window.requestAnimationFrame(() => {
     if (!shouldSyncAfterFrame()) {
@@ -633,6 +639,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
       clearRemoteTerminalElementSize(root, terminal)
       fitAddon.fit()
+      updateTerminalGridMetadata(root, terminal.cols, terminal.rows)
       if (force || terminal.cols !== lastSentSize.cols || terminal.rows !== lastSentSize.rows) {
         lastSentSize = { cols: terminal.cols, rows: terminal.rows }
         resizePanel(terminal.cols, terminal.rows)
@@ -794,7 +801,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             setIsTerminalHydrating(false)
 
             serverInputQueue?.attach(attachment)
-            if (pendingPanelResize !== null) {
+            if (pendingPanelResize !== null && terminalPresentationControllerRef.current) {
               const resize = pendingPanelResize
               pendingPanelResize = null
               void attachment.resize(resize).catch(() => {})
@@ -862,6 +869,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           remoteSizeOverrideRef.current = null
           setIsRemoteSizeOverrideActive(false)
           fitAndResize(true)
+          return
+        }
+
+        // Server presentation ownership is authoritative. A delayed legacy
+        // host notification from the former controller must never put the new
+        // controller back onto an observer-owned grid.
+        if (terminalPresentationControllerRef.current) {
           return
         }
 
@@ -1249,6 +1263,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       // have committed; this never replays server bytes.
       clearRemoteTerminalElementSize(root, terminal)
       fitAddon.fit()
+      updateTerminalGridMetadata(root, terminal.cols, terminal.rows)
       if (terminal.rows > 0) terminal.refresh(0, terminal.rows - 1)
       const useServerTerminal =
         resolvedTerminalClient.panelClient !== undefined &&

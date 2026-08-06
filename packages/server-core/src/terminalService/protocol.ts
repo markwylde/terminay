@@ -368,8 +368,10 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       rows,
       authorization: authorizationFor(value.identity, request, "write"),
     });
-    publishDimensions(value.identity, cols, rows);
-    return { attachmentId: value.attachment.attachmentId, cols, rows, presentation: presentationPayload(lease, value.clientId, value.attachment.attachmentId), ...(result.ownership === undefined ? {} : { leaseExpiresAt: result.ownership.leaseExpiresAt }) };
+    const accepted = result.ownership;
+    if (accepted === undefined) throw new TerminalServiceError("forbidden", "terminal resize ownership was not established", { reason: "resize_owner" });
+    publishDimensions(value.identity, accepted.cols, accepted.rows);
+    return { attachmentId: value.attachment.attachmentId, cols: accepted.cols, rows: accepted.rows, presentation: presentationPayload(lease, value.clientId, value.attachment.attachmentId), leaseExpiresAt: accepted.leaseExpiresAt };
   }
 
   function presentation(request: CommandRequest): JsonValue {
