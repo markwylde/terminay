@@ -1,10 +1,13 @@
 import { createPublicKey, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
-import type { RemoteReconnectGrantRecord } from '@terminay/server-core';
+import type { ByteTransport } from '@terminay/protocol';
+import type {
+	RemoteReconnectGrantRecord,
+	ServerCore,
+} from '@terminay/server-core';
 import {
 	createLocalUiServer,
 	type LocalUiServer,
-	type LocalUiServerOptions,
 } from '../../apps/terminay-server/src/localUiServer';
 import type {
 	ServerPairingHandoff,
@@ -37,6 +40,9 @@ export interface EmbeddedLanExposureOptions {
 		records: readonly RemoteReconnectGrantRecord[],
 	) => void;
 	readonly onConnectionError?: (error: unknown) => void;
+	/** Enables the Desktop test bridge's connection-scoped fault injector. The
+	 * production composition never sets this flag. */
+	readonly enableTestControl?: boolean;
 }
 
 /**
@@ -46,6 +52,7 @@ export interface EmbeddedLanExposureOptions {
  */
 export class EmbeddedLanExposure {
 	private listener: LocalUiServer | undefined;
+	private readonly testProtocolTransports = new Map<string, ByteTransport>();
 	private readonly pendingPairings = new Map<
 		string,
 		Readonly<{
@@ -113,9 +120,7 @@ export class EmbeddedLanExposure {
 			host: settings.bindAddress.trim() || '0.0.0.0',
 			port,
 			onConnectionError: this.options.onConnectionError,
-			protocolCore: this.options.core as NonNullable<
-				LocalUiServerOptions['protocolCore']
-			>,
+			protocolCore: this.protocolCore(),
 			pairing: {
 				start: (request) => {
 					const expiresAt = Date.parse(request.pairingExpiresAt);
@@ -248,7 +253,62 @@ export class EmbeddedLanExposure {
 		const listener = this.listener;
 		this.listener = undefined;
 		await listener?.stop();
+		this.testProtocolTransports.clear();
 		this.pendingPairings.clear();
+	}
+
+	/** Test-only opaque identifiers for active LAN application transports. */
+	testProtocolConnectionIds(): readonly string[] {
+		this.assertTestControl();
+		return Object.freeze([...this.testProtocolTransports.keys()]);
+	}
+
+	/** Test-only server-side transport failure. It cannot address a terminal,
+	 * device, project, or any connection outside this listener instance. */
+	async failTestProtocolConnection(connectionId: string): Promise<void> {
+		this.assertTestControl();
+		if (
+			connectionId.length === 0 ||
+			connectionId.length > 128 ||
+			!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(connectionId)
+		) {
+			throw new TypeError('test protocol connection id is invalid');
+		}
+		const transport = this.testProtocolTransports.get(connectionId);
+		if (transport === undefined)
+			throw new Error('test protocol connection is unavailable');
+		await transport.close({
+			code: 'internal',
+			message: 'test-injected remote transport failure',
+		});
+	}
+
+	private protocolCore(): ServerCore {
+		const core = this.options.core as ServerCore;
+		if (!this.options.enableTestControl) return core;
+		this.assertTestControl();
+		return {
+			accept: (transport, options = {}) => {
+				const connectionId = options.connectionId;
+				if (connectionId === undefined)
+					throw new Error('test-controlled protocol connection requires an id');
+				const connection = core.accept(transport, {
+					...options,
+					onClosed: () => {
+						this.testProtocolTransports.delete(connectionId);
+						options.onClosed?.();
+					},
+				});
+				this.testProtocolTransports.set(connectionId, transport);
+				return connection;
+			},
+		};
+	}
+
+	private assertTestControl(): void {
+		if (!this.options.enableTestControl || process.env.TERMINAY_TEST !== '1') {
+			throw new Error('embedded LAN test control is unavailable');
+		}
 	}
 
 	private publishReconnectRecords(exposure: ServerRemoteExposure): void {
