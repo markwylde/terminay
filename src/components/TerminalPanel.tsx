@@ -720,6 +720,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             const applyPresentation = (state: TerminalPresentationState) => {
               const becameController = !terminalPresentationControllerRef.current && state.role === 'controller'
               terminalPresentationControllerRef.current = state.role === 'controller'
+              if (state.role !== 'controller') serverInputQueue?.discardPending()
               setTerminalPresentation(state)
               if (presentationRenewTimer !== null) window.clearTimeout(presentationRenewTimer)
               presentationRenewTimer = null
@@ -1455,7 +1456,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           </button>
         </search>
       ) : null}
-      <div className="terminal-panel-root" ref={xtermRootRef} />
       {terminalPresentation?.role === 'read_only' && terminalPresentation.holder !== undefined && !presentationUnavailable ? (
         <div className="terminal-presentation-control" role="status" aria-live="polite">
           <span>Another device is controlling this terminal.</span>
@@ -1470,6 +1470,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           </button>
         </div>
       ) : null}
+      <div className="terminal-panel-root" ref={xtermRootRef} />
       {serverTerminalError ? (
         <div className="terminal-panel-connection-error" role="alert">
           <p>{serverTerminalError}</p>
