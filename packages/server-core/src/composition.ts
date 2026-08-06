@@ -7,6 +7,7 @@ import {
 } from "./terminalService/protocol.js";
 import { TerminalServiceAdapter } from "./terminalService/adapter.js";
 import { TerminalInputSourceAdapter } from "./terminalService/inputSources.js";
+import { TerminalPresentationCheckpointAuthority } from "./terminalService/presentationCheckpoint.js";
 import {
   TerminalService,
 } from "./terminalService/service.js";
@@ -114,6 +115,10 @@ export interface ServerCoreCompositionOptions
   /** Optional adapters supplied by a host; defaults are server-owned. */
   readonly terminalAttachments?: TerminalServiceAdapter;
   readonly terminalInputSources?: TerminalInputSourceAdapter;
+  /** Bounded canonical emulator used for fresh terminal presentation recovery.
+   * Hosts that inject a TerminalService supply the same authority to the
+   * service and this composition; normal compositions create one here. */
+  readonly presentationCheckpoints?: TerminalPresentationCheckpointAuthority;
   /** Optional canonical workspace authority. When supplied, workspace
    * queries and authenticated project.move commands are composed into the
    * same server dispatcher as terminal operations. */
@@ -199,7 +204,23 @@ export interface ServerCoreComposition {
 export function createServerCoreComposition(
   options: ServerCoreCompositionOptions,
 ): ServerCoreComposition {
-  const terminal = composeTerminal(options);
+  const presentationCheckpoints =
+    options.presentationCheckpoints ??
+    options.terminalOptions?.presentationCheckpoints ??
+    (options.terminalService === undefined
+      ? new TerminalPresentationCheckpointAuthority()
+      : undefined);
+  const terminal = composeTerminal({
+    ...options,
+    ...(presentationCheckpoints === undefined || options.terminalService !== undefined
+      ? {}
+      : {
+          terminalOptions: {
+            ...options.terminalOptions,
+            presentationCheckpoints,
+          },
+        }),
+  });
   if (terminal.serverId !== options.serverId) {
     throw new TypeError("terminal service server id does not match server core identity");
   }
@@ -256,6 +277,7 @@ export function createServerCoreComposition(
   const terminalOperations = createTerminalOperationRegistry({
     service: terminal,
     eventJournal,
+    ...(presentationCheckpoints === undefined ? {} : { checkpoints: presentationCheckpoints }),
     ...(terminalLaunchResolver === undefined ? {} : { launchResolver: terminalLaunchResolver }),
 		...(options.allowUnresolvedTestSessions === true ? { allowUnresolvedTestSessions: true } : {}),
     ...(options.workspace === undefined
@@ -451,6 +473,7 @@ export function createServerCoreComposition(
 			// Terminal exit is a final agent lifecycle input, so terminal stops
 			// before the agent service. Every later cleanup still runs if it fails.
 			await attempt(() => terminal.shutdown());
+			await attempt(() => presentationCheckpoints?.close());
 			await attempt(() => options.recordings?.service.shutdown());
 			await attempt(() => options.serviceLifecycle?.stop?.());
 			await attempt(() => unsubscribeGitEvents?.());
