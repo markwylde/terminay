@@ -26,6 +26,16 @@ function transport() {
   const listeners = new Set();
   return {
     calls,
+    emitRaw(payload, body) {
+      for (const listener of listeners) listener({
+        subscriptionId: "terminal-sub",
+        revision: 1,
+        cursor: "1",
+        event: "terminal",
+        payload,
+        ...(body === undefined ? {} : { body }),
+      });
+    },
     emit(payload, body) {
       for (const listener of listeners) listener({
         subscriptionId: "terminal-sub",
@@ -53,6 +63,17 @@ function transport() {
     },
   };
 }
+
+test("terminal panel ignores journal payloads that do not claim its exact attachment", async () => {
+  const source = transport();
+  const panel = await new TerminayTerminalPanelClient(new TerminayTerminalClient(source)).attach({ ...identity, clientId: "panel-client" });
+
+  assert.doesNotThrow(() => source.emitRaw(null));
+  assert.doesNotThrow(() => source.emitRaw({ type: "auxiliary-terminal-event" }));
+  assert.doesNotThrow(() => source.emitRaw({ ...identity, type: "presentation", attachmentId: "other-attachment", clientId: "other-client", revision: 1, role: "controller" }));
+  assert.throws(() => source.emit({ ...identity, type: "unknown-terminal-event" }), /unknown terminal event type/);
+  await panel.detach();
+});
 
 test("terminal panel adapter preserves raw bytes and routes input, resize, kill, ack, and detach", async () => {
   const source = transport();
