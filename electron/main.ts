@@ -913,6 +913,7 @@ const persistEmbeddedReconnectRecords = (
 };
 const embeddedLanExposure = new EmbeddedLanExposure({
 	core: serverTerminalAuthority.composition.core,
+	...(process.env.TERMINAY_TEST === '1' ? { enableTestControl: true } : {}),
 	getSettings: () => readTerminalSettings().remoteAccess,
 	onConnectionError: (error) => {
 		void desktopDiagnostics.record(
@@ -5617,6 +5618,27 @@ ipcMain.handle('desktop:recordings-host:open', (event, payload: unknown) => {
 });
 
 if (process.env.TERMINAY_TEST === '1') {
+	ipcMain.handle('test:list-remote-protocol-connections', (event) => {
+		assertTrustedAppSender(event);
+		return embeddedLanExposure.testProtocolConnectionIds();
+	});
+
+	ipcMain.handle(
+		'test:fail-remote-protocol-connection',
+		async (event, payload?: { connectionId?: unknown }) => {
+			assertTrustedAppSender(event);
+			const connectionId = payload?.connectionId;
+			if (
+				typeof connectionId !== 'string' ||
+				connectionId.length === 0 ||
+				connectionId.length > 128
+			) {
+				throw new TypeError('test protocol connection id is invalid');
+			}
+			await embeddedLanExposure.failTestProtocolConnection(connectionId);
+		},
+	);
+
 	ipcMain.handle(
 		'test:create-server-terminal',
 		async (event, payload?: { cwd?: unknown; projectId?: unknown }) => {

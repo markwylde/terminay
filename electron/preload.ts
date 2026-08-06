@@ -2145,6 +2145,14 @@ if (process.env.TERMINAY_TEST === '1') {
 		}),
 	);
 	const testApi: TerminayTestApi = {
+		listRemoteProtocolConnections: () =>
+			ipcRenderer.invoke('test:list-remote-protocol-connections') as Promise<
+				readonly string[]
+			>,
+		failRemoteProtocolConnection: (connectionId) =>
+			ipcRenderer.invoke('test:fail-remote-protocol-connection', {
+				connectionId,
+			}) as Promise<void>,
 		createServerTerminal: (options = {}) =>
 			ipcRenderer.invoke('test:create-server-terminal', options) as Promise<{
 				id: string;
