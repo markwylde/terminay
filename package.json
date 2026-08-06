@@ -156,7 +156,7 @@
 		"monaco-editor": "^0.55.1",
 		"node-pty": "^1.1.0",
 		"openai": "^6.45.0",
-		"pdfjs-dist": "^6.0.227",
+		"pdfjs-dist": "^6.2.108",
 		"qrcode": "^1.5.4",
 		"react": "^19.2.7",
 		"react-dom": "^19.2.7",
