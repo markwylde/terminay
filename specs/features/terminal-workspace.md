@@ -140,6 +140,21 @@ request an explicit takeover; focus, attachment, or receipt of output alone
 does not silently seize control. Handoff, disconnect, expiry, and revocation
 release the lease predictably and are visible to every attached client.
 
+When no presentation holder exists, the first write-authorized attachment
+acquires the lease as part of that same serialized attach operation. This is
+initial ownership, not a takeover: it must never displace an existing holder.
+The owning surface shows no controller badge or control affordance. A
+write-authorized observer shows takeover UI only while a different live
+attachment is the holder, as a full-width terminal bar reading “Another device
+is controlling this terminal.” with a “Take back control” action. A lease
+conflict is normal read-only presentation state, not a connection failure.
+
+Initial ownership and explicit takeover immediately fit the terminal to the
+owning surface and submit its current viewport. A resize attempted before the
+asynchronous attach completed is retained and submitted once ownership is
+known, so an unshared terminal always fills its panel and never retains a
+stale observer viewport.
+
 Server-authorized non-interactive sources such as macros, dictation, and MCP
 retain their own scoped command authorization and enter the same ordered input
 queue, but they do not acquire presentation ownership. Automatic terminal
@@ -155,6 +170,9 @@ query and injecting duplicate control responses.
   output byte in order, only the visible lease holder can produce interactive
   or emulator-generated input, and explicit takeover transfers that authority
   without duplicated terminal-query responses.
+- A sole local or remote attachment silently owns and fills its terminal. No
+  controller/read-only badge is shown unless another attachment currently owns
+  that presentation; that observer receives the full-width takeover bar.
 - A fresh client and a client recovering after a replay gap hydrate from a
   valid presentation boundary and then receive uninterrupted live output; they
   never start inside a partial ANSI/OSC sequence.
