@@ -148,7 +148,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       ...Object.keys(recordingOperations.commands),
       "settings.update", "settings.reset",
       "terminal.create", "terminal.attach", "terminal.resume", "terminal.ack",
-      "terminal.input", "terminal.resize", "terminal.kill", "terminal.detach",
+      "terminal.input", "terminal.presentation", "terminal.resize", "terminal.kill", "terminal.detach",
     ];
     assert.deepEqual([...composition.operations.queries.keys()].sort(), expectedQueries.sort());
     assert.deepEqual([...composition.operations.commands.keys()].sort(), expectedCommands.sort());

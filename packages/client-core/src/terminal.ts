@@ -28,6 +28,9 @@ export interface TerminalClientAttachRequest extends TerminalClientIdentity {
 	 * response. Live output still streams normally after attachment.
 	 */
 	readonly maxInitialReplayBytes?: number;
+	/** True only when attaching a newly-created blank emulator. It forces a
+	 * complete position-zero presentation instead of using reconnect state. */
+	readonly freshPresentation?: boolean;
 }
 
 export interface TerminalClientCreateRequest {
@@ -72,7 +75,23 @@ export interface TerminalClientListResult {
 export type TerminalWireEvent =
 	| TerminalWireOutputEvent
 	| TerminalWireExitEvent
-	| TerminalWireResyncEvent;
+	| TerminalWireResyncEvent
+	| TerminalWirePresentationEvent
+	| TerminalWirePresentationUnavailableEvent;
+
+export interface TerminalPresentationState extends TerminalClientIdentity {
+	readonly revision: number;
+	readonly role: 'controller' | 'read_only';
+	readonly holder?: Readonly<{ clientId: string; attachmentId: string; leaseExpiresAt: number }>;
+}
+
+export interface TerminalWirePresentationEvent extends TerminalPresentationState { readonly type: 'presentation'; readonly action?: string; }
+export interface TerminalWirePresentationUnavailableEvent extends TerminalClientIdentity {
+	readonly type: 'presentation_unavailable';
+	readonly requestedFromPosition: number;
+	readonly replayFrom: number;
+	readonly outputPosition: number;
+}
 
 export interface TerminalWireOutputEvent extends TerminalClientIdentity {
 	readonly type: 'output';
@@ -124,13 +143,16 @@ export interface TerminalStreamResyncEvent extends TerminalClientIdentity {
 export type TerminalStreamEvent =
 	| TerminalStreamOutputEvent
 	| TerminalStreamExitEvent
-	| TerminalStreamResyncEvent;
+	| TerminalStreamResyncEvent
+	| TerminalWirePresentationEvent
+	| TerminalWirePresentationUnavailableEvent;
 
 export interface TerminalAttachResult {
 	readonly attachmentId: string;
 	readonly fromPosition: number;
 	readonly position: number;
 	readonly events?: readonly TerminalWireEvent[];
+	readonly presentation: TerminalPresentationState;
 }
 
 export interface TerminalClientTransport {
@@ -156,6 +178,7 @@ export interface TerminalClientAttachment {
 	readonly initialEvents: readonly TerminalStreamEvent[];
 	readonly position: number;
 	readonly closed: boolean;
+	readonly presentation: TerminalPresentationState;
 	readonly onEvent: (
 		listener: (event: TerminalStreamEvent) => void,
 	) => () => void;
@@ -170,6 +193,7 @@ export interface TerminalClientAttachment {
 		dimensions: TerminalDimensions,
 		options?: CommandOptions,
 	) => Promise<void>;
+	readonly changePresentation: (mode: 'acquire' | 'renew' | 'takeover' | 'release', options?: CommandOptions) => Promise<TerminalPresentationState>;
 	/** Request termination of the attached session. */
 	readonly kill: (
 		signal?: number | string,
@@ -192,6 +216,7 @@ interface MutableAttachment {
 	unsubscribeEvent: () => void;
 	readonly initialEvents: TerminalStreamEvent[];
 	position: number;
+	presentation: TerminalPresentationState;
 	closed: boolean;
 	detached: Promise<void> | undefined;
 }
@@ -450,7 +475,8 @@ export class TerminayTerminalClient {
 		// delivery watermark. An explicit cursor belongs to this display surface:
 		// a newly-created xterm may deliberately request retained replay from 0
 		// without lowering the reconnect/acknowledgement watermark.
-		const fromPosition = request.fromPosition ?? highWatermark;
+		if (request.freshPresentation === true && request.fromPosition !== undefined && request.fromPosition !== 0) throw new TypeError('a fresh terminal presentation must start at position zero');
+		const fromPosition = request.freshPresentation === true ? 0 : request.fromPosition ?? highWatermark;
 		validatePosition(fromPosition);
 		const result = await this.invoke<TerminalAttachResult>(operation, {
 			clientId: request.clientId,
@@ -459,6 +485,7 @@ export class TerminayTerminalClient {
 				? {}
 				: { authorization: authorizationPayload(request.authorization) }),
 			fromPosition,
+			...(request.freshPresentation === true ? { freshPresentation: true } : {}),
 			...(request.maxInitialReplayBytes === undefined
 				? {}
 				: { maxInitialReplayBytes: request.maxInitialReplayBytes }),
@@ -522,6 +549,7 @@ export class TerminayTerminalClient {
 			unsubscribeEvent: () => undefined,
 			initialEvents: initialEvents.map(copyEvent),
 			position,
+			presentation: copyPresentation(result.presentation ?? { ...copyIdentity(request), revision: 0, role: 'read_only' }),
 			closed: false,
 			detached: undefined,
 		};
@@ -544,6 +572,7 @@ export class TerminayTerminalClient {
 					Math.max(this.highWatermarks.get(key) ?? 0, decoded.replayFrom),
 				);
 			}
+			if (decoded.type === 'presentation') mutable.presentation = copyPresentation(decoded);
 			if (mutable.listeners.size === 0) {
 				// The transport subscription is necessarily live before open() can
 				// return its attachment. Preserve that handoff window as replayable
@@ -646,6 +675,19 @@ export class TerminayTerminalClient {
 		);
 	}
 
+	async changePresentation(mutable: MutableAttachment, mode: 'acquire' | 'renew' | 'takeover' | 'release', options: CommandOptions = {}): Promise<TerminalPresentationState> {
+		if (mutable.closed) throw new Error('terminal attachment is closed');
+		const state = await this.invoke<TerminalPresentationState>('terminal.presentation', {
+			attachmentId: mutable.id,
+			clientId: mutable.clientId,
+			identity: identityPayload(mutable.identity),
+			mode,
+		}, options);
+		validatePresentation(state, mutable.identity);
+		mutable.presentation = copyPresentation(state);
+		return mutable.presentation;
+	}
+
 	async kill(
 		mutable: MutableAttachment,
 		signal?: number | string,
@@ -726,6 +768,7 @@ class AttachmentView implements TerminalClientAttachment {
 	get closed(): boolean {
 		return this.mutable.closed;
 	}
+	get presentation(): TerminalPresentationState { return this.mutable.presentation; }
 	onEvent(listener: (event: TerminalStreamEvent) => void): () => void {
 		if (typeof listener !== 'function')
 			throw new TypeError('terminal event listener must be a function');
@@ -746,6 +789,9 @@ class AttachmentView implements TerminalClientAttachment {
 		options: CommandOptions = {},
 	): Promise<void> {
 		return this.owner.resize(this.mutable, dimensions, options);
+	}
+	changePresentation(mode: 'acquire' | 'renew' | 'takeover' | 'release', options: CommandOptions = {}): Promise<TerminalPresentationState> {
+		return this.owner.changePresentation(this.mutable, mode, options);
 	}
 	kill(signal?: number | string, options: CommandOptions = {}): Promise<void> {
 		return this.owner.kill(this.mutable, signal, options);
@@ -776,6 +822,18 @@ function validateAttachResult(value: TerminalAttachResult): void {
 		!Number.isSafeInteger(value.position)
 	)
 		throw new TypeError('terminal attach result is invalid');
+	if (value.presentation !== undefined) validatePresentation(value.presentation, undefined);
+}
+
+function validatePresentation(value: unknown, identity: TerminalClientIdentity | undefined): asserts value is TerminalPresentationState {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new TypeError('terminal presentation state is invalid');
+	const candidate = value as Record<string, unknown>;
+	if (!Number.isSafeInteger(candidate.revision) || (candidate.revision as number) < 0 || (candidate.role !== 'controller' && candidate.role !== 'read_only')) throw new TypeError('terminal presentation state is invalid');
+	if (identity !== undefined && (candidate.serverId !== identity.serverId || candidate.projectId !== identity.projectId || candidate.sessionId !== identity.sessionId)) throw new TypeError('terminal presentation identity is invalid');
+	if (candidate.holder !== undefined) {
+		const holder = candidate.holder as Record<string, unknown>;
+		if (typeof holder !== 'object' || holder === null || !isBoundedIdentity(holder.clientId) || !isBoundedIdentity(holder.attachmentId) || !Number.isSafeInteger(holder.leaseExpiresAt)) throw new TypeError('terminal presentation holder is invalid');
+	}
 }
 
 function validateCreatedSession(value: TerminalClientSession): void {
@@ -902,6 +960,13 @@ function decodeEvent(
 			outputPosition,
 		});
 	}
+	if (type === 'presentation') {
+		validatePresentation(candidate, identity);
+		return Object.freeze({ ...copyPresentation(candidate as unknown as TerminalPresentationState), type: 'presentation', ...(typeof candidate.action === 'string' ? { action: candidate.action } : {}) });
+	}
+	if (type === 'presentation_unavailable') {
+		return Object.freeze({ ...identity, type: 'presentation_unavailable', requestedFromPosition: safePosition(candidate.requestedFromPosition, 'terminal presentation position'), replayFrom: safePosition(candidate.replayFrom, 'terminal presentation position'), outputPosition: safePosition(candidate.outputPosition, 'terminal presentation position') });
+	}
 	throw new TypeError('unknown terminal event type');
 }
 
@@ -949,7 +1014,7 @@ function eventBelongsToAttachment(
 	const candidate = payload as Record<string, unknown>;
 	const type = candidate.type;
 	const isTerminalEvent =
-		type === 'output' || type === 'exit' || type === 'resync_required';
+		type === 'output' || type === 'exit' || type === 'resync_required' || type === 'presentation' || type === 'presentation_unavailable';
 	if (!isTerminalEvent) return true;
 	if (candidate.attachmentId !== mutable.id) return false;
 	if (candidate.clientId !== mutable.clientId) return false;
@@ -957,6 +1022,10 @@ function eventBelongsToAttachment(
 	if (candidate.projectId !== mutable.identity.projectId) return false;
 	if (candidate.sessionId !== mutable.identity.sessionId) return false;
 	return true;
+}
+
+function copyPresentation(value: TerminalPresentationState): TerminalPresentationState {
+	return Object.freeze({ serverId: value.serverId, projectId: value.projectId, sessionId: value.sessionId, revision: value.revision, role: value.role, ...(value.holder === undefined ? {} : { holder: Object.freeze({ ...value.holder }) }) });
 }
 
 function copyEvent(event: TerminalStreamEvent): TerminalStreamEvent {

@@ -6,6 +6,7 @@ import type {
   RecordingsClient,
   TerminalClientIdentity,
   TerminalPanelAttachment,
+  TerminalPresentationState,
   TerminalStreamEvent,
   TerminalStreamResyncEvent,
   TerminayClient,
@@ -245,6 +246,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const hoveredLinkRef = useRef<string | null>(null)
   const terminalPanelResizeRef = useRef<(cols: number, rows: number) => void>(() => {})
+  const terminalPresentationActionRef = useRef<() => Promise<void>>(() => Promise.resolve())
+  const terminalPresentationControllerRef = useRef(false)
   const tabColorRef = useRef(props.params.color)
   const zoomLevelRef = useRef(0)
   const remoteSizeOverrideRef = useRef<{ cols: number; rows: number } | null>(null)
@@ -269,6 +272,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const [isRemoteSizeOverrideActive, setIsRemoteSizeOverrideActive] = useState(false)
   const [isTerminalHydrating, setIsTerminalHydrating] = useState(true)
   const [serverTerminalError, setServerTerminalError] = useState<string | null>(null)
+  const [presentationUnavailable, setPresentationUnavailable] = useState(false)
+  const [terminalPresentation, setTerminalPresentation] = useState<TerminalPresentationState | null>(null)
   // Incrementing this is the only user-initiated way to rebuild a failed
   // server attachment. Keeping it separate from panel identity prevents a
   // failed write from quietly falling back to preload authority.
@@ -429,11 +434,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     let serverAttachmentFailed = false
     if (useServerTerminal) {
       setServerTerminalError(null)
+      setPresentationUnavailable(false)
+      setTerminalPresentation(null)
+      terminalPresentationControllerRef.current = false
       setIsTerminalHydrating(true)
     } else {
       setIsTerminalHydrating(false)
     }
     let panelAttachment: TerminalPanelAttachment | null = null
+    let presentationRenewTimer: number | null = null
     let pendingPanelResize: { cols: number; rows: number } | null = null
     const failServerTransport = (error: unknown) => {
       if (serverAttachmentFailed || dataReplayDisposed) return
@@ -448,12 +457,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     let serverInputQueue = useServerTerminal ? new ServerTerminalInputQueue(failServerTransport) : null
 
     const writePanelInput = (data: string) => {
-      if (!useServerTerminal || serverAttachmentFailed) return
+      if (!useServerTerminal || serverAttachmentFailed || !terminalPresentationControllerRef.current) return
       serverInputQueue?.enqueue(data)
     }
 
     const resizePanel = (cols: number, rows: number) => {
-      if (!useServerTerminal || serverAttachmentFailed) return
+      if (!useServerTerminal || serverAttachmentFailed || !terminalPresentationControllerRef.current) return
       pendingPanelResize = { cols, rows }
       if (panelAttachment !== null) {
         const next = pendingPanelResize
@@ -693,10 +702,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         projectId: panelIdentity.projectId,
         sessionId,
         clientId: panelClientId,
+        freshPresentation: true,
+        fromPosition: 0,
         maxInitialReplayBytes: MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES,
-        ...(props.params.terminalClientFromPosition === undefined
-          ? {}
-          : { fromPosition: props.params.terminalClientFromPosition }),
       }
       let resyncing = false
       const attachServerTerminal = (fromPosition: number | undefined, forceResume: boolean) => {
@@ -709,11 +717,39 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             }
 
             panelAttachment = attachment
+            const applyPresentation = (state: TerminalPresentationState) => {
+              terminalPresentationControllerRef.current = state.role === 'controller'
+              setTerminalPresentation(state)
+              if (presentationRenewTimer !== null) window.clearTimeout(presentationRenewTimer)
+              presentationRenewTimer = null
+              if (state.role === 'controller') {
+                presentationRenewTimer = window.setTimeout(() => {
+                  void attachment.changePresentation('renew').then(applyPresentation).catch(() => {
+                    terminalPresentationControllerRef.current = false
+                    setTerminalPresentation({ ...state, role: 'read_only' })
+                  })
+                }, 5_000)
+              }
+            }
+            applyPresentation(attachment.presentation)
+            terminalPresentationActionRef.current = async () => {
+              const state = await attachment.changePresentation(
+                attachment.presentation.holder === undefined ? 'acquire' : 'takeover',
+              )
+              applyPresentation(state)
+              if (state.role === 'controller') fitAndResize(true)
+            }
             const renderServerEvent = (event: TerminalStreamEvent) => {
               if (event.type === 'output') {
                 renderTerminalOutput(event.bytes, event.nextPosition, attachment)
               } else if (event.type === 'exit') {
                 renderTerminalExit(event.exitCode, event.signal)
+              } else if (event.type === 'presentation') {
+                applyPresentation(event)
+              } else if (event.type === 'presentation_unavailable') {
+                setPresentationUnavailable(true)
+                setIsTerminalHydrating(false)
+                setServerTerminalError('Terminal presentation is unavailable because a complete safe recovery boundary is no longer retained.')
               } else {
                 beginTerminalResync(event)
               }
@@ -728,7 +764,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             ).onEvent(renderServerEvent)
             for (const event of attachment.initialEvents) {
               renderServerEvent(event)
-              if (event.type === 'resync_required') break
+              if (event.type === 'resync_required' || event.type === 'presentation_unavailable') break
             }
             if (serverAttachmentFailed || resyncing) return
             setIsTerminalHydrating(false)
@@ -759,7 +795,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             failServerTransport(error)
           })
       }
-      const beginTerminalResync = (event: TerminalStreamResyncEvent) => {
+      const beginTerminalResync = (_event: TerminalStreamResyncEvent) => {
         if (dataReplayDisposed || resyncing || serverAttachmentFailed) return
         resyncing = true
         setIsTerminalHydrating(true)
@@ -772,7 +808,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         terminal.clear()
         renderTerminalResync()
         void staleAttachment?.detach().catch(() => {})
-        attachServerTerminal(event.replayFrom, true)
+        // This xterm has just been cleared, so its previous byte watermark is
+        // no longer presentation state. Force a safe byte-zero recovery.
+        attachServerTerminal(0, true)
       }
       attachServerTerminal(request.fromPosition, false)
     } else {
@@ -1118,11 +1156,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       keyDisposer.dispose()
       dataDisposer.dispose()
       panelEventDisposer?.()
+      if (presentationRenewTimer !== null) window.clearTimeout(presentationRenewTimer)
       dataReplayDisposed = true
       serverInputQueue?.close()
       const attachmentToDetach = panelAttachment
       panelAttachment = null
       terminalPanelResizeRef.current = () => {}
+      terminalPresentationActionRef.current = () => Promise.resolve()
+      terminalPresentationControllerRef.current = false
       pendingPanelResize = null
       if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
       contextReaderDisposer?.()
@@ -1407,12 +1448,30 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         </search>
       ) : null}
       <div className="terminal-panel-root" ref={xtermRootRef} />
+      {terminalPresentation !== null && !presentationUnavailable ? (
+        <div className="terminal-presentation-control" role="status" aria-live="polite">
+          <span>{terminalPresentation.role === 'controller' ? 'Terminal controller' : 'Terminal read-only'}</span>
+          {terminalPresentation.role === 'read_only' ? (
+            <button
+              type="button"
+              aria-label="Take control of terminal"
+              onClick={() => void terminalPresentationActionRef.current().catch((error: unknown) => {
+                setServerTerminalError(error instanceof Error ? error.message : 'Terminal control takeover failed.')
+              })}
+            >
+              Take control
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {serverTerminalError ? (
         <div className="terminal-panel-connection-error" role="alert">
           <p>{serverTerminalError}</p>
-          <button type="button" onClick={() => setServerConnectionAttempt((attempt) => attempt + 1)}>
-            Retry connection
-          </button>
+          {!presentationUnavailable ? (
+            <button type="button" onClick={() => setServerConnectionAttempt((attempt) => attempt + 1)}>
+              Retry connection
+            </button>
+          ) : null}
         </div>
       ) : null}
       {isTerminalHydrating && serverTerminalError === null ? (
