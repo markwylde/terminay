@@ -914,6 +914,18 @@ const persistEmbeddedReconnectRecords = (
 const embeddedLanExposure = new EmbeddedLanExposure({
 	core: serverTerminalAuthority.composition.core,
 	getSettings: () => readTerminalSettings().remoteAccess,
+	onConnectionError: (error) => {
+		void desktopDiagnostics.record(
+			{
+				component: 'local-server',
+				event: 'local-server.connection.failed',
+				message: error,
+				severity: 'error',
+				source: 'local-server-protocol',
+			},
+			{ channel: 'lifecycle' },
+		);
+	},
 	onReconnectRecordsChanged: persistEmbeddedReconnectRecords,
 	remoteDirectory: path.join(app.getPath('userData'), 'remote-access'),
 	serverId: serverTerminalAuthority.service.serverId,
