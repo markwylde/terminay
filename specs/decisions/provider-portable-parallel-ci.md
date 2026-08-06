@@ -21,7 +21,8 @@ immediately, subject only to available runner capacity.
 Every E2E shard runs through `npm run test:e2e`. That command builds and uses the
 repository's pinned Docker E2E image, so Electron does not depend on GTK,
 Chromium, Xvfb, or other mutable packages from the runner image. Each failed
-shard uploads its own Playwright report and test results.
+shard reports its exact Playwright failure in the job log without relying on a
+provider-specific artifact service.
 
 ## Work kept out of pull requests
 
