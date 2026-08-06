@@ -135,7 +135,7 @@ test('server and static-web GHCR releases retain their verified multi-architectu
 	assert.match(webImageWorkflow, /sbom: true/u);
 	assert.match(
 		webImageWorkflow,
-		/push: \$\{\{ github\.event_name != 'pull_request' \}\}/u,
+		/push: true/u,
 	);
 });
 

@@ -76,6 +76,7 @@ export type TerminalWireEvent =
 	| TerminalWireOutputEvent
 	| TerminalWireExitEvent
 	| TerminalWireResyncEvent
+	| TerminalWireDimensionsEvent
 	| TerminalWirePresentationEvent
 	| TerminalWirePresentationUnavailableEvent;
 
@@ -86,6 +87,11 @@ export interface TerminalPresentationState extends TerminalClientIdentity {
 }
 
 export interface TerminalWirePresentationEvent extends TerminalPresentationState { readonly type: 'presentation'; readonly action?: string; }
+export interface TerminalWireDimensionsEvent extends TerminalClientIdentity {
+	readonly type: 'dimensions';
+	readonly cols: number;
+	readonly rows: number;
+}
 export interface TerminalWirePresentationUnavailableEvent extends TerminalClientIdentity {
 	readonly type: 'presentation_unavailable';
 	readonly requestedFromPosition: number;
@@ -144,6 +150,7 @@ export type TerminalStreamEvent =
 	| TerminalStreamOutputEvent
 	| TerminalStreamExitEvent
 	| TerminalStreamResyncEvent
+	| TerminalWireDimensionsEvent
 	| TerminalWirePresentationEvent
 	| TerminalWirePresentationUnavailableEvent;
 
@@ -536,7 +543,9 @@ export class TerminayTerminalClient {
 				payload: {
 					attachmentId: result.attachmentId,
 					clientId: request.clientId,
-					identity: identityPayload(request),
+					serverId: request.serverId,
+					projectId: request.projectId,
+					sessionId: request.sessionId,
 				},
 			},
 		);
@@ -960,6 +969,10 @@ function decodeEvent(
 			outputPosition,
 		});
 	}
+	if (type === 'dimensions') {
+		const dimensions = validateDimensions({ cols: candidate.cols as number, rows: candidate.rows as number });
+		return Object.freeze({ ...identity, type: 'dimensions', ...dimensions });
+	}
 	if (type === 'presentation') {
 		validatePresentation(candidate, identity);
 		return Object.freeze({ ...copyPresentation(candidate as unknown as TerminalPresentationState), type: 'presentation', ...(typeof candidate.action === 'string' ? { action: candidate.action } : {}) });
@@ -1010,17 +1023,16 @@ function eventBelongsToAttachment(
 	mutable: MutableAttachment,
 ): boolean {
 	if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
-		return true;
+		return false;
 	const candidate = payload as Record<string, unknown>;
-	const type = candidate.type;
-	const isTerminalEvent =
-		type === 'output' || type === 'exit' || type === 'resync_required' || type === 'presentation' || type === 'presentation_unavailable';
-	if (!isTerminalEvent) return true;
 	if (candidate.attachmentId !== mutable.id) return false;
 	if (candidate.clientId !== mutable.clientId) return false;
 	if (candidate.serverId !== mutable.identity.serverId) return false;
 	if (candidate.projectId !== mutable.identity.projectId) return false;
 	if (candidate.sessionId !== mutable.identity.sessionId) return false;
+	// The journal subscription is broader than one attachment. Only an event
+	// that claims this exact attachment reaches the strict terminal decoder;
+	// unrelated or auxiliary journal payloads must not tear down the panel.
 	return true;
 }
 

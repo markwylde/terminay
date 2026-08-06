@@ -134,8 +134,19 @@ export class TerminalLaunchResolver {
       resolvedProfile.definition.environment,
       this.options.environmentCaseInsensitive === true,
     );
+    // The PTY is rendered by Terminay's xterm.js surface, not by the terminal
+    // (if any) that launched the server process. Never inherit TERM=dumb from
+    // Finder, a service manager, CI, or an automation shell.
+    setCanonicalEnvironment(env, "TERM", "xterm-256color", this.options.environmentCaseInsensitive === true);
+    setCanonicalEnvironment(env, "COLORTERM", "truecolor", this.options.environmentCaseInsensitive === true);
     if (resolvedProfile.target.kind === "wsl") {
-      env.WSLENV = mergeWslenv(env.WSLENV, resolvedProfile.definition.environment);
+      const inheritedWslenv = environmentValue(env, "WSLENV", this.options.environmentCaseInsensitive === true);
+      setCanonicalEnvironment(
+        env,
+        "WSLENV",
+        mergeWslenv(inheritedWslenv, resolvedProfile.definition.environment, ["TERM", "COLORTERM"]),
+        this.options.environmentCaseInsensitive === true,
+      );
     }
     const createdAt = this.now();
     const profile: TerminalResolvedProfileMetadata = Object.freeze({
@@ -331,6 +342,30 @@ function applyProfileEnvironment(
   return result;
 }
 
+function setCanonicalEnvironment(
+  environment: Record<string, string | undefined>,
+  name: string,
+  value: string,
+  caseInsensitive: boolean,
+): void {
+  if (caseInsensitive) {
+    for (const candidate of Object.keys(environment)) {
+      if (candidate !== name && candidate.toUpperCase() === name) delete environment[candidate];
+    }
+  }
+  environment[name] = value;
+}
+
+function environmentValue(
+  environment: Readonly<Record<string, string | undefined>>,
+  name: string,
+  caseInsensitive: boolean,
+): string | undefined {
+  if (!caseInsensitive) return environment[name];
+  const key = Object.keys(environment).find((candidate) => candidate.toUpperCase() === name);
+  return key === undefined ? undefined : environment[key];
+}
+
 function assertWslLaunchCanRepresentProfile(profile: ResolvedShellProfile): void {
   if (profile.target.kind !== "wsl" || profile.target.shellPath !== undefined) return;
   if (profile.definition.startupMode !== "default" || profile.definition.args.length > 0) {
@@ -344,11 +379,17 @@ function assertWslLaunchCanRepresentProfile(profile: ResolvedShellProfile): void
 function mergeWslenv(
   inherited: string | undefined,
   overlay: Readonly<Record<string, string | null>>,
+  serverManaged: readonly string[] = [],
 ): string {
   const entries = (inherited ?? "").split(":").filter((entry) => entry.length > 0);
   const names = new Set(entries.map((entry) => entry.split("/")[0]?.toUpperCase()));
   for (const [key, value] of Object.entries(overlay)) {
     if (value === null || names.has(key.toUpperCase())) continue;
+    entries.push(key);
+    names.add(key.toUpperCase());
+  }
+  for (const key of serverManaged) {
+    if (names.has(key.toUpperCase())) continue;
     entries.push(key);
     names.add(key.toUpperCase());
   }

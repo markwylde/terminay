@@ -292,11 +292,21 @@ test('sandbox and CSP contain session navigation and reject unauthorized framing
     'allow-scripts allow-same-origin',
   )
 
-  const sessionResponse = await request.get(`${fixture.sessionAOrigin}/session`)
+  const sessionOrigin = new URL(fixture.sessionAOrigin)
+  const sessionUrl = new URL('/session', sessionOrigin)
+  sessionUrl.hostname = '127.0.0.1'
+  const sessionResponse = await request.get(sessionUrl.toString(), {
+    headers: { host: sessionOrigin.host },
+  })
   expect(sessionResponse.headers()['content-security-policy']).toContain(
     `frame-ancestors ${fixture.parentOrigin}`,
   )
-  const parentResponse = await request.get(fixture.parentOrigin)
+  const parentOrigin = new URL(fixture.parentOrigin)
+  const parentUrl = new URL('/', parentOrigin)
+  parentUrl.hostname = '127.0.0.1'
+  const parentResponse = await request.get(parentUrl.toString(), {
+    headers: { host: parentOrigin.host },
+  })
   expect(parentResponse.headers()['content-security-policy']).toContain(
     `frame-src ${fixture.sessionAOrigin} ${fixture.sessionBOrigin}`,
   )

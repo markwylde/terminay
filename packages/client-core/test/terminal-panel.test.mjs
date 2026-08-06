@@ -26,6 +26,16 @@ function transport() {
   const listeners = new Set();
   return {
     calls,
+    emitRaw(payload, body) {
+      for (const listener of listeners) listener({
+        subscriptionId: "terminal-sub",
+        revision: 1,
+        cursor: "1",
+        event: "terminal",
+        payload,
+        ...(body === undefined ? {} : { body }),
+      });
+    },
     emit(payload, body) {
       for (const listener of listeners) listener({
         subscriptionId: "terminal-sub",
@@ -53,6 +63,17 @@ function transport() {
     },
   };
 }
+
+test("terminal panel ignores journal payloads that do not claim its exact attachment", async () => {
+  const source = transport();
+  const panel = await new TerminayTerminalPanelClient(new TerminayTerminalClient(source)).attach({ ...identity, clientId: "panel-client" });
+
+  assert.doesNotThrow(() => source.emitRaw(null));
+  assert.doesNotThrow(() => source.emitRaw({ type: "auxiliary-terminal-event" }));
+  assert.doesNotThrow(() => source.emitRaw({ ...identity, type: "presentation", attachmentId: "other-attachment", clientId: "other-client", revision: 1, role: "controller" }));
+  assert.throws(() => source.emit({ ...identity, type: "unknown-terminal-event" }), /unknown terminal event type/);
+  await panel.detach();
+});
 
 test("terminal panel adapter preserves raw bytes and routes input, resize, kill, ack, and detach", async () => {
   const source = transport();
@@ -139,6 +160,8 @@ test("terminal panel forwards raw replay and filters output, exit, and resync li
   const outputs = [];
   const exits = [];
   const resyncs = [];
+  const events = [];
+  panel.onEvent((event) => events.push(event));
   panel.onOutput((event) => outputs.push({ bytes: [...event.bytes], position: event.position }));
   panel.onExit((event) => exits.push({ exitCode: event.exitCode, signal: event.signal }));
   panel.onResync((event) => resyncs.push({ replayFrom: event.replayFrom, outputPosition: event.outputPosition }));
@@ -146,10 +169,12 @@ test("terminal panel forwards raw replay and filters output, exit, and resync li
   source.emit(output(3, new Uint8Array([0x00, 0xc3, 0xa9])));
   source.emit({ ...identity, type: "exit", exitCode: 7, signal: 15 });
   source.emit({ ...identity, type: "resync_required", fromPosition: 6, replayFrom: 9, outputPosition: 12 });
+  source.emit({ ...identity, type: "dimensions", cols: 44, rows: 16 });
 
   assert.deepEqual(outputs, [{ bytes: [0x00, 0xc3, 0xa9], position: 3 }]);
   assert.deepEqual(exits, [{ exitCode: 7, signal: 15 }]);
   assert.deepEqual(resyncs, [{ replayFrom: 9, outputPosition: 12 }]);
+  assert.deepEqual(events.at(-1), { ...identity, type: "dimensions", cols: 44, rows: 16 });
   await panel.detach();
 });
 

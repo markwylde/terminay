@@ -41,8 +41,15 @@ test("a generic foreground wrapper restarts discovery for Codex resume after the
     await source.start((observation) => observations.push(observation));
     source.registerTerminal(identity);
     source.terminalStarted(identity, process.pid);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     child = spawn(process.execPath, ["-e", "const fs=require('fs');const fd=fs.openSync(process.argv[1],'a');fs.writeSync(fd,process.argv[2]+'\\n');setInterval(()=>{},1000)", path, record], { stdio: "ignore" });
+    let boundPath;
+    for (let attempt = 0; attempt < 40 && !boundPath; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      boundPath = await findProcessBoundCodexRollout(process.pid, join(root, "sessions"));
+    }
+    assert.equal(boundPath, await realpath(path));
+    assert.equal(observations.length, 0);
     source.foregroundProcessChanged(identity, null, false);
     for (let attempt = 0; attempt < 30 && observations.length === 0; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));

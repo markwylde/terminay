@@ -11,6 +11,7 @@ import {
   type CommandEnvelope,
   type CommandResultEnvelope,
   type Envelope,
+  type JsonValue,
   type QueryEnvelope,
   type ServerHello,
 } from "@terminay/protocol";
@@ -283,6 +284,9 @@ export class ServerConnection implements ServerConnectionLike {
     if (!isSafeId(subscriptionId)) return commandError(command, "validation", "event subscription id is invalid");
     const event = payload.event === null || payload.event === undefined ? undefined : payload.event;
     if (event !== undefined && (typeof event !== "string" || event.length === 0 || event.length > 256)) return commandError(command, "validation", "event name is invalid");
+    if (payload.payload !== undefined && (typeof payload.payload !== "object" || payload.payload === null || Array.isArray(payload.payload))) {
+      return commandError(command, "validation", "event subscription selector is invalid");
+    }
     const fromRevision = payload.fromRevision === undefined ? 0 : payload.fromRevision;
     if (!Number.isSafeInteger(fromRevision) || (fromRevision as number) < 0) return commandError(command, "validation", "event revision is invalid");
     return {
@@ -309,6 +313,7 @@ export class ServerConnection implements ServerConnectionLike {
     const subscriptionId = payload.subscriptionId;
     if (!isSafeId(subscriptionId)) return;
     const event = payload.event === null || payload.event === undefined ? undefined : typeof payload.event === "string" ? payload.event : undefined;
+    const selector = payload.payload as JsonValue | undefined;
     const fromRevision = (payload.fromRevision ?? 0) as number;
     this.eventSubscriptions.get(subscriptionId)?.();
     const pending: OrderedEvent[] = [];
@@ -316,7 +321,7 @@ export class ServerConnection implements ServerConnectionLike {
     let replaying = true;
     const listener = (value: OrderedEvent): void => {
       const projected = this.projectEvent(value);
-      if (projected === undefined || !matchesEvent(projected, this.authenticatedClient?.clientId, event)) return;
+      if (projected === undefined || !matchesEvent(projected, this.authenticatedClient?.clientId, event) || !matchesEventSelector(projected.payload, selector)) return;
       if (replaying) pending.push(projected);
       else void this.send(eventEnvelope(subscriptionId, projected)).catch(() => undefined);
     };
@@ -451,6 +456,18 @@ function matchesEvent(event: OrderedEvent, clientId: string | undefined, name: s
   if (name !== undefined && event.event !== name) return false;
   const payload = objectPayload(event.payload);
   return typeof payload.clientId !== "string" || payload.clientId === clientId;
+}
+
+function matchesEventSelector(payload: JsonValue, selector: JsonValue | undefined): boolean {
+  if (selector === undefined) return true;
+  if (typeof selector !== "object" || selector === null || Array.isArray(selector)) return false;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+  const candidate = payload as Record<string, JsonValue>;
+  for (const [key, expected] of Object.entries(selector)) {
+    if (typeof expected === "object" && expected !== null) return false;
+    if (candidate[key] !== expected) return false;
+  }
+  return true;
 }
 
 function eventEnvelope(subscriptionId: string, event: OrderedEvent): Envelope {

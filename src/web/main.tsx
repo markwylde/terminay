@@ -1043,9 +1043,9 @@ export default function WebManagerApp() {
 			cursor: client.snapshot.cursor,
 		});
 		void connectionGeneration.current.disposeActive(profileId);
-		setActiveConnection((current) =>
-			current?.profileId === profileId ? null : current,
-		);
+		// Keep the last connected workspace mounted while its replacement
+		// generation reconnects. Dropping it here flashes the initial pairing
+		// modal on every transient transport loss.
 		host.markStatus(profileId, 'unreachable');
 		setError('Connection lost. Reconnecting…');
 		setStatus(null);

@@ -62,7 +62,10 @@ A WSL profile must name an explicit Linux shell before it can use startup mode,
 arguments, or an environment overlay. Terminay translates the structured WSL
 target without treating arguments as an implicit Linux command. Windows
 environment keys are compared case-insensitively, and `WSLENV` remains
-server-managed.
+server-managed. Every PTY receives `TERM=xterm-256color` and
+`COLORTERM=truecolor` from the server launch resolver rather than inheriting
+the environment of the process which started Terminay. WSL launches propagate
+both values explicitly through `WSLENV`.
 
 An environment overlay maps variable names to string values or `null`; `null`
 removes a non-protected inherited variable. It contains no secret references or

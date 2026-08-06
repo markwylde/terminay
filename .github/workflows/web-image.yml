@@ -1,55 +1,16 @@
 name: Web image
 
 on:
-  # Operators can publish the already-reviewed commit deliberately without
-  # manufacturing an otherwise unrelated main-branch change.
-  workflow_dispatch:
-  pull_request:
-    paths:
-      - '.github/workflows/web-image.yml'
-      - 'Dockerfile.web'
-      - 'docker/nginx.web.conf'
-      - 'web.html'
-      - 'vite.web.config.ts'
-      - 'tsconfig.web.json'
-      - 'src/web/**'
-      - 'src/remote/**'
-      - 'remote.html'
-      - 'apps/terminay-web/**'
-      - 'packages/client-core/**'
-      - 'packages/protocol/**'
-      - 'packages/responsive-ui/**'
-      - 'scripts/web-build-contract.test.mjs'
-      - 'scripts/web-image.test.mjs'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'public/**'
   push:
-    branches: [main]
     tags: ['v*.*.*']
-    paths:
-      - '.github/workflows/web-image.yml'
-      - 'Dockerfile.web'
-      - 'docker/nginx.web.conf'
-      - 'web.html'
-      - 'vite.web.config.ts'
-      - 'tsconfig.web.json'
-      - 'src/web/**'
-      - 'src/remote/**'
-      - 'remote.html'
-      - 'apps/terminay-web/**'
-      - 'packages/client-core/**'
-      - 'packages/protocol/**'
-      - 'packages/responsive-ui/**'
-      - 'scripts/web-build-contract.test.mjs'
-      - 'scripts/web-image.test.mjs'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'public/**'
 
 permissions:
   contents: read
   packages: write
+
+concurrency:
+  group: terminay-web-image-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/terminay-web
@@ -75,7 +36,6 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -85,14 +45,13 @@ jobs:
         with:
           context: .
           file: Dockerfile.web
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
           sbom: true
           provenance: mode=max
       - name: Record immutable web image
-        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           digest='${{ steps.build.outputs.digest }}'

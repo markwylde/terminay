@@ -58,18 +58,22 @@ test("terminal operation registry binds the client contract to one server-owned 
   assert.equal(attached.ok, true);
   const attachment = attached.result;
   assert.equal(attachment.position, 0);
-  assert.equal(attachment.presentation.role, "read_only");
+  assert.equal(attachment.presentation.role, "controller");
 
   pty.processes[0].emitData("hello");
-  assert.equal(journal.revision, 1);
-  assert.equal(journal.replay(0).events[0].payload.clientId, "client-a");
+  assert.equal(journal.revision, 2);
+  const outputEvent = journal.replay(0).events.find((event) => event.payload.type === "output");
+  assert.equal(outputEvent.payload.clientId, "client-a");
 
-  const rejectedInput = await dispatcher.command(request("terminal.input", { clientId: "client-a", identity, attachmentId: attachment.attachmentId, dataBase64: "eA==" }, "input-read-only"));
-  assert.equal(rejectedInput.ok, false);
-  assert.equal(pty.processes[0].writes.length, 0);
   const controlled = await dispatcher.command(request("terminal.presentation", { clientId: "client-a", identity, attachmentId: attachment.attachmentId, mode: "acquire" }, "presentation-1"));
   assert.equal(controlled.ok, true, JSON.stringify(controlled));
   assert.equal(controlled.result.role, "controller");
+  assert.equal(controlled.result.revision, 2);
+  const renewed = await dispatcher.command(request("terminal.presentation", { clientId: "client-a", identity, attachmentId: attachment.attachmentId, mode: "renew" }, "presentation-renew-1"));
+  assert.equal(renewed.ok, true, JSON.stringify(renewed));
+  assert.equal(renewed.result.role, "controller");
+  assert.equal(renewed.result.holder.clientId, "client-a");
+  assert.equal(renewed.result.holder.attachmentId, attachment.attachmentId);
   const input = await dispatcher.command(request("terminal.input", { clientId: "client-a", identity, attachmentId: attachment.attachmentId, dataBase64: "aGk=" }, "input-1"));
   assert.equal(input.ok, true);
   assert.deepEqual([...pty.processes[0].writes[0]], [104, 105]);
@@ -89,6 +93,63 @@ test("terminal operation registry binds the client contract to one server-owned 
   assert.equal(service.getSession(identity).status, "running");
   registry.closeClient("client-a");
   assert.equal(service.getSession(identity).status, "running");
+});
+
+test("a newly created terminal reserves initial presentation for its authenticated creator", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({
+    serverId: "server-created-owner",
+    ptyFactory: pty,
+    generateSessionId: () => "session-created-owner",
+  });
+  const journal = new OrderedEventJournal();
+  const registry = createTerminalOperationRegistry({
+    service,
+    eventJournal: journal,
+    allowUnresolvedTestSessions: true,
+  });
+  const dispatcher = createOperationDispatcher(registry.operations);
+
+  const created = await dispatcher.command(request(
+    "terminal.create",
+    { projectId: "project-created-owner" },
+    "create-by-desktop",
+    "write",
+    "desktop",
+  ));
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const identity = {
+    serverId: created.result.serverId,
+    projectId: created.result.projectId,
+    sessionId: created.result.sessionId,
+  };
+
+  const browser = await dispatcher.command(request(
+    "terminal.attach",
+    { clientId: "browser", identity, fromPosition: 0 },
+    "browser-attaches-first",
+    "write",
+    "browser",
+  ));
+  assert.equal(browser.ok, true, JSON.stringify(browser));
+  assert.equal(browser.result.presentation.role, "read_only");
+  assert.equal(browser.result.presentation.holder, undefined);
+
+  const desktop = await dispatcher.command(request(
+    "terminal.attach",
+    { clientId: "desktop", identity, fromPosition: 0 },
+    "desktop-attaches-second",
+    "write",
+    "desktop",
+  ));
+  assert.equal(desktop.ok, true, JSON.stringify(desktop));
+  assert.equal(desktop.result.presentation.role, "controller");
+  assert.equal(desktop.result.presentation.holder.clientId, "desktop");
+  const browserPresentation = journal.replay(0).events.find((event) =>
+    event.payload.type === "presentation" && event.payload.clientId === "browser"
+  );
+  assert.equal(browserPresentation.payload.role, "read_only");
+  assert.equal(browserPresentation.payload.holder.clientId, "desktop");
 });
 
 test("terminal attach refuses an arbitrary replay suffix when the complete presentation exceeds the budget", async () => {
@@ -111,10 +172,17 @@ test("terminal attach refuses an arbitrary replay suffix when the complete prese
 
     assert.equal(attached.ok, true);
     assert.equal(attached.result.fromPosition, 6);
-    assert.equal(attached.result.events.length, 1);
-    assert.equal(attached.result.events[0].type, "presentation_unavailable");
-    assert.equal(attached.result.events[0].requestedFromPosition, 0);
-    assert.equal(attached.result.events[0].outputPosition, 6);
+    assert.deepEqual(attached.result.events[0], {
+      ...identity,
+      attachmentId: attached.result.attachmentId,
+      clientId: "client-a",
+      type: "dimensions",
+      cols: 80,
+      rows: 24,
+    });
+    const unavailable = attached.result.events.find((event) => event.type === "presentation_unavailable");
+    assert.equal(unavailable.requestedFromPosition, 0);
+    assert.equal(unavailable.outputPosition, 6);
   } finally {
     await service.shutdown();
   }
@@ -130,6 +198,9 @@ test("only the explicit presentation holder can forward emulator replies", async
   const attach = async (clientId) => (await dispatcher.command(request("terminal.attach", { clientId, identity, fromPosition: 0 }, `attach-${clientId}`, "write", clientId))).result;
   const desktop = await attach("desktop");
   const browser = await attach("browser");
+  assert.equal(desktop.presentation.role, "controller");
+  assert.equal(browser.presentation.role, "read_only");
+  assert.equal(browser.presentation.holder.attachmentId, desktop.attachmentId);
   const replyFamilies = ["\u001b]10;rgb:dddd/eeee/ffff\u0007", "\u001b[?1;2c", "\u001b[0n", "\u001b[12;40R", "\u001b[4;768;1024t", "\u001b[I", "\u001b[<0;1;1M"];
   const send = (attachment, clientId, value, id) => dispatcher.command(request("terminal.input", { clientId, identity, attachmentId: attachment.attachmentId, dataBase64: Buffer.from(value).toString("base64") }, id, "write", clientId));
 
@@ -147,6 +218,70 @@ test("only the explicit presentation holder can forward emulator replies", async
   await service.shutdown();
 });
 
+test("the presentation holder publishes canonical dimensions to every exact attachment", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({ serverId: "server-dimensions", ptyFactory: pty, generateSessionId: () => "session-dimensions" });
+  const session = await service.createSession({ projectId: "project-dimensions", cols: 80, rows: 24 });
+  const journal = new OrderedEventJournal();
+  const registry = createTerminalOperationRegistry({ service, eventJournal: journal, allowUnresolvedTestSessions: true });
+  const dispatcher = createOperationDispatcher(registry.operations);
+  const identity = { serverId: service.serverId, projectId: "project-dimensions", sessionId: session.sessionId };
+  const attach = async (clientId) => (await dispatcher.command(request(
+    "terminal.attach",
+    { clientId, identity, fromPosition: 0 },
+    `attach-${clientId}`,
+    "write",
+    clientId,
+  ))).result;
+  const resize = (attachment, clientId, cols, rows, id) => dispatcher.command(request(
+    "terminal.resize",
+    { clientId, identity, attachmentId: attachment.attachmentId, cols, rows },
+    id,
+    "write",
+    clientId,
+  ));
+
+  try {
+    const desktop = await attach("desktop");
+    const browser = await attach("browser");
+    assert.deepEqual(desktop.events[0], {
+      ...identity,
+      attachmentId: desktop.attachmentId,
+      clientId: "desktop",
+      type: "dimensions",
+      cols: 80,
+      rows: 24,
+    });
+
+    assert.equal((await resize(desktop, "desktop", 120, 40, "desktop-resize")).ok, true);
+    assert.equal((await resize(browser, "browser", 40, 16, "observer-resize")).ok, false);
+
+    const takeover = await dispatcher.command(request(
+      "terminal.presentation",
+      { clientId: "browser", identity, attachmentId: browser.attachmentId, mode: "takeover" },
+      "browser-takeover",
+      "write",
+      "browser",
+    ));
+    assert.equal(takeover.ok, true);
+    assert.equal((await resize(desktop, "desktop", 100, 30, "stale-desktop-resize")).ok, false);
+    assert.equal((await resize(browser, "browser", 40, 16, "browser-resize")).ok, true);
+
+    assert.deepEqual(pty.processes[0].resizes, [{ cols: 120, rows: 40 }, { cols: 40, rows: 16 }]);
+    const dimensions = journal.replay(0).events
+      .map((event) => event.payload)
+      .filter((event) => event.type === "dimensions");
+    assert.deepEqual(dimensions.map((event) => [event.clientId, event.attachmentId, event.cols, event.rows]), [
+      ["desktop", desktop.attachmentId, 120, 40],
+      ["browser", browser.attachmentId, 120, 40],
+      ["desktop", desktop.attachmentId, 40, 16],
+      ["browser", browser.attachmentId, 40, 16],
+    ]);
+  } finally {
+    await service.shutdown();
+  }
+});
+
 test("fresh presentation replay preserves complete hostile control sequences at every emitted byte boundary", async () => {
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-boundaries", ptyFactory: pty, generateSessionId: () => "session-boundaries", maxReplayBytes: 64 * 1024 });
@@ -158,9 +293,9 @@ test("fresh presentation replay preserves complete hostile control sequences at 
   for (const byte of transcript) pty.processes[0].emitData(new Uint8Array([byte]));
   const attached = await dispatcher.command(request("terminal.attach", { clientId: "fresh", identity, fromPosition: 0, freshPresentation: true, maxInitialReplayBytes: 32 * 1024 }, "attach-boundaries", "write", "fresh"));
   assert.equal(attached.ok, true);
-  assert.equal(attached.result.events.length, 1);
-  assert.equal(attached.result.events[0].position, 0);
-  assert.deepEqual(Buffer.from(attached.result.events[0].bytes, "base64"), Buffer.from(transcript));
+  const replay = attached.result.events.find((event) => event.type === "output");
+  assert.equal(replay.position, 0);
+  assert.deepEqual(Buffer.from(replay.bytes, "base64"), Buffer.from(transcript));
   await service.shutdown();
 });
 
@@ -207,9 +342,14 @@ test("framed terminal attach keeps an overstated fragmented replay inside the pr
       maxInitialReplayBytes: 128 * 1024,
     });
 
-    assert.equal(attached.initialEvents.length, 1);
-    assert.equal(attached.initialEvents[0].type, "presentation_unavailable");
-    assert.equal(attached.initialEvents[0].requestedFromPosition, 0);
+    assert.equal(attached.initialEvents[0].type, "dimensions");
+    assert.equal(attached.initialEvents[0].serverId, "server-protocol-budget");
+    assert.equal(attached.initialEvents[0].projectId, "project-protocol-budget");
+    assert.equal(attached.initialEvents[0].sessionId, session.sessionId);
+    assert.equal(attached.initialEvents[0].cols, 80);
+    assert.equal(attached.initialEvents[0].rows, 24);
+    const unavailable = attached.initialEvents.find((event) => event.type === "presentation_unavailable");
+    assert.equal(unavailable.requestedFromPosition, 0);
     assert.equal(attached.position, 40_000);
   } finally {
     await protocolClient.close();
@@ -333,8 +473,7 @@ test("framed ServerConnection exposes server-owned terminal operations through t
     await pair.open();
     await protocolClient.connect();
     const attachment = await terminalClient.attach({ ...identity, clientId: "client-framed" });
-    assert.equal(attachment.presentation.role, "read_only");
-    await attachment.changePresentation("acquire");
+    assert.equal(attachment.presentation.role, "controller");
     const output = new Promise((resolve) => {
       attachment.onEvent((event) => {
         if (event.type === "output") resolve(event);

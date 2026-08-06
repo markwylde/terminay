@@ -25,6 +25,7 @@ const MAX_INPUT_BYTES = 1024 * 1024;
 // metadata cannot turn a valid attach into a protocol-limit failure.
 const MAX_INITIAL_REPLAY_BYTES = 32 * 1024;
 const TERMINAL_EVENT = "terminal";
+const INITIAL_PRESENTATION_RESERVATION_MS = 10_000;
 
 export interface TerminalOperationRegistryOptions {
   readonly service: TerminalService;
@@ -53,6 +54,13 @@ interface ProtocolAttachment {
   readonly clientId: string;
   readonly identity: TerminalIdentity;
   readonly attachment: TerminalAttachment;
+  readonly canWrite: boolean;
+}
+
+interface InitialPresentationReservation {
+  readonly clientId: string;
+  readonly identity: TerminalIdentity;
+  readonly timeout: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -69,6 +77,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
   const inputSources = options.inputSources ?? new TerminalInputSourceAdapter(options.service);
   const protocolAttachments = new Map<string, ProtocolAttachment>();
   const byClientSession = new Map<string, string>();
+  const initialPresentationReservations = new Map<string, InitialPresentationReservation>();
   const presentations = options.presentations ?? new TerminalPresentationLeaseAuthority({
     onChanged: (state, action) => publishPresentationState(state, action),
   });
@@ -124,6 +133,9 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       // lifecycle event; neither affects the server-owned PTY.
       for (const identity of releasedIdentities.values()) inputSources.releaseClient(identity, clientId);
       for (const identity of releasedIdentities.values()) presentations.releaseClient(identity, clientId);
+      for (const reservation of [...initialPresentationReservations.values()]) {
+        if (reservation.clientId === clientId) releaseInitialPresentationReservation(reservation.identity, true);
+      }
     },
   };
 
@@ -197,9 +209,11 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
           rows,
         }));
     const snapshot = session.snapshot();
+    reserveInitialPresentation(snapshot, request.context.clientId);
     try {
       options.onSessionCreated?.(snapshot);
     } catch (error) {
+      releaseInitialPresentationReservation(snapshot, false);
       await options.service.kill(snapshot);
       throw error;
     }
@@ -283,15 +297,30 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       },
     });
     attachmentId = attachment.attachmentId;
-    protocolAttachments.set(attachment.attachmentId, { clientId, identity, attachment });
+    const canWrite = request.context.authScope === "write" || request.context.authScope === "admin";
+    protocolAttachments.set(attachment.attachmentId, { clientId, identity, attachment, canWrite });
     byClientSession.set(key, attachment.attachmentId);
+    // The first write-authorized surface is the natural presentation owner.
+    // `acquire` is deliberately non-stealing, so a later attachment remains an
+    // observer when another exact attachment already holds the lease.
+    if (canWrite) {
+      const state = presentations.state(identity);
+      const reservation = initialPresentationReservations.get(identityKey(identity));
+      if (state.holder === undefined && (reservation === undefined || reservation.clientId === clientId)) {
+        presentations.change("acquire", { ...identity, clientId, attachmentId: attachment.attachmentId });
+        releaseInitialPresentationReservation(identity, false);
+      }
+    }
     return {
       attachmentId: attachment.attachmentId,
       fromPosition: attachment.snapshot().fromPosition,
       position: attachment.position,
-      events: presentationUnavailable && snapshot !== undefined
-        ? [{ clientId, attachmentId: attachment.attachmentId, type: "presentation_unavailable", ...identity, requestedFromPosition, replayFrom: snapshot.replayFrom, outputPosition: snapshot.outputPosition }]
-        : compactInitialEvents(attachment.initialEvents).map((event) => terminalEventPayload(event, attachment.attachmentId, clientId)),
+      events: [
+        ...(snapshot === undefined ? [] : [dimensionsPayload(identity, attachment.attachmentId, clientId, snapshot.dimensions.cols, snapshot.dimensions.rows)]),
+        ...(presentationUnavailable && snapshot !== undefined
+          ? [{ clientId, attachmentId: attachment.attachmentId, type: "presentation_unavailable", ...identity, requestedFromPosition, replayFrom: snapshot.replayFrom, outputPosition: snapshot.outputPosition }]
+          : compactInitialEvents(attachment.initialEvents).map((event) => terminalEventPayload(event, attachment.attachmentId, clientId))),
+      ],
       presentation: presentationPayload(presentations.state(identity), clientId, attachment.attachmentId),
     };
   }
@@ -339,7 +368,10 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       rows,
       authorization: authorizationFor(value.identity, request, "write"),
     });
-    return { attachmentId: value.attachment.attachmentId, cols, rows, presentation: presentationPayload(lease, value.clientId, value.attachment.attachmentId), ...(result.ownership === undefined ? {} : { leaseExpiresAt: result.ownership.leaseExpiresAt }) };
+    const accepted = result.ownership;
+    if (accepted === undefined) throw new TerminalServiceError("forbidden", "terminal resize ownership was not established", { reason: "resize_owner" });
+    publishDimensions(value.identity, accepted.cols, accepted.rows);
+    return { attachmentId: value.attachment.attachmentId, cols: accepted.cols, rows: accepted.rows, presentation: presentationPayload(lease, value.clientId, value.attachment.attachmentId), leaseExpiresAt: accepted.leaseExpiresAt };
   }
 
   function presentation(request: CommandRequest): JsonValue {
@@ -358,9 +390,15 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       ...(payload.leaseMs === undefined ? {} : { leaseMs: position(payload.leaseMs) }),
       admin: request.context.authScope === "admin",
     });
+    if (mode === "acquire" || mode === "takeover" || mode === "revoke") {
+      releaseInitialPresentationReservation(value.identity, false);
+    }
     if (mode === "takeover" && previous.holder !== undefined && previous.holder.clientId !== value.clientId) {
       inputSources.releaseClient(value.identity, previous.holder.clientId);
     }
+    // Presentation state has its own `revision` field. Keep it inside the
+    // command-handler result envelope so the dispatcher cannot mistake that
+    // domain revision for its transport-level revision metadata.
     return { result: presentationPayload(state, value.clientId, value.attachment.attachmentId) };
   }
 
@@ -369,6 +407,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     const signal = objectPayload(request.envelope.payload).signal;
     if (signal !== undefined && typeof signal !== "string" && typeof signal !== "number") throw new TerminalServiceError("invalid_identity", "terminal signal is invalid");
     await options.service.kill(value.identity, authorizationFor(value.identity, request, "write"), signal as number | string | undefined);
+    releaseInitialPresentationReservation(value.identity, false);
     return { attachmentId: value.attachment.attachmentId, killed: true };
   }
 
@@ -416,6 +455,32 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     };
   }
 
+  function reserveInitialPresentation(identity: TerminalIdentity, clientId: string): void {
+    releaseInitialPresentationReservation(identity, false);
+    const timeout = setTimeout(() => releaseInitialPresentationReservation(identity, true), INITIAL_PRESENTATION_RESERVATION_MS);
+    timeout.unref?.();
+    initialPresentationReservations.set(identityKey(identity), { clientId, identity: { ...identity }, timeout });
+  }
+
+  function releaseInitialPresentationReservation(identity: TerminalIdentity, electFallback: boolean): void {
+    const key = identityKey(identity);
+    const reservation = initialPresentationReservations.get(key);
+    if (reservation === undefined) return;
+    clearTimeout(reservation.timeout);
+    initialPresentationReservations.delete(key);
+    if (!electFallback || presentations.state(identity).holder !== undefined) return;
+    const fallback = [...protocolAttachments.values()].find((candidate) =>
+      candidate.canWrite && identityKey(candidate.identity) === key
+    );
+    if (fallback !== undefined) {
+      presentations.change("acquire", {
+        ...fallback.identity,
+        clientId: fallback.clientId,
+        attachmentId: fallback.attachment.attachmentId,
+      });
+    }
+  }
+
   function attachmentFor(request: CommandRequest, required: "read" | "write"): ProtocolAttachment {
     const payload = objectPayload(request.envelope.payload);
     const attachmentId = payload.attachmentId;
@@ -440,6 +505,26 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       });
     }
   }
+
+  function publishDimensions(identity: TerminalIdentity, cols: number, rows: number): void {
+    for (const value of protocolAttachments.values()) {
+      if (!sameIdentity(value.identity, identity)) continue;
+      options.eventJournal.append(
+        TERMINAL_EVENT,
+        dimensionsPayload(identity, value.attachment.attachmentId, value.clientId, cols, rows),
+      );
+    }
+  }
+}
+
+function dimensionsPayload(
+  identity: TerminalIdentity,
+  attachmentId: string,
+  clientId: string,
+  cols: number,
+  rows: number,
+): Record<string, JsonValue> {
+  return { ...identity, attachmentId, clientId, type: "dimensions", cols, rows };
 }
 
 function presentationPayload(state: TerminalPresentationLeaseState, clientId: string, attachmentId: string): Record<string, JsonValue> {
@@ -490,6 +575,7 @@ function sameIdentity(left: TerminalIdentity, right: TerminalIdentity): boolean 
 }
 
 function sessionKey(clientId: string, identity: TerminalIdentity): string { return `${clientId}\u0000${identity.serverId}\u0000${identity.projectId}\u0000${identity.sessionId}`; }
+function identityKey(identity: TerminalIdentity): string { return `${identity.serverId}\u0000${identity.projectId}\u0000${identity.sessionId}`; }
 
 function position(value: JsonValue): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new TerminalServiceError("invalid_position", "terminal position is invalid");

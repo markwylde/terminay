@@ -2809,21 +2809,44 @@
 
 .terminal-presentation-control {
   align-items: center;
-  background: color-mix(in srgb, var(--terminal-panel-surface) 88%, #000);
-  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
-  border-radius: 6px;
+  background: var(--terminal-tab-bg-active, #161c25);
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--terminal-note-color) 48%, var(--terminal-tab-bg-active, #161c25));
+  box-sizing: border-box;
+  color: #f4f6f8;
   display: flex;
-  font-size: 12px;
+  flex: 0 0 auto;
+  font-family: 'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
   gap: 8px;
-  inset-block-start: 8px;
-  inset-inline-end: 8px;
-  padding: 4px 7px;
-  position: absolute;
-  z-index: 8;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 7px 12px;
+  width: 100%;
 }
 
 .terminal-presentation-control button {
+  background: #1a2330;
+  border: 1px solid #3a4b61;
+  border-radius: 7px;
+  color: #e7edf5;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  font-weight: 700;
   min-height: 28px;
+  padding: 5px 10px;
+}
+
+.terminal-presentation-control button:hover {
+  background: #243246;
+  border-color: #526780;
+}
+
+.terminal-presentation-control button:focus-visible {
+  outline: 2px solid var(--terminal-tab-active-accent, #57b7ff);
+  outline-offset: 2px;
 }
 
 .terminal-panel-connection-error p {

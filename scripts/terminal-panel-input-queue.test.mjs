@@ -87,6 +87,38 @@ test('server-backed terminal input fails closed after an uncertain write failure
   assert.deepEqual(errors, ['disconnected'])
 })
 
+test('presentation ownership changes discard stale queued input without failing the stream', async () => {
+  const writes = []
+  const errors = []
+  let rejectOwnership = true
+  const attachment = {
+    async write(data) {
+      writes.push(data)
+      if (rejectOwnership) {
+        throw Object.assign(new Error('terminal presentation is controlled by another attachment'), {
+          code: 'forbidden',
+          details: { reason: 'presentation_owner' },
+        })
+      }
+    },
+    async detach() {},
+  }
+  const queue = new ServerTerminalInputQueue((error) => errors.push(error.message))
+
+  queue.attach(attachment)
+  queue.enqueue('stale-emulator-reply')
+  queue.enqueue('also-stale')
+  await tick()
+  assert.deepEqual(writes, ['stale-emulator-reply'])
+  assert.deepEqual(errors, [])
+
+  rejectOwnership = false
+  queue.enqueue('after-takeover')
+  await tick()
+  assert.deepEqual(writes, ['stale-emulator-reply', 'after-takeover'])
+  assert.deepEqual(errors, [])
+})
+
 test('server-backed terminal input bounds queued data by UTF-8 bytes', async () => {
   const writes = []
   const attachment = {
