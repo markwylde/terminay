@@ -1,4 +1,5 @@
 import { TerminalServiceError } from "./errors.js";
+import type { TerminalPresentationCheckpointAuthority } from "./presentationCheckpoint.js";
 import type { TerminalResolvedLaunch } from "./launchResolver.js";
 import type {
   PtyDataListener,
@@ -237,6 +238,7 @@ export class TerminalService {
   private readonly eventListener: TerminalEventListener | undefined;
   private readonly sessionLifecycle: TerminalSessionLifecycle | undefined;
   private readonly inactivityTimer: TerminalInactivityTimer;
+  private readonly presentationCheckpoints: TerminalPresentationCheckpointAuthority | undefined;
   private readonly sessionsById = new Map<string, MutableSession>();
   private readonly listeners = new Set<TerminalEventListener>();
   private readonly inputListeners = new Set<
@@ -263,6 +265,7 @@ export class TerminalService {
     this.eventListener = options.onEvent;
     this.sessionLifecycle = options.sessionLifecycle;
     this.inactivityTimer = options.inactivityTimer ?? defaultInactivityTimer;
+    this.presentationCheckpoints = options.presentationCheckpoints;
     this.limits = Object.freeze(normalizeLimits(options));
     if (this.eventListener !== undefined) this.listeners.add(this.eventListener);
   }
@@ -380,6 +383,7 @@ export class TerminalService {
       replayFrom: 0,
     };
     this.sessionsById.set(sessionId, mutable);
+    this.startPresentationCheckpoint(mutable);
     const spawnOptions: PtySpawnOptions = {
       shellPath,
       shell: shellPath,
@@ -460,6 +464,7 @@ export class TerminalService {
         try { this.sessionLifecycle?.terminalStarted?.(identity, process.pid); } catch { /* observers cannot fail PTY creation */ }
       }
       this.sessionsById.set(identity.sessionId, mutable);
+      this.startPresentationCheckpoint(mutable);
       this.attachProcess(mutable, process);
       return new TerminalSessionHandle(this, mutable);
     } catch (error) {
@@ -590,6 +595,7 @@ export class TerminalService {
     await mutable.process.resize(next);
     mutable.dimensions.cols = next.cols;
     mutable.dimensions.rows = next.rows;
+    this.observePresentationResize(mutable, next);
   }
 
   async kill(session: string | TerminalIdentity, authorization?: TerminalAuthorization, signal?: number | string): Promise<void> {
@@ -701,8 +707,36 @@ export class TerminalService {
       while (replayBytes(mutable.replay) > this.limits.maxReplayBytes) mutable.replay.shift();
       mutable.replayFrom = mutable.replay[0]?.position ?? mutable.outputPosition;
       const event = outputEvent(mutable, chunk, position, false);
+      this.observePresentationOutput(mutable, position, chunkBytes);
       this.emit(event);
       for (const subscription of [...mutable.subscribers]) subscription.deliverEvent(event);
+    }
+  }
+
+  /** Checkpoint supervision is intentionally observational. A bounded
+   * presentation failure cannot delay output, terminate a PTY, or disturb an
+   * already-attached display. */
+  private startPresentationCheckpoint(mutable: MutableSession): void {
+    try {
+      this.presentationCheckpoints?.createSession(mutable.identity, mutable.dimensions);
+    } catch {
+      // The checkpoint authority exposes its own precise fresh-display error.
+    }
+  }
+
+  private observePresentationOutput(mutable: MutableSession, position: number, bytes: Uint8Array): void {
+    try {
+      void this.presentationCheckpoints?.ingestOutput(mutable.identity, position, bytes).catch(() => undefined);
+    } catch {
+      // A third-party checkpoint observer cannot interfere with the PTY.
+    }
+  }
+
+  private observePresentationResize(mutable: MutableSession, dimensions: TerminalDimensions): void {
+    try {
+      void this.presentationCheckpoints?.ingestResize(mutable.identity, dimensions).catch(() => undefined);
+    } catch {
+      // A third-party checkpoint observer cannot interfere with the PTY.
     }
   }
 
@@ -716,6 +750,7 @@ export class TerminalService {
     mutable.dataUnsubscribe?.();
     mutable.exitUnsubscribe?.();
     mutable.foregroundProcessUnsubscribe?.();
+    this.presentationCheckpoints?.closeSession(mutable.identity);
     try {
       const disposeResult = mutable.process?.dispose?.();
       if (disposeResult !== undefined) void Promise.resolve(disposeResult).catch(() => undefined);
