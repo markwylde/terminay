@@ -1,4 +1,11 @@
-import type { JsonValue, ProtocolId } from '@terminay/protocol';
+import {
+	parseWorkspaceDeltaDto,
+	parseWorkspaceSnapshotDto,
+	type JsonValue,
+	type ProtocolId,
+	type WorkspaceDeltaDto,
+	type WorkspaceSnapshotDto,
+} from '@terminay/protocol';
 import type { TerminayClient } from './client.js';
 import { type ClientCommandResult, ClientError } from './types.js';
 
@@ -10,13 +17,7 @@ export interface WorkspaceCommandOptions extends WorkspaceQueryOptions {
 	readonly commandId?: ProtocolId;
 	readonly expectedRevision?: number;
 }
-export interface WorkspaceSnapshotDto {
-	readonly schemaVersion: number;
-	readonly serverId: ProtocolId;
-	readonly revision: number;
-	readonly cursor: string;
-	readonly [key: string]: JsonValue;
-}
+export type { WorkspaceDeltaDto, WorkspaceSnapshotDto } from '@terminay/protocol';
 export interface ProjectMoveRequest {
 	readonly projectId: string;
 	readonly targetViewId: string;
@@ -127,7 +128,7 @@ export class WorkspaceClient {
 		revision: number,
 		cursor: string,
 		options: WorkspaceQueryOptions = {},
-	): Promise<WorkspaceSnapshotDto> {
+	): Promise<WorkspaceDeltaDto> {
 		// A legacy polling projection may have retained an arbitrary cursor string.
 		// The protocol only accepts the canonical cursor for the requested server
 		// revision, so reject that compatibility shape before it can generate a
@@ -143,7 +144,7 @@ export class WorkspaceClient {
 			{ revision, cursor },
 			options,
 		);
-		return asSnapshot(response.result);
+		return parseWorkspaceDeltaDto(response.result, { serverId: readDeltaServerId(response.result), revision, cursor });
 	}
 
 	/**
@@ -561,33 +562,14 @@ export class WorkspaceClient {
 }
 
 function asSnapshot(value: JsonValue | undefined): WorkspaceSnapshotDto {
-	// workspace.delta returns the store envelope ({ state, events }), whereas
-	// workspace.snapshot returns the state directly. The feature facade gives
-	// callers one consistent snapshot shape.
-	if (
-		typeof value === 'object' &&
-		value !== null &&
-		!Array.isArray(value) &&
-		'state' in value
-	) {
-		value = value.state as JsonValue;
+	return parseWorkspaceSnapshotDto(value);
+}
+
+function readDeltaServerId(value: JsonValue | undefined): string {
+	if (typeof value !== 'object' || value === null || Array.isArray(value) || typeof value.serverId !== 'string') {
+		throw new TypeError('invalid workspace delta');
 	}
-	if (
-		typeof value !== 'object' ||
-		value === null ||
-		Array.isArray(value) ||
-		typeof value.schemaVersion !== 'number' ||
-		!Number.isSafeInteger(value.schemaVersion) ||
-		value.schemaVersion <= 0 ||
-		!isBoundedId(value.serverId) ||
-		typeof value.revision !== 'number' ||
-		!Number.isSafeInteger(value.revision) ||
-		value.revision < 0 ||
-		typeof value.cursor !== 'string' ||
-		value.cursor !== String(value.revision)
-	)
-		throw new Error('invalid workspace snapshot');
-	return value as WorkspaceSnapshotDto;
+	return value.serverId;
 }
 
 function asMoveResult(value: JsonValue | undefined): ProjectMoveResult {

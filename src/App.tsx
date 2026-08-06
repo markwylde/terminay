@@ -4944,6 +4944,8 @@ function App({
 		(currentServerId === 'desktop-local'
 			? 'Local'
 			: `Remote · ${currentServerId}`);
+	const [workspaceSynchronizationError, setWorkspaceSynchronizationError] =
+		useState<string | null>(null);
 	const popoutUrl = useMemo(
 		() => new URL('popout.html', window.location.href).toString(),
 		[],
@@ -5308,6 +5310,22 @@ function App({
 		};
 	}, [terminalClientContext?.workspaceSnapshotStore]);
 
+	useEffect(() => {
+		const store = terminalClientContext?.workspaceSnapshotStore;
+		if (store === undefined) return;
+		return store.subscribeStatus((status) => {
+			if (status.state === 'current') {
+				setWorkspaceSynchronizationError(null);
+				return;
+			}
+			setWorkspaceSynchronizationError(
+				status.state === 'stale'
+					? 'Workspace synchronization is stale while Terminay securely resynchronizes it.'
+					: 'Workspace synchronization failed. The last confirmed workspace remains visible; reconnect to retry.',
+			);
+		});
+	}, [terminalClientContext?.workspaceSnapshotStore]);
+
 	const onReorder = (newOrder: ProjectTab[]) => {
 		setProjects(newOrder);
 	};
@@ -5659,6 +5677,14 @@ function App({
 						role="alert"
 					>
 						{projectCreationError}
+					</div>
+				) : null}
+				{workspaceSynchronizationError !== null ? (
+					<div
+						className="workspace-empty-state workspace-empty-state--error"
+						role="alert"
+					>
+						{workspaceSynchronizationError}
 					</div>
 				) : null}
 				{projects.map((project) => (

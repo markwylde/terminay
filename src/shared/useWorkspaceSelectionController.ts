@@ -45,10 +45,20 @@ export function useWorkspaceSelectionController(workspaceSnapshotStore: Workspac
 			setSnapshot(parsed); setSelectedViewId(selection.viewId); setSelectedProjectId(selection.projectId); setSelectedPanelId(selection.panelId)
 		}
 		const unsubscribe = workspaceSnapshotStore.subscribe(accept)
+		const unsubscribeStatus = workspaceSnapshotStore.subscribeStatus((status) => {
+			if (disposed) return
+			if (status.state === 'current') {
+				setError(null)
+				return
+			}
+			setError(status.error?.message ?? (status.state === 'stale'
+				? 'The server workspace is stale while Terminay resynchronizes it.'
+				: 'Unable to synchronize the server workspace.'))
+		})
 		void workspaceSnapshotStore.start().catch((cause: unknown) => {
 			if (!disposed) setError(cause instanceof Error ? cause.message : 'Unable to synchronize the server workspace.')
 		})
-		return () => { disposed = true; unsubscribe() }
+		return () => { disposed = true; unsubscribe(); unsubscribeStatus() }
 	}, [workspaceSnapshotStore])
 
 	const selectedView = selectView(snapshot, selectedViewId)

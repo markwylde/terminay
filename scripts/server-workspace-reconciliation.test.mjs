@@ -13,9 +13,9 @@ test.after(async () => { await rm(outputDirectory, { recursive: true, force: tru
 
 function snapshot({ revision = 2, projectIds = ['project-a'], panelIds = ['panel-a'], activePanelId = 'panel-a' } = {}) {
 	return {
-		schemaVersion: 1, serverId: 'server-a', revision, cursor: String(revision), viewOrder: ['view-a'],
+		schemaVersion: 2, serverId: 'server-a', revision, cursor: String(revision), viewOrder: ['view-a'],
 		views: { 'view-a': { id: 'view-a', serverId: 'server-a', name: 'Workspace', projectIds, activeProjectId: projectIds[0] } },
-		projects: Object.fromEntries(projectIds.map((id) => [id, { id, serverId: 'server-a', viewId: 'view-a', name: id, root: `/workspace/${id}`, panelIds: id === 'project-a' ? panelIds : [], ...(id === 'project-a' && activePanelId !== undefined ? { activePanelId } : {}) }])),
+		projects: Object.fromEntries(projectIds.map((id) => [id, { id, serverId: 'server-a', viewId: 'view-a', name: id, root: `/workspace/${id}`, rootOrigin: 'explicit', panelIds: id === 'project-a' ? panelIds : [], ...(id === 'project-a' && activePanelId !== undefined ? { activePanelId } : {}) }])),
 		panels: Object.fromEntries(panelIds.map((id) => [id, { id, projectId: 'project-a', type: 'terminal', sessionId: `session-${id}` }])),
 		terminalSessions: Object.fromEntries(panelIds.map((id) => [`session-${id}`, { id: `session-${id}`, serverId: 'server-a', projectId: 'project-a' }])),
 	}
@@ -48,7 +48,7 @@ test('project and panel identity survives project switches and detach-reattach s
 			{ id: panel.sessionId, serverId: 'server-a', projectId: panel.projectId },
 		]))
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			serverId: 'server-a',
 			revision,
 			cursor: String(revision),
@@ -70,6 +70,7 @@ test('project and panel identity survives project switches and detach-reattach s
 					viewId: 'view-a',
 					name: projectId,
 					root: `/workspace/${projectId}`,
+					rootOrigin: 'explicit',
 					panelIds: projectPanels[projectId],
 					...(projectPanels[projectId][0] === undefined ? {} : { activePanelId: projectPanels[projectId][0] }),
 				},
