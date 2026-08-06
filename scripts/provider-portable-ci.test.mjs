@@ -29,12 +29,11 @@ test("all six PR jobs are independent and use portable runners", () => {
   assert.match(ci, /cancel-in-progress: true/u);
 });
 
-test("Electron shards use Docker and retain per-shard failure artifacts", () => {
+test("Electron shards use Docker without provider-specific steps", () => {
   const e2e = ci.slice(ci.indexOf("  e2e-test:"));
   assert.match(e2e, /npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/5/u);
   assert.doesNotMatch(e2e, /test:e2e:host|playwright install|setup-node/u);
-  assert.match(e2e, /if: failure\(\)/u);
-  assert.match(e2e, /playwright-report-\$\{\{ matrix\.shard \}\}-of-5/u);
+  assert.doesNotMatch(e2e, /actions\/upload-artifact/u);
 });
 
 test("image publication is release-tag-only", () => {
