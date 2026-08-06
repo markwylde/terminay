@@ -56,6 +56,7 @@ export class ServerConnection implements ServerConnectionLike {
   private readonly inFlightRequests = new Map<string, InFlightRequest>();
   private readonly eventSubscriptions = new Map<string, () => void>();
   private connectionCleaned = false;
+	private liveEventSendFailure: Error | undefined;
 	private readonly onClosed: (() => void) | undefined;
 
   constructor(transport: ByteTransport, options: ServerCoreOptions, connectionOptions: ConnectionOptions = {}) {
@@ -136,6 +137,7 @@ export class ServerConnection implements ServerConnectionLike {
         this.currentState = "closed";
       }
     }
+		if (this.liveEventSendFailure !== undefined) throw this.liveEventSendFailure;
   }
 
   private async processEnvelope(envelope: Envelope, body: Uint8Array): Promise<void> {
@@ -277,7 +279,7 @@ export class ServerConnection implements ServerConnectionLike {
       const projected = this.projectEvent(value);
       if (projected === undefined || !matchesEvent(projected, this.authenticatedClient?.clientId, event)) return;
       if (replaying) pending.push(projected);
-      else void this.send(eventEnvelope(subscriptionId, projected));
+      else void this.send(eventEnvelope(subscriptionId, projected)).catch((error) => this.failLiveEventSend(error));
     };
     const unsubscribe = this.journal.subscribe(listener);
     this.eventSubscriptions.set(subscriptionId, unsubscribe);
@@ -309,6 +311,12 @@ export class ServerConnection implements ServerConnectionLike {
   }
 
   private async send(envelope: Envelope, body: Uint8Array = new Uint8Array()): Promise<void> { await this.transport.send(encodeFrame(envelope, body, this.options.limits)); }
+
+	private failLiveEventSend(error: unknown): void {
+		if (this.liveEventSendFailure !== undefined || this.currentState !== "open") return;
+		this.liveEventSendFailure = error instanceof Error ? error : new Error("event delivery failed");
+		void this.close(protocolError("unavailable", "event delivery failed")).catch(() => undefined);
+	}
 
   private projectEvent(event: OrderedEvent): OrderedEvent | undefined {
     return this.options.projectEvent === undefined
