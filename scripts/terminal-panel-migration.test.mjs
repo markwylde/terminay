@@ -129,6 +129,14 @@ test('server-backed TerminalPanel routes raw stream events through xterm and the
 	);
 	assert.match(
 		serverPath,
+		/event\.type === 'checkpoint'[\s\S]*terminal\.resize\(event\.checkpointDimensions\.cols, event\.checkpointDimensions\.rows\)[\s\S]*await writeTerminalPresentation\(event\.bytes\)[\s\S]*renderedPositionRef\.current = event\.position/,
+	);
+	assert.match(
+		serverPath,
+		/let terminalRenderQueue = Promise\.resolve\(\)[\s\S]*event\.type === 'checkpoint_resize'[\s\S]*terminal\.resize\(event\.dimensions\.cols, event\.dimensions\.rows\)[\s\S]*event\.type === 'output'[\s\S]*await renderTerminalOutput\(event\.bytes, event\.nextPosition, attachment\)/,
+	);
+	assert.match(
+		serverPath,
 		/panelEventDisposer = \([\s\S]*\)\.onEvent\(renderServerEvent\)/,
 	);
 	assert.ok(
@@ -136,7 +144,10 @@ test('server-backed TerminalPanel routes raw stream events through xterm and the
 			serverPath.indexOf('for (const event of attachment.initialEvents)'),
 		'the lossless catch-all listener must be installed before initial replay is consumed',
 	);
-	assert.match(serverPath, /attachServerTerminal\(0, true\)/);
+	assert.match(
+		serverPath,
+		/attachServerTerminal\(\{ fromPosition: 0, freshPresentation: true, forceResume: true \}\)/,
+	);
 	assert.match(
 		serverPath,
 		/serverInputQueue = new ServerTerminalInputQueue\(failServerTransport\)/,

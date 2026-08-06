@@ -15,13 +15,34 @@ test('TerminalPanel resolves the shared connection client before compatibility A
   assert.match(panel, /resolveTerminalPanelClient\(/)
   assert.match(panel, /params\.terminalPanelClient \?\?/)
   assert.match(panel, /context === null \? undefined/)
-  assert.match(panel, /const panelClient = resolvedTerminalClient\.panelClient/)
-  assert.match(panel, /const panelIdentity = resolvedTerminalClient\.identity/)
-  assert.match(panel, /const panelClientId = resolvedTerminalClient\.clientId/)
-	assert.match(panel, /const \[serverConnectionAttempt, setServerConnectionAttempt\] = useState\(0\)/)
-	assert.match(panel, /serverConnectionAttempt,\s*\]/)
+	assert.match(panel, /const panelClient = resolvedTerminalClient\.panelClient/)
+	assert.match(panel, /const panelIdentity = resolvedTerminalClient\.identity/)
+	assert.match(panel, /const panelClientId = resolvedTerminalClient\.clientId/)
+	assert.match(panel, /type TerminalPanelConnectionContext = Pick</)
+	assert.match(panel, /'client' \| 'serverId' \| 'projectId' \| 'clientId'/)
+	assert.match(panel, /const terminalPanelConnectionContext = useMemo<TerminalPanelConnectionContext \| null>/)
+	assert.match(panel, /browserFileDropContextRef\.current/)
+	assert.match(panel, /retryServerAttachmentRef\.current\(\)/)
 	assert.match(panel, /Retry connection/)
-	assert.match(panel, /setServerConnectionAttempt\(\(attempt\) => attempt \+ 1\)/)
+})
+
+test('workspace metadata and drop-upload changes do not rebuild a mounted terminal attachment', () => {
+  const lifecycleStart = panel.indexOf('  useEffect(() => {\n    const container = containerRef.current')
+  const lifecycleEnd = panel.indexOf('\n  useEffect(() => {\n    settingsRef.current = settings', lifecycleStart)
+  assert.notEqual(lifecycleStart, -1)
+  assert.notEqual(lifecycleEnd, -1)
+  const lifecycle = panel.slice(lifecycleStart, lifecycleEnd)
+  const dependencies = lifecycle.slice(lifecycle.lastIndexOf('  }, ['))
+
+  assert.match(lifecycle, /const canUploadBrowserFiles = \(\) =>/)
+  assert.match(lifecycle, /const browserDropContext = browserFileDropContextRef\.current/)
+  assert.match(lifecycle, /renderedPositionRef\.current = nextPosition/)
+  assert.match(lifecycle, /fromPosition: renderedPositionRef\.current \?\? 0/)
+  assert.match(lifecycle, /freshPresentation: false/)
+  assert.match(lifecycle, /freshPresentation: true/)
+  assert.doesNotMatch(dependencies, /terminalClientContext|projectRoot|fileViewerClient|settings/)
+  assert.match(dependencies, /resolvedTerminalClient/)
+  assert.match(dependencies, /props\.params\.sessionId/)
 })
 
 test('App provides one connection client context per project Dockview and keeps null as the fallback', () => {
@@ -48,7 +69,7 @@ test('context resolution uses the supplied shared terminal client for a real att
       absWorkingDir: process.cwd(),
       bundle: true,
       entryPoints: ['src/components/TerminalPanel.tsx'],
-      external: ['react', '@terminay/client-core'],
+      external: ['react', 'react-dom', '@terminay/client-core'],
       format: 'esm',
       loader: { '.css': 'empty' },
       outdir: outputDirectory,
