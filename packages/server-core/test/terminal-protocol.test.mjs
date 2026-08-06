@@ -68,6 +68,12 @@ test("terminal operation registry binds the client contract to one server-owned 
   const controlled = await dispatcher.command(request("terminal.presentation", { clientId: "client-a", identity, attachmentId: attachment.attachmentId, mode: "acquire" }, "presentation-1"));
   assert.equal(controlled.ok, true, JSON.stringify(controlled));
   assert.equal(controlled.result.role, "controller");
+  assert.equal(controlled.result.revision, 2);
+  const renewed = await dispatcher.command(request("terminal.presentation", { clientId: "client-a", identity, attachmentId: attachment.attachmentId, mode: "renew" }, "presentation-renew-1"));
+  assert.equal(renewed.ok, true, JSON.stringify(renewed));
+  assert.equal(renewed.result.role, "controller");
+  assert.equal(renewed.result.holder.clientId, "client-a");
+  assert.equal(renewed.result.holder.attachmentId, attachment.attachmentId);
   const input = await dispatcher.command(request("terminal.input", { clientId: "client-a", identity, attachmentId: attachment.attachmentId, dataBase64: "aGk=" }, "input-1"));
   assert.equal(input.ok, true);
   assert.deepEqual([...pty.processes[0].writes[0]], [104, 105]);
@@ -87,6 +93,63 @@ test("terminal operation registry binds the client contract to one server-owned 
   assert.equal(service.getSession(identity).status, "running");
   registry.closeClient("client-a");
   assert.equal(service.getSession(identity).status, "running");
+});
+
+test("a newly created terminal reserves initial presentation for its authenticated creator", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({
+    serverId: "server-created-owner",
+    ptyFactory: pty,
+    generateSessionId: () => "session-created-owner",
+  });
+  const journal = new OrderedEventJournal();
+  const registry = createTerminalOperationRegistry({
+    service,
+    eventJournal: journal,
+    allowUnresolvedTestSessions: true,
+  });
+  const dispatcher = createOperationDispatcher(registry.operations);
+
+  const created = await dispatcher.command(request(
+    "terminal.create",
+    { projectId: "project-created-owner" },
+    "create-by-desktop",
+    "write",
+    "desktop",
+  ));
+  assert.equal(created.ok, true, JSON.stringify(created));
+  const identity = {
+    serverId: created.result.serverId,
+    projectId: created.result.projectId,
+    sessionId: created.result.sessionId,
+  };
+
+  const browser = await dispatcher.command(request(
+    "terminal.attach",
+    { clientId: "browser", identity, fromPosition: 0 },
+    "browser-attaches-first",
+    "write",
+    "browser",
+  ));
+  assert.equal(browser.ok, true, JSON.stringify(browser));
+  assert.equal(browser.result.presentation.role, "read_only");
+  assert.equal(browser.result.presentation.holder, undefined);
+
+  const desktop = await dispatcher.command(request(
+    "terminal.attach",
+    { clientId: "desktop", identity, fromPosition: 0 },
+    "desktop-attaches-second",
+    "write",
+    "desktop",
+  ));
+  assert.equal(desktop.ok, true, JSON.stringify(desktop));
+  assert.equal(desktop.result.presentation.role, "controller");
+  assert.equal(desktop.result.presentation.holder.clientId, "desktop");
+  const browserPresentation = journal.replay(0).events.find((event) =>
+    event.payload.type === "presentation" && event.payload.clientId === "browser"
+  );
+  assert.equal(browserPresentation.payload.role, "read_only");
+  assert.equal(browserPresentation.payload.holder.clientId, "desktop");
 });
 
 test("terminal attach refuses an arbitrary replay suffix when the complete presentation exceeds the budget", async () => {
