@@ -11,7 +11,8 @@ test("rollout discovery requires an open writer below the exact process tree", {
   const sessions = join(root, "sessions", "2026", "08", "05");
   const path = join(sessions, "rollout-fixture.jsonl");
   await mkdir(sessions, { recursive: true });
-  const child = spawn(process.execPath, ["-e", "const fs=require('fs');const fd=fs.openSync(process.argv[1],'a');fs.writeSync(fd,'{}\\n');setInterval(()=>{},1000)", path], { stdio: "ignore" });
+  const record = JSON.stringify({ type: "session_meta", payload: { id: "fixture-session", originator: "codex-tui", source: "cli" } });
+  const child = spawn(process.execPath, ["-e", "const fs=require('fs');const fd=fs.openSync(process.argv[1],'a');fs.writeSync(fd,process.argv[2]+'\\n');setInterval(()=>{},1000)", path, record], { stdio: "ignore" });
   try {
     let found;
     for (let attempt = 0; attempt < 20 && !found; attempt += 1) {
@@ -27,12 +28,87 @@ test("rollout discovery requires an open writer below the exact process tree", {
   }
 });
 
+test("rollout discovery keeps the root session when the same Codex process opens a newer subagent journal", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-agent-multi-rollout-"));
+  const sessions = join(root, "sessions", "2026", "08", "06");
+  const rootPath = join(sessions, "rollout-root.jsonl");
+  const subagentPath = join(sessions, "rollout-subagent.jsonl");
+  await mkdir(sessions, { recursive: true });
+  const rootRecord = JSON.stringify({
+    type: "session_meta",
+    payload: { id: "root-session", originator: "codex-tui", source: "cli", cli_version: "0.146.1" },
+  });
+  const subagentRecord = JSON.stringify({
+    type: "session_meta",
+    payload: {
+      id: "subagent-session",
+      originator: "codex-tui",
+      source: { subagent: { thread_spawn: { parent_thread_id: "root-session", depth: 1, agent_path: "/root/research" } } },
+      cli_version: "0.146.1",
+    },
+  });
+  const child = spawn(process.execPath, [
+    "-e",
+    "const fs=require('fs');const [rootPath,rootRecord,subagentPath,subagentRecord]=process.argv.slice(1);const rootFd=fs.openSync(rootPath,'a');fs.writeSync(rootFd,rootRecord+'\\n');setTimeout(()=>{const subagentFd=fs.openSync(subagentPath,'a');fs.writeSync(subagentFd,subagentRecord+'\\n');setInterval(()=>{},1000)},100)",
+    rootPath,
+    rootRecord,
+    subagentPath,
+    subagentRecord,
+  ], { stdio: "ignore" });
+  try {
+    let subagentReady;
+    for (let attempt = 0; attempt < 40 && !subagentReady; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      subagentReady = await realpath(subagentPath).catch(() => undefined);
+    }
+    assert.ok(subagentReady);
+    assert.equal(await findProcessBoundCodexRollout(process.pid, join(root, "sessions")), await realpath(rootPath));
+  } finally {
+    child.kill();
+    if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rollout discovery selects the newest eligible root and rejects newer malformed metadata", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-agent-root-selection-"));
+  const sessions = join(root, "sessions", "2026", "08", "06");
+  const firstPath = join(sessions, "rollout-first-root.jsonl");
+  const resumedPath = join(sessions, "rollout-resumed-root.jsonl");
+  const malformedPath = join(sessions, "rollout-malformed.jsonl");
+  await mkdir(sessions, { recursive: true });
+  const firstRecord = JSON.stringify({ type: "session_meta", payload: { id: "first-root", originator: "codex-tui", source: "cli" } });
+  const resumedRecord = JSON.stringify({ type: "session_meta", payload: { id: "resumed-root", originator: "codex-tui", source: "cli" } });
+  const child = spawn(process.execPath, [
+    "-e",
+    "const fs=require('fs');const [firstPath,firstRecord,resumedPath,resumedRecord,malformedPath]=process.argv.slice(1);const fds=[];fds.push(fs.openSync(firstPath,'a'));fs.writeSync(fds[0],firstRecord+'\\n');setTimeout(()=>{fds.push(fs.openSync(resumedPath,'a'));fs.writeSync(fds[1],resumedRecord+'\\n')},100);setTimeout(()=>{fds.push(fs.openSync(malformedPath,'a'));fs.writeSync(fds[2],'{not-json}\\n');setInterval(()=>{},1000)},200)",
+    firstPath,
+    firstRecord,
+    resumedPath,
+    resumedRecord,
+    malformedPath,
+  ], { stdio: "ignore" });
+  try {
+    let malformedReady;
+    for (let attempt = 0; attempt < 40 && !malformedReady; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      malformedReady = await realpath(malformedPath).catch(() => undefined);
+    }
+    assert.ok(malformedReady);
+    assert.equal(await findProcessBoundCodexRollout(process.pid, join(root, "sessions")), await realpath(resumedPath));
+  } finally {
+    child.kill();
+    if (child.exitCode === null) await new Promise((resolve) => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a generic foreground wrapper restarts discovery for Codex resume after the startup scan expires", { skip: !["darwin", "linux"].includes(process.platform) }, async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-agent-resume-"));
   const sessions = join(root, "sessions", "2026", "08", "05");
   const path = join(sessions, "rollout-resumed.jsonl");
   await mkdir(sessions, { recursive: true });
-  const record = JSON.stringify({ type: "session_meta", payload: { id: "resumed-session", cli_version: "0.146.1" } });
+  const record = JSON.stringify({ type: "session_meta", payload: { id: "resumed-session", originator: "codex-tui", source: "cli", cli_version: "0.146.1" } });
   const identity = Object.freeze({ serverId: "server-1", projectId: "project-1", sessionId: "terminal-1" });
   const source = new NodeAgentJournalSource({ codexHome: root, discoveryAttemptLimit: 2, pollMs: 50 });
   const observations = [];
