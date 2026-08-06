@@ -462,9 +462,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
 
     const resizePanel = (cols: number, rows: number) => {
-      if (!useServerTerminal || serverAttachmentFailed || !terminalPresentationControllerRef.current) return
+      if (!useServerTerminal || serverAttachmentFailed) return
       pendingPanelResize = { cols, rows }
-      if (panelAttachment !== null) {
+      if (panelAttachment !== null && terminalPresentationControllerRef.current) {
         const next = pendingPanelResize
         pendingPanelResize = null
         // Resize ownership can legitimately belong to another presentation.
@@ -633,7 +633,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
       clearRemoteTerminalElementSize(root, terminal)
       fitAddon.fit()
-      if (terminal.cols !== lastSentSize.cols || terminal.rows !== lastSentSize.rows) {
+      if (force || terminal.cols !== lastSentSize.cols || terminal.rows !== lastSentSize.rows) {
         lastSentSize = { cols: terminal.cols, rows: terminal.rows }
         resizePanel(terminal.cols, terminal.rows)
       }
@@ -718,15 +718,23 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
             panelAttachment = attachment
             const applyPresentation = (state: TerminalPresentationState) => {
+              const becameController = !terminalPresentationControllerRef.current && state.role === 'controller'
               terminalPresentationControllerRef.current = state.role === 'controller'
               setTerminalPresentation(state)
               if (presentationRenewTimer !== null) window.clearTimeout(presentationRenewTimer)
               presentationRenewTimer = null
               if (state.role === 'controller') {
+                if (becameController) fitAndResize(true)
                 presentationRenewTimer = window.setTimeout(() => {
                   void attachment.changePresentation('renew').then(applyPresentation).catch(() => {
                     terminalPresentationControllerRef.current = false
-                    setTerminalPresentation({ ...state, role: 'read_only' })
+                    setTerminalPresentation({
+                      serverId: state.serverId,
+                      projectId: state.projectId,
+                      sessionId: state.sessionId,
+                      revision: state.revision,
+                      role: 'read_only',
+                    })
                   })
                 }, 5_000)
               }
@@ -1448,20 +1456,18 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         </search>
       ) : null}
       <div className="terminal-panel-root" ref={xtermRootRef} />
-      {terminalPresentation !== null && !presentationUnavailable ? (
+      {terminalPresentation?.role === 'read_only' && terminalPresentation.holder !== undefined && !presentationUnavailable ? (
         <div className="terminal-presentation-control" role="status" aria-live="polite">
-          <span>{terminalPresentation.role === 'controller' ? 'Terminal controller' : 'Terminal read-only'}</span>
-          {terminalPresentation.role === 'read_only' ? (
-            <button
-              type="button"
-              aria-label="Take control of terminal"
-              onClick={() => void terminalPresentationActionRef.current().catch((error: unknown) => {
-                setServerTerminalError(error instanceof Error ? error.message : 'Terminal control takeover failed.')
-              })}
-            >
-              Take control
-            </button>
-          ) : null}
+          <span>Another device is controlling this terminal.</span>
+          <button
+            type="button"
+            aria-label="Take back control of terminal"
+            onClick={() => void terminalPresentationActionRef.current().catch((error: unknown) => {
+              setServerTerminalError(error instanceof Error ? error.message : 'Terminal control takeover failed.')
+            })}
+          >
+            Take back control
+          </button>
         </div>
       ) : null}
       {serverTerminalError ? (

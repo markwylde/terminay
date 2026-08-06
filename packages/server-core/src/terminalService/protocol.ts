@@ -285,6 +285,15 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     attachmentId = attachment.attachmentId;
     protocolAttachments.set(attachment.attachmentId, { clientId, identity, attachment });
     byClientSession.set(key, attachment.attachmentId);
+    // The first write-authorized surface is the natural presentation owner.
+    // `acquire` is deliberately non-stealing, so a later attachment remains an
+    // observer when another exact attachment already holds the lease.
+    if (request.context.authScope === "write" || request.context.authScope === "admin") {
+      const state = presentations.state(identity);
+      if (state.holder === undefined) {
+        presentations.change("acquire", { ...identity, clientId, attachmentId: attachment.attachmentId });
+      }
+    }
     return {
       attachmentId: attachment.attachmentId,
       fromPosition: attachment.snapshot().fromPosition,
