@@ -48,6 +48,41 @@ test("local UI stream authenticates upgrade and delegates to protocol core", asy
   }
 });
 
+test("local UI stream reports a contained protocol connection failure", async () => {
+  const token = "local-stream-token-123456";
+  const failures = [];
+  const server = createLocalUiServer({
+    serverId: "stream-server",
+    serverVersion: "1.0.0",
+    authToken: token,
+    onConnectionError: (error) => failures.push(error),
+    protocolCore: {
+      accept: () => ({
+        state: "new",
+        connectionId: "stream-connection",
+        client: undefined,
+        start: async () => { throw new Error("contained stream failure"); },
+        process: async () => {},
+        subscribe: async () => ({ kind: "events", fromRevision: 0, events: [], currentRevision: 0 }),
+        close: async () => {},
+      }),
+    },
+  });
+  const address = await server.start();
+  try {
+    const socket = new WebSocket(
+      `${address.origin.replace(/^http:/, "ws:")}/protocol/stream`,
+      ["terminay.v1", `terminay.auth.${base64url(token)}`],
+    );
+    await once(socket, "open");
+    await waitFor(() => failures.length === 1);
+    assert.match(failures[0].message, /contained stream failure/u);
+    socket.close();
+  } finally {
+    await server.stop();
+  }
+});
+
 function base64url(value) {
   return Buffer.from(value, "utf8").toString("base64url");
 }

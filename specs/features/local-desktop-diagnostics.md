@@ -94,7 +94,10 @@ The normal diagnostic level records:
 - bounded process memory and CPU metrics when a process becomes unresponsive
   or unexpectedly exits;
 - embedded Local server composition construction, readiness, deliberate
-  shutdown, and startup/runtime/shutdown failure; and
+  shutdown, and startup/runtime/shutdown failure;
+- embedded Local server protocol-stream failures, including a client
+  disconnect racing an event delivery, as a stable bounded error without
+  protocol frames, terminal content, credentials, or remote addresses; and
 - diagnostic-writer, cleanup, crash-dump, and retention failures.
 
 Normal user actions and high-frequency UI state do not produce one event per
@@ -259,6 +262,9 @@ raw authority-bearing ids are not diagnostic correlation keys.
   duration when it recovers.
 - An embedded Local server failure records its bounded semantic lifecycle and
   application error metadata without recording any PTY output.
+- A Local protocol client that disconnects while an event is being delivered
+  produces one bounded connection-failure diagnostic, while Desktop and its
+  Electron windows remain running.
 - Console flooding and an oversized cyclic object cannot freeze Desktop,
   allocate unbounded memory, forge log lines, or exceed per-event and rotation
   bounds.
