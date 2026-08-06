@@ -56,6 +56,7 @@ test("composition owns TerminalService and exposes a complete merged registry", 
   assert.ok(composition.terminal instanceof TerminalService);
   assert.equal(composition.terminal.serverId, "embedded-server");
   assert.equal(composition.operations.queries.get("terminal.list") !== undefined, true);
+  assert.equal(composition.operations.queries.get("terminal.presentation-checkpoint") !== undefined, true);
   assert.equal(composition.operations.commands.get("terminal.attach") !== undefined, true);
   assert.equal(composition.operations.queries.get("workspace.ping") !== undefined, true);
   assert.deepEqual(composition.coreOptions.capabilities, ["workspace", "terminal"]);
@@ -140,7 +141,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       ...Object.keys(gitOperations.queries),
       ...Object.keys(recordingOperations.queries),
       "settings.get",
-      "terminal.cwd", "terminal.list", "terminal.wait-inactivity",
+      "terminal.cwd", "terminal.list", "terminal.presentation-checkpoint", "terminal.wait-inactivity",
     ];
     const expectedCommands = [
       "ai.metadata.generate", "ai.dictation.transcribe", "ai.request.cancel",

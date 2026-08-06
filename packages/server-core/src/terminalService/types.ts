@@ -9,6 +9,8 @@
 
 type TerminalMaybePromise<T> = T | PromiseLike<T>;
 
+import type { TerminalPresentationCheckpointAuthority } from "./presentationCheckpoint.js";
+
 export type TerminalBytes = Uint8Array;
 
 export interface TerminalDimensions {
@@ -254,6 +256,8 @@ export interface TerminalServiceOptions extends TerminalServiceLimits {
   readonly onEvent?: TerminalEventListener;
   /** Server-owned lifecycle observers such as agent journal tracking. */
   readonly sessionLifecycle?: TerminalSessionLifecycle;
+  /** Optional bounded canonical emulator used only for fresh presentation recovery. */
+  readonly presentationCheckpoints?: TerminalPresentationCheckpointAuthority;
 }
 
 export interface TerminalCreateOptions extends TerminalDimensions {

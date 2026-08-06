@@ -5,6 +5,11 @@ import { TerminalService } from "./service.js";
 import { TerminalServiceAdapter, type TerminalAttachment } from "./adapter.js";
 import { TerminalPresentationLeaseAuthority, type TerminalPresentationLeaseState } from "./presentationLease.js";
 import type {
+  TerminalPresentationCheckpointAuthority,
+  TerminalPresentationCheckpointMetadata,
+  TerminalPresentationCheckpointTailEvent,
+} from "./presentationCheckpoint.js";
+import type {
   TerminalAuthorization,
   TerminalEvent,
   TerminalIdentity,
@@ -25,6 +30,7 @@ const MAX_INPUT_BYTES = 1024 * 1024;
 // metadata cannot turn a valid attach into a protocol-limit failure.
 const MAX_INITIAL_REPLAY_BYTES = 32 * 1024;
 const TERMINAL_EVENT = "terminal";
+export const TERMINAL_PRESENTATION_CHECKPOINT_OPERATION = "terminal.presentation-checkpoint";
 const INITIAL_PRESENTATION_RESERVATION_MS = 10_000;
 
 export interface TerminalOperationRegistryOptions {
@@ -37,6 +43,8 @@ export interface TerminalOperationRegistryOptions {
   readonly attachments?: TerminalServiceAdapter;
   readonly inputSources?: TerminalInputSourceAdapter;
   readonly presentations?: TerminalPresentationLeaseAuthority;
+  /** Optional bounded, server-owned fresh-emulator recovery authority. */
+  readonly checkpoints?: TerminalPresentationCheckpointAuthority;
   /** The journal must also be installed on the transport's server core. */
   readonly eventJournal: OrderedEventJournalLike;
   /** Reconcile a newly-created PTY with other server-owned authorities before
@@ -97,6 +105,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     "terminal.list": (request: QueryRequest) => list(request),
     "terminal.cwd": (request: QueryRequest) => currentCwd(request),
     "terminal.wait-inactivity": (request: QueryRequest) => waitForInactivity(request),
+    [TERMINAL_PRESENTATION_CHECKPOINT_OPERATION]: (request: QueryRequest) => checkpoint(request),
   };
 
   return {
@@ -107,6 +116,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         "terminal.list": { scope: "read" },
         "terminal.cwd": { scope: "read" },
         "terminal.wait-inactivity": { scope: "read" },
+        [TERMINAL_PRESENTATION_CHECKPOINT_OPERATION]: { scope: "read" },
         "terminal.create": { scope: "write" },
         "terminal.attach": { scope: "read" },
         "terminal.resume": { scope: "read" },
@@ -133,6 +143,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       // lifecycle event; neither affects the server-owned PTY.
       for (const identity of releasedIdentities.values()) inputSources.releaseClient(identity, clientId);
       for (const identity of releasedIdentities.values()) presentations.releaseClient(identity, clientId);
+      options.checkpoints?.releaseClient(clientId);
       for (const reservation of [...initialPresentationReservations.values()]) {
         if (reservation.clientId === clientId) releaseInitialPresentationReservation(reservation.identity, true);
       }
@@ -175,6 +186,35 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       signal: request.context.signal,
     });
     return { ...identity, inactive: true };
+  }
+
+  function checkpoint(request: QueryRequest): { readonly result: JsonValue; readonly body: Uint8Array } {
+    if (options.checkpoints === undefined) {
+      throw new TerminalServiceError("service_shutdown", "terminal checkpoint recovery is unavailable");
+    }
+    const payload = objectPayload(request.envelope.payload);
+    const identity = parseIdentity(payload.identity, options.service.serverId);
+    const clientId = assertClient(request.context.clientId, payload.clientId);
+    const attachmentId = payload.attachmentId;
+    const checkpointId = payload.checkpointId;
+    if (typeof attachmentId !== "string" || !ID_PATTERN.test(attachmentId) ||
+        typeof checkpointId !== "string" || !ID_PATTERN.test(checkpointId)) {
+      throw new TerminalServiceError("invalid_identity", "terminal checkpoint identity is invalid");
+    }
+    authorizationFor(identity, request, "read");
+    const attachment = protocolAttachments.get(attachmentId);
+    if (attachment === undefined || attachment.clientId !== clientId || !sameIdentity(attachment.identity, identity)) {
+      throw new TerminalServiceError("forbidden", "terminal checkpoint attachment identity mismatch");
+    }
+    const value = options.checkpoints.fetch({ ...identity, clientId, attachmentId, checkpointId });
+    const body = checkpointBody(value.state, value.tail);
+    if (body.byteLength !== value.byteLength || value.state.byteLength !== value.stateByteLength) {
+      throw new TerminalServiceError("output_too_large", "terminal checkpoint body is invalid");
+    }
+    return {
+      result: { ...checkpointPayload(value), tail: checkpointTailPayload(value.tail) },
+      body,
+    };
   }
 
   async function create(request: CommandRequest): Promise<JsonValue> {
@@ -256,7 +296,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
 		}
   }
 
-  function attach(request: CommandRequest): JsonValue {
+  async function attach(request: CommandRequest): Promise<JsonValue> {
     const payload = objectPayload(request.envelope.payload);
     const identity = parseIdentity(payload.identity, options.service.serverId);
     const clientId = assertClient(request.context.clientId, payload.clientId);
@@ -271,14 +311,22 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       : Math.min(requestedInitialReplayBytes, MAX_INITIAL_REPLAY_BYTES);
     const authorization = authorizationFor(identity, request, "read");
     const snapshot = options.service.getSession(identity);
+    // A blank xterm needs canonical emulator state, not an arbitrary suffix of
+    // its PTY transcript. A parser-safe checkpoint supplies serialized state C
+    // and a raw C→H tail through a binary query; the stream itself begins at H.
+    const preparedCheckpoint = freshPresentation && options.checkpoints !== undefined
+      ? await options.checkpoints.prepare(identity, { clientId })
+      : undefined;
     // A fresh emulator is valid only when the complete bounded transcript from
     // position zero is available. Reconnecting emulators may resume from their
     // exact rendered position. Never manufacture an arbitrary byte suffix.
-    const presentationUnavailable = snapshot !== undefined && (
+    const presentationUnavailable = preparedCheckpoint === undefined && snapshot !== undefined && (
       requestedFromPosition < snapshot.replayFrom ||
       ((freshPresentation || requestedFromPosition === 0) && snapshot.outputPosition > maxInitialReplayBytes)
     );
-    const fromPosition = presentationUnavailable && snapshot !== undefined
+    const fromPosition = preparedCheckpoint !== undefined
+      ? preparedCheckpoint.headPosition
+      : presentationUnavailable && snapshot !== undefined
       ? snapshot.outputPosition
       : requestedFromPosition;
     const key = sessionKey(clientId, identity);
@@ -286,17 +334,54 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     if (priorId !== undefined) {
       const prior = protocolAttachments.get(priorId);
       if (prior !== undefined) presentations.releaseAttachment({ ...prior.identity, clientId: prior.clientId, attachmentId: prior.attachment.attachmentId });
+      if (prior !== undefined) options.checkpoints?.releaseAttachment({ ...prior.identity, clientId: prior.clientId, attachmentId: prior.attachment.attachmentId });
       attachments.detach(priorId);
       protocolAttachments.delete(priorId);
     }
     let attachmentId: string | undefined;
-    const attachment = attachments.attach({ clientId, identity, authorization, fromPosition }, {
+    let checkpointPublishing = preparedCheckpoint === undefined;
+    const queuedCheckpointEvents: TerminalEvent[] = [];
+    const publishTerminalEvent = (event: TerminalEvent): void => {
+      if (attachmentId === undefined) return;
+      options.eventJournal.append(TERMINAL_EVENT, terminalEventPayload(event, attachmentId, clientId));
+    };
+    let attachment: TerminalAttachment;
+    try {
+      attachment = attachments.attach({ clientId, identity, authorization, fromPosition }, {
       onEvent: (event) => {
-        if (attachmentId === undefined) return;
-        options.eventJournal.append(TERMINAL_EVENT, terminalEventPayload(event, attachmentId, clientId));
+        // The adapter synchronously emits retained replay while allocating its
+        // opaque attachment id. For checkpoint recovery, retain that exact
+        // sequence until the pin is bound, then append it before any later
+        // live event. This gives a subscriber one contiguous H→live stream.
+        if (!checkpointPublishing) {
+          queuedCheckpointEvents.push(event);
+          return;
+        }
+        publishTerminalEvent(event);
       },
-    });
+      });
+    } catch (error) {
+      if (preparedCheckpoint !== undefined) options.checkpoints?.release(preparedCheckpoint.checkpointId, { ...identity, clientId });
+      throw error;
+    }
     attachmentId = attachment.attachmentId;
+    let checkpoint: TerminalPresentationCheckpointMetadata | undefined;
+    if (preparedCheckpoint !== undefined) {
+      try {
+        checkpoint = options.checkpoints!.bind(preparedCheckpoint.checkpointId, {
+          ...identity,
+          clientId,
+          attachmentId: attachment.attachmentId,
+        });
+        checkpointPublishing = true;
+        for (const event of queuedCheckpointEvents) publishTerminalEvent(event);
+        queuedCheckpointEvents.length = 0;
+      } catch (error) {
+        attachments.detach(attachment);
+        options.checkpoints?.release(preparedCheckpoint.checkpointId, { ...identity, clientId });
+        throw error;
+      }
+    }
     const canWrite = request.context.authScope === "write" || request.context.authScope === "admin";
     protocolAttachments.set(attachment.attachmentId, { clientId, identity, attachment, canWrite });
     byClientSession.set(key, attachment.attachmentId);
@@ -313,14 +398,17 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     }
     return {
       attachmentId: attachment.attachmentId,
-      fromPosition: attachment.snapshot().fromPosition,
-      position: attachment.position,
+      fromPosition: checkpoint?.headPosition ?? attachment.snapshot().fromPosition,
+      position: checkpoint?.headPosition ?? attachment.snapshot().fromPosition,
       events: [
         ...(snapshot === undefined ? [] : [dimensionsPayload(identity, attachment.attachmentId, clientId, snapshot.dimensions.cols, snapshot.dimensions.rows)]),
-        ...(presentationUnavailable && snapshot !== undefined
+        ...(checkpoint !== undefined
+          ? []
+          : presentationUnavailable && snapshot !== undefined
           ? [{ clientId, attachmentId: attachment.attachmentId, type: "presentation_unavailable", ...identity, requestedFromPosition, replayFrom: snapshot.replayFrom, outputPosition: snapshot.outputPosition }]
           : compactInitialEvents(attachment.initialEvents).map((event) => terminalEventPayload(event, attachment.attachmentId, clientId))),
       ],
+      ...(checkpoint === undefined ? {} : { checkpoint: checkpointPayload(checkpoint) }),
       presentation: presentationPayload(presentations.state(identity), clientId, attachment.attachmentId),
     };
   }
@@ -418,6 +506,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     const key = sessionKey(value.clientId, value.identity);
     if (byClientSession.get(key) === value.attachment.attachmentId) byClientSession.delete(key);
     presentations.releaseAttachment({ ...value.identity, clientId: value.clientId, attachmentId: value.attachment.attachmentId });
+    options.checkpoints?.releaseAttachment({ ...value.identity, clientId: value.clientId, attachmentId: value.attachment.attachmentId });
     // A detach is the normal panel lifecycle boundary (tab close, server
     // switch, or renderer replacement), not merely an output subscription
     // change. Leaving its resize lease behind makes the next authenticated
@@ -536,6 +625,49 @@ function presentationPayload(state: TerminalPresentationLeaseState, clientId: st
     role: state.holder?.clientId === clientId && state.holder.attachmentId === attachmentId ? "controller" : "read_only",
     ...(state.holder === undefined ? {} : { holder: { ...state.holder } }),
   };
+}
+
+/** Metadata is attachment-safe but deliberately excludes client/attachment
+ * identifiers from the response body. The query request reasserts that exact
+ * scope before the authority releases its single-use binary bytes. */
+function checkpointPayload(value: TerminalPresentationCheckpointMetadata): Record<string, JsonValue> {
+  return {
+    checkpointId: value.checkpointId,
+    serverId: value.serverId,
+    projectId: value.projectId,
+    sessionId: value.sessionId,
+    position: value.position,
+    headPosition: value.headPosition,
+    checkpointDimensions: { cols: value.checkpointDimensions.cols, rows: value.checkpointDimensions.rows },
+    dimensions: { cols: value.dimensions.cols, rows: value.dimensions.rows },
+    formatVersion: value.formatVersion,
+    stateByteLength: value.stateByteLength,
+    tailByteLength: value.tailByteLength,
+    byteLength: value.byteLength,
+    expiresAt: value.expiresAt,
+  };
+}
+
+function checkpointTailPayload(events: readonly TerminalPresentationCheckpointTailEvent[]): JsonValue[] {
+  return events.map((event): JsonValue => {
+    if (event.type === "output") {
+      return { type: "output", position: event.position, nextPosition: event.nextPosition, byteLength: event.bytes.byteLength };
+    }
+    return { type: "resize", position: event.position, dimensions: { cols: event.dimensions.cols, rows: event.dimensions.rows } };
+  });
+}
+
+function checkpointBody(state: Uint8Array, events: readonly TerminalPresentationCheckpointTailEvent[]): Uint8Array {
+  const tailBytes = events.reduce((total, event) => total + (event.type === "output" ? event.bytes.byteLength : 0), 0);
+  const body = new Uint8Array(state.byteLength + tailBytes);
+  body.set(state);
+  let offset = state.byteLength;
+  for (const event of events) {
+    if (event.type !== "output") continue;
+    body.set(event.bytes, offset);
+    offset += event.bytes.byteLength;
+  }
+  return body;
 }
 
 function authorizationFor(identity: TerminalIdentity, request: CommandRequest | QueryRequest, required: "read" | "write"): TerminalAuthorization {
