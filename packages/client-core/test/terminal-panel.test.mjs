@@ -160,6 +160,8 @@ test("terminal panel forwards raw replay and filters output, exit, and resync li
   const outputs = [];
   const exits = [];
   const resyncs = [];
+  const events = [];
+  panel.onEvent((event) => events.push(event));
   panel.onOutput((event) => outputs.push({ bytes: [...event.bytes], position: event.position }));
   panel.onExit((event) => exits.push({ exitCode: event.exitCode, signal: event.signal }));
   panel.onResync((event) => resyncs.push({ replayFrom: event.replayFrom, outputPosition: event.outputPosition }));
@@ -167,10 +169,12 @@ test("terminal panel forwards raw replay and filters output, exit, and resync li
   source.emit(output(3, new Uint8Array([0x00, 0xc3, 0xa9])));
   source.emit({ ...identity, type: "exit", exitCode: 7, signal: 15 });
   source.emit({ ...identity, type: "resync_required", fromPosition: 6, replayFrom: 9, outputPosition: 12 });
+  source.emit({ ...identity, type: "dimensions", cols: 44, rows: 16 });
 
   assert.deepEqual(outputs, [{ bytes: [0x00, 0xc3, 0xa9], position: 3 }]);
   assert.deepEqual(exits, [{ exitCode: 7, signal: 15 }]);
   assert.deepEqual(resyncs, [{ replayFrom: 9, outputPosition: 12 }]);
+  assert.deepEqual(events.at(-1), { ...identity, type: "dimensions", cols: 44, rows: 16 });
   await panel.detach();
 });
 

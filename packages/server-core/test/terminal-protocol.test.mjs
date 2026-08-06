@@ -172,10 +172,17 @@ test("terminal attach refuses an arbitrary replay suffix when the complete prese
 
     assert.equal(attached.ok, true);
     assert.equal(attached.result.fromPosition, 6);
-    assert.equal(attached.result.events.length, 1);
-    assert.equal(attached.result.events[0].type, "presentation_unavailable");
-    assert.equal(attached.result.events[0].requestedFromPosition, 0);
-    assert.equal(attached.result.events[0].outputPosition, 6);
+    assert.deepEqual(attached.result.events[0], {
+      ...identity,
+      attachmentId: attached.result.attachmentId,
+      clientId: "client-a",
+      type: "dimensions",
+      cols: 80,
+      rows: 24,
+    });
+    const unavailable = attached.result.events.find((event) => event.type === "presentation_unavailable");
+    assert.equal(unavailable.requestedFromPosition, 0);
+    assert.equal(unavailable.outputPosition, 6);
   } finally {
     await service.shutdown();
   }
@@ -211,6 +218,70 @@ test("only the explicit presentation holder can forward emulator replies", async
   await service.shutdown();
 });
 
+test("the presentation holder publishes canonical dimensions to every exact attachment", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({ serverId: "server-dimensions", ptyFactory: pty, generateSessionId: () => "session-dimensions" });
+  const session = await service.createSession({ projectId: "project-dimensions", cols: 80, rows: 24 });
+  const journal = new OrderedEventJournal();
+  const registry = createTerminalOperationRegistry({ service, eventJournal: journal, allowUnresolvedTestSessions: true });
+  const dispatcher = createOperationDispatcher(registry.operations);
+  const identity = { serverId: service.serverId, projectId: "project-dimensions", sessionId: session.sessionId };
+  const attach = async (clientId) => (await dispatcher.command(request(
+    "terminal.attach",
+    { clientId, identity, fromPosition: 0 },
+    `attach-${clientId}`,
+    "write",
+    clientId,
+  ))).result;
+  const resize = (attachment, clientId, cols, rows, id) => dispatcher.command(request(
+    "terminal.resize",
+    { clientId, identity, attachmentId: attachment.attachmentId, cols, rows },
+    id,
+    "write",
+    clientId,
+  ));
+
+  try {
+    const desktop = await attach("desktop");
+    const browser = await attach("browser");
+    assert.deepEqual(desktop.events[0], {
+      ...identity,
+      attachmentId: desktop.attachmentId,
+      clientId: "desktop",
+      type: "dimensions",
+      cols: 80,
+      rows: 24,
+    });
+
+    assert.equal((await resize(desktop, "desktop", 120, 40, "desktop-resize")).ok, true);
+    assert.equal((await resize(browser, "browser", 40, 16, "observer-resize")).ok, false);
+
+    const takeover = await dispatcher.command(request(
+      "terminal.presentation",
+      { clientId: "browser", identity, attachmentId: browser.attachmentId, mode: "takeover" },
+      "browser-takeover",
+      "write",
+      "browser",
+    ));
+    assert.equal(takeover.ok, true);
+    assert.equal((await resize(desktop, "desktop", 100, 30, "stale-desktop-resize")).ok, false);
+    assert.equal((await resize(browser, "browser", 40, 16, "browser-resize")).ok, true);
+
+    assert.deepEqual(pty.processes[0].resizes, [{ cols: 120, rows: 40 }, { cols: 40, rows: 16 }]);
+    const dimensions = journal.replay(0).events
+      .map((event) => event.payload)
+      .filter((event) => event.type === "dimensions");
+    assert.deepEqual(dimensions.map((event) => [event.clientId, event.attachmentId, event.cols, event.rows]), [
+      ["desktop", desktop.attachmentId, 120, 40],
+      ["browser", browser.attachmentId, 120, 40],
+      ["desktop", desktop.attachmentId, 40, 16],
+      ["browser", browser.attachmentId, 40, 16],
+    ]);
+  } finally {
+    await service.shutdown();
+  }
+});
+
 test("fresh presentation replay preserves complete hostile control sequences at every emitted byte boundary", async () => {
   const pty = createPtyFactory();
   const service = new TerminalService({ serverId: "server-boundaries", ptyFactory: pty, generateSessionId: () => "session-boundaries", maxReplayBytes: 64 * 1024 });
@@ -222,9 +293,9 @@ test("fresh presentation replay preserves complete hostile control sequences at 
   for (const byte of transcript) pty.processes[0].emitData(new Uint8Array([byte]));
   const attached = await dispatcher.command(request("terminal.attach", { clientId: "fresh", identity, fromPosition: 0, freshPresentation: true, maxInitialReplayBytes: 32 * 1024 }, "attach-boundaries", "write", "fresh"));
   assert.equal(attached.ok, true);
-  assert.equal(attached.result.events.length, 1);
-  assert.equal(attached.result.events[0].position, 0);
-  assert.deepEqual(Buffer.from(attached.result.events[0].bytes, "base64"), Buffer.from(transcript));
+  const replay = attached.result.events.find((event) => event.type === "output");
+  assert.equal(replay.position, 0);
+  assert.deepEqual(Buffer.from(replay.bytes, "base64"), Buffer.from(transcript));
   await service.shutdown();
 });
 
@@ -271,9 +342,14 @@ test("framed terminal attach keeps an overstated fragmented replay inside the pr
       maxInitialReplayBytes: 128 * 1024,
     });
 
-    assert.equal(attached.initialEvents.length, 1);
-    assert.equal(attached.initialEvents[0].type, "presentation_unavailable");
-    assert.equal(attached.initialEvents[0].requestedFromPosition, 0);
+    assert.equal(attached.initialEvents[0].type, "dimensions");
+    assert.equal(attached.initialEvents[0].serverId, "server-protocol-budget");
+    assert.equal(attached.initialEvents[0].projectId, "project-protocol-budget");
+    assert.equal(attached.initialEvents[0].sessionId, session.sessionId);
+    assert.equal(attached.initialEvents[0].cols, 80);
+    assert.equal(attached.initialEvents[0].rows, 24);
+    const unavailable = attached.initialEvents.find((event) => event.type === "presentation_unavailable");
+    assert.equal(unavailable.requestedFromPosition, 0);
     assert.equal(attached.position, 40_000);
   } finally {
     await protocolClient.close();
