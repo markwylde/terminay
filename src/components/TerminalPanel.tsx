@@ -146,6 +146,11 @@ function updateRemoteViewportMetadata(sessionId: string, root: HTMLElement) {
   })
 }
 
+function updateTerminalGridMetadata(root: HTMLElement, cols: number, rows: number) {
+  root.dataset.terminalCols = String(cols)
+  root.dataset.terminalRows = String(rows)
+}
+
 function clearRemoteTerminalElementSize(root: HTMLElement, terminal: Terminal) {
   root.style.removeProperty(REMOTE_TERMINAL_SCALE_PROPERTY)
 
@@ -204,6 +209,7 @@ function applyRemoteTerminalSize(
   shouldSyncAfterFrame: () => boolean,
 ) {
   terminal.resize(cols, rows)
+  updateTerminalGridMetadata(root, cols, rows)
   syncRemoteTerminalElementSize(root, terminal)
   window.requestAnimationFrame(() => {
     if (!shouldSyncAfterFrame()) {
@@ -462,9 +468,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
 
     const resizePanel = (cols: number, rows: number) => {
-      if (!useServerTerminal || serverAttachmentFailed || !terminalPresentationControllerRef.current) return
+      if (!useServerTerminal || serverAttachmentFailed) return
       pendingPanelResize = { cols, rows }
-      if (panelAttachment !== null) {
+      if (panelAttachment !== null && terminalPresentationControllerRef.current) {
         const next = pendingPanelResize
         pendingPanelResize = null
         // Resize ownership can legitimately belong to another presentation.
@@ -633,7 +639,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
       clearRemoteTerminalElementSize(root, terminal)
       fitAddon.fit()
-      if (terminal.cols !== lastSentSize.cols || terminal.rows !== lastSentSize.rows) {
+      updateTerminalGridMetadata(root, terminal.cols, terminal.rows)
+      if (force || terminal.cols !== lastSentSize.cols || terminal.rows !== lastSentSize.rows) {
         lastSentSize = { cols: terminal.cols, rows: terminal.rows }
         resizePanel(terminal.cols, terminal.rows)
       }
@@ -718,15 +725,29 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
             panelAttachment = attachment
             const applyPresentation = (state: TerminalPresentationState) => {
+              const becameController = !terminalPresentationControllerRef.current && state.role === 'controller'
               terminalPresentationControllerRef.current = state.role === 'controller'
+              if (state.role !== 'controller') serverInputQueue?.discardPending()
+              if (becameController) {
+                remoteSizeOverrideRef.current = null
+                setIsRemoteSizeOverrideActive(false)
+                clearRemoteTerminalElementSize(root, terminal)
+              }
               setTerminalPresentation(state)
               if (presentationRenewTimer !== null) window.clearTimeout(presentationRenewTimer)
               presentationRenewTimer = null
               if (state.role === 'controller') {
+                if (becameController) fitAndResize(true)
                 presentationRenewTimer = window.setTimeout(() => {
                   void attachment.changePresentation('renew').then(applyPresentation).catch(() => {
                     terminalPresentationControllerRef.current = false
-                    setTerminalPresentation({ ...state, role: 'read_only' })
+                    setTerminalPresentation({
+                      serverId: state.serverId,
+                      projectId: state.projectId,
+                      sessionId: state.sessionId,
+                      revision: state.revision,
+                      role: 'read_only',
+                    })
                   })
                 }, 5_000)
               }
@@ -744,6 +765,16 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
                 renderTerminalOutput(event.bytes, event.nextPosition, attachment)
               } else if (event.type === 'exit') {
                 renderTerminalExit(event.exitCode, event.signal)
+              } else if (event.type === 'dimensions') {
+                if (!terminalPresentationControllerRef.current) {
+                  remoteSizeOverrideRef.current = { cols: event.cols, rows: event.rows }
+                  setIsRemoteSizeOverrideActive(true)
+                  applyRemoteTerminalSize(root, terminal, event.cols, event.rows, () => {
+                    const currentOverride = remoteSizeOverrideRef.current
+                    return terminalRef.current === terminal && currentOverride?.cols === event.cols && currentOverride.rows === event.rows
+                  })
+                  updateRemoteViewportMetadata(sessionId, root)
+                }
               } else if (event.type === 'presentation') {
                 applyPresentation(event)
               } else if (event.type === 'presentation_unavailable') {
@@ -770,7 +801,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             setIsTerminalHydrating(false)
 
             serverInputQueue?.attach(attachment)
-            if (pendingPanelResize !== null) {
+            if (pendingPanelResize !== null && terminalPresentationControllerRef.current) {
               const resize = pendingPanelResize
               pendingPanelResize = null
               void attachment.resize(resize).catch(() => {})
@@ -838,6 +869,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           remoteSizeOverrideRef.current = null
           setIsRemoteSizeOverrideActive(false)
           fitAndResize(true)
+          return
+        }
+
+        // Server presentation ownership is authoritative. A delayed legacy
+        // host notification from the former controller must never put the new
+        // controller back onto an observer-owned grid.
+        if (terminalPresentationControllerRef.current) {
           return
         }
 
@@ -1225,6 +1263,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       // have committed; this never replays server bytes.
       clearRemoteTerminalElementSize(root, terminal)
       fitAddon.fit()
+      updateTerminalGridMetadata(root, terminal.cols, terminal.rows)
       if (terminal.rows > 0) terminal.refresh(0, terminal.rows - 1)
       const useServerTerminal =
         resolvedTerminalClient.panelClient !== undefined &&
@@ -1447,23 +1486,21 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           </button>
         </search>
       ) : null}
-      <div className="terminal-panel-root" ref={xtermRootRef} />
-      {terminalPresentation !== null && !presentationUnavailable ? (
+      {terminalPresentation?.role === 'read_only' && terminalPresentation.holder !== undefined && !presentationUnavailable ? (
         <div className="terminal-presentation-control" role="status" aria-live="polite">
-          <span>{terminalPresentation.role === 'controller' ? 'Terminal controller' : 'Terminal read-only'}</span>
-          {terminalPresentation.role === 'read_only' ? (
-            <button
-              type="button"
-              aria-label="Take control of terminal"
-              onClick={() => void terminalPresentationActionRef.current().catch((error: unknown) => {
-                setServerTerminalError(error instanceof Error ? error.message : 'Terminal control takeover failed.')
-              })}
-            >
-              Take control
-            </button>
-          ) : null}
+          <span>Another device is controlling this terminal.</span>
+          <button
+            type="button"
+            aria-label="Take back control of terminal"
+            onClick={() => void terminalPresentationActionRef.current().catch((error: unknown) => {
+              setServerTerminalError(error instanceof Error ? error.message : 'Terminal control takeover failed.')
+            })}
+          >
+            Take back control
+          </button>
         </div>
       ) : null}
+      <div className="terminal-panel-root" ref={xtermRootRef} />
       {serverTerminalError ? (
         <div className="terminal-panel-connection-error" role="alert">
           <p>{serverTerminalError}</p>
