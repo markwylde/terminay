@@ -297,6 +297,7 @@ interface MutableAttachment {
 export class TerminayTerminalClient {
 	private readonly attachments = new Map<string, MutableAttachment>();
 	private readonly highWatermarks = new Map<string, number>();
+	private readonly openingAttachments = new Map<string, Promise<void>>();
 
 	constructor(private readonly transport: TerminalClientTransport) {}
 
@@ -533,6 +534,32 @@ export class TerminayTerminalClient {
 		validateClientId(request.clientId);
 		validateAuthorizationForIdentity(request.authorization, request);
 		const key = clientSessionKey(request.clientId, request);
+		const preceding = this.openingAttachments.get(key) ?? Promise.resolve();
+		const opening = preceding
+			.catch(() => undefined)
+			.then(() => this.openAttachment(operation, request, key));
+		const settled = opening.then(
+			() => undefined,
+			() => undefined,
+		);
+		this.openingAttachments.set(key, settled);
+		try {
+			return await opening;
+		} finally {
+			if (this.openingAttachments.get(key) === settled) {
+				this.openingAttachments.delete(key);
+			}
+		}
+	}
+
+	/** Complete the attach, subscription, and optional binary hydration as one
+	 * same-session critical section. A replacement attach must not invalidate
+	 * the prior attachment's one-use checkpoint while it is still in flight. */
+	private async openAttachment(
+		operation: 'terminal.attach' | 'terminal.resume',
+		request: TerminalClientAttachRequest,
+		key: string,
+	): Promise<TerminalClientAttachment> {
 		const prior = this.attachments.get(key);
 		if (prior !== undefined) await this.detachMutable(prior);
 		const highWatermark = this.highWatermarks.get(key) ?? 0;
