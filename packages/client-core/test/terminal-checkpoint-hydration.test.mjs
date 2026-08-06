@@ -302,3 +302,43 @@ test('checkpoint hydration rejects a binary response whose exact project/session
 		'a mismatched checkpoint cannot leave an attachment pin live',
 	);
 });
+
+test('same-session replacement waits for checkpoint hydration before opening its attachment', async () => {
+	const checkpoint = metadata({ stateByteLength: 1, byteLength: 1 });
+	let releaseFirstFetch;
+	const firstFetchBlocked = new Promise((resolve) => {
+		releaseFirstFetch = resolve;
+	});
+	let fetches = 0;
+	const transport = hydrationTransport({
+		checkpoint,
+		onFetch: async () => {
+			fetches += 1;
+			if (fetches === 1) await firstFetchBlocked;
+			return { result: { ...checkpoint, tail: [] }, body: new Uint8Array([0]) };
+		},
+	});
+	const client = new TerminayTerminalClient(transport);
+	const request = { ...identity, clientId: transport.clientId, freshPresentation: true };
+
+	const first = client.attach(request);
+	while (fetches === 0) await new Promise((resolve) => setImmediate(resolve));
+	const second = client.attach(request);
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(
+		transport.calls.filter(([operation]) => operation === 'terminal.attach').length,
+		1,
+		'a replacement must not invalidate the checkpoint currently being fetched',
+	);
+
+	releaseFirstFetch();
+	const firstAttachment = await first;
+	const secondAttachment = await second;
+	assert.equal(
+		transport.calls.filter(([operation]) => operation === 'terminal.attach').length,
+		2,
+	);
+	assert.equal(fetches, 2);
+	await firstAttachment.detach();
+	await secondAttachment.detach();
+});
