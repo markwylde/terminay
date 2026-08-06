@@ -721,6 +721,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
               const becameController = !terminalPresentationControllerRef.current && state.role === 'controller'
               terminalPresentationControllerRef.current = state.role === 'controller'
               if (state.role !== 'controller') serverInputQueue?.discardPending()
+              if (becameController) {
+                remoteSizeOverrideRef.current = null
+                setIsRemoteSizeOverrideActive(false)
+                clearRemoteTerminalElementSize(root, terminal)
+              }
               setTerminalPresentation(state)
               if (presentationRenewTimer !== null) window.clearTimeout(presentationRenewTimer)
               presentationRenewTimer = null
@@ -753,6 +758,16 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
                 renderTerminalOutput(event.bytes, event.nextPosition, attachment)
               } else if (event.type === 'exit') {
                 renderTerminalExit(event.exitCode, event.signal)
+              } else if (event.type === 'dimensions') {
+                if (!terminalPresentationControllerRef.current) {
+                  remoteSizeOverrideRef.current = { cols: event.cols, rows: event.rows }
+                  setIsRemoteSizeOverrideActive(true)
+                  applyRemoteTerminalSize(root, terminal, event.cols, event.rows, () => {
+                    const currentOverride = remoteSizeOverrideRef.current
+                    return terminalRef.current === terminal && currentOverride?.cols === event.cols && currentOverride.rows === event.rows
+                  })
+                  updateRemoteViewportMetadata(sessionId, root)
+                }
               } else if (event.type === 'presentation') {
                 applyPresentation(event)
               } else if (event.type === 'presentation_unavailable') {
