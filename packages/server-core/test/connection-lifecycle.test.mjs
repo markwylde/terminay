@@ -94,7 +94,7 @@ test("a failed live event send closes the connection without an unhandled reject
   failSends = true;
   journal.append("activity", { status: "working" });
 
-  await assert.rejects(task, /simulated disconnected event stream/u);
+  await task;
   assert.equal(connection.state, "closed");
 });
 
