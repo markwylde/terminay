@@ -69,6 +69,55 @@ test('server-scoped MessagePorts carry only framed bytes for the selected server
   }
 })
 
+test('MessagePort transport rejects a send racing with close and releases backpressure waiters', async () => {
+  const port = new FakeMessagePort()
+  const transport = new ServerPortTransport(port, {
+    maxFrameBytes: 1,
+    maxQueuedBytes: 1,
+  })
+  await transport.open()
+  transport.queued = 1
+  const sending = transport.send(new Uint8Array([1]))
+  await transport.close({ code: 'unavailable', message: 'scripted close' })
+  await assert.rejects(sending, /scripted close/u)
+  assert.deepEqual(port.messages, [])
+  assert.equal(transport.state, 'closed')
+})
+
+test('MessagePort transport fails atomically on synchronous postMessage failure', async () => {
+  const port = new FakeMessagePort()
+  port.sendError = new Error('scripted post failure')
+  const transport = new ServerPortTransport(port, {
+    maxFrameBytes: 1,
+    maxQueuedBytes: 1,
+  })
+  const states = []
+  transport.onStateChange(() => {
+    throw new Error('observer failure')
+  })
+  transport.onStateChange((state) => states.push(state))
+  await transport.open()
+  await assert.rejects(transport.send(new Uint8Array([1])), /scripted post failure/u)
+  assert.equal(transport.state, 'failed')
+  assert.deepEqual(states, ['open', 'failed'])
+})
+
+test('MessagePort backpressure wait is abortable without failing the transport', async () => {
+  const port = new FakeMessagePort()
+  const transport = new ServerPortTransport(port, {
+    maxFrameBytes: 1,
+    maxQueuedBytes: 1,
+  })
+  await transport.open()
+  transport.queued = 1
+  const controller = new AbortController()
+  const waiting = transport.waitForWritable(1, controller.signal)
+  controller.abort(new Error('scripted abort'))
+  await assert.rejects(waiting, /scripted abort/u)
+  assert.equal(transport.state, 'open')
+  await transport.close()
+})
+
 test('normal peer closure terminates incoming work and releases a server connection slot', async () => {
   const { port1, port2 } = new MessageChannel()
   const transport = new ServerPortTransport(
@@ -101,6 +150,22 @@ test('normal peer closure terminates incoming work and releases a server connect
   await replacement.close()
   replacementChannel.port2.close()
 })
+
+class FakeMessagePort {
+  onmessage = null
+  onmessageerror = null
+  onclose = null
+  messages = []
+  sendError = undefined
+
+  postMessage(message) {
+    if (this.sendError !== undefined) throw this.sendError
+    this.messages.push(message)
+  }
+
+  start() {}
+  close() {}
+}
 
 test('a frame from another server is rejected before it reaches the transport', async () => {
   const { port1, port2 } = new MessageChannel()
@@ -322,6 +387,8 @@ test('the production renderer connector attaches through the server-owned compos
       sessionId: session.sessionId,
       clientId: context.clientId,
     })
+    assert.equal(panel.presentation.role, 'read_only')
+    assert.equal((await panel.changePresentation('acquire')).role, 'controller')
     const output = new Promise((resolve) => panel.onOutput(resolve))
     const rawBytes = new Uint8Array([0x00, 0xff, 0x1b, 0xc3, 0xa9])
     processes[0].emitData(rawBytes)

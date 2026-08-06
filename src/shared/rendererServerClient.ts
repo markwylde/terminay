@@ -279,6 +279,7 @@ export async function createConnectedServerClientContext(
 					? change.current.state
 					: `${change.current.state}: ${change.current.error.message}`;
 			if (
+				change.current.state === 'stale' ||
 				change.current.state === 'closed' ||
 				change.current.state === 'failed'
 			) {
