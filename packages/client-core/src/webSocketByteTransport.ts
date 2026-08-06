@@ -45,6 +45,7 @@ export interface WebSocketByteTransportOptions {
 	readonly authToken: string;
 	readonly WebSocket?: WebSocketConstructorLike;
 	readonly maxFrameBytes?: number;
+	readonly maxQueuedBytes?: number;
 	readonly path?: string;
 }
 
@@ -63,6 +64,7 @@ export class WebSocketByteTransport implements ByteTransport {
 	private readonly protocols: readonly string[];
 	private readonly WebSocketCtor: WebSocketConstructorLike;
 	private readonly maxFrameBytes: number;
+	private readonly maxQueuedBytes: number;
 	private readonly listeners = new Set<
 		(state: TransportState, reason?: TransportCloseReason) => void
 	>();
@@ -88,8 +90,11 @@ export class WebSocketByteTransport implements ByteTransport {
 			throw new TypeError('WebSocket is required for the remote stream transport');
 		this.WebSocketCtor = WebSocketCtor;
 		this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_PROTOCOL_LIMITS.maxFrameBytes;
+		this.maxQueuedBytes = options.maxQueuedBytes ?? DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes;
 		if (!Number.isSafeInteger(this.maxFrameBytes) || this.maxFrameBytes <= 0)
 			throw new RangeError('maxFrameBytes is invalid');
+		if (!Number.isSafeInteger(this.maxQueuedBytes) || this.maxQueuedBytes < this.maxFrameBytes)
+			throw new RangeError('maxQueuedBytes is invalid');
 	}
 
 	get state(): TransportState {
@@ -178,17 +183,18 @@ export class WebSocketByteTransport implements ByteTransport {
 		validateTransportFrame(frame, this.maxFrameBytes);
 		abortIfSignalled(options.signal);
 		const socket = this.socket;
-		if (this.currentState !== 'open' || socket === undefined)
-			throw new WebSocketByteTransportError(
-				`remote stream is ${this.currentState}`,
-			);
+		await this.waitForWritable(frame.byteLength, options.signal);
+		this.assertWritable(socket);
 		await new Promise<void>((resolve, reject) => {
 			let settled = false;
 			const finish = (error?: Error | null): void => {
 				if (settled) return;
 				settled = true;
 				options.signal?.removeEventListener('abort', abort);
-				if (error != null) reject(error);
+				if (error != null) {
+					this.fail({ code: 'unavailable', message: 'remote stream send failed', cause: error });
+					reject(error);
+				}
 				else resolve();
 			};
 			const abort = (): void => finish(abortError(options.signal));
@@ -204,11 +210,11 @@ export class WebSocketByteTransport implements ByteTransport {
 					finish();
 				}
 			} catch (error) {
-				finish(
-					error instanceof Error
+				const failure = error instanceof Error
 						? error
-						: new WebSocketByteTransportError('remote stream send failed'),
-				);
+						: new WebSocketByteTransportError('remote stream send failed');
+				this.fail({ code: 'unavailable', message: 'remote stream send failed', cause: failure });
+				finish(failure);
 			}
 		});
 	}
@@ -218,20 +224,17 @@ export class WebSocketByteTransport implements ByteTransport {
 		signal?: AbortSignal,
 	): Promise<void> {
 		if (
-			requiredBytes < 0 ||
+			requiredBytes < 1 ||
 			!Number.isSafeInteger(requiredBytes) ||
-			requiredBytes > this.maxFrameBytes
+			requiredBytes > this.maxQueuedBytes
 		)
 			throw new RangeError('requiredBytes is invalid');
-		while ((this.socket?.bufferedAmount ?? 0) > requiredBytes) {
-			abortIfSignalled(signal);
-			await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 0));
+		while (this.readBufferedAmount() + requiredBytes > this.maxQueuedBytes) {
+			this.assertWritable(this.socket);
+			await abortableDelay(signal);
 		}
 		abortIfSignalled(signal);
-		if (this.currentState !== 'open')
-			throw new WebSocketByteTransportError(
-				`remote stream is ${this.currentState}`,
-			);
+		this.assertWritable(this.socket);
 	}
 
 	async close(
@@ -277,15 +280,14 @@ export class WebSocketByteTransport implements ByteTransport {
 			if (this.currentState === 'closed' || this.currentState === 'closing')
 				return;
 			const socketEvent = normalizeWebSocketEvent(event);
-			this.transition('failed', {
+			this.fail({
 				code: 'unavailable',
 				message: 'remote stream failed',
 				cause: socketEvent.error,
 			});
-			this.finishIncoming();
 		});
 		addListener(socket, 'close', (event: unknown) => {
-			if (this.currentState === 'closed') return;
+			if (this.currentState === 'closed' || this.currentState === 'failed') return;
 			const reason = this.terminalReason ?? closeReason(normalizeWebSocketEvent(event));
 			this.transition('closed', reason);
 			this.finishIncoming();
@@ -325,8 +327,50 @@ export class WebSocketByteTransport implements ByteTransport {
 		reason?: TransportCloseReason,
 	): void {
 		this.currentState = state;
-		for (const listener of [...this.listeners]) listener(state, reason);
+		for (const listener of [...this.listeners]) {
+			try { listener(state, reason); } catch { /* Observers cannot break transport lifecycle. */ }
+		}
 	}
+
+	private assertWritable(socket: WebSocketLike | undefined): asserts socket is WebSocketLike {
+		if (this.currentState === 'open' && socket?.readyState === 1) return;
+		if (this.currentState === 'open') this.fail({ code: 'unavailable', message: 'remote stream underlying socket is not open' });
+		throw new WebSocketByteTransportError(`remote stream is ${this.currentState}`);
+	}
+
+	private readBufferedAmount(): number {
+		const value = this.socket?.bufferedAmount;
+		if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > this.maxQueuedBytes * 2) {
+			this.fail({ code: 'resource', message: 'remote stream buffered amount is invalid' });
+			throw new WebSocketByteTransportError('remote stream buffered amount is invalid');
+		}
+		return value as number;
+	}
+
+	private fail(reason: TransportCloseReason): void {
+		if (this.currentState === 'closed' || this.currentState === 'failed') return;
+		this.terminalReason = reason;
+		this.transition('failed', reason);
+		this.finishIncoming();
+		try { this.socket?.close(closeCode(reason), reason.message?.slice(0, 120)); } catch { /* Best effort after failure. */ }
+	}
+}
+
+async function abortableDelay(signal?: AbortSignal): Promise<void> {
+	abortIfSignalled(signal);
+	await new Promise<void>((resolve, reject) => {
+		const timeout = globalThis.setTimeout(done, 5);
+		const abort = () => {
+			globalThis.clearTimeout(timeout);
+			signal?.removeEventListener('abort', abort);
+			reject(signal?.reason);
+		};
+		function done(): void {
+			signal?.removeEventListener('abort', abort);
+			resolve();
+		}
+		signal?.addEventListener('abort', abort, { once: true });
+	});
 }
 
 function streamUrl(origin: string, path: string): string {

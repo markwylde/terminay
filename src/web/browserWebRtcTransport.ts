@@ -71,7 +71,9 @@ class BrowserApplicationTransport implements ByteTransport {
 	}
 
 	get state(): TransportState { return this.currentState; }
-	get queuedBytes(): number { return this.application.bufferedAmount; }
+	get queuedBytes(): number {
+		try { return this.readBufferedAmount(); } catch { return 0; }
+	}
 	get bufferedBytes(): number { return this.inbound.reduce((total, frame) => total + frame.byteLength, 0); }
 	get incoming(): AsyncIterable<Uint8Array> {
 		return { [Symbol.asyncIterator]: () => ({ next: () => this.next() }) };
@@ -85,10 +87,14 @@ class BrowserApplicationTransport implements ByteTransport {
 	async send(frame: Uint8Array, options: { readonly signal?: AbortSignal } = {}): Promise<void> {
 		if (options.signal?.aborted) throw options.signal.reason;
 		validateTransportFrame(frame, DEFAULT_PROTOCOL_LIMITS.maxFrameBytes);
-		if (this.currentState !== 'open' || this.application.readyState !== 'open') {
-			throw new Error('WebRTC application transport is closed.');
+		await this.waitForWritable(frame.byteLength, options.signal);
+		this.assertWritable();
+		try {
+			this.application.send(frame.slice());
+		} catch (cause) {
+			this.finish({ code: 'unavailable', message: 'WebRTC application send failed.', cause }, true);
+			throw cause;
 		}
-		this.application.send(frame.slice());
 	}
 
 	async waitForWritable(requiredBytes = 1, signal?: AbortSignal): Promise<void> {
@@ -96,22 +102,18 @@ class BrowserApplicationTransport implements ByteTransport {
 		if (!Number.isSafeInteger(requiredBytes) || requiredBytes < 1 || requiredBytes > DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes) {
 			throw new RangeError('WebRTC writable size is invalid.');
 		}
-		while (this.application.bufferedAmount + requiredBytes > DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes) {
-			if (this.currentState !== 'open') throw new Error('WebRTC application transport is closed.');
-			await new Promise<void>((resolve, reject) => {
-				const timeout = window.setTimeout(resolve, 10);
-				signal?.addEventListener('abort', () => {
-					window.clearTimeout(timeout);
-					reject(signal.reason);
-				}, { once: true });
-			});
+		while (this.readBufferedAmount() + requiredBytes > DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes) {
+			this.assertWritable();
+			await abortableDelay(signal);
 		}
+		if (signal?.aborted) throw signal.reason;
+		this.assertWritable();
 	}
 
 	async close(reason: TransportCloseReason = { code: 'normal' }): Promise<void> {
 		if (this.currentState === 'closed' || this.currentState === 'failed') return;
 		this.currentState = 'closing';
-		for (const listener of this.listeners) listener('closing', reason);
+		this.notify('closing', reason);
 		for (const channel of this.channels.values()) channel.close();
 		this.finish(reason);
 	}
@@ -131,7 +133,12 @@ class BrowserApplicationTransport implements ByteTransport {
 			this.finish({ code: 'protocol_error', message: 'WebRTC application frame must be binary.' }, true);
 			return;
 		}
-		validateTransportFrame(frame, DEFAULT_PROTOCOL_LIMITS.maxFrameBytes);
+		try {
+			validateTransportFrame(frame, DEFAULT_PROTOCOL_LIMITS.maxFrameBytes);
+		} catch (cause) {
+			this.finish({ code: 'protocol_error', message: 'WebRTC application frame is invalid.', cause }, true);
+			return;
+		}
 		const waiter = this.waiters.shift();
 		if (waiter !== undefined) waiter.resolve({ done: false, value: frame.slice() });
 		else this.inbound.push(frame.slice());
@@ -148,12 +155,56 @@ class BrowserApplicationTransport implements ByteTransport {
 	private finish(reason: TransportCloseReason, failed = false): void {
 		if (this.currentState === 'closed' || this.currentState === 'failed') return;
 		this.currentState = failed ? 'failed' : 'closed';
+		this.inbound.splice(0);
+		for (const channel of this.channels.values()) {
+			if (channel.readyState !== 'closed') {
+				try { channel.close(); } catch { /* Best effort after terminal failure. */ }
+			}
+		}
 		for (const waiter of this.waiters.splice(0)) {
 			if (failed) waiter.reject(new Error(reason.message ?? 'WebRTC application transport failed.'));
 			else waiter.resolve({ done: true, value: undefined });
 		}
-		for (const listener of this.listeners) listener(this.currentState, reason);
+		this.notify(this.currentState, reason);
 	}
+
+	private assertWritable(): void {
+		if (this.currentState === 'open' && this.application.readyState === 'open') return;
+		if (this.currentState === 'open') this.finish({ code: 'unavailable', message: 'WebRTC application channel is not open.' }, true);
+		throw new Error('WebRTC application transport is closed.');
+	}
+
+	private readBufferedAmount(): number {
+		const value = this.application.bufferedAmount;
+		if (!Number.isSafeInteger(value) || value < 0 || value > DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes * 2) {
+			this.finish({ code: 'resource', message: 'WebRTC application buffered amount is invalid.' }, true);
+			throw new Error('WebRTC application buffered amount is invalid.');
+		}
+		return value;
+	}
+
+	private notify(state: TransportState, reason?: TransportCloseReason): void {
+		for (const listener of [...this.listeners]) {
+			try { listener(state, reason); } catch { /* Observers cannot break transport lifecycle. */ }
+		}
+	}
+}
+
+async function abortableDelay(signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) throw signal.reason;
+	await new Promise<void>((resolve, reject) => {
+		const timeout = globalThis.setTimeout(done, 10);
+		const abort = () => {
+			globalThis.clearTimeout(timeout);
+			signal?.removeEventListener('abort', abort);
+			reject(signal?.reason);
+		};
+		function done(): void {
+			signal?.removeEventListener('abort', abort);
+			resolve();
+		}
+		signal?.addEventListener('abort', abort, { once: true });
+	});
 }
 
 function waitForOpen(channel: RTCDataChannel): Promise<void> {

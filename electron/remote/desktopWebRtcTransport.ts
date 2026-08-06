@@ -73,12 +73,30 @@ export async function createDesktopWebRtcTransport(options: Readonly<{
       throw new Error('Desktop WebRTC application channel is unavailable.')
     }
     const transport = new HeadlessChannelTransport(application, options.transportOptions)
+		const removeChannelStateListeners = [...channels.entries()].map(
+			([label, channel]) => channel.onStateChange((state) => {
+				if (label === 'application' || (state !== 'closing' && state !== 'closed')) return
+				void transport.close({
+					code: 'unavailable',
+					message: 'Desktop WebRTC traffic channel closed.',
+				}).catch(() => undefined)
+			}),
+		)
+		const closeOnAbort = (): void => {
+			void transport.close({
+				code: 'cancelled',
+				message: 'Desktop WebRTC connection was cancelled.',
+			}).catch(() => undefined)
+		}
+		options.signal?.addEventListener('abort', closeOnAbort, { once: true })
     transport.onStateChange((state) => {
       if (state !== 'closed' && state !== 'failed') return
+			for (const remove of removeChannelStateListeners.splice(0)) remove()
       for (const [label, channel] of channels) {
         if (label !== 'application') channel.close()
       }
       options.signal?.removeEventListener('abort', abort)
+			options.signal?.removeEventListener('abort', closeOnAbort)
     })
     return transport
   } catch (error) {

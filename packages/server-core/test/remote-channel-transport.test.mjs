@@ -19,9 +19,11 @@ class FakeChannel {
 		this.states = new Set();
 		this.sent = [];
 		this.closed = false;
+		this.sendError = undefined;
 	}
 
 	send(frame) {
+		if (this.sendError !== undefined) throw this.sendError;
 		if (this.readyState !== "open") throw new Error("channel is not open");
 		this.sent.push(new Uint8Array(frame));
 		this.peer?.emit(new Uint8Array(frame));
@@ -147,6 +149,52 @@ test("a slow backpressured channel fails closed instead of waiting forever", asy
 	assert.equal(transport.state, "failed");
 	assert.equal(channel.closed, true);
 	assert.deepEqual(states, [["failed", "timeout"]]);
+});
+
+test("headless channel send racing with close rejects and cannot reuse the channel", async () => {
+	const channel = new FakeChannel();
+	channel.open();
+	channel.bufferedAmount = 16;
+	const transport = new HeadlessChannelTransport(channel, {
+		maxFrameBytes: 8,
+		maxBufferedBytes: 16,
+		maxWritableWaitMs: 1_000,
+	});
+	await transport.open();
+	const sending = transport.send(new Uint8Array([1]));
+	await transport.close({ code: "unavailable", message: "scripted close" });
+	await assert.rejects(sending, /transport is (?:closing|closed)/u);
+	await assert.rejects(transport.send(new Uint8Array([2])), /transport is closed/u);
+	assert.deepEqual(channel.sent, []);
+});
+
+test("headless channel observes abort while waiting for backpressure", async () => {
+	const channel = new FakeChannel();
+	channel.open();
+	channel.bufferedAmount = 16;
+	const transport = new HeadlessChannelTransport(channel, {
+		maxFrameBytes: 8,
+		maxBufferedBytes: 16,
+		maxWritableWaitMs: 1_000,
+	});
+	await transport.open();
+	const controller = new AbortController();
+	const waiting = transport.waitForWritable(1, controller.signal);
+	controller.abort(new Error("scripted abort"));
+	await assert.rejects(waiting, /scripted abort/u);
+	assert.equal(transport.state, "open");
+	await transport.close();
+});
+
+test("headless channel fails closed on synchronous native send failure", async () => {
+	const channel = new FakeChannel();
+	channel.open();
+	channel.sendError = new Error("scripted native send failure");
+	const transport = new HeadlessChannelTransport(channel, { maxFrameBytes: 8, maxBufferedBytes: 16 });
+	await transport.open();
+	await assert.rejects(transport.send(new Uint8Array([1])), /scripted native send failure/u);
+	assert.equal(transport.state, "failed");
+	assert.equal(channel.closed, true);
 });
 
 test("a throwing or poisoned native buffered-byte counter fails the relay closed", async () => {
