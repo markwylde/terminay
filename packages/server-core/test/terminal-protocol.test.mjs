@@ -58,15 +58,13 @@ test("terminal operation registry binds the client contract to one server-owned 
   assert.equal(attached.ok, true);
   const attachment = attached.result;
   assert.equal(attachment.position, 0);
-  assert.equal(attachment.presentation.role, "read_only");
+  assert.equal(attachment.presentation.role, "controller");
 
   pty.processes[0].emitData("hello");
-  assert.equal(journal.revision, 1);
-  assert.equal(journal.replay(0).events[0].payload.clientId, "client-a");
+  assert.equal(journal.revision, 2);
+  const outputEvent = journal.replay(0).events.find((event) => event.payload.type === "output");
+  assert.equal(outputEvent.payload.clientId, "client-a");
 
-  const rejectedInput = await dispatcher.command(request("terminal.input", { clientId: "client-a", identity, attachmentId: attachment.attachmentId, dataBase64: "eA==" }, "input-read-only"));
-  assert.equal(rejectedInput.ok, false);
-  assert.equal(pty.processes[0].writes.length, 0);
   const controlled = await dispatcher.command(request("terminal.presentation", { clientId: "client-a", identity, attachmentId: attachment.attachmentId, mode: "acquire" }, "presentation-1"));
   assert.equal(controlled.ok, true, JSON.stringify(controlled));
   assert.equal(controlled.result.role, "controller");
@@ -130,6 +128,9 @@ test("only the explicit presentation holder can forward emulator replies", async
   const attach = async (clientId) => (await dispatcher.command(request("terminal.attach", { clientId, identity, fromPosition: 0 }, `attach-${clientId}`, "write", clientId))).result;
   const desktop = await attach("desktop");
   const browser = await attach("browser");
+  assert.equal(desktop.presentation.role, "controller");
+  assert.equal(browser.presentation.role, "read_only");
+  assert.equal(browser.presentation.holder.attachmentId, desktop.attachmentId);
   const replyFamilies = ["\u001b]10;rgb:dddd/eeee/ffff\u0007", "\u001b[?1;2c", "\u001b[0n", "\u001b[12;40R", "\u001b[4;768;1024t", "\u001b[I", "\u001b[<0;1;1M"];
   const send = (attachment, clientId, value, id) => dispatcher.command(request("terminal.input", { clientId, identity, attachmentId: attachment.attachmentId, dataBase64: Buffer.from(value).toString("base64") }, id, "write", clientId));
 
@@ -333,8 +334,7 @@ test("framed ServerConnection exposes server-owned terminal operations through t
     await pair.open();
     await protocolClient.connect();
     const attachment = await terminalClient.attach({ ...identity, clientId: "client-framed" });
-    assert.equal(attachment.presentation.role, "read_only");
-    await attachment.changePresentation("acquire");
+    assert.equal(attachment.presentation.role, "controller");
     const output = new Promise((resolve) => {
       attachment.onEvent((event) => {
         if (event.type === "output") resolve(event);
