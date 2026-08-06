@@ -27,12 +27,19 @@ function transport() {
   return {
     calls,
     emit(payload, body) {
-      for (const listener of listeners) listener({ subscriptionId: "terminal-sub", revision: 1, cursor: "1", event: "terminal", payload, ...(body === undefined ? {} : { body }) });
+      for (const listener of listeners) listener({
+        subscriptionId: "terminal-sub",
+        revision: 1,
+        cursor: "1",
+        event: "terminal",
+        payload: { attachmentId: "panel-attachment", clientId: "panel-client", ...payload },
+        ...(body === undefined ? {} : { body }),
+      });
     },
     async command(operation, payload) {
       calls.push([operation, payload]);
       if (operation === "terminal.attach" || operation === "terminal.resume") {
-        return { attachmentId: "panel-attachment", fromPosition: payload.fromPosition, position: payload.fromPosition, events: payload.fromPosition === 0 ? [output(0, new Uint8Array([0, 0xff, 0x1b]), true)] : [] };
+        return { attachmentId: "panel-attachment", presentation: { ...payload.identity, revision: 0, role: "read_only" }, fromPosition: payload.fromPosition, position: payload.fromPosition, events: payload.fromPosition === 0 ? [output(0, new Uint8Array([0, 0xff, 0x1b]), true)] : [] };
       }
       return { type: "command_result", commandId: `command-${calls.length}`, correlationId: `correlation-${calls.length}`, ok: true };
     },
