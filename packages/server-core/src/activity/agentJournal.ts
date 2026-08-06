@@ -33,6 +33,8 @@ interface WatchedTerminal {
   provider: AgentProvider | null;
   discovery?: ReturnType<typeof setInterval>;
   discoveryAttempts?: number;
+  discoveryBusy?: boolean;
+  discoveryPersistent?: boolean;
   tail?: JournalTail;
 }
 
@@ -40,6 +42,7 @@ interface JournalTail { path: string; offset: number; partial: string; timer: Re
 
 export interface NodeAgentJournalSourceOptions {
   readonly codexHome?: string;
+  readonly discoveryAttemptLimit?: number;
   readonly platform?: NodeJS.Platform;
   readonly pollMs?: number;
 }
@@ -54,6 +57,7 @@ export class NodeAgentJournalSource implements AgentJournalSource {
   private readonly root: string;
   private readonly platform: NodeJS.Platform;
   private readonly pollMs: number;
+  private readonly discoveryAttemptLimit: number;
   private listener: AgentJournalListener | undefined;
   private enabled = true;
 
@@ -61,6 +65,7 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     this.root = resolve(options.codexHome ?? (process.env.CODEX_HOME?.trim() || join(homedir(), ".codex")));
     this.platform = options.platform ?? process.platform;
     this.pollMs = Math.max(50, options.pollMs ?? POLL_MS);
+    this.discoveryAttemptLimit = Math.max(1, Math.floor(options.discoveryAttemptLimit ?? 80));
   }
 
   async start(listener: AgentJournalListener): Promise<void> { this.listener = listener; }
@@ -89,8 +94,9 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     const terminal = this.exactTerminal(identity);
     if (!terminal) return;
     terminal.provider = provider;
-    if (provider === "codex") this.startDiscovery(terminal);
+    if (provider === "codex") this.startDiscovery(terminal, true);
     else if (shellForeground) this.stopWatching(terminal);
+    else this.startDiscovery(terminal);
   }
 
   unregisterTerminal(identity: ActivitySessionIdentity): void {
@@ -113,26 +119,32 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     return terminal?.identity.serverId === identity.serverId && terminal.identity.projectId === identity.projectId ? terminal : undefined;
   }
 
-  private startDiscovery(terminal: WatchedTerminal): void {
+  private startDiscovery(terminal: WatchedTerminal, persistent = false): void {
+    if (persistent) terminal.discoveryPersistent = true;
     if (!this.enabled || terminal.shellPid === undefined || terminal.tail !== undefined || terminal.discovery !== undefined) return;
     terminal.discoveryAttempts = 0;
     const discover = async () => {
-      if (terminal.tail !== undefined || terminal.shellPid === undefined) return;
-      terminal.discoveryAttempts = (terminal.discoveryAttempts ?? 0) + 1;
-      const path = await findProcessBoundCodexRollout(terminal.shellPid, join(this.root, "sessions"), this.platform).catch(() => undefined);
-      if (!path) {
-        if ((terminal.discoveryAttempts ?? 0) >= 80 && terminal.discovery !== undefined) {
-          clearInterval(terminal.discovery); terminal.discovery = undefined;
+      if (terminal.tail !== undefined || terminal.shellPid === undefined || terminal.discoveryBusy) return;
+      terminal.discoveryBusy = true;
+      try {
+        terminal.discoveryAttempts = (terminal.discoveryAttempts ?? 0) + 1;
+        const path = await findProcessBoundCodexRollout(terminal.shellPid, join(this.root, "sessions"), this.platform).catch(() => undefined);
+        if (!path) {
+          if (!terminal.discoveryPersistent && (terminal.discoveryAttempts ?? 0) >= this.discoveryAttemptLimit && terminal.discovery !== undefined) {
+            clearInterval(terminal.discovery); terminal.discovery = undefined;
+          }
+          return;
         }
-        return;
+        if (terminal.discovery !== undefined) clearInterval(terminal.discovery);
+        terminal.discovery = undefined;
+        await this.startTail(terminal, path).catch(() => undefined);
+      } finally {
+        terminal.discoveryBusy = false;
       }
-      if (terminal.discovery !== undefined) clearInterval(terminal.discovery);
-      terminal.discovery = undefined;
-      await this.startTail(terminal, path).catch(() => undefined);
     };
-    void discover();
     terminal.discovery = setInterval(() => void discover(), this.pollMs);
     terminal.discovery.unref?.();
+    void discover();
   }
 
   private async startTail(terminal: WatchedTerminal, path: string): Promise<void> {
@@ -205,6 +217,8 @@ export class NodeAgentJournalSource implements AgentJournalSource {
     if (terminal.tail !== undefined) clearInterval(terminal.tail.timer);
     terminal.discovery = undefined;
     terminal.discoveryAttempts = undefined;
+    terminal.discoveryBusy = undefined;
+    terminal.discoveryPersistent = undefined;
     terminal.tail = undefined;
   }
 }
