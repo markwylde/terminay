@@ -227,6 +227,13 @@ selected server supplies the full workspace implementation and matching
 application client. The installed bundle executes in that server's exact
 isolated session origin rather than the manager origin.
 
+After a browser has entered a connected workspace, a transient transport loss
+keeps that workspace mounted while bounded reconnect attempts run. It may show
+connection health or terminal recovery state, but it must not flash or reopen
+the “Connect to Remote Server” enrollment dialog. That dialog returns only
+after explicit disconnect/forget, a credential failure that requires fresh
+pairing, or initial launch with no restorable connection.
+
 Terminay Desktop follows the same remote bootstrap and bundle-install flow. It
 keeps protected credentials and transport authority in the main process,
 launches the verified server bundle in a sandboxed origin/profile partition,
