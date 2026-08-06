@@ -350,6 +350,11 @@ inspect the application protocol.
 - A client that loses transport shows the last confirmed revision as stale,
   disables unsafe mutations, and reconnects/resynchronizes without creating a
   replacement server or terminal.
+- A transport that disconnects while the server is publishing an event is
+  closed and unsubscribed as one failed client connection. Its rejected send
+  is contained by the connection lifecycle, never becomes an unhandled host
+  rejection, and does not terminate the server process, Desktop, another
+  client, or the underlying PTY.
 - An incompatible protocol receives a clear version/capability error. Direct
   server URLs remain the recovery path because their UI ships with the server.
 - Host failure recovery exposes metadata for a direct server-bundled client:

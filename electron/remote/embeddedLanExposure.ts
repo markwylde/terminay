@@ -36,6 +36,7 @@ export interface EmbeddedLanExposureOptions {
 	readonly onReconnectRecordsChanged?: (
 		records: readonly RemoteReconnectGrantRecord[],
 	) => void;
+	readonly onConnectionError?: (error: unknown) => void;
 }
 
 /**
@@ -111,6 +112,7 @@ export class EmbeddedLanExposure {
 			allowedWebOrigins: [input.sessionOrigin],
 			host: settings.bindAddress.trim() || '0.0.0.0',
 			port,
+			onConnectionError: this.options.onConnectionError,
 			protocolCore: this.options.core as NonNullable<
 				LocalUiServerOptions['protocolCore']
 			>,
