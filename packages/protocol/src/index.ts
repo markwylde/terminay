@@ -7,3 +7,4 @@ export * from "./negotiation.js";
 export * from "./signalingBootstrap.js";
 export * from "./transport.js";
 export * from "./types.js";
+export * from "./workspace.js";
