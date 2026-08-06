@@ -1,5 +1,5 @@
 import { createServer } from 'node:net';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
 
@@ -83,6 +83,36 @@ function terminalPanel(page: Page, sessionId: string) {
 	);
 }
 
+async function expectControlBarLayout(panel: Locator): Promise<void> {
+	const geometry = await panel.evaluate((element) => {
+		const bar = element.querySelector<HTMLElement>('.terminal-presentation-control');
+		const root = element.querySelector<HTMLElement>('.terminal-panel-root');
+		const viewport = element.querySelector<HTMLElement>('.xterm-viewport');
+		if (bar === null || root === null || viewport === null) throw new Error('Terminal control layout is incomplete');
+		const panelRect = element.getBoundingClientRect();
+		const barRect = bar.getBoundingClientRect();
+		const rootRect = root.getBoundingClientRect();
+		const backgroundColor = getComputedStyle(bar).backgroundColor;
+		const alphaMatch = backgroundColor.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)$/u);
+		return {
+			barLeft: barRect.left,
+			barRight: barRect.right,
+			panelLeft: panelRect.left,
+			panelRight: panelRect.right,
+			barBottom: barRect.bottom,
+			rootTop: rootRect.top,
+			backgroundColor,
+			backgroundAlpha: alphaMatch === null ? 1 : Number(alphaMatch[1]),
+			terminalBackgroundColor: getComputedStyle(viewport).backgroundColor,
+		};
+	});
+	expect(Math.abs(geometry.barLeft - geometry.panelLeft)).toBeLessThanOrEqual(1);
+	expect(Math.abs(geometry.barRight - geometry.panelRight)).toBeLessThanOrEqual(1);
+	expect(geometry.rootTop).toBeGreaterThanOrEqual(geometry.barBottom);
+	expect(geometry.backgroundAlpha).toBe(1);
+	expect(geometry.backgroundColor).not.toBe(geometry.terminalBackgroundColor);
+}
+
 test('Desktop and browser converge on terminal tabs and one shared PTY output stream', async ({
 	mainWindow,
 	page,
@@ -126,18 +156,37 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expect(
 			browserPanel.getByText('Another device is controlling this terminal.', { exact: true }),
 		).toBeVisible();
-		await expect(browserPanel.locator('.terminal-presentation-control')).toHaveCSS('left', '0px');
-		await expect(browserPanel.locator('.terminal-presentation-control')).toHaveCSS('right', '0px');
+		await expectControlBarLayout(browserPanel);
 
 		const proof = '__TERMINAY_SHARED_PTY_OUTPUT__';
 		const desktopInput = desktopPanel.locator('.xterm-helper-textarea');
 		await desktopInput.focus();
+		const environmentProof = '__TERMINAY_ENV__xterm-256color|truecolor';
+		await mainWindow.keyboard.type(
+			`printf '__TERMINAY_ENV__%s|%s\\n' "$TERM" "$COLORTERM"`,
+		);
+		await mainWindow.keyboard.press('Enter');
+		await expect(desktopPanel).toContainText(environmentProof);
+		await expect(browserPanel).toContainText(environmentProof);
 		await mainWindow.keyboard.type(`printf '${proof}\\n'`);
 		await mainWindow.keyboard.press('Enter');
 		await expect(terminalPanel(mainWindow, desktopSessionId)).toContainText(
 			proof,
 		);
 		await expect(terminalPanel(page, desktopSessionId)).toContainText(proof);
+		await sendAppCommand(mainWindow, 'clear-terminal');
+		await page.waitForTimeout(6_000);
+		await expect(browserPanel.getByText('unknown terminal event type')).toHaveCount(0);
+		await expect(browserPanel.locator('.terminal-panel-connection-error')).toHaveCount(0);
+		await expect(
+			browserPanel.getByText('Another device is controlling this terminal.', { exact: true }),
+		).toBeVisible();
+		const postRenewalProof = '__TERMINAY_INPUT_AFTER_PRESENTATION_RENEWAL__';
+		await desktopInput.focus();
+		await mainWindow.keyboard.type(`printf '${postRenewalProof}\\n'`);
+		await mainWindow.keyboard.press('Enter');
+		await expect(desktopPanel).toContainText(postRenewalProof);
+		await expect(browserPanel).toContainText(postRenewalProof);
 
 		// Run the query inside the PTY and count replies at the byte source. A
 		// second attached renderer must not send another automatic OSC response.
@@ -173,6 +222,7 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expect(
 			desktopPanel.getByText('Another device is controlling this terminal.', { exact: true }),
 		).toBeVisible();
+		await expectControlBarLayout(desktopPanel);
 
 		const takeoverProof = '__TERMINAY_BROWSER_TAKEOVER_INPUT__';
 		await browserPanel.locator('.xterm-helper-textarea').focus();
