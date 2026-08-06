@@ -2908,7 +2908,7 @@
   position: absolute;
   top: 14px;
   right: 14px;
-  z-index: 4;
+  z-index: 9;
   display: flex;
   align-items: center;
   gap: 6px;
