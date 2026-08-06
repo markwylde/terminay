@@ -7,6 +7,7 @@ import {
   type TerminalStreamExitEvent,
   type TerminalStreamOutputEvent,
   type TerminalStreamResyncEvent,
+  type TerminalPresentationState,
   TerminayTerminalClient,
 } from "./terminal.js";
 
@@ -22,6 +23,7 @@ export interface TerminalPanelAttachment {
   readonly initialEvents: readonly TerminalStreamEvent[];
   readonly position: number;
   readonly closed: boolean;
+  readonly presentation: TerminalPresentationState;
   readonly onEvent: (listener: (event: TerminalStreamEvent) => void) => () => void;
   readonly onOutput: (listener: (event: TerminalStreamOutputEvent) => void) => () => void;
   readonly onExit: (listener: (event: TerminalStreamExitEvent) => void) => () => void;
@@ -29,6 +31,7 @@ export interface TerminalPanelAttachment {
   readonly ack: (position: number, options?: CommandOptions) => Promise<void>;
   readonly write: (data: Uint8Array | string, options?: CommandOptions) => Promise<void>;
   readonly resize: (dimensions: TerminalDimensions, options?: CommandOptions) => Promise<void>;
+  readonly changePresentation: (mode: "acquire" | "renew" | "takeover" | "release", options?: CommandOptions) => Promise<TerminalPresentationState>;
   readonly kill: (signal?: number | string, options?: CommandOptions) => Promise<void>;
   readonly detach: (options?: CommandOptions) => Promise<void>;
 }
@@ -64,6 +67,7 @@ class PanelAttachmentView implements TerminalPanelAttachment {
   get initialEvents(): readonly TerminalStreamEvent[] { return this.attachment.initialEvents; }
   get position(): number { return this.attachment.position; }
   get closed(): boolean { return this.attachment.closed; }
+  get presentation(): TerminalPresentationState { return this.attachment.presentation; }
 
   onEvent(listener: (event: TerminalStreamEvent) => void): () => void {
     if (typeof listener !== "function") throw new TypeError("terminal event listener must be a function");
@@ -94,6 +98,7 @@ class PanelAttachmentView implements TerminalPanelAttachment {
   ack(position: number, options: CommandOptions = {}): Promise<void> { return this.attachment.ack(position, options); }
   write(data: Uint8Array | string, options: CommandOptions = {}): Promise<void> { return this.attachment.write(data, options); }
   resize(dimensions: TerminalDimensions, options: CommandOptions = {}): Promise<void> { return this.attachment.resize(dimensions, options); }
+  changePresentation(mode: "acquire" | "renew" | "takeover" | "release", options: CommandOptions = {}): Promise<TerminalPresentationState> { return this.attachment.changePresentation(mode, options); }
   kill(signal?: number | string, options: CommandOptions = {}): Promise<void> { return this.attachment.kill(signal, options); }
   detach(options: CommandOptions = {}): Promise<void> { return this.attachment.detach(options); }
 }
