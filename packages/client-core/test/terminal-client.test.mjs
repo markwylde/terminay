@@ -63,6 +63,7 @@ function fakeTransport() {
 				currentClientId = payload.clientId;
 				return {
 					attachmentId: currentAttachmentId,
+					presentation: { ...payload.identity, revision: 0, role: 'read_only' },
 					fromPosition: payload.fromPosition,
 					position: payload.fromPosition,
 					events:
@@ -186,6 +187,22 @@ test('an explicit display cursor replays behind the reconnect watermark for a fr
 	);
 	assert.equal(moved.position, 6);
 	await moved.detach();
+});
+
+test('a remounted blank emulator forces position-zero recovery despite a reconnect watermark', async () => {
+	const transport = fakeTransport();
+	const client = new TerminayTerminalClient(transport);
+	const first = await client.attach({ ...identity, clientId: 'client-a' });
+	assert.equal(first.position, 3);
+	transport.emit(output(3, 'def'));
+	assert.equal(first.position, 6);
+	await first.detach();
+	const fresh = await client.resume({ ...identity, clientId: 'client-a', freshPresentation: true });
+	const call = transport.calls.filter(([operation]) => operation === 'terminal.resume').at(-1);
+	assert.equal(call[1].fromPosition, 0);
+	assert.equal(call[1].freshPresentation, true);
+	assert.equal(new TextDecoder().decode(fresh.initialEvents[0].bytes), 'abc');
+	await fresh.detach();
 });
 
 test('output arriving during the subscription handoff is retained in initial events', async () => {

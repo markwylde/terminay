@@ -1,8 +1,10 @@
 import {
+  abortIfSignalled,
   type ByteTransport,
   createTerminayHostBytePacket,
   parseTerminayHostBytePacket,
   type TransportCloseReason,
+  type TransportSendOptions,
   type TransportState,
   validateTransportFrame,
 } from '@terminay/protocol'
@@ -126,6 +128,8 @@ export class ServerPortTransport implements ByteTransport {
     bytes: number
     resolve: () => void
     reject: (reason?: unknown) => void
+    signal?: AbortSignal
+    abort?: () => void
   }> = []
   private readonly listeners = new Set<
     (state: TransportState, reason?: TransportCloseReason) => void
@@ -178,41 +182,79 @@ export class ServerPortTransport implements ByteTransport {
     }
   }
 
-  async open(): Promise<void> {
+  async open(signal?: AbortSignal): Promise<void> {
+    abortIfSignalled(signal)
     if (this.currentState === 'open') return
     if (this.currentState !== 'opening')
       throw new Error(`server port is ${this.currentState}`)
     this.currentState = 'open'
-    this.port.start?.()
+    try {
+      this.port.start?.()
+    } catch (cause) {
+      this.fail({ code: 'unavailable', message: 'server port failed to start', cause })
+      throw cause
+    }
     this.notify()
   }
 
-  async send(frame: Uint8Array): Promise<void> {
+  async send(
+    frame: Uint8Array,
+    options: TransportSendOptions = {},
+  ): Promise<void> {
+    abortIfSignalled(options.signal)
     validateTransportFrame(frame, this.maxFrameBytes)
-    if (this.currentState !== 'open')
-      throw new Error(`server port is ${this.currentState}`)
-    await this.waitForWritable(frame.byteLength)
+    while (this.queued + frame.byteLength > this.maxQueuedBytes)
+      await this.waitForWritable(frame.byteLength, options.signal)
+    abortIfSignalled(options.signal)
+    this.assertOpen()
     this.queued += frame.byteLength
-    this.port.postMessage(frame.slice())
+    try {
+      this.port.postMessage(frame.slice())
+    } catch (cause) {
+      this.queued -= frame.byteLength
+      this.fail({
+        code: 'unavailable',
+        message: 'server port send failed',
+        cause,
+      })
+      throw cause
+    }
     queueMicrotask(() => {
       this.queued = Math.max(0, this.queued - frame.byteLength)
       this.notifyWritable()
     })
   }
 
-  async waitForWritable(requiredBytes = 1): Promise<void> {
+  async waitForWritable(
+    requiredBytes = 1,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    abortIfSignalled(signal)
     if (
       !Number.isSafeInteger(requiredBytes) ||
       requiredBytes <= 0 ||
       requiredBytes > this.maxQueuedBytes
     )
       throw new RangeError('requiredBytes out of bounds')
-    if (this.currentState !== 'open')
-      throw new Error(`server port is ${this.currentState}`)
+    this.assertOpen()
     if (this.queued + requiredBytes <= this.maxQueuedBytes) return
-    await new Promise<void>((resolve, reject) =>
-      this.writableWaiters.push({ bytes: requiredBytes, resolve, reject }),
-    )
+    await new Promise<void>((resolve, reject) => {
+      const waiter: (typeof this.writableWaiters)[number] = {
+        bytes: requiredBytes,
+        resolve,
+        reject,
+        signal,
+      }
+      const abort = () => {
+        this.removeWritableWaiter(waiter)
+        reject(signal?.reason)
+      }
+      waiter.abort = abort
+      this.writableWaiters.push(waiter)
+      signal?.addEventListener('abort', abort, { once: true })
+    })
+    abortIfSignalled(signal)
+    this.assertOpen()
   }
 
   async close(
@@ -222,11 +264,17 @@ export class ServerPortTransport implements ByteTransport {
     this.currentState = 'closing'
     this.notify(reason)
     this.finish(new Error(reason.message ?? 'server port closed'))
-    this.port.close?.()
-    this.currentState = 'closed'
-    this.notify(reason)
-    for (const waiter of this.writableWaiters.splice(0))
-      waiter.reject(new Error(reason.message ?? 'server port closed'))
+    let closeFailure: unknown
+    try {
+      this.port.close?.()
+    } catch (cause) {
+      closeFailure = cause
+    } finally {
+      this.currentState = 'closed'
+      this.notify(reason)
+      this.rejectWritable(new Error(reason.message ?? 'server port closed'))
+    }
+    if (closeFailure !== undefined) throw closeFailure
   }
 
   onStateChange(
@@ -244,8 +292,15 @@ export class ServerPortTransport implements ByteTransport {
   ): void {
     if (this.currentState === 'closed' || this.currentState === 'failed') return
     this.currentState = 'failed'
-    this.finish(new Error(reason.message ?? 'server port failed'))
+    const error = new Error(reason.message ?? 'server port failed')
+    this.finish(error)
+    this.rejectWritable(error)
     this.notify(reason)
+    try {
+      this.port.close?.()
+    } catch {
+      // The transport is already failed; native cleanup is best effort.
+    }
   }
 
   private receive(value: unknown): void {
@@ -283,6 +338,7 @@ export class ServerPortTransport implements ByteTransport {
   private finish(error?: Error): void {
     if (this.ended) return
     this.ended = true
+    this.inbound.splice(0)
     for (const waiter of this.waiters.splice(0))
       error === undefined
         ? waiter.resolve({
@@ -293,14 +349,42 @@ export class ServerPortTransport implements ByteTransport {
   }
 
   private notify(reason?: TransportCloseReason): void {
-    for (const listener of this.listeners) listener(this.currentState, reason)
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(this.currentState, reason)
+      } catch {
+        // Lifecycle observers cannot affect the privileged transport.
+      }
+    }
   }
   private notifyWritable(): void {
     for (const waiter of [...this.writableWaiters])
       if (this.queued + waiter.bytes <= this.maxQueuedBytes) {
-        this.writableWaiters.splice(this.writableWaiters.indexOf(waiter), 1)
+        this.removeWritableWaiter(waiter)
         waiter.resolve()
       }
+  }
+
+  private removeWritableWaiter(
+    waiter: (typeof this.writableWaiters)[number],
+  ): void {
+    const index = this.writableWaiters.indexOf(waiter)
+    if (index >= 0) this.writableWaiters.splice(index, 1)
+    if (waiter.abort !== undefined)
+      waiter.signal?.removeEventListener('abort', waiter.abort)
+  }
+
+  private assertOpen(): void {
+    if (this.currentState !== 'open')
+      throw new Error(`server port is ${this.currentState}`)
+  }
+
+  private rejectWritable(error: Error): void {
+    for (const waiter of this.writableWaiters.splice(0)) {
+      if (waiter.abort !== undefined)
+        waiter.signal?.removeEventListener('abort', waiter.abort)
+      waiter.reject(error)
+    }
   }
 }
 

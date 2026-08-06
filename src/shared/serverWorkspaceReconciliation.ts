@@ -48,6 +48,11 @@ export type ServerWorkspaceSnapshot = Readonly<{
 
 export type ServerWorkspaceSelection = Readonly<{ viewId: string | null; projectId: string | null; panelId: string | null }>
 
+export type ServerWorkspaceDelta = Readonly<{
+	state: ServerWorkspaceSnapshot
+	events: WorkspaceDeltaDto['events']
+}>
+
 /**
  * Keep presentation selection constrained to the latest authenticated server
  * snapshot. A closed/moved panel therefore cannot leave a browser pointing at
@@ -90,5 +95,24 @@ export function parseServerWorkspaceSnapshot(value: unknown, expectedServerId: s
 	return snapshot
 }
 
+export function parseServerWorkspaceDelta(value: unknown, expectedServerId: string, previous: ServerWorkspaceSnapshot): ServerWorkspaceDelta {
+	const delta = parseWorkspaceDeltaDto(value, {
+		serverId: expectedServerId,
+		revision: previous.revision,
+		cursor: previous.cursor,
+	})
+	const state = parseServerWorkspaceSnapshot(delta.state, expectedServerId, previous)
+	if (delta.revision !== state.revision || delta.cursor !== state.cursor) {
+		throw new Error('The server returned a workspace delta that disagrees with its state.')
+	}
+	for (const event of delta.events) {
+		if (event.revision <= previous.revision || event.revision > state.revision) {
+			throw new Error('The server returned an out-of-bounds workspace change.')
+		}
+	}
+	return { state, events: delta.events }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
 function isStringArray(value: unknown): value is readonly string[] { return Array.isArray(value) && value.every((entry) => typeof entry === 'string') }
+import { parseWorkspaceDeltaDto, type WorkspaceDeltaDto } from '@terminay/protocol'

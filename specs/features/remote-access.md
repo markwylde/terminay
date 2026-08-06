@@ -375,6 +375,10 @@ project paths, filenames, command history, PINs, tokens, or private keys.
   explicit limits.
 - Failure in one traffic class or application service does not silently widen
   authorization or corrupt unrelated sessions.
+- A failed application-event send transitions that peer to a visible
+  disconnected/stale state and resumes its subscriptions on a new authenticated
+  transport. The server never keeps accepting commands for a connection whose
+  workspace or terminal event path has silently stopped.
 
 The server transport adapter performs the application handshake only after its
 device-key verifier and PIN/approval authority both accept the connection
@@ -429,6 +433,9 @@ leaving Local and other devices available.
   responsive UI.
 - Local and remote clients observe the same server-owned projects, panels,
   sessions, settings, agents, recordings, and mutations.
+- While Desktop and browser clients are connected together, a panel mutation
+  and live terminal output appear in both without polling; disconnect and
+  reconnect resume from confirmed revisions/positions without invisible loss.
 - Closing a window, browser tab, or network connection does not terminate an
   active PTY.
 - `web.terminay.com`, signaling storage, access logs, and analytics contain no
