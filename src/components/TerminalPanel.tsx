@@ -90,12 +90,22 @@ export type TerminalPanelClientResolution = {
   readonly clientId?: string
 }
 
+/**
+ * The terminal attachment only needs connection identity. Keep this deliberately
+ * narrower than the workspace context: project-root and file-upload changes are
+ * presentation concerns and must not reconnect an already mounted terminal.
+ */
+type TerminalPanelConnectionContext = Pick<
+  TerminalPanelClientContextValue,
+  'client' | 'serverId' | 'projectId' | 'clientId'
+>
+
 /** Resolve panel params with the connection context as the production path.
  * Explicit params remain useful for moved/embedded panels and tests; a null
  * result intentionally selects the legacy preload compatibility path. */
 export function resolveTerminalPanelClient(
   params: Pick<TerminalPanelParams, 'terminalPanelClient' | 'terminalClientIdentity' | 'terminalClientId'>,
-  context: TerminalPanelClientContextValue | null,
+  context: TerminalPanelConnectionContext | null,
   contextPanelClient?: TerminayTerminalPanelClient,
 ): TerminalPanelClientResolution {
   return {
@@ -253,24 +263,56 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const hoveredLinkRef = useRef<string | null>(null)
   const terminalPanelResizeRef = useRef<(cols: number, rows: number) => void>(() => {})
   const terminalPresentationActionRef = useRef<() => Promise<void>>(() => Promise.resolve())
+  const retryServerAttachmentRef = useRef<() => void>(() => {})
   const terminalPresentationControllerRef = useRef(false)
+  // This belongs to the mounted xterm, rather than to a connection attempt.
+  // A retry can therefore resume a display that still contains its prior bytes.
+  const renderedPositionRef = useRef<number | null>(null)
+  const browserFileDropContextRef = useRef<
+    Pick<TerminalPanelClientContextValue, 'fileViewerClient' | 'projectId' | 'projectRoot'> | undefined
+  >(undefined)
   const tabColorRef = useRef(props.params.color)
   const zoomLevelRef = useRef(0)
   const remoteSizeOverrideRef = useRef<{ cols: number; rows: number } | null>(null)
   const { settings } = useTerminalSettings()
   const terminalClientContext = useContext(TerminalPanelClientContext)
+  browserFileDropContextRef.current =
+    terminalClientContext === null
+      ? undefined
+      : {
+          fileViewerClient: terminalClientContext.fileViewerClient,
+          projectId: terminalClientContext.projectId,
+          projectRoot: terminalClientContext.projectRoot,
+        }
   const contextPanelClient = useMemo(
     () => (terminalClientContext === null ? undefined : new TerminayTerminalPanelClient(terminalClientContext.client)),
     [terminalClientContext?.client],
   )
+  const terminalPanelConnectionContext = useMemo<TerminalPanelConnectionContext | null>(
+    () =>
+      terminalClientContext === null
+        ? null
+        : {
+            client: terminalClientContext.client,
+            clientId: terminalClientContext.clientId,
+            projectId: terminalClientContext.projectId,
+            serverId: terminalClientContext.serverId,
+          },
+    [
+      terminalClientContext?.client,
+      terminalClientContext?.clientId,
+      terminalClientContext?.projectId,
+      terminalClientContext?.serverId,
+    ],
+  )
   const resolvedTerminalClient = useMemo(
-    () => resolveTerminalPanelClient(props.params, terminalClientContext, contextPanelClient),
+    () => resolveTerminalPanelClient(props.params, terminalPanelConnectionContext, contextPanelClient),
     [
       contextPanelClient,
       props.params.terminalClientId,
       props.params.terminalClientIdentity,
       props.params.terminalPanelClient,
-      terminalClientContext,
+      terminalPanelConnectionContext,
     ],
   )
   const settingsRef = useRef(settings)
@@ -280,10 +322,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const [serverTerminalError, setServerTerminalError] = useState<string | null>(null)
   const [presentationUnavailable, setPresentationUnavailable] = useState(false)
   const [terminalPresentation, setTerminalPresentation] = useState<TerminalPresentationState | null>(null)
-  // Incrementing this is the only user-initiated way to rebuild a failed
-  // server attachment. Keeping it separate from panel identity prevents a
-  // failed write from quietly falling back to preload authority.
-  const [serverConnectionAttempt, setServerConnectionAttempt] = useState(0)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchSummary, setSearchSummary] = useState<{
     index: number
@@ -391,6 +429,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       linkHandler: oscLinkHandler,
     })
     terminalRef.current = terminal
+    renderedPositionRef.current = 0
 
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
@@ -436,7 +475,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     const resolveDesktopDroppedFilePath = window.terminayFileExplorerHost === undefined
       ? undefined
       : (file: unknown) => window.terminayFileExplorerHost?.resolveDroppedFilePath(file as File)
-    const canUploadBrowserFiles = resolveDesktopDroppedFilePath === undefined && terminalClientContext?.fileViewerClient !== undefined && terminalClientContext.projectRoot !== undefined
+    const canUploadBrowserFiles = () => {
+      const browserDropContext = browserFileDropContextRef.current
+      return (
+        resolveDesktopDroppedFilePath === undefined &&
+        browserDropContext?.fileViewerClient !== undefined &&
+        browserDropContext.projectRoot !== undefined
+      )
+    }
     let serverAttachmentFailed = false
     if (useServerTerminal) {
       setServerTerminalError(null)
@@ -450,10 +496,18 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     let panelAttachment: TerminalPanelAttachment | null = null
     let presentationRenewTimer: number | null = null
     let pendingPanelResize: { cols: number; rows: number } | null = null
+    let dataReplayDisposed = false
+    let panelEventDisposer: (() => void) | null = null
     const failServerTransport = (error: unknown) => {
       if (serverAttachmentFailed || dataReplayDisposed) return
       serverAttachmentFailed = true
       serverInputQueue?.close()
+      panelEventDisposer?.()
+      panelEventDisposer = null
+      if (presentationRenewTimer !== null) {
+        window.clearTimeout(presentationRenewTimer)
+        presentationRenewTimer = null
+      }
       const attachmentToDetach = panelAttachment
       panelAttachment = null
       if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
@@ -662,9 +716,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
     fitAndResize(true)
 
-    let dataReplayDisposed = false
-    let panelEventDisposer: (() => void) | null = null
-
     const renderTerminalExit = (exitCode: number, signal: number | null) => {
       window.dispatchEvent(
         new CustomEvent(TERMINAL_PANEL_EXIT_EVENT, {
@@ -687,16 +738,24 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminal.write(notice)
     }
 
-    const renderTerminalOutput = (bytes: Uint8Array, nextPosition: number, attachment: TerminalPanelAttachment) => {
-      terminal.write(bytes, () => {
-        window.dispatchEvent(
-          new CustomEvent(TERMINAL_PANEL_OUTPUT_EVENT, {
-            detail: { nextPosition, sessionId },
-          }),
-        )
-        void attachment.ack(nextPosition).catch(failServerTransport)
+    const renderTerminalOutput = (bytes: Uint8Array, nextPosition: number, attachment: TerminalPanelAttachment) =>
+      new Promise<void>((resolve) => {
+        terminal.write(bytes, () => {
+          renderedPositionRef.current = nextPosition
+          window.dispatchEvent(
+            new CustomEvent(TERMINAL_PANEL_OUTPUT_EVENT, {
+              detail: { nextPosition, sessionId },
+            }),
+          )
+          void attachment.ack(nextPosition).catch(failServerTransport)
+          resolve()
+        })
       })
-    }
+
+    const writeTerminalPresentation = (bytes: Uint8Array) =>
+      new Promise<void>((resolve) => {
+        terminal.write(bytes, resolve)
+      })
 
     const renderTerminalResync = () => {
       terminal.write('\r\n\x1b[33m[terminal output requires resync]\x1b[0m\r\n')
@@ -709,13 +768,23 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         projectId: panelIdentity.projectId,
         sessionId,
         clientId: panelClientId,
-        freshPresentation: true,
-        fromPosition: 0,
         maxInitialReplayBytes: MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES,
       }
       let resyncing = false
-      const attachServerTerminal = (fromPosition: number | undefined, forceResume: boolean) => {
-        const nextRequest = fromPosition === undefined ? request : { ...request, fromPosition }
+      const attachServerTerminal = ({
+        fromPosition,
+        freshPresentation,
+        forceResume,
+      }: {
+        fromPosition: number | undefined
+        freshPresentation: boolean
+        forceResume: boolean
+      }) => {
+        const nextRequest = {
+          ...request,
+          ...(fromPosition === undefined ? {} : { fromPosition }),
+          ...(freshPresentation ? { freshPresentation: true } : {}),
+        }
         void (forceResume || mode === 'resume' ? panelClient.resume(nextRequest) : panelClient.attach(nextRequest))
           .then((attachment) => {
             if (dataReplayDisposed) {
@@ -760,30 +829,56 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
               applyPresentation(state)
               if (state.role === 'controller') fitAndResize(true)
             }
+            // Xterm serializes writes, but resize is synchronous. Keep one
+            // explicit queue so a parser-safe snapshot is restored in its
+            // original geometry before a tail resize or any subsequent output
+            // reaches the emulator. The same queue also prevents live output
+            // delivered during binary hydration from overtaking the tail.
+            let terminalRenderQueue = Promise.resolve()
             const renderServerEvent = (event: TerminalStreamEvent) => {
-              if (event.type === 'output') {
-                renderTerminalOutput(event.bytes, event.nextPosition, attachment)
-              } else if (event.type === 'exit') {
-                renderTerminalExit(event.exitCode, event.signal)
-              } else if (event.type === 'dimensions') {
-                if (!terminalPresentationControllerRef.current) {
-                  remoteSizeOverrideRef.current = { cols: event.cols, rows: event.rows }
-                  setIsRemoteSizeOverrideActive(true)
-                  applyRemoteTerminalSize(root, terminal, event.cols, event.rows, () => {
-                    const currentOverride = remoteSizeOverrideRef.current
-                    return terminalRef.current === terminal && currentOverride?.cols === event.cols && currentOverride.rows === event.rows
-                  })
-                  updateRemoteViewportMetadata(sessionId, root)
-                }
-              } else if (event.type === 'presentation') {
-                applyPresentation(event)
-              } else if (event.type === 'presentation_unavailable') {
-                setPresentationUnavailable(true)
-                setIsTerminalHydrating(false)
-                setServerTerminalError('Terminal presentation is unavailable because a complete safe recovery boundary is no longer retained.')
-              } else {
-                beginTerminalResync(event)
-              }
+              terminalRenderQueue = terminalRenderQueue
+                .then(async () => {
+                  if (dataReplayDisposed || panelAttachment !== attachment) return
+
+                  if (event.type === 'checkpoint') {
+                    // Checkpoint bytes are xterm restoration input rather than
+                    // PTY output. SerializeAddon requires the geometry used to
+                    // create the checkpoint, and neither that resize nor the
+                    // restoration bytes may be acknowledged to the server.
+                    terminal.resize(event.checkpointDimensions.cols, event.checkpointDimensions.rows)
+                    await writeTerminalPresentation(event.bytes)
+                    renderedPositionRef.current = event.position
+                  } else if (event.type === 'checkpoint_resize') {
+                    // A parser-safe checkpoint can have ordered resize
+                    // transitions in its C→H raw tail. Apply them between the
+                    // restoration and corresponding output, without claiming
+                    // viewport control or forwarding a resize to the PTY.
+                    terminal.resize(event.dimensions.cols, event.dimensions.rows)
+                  } else if (event.type === 'output') {
+                    await renderTerminalOutput(event.bytes, event.nextPosition, attachment)
+                  } else if (event.type === 'exit') {
+                    renderTerminalExit(event.exitCode, event.signal)
+                  } else if (event.type === 'dimensions') {
+                    if (!terminalPresentationControllerRef.current) {
+                      remoteSizeOverrideRef.current = { cols: event.cols, rows: event.rows }
+                      setIsRemoteSizeOverrideActive(true)
+                      applyRemoteTerminalSize(root, terminal, event.cols, event.rows, () => {
+                        const currentOverride = remoteSizeOverrideRef.current
+                        return terminalRef.current === terminal && currentOverride?.cols === event.cols && currentOverride.rows === event.rows
+                      })
+                      updateRemoteViewportMetadata(sessionId, root)
+                    }
+                  } else if (event.type === 'presentation') {
+                    applyPresentation(event)
+                  } else if (event.type === 'presentation_unavailable') {
+                    setPresentationUnavailable(true)
+                    setIsTerminalHydrating(false)
+                    setServerTerminalError('Terminal presentation is unavailable because a complete safe recovery boundary is no longer retained.')
+                  } else if (event.type === 'resync_required') {
+                    beginTerminalResync(event)
+                  }
+                })
+                .catch(failServerTransport)
             }
             // Install one catch-all listener before consuming initialEvents. Three
             // sequential filtered listeners leave a handoff window in which a fast
@@ -797,29 +892,32 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
               renderServerEvent(event)
               if (event.type === 'resync_required' || event.type === 'presentation_unavailable') break
             }
-            if (serverAttachmentFailed || resyncing) return
-            setIsTerminalHydrating(false)
+            const initialEventsRendered = terminalRenderQueue
+            void initialEventsRendered.then(() => {
+              if (dataReplayDisposed || panelAttachment !== attachment || serverAttachmentFailed || resyncing) return
+              setIsTerminalHydrating(false)
 
-            serverInputQueue?.attach(attachment)
-            if (pendingPanelResize !== null && terminalPresentationControllerRef.current) {
-              const resize = pendingPanelResize
-              pendingPanelResize = null
-              void attachment.resize(resize).catch(() => {})
-            }
-            // The initial focus call runs before the asynchronous attachment is ready.
-            // During browser connection setup Dockview/layout work can return focus to
-            // body, leaving xterm's hidden textarea unable to receive the first key.
-            // Restore it only when focus is still unclaimed (or already in this panel)
-            // so a user who deliberately selected another control is not interrupted.
-            const activeElement = document.activeElement
-            if (
-              props.api.isActive &&
-              (activeElement === null || activeElement === document.body || root.contains(activeElement))
-            ) {
-              terminal.focus()
-              announceTerminalFocus()
-            }
-            resyncing = false
+              serverInputQueue?.attach(attachment)
+              if (pendingPanelResize !== null && terminalPresentationControllerRef.current) {
+                const resize = pendingPanelResize
+                pendingPanelResize = null
+                void attachment.resize(resize).catch(() => {})
+              }
+              // The initial focus call runs before the asynchronous attachment is ready.
+              // During browser connection setup Dockview/layout work can return focus to
+              // body, leaving xterm's hidden textarea unable to receive the first key.
+              // Restore it only when focus is still unclaimed (or already in this panel)
+              // so a user who deliberately selected another control is not interrupted.
+              const activeElement = document.activeElement
+              if (
+                props.api.isActive &&
+                (activeElement === null || activeElement === document.body || root.contains(activeElement))
+              ) {
+                terminal.focus()
+                announceTerminalFocus()
+              }
+              resyncing = false
+            })
           })
           .catch((error: unknown) => {
             if (dataReplayDisposed) return
@@ -841,9 +939,26 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         void staleAttachment?.detach().catch(() => {})
         // This xterm has just been cleared, so its previous byte watermark is
         // no longer presentation state. Force a safe byte-zero recovery.
-        attachServerTerminal(0, true)
+        attachServerTerminal({ fromPosition: 0, freshPresentation: true, forceResume: true })
       }
-      attachServerTerminal(request.fromPosition, false)
+      // The first attachment hydrates the newly created emulator. Later
+      // reconnects use the exact cursor xterm has already rendered.
+      retryServerAttachmentRef.current = () => {
+        if (dataReplayDisposed) return
+        serverAttachmentFailed = false
+        resyncing = false
+        serverInputQueue?.close()
+        serverInputQueue = new ServerTerminalInputQueue(failServerTransport)
+        setServerTerminalError(null)
+        setPresentationUnavailable(false)
+        setIsTerminalHydrating(true)
+        attachServerTerminal({
+          fromPosition: renderedPositionRef.current ?? 0,
+          freshPresentation: false,
+          forceResume: true,
+        })
+      }
+      attachServerTerminal({ fromPosition: 0, freshPresentation: true, forceResume: false })
     } else {
       // A terminal surface is a detachable server client. There is no Local
       // Electron IPC fallback: doing so would make the renderer a second PTY
@@ -1059,7 +1174,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     })
 
     const handleDragEnter = (event: DragEvent) => {
-      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer, resolveDesktopDroppedFilePath, canUploadBrowserFiles)) {
+      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer, resolveDesktopDroppedFilePath, canUploadBrowserFiles())) {
         return
       }
 
@@ -1069,7 +1184,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
 
     const handleDragOver = (event: DragEvent) => {
-      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer, resolveDesktopDroppedFilePath, canUploadBrowserFiles)) {
+      if (!event.dataTransfer || !shouldInterceptTerminalDrop(event.dataTransfer, resolveDesktopDroppedFilePath, canUploadBrowserFiles())) {
         return
       }
 
@@ -1084,7 +1199,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         !shouldInterceptTerminalDrop(
           event.dataTransfer,
           resolveDesktopDroppedFilePath,
-          canUploadBrowserFiles,
+          canUploadBrowserFiles(),
         )
       ) {
         return
@@ -1096,12 +1211,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       event.stopPropagation()
 
       let droppedText = getTerminalDropText(event.dataTransfer, resolveDesktopDroppedFilePath)
-      if (!droppedText && canUploadBrowserFiles && terminalClientContext?.fileViewerClient && terminalClientContext.projectRoot) {
+      const browserDropContext = browserFileDropContextRef.current
+      if (!droppedText && canUploadBrowserFiles() && browserDropContext?.fileViewerClient && browserDropContext.projectRoot) {
         try {
           droppedText = await uploadBrowserTerminalDrop(
             event.dataTransfer.files,
-            terminalClientContext.projectRoot,
-            (path, bytes) => terminalClientContext.fileViewerClient!.createFile(path, bytes, terminalClientContext.projectId),
+            browserDropContext.projectRoot,
+            (path, bytes) => browserDropContext.fileViewerClient!.createFile(path, bytes, browserDropContext.projectId),
           )
         } catch (error) {
           console.error('Browser file drop upload failed', error)
@@ -1201,6 +1317,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       panelAttachment = null
       terminalPanelResizeRef.current = () => {}
       terminalPresentationActionRef.current = () => Promise.resolve()
+      retryServerAttachmentRef.current = () => {}
       terminalPresentationControllerRef.current = false
       pendingPanelResize = null
       if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
@@ -1211,6 +1328,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       searchAddonRef.current = null
       fitAddonRef.current = null
       terminalRef.current = null
+      renderedPositionRef.current = null
       hoveredLinkRef.current = null
       terminal.dispose()
     }
@@ -1225,7 +1343,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     props.params.terminalClientMode,
     props.params.terminalPanelClient,
     resolvedTerminalClient,
-    serverConnectionAttempt,
   ])
 
   useEffect(() => {
@@ -1505,7 +1622,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         <div className="terminal-panel-connection-error" role="alert">
           <p>{serverTerminalError}</p>
           {!presentationUnavailable ? (
-            <button type="button" onClick={() => setServerConnectionAttempt((attempt) => attempt + 1)}>
+            <button type="button" onClick={() => retryServerAttachmentRef.current()}>
               Retry connection
             </button>
           ) : null}

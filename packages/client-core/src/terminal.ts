@@ -1,10 +1,23 @@
 import type { JsonValue } from '@terminay/protocol';
 import type {
+	ClientBinaryQueryResult,
 	ClientCommandResult,
 	ClientSubscription,
 	CommandOptions,
+	QueryOptions,
 	SubscriptionOptions,
 } from './types.js';
+
+/** The attachment-scoped binary query used to hydrate a genuinely new xterm. */
+export const TERMINAL_PRESENTATION_CHECKPOINT_OPERATION = 'terminal.presentation-checkpoint';
+
+/**
+ * A bounded amount of raw PTY output may arrive after an attachment is
+ * subscribed but before its binary checkpoint has been written to xterm.
+ * Keep that client-side handoff bounded even when a transport ignores its own
+ * queue limits. The server enforces the matching authoritative limit.
+ */
+export const MAX_TERMINAL_HYDRATION_QUEUE_BYTES = 4 * 1024 * 1024;
 
 /** The exact server/project/session identity carried by every terminal call. */
 export interface TerminalClientIdentity {
@@ -99,6 +112,25 @@ export interface TerminalWirePresentationUnavailableEvent extends TerminalClient
 	readonly outputPosition: number;
 }
 
+/** Metadata is intentionally small enough for an attach command header. The
+ * serialized terminal state is returned only as the binary body of
+ * `terminal.presentation-checkpoint`. */
+export interface TerminalPresentationCheckpointMetadata extends TerminalClientIdentity {
+	readonly checkpointId: string;
+	/** Parser-safe raw PTY position represented by the serialized xterm state. */
+	readonly position: number;
+	/** The attachment begins here after replaying the binary parser tail. */
+	readonly headPosition: number;
+	/** Geometry at the parser-safe serialized state position. */
+	readonly checkpointDimensions: TerminalDimensions;
+	readonly dimensions: TerminalDimensions;
+	readonly formatVersion: number;
+	readonly stateByteLength: number;
+	readonly tailByteLength: number;
+	readonly byteLength: number;
+	readonly expiresAt: number;
+}
+
 export interface TerminalWireOutputEvent extends TerminalClientIdentity {
 	readonly type: 'output';
 	readonly position: number;
@@ -146,7 +178,26 @@ export interface TerminalStreamResyncEvent extends TerminalClientIdentity {
 	readonly outputPosition: number;
 }
 
+/**
+ * Local-only event placed before retained output for a fresh display. Its
+ * bytes restore xterm state but are not PTY output and must never be
+ * acknowledged as such.
+ */
+export interface TerminalStreamCheckpointEvent
+	extends TerminalPresentationCheckpointMetadata {
+	readonly type: 'checkpoint';
+	readonly bytes: Uint8Array;
+}
+
+export interface TerminalStreamCheckpointResizeEvent extends TerminalClientIdentity {
+	readonly type: 'checkpoint_resize';
+	readonly position: number;
+	readonly dimensions: TerminalDimensions;
+}
+
 export type TerminalStreamEvent =
+	| TerminalStreamCheckpointEvent
+	| TerminalStreamCheckpointResizeEvent
 	| TerminalStreamOutputEvent
 	| TerminalStreamExitEvent
 	| TerminalStreamResyncEvent
@@ -160,6 +211,8 @@ export interface TerminalAttachResult {
 	readonly position: number;
 	readonly events?: readonly TerminalWireEvent[];
 	readonly presentation: TerminalPresentationState;
+	/** Present only for a fresh attachment backed by a pinned checkpoint. */
+	readonly checkpoint?: TerminalPresentationCheckpointMetadata;
 }
 
 export interface TerminalClientTransport {
@@ -168,6 +221,11 @@ export interface TerminalClientTransport {
 		payload?: JsonValue,
 		options?: CommandOptions,
 	) => Promise<{ readonly result?: T }>;
+	readonly queryWithBody?: <T extends JsonValue = JsonValue>(
+		operation: string,
+		payload?: JsonValue,
+		options?: QueryOptions,
+	) => Promise<ClientBinaryQueryResult<T> | { readonly result: T; readonly body: Uint8Array }>;
 	readonly command: <T extends JsonValue = JsonValue>(
 		operation: string,
 		payload?: JsonValue,
@@ -498,18 +556,33 @@ export class TerminayTerminalClient {
 				: { maxInitialReplayBytes: request.maxInitialReplayBytes }),
 		} as { readonly [key: string]: JsonValue });
 		validateAttachResult(result);
+		const checkpoint = result.checkpoint === undefined
+			? undefined
+			: validateCheckpointMetadata(result.checkpoint, request);
 		if (
 			result.fromPosition < fromPosition ||
 			result.position < result.fromPosition
 		)
 			throw new TypeError('terminal attach result position regressed');
+		if (checkpoint !== undefined) {
+			// The server must attach at the checkpoint boundary and send all tail
+			// bytes through the exact attachment event subscription. Advancing the
+			// cursor here would silently discard the checkpoint/live handoff.
+			if (
+				request.freshPresentation !== true ||
+				result.fromPosition !== checkpoint.headPosition ||
+				result.position !== checkpoint.headPosition
+			)
+				throw new TypeError('terminal checkpoint attachment boundary is invalid');
+		}
 
 		const initialEvents: TerminalStreamEvent[] = [];
 		// The server may advance the display cursor to honor its bounded initial
 		// replay budget. Decode replay relative to that authoritative boundary,
 		// while retaining the independently tracked reconnect high-water mark.
-		let position = result.fromPosition;
+		let position = checkpoint?.headPosition ?? result.fromPosition;
 		let replayBoundary: number | undefined;
+		let hydrationBytes = 0;
 		for (const wireEvent of result.events ?? []) {
 			const event = tryDecodeEvent(wireEvent, request, undefined);
 			if (event === undefined) continue;
@@ -527,10 +600,16 @@ export class TerminayTerminalClient {
 				);
 			}
 			initialEvents.push(event);
+			if (checkpoint !== undefined && event.type === 'output') {
+				hydrationBytes += event.bytes.byteLength;
+				assertHydrationQueueBytes(hydrationBytes);
+			}
 		}
 		position =
 			replayBoundary === undefined
-				? Math.max(position, result.position)
+				? checkpoint === undefined
+					? Math.max(position, result.position)
+					: position
 				: replayBoundary;
 		this.highWatermarks.set(
 			key,
@@ -562,6 +641,7 @@ export class TerminayTerminalClient {
 			closed: false,
 			detached: undefined,
 		};
+		let hydrationFailure: Error | undefined;
 		mutable.unsubscribeEvent = subscription.onEvent((event) => {
 			if (mutable.closed) return;
 			if (!eventBelongsToAttachment(event.payload, mutable)) return;
@@ -571,8 +651,13 @@ export class TerminayTerminalClient {
 				event.body,
 			);
 			if (decoded === undefined) return;
-			if (!acceptEvent(decoded, this.highWatermarks, key, mutable.position))
+			try {
+				if (!acceptEvent(decoded, this.highWatermarks, key, mutable.position))
+					return;
+			} catch (error) {
+				hydrationFailure = error instanceof Error ? error : new Error('terminal output delivery failed');
 				return;
+			}
 			if (decoded.type === 'output') mutable.position = decoded.nextPosition;
 			if (decoded.type === 'resync_required') {
 				mutable.position = decoded.replayFrom;
@@ -586,13 +671,94 @@ export class TerminayTerminalClient {
 				// The transport subscription is necessarily live before open() can
 				// return its attachment. Preserve that handoff window as replayable
 				// initial events so fast shell output cannot disappear.
+				if (checkpoint !== undefined && decoded.type === 'output') {
+					hydrationBytes += decoded.bytes.byteLength;
+					try {
+						assertHydrationQueueBytes(hydrationBytes);
+					} catch (error) {
+						hydrationFailure = error instanceof Error ? error : new Error('terminal hydration queue overflowed');
+						return;
+					}
+				}
 				mutable.initialEvents.push(copyEvent(decoded));
 			} else {
 				for (const listener of mutable.listeners) listener(copyEvent(decoded));
 			}
 		});
 		this.attachments.set(key, mutable);
+		if (checkpoint !== undefined) {
+			try {
+				const hydrated = await this.fetchCheckpoint(request, mutable, checkpoint);
+				if (hydrationFailure !== undefined) throw hydrationFailure;
+				mutable.initialEvents.unshift(...hydrated);
+			} catch (error) {
+				await this.detachMutable(mutable).catch(() => undefined);
+				throw error;
+			}
+		}
 		return new AttachmentView(this, mutable);
+	}
+
+	private async fetchCheckpoint(
+		request: TerminalClientAttachRequest,
+		mutable: MutableAttachment,
+		checkpoint: TerminalPresentationCheckpointMetadata,
+	): Promise<readonly TerminalStreamEvent[]> {
+		if (typeof this.transport.queryWithBody !== 'function') {
+			throw new Error('terminal checkpoint hydration requires binary query support');
+		}
+		const response = await this.transport.queryWithBody<JsonValue>(
+			TERMINAL_PRESENTATION_CHECKPOINT_OPERATION,
+			{
+				clientId: request.clientId,
+				attachmentId: mutable.id,
+				checkpointId: checkpoint.checkpointId,
+				identity: identityPayload(request),
+				...(request.authorization === undefined
+					? {}
+					: { authorization: authorizationPayload(request.authorization) }),
+			},
+		);
+		const result = 'envelope' in response ? response.envelope.result : response.result;
+		if (result === undefined) {
+			throw new TypeError('terminal checkpoint response is missing metadata');
+		}
+		const returned = validateCheckpointMetadata(result, request);
+		if (
+			returned.checkpointId !== checkpoint.checkpointId ||
+			returned.position !== checkpoint.position ||
+			returned.headPosition !== checkpoint.headPosition ||
+			returned.formatVersion !== checkpoint.formatVersion ||
+			returned.stateByteLength !== checkpoint.stateByteLength ||
+			returned.tailByteLength !== checkpoint.tailByteLength ||
+			returned.byteLength !== checkpoint.byteLength ||
+			returned.checkpointDimensions.cols !== checkpoint.checkpointDimensions.cols ||
+			returned.checkpointDimensions.rows !== checkpoint.checkpointDimensions.rows ||
+			returned.dimensions.cols !== checkpoint.dimensions.cols ||
+			returned.dimensions.rows !== checkpoint.dimensions.rows
+		) {
+			throw new TypeError('terminal checkpoint response does not match its attachment pin');
+		}
+		if (
+			!(response.body instanceof Uint8Array) ||
+			response.body.byteLength !== checkpoint.byteLength
+		) {
+			throw new TypeError('terminal checkpoint body length is invalid');
+		}
+		const snapshot = response.body.slice(0, checkpoint.stateByteLength);
+		const restored: TerminalStreamCheckpointEvent = Object.freeze({
+			...checkpoint,
+			type: 'checkpoint',
+			bytes: snapshot,
+		});
+		return Object.freeze([
+			restored,
+			...decodeCheckpointTail(
+				result,
+				checkpoint,
+				response.body.slice(checkpoint.stateByteLength),
+			),
+		]);
 	}
 
 	private async detachMutable(
@@ -832,6 +998,145 @@ function validateAttachResult(value: TerminalAttachResult): void {
 	)
 		throw new TypeError('terminal attach result is invalid');
 	if (value.presentation !== undefined) validatePresentation(value.presentation, undefined);
+	if (value.checkpoint !== undefined) validateCheckpointMetadata(value.checkpoint, undefined);
+}
+
+function decodeCheckpointTail(
+	value: JsonValue,
+	checkpoint: TerminalPresentationCheckpointMetadata,
+	bytes: Uint8Array,
+): readonly TerminalStreamEvent[] {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+		throw new TypeError('terminal checkpoint response metadata is invalid');
+	}
+	const tail = (value as Record<string, unknown>).tail;
+	if (!Array.isArray(tail)) throw new TypeError('terminal checkpoint tail is invalid');
+	const result: TerminalStreamEvent[] = [];
+	let position = checkpoint.position;
+	let offset = 0;
+	for (const item of tail) {
+		if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+			throw new TypeError('terminal checkpoint tail is invalid');
+		}
+		const event = item as Record<string, unknown>;
+		if (event.type === 'output') {
+			const eventPosition = safePosition(event.position, 'terminal checkpoint tail position');
+			const nextPosition = safePosition(event.nextPosition, 'terminal checkpoint tail position');
+			const byteLength = safePosition(event.byteLength, 'terminal checkpoint tail length');
+			if (eventPosition !== position || nextPosition <= position || nextPosition - position !== byteLength || offset + byteLength > bytes.byteLength) {
+				throw new TypeError('terminal checkpoint tail is not contiguous');
+			}
+			result.push(Object.freeze({
+				serverId: checkpoint.serverId,
+				projectId: checkpoint.projectId,
+				sessionId: checkpoint.sessionId,
+				type: 'output',
+				position,
+				nextPosition,
+				bytes: bytes.slice(offset, offset + byteLength),
+				replay: true,
+			}));
+			position = nextPosition;
+			offset += byteLength;
+			continue;
+		}
+		if (event.type === 'resize') {
+			const eventPosition = safePosition(event.position, 'terminal checkpoint resize position');
+			if (eventPosition !== position) throw new TypeError('terminal checkpoint resize is not ordered');
+			result.push(Object.freeze({
+				serverId: checkpoint.serverId,
+				projectId: checkpoint.projectId,
+				sessionId: checkpoint.sessionId,
+				type: 'checkpoint_resize',
+				position,
+				dimensions: validateDimensions(event.dimensions as TerminalDimensions),
+			}));
+			continue;
+		}
+		throw new TypeError('terminal checkpoint tail event is invalid');
+	}
+	if (position !== checkpoint.headPosition || offset !== bytes.byteLength) {
+		throw new TypeError('terminal checkpoint tail boundary is invalid');
+	}
+	return Object.freeze(result);
+}
+
+function validateCheckpointMetadata(
+	value: unknown,
+	identity: TerminalClientIdentity | undefined,
+): TerminalPresentationCheckpointMetadata {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+		throw new TypeError('terminal checkpoint metadata is invalid');
+	}
+	const candidate = value as Record<string, unknown>;
+	if (
+		!isBoundedIdentity(candidate.checkpointId) ||
+		!Number.isSafeInteger(candidate.position) ||
+		(candidate.position as number) < 0 ||
+		!Number.isSafeInteger(candidate.headPosition) ||
+		(candidate.headPosition as number) < (candidate.position as number) ||
+		!Number.isSafeInteger(candidate.formatVersion) ||
+		(candidate.formatVersion as number) <= 0 ||
+		!Number.isSafeInteger(candidate.stateByteLength) ||
+		(candidate.stateByteLength as number) < 0 ||
+		(candidate.stateByteLength as number) > 8 * 1024 * 1024 ||
+		!Number.isSafeInteger(candidate.tailByteLength) ||
+		(candidate.tailByteLength as number) < 0 ||
+		(candidate.tailByteLength as number) > 8 * 1024 * 1024 ||
+		(candidate.tailByteLength as number) !==
+			(candidate.headPosition as number) - (candidate.position as number) ||
+		!Number.isSafeInteger(candidate.byteLength) ||
+		(candidate.byteLength as number) !== (candidate.stateByteLength as number) + (candidate.tailByteLength as number) ||
+		(candidate.byteLength as number) > 8 * 1024 * 1024 ||
+		!Number.isSafeInteger(candidate.expiresAt) ||
+		(candidate.expiresAt as number) <= 0
+	) {
+		throw new TypeError('terminal checkpoint metadata is invalid');
+	}
+	if (
+		typeof candidate.serverId !== 'string' ||
+		typeof candidate.projectId !== 'string' ||
+		typeof candidate.sessionId !== 'string'
+	) {
+		throw new TypeError('terminal checkpoint identity is invalid');
+	}
+	const checkpointIdentity: TerminalClientIdentity = {
+		serverId: candidate.serverId,
+		projectId: candidate.projectId,
+		sessionId: candidate.sessionId,
+	};
+	validateIdentity(checkpointIdentity);
+	if (
+		identity !== undefined &&
+		(checkpointIdentity.serverId !== identity.serverId ||
+			checkpointIdentity.projectId !== identity.projectId ||
+			checkpointIdentity.sessionId !== identity.sessionId)
+	) {
+		throw new TypeError('terminal checkpoint identity is invalid');
+	}
+	const checkpointDimensions = validateDimensions(candidate.checkpointDimensions as TerminalDimensions);
+	const dimensions = validateDimensions(candidate.dimensions as TerminalDimensions);
+	return Object.freeze({
+		serverId: checkpointIdentity.serverId,
+		projectId: checkpointIdentity.projectId,
+		sessionId: checkpointIdentity.sessionId,
+		checkpointId: candidate.checkpointId as string,
+		position: candidate.position as number,
+		headPosition: candidate.headPosition as number,
+		checkpointDimensions,
+		dimensions,
+		formatVersion: candidate.formatVersion as number,
+		stateByteLength: candidate.stateByteLength as number,
+		tailByteLength: candidate.tailByteLength as number,
+		byteLength: candidate.byteLength as number,
+		expiresAt: candidate.expiresAt as number,
+	});
+}
+
+function assertHydrationQueueBytes(bytes: number): void {
+	if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > MAX_TERMINAL_HYDRATION_QUEUE_BYTES) {
+		throw new RangeError('terminal hydration queue exceeds its byte limit');
+	}
 }
 
 function validatePresentation(value: unknown, identity: TerminalClientIdentity | undefined): asserts value is TerminalPresentationState {
@@ -1041,7 +1346,7 @@ function copyPresentation(value: TerminalPresentationState): TerminalPresentatio
 }
 
 function copyEvent(event: TerminalStreamEvent): TerminalStreamEvent {
-	return event.type === 'output'
+	return event.type === 'output' || event.type === 'checkpoint'
 		? { ...event, bytes: new Uint8Array(event.bytes) }
 		: { ...event };
 }
