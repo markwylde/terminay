@@ -1,5 +1,6 @@
 import {
   decodeFrame,
+  DEFAULT_PROTOCOL_LIMITS,
   encodeFrame,
   negotiateVersion,
   protocolError,
@@ -16,6 +17,11 @@ import {
 import { authError, validateIdentity } from "./auth.js";
 import { createOperationDispatcher, type OperationDispatcher } from "./dispatcher.js";
 import { OrderedEventJournal } from "./events.js";
+import {
+  OutboundDeliveryPump,
+  type OutboundDeliveryError,
+  type OutboundDeliverySnapshot,
+} from "./outboundDelivery.js";
 import type {
   AuthenticatedClient,
   AuthenticateClient,
@@ -49,6 +55,7 @@ export class ServerConnection implements ServerConnectionLike {
   private readonly dispatcher: OperationDispatcher;
   private readonly options: ServerCoreOptions;
   private readonly transport: ByteTransport;
+  private readonly outbound: OutboundDeliveryPump;
   private readonly journal: OrderedEventJournalLike;
   private readonly authenticate: AuthenticateClient;
   private readerTask: Promise<void> | undefined;
@@ -56,8 +63,9 @@ export class ServerConnection implements ServerConnectionLike {
   private readonly inFlightRequests = new Map<string, InFlightRequest>();
   private readonly eventSubscriptions = new Map<string, () => void>();
   private connectionCleaned = false;
-	private liveEventSendFailure: Error | undefined;
 	private readonly onClosed: (() => void) | undefined;
+	private readonly onDeliveryDiagnostic: ConnectionOptions["onDeliveryDiagnostic"];
+	private closeTask: Promise<void> | undefined;
 
   constructor(transport: ByteTransport, options: ServerCoreOptions, connectionOptions: ConnectionOptions = {}) {
     this.transport = transport;
@@ -67,6 +75,12 @@ export class ServerConnection implements ServerConnectionLike {
     this.authenticate = options.authenticate ?? ((context) => ({ clientId: context.hello.clientId, authScope: "none" }));
     this.dispatcher = createOperationDispatcher(options);
 		this.onClosed = connectionOptions.onClosed;
+		this.onDeliveryDiagnostic = connectionOptions.onDeliveryDiagnostic;
+		this.outbound = new OutboundDeliveryPump(
+			transport,
+			{ maxQueuedBytes: options.limits?.maxQueuedBytes ?? DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes },
+			(error, snapshot) => this.handleOutboundFailure(error, snapshot),
+		);
   }
 
   get state(): State { return this.currentState; }
@@ -75,7 +89,17 @@ export class ServerConnection implements ServerConnectionLike {
   async start(signal?: AbortSignal): Promise<void> {
     if (this.currentState !== "new") return;
     this.currentState = "handshaking";
-    await this.transport.open(signal);
+		try {
+			await this.transport.open(signal);
+		} catch (cause) {
+			const reason = { code: "unavailable" as const, message: "transport failed to open", cause };
+			this.outbound.close(reason);
+			this.abortController.abort(cause);
+			this.cleanupConnection();
+			this.currentState = "closed";
+			this.reportDeliveryDiagnostic({ phase: "closed", code: reason.code, queuedBytes: 0, queuedFrames: 0 });
+			throw cause;
+		}
     this.readerTask = this.readLoop();
     await this.readerTask;
   }
@@ -96,12 +120,22 @@ export class ServerConnection implements ServerConnectionLike {
   }
 
   async close(reason?: ReturnType<typeof protocolError>): Promise<void> {
-    if (this.currentState === "closed") return;
-    this.currentState = "closing";
-    this.abortController.abort(reason === undefined ? undefined : new Error(reason.message));
-    this.cleanupConnection();
-    await this.transport.close({ code: reason?.code === "unauthorized" ? "unauthorized" : "normal", ...(reason?.message === undefined ? {} : { message: reason.message }) });
-    this.currentState = "closed";
+		if (this.closeTask !== undefined) return this.closeTask;
+		if (this.currentState === "closed") return;
+		const closeReason = { code: reason?.code === "unauthorized" ? "unauthorized" as const : "normal" as const, ...(reason?.message === undefined ? {} : { message: reason.message }) };
+		this.currentState = "closing";
+		this.outbound.close(closeReason);
+		this.abortController.abort(reason === undefined ? undefined : new Error(reason.message));
+		this.cleanupConnection();
+		this.closeTask = (async () => {
+			try {
+				await this.transport.close(closeReason);
+			} finally {
+				this.currentState = "closed";
+				this.reportDeliveryDiagnostic({ phase: "closed", code: closeReason.code, queuedBytes: 0, queuedFrames: 0 });
+			}
+		})();
+		return this.closeTask;
   }
 
   private async readLoop(): Promise<void> {
@@ -130,15 +164,20 @@ export class ServerConnection implements ServerConnectionLike {
         }
       }
     } finally {
-      if (this.currentState !== "closing") this.abortController.abort(new Error("transport disconnected"));
+		const disconnected = this.currentState !== "closing";
+		if (disconnected) {
+			const reason = { code: "unavailable" as const, message: "transport disconnected" };
+			this.outbound.close(reason);
+			this.abortController.abort(new Error(reason.message));
+		}
       await Promise.all([...inFlight]);
-      if (this.currentState !== "closing") {
+		if (disconnected && this.currentState !== "closing") {
         this.cleanupConnection();
         this.currentState = "closed";
+			this.reportDeliveryDiagnostic({ phase: "closed", code: "unavailable", queuedBytes: 0, queuedFrames: 0 });
       }
     }
-		if (this.liveEventSendFailure !== undefined) throw this.liveEventSendFailure;
-  }
+	}
 
   private async processEnvelope(envelope: Envelope, body: Uint8Array): Promise<void> {
     validateEnvelope(envelope);
@@ -279,7 +318,7 @@ export class ServerConnection implements ServerConnectionLike {
       const projected = this.projectEvent(value);
       if (projected === undefined || !matchesEvent(projected, this.authenticatedClient?.clientId, event)) return;
       if (replaying) pending.push(projected);
-      else void this.send(eventEnvelope(subscriptionId, projected)).catch((error) => this.failLiveEventSend(error));
+      else void this.send(eventEnvelope(subscriptionId, projected)).catch(() => undefined);
     };
     const unsubscribe = this.journal.subscribe(listener);
     this.eventSubscriptions.set(subscriptionId, unsubscribe);
@@ -310,12 +349,38 @@ export class ServerConnection implements ServerConnectionLike {
     return { connectionId: this.connectionId, clientId: this.authenticatedClient?.clientId ?? "unknown", authScope: this.authenticatedClient?.authScope ?? "none", ...(this.authenticatedClient?.claims === undefined ? {} : { claims: this.authenticatedClient.claims }), signal, ...(request.deadlineMs === undefined ? {} : { deadline: Date.now() + request.deadlineMs }), ...(request.type === "command" && request.expectedRevision === undefined ? {} : request.type === "command" ? { expectedRevision: request.expectedRevision } : {}) };
   }
 
-  private async send(envelope: Envelope, body: Uint8Array = new Uint8Array()): Promise<void> { await this.transport.send(encodeFrame(envelope, body, this.options.limits)); }
+  private async send(envelope: Envelope, body: Uint8Array = new Uint8Array()): Promise<void> {
+		await this.outbound.send(encodeFrame(envelope, body, this.options.limits));
+	}
 
-	private failLiveEventSend(error: unknown): void {
-		if (this.liveEventSendFailure !== undefined || this.currentState !== "open") return;
-		this.liveEventSendFailure = error instanceof Error ? error : new Error("event delivery failed");
-		void this.close(protocolError("unavailable", "event delivery failed")).catch(() => undefined);
+	private handleOutboundFailure(error: OutboundDeliveryError, snapshot: OutboundDeliverySnapshot): void {
+		this.reportDeliveryDiagnostic({
+			phase: "failure",
+			code: error.reason.code,
+			queuedBytes: snapshot.queuedBytes,
+			queuedFrames: snapshot.queuedFrames,
+		});
+		void this.failConnection(error).catch(() => undefined);
+	}
+
+	private async failConnection(error: OutboundDeliveryError): Promise<void> {
+		if (this.closeTask !== undefined || this.currentState === "closed") return this.closeTask;
+		this.currentState = "closing";
+		this.abortController.abort(error);
+		this.cleanupConnection();
+		this.closeTask = (async () => {
+			try {
+				await this.transport.close(error.reason);
+			} finally {
+				this.currentState = "closed";
+				this.reportDeliveryDiagnostic({ phase: "closed", code: error.reason.code, queuedBytes: 0, queuedFrames: 0 });
+			}
+		})();
+		return this.closeTask;
+	}
+
+	private reportDeliveryDiagnostic(diagnostic: Parameters<NonNullable<ConnectionOptions["onDeliveryDiagnostic"]>>[0]): void {
+		try { this.onDeliveryDiagnostic?.(diagnostic); } catch { /* Diagnostic sinks cannot affect connection lifecycle. */ }
 	}
 
   private projectEvent(event: OrderedEvent): OrderedEvent | undefined {

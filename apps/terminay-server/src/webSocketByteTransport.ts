@@ -17,13 +17,23 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 	>();
 	private stateValue: TransportState = 'opening';
 	private buffered = 0;
+	private terminalReason: TransportCloseReason | undefined;
 
 	constructor(
 		private readonly socket: WebSocket,
 		private readonly maxFrameBytes = DEFAULT_PROTOCOL_LIMITS.maxFrameBytes,
+		private readonly maxQueuedBytes = DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes,
 	) {
+		if (!Number.isSafeInteger(maxFrameBytes) || maxFrameBytes <= 0)
+			throw new RangeError('remote stream frame limit is invalid');
+		if (!Number.isSafeInteger(maxQueuedBytes) || maxQueuedBytes < maxFrameBytes)
+			throw new RangeError('remote stream queue limit is invalid');
 		this.socket.on('message', (data) => this.receive(data));
-		this.socket.once('close', () => this.finishClosed({ code: 'normal' }));
+		this.socket.once('close', (code, reason) =>
+			this.finishClosed(
+				this.terminalReason ?? socketCloseReason(code, reason),
+			),
+		);
 		this.socket.once('error', (cause) =>
 			this.fail({ code: 'unavailable', message: 'remote stream failed', cause }),
 		);
@@ -38,7 +48,7 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 		};
 	}
 	get queuedBytes(): number {
-		return this.socket.bufferedAmount;
+		try { return this.readBufferedAmount(); } catch { return 0; }
 	}
 	get bufferedBytes(): number {
 		return this.buffered;
@@ -60,27 +70,37 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 	): Promise<void> {
 		if (options.signal?.aborted) throw options.signal.reason;
 		validateTransportFrame(frame, this.maxFrameBytes);
-		if (
-			this.stateValue !== 'open' ||
-			this.socket.readyState !== WebSocket.OPEN
-		)
-			throw new Error(`remote stream is ${this.stateValue}`);
+		await this.waitForWritable(frame.byteLength, options.signal);
+		this.assertWritable();
 		await new Promise<void>((resolve, reject) => {
-			this.socket.send(frame, { binary: true }, (error) => {
-				if (error) reject(error);
-				else resolve();
-			});
+			try {
+				this.socket.send(frame, { binary: true }, (error) => {
+					if (error) {
+						this.fail({ code: 'unavailable', message: 'remote stream send failed', cause: error });
+						reject(error);
+					} else resolve();
+				});
+			} catch (cause) {
+				this.fail({ code: 'unavailable', message: 'remote stream send failed', cause });
+				reject(cause);
+			}
 		});
 	}
 
-	async waitForWritable(_requiredBytes = 0, signal?: AbortSignal): Promise<void> {
+	async waitForWritable(requiredBytes = 1, signal?: AbortSignal): Promise<void> {
 		if (signal?.aborted) throw signal.reason;
-		if (this.stateValue !== 'open')
-			throw new Error(`remote stream is ${this.stateValue}`);
+		if (!Number.isSafeInteger(requiredBytes) || requiredBytes < 1 || requiredBytes > this.maxQueuedBytes)
+			throw new RangeError('remote stream writable size is invalid');
+		while (this.readBufferedAmount() + requiredBytes > this.maxQueuedBytes) {
+			this.assertWritable();
+			await abortableDelay(signal);
+		}
+		this.assertWritable();
 	}
 
 	async close(reason: TransportCloseReason = { code: 'normal' }): Promise<void> {
-		if (this.stateValue === 'closed') return;
+		if (this.stateValue === 'closed' || this.stateValue === 'failed') return;
+		this.terminalReason = reason;
 		this.transition('closing', reason);
 		if (
 			this.socket.readyState === WebSocket.OPEN ||
@@ -135,12 +155,14 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 
 	private fail(reason: TransportCloseReason): void {
 		if (this.stateValue === 'closed' || this.stateValue === 'failed') return;
+		this.terminalReason = reason;
 		this.finishIncoming();
 		this.transition('failed', reason);
+		try { this.socket.close(closeCode(reason), reason.message?.slice(0, 120)); } catch { /* best effort after failure */ }
 	}
 
 	private finishClosed(reason: TransportCloseReason): void {
-		if (this.stateValue === 'closed') return;
+		if (this.stateValue === 'closed' || this.stateValue === 'failed') return;
 		this.finishIncoming();
 		this.transition('closed', reason);
 	}
@@ -154,7 +176,26 @@ export class ServerWebSocketByteTransport implements ByteTransport {
 
 	private transition(state: TransportState, reason?: TransportCloseReason): void {
 		this.stateValue = state;
-		for (const listener of this.listeners) listener(state, reason);
+		for (const listener of [...this.listeners]) {
+			try { listener(state, reason); } catch { /* State observers cannot break transport lifecycle. */ }
+		}
+	}
+
+	private assertWritable(): void {
+		if (this.stateValue === 'open' && this.socket.readyState === WebSocket.OPEN) return;
+		if (this.stateValue === 'open') {
+			this.fail({ code: 'unavailable', message: 'remote stream underlying socket is not open' });
+		}
+		throw new Error(`remote stream is ${this.stateValue}`);
+	}
+
+	private readBufferedAmount(): number {
+		const value = this.socket.bufferedAmount;
+		if (!Number.isSafeInteger(value) || value < 0 || value > this.maxQueuedBytes * 2) {
+			this.fail({ code: 'resource', message: 'remote stream buffered amount is invalid' });
+			throw new Error('remote stream buffered amount is invalid');
+		}
+		return value;
 	}
 }
 
@@ -171,4 +212,29 @@ function closeCode(reason: TransportCloseReason): number {
 	if (reason.code === 'protocol_error') return 1002;
 	if (reason.code === 'unavailable') return 1013;
 	return 1000;
+}
+
+function socketCloseReason(code: number, reason: Buffer): TransportCloseReason {
+	const message = reason.toString('utf8').slice(0, 120);
+	return {
+		code: code === 1000 ? 'normal' : 'unavailable',
+		...(message === '' ? {} : { message }),
+	};
+}
+
+async function abortableDelay(signal?: AbortSignal): Promise<void> {
+	if (signal?.aborted) throw signal.reason;
+	await new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(done, 5);
+		function done(): void {
+			signal?.removeEventListener('abort', abort);
+			resolve();
+		}
+		function abort(): void {
+			clearTimeout(timer);
+			signal?.removeEventListener('abort', abort);
+			reject(signal?.reason);
+		}
+		signal?.addEventListener('abort', abort, { once: true });
+	});
 }

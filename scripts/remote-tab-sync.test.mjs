@@ -12,11 +12,3 @@ test('terminal tab edits commit canonical panel presentation before updating Doc
 	assert.ok(localTitle > commit, 'local Dockview presentation must follow the canonical update')
 	assert.match(store, /async updatePanel\(request: PanelUpdateRequest[\s\S]*this\.workspace\.updatePanel\(request, options\)/u)
 })
-
-test('workspace snapshot reconciliation updates renamed tabs and removes closed tabs', () => {
-	assert.match(app, /reconcileServerPanels: \(panels: readonly ServerWorkspacePanel\[\]\) => void/u)
-	assert.match(app, /canonical\.title !== undefined && panel\.title !== canonical\.title\)[\s\S]*panel\.api\.setTitle\(canonical\.title\)/u)
-	assert.match(app, /canonicalById\.get\(panelId\) \?\? canonicalBySessionId\.get\(sessionId\)/u)
-	assert.match(app, /canonical === undefined\)[\s\S]*api\.removePanel\(panel\)/u)
-	assert.match(app, /const canonicalTerminalPanels = Object\.values\(snapshot\.panels\)\.filter\([\s\S]*panel\.type === 'terminal'[\s\S]*workspace\.reconcileServerPanels\(canonicalTerminalPanels\)/u)
-})

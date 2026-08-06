@@ -62,6 +62,46 @@ test("protocol terminal creation registers its project and session with the work
   }
 });
 
+test("a terminal panel created by one client converges to a second client with identical panel and session ids", async () => {
+  const workspace = new WorkspaceStore(createInitialWorkspace("two-client-workspace-server"));
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    serverId: "two-client-workspace-server",
+    serverVersion: "test",
+    capabilities: ["workspace", "terminal"],
+    ptyFactory: createPtyFactory(),
+    workspace,
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "write" }),
+  });
+  const creator = await connect(composition, "creator-client");
+  const observer = await connect(composition, "observer-client");
+  const subscription = await observer.client.subscribe("workspace.changed");
+  const observedRevision = new Promise((resolve) => {
+    subscription.onEvent((event) => { if (event.payload.revision >= 2) resolve(event.payload.revision); });
+  });
+  try {
+    const before = await new WorkspaceClient(observer.client).snapshot();
+    const created = await creator.client.command("terminal.create", {
+      projectId: "project-a",
+      cwd: "/repo/a",
+      cols: 80,
+      rows: 24,
+    }, { commandId: "create-shared-terminal" });
+    const revision = await observedRevision;
+    const observed = await new WorkspaceClient(observer.client).delta(before.revision, before.cursor);
+    const panel = Object.values(observed.state.panels).find((candidate) => candidate.sessionId === created.result.sessionId);
+    assert.equal(revision, observed.revision);
+    assert.equal(panel.id, `p:${created.result.sessionId}`);
+    assert.equal(panel.sessionId, created.result.sessionId);
+    assert.equal(observed.state.terminalSessions[created.result.sessionId].id, created.result.sessionId);
+  } finally {
+    await subscription.unsubscribe().catch(() => undefined);
+    await Promise.all([creator.client.close().catch(() => undefined), observer.client.close().catch(() => undefined)]);
+    await Promise.all([creator.serverTask.catch(() => undefined), observer.serverTask.catch(() => undefined)]);
+    await composition.shutdown();
+  }
+});
+
 test("authenticated WorkspaceClient project.move commits through the real server transport and preserves panel/session identity", async () => {
   const workspace = new WorkspaceStore(createInitialWorkspace("move-server"));
   const defaultViewId = workspace.state.viewOrder[0];
@@ -228,7 +268,7 @@ test("project-scoped workspace queries never disclose sibling project or termina
     const client = new WorkspaceClient(connected.client);
     const snapshot = await client.snapshot();
     const delta = await client.delta(0, "0");
-    for (const value of [snapshot, delta]) {
+    for (const value of [snapshot, delta.state]) {
       assert.deepEqual(Object.keys(value.projects), ["project-a"]);
       assert.deepEqual(Object.keys(value.terminalSessions), ["session-a"]);
       assert.equal(JSON.stringify(value).includes("project-b"), false);

@@ -106,6 +106,14 @@ cleanup rather than a workspace or PTY lifecycle command.
   explicit. Otherwise the server returns a conflict with the current revision.
 - Clients that miss events request a delta from a known revision or a fresh
   snapshot.
+- A workspace delta has one versioned wire shape containing the resulting
+  project-scoped state and the ordered change records since the requested
+  revision. Clients validate that envelope, advance atomically to its embedded
+  state, and never parse the envelope itself as a complete workspace snapshot.
+- Snapshot and delta validation failures leave the last confirmed projection
+  marked stale and trigger a bounded full-snapshot recovery. They are surfaced
+  as connection/reconciliation failures rather than discarded while the UI
+  continues to present stale state as current.
 - Optimistic UI is allowed only when rollback is deterministic; destructive
   filesystem, Git, secret, recording, and terminal-lifecycle actions wait for
   server confirmation.
@@ -270,6 +278,12 @@ interrupted or exited.
 - Closing or reloading the owning Electron window does not kill its PTYs.
 - Two connected clients receive one ordered result for each committed workspace
   command and recover cleanly from a revision conflict.
+- When either client creates, closes, moves, or activates a panel, the other
+  client reaches the same workspace revision and panel/session identities
+  without polling, reload, or an independently manufactured renderer panel.
+- A malformed, stale, or incompatible delta cannot partially mutate a client
+  projection; the client reports stale state and recovers from a complete
+  authorized snapshot.
 - Moving a project between logical views preserves panel/session ids and
   service scope.
 - Files, Git, recordings, agents, MCP, macros, and settings work through the

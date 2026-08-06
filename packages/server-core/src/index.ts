@@ -132,5 +132,6 @@ export * from "./recordingService/index.js";
 export * from "./gitService/index.js";
 export * from "./migration/index.js";
 export * from "./diagnostics.js";
+export * from "./outboundDelivery.js";
 export * from "./remote/index.js";
 export * from "./uiBundle/index.js";

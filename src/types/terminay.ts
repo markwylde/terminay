@@ -649,6 +649,10 @@ export interface McpInstallActionResult {
 }
 
 export interface TerminayTestApi {
+  /** Test-only opaque LAN application-transport identifiers. */
+  listRemoteProtocolConnections: () => Promise<readonly string[]>
+  /** Test-only server-side failure for one exact LAN application transport. */
+  failRemoteProtocolConnection: (connectionId: string) => Promise<void>
   /** Test-only server-owned terminal creation. Never exposed in production. */
   createServerTerminal: (options?: { cwd?: string; projectId?: string }) => Promise<{ id: string }>
   /** Test-only input through the canonical embedded server terminal authority. */

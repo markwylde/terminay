@@ -3,6 +3,7 @@ import { TerminalServiceError } from "./errors.js";
 import { TerminalInputSourceAdapter, type TerminalInputSource } from "./inputSources.js";
 import { TerminalService } from "./service.js";
 import { TerminalServiceAdapter, type TerminalAttachment } from "./adapter.js";
+import { TerminalPresentationLeaseAuthority, type TerminalPresentationLeaseState } from "./presentationLease.js";
 import type {
   TerminalAuthorization,
   TerminalEvent,
@@ -34,6 +35,7 @@ export interface TerminalOperationRegistryOptions {
 	readonly allowUnresolvedTestSessions?: boolean;
   readonly attachments?: TerminalServiceAdapter;
   readonly inputSources?: TerminalInputSourceAdapter;
+  readonly presentations?: TerminalPresentationLeaseAuthority;
   /** The journal must also be installed on the transport's server core. */
   readonly eventJournal: OrderedEventJournalLike;
   /** Reconcile a newly-created PTY with other server-owned authorities before
@@ -67,6 +69,9 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
   const inputSources = options.inputSources ?? new TerminalInputSourceAdapter(options.service);
   const protocolAttachments = new Map<string, ProtocolAttachment>();
   const byClientSession = new Map<string, string>();
+  const presentations = options.presentations ?? new TerminalPresentationLeaseAuthority({
+    onChanged: (state, action) => publishPresentationState(state, action),
+  });
 
   const commands = {
     "terminal.create": (request: CommandRequest) => create(request),
@@ -75,6 +80,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     "terminal.ack": (request: CommandRequest) => acknowledge(request),
     "terminal.input": (request: CommandRequest) => input(request),
     "terminal.resize": (request: CommandRequest) => resize(request),
+    "terminal.presentation": (request: CommandRequest) => presentation(request),
     "terminal.kill": (request: CommandRequest) => kill(request),
     "terminal.detach": (request: CommandRequest) => detach(request),
   };
@@ -98,6 +104,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         "terminal.ack": { scope: "read" },
         "terminal.input": { scope: "write" },
         "terminal.resize": { scope: "write" },
+        "terminal.presentation": { scope: "write" },
         "terminal.kill": { scope: "write" },
         "terminal.detach": { scope: "read" },
       },
@@ -116,6 +123,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       // concerns, but both are consequences of the same authenticated client
       // lifecycle event; neither affects the server-owned PTY.
       for (const identity of releasedIdentities.values()) inputSources.releaseClient(identity, clientId);
+      for (const identity of releasedIdentities.values()) presentations.releaseClient(identity, clientId);
     },
   };
 
@@ -239,6 +247,8 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     const identity = parseIdentity(payload.identity, options.service.serverId);
     const clientId = assertClient(request.context.clientId, payload.clientId);
     const requestedFromPosition = position(payload.fromPosition ?? 0);
+    const freshPresentation = payload.freshPresentation === true;
+    if (freshPresentation && requestedFromPosition !== 0) throw new TerminalServiceError("invalid_position", "a fresh terminal presentation must start at position zero");
     const requestedInitialReplayBytes = payload.maxInitialReplayBytes === undefined
       ? undefined
       : position(payload.maxInitialReplayBytes);
@@ -247,16 +257,21 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       : Math.min(requestedInitialReplayBytes, MAX_INITIAL_REPLAY_BYTES);
     const authorization = authorizationFor(identity, request, "read");
     const snapshot = options.service.getSession(identity);
-    const fromPosition = snapshot === undefined || maxInitialReplayBytes === undefined
-      ? requestedFromPosition
-      : Math.max(
-          requestedFromPosition,
-          snapshot.replayFrom,
-          snapshot.outputPosition - maxInitialReplayBytes,
-        );
+    // A fresh emulator is valid only when the complete bounded transcript from
+    // position zero is available. Reconnecting emulators may resume from their
+    // exact rendered position. Never manufacture an arbitrary byte suffix.
+    const presentationUnavailable = snapshot !== undefined && (
+      requestedFromPosition < snapshot.replayFrom ||
+      ((freshPresentation || requestedFromPosition === 0) && snapshot.outputPosition > maxInitialReplayBytes)
+    );
+    const fromPosition = presentationUnavailable && snapshot !== undefined
+      ? snapshot.outputPosition
+      : requestedFromPosition;
     const key = sessionKey(clientId, identity);
     const priorId = byClientSession.get(key);
     if (priorId !== undefined) {
+      const prior = protocolAttachments.get(priorId);
+      if (prior !== undefined) presentations.releaseAttachment({ ...prior.identity, clientId: prior.clientId, attachmentId: prior.attachment.attachmentId });
       attachments.detach(priorId);
       protocolAttachments.delete(priorId);
     }
@@ -274,7 +289,10 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       attachmentId: attachment.attachmentId,
       fromPosition: attachment.snapshot().fromPosition,
       position: attachment.position,
-      events: compactInitialEvents(attachment.initialEvents).map((event) => terminalEventPayload(event, attachment.attachmentId, clientId)),
+      events: presentationUnavailable && snapshot !== undefined
+        ? [{ clientId, attachmentId: attachment.attachmentId, type: "presentation_unavailable", ...identity, requestedFromPosition, replayFrom: snapshot.replayFrom, outputPosition: snapshot.outputPosition }]
+        : compactInitialEvents(attachment.initialEvents).map((event) => terminalEventPayload(event, attachment.attachmentId, clientId)),
+      presentation: presentationPayload(presentations.state(identity), clientId, attachment.attachmentId),
     };
   }
 
@@ -290,6 +308,10 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     const payload = objectPayload(request.envelope.payload);
     const bytes = decodeBase64(payload.dataBase64);
     const source = parseSource(payload.source ?? "remote");
+    if (source === "macro" || source === "dictation" || source === "mcp") {
+      throw new TerminalServiceError("forbidden", "server-authorized terminal sources cannot use a presentation attachment", { reason: "source_boundary" });
+    }
+    presentations.assertHolder({ ...value.identity, clientId: value.clientId, attachmentId: value.attachment.attachmentId });
     const result = await inputSources.write({
       identity: value.identity,
       clientId: value.clientId,
@@ -306,6 +328,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     const payload = objectPayload(request.envelope.payload);
     const cols = positiveDimension(payload.cols, "cols");
     const rows = positiveDimension(payload.rows, "rows");
+    const lease = presentations.assertHolder({ ...value.identity, clientId: value.clientId, attachmentId: value.attachment.attachmentId });
     const result = await inputSources.resize({
       identity: value.identity,
       clientId: value.clientId,
@@ -316,7 +339,29 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       rows,
       authorization: authorizationFor(value.identity, request, "write"),
     });
-    return { attachmentId: value.attachment.attachmentId, cols, rows, ...(result.ownership === undefined ? {} : { leaseExpiresAt: result.ownership.leaseExpiresAt }) };
+    return { attachmentId: value.attachment.attachmentId, cols, rows, presentation: presentationPayload(lease, value.clientId, value.attachment.attachmentId), ...(result.ownership === undefined ? {} : { leaseExpiresAt: result.ownership.leaseExpiresAt }) };
+  }
+
+  function presentation(request: CommandRequest): JsonValue {
+    const value = attachmentFor(request, "write");
+    const payload = objectPayload(request.envelope.payload);
+    const mode = payload.mode;
+    if (mode !== "acquire" && mode !== "renew" && mode !== "takeover" && mode !== "release" && mode !== "revoke") {
+      throw new TerminalServiceError("invalid_identity", "terminal presentation lease mode is invalid");
+    }
+    const previous = presentations.state(value.identity);
+    const state = presentations.change(mode, {
+      ...value.identity,
+      clientId: value.clientId,
+      attachmentId: value.attachment.attachmentId,
+    }, {
+      ...(payload.leaseMs === undefined ? {} : { leaseMs: position(payload.leaseMs) }),
+      admin: request.context.authScope === "admin",
+    });
+    if (mode === "takeover" && previous.holder !== undefined && previous.holder.clientId !== value.clientId) {
+      inputSources.releaseClient(value.identity, previous.holder.clientId);
+    }
+    return { result: presentationPayload(state, value.clientId, value.attachment.attachmentId) };
   }
 
   async function kill(request: CommandRequest): Promise<JsonValue> {
@@ -333,6 +378,7 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     protocolAttachments.delete(value.attachment.attachmentId);
     const key = sessionKey(value.clientId, value.identity);
     if (byClientSession.get(key) === value.attachment.attachmentId) byClientSession.delete(key);
+    presentations.releaseAttachment({ ...value.identity, clientId: value.clientId, attachmentId: value.attachment.attachmentId });
     // A detach is the normal panel lifecycle boundary (tab close, server
     // switch, or renderer replacement), not merely an output subscription
     // change. Leaving its resize lease behind makes the next authenticated
@@ -381,6 +427,30 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     authorizationFor(value.identity, request, required);
     return value;
   }
+
+  function publishPresentationState(state: TerminalPresentationLeaseState, action: string): void {
+    for (const value of protocolAttachments.values()) {
+      if (!sameIdentity(value.identity, state)) continue;
+      options.eventJournal.append(TERMINAL_EVENT, {
+        clientId: value.clientId,
+        attachmentId: value.attachment.attachmentId,
+        type: "presentation",
+        action,
+        ...presentationPayload(state, value.clientId, value.attachment.attachmentId),
+      });
+    }
+  }
+}
+
+function presentationPayload(state: TerminalPresentationLeaseState, clientId: string, attachmentId: string): Record<string, JsonValue> {
+  return {
+    serverId: state.serverId,
+    projectId: state.projectId,
+    sessionId: state.sessionId,
+    revision: state.revision,
+    role: state.holder?.clientId === clientId && state.holder.attachmentId === attachmentId ? "controller" : "read_only",
+    ...(state.holder === undefined ? {} : { holder: { ...state.holder } }),
+  };
 }
 
 function authorizationFor(identity: TerminalIdentity, request: CommandRequest | QueryRequest, required: "read" | "write"): TerminalAuthorization {

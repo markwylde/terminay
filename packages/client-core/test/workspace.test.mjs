@@ -5,7 +5,7 @@ import { ClientError, WorkspaceClient } from "../dist/index.js";
 test("workspace facade keeps panel activation on the canonical server operation", async () => {
   const calls = [];
   const fake = {
-    async query(operation, payload) { calls.push([operation, payload]); return { result: operation === "workspace.delta" ? { state: { schemaVersion: 1, serverId: "server-a", revision: 3, cursor: "3" }, events: [] } : { schemaVersion: 1, serverId: "server-a", revision: 2, cursor: "2" } }; },
+    async query(operation, payload) { calls.push([operation, payload]); return { result: operation === "workspace.delta" ? deltaEnvelope(2, 3) : { schemaVersion: 1, serverId: "server-a", revision: 2, cursor: "2" } }; },
     async command(operation, payload) { calls.push([operation, payload]); return { result: { revision: 3 } }; },
   };
   const workspace = new WorkspaceClient(fake);
@@ -89,7 +89,7 @@ test("workspace delta accepts only the canonical revision cursor and snapshot sh
   const workspace = new WorkspaceClient({
     async query(operation, payload) {
       calls.push([operation, payload]);
-      return { result: { state: { schemaVersion: 1, serverId: "server-a", revision: 4, cursor: "3" }, events: [] } };
+      return { result: { ...deltaEnvelope(3, 4), state: { schemaVersion: 1, serverId: "server-a", revision: 4, cursor: "3" } } };
     },
     async command() { throw new Error("not reached"); },
   });
@@ -101,6 +101,39 @@ test("workspace delta accepts only the canonical revision cursor and snapshot sh
   await assert.rejects(workspace.delta(3, "3"), /invalid workspace snapshot/);
   assert.deepEqual(calls, [["workspace.delta", { revision: 3, cursor: "3" }]]);
 });
+
+test("workspace facade preserves and validates the versioned delta envelope", async () => {
+  const workspace = new WorkspaceClient({
+    async query() { return { result: deltaEnvelope(4, 6, [
+      { revision: 5, cursor: "5", commandId: "command-5", type: "panel.create", changedIds: ["panel-b"] },
+      { revision: 6, cursor: "6", commandId: "command-6", type: "panel.activate", changedIds: ["panel-b"] },
+    ]) }; },
+  });
+  const delta = await workspace.delta(4, "4");
+  assert.equal(delta.fromRevision, 4);
+  assert.deepEqual(delta.events.map((event) => event.revision), [5, 6]);
+
+  const malformed = new WorkspaceClient({
+    async query() { return { result: deltaEnvelope(4, 6, [
+      { revision: 6, cursor: "6", commandId: "command-6", type: "panel.activate", changedIds: ["panel-b"] },
+      { revision: 5, cursor: "5", commandId: "command-5", type: "panel.create", changedIds: ["panel-b"] },
+    ]) }; },
+  });
+  await assert.rejects(malformed.delta(4, "4"), /invalid workspace delta event/);
+});
+
+function deltaEnvelope(fromRevision, revision, events = []) {
+  return {
+    deltaVersion: 1,
+    serverId: "server-a",
+    fromRevision,
+    fromCursor: String(fromRevision),
+    revision,
+    cursor: String(revision),
+    state: { schemaVersion: 1, serverId: "server-a", revision, cursor: String(revision) },
+    events,
+  };
+}
 
 test("workspace facade binds a project move acknowledgement to its canonical request identity", async () => {
   const calls = [];

@@ -88,6 +88,15 @@ overstates its requested replay budget, and coalesces contiguous replay chunks
 to avoid per-event metadata exhausting that budget. Live output continues on
 the ordered terminal event stream after attachment.
 
+An attach or resync begins from a valid terminal presentation boundary. The
+server never asks a fresh emulator to reconstruct a screen from an arbitrary
+byte suffix that may begin inside an escape sequence or depend on discarded
+terminal mode history. A bounded checkpoint or equivalent canonical screen
+state is tied to an exact output position; live raw bytes continue from that
+position without a gap or duplicate. If no valid boundary is retained, the
+client receives an explicit unavailable/resync state instead of a plausible but
+corrupted terminal display.
+
 The incremental panel migration uses `TerminayTerminalPanelClient`, a
 transport-neutral view over that attachment. It exposes raw-byte output,
 exit/resync notifications, and attachment-scoped input, resize, kill, and
@@ -123,10 +132,32 @@ explicit lease: one client claims `wide`, `narrow`, or `mobile` dimensions,
 the owner updates or releases them, and an expired/disconnected owner no
 longer blocks another client from claiming the session.
 
+Each live session also has one interactive presentation lease shared by
+keyboard/paste input, viewport ownership, and emulator-generated protocol
+responses. Only its current holder may forward an xterm `onData` stream into
+the PTY. Other authorized clients remain live read-only observers and can
+request an explicit takeover; focus, attachment, or receipt of output alone
+does not silently seize control. Handoff, disconnect, expiry, and revocation
+release the lease predictably and are visible to every attached client.
+
+Server-authorized non-interactive sources such as macros, dictation, and MCP
+retain their own scoped command authorization and enter the same ordered input
+queue, but they do not acquire presentation ownership. Automatic terminal
+replies are never identified by filtering particular escape strings: gating the
+complete emulator input stream prevents two renderers from answering one PTY
+query and injecting duplicate control responses.
+
 ## Acceptance outcomes
 
 - Terminal identity survives panel moves and native-window adoption.
 - Resize and input reach only the intended live PTY.
+- With Desktop and browser clients attached to one session, both render every
+  output byte in order, only the visible lease holder can produce interactive
+  or emulator-generated input, and explicit takeover transfers that authority
+  without duplicated terminal-query responses.
+- A fresh client and a client recovering after a replay gap hydrate from a
+  valid presentation boundary and then receive uninterrupted live output; they
+  never start inside a partial ANSI/OSC sequence.
 - An exited terminal is clearly represented and cannot be accidentally reused as
   a live session.
 - Reconnect resumes from a known output position without duplicating the PTY or

@@ -136,7 +136,7 @@ test('server-backed TerminalPanel routes raw stream events through xterm and the
 			serverPath.indexOf('for (const event of attachment.initialEvents)'),
 		'the lossless catch-all listener must be installed before initial replay is consumed',
 	);
-	assert.match(serverPath, /attachServerTerminal\(event\.replayFrom, true\)/);
+	assert.match(serverPath, /attachServerTerminal\(0, true\)/);
 	assert.match(
 		serverPath,
 		/serverInputQueue = new ServerTerminalInputQueue\(failServerTransport\)/,
@@ -190,7 +190,7 @@ test('connected terminal pointerdown does not override xterm focus or selection'
 test('server-backed input and resize fail closed without terminal application IPC', () => {
 	assert.match(
 		panelInteractionHelpers,
-		/if \(!useServerTerminal \|\| serverAttachmentFailed\) return/,
+		/if \(!useServerTerminal \|\| serverAttachmentFailed \|\| !terminalPresentationControllerRef\.current\) return/,
 	);
 	assert.match(panelInteractionHelpers, /serverInputQueue\?\.enqueue\(data\)/);
 	assert.match(panelInteractionHelpers, /panelAttachment\.resize\(next\)/);
@@ -342,8 +342,10 @@ test('server-owned terminal panels keep the server panel id through close', () =
 		);
 		assert.match(app, /acceptServerTerminal\(\s*serverPanel\.id,\s*session\.id,\s*serverPanel\.title,\s*serverPanel\.cwd,\s*\)/);
 		assert.match(app, /workspace\.acceptServerTerminal\(\s*panel\.id,\s*session\.id,\s*panel\.title,\s*panel\.cwd,\s*\)/);
-		assert.match(terminalPanel, /MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES = 64 \* 1024/);
+		assert.match(terminalPanel, /MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES = 32 \* 1024/);
 		assert.match(terminalPanel, /maxInitialReplayBytes: MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES/);
+		assert.match(terminalPanel, /freshPresentation: true/);
+		assert.match(terminalPanel, /complete safe recovery boundary is no longer retained/);
 	assert.match(app, /const panel = store\?\.snapshot\?\.panels\[panelId\]/);
 	assert.match(app, /void store\.closePanel\(panelId\)/);
 	assert.doesNotMatch(app, /pending:\$\{sessionId\}/);
