@@ -241,6 +241,23 @@ implement workspace behaviour. Local and WebRTC connections must therefore
 produce the same authorization, commands, events, errors, and reconnect
 semantics.
 
+Within each ordered traffic lane, one connection-owned outbound pump serializes
+accepted frames, observes transport backpressure, and preserves application
+order across command results, subscription replay, and live events. Feature
+listeners never launch an unobserved transport send. Once the underlying
+transport stops accepting frames, the connection atomically stops admission,
+rejects or cancels queued sends with one typed reason, cleans up subscriptions,
+and closes. A send rejection is a connection failure; it never becomes an
+unhandled process rejection or leaves a logically open connection on a closed
+socket.
+
+Transport adapters keep their reported lifecycle synchronized with the
+underlying channel or socket. A closing, closed, or failed underlying stream is
+not reported as writable, and concurrent close/send activity has one
+deterministic outcome. Reconnect establishes a new connection and resumes only
+from confirmed workspace revisions and terminal positions; it does not reuse a
+half-closed transport.
+
 Remote channels may remain separated by traffic class so large asset/file
 transfers cannot block terminal control:
 
@@ -355,6 +372,9 @@ inspect the application protocol.
   is contained by the connection lifecycle, never becomes an unhandled host
   rejection, and does not terminate the server process, Desktop, another
   client, or the underlying PTY.
+- Loss of an outbound event stream is treated as loss of the connection even if
+  inbound bytes were recently accepted. The client never remains apparently
+  connected with silently frozen workspace or terminal subscriptions.
 - An incompatible protocol receives a clear version/capability error. Direct
   server URLs remain the recovery path because their UI ships with the server.
 - Host failure recovery exposes metadata for a direct server-bundled client:
@@ -366,6 +386,9 @@ inspect the application protocol.
   defaults.
 - Failure in files, Git, AI, recording, or one PTY does not take down the
   connection runtime or unrelated sessions.
+- Transport send failure closes only the affected connection, produces bounded
+  metadata-only diagnostics, and cannot terminate the server process or another
+  client's connection.
 
 ## Operational contract
 
