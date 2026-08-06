@@ -202,10 +202,13 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       throw new TerminalServiceError("invalid_identity", "terminal checkpoint identity is invalid");
     }
     authorizationFor(identity, request, "read");
-    const attachment = protocolAttachments.get(attachmentId);
-    if (attachment === undefined || attachment.clientId !== clientId || !sameIdentity(attachment.identity, identity)) {
-      throw new TerminalServiceError("forbidden", "terminal checkpoint attachment identity mismatch");
-    }
+    // The immutable checkpoint pin is the authority for this short binary
+    // handoff. Do not re-authorize it through protocolAttachments: a renderer
+    // can replace a panel after terminal.attach has bound the pin but before
+    // this query is dispatched, and that mutable registry may already describe
+    // the replacement attachment. fetch() validates the complete bound scope
+    // (server, project, session, client, attachment, and unpredictable pin id)
+    // before returning or consuming any bytes.
     const value = options.checkpoints.fetch({ ...identity, clientId, attachmentId, checkpointId });
     const body = checkpointBody(value.state, value.tail);
     if (body.byteLength !== value.byteLength || value.state.byteLength !== value.stateByteLength) {

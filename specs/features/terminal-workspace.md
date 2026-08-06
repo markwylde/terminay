@@ -106,6 +106,13 @@ position without a gap or duplicate. If no valid boundary is retained, the
 client receives an explicit unavailable/resync state instead of a plausible but
 corrupted terminal display.
 
+Checkpoint hydration is authorized by the immutable, one-use pin bound during
+attach to the exact server, project, session, client, and attachment. A mutable
+live-attachment registry is not a second authority for that binary handoff:
+rapid panel replacement or moving a terminal presentation between projects can
+change the live registry while the already-bound checkpoint query is in flight.
+The pin remains scoped and unguessable, and replacement releases stale pins.
+
 Workspace metadata and chrome are not terminal presentation lifecycles.
 Changing a project root, opening or closing a sidebar, resizing a window, and
 other layout-only updates preserve the mounted emulator, its attachment, and
