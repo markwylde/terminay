@@ -59,6 +59,13 @@ export class ServerTerminalInputQueue {
 		this.queuedBytes = 0
 	}
 
+	discardPending(): void {
+		if (this.closed) return
+		this.attachmentGeneration += 1
+		this.items.length = 0
+		this.queuedBytes = 0
+	}
+
 	private async pump(): Promise<void> {
 		if (this.pumping || this.closed) {
 			return
@@ -88,6 +95,13 @@ export class ServerTerminalInputQueue {
 					await attachment.write(item.data)
 				} catch (error) {
 					if (!this.closed && this.attachment === attachment && this.attachmentGeneration === generation) {
+						if (isTerminalPresentationOwnershipError(error)) {
+							// The server definitively rejected this write before PTY delivery
+							// because control changed after it was queued. This is normal
+							// read-only state, not a transport failure.
+							this.discardPending()
+							continue
+						}
 						// A failed terminal write has an unknown delivery outcome. Do not
 						// send later input and risk changing shell command order.
 						this.close()
@@ -107,4 +121,11 @@ export class ServerTerminalInputQueue {
 			}
 		}
 	}
+}
+
+export function isTerminalPresentationOwnershipError(error: unknown): boolean {
+	if (typeof error !== 'object' || error === null) return false
+	const candidate = error as { code?: unknown; details?: unknown }
+	if (candidate.code !== 'forbidden' || typeof candidate.details !== 'object' || candidate.details === null) return false
+	return (candidate.details as { reason?: unknown }).reason === 'presentation_owner'
 }
