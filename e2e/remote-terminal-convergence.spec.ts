@@ -91,6 +91,16 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 
 	try {
 		await connectBrowser(page, pairingUrl);
+		await page.evaluate(() => {
+			const state = window as Window & { __terminayConnectModalFlashed?: boolean };
+			state.__terminayConnectModalFlashed = false;
+			const observe = () => {
+				const dialog = document.querySelector('[role="dialog"][aria-labelledby="connect-server-heading"]');
+				if (dialog !== null) state.__terminayConnectModalFlashed = true;
+			};
+			new MutationObserver(observe).observe(document.body, { childList: true, subtree: true });
+			observe();
+		});
 		await expect(terminalTabs(mainWindow)).toHaveCount(1);
 		await expect(terminalTabs(page)).toHaveCount(1);
 
@@ -107,21 +117,17 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expect(terminalPanel(page, desktopSessionId)).toHaveCount(1);
 		const desktopPanel = terminalPanel(mainWindow, desktopSessionId);
 		const browserPanel = terminalPanel(page, desktopSessionId);
+		await expect(desktopPanel.locator('.terminal-presentation-control')).toHaveCount(0);
+		const desktopGeometry = await desktopPanel.evaluate((panel) => ({
+			panelWidth: panel.getBoundingClientRect().width,
+			screenWidth: panel.querySelector('.xterm-screen')?.getBoundingClientRect().width ?? 0,
+		}));
+		expect(desktopGeometry.screenWidth).toBeGreaterThan(desktopGeometry.panelWidth * 0.9);
 		await expect(
-			desktopPanel.getByText('Terminal read-only', { exact: true }),
+			browserPanel.getByText('Another device is controlling this terminal.', { exact: true }),
 		).toBeVisible();
-		await expect(
-			browserPanel.getByText('Terminal read-only', { exact: true }),
-		).toBeVisible();
-		await desktopPanel
-			.getByRole('button', { name: 'Take control of terminal' })
-			.click();
-		await expect(
-			desktopPanel.getByText('Terminal controller', { exact: true }),
-		).toBeVisible();
-		await expect(
-			browserPanel.getByText('Terminal read-only', { exact: true }),
-		).toBeVisible();
+		await expect(browserPanel.locator('.terminal-presentation-control')).toHaveCSS('left', '0px');
+		await expect(browserPanel.locator('.terminal-presentation-control')).toHaveCSS('right', '0px');
 
 		const proof = '__TERMINAY_SHARED_PTY_OUTPUT__';
 		const desktopInput = desktopPanel.locator('.xterm-helper-textarea');
@@ -161,13 +167,11 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expect(desktopPanel).not.toContainText(rejectedInput);
 
 		await browserPanel
-			.getByRole('button', { name: 'Take control of terminal' })
+			.getByRole('button', { name: 'Take back control of terminal' })
 			.click();
+		await expect(browserPanel.locator('.terminal-presentation-control')).toHaveCount(0);
 		await expect(
-			browserPanel.getByText('Terminal controller', { exact: true }),
-		).toBeVisible();
-		await expect(
-			desktopPanel.getByText('Terminal read-only', { exact: true }),
+			desktopPanel.getByText('Another device is controlling this terminal.', { exact: true }),
 		).toBeVisible();
 
 		const takeoverProof = '__TERMINAY_BROWSER_TAKEOVER_INPUT__';
@@ -219,6 +223,11 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 			.locator('.xterm-rows')
 			.innerText();
 		expect(resumedText.split(resumeProof)).toHaveLength(2);
+		expect(
+			await page.evaluate(
+				() => (window as Window & { __terminayConnectModalFlashed?: boolean }).__terminayConnectModalFlashed,
+			),
+		).toBe(false);
 
 		await page.getByLabel('New terminal tab').last().click();
 		await expect(terminalTabs(page)).toHaveCount(3);

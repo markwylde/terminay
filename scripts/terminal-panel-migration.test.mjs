@@ -211,6 +211,25 @@ test('server-backed input and resize fail closed without terminal application IP
 	assert.doesNotMatch(resizeEffect, /window\.terminay\.resizeTerminal/);
 });
 
+test('presentation ownership stays silent until another attachment controls the terminal', () => {
+	assert.match(
+		terminalPanel,
+		/terminalPresentation\?\.role === 'read_only' && terminalPresentation\.holder !== undefined/,
+	);
+	assert.match(
+		terminalPanel,
+		/Another device is controlling this terminal\./,
+	);
+	assert.match(terminalPanel, /Take back control/);
+	assert.doesNotMatch(terminalPanel, />Terminal controller</);
+	assert.doesNotMatch(terminalPanel, />Terminal read-only</);
+	assert.match(
+		panelInteractionHelpers,
+		/pendingPanelResize = \{ cols, rows \}[\s\S]*panelAttachment !== null && terminalPresentationControllerRef\.current/,
+	);
+	assert.match(serverPath, /if \(becameController\) fitAndResize\(true\)/);
+});
+
 test('clipboard paste remains on xterm input and tolerates a clipboard read failure', () => {
 	const pasteShortcut = sourceBetween(
 		terminalPanel,

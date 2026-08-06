@@ -21,13 +21,6 @@ async function getActiveSessionId(page: Page): Promise<string> {
 	return sessionId;
 }
 
-async function takeTerminalControl(page: Page): Promise<void> {
-	const action = page.getByRole('button', { name: 'Take control of terminal' });
-	await expect(action).toBeVisible();
-	await action.click();
-	await expect(page.getByText('Terminal controller', { exact: true })).toBeVisible();
-}
-
 async function writeToTerminal(page: Page, data: string): Promise<void> {
 	const sessionId = await getActiveSessionId(page);
 	await writeToTerminalSession(page, sessionId, data);
@@ -409,7 +402,6 @@ test.describe('terminal behavior', () => {
 		mainWindow,
 	}) => {
 		const marker = 'terminay-click-type-424242';
-		await takeTerminalControl(mainWindow);
 		await mainWindow.evaluate(() => {
 			if (document.activeElement instanceof HTMLElement) {
 				document.activeElement.blur();
@@ -1054,7 +1046,6 @@ test.describe('terminal behavior', () => {
 			'.agent-status-indicator[data-agent-state="done"]',
 		);
 
-		await takeTerminalControl(mainWindow);
 		await mainWindow.locator('.terminal-panel').first().click();
 		await mainWindow.keyboard.type("sleep 2.1; printf '\\033]9;4;0;\\007'");
 		await mainWindow.keyboard.press('Enter');
