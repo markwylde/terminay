@@ -179,6 +179,16 @@ asynchronous attach completed is retained and submitted once ownership is
 known, so an unshared terminal always fills its panel and never retains a
 stale observer viewport.
 
+The current presentation holder exclusively defines the canonical PTY columns
+and rows. Every accepted holder resize is published to each exact terminal
+attachment. Read-only observers adopt that canonical grid locally, scaling it
+to their available panel when necessary, but their own layout observers never
+submit a resize or alter PTY dimensions. Attach and resume deliver the current
+canonical dimensions before replayed output. On takeover, the former holder's
+resize lease is released, the new holder clears any observer-size override,
+fits its own viewport, and immediately publishes its dimensions. Taking
+control back performs the same transition in reverse.
+
 Server-authorized non-interactive sources such as macros, dictation, and MCP
 retain their own scoped command authorization and enter the same ordered input
 queue, but they do not acquire presentation ownership. Automatic terminal
