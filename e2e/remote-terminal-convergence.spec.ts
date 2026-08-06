@@ -84,12 +84,17 @@ async function readTerminalColumns(page: Page, panel: Locator, marker: string): 
 	return value;
 }
 
-async function expectMatchingLogicalGrid(first: Locator, second: Locator): Promise<void> {
-	const [firstWidth, secondWidth] = await Promise.all([
-		first.locator('.xterm-screen').evaluate((element) => (element as HTMLElement).offsetWidth),
-		second.locator('.xterm-screen').evaluate((element) => (element as HTMLElement).offsetWidth),
-	]);
-	expect(Math.abs(firstWidth - secondWidth)).toBeLessThanOrEqual(2);
+async function readLogicalGridColumns(panel: Locator): Promise<number> {
+	const value = Number(await panel.locator('.terminal-panel-root').getAttribute('data-terminal-cols'));
+	if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Unable to read the xterm logical grid');
+	return value;
+}
+
+async function expectMatchingLogicalGrid(first: Locator, second: Locator, expectedColumns: number): Promise<void> {
+	await expect.poll(async () => Promise.all([
+		readLogicalGridColumns(first),
+		readLogicalGridColumns(second),
+	])).toEqual([expectedColumns, expectedColumns]);
 }
 
 async function stopExposure(mainWindow: Page): Promise<void> {
@@ -260,7 +265,12 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expectControlBarLayout(desktopPanel);
 		const browserColumns = await readTerminalColumns(page, browserPanel, '__TB1__');
 		expect(browserColumns).toBeLessThan(desktopColumnsBeforeTakeover);
-		await expectMatchingLogicalGrid(browserPanel, desktopPanel);
+		await expectMatchingLogicalGrid(browserPanel, desktopPanel, browserColumns);
+		await page.setViewportSize({ width: 520, height: 900 });
+		await page.waitForTimeout(500);
+		const browserColumnsAfterResize = await readTerminalColumns(page, browserPanel, '__TB2__');
+		expect(browserColumnsAfterResize).toBeLessThan(browserColumns);
+		await expectMatchingLogicalGrid(browserPanel, desktopPanel, browserColumnsAfterResize);
 
 		const takeoverProof = '__TERMINAY_BROWSER_TAKEOVER_INPUT__';
 		await browserPanel.locator('.xterm-helper-textarea').focus();
@@ -280,8 +290,8 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 			desktopPanel,
 			'__TD2__',
 		);
-		expect(desktopColumnsAfterTakeback).toBeGreaterThan(browserColumns);
-		await expectMatchingLogicalGrid(desktopPanel, browserPanel);
+		expect(desktopColumnsAfterTakeback).toBeGreaterThan(browserColumnsAfterResize);
+		await expectMatchingLogicalGrid(desktopPanel, browserPanel, desktopColumnsAfterTakeback);
 
 		const remoteConnections = await mainWindow.evaluate(() =>
 			window.terminayTest.listRemoteProtocolConnections(),
