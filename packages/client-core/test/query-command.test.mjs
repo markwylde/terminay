@@ -5,7 +5,7 @@ import { FILE_VIEWER_OPERATIONS, FileViewerClient, SettingsClient, TerminayClien
 test("TerminayClientFacade adapts query and command envelopes to feature results", async () => {
   const calls = [];
   const facade = new TerminayClientFacade({
-    async query() {
+    async query(operation, payload) {
       calls.push(["query", operation, payload]);
       return { result: { serverId: "server-a" } };
     },
@@ -98,8 +98,8 @@ test("FileViewerClient uses a bounded canonical query operation", async () => {
   });
   assert.deepEqual(await client.getGitDiff("src/App.tsx"), { path: "src/App.tsx", hunks: [] });
   assert.deepEqual(calls, [["file.get-git-diff", { path: "src/App.tsx" }]]);
-  assert.throws(() => client.getGitDiff(""), /file path/);
-  assert.throws(() => client.getGitDiff("bad\0path"), /file path/);
+  await assert.rejects(() => client.getGitDiff(""), /file path/);
+  await assert.rejects(() => client.getGitDiff("bad\0path"), /file path/);
 });
 
 test("FileViewerClient bounds raw content ranges to the framed response budget", async () => {
