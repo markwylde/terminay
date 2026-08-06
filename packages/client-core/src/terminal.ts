@@ -76,6 +76,7 @@ export type TerminalWireEvent =
 	| TerminalWireOutputEvent
 	| TerminalWireExitEvent
 	| TerminalWireResyncEvent
+	| TerminalWireDimensionsEvent
 	| TerminalWirePresentationEvent
 	| TerminalWirePresentationUnavailableEvent;
 
@@ -86,6 +87,11 @@ export interface TerminalPresentationState extends TerminalClientIdentity {
 }
 
 export interface TerminalWirePresentationEvent extends TerminalPresentationState { readonly type: 'presentation'; readonly action?: string; }
+export interface TerminalWireDimensionsEvent extends TerminalClientIdentity {
+	readonly type: 'dimensions';
+	readonly cols: number;
+	readonly rows: number;
+}
 export interface TerminalWirePresentationUnavailableEvent extends TerminalClientIdentity {
 	readonly type: 'presentation_unavailable';
 	readonly requestedFromPosition: number;
@@ -144,6 +150,7 @@ export type TerminalStreamEvent =
 	| TerminalStreamOutputEvent
 	| TerminalStreamExitEvent
 	| TerminalStreamResyncEvent
+	| TerminalWireDimensionsEvent
 	| TerminalWirePresentationEvent
 	| TerminalWirePresentationUnavailableEvent;
 
@@ -961,6 +968,10 @@ function decodeEvent(
 			replayFrom,
 			outputPosition,
 		});
+	}
+	if (type === 'dimensions') {
+		const dimensions = validateDimensions({ cols: candidate.cols as number, rows: candidate.rows as number });
+		return Object.freeze({ ...identity, type: 'dimensions', ...dimensions });
 	}
 	if (type === 'presentation') {
 		validatePresentation(candidate, identity);
