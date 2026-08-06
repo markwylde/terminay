@@ -194,3 +194,55 @@ test('Desktop application lane fails closed when a slow native channel remains b
   assert.equal(transport.state, 'failed')
   assert.ok([...Peer.instance.channels.values()].every(channel => channel.closed))
 })
+
+test('Desktop closes the complete authenticated transport when an ancillary lane closes', async () => {
+  let signalListener = () => {}
+  const signaling = {
+    onMessage(listener) { signalListener = listener; return () => { signalListener = () => {} } },
+    send(message) {
+      if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' }))
+    },
+    sign(message) { return message },
+    verify(message) { return message },
+  }
+  const transport = await createDesktopWebRtcTransport({
+    peerId: 'desktop-ancillary-close',
+    ...identity,
+    signaling,
+    loadModule: async () => ({ PeerConnection: Peer }),
+  })
+  await transport.open()
+
+  Peer.instance.channels.get('assets').close()
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.equal(transport.state, 'closed')
+  assert.ok([...Peer.instance.channels.values()].every(channel => channel.closed))
+})
+
+test('Desktop abort after connection retires every WebRTC lane', async () => {
+  let signalListener = () => {}
+  const signaling = {
+    onMessage(listener) { signalListener = listener; return () => { signalListener = () => {} } },
+    send(message) {
+      if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' }))
+    },
+    sign(message) { return message },
+    verify(message) { return message },
+  }
+  const controller = new AbortController()
+  const transport = await createDesktopWebRtcTransport({
+    peerId: 'desktop-connected-abort',
+    ...identity,
+    signaling,
+    signal: controller.signal,
+    loadModule: async () => ({ PeerConnection: Peer }),
+  })
+  await transport.open()
+
+  controller.abort(new Error('scripted Desktop abort'))
+  await new Promise(resolve => setImmediate(resolve))
+
+  assert.equal(transport.state, 'closed')
+  assert.ok([...Peer.instance.channels.values()].every(channel => channel.closed))
+})

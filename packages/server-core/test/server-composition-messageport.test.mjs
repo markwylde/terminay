@@ -239,6 +239,14 @@ test("server-core composition dispatches terminal operations through a MessagePo
     assert.equal(attached.ok, true);
     assert.equal(attached.result.position, 0);
 
+    const controlled = await client.command("terminal.presentation", {
+      clientId: "desktop-client",
+      identity,
+      attachmentId: attached.result.attachmentId,
+      mode: "acquire",
+    });
+    assert.equal(controlled.result.role, "controller");
+
     const input = await client.command("terminal.input", {
       clientId: "desktop-client",
       identity,
@@ -259,8 +267,8 @@ test("server-core composition dispatches terminal operations through a MessagePo
     assert.deepEqual(pty.processes[0].resizes, [{ cols: 100, rows: 30 }]);
 
     pty.processes[0].emitData("server-owned");
-    await waitFor(() => eventJournal.revision === 1);
-    assert.equal(eventJournal.replay(0).events[0].event, "terminal");
+    await waitFor(() => eventJournal.revision >= 2);
+    assert.equal(eventJournal.replay(0).events.at(-1).event, "terminal");
 
     const listed = await client.query("terminal.list", { projectId: "project-a" });
     assert.equal(listed.ok, true);

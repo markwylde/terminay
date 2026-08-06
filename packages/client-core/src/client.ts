@@ -102,6 +102,16 @@ export class TerminayClient {
   constructor(options: TerminayClientOptions) {
     this.transport = options.transport;
     this.options = options;
+		if (options.initialWatermark !== undefined) {
+			if (
+				!Number.isSafeInteger(options.initialWatermark.revision) ||
+				options.initialWatermark.revision < 0 ||
+				options.initialWatermark.cursor !== String(options.initialWatermark.revision)
+			) {
+				throw new TypeError("initial connection watermark is invalid");
+			}
+			this.current = { ...this.current, revision: options.initialWatermark.revision, cursor: options.initialWatermark.cursor, stale: true };
+		}
   }
 
   get snapshot(): ConnectionSnapshot { return this.current; }
@@ -394,7 +404,8 @@ export class TerminayClient {
     this.pending.clear();
     this.handshake?.reject(error);
     this.handshake = undefined;
-    this.setState("closed", { error });
+		this.events.clear();
+		this.setState("stale", { error, stale: true });
   }
 
   private setState(state: ConnectionState, patch: Partial<ConnectionSnapshot> = {}): void {

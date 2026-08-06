@@ -1,4 +1,4 @@
-import { protocolError, type JsonValue } from "@terminay/protocol";
+import { parseWorkspaceDeltaDto, parseWorkspaceSnapshotDto, WORKSPACE_DELTA_VERSION, protocolError, type JsonValue, type WorkspaceDeltaDto } from "@terminay/protocol";
 import { WorkspaceStore, type WorkspaceCommand, type WorkspaceState } from "./workspace.js";
 import type {
   CommandRequest,
@@ -49,14 +49,24 @@ export interface WorkspaceOperationRegistry {
  */
 export function createWorkspaceOperationRegistry(workspace: WorkspaceStore, options: WorkspaceOperationRegistryOptions = {}): WorkspaceOperationRegistry {
   const queries = {
-    [WORKSPACE_OPERATIONS.snapshot]: (request: QueryRequest) => projectScopedState(workspace.state, projectClaim(request)) as unknown as JsonValue,
+    [WORKSPACE_OPERATIONS.snapshot]: (request: QueryRequest) => parseWorkspaceSnapshotDto(projectScopedState(workspace.state, projectClaim(request))) as unknown as JsonValue,
     [WORKSPACE_OPERATIONS.delta]: (request: QueryRequest) => {
       const payload = objectPayload(request.envelope.payload);
       const revision = uint(payload.revision, "revision");
       const cursor = stringField(payload.cursor, "cursor");
       if (cursor !== String(revision)) throw protocolError("validation", "workspace cursor does not match revision");
-      const delta = workspace.delta(revision);
-      return projectScopedDelta(delta, projectClaim(request)) as unknown as JsonValue;
+      const delta = projectScopedDelta(workspace.delta(revision), projectClaim(request));
+      const response: WorkspaceDeltaDto = {
+        deltaVersion: WORKSPACE_DELTA_VERSION,
+        serverId: delta.state.serverId,
+        fromRevision: revision,
+        fromCursor: cursor,
+        revision: delta.state.revision,
+        cursor: delta.state.cursor,
+        state: delta.state as unknown as WorkspaceDeltaDto["state"],
+        events: delta.events,
+      };
+      return parseWorkspaceDeltaDto(response, { serverId: delta.state.serverId, revision, cursor }) as unknown as JsonValue;
     },
   };
 
