@@ -52,6 +52,7 @@ async function exposeDesktopOnLan(mainWindow: Page): Promise<string> {
 }
 
 async function connectBrowser(page: Page, pairingUrl: string): Promise<void> {
+	await page.setViewportSize({ width: 640, height: 900 });
 	await page.goto(pairingUrl);
 	await expect(
 		page.getByRole('dialog', { name: 'Enroll browser device' }),
@@ -62,6 +63,33 @@ async function connectBrowser(page: Page, pairingUrl: string): Promise<void> {
 	await expect(page.locator('.connected-web-renderer-workspace')).toBeVisible({
 		timeout: 20_000,
 	});
+}
+
+async function readTerminalColumns(page: Page, panel: Locator, marker: string): Promise<number> {
+	const input = panel.locator('.xterm-helper-textarea');
+	await input.focus();
+	await page.keyboard.type(`printf '${marker}%s__\\n' "$(tput cols)"`);
+	await page.keyboard.press('Enter');
+	const outputPattern = new RegExp(`${marker}(\\d+)__`, 'gu');
+	let text = '';
+	await expect.poll(async () => {
+		text = await panel.locator('.xterm-rows').innerText();
+		outputPattern.lastIndex = 0;
+		return outputPattern.test(text);
+	}).toBe(true);
+	outputPattern.lastIndex = 0;
+	const matches = [...text.matchAll(outputPattern)];
+	const value = Number(matches.at(-1)?.[1]);
+	if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`Unable to read terminal columns for ${marker}`);
+	return value;
+}
+
+async function expectMatchingLogicalGrid(first: Locator, second: Locator): Promise<void> {
+	const [firstWidth, secondWidth] = await Promise.all([
+		first.locator('.xterm-screen').evaluate((element) => (element as HTMLElement).offsetWidth),
+		second.locator('.xterm-screen').evaluate((element) => (element as HTMLElement).offsetWidth),
+	]);
+	expect(Math.abs(firstWidth - secondWidth)).toBeLessThanOrEqual(2);
 }
 
 async function stopExposure(mainWindow: Page): Promise<void> {
@@ -153,6 +181,11 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 			screenWidth: panel.querySelector('.xterm-screen')?.getBoundingClientRect().width ?? 0,
 		}));
 		expect(desktopGeometry.screenWidth).toBeGreaterThan(desktopGeometry.panelWidth * 0.9);
+		const desktopColumnsBeforeTakeover = await readTerminalColumns(
+			mainWindow,
+			desktopPanel,
+			'__TD0__',
+		);
 		await expect(
 			browserPanel.getByText('Another device is controlling this terminal.', { exact: true }),
 		).toBeVisible();
@@ -219,10 +252,15 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 			.getByRole('button', { name: 'Take back control of terminal' })
 			.click();
 		await expect(browserPanel.locator('.terminal-presentation-control')).toHaveCount(0);
+		await expect(browserPanel).not.toHaveClass(/terminal-panel--remote-size-override/u);
+		await expect(desktopPanel).toHaveClass(/terminal-panel--remote-size-override/u);
 		await expect(
 			desktopPanel.getByText('Another device is controlling this terminal.', { exact: true }),
 		).toBeVisible();
 		await expectControlBarLayout(desktopPanel);
+		const browserColumns = await readTerminalColumns(page, browserPanel, '__TB1__');
+		expect(browserColumns).toBeLessThan(desktopColumnsBeforeTakeover);
+		await expectMatchingLogicalGrid(browserPanel, desktopPanel);
 
 		const takeoverProof = '__TERMINAY_BROWSER_TAKEOVER_INPUT__';
 		await browserPanel.locator('.xterm-helper-textarea').focus();
@@ -230,6 +268,20 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await page.keyboard.press('Enter');
 		await expect(browserPanel).toContainText(takeoverProof);
 		await expect(desktopPanel).toContainText(takeoverProof);
+
+		await desktopPanel
+			.getByRole('button', { name: 'Take back control of terminal' })
+			.click();
+		await expect(desktopPanel.locator('.terminal-presentation-control')).toHaveCount(0);
+		await expect(desktopPanel).not.toHaveClass(/terminal-panel--remote-size-override/u);
+		await expect(browserPanel).toHaveClass(/terminal-panel--remote-size-override/u);
+		const desktopColumnsAfterTakeback = await readTerminalColumns(
+			mainWindow,
+			desktopPanel,
+			'__TD2__',
+		);
+		expect(desktopColumnsAfterTakeback).toBeGreaterThan(browserColumns);
+		await expectMatchingLogicalGrid(desktopPanel, browserPanel);
 
 		const remoteConnections = await mainWindow.evaluate(() =>
 			window.terminayTest.listRemoteProtocolConnections(),
