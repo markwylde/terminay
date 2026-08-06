@@ -387,8 +387,7 @@ test('the production renderer connector attaches through the server-owned compos
       sessionId: session.sessionId,
       clientId: context.clientId,
     })
-    assert.equal(panel.presentation.role, 'read_only')
-    assert.equal((await panel.changePresentation('acquire')).role, 'controller')
+    assert.equal(panel.presentation.role, 'controller')
     const output = new Promise((resolve) => panel.onOutput(resolve))
     const rawBytes = new Uint8Array([0x00, 0xff, 0x1b, 0xc3, 0xa9])
     processes[0].emitData(rawBytes)

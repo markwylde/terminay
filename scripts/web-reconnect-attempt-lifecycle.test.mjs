@@ -52,6 +52,12 @@ test('transient restart failures retry with bounded backoff and one visible outc
   assert.match(source, /reconnectAttempts\.current\.delete\(profile\.id\);\s+setError\(null\);\s+setStatus\(null\)/u)
   assert.match(source, /setError\('Connection lost\. Reconnecting…'\);\s+setStatus\(null\)/u)
   assert.match(source, /window\.clearTimeout\(reconnectTimer\)/u)
+	const recovery = source.slice(
+		source.indexOf('\tfunction recoverConnection('),
+		source.indexOf('\n\tfunction scheduleRecovery(', source.indexOf('\tfunction recoverConnection(')),
+	)
+	assert.doesNotMatch(recovery, /setActiveConnection/u)
+	assert.match(recovery, /Keep the last connected workspace mounted/u)
 })
 
 test('invalid persisted reconnect proofs stop retrying and require fresh pairing', () => {
