@@ -140,14 +140,38 @@ request an explicit takeover; focus, attachment, or receipt of output alone
 does not silently seize control. Handoff, disconnect, expiry, and revocation
 release the lease predictably and are visible to every attached client.
 
-When no presentation holder exists, the first write-authorized attachment
-acquires the lease as part of that same serialized attach operation. This is
-initial ownership, not a takeover: it must never displace an existing holder.
+When a client creates a terminal, the server briefly reserves initial
+presentation ownership for that authenticated creator. Reconciliation order
+cannot let an observing browser win a race by attaching before the creating
+desktop. The creator acquires the lease as part of its serialized attach; if
+it disconnects or fails to attach within the bounded reservation, the server
+elects an already attached write-authorized observer. For a pre-existing
+session with no reservation or holder, the first write-authorized attachment
+acquires the lease. Initial ownership is not a takeover and never displaces an
+existing holder.
 The owning surface shows no controller badge or control affordance. A
 write-authorized observer shows takeover UI only while a different live
 attachment is the holder, as a full-width terminal bar reading “Another device
 is controlling this terminal.” with a “Take back control” action. A lease
 conflict is normal read-only presentation state, not a connection failure.
+The control bar is an opaque, themed layout row above the terminal viewport;
+it reserves its own height and never covers terminal output, the cursor, or the
+emulator input surface. Its geometry and appearance are identical in desktop
+and browser renderers and remain stable across active-tab changes.
+Terminal journal consumers route by the exact server, project, session, client,
+and attachment identity before strict event decoding. Auxiliary or other-client
+journal payloads cannot detach a valid terminal stream; an unknown event that
+does claim the exact attachment still fails closed as a protocol violation.
+If control changes while emulator or keyboard bytes are already queued, a
+server `presentation_owner` rejection definitively means those bytes were not
+delivered. The old controller discards that stale queue and remains attached
+as a read-only observer; it does not show a connection error or retry action.
+Presentation acquire, takeover, and renewal expose the presentation state as
+the standard command result payload. Because presentation state contains its
+own `revision`, the server handler must retain the internal command-result
+wrapper so the dispatcher does not reinterpret that domain revision as
+transport metadata. The wire response still contains exactly one command
+result envelope.
 
 Initial ownership and explicit takeover immediately fit the terminal to the
 owning surface and submit its current viewport. A resize attempted before the
@@ -184,3 +208,7 @@ query and injecting duplicate control responses.
   server, project, active panel, and explicit user choices.
 - System-default resolution happens on the server machine that will own the PTY;
   Desktop and remote clients do not supply their host shell as a fallback.
+- Every resolved Terminay PTY advertises the emulator it actually runs under
+  with `TERM=xterm-256color` and `COLORTERM=truecolor`. Host launcher values
+  such as `TERM=dumb` never cross into a terminal session, and profiles cannot
+  weaken these protected emulator capabilities.
