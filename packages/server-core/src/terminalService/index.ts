@@ -4,6 +4,7 @@ export * from "./service.js";
 export * from "./types.js";
 export * from "./adapter.js";
 export * from "./inputSources.js";
+export * from "./presentationLease.js";
 export * from "./protocol.js";
 export * from "./consumers.js";
 export * from "./launchResolver.js";
