@@ -31,8 +31,10 @@ test("local Electron E2E defaults to an isolated Linux container", async () => {
   assert.doesNotMatch(runner, /--volume[^\n]*repo_dir/u);
 });
 
-test("GitHub runs the host command only inside its isolated Ubuntu runner", async () => {
+test("CI shards Electron E2E through the same isolated Docker entrypoint", async () => {
   const workflow = await text(".github/workflows/ci.yml");
-  assert.match(workflow, /run: xvfb-run -a npm run test:e2e:host/u);
-  assert.doesNotMatch(workflow, /run: xvfb-run -a npm run test:e2e\s*$/mu);
+  assert.match(workflow, /shard: \[1, 2, 3, 4, 5\]/u);
+  assert.match(workflow, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/5/u);
+  assert.doesNotMatch(workflow, /run: xvfb-run -a npm run test:e2e:host/u);
+  assert.match(workflow, /playwright-report-\$\{\{ matrix\.shard \}\}-of-5/u);
 });
