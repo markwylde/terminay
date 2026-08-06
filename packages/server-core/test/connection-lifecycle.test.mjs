@@ -53,6 +53,51 @@ test("bounded event replay sends event_resync only to clients that advertised th
   await capable.task;
 });
 
+test("a failed live event send closes the connection without an unhandled rejection", async () => {
+  const journal = new OrderedEventJournal();
+  const pair = createInMemoryTransportPair();
+  let failSends = false;
+  const transport = {
+    get state() { return pair.server.state; },
+    get incoming() { return pair.server.incoming; },
+    get queuedBytes() { return pair.server.queuedBytes; },
+    get bufferedBytes() { return pair.server.bufferedBytes; },
+    open: (signal) => pair.server.open(signal),
+    send: (frame, options) => failSends
+      ? Promise.reject(new Error("simulated disconnected event stream"))
+      : pair.server.send(frame, options),
+    waitForWritable: (requiredBytes, signal) => pair.server.waitForWritable(requiredBytes, signal),
+    close: (reason, options) => pair.server.close(reason, options),
+    onStateChange: (listener) => pair.server.onStateChange(listener),
+  };
+  const core = createServerCore({
+    serverId: "event-send-failure-server", serverVersion: "test", capabilities: [], eventJournal: journal,
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
+  });
+  const connection = core.accept(transport);
+  const task = connection.start();
+  await pair.client.open();
+  const iterator = pair.client.incoming[Symbol.asyncIterator]();
+  await pair.client.send(encodeFrame({
+    type: "client_hello", protocolMin: 1, protocolMax: 1, clientId: "event-client", clientVersion: "test", capabilities: ["events.resync"], limits: {},
+  }));
+  assert.equal(decodeFrame((await iterator.next()).value).envelope.type, "server_hello");
+  await pair.client.send(encodeFrame({
+    type: "command", commandId: "subscribe-command", correlationId: "subscribe-correlation", operation: "events.subscribe",
+    payload: { subscriptionId: "subscription", event: null, fromRevision: 0 },
+  }));
+  const subscriptionResult = decodeFrame((await iterator.next()).value).envelope;
+  assert.equal(subscriptionResult.type, "command_result");
+  assert.equal(subscriptionResult.ok, true);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  failSends = true;
+  journal.append("activity", { status: "working" });
+
+  await assert.rejects(task, /simulated disconnected event stream/u);
+  assert.equal(connection.state, "closed");
+});
+
 async function subscribeWithCapabilities(core, capabilities, clientId) {
   const pair = createInMemoryTransportPair();
   const connection = core.accept(pair.server);
