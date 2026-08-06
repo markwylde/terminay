@@ -10,26 +10,32 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends build-essential ca-certificates git python3 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY package.json package-lock.json ./
-COPY apps/terminay-desktop/package.json apps/terminay-desktop/package.json
-COPY apps/terminay-server/package.json apps/terminay-server/package.json
-COPY apps/terminay-web/package.json apps/terminay-web/package.json
-COPY packages/client-core/package.json packages/client-core/package.json
-COPY packages/protocol-conformance/package.json packages/protocol-conformance/package.json
-COPY packages/protocol/package.json packages/protocol/package.json
-COPY packages/responsive-ui/package.json packages/responsive-ui/package.json
-COPY packages/server-core/package.json packages/server-core/package.json
-COPY scripts/ensure-node-pty-helper-mode.mjs scripts/ensure-node-pty-helper-mode.mjs
+COPY --chown=node:node package.json package-lock.json ./
+COPY --chown=node:node apps/terminay-desktop/package.json apps/terminay-desktop/package.json
+COPY --chown=node:node apps/terminay-server/package.json apps/terminay-server/package.json
+COPY --chown=node:node apps/terminay-web/package.json apps/terminay-web/package.json
+COPY --chown=node:node packages/client-core/package.json packages/client-core/package.json
+COPY --chown=node:node packages/protocol-conformance/package.json packages/protocol-conformance/package.json
+COPY --chown=node:node packages/protocol/package.json packages/protocol/package.json
+COPY --chown=node:node packages/responsive-ui/package.json packages/responsive-ui/package.json
+COPY --chown=node:node packages/server-core/package.json packages/server-core/package.json
+COPY --chown=node:node scripts/ensure-node-pty-helper-mode.mjs scripts/ensure-node-pty-helper-mode.mjs
 
+RUN mkdir -p /ms-playwright \
+    && chown node:node /workspace /ms-playwright
+
+USER node
 RUN npm ci \
-    && npx playwright install --with-deps chromium
+    && npx playwright install chromium
+
+USER root
+RUN npx playwright install-deps chromium
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends libgtk-3-0 libxss1 xauth \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=node:node . .
-RUN chown -R node:node /workspace
 
 USER node
 RUN npm run build:app
