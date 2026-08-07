@@ -16,6 +16,7 @@ import type {
 	DictationMicrophonePermissionStatus,
 	DictationTranscribeRequest,
 	DictationTranscribeResult,
+	ParakeetRuntimeStatus,
 	EditWindowResult,
 	EditWindowState,
 	FileExplorerEntry,
@@ -1289,6 +1290,10 @@ contextBridge.exposeInMainWorld(
 	'terminayDictationHost',
 	Object.freeze({
 		version: DESKTOP_DICTATION_HOST_BRIDGE_VERSION,
+		getParakeetStatus: () =>
+			ipcRenderer.invoke('dictation:get-parakeet-status') as Promise<ParakeetRuntimeStatus>,
+		installParakeet: () =>
+			ipcRenderer.invoke('dictation:install-parakeet') as Promise<ParakeetRuntimeStatus>,
 		getKeyStatus: () =>
 			ipcRenderer.invoke(
 				'dictation:get-openai-key-status',
@@ -1319,7 +1324,7 @@ contextBridge.exposeInMainWorld(
 			}
 			const value = request as Record<string, unknown>;
 			const optionalText = (
-				key: 'language' | 'model' | 'prompt',
+				key: 'language' | 'model' | 'prompt' | 'provider',
 				maxLength: number,
 			): string | undefined => {
 				const candidate = value[key];
@@ -1336,6 +1341,7 @@ contextBridge.exposeInMainWorld(
 			const language = optionalText('language', 128);
 			const model = optionalText('model', 128);
 			const prompt = optionalText('prompt', 16_384);
+			const provider = optionalText('provider', 32);
 			return ipcRenderer.invoke('dictation:transcribe', {
 				audioBase64: dictationHostText(
 					value.audioBase64,
@@ -1347,6 +1353,7 @@ contextBridge.exposeInMainWorld(
 				...(language === undefined ? {} : { language }),
 				...(model === undefined ? {} : { model }),
 				...(prompt === undefined ? {} : { prompt }),
+				...(provider === undefined ? {} : { provider }),
 			}) as Promise<DictationTranscribeResult>;
 		},
 	}),

@@ -195,6 +195,19 @@ export type DictationKeyStatus = {
   configured: boolean
 }
 
+export type ParakeetRuntimeState =
+  | 'unsupported'
+  | 'not-installed'
+  | 'installing'
+  | 'ready'
+  | 'error'
+
+export type ParakeetRuntimeStatus = {
+  message?: string
+  model: 'mlx-community/parakeet-tdt-0.6b-v3'
+  state: ParakeetRuntimeState
+}
+
 export type DictationMicrophonePermissionStatus =
   | 'not-determined'
   | 'granted'
@@ -208,6 +221,7 @@ export type DictationTranscribeRequest = {
   language?: string
   mimeType: string
   model?: import('./settings').DictationTranscriptionModel
+  provider?: import('./settings').DictationProvider
   prompt?: string
 }
 
