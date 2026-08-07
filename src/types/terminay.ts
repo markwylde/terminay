@@ -205,6 +205,7 @@ export type ParakeetRuntimeState =
 export type ParakeetRuntimeStatus = {
   message?: string
   model: 'mlx-community/parakeet-tdt-0.6b-v3'
+  progress?: number
   state: ParakeetRuntimeState
 }
 
