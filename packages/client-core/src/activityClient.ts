@@ -14,7 +14,7 @@ export interface ActivityClientTransport extends QueryCommandTransport {
    * Activity is a live server-owned projection. A query/command-only bridge
    * cannot keep it current, so it is not a valid ActivityClient transport.
    */
-  subscribe: (event: string, listener: (event: ClientEvent<ActivityEvent>) => void) => (() => void) | Promise<(() => void)>;
+  subscribe: (event: string, listener: (event: ClientEvent<ActivityEvent>) => void, onResync?: () => void) => (() => void) | Promise<(() => void)>;
 }
 
 /** A thin client boundary around the canonical server activity projection. */
@@ -80,13 +80,14 @@ export class ActivityClient {
 
   async subscribe(): Promise<() => void> {
     if (this.unsubscribe !== undefined) return this.unsubscribe;
+    const reload = () => void this.reload().catch(() => undefined);
     const unsubscribe = await this.transport.subscribe(ACTIVITY_OPERATIONS.event, (event) => {
       const result = this.store.applyEvent(event.payload);
       // A stream gap is a reconnect boundary. Replace from the canonical
       // server snapshot so a restarted server's lower revision is retained;
       // do not infer an activity transition from the gap locally.
-      if (result.kind === "resync_required") void this.reload().catch(() => undefined);
-    });
+      if (result.kind === "resync_required") reload();
+    }, reload);
     this.unsubscribe = () => {
       try { unsubscribe(); } catch { /* expected disconnect cleanup is local */ }
       this.unsubscribe = undefined;

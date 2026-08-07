@@ -43,6 +43,26 @@ test("activity client converges on the authoritative snapshot after a live repla
   client.close();
 });
 
+test("activity client reloads the canonical snapshot after subscription resync", async () => {
+  let onResync;
+  let snapshot = { revision: 1, cursor: "1", sessions: { "session-a": session(true) } };
+  const client = new ActivityClient({
+    query: async () => snapshot,
+    command: async () => null,
+    subscribe: async (_event, _listener, resync) => {
+      onResync = resync;
+      return () => { onResync = undefined; };
+    },
+  });
+  await client.subscribe();
+  snapshot = { revision: 4, cursor: "4", sessions: { "session-a": session(false) } };
+  onResync();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(client.store.revision, 4);
+  assert.equal(client.store.snapshot.sessions["session-a"].attention, false);
+  client.close();
+});
+
 test("activity client sends acknowledgement only with immutable project/session identity", async () => {
   const commands = [];
   const client = new ActivityClient({
