@@ -24,13 +24,13 @@ async function closeEditWindowWithButton(editWindow: Page, label: 'Save' | 'Canc
 
 export async function openProjectEditWindow(page: Page): Promise<Page> {
   return openChildWindowFromAction(page, async () => {
-    await page.locator('.project-tab--active').dblclick()
+    await page.locator('.project-tab--active').dispatchEvent('dblclick')
   })
 }
 
 export async function openTerminalEditWindow(page: Page): Promise<Page> {
   return openChildWindowFromAction(page, async () => {
-    await page.locator('.project-workspace--active .terminal-tab-content').first().dblclick()
+    await page.locator('.project-workspace--active .terminal-tab-content').first().dispatchEvent('dblclick')
   })
 }
 
