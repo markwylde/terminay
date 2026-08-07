@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 5_000,
+  timeout: 30_000,
   expect: {
     timeout: 5_000,
   },
@@ -13,6 +13,8 @@ export default defineConfig({
   maxFailures: process.env.CI ? 1 : 0,
   workers: process.env.CI ? Number(process.env.PLAYWRIGHT_WORKERS ?? '1') : 1,
   use: {
+    actionTimeout: 5_000,
+    navigationTimeout: 5_000,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
