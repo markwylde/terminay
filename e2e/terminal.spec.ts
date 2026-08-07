@@ -491,6 +491,7 @@ test.describe('terminal behavior', () => {
 	});
 
 	test('terminal edit window keeps the icon input to one character and cancel leaves the tab unchanged', async ({
+		appHarness,
 		mainWindow,
 	}) => {
 		const firstTab = mainWindow.locator('.terminal-tab-content').first();
@@ -504,7 +505,12 @@ test.describe('terminal behavior', () => {
 				.catch(() => null)) ?? ''
 		).trim();
 
-		const editWindow = await openTerminalEditWindow(mainWindow);
+		await appHarness.openMacroLauncher(mainWindow);
+		const editWindow = await appHarness.openChildWindow(async () => {
+			await mainWindow
+				.getByRole('button', { name: 'Edit tab settings' })
+				.click();
+		});
 		const iconInput = editWindow.getByLabel('Tab icon');
 
 		await expect(
