@@ -57,6 +57,8 @@ export type ActivityAuthority = "none" | "raw" | "structured" | "provider";
 export interface TerminalActivitySessionSnapshot {
   readonly sessionId: string;
   readonly projectId?: string;
+  /** True only while a process other than the spawned shell owns the PTY foreground group. */
+  readonly foregroundBusy: boolean;
   readonly status: TerminalActivityStatus;
   readonly attention: boolean;
   readonly acknowledged: boolean;
