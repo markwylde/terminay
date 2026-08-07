@@ -41,8 +41,7 @@ export class OrderedEventJournal implements OrderedEventJournalLike {
   }
 
   append(event: string, payload: JsonValue): OrderedEvent {
-    if (typeof event !== "string" || event.length === 0 || event.length > 256) throw new TypeError("event name is invalid");
-    assertJsonValue(payload);
+    validateEvent(event, payload);
     if (this.nextRevision === Number.MAX_SAFE_INTEGER) throw new RangeError("event revision exhausted");
     const nextRevision = this.nextRevision + 1;
     const next: OrderedEvent = Object.freeze({ revision: nextRevision, cursor: String(nextRevision), event, payload });
@@ -50,10 +49,26 @@ export class OrderedEventJournal implements OrderedEventJournalLike {
     this.currentCursor = next.cursor;
     this.events.push(next);
     while (this.events.length > this.maxEvents) this.events.shift();
-    for (const listener of this.listeners) {
-      try { listener(next); } catch { /* listeners are observers, not commit participants */ }
-    }
+    this.publish(next);
     return next;
+  }
+
+  /**
+   * Notify current subscribers without retaining the event or advancing the
+   * durable revision. High-volume streams use this path when feature-owned
+   * replay/checkpoint authorities, rather than the generic journal, own
+   * recovery.
+   */
+  publishTransient(event: string, payload: JsonValue): OrderedEvent {
+    validateEvent(event, payload);
+    const transient = Object.freeze({
+      revision: this.nextRevision,
+      cursor: this.currentCursor,
+      event,
+      payload,
+    });
+    this.publish(transient);
+    return transient;
   }
 
   replay(afterRevision = 0): EventReplay | Promise<EventReplay> {
@@ -85,4 +100,15 @@ export class OrderedEventJournal implements OrderedEventJournalLike {
     this.events.length = 0;
     this.listeners.clear();
   }
+
+  private publish(event: OrderedEvent): void {
+    for (const listener of this.listeners) {
+      try { listener(event); } catch { /* listeners are observers, not commit participants */ }
+    }
+  }
+}
+
+function validateEvent(event: string, payload: JsonValue): void {
+  if (typeof event !== "string" || event.length === 0 || event.length > 256) throw new TypeError("event name is invalid");
+  assertJsonValue(payload);
 }
