@@ -123,6 +123,31 @@ test("agent client never regresses from a newer live snapshot to a delayed refre
   assert.equal(client.snapshot.entries["session-a:root"].state, "waiting");
 });
 
+test("agent client reloads its authoritative snapshot after subscription resync", async () => {
+  let onResync;
+  let queries = 0;
+  const snapshots = [
+    { revision: 1, cursor: "1", entries: { "session-a:root": entry("session-a", "session-a:root", "working") } },
+    { revision: 9, cursor: "9", entries: { "session-a:root": entry("session-a", "session-a:root", "waiting") } },
+  ];
+  const client = new AgentStatusClient(["session-a"], {
+    async query() { return snapshots[Math.min(queries++, snapshots.length - 1)]; },
+    async command() { return null; },
+    subscribe(_event, _listener, resync) {
+      onResync = resync;
+      return () => undefined;
+    },
+  });
+
+  await client.subscribe();
+  assert.equal(client.snapshot.revision, 1);
+  onResync();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(client.snapshot.revision, 9);
+  assert.equal(client.snapshot.entries["session-a:root"].state, "waiting");
+});
+
 test("agent client reload replaces a restarted-server snapshot without manufacturing an event", async () => {
   let snapshot = { revision: 8, cursor: "8", entries: { "session-a:root": entry("session-a", "session-a:root", "waiting") } };
   const client = new AgentStatusClient(["session-a"], {
