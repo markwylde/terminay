@@ -24,6 +24,8 @@ test("GitService pulls a clean attached worktree from its reviewed upstream", as
     await git(["worktree", "add", feature, "-b", "feature"], repo);
     await git(["push", "-u", "origin", "feature"], feature);
     await git(["clone", remote, other], root);
+    await git(["config", "user.email", "test@example.invalid"], other);
+    await git(["config", "user.name", "Terminay Test"], other);
     await git(["switch", "feature"], other);
     await writeFile(join(other, "remote.txt"), "pulled\n");
     await git(["add", "remote.txt"], other);
