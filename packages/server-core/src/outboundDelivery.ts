@@ -9,6 +9,7 @@ export interface OutboundDeliveryLimits {
 	readonly maxTerminalQueuedBytes?: number;
 	readonly maxTerminalQueuedFrames?: number;
 	readonly maxTerminalUnconfirmedBytes?: number;
+	readonly maxTerminalUnconfirmedAgeMs?: number;
 }
 
 export interface OutboundDeliverySnapshot {
@@ -28,6 +29,7 @@ const DEFAULT_MAX_QUEUED_FRAMES = 1_024;
 const DEFAULT_MAX_TERMINAL_QUEUED_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_TERMINAL_QUEUED_FRAMES = 256;
 const DEFAULT_MAX_TERMINAL_UNCONFIRMED_BYTES = 256 * 1024;
+const DEFAULT_MAX_TERMINAL_UNCONFIRMED_AGE_MS = 5_000;
 const MAX_CONSECUTIVE_CONTROL_DELIVERIES = 8;
 
 export interface TerminalDeliveryAdmission {
@@ -55,6 +57,7 @@ interface TerminalLane {
 	releasePending: boolean;
 	confirmedPosition: number;
 	headPosition: number;
+	unconfirmedSince: number | undefined;
 }
 
 /** The single stable reason returned by a failed or closed outbound lane. */
@@ -85,6 +88,7 @@ export class OutboundDeliveryPump {
 	private readonly maxTerminalQueuedBytes: number;
 	private readonly maxTerminalQueuedFrames: number;
 	private readonly maxTerminalUnconfirmedBytes: number;
+	private readonly maxTerminalUnconfirmedAgeMs: number;
 	private controlQueuedByteCount = 0;
 	private terminalQueuedByteCount = 0;
 	private running = false;
@@ -103,6 +107,7 @@ export class OutboundDeliveryPump {
 		private readonly onTerminalCongestion?: (
 			congestion: TerminalDeliveryCongestion,
 		) => void,
+		private readonly now: () => number = () => Date.now(),
 	) {
 		this.maxQueuedBytes = positiveInteger(
 			limits.maxQueuedBytes,
@@ -124,6 +129,11 @@ export class OutboundDeliveryPump {
 			limits.maxTerminalUnconfirmedBytes ??
 				DEFAULT_MAX_TERMINAL_UNCONFIRMED_BYTES,
 			'maxTerminalUnconfirmedBytes',
+		);
+		this.maxTerminalUnconfirmedAgeMs = positiveInteger(
+			limits.maxTerminalUnconfirmedAgeMs ??
+				DEFAULT_MAX_TERMINAL_UNCONFIRMED_AGE_MS,
+			'maxTerminalUnconfirmedAgeMs',
 		);
 	}
 
@@ -194,6 +204,7 @@ export class OutboundDeliveryPump {
 				releasePending: false,
 				confirmedPosition: admission.position,
 				headPosition: admission.position,
+				unconfirmedSince: undefined,
 			};
 			this.terminalLanes.set(admission.laneId, lane);
 		}
@@ -204,13 +215,16 @@ export class OutboundDeliveryPump {
 			this.start();
 			return Promise.resolve();
 		}
+		if (lane.unconfirmedSince === undefined)
+			lane.unconfirmedSince = this.now();
 		lane.headPosition = admission.nextPosition;
 		if (
 			lane.queue.length >= this.maxTerminalQueuedFrames ||
 			lane.queuedBytes + frame.byteLength > this.maxTerminalQueuedBytes ||
 			this.terminalQueuedByteCount + frame.byteLength > this.maxQueuedBytes ||
 			admission.nextPosition - lane.confirmedPosition >
-				this.maxTerminalUnconfirmedBytes
+				this.maxTerminalUnconfirmedBytes ||
+			this.now() - lane.unconfirmedSince > this.maxTerminalUnconfirmedAgeMs
 		) {
 			this.congestTerminalLane(admission.laneId, lane, admission);
 			this.start();
@@ -244,6 +258,7 @@ export class OutboundDeliveryPump {
 			position > lane.headPosition
 		) return;
 		lane.confirmedPosition = position;
+		lane.unconfirmedSince = position >= lane.headPosition ? undefined : this.now();
 	}
 
 	/** Release scheduler state after the authoritative attachment is detached.
