@@ -87,10 +87,12 @@ test("Codex journal replay cannot close the application connection or block term
     capabilities: ["events.resync"],
   });
   let subscription;
+  let resyncs = 0;
   try {
     await pair.open();
     await client.connect();
     subscription = await client.subscribe("agent");
+    subscription.onResync(() => { resyncs += 1; });
     blockServerWrites = true;
     serverWriteGate = new Promise((resolve) => { releaseServerWrites = resolve; });
 
@@ -107,15 +109,12 @@ test("Codex journal replay cannot close the application connection or block term
     }
     await new Promise((resolve) => setImmediate(resolve));
 
-    assert.deepEqual(deliveryDiagnostics.find((diagnostic) => diagnostic.phase === "failure"), {
-      phase: "failure",
-      code: "resource",
-      queuedBytes: deliveryDiagnostics.find((diagnostic) => diagnostic.phase === "failure")?.queuedBytes,
-      queuedFrames: 1_024,
-    });
+    assert.equal(deliveryDiagnostics.some((diagnostic) => diagnostic.phase === "failure"), false);
     assert.equal(connection.state, "open", "agent projection pressure closed the shared application connection");
     releaseServerWrites();
     blockServerWrites = false;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(resyncs <= 1, "agent projection pressure emitted repeated resync requests");
     const created = await client.command("terminal.create", {
       projectId: "project-a",
       cwd: "/repo/a",
