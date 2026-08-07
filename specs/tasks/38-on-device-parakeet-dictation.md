@@ -42,6 +42,10 @@ must not be treated as renderer code or an unbounded shell command.
   output bounds, model cache location, and shutdown cleanup.
 - Runtime/model installation is an explicit user-visible action. It reports
   progress and failures, and does not occur merely by opening Settings.
+- [x] Poll and display bounded phase-based setup progress while installation is
+  active, including an explicit model download/load phase for the potentially
+  long first run. Drain bounded worker diagnostics so download output cannot
+  block the worker when no terminal is attached.
 - Model downloads use the worker's isolated application cache. Audio and
   transcript content are not written into that cache or retained after a
   request.
