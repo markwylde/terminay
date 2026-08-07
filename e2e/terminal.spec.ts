@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
 import {
@@ -19,6 +19,19 @@ async function getActiveSessionId(page: Page): Promise<string> {
 	}
 
 	return sessionId;
+}
+
+async function requireBoundingBox(locator: Locator, label: string) {
+	let box = await locator.boundingBox();
+	await expect
+		.poll(async () => {
+			box = await locator.boundingBox();
+			return box !== null;
+		})
+		.toBe(true);
+
+	if (!box) throw new Error(`${label} location is unavailable`);
+	return box;
 }
 
 async function writeToTerminal(page: Page, data: string): Promise<void> {
@@ -622,14 +635,11 @@ test.describe('terminal behavior', () => {
 			.locator('.xterm-rows')
 			.getByText(linkUrl, { exact: true });
 		await expect(link).toBeVisible();
-		const linkBox = await link.boundingBox();
-		const terminalBox = await mainWindow
-			.locator('.terminal-panel')
-			.first()
-			.boundingBox();
-		if (!linkBox || !terminalBox) {
-			throw new Error('Terminal link location is unavailable');
-		}
+		const linkBox = await requireBoundingBox(link, 'Terminal link');
+		const terminalBox = await requireBoundingBox(
+			mainWindow.locator('.terminal-panel').first(),
+			'Terminal',
+		);
 		const linkCenter = {
 			x: linkBox.x + linkBox.width / 2,
 			y: linkBox.y + linkBox.height / 2,
@@ -709,14 +719,11 @@ test.describe('terminal behavior', () => {
 			.locator('.xterm-rows')
 			.getByText(linkText, { exact: true });
 		await expect(link).toBeVisible();
-		const linkBox = await link.boundingBox();
-		const terminalBox = await mainWindow
-			.locator('.terminal-panel')
-			.first()
-			.boundingBox();
-		if (!linkBox || !terminalBox) {
-			throw new Error('Terminal OSC link location is unavailable');
-		}
+		const linkBox = await requireBoundingBox(link, 'Terminal OSC link');
+		const terminalBox = await requireBoundingBox(
+			mainWindow.locator('.terminal-panel').first(),
+			'Terminal',
+		);
 
 		const linkCenter = {
 			x: linkBox.x + linkBox.width / 2,
