@@ -10,6 +10,8 @@ export interface OutboundDeliveryLimits {
 	readonly maxTerminalQueuedFrames?: number;
 	readonly maxTerminalUnconfirmedBytes?: number;
 	readonly maxTerminalUnconfirmedAgeMs?: number;
+	readonly maxStateQueuedBytes?: number;
+	readonly maxStateQueuedFrames?: number;
 }
 
 export interface OutboundDeliverySnapshot {
@@ -21,8 +23,10 @@ interface PendingDelivery {
 	readonly frame: Uint8Array;
 	readonly resolve: () => void;
 	readonly reject: (reason: OutboundDeliveryError) => void;
-	readonly trafficClass: 'control' | 'terminal' | 'terminal_resync';
+	readonly trafficClass: 'control' | 'state' | 'state_resync' | 'terminal' | 'terminal_resync';
 	readonly terminalLaneId?: string;
+	readonly stateLaneId?: string;
+	readonly stateKey?: string;
 }
 
 const DEFAULT_MAX_QUEUED_FRAMES = 1_024;
@@ -30,6 +34,8 @@ const DEFAULT_MAX_TERMINAL_QUEUED_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_TERMINAL_QUEUED_FRAMES = 256;
 const DEFAULT_MAX_TERMINAL_UNCONFIRMED_BYTES = 256 * 1024;
 const DEFAULT_MAX_TERMINAL_UNCONFIRMED_AGE_MS = 5_000;
+const DEFAULT_MAX_STATE_QUEUED_BYTES = 1024 * 1024;
+const DEFAULT_MAX_STATE_QUEUED_FRAMES = 256;
 const MAX_CONSECUTIVE_CONTROL_DELIVERIES = 8;
 
 export interface TerminalDeliveryAdmission {
@@ -60,6 +66,18 @@ interface TerminalLane {
 	unconfirmedSince: number | undefined;
 }
 
+interface StateLane {
+	readonly queue: PendingDelivery[];
+	queuedBytes: number;
+	resyncPending: boolean;
+}
+
+export interface StateDeliveryAdmission {
+	readonly laneId: string;
+	readonly key: string;
+	readonly createResyncFrame: () => Uint8Array;
+}
+
 /** The single stable reason returned by a failed or closed outbound lane. */
 export class OutboundDeliveryError extends Error {
 	readonly reason: TransportCloseReason;
@@ -83,17 +101,22 @@ export class OutboundDeliveryError extends Error {
 export class OutboundDeliveryPump {
 	private readonly controlQueue: PendingDelivery[] = [];
 	private readonly terminalLanes = new Map<string, TerminalLane>();
+	private readonly stateLanes = new Map<string, StateLane>();
 	private readonly maxQueuedBytes: number;
 	private readonly maxQueuedFrames: number;
 	private readonly maxTerminalQueuedBytes: number;
 	private readonly maxTerminalQueuedFrames: number;
 	private readonly maxTerminalUnconfirmedBytes: number;
 	private readonly maxTerminalUnconfirmedAgeMs: number;
+	private readonly maxStateQueuedBytes: number;
+	private readonly maxStateQueuedFrames: number;
 	private controlQueuedByteCount = 0;
 	private terminalQueuedByteCount = 0;
+	private stateQueuedByteCount = 0;
 	private running = false;
 	private activeDelivery: PendingDelivery | undefined;
 	private terminalLaneCursor = 0;
+	private stateLaneCursor = 0;
 	private consecutiveControlDeliveries = 0;
 	private terminalError: OutboundDeliveryError | undefined;
 
@@ -135,18 +158,59 @@ export class OutboundDeliveryPump {
 				DEFAULT_MAX_TERMINAL_UNCONFIRMED_AGE_MS,
 			'maxTerminalUnconfirmedAgeMs',
 		);
+		this.maxStateQueuedBytes = positiveInteger(limits.maxStateQueuedBytes ?? DEFAULT_MAX_STATE_QUEUED_BYTES, 'maxStateQueuedBytes');
+		this.maxStateQueuedFrames = positiveInteger(limits.maxStateQueuedFrames ?? DEFAULT_MAX_STATE_QUEUED_FRAMES, 'maxStateQueuedFrames');
 	}
 
 	get snapshot(): OutboundDeliverySnapshot {
 		return {
-			queuedBytes: this.controlQueuedByteCount + this.terminalQueuedByteCount,
+			queuedBytes: this.controlQueuedByteCount + this.stateQueuedByteCount + this.terminalQueuedByteCount,
 			queuedFrames:
 				this.controlQueue.length +
+				[...this.stateLanes.values()].reduce((sum, lane) => sum + lane.queue.length, 0) +
 				[...this.terminalLanes.values()].reduce(
 					(sum, lane) => sum + lane.queue.length,
 					0,
 				),
 		};
+	}
+
+	/** Deliver reconstructible latest-value state outside the reliable control
+	 * queue. Pending values with the same key supersede one another. If a
+	 * subscription exceeds its independent bound, one resync marker replaces
+	 * its backlog; this lane can never fail the application connection. */
+	sendState(frame: Uint8Array, admission: StateDeliveryAdmission): Promise<void> {
+		if (this.terminalError !== undefined) return Promise.reject(this.terminalError);
+		if (admission.laneId.length === 0 || admission.key.length === 0) return Promise.reject(new TypeError('state delivery identity is invalid'));
+		let lane = this.stateLanes.get(admission.laneId);
+		if (lane === undefined) {
+			lane = { queue: [], queuedBytes: 0, resyncPending: false };
+			this.stateLanes.set(admission.laneId, lane);
+		}
+		if (lane.resyncPending) return Promise.resolve();
+		const replaceIndex = lane.queue.findIndex((pending) => pending !== this.activeDelivery && pending.stateKey === admission.key);
+		if (replaceIndex >= 0) {
+			const replaced = lane.queue[replaceIndex];
+			if (replaced !== undefined) {
+				lane.queue.splice(replaceIndex, 1);
+				lane.queuedBytes -= replaced.frame.byteLength;
+				this.stateQueuedByteCount -= replaced.frame.byteLength;
+				replaced.resolve();
+			}
+		}
+		if (lane.queue.length >= this.maxStateQueuedFrames || lane.queuedBytes + frame.byteLength > this.maxStateQueuedBytes || this.stateQueuedByteCount + frame.byteLength > this.maxStateQueuedBytes) {
+			this.congestStateLane(admission.laneId, lane, admission.createResyncFrame);
+			this.start();
+			return Promise.resolve();
+		}
+		const copy = frame.slice();
+		const result = new Promise<void>((resolve, reject) => {
+			lane.queue.push({ frame: copy, resolve, reject, trafficClass: 'state', stateLaneId: admission.laneId, stateKey: admission.key });
+			lane.queuedBytes += copy.byteLength;
+			this.stateQueuedByteCount += copy.byteLength;
+		});
+		this.start();
+		return result;
 	}
 
 	send(frame: Uint8Array): Promise<void> {
@@ -322,13 +386,21 @@ export class OutboundDeliveryPump {
 			([, lane]) => lane.queue.length > 0,
 		);
 		const control = this.controlQueue[0];
+		const stateLanes = [...this.stateLanes.entries()].filter(([, lane]) => lane.queue.length > 0);
 		if (
 			control !== undefined &&
-			(lanes.length === 0 ||
+			((lanes.length === 0 && stateLanes.length === 0) ||
 				this.consecutiveControlDeliveries < MAX_CONSECUTIVE_CONTROL_DELIVERIES)
 		) {
 			this.consecutiveControlDeliveries += 1;
 			return control;
+		}
+		if (stateLanes.length > 0) {
+			this.consecutiveControlDeliveries = 0;
+			this.stateLaneCursor %= stateLanes.length;
+			const pending = stateLanes[this.stateLaneCursor]?.[1].queue[0];
+			this.stateLaneCursor = (this.stateLaneCursor + 1) % stateLanes.length;
+			return pending;
 		}
 		if (lanes.length === 0) return undefined;
 		this.consecutiveControlDeliveries = 0;
@@ -345,6 +417,15 @@ export class OutboundDeliveryPump {
 			this.controlQueuedByteCount -= pending.frame.byteLength;
 			return;
 		}
+		if (pending.trafficClass === 'state' || pending.trafficClass === 'state_resync') {
+			const lane = pending.stateLaneId === undefined ? undefined : this.stateLanes.get(pending.stateLaneId);
+			if (lane === undefined || lane.queue[0] !== pending) return;
+			lane.queue.shift();
+			lane.queuedBytes -= pending.frame.byteLength;
+			this.stateQueuedByteCount -= pending.frame.byteLength;
+			if (lane.queue.length === 0) this.stateLanes.delete(pending.stateLaneId as string);
+			return;
+		}
 		const laneId = pending.terminalLaneId;
 		if (laneId === undefined) return;
 		const lane = this.terminalLanes.get(laneId);
@@ -354,6 +435,23 @@ export class OutboundDeliveryPump {
 		this.terminalQueuedByteCount -= pending.frame.byteLength;
 		if (lane.queue.length === 0 && lane.releasePending)
 			this.terminalLanes.delete(laneId);
+	}
+
+	private congestStateLane(laneId: string, lane: StateLane, createResyncFrame: () => Uint8Array): void {
+		const retained = this.activeDelivery?.stateLaneId === laneId ? this.activeDelivery : undefined;
+		for (const pending of lane.queue.splice(0)) {
+			if (pending === retained) continue;
+			lane.queuedBytes -= pending.frame.byteLength;
+			this.stateQueuedByteCount -= pending.frame.byteLength;
+			pending.resolve();
+		}
+		if (retained !== undefined) lane.queue.push(retained);
+		const copy = createResyncFrame().slice();
+		if (copy.byteLength > this.maxStateQueuedBytes) return;
+		lane.queue.push({ frame: copy, resolve: () => undefined, reject: () => undefined, trafficClass: 'state_resync', stateLaneId: laneId });
+		lane.queuedBytes += copy.byteLength;
+		this.stateQueuedByteCount += copy.byteLength;
+		lane.resyncPending = true;
 	}
 
 	private congestTerminalLane(
@@ -419,10 +517,13 @@ export class OutboundDeliveryPump {
 		const error = new OutboundDeliveryError(reason);
 		this.terminalError = error;
 		for (const pending of this.controlQueue.splice(0)) pending.reject(error);
+		for (const lane of this.stateLanes.values()) for (const pending of lane.queue.splice(0)) pending.reject(error);
+		this.stateLanes.clear();
 		for (const lane of this.terminalLanes.values())
 			for (const pending of lane.queue.splice(0)) pending.reject(error);
 		this.terminalLanes.clear();
 		this.controlQueuedByteCount = 0;
+		this.stateQueuedByteCount = 0;
 		this.terminalQueuedByteCount = 0;
 		if (notify) {
 			try {
