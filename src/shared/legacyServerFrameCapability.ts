@@ -4,29 +4,40 @@
  * hand-off narrow: importing the client transport must never acquire the
  * application-wide preload object.
  */
-type LegacyServerFrameApi = LegacyServerFrameCapability
+type LegacyServerFrameApi = LegacyServerFrameCapability;
 
 export type LegacyServerFrameCapability = Readonly<{
-  sendServerFrame: (serverId: string, frame: Uint8Array) => void
-  onServerFrame: (
-    serverId: string,
-    listener: (frame: Uint8Array | null) => void,
-  ) => () => void
-}>
+	closeServerConnection: (connectionId: string) => void;
+	sendServerFrame: (connectionId: string, frame: Uint8Array) => void;
+	onServerFrame: (
+		connectionId: string,
+		listener: (frame: Uint8Array | null) => void,
+	) => () => void;
+}>;
 
 /** Snapshot only the fixed-server frame operations, never the broad preload. */
 export function captureLegacyServerFrameCapability(
-  api: LegacyServerFrameApi,
+	api: LegacyServerFrameApi,
 ): LegacyServerFrameCapability {
-  const { sendServerFrame, onServerFrame } = api
-  for (const [name, value] of Object.entries({ sendServerFrame, onServerFrame })) {
-    if (typeof value !== 'function') {
-      throw new TypeError(`legacy server-frame capability ${name} is unavailable`)
-    }
-  }
+	const { closeServerConnection, sendServerFrame, onServerFrame } = api;
+	for (const [name, value] of Object.entries({
+		closeServerConnection,
+		sendServerFrame,
+		onServerFrame,
+	})) {
+		if (typeof value !== 'function') {
+			throw new TypeError(
+				`legacy server-frame capability ${name} is unavailable`,
+			);
+		}
+	}
 
-  return Object.freeze({
-    sendServerFrame: (serverId, frame) => sendServerFrame(serverId, frame),
-    onServerFrame: (serverId, listener) => onServerFrame(serverId, listener),
-  })
+	return Object.freeze({
+		closeServerConnection: (connectionId) =>
+			closeServerConnection(connectionId),
+		sendServerFrame: (connectionId, frame) =>
+			sendServerFrame(connectionId, frame),
+		onServerFrame: (connectionId, listener) =>
+			onServerFrame(connectionId, listener),
+	});
 }

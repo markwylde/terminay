@@ -90,6 +90,14 @@ export class RendererConnectionRecovery<Context> {
 
 	start(key: string): void {
 		if (key.length === 0) throw new Error('connection recovery key is required');
+		if (
+			this.key === key &&
+			(this.stateValue.phase === 'reconnecting' ||
+				this.stateValue.phase === 'resubscribing' ||
+				this.stateValue.phase === 'hydrating')
+		) {
+			return;
+		}
 		this.replaceGeneration(key, true);
 	}
 

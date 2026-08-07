@@ -2977,6 +2977,7 @@ function createWindow(options?: {
 				window.webContents.postMessage(
 					'server:connection',
 					{
+						connectionId: randomUUID(),
 						serverId: serverTerminalAuthority.service.serverId,
 						label: 'Local',
 					},
@@ -3035,6 +3036,7 @@ function attachAuxiliaryServerConnection(window: BrowserWindow): void {
 		window.webContents.postMessage(
 			'server:connection',
 			{
+				connectionId: randomUUID(),
 				serverId: serverTerminalAuthority.service.serverId,
 				label: 'Local',
 			},
@@ -3060,6 +3062,7 @@ function postLocalServerConnection(
 	sender.postMessage(
 		'server:connection',
 		{
+			connectionId: randomUUID(),
 			label: 'Local',
 			replacement,
 			serverId: authority.service.serverId,
@@ -3378,9 +3381,11 @@ async function connectRemoteByteTransport(
 	const postRemoteConnection = () => {
 		if (isClosed || sender.isDestroyed()) return;
 		try {
-			sender.postMessage('server:connection', { serverId: scopeId, label }, [
-				channel.port2,
-			]);
+			sender.postMessage(
+				'server:connection',
+				{ connectionId: randomUUID(), serverId: scopeId, label },
+				[channel.port2],
+			);
 		} catch (error) {
 			fail(error);
 		}
