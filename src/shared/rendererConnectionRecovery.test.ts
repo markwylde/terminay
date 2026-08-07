@@ -254,3 +254,32 @@ test('supersession during asynchronous activation fences and disposes the stale 
 	assert.deepEqual(disposed, ['old']);
 	assert.equal(recovery.state.key, 'new');
 });
+
+test('duplicate close notifications do not restart an active recovery', async () => {
+	const subscription = deferred<void>();
+	let connectCalls = 0;
+	const recovery = new RendererConnectionRecovery<string>({
+		connect: async () => {
+			connectCalls += 1;
+			return 'candidate';
+		},
+		dispose: () => undefined,
+		hydrate: async () => undefined,
+		onRecovered: () => undefined,
+		resubscribe: () => subscription.promise,
+	});
+
+	recovery.start('local');
+	await eventually(() => recovery.state.phase === 'resubscribing');
+	const generation = recovery.state.generation;
+	recovery.start('local');
+	recovery.start('local');
+	assert.equal(recovery.state.generation, generation);
+	assert.equal(connectCalls, 1);
+
+	recovery.retry();
+	assert.equal(recovery.state.generation, generation + 1);
+	subscription.resolve();
+	await eventually(() => recovery.state.phase === 'connected');
+	assert.equal(connectCalls, 2);
+});

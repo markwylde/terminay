@@ -32,6 +32,7 @@ type RendererBootstrapOptions = {
 	readonly connectionTimeoutMs?: number;
 	readonly onTransportClosed?: () => void;
 	readonly preloadFrameCapability?: LegacyServerFrameCapability;
+	readonly signal?: AbortSignal;
 	readonly setupTimeoutMs?: number;
 	readonly onPhaseChange?: (
 		phase: RendererBootstrapPhase,
@@ -51,6 +52,7 @@ export type RendererApplicationClientContext = Readonly<{
 
 function createRendererServerTransport(
 	serverId: string,
+	connectionId: string,
 	port?: MessagePort,
 	preloadFrameCapability?: LegacyServerFrameCapability,
 ): ServerPortTransport {
@@ -59,7 +61,7 @@ function createRendererServerTransport(
 			throw new Error('Desktop server-frame capability is unavailable');
 		}
 		return new ServerPortTransport(
-			new PreloadServerMessagePort(serverId, preloadFrameCapability),
+			new PreloadServerMessagePort(serverId, connectionId, preloadFrameCapability),
 		);
 	}
 	return new ServerPortTransport(
@@ -79,6 +81,7 @@ function createRendererClient(transport: ServerPortTransport) {
 
 export async function connectRendererApplicationClient(
 	serverId: string,
+	connectionId: string,
 	port?: MessagePort,
 	options: RendererBootstrapOptions = {},
 ): Promise<RendererApplicationClientContext> {
@@ -89,11 +92,18 @@ export async function connectRendererApplicationClient(
 	);
 	const transport = createRendererServerTransport(
 		serverId,
+		connectionId,
 		port,
 		options.preloadFrameCapability,
 	);
 	const client = createRendererClient(transport);
 	const controller = new AbortController();
+	const abortFromCaller = () =>
+		controller.abort(
+			options.signal?.reason ?? new Error('server handshake aborted'),
+		);
+	if (options.signal?.aborted) abortFromCaller();
+	else options.signal?.addEventListener('abort', abortFromCaller, { once: true });
 	const timeout = globalThis.setTimeout(() => {
 		controller.abort(
 			new Error(`server handshake timed out after ${connectionTimeoutMs}ms`),
@@ -120,17 +130,20 @@ export async function connectRendererApplicationClient(
 		throw error;
 	} finally {
 		globalThis.clearTimeout(timeout);
+		options.signal?.removeEventListener('abort', abortFromCaller);
 	}
 }
 
 /** Connect the renderer to the one server-scoped port supplied by Desktop. */
 export async function connectRendererServerClient(
 	serverId: string,
+	connectionId: string,
 	port?: MessagePort,
 	options: RendererBootstrapOptions = {},
 ): Promise<Omit<TerminalPanelClientContextValue, 'projectId'>> {
 	const context = await connectRendererApplicationClient(
 		serverId,
+		connectionId,
 		port,
 		options,
 	);
@@ -234,6 +247,7 @@ export async function createConnectedServerClientContext(
 					candidateActivityClient.subscribe(),
 					setupTimeoutMs,
 					'activity subscription',
+					options.signal,
 				),
 			),
 			trackedPhase(
@@ -243,6 +257,7 @@ export async function createConnectedServerClientContext(
 					candidateAgentStatusClient.subscribe(),
 					setupTimeoutMs,
 					'agent-status subscription',
+					options.signal,
 				),
 			),
 			trackedPhase(
@@ -252,6 +267,7 @@ export async function createConnectedServerClientContext(
 					store.subscribeToChanges(),
 					setupTimeoutMs,
 					'workspace subscription',
+					options.signal,
 				),
 			).then(() =>
 				trackedPhase(
@@ -261,6 +277,7 @@ export async function createConnectedServerClientContext(
 						store.loadInitialSnapshot(),
 						setupTimeoutMs,
 						'workspace snapshot',
+						options.signal,
 					),
 				),
 			),
@@ -350,8 +367,10 @@ async function withTimeout<T>(
 	promise: Promise<T>,
 	timeoutMs: number,
 	operation: string,
+	signal?: AbortSignal,
 ): Promise<T> {
 	let timeout: ReturnType<typeof globalThis.setTimeout> | undefined;
+	let abort: (() => void) | undefined;
 	try {
 		return await Promise.race([
 			promise,
@@ -362,22 +381,30 @@ async function withTimeout<T>(
 					timeoutMs,
 				);
 			}),
+			new Promise<never>((_resolve, reject) => {
+				abort = () =>
+					reject(signal?.reason ?? new Error(`${operation} aborted`));
+				if (signal?.aborted) abort();
+				else signal?.addEventListener('abort', abort, { once: true });
+			}),
 		]);
 	} finally {
 		if (timeout !== undefined) globalThis.clearTimeout(timeout);
+		if (abort !== undefined) signal?.removeEventListener('abort', abort);
 	}
 }
 
 /** The actual Electron MessagePort stays in preload. Context isolation turns
  * transferred DOM ports into inert objects, so the renderer gets only this
  * fixed-server frame adapter. */
-class PreloadServerMessagePort implements ServerMessagePort {
+export class PreloadServerMessagePort implements ServerMessagePort {
 	onmessage: ((event: { readonly data: unknown }) => void) | null = null;
 	onmessageerror: (() => void) | null = null;
 	private unsubscribe: (() => void) | undefined;
 
 	constructor(
 		private readonly serverId: string,
+		private readonly connectionId: string,
 		private readonly frameCapability: LegacyServerFrameCapability,
 	) {}
 
@@ -388,7 +415,7 @@ class PreloadServerMessagePort implements ServerMessagePort {
 		diagnostic.sentFrames += 1;
 		diagnostic.lastSentBytes = message.byteLength;
 		try {
-			this.frameCapability.sendServerFrame(this.serverId, message);
+			this.frameCapability.sendServerFrame(this.connectionId, message);
 		} catch (error) {
 			diagnostic.lastError =
 				error instanceof Error ? error.message : String(error);
@@ -401,7 +428,7 @@ class PreloadServerMessagePort implements ServerMessagePort {
 		const diagnostic = rendererTransportDiagnostic(this.serverId);
 		diagnostic.started = true;
 		this.unsubscribe = this.frameCapability.onServerFrame(
-			this.serverId,
+			this.connectionId,
 			(frame) => {
 				if (frame === null) {
 					diagnostic.lastError = 'preload server frame failed validation';
@@ -418,6 +445,7 @@ class PreloadServerMessagePort implements ServerMessagePort {
 	close(): void {
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
+		this.frameCapability.closeServerConnection(this.connectionId);
 	}
 }
 
