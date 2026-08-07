@@ -1877,10 +1877,28 @@ contextBridge.exposeInMainWorld(
 	'terminayWindowLifecycleHost',
 	Object.freeze({
 		version: DESKTOP_WINDOW_LIFECYCLE_HOST_BRIDGE_VERSION,
-		closeCurrent: () =>
+		closeCurrent: (confirmedRunningWork = false) =>
 			ipcRenderer.invoke('desktop:window-lifecycle-host:close-current', {
+				confirmedRunningWork,
 				version: DESKTOP_WINDOW_LIFECYCLE_HOST_BRIDGE_VERSION,
 			}) as Promise<void>,
+		confirmClose: (
+			kind: 'terminal' | 'project',
+			runningTerminalCount: number,
+		) =>
+			ipcRenderer.invoke('desktop:window-lifecycle-host:confirm-close', {
+				kind,
+				runningTerminalCount,
+				version: DESKTOP_WINDOW_LIFECYCLE_HOST_BRIDGE_VERSION,
+			}) as Promise<boolean>,
+		publishRunningTerminalSessions: (sessionIds: readonly string[]) =>
+			ipcRenderer.invoke(
+				'desktop:window-lifecycle-host:publish-running-terminals',
+				{
+					sessionIds: [...sessionIds],
+					version: DESKTOP_WINDOW_LIFECYCLE_HOST_BRIDGE_VERSION,
+				},
+			) as Promise<void>,
 	}),
 );
 

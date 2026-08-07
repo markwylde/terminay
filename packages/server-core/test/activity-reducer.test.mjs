@@ -49,9 +49,17 @@ test("provider activity has precedence over structured and raw fallback", () => 
   assert.equal(reducer.snapshot().sessions["session-a"].providerState, "waiting");
   assert.equal(reducer.snapshot().sessions["session-a"].status, "idle");
 
+  // Close protection remains tied to the real PTY foreground process even
+  // when provider state owns presentation activity.
+  const foreground = reducer.applySignal("session-a", { kind: "foreground", busy: true, processName: "codex" }, { now: 4 });
+  assert.equal(foreground.snapshot.providerState, "waiting");
+  assert.equal(foreground.snapshot.foregroundBusy, true);
+  const shell = reducer.applySignal("session-a", { kind: "foreground", busy: false, processName: "zsh" }, { now: 5 });
+  assert.equal(shell.snapshot.foregroundBusy, false);
+
   // Reordered and cross-run updates are fenced.
-  assert.equal(reducer.applyProviderActivity("session-a", { provider: "codex", state: "working", sequence: 3 }, { now: 4 }), undefined);
-  assert.equal(reducer.applyProviderActivity("session-a", { provider: "codex", state: "working", sequence: 5, agentId: "other" }, { now: 5 }), undefined);
+  assert.equal(reducer.applyProviderActivity("session-a", { provider: "codex", state: "working", sequence: 3 }, { now: 6 }), undefined);
+  assert.equal(reducer.applyProviderActivity("session-a", { provider: "codex", state: "working", sequence: 5, agentId: "other" }, { now: 7 }), undefined);
 });
 
 test("terminal exit removes only its session and fences stale updates", () => {
