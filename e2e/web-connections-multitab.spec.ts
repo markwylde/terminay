@@ -19,8 +19,7 @@ test('shared Web Connections actions persist and converge across tabs without pa
 	const first = await context.newPage();
 	const second = await context.newPage();
 	const url = `${fixture.origin}/web.html`;
-	await first.goto(url);
-	await second.goto(url);
+	await Promise.all([first.goto(url), second.goto(url)]);
 
 	const firstConnections = first.locator(
 		'[data-shared-route-body="connections"]',
