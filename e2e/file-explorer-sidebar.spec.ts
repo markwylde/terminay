@@ -291,6 +291,10 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   await expect(contextMenuItem(mainWindow, 'Copy path')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Copy relative path')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Rename')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Delete')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Create new file')).toHaveCount(0)
   await mainWindow.keyboard.press('Escape')
 
   // The Changes group lists the modified and untracked files.
@@ -448,6 +452,24 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   // Re-expand.
   await worktree.locator('.git-panel__folder').filter({ hasText: 'lib' }).click()
   await expect(utilRow).toBeVisible()
+
+  // Double-clicking a Git folder mirrors Explorer by opening a Folder tab while
+  // leaving its disclosure state unchanged.
+  const libFolder = worktree.locator('.git-panel__folder').filter({ hasText: 'lib' })
+  await libFolder.dblclick()
+  await expect(mainWindow.getByLabel('Close folder tab')).toHaveCount(1)
+  await expect(utilRow).toBeVisible()
+
+  await libFolder.click({ button: 'right' })
+  await expect(contextMenuItem(mainWindow, 'Create new file')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Create new folder')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Rename')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Delete')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Copy path')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Copy relative path')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toBeVisible()
+  await mainWindow.keyboard.press('Escape')
 
   // The worktree row exposes a push-agent menu offering the four commit-and-push actions.
   const pushButton = worktree.getByLabel(/Commit and push .* with an AI agent/)

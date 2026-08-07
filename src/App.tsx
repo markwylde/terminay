@@ -1188,6 +1188,10 @@ const ProjectWorkspace = forwardRef<
 		},
 		ref,
 	) => {
+		const [pendingGitFolderOpen, setPendingGitFolderOpen] = useState<{
+			path: string;
+			worktreeRoot: string;
+		} | null>(null);
 		const legacySettingsClient = useTerminalSettingsClient();
 		const disconnectedFileCompatibility =
 			useOptionalDisconnectedFileCompatibility();
@@ -2335,6 +2339,27 @@ const ProjectWorkspace = forwardRef<
 				syncPanelFocusState,
 			],
 		);
+		const handleOpenGitFolder = useCallback(
+			(folderPath: string, worktreeRoot: string) => {
+				if (worktreeRoot !== project.rootFolder) {
+					setPendingGitFolderOpen({ path: folderPath, worktreeRoot });
+					onUpdateProject(project.id, { rootFolder: worktreeRoot });
+					return;
+				}
+				openFolder(folderPath);
+			},
+			[onUpdateProject, openFolder, project.id, project.rootFolder],
+		);
+		useEffect(() => {
+			if (
+				pendingGitFolderOpen === null ||
+				project.rootFolder !== pendingGitFolderOpen.worktreeRoot
+			) {
+				return;
+			}
+			openFolder(pendingGitFolderOpen.path);
+			setPendingGitFolderOpen(null);
+		}, [openFolder, pendingGitFolderOpen, project.rootFolder]);
 
 		const setProjectRootFolderToWorkingDirectory = useCallback(async () => {
 			const sessionId = getActiveSessionId();
@@ -4374,13 +4399,18 @@ const ProjectWorkspace = forwardRef<
 							deletingWorktreePaths={deletingWorktreePaths}
 							status={worktreePanelStatus}
 							viewMode={settings.sidebar.gitPanelViewMode}
+							onDeletePath={handleDelete}
+							onNewFile={handleNewFile}
+							onNewFolder={handleNewFolder}
 							onDeleteWorktree={handleDeleteWorktree}
 							onOpenEntry={handleOpenGitEntry}
+							onOpenFolder={handleOpenGitFolder}
 							onOpenPushMenu={handleOpenWorktreePushMenu}
 							onOpenTerminal={handleOpenTerminalAtWorktree}
 							onOpenTerminalAtPath={handleOpenTerminalAt}
 							onPullFromOrigin={handlePullWorktreeFromOrigin}
 							onRenameWorktree={handleRenameWorktree}
+							onRenamePath={handleRename}
 							onRevealWorktree={handleRevealWorktree}
 							onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
 						/>
