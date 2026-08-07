@@ -23,7 +23,11 @@ function pairingUrl(): string {
 }
 
 async function openEnrollment(page: import('@playwright/test').Page) {
-	await page.goto(`${fixture.origin}/web.html`);
+	// Cold Vite compilation is fixture bootstrap, not an application operation.
+	await page.goto(`${fixture.origin}/web.html`, {
+		waitUntil: 'domcontentloaded',
+		timeout: 15_000,
+	});
 	const connect = page.getByRole('dialog', {
 		name: 'Connect to Remote Server',
 	});
