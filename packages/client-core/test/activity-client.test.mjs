@@ -151,7 +151,12 @@ test("activity replay resync replaces a restarted canonical snapshot exactly", a
 
   await client.refresh();
   assert.deepEqual(await client.replay(), { kind: "applied", revision: 1, changed: true });
-  assert.deepEqual(client.store.snapshot, restarted);
+  assert.deepEqual(client.store.snapshot, {
+    ...restarted,
+    sessions: {
+      "session-b": { ...restarted.sessions["session-b"], foregroundBusy: false },
+    },
+  });
   assert.equal(updates.length, 2);
 
   assert.deepEqual(await client.replay(), { kind: "ignored", revision: 1, changed: false });
@@ -171,7 +176,12 @@ test("activity stream gap reloads an exact restarted-server snapshot", async () 
   listener({ payload: { revision: 10, cursor: "10", type: "activity.changed", sessionId: "session-a", snapshot: session(true) } });
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(client.store.snapshot, snapshot);
+  assert.deepEqual(client.store.snapshot, {
+    ...snapshot,
+    sessions: {
+      "session-a": { ...snapshot.sessions["session-a"], foregroundBusy: false },
+    },
+  });
   client.close();
 });
 
