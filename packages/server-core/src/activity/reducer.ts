@@ -460,6 +460,13 @@ export class TerminalActivityReducer {
 
   private commitIfChanged(session: MutableSession, before: TerminalActivitySessionSnapshot): ActivityEvent | undefined {
     const after = snapshotOf(session);
+    // `updatedAt` describes the last externally visible state transition. A
+    // reducer pass may refresh private deadlines without changing that state;
+    // such maintenance must not consume a revision or publish an event.
+    if (sameSnapshotExceptUpdatedAt(before, after)) {
+      session.updatedAt = before.updatedAt;
+      return undefined;
+    }
     if (sameSnapshot(before, after)) return undefined;
     session.updatedAt = after.updatedAt;
     const revision = this.nextRevision();
@@ -556,6 +563,15 @@ function snapshotOf(session: MutableSession): TerminalActivitySessionSnapshot {
 
 function sameSnapshot(a: TerminalActivitySessionSnapshot, b: TerminalActivitySessionSnapshot): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function sameSnapshotExceptUpdatedAt(
+  a: TerminalActivitySessionSnapshot,
+  b: TerminalActivitySessionSnapshot,
+): boolean {
+  const { updatedAt: _aUpdatedAt, ...aState } = a;
+  const { updatedAt: _bUpdatedAt, ...bState } = b;
+  return JSON.stringify(aState) === JSON.stringify(bState);
 }
 
 function normalizeProviderState(value: ProviderActivityUpdate["state"] | ProviderActivityUpdate["status"]): ProviderActivityState {
