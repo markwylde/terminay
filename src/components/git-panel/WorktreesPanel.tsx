@@ -28,7 +28,11 @@ export type WorktreesPanelProps = {
 	status: WorktreePanelStatus | null;
 	viewMode: 'list' | 'tree';
 	onDeleteWorktree: (worktree: GitWorktreeStatus) => void;
+	onDeletePath: (path: string) => void;
+	onNewFile: (path: string) => void;
+	onNewFolder: (path: string) => void;
 	onOpenEntry: (entry: GitChangeEntry) => void;
+	onOpenFolder: (path: string, worktreeRoot: string) => void;
 	onOpenPushMenu: (
 		worktree: GitWorktreeStatus,
 		anchor: { x: number; y: number },
@@ -37,6 +41,7 @@ export type WorktreesPanelProps = {
 	onOpenTerminalAtPath: (path: string) => void;
 	onPullFromOrigin: (worktree: GitWorktreeStatus) => void;
 	onRenameWorktree: (worktree: GitWorktreeStatus) => void;
+	onRenamePath: (path: string) => void;
 	onRevealWorktree: (worktree: GitWorktreeStatus) => void;
 	onSwitchProjectRoot: (worktree: GitWorktreeStatus) => void;
 };
@@ -96,12 +101,17 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 		deletingWorktreePaths,
 		status,
 		viewMode,
+		onDeletePath,
 		onDeleteWorktree,
+		onNewFile,
+		onNewFolder,
 		onOpenEntry,
+		onOpenFolder,
 		onOpenPushMenu,
 		onOpenTerminal,
 		onOpenTerminalAtPath,
 		onPullFromOrigin,
+		onRenamePath,
 		onRenameWorktree,
 		onRevealWorktree,
 		onSwitchProjectRoot,
@@ -363,8 +373,15 @@ export function WorktreesPanel(props: WorktreesPanelProps): JSX.Element {
 								<GitPanel
 									status={worktreeStatus}
 									viewMode={viewMode}
+									onDelete={onDeletePath}
+									onNewFile={onNewFile}
+									onNewFolder={onNewFolder}
 									onOpenEntry={onOpenEntry}
+									onOpenFolder={(path) =>
+										onOpenFolder(path, worktree.path)
+									}
 									onOpenTerminal={onOpenTerminalAtPath}
+									onRename={onRenamePath}
 								/>
 							</div>
 						)}
