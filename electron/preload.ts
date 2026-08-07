@@ -2086,6 +2086,15 @@ contextBridge.exposeInMainWorld(
 	'terminayWorkspaceTransferHost',
 	Object.freeze({
 		version: DESKTOP_WORKSPACE_TRANSFER_HOST_BRIDGE_VERSION,
+		bindView: (viewId: unknown) => {
+			if (typeof viewId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(viewId)) {
+				throw new TypeError('workspace view binding is invalid');
+			}
+			return ipcRenderer.invoke('desktop:workspace-transfer-host:bind-view', {
+				version: DESKTOP_WORKSPACE_TRANSFER_HOST_BRIDGE_VERSION,
+				viewId,
+			}) as Promise<void>;
+		},
 		subscribeAdoptedProject: (listener: unknown) => {
 			if (typeof listener !== 'function')
 				throw new TypeError('workspace transfer listener is invalid');
@@ -2107,9 +2116,11 @@ contextBridge.exposeInMainWorld(
 					version: DESKTOP_WORKSPACE_TRANSFER_HOST_BRIDGE_VERSION,
 				},
 			) as Promise<AdoptedProjectPayload | null>,
-		popoutProject: (project: unknown, x: unknown, y: unknown) => {
+		popoutProject: (project: unknown, targetViewId: unknown, x: unknown, y: unknown) => {
 			if (
 				!isWorkspaceTransferPayload(project) ||
+				typeof targetViewId !== 'string' ||
+				!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(targetViewId) ||
 				typeof x !== 'number' ||
 				!Number.isFinite(x) ||
 				Math.abs(x) > 100_000 ||
@@ -2125,6 +2136,7 @@ contextBridge.exposeInMainWorld(
 				'desktop:workspace-transfer-host:popout-project',
 				{
 					project,
+					targetViewId,
 					version: DESKTOP_WORKSPACE_TRANSFER_HOST_BRIDGE_VERSION,
 					x,
 					y,
