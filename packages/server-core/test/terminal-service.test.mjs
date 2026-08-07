@@ -233,6 +233,7 @@ test("TerminalService owns PTY lifecycle and enforces exact server/project/sessi
 
 test("TerminalService forwards optional foreground process events with exact identity and disposes them on exit", async () => {
   const pty = createPtyFactory();
+  const foregroundEvents = [];
   const service = new TerminalService({
     serverId: "server-a",
     ptyFactory: pty,
@@ -642,7 +643,6 @@ test("node-pty adapter supervises a real shell and preserves server-owned exit/o
 
 test("TerminalService disposal releases node-pty foreground polling when shutdown precedes PTY exit", async () => {
   const intervals = new Map();
-  const foregroundEvents = [];
   let nextIntervalId = 0;
   const exits = new Set();
   const child = {
