@@ -124,7 +124,7 @@ MessagePort.
 
 - [x] Pass the deterministic 200 MiB regression and the real Electron
   presentation-limit reproduction without retry.
-- [ ] Test sustained output with bounded memory and a deliberately stalled
+- [x] Test sustained output with bounded memory and a deliberately stalled
   renderer while another terminal and workspace commands remain responsive.
 - [x] Test multiple noisy terminals for fair progress and reserved control
   capacity.
