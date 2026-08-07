@@ -169,6 +169,31 @@ async function connectedClient() {
   return { client, transport };
 }
 
+test("live terminal presentation does not move the durable connection watermark backwards", async () => {
+  const { client, transport } = await connectedClient();
+  transport.push({
+    type: "event",
+    subscriptionId: "unrouted",
+    revision: 7,
+    cursor: "7",
+    event: "workspace.changed",
+    payload: {},
+  });
+  transport.push({
+    type: "event",
+    subscriptionId: "unrouted",
+    revision: 6,
+    cursor: "6",
+    event: "terminal",
+    payload: { type: "output", attachmentId: "attachment-a" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(client.snapshot.revision, 7);
+  assert.equal(client.snapshot.cursor, "7");
+  await client.close();
+});
+
 test("aborting an accepted command sends one validated cancel frame for its correlation", async () => {
   const { client, transport } = await connectedClient();
   const controller = new AbortController();
