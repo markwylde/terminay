@@ -18,7 +18,7 @@ test('remote entry uses the shared browser connection and workspace runtime', as
 	page,
 }) => {
 	const pairingUrl = `${fixture.origin}/remote.html#pairingToken=${'a'.repeat(32)}`;
-	await page.goto(pairingUrl);
+	await page.goto(pairingUrl, { waitUntil: 'domcontentloaded' });
 
 	await expect(
 		page.getByRole('dialog', { name: 'Connect to Remote Server' }),
