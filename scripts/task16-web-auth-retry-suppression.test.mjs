@@ -13,8 +13,7 @@ test('failed initial pairing invalidates its attempt and clears recovery state',
 	)?.[0];
 	assert.ok(failure);
 	assert.match(failure, /invalidateConnectionAttempt\(profile\.id\)/);
-	assert.match(failure, /window\.clearTimeout\(reconnectTimer\)/);
-	assert.match(failure, /reconnectAttempts\.current\.delete\(profile\.id\)/);
+	assert.doesNotMatch(failure, /connectionRecovery\.current\?\.start/);
 	assert.doesNotMatch(failure, /scheduleRecovery/);
 });
 

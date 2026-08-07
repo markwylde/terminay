@@ -26,11 +26,15 @@ function createPtyFactory() {
         writes: [],
         resizes: [],
         kills: [],
+        pauses: 0,
+        resumes: 0,
         currentCwd: options.cwd,
         getCwd() { return this.currentCwd; },
         write(bytes) { this.writes.push(new Uint8Array(bytes)); },
         resize(dimensions) { this.resizes.push({ ...dimensions }); },
         kill(signal) { this.kills.push(signal); },
+        pause() { this.pauses += 1; },
+        resume() { this.resumes += 1; },
         onData(listener) { dataListeners.add(listener); return () => dataListeners.delete(listener); },
         onExit(listener) { exitListeners.add(listener); return () => exitListeners.delete(listener); },
         onForegroundProcess(listener) { foregroundProcessListeners.add(listener); return () => foregroundProcessListeners.delete(listener); },
@@ -319,6 +323,75 @@ test("TerminalService resolves inactivity waits on exit and abort cleans up only
   timer.advanceBy(200);
   await remaining;
   assert.equal(timer.size, 0);
+});
+
+test("TerminalService incrementally drains one multi-megabyte PTY callback into checkpoints", { timeout: 5_000 }, async () => {
+  const pty = createPtyFactory();
+  const pending = [];
+  const admitted = [];
+  let active = 0;
+  const checkpoints = {
+    createSession() {},
+    ingestOutput(_identity, position, bytes) {
+      active += 1;
+      assert.equal(active, 1, "checkpoint authority receives only one in-flight chunk");
+      let resolve;
+      const promise = new Promise((done) => {
+        resolve = () => {
+          active -= 1;
+          done();
+        };
+      });
+      admitted.push({ position, bytes: new Uint8Array(bytes) });
+      pending.push({ promise, resolve });
+      return promise;
+    },
+    ingestResize() { return Promise.resolve(); },
+    closeSession() {},
+  };
+  const service = new TerminalService({
+    serverId: "server-checkpoint-pressure",
+    ptyFactory: pty,
+    presentationCheckpoints: checkpoints,
+  });
+  await service.createSession({
+    projectId: "project-checkpoint-pressure",
+    sessionId: "session-checkpoint-pressure",
+    cols: 80,
+    rows: 24,
+  });
+  const process = pty.processes[0];
+  const output = new Uint8Array(3 * 1024 * 1024);
+  for (let index = 0; index < output.byteLength; index += 1) output[index] = index % 251;
+
+  try {
+    process.emitData(output);
+    assert.equal(process.pauses, 1, "the PTY pauses at the bounded parser high-water mark");
+    assert.equal(process.resumes, 0);
+    assert.equal(admitted.length, 1, "a single large callback does not flood checkpoint admission");
+
+    const expectedChunks = output.byteLength / (64 * 1024);
+    for (let index = 0; index < expectedChunks; index += 1) {
+      assert.equal(pending.length, index + 1);
+      pending[index].resolve();
+      await pending[index].promise;
+      await Promise.resolve();
+    }
+    assert.equal(process.resumes, 1, "the PTY resumes at the parser low-water mark");
+    assert.equal(admitted.length, expectedChunks);
+    for (let index = 0; index < admitted.length; index += 1) {
+      assert.equal(admitted[index].position, index * 64 * 1024);
+      assert.deepEqual(admitted[index].bytes, output.slice(index * 64 * 1024, (index + 1) * 64 * 1024));
+    }
+    assert.equal(service.getSession({
+      serverId: "server-checkpoint-pressure",
+      projectId: "project-checkpoint-pressure",
+      sessionId: "session-checkpoint-pressure",
+    }).status, "running");
+  } finally {
+    for (const item of pending) item.resolve();
+    await service.shutdown();
+  }
 });
 
 test("TerminalService kill finalizes a session exactly once when the PTY reports duplicate exits", async () => {

@@ -135,12 +135,20 @@ export interface ServerCoreOptions extends ServerIdentity, OperationRegistries {
   readonly projectEvent?: (event: OrderedEvent, client: AuthenticatedClient | undefined) => OrderedEvent | undefined;
   /** Host-owned cleanup for connection-scoped protocol adapters. */
   readonly onConnectionClosed?: (clientId: ProtocolId) => void;
+	/** Internal attachment-owned output suppression after presentation
+	 * congestion. The PTY and canonical checkpoint remain live. */
+	readonly onTerminalCongestion?: (
+		attachmentId: ProtocolId,
+		clientId: ProtocolId,
+	) => void;
 }
 
 export interface OrderedEventJournalLike {
   readonly revision: number;
   readonly cursor: string;
   append(event: string, payload: JsonValue): OrderedEvent;
+  /** Publish a live event without advancing or consuming retained history. */
+  publishTransient(event: string, payload: JsonValue): OrderedEvent;
   replay(afterRevision?: number): EventReplay | Promise<EventReplay>;
   subscribe(listener: EventListener): () => void;
 }
@@ -158,10 +166,13 @@ export interface ConnectionOptions {
 }
 
 export interface ConnectionDeliveryDiagnostic {
-	readonly phase: "failure" | "closed";
+	readonly phase: "terminal_congestion" | "failure" | "closed";
 	readonly code: TransportCloseCode;
 	readonly queuedBytes: number;
 	readonly queuedFrames: number;
+	readonly attachmentId?: string;
+	readonly confirmedPosition?: number;
+	readonly headPosition?: number;
 }
 
 export interface ServerConnectionLike {
