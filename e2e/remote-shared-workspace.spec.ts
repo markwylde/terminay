@@ -18,7 +18,10 @@ test('remote entry uses the shared browser connection and workspace runtime', as
 	page,
 }) => {
 	const pairingUrl = `${fixture.origin}/remote.html#pairingToken=${'a'.repeat(32)}`;
-	await page.goto(pairingUrl, { waitUntil: 'domcontentloaded' });
+	// The Vite fixture can still be compiling the browser graph on a cold CI
+	// worker. Treat receiving the document as navigation completion; the UI
+	// assertions below remain the bounded readiness check.
+	await page.goto(pairingUrl, { waitUntil: 'commit' });
 
 	await expect(
 		page.getByRole('dialog', { name: 'Connect to Remote Server' }),

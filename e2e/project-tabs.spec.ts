@@ -149,6 +149,7 @@ test.describe('project tabs', () => {
 	});
 
 	test('project edit window uses a single-character icon input and cancel keeps the project unchanged', async ({
+		appHarness,
 		mainWindow,
 	}) => {
 		const activeProjectTab = mainWindow.locator('.project-tab--active');
@@ -163,7 +164,12 @@ test.describe('project tabs', () => {
 				.catch(() => null)) ?? ''
 		).trim();
 
-		const editWindow = await openProjectEditWindow(mainWindow);
+		await appHarness.openMacroLauncher(mainWindow);
+		const editWindow = await appHarness.openChildWindow(async () => {
+			await mainWindow
+				.getByRole('button', { name: 'Edit project settings' })
+				.click();
+		});
 		const iconInput = editWindow.getByLabel('Tab icon');
 
 		await expect(
