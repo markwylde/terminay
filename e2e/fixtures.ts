@@ -106,7 +106,7 @@ async function createStaticServer(distRoot: string): Promise<{ close: () => Prom
 }
 
 async function closeElectronAppGracefully(electronApp: ElectronApplication): Promise<void> {
-  const closeTimeoutMs = process.env.CI ? 15_000 : 5_000
+  const closeTimeoutMs = 2_500
 
   const raceWithTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
     return await Promise.race([
@@ -118,45 +118,18 @@ async function closeElectronAppGracefully(electronApp: ElectronApplication): Pro
   }
 
   try {
+    await electronApp.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async () => ({ checkboxChecked: false, response: 0 })
+    })
+  } catch {
+    // The app may already have exited during the test.
+  }
+
+  try {
     await raceWithTimeout(electronApp.close(), closeTimeoutMs, 'Timed out waiting for Electron to close gracefully.')
     return
   } catch {
-    // Fall through to a harder shutdown path to keep teardown deterministic in CI.
-  }
-
-  try {
-    // A blocked `before-quit` handler can also block the Playwright main-process
-    // RPC itself. Keep this best-effort forced shutdown bounded so it cannot
-    // prevent the process-level fallback below from running.
-    await raceWithTimeout(
-      electronApp.evaluate(({ BrowserWindow, app }) => {
-        for (const window of BrowserWindow.getAllWindows()) {
-          if (!window.isDestroyed()) {
-            window.destroy()
-          }
-        }
-
-        app.exit(0)
-      }),
-      closeTimeoutMs,
-      'Timed out forcing Electron to exit after graceful shutdown stalled.',
-    )
-  } catch {
-    // If the main process is already gone or its control channel is blocked,
-    // the process kill fallback below remains authoritative for test teardown.
-  }
-
-  if (electronApp.process().exitCode !== null) {
-    return
-  }
-
-  try {
-    await raceWithTimeout(
-      electronApp.waitForEvent('close', { timeout: closeTimeoutMs }),
-      closeTimeoutMs,
-      'Timed out waiting for Electron to exit after forcing shutdown.',
-    )
-  } catch {
+    // A broken graceful-shutdown path must not consume the test timeout.
     if (electronApp.process().exitCode === null) {
       electronApp.process().kill('SIGKILL')
     }

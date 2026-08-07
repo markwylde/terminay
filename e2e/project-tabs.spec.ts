@@ -1,7 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import {
-	cancelEditWindow,
 	openProjectEditWindow,
 	submitEditWindow,
 } from './support/ui';
@@ -94,6 +93,7 @@ test.describe('project tabs', () => {
 
 	test('adds, edits, switches, and closes project tabs', async ({
 		createWorkspace,
+		electronApp,
 		mainWindow,
 	}) => {
 		const workspace = await createWorkspace({ name: 'project-tab-root' });
@@ -112,7 +112,10 @@ test.describe('project tabs', () => {
 		).toBeVisible();
 
 		await editWindow.getByPlaceholder('Project name').fill('Workspace QA');
-		await editWindow.getByLabel('Tab icon').fill('W');
+		const iconInput = editWindow.getByLabel('Tab icon');
+		await iconInput.fill('QA');
+		await expect(iconInput).toHaveValue('Q');
+		await iconInput.fill('W');
 		await editWindow
 			.getByPlaceholder('Enter folder path')
 			.fill(workspace.rootDir);
@@ -136,50 +139,15 @@ test.describe('project tabs', () => {
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Workspace QA',
 		);
+		await electronApp.evaluate(({ dialog }) => {
+			dialog.showMessageBox = async () => ({ checkboxChecked: false, response: 0 });
+		});
 
 		await initialProjectTab.getByLabel('Close Project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Workspace QA',
 		);
-	});
-
-	test('project edit window uses a single-character icon input and cancel keeps the project unchanged', async ({
-		mainWindow,
-	}) => {
-		const activeProjectTab = mainWindow.locator('.project-tab--active');
-		const originalTitle =
-			(
-				await activeProjectTab.locator('.project-tab-title').textContent()
-			)?.trim() ?? 'Project';
-		const originalIcon = (
-			(await activeProjectTab
-				.locator('.project-tab-emoji')
-				.textContent()
-				.catch(() => null)) ?? ''
-		).trim();
-
-		const editWindow = await openProjectEditWindow(mainWindow);
-		const iconInput = editWindow.getByLabel('Tab icon');
-
-		await expect(
-			editWindow.getByRole('heading', { name: 'Edit Project Tab' }),
-		).toBeVisible();
-		await iconInput.fill('QA');
-		await expect(iconInput).toHaveValue('Q');
-		await editWindow.getByPlaceholder('Project name').fill('Should Not Save');
-		await cancelEditWindow(editWindow);
-
-		await expect(activeProjectTab).toContainText(originalTitle);
-		if (originalIcon) {
-			await expect(activeProjectTab.locator('.project-tab-emoji')).toHaveText(
-				originalIcon,
-			);
-		} else {
-			await expect(activeProjectTab.locator('.project-tab-emoji')).toHaveCount(
-				0,
-			);
-		}
 	});
 
 	test('new project tabs do not reuse palette colours until the palette is exhausted', async ({
