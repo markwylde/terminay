@@ -19,8 +19,9 @@ test('shared Web Connections actions persist and converge across tabs without pa
 	const first = await context.newPage();
 	const second = await context.newPage();
 	const url = `${fixture.origin}/web.html`;
-	await first.goto(url, { waitUntil: 'commit' });
-	await second.goto(url, { waitUntil: 'commit' });
+	// Cold Vite compilation is fixture bootstrap, not an application operation.
+	await first.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+	await second.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
 
 	const firstConnections = first.locator(
 		'[data-shared-route-body="connections"]',
