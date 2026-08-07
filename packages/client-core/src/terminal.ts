@@ -19,6 +19,14 @@ export const TERMINAL_PRESENTATION_CHECKPOINT_OPERATION = 'terminal.presentation
  */
 export const MAX_TERMINAL_HYDRATION_QUEUE_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Rendering acknowledgements are cumulative. Briefly collecting adjacent
+ * xterm writes prevents a fast local renderer from turning every PTY frame
+ * into its own reliable command while still advancing server flow control
+ * within one frame at normal display rates.
+ */
+export const TERMINAL_ACKNOWLEDGEMENT_INTERVAL_MS = 16;
+
 /** The exact server/project/session identity carried by every terminal call. */
 export interface TerminalClientIdentity {
 	readonly serverId: string;
@@ -284,6 +292,15 @@ interface MutableAttachment {
 	presentation: TerminalPresentationState;
 	closed: boolean;
 	detached: Promise<void> | undefined;
+	acknowledgedPosition: number;
+	pendingAcknowledgementPosition: number;
+	acknowledgementTimer: ReturnType<typeof setTimeout> | undefined;
+	acknowledgementInFlight: Promise<void> | undefined;
+	readonly acknowledgementWaiters: Array<{
+		position: number;
+		readonly resolve: () => void;
+		readonly reject: (error: unknown) => void;
+	}>;
 }
 
 /**
@@ -667,6 +684,11 @@ export class TerminayTerminalClient {
 			presentation: copyPresentation(result.presentation ?? { ...copyIdentity(request), revision: 0, role: 'read_only' }),
 			closed: false,
 			detached: undefined,
+			acknowledgedPosition: result.fromPosition,
+			pendingAcknowledgementPosition: result.fromPosition,
+			acknowledgementTimer: undefined,
+			acknowledgementInFlight: undefined,
+			acknowledgementWaiters: [],
 		};
 		let hydrationFailure: Error | undefined;
 		mutable.unsubscribeEvent = subscription.onEvent((event) => {
@@ -688,6 +710,16 @@ export class TerminayTerminalClient {
 			if (decoded.type === 'output') mutable.position = decoded.nextPosition;
 			if (decoded.type === 'resync_required') {
 				mutable.position = decoded.replayFrom;
+				// A resync invalidates any rendered-but-unconfirmed tail. Collapse a
+				// queued cumulative acknowledgement to the retained safe boundary so
+				// detach cannot publish a position the server has superseded.
+				mutable.pendingAcknowledgementPosition = Math.min(
+					mutable.pendingAcknowledgementPosition,
+					decoded.replayFrom,
+				);
+				for (const waiter of mutable.acknowledgementWaiters) {
+					waiter.position = Math.min(waiter.position, decoded.replayFrom);
+				}
 				this.highWatermarks.set(
 					key,
 					Math.max(this.highWatermarks.get(key) ?? 0, decoded.replayFrom),
@@ -794,6 +826,9 @@ export class TerminayTerminalClient {
 	): Promise<void> {
 		if (mutable.detached !== undefined) return mutable.detached;
 		mutable.detached = (async () => {
+			// Detach supersedes delivery progress. Pending callers already receive
+			// an acknowledgement failure; cleanup must still release the attachment.
+			await this.flushAcknowledgement(mutable).catch(() => undefined);
 			mutable.closed = true;
 			mutable.unsubscribeEvent();
 			try {
@@ -827,7 +862,96 @@ export class TerminayTerminalClient {
 			throw new RangeError(
 				'terminal acknowledgement is ahead of the observed output',
 			);
-		await this.invokeVoid(
+		if (position <= mutable.acknowledgedPosition) return;
+
+		// Caller-specific cancellation, deadlines, revisions, and command ids
+		// cannot safely be shared with another caller. Preserve those semantics
+		// while coalescing the panel's normal acknowledgement path.
+		if (hasCommandOptions(options)) {
+			await this.flushAcknowledgement(mutable);
+			if (position <= mutable.acknowledgedPosition) return;
+			await this.sendAcknowledgement(mutable, position, options);
+			mutable.acknowledgedPosition = Math.max(
+				mutable.acknowledgedPosition,
+				position,
+			);
+			return;
+		}
+
+		mutable.pendingAcknowledgementPosition = Math.max(
+			mutable.pendingAcknowledgementPosition,
+			position,
+		);
+		const completed = new Promise<void>((resolve, reject) => {
+			mutable.acknowledgementWaiters.push({ position, resolve, reject });
+		});
+		if (
+			mutable.acknowledgementTimer === undefined &&
+			mutable.acknowledgementInFlight === undefined
+		) {
+			mutable.acknowledgementTimer = setTimeout(() => {
+				mutable.acknowledgementTimer = undefined;
+				void this.flushAcknowledgement(mutable).catch(() => undefined);
+			}, TERMINAL_ACKNOWLEDGEMENT_INTERVAL_MS);
+		}
+		return completed;
+	}
+
+	private async flushAcknowledgement(mutable: MutableAttachment): Promise<void> {
+		if (mutable.acknowledgementTimer !== undefined) {
+			clearTimeout(mutable.acknowledgementTimer);
+			mutable.acknowledgementTimer = undefined;
+		}
+		if (mutable.acknowledgementInFlight !== undefined) {
+			return mutable.acknowledgementInFlight;
+		}
+		this.resolveAcknowledgementWaiters(mutable);
+		const draining = (async () => {
+			while (
+				mutable.pendingAcknowledgementPosition > mutable.acknowledgedPosition
+			) {
+				const position = mutable.pendingAcknowledgementPosition;
+				try {
+					await this.sendAcknowledgement(mutable, position, {});
+					mutable.acknowledgedPosition = Math.max(
+						mutable.acknowledgedPosition,
+						position,
+					);
+					this.resolveAcknowledgementWaiters(mutable);
+				} catch (error) {
+					const waiters = mutable.acknowledgementWaiters.splice(0);
+					mutable.pendingAcknowledgementPosition = mutable.acknowledgedPosition;
+					for (const waiter of waiters) waiter.reject(error);
+					throw error;
+				}
+			}
+		})();
+		mutable.acknowledgementInFlight = draining;
+		try {
+			await draining;
+		} finally {
+			if (mutable.acknowledgementInFlight === draining) {
+				mutable.acknowledgementInFlight = undefined;
+			}
+		}
+	}
+
+	private resolveAcknowledgementWaiters(mutable: MutableAttachment): void {
+		for (let index = mutable.acknowledgementWaiters.length - 1; index >= 0; index -= 1) {
+			const waiter = mutable.acknowledgementWaiters[index];
+			if (waiter !== undefined && waiter.position <= mutable.acknowledgedPosition) {
+				mutable.acknowledgementWaiters.splice(index, 1);
+				waiter.resolve();
+			}
+		}
+	}
+
+	private sendAcknowledgement(
+		mutable: MutableAttachment,
+		position: number,
+		options: CommandOptions,
+	): Promise<void> {
+		return this.invokeVoid(
 			'terminal.ack',
 			{
 				attachmentId: mutable.id,
@@ -1011,6 +1135,15 @@ function isCommandEnvelope(
 		value !== null &&
 		'ok' in value &&
 		'commandId' in value
+	);
+}
+
+function hasCommandOptions(options: CommandOptions): boolean {
+	return (
+		options.commandId !== undefined ||
+		options.expectedRevision !== undefined ||
+		options.deadlineMs !== undefined ||
+		options.signal !== undefined
 	);
 }
 

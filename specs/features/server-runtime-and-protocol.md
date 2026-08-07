@@ -258,6 +258,14 @@ deterministic outcome. Reconnect establishes a new connection and resumes only
 from confirmed workspace revisions and terminal positions; it does not reuse a
 half-closed transport.
 
+Raw terminal presentation bytes use independently bounded attachment lanes
+rather than the generic reliable application-event FIFO. The connection writer
+reserves bounded capacity for control and workspace traffic and schedules
+terminal lanes fairly. Terminal-lane congestion performs attachment-scoped
+resynchronization under the
+[terminal stream congestion and recovery](./terminal-stream-congestion-and-recovery.md)
+contract; it is not a transport failure and cannot close the shared connection.
+
 Remote channels may remain separated by traffic class so large asset/file
 transfers cannot block terminal control:
 

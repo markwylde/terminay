@@ -50,6 +50,8 @@ test("terminal operation registry binds the client contract to one server-owned 
   const service = new TerminalService({ serverId: "server-a", ptyFactory: pty, generateSessionId: () => "session-a" });
   const session = await service.createSession({ projectId: "project-a", cols: 80, rows: 24 });
   const journal = new OrderedEventJournal();
+  const liveEvents = [];
+  const unsubscribe = journal.subscribe((event) => liveEvents.push(event));
   const registry = createTerminalOperationRegistry({ service, eventJournal: journal, allowUnresolvedTestSessions: true });
   const dispatcher = createOperationDispatcher(registry.operations);
   const identity = { serverId: "server-a", projectId: "project-a", sessionId: session.sessionId };
@@ -61,9 +63,10 @@ test("terminal operation registry binds the client contract to one server-owned 
   assert.equal(attachment.presentation.role, "controller");
 
   pty.processes[0].emitData("hello");
-  assert.equal(journal.revision, 2);
-  const outputEvent = journal.replay(0).events.find((event) => event.payload.type === "output");
+  assert.equal(journal.revision, 1);
+  const outputEvent = liveEvents.find((event) => event.payload.type === "output");
   assert.equal(outputEvent.payload.clientId, "client-a");
+  assert.equal(journal.replay(0).events.some((event) => event.payload.type === "output"), false);
 
   const controlled = await dispatcher.command(request("terminal.presentation", { clientId: "client-a", identity, attachmentId: attachment.attachmentId, mode: "acquire" }, "presentation-1"));
   assert.equal(controlled.ok, true, JSON.stringify(controlled));
@@ -92,7 +95,87 @@ test("terminal operation registry binds the client contract to one server-owned 
   assert.equal(spoofed.ok, false);
   assert.equal(service.getSession(identity).status, "running");
   registry.closeClient("client-a");
+  unsubscribe();
   assert.equal(service.getSession(identity).status, "running");
+});
+
+test("congestion suppression stops publishing raw output without stopping the PTY", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({
+    serverId: "server-suppression",
+    ptyFactory: pty,
+    generateSessionId: () => "session-suppression",
+  });
+  const session = await service.createSession({ projectId: "project-suppression", cols: 80, rows: 24 });
+  const journal = new OrderedEventJournal();
+  const registry = createTerminalOperationRegistry({
+    service,
+    eventJournal: journal,
+    allowUnresolvedTestSessions: true,
+  });
+  const dispatcher = createOperationDispatcher(registry.operations);
+  const identity = {
+    serverId: service.serverId,
+    projectId: session.projectId,
+    sessionId: session.sessionId,
+  };
+
+  try {
+    const attached = await dispatcher.command(request(
+      "terminal.attach",
+      { clientId: "client-a", identity, fromPosition: 0 },
+      "attach-suppression",
+    ));
+    assert.equal(attached.ok, true, JSON.stringify(attached));
+    const attachmentId = attached.result.attachmentId;
+
+    pty.processes[0].emitData("published");
+    const revisionBeforeSuppression = journal.revision;
+    registry.suppressOutput(attachmentId, "client-a");
+    pty.processes[0].emitData(new Uint8Array(64 * 1024));
+    assert.equal(journal.revision, revisionBeforeSuppression, "suppressed output never enters the shared event journal");
+    assert.equal(service.getSession(identity).outputPosition, 64 * 1024 + 9, "the server-owned PTY stream continues advancing");
+
+    const input = await dispatcher.command(request(
+      "terminal.input",
+      { clientId: "client-a", identity, attachmentId, dataBase64: "b2s=" },
+      "input-after-suppression",
+    ));
+    assert.equal(input.ok, true, JSON.stringify(input));
+    assert.equal(new TextDecoder().decode(pty.processes[0].writes.at(-1)), "ok");
+  } finally {
+    await service.shutdown();
+  }
+});
+
+test("high terminal output stays live without evicting retained workspace events", async () => {
+  const pty = createPtyFactory();
+  const service = new TerminalService({
+    serverId: "server-journal-isolation",
+    ptyFactory: pty,
+    generateSessionId: () => "session-journal-isolation",
+  });
+  const session = await service.createSession({ projectId: "project-a", cols: 80, rows: 24 });
+  const journal = new OrderedEventJournal({ maxEvents: 2 });
+  const registry = createTerminalOperationRegistry({ service, eventJournal: journal, allowUnresolvedTestSessions: true });
+  const dispatcher = createOperationDispatcher(registry.operations);
+  const identity = { serverId: service.serverId, projectId: session.projectId, sessionId: session.sessionId };
+  const attached = await dispatcher.command(request("terminal.attach", { clientId: "client-a", identity, fromPosition: 0 }, "attach-journal-isolation"));
+  assert.equal(attached.ok, true, JSON.stringify(attached));
+  journal.append("workspace", { marker: "first" });
+  journal.append("workspace", { marker: "second" });
+  let deliveredOutput = 0;
+  const unsubscribe = journal.subscribe((event) => {
+    if (event.event === "terminal" && event.payload.type === "output") deliveredOutput += 1;
+  });
+
+  for (let index = 0; index < 10_000; index += 1) pty.processes[0].emitData("x");
+
+  unsubscribe();
+  assert.equal(deliveredOutput, 10_000);
+  assert.equal(journal.revision, 3, "raw output does not advance the durable revision");
+  assert.deepEqual(journal.replay(1).events.map((event) => event.payload.marker), ["first", "second"]);
+  await service.shutdown();
 });
 
 test("a newly created terminal reserves initial presentation for its authenticated creator", async () => {
