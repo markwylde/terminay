@@ -1204,10 +1204,18 @@ export function SettingsWindow({
 		setParakeetStatus({
 			model: 'mlx-community/parakeet-tdt-0.6b-v3',
 			state: 'installing',
+			progress: 0,
+			message: 'Starting on-device setup…',
 		});
+		let statusPoll: ReturnType<typeof setInterval> | undefined;
 		try {
 			const host = window.terminayDictationHost;
 			if (!host) throw new Error('Desktop dictation is unavailable.');
+			statusPoll = setInterval(() => {
+				void host.getParakeetStatus().then(setParakeetStatus).catch(() => {
+					// The install request owns final error reporting.
+				});
+			}, 500);
 			setParakeetStatus(await host.installParakeet());
 		} catch (error) {
 			setParakeetStatus({
@@ -1216,6 +1224,7 @@ export function SettingsWindow({
 				message: error instanceof Error ? error.message : String(error),
 			});
 		} finally {
+			if (statusPoll !== undefined) clearInterval(statusPoll);
 			setIsInstallingParakeet(false);
 		}
 	};
@@ -1637,6 +1646,7 @@ export function SettingsWindow({
 
 		if (field.key === 'dictation.parakeetRuntime') {
 			const state = parakeetStatus?.state ?? 'not-installed';
+			const installProgress = Math.round((parakeetStatus?.progress ?? 0) * 100);
 			return (
 				<div className="settings-shortcut-editor">
 					<div className="settings-shortcut-value">
@@ -1644,8 +1654,18 @@ export function SettingsWindow({
 							{state === 'ready' ? 'Ready' : state === 'installing' ? 'Installing…' : state === 'unsupported' ? 'Unsupported' : state === 'error' ? 'Setup failed' : 'Not installed'}
 						</span>
 					</div>
+					{state === 'installing' ? (
+						<progress
+							className="settings-parakeet-progress"
+							max={100}
+							value={installProgress}
+							aria-label={`Installing on-device dictation: ${installProgress}%`}
+						/>
+					) : null}
 					{parakeetStatus?.message ? (
-						<span className="settings-shortcut-warning">{parakeetStatus.message}</span>
+						<span className={state === 'error' || state === 'unsupported' ? 'settings-shortcut-warning' : 'settings-parakeet-status'}>
+							{parakeetStatus.message}
+						</span>
 					) : null}
 					<div className="settings-shortcut-actions">
 						<button
