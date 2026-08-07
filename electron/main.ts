@@ -5886,6 +5886,7 @@ if (process.env.TERMINAY_TEST === '1') {
 			return snapshot === undefined
 				? null
 				: {
+						foregroundBusy: snapshot.foregroundBusy,
 						status: snapshot.status,
 						acknowledged: snapshot.acknowledged,
 						claimed: snapshot.claimed,
