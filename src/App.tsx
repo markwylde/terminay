@@ -143,6 +143,10 @@ import type {
 	TerminalRecordingState,
 } from './types/terminay';
 import { FileExplorerTree } from './workspace/FileExplorerTree';
+import {
+	confirmRunningTerminalClose,
+	getRunningTerminalSessionIds,
+} from './workspace/closeProtection';
 import { ProjectTabList } from './workspace/ProjectTabList';
 import type { ProjectTab } from './workspace/projectTabModel';
 import {
@@ -161,7 +165,6 @@ import {
 } from './workspace/TerminalActivityOverview';
 import {
 	activateTerminalPanel,
-	closeActiveDockviewPanel,
 	findTerminalFocusTarget,
 	findTerminalPanel,
 	getActiveTerminalSessionId,
@@ -431,7 +434,10 @@ type ProjectWorkspaceProps = {
 	isMac: boolean;
 	macros: MacroDefinition[];
 	onAddProject: () => void;
-	onCloseProject: (projectId: string) => void;
+	onCloseProject: (
+		projectId: string,
+		options?: { skipConfirmation?: boolean },
+	) => void;
 	onEditProject: (projectId: string) => Promise<void>;
 	onMoveTerminalToProject: (
 		sourceProjectId: string,
@@ -3414,12 +3420,48 @@ const ProjectWorkspace = forwardRef<
 				.filter(({ items }) => items.length > 0);
 		}, [filteredMacros]);
 
+		const requestClosePanel = useCallback(async (panelId: string) => {
+			const api = dockviewApiRef.current;
+			const panel = api?.getPanel(panelId);
+			if (!api || !panel) return;
+			const sessionId = panelSessionMapRef.current.get(panelId);
+			if (sessionId !== undefined) {
+				const running = getRunningTerminalSessionIds(
+					serverActivityClient?.store.snapshot,
+				).includes(sessionId);
+				if (!(await confirmRunningTerminalClose('terminal', running ? 1 : 0))) {
+					return;
+				}
+			}
+			if (api.panels.length === 1) {
+				onCloseProject(project.id, { skipConfirmation: true });
+				return;
+			}
+			panel.api.close();
+		}, [onCloseProject, project.id, serverActivityClient]);
+
+		useEffect(() => {
+			const listener = (event: Event) => {
+				const detail = (event as CustomEvent).detail as
+					| { panelId?: unknown; sessionId?: unknown }
+					| undefined;
+				if (
+					typeof detail?.panelId !== 'string' ||
+					typeof detail.sessionId !== 'string' ||
+					panelSessionMapRef.current.get(detail.panelId) !== detail.sessionId
+				) return;
+				void requestClosePanel(detail.panelId);
+			};
+			window.addEventListener('terminay-request-close-terminal', listener);
+			return () =>
+				window.removeEventListener('terminay-request-close-terminal', listener);
+		}, [requestClosePanel]);
+
 		const closeActivePanel = useCallback(() => {
-			closeActiveDockviewPanel({
-				api: dockviewApiRef.current,
-				onCloseLastPanel: () => onCloseProject(project.id),
-			});
-		}, [onCloseProject, project.id]);
+			const panelId = dockviewApiRef.current?.activePanel?.id;
+			if (panelId === undefined) return;
+			void requestClosePanel(panelId);
+		}, [requestClosePanel]);
 
 		const saveActivePanel = useCallback(
 			() =>
@@ -4982,6 +5024,31 @@ function App({
 	const workspaceRefs = useRef(
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
+	useEffect(() => {
+		const activityStore = terminalClientContext?.activityClient?.store;
+		const host = window.terminayWindowLifecycleHost;
+		if (activityStore === undefined || host === undefined) return;
+		const publish = () =>
+			void host.publishRunningTerminalSessions(
+				getRunningTerminalSessionIds(activityStore.snapshot),
+			);
+		publish();
+		const unsubscribe = activityStore.subscribe(publish);
+		return () => {
+			unsubscribe();
+			void host.publishRunningTerminalSessions([]);
+		};
+	}, [terminalClientContext?.activityClient]);
+	const confirmProjectClose = useCallback(
+		(projectId: string) => {
+			const running = getRunningTerminalSessionIds(
+				terminalClientContext?.activityClient?.store.snapshot,
+				projectId,
+			);
+			return confirmRunningTerminalClose('project', running.length);
+		},
+		[terminalClientContext?.activityClient],
+	);
 
 	const {
 		activeProjectId,
@@ -4999,6 +5066,7 @@ function App({
 		setProjects,
 		updateProject,
 	} = useProjectCollection<MovedTerminalTab>({
+		confirmProjectClose,
 		defaultProjectRoot:
 			terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects[
 				Object.keys(

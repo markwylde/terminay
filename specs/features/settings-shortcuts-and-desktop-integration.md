@@ -35,6 +35,12 @@ configurable keyboard accelerators.
   application lifecycle are coordinated by Electron. Browser hosts provide a
   visible in-page menu bar for File, Edit, View, and Help so shared commands
   remain discoverable without native application menus.
+- Closing Terminay proceeds immediately when every terminal is at its shell
+  prompt. If any terminal in any open project has a non-shell foreground
+  process, Desktop reports the affected terminal count and asks whether to
+  **Quit Terminay** or **Keep Running**. **Keep Running** is the default and
+  cancel action. One accepted quit enters graceful shutdown without showing a
+  second confirmation.
 - The app periodically checks the GitHub release endpoint and surfaces available
   updates without downloading or installing software implicitly.
 
@@ -79,6 +85,10 @@ forwarding paths, provider messages, or plaintext.
 - Keyboard accelerators reject reserved/invalid combinations and do not conflict
   with text entry unexpectedly.
 - Desktop actions preserve window/project/session boundaries.
+- An idle application closes without a warning. When foreground work exists,
+  dismissing the close alert or choosing **Keep Running** leaves every project
+  and terminal running, while choosing **Quit Terminay** performs the normal
+  graceful application shutdown.
 - Embedded Desktop AI metadata failures cross the authenticated server bridge
   as bounded, user-facing provider errors. The bridge does not expose raw
   provider stdout or stderr and does not collapse actionable errors into an
