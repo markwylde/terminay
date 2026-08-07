@@ -131,7 +131,7 @@ export function useDictationController({
 
 		if (!getSettings().enabled) {
 				setErrorText('Enable dictation in Settings before recording.');
-				void window.terminaySettingsWindowHost?.open('openai-dictation');
+				void window.terminaySettingsWindowHost?.open('dictation');
 				return;
 			}
 
@@ -146,13 +146,24 @@ export function useDictationController({
 				if (dictationHost === undefined) {
 					throw new Error('Desktop dictation is unavailable.');
 				}
-				const keyStatus = await dictationHost.getKeyStatus();
-				if (!keyStatus.configured) {
+				const dictationSettings = getSettings();
+				const keyStatus = dictationSettings.provider === 'openai'
+					? await dictationHost.getKeyStatus()
+					: null;
+				if (keyStatus !== null && !keyStatus.configured) {
 					setErrorText(
 						'Add an OpenAI API key in Settings before starting dictation.',
 					);
-					void window.terminaySettingsWindowHost?.open('openai-dictation');
+					void window.terminaySettingsWindowHost?.open('dictation');
 					return;
+				}
+				if (dictationSettings.provider === 'parakeet') {
+					const runtimeStatus = await dictationHost.getParakeetStatus();
+					if (runtimeStatus.state !== 'ready') {
+						setErrorText(runtimeStatus.message ?? 'Install the on-device Parakeet engine in Settings before starting dictation.');
+						void window.terminaySettingsWindowHost?.open('dictation');
+						return;
+					}
 				}
 
 			if (
@@ -468,11 +479,12 @@ export function useDictationController({
 									defaultLanguage,
 								mimeType: uploadMimeType,
 								model: config.model,
+								provider: config.provider,
 								prompt: config.prompt,
 							});
 							const transcript = result.text.trim();
 							if (!transcript) {
-								throw new Error('OpenAI returned an empty transcript.');
+								throw new Error('The transcription provider returned an empty transcript.');
 							}
 
 						await insertTranscript(sessionId, transcript);
