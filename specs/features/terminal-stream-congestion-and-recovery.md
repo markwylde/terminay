@@ -64,6 +64,22 @@ Congestion is not reported as a transport failure. Increasing a global queue,
 silently dropping raw frames, replaying from an arbitrary byte suffix, and
 closing the shared application connection are not valid recovery strategies.
 
+## PTY-derived state projections
+
+Terminal activity is current state, not one durable event per PTY callback.
+Raw output refreshes the server-owned inactivity deadline, but repeated output
+that leaves status, attention, acknowledgement, authority, and source
+unchanged does not advance the public activity revision or `updatedAt`.
+Semantic transitions remain ordered and replayable.
+
+Reconstructible feature state uses a separately bounded, keyed latest-value
+delivery class. A pending value for the same subscription and entity
+supersedes its obsolete predecessor. If a state subscription exceeds its
+bound, its backlog becomes one scoped resynchronization request and the client
+reloads the authoritative feature snapshot. RPC results and application
+control retain reserved capacity. No volume or timing of PTY-derived state may
+close the application connection.
+
 ## Genuine connection failure
 
 A real transport failure uses an explicit client state machine:
@@ -118,6 +134,9 @@ terminal clients.
   without duplicating PTYs, output, input, or workspace mutations.
 - Queue and recovery diagnostics identify the affected opaque lane and precise
   resource transition without including terminal content.
+- Thousands of pre-provider PTY callbacks publish only semantic activity
+  transitions, keep the renderer connection open, and do not prevent another
+  terminal from being created.
 
 ## Non-goals
 
