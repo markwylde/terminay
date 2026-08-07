@@ -421,6 +421,10 @@ export function createServerCoreComposition(
     ...optionalCoreOptions(options),
     ...completeOperations,
     onConnectionClosed,
+		onTerminalCongestion: (attachmentId, clientId) => {
+			terminalOperations.suppressOutput(attachmentId, clientId);
+			options.onTerminalCongestion?.(attachmentId, clientId);
+		},
   };
   const baseCore = createServerCore(coreOptions);
   const connections = new Set<ServerConnectionLike>();

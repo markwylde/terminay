@@ -40,12 +40,66 @@ await build({
 const { ServerPortTransport, ServerScopedMessagePort } = await import(
   outputFile
 )
-const { connectRendererServerClient, createConnectedServerClientContext } =
-  await import(rendererClientFile)
+const {
+	PreloadServerMessagePort,
+  connectRendererApplicationClient,
+  connectRendererServerClient,
+  createConnectedServerClientContext,
+  createRendererServerClientContext,
+} = await import(rendererClientFile)
 globalThis.window = globalThis
 
 test.after(async () => {
   await rm(outputDirectory, { recursive: true, force: true })
+})
+
+test('preload frame capabilities isolate simultaneous connection generations', () => {
+  const listeners = new Map()
+  const sent = []
+  const closed = []
+  const capability = {
+    closeServerConnection: (connectionId) => closed.push(connectionId),
+    sendServerFrame: (connectionId, frame) => sent.push([connectionId, [...frame]]),
+    onServerFrame: (connectionId, listener) => {
+      listeners.set(connectionId, listener)
+      return () => listeners.delete(connectionId)
+    },
+  }
+  const oldPort = new PreloadServerMessagePort('desktop-local', 'generation-old', capability)
+  const newPort = new PreloadServerMessagePort('desktop-local', 'generation-new', capability)
+  const oldFrames = []
+  const newFrames = []
+  let oldErrors = 0
+  let newErrors = 0
+  oldPort.onmessage = ({ data }) => oldFrames.push([...data])
+  newPort.onmessage = ({ data }) => newFrames.push([...data])
+  oldPort.onmessageerror = () => { oldErrors += 1 }
+  newPort.onmessageerror = () => { newErrors += 1 }
+  oldPort.start()
+  newPort.start()
+
+  listeners.get('generation-old')(new Uint8Array([1]))
+  listeners.get('generation-new')(new Uint8Array([2]))
+  oldPort.postMessage(new Uint8Array([3]))
+  newPort.postMessage(new Uint8Array([4]))
+  listeners.get('generation-old')(null)
+
+  assert.deepEqual(oldFrames, [[1]])
+  assert.deepEqual(newFrames, [[2]])
+  assert.deepEqual(sent, [
+    ['generation-old', [3]],
+    ['generation-new', [4]],
+  ])
+  assert.equal(oldErrors, 1)
+  assert.equal(newErrors, 0)
+
+  oldPort.close()
+  assert.deepEqual(closed, ['generation-old'])
+  assert.equal(listeners.has('generation-old'), false)
+  assert.equal(listeners.has('generation-new'), true)
+  listeners.get('generation-new')(new Uint8Array([5]))
+  assert.deepEqual(newFrames, [[2], [5]])
+  newPort.close()
 })
 
 test('server-scoped MessagePorts carry only framed bytes for the selected server', async () => {
@@ -167,6 +221,32 @@ class FakeMessagePort {
   close() {}
 }
 
+class TestAbortSignal {
+  aborted = false
+  reason = undefined
+  addedListeners = 0
+  removedListeners = 0
+  listeners = new Set()
+
+  addEventListener(event, listener) {
+    assert.equal(event, 'abort')
+    this.addedListeners += 1
+    this.listeners.add(listener)
+  }
+
+  removeEventListener(event, listener) {
+    assert.equal(event, 'abort')
+    if (this.listeners.delete(listener)) this.removedListeners += 1
+  }
+
+  abort(reason) {
+    if (this.aborted) return
+    this.aborted = true
+    this.reason = reason
+    for (const listener of [...this.listeners]) listener()
+  }
+}
+
 test('a frame from another server is rejected before it reaches the transport', async () => {
   const { port1, port2 } = new MessageChannel()
   const scoped = new ServerScopedMessagePort(port1, 'desktop-local')
@@ -196,13 +276,43 @@ test('the renderer connector aborts a server handshake that never replies', asyn
   const { port1, port2 } = new MessageChannel()
   try {
     await assert.rejects(
-      connectRendererServerClient('desktop-local', port2, {
+      connectRendererServerClient('desktop-local', 'desktop-local', port2, {
         connectionTimeoutMs: 10,
       }),
       (error) =>
         error?.message === 'connection handshake failed' &&
         error.cause?.message === 'server handshake timed out after 10ms',
     )
+  } finally {
+    port1.close()
+    port2.close()
+  }
+})
+
+test('application handshake stops promptly when its recovery attempt is superseded', async () => {
+  const { port1, port2 } = new MessageChannel()
+  const signal = new TestAbortSignal()
+  const startedAt = performance.now()
+  try {
+    await assert.rejects(
+      connectRendererApplicationClient('desktop-local', 'desktop-local', port2, {
+        connectionTimeoutMs: 15_000,
+        signal,
+        onPhaseChange: (phase, state) => {
+          if (phase === 'handshake' && state === 'pending') {
+            queueMicrotask(() =>
+              signal.abort(new Error('recovery attempt superseded')),
+            )
+          }
+        },
+      }),
+      (error) =>
+        error?.message === 'recovery attempt superseded' ||
+        (error?.message === 'connection handshake failed' &&
+          error.cause?.message === 'recovery attempt superseded'),
+    )
+    assert.ok(performance.now() - startedAt < 500)
+    assert.equal(signal.addedListeners, signal.removedListeners)
   } finally {
     port1.close()
     port2.close()
@@ -226,6 +336,76 @@ test('canonical renderer setup closes a client whose subscription never settles'
     /activity subscription timed out after 10ms/u,
   )
   assert.equal(closed, 1)
+})
+
+test('application handshake context is promoted without reconnecting its live transport', async () => {
+  let closed = 0
+  const applicationClient = {
+    close: async () => {
+      closed += 1
+    },
+    subscribe: async () => new Promise(() => {}),
+  }
+
+  await assert.rejects(
+    createRendererServerClientContext(
+      {
+        applicationClient,
+        clientId: 'client',
+        dispose: () => applicationClient.close(),
+        serverHello: { clientId: 'client', serverId: 'desktop-local' },
+        serverId: 'desktop-local',
+      },
+      { setupTimeoutMs: 10 },
+    ),
+    /activity subscription timed out after 10ms/u,
+  )
+  assert.equal(closed, 1)
+})
+
+test('superseded feature setup rejects promptly, reports failure, and closes the fresh client', async () => {
+  let closed = 0
+  const signal = new TestAbortSignal()
+  const phases = []
+  const applicationClient = {
+    close: async () => {
+      closed += 1
+    },
+    subscribe: async () => new Promise(() => {}),
+  }
+  const startedAt = performance.now()
+
+  await assert.rejects(
+    createRendererServerClientContext(
+      {
+        applicationClient,
+        clientId: 'client',
+        dispose: () => applicationClient.close(),
+        serverHello: { clientId: 'client', serverId: 'desktop-local' },
+        serverId: 'desktop-local',
+      },
+      {
+        setupTimeoutMs: 15_000,
+        signal,
+        onPhaseChange: (phase, state) => {
+          phases.push([phase, state])
+          if (phase === 'activity subscription' && state === 'pending') {
+            signal.abort(new Error('recovery attempt superseded'))
+          }
+        },
+      },
+    ),
+    /recovery attempt superseded/u,
+  )
+  assert.ok(performance.now() - startedAt < 500)
+  assert.equal(closed, 1)
+  assert.ok(
+    phases.some(
+      ([phase, state]) =>
+        phase === 'activity subscription' && state === 'failed',
+    ),
+  )
+  assert.equal(signal.addedListeners, signal.removedListeners)
 })
 
 const setupPhaseCases = [
@@ -380,7 +560,11 @@ test('the production renderer connector attaches through the server-owned compos
   let context
 
   try {
-    context = await connectRendererServerClient('desktop-local', port2)
+    context = await connectRendererServerClient(
+      'desktop-local',
+      'desktop-local',
+      port2,
+    )
     const panel = await new TerminayTerminalPanelClient(context.client).attach({
       serverId: context.serverId,
       projectId: 'project-renderer',

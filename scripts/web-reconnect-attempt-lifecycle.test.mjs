@@ -15,7 +15,7 @@ await build({
   outfile: bundlePath,
   logLevel: 'silent',
 })
-const { BrowserConnectionAttemptGate } = await import(`${bundlePath}?test=${Date.now()}`)
+const { BrowserConnectionAttemptGate, runBoundedBrowserRecoveryStep } = await import(`${bundlePath}?test=${Date.now()}`)
 test.after(() => rm(bundleDirectory, { force: true, recursive: true }))
 
 test('forgetting a browser profile invalidates only its pending reconnect attempt', () => {
@@ -28,6 +28,40 @@ test('forgetting a browser profile invalidates only its pending reconnect attemp
   gate.invalidate('discarded-server')
   assert.equal(gate.isCurrent(selected), true)
   assert.equal(gate.isCurrent(discarded), false)
+})
+
+test('browser recovery bounds an acquisition which ignores cancellation', async () => {
+  let callback
+  let cleared = false
+  const attempt = new AbortController()
+  const pending = runBoundedBrowserRecoveryStep({
+    clock: {
+      clearTimeout: () => { cleared = true },
+      setTimeout: (next) => { callback = next; return 1 },
+    },
+    label: 'Credential lookup',
+    operation: async () => new Promise(() => {}),
+    signal: attempt.signal,
+    timeoutMs: 30,
+  })
+  callback()
+  await assert.rejects(pending, /Credential lookup timed out after 30ms/)
+  assert.equal(cleared, true)
+})
+
+test('browser recovery aborts a hung acquisition when its generation is cancelled', async () => {
+  const attempt = new AbortController()
+  const pending = runBoundedBrowserRecoveryStep({
+    clock: {
+      clearTimeout: () => undefined,
+      setTimeout: () => 1,
+    },
+    label: 'Reconnect ticket',
+    operation: async () => new Promise(() => {}),
+    signal: attempt.signal,
+  })
+  attempt.abort(new Error('superseded'))
+  await assert.rejects(pending, /superseded/)
 })
 
 test('web connection activation checks the gate before replacing the workspace', () => {
@@ -44,17 +78,16 @@ test('web connection activation checks the gate before replacing the workspace',
 })
 
 test('transient restart failures retry with bounded backoff and one visible outcome', () => {
-  assert.match(source, /const reconnectAttempts = useRef\(new Map<string, number>\(\)\)/u)
-  assert.match(source, /function scheduleRecovery\(profileId: string\): void/u)
-  assert.match(source, /Math\.min\(10_000, 750 \* 2 \*\* Math\.min\(attempt, 4\)\)/u)
-  assert.match(source, /void openConnection\(profileId, false, true\)/u)
-  assert.match(source, /if \(recovering\) scheduleRecovery\(profile\.id\)/u)
-  assert.match(source, /reconnectAttempts\.current\.delete\(profile\.id\);\s+setError\(null\);\s+setStatus\(null\)/u)
+  assert.match(source, /new RendererConnectionRecovery\(\{/u)
+  assert.match(source, /initialRetryMs: 750/u)
+  assert.match(source, /maxRetryMs: 10_000/u)
+  assert.match(source, /connect: connectSavedBrowserProfile/u)
+  assert.match(source, /connectionRecovery\.current\?\.start\(profileId\)/u)
+  assert.match(source, /connectionRecovery\.current\?\.cancel\(\)/u)
   assert.match(source, /setError\('Connection lost\. Reconnecting…'\);\s+setStatus\(null\)/u)
-  assert.match(source, /window\.clearTimeout\(reconnectTimer\)/u)
 	const recovery = source.slice(
 		source.indexOf('\tfunction recoverConnection('),
-		source.indexOf('\n\tfunction scheduleRecovery(', source.indexOf('\tfunction recoverConnection(')),
+		source.indexOf('\n\tif (activeConnection', source.indexOf('\tfunction recoverConnection(')),
 	)
 	assert.doesNotMatch(recovery, /setActiveConnection/u)
 	assert.match(recovery, /Keep the last connected workspace mounted/u)

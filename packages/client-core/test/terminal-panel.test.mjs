@@ -195,6 +195,62 @@ test("terminal panel acknowledges only observed output and preserves acknowledge
   await panel.detach();
 });
 
+test("terminal panel coalesces a rendered output burst into one cumulative acknowledgement", async () => {
+  const source = transport();
+  const client = new TerminayTerminalClient(source);
+  const panel = await new TerminayTerminalPanelClient(client).attach({ ...identity, clientId: "panel-client" });
+
+  const acknowledgements = [];
+  for (let index = 0; index < 200; index += 1) {
+    source.emit(output(panel.position, new Uint8Array([index & 0xff])));
+    acknowledgements.push(panel.ack(panel.position));
+  }
+  await Promise.all(acknowledgements);
+
+  const calls = source.calls.filter(([operation]) => operation === "terminal.ack");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].position, 203);
+  await panel.detach();
+});
+
+test("terminal panel bounds acknowledgement concurrency and advances to output rendered in flight", async () => {
+  const source = transport();
+  const originalCommand = source.command.bind(source);
+  let releaseFirstAcknowledgement;
+  const firstAcknowledgementBlocked = new Promise((resolve) => { releaseFirstAcknowledgement = resolve; });
+  let acknowledgementCalls = 0;
+  source.command = async (operation, payload) => {
+    if (operation === "terminal.ack") {
+      acknowledgementCalls += 1;
+      source.calls.push([operation, payload]);
+      if (acknowledgementCalls === 1) await firstAcknowledgementBlocked;
+      return { type: "command_result", commandId: `ack-${acknowledgementCalls}`, correlationId: `ack-${acknowledgementCalls}`, ok: true };
+    }
+    return originalCommand(operation, payload);
+  };
+  const panel = await new TerminayTerminalPanelClient(new TerminayTerminalClient(source)).attach({ ...identity, clientId: "panel-client" });
+
+  source.emit(output(3, new Uint8Array([1])));
+  const first = panel.ack(4);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(acknowledgementCalls, 1);
+
+  const later = [];
+  for (let position = 4; position < 104; position += 1) {
+    source.emit(output(position, new Uint8Array([1])));
+    later.push(panel.ack(position + 1));
+  }
+  assert.equal(acknowledgementCalls, 1);
+  releaseFirstAcknowledgement();
+  await Promise.all([first, ...later]);
+
+  const positions = source.calls
+    .filter(([operation]) => operation === "terminal.ack")
+    .map(([, payload]) => payload.position);
+  assert.deepEqual(positions, [4, 104]);
+  await panel.detach();
+});
+
 test("terminal panel detach is idempotent and closes all lifecycle commands", async () => {
   const source = transport();
   const client = new TerminayTerminalClient(source);

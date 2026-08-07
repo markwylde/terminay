@@ -649,6 +649,8 @@ export interface McpInstallActionResult {
 }
 
 export interface TerminayTestApi {
+  /** Test-only renderer-side failure of the one exact active Local application transport. */
+  failActiveLocalServerConnection: () => Promise<{ connectionId: string }>
   /** Test-only opaque LAN application-transport identifiers. */
   listRemoteProtocolConnections: () => Promise<readonly string[]>
   /** Test-only server-side failure for one exact LAN application transport. */
