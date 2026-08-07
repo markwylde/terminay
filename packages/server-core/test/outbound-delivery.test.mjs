@@ -219,6 +219,37 @@ test('transport acceptance does not advance the terminal presentation watermark'
 	assert.deepEqual(transport.sent.at(-1), new Uint8Array([4]));
 });
 
+test('an unacknowledged trickle resynchronizes after the presentation age limit', async () => {
+	const transport = new ControlledTransport();
+	await transport.open();
+	let now = 0;
+	const congestion = [];
+	const pump = new OutboundDeliveryPump(
+		transport,
+		{
+			maxQueuedBytes: 32,
+			maxTerminalUnconfirmedBytes: 32,
+			maxTerminalUnconfirmedAgeMs: 5,
+		},
+		() => undefined,
+		(value) => congestion.push(value),
+		() => now,
+	);
+	const admission = (position, nextPosition) => ({
+		laneId: 'attachment-aged',
+		position,
+		nextPosition,
+		createResyncFrame: () => new Uint8Array([7]),
+	});
+
+	await pump.sendTerminal(new Uint8Array([1]), admission(0, 1));
+	now = 6;
+	await pump.sendTerminal(new Uint8Array([2]), admission(1, 2));
+	await waitFor(() => transport.sent.length === 2);
+	assert.deepEqual(transport.sent.map((frame) => [...frame]), [[1], [7]]);
+	assert.equal(congestion.length, 1);
+});
+
 test('detaching a lane blocked in transport drops later output and releases scheduler state', async () => {
 	const transport = new ControlledTransport();
 	await transport.open();
