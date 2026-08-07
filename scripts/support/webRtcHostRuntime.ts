@@ -45,6 +45,7 @@ const MAX_ACTIVE_ASSET_REQUESTS = 1
 const MAX_UNACKNOWLEDGED_ASSET_BODY_CHARS =
   MAX_ACTIVE_ASSET_REQUESTS * ASSET_CHUNK_WINDOW * ASSET_CHUNK_BODY_CHARS
 const MAX_INBOUND_PROTOCOL_BYTES = 128 * 1024
+const DEFAULT_ICE_RECOVERY_GRACE_MS = 5_000
 
 type AssetTransfer = {
   acknowledged: Set<number>
@@ -56,6 +57,82 @@ type AssetTransfer = {
 export type WebRtcHostRuntimeDependencies = {
   api?: HostApi
   createPeerConnection?: (configuration: RTCConfiguration) => RTCPeerConnection
+  iceRecoveryGraceMs?: number
+}
+
+class WebRtcPeerLifecycle {
+  private recoveryTimer: ReturnType<typeof setTimeout> | undefined
+  private stopped = false
+  private terminal = false
+
+  constructor(
+    private readonly peer: RTCPeerConnection,
+    private readonly recoveryGraceMs: number,
+    private readonly closeSession: (reason: string) => void,
+  ) {}
+
+  observe(source: 'peer' | 'ice'): void {
+    if (this.stopped || this.terminal) return
+    const peerState = this.peer.connectionState
+    const iceState = this.peer.iceConnectionState
+    if (isTerminalWebRtcState(peerState) || isTerminalWebRtcState(iceState)) {
+      const reason = source === 'peer' && isTerminalWebRtcState(peerState)
+        ? `WebRTC peer connection ${peerState}.`
+        : source === 'ice' && isTerminalWebRtcState(iceState)
+          ? `WebRTC ICE connection ${iceState}.`
+          : `WebRTC connection failed (peer: ${peerState}, ICE: ${iceState}).`
+      this.fail(reason)
+      return
+    }
+    if (peerState === 'disconnected' || iceState === 'disconnected') {
+      this.recoveryTimer ??= setTimeout(() => {
+        this.recoveryTimer = undefined
+        if (this.stopped || this.terminal) return
+        const currentPeerState = this.peer.connectionState
+        const currentIceState = this.peer.iceConnectionState
+        if (currentPeerState === 'disconnected' || currentIceState === 'disconnected') {
+          this.fail(
+            `WebRTC recovery grace period expired (peer: ${currentPeerState}, ICE: ${currentIceState}).`,
+          )
+        } else {
+          this.cancelRecovery()
+        }
+      }, this.recoveryGraceMs)
+      return
+    }
+    this.cancelRecovery()
+  }
+
+  stop(): void {
+    if (this.stopped) return
+    this.stopped = true
+    this.cancelRecovery()
+  }
+
+  fail(reason: string): void {
+    if (this.terminal || this.stopped) return
+    this.terminal = true
+    this.cancelRecovery()
+    this.closeSession(reason)
+  }
+
+  private cancelRecovery(): void {
+    if (this.recoveryTimer === undefined) return
+    clearTimeout(this.recoveryTimer)
+    this.recoveryTimer = undefined
+  }
+}
+
+function isTerminalWebRtcState(state: RTCPeerConnectionState | RTCIceConnectionState): boolean {
+  return state === 'closed' || state === 'failed'
+}
+
+function resolveIceRecoveryGraceMs(value: number | undefined): number {
+  const resolved = value ?? DEFAULT_ICE_RECOVERY_GRACE_MS
+  if (!Number.isSafeInteger(resolved) || resolved < 1 || resolved > 60_000) {
+    throw new RangeError('WebRTC ICE recovery grace period must be between 1ms and 60 seconds.')
+  }
+  return resolved
 }
 
 declare global {
@@ -324,7 +401,6 @@ export async function runHost(
   const activeAssetRequestIds = new Set<string>()
   let terminalClosed = false
   let applicationClosed = false
-  let terminalCloseReason = 'WebRTC terminal channel closed.'
   let terminalAuthenticated = false
   const seenSignalNonces = new Set<string>()
   const closeTerminal = (reason = 'WebRTC terminal channel closed.') => {
@@ -337,6 +413,14 @@ export async function runHost(
     applicationClosed = true
     api.closeApplication?.(applicationChannelId, reason)
   }
+  const lifecycle = new WebRtcPeerLifecycle(
+    peer,
+    resolveIceRecoveryGraceMs(dependencies.iceRecoveryGraceMs),
+    (reason) => {
+      closeApplication(reason)
+      closeTerminal(reason)
+    },
+  )
 
   peer.addEventListener('icecandidate', (event) => {
     if (!event.candidate) return
@@ -452,8 +536,14 @@ export async function runHost(
       }
     })()
   })
-  channels.application.addEventListener('close', () => closeApplication())
-  channels.application.addEventListener('error', () => closeApplication('WebRTC application channel failed.'))
+  for (const channel of [channels.control, channels.application, channels.terminal, channels.assets]) {
+    channel.addEventListener('close', () => {
+      lifecycle.fail(`WebRTC ${channel.label} channel closed.`)
+    })
+    channel.addEventListener('error', () => {
+      lifecycle.fail(`WebRTC ${channel.label} channel failed.`)
+    })
+  }
 
   channels.terminal.addEventListener('message', (event) => {
     const request = parseJson(event.data)
@@ -473,21 +563,12 @@ export async function runHost(
       api.handleTerminalMessage(terminalChannelId, terminalMessage)
     }
   })
-  channels.terminal.addEventListener('close', () => closeTerminal(terminalCloseReason))
-  channels.terminal.addEventListener('error', () => closeTerminal('WebRTC terminal channel failed.'))
-
   peer.addEventListener('connectionstatechange', () => {
-    if (peer.connectionState === 'closed' || peer.connectionState === 'disconnected' || peer.connectionState === 'failed') {
-      closeApplication(`WebRTC peer connection ${peer.connectionState}.`)
-      closeTerminal(`WebRTC peer connection ${peer.connectionState}.`)
-    }
+    lifecycle.observe('peer')
   })
 
   peer.addEventListener('iceconnectionstatechange', () => {
-    if (peer.iceConnectionState === 'closed' || peer.iceConnectionState === 'disconnected' || peer.iceConnectionState === 'failed') {
-      closeApplication(`WebRTC ICE connection ${peer.iceConnectionState}.`)
-      closeTerminal(`WebRTC ICE connection ${peer.iceConnectionState}.`)
-    }
+    lifecycle.observe('ice')
   })
 
   const stopTerminalMessages = api.onTerminalMessage((message) => {
@@ -497,11 +578,10 @@ export async function runHost(
   const stopTerminalCloseRequests = api.onTerminalCloseRequest((message) => {
     if (message.channelId !== terminalChannelId) return
     const reason = message.reason || 'Remote connection closed by Terminay.'
-    terminalCloseReason = reason
+    lifecycle.fail(reason)
     if (channels.terminal.readyState === 'open' || channels.terminal.readyState === 'connecting') {
       channels.terminal.close()
     }
-    closeTerminal(reason)
   })
 
   const stopSignalMessages = api.onSignalMessage((rawMessage) => {
@@ -555,6 +635,7 @@ export async function runHost(
   api.openSignal()
 
   return () => {
+    lifecycle.stop()
     stopSignalMessages()
     stopTerminalMessages()
     stopTerminalCloseRequests()
