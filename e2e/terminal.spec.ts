@@ -381,11 +381,10 @@ test.describe('terminal behavior', () => {
 			)
 			.getByText(marker, { exact: true });
 		await expect(line).toBeVisible();
-		await line.scrollIntoViewIfNeeded();
-		const box = await line.boundingBox();
-		if (!box) {
-			throw new Error('Terminal selectable text location is unavailable');
-		}
+		const box = await line.evaluate((element) => {
+			const rect = element.getBoundingClientRect();
+			return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+		});
 
 		await mainWindow.mouse.move(box.x + 2, box.y + box.height / 2);
 		await mainWindow.mouse.down();
