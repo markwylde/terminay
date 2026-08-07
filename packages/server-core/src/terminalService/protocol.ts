@@ -56,6 +56,8 @@ export interface TerminalOperationRegistry {
   readonly operations: OperationRegistries;
   /** Detach all protocol attachments for a client without touching the PTY. */
   readonly closeClient: (clientId: string) => void;
+	/** Stop publishing obsolete raw output for one congested presentation. */
+	readonly suppressOutput: (attachmentId: string, clientId: string) => void;
 }
 
 interface ProtocolAttachment {
@@ -63,6 +65,7 @@ interface ProtocolAttachment {
   readonly identity: TerminalIdentity;
   readonly attachment: TerminalAttachment;
   readonly canWrite: boolean;
+	outputSuppressed: boolean;
 }
 
 interface InitialPresentationReservation {
@@ -77,7 +80,8 @@ interface InitialPresentationReservation {
  * The registry is deliberately independent of HTTP, WebRTC, Electron, and
  * xterm. A transport supplies an authenticated RequestContext and shares the
  * same OrderedEventJournal with ServerConnection. Terminal output is scoped
- * by authenticated client id before it is appended to that journal.
+ * by authenticated client id and published live without consuming the generic
+ * retained history; terminal replay and checkpoints own byte-stream recovery.
  */
 export function createTerminalOperationRegistry(options: TerminalOperationRegistryOptions): TerminalOperationRegistry {
   if (!(options.service instanceof TerminalService)) throw new TypeError("terminal service is required");
@@ -148,6 +152,10 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
         if (reservation.clientId === clientId) releaseInitialPresentationReservation(reservation.identity, true);
       }
     },
+		suppressOutput: (attachmentId, clientId) => {
+			const value = protocolAttachments.get(attachmentId);
+			if (value?.clientId === clientId) value.outputSuppressed = true;
+		},
   };
 
   async function currentCwd(request: QueryRequest): Promise<JsonValue> {
@@ -346,7 +354,13 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
     const queuedCheckpointEvents: TerminalEvent[] = [];
     const publishTerminalEvent = (event: TerminalEvent): void => {
       if (attachmentId === undefined) return;
-      options.eventJournal.append(TERMINAL_EVENT, terminalEventPayload(event, attachmentId, clientId));
+			if (
+				event.type === "output" &&
+				protocolAttachments.get(attachmentId)?.outputSuppressed === true
+			) return;
+      const payload = terminalEventPayload(event, attachmentId, clientId);
+      if (event.type === "output") options.eventJournal.publishTransient(TERMINAL_EVENT, payload);
+      else options.eventJournal.append(TERMINAL_EVENT, payload);
     };
     let attachment: TerminalAttachment;
     try {
@@ -386,7 +400,13 @@ export function createTerminalOperationRegistry(options: TerminalOperationRegist
       }
     }
     const canWrite = request.context.authScope === "write" || request.context.authScope === "admin";
-    protocolAttachments.set(attachment.attachmentId, { clientId, identity, attachment, canWrite });
+    protocolAttachments.set(attachment.attachmentId, {
+			clientId,
+			identity,
+			attachment,
+			canWrite,
+			outputSuppressed: false,
+		});
     byClientSession.set(key, attachment.attachmentId);
     // The first write-authorized surface is the natural presentation owner.
     // `acquire` is deliberately non-stealing, so a later attachment remains an

@@ -55,6 +55,9 @@ export interface PtyProcess {
   readonly write: (bytes: Uint8Array) => TerminalMaybePromise<void>;
   readonly resize: (dimensions: TerminalDimensions) => TerminalMaybePromise<void>;
   readonly kill: (signal?: number | string) => TerminalMaybePromise<void>;
+	/** Optional host backpressure used to keep canonical parser work bounded. */
+	readonly pause?: () => void;
+	readonly resume?: () => void;
   readonly onData: (listener: PtyDataListener) => Unsubscribe | undefined;
   readonly onExit: (listener: PtyExitListener) => Unsubscribe | undefined;
   /** Optional trusted host observation of the process' current directory. */
