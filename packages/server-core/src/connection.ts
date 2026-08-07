@@ -392,6 +392,21 @@ export class ServerConnection implements ServerConnectionLike {
 		const envelope = eventEnvelope(subscriptionId, event);
 		const output = terminalOutputMetadata(event);
 		if (output === undefined) {
+			if (event.event === 'activity') {
+				const payload = objectPayload(event.payload);
+				const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : 'snapshot';
+				await this.outbound.sendState(encodeFrame(envelope, new Uint8Array(), this.options.limits), {
+					laneId: subscriptionId,
+					key: sessionId,
+					createResyncFrame: () => encodeFrame({
+						type: 'event_resync',
+						subscriptionId,
+						revision: event.revision,
+						cursor: event.cursor,
+					}, new Uint8Array(), this.options.limits),
+				});
+				return;
+			}
 			await this.send(envelope);
 			return;
 		}
