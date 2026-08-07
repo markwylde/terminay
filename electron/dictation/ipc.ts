@@ -1,11 +1,13 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron';
 import type { DictationService, DictationTranscribeRequest } from './service';
-import type { DictationMicrophonePermissionStatus } from '../../src/types/terminay';
+import type { DictationMicrophonePermissionStatus, ParakeetRuntimeStatus } from '../../src/types/terminay';
 
 type RegisterDictationIpcOptions = {
 	assertTrustedSender: (event: IpcMainInvokeEvent) => void;
 	clearOpenAiKey: () => Promise<boolean> | boolean;
 	dictationService: DictationService;
+	getParakeetStatus: () => Promise<ParakeetRuntimeStatus>;
+	installParakeet: () => Promise<ParakeetRuntimeStatus>;
 	getMicrophonePermissionStatus: () =>
 		| Promise<DictationMicrophonePermissionStatus>
 		| DictationMicrophonePermissionStatus;
@@ -21,12 +23,23 @@ export function registerDictationIpcHandlers({
 	assertTrustedSender,
 	clearOpenAiKey,
 	dictationService,
+	getParakeetStatus,
+	installParakeet,
 	getMicrophonePermissionStatus,
 	getOpenAiKeyStatus,
 	ipcMain,
 	requestMicrophonePermission,
 	saveOpenAiKey,
 }: RegisterDictationIpcOptions): void {
+	ipcMain.handle('dictation:get-parakeet-status', async (event) => {
+		assertTrustedSender(event);
+		return getParakeetStatus();
+	});
+
+	ipcMain.handle('dictation:install-parakeet', async (event) => {
+		assertTrustedSender(event);
+		return installParakeet();
+	});
 	ipcMain.handle('dictation:get-openai-key-status', async (event) => {
 		assertTrustedSender(event);
 		return getOpenAiKeyStatus();

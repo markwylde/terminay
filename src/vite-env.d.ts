@@ -141,6 +141,8 @@ declare global {
 		/** Native microphone, credential-store, and transcription capability. */
 		terminayDictationHost?: {
 			readonly version: 1;
+			getParakeetStatus(): Promise<import('./types/terminay').ParakeetRuntimeStatus>;
+			installParakeet(): Promise<import('./types/terminay').ParakeetRuntimeStatus>;
 			getKeyStatus(): Promise<import('./types/terminay').DictationKeyStatus>;
 			saveKey(
 				apiKey: string,
