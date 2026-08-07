@@ -52,6 +52,80 @@ test('WebRTC host authenticates the canonical four-lane application session befo
   cleanup()
 })
 
+test('WebRTC host preserves an authenticated session across a transient ICE disconnect', async () => {
+  const api = createHostApi()
+  const channels = new Map()
+  const peer = new MockPeerConnection()
+  peer.createDataChannel = (label) => {
+    const channel = new MockDataChannel(label)
+    channels.set(label, channel)
+    return channel
+  }
+
+  const cleanup = await runHost(createHostConfig(), {
+    api,
+    createPeerConnection: () => peer,
+  })
+
+  channels.get('control').dispatchMessage(JSON.stringify({
+    id: 'auth-transient-disconnect',
+    ticket: 'ticket-transient-disconnect',
+    type: 'application-auth',
+  }))
+  await api.waitForApplicationAttach()
+
+  peer.iceConnectionState = 'disconnected'
+  peer.dispatchEvent(new Event('iceconnectionstatechange'))
+  await settle()
+
+  peer.iceConnectionState = 'connected'
+  peer.dispatchEvent(new Event('iceconnectionstatechange'))
+
+  assert.deepEqual(api.closedApplications, [])
+  assert.equal(channels.get('application').readyState, 'open')
+  assert.equal(channels.get('terminal').readyState, 'open')
+
+  cleanup()
+})
+
+test('WebRTC host closes an authenticated session once when ICE recovery expires', async () => {
+  const api = createHostApi()
+  const channels = new Map()
+  const peer = new MockPeerConnection()
+  peer.createDataChannel = (label) => {
+    const channel = new MockDataChannel(label)
+    channels.set(label, channel)
+    return channel
+  }
+
+  const cleanup = await runHost(createHostConfig(), {
+    api,
+    createPeerConnection: () => peer,
+    iceRecoveryGraceMs: 10,
+  })
+
+  channels.get('control').dispatchMessage(JSON.stringify({
+    id: 'auth-expired-disconnect',
+    ticket: 'ticket-expired-disconnect',
+    type: 'application-auth',
+  }))
+  await api.waitForApplicationAttach()
+
+  peer.iceConnectionState = 'disconnected'
+  peer.dispatchEvent(new Event('iceconnectionstatechange'))
+  await waitFor(() => api.closedApplications.length === 1)
+
+  peer.connectionState = 'failed'
+  peer.dispatchEvent(new Event('connectionstatechange'))
+  assert.equal(api.closedApplications.length, 1)
+  assert.match(
+    api.closedApplications[0].reason,
+    /^WebRTC recovery grace period expired/u,
+  )
+
+  cleanup()
+})
+
 test('WebRTC host closes the terminal data channel when the desktop revokes the connection', async () => {
   const api = createHostApi()
   const terminalChannel = new MockDataChannel('terminal')
