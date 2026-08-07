@@ -35,6 +35,8 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const DEFAULT_MAX_SESSIONS = 256;
 const DEFAULT_MAX_INPUT_BYTES = 64 * 1024;
 const DEFAULT_MAX_OUTPUT_CHUNK_BYTES = 64 * 1024;
+const CHECKPOINT_PAUSE_BYTES = 256 * 1024;
+const CHECKPOINT_RESUME_BYTES = 128 * 1024;
 const DEFAULT_MAX_REPLAY_BYTES = 1024 * 1024;
 const DEFAULT_MAX_QUEUED_OUTPUT_BYTES = 256 * 1024;
 const DEFAULT_MAX_SUBSCRIBERS = 32;
@@ -58,6 +60,11 @@ interface ReplayChunk {
   readonly bytes: Uint8Array;
 }
 
+interface CheckpointOutputChunk {
+  readonly position: number;
+  readonly bytes: Uint8Array;
+}
+
 interface MutableSession {
   readonly identity: TerminalIdentity;
   readonly cwd: string;
@@ -77,6 +84,10 @@ interface MutableSession {
   dataUnsubscribe?: Unsubscribe;
   exitUnsubscribe?: Unsubscribe;
   foregroundProcessUnsubscribe?: Unsubscribe;
+	checkpointPendingBytes: number;
+	checkpointPaused: boolean;
+	checkpointDraining: boolean;
+	readonly checkpointQueue: CheckpointOutputChunk[];
 }
 
 interface InactivityWaiter {
@@ -378,6 +389,10 @@ export class TerminalService {
       replay: [],
       subscribers: new Set(),
       inactivityWaiters: new Set(),
+			checkpointPendingBytes: 0,
+			checkpointPaused: false,
+			checkpointDraining: false,
+			checkpointQueue: [],
       status: "running",
       outputPosition: 0,
       replayFrom: 0,
@@ -444,6 +459,10 @@ export class TerminalService {
       replay: [],
       subscribers: new Set(),
       inactivityWaiters: new Set(),
+			checkpointPendingBytes: 0,
+			checkpointPaused: false,
+			checkpointDraining: false,
+			checkpointQueue: [],
       status: "running",
       outputPosition: 0,
       replayFrom: 0,
@@ -707,7 +726,7 @@ export class TerminalService {
       while (replayBytes(mutable.replay) > this.limits.maxReplayBytes) mutable.replay.shift();
       mutable.replayFrom = mutable.replay[0]?.position ?? mutable.outputPosition;
       const event = outputEvent(mutable, chunk, position, false);
-      this.observePresentationOutput(mutable, position, chunkBytes);
+			this.observePresentationOutput(mutable, position, chunkBytes);
       this.emit(event);
       for (const subscription of [...mutable.subscribers]) subscription.deliverEvent(event);
     }
@@ -725,11 +744,58 @@ export class TerminalService {
   }
 
   private observePresentationOutput(mutable: MutableSession, position: number, bytes: Uint8Array): void {
-    try {
-      void this.presentationCheckpoints?.ingestOutput(mutable.identity, position, bytes).catch(() => undefined);
-    } catch {
-      // A third-party checkpoint observer cannot interfere with the PTY.
-    }
+		if (this.presentationCheckpoints === undefined) return;
+		mutable.checkpointQueue.push({ position, bytes });
+		mutable.checkpointPendingBytes += bytes.byteLength;
+		if (
+			!mutable.checkpointPaused &&
+			mutable.checkpointPendingBytes >= CHECKPOINT_PAUSE_BYTES &&
+			mutable.process?.pause !== undefined &&
+			mutable.process.resume !== undefined
+		) {
+			try {
+				mutable.process.pause();
+				mutable.checkpointPaused = true;
+			} catch {
+				// PTY exit wins over checkpoint backpressure.
+			}
+		}
+		this.drainPresentationOutput(mutable);
+	}
+
+	/** Admit at most one output chunk to the checkpoint parser at a time. The
+	 * service queue absorbs the remainder of a large PTY callback after pausing
+	 * its source, so the authority's own bounded queue can never be flooded. */
+	private drainPresentationOutput(mutable: MutableSession): void {
+		if (mutable.checkpointDraining || mutable.status !== "running") return;
+		const chunk = mutable.checkpointQueue.shift();
+		if (chunk === undefined) return;
+		mutable.checkpointDraining = true;
+		let pending: Promise<void>;
+		try {
+			pending = this.presentationCheckpoints!.ingestOutput(
+				mutable.identity,
+				chunk.position,
+				chunk.bytes,
+			);
+		} catch {
+			pending = Promise.resolve();
+		}
+		void pending.catch(() => undefined).finally(() => {
+			mutable.checkpointDraining = false;
+			mutable.checkpointPendingBytes = Math.max(
+				0,
+				mutable.checkpointPendingBytes - chunk.bytes.byteLength,
+			);
+			if (
+				mutable.checkpointPaused &&
+				mutable.checkpointPendingBytes <= CHECKPOINT_RESUME_BYTES
+			) {
+				mutable.checkpointPaused = false;
+				try { mutable.process?.resume?.(); } catch { /* PTY exit wins. */ }
+			}
+			this.drainPresentationOutput(mutable);
+		});
   }
 
   private observePresentationResize(mutable: MutableSession, dimensions: TerminalDimensions): void {
@@ -750,6 +816,8 @@ export class TerminalService {
     mutable.dataUnsubscribe?.();
     mutable.exitUnsubscribe?.();
     mutable.foregroundProcessUnsubscribe?.();
+		mutable.checkpointQueue.length = 0;
+		mutable.checkpointPendingBytes = 0;
     this.presentationCheckpoints?.closeSession(mutable.identity);
     try {
       const disposeResult = mutable.process?.dispose?.();

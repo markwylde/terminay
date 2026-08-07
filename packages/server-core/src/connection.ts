@@ -22,6 +22,7 @@ import {
   OutboundDeliveryPump,
   type OutboundDeliveryError,
   type OutboundDeliverySnapshot,
+	type TerminalDeliveryCongestion,
 } from "./outboundDelivery.js";
 import type {
   AuthenticatedClient,
@@ -63,6 +64,7 @@ export class ServerConnection implements ServerConnectionLike {
   private readonly abortController = new AbortController();
   private readonly inFlightRequests = new Map<string, InFlightRequest>();
   private readonly eventSubscriptions = new Map<string, () => void>();
+  private readonly terminalOutputPositions = new Map<string, number>();
   private connectionCleaned = false;
 	private readonly onClosed: (() => void) | undefined;
 	private readonly onDeliveryDiagnostic: ConnectionOptions["onDeliveryDiagnostic"];
@@ -81,6 +83,7 @@ export class ServerConnection implements ServerConnectionLike {
 			transport,
 			{ maxQueuedBytes: options.limits?.maxQueuedBytes ?? DEFAULT_PROTOCOL_LIMITS.maxQueuedBytes },
 			(error, snapshot) => this.handleOutboundFailure(error, snapshot),
+			(congestion) => this.handleTerminalCongestion(congestion),
 		);
   }
 
@@ -244,7 +247,9 @@ export class ServerConnection implements ServerConnectionLike {
         await this.send(result);
         return;
       }
-      await this.send(await this.dispatcher.command({ envelope: command, body, context: this.context(command, request.controller.signal) }));
+      const result = await this.dispatcher.command({ envelope: command, body, context: this.context(command, request.controller.signal) });
+			this.applyTerminalDeliveryCommand(command, result);
+			await this.send(result);
     } catch (error) {
       await this.send({ type: "command_result", commandId: command.commandId, correlationId: command.correlationId, ok: false, error: responseFailureError(error) }).catch(() => undefined);
     } finally {
@@ -323,7 +328,7 @@ export class ServerConnection implements ServerConnectionLike {
       const projected = this.projectEvent(value);
       if (projected === undefined || !matchesEvent(projected, this.authenticatedClient?.clientId, event) || !matchesEventSelector(projected.payload, selector)) return;
       if (replaying) pending.push(projected);
-      else void this.send(eventEnvelope(subscriptionId, projected)).catch(() => undefined);
+      else void this.sendEvent(subscriptionId, projected).catch(() => undefined);
     };
     const unsubscribe = this.journal.subscribe(listener);
     this.eventSubscriptions.set(subscriptionId, unsubscribe);
@@ -337,17 +342,24 @@ export class ServerConnection implements ServerConnectionLike {
         await this.send({ type: "event_resync", subscriptionId, revision: snapshot?.revision ?? fromRevision, cursor: snapshot?.cursor ?? String(fromRevision) });
       }
       replaying = false;
+      for (const value of pending) {
+        if (terminalOutputMetadata(value) !== undefined) await this.sendEvent(subscriptionId, value);
+      }
       return;
     }
     for (const value of replay.events) {
       const projected = this.projectEvent(value);
       if (projected !== undefined && matchesEvent(projected, this.authenticatedClient?.clientId, event)) {
         replayedRevisions.add(projected.revision);
-        await this.send(eventEnvelope(subscriptionId, projected));
+        await this.sendEvent(subscriptionId, projected);
       }
     }
     replaying = false;
-    for (const value of pending) if (value.revision > fromRevision && !replayedRevisions.has(value.revision)) await this.send(eventEnvelope(subscriptionId, value));
+    for (const value of pending) {
+      if (terminalOutputMetadata(value) !== undefined || (value.revision > fromRevision && !replayedRevisions.has(value.revision))) {
+        await this.sendEvent(subscriptionId, value);
+      }
+    }
   }
 
   private context(request: QueryEnvelope | CommandEnvelope, signal: AbortSignal = this.abortController.signal) {
@@ -356,6 +368,91 @@ export class ServerConnection implements ServerConnectionLike {
 
   private async send(envelope: Envelope, body: Uint8Array = new Uint8Array()): Promise<void> {
 		await this.outbound.send(encodeFrame(envelope, body, this.options.limits));
+	}
+
+	private applyTerminalDeliveryCommand(
+		command: CommandEnvelope,
+		result: CommandResultEnvelope,
+	): void {
+		if (!result.ok) return;
+		const payload = objectPayload(command.payload);
+		const attachmentId = payload.attachmentId;
+		if (!isSafeId(attachmentId)) return;
+		if (command.operation === "terminal.ack") {
+			const position = payload.position;
+			if (typeof position === "number")
+				this.outbound.acknowledgeTerminal(attachmentId, position);
+		} else if (command.operation === "terminal.detach") {
+			this.outbound.releaseTerminal(attachmentId);
+			this.terminalOutputPositions.delete(attachmentId);
+		}
+	}
+
+	private async sendEvent(subscriptionId: string, event: OrderedEvent): Promise<void> {
+		const envelope = eventEnvelope(subscriptionId, event);
+		const output = terminalOutputMetadata(event);
+		if (output === undefined) {
+			await this.send(envelope);
+			return;
+		}
+		// Event subscriptions are intentionally independent, so overlapping
+		// selectors may project the same journal event more than once. Terminal
+		// output is different: every copy targets one attachment delivery lane.
+		// Admit each byte range once per connection/attachment or duplicate
+		// subscriptions would double its queued bytes and advance the lane twice.
+		// Raw output is live-only and deliberately does not advance the generic
+		// journal revision, so its attachment-owned position is the authority.
+		const deliveredPosition = this.terminalOutputPositions.get(output.attachmentId);
+		if (deliveredPosition !== undefined && output.nextPosition <= deliveredPosition)
+			return;
+		this.terminalOutputPositions.set(output.attachmentId, output.nextPosition);
+		await this.outbound.sendTerminal(
+			encodeFrame(envelope, new Uint8Array(), this.options.limits),
+			{
+				laneId: output.attachmentId,
+				position: output.position,
+				nextPosition: output.nextPosition,
+				createResyncFrame: ({ confirmedPosition, headPosition }) =>
+					encodeFrame(
+						eventEnvelope(subscriptionId, {
+							...event,
+							payload: {
+								clientId: output.clientId,
+								attachmentId: output.attachmentId,
+								type: "resync_required",
+								serverId: output.serverId,
+								projectId: output.projectId,
+								sessionId: output.sessionId,
+								fromPosition: confirmedPosition,
+								replayFrom: headPosition,
+								outputPosition: headPosition,
+							},
+						}),
+						new Uint8Array(),
+						this.options.limits,
+					),
+			},
+		);
+	}
+
+	private handleTerminalCongestion(congestion: TerminalDeliveryCongestion): void {
+		const clientId = this.authenticatedClient?.clientId;
+		if (clientId !== undefined) {
+			try {
+				this.options.onTerminalCongestion?.(congestion.laneId, clientId);
+			} catch {
+				/* Output suppression cannot affect connection delivery. */
+			}
+		}
+		this.reportDeliveryDiagnostic({
+			phase: "terminal_congestion",
+			code: "resource",
+			queuedBytes: congestion.queuedBytes,
+			queuedFrames: congestion.queuedFrames,
+			attachmentId: congestion.laneId,
+			confirmedPosition: congestion.confirmedPosition,
+			headPosition: congestion.headPosition,
+		});
 	}
 
 	private handleOutboundFailure(error: OutboundDeliveryError, snapshot: OutboundDeliverySnapshot): void {
@@ -404,6 +501,7 @@ export class ServerConnection implements ServerConnectionLike {
     this.inFlightRequests.clear();
     for (const unsubscribe of this.eventSubscriptions.values()) unsubscribe();
     this.eventSubscriptions.clear();
+		this.terminalOutputPositions.clear();
     const clientId = this.authenticatedClient?.clientId;
     if (clientId !== undefined) this.options.onConnectionClosed?.(clientId);
 		this.onClosed?.();
@@ -468,6 +566,42 @@ function matchesEventSelector(payload: JsonValue, selector: JsonValue | undefine
     if (candidate[key] !== expected) return false;
   }
   return true;
+}
+
+interface TerminalOutputMetadata {
+	readonly attachmentId: string;
+	readonly clientId: string;
+	readonly serverId: string;
+	readonly projectId: string;
+	readonly sessionId: string;
+	readonly position: number;
+	readonly nextPosition: number;
+}
+
+function terminalOutputMetadata(event: OrderedEvent): TerminalOutputMetadata | undefined {
+	if (event.event !== "terminal") return undefined;
+	const payload = objectPayload(event.payload);
+	if (
+		payload.type !== "output" ||
+		!isSafeId(payload.attachmentId) ||
+		typeof payload.clientId !== "string" ||
+		typeof payload.serverId !== "string" ||
+		typeof payload.projectId !== "string" ||
+		typeof payload.sessionId !== "string" ||
+		!Number.isSafeInteger(payload.position) ||
+		!Number.isSafeInteger(payload.nextPosition) ||
+		(payload.position as number) < 0 ||
+		(payload.nextPosition as number) <= (payload.position as number)
+	) return undefined;
+	return {
+		attachmentId: payload.attachmentId,
+		clientId: payload.clientId,
+		serverId: payload.serverId,
+		projectId: payload.projectId,
+		sessionId: payload.sessionId,
+		position: payload.position as number,
+		nextPosition: payload.nextPosition as number,
+	};
 }
 
 function eventEnvelope(subscriptionId: string, event: OrderedEvent): Envelope {

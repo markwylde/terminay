@@ -370,7 +370,13 @@ export class TerminayClient {
     }
     if (envelope.type === "error") { if (envelope.correlationId !== undefined) this.pending.get(envelope.correlationId)?.reject(new ClientError(envelope.error.code, envelope.error.message, { ...(envelope.error.retryable === undefined ? {} : { retryable: envelope.error.retryable }), ...(envelope.error.details === undefined ? {} : { details: envelope.error.details }) })); return; }
     if (envelope.type === "event") {
-      this.setState("connected", { revision: envelope.revision, cursor: envelope.cursor });
+      // Raw terminal presentation has its own byte-position recovery authority
+      // and does not advance the server's durable event journal. A delayed
+      // terminal frame must therefore never move the generic client watermark
+      // backwards after a newer retained event has arrived.
+      if (!isTransientTerminalEvent(envelope)) {
+        this.setState("connected", { revision: envelope.revision, cursor: envelope.cursor });
+      }
       const subscription = this.events.get(envelope.subscriptionId);
       if (subscription === undefined) return;
       if (subscription.resync !== undefined) return;
@@ -418,3 +424,9 @@ export class TerminayClient {
 }
 
 export type { ReconnectOptions };
+
+function isTransientTerminalEvent(envelope: Extract<Envelope, { readonly type: "event" }>): boolean {
+  if (envelope.event !== "terminal" || typeof envelope.payload !== "object" || envelope.payload === null || Array.isArray(envelope.payload)) return false;
+  const type = (envelope.payload as Readonly<Record<string, unknown>>).type;
+  return type === "output" || type === "resync_required";
+}
