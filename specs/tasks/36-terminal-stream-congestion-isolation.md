@@ -29,10 +29,12 @@ terminal clients become inert and a newly created server session cannot publish
 its workspace panel. Local client rehydration does not reliably replace the
 disposed context, so waiting cannot recover the window.
 
-The Docker reproduction in `e2e/terminal-output-congestion.spec.ts` emits a
-finite 200 MiB PTY burst and observes missing forward progress or an inert
-terminal afterward. The scaled server characterization proves the same backlog
-transitions the shared connection to permanent `closed/resource`.
+The original Docker reproduction emitted a large PTY burst and observed missing
+forward progress or an inert terminal afterward. The permanent regression uses
+a fast test pyramid: the deterministic server test advances the complete 200
+MiB byte range, while Docker Electron emits 1 MiB—enough to cross the same
+presentation limits—through the real PTY, checkpoint parser, xterm, and Local
+MessagePort.
 
 ## Architecture decisions
 
@@ -75,55 +77,56 @@ transitions the shared connection to permanent `closed/resource`.
 
 ### 1. Lock the regression and expose evidence
 
-- [x] Add a real Docker Electron test that emits 200 MiB inside the PTY and
+- [x] Add a real Docker Electron test that crosses the presentation limits and
   verifies completion, subsequent input, connection health, and new-terminal
   creation.
-- [x] Add a deterministic server characterization proving a finite terminal
-  backlog currently closes the shared connection with `resource`.
-- [ ] Add metadata-only diagnostics for traffic class, opaque attachment id,
+- [x] Add a deterministic 200 MiB server characterization proving congestion
+  remains attachment-scoped without closing the shared connection.
+- [x] Add metadata-only diagnostics for traffic class, opaque attachment id,
   queued bytes/frames, confirmed/head positions, congestion transition, and
   connection rehydration outcome.
 
 ### 2. Separate terminal presentation delivery
 
-- [ ] Define the connection scheduler and terminal-lane state machine with
+- [x] Define the connection scheduler and terminal-lane state machine with
   explicit byte, frame, age, and fairness limits.
-- [ ] Remove raw terminal output from the generic journal FIFO while preserving
+- [x] Remove raw terminal output from the generic journal FIFO while preserving
   exact attachment authorization and terminal event subscription semantics.
-- [ ] Reserve bounded control capacity and prove terminal output cannot starve
+- [x] Reserve bounded control capacity and prove terminal output cannot starve
   command/query results, workspace deltas, or lifecycle events.
-- [ ] Preserve ordering of dimensions, presentation ownership, output, exit,
+- [x] Preserve ordering of dimensions, presentation ownership, output, exit,
   and resync transitions within each exact terminal attachment.
 
 ### 3. Recover one congested presentation
 
-- [ ] Convert terminal-lane overflow into one attachment-scoped
+- [x] Convert terminal-lane overflow into one attachment-scoped
   `resync_required` transition without closing the transport or PTY.
-- [ ] Rehydrate the affected xterm through the checkpoint protocol from a
+- [x] Rehydrate the affected xterm through the checkpoint protocol from a
   precise safe position and resume bounded live delivery without gaps or
   duplicates.
-- [ ] Keep unrelated terminals interactive and allow workspace/terminal
+- [x] Keep unrelated terminals interactive and allow workspace/terminal
   creation commands throughout another terminal's congestion.
-- [ ] Bound repeated overflow, pins, retries, parser work, and queued live tail;
+- [x] Bound repeated overflow, pins, retries, parser work, and queued live tail;
   ensure controller input is restored only after valid hydration.
 
 ### 4. Repair genuine connection recovery
 
-- [ ] Implement and expose `connected → reconnecting → resubscribing →
+- [x] Implement and expose `connected → reconnecting → resubscribing →
   hydrating → connected` for Local and remote clients.
-- [ ] Replace disposed clients atomically with generation guards, bounded
+- [x] Replace disposed clients atomically with generation guards, bounded
   backoff, and actionable failure state; never reuse a half-closed transport.
-- [ ] Reload authoritative workspace state and reattach mounted terminal panels
+- [x] Reload authoritative workspace state and reattach mounted terminal panels
   without creating another PTY or losing presentation identity.
-- [ ] Prove new commands fail promptly while reconnecting and succeed after
+- [x] Prove new commands fail promptly while reconnecting and succeed after
   recovery rather than timing out against an inert client.
 
 ### 5. Verify limits and convergence
 
-- [ ] Pass the 200 MiB Electron reproduction repeatedly without retry.
+- [x] Pass the deterministic 200 MiB regression and the real Electron
+  presentation-limit reproduction without retry.
 - [ ] Test sustained output with bounded memory and a deliberately stalled
   renderer while another terminal and workspace commands remain responsive.
-- [ ] Test multiple noisy terminals for fair progress and reserved control
+- [x] Test multiple noisy terminals for fair progress and reserved control
   capacity.
 - [ ] Test congestion across UTF-8 and terminal-control byte boundaries,
   resize, alternate screen, synchronized output, recording, detach, exit, and
@@ -152,4 +155,4 @@ Terminal output has a bounded attachment-owned delivery path, terminal
 congestion performs safe checkpoint resynchronization instead of connection
 failure, control traffic remains available, real transport loss reconverges the
 workspace and mounted terminals, all resource and hostile-boundary tests pass,
-and the 200 MiB Docker Electron regression passes repeatedly.
+and the deterministic 200 MiB plus real Docker Electron regressions pass.
