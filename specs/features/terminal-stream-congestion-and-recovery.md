@@ -22,11 +22,13 @@ and congestion state. One attachment cannot consume another attachment's
 budget.
 
 Connection control traffic includes handshake, command and query results,
-cancellation, subscription lifecycle, workspace deltas, resynchronization, and
-connection recovery. It has reserved bounded delivery capacity and cannot be
-starved or displaced by terminal presentation bytes. The transport has one
-ordered writer, but its scheduler fairly selects independently bounded traffic
-classes instead of admitting all frames into one undifferentiated FIFO.
+cancellation, subscription lifecycle, resynchronization, and connection
+recovery. It has reserved bounded delivery capacity and cannot be starved or
+displaced by terminal presentation bytes. Subscription events, including
+workspace and feature projections, are reconstructible state traffic rather
+than reliable RPC control. The transport has one ordered writer, but its
+scheduler fairly selects independently bounded traffic classes instead of
+admitting all frames into one undifferentiated FIFO.
 
 The terminal service, recording service, activity projection, and checkpoint
 authority may observe the same PTY bytes, but they do not share a renderer
@@ -72,13 +74,15 @@ that leaves status, attention, acknowledgement, authority, and source
 unchanged does not advance the public activity revision or `updatedAt`.
 Semantic transitions remain ordered and replayable.
 
-Reconstructible feature state uses a separately bounded, keyed latest-value
-delivery class. A pending value for the same subscription and entity
-supersedes its obsolete predecessor. If a state subscription exceeds its
-bound, its backlog becomes one scoped resynchronization request and the client
-reloads the authoritative feature snapshot. RPC results and application
-control retain reserved capacity. No volume or timing of PTY-derived state may
-close the application connection.
+Every non-terminal subscription event uses a separately bounded projection
+delivery class. Full snapshots use stable semantic keys so a pending value for
+the same subscription and entity supersedes its obsolete predecessor. Ordered
+deltas retain their revision identity until the bound is reached. If a
+subscription exceeds its bound, its backlog becomes one scoped
+resynchronization request and the client reloads the authoritative feature
+snapshot. RPC results and application control retain reserved capacity. No
+volume or timing of reconstructible state, including agent snapshots derived
+from terminal journal ingestion, may close the application connection.
 
 ## Genuine connection failure
 
@@ -137,6 +141,10 @@ terminal clients.
 - Thousands of pre-provider PTY callbacks publish only semantic activity
   transitions, keep the renderer connection open, and do not prevent another
   terminal from being created.
+- Thousands of agent-status snapshots produced while a Codex journal is
+  replayed coalesce or resynchronize within their subscription lane, keep the
+  renderer connection open, and do not prevent another terminal from being
+  created.
 
 ## Non-goals
 
