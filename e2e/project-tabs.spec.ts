@@ -99,6 +99,11 @@ test.describe('project tabs', () => {
 		const workspace = await createWorkspace({ name: 'project-tab-root' });
 		const initialProjectTab = mainWindow.locator('.project-tab').first();
 		await expect(initialProjectTab).toContainText('Project');
+		const initialSessionId = await mainWindow
+			.locator('.terminal-panel')
+			.first()
+			.getAttribute('data-terminay-terminal-session-id');
+		if (!initialSessionId) throw new Error('Initial terminal session is unavailable');
 
 		await mainWindow.getByLabel('Add project tab').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
@@ -136,6 +141,15 @@ test.describe('project tabs', () => {
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Workspace QA',
 		);
+		await expect
+			.poll(() =>
+				mainWindow.evaluate(
+					(sessionId) =>
+						window.terminayTest!.getServerTerminalActivity(sessionId),
+					initialSessionId,
+				),
+			)
+			.toMatchObject({ foregroundBusy: false });
 
 		await initialProjectTab.getByLabel('Close Project').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
