@@ -59,3 +59,17 @@ test("activity client rejects malformed or cross-project retargeting snapshots",
   assert.throws(() => store.applySnapshot({ revision: 1, cursor: "wrong", sessions: {} }), /snapshot is invalid/);
   assert.throws(() => store.applyEvent({ revision: 1, cursor: "1", type: "activity.changed", sessionId: "session-a", snapshot: session("session-b") }), /session mismatch/);
 });
+
+test("activity client retains foreground busy state and defaults older snapshots idle", () => {
+  const store = new ActivitySnapshotStore();
+  store.applySnapshot(snapshot(1, { "session-a": session("session-a") }));
+  assert.equal(store.snapshot.sessions["session-a"].foregroundBusy, false);
+  store.applyEvent({
+    revision: 2,
+    cursor: "2",
+    type: "activity.changed",
+    sessionId: "session-a",
+    snapshot: session("session-a", "project-a", { foregroundBusy: true, updatedAt: 2 }),
+  });
+  assert.equal(store.snapshot.sessions["session-a"].foregroundBusy, true);
+});

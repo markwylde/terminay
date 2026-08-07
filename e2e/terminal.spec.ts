@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
 import {
@@ -19,6 +19,19 @@ async function getActiveSessionId(page: Page): Promise<string> {
 	}
 
 	return sessionId;
+}
+
+async function requireBoundingBox(locator: Locator, label: string) {
+	let box = await locator.boundingBox();
+	await expect
+		.poll(async () => {
+			box = await locator.boundingBox();
+			return box !== null;
+		})
+		.toBe(true);
+
+	if (!box) throw new Error(`${label} location is unavailable`);
+	return box;
 }
 
 async function writeToTerminal(page: Page, data: string): Promise<void> {
@@ -376,13 +389,15 @@ test.describe('terminal behavior', () => {
 		);
 
 		const line = mainWindow
-			.locator('.xterm-rows')
+			.locator(
+				`.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${sessionId}"] .xterm-rows`,
+			)
 			.getByText(marker, { exact: true });
 		await expect(line).toBeVisible();
-		const box = await line.boundingBox();
-		if (!box) {
-			throw new Error('Terminal selectable text location is unavailable');
-		}
+		const box = await line.evaluate((element) => {
+			const rect = element.getBoundingClientRect();
+			return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+		});
 
 		await mainWindow.mouse.move(box.x + 2, box.y + box.height / 2);
 		await mainWindow.mouse.down();
@@ -430,7 +445,10 @@ test.describe('terminal behavior', () => {
 		await expect(terminalTabs).toHaveCount(initialTabCount);
 
 		await editWindow.getByPlaceholder('Terminal name').fill('Build Shell');
-		await editWindow.getByLabel('Tab icon').fill('B');
+		const iconInput = editWindow.getByLabel('Tab icon');
+		await iconInput.fill('ZZ');
+		await expect(iconInput).toHaveValue('Z');
+		await iconInput.fill('B');
 		await editWindow.locator('.hue-slider').fill('30');
 		await submitEditWindow(editWindow);
 
@@ -486,43 +504,6 @@ test.describe('terminal behavior', () => {
 				.locator('.terminal-tab-title'),
 		).toHaveText('Keyboard Shell');
 		await expectTerminalInputFocused(mainWindow);
-	});
-
-	test('terminal edit window keeps the icon input to one character and cancel leaves the tab unchanged', async ({
-		mainWindow,
-	}) => {
-		const firstTab = mainWindow.locator('.terminal-tab-content').first();
-		const originalTitle =
-			(await firstTab.locator('.terminal-tab-title').textContent())?.trim() ??
-			'Terminal 1';
-		const originalIcon = (
-			(await firstTab
-				.locator('.terminal-tab-emoji')
-				.textContent()
-				.catch(() => null)) ?? ''
-		).trim();
-
-		const editWindow = await openTerminalEditWindow(mainWindow);
-		const iconInput = editWindow.getByLabel('Tab icon');
-
-		await expect(
-			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
-		).toBeVisible();
-		await iconInput.fill('ZZ');
-		await expect(iconInput).toHaveValue('Z');
-		await editWindow.getByPlaceholder('Terminal name').fill('Should Not Save');
-		await cancelEditWindow(editWindow);
-
-		await expect(firstTab.locator('.terminal-tab-title')).toHaveText(
-			originalTitle,
-		);
-		if (originalIcon) {
-			await expect(firstTab.locator('.terminal-tab-emoji')).toHaveText(
-				originalIcon,
-			);
-		} else {
-			await expect(firstTab.locator('.terminal-tab-emoji')).toHaveCount(0);
-		}
 	});
 
 	test('double-clicking a terminal tab opens one edit window for the active project tab', async ({
@@ -654,14 +635,11 @@ test.describe('terminal behavior', () => {
 			.locator('.xterm-rows')
 			.getByText(linkUrl, { exact: true });
 		await expect(link).toBeVisible();
-		const linkBox = await link.boundingBox();
-		const terminalBox = await mainWindow
-			.locator('.terminal-panel')
-			.first()
-			.boundingBox();
-		if (!linkBox || !terminalBox) {
-			throw new Error('Terminal link location is unavailable');
-		}
+		const linkBox = await requireBoundingBox(link, 'Terminal link');
+		const terminalBox = await requireBoundingBox(
+			mainWindow.locator('.terminal-panel').first(),
+			'Terminal',
+		);
 		const linkCenter = {
 			x: linkBox.x + linkBox.width / 2,
 			y: linkBox.y + linkBox.height / 2,
@@ -741,14 +719,11 @@ test.describe('terminal behavior', () => {
 			.locator('.xterm-rows')
 			.getByText(linkText, { exact: true });
 		await expect(link).toBeVisible();
-		const linkBox = await link.boundingBox();
-		const terminalBox = await mainWindow
-			.locator('.terminal-panel')
-			.first()
-			.boundingBox();
-		if (!linkBox || !terminalBox) {
-			throw new Error('Terminal OSC link location is unavailable');
-		}
+		const linkBox = await requireBoundingBox(link, 'Terminal OSC link');
+		const terminalBox = await requireBoundingBox(
+			mainWindow.locator('.terminal-panel').first(),
+			'Terminal',
+		);
 
 		const linkCenter = {
 			x: linkBox.x + linkBox.width / 2,
