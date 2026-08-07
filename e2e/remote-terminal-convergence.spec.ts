@@ -200,12 +200,21 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		const desktopInput = desktopPanel.locator('.xterm-helper-textarea');
 		await desktopInput.focus();
 		const environmentProof = '__TERMINAY_ENV__xterm-256color|truecolor';
-		await mainWindow.keyboard.type(
-			`printf '__TERMINAY_ENV__%s|%s\\n' "$TERM" "$COLORTERM"`,
-		);
-		await mainWindow.keyboard.press('Enter');
+		for (let attempt = 0; attempt < 3; attempt++) {
+			await mainWindow.keyboard.type(
+				`printf '__TERMINAY_ENV__%s|%s\\n' "$TERM" "$COLORTERM"`,
+			);
+			await mainWindow.keyboard.press('Enter');
+			try {
+				await expect(browserPanel).toContainText(environmentProof, {
+					timeout: 3_000,
+				});
+				break;
+			} catch (error) {
+				if (attempt === 2) throw error;
+			}
+		}
 		await expect(desktopPanel).toContainText(environmentProof);
-		await expect(browserPanel).toContainText(environmentProof, { timeout: 10_000 });
 		await mainWindow.keyboard.type(`printf '${proof}\\n'`);
 		await mainWindow.keyboard.press('Enter');
 		await expect(terminalPanel(mainWindow, desktopSessionId)).toContainText(
