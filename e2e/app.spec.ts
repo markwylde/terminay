@@ -390,6 +390,7 @@ test('scrolls the active command into view during keyboard navigation', async ({
   await seedScrollTestMacros(mainWindow)
 
   await openMacroLauncher(mainWindow)
+	await mainWindow.getByPlaceholder('Search commands...').fill('Scroll test macro')
 
   const commandList = mainWindow.locator('.macro-launcher-list')
 
@@ -405,6 +406,7 @@ test('scrolls the active command into view when navigating upward', async ({ mai
   await seedScrollTestMacros(mainWindow)
 
   await openMacroLauncher(mainWindow)
+	await mainWindow.getByPlaceholder('Search commands...').fill('Scroll test macro')
 
   const commandList = mainWindow.locator('.macro-launcher-list')
 
