@@ -171,7 +171,7 @@ function createForegroundObserver(
     const processName = foregroundProcessName(child);
     if (processName === undefined || processName === lastProcess) return;
     lastProcess = processName;
-    const event = Object.freeze({ processName, shellForeground: processName === shellProcess });
+    const event = Object.freeze({ processName, shellForeground: isShellProcess(processName, shellProcess) });
     for (const listener of [...listeners]) listener(event);
   };
   const start = (): void => {
@@ -211,4 +211,12 @@ function foregroundProcessName(child: NodePtyProcessLike): string | undefined {
 function shellName(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   return normalized.slice(normalized.lastIndexOf("/") + 1);
+}
+
+const knownShellProcesses = new Set(["bash", "cmd", "dash", "fish", "nu", "powershell", "pwsh", "sh", "zsh"]);
+
+function isShellProcess(processName: string, configuredShell: string): boolean {
+  const normalized = shellName(processName).replace(/^-/, "").replace(/\.exe$/i, "").toLowerCase();
+  const configured = shellName(configuredShell).replace(/^-/, "").replace(/\.exe$/i, "").toLowerCase();
+  return normalized === configured || knownShellProcesses.has(normalized);
 }
