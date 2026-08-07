@@ -376,9 +376,12 @@ test.describe('terminal behavior', () => {
 		);
 
 		const line = mainWindow
-			.locator('.xterm-rows')
+			.locator(
+				`.project-workspace--active .terminal-panel[data-terminay-terminal-session-id="${sessionId}"] .xterm-rows`,
+			)
 			.getByText(marker, { exact: true });
 		await expect(line).toBeVisible();
+		await line.scrollIntoViewIfNeeded();
 		const box = await line.boundingBox();
 		if (!box) {
 			throw new Error('Terminal selectable text location is unavailable');

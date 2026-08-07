@@ -119,6 +119,8 @@ export async function closeDesktop(app: ElectronApplication): Promise<void> {
 				timer.unref?.();
 			}),
 		]);
+	} catch {
+		if (app.process().exitCode === null) app.process().kill('SIGKILL');
 	} finally {
 		if (timer !== undefined) clearTimeout(timer);
 	}
