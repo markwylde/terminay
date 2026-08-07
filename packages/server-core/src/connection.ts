@@ -392,22 +392,21 @@ export class ServerConnection implements ServerConnectionLike {
 		const envelope = eventEnvelope(subscriptionId, event);
 		const output = terminalOutputMetadata(event);
 		if (output === undefined) {
-			if (event.event === 'activity') {
-				const payload = objectPayload(event.payload);
-				const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : 'snapshot';
-				await this.outbound.sendState(encodeFrame(envelope, new Uint8Array(), this.options.limits), {
-					laneId: subscriptionId,
-					key: sessionId,
-					createResyncFrame: () => encodeFrame({
-						type: 'event_resync',
-						subscriptionId,
-						revision: event.revision,
-						cursor: event.cursor,
-					}, new Uint8Array(), this.options.limits),
-				});
-				return;
-			}
-			await this.send(envelope);
+			// Subscription events are reconstructible projections, never RPC
+			// control. Keep them outside the fatal reliable-control queue even for
+			// features that do not yet have a semantic coalescing key. Full snapshot
+			// projections coalesce aggressively; ordered deltas retain unique keys
+			// until the bounded lane replaces them with event_resync.
+			await this.outbound.sendState(encodeFrame(envelope, new Uint8Array(), this.options.limits), {
+				laneId: subscriptionId,
+				key: projectionDeliveryKey(event),
+				createResyncFrame: () => encodeFrame({
+					type: 'event_resync',
+					subscriptionId,
+					revision: event.revision,
+					cursor: event.cursor,
+				}, new Uint8Array(), this.options.limits),
+			});
 			return;
 		}
 		// Event subscriptions are intentionally independent, so overlapping
@@ -521,6 +520,15 @@ export class ServerConnection implements ServerConnectionLike {
     if (clientId !== undefined) this.options.onConnectionClosed?.(clientId);
 		this.onClosed?.();
   }
+}
+
+function projectionDeliveryKey(event: OrderedEvent): string {
+	if (event.event === 'agent') return 'agent:snapshot';
+	if (event.event === 'activity') {
+		const payload = objectPayload(event.payload);
+		if (typeof payload.sessionId === 'string') return `activity:${payload.sessionId}`;
+	}
+	return `${event.event}:revision:${event.revision}`;
 }
 
 export interface ServerCore { readonly accept: (transport: ByteTransport, options?: ConnectionOptions) => ServerConnection; }
