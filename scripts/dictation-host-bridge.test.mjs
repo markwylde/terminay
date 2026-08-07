@@ -24,6 +24,8 @@ test('Desktop dictation routes use one narrow validated host', () => {
   }
   assert.match(settingsWindow, /getParakeetStatus\(\)/u)
   assert.match(settingsWindow, /installParakeet\(\)/u)
+  assert.match(settingsWindow, /setInterval\(\(\) =>/u)
+  assert.match(settingsWindow, /settings-parakeet-progress/u)
   assert.doesNotMatch(
     rendererSource,
     /window\.terminay\.(?:getDictationOpenAiKeyStatus|saveDictationOpenAiKey|clearDictationOpenAiKey|getDictationMicrophonePermissionStatus|requestDictationMicrophonePermission|transcribeDictation)/u,
