@@ -185,6 +185,17 @@ short ICE-recovery grace period returns through the same saved-session
 bootstrap. An offline browser waits for the network to return, then reconnects
 with its origin-bound device key and grant without replaying the pairing URL.
 
+The authenticated WebRTC session has one lifecycle authority across peer,
+ICE, and required data-channel state. A peer or ICE `disconnected` transition
+is recoverable: it starts one bounded grace period, keeps the authenticated
+application and terminal channels attached, and is cancelled when all
+recoverable transport state becomes healthy again. It never independently
+closes application traffic. Explicit peer/ICE `failed` or `closed`, required
+data-channel failure, revocation, host shutdown, or expiry of the recovery
+grace period is terminal and closes the affected connection exactly once with
+one metadata-only reason. Competing peer, ICE, channel, delivery, and host
+callbacks cannot widen teardown to another client or server-owned PTY.
+
 For the local static-browser host, enrollment derives a non-extractable
 WebCrypto HMAC proof key in IndexedDB, partitioned by the selected server
 origin; the one-time pairing grant is discarded immediately. The standalone
