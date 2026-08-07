@@ -191,6 +191,14 @@ The server republishes its in-memory reduced snapshot after client reload.
 Entries do not survive a server restart as Terminay history. A live provider can
 be rebound and a bounded journal tail replayed to reconstruct current state.
 
+The transport-neutral agent projection is the renderer's sole revision
+authority. Ordinary live snapshots are monotonic within one server authority
+incarnation. An explicit reconnect or replay-gap resync is an authority
+boundary: its complete snapshot replaces the prior projection even when its
+revision is lower because the server restarted its revision sequence. Host
+adapters forward that resync boundary unchanged, and presentation components
+render the accepted projection without applying a second revision fence.
+
 - Unsupported, missing, inaccessible, ephemeral, unbound, oversized, or
   malformed journals leave the terminal on terminal-activity fallback.
 - A bound journal is authoritative; terminal output, spinner frames, BEL, and
@@ -217,7 +225,9 @@ be rebound and a bounded journal tail replayed to reconstruct current state.
    and inaccessible files fail safely without exposing contents.
 10. Disabling clears observation and state without touching `.codex`.
 11. Client reload/project switching preserve scope and create no duplicate watchers.
-12. Electron end-to-end coverage runs only through `npm run test:e2e`.
+12. A reconnect/resync after a server revision restart replaces stale `done`
+    state, resumes a working agent, and admits newly discovered concurrent agents.
+13. Electron end-to-end coverage runs only through `npm run test:e2e`.
 
 ## Non-goals
 

@@ -179,39 +179,31 @@ export async function createConnectedServerClientContext(
 	let workspaceSnapshotStore: WorkspaceSnapshotStore | undefined;
 	try {
 		const featureTransport = new TerminayClientFacade(client);
-		let candidateActivityClient: ActivityClient | undefined;
-		candidateActivityClient = new ActivityClient({
+		const candidateActivityClient = new ActivityClient({
 			query: featureTransport.query.bind(featureTransport),
 			command: featureTransport.command.bind(featureTransport),
-			subscribe: (event, listener) =>
+			subscribe: (event, listener, onResync) =>
 				featureTransport.subscribeClientEvents(
 					event,
 					listener as unknown as (
 						message: import('@terminay/client-core').ClientEvent,
 					) => void,
-					() => {
-						// The journal cannot provide a safe generic snapshot. This feature
-						// owns its scoped snapshot operation, so converge through it.
-						void candidateActivityClient?.refresh().catch(() => undefined);
-					},
+					onResync,
 				),
 		});
 		const fileViewerClient = new FileViewerClient(featureTransport);
 		const fileObservationClient = new FileObservationClient(featureTransport);
 		const recordingsClient = new RecordingsClient(featureTransport);
 		const gitClient = new TerminayGitClient(featureTransport);
-		let candidateAgentStatusClient: AgentStatusClient | undefined;
-		candidateAgentStatusClient = new AgentStatusClient([], {
+		const candidateAgentStatusClient = new AgentStatusClient([], {
 			query: featureTransport.query.bind(featureTransport),
 			command: featureTransport.command.bind(featureTransport),
-			subscribe: (event, listener) =>
+			subscribe: (event, listener, onResync) =>
 				featureTransport.subscribeEvents(
 					event,
 					(payload) =>
 						listener(payload as unknown as Parameters<typeof listener>[0]),
-					() => {
-						void candidateAgentStatusClient?.refresh().catch(() => undefined);
-					},
+					onResync,
 				),
 		});
 		// Activity and agent state are canonical server projections. Do not retain a
