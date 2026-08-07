@@ -309,6 +309,62 @@ test('sustained terminal output remains live while rendered acknowledgements adv
 	assert.equal(transport.sent.at(-1)?.[0], 99);
 });
 
+test('a stalled renderer stays bounded while another terminal and workspace control remain responsive', async () => {
+	const transport = new ControlledTransport();
+	await transport.open();
+	const congestion = [];
+	const failures = [];
+	const pump = new OutboundDeliveryPump(
+		transport,
+		{
+			maxQueuedBytes: 64,
+			maxQueuedFrames: 8,
+			maxTerminalQueuedBytes: 8,
+			maxTerminalQueuedFrames: 4,
+			maxTerminalUnconfirmedBytes: 2,
+		},
+		(error) => failures.push(error),
+		(value) => congestion.push(value),
+	);
+	const noisy = (position) => ({
+		laneId: 'terminal-stalled',
+		position,
+		nextPosition: position + 1,
+		createResyncFrame: () => new Uint8Array([200]),
+	});
+	const interactive = (position) => ({
+		laneId: 'terminal-interactive',
+		position,
+		nextPosition: position + 1,
+		createResyncFrame: () => new Uint8Array([201]),
+	});
+	let maximumQueuedBytes = 0;
+	let maximumQueuedFrames = 0;
+	let interactivePosition = 0;
+
+	for (let position = 0; position < 10_000; position += 1) {
+		await pump.sendTerminal(new Uint8Array([1]), noisy(position));
+		if (position % 100 === 0) {
+			await pump.sendTerminal(new Uint8Array([100]), interactive(interactivePosition));
+			interactivePosition += 1;
+			pump.acknowledgeTerminal('terminal-interactive', interactivePosition);
+			await pump.send(new Uint8Array([250]));
+		}
+		maximumQueuedBytes = Math.max(maximumQueuedBytes, pump.snapshot.queuedBytes);
+		maximumQueuedFrames = Math.max(maximumQueuedFrames, pump.snapshot.queuedFrames);
+	}
+	await waitFor(() => pump.snapshot.queuedFrames === 0);
+
+	assert.equal(congestion.length, 1, 'the stalled attachment enters one bounded resync state');
+	assert.equal(congestion[0].laneId, 'terminal-stalled');
+	assert.equal(transport.sent.filter((frame) => frame[0] === 200).length, 1);
+	assert.equal(transport.sent.filter((frame) => frame[0] === 100).length, 100);
+	assert.equal(transport.sent.filter((frame) => frame[0] === 250).length, 100);
+	assert.equal(maximumQueuedBytes <= 64, true);
+	assert.equal(maximumQueuedFrames <= 8, true);
+	assert.deepEqual(failures, []);
+});
+
 test('live event send rejection closes one server connection without an unhandled rejection', async () => {
 	const journal = new OrderedEventJournal();
 	const transport = new ControlledTransport(
