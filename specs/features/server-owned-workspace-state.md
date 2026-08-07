@@ -134,6 +134,11 @@ editing continues to use the file-viewer conflict contract.
   commit normalized weights.
 - Native popout/adoption becomes movement between server-owned workspace views.
   It never transfers PTY ownership between renderers.
+- A native project-host window binds to one exact server-owned workspace view
+  and derives its project tabs only from that view's ordered project ids. The
+  host may reattach terminal presentation streams between renderers, but it
+  never synthesizes a replacement project id or treats a cross-view move as a
+  project close.
 - Web clients can manage logical views without requiring browser popup windows.
 
 ## Privileged service ownership
