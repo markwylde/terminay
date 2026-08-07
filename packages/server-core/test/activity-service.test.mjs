@@ -90,7 +90,7 @@ test("OSC 9;4 and OSC 133/633 completion markers remain exact canonical session 
   const isolated = service.ingestPtyOutput(identity(), "\u001b]9;4;0\u0007");
   assert.equal(isolated.length, 1);
   assert.deepEqual(service.get(identity()), {
-    sessionId: "session-a", projectId: "project-a", status: "idle",
+    sessionId: "session-a", projectId: "project-a", foregroundBusy: false, status: "idle",
     attention: false, acknowledged: true, claimed: true,
     authority: "structured", source: "structured:progress", updatedAt: 1,
   });

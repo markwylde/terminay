@@ -36,6 +36,14 @@ boundary.
 - Files and folders opened from project navigation become dockable panels in the
   relevant project. Closing a panel must dispose only that panel's resources;
   terminal termination is explicit terminal lifecycle behaviour.
+- Closing an idle terminal proceeds immediately. Closing a terminal whose PTY
+  has a non-shell foreground process asks whether to **Close Terminal** or
+  **Keep Running** before terminating it.
+- Closing a project proceeds immediately when all of its terminals are at their
+  shell prompts. If one or more project terminals have non-shell foreground
+  processes, Terminay reports the affected terminal count and asks whether to
+  **Close Project** or **Keep Running**. Moving a project or terminal between
+  views is not a close and never triggers this warning.
 
 ## Boundaries and persistence
 
@@ -58,3 +66,5 @@ client focus.
   clearly when their required target is absent.
 - Reconnecting from a fresh client restores project and panel identity from
   server state without recreating live terminals.
+- Terminal and project close warnings depend on canonical PTY foreground-process
+  state, not recent output, agent status, tab attention, or display settings.

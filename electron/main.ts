@@ -28,6 +28,7 @@ import {
 	BrowserWindow,
 	clipboard,
 	crashReporter,
+	dialog,
 	ipcMain,
 	Menu,
 	MessageChannelMain,
@@ -128,6 +129,11 @@ import { FileWatchService } from './fileViewer/fileWatchService';
 import { GitDiffService } from './fileViewer/gitDiffService';
 import { registerFileViewerIpcHandlers } from './fileViewer/ipc';
 import { createGracefulQuitHandler } from './gracefulQuit';
+import {
+	bindMainWindowCloseConfirmation,
+	createCloseConfirmationDialog,
+	type DestructiveCloseKind,
+} from './mainWindowCloseConfirmation';
 import {
 	getMcpInstallStatus,
 	installMcpAgent,
@@ -604,6 +610,15 @@ interface AdoptedProjectPayload {
 // Project-host (index.html) windows, as opposed to the auxiliary settings /
 // macros / recordings / edit windows. Multi-window project tabs are peers.
 const appWindows = new Set<BrowserWindow>();
+const runningTerminalSessionsByWindow = new Map<number, Set<string>>();
+
+function getRunningTerminalCount(): number {
+	const sessions = new Set<string>();
+	for (const windowSessions of runningTerminalSessionsByWindow.values()) {
+		for (const sessionId of windowSessions) sessions.add(sessionId);
+	}
+	return sessions.size;
+}
 // New popout windows pull their adopted project on boot through the transfer host.
 const pendingAdoptedProjects = new Map<number, AdoptedProjectPayload>();
 // Each project-host window publishes the screen-relative rect of its project tab
@@ -2479,6 +2494,8 @@ function detachSessionsForWebContents(webContentsId: number): void {
 }
 
 let isQuitting = false;
+let isQuitConfirmed = false;
+let quitConfirmationPending = false;
 
 function getFirstAppWindow(): BrowserWindow | null {
 	for (const window of appWindows) {
@@ -2551,7 +2568,6 @@ function bindAppShortcuts(webContents: Electron.WebContents): void {
 	webContents.on('before-input-event', (event, input) => {
 		if (input.type === 'keyDown' && isMacQuitInput(input)) {
 			event.preventDefault();
-			isQuitting = true;
 			app.quit();
 			return;
 		}
@@ -2874,6 +2890,20 @@ function createWindow(options?: {
 	});
 	securePrimaryWindow(window);
 	appWindows.add(window);
+	bindMainWindowCloseConfirmation({
+		window,
+		isQuitting: () => isQuitting,
+		getRunningTerminalCount,
+		showConfirmation: (target, dialogOptions) =>
+			dialog.showMessageBox(target as BrowserWindow, dialogOptions),
+		requestQuit: () => {
+			isQuitConfirmed = true;
+			isQuitting = true;
+			app.quit();
+		},
+		onError: (error) =>
+			console.error('[window] close confirmation failed', error),
+	});
 
 	// Capture the webContents id now; it's unreadable once the window is closed
 	// (accessing window.webContents after destruction throws).
@@ -2885,6 +2915,7 @@ function createWindow(options?: {
 
 	window.on('closed', () => {
 		appWindows.delete(window);
+		runningTerminalSessionsByWindow.delete(windowWebContentsId);
 		tabBarRectsByWebContents.delete(windowWebContentsId);
 		pendingAdoptedProjects.delete(windowWebContentsId);
 		for (const [
@@ -4429,12 +4460,85 @@ ipcMain.handle(
 			payload === null ||
 			Array.isArray(payload) ||
 			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 1 ||
+			Object.keys(payload).length !== 2 ||
 			(payload as { version?: unknown }).version !== 1
 		) {
 			throw new TypeError('desktop window lifecycle host request is invalid');
 		}
+		const confirmedRunningWork = (payload as { confirmedRunningWork?: unknown })
+			.confirmedRunningWork;
+		if (typeof confirmedRunningWork !== 'boolean') {
+			throw new TypeError('desktop window lifecycle confirmation is invalid');
+		}
+		if (confirmedRunningWork) {
+			isQuitConfirmed = true;
+			isQuitting = true;
+			app.quit();
+			return;
+		}
 		BrowserWindow.fromWebContents(event.sender)?.close();
+	},
+);
+
+ipcMain.handle(
+	'desktop:window-lifecycle-host:publish-running-terminals',
+	(event, payload: unknown) => {
+		assertTrustedAppSender(event);
+		if (
+			typeof payload !== 'object' ||
+			payload === null ||
+			Array.isArray(payload) ||
+			Object.getPrototypeOf(payload) !== Object.prototype ||
+			Object.keys(payload).length !== 2 ||
+			(payload as { version?: unknown }).version !== 1 ||
+			!Array.isArray((payload as { sessionIds?: unknown }).sessionIds)
+		) throw new TypeError('desktop running terminal publication is invalid');
+		const sessionIds = (payload as { sessionIds: unknown[] }).sessionIds;
+		if (
+			sessionIds.length > 4_096 ||
+			sessionIds.some(
+				(value) =>
+					typeof value !== 'string' ||
+					!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value),
+			)
+		) throw new TypeError('desktop running terminal session ids are invalid');
+		runningTerminalSessionsByWindow.set(event.sender.id, new Set(sessionIds as string[]));
+	},
+);
+
+ipcMain.handle(
+	'desktop:window-lifecycle-host:confirm-close',
+	async (event, payload: unknown) => {
+		assertTrustedAppSender(event);
+		if (
+			typeof payload !== 'object' ||
+			payload === null ||
+			Array.isArray(payload) ||
+			Object.getPrototypeOf(payload) !== Object.prototype ||
+			Object.keys(payload).length !== 3 ||
+			(payload as { version?: unknown }).version !== 1
+		) throw new TypeError('desktop close confirmation request is invalid');
+		const { kind, runningTerminalCount } = payload as {
+			kind: unknown;
+			runningTerminalCount: unknown;
+		};
+		if (
+			(kind !== 'terminal' && kind !== 'project') ||
+			typeof runningTerminalCount !== 'number' ||
+			!Number.isSafeInteger(runningTerminalCount) ||
+			runningTerminalCount < 1 ||
+			runningTerminalCount > 4_096
+		) throw new TypeError('desktop close confirmation scope is invalid');
+		const target = BrowserWindow.fromWebContents(event.sender);
+		if (!target || target.isDestroyed()) return false;
+		const result = await dialog.showMessageBox(
+			target,
+			createCloseConfirmationDialog(
+				kind as DestructiveCloseKind,
+				runningTerminalCount,
+			),
+		);
+		return result.response === 0;
 	},
 );
 
@@ -5788,6 +5892,7 @@ if (process.env.TERMINAY_TEST === '1') {
 			return snapshot === undefined
 				? null
 				: {
+						foregroundBusy: snapshot.foregroundBusy,
 						status: snapshot.status,
 						acknowledged: snapshot.acknowledged,
 						claimed: snapshot.claimed,
@@ -6215,6 +6320,36 @@ const handleBeforeQuit = createGracefulQuitHandler({
 });
 
 app.on('before-quit', (event) => {
+	const runningTerminalCount = getRunningTerminalCount();
+	if (!isQuitConfirmed && runningTerminalCount > 0) {
+		event.preventDefault();
+		if (quitConfirmationPending) return;
+		quitConfirmationPending = true;
+		const target = BrowserWindow.getFocusedWindow() ?? getFirstAppWindow();
+		const confirmation = target
+			? dialog.showMessageBox(
+					target,
+					createCloseConfirmationDialog('app', runningTerminalCount),
+				)
+			: dialog.showMessageBox(
+					createCloseConfirmationDialog('app', runningTerminalCount),
+				);
+		void confirmation
+			.then(({ response }) => {
+				if (response !== 0) return;
+				isQuitConfirmed = true;
+				isQuitting = true;
+				app.quit();
+			})
+			.catch((error) =>
+				console.error('[app] quit confirmation failed', error),
+			)
+			.finally(() => {
+				quitConfirmationPending = false;
+			});
+		return;
+	}
+	isQuitConfirmed = true;
 	isQuitting = true;
 	parakeetRuntime.stop();
 	handleBeforeQuit(event);

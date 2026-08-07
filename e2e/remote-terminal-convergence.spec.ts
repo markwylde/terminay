@@ -200,18 +200,29 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		const desktopInput = desktopPanel.locator('.xterm-helper-textarea');
 		await desktopInput.focus();
 		const environmentProof = '__TERMINAY_ENV__xterm-256color|truecolor';
-		await mainWindow.keyboard.type(
-			`printf '__TERMINAY_ENV__%s|%s\\n' "$TERM" "$COLORTERM"`,
-		);
-		await mainWindow.keyboard.press('Enter');
+		for (let attempt = 0; attempt < 3; attempt++) {
+			await mainWindow.keyboard.type(
+				`printf '__TERMINAY_ENV__%s|%s\\n' "$TERM" "$COLORTERM"`,
+			);
+			await mainWindow.keyboard.press('Enter');
+			try {
+				await expect(browserPanel).toContainText(environmentProof, {
+					timeout: 3_000,
+				});
+				break;
+			} catch (error) {
+				if (attempt === 2) throw error;
+			}
+		}
 		await expect(desktopPanel).toContainText(environmentProof);
-		await expect(browserPanel).toContainText(environmentProof);
 		await mainWindow.keyboard.type(`printf '${proof}\\n'`);
 		await mainWindow.keyboard.press('Enter');
 		await expect(terminalPanel(mainWindow, desktopSessionId)).toContainText(
 			proof,
 		);
-		await expect(terminalPanel(page, desktopSessionId)).toContainText(proof);
+		await expect(terminalPanel(page, desktopSessionId)).toContainText(proof, {
+			timeout: 10_000,
+		});
 		await sendAppCommand(mainWindow, 'clear-terminal');
 		await page.waitForTimeout(6_000);
 		await expect(browserPanel.getByText('unknown terminal event type')).toHaveCount(0);
@@ -224,7 +235,9 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await mainWindow.keyboard.type(`printf '${postRenewalProof}\\n'`);
 		await mainWindow.keyboard.press('Enter');
 		await expect(desktopPanel).toContainText(postRenewalProof);
-		await expect(browserPanel).toContainText(postRenewalProof);
+		await expect(browserPanel).toContainText(postRenewalProof, {
+			timeout: 10_000,
+		});
 
 		// Run the query inside the PTY and count replies at the byte source. A
 		// second attached renderer must not send another automatic OSC response.

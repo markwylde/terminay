@@ -230,7 +230,15 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
 
   const onClose = (event: MouseEvent) => {
     event.stopPropagation()
-    props.api.close()
+    requestClose()
+  }
+
+  const requestClose = () => {
+    window.dispatchEvent(
+      new CustomEvent('terminay-request-close-terminal', {
+        detail: { panelId: props.api.id, sessionId: params?.sessionId },
+      }),
+    )
   }
 
   const onClick = () => {
@@ -341,7 +349,7 @@ export function TerminalTab(props: IDockviewPanelHeaderProps<TerminalPanelParams
       label: 'Close',
       icon: <XCircle size={14} />,
       danger: true,
-      onClick: () => props.api.close(),
+      onClick: requestClose,
     },
     {
       label: 'Open Settings',

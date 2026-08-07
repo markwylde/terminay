@@ -25,7 +25,10 @@ export function useProjectTabTransfer({
 	onAdopt,
 	projectsRef,
 }: {
-	closeProject: (projectId: string) => void;
+	closeProject: (
+		projectId: string,
+		options?: { skipConfirmation?: boolean },
+	) => void;
 	exportProject: (projectId: string) => MovedProject | null;
 	isAdoptWindow: boolean;
 	onAdopt: (payload: AdoptedProjectPayload, insertIndex: number | null) => void;
@@ -104,7 +107,7 @@ export function useProjectTabTransfer({
 					decision.y,
 				);
 			}
-			closeProject(projectId);
+			closeProject(projectId, { skipConfirmation: true });
 		},
 		[closeProject, exportProject, projectsRef],
 	);

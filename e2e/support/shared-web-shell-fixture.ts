@@ -27,6 +27,10 @@ export async function startSharedWebShellFixture(): Promise<SharedWebShellFixtur
     },
   })
   await server.listen()
+  await Promise.all([
+    server.warmupRequest('/src/remote/main.tsx'),
+    server.warmupRequest('/src/web/main.tsx'),
+  ])
   const address = server.httpServer?.address()
   if (address === undefined || address === null || typeof address === 'string') {
     await server.close()

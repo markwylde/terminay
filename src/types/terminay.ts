@@ -695,6 +695,7 @@ export interface TerminayTestApi {
     }
   } | null>
   getServerTerminalActivity: (sessionId: string) => Promise<{
+    foregroundBusy: boolean
     status: 'working' | 'idle'
     acknowledged: boolean
     claimed: boolean

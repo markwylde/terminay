@@ -9,8 +9,9 @@ const execFileAsync = promisify(execFile);
 
 async function getActiveSessionId(page: Page): Promise<string> {
 	const sessionId = await page
-		.locator('.terminal-panel')
-		.first()
+		.locator(
+			'.project-workspace--active .terminal-panel:has(.xterm-helper-textarea:focus)',
+		)
 		.getAttribute('data-terminay-terminal-session-id');
 
 	if (!sessionId) {
@@ -20,7 +21,7 @@ async function getActiveSessionId(page: Page): Promise<string> {
 	return sessionId;
 }
 
-async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
+async function writeToActiveTerminal(page: Page, data: string): Promise<string> {
 	const sessionId = await getActiveSessionId(page);
 	await page.evaluate(
 		async ({ nextData, nextSessionId }) => {
@@ -28,6 +29,7 @@ async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
 		},
 		{ nextData: data, nextSessionId: sessionId },
 	);
+	return sessionId;
 }
 
 async function getAppMenuItemAccelerator(
@@ -75,6 +77,63 @@ test.describe('workspace shell', () => {
 		await expect(closeButtons).toHaveCount(2);
 
 		await appHarness.sendAppCommand('close-active');
+		await expect(closeButtons).toHaveCount(1);
+	});
+
+	test('warns only when closing a terminal with a foreground process', async ({
+		appHarness,
+		electronApp,
+		mainWindow,
+	}) => {
+		await appHarness.sendAppCommand('new-terminal');
+		const closeButtons = mainWindow.getByLabel('Close terminal');
+		await expect(closeButtons).toHaveCount(2);
+		await electronApp.evaluate(({ dialog }) => {
+			const state = globalThis as typeof globalThis & {
+				closeDialog?: Electron.MessageBoxOptions;
+				closeDialogResponse?: number;
+			};
+			state.closeDialogResponse = 1;
+			dialog.showMessageBox = async (...args) => {
+				state.closeDialog = args.at(-1) as Electron.MessageBoxOptions;
+				return {
+					checkboxChecked: false,
+					response: state.closeDialogResponse ?? 1,
+				};
+			};
+		});
+
+		const sessionId = await writeToActiveTerminal(mainWindow, 'sleep 30\n');
+		await expect
+			.poll(() =>
+				mainWindow.evaluate(
+					(nextSessionId) =>
+						window.terminayTest!.getServerTerminalActivity(nextSessionId),
+					sessionId,
+				),
+			)
+			.toMatchObject({ foregroundBusy: true });
+		await closeButtons.last().click();
+		await expect
+			.poll(() =>
+				electronApp.evaluate(
+					() =>
+						(
+							globalThis as typeof globalThis & {
+								closeDialog?: Electron.MessageBoxOptions;
+							}
+						).closeDialog?.buttons?.[0] ?? null,
+				),
+			)
+			.toBe('Close Terminal');
+		await expect(closeButtons).toHaveCount(2);
+
+		await electronApp.evaluate(() => {
+			(
+				globalThis as typeof globalThis & { closeDialogResponse?: number }
+			).closeDialogResponse = 0;
+		});
+		await closeButtons.last().click();
 		await expect(closeButtons).toHaveCount(1);
 	});
 
@@ -259,11 +318,9 @@ test.describe('workspace shell', () => {
 		await editWindow.close();
 
 		await openFileExplorer(mainWindow);
-		const gitPane = mainWindow
-			.locator('.sidebar-pane')
-			.filter({
-				has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }),
-			});
+		const gitPane = mainWindow.locator('.sidebar-pane').filter({
+			has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }),
+		});
 		const worktree = gitPane.locator('.worktrees-panel__worktree').first();
 		await expect(
 			worktree.locator('.worktrees-panel__worktree-name'),

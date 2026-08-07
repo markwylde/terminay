@@ -57,13 +57,20 @@ async function seedScrollTestMacros(page: Page, count = 20): Promise<void> {
 
 
 async function navigateToCommand(page: Page, direction: 'ArrowDown' | 'ArrowUp', title: string, maxSteps = 80): Promise<void> {
+	const activeCommand = page.locator('.macro-launcher-item--active')
+
   for (let step = 0; step < maxSteps; step++) {
-    const activeText = await page.locator('.macro-launcher-item--active').textContent()
+		const activeText = await activeCommand.textContent()
     if (activeText?.includes(title)) {
       return
     }
 
-    await page.keyboard.press(direction)
+		await page.keyboard.press(direction)
+		await page.evaluate(
+			() => new Promise<void>((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+			),
+		)
   }
 
   throw new Error(`Failed to navigate to command: ${title}`)
@@ -383,6 +390,7 @@ test('scrolls the active command into view during keyboard navigation', async ({
   await seedScrollTestMacros(mainWindow)
 
   await openMacroLauncher(mainWindow)
+	await mainWindow.getByPlaceholder('Search commands...').fill('Scroll test macro')
 
   const commandList = mainWindow.locator('.macro-launcher-list')
 
@@ -398,6 +406,7 @@ test('scrolls the active command into view when navigating upward', async ({ mai
   await seedScrollTestMacros(mainWindow)
 
   await openMacroLauncher(mainWindow)
+	await mainWindow.getByPlaceholder('Search commands...').fill('Scroll test macro')
 
   const commandList = mainWindow.locator('.macro-launcher-list')
 

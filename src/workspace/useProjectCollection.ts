@@ -11,6 +11,7 @@ export function useProjectCollection<TTerminal>({
 	isAdoptWindow,
 	isSettingsLoading,
 	projectColorScope,
+	confirmProjectClose,
 	sidebarSettings,
 	workspaceSnapshotStore,
 }: {
@@ -21,6 +22,7 @@ export function useProjectCollection<TTerminal>({
 	isSettingsLoading: boolean;
 	/** Stable server identity used only to synthesize unpersisted project colors. */
 	projectColorScope: string;
+	confirmProjectClose?: (projectId: string) => Promise<boolean>;
 	sidebarSettings: SidebarSettings;
 	workspaceSnapshotStore?: WorkspaceSnapshotStore;
 }) {
@@ -234,12 +236,23 @@ export function useProjectCollection<TTerminal>({
 	}, [defaultProjectRoot, projectColorScope, workspaceSnapshotStore]);
 
 	const closeProject = useCallback(
-		(projectId: string) => {
+		(projectId: string, options: { skipConfirmation?: boolean } = {}) => {
 			const current = projectsRef.current;
 			const index = current.findIndex((project) => project.id === projectId);
 			if (index === -1) return;
+			if (
+				options.skipConfirmation !== true &&
+				confirmProjectClose !== undefined
+			) {
+				void confirmProjectClose(projectId).then((confirmed) => {
+					if (confirmed) closeProject(projectId, { skipConfirmation: true });
+				});
+				return;
+			}
 			if (current.length === 1) {
-				void window.terminayWindowLifecycleHost?.closeCurrent();
+				void window.terminayWindowLifecycleHost?.closeCurrent(
+					options.skipConfirmation === true,
+				);
 				return;
 			}
 			if (workspaceSnapshotStore !== undefined) {
@@ -285,7 +298,7 @@ export function useProjectCollection<TTerminal>({
 				setActiveProjectId(nextId);
 			}
 		},
-		[workspaceSnapshotStore],
+		[confirmProjectClose, workspaceSnapshotStore],
 	);
 
 	const adoptProject = useCallback(

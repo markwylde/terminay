@@ -124,7 +124,7 @@ export class TerminalActivityReducer {
     // Provider state is authoritative for this exact terminal. Structured and
     // raw evidence is still accepted by the parser but cannot mutate the
     // provider-backed canonical snapshot.
-    if (session.provider !== undefined) {
+    if (session.provider !== undefined && signal.kind !== "foreground") {
       this.updateFallbackEvidence(session, signal, at);
       return undefined;
     }
@@ -179,8 +179,10 @@ export class TerminalActivityReducer {
         }
         break;
       case "foreground":
-        session.authority = "structured";
-        session.source = "structured:foreground";
+        if (session.provider === undefined) {
+          session.authority = "structured";
+          session.source = "structured:foreground";
+        }
         if (
           session.foregroundBusy &&
           !signal.busy &&
@@ -206,7 +208,7 @@ export class TerminalActivityReducer {
         session.acknowledged = true;
         break;
     }
-    derive(session, at, this.rawActivityMs);
+    if (session.provider === undefined) derive(session, at, this.rawActivityMs);
     return this.commitIfChanged(session, before);
   }
 
@@ -547,6 +549,7 @@ function snapshotOf(session: MutableSession): TerminalActivitySessionSnapshot {
   return Object.freeze({
     sessionId: session.sessionId,
     ...(session.projectId === undefined ? {} : { projectId: session.projectId }),
+    foregroundBusy: session.foregroundBusy,
     status: session.status,
     attention: session.attention,
     acknowledged: session.acknowledged,
