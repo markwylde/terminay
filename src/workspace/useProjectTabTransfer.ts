@@ -12,6 +12,7 @@ import type {
 	ProjectTabDragResult,
 } from '../types/terminay';
 import type { ProjectTab } from './projectTabModel';
+import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
 
 type MovedProject = {
 	terminals: unknown[];
@@ -24,6 +25,8 @@ export function useProjectTabTransfer({
 	isAdoptWindow,
 	onAdopt,
 	projectsRef,
+	workspaceSnapshotStore,
+	workspaceViewId,
 }: {
 	closeProject: (
 		projectId: string,
@@ -33,6 +36,8 @@ export function useProjectTabTransfer({
 	isAdoptWindow: boolean;
 	onAdopt: (payload: AdoptedProjectPayload, insertIndex: number | null) => void;
 	projectsRef: MutableRefObject<ProjectTab[]>;
+	workspaceSnapshotStore?: WorkspaceSnapshotStore;
+	workspaceViewId: string | null;
 }) {
 	const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null);
 	const [isProjectDropTarget, setIsProjectDropTarget] = useState(false);
@@ -95,6 +100,54 @@ export function useProjectTabTransfer({
 					moved.terminals as unknown as AdoptedProjectPayload['terminals'],
 				activeSessionId: moved.activeSessionId,
 			};
+			if (workspaceSnapshotStore !== undefined && workspaceViewId !== null) {
+				const targetViewId =
+					decision.action === 'merge'
+						? decision.targetViewId
+						: `view-${crypto.randomUUID()}`;
+				let createdView = false;
+				let projectMoved = false;
+				try {
+					if (decision.action === 'popout') {
+						await workspaceSnapshotStore.createView({
+							viewId: targetViewId,
+							name: project.title,
+						});
+						createdView = true;
+					}
+					await workspaceSnapshotStore.moveProject({
+						projectId,
+						targetViewId,
+					});
+					projectMoved = true;
+					if (decision.action === 'merge') {
+						const result = await window.terminayWorkspaceTransferHost?.mergeProject(
+							payload,
+							decision.targetWindowId,
+						);
+						if (result?.ok !== true) throw new Error('Unable to merge project window');
+					} else {
+						const result = await window.terminayWorkspaceTransferHost?.popoutProject(
+							payload,
+							targetViewId,
+							decision.x,
+							decision.y,
+						);
+						if (result?.ok !== true) throw new Error('Unable to open project window');
+					}
+					return;
+				} catch {
+					if (projectMoved) {
+						await workspaceSnapshotStore
+							.moveProject({ projectId, targetViewId: workspaceViewId })
+							.catch(() => undefined);
+					}
+					if (createdView) {
+						await workspaceSnapshotStore.closeView(targetViewId).catch(() => undefined);
+					}
+					return;
+				}
+			}
 			if (decision.action === 'merge') {
 				await window.terminayWorkspaceTransferHost?.mergeProject(
 					payload,
@@ -103,13 +156,14 @@ export function useProjectTabTransfer({
 			} else {
 				await window.terminayWorkspaceTransferHost?.popoutProject(
 					payload,
+					project.id,
 					decision.x,
 					decision.y,
 				);
 			}
 			closeProject(projectId, { skipConfirmation: true });
 		},
-		[closeProject, exportProject, projectsRef],
+		[closeProject, exportProject, projectsRef, workspaceSnapshotStore, workspaceViewId],
 	);
 
 	useEffect(() => {

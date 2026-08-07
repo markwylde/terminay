@@ -1,4 +1,4 @@
-import { WorkspaceClient, type PanelActivationRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectRootUpdateRequest, type TerminayClient, type WorkspaceCommandOptions } from '@terminay/client-core'
+import { WorkspaceClient, type PanelActivationRequest, type PanelReorderRequest, type PanelSplitRequest, type PanelUpdateRequest, type ProjectActivationRequest, type ProjectCreateRequest, type ProjectMoveRequest, type ProjectRootUpdateRequest, type TerminayClient, type WorkspaceCommandOptions, type WorkspaceViewCreateRequest } from '@terminay/client-core'
 import {
 	parseServerWorkspaceSnapshot,
 	parseServerWorkspaceDelta,
@@ -233,6 +233,21 @@ export class WorkspaceSnapshotStore {
 	async closeProject(projectId: string, options: WorkspaceCommandOptions = {}): Promise<void> {
 		if (this.closed) throw new Error('workspace snapshot store is closed')
 		await this.workspace.closeProject(projectId, options)
+	}
+
+	async createView(request: WorkspaceViewCreateRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.createView(request, options)
+	}
+
+	async moveProject(request: ProjectMoveRequest, options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.moveProject(request, options)
+	}
+
+	async closeView(viewId: string, options: WorkspaceCommandOptions = {}): Promise<void> {
+		if (this.closed) throw new Error('workspace snapshot store is closed')
+		await this.workspace.closeView(viewId, options)
 	}
 
 	async closePanel(panelId: string, options: WorkspaceCommandOptions = {}): Promise<void> {
