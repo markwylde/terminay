@@ -81,9 +81,12 @@ test("primary Electron windows use an explicit deny-by-default security policy",
   assert.match(policy, /will-frame-navigate/u);
   assert.match(policy, /will-navigate/u);
   assert.match(policy, /will-redirect/u);
-  assert.match(policy, /secureSession\(contents\.session\)/u);
-  assert.match(sessionPolicy, /setPermissionCheckHandler\(\(\) => false\)/u);
-  assert.match(sessionPolicy, /setPermissionRequestHandler[\s\S]{0,120}callback\(false\)/u);
+  assert.match(policy, /secureSession\(contents\.session, allowPrimaryWindowPermission\)/u);
+  assert.match(sessionPolicy, /allowPermission\(webContents, permission, details\)/u);
+  assert.match(main, /permission !== 'media'/u);
+  assert.match(main, /mediaDetails\.mediaType === 'audio'/u);
+  assert.match(main, /mediaType === 'audio'/u);
+  assert.match(main, /isTrustedDictationWindow\(window\)/u);
   assert.match(sessionPolicy, /will-download/u);
   assert.match(sessionPolicy, /item\.cancel\(\)/u);
   assert.doesNotMatch(main.slice(0, main.indexOf("function isAppNavigation")), /'file:'/u);
