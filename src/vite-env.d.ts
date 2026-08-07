@@ -60,17 +60,19 @@ declare global {
 		/** Bounded renderer transport for the preload-owned server MessagePort. */
 		terminayServerConnectionHost: {
 			readonly version: 1;
+			closeServerConnection(connectionId: string): void;
 			onServerConnection(
 				listener: (message: {
+					connectionId: string;
 					serverId: string;
 					label?: string;
 					replacement?: boolean;
 				}) => void,
 			): () => void;
 			requestServerConnection(serverId: string): Promise<void>;
-			sendServerFrame(serverId: string, frame: Uint8Array): void;
+			sendServerFrame(connectionId: string, frame: Uint8Array): void;
 			onServerFrame(
-				serverId: string,
+				connectionId: string,
 				listener: (frame: Uint8Array | null) => void,
 			): () => void;
 		};
