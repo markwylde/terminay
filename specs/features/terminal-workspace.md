@@ -49,6 +49,12 @@ Electron-window close while its server remains alive.
 Local and remote clients use the same terminal command/stream contract; only
 the underlying transport differs.
 
+High-volume delivery, slow-renderer isolation, attachment-scoped resync, and
+recovery after genuine transport loss follow the
+[terminal stream congestion and recovery](./terminal-stream-congestion-and-recovery.md)
+contract. Terminal presentation congestion never invalidates the shared
+workspace connection.
+
 The server terminal boundary uses immutable `{serverId, projectId, sessionId}`
 identity. Input is accepted only for that exact live session and is bounded by
 the negotiated input-byte limit; resize and termination use the same
