@@ -5280,31 +5280,19 @@ function App({
 		useState<Record<string, TerminalActivityOverviewItem[]>>({});
 	const [agentStatusSnapshot, setAgentStatusSnapshot] =
 		useState<AgentStatusSnapshot>(EMPTY_AGENT_STATUS_SNAPSHOT);
-	const agentStatusSnapshotServerIdRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		let disposed = false;
-		const snapshotServerId = terminalClientContext?.serverId ?? 'desktop-local';
-		// Revisions are per server authority. Reset only when the authority
-		// actually changes, never when the framed client for this same authority
-		// finishes hydrating with its initially empty terminal scope.
-		if (agentStatusSnapshotServerIdRef.current !== snapshotServerId) {
-			agentStatusSnapshotServerIdRef.current = snapshotServerId;
-			setAgentStatusSnapshot(EMPTY_AGENT_STATUS_SNAPSHOT);
-		}
 		const acceptSnapshot = (snapshot: AgentStatusSnapshot) => {
-			if (disposed) {
-				return;
-			}
-			setAgentStatusSnapshot((current) => {
-				return snapshot.revision >= current.revision ? snapshot : current;
-			});
+			if (!disposed) setAgentStatusSnapshot(snapshot);
 		};
 		const agentStatusClient = terminalClientContext?.agentStatusClient;
-		if (agentStatusClient === undefined)
+		if (agentStatusClient === undefined) {
+			setAgentStatusSnapshot(EMPTY_AGENT_STATUS_SNAPSHOT);
 			return () => {
 				disposed = true;
 			};
+		}
 		const unsubscribe = subscribeServerAgentSnapshots(
 			agentStatusClient,
 			acceptSnapshot,

@@ -201,8 +201,12 @@ unmodified PTY stream remain unchanged.
 Transport-neutral clients maintain a bounded projection of the server snapshot.
 They apply only contiguous revisions; a replay gap requests a fresh snapshot,
 and reload/resync replaces the projection without replaying old transitions as
-new local activity. Project-scoped projections advance the global cursor while
-omitting sessions owned by other projects.
+new local activity. A resync is an explicit authority boundary and therefore
+accepts a lower revision when the server has restarted its revision sequence.
+Host transport adapters forward the projection client's resync callback rather
+than substituting an ordinary refresh, and presentation layers do not impose a
+second revision comparison. Project-scoped projections advance the global
+cursor while omitting sessions owned by other projects.
 
 The protocol exposes this projection as `activity.snapshot` and
 `activity.delta`, emits canonical `activity` events on the normal ordered event
