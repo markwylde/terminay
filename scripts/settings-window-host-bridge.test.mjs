@@ -36,7 +36,7 @@ test('workspace settings actions use only the bounded settings-window host', asy
 	);
 	assert.match(
 		dictationController,
-		/window\.terminaySettingsWindowHost\?\.open\('openai-dictation'\)/u,
+		/window\.terminaySettingsWindowHost\?\.open\('dictation'\)/u,
 	);
 	assert.match(
 		app,
