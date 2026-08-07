@@ -3,6 +3,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import OpenAI from 'openai';
+import type { DictationProvider } from '../../src/types/settings';
+import { PARAKEET_MODEL, type ParakeetRuntime } from './parakeetRuntime';
 
 export const DEFAULT_DICTATION_MODEL = 'gpt-4o-transcribe';
 export const MAX_DICTATION_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -22,6 +24,7 @@ export type DictationTranscribeRequest = {
 	language?: string;
 	mimeType: string;
 	model?: string;
+	provider?: DictationProvider;
 	prompt?: string;
 };
 
@@ -32,6 +35,8 @@ export type DictationTranscribeResult = {
 
 type DictationServiceOptions = {
 	apiKeyProvider: DictationApiKeyProvider;
+	providerProvider?: () => DictationProvider | Promise<DictationProvider>;
+	parakeetRuntime?: Pick<ParakeetRuntime, 'transcribe'>;
 	readonly openaiFactory?: (apiKey: string) => Pick<OpenAI, 'audio'>;
 };
 
@@ -180,9 +185,13 @@ function readTranscriptText(response: unknown): string {
 export class DictationService {
 	private readonly apiKeyProvider: DictationApiKeyProvider;
 	private readonly openaiFactory: (apiKey: string) => Pick<OpenAI, 'audio'>;
+	private readonly providerProvider: () => DictationProvider | Promise<DictationProvider>;
+	private readonly parakeetRuntime: Pick<ParakeetRuntime, 'transcribe'> | undefined;
 
 	constructor(options: DictationServiceOptions) {
 		this.apiKeyProvider = options.apiKeyProvider;
+		this.providerProvider = options.providerProvider ?? (() => 'openai');
+		this.parakeetRuntime = options.parakeetRuntime;
 		this.openaiFactory = options.openaiFactory ?? ((apiKey) => new OpenAI({ apiKey }));
 	}
 
@@ -198,9 +207,28 @@ export class DictationService {
 			throw new Error('Dictation audio MIME type is required.');
 		}
 
-		const model = trimOptional(request.model) ?? DEFAULT_DICTATION_MODEL;
+		const provider = await this.providerProvider();
+		const model = provider === 'parakeet'
+			? PARAKEET_MODEL
+			: trimOptional(request.model) ?? DEFAULT_DICTATION_MODEL;
 		const audio = decodeAudioBase64(request.audioBase64);
 		const fileName = getSafeFileName(request.fileName, mimeType);
+
+		if (provider === 'parakeet') {
+			if (!this.parakeetRuntime) {
+				throw new Error('On-device Parakeet is unavailable on this host.');
+			}
+			const tempDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-parakeet-'));
+			const tempPath = path.join(tempDir, fileName);
+			try {
+				await writeFile(tempPath, audio, { mode: 0o600 });
+				const text = (await this.parakeetRuntime.transcribe(tempPath)).trim();
+				if (!text) throw new Error('Parakeet returned an empty transcript.');
+				return { model, text };
+			} finally {
+				await rm(tempDir, { force: true, recursive: true });
+			}
+		}
 
 		const apiKey = trimOptional(await this.apiKeyProvider());
 		if (!apiKey) {

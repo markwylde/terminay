@@ -54,6 +54,54 @@ test('rejects valid audio when the OpenAI API key is missing', async () => {
   )
 })
 
+test('on-device Parakeet does not read the OpenAI key and removes temporary audio', async () => {
+  let apiKeyRead = false
+  let audioPath
+  const service = new DictationService({
+    apiKeyProvider: () => {
+      apiKeyRead = true
+      return null
+    },
+    providerProvider: () => 'parakeet',
+    parakeetRuntime: {
+      async transcribe(path) {
+        audioPath = path
+        assert.equal((await stat(path)).isFile(), true)
+        return 'local transcript'
+      },
+    },
+  })
+
+  const result = await service.transcribe({
+    audioBase64: Buffer.from('audio').toString('base64'),
+    mimeType: 'audio/webm',
+    model: 'gpt-4o-transcribe',
+  })
+  assert.equal(result.text, 'local transcript')
+  assert.equal(result.model, 'mlx-community/parakeet-tdt-0.6b-v3')
+  assert.equal(apiKeyRead, false)
+  await assert.rejects(stat(audioPath), /ENOENT/u)
+})
+
+test('on-device Parakeet never falls back to OpenAI after a local failure', async () => {
+  let openAiCreated = false
+  const service = new DictationService({
+    apiKeyProvider: () => 'test-key',
+    providerProvider: () => 'parakeet',
+    parakeetRuntime: { transcribe: async () => { throw new Error('local failure') } },
+    openaiFactory: () => {
+      openAiCreated = true
+      throw new Error('must not be called')
+    },
+  })
+
+  await assert.rejects(
+    () => service.transcribe({ audioBase64: Buffer.from('audio').toString('base64'), mimeType: 'audio/webm' }),
+    /local failure/u,
+  )
+  assert.equal(openAiCreated, false)
+})
+
 test('removes file-backed temporary audio after provider success and failure', async () => {
   const originalFile = globalThis.File
   globalThis.File = undefined
