@@ -52,6 +52,7 @@ import type {
 import type {
 	AppCommand,
 	DictationMicrophonePermissionStatus,
+	ParakeetRuntimeStatus,
 	RemoteAccessStatus,
 } from '../types/terminay';
 import '../settings.css';
@@ -635,6 +636,9 @@ export function SettingsWindow({
 	>(null);
 	const [isSavingDictationOpenAiKey, setIsSavingDictationOpenAiKey] =
 		useState(false);
+	const [parakeetStatus, setParakeetStatus] =
+		useState<ParakeetRuntimeStatus | null>(null);
+	const [isInstallingParakeet, setIsInstallingParakeet] = useState(false);
 	const [dictationMicrophoneDevices, setDictationMicrophoneDevices] = useState<
 		MicrophoneDeviceOption[]
 	>([]);
@@ -789,6 +793,21 @@ export function SettingsWindow({
 					setDictationOpenAiKeyError(
 						error instanceof Error ? error.message : String(error),
 					);
+				}
+			});
+
+		void window.terminayDictationHost
+			?.getParakeetStatus()
+			.then((status) => {
+				if (isMounted) setParakeetStatus(status);
+			})
+			.catch((error) => {
+				if (isMounted) {
+					setParakeetStatus({
+						model: 'mlx-community/parakeet-tdt-0.6b-v3',
+						state: 'error',
+						message: error instanceof Error ? error.message : String(error),
+					});
 				}
 			});
 
@@ -1032,7 +1051,16 @@ export function SettingsWindow({
 		field: SettingsFieldDefinition,
 		rawValue: boolean | number | string,
 	) => {
-		const nextDraft = setValueAtPath(draftRef.current, field.key, rawValue);
+		let nextDraft = setValueAtPath(draftRef.current, field.key, rawValue);
+		if (field.key === 'dictation.provider') {
+			nextDraft = setValueAtPath(
+				nextDraft,
+				'dictation.model',
+				rawValue === 'parakeet'
+					? 'mlx-community/parakeet-tdt-0.6b-v3'
+					: 'gpt-4o-transcribe',
+			);
+		}
 		await saveDraft(nextDraft);
 	};
 
@@ -1168,6 +1196,27 @@ export function SettingsWindow({
 			);
 		} finally {
 			setIsSavingDictationOpenAiKey(false);
+		}
+	};
+
+	const installParakeet = async () => {
+		setIsInstallingParakeet(true);
+		setParakeetStatus({
+			model: 'mlx-community/parakeet-tdt-0.6b-v3',
+			state: 'installing',
+		});
+		try {
+			const host = window.terminayDictationHost;
+			if (!host) throw new Error('Desktop dictation is unavailable.');
+			setParakeetStatus(await host.installParakeet());
+		} catch (error) {
+			setParakeetStatus({
+				model: 'mlx-community/parakeet-tdt-0.6b-v3',
+				state: 'error',
+				message: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			setIsInstallingParakeet(false);
 		}
 	};
 
@@ -1585,6 +1634,32 @@ export function SettingsWindow({
 
 	const renderFieldControl = (field: SettingsFieldDefinition) => {
 		const value = getValueAtPath(draft, field.key);
+
+		if (field.key === 'dictation.parakeetRuntime') {
+			const state = parakeetStatus?.state ?? 'not-installed';
+			return (
+				<div className="settings-shortcut-editor">
+					<div className="settings-shortcut-value">
+						<span className={`settings-shortcut-chip${state === 'ready' ? '' : ' settings-shortcut-chip--muted'}`}>
+							{state === 'ready' ? 'Ready' : state === 'installing' ? 'Installing…' : state === 'unsupported' ? 'Unsupported' : state === 'error' ? 'Setup failed' : 'Not installed'}
+						</span>
+					</div>
+					{parakeetStatus?.message ? (
+						<span className="settings-shortcut-warning">{parakeetStatus.message}</span>
+					) : null}
+					<div className="settings-shortcut-actions">
+						<button
+							type="button"
+							className="settings-secondary-button settings-secondary-button--small"
+							disabled={isInstallingParakeet || state === 'unsupported'}
+							onClick={() => void installParakeet()}
+						>
+							{state === 'ready' ? 'Reinstall' : 'Install engine and model'}
+						</button>
+					</div>
+				</div>
+			);
+		}
 
 		if (field.key === 'dictation.openaiApiKey') {
 			const canSaveKey =

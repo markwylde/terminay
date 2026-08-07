@@ -76,6 +76,8 @@
 		"test:pty-packaged-linux": "npm run build:app && electron-builder --linux AppImage --x64 --publish never && TERMINAY_PACKAGED_APPIMAGE=release/0.0.0/Terminay-Linux-0.0.0.AppImage xvfb-run --auto-servernum node --test scripts/pty-packaged-linux.test.mjs",
 		"test:terminal-input": "node --test scripts/terminal-input.test.mjs",
 		"test:dictation-service": "node --test scripts/dictation-service.test.mjs",
+		"test:parakeet-runtime": "node --test scripts/parakeet-runtime.test.mjs",
+		"test:parakeet-real": "TERMINAY_TEST_REAL_PARAKEET=1 node scripts/parakeet-real-macos-smoke.mjs",
 		"test:recording-service": "node --test scripts/recording-service.test.mjs",
 		"test:recording-replay": "node --test scripts/recording-replay.test.mjs",
 		"test:vault-reference": "node --test scripts/vault-reference.test.mjs",

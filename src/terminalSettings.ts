@@ -317,6 +317,7 @@ export const defaultTerminalSettings: TerminalSettings = {
 	},
 	dictation: {
 		enabled: true,
+		provider: 'openai',
 		model: 'gpt-4o-transcribe',
 		microphoneDeviceId: '',
 		language: 'en',
@@ -678,20 +679,34 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		],
 	},
 	{
-		id: 'openai-dictation',
+		id: 'dictation',
 		categoryId: 'ai',
-		title: 'OpenAI Dictation',
+		title: 'Dictation',
 		description:
-			'Record speech, transcribe it with OpenAI, and type the result into the active terminal.',
+			'Record speech, transcribe it on this Mac or with OpenAI, and type the result into the active terminal.',
 		fields: [
+			makeField({
+				key: 'dictation.provider',
+				label: 'Transcription provider',
+				description: 'Choose whether audio stays on this Mac or is sent to OpenAI.',
+				sectionId: 'dictation',
+				categoryId: 'ai',
+				input: 'select',
+				options: [
+					{ label: 'On-device (Parakeet)', value: 'parakeet' },
+					{ label: 'OpenAI', value: 'openai' },
+				],
+				keywords: ['dictation', 'provider', 'local', 'on-device', 'parakeet', 'openai'],
+			}),
 			makeField({
 				key: 'dictation.openaiApiKey',
 				label: 'OpenAI API key',
 				description:
 					'Stored with OS-level encryption and used only by the local main process for dictation transcription.',
-				sectionId: 'openai-dictation',
+				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'text',
+				visibleWhen: { key: 'dictation.provider', value: 'openai' },
 				keywords: [
 					'openai',
 					'api key',
@@ -706,18 +721,18 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				key: 'dictation.enabled',
 				label: 'Enable dictation',
 				description:
-					'Allow the Command bar action to record microphone audio and insert an OpenAI transcript.',
-				sectionId: 'openai-dictation',
+					'Allow the Command bar action to record microphone audio and insert a transcript.',
+				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'boolean',
 				keywords: ['dictation', 'voice', 'speech', 'microphone', 'openai'],
 			}),
 			makeField({
 				key: 'dictation.model',
-				label: 'Transcription model',
+				label: 'OpenAI model',
 				description:
 					'OpenAI speech-to-text model used when a dictation recording stops.',
-				sectionId: 'openai-dictation',
+				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'select',
 				options: [
@@ -727,7 +742,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 						value: 'gpt-4o-mini-transcribe',
 					},
 				],
-				visibleWhen: { key: 'dictation.enabled', value: true },
+				visibleWhen: { key: 'dictation.provider', value: 'openai' },
 				keywords: [
 					'openai',
 					'model',
@@ -737,11 +752,32 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				],
 			}),
 			makeField({
+				key: 'dictation.model',
+				label: 'On-device model',
+				description: 'Parakeet TDT 0.6B v3 runs locally using MLX and the Apple GPU.',
+				sectionId: 'dictation',
+				categoryId: 'ai',
+				input: 'select',
+				options: [{ label: 'Parakeet TDT 0.6B v3', value: 'mlx-community/parakeet-tdt-0.6b-v3' }],
+				visibleWhen: { key: 'dictation.provider', value: 'parakeet' },
+				keywords: ['parakeet', 'mlx', 'metal', 'local', 'on-device'],
+			}),
+			makeField({
+				key: 'dictation.parakeetRuntime',
+				label: 'On-device engine',
+				description: 'Install the pinned MLX runtime and model before using local dictation.',
+				sectionId: 'dictation',
+				categoryId: 'ai',
+				input: 'text',
+				visibleWhen: { key: 'dictation.provider', value: 'parakeet' },
+				keywords: ['parakeet', 'install', 'runtime', 'model'],
+			}),
+			makeField({
 				key: 'dictation.microphoneDeviceId',
 				label: 'Microphone',
 				description:
 					'Audio input device used for dictation recording.',
-				sectionId: 'openai-dictation',
+				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'select',
 				options: [{ label: 'System default', value: '' }],
@@ -753,11 +789,11 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				label: 'Language hint',
 				description:
 					'ISO language hint for transcription. Defaults to en.',
-				sectionId: 'openai-dictation',
+				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'text',
 				placeholder: 'en',
-				visibleWhen: { key: 'dictation.enabled', value: true },
+				visibleWhen: { key: 'dictation.provider', value: 'openai' },
 				keywords: ['dictation', 'language', 'locale', 'openai'],
 			}),
 			makeField({
@@ -765,10 +801,10 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				label: 'Prompt',
 				description:
 					'Optional terms or formatting hints for dictation transcription.',
-				sectionId: 'openai-dictation',
+				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'textarea',
-				visibleWhen: { key: 'dictation.enabled', value: true },
+				visibleWhen: { key: 'dictation.provider', value: 'openai' },
 				keywords: ['dictation', 'prompt', 'terms', 'context', 'openai'],
 			}),
 			makeField({
@@ -776,7 +812,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				label: 'Stop after silence',
 				description:
 					'Seconds of quiet audio before Terminay automatically stops recording.',
-				sectionId: 'openai-dictation',
+				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'number',
 				min: 1,
@@ -790,7 +826,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				label: 'Max recording duration',
 				description:
 					'Maximum seconds for a single dictation recording before it stops.',
-				sectionId: 'openai-dictation',
+				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'number',
 				min: 5,
@@ -2293,11 +2329,15 @@ export function normalizeTerminalSettings(
 				typeof dictationInput.enabled === 'boolean'
 					? dictationInput.enabled
 					: defaultTerminalSettings.dictation.enabled,
+			provider:
+				dictationInput.provider === 'parakeet' ? 'parakeet' : 'openai',
 			model:
-				dictationInput.model === 'gpt-4o-mini-transcribe' ||
-				dictationInput.model === 'gpt-4o-transcribe'
-					? dictationInput.model
-					: defaultTerminalSettings.dictation.model,
+				dictationInput.provider === 'parakeet'
+					? 'mlx-community/parakeet-tdt-0.6b-v3'
+					: dictationInput.model === 'gpt-4o-mini-transcribe' ||
+							dictationInput.model === 'gpt-4o-transcribe'
+						? dictationInput.model
+						: defaultTerminalSettings.dictation.model,
 			language:
 				typeof dictationInput.language === 'string' &&
 				dictationInput.language.trim().length > 0

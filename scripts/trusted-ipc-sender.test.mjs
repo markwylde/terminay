@@ -115,7 +115,7 @@ test('all direct and modular privileged IPC registrations establish provenance',
 test('privileged IPC registration modules require the trusted sender before services run', async () => {
   const modules = [
     ['electron/fileViewer/ipc.ts', ['file:get-info', 'file:read-bytes', 'file:read-text', 'file:save', 'file:get-text-metadata', 'file:read-text-lines', 'file:save-sparse', 'file:watch', 'file:unwatch', 'file:get-preview-source', 'file:get-git-repo-info', 'file:get-git-diff']],
-    ['electron/dictation/ipc.ts', ['dictation:get-openai-key-status', 'dictation:save-openai-key', 'dictation:clear-openai-key', 'dictation:get-microphone-permission-status', 'dictation:request-microphone-permission', 'dictation:transcribe']],
+    ['electron/dictation/ipc.ts', ['dictation:get-parakeet-status', 'dictation:install-parakeet', 'dictation:get-openai-key-status', 'dictation:save-openai-key', 'dictation:clear-openai-key', 'dictation:get-microphone-permission-status', 'dictation:request-microphone-permission', 'dictation:transcribe']],
     ['electron/quickPush/ipc.ts', ['quick-push:generate-plan', 'quick-push:apply']],
     ['electron/aiTabMetadata/ipc.ts', ['ai-tab-metadata:list-models', 'ai-tab-metadata:generate']],
   ]

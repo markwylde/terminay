@@ -146,6 +146,7 @@ test('normalizes dictation settings defaults and bounds', () => {
     maxDurationSeconds: 300,
     microphoneDeviceId: 'hd-pro-webcam',
     model: 'gpt-4o-mini-transcribe',
+	provider: 'openai',
     prompt: 'Prefer terminal command names.',
     silenceStopSeconds: 1,
   })

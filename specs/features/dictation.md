@@ -50,9 +50,10 @@ through a scoped callback. The callback is not part of any client or status
 DTO, and no vault value is included in the selected-server/provider disclosure
 shown before capture.
 
-The captured audio is sent to the selected Terminay Server and then to the
-configured transcription provider. The UI discloses both destinations before
-capture.
+The captured audio is sent to the selected Terminay Server. When a remote
+provider is selected it is then sent to that provider; when the on-device
+Parakeet provider is selected it remains on the macOS server. The UI discloses
+the selected execution location before capture.
 
 Shared clients use a transport-neutral `DictationCaptureClient` boundary for
 the local capture state. It snapshots one immutable server/project/panel/
@@ -113,6 +114,19 @@ different or exited terminal.
 
 - The default final-transcript model is `gpt-4o-transcribe` when OpenAI is the
   configured provider.
+- Apple Silicon macOS servers can instead select the on-device Parakeet
+  provider with the pinned `mlx-community/parakeet-tdt-0.6b-v3` model.
+- The Parakeet provider runs through a server-owned MLX worker and keeps the
+  loaded model warm between bounded requests. It never sends dictation audio
+  to OpenAI, Hugging Face, or another inference service.
+- The Parakeet runtime package and model weights may be downloaded on explicit
+  user request or first setup. Settings disclose download size/status and the
+  network requirement. After installation, transcription works offline.
+- Provider selection is explicit and stable for the whole request. Failure of
+  an on-device provider never falls back to a remote provider.
+- Parakeet automatically detects its supported languages and does not consume
+  OpenAI-style prompt hints. The UI hides or explains settings which do not
+  apply to the selected provider.
 - Users can configure provider, model, language hint, silence interval, maximum
   duration, and whether a trailing newline is appended.
 - An empty or whitespace-only transcript is not written.
@@ -129,7 +143,7 @@ different or exited terminal.
 Provider/model and capture preferences are server settings. Microphone
 permission is client-local.
 
-The provider API key is stored in the server vault:
+Remote-provider API keys are stored in the server vault:
 
 - embedded Desktop can back the vault with OS secure storage;
 - standalone server deployment uses its configured headless vault policy;
@@ -167,6 +181,7 @@ The provider API key is stored in the server vault:
 - No background capture after the user leaves the recorder.
 - No direct provider credential in browser code.
 - No silent fallback to a different terminal, server, provider, or model.
+- No silent fallback from on-device transcription to cloud transcription.
 - No storage of dictation audio as a terminal recording.
 - No realtime partial transcript requirement.
 
