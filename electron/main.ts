@@ -288,6 +288,45 @@ function isTrustedAppWindow(window: BrowserWindow): boolean {
 	);
 }
 
+function isTrustedDictationWindow(window: BrowserWindow): boolean {
+	return appWindows.has(window) || window === settingsWindow;
+}
+
+function allowPrimaryWindowPermission(
+	requestingWebContents: unknown,
+	permission: unknown,
+	details: unknown,
+): boolean {
+	if (
+		permission !== 'media' ||
+		requestingWebContents === null ||
+		typeof requestingWebContents !== 'object'
+	) {
+		return false;
+	}
+
+	const window = BrowserWindow.fromWebContents(
+		requestingWebContents as Electron.WebContents,
+	);
+	if (window === null || !isTrustedDictationWindow(window)) {
+		return false;
+	}
+
+	const mediaDetails = details as {
+		mediaType?: unknown;
+		mediaTypes?: unknown;
+	};
+	if (mediaDetails.mediaType !== undefined) {
+		return mediaDetails.mediaType === 'audio';
+	}
+
+	return (
+		Array.isArray(mediaDetails.mediaTypes) &&
+		mediaDetails.mediaTypes.length > 0 &&
+		mediaDetails.mediaTypes.every((mediaType) => mediaType === 'audio')
+	);
+}
+
 /** Apply one explicit deny-by-default policy to every privileged renderer.
  * The app's own origin is the only allowed navigation target; external links
  * go through the validated host action instead of becoming renderer windows. */
@@ -310,7 +349,7 @@ function securePrimaryWindow(window: BrowserWindow): void {
 	contents.on('will-redirect', (event, url) => {
 		if (!isAppNavigation(url)) event.preventDefault();
 	});
-	secureSession(contents.session);
+	secureSession(contents.session, allowPrimaryWindowPermission);
 }
 
 function getBrandAssetPath(filename: string): string | null {
