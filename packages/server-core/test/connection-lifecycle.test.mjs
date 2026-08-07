@@ -98,6 +98,62 @@ test("a failed live event send closes the connection without an unhandled reject
   assert.equal(connection.state, "closed");
 });
 
+test("unknown feature projections resync without entering the fatal control queue", { timeout: 5_000 }, async () => {
+  const journal = new OrderedEventJournal();
+  const pair = createInMemoryTransportPair();
+  let blocked = false;
+  let release = () => undefined;
+  let gate = Promise.resolve();
+  const serverTransport = new Proxy(pair.server, {
+    get(target, property) {
+      if (property === "waitForWritable") return async (requiredBytes, signal) => {
+        if (blocked) await gate;
+        return target.waitForWritable(requiredBytes, signal);
+      };
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const core = createServerCore({
+    serverId: "generic-projection-server",
+    serverVersion: "test",
+    capabilities: [],
+    eventJournal: journal,
+    queries: { "workspace.ping": () => ({ ok: true }) },
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "read" }),
+  });
+  const connection = core.accept(serverTransport);
+  const serverTask = connection.start();
+  const client = new TerminayClient({ transport: pair.client, clientId: "projection-client", capabilities: ["events.resync"] });
+  let subscription;
+  let resyncs = 0;
+  try {
+    await pair.open();
+    await client.connect();
+    subscription = await client.subscribe("future-feature");
+    subscription.onResync(() => { resyncs += 1; });
+    blocked = true;
+    gate = new Promise((resolve) => { release = resolve; });
+
+    for (let revision = 0; revision < 2_000; revision += 1) {
+      journal.append("future-feature", { revision });
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(connection.state, "open");
+
+    blocked = false;
+    release();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(resyncs, 1);
+    assert.deepEqual((await client.query("workspace.ping")).result, { ok: true });
+  } finally {
+    release();
+    await subscription?.unsubscribe().catch(() => undefined);
+    await client.close().catch(() => undefined);
+    await serverTask.catch(() => undefined);
+  }
+});
+
 async function subscribeWithCapabilities(core, capabilities, clientId) {
   const pair = createInMemoryTransportPair();
   const connection = core.accept(pair.server);
