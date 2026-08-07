@@ -1,4 +1,13 @@
-import { ChevronDown, Copy, Terminal } from 'lucide-react';
+import {
+	ChevronDown,
+	Copy,
+	FileEdit,
+	FolderOpen,
+	FolderPlus,
+	PlusSquare,
+	Terminal,
+	Trash2,
+} from 'lucide-react';
 import { type JSX, type MouseEvent, useState } from 'react';
 import type {
 	GitChangeEntry,
@@ -14,7 +23,12 @@ export type GitPanelProps = {
 	status: GitPanelStatus | null;
 	viewMode: 'list' | 'tree';
 	onOpenEntry: (entry: GitChangeEntry) => void;
+	onOpenFolder: (path: string) => void;
 	onOpenTerminal?: (path: string) => void;
+	onRename: (path: string) => void;
+	onDelete: (path: string) => void;
+	onNewFile: (path: string) => void;
+	onNewFolder: (path: string) => void;
 };
 
 type TreeNode =
@@ -157,6 +171,7 @@ function GitTreeNode({
 	onToggleFolder,
 	onOpenEntry,
 	onContextMenu,
+	onOpenFolder,
 	repoRoot,
 }: {
 	node: TreeNode;
@@ -166,6 +181,7 @@ function GitTreeNode({
 	onToggleFolder: (key: string) => void;
 	onOpenEntry: (entry: GitChangeEntry) => void;
 	onContextMenu: (event: MouseEvent<HTMLElement>, path: string, relativePath: string, isDirectory: boolean) => void;
+	onOpenFolder: (path: string) => void;
 	repoRoot: string;
 }): JSX.Element {
 	if (node.type === 'file') {
@@ -211,6 +227,7 @@ function GitTreeNode({
 				}`}
 				style={{ paddingLeft: depth * FOLDER_INDENT + ROW_BASE_INDENT }}
 				onClick={() => onToggleFolder(folderKey)}
+				onDoubleClick={() => onOpenFolder(folderPath)}
 				onContextMenu={(event) => onContextMenu(event, folderPath, node.path, true)}
 			>
 				<span
@@ -239,6 +256,7 @@ function GitTreeNode({
 							onToggleFolder={onToggleFolder}
 							onOpenEntry={onOpenEntry}
 							onContextMenu={onContextMenu}
+							onOpenFolder={onOpenFolder}
 							repoRoot={repoRoot}
 						/>
 					))}
@@ -247,7 +265,17 @@ function GitTreeNode({
 }
 
 export function GitPanel(props: GitPanelProps): JSX.Element {
-	const { status, viewMode, onOpenEntry, onOpenTerminal } = props;
+	const {
+		status,
+		viewMode,
+		onDelete,
+		onNewFile,
+		onNewFolder,
+		onOpenEntry,
+		onOpenFolder,
+		onOpenTerminal,
+		onRename,
+	} = props;
 	const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(
 		() => new Set(),
 	);
@@ -372,6 +400,7 @@ export function GitPanel(props: GitPanelProps): JSX.Element {
 									onToggleFolder={onToggleFolder}
 									onOpenEntry={onOpenEntry}
 									onContextMenu={openContextMenu}
+									onOpenFolder={onOpenFolder}
 									repoRoot={repoRoot}
 								/>
 							))
@@ -392,7 +421,11 @@ export function GitPanel(props: GitPanelProps): JSX.Element {
 					onClose={() => setContextMenu(null)}
 					items={buildGitPathContextMenuItems({
 						isDirectory: contextMenu.isDirectory,
+						onDelete,
+						onNewFile,
+						onNewFolder,
 						onOpenTerminal,
+						onRename,
 						path: contextMenu.path,
 						relativePath: contextMenu.relativePath,
 						repoRoot,
@@ -405,15 +438,56 @@ export function GitPanel(props: GitPanelProps): JSX.Element {
 
 function buildGitPathContextMenuItems(options: {
 	isDirectory: boolean;
+	onDelete: (path: string) => void;
+	onNewFile: (path: string) => void;
+	onNewFolder: (path: string) => void;
 	onOpenTerminal?: (path: string) => void;
+	onRename: (path: string) => void;
 	path: string;
 	relativePath: string;
 	repoRoot: string;
 }): ContextMenuItem[] {
-	const { isDirectory, onOpenTerminal, path, relativePath, repoRoot } = options;
+	const {
+		isDirectory,
+		onDelete,
+		onNewFile,
+		onNewFolder,
+		onOpenTerminal,
+		onRename,
+		path,
+		relativePath,
+		repoRoot,
+	} = options;
 	const terminalPath = isDirectory ? path : getParentPath(path);
 
 	return [
+		...(isDirectory
+			? [
+					{
+						label: 'Create new file',
+						icon: <PlusSquare size={14} />,
+						onClick: () => onNewFile(path),
+					},
+					{
+						label: 'Create new folder',
+						icon: <FolderPlus size={14} />,
+						onClick: () => onNewFolder(path),
+					},
+					{ separator: true, label: '', onClick: () => {} },
+				]
+			: []),
+		{
+			label: 'Rename',
+			icon: <FileEdit size={14} />,
+			onClick: () => onRename(path),
+		},
+		{
+			label: 'Delete',
+			icon: <Trash2 size={14} />,
+			danger: true,
+			onClick: () => onDelete(path),
+		},
+		{ separator: true, label: '', onClick: () => {} },
 		{
 			label: 'Copy path',
 			icon: <Copy size={14} />,
@@ -433,6 +507,11 @@ function buildGitPathContextMenuItems(options: {
 			icon: <Terminal size={14} />,
 			disabled: !onOpenTerminal,
 			onClick: () => onOpenTerminal?.(terminalPath),
+		},
+		{
+			label: 'Reveal in OS',
+			icon: <FolderOpen size={14} />,
+			onClick: () => void window.terminayRevealHost?.reveal(path),
 		},
 	];
 }
