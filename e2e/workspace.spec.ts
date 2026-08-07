@@ -9,8 +9,9 @@ const execFileAsync = promisify(execFile);
 
 async function getActiveSessionId(page: Page): Promise<string> {
 	const sessionId = await page
-		.locator('.terminal-panel')
-		.first()
+		.locator(
+			'.project-workspace--active .terminal-panel:has(.xterm-helper-textarea:focus)',
+		)
 		.getAttribute('data-terminay-terminal-session-id');
 
 	if (!sessionId) {
@@ -20,7 +21,7 @@ async function getActiveSessionId(page: Page): Promise<string> {
 	return sessionId;
 }
 
-async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
+async function writeToActiveTerminal(page: Page, data: string): Promise<string> {
 	const sessionId = await getActiveSessionId(page);
 	await page.evaluate(
 		async ({ nextData, nextSessionId }) => {
@@ -28,6 +29,7 @@ async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
 		},
 		{ nextData: data, nextSessionId: sessionId },
 	);
+	return sessionId;
 }
 
 async function getAppMenuItemAccelerator(
@@ -101,19 +103,16 @@ test.describe('workspace shell', () => {
 			};
 		});
 
-		await writeToActiveTerminal(mainWindow, 'sleep 30\n');
+		const sessionId = await writeToActiveTerminal(mainWindow, 'sleep 30\n');
 		await expect
 			.poll(() =>
-				electronApp.evaluate(
-					() =>
-						(
-							globalThis as typeof globalThis & {
-								closeDialog?: Electron.MessageBoxOptions;
-							}
-						).closeDialog?.buttons?.[0] ?? null,
+				mainWindow.evaluate(
+					(nextSessionId) =>
+						window.terminayTest!.getServerTerminalActivity(nextSessionId),
+					sessionId,
 				),
 			)
-			.not.toBe('Close Terminal');
+			.toMatchObject({ foregroundBusy: true });
 		await closeButtons.last().click();
 		await expect
 			.poll(() =>
