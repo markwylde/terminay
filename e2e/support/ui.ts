@@ -30,7 +30,7 @@ export async function openProjectEditWindow(page: Page): Promise<Page> {
 
 export async function openTerminalEditWindow(page: Page): Promise<Page> {
   return openChildWindowFromAction(page, async () => {
-    await page.locator('.terminal-tab-content').first().dblclick()
+    await page.locator('.project-workspace--active .terminal-tab-content').first().dblclick()
   })
 }
 
