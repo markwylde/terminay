@@ -76,6 +76,49 @@ test('outbound delivery fails atomically with one typed reason', async () => {
 	);
 });
 
+test('latest-value state coalesces under backpressure without consuming control capacity', async () => {
+	const transport = new ControlledTransport();
+	await transport.open();
+	transport.blockWrites = true;
+	const failures = [];
+	const pump = new OutboundDeliveryPump(transport, { maxQueuedBytes: 8, maxQueuedFrames: 2, maxStateQueuedBytes: 4, maxStateQueuedFrames: 2 }, (error) => failures.push(error));
+	const deliveries = [];
+	for (let index = 0; index < 2_000; index += 1) {
+		deliveries.push(pump.sendState(new Uint8Array([index % 255]), {
+			laneId: 'activity-subscription', key: 'session-a', createResyncFrame: () => new Uint8Array([254]),
+		}));
+	}
+	const control = pump.send(new Uint8Array([255]));
+	assert.equal(pump.snapshot.queuedFrames <= 3, true);
+	assert.deepEqual(failures, []);
+	transport.releaseWrites();
+	await Promise.all([...deliveries, control]);
+	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	assert.equal(transport.sent.some((frame) => frame[0] === 255), true);
+	assert.deepEqual(failures, []);
+});
+
+test('state capacity pressure collapses one subscription to resync without closing the connection', async () => {
+	const transport = new ControlledTransport();
+	await transport.open();
+	transport.blockWrites = true;
+	const failures = [];
+	const pump = new OutboundDeliveryPump(transport, { maxQueuedBytes: 8, maxQueuedFrames: 2, maxStateQueuedBytes: 3, maxStateQueuedFrames: 2 }, (error) => failures.push(error));
+	const deliveries = [];
+	for (const key of ['a', 'b', 'c', 'd']) {
+		deliveries.push(pump.sendState(new Uint8Array([key.charCodeAt(0)]), {
+			laneId: 'activity-subscription', key, createResyncFrame: () => new Uint8Array([200]),
+		}));
+	}
+	const control = pump.send(new Uint8Array([255]));
+	transport.releaseWrites();
+	await Promise.all([...deliveries, control]);
+	await waitFor(() => pump.snapshot.queuedFrames === 0);
+	assert.equal(transport.sent.filter((frame) => frame[0] === 200).length, 1);
+	assert.equal(transport.sent.filter((frame) => frame[0] === 255).length, 1);
+	assert.deepEqual(failures, []);
+});
+
 test('terminal congestion supersedes only its lane and preserves control delivery', async () => {
 	const transport = new ControlledTransport();
 	await transport.open();
