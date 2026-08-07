@@ -122,10 +122,14 @@ export type TerminayMcpSettings = { enabled: boolean };
 
 export type DictationTranscriptionModel =
 	| 'gpt-4o-transcribe'
-	| 'gpt-4o-mini-transcribe';
+	| 'gpt-4o-mini-transcribe'
+	| 'mlx-community/parakeet-tdt-0.6b-v3';
+
+export type DictationProvider = 'openai' | 'parakeet';
 
 export type DictationSettings = {
 	enabled: boolean;
+	provider: DictationProvider;
 	model: DictationTranscriptionModel;
 	microphoneDeviceId: string;
 	language: string;

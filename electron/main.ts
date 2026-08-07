@@ -111,6 +111,7 @@ import {
 } from './control/server';
 import { registerDictationIpcHandlers } from './dictation/ipc';
 import { DictationService } from './dictation/service';
+import { ParakeetRuntime } from './dictation/parakeetRuntime';
 import {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
@@ -618,8 +619,13 @@ const fileExplorerWatchService = new FileExplorerWatchService(() =>
 );
 const gitDiffService = new GitDiffService(fileBufferService);
 const aiTabMetadataService = new AiTabMetadataService(app.getPath('home'));
+const parakeetRuntime = new ParakeetRuntime({
+	rootDirectory: path.join(app.getPath('userData'), 'dictation', 'parakeet'),
+});
 const dictationService = new DictationService({
 	apiKeyProvider: () => readDictationOpenAiKey(),
+	providerProvider: () => readTerminalSettings().dictation.provider,
+	parakeetRuntime,
 });
 const quickPushService = new QuickPushService(aiTabMetadataService);
 warmAiTabMetadataProviderEnv();
@@ -6210,6 +6216,7 @@ const handleBeforeQuit = createGracefulQuitHandler({
 
 app.on('before-quit', (event) => {
 	isQuitting = true;
+	parakeetRuntime.stop();
 	handleBeforeQuit(event);
 });
 
@@ -6231,6 +6238,8 @@ registerDictationIpcHandlers({
 	assertTrustedSender: assertTrustedAppSender,
 	clearOpenAiKey: clearDictationOpenAiKey,
 	dictationService,
+	getParakeetStatus: () => parakeetRuntime.getStatus(),
+	installParakeet: () => parakeetRuntime.install(),
 	getMicrophonePermissionStatus: getDictationMicrophonePermissionStatus,
 	getOpenAiKeyStatus: getDictationOpenAiKeyStatus,
 	ipcMain,
