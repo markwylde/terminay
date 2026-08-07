@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { decodeFrame, encodeFrame } from '@terminay/protocol';
+import {
+	decodeFrame,
+	DEFAULT_PROTOCOL_LIMITS,
+	encodeFrame,
+} from '@terminay/protocol';
 import {
 	createServerCore,
 	OrderedEventJournal,
@@ -149,6 +153,97 @@ test('live event send rejection closes one server connection without an unhandle
 		assert.equal(journal.revision, 1);
 	} finally {
 		process.off('unhandledRejection', onUnhandled);
+		await connection.close().catch(() => undefined);
+		transport.end();
+	}
+});
+
+test('characterizes a terminal burst exhausting and permanently closing the shared application connection', async () => {
+	const journal = new OrderedEventJournal();
+	const transport = new ControlledTransport();
+	const diagnostics = [];
+	const core = createServerCore({
+		serverId: 'terminal-burst-server',
+		serverVersion: 'test',
+		capabilities: [],
+		eventJournal: journal,
+		limits: { ...DEFAULT_PROTOCOL_LIMITS, maxQueuedBytes: 4 * 1024 },
+		authenticate: ({ hello }) => ({
+			clientId: hello.clientId,
+			authScope: 'write',
+		}),
+	});
+	const connection = core.accept(transport, {
+		onDeliveryDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+	});
+	const run = connection.start();
+	try {
+		transport.push(
+			encodeFrame({
+				type: 'client_hello',
+				protocolMin: 1,
+				protocolMax: 1,
+				clientId: 'terminal-burst-client',
+				clientVersion: 'test',
+				capabilities: ['events.resync'],
+				limits: {},
+			}),
+		);
+		await waitFor(() => connection.state === 'open');
+		transport.push(
+			encodeFrame({
+				type: 'command',
+				commandId: 'subscribe-terminal',
+				correlationId: 'subscribe-terminal-correlation',
+				operation: 'events.subscribe',
+				payload: {
+					subscriptionId: 'terminal-events',
+					event: 'terminal',
+					fromRevision: 0,
+				},
+			}),
+		);
+		await waitFor(() =>
+			transport.sent.some(
+				(frame) => decodeFrame(frame).envelope.type === 'command_result',
+			),
+		);
+
+		// Model a renderer/xterm stall while a PTY emits a finite burst. The
+		// production limit is 16 MiB; this proportionally smaller boundary makes
+		// the same state transition deterministic without allocating 200 MiB.
+		transport.blockWrites = true;
+		for (let index = 0; index < 16; index += 1) {
+			journal.append('terminal', {
+				attachmentId: 'terminal-attachment',
+				clientId: 'terminal-burst-client',
+				projectId: 'project-a',
+				serverId: 'terminal-burst-server',
+				sessionId: 'session-a',
+				type: 'output',
+				position: index * 512,
+				nextPosition: (index + 1) * 512,
+				bytes: 'eA=='.repeat(192),
+			});
+		}
+
+		await waitFor(() => connection.state === 'closed');
+		await run;
+		assert.equal(transport.closeCount, 1);
+		assert.deepEqual(
+			diagnostics.map(({ phase, code }) => ({ phase, code })),
+			[
+				{ phase: 'failure', code: 'resource' },
+				{ phase: 'closed', code: 'resource' },
+			],
+		);
+		assert.equal(
+			diagnostics[0].queuedBytes > 0,
+			true,
+			'a finite terminal backlog consumes the shared connection queue',
+		);
+	} finally {
+		transport.releaseWrites();
 		await connection.close().catch(() => undefined);
 		transport.end();
 	}
