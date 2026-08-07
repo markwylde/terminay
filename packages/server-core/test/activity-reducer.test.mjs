@@ -134,3 +134,21 @@ test("bounded replay returns a complete snapshot when the delta is too old", () 
   assert.equal(replay.snapshot.revision, reducer.revision);
   assert.deepEqual(Object.keys(replay.snapshot.sessions), ["a", "b", "c"]);
 });
+
+test("raw PTY throughput refreshes expiry without publishing timestamp-only transitions", () => {
+  const reducer = createTerminalActivityReducer({ rawActivityMs: 10, now: () => 0 });
+  const first = reducer.applyRawOutput("session-a", { projectId: "project-a", now: 1 });
+  assert.equal(first.revision, 1);
+  assert.equal(first.snapshot.status, "working");
+  for (let now = 2; now <= 2_000; now += 1) {
+    assert.equal(reducer.applyRawOutput("session-a", { projectId: "project-a", now }), undefined);
+  }
+  assert.equal(reducer.revision, 1);
+  assert.equal(reducer.get("session-a").updatedAt, 1);
+  assert.deepEqual(reducer.tick(2_009), []);
+  const idle = reducer.tick(2_010);
+  assert.equal(idle.length, 1);
+  assert.equal(idle[0].revision, 2);
+  assert.equal(idle[0].snapshot.status, "idle");
+  assert.equal(idle[0].snapshot.updatedAt, 2_010);
+});

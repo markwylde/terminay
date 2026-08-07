@@ -451,6 +451,68 @@ test("composition feeds PTY bytes into the activity service and serves its snaps
   }
 });
 
+test("thousands of pre-provider PTY callbacks remain one semantic activity transition and preserve terminal creation", async () => {
+  const pty = createPtyFactory();
+  let now = 0;
+  const activity = new TerminalActivityService({ serverId: "activity-throughput-server", now: () => now, setTimeout: () => 1, clearTimeout: () => undefined });
+  const composition = createServerCoreComposition({
+    allowUnresolvedTestSessions: true,
+    serverId: "activity-throughput-server",
+    serverVersion: "1.0.0",
+    capabilities: ["desktop"],
+    ptyFactory: pty,
+    activity,
+    authenticate: ({ hello }) => ({ clientId: hello.clientId, authScope: "write" }),
+  });
+  const identity = { serverId: "activity-throughput-server", projectId: "project-a", sessionId: "noisy-session" };
+  await composition.terminal.createSession({ projectId: identity.projectId, sessionId: identity.sessionId, cols: 80, rows: 24 });
+  const pair = createInMemoryTransportPair();
+  let blockServerWrites = false;
+  let releaseServerWrites = () => undefined;
+  let serverWriteGate = Promise.resolve();
+  const serverTransport = new Proxy(pair.server, {
+    get(target, property) {
+      if (property === "waitForWritable") return async (requiredBytes, signal) => {
+        if (blockServerWrites) await serverWriteGate;
+        return target.waitForWritable(requiredBytes, signal);
+      };
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const connection = composition.core.accept(serverTransport);
+  const serverTask = connection.start();
+  const client = new TerminayClient({ transport: pair.client, clientId: "throughput-client", capabilities: ["events.resync"] });
+  let subscription;
+  try {
+    await pair.open();
+    await client.connect();
+    subscription = await client.subscribe("activity");
+    blockServerWrites = true;
+    serverWriteGate = new Promise((resolve) => { releaseServerWrites = resolve; });
+    for (let index = 0; index < 5_000; index += 1) {
+      now += 1;
+      pty.processes[0].emitData("codex transcript output\r\n");
+    }
+    assert.equal(activity.revision, 1, "raw throughput publishes only idle-to-working");
+    assert.equal(activity.get(identity).updatedAt, 1);
+    const create = client.command("terminal.create", { projectId: "project-a", cwd: "/repo/a", cols: 80, rows: 24 });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(connection.state, "open");
+    releaseServerWrites();
+    blockServerWrites = false;
+    const created = await create;
+    assert.equal(typeof created.result.sessionId, "string");
+    assert.equal(composition.terminal.listSessions().filter((session) => session.projectId === "project-a").length, 2);
+  } finally {
+    releaseServerWrites();
+    await subscription?.unsubscribe().catch(() => undefined);
+    await client.close().catch(() => undefined);
+    await serverTask.catch(() => undefined);
+    await composition.shutdown();
+  }
+});
+
 test("framed activity snapshots preserve OSC progress and command completion for the exact session", async () => {
   const pty = createPtyFactory();
   const activity = new TerminalActivityService({ serverId: "activity-completion-server" });
