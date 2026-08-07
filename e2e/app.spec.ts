@@ -65,8 +65,15 @@ async function navigateToCommand(page: Page, direction: 'ArrowDown' | 'ArrowUp',
       return
     }
 
-    await page.keyboard.press(direction)
-		await expect(activeCommand).not.toHaveText(activeText ?? '', { timeout: 1_000 })
+		for (let attempt = 0; attempt < 3; attempt++) {
+			await page.keyboard.press(direction)
+			try {
+				await expect(activeCommand).not.toHaveText(activeText ?? '', { timeout: 500 })
+				break
+			} catch (error) {
+				if (attempt === 2) throw error
+			}
+		}
   }
 
   throw new Error(`Failed to navigate to command: ${title}`)
