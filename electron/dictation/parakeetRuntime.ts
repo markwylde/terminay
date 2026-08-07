@@ -71,6 +71,7 @@ export class ParakeetRuntime {
 	private readonly pending = new Map<string, PendingRequest>();
 	private sequence = 0;
 	private lastError: string | undefined;
+	private installStatus: ParakeetRuntimeStatus | null = null;
 
 	constructor(options: ParakeetRuntimeOptions) {
 		this.rootDirectory = path.resolve(options.rootDirectory);
@@ -84,7 +85,7 @@ export class ParakeetRuntime {
 		if (!this.isSupported()) {
 			return { model: PARAKEET_MODEL, state: 'unsupported', message: 'On-device Parakeet requires an Apple Silicon Mac.' };
 		}
-		if (this.installPromise !== null) return { model: PARAKEET_MODEL, state: 'installing' };
+		if (this.installPromise !== null) return this.installStatus ?? { model: PARAKEET_MODEL, state: 'installing', progress: 0 };
 		if (this.child !== null) return { model: PARAKEET_MODEL, state: 'ready' };
 		if (this.lastError) return { model: PARAKEET_MODEL, state: 'error', message: this.lastError };
 		try {
@@ -138,6 +139,7 @@ export class ParakeetRuntime {
 		if (!this.isSupported()) return { model: PARAKEET_MODEL, state: 'unsupported', message: 'On-device Parakeet requires an Apple Silicon Mac.' };
 		this.stop();
 		this.lastError = undefined;
+		this.updateInstallStatus(0.05, 'Checking on-device setup requirements…');
 		try {
 			const uv = await this.findExecutable([
 				path.join(this.homeDirectory, '.local', 'bin', 'uv'),
@@ -149,16 +151,25 @@ export class ParakeetRuntime {
 			if (!ffmpeg) throw new Error('ffmpeg is required to decode microphone audio. Install it with “brew install ffmpeg” and try again.');
 			await mkdir(this.rootDirectory, { recursive: true, mode: 0o700 });
 			await writeFile(this.workerPath(), WORKER_SOURCE, { encoding: 'utf8', mode: 0o600 });
+			this.updateInstallStatus(0.2, 'Creating the private Python environment…');
 			await this.run(uv, ['venv', '--clear', '--python', '3.12', this.venvDirectory()]);
+			this.updateInstallStatus(0.4, 'Installing the pinned MLX speech engine…');
 			await this.run(uv, ['pip', 'install', '--python', this.pythonPath(), `parakeet-mlx==${PARAKEET_MLX_VERSION}`]);
 			await writeFile(this.markerPath(), `${PARAKEET_MLX_VERSION}\n`, { mode: 0o600 });
+			this.updateInstallStatus(0.7, 'Downloading and loading the Parakeet model. The first setup may take several minutes…');
 			await this.ensureWorker(path.dirname(ffmpeg), WORKER_INSTALL_TIMEOUT_MS);
+			this.installStatus = null;
 			return { model: PARAKEET_MODEL, state: 'ready' };
 		} catch (error) {
 			this.lastError = error instanceof Error ? error.message : String(error);
 			this.stop();
+			this.installStatus = null;
 			return { model: PARAKEET_MODEL, state: 'error', message: this.lastError };
 		}
+	}
+
+	private updateInstallStatus(progress: number, message: string): void {
+		this.installStatus = { model: PARAKEET_MODEL, state: 'installing', progress, message };
 	}
 
 	private async ensureWorker(
@@ -176,6 +187,9 @@ export class ParakeetRuntime {
 			} as unknown as NodeJS.ProcessEnv;
 			const child = this.spawnProcess(this.pythonPath(), ['-I', '-u', this.workerPath()], { cwd: this.rootDirectory, env });
 			this.child = child;
+			// Hugging Face and MLX write download diagnostics to stderr. Always drain
+			// the pipe: leaving it unread can fill its buffer and suspend the worker.
+			child.stderr.on('data', () => { /* diagnostics are intentionally bounded and discarded */ });
 			let settled = false;
 			const startupTimer = setTimeout(() => fail(new Error('Timed out while loading the Parakeet model.')), startupTimeoutMs);
 			const fail = (error: Error) => {

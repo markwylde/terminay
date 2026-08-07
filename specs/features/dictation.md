@@ -122,6 +122,11 @@ different or exited terminal.
 - The Parakeet runtime package and model weights may be downloaded on explicit
   user request or first setup. Settings disclose download size/status and the
   network requirement. After installation, transcription works offline.
+- While setup is running, Settings polls the privileged runtime and shows its
+  current phase: prerequisite checks, Python environment creation, engine
+  installation, or model download/load. The phase indicator remains visibly
+  active when an exact aggregate byte percentage is unavailable, and setup
+  diagnostics are consumed without exposing local paths or unbounded output.
 - Provider selection is explicit and stable for the whole request. Failure of
   an on-device provider never falls back to a remote provider.
 - Parakeet automatically detects its supported languages and does not consume
