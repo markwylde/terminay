@@ -45,7 +45,7 @@ export class TerminayClientFacade implements QueryCommandTransport {
 
   /** Bridge the client's asynchronous subscription primitive to the small
    * synchronous listener contract used by feature facades. */
-  subscribe(event: string, listener: (payload: JsonValue) => void): () => void {
+  subscribe(event: string, listener: (payload: JsonValue) => void, onResync?: () => void): () => void {
     const subscribe = this.client.subscribe;
     // Query/command-only compatibility transports cannot keep a server-owned
     // projection current.  Returning a no-op here let feature facades retain
@@ -65,6 +65,7 @@ export class TerminayClientFacade implements QueryCommandTransport {
       }
       subscription = next;
       next.onEvent((value) => listener(value.payload));
+      if (onResync !== undefined) next.onResync(onResync);
     }).catch(() => undefined);
     return () => {
       active = false;
