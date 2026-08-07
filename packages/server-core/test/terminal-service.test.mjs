@@ -233,7 +233,6 @@ test("TerminalService owns PTY lifecycle and enforces exact server/project/sessi
 
 test("TerminalService forwards optional foreground process events with exact identity and disposes them on exit", async () => {
   const pty = createPtyFactory();
-  const foregroundEvents = [];
   const service = new TerminalService({
     serverId: "server-a",
     ptyFactory: pty,
@@ -648,7 +647,7 @@ test("TerminalService disposal releases node-pty foreground polling when shutdow
   const exits = new Set();
   const child = {
     pid: 9911,
-    process: "dash",
+    process: "sh",
     write() {},
     resize() {},
     kill() {},
@@ -660,9 +659,6 @@ test("TerminalService disposal releases node-pty foreground polling when shutdow
   };
   const service = new TerminalService({
     serverId: "server-foreground-disposal",
-    sessionLifecycle: {
-      foregroundProcessChanged(_identity, event) { foregroundEvents.push(event); },
-    },
     ptyFactory: createNodePtyFactory(
       { spawn: () => child },
       {
@@ -680,8 +676,6 @@ test("TerminalService disposal releases node-pty foreground polling when shutdow
   const session = await service.createSession({ projectId: "project-foreground-disposal", shellPath: "/bin/sh", cols: 80, rows: 24 });
 
   assert.equal(intervals.size, 1, "the service foreground subscription starts the adapter poll");
-  [...intervals.values()][0].callback();
-  assert.deepEqual(foregroundEvents, [{ processName: "dash", shellForeground: true }]);
   await service.shutdown();
   assert.equal(session.status, "interrupted");
   assert.equal(intervals.size, 0, "authoritative shutdown disposes the adapter poll without waiting for node-pty exit");

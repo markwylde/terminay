@@ -171,7 +171,7 @@ function createForegroundObserver(
     const processName = foregroundProcessName(child);
     if (processName === undefined || processName === lastProcess) return;
     lastProcess = processName;
-    const event = Object.freeze({ processName, shellForeground: isShellProcess(processName, shellProcess) });
+    const event = Object.freeze({ processName, shellForeground: isConfiguredShellProcess(processName, shellProcess) });
     for (const listener of [...listeners]) listener(event);
   };
   const start = (): void => {
@@ -213,10 +213,7 @@ function shellName(path: string): string {
   return normalized.slice(normalized.lastIndexOf("/") + 1);
 }
 
-const knownShellProcesses = new Set(["bash", "cmd", "dash", "fish", "nu", "powershell", "pwsh", "sh", "zsh"]);
-
-function isShellProcess(processName: string, configuredShell: string): boolean {
-  const normalized = shellName(processName).replace(/^-/, "").replace(/\.exe$/i, "").toLowerCase();
-  const configured = shellName(configuredShell).replace(/^-/, "").replace(/\.exe$/i, "").toLowerCase();
-  return normalized === configured || knownShellProcesses.has(normalized);
+function isConfiguredShellProcess(processName: string, configuredShell: string): boolean {
+  if (processName === configuredShell) return true;
+  return configuredShell === "sh" && processName === "dash";
 }

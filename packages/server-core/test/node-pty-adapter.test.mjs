@@ -74,6 +74,18 @@ test("node-pty foreground observer tears down on PTY exit and never enters outpu
   assert.equal(output.length, 0);
 });
 
+test("node-pty treats Debian dash as the configured POSIX sh shell", () => {
+  const scheduler = createScheduler();
+  const child = createChild();
+  child.process = "dash";
+  const factory = createNodePtyFactory({ spawn: () => child }, { foregroundPolling: scheduler });
+  const process = factory.spawn({ shellPath: "/bin/sh", shell: "/bin/sh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+  scheduler.tick();
+  assert.deepEqual(events, [{ processName: "dash", shellForeground: true }]);
+});
+
 test("node-pty cwd observation forwards the service cancellation signal", async () => {
   const child = createChild();
   let observed;
