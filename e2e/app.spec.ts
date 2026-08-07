@@ -57,13 +57,16 @@ async function seedScrollTestMacros(page: Page, count = 20): Promise<void> {
 
 
 async function navigateToCommand(page: Page, direction: 'ArrowDown' | 'ArrowUp', title: string, maxSteps = 80): Promise<void> {
+	const activeCommand = page.locator('.macro-launcher-item--active')
+
   for (let step = 0; step < maxSteps; step++) {
-    const activeText = await page.locator('.macro-launcher-item--active').textContent()
+		const activeText = await activeCommand.textContent()
     if (activeText?.includes(title)) {
       return
     }
 
     await page.keyboard.press(direction)
+		await expect(activeCommand).not.toHaveText(activeText ?? '', { timeout: 1_000 })
   }
 
   throw new Error(`Failed to navigate to command: ${title}`)
