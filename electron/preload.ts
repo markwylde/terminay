@@ -65,6 +65,7 @@ type ElectronListener<T> = (
 ) => void;
 
 type ServerConnectionMessage = {
+	readonly connectionId: string;
 	readonly serverId: string;
 	readonly label?: string;
 	readonly replacement?: boolean;
@@ -115,7 +116,10 @@ const DESKTOP_DIAGNOSTICS_HOST_BRIDGE_VERSION = 1 as const;
 
 let pendingServerConnection: ServerConnectionMessage | null = null;
 const serverConnectionListeners = new Set<ServerConnectionListener>();
-const serverPorts = new Map<string, MessagePort>();
+const serverPorts = new Map<
+	string,
+	{ readonly port: MessagePort; readonly serverId: string }
+>();
 const serverFrameListeners = new Map<string, Set<ServerFrameListener>>();
 const terminalPresentationProjectIds = new Map<string, string>();
 
@@ -254,11 +258,25 @@ ipcRenderer.on(
 	'server:connection',
 	(
 		event,
-		message: { serverId?: unknown; label?: unknown; replacement?: unknown },
+		message: {
+			connectionId?: unknown;
+			serverId?: unknown;
+			label?: unknown;
+			replacement?: unknown;
+		},
 	) => {
 		const port = event.ports?.[0];
-		if (!port || typeof message?.serverId !== 'string') return;
+		if (
+			!port ||
+			typeof message?.connectionId !== 'string' ||
+			message.connectionId.length === 0 ||
+			message.connectionId.length > 128 ||
+			!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(message.connectionId) ||
+			typeof message.serverId !== 'string'
+		)
+			return;
 		const connection = {
+			connectionId: message.connectionId,
 			serverId: message.serverId,
 			...(typeof message.label === 'string' &&
 			message.label.length > 0 &&
@@ -268,26 +286,23 @@ ipcRenderer.on(
 				: {}),
 		};
 		const replacement = message.replacement === true;
-		// A did-finish-load duplicate can arrive after the renderer has attached.
-		// Keeping the existing port is essential: replacing it here closes the
-		// transport beneath every live terminal before the renderer can reject the
-		// duplicate connection notification. A real renderer reload has a fresh
-		// preload realm, so it never has an existing port to preserve.
-		if (serverPorts.has(connection.serverId) && !replacement) {
+		// The opaque generation is the routing authority. Multiple generations for
+		// one server may overlap while a replacement handshakes; neither receipt nor
+		// failure of one is allowed to mutate another generation's route.
+		if (serverPorts.has(connection.connectionId)) {
 			port.close();
 			return;
 		}
-		if (replacement) {
-			serverPorts.get(connection.serverId)?.close();
-		}
-		serverPorts.set(connection.serverId, port);
+		serverPorts.set(connection.connectionId, {
+			port,
+			serverId: connection.serverId,
+		});
 		const notifyPortClosed = () => {
-			// A delayed close from a replaced generation must not remove or fail the
-			// currently active port for this server.
-			if (serverPorts.get(connection.serverId) !== port) return;
-			serverPorts.delete(connection.serverId);
-			for (const listener of serverFrameListeners.get(connection.serverId) ??
-				[])
+			if (serverPorts.get(connection.connectionId)?.port !== port) return;
+			serverPorts.delete(connection.connectionId);
+			for (const listener of serverFrameListeners.get(
+				connection.connectionId,
+			) ?? [])
 				listener(null);
 		};
 		port.onmessage = (portEvent) => {
@@ -298,24 +313,36 @@ ipcRenderer.on(
 					connection.serverId,
 				).frame;
 			} catch {
-				for (const listener of serverFrameListeners.get(connection.serverId) ??
-					[])
+				for (const listener of serverFrameListeners.get(
+					connection.connectionId,
+				) ?? [])
 					listener(null);
 				return;
 			}
-			for (const listener of serverFrameListeners.get(connection.serverId) ??
-				[])
+			for (const listener of serverFrameListeners.get(
+				connection.connectionId,
+			) ?? [])
 				listener(frame);
 		};
 		port.onmessageerror = () => {
-			for (const listener of serverFrameListeners.get(connection.serverId) ??
-				[])
+			for (const listener of serverFrameListeners.get(
+				connection.connectionId,
+			) ?? [])
 				listener(null);
 		};
 		(port as MessagePort & { onclose?: (() => void) | null }).onclose =
 			notifyPortClosed;
 		port.start();
 		if (serverConnectionListeners.size === 0) {
+			const previousPending = pendingServerConnection;
+			if (
+				previousPending !== null &&
+				previousPending.connectionId !== connection.connectionId
+			) {
+				const previous = serverPorts.get(previousPending.connectionId);
+				serverPorts.delete(previousPending.connectionId);
+				previous?.port.close();
+			}
 			pendingServerConnection = replacement
 				? { ...connection, replacement: true }
 				: connection;
@@ -900,11 +927,28 @@ contextBridge.exposeInMainWorld(
 	'terminayServerConnectionHost',
 	Object.freeze({
 		version: DESKTOP_SERVER_CONNECTION_HOST_BRIDGE_VERSION,
+		closeServerConnection: (connectionId: unknown) => {
+			if (
+				typeof connectionId !== 'string' ||
+				connectionId.length === 0 ||
+				connectionId.length > 128
+			)
+				throw new TypeError('server connection id is invalid');
+			const connection = serverPorts.get(connectionId);
+			if (connection === undefined) return;
+			// Do not remove the route first: this is an unexpected-loss simulation,
+			// so the installed onclose handler must publish null to the exact active
+			// generation before retiring it.
+			connection.port.close();
+		},
 		onServerConnection: (listener: unknown) => {
 			if (typeof listener !== 'function')
 				throw new TypeError('server connection listener is invalid');
 			const validatedListener: ServerConnectionListener = (message) => {
 				if (
+					typeof message.connectionId !== 'string' ||
+					message.connectionId.length === 0 ||
+					message.connectionId.length > 128 ||
 					typeof message.serverId !== 'string' ||
 					message.serverId.length === 0 ||
 					message.serverId.length > 512 ||
@@ -936,17 +980,17 @@ contextBridge.exposeInMainWorld(
 				serverId,
 			}) as Promise<void>;
 		},
-		sendServerFrame: (serverId: unknown, frame: unknown) => {
+		sendServerFrame: (connectionId: unknown, frame: unknown) => {
 			if (
-				typeof serverId !== 'string' ||
-				serverId.length === 0 ||
-				serverId.length > 512
+				typeof connectionId !== 'string' ||
+				connectionId.length === 0 ||
+				connectionId.length > 128
 			) {
-				throw new TypeError('server id is invalid');
+				throw new TypeError('server connection id is invalid');
 			}
-			const port = serverPorts.get(serverId);
-			if (port === undefined)
-				throw new Error(`No server port is available for ${serverId}`);
+			const connection = serverPorts.get(connectionId);
+			if (connection === undefined)
+				throw new Error(`No server port is available for ${connectionId}`);
 			const bytes = asServerFrame(frame);
 			if (
 				bytes === undefined ||
@@ -955,20 +999,23 @@ contextBridge.exposeInMainWorld(
 			) {
 				throw new TypeError('server frame must be bounded non-empty bytes');
 			}
-			port.postMessage(createTerminayHostBytePacket(serverId, bytes));
+			connection.port.postMessage(
+				createTerminayHostBytePacket(connection.serverId, bytes),
+			);
 		},
-		onServerFrame: (serverId: unknown, listener: unknown) => {
+		onServerFrame: (connectionId: unknown, listener: unknown) => {
 			if (
-				typeof serverId !== 'string' ||
-				serverId.length === 0 ||
-				serverId.length > 512
+				typeof connectionId !== 'string' ||
+				connectionId.length === 0 ||
+				connectionId.length > 128
 			) {
-				throw new TypeError('server id is invalid');
+				throw new TypeError('server connection id is invalid');
 			}
 			if (typeof listener !== 'function')
 				throw new TypeError('server frame listener is invalid');
 			const listeners =
-				serverFrameListeners.get(serverId) ?? new Set<ServerFrameListener>();
+				serverFrameListeners.get(connectionId) ??
+				new Set<ServerFrameListener>();
 			const validatedListener: ServerFrameListener = (frame) => {
 				if (frame === null) {
 					(listener as ServerFrameListener)(null);
@@ -984,10 +1031,10 @@ contextBridge.exposeInMainWorld(
 				}
 			};
 			listeners.add(validatedListener);
-			serverFrameListeners.set(serverId, listeners);
+			serverFrameListeners.set(connectionId, listeners);
 			return () => {
 				listeners.delete(validatedListener);
-				if (listeners.size === 0) serverFrameListeners.delete(serverId);
+				if (listeners.size === 0) serverFrameListeners.delete(connectionId);
 			};
 		},
 	}),
@@ -2145,6 +2192,29 @@ if (process.env.TERMINAY_TEST === '1') {
 		}),
 	);
 	const testApi: TerminayTestApi = {
+		failActiveLocalServerConnection: async () => {
+			// An active framed client owns a listener set for its exact opaque port
+			// generation. Refuse ambiguous failure injection while a replacement is
+			// handshaking so tests can never tear down the wrong generation.
+			const activeConnections = [...serverFrameListeners.entries()].filter(
+				([connectionId, listeners]) =>
+					listeners.size > 0 && serverPorts.has(connectionId),
+			);
+			if (activeConnections.length !== 1) {
+				throw new Error(
+					`Expected one active Local server connection, found ${activeConnections.length}`,
+				);
+			}
+			const connectionId = activeConnections[0]![0];
+			const connection = serverPorts.get(connectionId);
+			if (connection === undefined) {
+				throw new Error('The active Local server connection disappeared');
+			}
+			for (const listener of activeConnections[0]![1]) listener(null);
+			serverPorts.delete(connectionId);
+			connection.port.close();
+			return { connectionId };
+		},
 		listRemoteProtocolConnections: () =>
 			ipcRenderer.invoke('test:list-remote-protocol-connections') as Promise<
 				readonly string[]

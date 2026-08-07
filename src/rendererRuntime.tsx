@@ -48,8 +48,14 @@ import {
 } from './shared/ResponsiveWorkspaceEntry.tsx';
 import { RendererConnectionGeneration } from './shared/rendererConnectionGeneration.ts';
 import {
+	RendererConnectionRecovery,
+	type RendererConnectionRecoveryAttempt,
+	type RendererConnectionRecoveryState,
+} from './shared/rendererConnectionRecovery.ts';
+import {
 	connectRendererApplicationClient,
 	connectRendererServerClient,
+	createRendererServerClientContext,
 	type RendererApplicationClientContext,
 	type RendererBootstrapPhase,
 } from './shared/rendererServerClient.ts';
@@ -101,6 +107,7 @@ export function RendererEntry() {
 	const [auxiliaryClientContext, setAuxiliaryClientContext] =
 		useState<AuxiliaryRendererClientContext>();
 	const [serverConnectionError, setServerConnectionError] = useState<string>();
+	const [serverRecoveryStatus, setServerRecoveryStatus] = useState<string>();
 	const connectionRef = useRef<AppProps['terminalClientContext']>(undefined);
 	const auxiliaryConnectionRef = useRef<
 		AuxiliaryRendererClientContext | undefined
@@ -114,7 +121,6 @@ export function RendererEntry() {
 		new RendererConnectionGeneration<AuxiliaryRendererClientContext>(),
 	);
 	const connectingServerIdRef = useRef<string | undefined>(undefined);
-	const rehydratingServerIdRef = useRef<string | undefined>(undefined);
 	const [hostCapabilities, setHostCapabilities] = useState<HostCapabilitySet>();
 	const serverConnectionLifecycle = useMemo(
 		() =>
@@ -188,27 +194,264 @@ export function RendererEntry() {
 		if (!usesServerClient) return () => undefined;
 		let disposed = false;
 		let generation = 0;
+		type ServerAnnouncement = Readonly<{
+			connectionId: string;
+			serverId: string;
+			label?: string;
+			replacement?: boolean;
+		}>;
+		let pendingReplacement:
+			| Readonly<{
+					cleanup(): void;
+					serverId: string;
+					resolve(message: ServerAnnouncement): void;
+				}>
+			| undefined;
+		const publishRecoveryState = (state: RendererConnectionRecoveryState) => {
+			if (disposed) return;
+			const error =
+				state.phase === 'failed' && state.error !== undefined
+					? describeServerClientError(state.error)
+					: undefined;
+			const status =
+				state.phase === 'connected'
+					? undefined
+					: state.phase === 'failed'
+						? `Server connection unavailable; retrying in ${state.nextRetryMs ?? 0}ms: ${error ?? 'unknown error'}`
+						: `Server connection ${state.phase} (attempt ${state.attempt})…`;
+			(
+				window as Window & { __terminayServerClientState?: string }
+			).__terminayServerClientState =
+				state.phase === 'connected' ? 'connected' : status;
+			setServerRecoveryStatus(status);
+			setServerConnectionError(error);
+		};
+		const updateBootstrapPhaseFor = (serverId: string) =>
+			(
+				phase: RendererBootstrapPhase,
+				state: 'pending' | 'complete' | 'failed',
+				error?: unknown,
+			) => {
+				const target = window as Window & {
+					__terminayServerClientBootstrap?: {
+						serverId: string;
+						phases: Partial<
+							Record<RendererBootstrapPhase, { state: string; error?: string }>
+						>;
+					};
+				};
+				const diagnostic =
+					target.__terminayServerClientBootstrap?.serverId === serverId
+						? target.__terminayServerClientBootstrap
+						: { serverId, phases: {} };
+				diagnostic.phases[phase] = {
+					state,
+					...(error === undefined
+						? {}
+						: { error: describeServerClientError(error) }),
+				};
+				target.__terminayServerClientBootstrap = diagnostic;
+			};
+
+		type TerminalCandidate = {
+			applicationContext: RendererApplicationClientContext;
+			context?: NonNullable<AppProps['terminalClientContext']>;
+			activation: ReturnType<RendererConnectionGeneration<NonNullable<AppProps['terminalClientContext']>>['begin']>;
+			label?: string;
+		};
+		type AuxiliaryCandidate = Readonly<{
+			context: AuxiliaryRendererClientContext;
+			activation: ReturnType<RendererConnectionGeneration<AuxiliaryRendererClientContext>['begin']>;
+		}>;
+		const acquireReplacement = async (
+			attempt: RendererConnectionRecoveryAttempt,
+		): Promise<ServerAnnouncement> => {
+			const announcement = new Promise<ServerAnnouncement>((resolve, reject) => {
+				const timeout = window.setTimeout(() => {
+					if (pendingReplacement?.resolve === resolve)
+						pendingReplacement = undefined;
+					attempt.signal.removeEventListener('abort', abort);
+					reject(new Error('replacement server connection announcement timed out'));
+				}, 5_000);
+				const abort = () => {
+					window.clearTimeout(timeout);
+					if (pendingReplacement?.resolve === resolve)
+						pendingReplacement = undefined;
+					reject(attempt.signal.reason ?? new Error('connection recovery aborted'));
+				};
+				attempt.signal.addEventListener('abort', abort, { once: true });
+				pendingReplacement = {
+					cleanup: () => {
+						window.clearTimeout(timeout);
+						attempt.signal.removeEventListener('abort', abort);
+					},
+					serverId: attempt.key,
+					resolve: (message) => {
+						window.clearTimeout(timeout);
+						attempt.signal.removeEventListener('abort', abort);
+						resolve(message);
+					},
+				};
+			});
+			try {
+				const [, replacement] = await Promise.all([
+					serverConnectionLifecycle.requestServerConnection(attempt.key),
+					announcement,
+				]);
+				return replacement;
+			} catch (error) {
+				pendingReplacement?.cleanup();
+				pendingReplacement = undefined;
+				throw error;
+			}
+		};
+		const terminalRecovery = new RendererConnectionRecovery<TerminalCandidate>({
+			connect: async (attempt) => {
+				const replacement = await acquireReplacement(attempt);
+				const key = attempt.key;
+				const applicationContext = await connectRendererApplicationClient(
+					key,
+					replacement.connectionId,
+					undefined,
+					{
+						preloadFrameCapability: serverFrameCapability,
+						onPhaseChange: updateBootstrapPhaseFor(key),
+						signal: attempt.signal,
+					},
+				);
+				return {
+					activation: connectionGeneration.current.begin(key),
+					applicationContext,
+					label: replacement.label,
+				};
+			},
+			dispose: ({ applicationContext, context }) =>
+				context === undefined
+					? applicationContext.dispose()
+					: context.dispose?.(),
+			resubscribe: async (candidate, attempt) => {
+				const { key } = attempt;
+				const context = await createRendererServerClientContext(
+					candidate.applicationContext,
+					{
+						preloadFrameCapability: serverFrameCapability,
+						onTransportClosed: () => requestRehydration(key),
+						onPhaseChange: updateBootstrapPhaseFor(key),
+						signal: attempt.signal,
+					},
+				);
+				candidate.context = {
+					...context,
+					...(candidate.label === undefined
+						? {}
+						: { connectionLabel: candidate.label }),
+				};
+			},
+			hydrate: async ({ context }) => {
+				if (context === undefined)
+					throw new Error('replacement terminal client was not bootstrapped');
+			},
+			onRecovered: async ({ activation, context }) => {
+				if (context === undefined)
+					throw new Error('replacement terminal client was not activated');
+				if (!(await connectionGeneration.current.activate(activation, context)))
+					throw new Error('replacement terminal client was superseded');
+				try {
+					connectionRef.current = context;
+					setTerminalClientContext(context);
+					window.terminayBootstrapDiagnostic?.record('renderer.context.recovered');
+				} catch (error) {
+					await connectionGeneration.current.disposeActive(activation.key);
+					throw error;
+				}
+			},
+			onStateChange: publishRecoveryState,
+		});
+		const auxiliaryRecovery = new RendererConnectionRecovery<AuxiliaryCandidate>({
+			connect: async (attempt) => {
+				const replacement = await acquireReplacement(attempt);
+				const key = attempt.key;
+				const context = await connectRendererApplicationClient(key, replacement.connectionId, undefined, {
+					preloadFrameCapability: serverFrameCapability,
+					onTransportClosed: () => requestRehydration(key),
+					onPhaseChange: updateBootstrapPhaseFor(key),
+					signal: attempt.signal,
+				});
+				const labelledContext = makeRecoverableAuxiliaryContext(
+					context,
+					key,
+					replacement.label,
+				);
+				return {
+					activation: auxiliaryConnectionGeneration.current.begin(key),
+					context: labelledContext,
+				};
+			},
+			dispose: ({ context }) => context.dispose?.(),
+			hydrate: async () => undefined,
+			onRecovered: async ({ activation, context }) => {
+				if (
+					!(await auxiliaryConnectionGeneration.current.activate(
+						activation,
+						context,
+					))
+				)
+					throw new Error('replacement application client was superseded');
+				try {
+					auxiliaryConnectionRef.current = context;
+					setAuxiliaryClientContext(context);
+					window.terminayBootstrapDiagnostic?.record('renderer.context.recovered');
+				} catch (error) {
+					await auxiliaryConnectionGeneration.current.disposeActive(activation.key);
+					throw error;
+				}
+			},
+			onStateChange: publishRecoveryState,
+			resubscribe: async () => undefined,
+		});
 		const requestRehydration = (serverId: string) => {
-			if (disposed || rehydratingServerIdRef.current === serverId) return;
-			rehydratingServerIdRef.current = serverId;
+			if (disposed) return;
 			// Keep the current workspace presentation mounted while obtaining a
 			// replacement transport. Clearing the context here unmounted App and
 			// discarded Dockview's local attachment layout on every transient
 			// reconnect (observable as 1 → 0 → 1 tabs after terminal.create).
 			setServerConnectionError(undefined);
-			void serverConnectionLifecycle
-				.requestServerConnection(serverId)
-				.catch((error) => {
-					if (disposed) return;
-					if (rehydratingServerIdRef.current === serverId)
-						rehydratingServerIdRef.current = undefined;
-					const message = describeServerClientError(error);
-					(
-						window as Window & { __terminayServerClientState?: string }
-					).__terminayServerClientState = message;
-					setServerConnectionError(message);
-					console.error('[terminay] server port rehydration failed', error);
-				});
+			if (usesApplicationOnlyServerClient) {
+				if (auxiliaryRecovery.state.phase === 'connected')
+					void auxiliaryConnectionGeneration.current.disposeActive(serverId);
+				auxiliaryRecovery.start(serverId);
+			} else {
+				if (terminalRecovery.state.phase === 'connected')
+					void connectionGeneration.current.disposeActive(serverId);
+				terminalRecovery.start(serverId);
+			}
+		};
+		const makeRecoverableAuxiliaryContext = (
+			context: RendererApplicationClientContext,
+			serverId: string,
+			label?: string,
+		): AuxiliaryRendererClientContext => {
+			let intentionallyDisposed = false;
+			const removeStateListener = context.applicationClient.onStateChange(
+				(change) => {
+					if (
+						!intentionallyDisposed &&
+						(change.current.state === 'stale' ||
+							change.current.state === 'closed' ||
+							change.current.state === 'failed')
+					)
+						requestRehydration(serverId);
+				},
+			);
+			return {
+				...context,
+				...(label === undefined ? {} : { connectionLabel: label }),
+				dispose: async () => {
+					intentionallyDisposed = true;
+					removeStateListener();
+					await context.dispose();
+				},
+			};
 		};
 		const unsubscribe = serverConnectionLifecycle.onServerConnection(
 			(message) => {
@@ -221,10 +464,25 @@ export function RendererEntry() {
 					? auxiliaryConnectionRef.current?.serverId
 					: connectionRef.current?.serverId;
 				if (
+					isReplacement &&
+					pendingReplacement?.serverId === message.serverId
+				) {
+					const pending = pendingReplacement;
+					pendingReplacement = undefined;
+					pending.resolve(message);
+					return;
+				}
+				if (isReplacement) {
+					serverFrameCapability.closeServerConnection(message.connectionId);
+					return;
+				}
+				if (
 					(connectedServerId === message.serverId && !isReplacement) ||
 					connectingServerIdRef.current === message.serverId
-				)
+				) {
+					serverFrameCapability.closeServerConnection(message.connectionId);
 					return;
+				}
 				connectingServerIdRef.current = message.serverId;
 				(
 					window as Window & { __terminayServerClientState?: string }
@@ -263,7 +521,7 @@ export function RendererEntry() {
 					const connectionAttempt = auxiliaryConnectionGeneration.current.begin(
 						message.serverId,
 					);
-					void connectRendererApplicationClient(message.serverId, undefined, {
+					void connectRendererApplicationClient(message.serverId, message.connectionId, undefined, {
 						preloadFrameCapability: serverFrameCapability,
 						onTransportClosed: () => requestRehydration(message.serverId),
 						onPhaseChange: updateBootstrapPhase,
@@ -274,12 +532,11 @@ export function RendererEntry() {
 							);
 							connectingServerIdRef.current = undefined;
 							if (!disposed && requestGeneration === generation) {
-								const labelledContext = {
-									...context,
-									...(message.label === undefined
-										? {}
-										: { connectionLabel: message.label }),
-								};
+								const labelledContext = makeRecoverableAuxiliaryContext(
+									context,
+									message.serverId,
+									message.label,
+								);
 								const activated =
 									await auxiliaryConnectionGeneration.current.activate(
 										connectionAttempt,
@@ -287,8 +544,6 @@ export function RendererEntry() {
 									);
 								if (!activated) return;
 								auxiliaryConnectionRef.current = labelledContext;
-								if (rehydratingServerIdRef.current === message.serverId)
-									rehydratingServerIdRef.current = undefined;
 								(
 									window as Window & { __terminayServerClientState?: string }
 								).__terminayServerClientState = 'connected';
@@ -311,6 +566,7 @@ export function RendererEntry() {
 								window as Window & { __terminayServerClientState?: string }
 							).__terminayServerClientState = errorMessage;
 							setServerConnectionError(errorMessage);
+							requestRehydration(message.serverId);
 							console.error(
 								'[terminay] server client connection failed',
 								error,
@@ -321,7 +577,7 @@ export function RendererEntry() {
 				const connectionAttempt = connectionGeneration.current.begin(
 					message.serverId,
 				);
-				void connectRendererServerClient(message.serverId, undefined, {
+				void connectRendererServerClient(message.serverId, message.connectionId, undefined, {
 					preloadFrameCapability: serverFrameCapability,
 					onTransportClosed: () => requestRehydration(message.serverId),
 					onPhaseChange: updateBootstrapPhase,
@@ -344,8 +600,6 @@ export function RendererEntry() {
 							);
 							if (!activated) return;
 							connectionRef.current = labelledContext;
-							if (rehydratingServerIdRef.current === message.serverId)
-								rehydratingServerIdRef.current = undefined;
 							(
 								window as Window & { __terminayServerClientState?: string }
 							).__terminayServerClientState = 'connected';
@@ -368,12 +622,15 @@ export function RendererEntry() {
 							window as Window & { __terminayServerClientState?: string }
 						).__terminayServerClientState = errorMessage;
 						setServerConnectionError(errorMessage);
+						requestRehydration(message.serverId);
 						console.error('[terminay] server client connection failed', error);
 					});
 			},
 		);
 		return () => {
 			disposed = true;
+			terminalRecovery.cancel();
+			auxiliaryRecovery.cancel();
 			unsubscribe();
 			void connectionGeneration.current.disposeActive();
 			void auxiliaryConnectionGeneration.current.disposeActive();
@@ -585,6 +842,23 @@ export function RendererEntry() {
 		<DisconnectedFileCompatibilityProvider
 			value={disconnectedFileCompatibility}
 		>
+			{serverRecoveryStatus === undefined ? null : (
+				<div
+					aria-live="polite"
+					className="error-banner"
+					role="status"
+					style={{
+						left: 0,
+						pointerEvents: 'none',
+						position: 'fixed',
+						right: 0,
+						top: 0,
+						zIndex: 10_000,
+					}}
+				>
+					{serverRecoveryStatus}
+				</div>
+			)}
 			<TerminalSettingsClientProvider client={legacySettingsClient}>
 				<LegacyMacroSettingsProvider capability={legacyMacroSettingsCapability}>
 					{sharedRoute === undefined ? (

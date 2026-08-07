@@ -53,6 +53,8 @@ export interface NodePtyProcessLike {
   readonly write: (data: string) => void;
   readonly resize: (cols: number, rows: number) => void;
   readonly kill: (signal?: number | string) => void;
+	readonly pause?: () => void;
+	readonly resume?: () => void;
 }
 
 export interface NodePtyDisposable { readonly dispose: () => void; }
@@ -103,6 +105,8 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         write: (bytes) => child.write(new TextDecoder().decode(bytes)),
         resize: (dimensions) => child.resize(dimensions.cols, dimensions.rows),
         kill: (signal) => child.kill(signal),
+				...(typeof child.pause === "function" ? { pause: () => child.pause?.() } : {}),
+				...(typeof child.resume === "function" ? { resume: () => child.resume?.() } : {}),
         onData: (listener: PtyDataListener) => normalizeDisposable(child.onData((data) => listener(new TextEncoder().encode(data)))),
         onExit: (listener: PtyExitListener) => normalizeDisposable(child.onExit((event) => listener({ exitCode: event.exitCode, signal: event.signal ?? null }))),
         ...(typeof child.pid === "number" && factoryOptions.resolveCwd !== undefined
