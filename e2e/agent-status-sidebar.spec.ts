@@ -1,4 +1,4 @@
-import type { ElectronApplication, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
 import { openFileExplorer } from './support/ui';
@@ -20,14 +20,6 @@ async function beginCodexSession(page: Page, terminalSessionId: string, provider
 	await emitJournalRecord(page, terminalSessionId, {
 		type: 'session_meta',
 		payload: { id: providerSessionId, cli_version: '0.2.0', originator: 'codex-tui', source: 'cli' },
-	});
-}
-
-async function destroySettingsWindow(electronApp: ElectronApplication): Promise<void> {
-	await electronApp.evaluate(({ BrowserWindow }) => {
-		const settingsWindow = BrowserWindow.getAllWindows().find((window) => !window.isDestroyed() && new URL(window.webContents.getURL()).searchParams.get('view') === 'settings');
-		if (!settingsWindow) throw new Error('Settings window is unavailable');
-		settingsWindow.destroy();
 	});
 }
 
@@ -68,13 +60,13 @@ test('Codex rollout state projects to the terminal indicator and Agents sidebar'
 	await expect(agentTab.locator('.agent-status-indicator[data-agent-state="done"]')).toBeVisible();
 });
 
-test('agent integration setting disables and restores journal-backed status', async ({ appHarness, electronApp, mainWindow }) => {
+test('agent integration setting disables and restores journal-backed status', async ({ appHarness, mainWindow }) => {
 	const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'agent-integration' });
 	const toggle = settingsWindow.getByLabel('Agent status and sidebar').locator('input[type="checkbox"]');
 	await expect(toggle).toBeChecked();
 	await toggle.evaluate((element) => (element as HTMLInputElement).click());
 	await expect(toggle).not.toBeChecked();
-	await destroySettingsWindow(electronApp);
+	await settingsWindow.close();
 	await openFileExplorer(mainWindow);
 	await expect(mainWindow.getByRole('button', { name: /^Agents/ })).toHaveCount(0);
 
@@ -82,7 +74,7 @@ test('agent integration setting disables and restores journal-backed status', as
 	const restoredToggle = restoredWindow.getByLabel('Agent status and sidebar').locator('input[type="checkbox"]');
 	await restoredToggle.evaluate((element) => (element as HTMLInputElement).click());
 	await expect(restoredToggle).toBeChecked();
-	await destroySettingsWindow(electronApp);
+	await restoredWindow.close();
 	const sessionId = await getActiveSessionId(mainWindow);
 	await beginCodexSession(mainWindow, sessionId, 'codex-restored');
 	await emitJournalRecord(mainWindow, sessionId, { type: 'event_msg', payload: { type: 'user_message', message: 'Agent integration restored' } });

@@ -95,6 +95,12 @@ export async function readStrictDiagnosticEvents(
 
 export async function closeDesktop(app: ElectronApplication): Promise<void> {
 	if (app.process().exitCode !== null) return;
+	await app.evaluate(({ dialog }) => {
+		dialog.showMessageBox = async () => ({
+			checkboxChecked: false,
+			response: 0,
+		});
+	});
 	const closed = app.close();
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
@@ -105,14 +111,16 @@ export async function closeDesktop(app: ElectronApplication): Promise<void> {
 					() =>
 						reject(
 							new Error(
-								'Electron did not finish graceful shutdown in 20 seconds.',
+								'Electron did not finish graceful shutdown in 5 seconds.',
 							),
 						),
-					20_000,
+					5_000,
 				);
 				timer.unref?.();
 			}),
 		]);
+	} catch {
+		if (app.process().exitCode === null) app.process().kill('SIGKILL');
 	} finally {
 		if (timer !== undefined) clearTimeout(timer);
 	}
