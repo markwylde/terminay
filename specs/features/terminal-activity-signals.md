@@ -119,6 +119,14 @@ provider process returning to the known shell may retire the live association
 after a short confirmation window. A journal event during that window cancels
 the retirement.
 
+The canonical activity snapshot also exposes a `foregroundBusy` boolean. It is
+true only while the PTY host reports that a process other than the spawned
+shell owns the foreground process group. Unlike the presentation-oriented
+`working` status, this value is not suppressed by provider authority, command
+completion signals, acknowledgement, output timers, or activity-indicator
+settings. Clients use it solely for destructive close protection and do not
+infer it from output.
+
 ## Fallback interpretation
 
 Fallback interpretation remains provider-aware only to avoid known false
