@@ -937,9 +937,20 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         terminal.clear()
         renderTerminalResync()
         void staleAttachment?.detach().catch(() => {})
-        // This xterm has just been cleared, so its previous byte watermark is
-        // no longer presentation state. Force a safe byte-zero recovery.
-        attachServerTerminal({ fromPosition: 0, freshPresentation: true, forceResume: true })
+				// Do not immediately chase a producer which is still flooding output:
+				// that creates an endless attach/resync loop. The server-owned PTY
+				// activity clock lets this one display wait without blocking the PTY,
+				// connection, other terminals, or workspace commands. Once quiet, a
+				// single current checkpoint replaces all obsolete repaint frames.
+				void panelClient
+					.waitForInactivity(panelIdentity.projectId, sessionId, 100)
+					.then(() => {
+						if (dataReplayDisposed || !resyncing || panelAttachment !== null) return
+						// This xterm has just been cleared, so its previous byte watermark is
+						// no longer presentation state. Force a safe byte-zero recovery.
+						attachServerTerminal({ fromPosition: 0, freshPresentation: true, forceResume: true })
+					})
+					.catch(failServerTransport)
       }
       // The first attachment hydrates the newly created emulator. Later
       // reconnects use the exact cursor xterm has already rendered.

@@ -53,6 +53,20 @@ export class TerminayTerminalPanelClient {
     return this.open("resume", request);
   }
 
+	waitForInactivity(
+		projectId: string,
+		sessionId: string,
+		durationMs: number,
+		options: CommandOptions = {},
+	): Promise<void> {
+		return this.client.waitForInactivity(
+			projectId,
+			sessionId,
+			durationMs,
+			options,
+		);
+	}
+
   private async open(mode: "attach" | "resume", request: TerminalClientAttachRequest): Promise<TerminalPanelAttachment> {
     const attachment = await (mode === "attach" ? this.client.attach(request) : this.client.resume(request));
     return new PanelAttachmentView(attachment);

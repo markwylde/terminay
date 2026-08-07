@@ -18,10 +18,10 @@ async function writeToSession(page: Page, sessionId: string, data: string): Prom
 	);
 }
 
-test('a 200 MiB terminal burst cannot kill the shared local application connection', async ({
+test('a high-volume terminal burst cannot kill the shared local application connection', async ({
 	mainWindow,
 }) => {
-	test.setTimeout(180_000);
+	test.setTimeout(30_000);
 	const sessionId = await activeSessionId(mainWindow);
 	const panel = mainWindow.locator(
 		`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
@@ -29,23 +29,26 @@ test('a 200 MiB terminal burst cannot kill the shared local application connecti
 	const rows = panel.locator('.xterm-rows');
 	const burstComplete = `terminay-burst-complete-${sessionId}`;
 	const inputComplete = `terminay-input-after-burst-${sessionId}`;
+	const burstCompleteBase64 = Buffer.from(burstComplete).toString('base64');
+	const inputCompleteBase64 = Buffer.from(inputComplete).toString('base64');
 	const terminalTabs = mainWindow.locator(
 		'.project-workspace--active .terminal-tab-content',
 	);
 	const initialTerminalCount = await terminalTabs.count();
 
-	// This is deliberately in the range observed from a large `codex resume`.
-	// Generate it inside the PTY so the renderer-to-host test bridge does not
-	// itself carry or allocate the payload.
+	// Generate enough real PTY output to cross the presentation budget several
+	// times. The server-level regression advances the complete 200 MiB byte
+	// range; this Electron test stays fast while exercising the real parser,
+	// checkpoint hydration, xterm acknowledgement, and local MessagePort.
 	await writeToSession(
 		mainWindow,
 		sessionId,
-		`head -c 209715200 /dev/zero | tr '\\0' x; printf '\\n%s\\n' ${JSON.stringify(burstComplete)}\r`,
+		`head -c 1048576 /dev/zero | tr '\\0' x; printf '\\n'; printf '%s' ${JSON.stringify(burstCompleteBase64)} | base64 -d; printf '\\n'\r`,
 	);
 
 	await expect
 		.poll(async () => (await rows.textContent())?.includes(burstComplete) ?? false, {
-			timeout: 120_000,
+			timeout: 20_000,
 		})
 		.toBe(true);
 	await expect
@@ -64,17 +67,17 @@ test('a 200 MiB terminal burst cannot kill the shared local application connecti
 	await writeToSession(
 		mainWindow,
 		sessionId,
-		`printf '%s\\n' ${JSON.stringify(inputComplete)}\r`,
+		`printf '%s' ${JSON.stringify(inputCompleteBase64)} | base64 -d; printf '\\n'\r`,
 	);
 	await expect
 		.poll(async () => (await rows.textContent())?.includes(inputComplete) ?? false, {
-			timeout: 15_000,
+			timeout: 5_000,
 		})
 		.toBe(true);
 
 	await mainWindow.getByLabel('New terminal tab').click();
 	await expect(terminalTabs).toHaveCount(initialTerminalCount + 1, {
-		timeout: 15_000,
+		timeout: 5_000,
 	});
 	await expect(mainWindow.getByText('Server did not publish a terminal panel')).toHaveCount(0);
 });
