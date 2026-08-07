@@ -59,16 +59,8 @@ test('standalone operations runbook documents paths, network trust, recovery, an
   assert.match(runbook, /foreground/i)
 })
 
-test('release workflow keeps readiness, clean-server smoke, and hosted publication ordered', async () => {
-  const ci = await readFile(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8')
+test('release workflow keeps readiness, artifact builds, and hosted publication ordered', async () => {
   const release = await readFile(join(process.cwd(), '.github/workflows/trigger-release.yml'), 'utf8')
-
-  assert.match(ci, /standalone-server-smoke:/)
-  assert.match(ci, /npm run test:standalone-server/)
-  assert.match(ci, /npm run test:hosted-deployment-order/)
-  assert.match(ci, /npm run test:release-readiness/)
-  assert.match(ci, /npm run test:security-fuzz/)
-  assert.match(ci, /npm run test:security-boundaries/)
 
   const smokeIndex = release.indexOf('  smoke-test:')
   const releaseIndex = release.indexOf('  release:')

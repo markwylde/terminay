@@ -25,12 +25,11 @@ workspace.
 - `scripts/release-readiness.mjs` records the workspace packages, lockfile
   version, native package inventory, SBOM hash, and source correspondence in
   one release manifest.
-- `.github/workflows/ci.yml` builds the shared packages and standalone server
-  from the same checkout, and its production WebRTC job checks out only the
-  separately deployed hosted-service repository as an explicit external
-  dependency.
+- `.github/workflows/ci.yml` builds and tests the workspace from one checkout,
+  with the Electron suite isolated in the repository's pinned Docker image.
 - `.github/workflows/trigger-release.yml` sequences one release version and
-  matched Desktop artifacts from that source revision.
+  matched Desktop and standalone Server artifacts from the same tagged source
+  revision.
 
 Splitting the matched workspace would add version-coordination and source
 correspondence machinery without improving ownership or release cadence. The
