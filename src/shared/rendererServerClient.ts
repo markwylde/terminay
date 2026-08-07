@@ -44,6 +44,7 @@ export type RendererApplicationClientContext = Readonly<{
 	applicationClient: TerminayClient;
 	clientId: string;
 	dispose: () => Promise<void>;
+	serverHello: ServerHello;
 	serverCapabilities?: readonly string[];
 	serverId: string;
 }>;
@@ -108,6 +109,7 @@ export async function connectRendererApplicationClient(
 			applicationClient: client,
 			clientId: server.clientId,
 			dispose: () => client.close().catch(() => undefined),
+			serverHello: server,
 			serverCapabilities: server.capabilities,
 			serverId: server.serverId,
 		};
@@ -132,14 +134,20 @@ export async function connectRendererServerClient(
 		port,
 		options,
 	);
-	const client = context.applicationClient;
-	try {
-		const server = await client.connect();
-		return await createConnectedServerClientContext(client, server, options);
-	} catch (error) {
-		await client.close().catch(() => undefined);
-		throw error;
-	}
+	return createRendererServerClientContext(context, options);
+}
+
+/** Establish the renderer feature projections after a successful application
+ * handshake, without reconnecting or replacing its live transport. */
+export async function createRendererServerClientContext(
+	context: RendererApplicationClientContext,
+	options: RendererBootstrapOptions = {},
+): Promise<Omit<TerminalPanelClientContextValue, 'projectId'>> {
+	return createConnectedServerClientContext(
+		context.applicationClient,
+		context.serverHello,
+		options,
+	);
 }
 
 /** Host-neutral feature setup for an already-authenticated TerminayClient.

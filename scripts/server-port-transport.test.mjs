@@ -40,8 +40,11 @@ await build({
 const { ServerPortTransport, ServerScopedMessagePort } = await import(
   outputFile
 )
-const { connectRendererServerClient, createConnectedServerClientContext } =
-  await import(rendererClientFile)
+const {
+  connectRendererServerClient,
+  createConnectedServerClientContext,
+  createRendererServerClientContext,
+} = await import(rendererClientFile)
 globalThis.window = globalThis
 
 test.after(async () => {
@@ -221,6 +224,31 @@ test('canonical renderer setup closes a client whose subscription never settles'
     createConnectedServerClientContext(
       client,
       { clientId: 'client', serverId: 'desktop-local' },
+      { setupTimeoutMs: 10 },
+    ),
+    /activity subscription timed out after 10ms/u,
+  )
+  assert.equal(closed, 1)
+})
+
+test('application handshake context is promoted without reconnecting its live transport', async () => {
+  let closed = 0
+  const applicationClient = {
+    close: async () => {
+      closed += 1
+    },
+    subscribe: async () => new Promise(() => {}),
+  }
+
+  await assert.rejects(
+    createRendererServerClientContext(
+      {
+        applicationClient,
+        clientId: 'client',
+        dispose: () => applicationClient.close(),
+        serverHello: { clientId: 'client', serverId: 'desktop-local' },
+        serverId: 'desktop-local',
+      },
       { setupTimeoutMs: 10 },
     ),
     /activity subscription timed out after 10ms/u,
