@@ -54,7 +54,11 @@ export interface AgentStatusClientTransport extends QueryCommandTransport {
   /** Agent state is live, server-owned state. A query/command-only bridge
    * cannot safely project it because it could leave a stale renderer snapshot
    * looking authoritative after the server changes. */
-  subscribe: (event: string, listener: (snapshot: AgentClientSnapshot) => void) => (() => void) | Promise<(() => void)>;
+  subscribe: (
+    event: string,
+    listener: (snapshot: AgentClientSnapshot) => void,
+    onResync?: () => void,
+  ) => (() => void) | Promise<(() => void)>;
 }
 
 export class AgentStatusClient {
@@ -120,9 +124,11 @@ export class AgentStatusClient {
   async subscribe(): Promise<() => void> {
     if (this.unsubscribe !== undefined) return this.unsubscribe;
     if (this.transport === undefined) throw new Error("agent status transport is unavailable");
-    const unsubscribe = await this.transport.subscribe(AGENT_STATUS_OPERATIONS.event, (snapshot) => {
-      this.applySnapshot(snapshot);
-    });
+    const unsubscribe = await this.transport.subscribe(
+      AGENT_STATUS_OPERATIONS.event,
+      (snapshot) => { this.applySnapshot(snapshot); },
+      () => { void this.resync().catch(() => undefined); },
+    );
     this.unsubscribe = () => {
       try { unsubscribe(); } catch { /* expected disconnect cleanup is local */ }
       this.unsubscribe = undefined;
