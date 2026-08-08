@@ -1,4 +1,4 @@
-export type DestructiveCloseKind = 'app' | 'project' | 'terminal';
+export type DestructiveCloseKind = 'app' | 'project' | 'terminal' | 'window';
 
 export interface CloseEvent {
 	preventDefault(): void;
@@ -27,6 +27,7 @@ const destructiveLabels: Record<DestructiveCloseKind, string> = {
 	app: 'Quit Terminay',
 	project: 'Close Project',
 	terminal: 'Close Terminal',
+	window: 'Close Window',
 };
 
 export function createCloseConfirmationDialog(
@@ -55,17 +56,26 @@ export function bindMainWindowCloseConfirmation(options: {
 	window: ConfirmableMainWindow;
 	isQuitting: () => boolean;
 	getRunningTerminalCount: () => number;
+	isLastWindow: () => boolean;
+	consumeConfirmedClose?: () => boolean;
 	showConfirmation: (
 		window: ConfirmableMainWindow,
 		options: CloseConfirmationDialogOptions,
 	) => Promise<CloseConfirmationResult>;
 	requestQuit: () => void;
+	requestClose: () => void;
 	onError?: (error: unknown) => void;
 }): void {
 	let confirmationPending = false;
+	let confirmationAccepted = false;
 
 	options.window.on('close', (event) => {
 		if (options.isQuitting()) return;
+		if (confirmationAccepted) {
+			confirmationAccepted = false;
+			return;
+		}
+		if (options.consumeConfirmedClose?.() === true) return;
 		const runningTerminalCount = options.getRunningTerminalCount();
 		if (runningTerminalCount === 0) return;
 
@@ -76,11 +86,18 @@ export function bindMainWindowCloseConfirmation(options: {
 		void options
 			.showConfirmation(
 				options.window,
-				createCloseConfirmationDialog('app', runningTerminalCount),
+				createCloseConfirmationDialog(
+					options.isLastWindow() ? 'app' : 'window',
+					runningTerminalCount,
+				),
 			)
 			.then(({ response }) => {
 				if (response === 0 && !options.window.isDestroyed()) {
-					options.requestQuit();
+					if (options.isLastWindow()) options.requestQuit();
+					else {
+						confirmationAccepted = true;
+						options.requestClose();
+					}
 				}
 			})
 			.catch((error) => options.onError?.(error))
