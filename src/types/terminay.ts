@@ -24,7 +24,7 @@ export interface AdoptedProjectPayload {
 
 export type ProjectTabDragResult =
   | { action: 'reorder' }
-  | { action: 'merge'; targetWindowId: number }
+  | { action: 'merge'; targetWindowId: number; targetViewId: string }
   | { action: 'popout'; x: number; y: number }
 
 export type ProjectTabDragPreview = {
