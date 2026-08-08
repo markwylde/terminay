@@ -80,6 +80,9 @@ client focus.
   clearly when their required target is absent.
 - Reconnecting from a fresh client restores project and panel identity from
   server state without recreating live terminals.
+- Reloading or closing a renderer detaches its presentation and must not turn
+  Dockview disposal into canonical panel-close commands; restored renderers
+  hydrate the same panels and terminal sessions.
 - Terminal and project close warnings depend on canonical PTY foreground-process
   state, not recent output, agent status, tab attention, or display settings.
 - A foreground process in one native window protects that window with a scoped
