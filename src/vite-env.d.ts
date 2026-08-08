@@ -308,6 +308,7 @@ declare global {
 		/** Bounded native project transfer capability for the current Desktop window. */
 		terminayWorkspaceTransferHost?: {
 			readonly version: 1;
+			bindView(viewId: string): Promise<void>;
 			subscribeAdoptedProject(
 				listener: (
 					project: import('./types/terminay').AdoptedProjectPayload,
@@ -318,6 +319,7 @@ declare global {
 			>;
 			popoutProject(
 				project: import('./types/terminay').AdoptedProjectPayload,
+				targetViewId: string,
 				x: number,
 				y: number,
 			): Promise<{ ok: boolean; windowId?: number }>;
