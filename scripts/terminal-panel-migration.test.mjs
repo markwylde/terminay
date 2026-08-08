@@ -222,15 +222,18 @@ test('server-backed input and resize fail closed without terminal application IP
 	assert.doesNotMatch(resizeEffect, /window\.terminay\.resizeTerminal/);
 });
 
-test('presentation ownership stays silent until another attachment controls the terminal', () => {
+test('presentation ownership stays silent for controllers and exposes every read-only recovery state', () => {
 	assert.match(
 		terminalPanel,
-		/terminalPresentation\?\.role === 'read_only' && terminalPresentation\.holder !== undefined/,
+		/terminalPresentation\?\.role === 'read_only' && !presentationUnavailable/,
 	);
 	assert.match(
 		terminalPanel,
 		/Another device is controlling this terminal\./,
 	);
+	assert.match(terminalPanel, /No device currently controls this terminal\./);
+	assert.match(terminalPanel, /currentPresentation\.holder === undefined \? 'acquire' : 'takeover'/);
+	assert.match(terminalPanel, /Take control/);
 	assert.match(terminalPanel, /Take back control/);
 	assert.doesNotMatch(terminalPanel, />Terminal controller</);
 	assert.doesNotMatch(terminalPanel, />Terminal read-only</);
