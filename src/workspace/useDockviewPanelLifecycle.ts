@@ -4,6 +4,7 @@ import {
 	type MutableRefObject,
 	type SetStateAction,
 	useCallback,
+	useEffect,
 	useRef,
 } from 'react';
 
@@ -46,7 +47,20 @@ function removePanelMapping(
  */
 export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 	const optionsRef = useRef(options);
+	const rendererUnloadingRef = useRef(false);
 	optionsRef.current = options;
+
+	useEffect(() => {
+		const markRendererUnloading = () => {
+			rendererUnloadingRef.current = true;
+		};
+		window.addEventListener('beforeunload', markRendererUnloading);
+		window.addEventListener('pagehide', markRendererUnloading);
+		return () => {
+			window.removeEventListener('beforeunload', markRendererUnloading);
+			window.removeEventListener('pagehide', markRendererUnloading);
+		};
+	}, []);
 
 	const handleReady = useCallback((event: DockviewReadyEvent) => {
 		const current = optionsRef.current;
@@ -54,6 +68,10 @@ export function useDockviewPanelLifecycle(options: LifecycleOptions) {
 		current.setIsDockviewReady(true);
 
 		event.api.onDidRemovePanel((panel) => {
+			// Dockview disposes its panels while the whole renderer is reloading or
+			// closing. That is a client detach, not an intent to delete canonical
+			// panels or terminate their server-owned sessions.
+			if (rendererUnloadingRef.current) return;
 			const latest = optionsRef.current;
 			const sessionId = latest.panelSessionMapRef.current.get(panel.id);
 			if (!sessionId) {
