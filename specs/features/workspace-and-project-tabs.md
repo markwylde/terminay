@@ -36,6 +36,10 @@ boundary.
   view. Tearing a project into a new native window creates a destination view
   and canonically moves the existing project into it; it does not copy the
   project into renderer state or close the source project.
+- Closing a native project-host window closes only that window and detaches its
+  workspace-view presentation while another project-host window remains. App
+  shutdown begins only when the final project-host window closes or the user
+  explicitly invokes Quit.
 - Double-clicking a project tab opens project-tab editing in the current host's
   auxiliary-route presentation. Desktop may use a native modal window; web uses
   an in-page edit-tab surface. Saving updates the server-owned project name,
@@ -78,3 +82,7 @@ client focus.
   server state without recreating live terminals.
 - Terminal and project close warnings depend on canonical PTY foreground-process
   state, not recent output, agent status, tab attention, or display settings.
+- A foreground process in one native window protects that window with a scoped
+  close warning; confirming it never closes sibling project windows. Only the
+  final native project-host window uses the application quit warning and
+  graceful shutdown path.
