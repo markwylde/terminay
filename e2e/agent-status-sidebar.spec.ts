@@ -60,6 +60,70 @@ test('Codex rollout state projects to the terminal indicator and Agents sidebar'
 	await expect(agentTab.locator('.agent-status-indicator[data-agent-state="done"]')).toBeVisible();
 });
 
+test('a completed agent resumes working while a second running agent appears', async ({
+	mainWindow,
+}) => {
+	const firstTerminalSessionId = await getActiveSessionId(mainWindow);
+	await beginCodexSession(mainWindow, firstTerminalSessionId, 'codex-e2e-resumed-root');
+	await emitJournalRecord(mainWindow, firstTerminalSessionId, {
+		type: 'event_msg',
+		payload: { type: 'user_message', message: 'Web disconnect bug' },
+	});
+	await emitJournalRecord(mainWindow, firstTerminalSessionId, {
+		type: 'event_msg',
+		payload: { type: 'task_complete', turn_id: 'turn-1' },
+	});
+	await openFileExplorer(mainWindow);
+	const firstAgent = mainWindow
+		.locator('.agents-sidebar__tree-item')
+		.filter({ hasText: 'Web disconnect bug' });
+	await expect(
+		firstAgent.locator('.agent-status-indicator[data-agent-state="done"]'),
+	).toBeVisible();
+	await mainWindow.evaluate(() =>
+		window.terminayTest!.failActiveLocalServerConnection(),
+	);
+	await expect.poll(
+		() =>
+			mainWindow.evaluate(
+				() =>
+					(window as Window & { __terminayServerClientState?: string })
+						.__terminayServerClientState,
+			),
+		{ timeout: 5_000 },
+	).toBe('connected');
+
+	await emitJournalRecord(mainWindow, firstTerminalSessionId, {
+		type: 'event_msg',
+		payload: { type: 'task_started', turn_id: 'turn-2' },
+	});
+	await expect(
+		firstAgent.locator('.agent-status-indicator[data-agent-state="working"]'),
+	).toBeVisible();
+
+	await sendAppCommand(mainWindow, 'new-terminal');
+	const secondTerminalSessionId = await getActiveSessionId(mainWindow);
+	await beginCodexSession(
+		mainWindow,
+		secondTerminalSessionId,
+		'codex-e2e-concurrent-root',
+	);
+	await emitJournalRecord(mainWindow, secondTerminalSessionId, {
+		type: 'event_msg',
+		payload: { type: 'user_message', message: 'Agents not updating' },
+	});
+
+	const secondAgent = mainWindow
+		.locator('.agents-sidebar__tree-item')
+		.filter({ hasText: 'Agents not updating' });
+	await expect(
+		firstAgent.locator('.agent-status-indicator[data-agent-state="working"]'),
+	).toBeVisible();
+	await expect(
+		secondAgent.locator('.agent-status-indicator[data-agent-state="working"]'),
+	).toBeVisible();
+});
+
 test('agent integration setting disables and restores journal-backed status', async ({ appHarness, mainWindow }) => {
 	const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'agent-integration' });
 	const toggle = settingsWindow.getByLabel('Agent status and sidebar').locator('input[type="checkbox"]');

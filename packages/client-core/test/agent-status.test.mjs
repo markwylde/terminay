@@ -148,6 +148,51 @@ test("agent client reloads its authoritative snapshot after subscription resync"
   assert.equal(client.snapshot.entries["session-a:root"].state, "waiting");
 });
 
+test("a host transport forwards resync so stale done state is replaced after a server revision restart", async () => {
+  let transportResync;
+  let restarted = false;
+  const staleDone = {
+    revision: 9,
+    cursor: "9",
+    entries: { "session-a:root": entry("session-a", "session-a:root", "done") },
+  };
+  const restartedWorking = {
+    revision: 2,
+    cursor: "2",
+    entries: {
+      "session-a:root": entry("session-a", "session-a:root", "working"),
+      "session-b:root": entry("session-b", "session-b:root", "working"),
+    },
+  };
+  const featureTransport = {
+    async query() { return restarted ? restartedWorking : staleDone; },
+    async command() { return null; },
+    subscribeEvents(_event, _listener, onResync) {
+      transportResync = onResync;
+      return () => undefined;
+    },
+  };
+  const client = new AgentStatusClient(["session-a", "session-b"], {
+    query: featureTransport.query,
+    command: featureTransport.command,
+    subscribe: (event, listener, onResync) => featureTransport.subscribeEvents(
+      event,
+      listener,
+      onResync,
+    ),
+  });
+
+  await client.subscribe();
+  assert.equal(client.snapshot.entries["session-a:root"].state, "done");
+  restarted = true;
+  transportResync();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(client.snapshot.revision, 2);
+  assert.equal(client.snapshot.entries["session-a:root"].state, "working");
+  assert.equal(client.snapshot.entries["session-b:root"].state, "working");
+});
+
 test("agent client reload replaces a restarted-server snapshot without manufacturing an event", async () => {
   let snapshot = { revision: 8, cursor: "8", entries: { "session-a:root": entry("session-a", "session-a:root", "waiting") } };
   const client = new AgentStatusClient(["session-a"], {
