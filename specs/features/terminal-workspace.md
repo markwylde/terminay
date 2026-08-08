@@ -170,6 +170,14 @@ request an explicit takeover; focus, attachment, or receipt of output alone
 does not silently seize control. Handoff, disconnect, expiry, and revocation
 release the lease predictably and are visible to every attached client.
 
+Lease expiry distinguishes an abandoned attachment from a temporarily
+suspended host. A still-live, write-authorized exact attachment may renew an
+unowned lease after its timers resume, including after operating-system sleep;
+renewal never displaces a different holder. If a presentation is read-only
+while no holder exists, its control surface remains visible and offers an
+explicit acquire action rather than silently discarding input behind an
+apparently interactive terminal.
+
 When a client creates a terminal, the server briefly reserves initial
 presentation ownership for that authenticated creator. Reconciliation order
 cannot let an observing browser win a race by attaching before the creating
@@ -237,6 +245,10 @@ query and injecting duplicate control responses.
 - A sole local or remote attachment silently owns and fills its terminal. No
   controller/read-only badge is shown unless another attachment currently owns
   that presentation; that observer receives the full-width takeover bar.
+- A controlling attachment that remains live across operating-system sleep
+  renews an otherwise unowned lease when its timers resume. If automatic
+  renewal cannot restore control, the terminal visibly offers acquisition and
+  never remains an unlabelled read-only surface.
 - A fresh client and a client recovering after a replay gap hydrate from a
   valid presentation boundary and then receive uninterrupted live output; they
   never start inside a partial ANSI/OSC sequence.

@@ -47,6 +47,37 @@ test("presentation lease expires, disconnect releases it, and revocation is admi
   assert.equal(authority.change("revoke", browser, { admin: true }).holder, undefined);
 });
 
+test("a still-attached controller can renew after the host wakes from sleep", () => {
+  let now = 1_000;
+  const authority = new TerminalPresentationLeaseAuthority({ now: () => now, leaseMs: 15_000 });
+
+  const acquired = authority.change("acquire", desktop);
+  assert.equal(acquired.holder?.attachmentId, desktop.attachmentId);
+
+  // Renderer timers are suspended while macOS sleeps. The attachment and PTY
+  // remain live, but the next five-second renewal runs after the wall-clock
+  // lease deadline has passed.
+  now += 60 * 60 * 1_000;
+
+  const renewed = authority.change("renew", desktop);
+  assert.equal(renewed.holder?.attachmentId, desktop.attachmentId);
+});
+
+test("a delayed renewal after sleep cannot displace a new controller", () => {
+  let now = 1_000;
+  const authority = new TerminalPresentationLeaseAuthority({ now: () => now, leaseMs: 15_000 });
+  authority.change("acquire", desktop);
+
+  now += 60 * 60 * 1_000;
+  authority.change("acquire", browser);
+
+  assert.throws(
+    () => authority.change("renew", desktop),
+    (error) => error instanceof TerminalServiceError && error.details?.reason === "presentation_owner",
+  );
+  assert.equal(authority.state(identity).holder?.attachmentId, browser.attachmentId);
+});
+
 test("server command order deterministically resolves simultaneous takeovers", () => {
   const authority = new TerminalPresentationLeaseAuthority();
   authority.change("acquire", desktop);
