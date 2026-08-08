@@ -52,6 +52,12 @@ test('desktop inactivity wait validates the authenticated framed consumer identi
   assert.doesNotMatch(workspaceE2e, /terminayTerminalLifecycleHost\.waitForInactivity/u)
 })
 
+test('test app commands acknowledge completed asynchronous work within the scenario budget', () => {
+  assert.match(main, /renderer app command completion timed out[\s\S]{0,500}\}, 20_000\)/u)
+  assert.match(app, /const closeActivePanel = useCallback\(async \(\) => \{[\s\S]{0,300}await requestClosePanel\(panelId\)/u)
+  assert.match(app, /case 'close-active':[\s\S]{0,100}await closeActivePanel\(\)/u)
+})
+
 test('terminal panel installs one lossless event listener before replay handoff', () => {
   assert.match(panelClient, /readonly onEvent: \(listener:/u)
   assert.match(panel, /\.onEvent\(renderServerEvent\)/u)
