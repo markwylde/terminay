@@ -29,6 +29,13 @@ boundary.
 - Desktop presents workspace views as native windows. Project tabs can be
   dragged between them; web clients manage the same views in-page. Moving a
   project preserves its panels, live PTYs, scrollback, and service identities.
+- A newly torn-off native window becomes the active window once its workspace
+  is ready; the first interaction with its terminal controls is delivered to
+  that control rather than being consumed only to activate the window.
+- Each native project-host window presents exactly one server-owned workspace
+  view. Tearing a project into a new native window creates a destination view
+  and canonically moves the existing project into it; it does not copy the
+  project into renderer state or close the source project.
 - Double-clicking a project tab opens project-tab editing in the current host's
   auxiliary-route presentation. Desktop may use a native modal window; web uses
   an in-page edit-tab surface. Saving updates the server-owned project name,
@@ -62,6 +69,9 @@ client focus.
   settings change.
 - Moving or popping a project does not duplicate a terminal session or lose its
   connection to activity, agent, recording, or remote services.
+- After a project is torn into a new native window, the source window shows the
+  source view's remaining projects and the destination shows only the
+  destination view's projects. A later workspace refresh preserves that split.
 - Keyboard and menu commands operate on the active project/panel and fail
   clearly when their required target is absent.
 - Reconnecting from a fresh client restores project and panel identity from
