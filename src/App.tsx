@@ -3482,10 +3482,10 @@ const ProjectWorkspace = forwardRef<
 				window.removeEventListener('terminay-request-close-terminal', listener);
 		}, [requestClosePanel]);
 
-		const closeActivePanel = useCallback(() => {
+		const closeActivePanel = useCallback(async () => {
 			const panelId = dockviewApiRef.current?.activePanel?.id;
 			if (panelId === undefined) return;
-			void requestClosePanel(panelId);
+			await requestClosePanel(panelId);
 		}, [requestClosePanel]);
 
 		const saveActivePanel = useCallback(
@@ -3529,7 +3529,7 @@ const ProjectWorkspace = forwardRef<
 						await popoutActivePanel();
 						break;
 					case 'close-active':
-						closeActivePanel();
+						await closeActivePanel();
 						break;
 					case 'clear-terminal':
 						clearActiveTerminal();

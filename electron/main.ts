@@ -6051,7 +6051,11 @@ if (process.env.TERMINAY_TEST === '1') {
 				const timeout = setTimeout(() => {
 					cleanup();
 					reject(new Error('renderer app command completion timed out'));
-				}, 5_000);
+				// App commands acknowledge their real asynchronous completion. Large
+				// sparse saves and other bounded host operations can legitimately exceed
+				// Playwright's per-action timeout on a loaded CI runner, so this test-only
+				// transport deadline follows the enclosing 30-second scenario budget.
+				}, 20_000);
 				const onComplete = (
 					event: Electron.IpcMainEvent,
 					replyRequestId: unknown,
