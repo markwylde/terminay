@@ -140,6 +140,94 @@ test.describe('project tabs', () => {
 		).toHaveText(['Terminal 1', 'Terminal 2']);
 	});
 
+	test('closing a busy torn-off project window leaves its sibling window alive', async ({
+		electronApp,
+		mainWindow,
+	}) => {
+		await mainWindow.getByLabel('Add project tab').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+		const draggedProject = mainWindow.locator('.project-tab').last();
+		const projectBox = await draggedProject.boundingBox();
+		if (!projectBox) throw new Error('Expected the project tab to have a layout box');
+		const centerX = projectBox.x + projectBox.width / 2;
+		const centerY = projectBox.y + projectBox.height / 2;
+		await mainWindow.mouse.move(centerX, centerY);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(centerX, centerY + 180, { steps: 12 });
+		await mainWindow.mouse.up();
+		await expect
+			.poll(
+				() =>
+					electronApp
+						.windows()
+						.filter(
+							(page) =>
+								page !== mainWindow &&
+								!page.isClosed() &&
+								!page.url().startsWith('data:'),
+						).length,
+			)
+			.toBe(1);
+		const popoutWindow = electronApp
+			.windows()
+			.find(
+				(page) =>
+					page !== mainWindow &&
+					!page.isClosed() &&
+					!page.url().startsWith('data:'),
+			);
+		if (!popoutWindow) throw new Error('Expected the project popout window');
+		await popoutWindow.waitForLoadState('domcontentloaded');
+		const sessionId = await popoutWindow
+			.locator('.project-workspace--active .terminal-panel')
+			.getAttribute('data-terminay-terminal-session-id');
+		if (!sessionId) throw new Error('Expected the popout terminal');
+
+		await electronApp.evaluate(({ dialog }) => {
+			const state = globalThis as typeof globalThis & {
+				closeDialog?: Electron.MessageBoxOptions;
+			};
+			dialog.showMessageBox = async (...args) => {
+				state.closeDialog = args.at(-1) as Electron.MessageBoxOptions;
+				return { checkboxChecked: false, response: 0 };
+			};
+		});
+		await popoutWindow.evaluate(
+			async (nextSessionId) =>
+				window.terminayTest!.writeServerTerminal(nextSessionId, 'sleep 30\n'),
+			sessionId,
+		);
+		await expect
+			.poll(() =>
+				popoutWindow.evaluate(
+					(nextSessionId) =>
+						window.terminayTest!.getServerTerminalActivity(nextSessionId),
+					sessionId,
+				),
+			)
+			.toMatchObject({ foregroundBusy: true });
+		await electronApp.evaluate(({ BrowserWindow }) =>
+			BrowserWindow.getFocusedWindow()?.close(),
+		);
+		await expect
+			.poll(() =>
+				electronApp.evaluate(() =>
+					(
+						globalThis as typeof globalThis & {
+							closeDialog?: Electron.MessageBoxOptions;
+						}
+					).closeDialog?.buttons?.[0] ?? null,
+				),
+			)
+			.toBe('Close Window');
+		await expect.poll(() => popoutWindow.isClosed()).toBe(true);
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
+		await mainWindow.getByLabel('New terminal tab').click();
+		await expect(
+			mainWindow.locator('.project-workspace--active .terminal-tab-title'),
+		).toHaveText(['Terminal 1', 'Terminal 2']);
+	});
+
 	test('adds, edits, switches, and closes project tabs', async ({
 		createWorkspace,
 		electronApp,
