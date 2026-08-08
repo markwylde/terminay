@@ -68,8 +68,11 @@ export class TerminalPresentationLeaseAuthority {
       return this.commit(key, identity, undefined, mode);
     }
     if (mode === "renew") {
-      if (current === undefined) throw new TerminalServiceError("forbidden", "terminal presentation lease has expired", { reason: "presentation_owner" });
-      this.assertSameHolder(current, identity);
+      // The validated protocol boundary only exposes renewal to an exact live
+      // attachment. Its renderer timers can pause across operating-system
+      // sleep, so an expired and still-unowned lease is safely recoverable by
+      // that attachment. A different live holder is never displaced here.
+      if (current !== undefined) this.assertSameHolder(current, identity);
     }
     if (mode === "acquire" && current !== undefined) {
       this.assertSameHolder(current, identity);

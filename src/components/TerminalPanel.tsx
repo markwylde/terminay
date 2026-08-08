@@ -40,7 +40,7 @@ import { shouldRestoreTerminalFocusAfterWindowActivation } from './terminalFocus
 import { createTerminalLinkInteraction } from './terminalLinkInteraction'
 import { shouldInsertTerminalMultilineNewline } from './terminalMultilineInteraction'
 import { shouldReturnFocusToTerminalFromNote } from './terminalNoteInteraction'
-import { ServerTerminalInputQueue } from './terminalPanelInputQueue'
+import { isTerminalPresentationOwnershipError, ServerTerminalInputQueue } from './terminalPanelInputQueue'
 import { pasteTerminalClipboard } from './terminalPasteInteraction'
 import { publishTerminalPresentationMetadata } from './terminalPresentationHost'
 import { buildTerminalPresentationOptions } from './terminalPresentationInteraction'
@@ -793,7 +793,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             }
 
             panelAttachment = attachment
+            let currentPresentation = attachment.presentation
             const applyPresentation = (state: TerminalPresentationState) => {
+              currentPresentation = state
               const becameController = !terminalPresentationControllerRef.current && state.role === 'controller'
               terminalPresentationControllerRef.current = state.role === 'controller'
               if (state.role !== 'controller') serverInputQueue?.discardPending()
@@ -808,9 +810,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
               if (state.role === 'controller') {
                 if (becameController) fitAndResize(true)
                 presentationRenewTimer = window.setTimeout(() => {
-                  void attachment.changePresentation('renew').then(applyPresentation).catch(() => {
-                    terminalPresentationControllerRef.current = false
-                    setTerminalPresentation({
+                  void attachment.changePresentation('renew').then(applyPresentation).catch((error: unknown) => {
+                    if (!isTerminalPresentationOwnershipError(error)) {
+                      failServerTransport(error)
+                      return
+                    }
+                    applyPresentation({
                       serverId: state.serverId,
                       projectId: state.projectId,
                       sessionId: state.sessionId,
@@ -824,7 +829,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             applyPresentation(attachment.presentation)
             terminalPresentationActionRef.current = async () => {
               const state = await attachment.changePresentation(
-                attachment.presentation.holder === undefined ? 'acquire' : 'takeover',
+                currentPresentation.holder === undefined ? 'acquire' : 'takeover',
               )
               applyPresentation(state)
               if (state.role === 'controller') fitAndResize(true)
@@ -1614,17 +1619,21 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           </button>
         </search>
       ) : null}
-      {terminalPresentation?.role === 'read_only' && terminalPresentation.holder !== undefined && !presentationUnavailable ? (
+      {terminalPresentation?.role === 'read_only' && !presentationUnavailable ? (
         <div className="terminal-presentation-control" role="status" aria-live="polite">
-          <span>Another device is controlling this terminal.</span>
+          <span>
+            {terminalPresentation.holder === undefined
+              ? 'No device currently controls this terminal.'
+              : 'Another device is controlling this terminal.'}
+          </span>
           <button
             type="button"
-            aria-label="Take back control of terminal"
+            aria-label={terminalPresentation.holder === undefined ? 'Take control of terminal' : 'Take back control of terminal'}
             onClick={() => void terminalPresentationActionRef.current().catch((error: unknown) => {
               setServerTerminalError(error instanceof Error ? error.message : 'Terminal control takeover failed.')
             })}
           >
-            Take back control
+            {terminalPresentation.holder === undefined ? 'Take control' : 'Take back control'}
           </button>
         </div>
       ) : null}
