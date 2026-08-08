@@ -4911,6 +4911,9 @@ ProjectWorkspace.displayName = 'ProjectWorkspace';
 // no default project and pulls its adopted project on mount instead.
 const isAdoptWindow =
 	new URLSearchParams(window.location.search).get('adopt') === '1';
+const requestedWorkspaceViewId =
+	new URLSearchParams(window.location.search).get('view') ??
+	new URLSearchParams(window.location.hash.slice(1)).get('view');
 
 export type AppProps = {
 	auxiliaryRoutes?: AuxiliaryRouteController;
@@ -5079,6 +5082,14 @@ function App({
 		},
 		[terminalClientContext?.activityClient],
 	);
+	const workspaceSnapshot =
+		terminalClientContext?.workspaceSnapshotStore?.snapshot;
+	const boundWorkspaceViewId =
+		requestedWorkspaceViewId ?? workspaceSnapshot?.viewOrder[0] ?? null;
+	useEffect(() => {
+		if (boundWorkspaceViewId === null) return;
+		void window.terminayWorkspaceTransferHost?.bindView(boundWorkspaceViewId);
+	}, [boundWorkspaceViewId]);
 
 	const {
 		activeProjectId,
@@ -5098,17 +5109,15 @@ function App({
 	} = useProjectCollection<MovedTerminalTab>({
 		confirmProjectClose,
 		defaultProjectRoot:
-			terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects[
-				Object.keys(
-					terminalClientContext?.workspaceSnapshotStore?.snapshot?.projects ??
-						{},
-				)[0] ?? ''
+			workspaceSnapshot?.projects[
+				workspaceSnapshot.views[boundWorkspaceViewId ?? '']?.projectIds[0] ?? ''
 			]?.root ?? '',
 		isAdoptWindow,
 		isSettingsLoading: areTerminalSettingsLoading,
 		projectColorScope: currentServerId,
 		sidebarSettings: settings.sidebar,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
+		workspaceViewId: boundWorkspaceViewId,
 	});
 	const exportProjectForTransfer = useCallback(
 		(projectId: string) =>
@@ -5138,6 +5147,8 @@ function App({
 		isAdoptWindow,
 		onAdopt: adoptTransferredProject,
 		projectsRef,
+		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
+		workspaceViewId: boundWorkspaceViewId,
 	});
 	const {
 		addresses: remoteAddresses,

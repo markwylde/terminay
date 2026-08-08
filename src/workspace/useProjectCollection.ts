@@ -14,6 +14,7 @@ export function useProjectCollection<TTerminal>({
 	confirmProjectClose,
 	sidebarSettings,
 	workspaceSnapshotStore,
+	workspaceViewId,
 }: {
 	/** Canonical server-projected root for newly created projects. The hook
 	 * never discovers host filesystem paths on its own. */
@@ -25,19 +26,21 @@ export function useProjectCollection<TTerminal>({
 	confirmProjectClose?: (projectId: string) => Promise<boolean>;
 	sidebarSettings: SidebarSettings;
 	workspaceSnapshotStore?: WorkspaceSnapshotStore;
+	workspaceViewId: string | null;
 }) {
 	const sidebarDefaultsRef = useRef(sidebarSettings);
 	const didApplyPersistedSidebarOrderRef = useRef(false);
 	const projectCounterRef = useRef(1);
 	const initialServerSnapshot = workspaceSnapshotStore?.snapshot;
 	const hasServerWorkspace = workspaceSnapshotStore !== undefined;
+	const initialViewId =
+		workspaceViewId ?? initialServerSnapshot?.viewOrder[0] ?? null;
+	const initialServerView =
+		initialViewId === null ? undefined : initialServerSnapshot?.views[initialViewId];
 	const initialServerProjects =
-		initialServerSnapshot?.viewOrder.flatMap(
-			(viewId) =>
-				initialServerSnapshot.views[viewId]?.projectIds
-					.map((projectId) => initialServerSnapshot.projects[projectId])
-					.filter((project) => project !== undefined) ?? [],
-		) ?? [];
+		initialServerView?.projectIds
+			.map((projectId) => initialServerSnapshot?.projects[projectId])
+			.filter((project) => project !== undefined) ?? [];
 	const [projects, setProjects] = useState<ProjectTab[]>(() => {
 		if (isAdoptWindow) return [];
 		if (hasServerWorkspace && initialServerSnapshot === null) return [];
@@ -82,9 +85,7 @@ export function useProjectCollection<TTerminal>({
 			? ''
 			: hasServerWorkspace && initialServerSnapshot === null
 				? ''
-				: (initialServerSnapshot?.views[
-						initialServerSnapshot.viewOrder[0] ?? ''
-					]?.activeProjectId ??
+				: (initialServerView?.activeProjectId ??
 					initialServerProjects[0]?.id ??
 					(hasServerWorkspace ? '' : 'project-1')),
 	);
@@ -123,14 +124,12 @@ export function useProjectCollection<TTerminal>({
 	useEffect(() => {
 		if (workspaceSnapshotStore === undefined) return;
 		return workspaceSnapshotStore.subscribe((snapshot) => {
-			const orderedServerProjects = snapshot.viewOrder.flatMap((viewId) => {
-				const view = snapshot.views[viewId];
-				return (
-					view?.projectIds
-						.map((projectId) => snapshot.projects[projectId])
-						.filter((project) => project !== undefined) ?? []
-				);
-			});
+			const viewId = workspaceViewId ?? snapshot.viewOrder[0];
+			const view = viewId === undefined ? undefined : snapshot.views[viewId];
+			const orderedServerProjects =
+				view?.projectIds
+					.map((projectId) => snapshot.projects[projectId])
+					.filter((project) => project !== undefined) ?? [];
 			setProjects((current) => {
 				const currentById = new Map(
 					current.map((project) => [project.id, project]),
@@ -160,21 +159,20 @@ export function useProjectCollection<TTerminal>({
 				projectsRef.current = next;
 				return next;
 			});
-			const activeView = snapshot.views[snapshot.viewOrder[0] ?? ''];
 			const nextActiveId =
-				activeView?.activeProjectId ??
-				activeView?.projectIds[0] ??
+				view?.activeProjectId ??
+				view?.projectIds[0] ??
 				orderedServerProjects[0]?.id ??
 				'';
 			activeProjectIdRef.current = nextActiveId;
 			setActiveProjectId(nextActiveId);
 		});
-	}, [projectColorScope, workspaceSnapshotStore]);
+	}, [projectColorScope, workspaceSnapshotStore, workspaceViewId]);
 
 	const addProject = useCallback(() => {
 		if (workspaceSnapshotStore !== undefined) {
 			const snapshot = workspaceSnapshotStore.snapshot;
-			const viewId = snapshot?.viewOrder[0];
+			const viewId = workspaceViewId ?? snapshot?.viewOrder[0];
 			if (snapshot === null || viewId === undefined) {
 				setProjectCreationError('Workspace is still loading from the server.');
 				return;
@@ -233,7 +231,7 @@ export function useProjectCollection<TTerminal>({
 			),
 		]);
 		setActiveProjectId(`project-${index}`);
-	}, [defaultProjectRoot, projectColorScope, workspaceSnapshotStore]);
+	}, [defaultProjectRoot, projectColorScope, workspaceSnapshotStore, workspaceViewId]);
 
 	const closeProject = useCallback(
 		(projectId: string, options: { skipConfirmation?: boolean } = {}) => {
