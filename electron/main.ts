@@ -650,6 +650,7 @@ interface AdoptedProjectPayload {
 // macros / recordings / edit windows. Multi-window project tabs are peers.
 const appWindows = new Set<BrowserWindow>();
 const runningTerminalSessionsByWindow = new Map<number, Set<string>>();
+const workspaceViewByWebContents = new Map<number, string>();
 
 function getRunningTerminalCount(): number {
 	const sessions = new Set<string>();
@@ -2881,6 +2882,7 @@ function createWindow(options?: {
 	adoptedProject?: AdoptedProjectPayload;
 	bounds?: { x: number; y: number };
 	initialServerConnection?: 'local' | 'deferred';
+	workspaceViewId?: string;
 }): BrowserWindow | null {
 	if (isQuitting) {
 		return null;
@@ -2951,12 +2953,25 @@ function createWindow(options?: {
 	if (options?.adoptedProject) {
 		pendingAdoptedProjects.set(windowWebContentsId, options.adoptedProject);
 	}
+	if (options?.workspaceViewId) {
+		workspaceViewByWebContents.set(windowWebContentsId, options.workspaceViewId);
+		// A project tear-off is an explicit request to work in the destination.
+		// Creating the BrowserWindow from a drag-end callback does not reliably
+		// activate it on macOS, where the first click would otherwise be consumed
+		// solely to focus the window instead of reaching the terminal-tab + button.
+		window.once('ready-to-show', () => {
+			if (window.isDestroyed()) return;
+			window.show();
+			window.focus();
+		});
+	}
 
 	window.on('closed', () => {
 		appWindows.delete(window);
 		runningTerminalSessionsByWindow.delete(windowWebContentsId);
 		tabBarRectsByWebContents.delete(windowWebContentsId);
 		pendingAdoptedProjects.delete(windowWebContentsId);
+		workspaceViewByWebContents.delete(windowWebContentsId);
 		for (const [
 			profileId,
 			pendingWindow,
@@ -3072,17 +3087,23 @@ function createWindow(options?: {
 
 	// A torn-off window boots in "adopt" mode so the renderer starts with no
 	// default project and instead pulls its adopted project on mount.
-	const isAdoptWindow = Boolean(options?.adoptedProject);
+	const isAdoptWindow = Boolean(options?.adoptedProject) && !options?.workspaceViewId;
 	if (VITE_DEV_SERVER_URL) {
 		const target = new URL(VITE_DEV_SERVER_URL);
 		if (isAdoptWindow) {
 			target.searchParams.set('adopt', '1');
 		}
+		if (options?.workspaceViewId) target.searchParams.set('view', options.workspaceViewId);
+		if (options?.workspaceViewId) target.hash = `view=${encodeURIComponent(options.workspaceViewId)}`;
 		window.loadURL(target.toString());
 	} else {
 		window.loadFile(
 			path.join(RENDERER_DIST, 'index.html'),
-			isAdoptWindow ? { query: { adopt: '1' } } : undefined,
+			isAdoptWindow
+				? { query: { adopt: '1' } }
+				: options?.workspaceViewId
+					? { hash: `view=${encodeURIComponent(options.workspaceViewId)}`, query: { view: options.workspaceViewId } }
+					: undefined,
 		);
 	}
 
@@ -4371,6 +4392,29 @@ function isWorkspaceTransferPayload(
 
 // A freshly torn-off window pulls its adopted project once on boot.
 ipcMain.handle(
+	'desktop:workspace-transfer-host:bind-view',
+	(event, payload: unknown) => {
+		assertTrustedAppSender(event);
+		if (
+			typeof payload !== 'object' ||
+			payload === null ||
+			Array.isArray(payload) ||
+			Object.getPrototypeOf(payload) !== Object.prototype ||
+			Object.keys(payload).length !== 2 ||
+			(payload as { version?: unknown }).version !== 1 ||
+			typeof (payload as { viewId?: unknown }).viewId !== 'string' ||
+			!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(
+				(payload as { viewId: string }).viewId,
+			)
+		) throw new TypeError('desktop workspace view binding is invalid');
+		workspaceViewByWebContents.set(
+			event.sender.id,
+			(payload as { viewId: string }).viewId,
+		);
+	},
+);
+
+ipcMain.handle(
 	'desktop:workspace-transfer-host:get-adopted-project',
 	(event, payload: unknown) => {
 		assertTrustedAppSender(event);
@@ -4401,13 +4445,15 @@ ipcMain.handle(
 			payload === null ||
 			Array.isArray(payload) ||
 			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 4 ||
+			Object.keys(payload).length !== 5 ||
 			(payload as { version?: unknown }).version !== 1
 		)
 			throw new TypeError('desktop workspace transfer host request is invalid');
 		const request = payload as Record<string, unknown>;
 		if (
 			!isWorkspaceTransferPayload(request.project) ||
+			typeof request.targetViewId !== 'string' ||
+			!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(request.targetViewId) ||
 			typeof request.x !== 'number' ||
 			!Number.isFinite(request.x) ||
 			Math.abs(request.x) > 100_000 ||
@@ -4427,8 +4473,8 @@ ipcMain.handle(
 			return { ok: false };
 		}
 		const window = createWindow({
-			adoptedProject: project,
 			bounds: { x: request.x, y: request.y },
+			workspaceViewId: request.targetViewId,
 		});
 		if (!window) return { ok: false };
 
@@ -4482,7 +4528,9 @@ ipcMain.handle(
 		for (const terminal of project.terminals) {
 			reassignSessionOwner(terminal.sessionId, event.sender.id, target.id);
 		}
-		target.send('app:adopt-project', project);
+		if (!workspaceViewByWebContents.has(target.id)) {
+			target.send('app:adopt-project', project);
+		}
 		BrowserWindow.fromWebContents(target)?.focus();
 		return { ok: true };
 	},
@@ -5092,10 +5140,16 @@ ipcMain.handle(
 		// Merge: leave the drop target's in-bar placeholder up so adoptProject can
 		// replace it in place (no flicker). Clear any other stale placeholder.
 		if (hit !== null) {
+			const targetViewId = workspaceViewByWebContents.get(hit);
+			if (targetViewId === undefined) {
+				clearPlaceholder(hit);
+				source?.send('app:project-tab-torn-off', { active: false });
+				return { action: 'reorder' as const };
+			}
 			if (hoverTargetId !== hit) {
 				clearPlaceholder(hoverTargetId);
 			}
-			return { action: 'merge' as const, targetWindowId: hit };
+			return { action: 'merge' as const, targetWindowId: hit, targetViewId };
 		}
 
 		clearPlaceholder(hoverTargetId);

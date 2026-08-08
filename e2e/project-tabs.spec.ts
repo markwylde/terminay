@@ -34,61 +34,110 @@ async function expectTerminalInputFocused(page: Page): Promise<void> {
 }
 
 test.describe('project tabs', () => {
-	test('native project popout adopts its live workspace in a new window', async ({
+	test('dragging a project into a new window preserves its canonical project and terminal', async ({
 		electronApp,
 		mainWindow,
 	}) => {
+		await mainWindow.getByLabel('Add project tab').click();
+		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
+
+		const editWindow = await openProjectEditWindow(mainWindow);
+		await editWindow
+			.getByPlaceholder('Project name')
+			.fill('react-massive-table');
+		await submitEditWindow(editWindow);
+
+		const draggedProject = mainWindow
+			.locator('.project-tab', { hasText: 'react-massive-table' })
+			.first();
+		await expect(draggedProject).toBeVisible();
+		const projectId = await draggedProject.getAttribute('data-project-id');
+		if (!projectId) throw new Error('Expected the moved project identity');
+		const activeWorkspace = mainWindow.locator('.project-workspace--active');
+		await expect(activeWorkspace.locator('.terminal-panel')).toHaveCount(1);
 		const sessionId = await mainWindow
-			.locator('.terminal-panel')
+			.locator('.project-workspace--active .terminal-panel')
 			.first()
 			.getAttribute('data-terminay-terminal-session-id');
-		if (!sessionId)
-			throw new Error('Expected the active server terminal identity');
+		if (!sessionId) throw new Error('Expected the moved terminal identity');
 
-		const nextWindow = electronApp.waitForEvent('window');
-		const result = await mainWindow.evaluate(
-			async (activeSessionId) =>
-				window.terminayWorkspaceTransferHost?.popoutProject(
-					{
-						project: {
-							id: 'project-1',
-							title: 'Project 1',
-							color: '#4db5ff',
-							emoji: '',
-							fileExplorerWidth: 320,
-							isFileExplorerOpen: false,
-							isExplorerPaneCollapsed: false,
-							isAgentsPaneCollapsed: false,
-							isGitPaneCollapsed: false,
-							expandedAgentEntryIds: [],
-							sidebarAgentsHeight: 240,
-							sidebarExplorerHeight: 240,
-							sidebarGitHeight: 240,
-							sidebarPanelOrder: ['explorer', 'agents', 'git'],
-							rootFolder: '',
-						},
-						terminals: [{ sessionId: activeSessionId, title: 'Terminal 1' }],
-						activeSessionId,
-					},
-					100,
-					100,
-				),
-			sessionId,
+		const projectBox = await draggedProject.boundingBox();
+		if (!projectBox) throw new Error('Expected the project tab to have a layout box');
+		const revisionBeforeMove = Number(
+			await mainWindow.locator('.app-shell').getAttribute(
+				'data-terminay-workspace-revision',
+			),
 		);
-		expect(result?.ok).toBe(true);
 
-		const adoptedWindow = await nextWindow;
-		await adoptedWindow.waitForLoadState('domcontentloaded');
-		await expect(adoptedWindow.locator('.project-tab--active')).toContainText(
-			'Project 1',
+		const centerX = projectBox.x + projectBox.width / 2;
+		const centerY = projectBox.y + projectBox.height / 2;
+		await mainWindow.mouse.move(centerX, centerY);
+		await mainWindow.mouse.down();
+		await mainWindow.mouse.move(centerX, centerY + 180, { steps: 12 });
+		await mainWindow.mouse.up();
+		await expect
+			.poll(
+				() =>
+					electronApp
+						.windows()
+						.filter(
+							(page) =>
+								page !== mainWindow &&
+								!page.isClosed() &&
+								!page.url().startsWith('data:'),
+						).length,
+			)
+			.toBe(1);
+		const popoutWindow = electronApp
+			.windows()
+			.find(
+				(page) =>
+					page !== mainWindow &&
+					!page.isClosed() &&
+					!page.url().startsWith('data:'),
+			);
+		if (!popoutWindow) throw new Error('Expected the project popout window');
+		await popoutWindow.waitForLoadState('domcontentloaded');
+
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText(['Project']);
+		await expect
+			.poll(async () =>
+				Number(
+					await popoutWindow.locator('.app-shell').getAttribute(
+						'data-terminay-workspace-revision',
+					),
+				),
+			)
+			.toBeGreaterThan(revisionBeforeMove);
+
+		await expect(popoutWindow.locator('.project-tab-title')).toHaveText([
+			'react-massive-table',
+		]);
+		await expect(popoutWindow.locator('.project-tab')).toHaveAttribute(
+			'data-project-id',
+			projectId,
 		);
 		await expect(
-			adoptedWindow
-				.locator(
-					`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
-				)
-				.last(),
+			popoutWindow.locator(
+				`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
+			),
 		).toBeVisible();
+		await popoutWindow.getByLabel('New terminal tab').click();
+		await expect(
+			popoutWindow.locator('.project-workspace--active .terminal-tab-title'),
+		).toHaveText(['Terminal 1', 'Terminal 2']);
+
+		await popoutWindow.reload();
+		await expect(popoutWindow.locator('.project-tab-title')).toHaveText([
+			'react-massive-table',
+		]);
+		await expect(popoutWindow.locator('.project-tab')).toHaveAttribute(
+			'data-project-id',
+			projectId,
+		);
+		await expect(
+			popoutWindow.locator('.project-workspace--active .terminal-tab-title'),
+		).toHaveText(['Terminal 1', 'Terminal 2']);
 	});
 
 	test('adds, edits, switches, and closes project tabs', async ({
