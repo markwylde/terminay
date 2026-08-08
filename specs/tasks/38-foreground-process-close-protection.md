@@ -27,6 +27,11 @@ distinguish an idle shell prompt from a running foreground process.
       treating cross-view moves as closure.
 - [x] Publish each Desktop window's bounded busy-session set to Electron so a
       native app/window close can guard work across projects and windows.
+- [x] Scope native-window close confirmation and confirmed closure to the
+      target project window; reserve application quit for the final project
+      window or an explicit Quit command.
+- [x] Regress a busy torn-off project window closing while its sibling remains
+      alive and usable.
 - [ ] Cover idle, busy, cancel, confirm, aggregation, and explicit-quit bypass
       behaviour with focused and Docker-isolated Electron tests.
 
@@ -40,6 +45,8 @@ distinguish an idle shell prompt from a running foreground process.
 - Provider state, recent output, and activity indicator settings cannot create
   or suppress a close warning.
 - Moving tabs/projects does not display a close warning or terminate a PTY.
+- Confirming closure of a non-final project window closes only that window;
+  sibling windows remain alive, and only the last project window quits Terminay.
 - Confirmed operations retain existing server-owned termination and graceful
   shutdown semantics.
 

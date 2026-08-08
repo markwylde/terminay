@@ -651,6 +651,7 @@ interface AdoptedProjectPayload {
 const appWindows = new Set<BrowserWindow>();
 const runningTerminalSessionsByWindow = new Map<number, Set<string>>();
 const workspaceViewByWebContents = new Map<number, string>();
+const confirmedWindowCloseWebContents = new Set<number>();
 
 function getRunningTerminalCount(): number {
 	const sessions = new Set<string>();
@@ -658,6 +659,18 @@ function getRunningTerminalCount(): number {
 		for (const sessionId of windowSessions) sessions.add(sessionId);
 	}
 	return sessions.size;
+}
+
+function getRunningTerminalCountForWindow(webContentsId: number): number {
+	return runningTerminalSessionsByWindow.get(webContentsId)?.size ?? 0;
+}
+
+function getOpenProjectWindowCount(): number {
+	let count = 0;
+	for (const window of appWindows) {
+		if (!window.isDestroyed()) count += 1;
+	}
+	return count;
 }
 // New popout windows pull their adopted project on boot through the transfer host.
 const pendingAdoptedProjects = new Map<number, AdoptedProjectPayload>();
@@ -2931,10 +2944,17 @@ function createWindow(options?: {
 	});
 	securePrimaryWindow(window);
 	appWindows.add(window);
+	// Capture the webContents id now; it's unreadable once the window is closed
+	// (accessing window.webContents after destruction throws).
+	const windowWebContentsId = window.webContents.id;
 	bindMainWindowCloseConfirmation({
 		window,
 		isQuitting: () => isQuitting,
-		getRunningTerminalCount,
+		getRunningTerminalCount: () =>
+			getRunningTerminalCountForWindow(windowWebContentsId),
+		isLastWindow: () => getOpenProjectWindowCount() <= 1,
+		consumeConfirmedClose: () =>
+			confirmedWindowCloseWebContents.delete(windowWebContentsId),
 		showConfirmation: (target, dialogOptions) =>
 			dialog.showMessageBox(target as BrowserWindow, dialogOptions),
 		requestQuit: () => {
@@ -2942,13 +2962,10 @@ function createWindow(options?: {
 			isQuitting = true;
 			app.quit();
 		},
+		requestClose: () => window.close(),
 		onError: (error) =>
 			console.error('[window] close confirmation failed', error),
 	});
-
-	// Capture the webContents id now; it's unreadable once the window is closed
-	// (accessing window.webContents after destruction throws).
-	const windowWebContentsId = window.webContents.id;
 
 	if (options?.adoptedProject) {
 		pendingAdoptedProjects.set(windowWebContentsId, options.adoptedProject);
@@ -2969,6 +2986,7 @@ function createWindow(options?: {
 	window.on('closed', () => {
 		appWindows.delete(window);
 		runningTerminalSessionsByWindow.delete(windowWebContentsId);
+		confirmedWindowCloseWebContents.delete(windowWebContentsId);
 		tabBarRectsByWebContents.delete(windowWebContentsId);
 		pendingAdoptedProjects.delete(windowWebContentsId);
 		workspaceViewByWebContents.delete(windowWebContentsId);
@@ -4557,13 +4575,12 @@ ipcMain.handle(
 		if (typeof confirmedRunningWork !== 'boolean') {
 			throw new TypeError('desktop window lifecycle confirmation is invalid');
 		}
+		const target = BrowserWindow.fromWebContents(event.sender);
+		if (!target || target.isDestroyed()) return;
 		if (confirmedRunningWork) {
-			isQuitConfirmed = true;
-			isQuitting = true;
-			app.quit();
-			return;
+			confirmedWindowCloseWebContents.add(event.sender.id);
 		}
-		BrowserWindow.fromWebContents(event.sender)?.close();
+		target.close();
 	},
 );
 
