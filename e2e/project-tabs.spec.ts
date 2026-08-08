@@ -122,11 +122,6 @@ test.describe('project tabs', () => {
 				`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
 			),
 		).toBeVisible();
-		await popoutWindow.getByLabel('New terminal tab').click();
-		await expect(
-			popoutWindow.locator('.project-workspace--active .terminal-tab-title'),
-		).toHaveText(['Terminal 1', 'Terminal 2']);
-
 		await popoutWindow.reload();
 		await expect(popoutWindow.locator('.project-tab-title')).toHaveText([
 			'react-massive-table',
@@ -137,7 +132,12 @@ test.describe('project tabs', () => {
 		);
 		await expect(
 			popoutWindow.locator('.project-workspace--active .terminal-tab-title'),
-		).toHaveText(['Terminal 1', 'Terminal 2']);
+		).toHaveText(['Terminal 1']);
+		await expect(
+			popoutWindow.locator(
+				`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
+			),
+		).toBeVisible();
 	});
 
 	test('closing a busy torn-off project window leaves its sibling window alive', async ({
@@ -222,10 +222,10 @@ test.describe('project tabs', () => {
 			.toBe('Close Window');
 		await expect.poll(() => popoutWindow.isClosed()).toBe(true);
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(1);
-		await mainWindow.getByLabel('New terminal tab').click();
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-title'),
-		).toHaveText(['Terminal 1', 'Terminal 2']);
+		).toHaveText(['Terminal 1']);
+		await expectTerminalInputFocused(mainWindow);
 	});
 
 	test('adds, edits, switches, and closes project tabs', async ({
