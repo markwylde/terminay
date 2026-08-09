@@ -1,0 +1,52 @@
+name: Update Specification Progress
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - docs/spec-progress.svg
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: specification-progress-main
+  cancel-in-progress: true
+
+jobs:
+  update-widget:
+    if: ${{ github.server_url == 'https://git.i.wylde.net' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Test generator
+        run: node --test scripts/generate-spec-progress.test.mjs
+
+      - name: Generate widget
+        run: node scripts/generate-spec-progress.mjs --update-readme
+
+      - name: Commit updated widget
+        shell: bash
+        run: |
+          if git diff --quiet -- docs/spec-progress.svg README.md; then
+            echo "Specification progress is already current."
+            exit 0
+          fi
+
+          git config user.name "Terminay Actions"
+          git config user.email "actions@terminay.com"
+          git add docs/spec-progress.svg README.md
+          git commit -m "docs(specs): update progress widget [skip ci]"
+          git push origin HEAD:main
