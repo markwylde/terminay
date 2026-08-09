@@ -122,8 +122,8 @@ test('web image has an explicit static health and SPA fallback contract', async 
 		/apps\/terminay-web\/(Dockerfile|server\.mjs)/u,
 	);
 	assert.match(workflow, /Dockerfile\.web/u);
-	assert.match(workflow, /tags: \['v\*\.\*\.\*'\]/u);
 	assert.match(workflow, /workflow_dispatch:/u);
+	assert.doesNotMatch(workflow, /push:\s*\n\s+tags:/u);
 	assert.match(
 		workflow,
 		/IMAGE_NAME: ghcr\.io\/\$\{\{ github\.repository_owner \}\}\/terminay-web/u,

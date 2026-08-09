@@ -7,7 +7,11 @@ also pass the repository verifier.
 
 ## Publish and select the immutable image
 
-After the web-image workflow is merged to the default branch:
+The normal production path is the repository **Trigger Release** workflow. It
+builds the web image from the exact release tag and source commit, publishes
+matching `latest`, semantic-version, minor-version, and commit tags, and blocks
+final release-note publication until the image succeeds. The standalone
+web-image workflow is manual recovery only:
 
 ```sh
 gh workflow run web-image.yml --repo markwylde/terminay --ref main
