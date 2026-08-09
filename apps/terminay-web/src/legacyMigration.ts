@@ -53,7 +53,7 @@ export type LegacyMigrationResult =
 	  }>
 	| Readonly<{ status: 'recovery'; count: 0; message: string }>;
 
-/** Run on app.terminay.com. The offer travels in the browsing context's
+/** Run on the retired web.terminay.com authority. The offer travels in the browsing context's
  * window.name rather than a URL, request, referrer, log, or shared storage.
  * The legacy record remains untouched until the canonical origin acknowledges
  * a durable import and bounces back for cleanup. */
@@ -113,7 +113,7 @@ export function runLegacyManagerMigration(input: {
 	}
 }
 
-/** Run before rendering web.terminay.com. A valid offer is imported once. An
+/** Run before rendering the canonical app.terminay.com manager. A valid offer is imported once. An
  * acknowledgement is installed only after WebConnectionHost has committed the
  * canonical localStorage record; import failure leaves the offer and source
  * record available for retry. */

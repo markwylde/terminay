@@ -3,7 +3,7 @@ import test from 'node:test';
 import { acceptSessionSignalingUpgrade } from '../dist/index.js';
 
 const options = {
-	managerOrigin: 'https://web.terminay.com',
+	managerOrigin: 'https://app.terminay.com',
 	sessionOrigin: 'https://session-123.terminay.com',
 };
 
@@ -19,7 +19,7 @@ test('only the isolated session host can accept the signaling WebSocket upgrade'
 
 test('manager-only hosts and untrusted host routing cannot become signaling endpoints', () => {
 	for (const request of [
-		{ host: 'web.terminay.com', upgrade: 'websocket', url: '/signal' },
+		{ host: 'app.terminay.com', upgrade: 'websocket', url: '/signal' },
 		{ host: 'attacker.example.test', upgrade: 'websocket', url: '/signal' },
 		{ host: 'session-123.terminay.com', upgrade: 'websocket', url: '/other' },
 		{ host: 'session-123.terminay.com', upgrade: 'h2c', url: '/signal' },
@@ -47,8 +47,8 @@ test('the boundary refuses an unsafe configuration that collapses manager and se
 	assert.throws(
 		() =>
 			acceptSessionSignalingUpgrade(
-				{ host: 'web.terminay.com', upgrade: 'websocket', url: '/signal' },
-				{ managerOrigin: 'https://web.terminay.com', sessionOrigin: 'https://web.terminay.com' },
+				{ host: 'app.terminay.com', upgrade: 'websocket', url: '/signal' },
+				{ managerOrigin: 'https://app.terminay.com', sessionOrigin: 'https://app.terminay.com' },
 			),
 		/manager and session origins must be distinct/,
 	);

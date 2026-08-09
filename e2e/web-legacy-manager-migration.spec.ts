@@ -10,8 +10,8 @@ import {
 	startSharedWebShellFixture,
 } from './support/shared-web-shell-fixture';
 
-const LEGACY_ORIGIN = 'https://app.terminay.com';
-const MANAGER_ORIGIN = 'https://web.terminay.com';
+const LEGACY_ORIGIN = 'https://web.terminay.com';
+const MANAGER_ORIGIN = 'https://app.terminay.com';
 const SESSION_ORIGIN = 'https://workstation-one.sessions.example';
 const SESSION_CREDENTIAL_KEY = 'terminay.test.origin-bound-reconnect';
 

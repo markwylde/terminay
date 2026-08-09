@@ -480,7 +480,7 @@ export async function runDockerComposeWebServerSmoke({
 				serverRestartedWithoutRestartingWeb: true,
 			}),
 			limitations: [
-				'This smoke proves local compose web-to-server HTTP protocol connectivity and server restart recovery through the web proxy. It does not prove public web.terminay.com DNS/TLS/CDN deployment or WebRTC/TURN routing.',
+				'This smoke proves local compose web-to-server HTTP protocol connectivity and server restart recovery through the web proxy. It does not prove public app.terminay.com DNS/TLS/CDN deployment or WebRTC/TURN routing.',
 			],
 		});
 	} catch (error) {

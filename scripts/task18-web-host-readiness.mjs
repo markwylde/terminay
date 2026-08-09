@@ -3,7 +3,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-export const TASK18_WEB_MANAGER_ORIGIN = 'https://web.terminay.com'
+export const TASK18_WEB_MANAGER_ORIGIN = 'https://app.terminay.com'
 const WEB_PACKAGE = 'apps/terminay-web'
 const ARTIFACTS = ['dist/index.js', 'dist/index.d.ts']
 

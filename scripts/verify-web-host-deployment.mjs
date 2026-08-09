@@ -1,4 +1,4 @@
-const DEFAULT_ORIGIN = 'https://web.terminay.com';
+const DEFAULT_ORIGIN = 'https://app.terminay.com';
 
 export class WebHostDeploymentVerificationError extends Error {
 	constructor(message) {
