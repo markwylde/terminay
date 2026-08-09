@@ -15,7 +15,8 @@ node_modules/
 /build/webrtc-runtime/*
 !/build/webrtc-runtime/selection.json
 .release/
-/docs/
+/docs/*
+!/docs/spec-progress.svg
 
 # Logs
 logs/
