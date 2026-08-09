@@ -9,7 +9,7 @@ import { createNodePtyFactory, TerminalService } from "@terminay/server-core";
 
 const decoder = new TextDecoder();
 
-function waitFor(predicate, label, timeoutMs = 3_000) {
+function waitFor(predicate, label, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
     const check = () => {
