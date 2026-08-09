@@ -5,7 +5,7 @@
  * isolated session origin rather than with a URL supplied by the client.
  */
 export interface SignalingUpgradeBoundaryOptions {
-	/** Public, non-secret connection-manager origin (for example web.terminay.com). */
+	/** Public, non-secret connection-manager origin (for example app.terminay.com). */
 	readonly managerOrigin: string;
 	/** Exact isolated origin assigned to this Terminay Server session. */
 	readonly sessionOrigin: string;

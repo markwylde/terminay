@@ -248,7 +248,7 @@ and insertion into the intended terminal remain server-authorized operations.
   contain no store payloads. Project and recording references retain their
   original paths and explicitly report available, missing, inaccessible, or
   invalid roots; renderer-only layouts are reported as unrecoverable.
-- Legacy manager metadata is redirected to the `web.terminay.com` manager as a
+- Legacy manager metadata is restored by the `app.terminay.com` manager as a
   sanitized profile list; server trust state remains on the exact session
   origin. Pairing fragments, device keys, reconnect grants, and credentials
   are not part of the migrated manager record. An explicit failed-import

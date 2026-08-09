@@ -17,7 +17,7 @@ test('web image packages only the browser manager without Electron', async () =>
 
 	assert.match(manager, /<title>Terminay Connections<\/title>/u);
 	assert.match(managerModuleGraph, /Connections/u);
-	assert.match(managerModuleGraph, /web\.terminay\.com/u);
+	assert.match(managerModuleGraph, /app\.terminay\.com/u);
 	assert.doesNotMatch(
 		managerModuleGraph,
 		/ipcRenderer|electron\/|node:(?:fs|path|crypto|net)/u,
@@ -43,8 +43,8 @@ test('web image has an explicit static health and SPA fallback contract', async 
 	assert.match(nginx, /default_type application\/json/u);
 	assert.match(nginx, /return 200 '\{"ok":true\}\\n';/u);
 	assert.match(nginx, /location = \/\.well-known\/terminay-release\.json/u);
-	assert.match(nginx, /web\.terminay\.com web\.html;/u);
-	assert.match(nginx, /app\.terminay\.com legacy\.html;/u);
+	assert.match(nginx, /app\.terminay\.com web\.html;/u);
+	assert.match(nginx, /web\.terminay\.com legacy\.html;/u);
 	assert.match(nginx, /localhost web\.html;/u);
 	assert.match(nginx, /default "";/u);
 	assert.match(

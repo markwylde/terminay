@@ -8,6 +8,12 @@ complete enrollment, reconnect immediately, and return later through a saved
 connection without reusing the one-time link. Retire the legacy public manager
 only after its bounded, metadata-only migration path is working and verified.
 
+> Authority correction (2026-08-09): `app.terminay.com` is the canonical
+> connection manager. The earlier `web.terminay.com` conclusion in this audit
+> was incorrect. Historical observations below are retained as investigation
+> history; the governing feature specifications and deployment runbook use the
+> corrected authority.
+
 ## Governing specifications
 
 - [Connections and client hosts](../features/connections-and-client-hosts.md)
@@ -152,8 +158,8 @@ easier.
   digest through a non-secret artifact marker. Reject the legacy **Terminay
   Remote** document, a signaling-service fallback, missing/stale hashed assets,
   redirects, host-routing failures, and an otherwise healthy wrong origin.
-- [x] Make hostname routing fail closed: `web.terminay.com` serves only the
-  canonical static manager, `app.terminay.com` serves only the bounded migration
+- [x] Make hostname routing fail closed: `app.terminay.com` serves only the
+  canonical static manager, `web.terminay.com` serves only the bounded migration
   redirect, and session/signaling hosts retain their separate authority.
 - [ ] Publish the selected immutable image, update the Bunny origin and Host
   header, attach both hostnames to their intended behaviors, purge stale entry
@@ -236,10 +242,10 @@ easier.
   semantics.
 - No UI reports paired or saved until both protected reconnect material and
   sanitized metadata have been durably committed.
-- `web.terminay.com` serves the verified canonical manager and its hashed
+- `app.terminay.com` serves the verified canonical manager and its hashed
   assets with the required security headers; it never returns the signaling
   service's HTTP 421 host-boundary response.
-- `app.terminay.com` no longer serves an independently evolving manager. It
+- `web.terminay.com` no longer serves an independently evolving manager. It
   performs the bounded metadata migration/redirect or a safe no-data redirect.
 - Legacy migration never claims to copy origin-bound secrets. Pairing URLs,
   fragments, keys, grants, PINs, and application data are absent from manager
