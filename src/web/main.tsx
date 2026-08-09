@@ -241,6 +241,19 @@ function transportOriginForProfile(origin: string): string {
 	return shouldUseComposeProxy(parsed) ? window.location.origin : parsed.origin;
 }
 
+function shouldLaunchOnSessionOrigin(origin: string): boolean {
+	return (
+		window.location.origin === WEB_MANAGER_ORIGIN &&
+		new URL(origin).origin !== window.location.origin
+	);
+}
+
+function launchPairingOnSessionOrigin(rawUrl: string, origin: string): boolean {
+	if (!shouldLaunchOnSessionOrigin(origin)) return false;
+	openWindow(rawUrl, '_self');
+	return true;
+}
+
 function isBrowserReconnectOrigin(origin: string): boolean {
 	const parsed = new URL(origin);
 	if (parsed.protocol === 'https:') return true;
@@ -624,6 +637,8 @@ export default function WebManagerApp() {
 				// form. Generic token parsing must not weaken this transaction.
 				parsePairingBootstrap(rawServerUrl);
 				const pairingUrl = explicitWebRtcUrl ?? explicitDirectDeviceUrl!;
+				if (launchPairingOnSessionOrigin(rawServerUrl, pairingUrl.origin))
+					return;
 				const attempt = beginConnectionAttempt(`pairing:${pairingUrl.origin}`);
 				setPairingRequest({
 					attempt,
@@ -678,6 +693,8 @@ export default function WebManagerApp() {
 					'This server needs a pairing URL before it can be connected and saved.',
 				);
 			}
+			if (launchPairingOnSessionOrigin(rawServerUrl, parsed.displayOrigin))
+				return;
 			const displayUrl = new URL(parsed.displayOrigin);
 			const existing = host.profiles
 				.snapshot()
@@ -1165,6 +1182,10 @@ export default function WebManagerApp() {
 		const profile = host.profiles.get(profileId);
 		if (profile === undefined) {
 			setError('That server is no longer saved in this browser.');
+			return;
+		}
+		if (shouldLaunchOnSessionOrigin(profile.origin)) {
+			host.open(profileId, { newTab });
 			return;
 		}
 		if (recovering) {
