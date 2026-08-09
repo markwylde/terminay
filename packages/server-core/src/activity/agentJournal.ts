@@ -285,10 +285,13 @@ async function psDescendants(shellPid: number): Promise<number[]> {
 
 async function linuxDescendants(shellPid: number): Promise<number[]> {
   const children = new Map<number, number[]>();
-  for (const entry of await readdir("/proc", { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
-    const pid = Number(entry.name);
-    const value = await readFile(join("/proc", entry.name, "stat"), "utf8").catch(() => "");
+  // Process directories can disappear at any point. Reading names avoids the
+  // implicit lstat that `withFileTypes` may perform on procfs entries, while
+  // the guarded stat read below handles the normal exit race per process.
+  for (const entry of await readdir("/proc")) {
+    if (!/^\d+$/u.test(entry)) continue;
+    const pid = Number(entry);
+    const value = await readFile(join("/proc", entry, "stat"), "utf8").catch(() => "");
     const closing = value.lastIndexOf(")");
     const parent = Number(value.slice(closing + 2).split(/\s+/u)[1]);
     if (Number.isSafeInteger(parent)) children.set(parent, [...(children.get(parent) ?? []), pid]);
