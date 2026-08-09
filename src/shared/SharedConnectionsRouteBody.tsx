@@ -2,7 +2,6 @@ import type {
 	ConnectionProfile,
 	ConnectionProfileStore,
 } from '@terminay/client-core';
-import type { FormEvent } from 'react';
 import { useState } from 'react';
 
 interface ConnectionSummary {
@@ -64,7 +63,6 @@ export function SharedConnectionsRouteBody({
 	}>();
 	const [rename, setRename] = useState<ConnectionProfile>();
 	const [renameLabel, setRenameLabel] = useState('');
-	const [showAdd, setShowAdd] = useState(false);
 	const [showImport, setShowImport] = useState(false);
 	const [showPair, setShowPair] = useState(false);
 	const [importText, setImportText] = useState('');
@@ -75,6 +73,22 @@ export function SharedConnectionsRouteBody({
 	);
 	const visibleConnections = profiles ?? connections;
 	const currentId = snapshot?.currentProfileId ?? activeConnectionId;
+	const profileActions =
+		profileStore === undefined ? null : (
+			<nav
+				className="shared-connections__profile-actions"
+				aria-label="Connection profile actions"
+			>
+				{canPair && onPairingHandoff !== undefined && (
+					<button type="button" onClick={() => setShowPair(true)}>
+						Add connection…
+					</button>
+				)}
+				<button type="button" onClick={() => setShowImport(true)}>
+					Advanced: import profile metadata
+				</button>
+			</nav>
+		);
 
 	const mutate = async (
 		key: string,
@@ -99,26 +113,6 @@ export function SharedConnectionsRouteBody({
 		}
 	};
 
-	const addProfile = (event: FormEvent<HTMLFormElement>) => {
-		event.preventDefault();
-		if (profileStore === undefined) return;
-		const data = new FormData(event.currentTarget);
-		void mutate(
-			'add',
-			async () => {
-				const profile = profileStore.remember({
-					serverId: String(data.get('serverId') ?? ''),
-					label: String(data.get('label') ?? ''),
-					origin: String(data.get('origin') ?? ''),
-					status: 'offline',
-				});
-				await onRemember?.(profile);
-				setShowAdd(false);
-			},
-			'Connection profile added.',
-		);
-	};
-
 	const importProfile = () => {
 		if (profileStore === undefined) return;
 		void mutate(
@@ -129,7 +123,7 @@ export function SharedConnectionsRouteBody({
 				setImportText('');
 				setShowImport(false);
 			},
-			'Connection profile imported.',
+			'Profile metadata imported. Pairing is required before connecting.',
 		);
 	};
 
@@ -172,7 +166,10 @@ export function SharedConnectionsRouteBody({
 				</p>
 			)}
 			{state === 'empty' && (
-				<p role="status">No saved servers are available.</p>
+				<>
+					<p role="status">No saved servers are available.</p>
+					{profileActions}
+				</>
 			)}
 			{state === 'unavailable' && (
 				<p role="status">Connection management is unavailable in this host.</p>
@@ -194,8 +191,8 @@ export function SharedConnectionsRouteBody({
 							<div className="shared-connections__empty">
 								<strong>No saved servers yet</strong>
 								<span>
-									Connect with a pairing URL or add a server profile to make
-									switching quick next time.
+									Add a connection with its pairing URL. Saved metadata that
+									lacks credentials will still require pairing.
 								</span>
 							</div>
 						)}
@@ -323,24 +320,7 @@ export function SharedConnectionsRouteBody({
 							);
 						})}
 					</div>
-					{profileStore !== undefined && (
-						<nav
-							className="shared-connections__profile-actions"
-							aria-label="Connection profile actions"
-						>
-							<button type="button" onClick={() => setShowAdd(true)}>
-								Add server
-							</button>
-							<button type="button" onClick={() => setShowImport(true)}>
-								Import profile
-							</button>
-							{canPair && onPairingHandoff !== undefined && (
-								<button type="button" onClick={() => setShowPair(true)}>
-									Pair device
-								</button>
-							)}
-						</nav>
-					)}
+					{profileActions}
 				</>
 			)}
 			{busy !== undefined && (
@@ -404,35 +384,15 @@ export function SharedConnectionsRouteBody({
 					</button>
 				</section>
 			)}
-			{showAdd && (
-				<form
-					aria-label="Add connection"
-					className="shared-connections__action-panel shared-connections__action-panel--fields"
-					onSubmit={addProfile}
-				>
-					<label>
-						Server ID
-						<input name="serverId" required />
-					</label>
-					<label>
-						Name
-						<input name="label" required />
-					</label>
-					<label>
-						Origin
-						<input name="origin" type="url" required />
-					</label>
-					<button type="submit">Save server</button>
-					<button type="button" onClick={() => setShowAdd(false)}>
-						Cancel
-					</button>
-				</form>
-			)}
 			{showImport && (
 				<section
-					aria-label="Import connection"
+					aria-label="Advanced profile metadata import"
 					className="shared-connections__action-panel"
 				>
+					<p>
+						This imports non-secret connection metadata only. You will need a
+						fresh pairing URL before this browser can connect.
+					</p>
 					<label>
 						Profile metadata
 						<textarea
@@ -441,7 +401,7 @@ export function SharedConnectionsRouteBody({
 						/>
 					</label>
 					<button type="button" onClick={importProfile}>
-						Import
+						Import metadata
 					</button>
 					<button type="button" onClick={() => setShowImport(false)}>
 						Cancel
@@ -450,7 +410,7 @@ export function SharedConnectionsRouteBody({
 			)}
 			{showPair && (
 				<form
-					aria-label="Pair device"
+					aria-label="Add connection"
 					className="shared-connections__action-panel"
 					onSubmit={(event) => {
 						event.preventDefault();
@@ -462,7 +422,7 @@ export function SharedConnectionsRouteBody({
 								setPairingUrl('');
 								setShowPair(false);
 							},
-							'Pairing handoff accepted.',
+							'Pairing details accepted. Complete enrollment to save this connection.',
 						);
 					}}
 				>
