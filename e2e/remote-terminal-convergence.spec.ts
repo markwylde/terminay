@@ -266,6 +266,12 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await page.waitForTimeout(500);
 		await expect(desktopPanel).not.toContainText(rejectedInput);
 
+		// A resubscription snapshot can briefly cover the already-rendered control
+		// after the output proofs converge. Wait for the terminal's actual
+		// interactive boundary instead of making click retry timing the assertion.
+		await expect(browserPanel.locator('.terminal-panel-loading')).toHaveCount(0, {
+			timeout: 15_000,
+		});
 		await browserPanel
 			.getByRole('button', { name: 'Take back control of terminal' })
 			.click();
@@ -292,6 +298,9 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expect(browserPanel).toContainText(takeoverProof);
 		await expect(desktopPanel).toContainText(takeoverProof);
 
+		await expect(desktopPanel.locator('.terminal-panel-loading')).toHaveCount(0, {
+			timeout: 15_000,
+		});
 		await desktopPanel
 			.getByRole('button', { name: 'Take back control of terminal' })
 			.click();
