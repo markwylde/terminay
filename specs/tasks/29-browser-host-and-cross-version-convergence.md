@@ -42,8 +42,8 @@ same bundle id or cover compatible older/current/newer host and server fixtures.
   origin.
 - [ ] Pass only the Task 27 browser host context and opaque byte endpoint across
   a closed exact-source/exact-origin bridge.
-- [ ] Keep `web.terminay.com` canonical and retain only sanitized
-  `app.terminay.com` migration unless a separate domain/product task changes it.
+- [ ] Keep `app.terminay.com` canonical, preserve its same-origin sanitized
+  profile metadata, and use `web.terminay.com` only as a retired redirect.
 
 ### Origin, cache, and credential isolation
 
