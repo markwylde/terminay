@@ -32,7 +32,7 @@ async function openEnrollment(page: import('@playwright/test').Page) {
 		name: 'Connect to Remote Server',
 	});
 	await connect.getByLabel('Pairing URL').fill(pairingUrl());
-	await connect.getByRole('button', { name: 'Connect' }).click();
+	await connect.getByRole('button', { name: 'Connect', exact: true }).click();
 	return page.getByRole('dialog', { name: 'Enroll browser device' });
 }
 
@@ -116,4 +116,99 @@ test('cancelling PIN enrollment persists neither pairing material nor a profile'
 	expect(persisted ?? '').not.toContain('paired.example.test');
 	expect(persisted ?? '').not.toContain('pairing-token-browser-pin');
 	expect(persisted ?? '').not.toContain('123456');
+});
+
+test('an expired pairing handoff fails before enrollment and saves nothing', async ({
+	page,
+}) => {
+	const expiredUrl = `https://expired.example.test/?transport=webrtc#${new URLSearchParams({
+		pairingExpiresAt: new Date(Date.now() - 60_000).toISOString(),
+		pairingSessionId: 'expired-browser-pairing',
+		pairingToken: 'expired-browser-token-0123456789abcdef',
+	})}`;
+	await page.goto(`${fixture.origin}/web.html`, {
+		waitUntil: 'domcontentloaded',
+		timeout: 15_000,
+	});
+	const connect = page.getByRole('dialog', {
+		name: 'Connect to Remote Server',
+	});
+	await connect.getByLabel('Pairing URL').fill(expiredUrl);
+	await connect.getByRole('button', { name: 'Connect', exact: true }).click();
+	await expect(connect.getByRole('alert')).toContainText('expired');
+	await expect(
+		page.getByRole('dialog', { name: 'Enroll browser device' }),
+	).toHaveCount(0);
+	const persisted = await page.evaluate(
+		(key) => localStorage.getItem(key),
+		WEB_PROFILE_STORAGE_KEY,
+	);
+	expect(persisted ?? '').not.toContain('expired.example.test');
+	expect(persisted ?? '').not.toContain('expired-browser-pairing');
+});
+
+test('a pairing link missing its token fails before enrollment and saves nothing', async ({
+	page,
+}) => {
+	const invalidUrl = `https://invalid.example.test/?transport=webrtc#${new URLSearchParams({
+		pairingExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+		pairingSessionId: 'missing-token-browser-pairing',
+	})}`;
+		await page.goto(`${fixture.origin}/web.html`, {
+			waitUntil: 'domcontentloaded',
+			timeout: 15_000,
+		});
+		const connect = page.getByRole('dialog', {
+			name: 'Connect to Remote Server',
+		});
+		await connect.getByLabel('Pairing URL').fill(invalidUrl);
+		await connect.getByRole('button', { name: 'Connect', exact: true }).click();
+		await expect(connect.getByRole('alert')).toBeVisible();
+		await expect(
+			page.getByRole('dialog', { name: 'Enroll browser device' }),
+		).toHaveCount(0);
+		const persisted = await page.evaluate(
+			(key) => localStorage.getItem(key),
+			WEB_PROFILE_STORAGE_KEY,
+		);
+		expect(persisted ?? '').not.toContain(new URL(invalidUrl).origin);
+	expect(persisted ?? '').not.toContain('browser-pairing');
+});
+
+test('a wrong PIN reports the server denial and persists no connection', async ({
+	page,
+}) => {
+	let submittedPin: string | undefined;
+	await page.route(`${fixture.origin}/api/pairing/start`, async (route) => {
+		const body = route.request().postDataJSON() as { pairingPin?: string };
+		submittedPin = body.pairingPin;
+		await route.fulfill({
+			body: JSON.stringify({ error: 'Pairing PIN is incorrect.' }),
+			contentType: 'application/json',
+			status: 403,
+		});
+	});
+	const fragment = new URLSearchParams({
+		pairingExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+		pairingFlow: 'device',
+		pairingSessionId: 'wrong-pin-browser-pairing',
+		pairingToken: 'wrong-pin-browser-token-0123456789abcdef',
+	});
+	await page.goto(`${fixture.origin}/web.html#${fragment}`);
+	const enrollment = page.getByRole('dialog', {
+		name: 'Enroll browser device',
+	});
+	await enrollment.getByLabel('Device name').fill('Wrong PIN browser');
+	await enrollment.getByLabel('Pairing PIN').fill('654321');
+	await enrollment.getByRole('button', { name: 'Pair and connect' }).click();
+	await expect(enrollment.getByRole('alert')).toContainText(
+		'Pairing PIN is incorrect.',
+	);
+	expect(submittedPin).toBe('654321');
+	const persisted = await page.evaluate(
+		(key) => localStorage.getItem(key),
+		WEB_PROFILE_STORAGE_KEY,
+	);
+	expect(persisted ?? '').not.toContain('wrong-pin-browser-pairing');
+	expect(persisted ?? '').not.toContain('Wrong PIN browser');
 });

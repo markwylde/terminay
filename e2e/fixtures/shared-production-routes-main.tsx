@@ -42,6 +42,28 @@ connectionProfiles.remember({
 	origin: 'https://terminay.example',
 	status: 'offline',
 });
+const canonicalConnectionStates = [
+	{ label: 'Disconnected', status: 'offline' },
+	{ label: 'Unreachable', status: 'unreachable' },
+	{ label: 'Expired', status: 'expired' },
+	{ label: 'Revoked', status: 'revoked' },
+	{ label: 'Already connected', status: 'connected' },
+] as const;
+const canonicalConnectionStateStores = canonicalConnectionStates.map(
+	({ label, status }) => {
+		const store = new ConnectionProfileStore({ local: false });
+		const profile = store.remember({
+			id: `server:${status}`,
+			serverId: `server:${status}`,
+			label,
+			origin: `https://${status}.example`,
+			status,
+		});
+		if (status === 'connected') store.select(profile.id);
+		return { label, store };
+	},
+);
+const emptyConnectionStateStore = new ConnectionProfileStore({ local: false });
 const mobileLifecycleActions: string[] = [];
 (
 	window as unknown as { __mobileLifecycleActions: string[] }
@@ -1060,6 +1082,29 @@ createRoot(document.getElementById('root')!).render(
 				connectionActions.push('pair');
 			}}
 		/>
+		<section aria-label="Empty Connections state">
+			<SharedConnectionsRouteBody
+				state="empty"
+				profileStore={emptyConnectionStateStore}
+				canPair
+				onPairingHandoff={(pairingUrl) => {
+					connectionActions.push(`empty-pair:${pairingUrl}`);
+				}}
+			/>
+		</section>
+		{canonicalConnectionStateStores.map(({ label, store }) => (
+			<section key={label} aria-label={`${label} Connections state`}>
+				<SharedConnectionsRouteBody
+					state="ready"
+					profileStore={store}
+					canPair
+					onSelect={() => undefined}
+					onPairingHandoff={(pairingUrl) => {
+						connectionActions.push(`${label}-pair:${pairingUrl}`);
+					}}
+				/>
+			</section>
+		))}
 		<SharedConnectionsRouteBody state="loading" connections={[]} />
 		<SharedConnectionsRouteBody state="empty" connections={[]} />
 		<SharedConnectionsRouteBody state="unavailable" connections={[]} />

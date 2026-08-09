@@ -59,7 +59,21 @@ function readSinglePairingField(params: URLSearchParams, name: string, maximumLe
   return value
 }
 
-export function parsePairingBootstrap(input: string): PairingBootstrap {
+function validatePairingExpiry(
+  bootstrap: PairingBootstrap,
+  now: number,
+): PairingBootstrap {
+  const expiresAt = Date.parse(bootstrap.pairingExpiresAt)
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+    throw new Error('Pairing payload is expired or has an invalid expiry.')
+  }
+  return bootstrap
+}
+
+export function parsePairingBootstrap(
+  input: string,
+  now = Date.now(),
+): PairingBootstrap {
   const trimmed = normalizePairingInput(input)
   if (!trimmed) {
     throw new Error('Pairing details are missing.')
@@ -67,7 +81,7 @@ export function parsePairingBootstrap(input: string): PairingBootstrap {
 
   const fromUrl = parseFromUrl(trimmed)
   if (fromUrl) {
-    return fromUrl
+    return validatePairingExpiry(fromUrl, now)
   }
 
   if (trimmed.startsWith('{')) {
@@ -77,11 +91,11 @@ export function parsePairingBootstrap(input: string): PairingBootstrap {
       typeof parsed.pairingToken === 'string' &&
       typeof parsed.pairingExpiresAt === 'string'
     ) {
-      return {
+      return validatePairingExpiry({
         pairingExpiresAt: parsed.pairingExpiresAt,
         pairingSessionId: parsed.pairingSessionId,
         pairingToken: parsed.pairingToken,
-      }
+      }, now)
     }
   }
 

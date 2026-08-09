@@ -10,6 +10,7 @@ export default defineConfig({
 		emptyOutDir: true,
 		rollupOptions: {
 			input: {
+				legacy: path.resolve(__dirname, 'legacy.html'),
 				web: path.resolve(__dirname, 'web.html'),
 			},
 		},

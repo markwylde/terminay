@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b1119" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Moving saved Terminay connections</title>
+  </head>
+  <body>
+    <main aria-labelledby="legacy-migration-title">
+      <h1 id="legacy-migration-title">Moving your saved connections</h1>
+      <p id="legacy-migration-status" role="status">Taking you to the current Terminay connection manager…</p>
+      <button id="legacy-migration-retry" type="button" hidden>Try again</button>
+      <p>Your saved connection names and server addresses can be moved. For your security, credentials are never copied; you may need to pair again.</p>
+    </main>
+    <script type="module" src="/src/web/legacyManager.ts"></script>
+  </body>
+</html>
