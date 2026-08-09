@@ -86,7 +86,7 @@ test("web host starts disconnected, persists only profile metadata, and opens th
   assert.equal(host.profiles.get(profile.id)?.lastOpenedAt, productionLastOpenedAt);
   assert.equal(host.revoke(second.id, true).status, "revoked");
   assert.equal(host.profiles.get("prod")?.status, "connected");
-  assert.equal(host.openManager(), "https://web.terminay.com");
+  assert.equal(host.openManager(), "https://app.terminay.com");
   assert.deepEqual(opened.at(-1), { url: WEB_MANAGER_ORIGIN, target: "_self" });
   host.openManager(true);
   assert.deepEqual(opened.at(-1), { url: WEB_MANAGER_ORIGIN, target: "_blank" });
