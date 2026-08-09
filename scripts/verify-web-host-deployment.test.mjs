@@ -44,10 +44,10 @@ test('deployment verifier requires health, manager HTML, security headers, and l
 	});
 	assert.equal(result.shell, true);
 	assert.deepEqual(calls, [
-		'https://web.terminay.com/healthz',
-		'https://web.terminay.com/.well-known/terminay-release.json',
-		'https://web.terminay.com/',
-		'https://web.terminay.com/assets/web-abcdefgh.js',
+		'https://app.terminay.com/healthz',
+		'https://app.terminay.com/.well-known/terminay-release.json',
+		'https://app.terminay.com/',
+		'https://app.terminay.com/assets/web-abcdefgh.js',
 	]);
 });
 

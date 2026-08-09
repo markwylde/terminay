@@ -65,7 +65,7 @@ versioned workspace renderer.
 
 ### Client hosts
 
-Terminay Desktop and `web.terminay.com` are protocol-blind connection hosts
+Terminay Desktop and `app.terminay.com` are protocol-blind connection hosts
 around the shared server-bundled workspace UI. They own connection bootstrap,
 credential protection, verified bundle installation, and host presentation;
 they do not interpret or persist application-protocol workspace state.

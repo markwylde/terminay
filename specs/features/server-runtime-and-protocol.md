@@ -31,7 +31,7 @@ Terminay has four distinct runtime roles:
 2. **Terminay Desktop** owns native application windows, local-server
    supervision, OS integration, connection credentials, verified bundle
    installation, and opaque local/remote transport delivery.
-3. **The web connection host** at `web.terminay.com` owns browser-local
+3. **The web connection host** at `app.terminay.com` owns browser-local
    connection metadata and launches or embeds an origin-isolated server UI.
 4. **The hosted bootstrap/signaling service** owns only static bootstrap,
    manager-shell, WebRTC signaling, and operational relay state. It never
@@ -314,7 +314,7 @@ inspect the application protocol.
 - The hosted bootstrap refuses incomplete, oversized, path-unsafe, or
   hash-invalid bundles.
 - A server UI remains usable when opened directly at its session origin.
-- `web.terminay.com` is not a second independently evolving full workspace
+- `app.terminay.com` is not a second independently evolving full workspace
   build. It is a stable connection host around the selected server's bundle.
 - A Desktop remote connection downloads and commits the selected server's
   bundle before opening its sandboxed connection window. Desktop does not run
@@ -434,7 +434,7 @@ the probed bytes to the checked-out commit and proves that worktree clean.
 ## Non-goals
 
 - No cloud storage or proxying of workspace/application data.
-- No independent latest workspace application at `web.terminay.com`.
+- No independent latest workspace application at `app.terminay.com`.
 - No requirement that Local connections use WebRTC.
 - No peer-to-peer collaborative text editing.
 - No promise that PTYs survive a server-process or machine restart.
