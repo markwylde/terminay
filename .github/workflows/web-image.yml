@@ -1,6 +1,7 @@
 name: Web image
 
 on:
+  workflow_dispatch:
   push:
     tags: ['v*.*.*']
 
@@ -40,6 +41,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify the actual production image locally
+        run: npm run test:web-image-integration
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         id: build
         with:
@@ -51,6 +54,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           sbom: true
           provenance: mode=max
+          build-args: |
+            TERMINAY_SOURCE_REVISION=${{ github.sha }}
       - name: Record immutable web image
         shell: bash
         run: |

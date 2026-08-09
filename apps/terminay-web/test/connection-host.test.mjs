@@ -7,6 +7,7 @@ import {
   WEB_MANAGER_ORIGIN,
   WebConnectionHost,
   WebHostBridge,
+	commitPairedWebConnection,
   createWebFileSelectionActionModel,
   createWebWorkspaceRouteRenderModel,
   sessionUrl,
@@ -389,6 +390,82 @@ test("browser reconnect vault never releases an in-flight proof after fresh pair
   await assert.rejects(staleProof, /credential changed while signing/);
   await assert.rejects(vault.sign({ origin, handle: oldHandle, signingInput }), /credential is unavailable/);
   assert.equal((await vault.credential(origin))?.handle, newHandle);
+});
+
+test("reversible reconnect enrollment restores the exact-origin credential after interrupted profile persistence", async () => {
+  const origin = "https://pair.example.test";
+  const vault = new MemoryWebReconnectVault();
+  const oldHandle = "old-reconnect-handle-0123456789abcdef";
+  const replacementHandle = "replacement-handle-0123456789abcdef";
+  await vault.enroll({ origin, handle: oldHandle, grant: "old-reconnect-grant-0123456789abcdef", signingOrigin: origin });
+
+  const replacement = await vault.enrollReversibly({ origin, handle: replacementHandle, grant: "new-reconnect-grant-0123456789abcdef", signingOrigin: origin });
+  assert.equal((await vault.credential(origin))?.handle, replacementHandle);
+  await replacement.rollback();
+  assert.equal((await vault.credential(origin))?.handle, oldHandle);
+});
+
+test("a stale enrollment rollback cannot overwrite a newer exact-origin pairing", async () => {
+  const origin = "https://pair.example.test";
+  const vault = new MemoryWebReconnectVault();
+  const interrupted = await vault.enrollReversibly({ origin, handle: "interrupted-handle-0123456789abcdef", grant: "interrupted-grant-0123456789abcdef", signingOrigin: origin });
+  await vault.enroll({ origin, handle: "newest-reconnect-handle-0123456789abcdef", grant: "newest-reconnect-grant-0123456789abcdef", signingOrigin: origin });
+
+  await interrupted.rollback();
+  assert.equal((await vault.credential(origin))?.handle, "newest-reconnect-handle-0123456789abcdef");
+});
+
+test("paired connection commit rolls reconnect replacement back when metadata persistence is interrupted", async () => {
+  const origin = "https://pair.example.test";
+  const vault = new MemoryWebReconnectVault();
+  const host = new WebConnectionHost({
+    storage: {
+      getItem() { return null; },
+      removeItem() {},
+      setItem() { throw new Error("localStorage quota exceeded"); },
+    },
+  });
+  await vault.enroll({ origin, handle: "old-reconnect-handle-0123456789abcdef", grant: "old-reconnect-grant-0123456789abcdef", signingOrigin: origin });
+
+  await assert.rejects(commitPairedWebConnection({
+    vault,
+    enrollment: { origin, handle: "replacement-handle-0123456789abcdef", grant: "replacement-grant-0123456789abcdef", signingOrigin: origin },
+    persistProfile: () => host.addConnection({ id: "pair", serverId: "server-pair", label: "Pair", origin, status: "connected" }),
+  }), /quota exceeded/);
+  assert.equal((await vault.credential(origin))?.handle, "old-reconnect-handle-0123456789abcdef");
+  assert.equal(host.snapshot().profiles.profiles.length, 0);
+});
+
+test("paired connection commit upserts one profile for an exact-origin re-pair", async () => {
+  const origin = "https://pair.example.test";
+  const vault = new MemoryWebReconnectVault();
+  const host = new WebConnectionHost({ storage: memoryStorage() });
+  const first = host.addConnection({ id: "first", serverId: "server-pair", label: "First", origin, status: "expired" });
+  const paired = await commitPairedWebConnection({
+    vault,
+    enrollment: { origin, handle: "replacement-handle-0123456789abcdef", grant: "replacement-grant-0123456789abcdef", signingOrigin: origin },
+    persistProfile: () => host.addConnection({ id: "random-new-id", serverId: "server-pair", label: "Re-paired", origin, status: "connected" }),
+  });
+  assert.equal(paired.id, first.id);
+  assert.equal(host.snapshot().profiles.profiles.length, 1);
+  assert.equal((await vault.credential(origin))?.handle, "replacement-handle-0123456789abcdef");
+});
+
+test("failed fresh pairing keeps remembered metadata and does not report a credential", async () => {
+  const origin = "https://pair.example.test";
+  const vault = new MemoryWebReconnectVault();
+  const host = new WebConnectionHost({ storage: memoryStorage() });
+  const remembered = host.addConnection({ id: "remembered", serverId: "server-pair", label: "Remembered", origin, status: "expired" });
+  let metadataCommitted = false;
+
+  await assert.rejects(commitPairedWebConnection({
+    vault,
+    enrollment: { origin, handle: "replacement-handle-0123456789abcdef", grant: "short", signingOrigin: origin },
+    persistProfile() { metadataCommitted = true; return remembered; },
+  }), /enrollment is invalid/);
+  assert.equal(metadataCommitted, false);
+  assert.equal(await vault.credential(origin), undefined);
+  assert.equal(host.snapshot().profiles.profiles[0].status, "expired");
 });
 
 test("browser reconnect vault signs only the canonical exact-origin challenge", async () => {

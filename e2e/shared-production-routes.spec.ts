@@ -529,12 +529,15 @@ for (const viewport of [
 			).__connectionActions.length = 0;
 		});
 		await connections.getByRole('button', { name: 'Expose server' }).click();
-		await connections.getByRole('button', { name: 'Pair device' }).click();
-		const pairing = connections.getByRole('form', { name: 'Pair device' });
+		await connections.getByRole('button', { name: 'Add connection…' }).click();
+		const pairing = connections.getByRole('form', { name: 'Add connection' });
 		await pairing
 			.getByLabel('Pairing URL')
 			.fill('https://terminay.example/pair#one-time-secret');
 		await pairing.getByRole('button', { name: 'Continue pairing' }).click();
+		await expect(connections.getByRole('status')).toContainText(
+			'Complete enrollment to save this connection.',
+		);
 		const remote = connections.getByRole('option', { name: /Remote offline/u });
 		await remote.getByRole('button', { name: 'Remote' }).click();
 		await expect(remote).toHaveAttribute('aria-selected', 'true');
@@ -542,22 +545,21 @@ for (const viewport of [
 		const rename = connections.getByRole('form', { name: 'Rename connection' });
 		await rename.getByLabel('Connection name').fill('Remote renamed');
 		await rename.getByRole('button', { name: 'Save name' }).click();
-		await connections.getByRole('button', { name: 'Add server' }).click();
-		const add = connections.getByRole('form', { name: 'Add connection' });
-		await add.getByLabel('Server ID').fill('server:added');
-		await add.getByLabel('Name').fill('Added');
-		await add.getByLabel('Origin').fill('https://added.example');
-		await add.getByRole('button', { name: 'Save server' }).click();
-		await connections.getByRole('button', { name: 'Import profile' }).click();
+		await connections
+			.getByRole('button', { name: 'Advanced: import profile metadata' })
+			.click();
 		const importRegion = connections.getByRole('region', {
-			name: 'Import connection',
+			name: 'Advanced profile metadata import',
 		});
+		await expect(importRegion).toContainText(
+			'imports non-secret connection metadata only',
+		);
 		await importRegion
 			.getByLabel('Profile metadata')
 			.fill(
 				'{"id":"imported:test","serverId":"server:imported","label":"Imported","origin":"https://imported.example","status":"offline"}',
 			);
-		await importRegion.getByRole('button', { name: 'Import' }).click();
+		await importRegion.getByRole('button', { name: 'Import metadata' }).click();
 		const renamed = connections.getByRole('option', {
 			name: /Remote renamed offline/u,
 		});
@@ -588,7 +590,6 @@ for (const viewport of [
 				'select:remote:test',
 				'revoke:remote:test',
 			]);
-		await expect(connections).toContainText('Added');
 		await expect(connections).toContainText('Imported');
 		await expect(connections).not.toContainText('Remote renamed');
 		const git = page.locator('[data-shared-route-body="git"]').first();
@@ -600,8 +601,34 @@ for (const viewport of [
 			'true',
 		);
 		await expect(
-			page.getByText('No saved servers are available.'),
+			page.getByText('No saved servers are available.').first(),
 		).toBeVisible();
+		for (const state of [
+			'Empty',
+			'Disconnected',
+			'Unreachable',
+			'Expired',
+			'Revoked',
+			'Already connected',
+		] as const) {
+			const stateRegion = page.getByRole('region', {
+				name: `${state} Connections state`,
+			});
+			const addConnection = stateRegion.getByRole('button', {
+				name: 'Add connection…',
+			});
+			await expect(addConnection).toBeVisible();
+			await addConnection.focus();
+			await page.keyboard.press('Enter');
+			const addForm = stateRegion.getByRole('form', {
+				name: 'Add connection',
+			});
+			await expect(addForm.getByLabel('Pairing URL')).toBeEditable();
+			await addForm.getByLabel('Pairing URL').fill(
+				`https://${state.toLowerCase().replaceAll(' ', '-')}.example/#pairingToken=${'a'.repeat(32)}`,
+			);
+			await addForm.getByRole('button', { name: 'Cancel' }).click();
+		}
 		await expect(
 			page.getByText('Connection management is unavailable in this host.'),
 		).toBeVisible();
