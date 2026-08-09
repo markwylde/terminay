@@ -93,6 +93,7 @@
 		"test:task6-runtime-layout": "node --test scripts/task6-runtime-layout.test.mjs",
 		"test:ghcr-image": "node --test scripts/ghcr-image.test.mjs",
 		"test:web-image": "npm run build:shared && npm run build --workspace @terminay/web && npm run typecheck:web && npm run build:web && node --test scripts/web-image.test.mjs",
+		"test:web-image-integration": "node --test scripts/web-image-integration.test.mjs",
 		"test:web-build-contract": "npm run build:web && node --test scripts/web-build-contract.test.mjs",
 		"test:task20-artifact-contract": "node --test scripts/task20-release-artifact.test.mjs scripts/task20-release-lifecycle.test.mjs",
 		"test:docker-pairing-smoke": "node --test scripts/docker-pairing-smoke.test.mjs",

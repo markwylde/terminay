@@ -31,3 +31,17 @@ test('rejects ambiguous or control-bearing pairing frames before a client can se
     /invalid pairingToken/u,
   )
 })
+
+test('rejects malformed and expired pairing frames at or before the current instant', () => {
+  const boundary = Date.parse(expiresAt)
+  assert.deepEqual(
+    parsePairingBootstrap(fragmentUrl, boundary - 1),
+    { pairingExpiresAt: expiresAt, pairingSessionId: 'session-a', pairingToken: 'one-time-token' },
+  )
+  assert.throws(() => parsePairingBootstrap(fragmentUrl, boundary), /expired or has an invalid expiry/u)
+  assert.throws(() => parsePairingBootstrap(fragmentUrl, boundary + 1), /expired or has an invalid expiry/u)
+  assert.throws(
+    () => parsePairingBootstrap(JSON.stringify({ pairingExpiresAt: 'not-a-date', pairingSessionId: 'session-a', pairingToken: 'one-time-token' }), boundary),
+    /expired or has an invalid expiry/u,
+  )
+})
