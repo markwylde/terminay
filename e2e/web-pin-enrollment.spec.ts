@@ -36,6 +36,45 @@ async function openEnrollment(page: import('@playwright/test').Page) {
 	return page.getByRole('dialog', { name: 'Enroll browser device' });
 }
 
+test('canonical manager hands a pairing URL to its exact session origin', async ({
+	page,
+}) => {
+	await page.route('https://app.terminay.com/**', async (route) => {
+		const requested = new URL(route.request().url());
+		const upstream = new URL(
+			`${requested.pathname}${requested.search}`,
+			fixture.origin,
+		);
+		await route.fulfill({ response: await route.fetch({ url: upstream.toString() }) });
+	});
+	await page.route('https://session-handoff.example.test/**', async (route) => {
+		await route.fulfill({
+			body: '<!doctype html><title>Session handoff</title>',
+			contentType: 'text/html',
+		});
+	});
+
+	await page.goto('https://app.terminay.com/web.html', {
+		waitUntil: 'domcontentloaded',
+		timeout: 15_000,
+	});
+	const fragment = new URLSearchParams({
+		pairingExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+		pairingFlow: 'device',
+		pairingSessionId: 'manager-session-handoff',
+		pairingToken: 'manager-session-handoff-token-0123456789abcdef',
+	});
+	const pairingUrl = `https://session-handoff.example.test/#${fragment}`;
+	const connect = page.getByRole('dialog', {
+		name: 'Connect to Remote Server',
+	});
+	await connect.getByLabel('Pairing URL').fill(pairingUrl);
+	await connect.getByRole('button', { name: 'Connect', exact: true }).click();
+
+	await page.waitForURL(pairingUrl);
+	await expect(page).toHaveTitle('Session handoff');
+});
+
 test('browser pairing requires explicit device name and six-digit PIN enrollment', async ({
 	page,
 }) => {
