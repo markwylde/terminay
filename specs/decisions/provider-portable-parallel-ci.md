@@ -30,8 +30,9 @@ provider-specific artifact service.
   workflow.
 - Standalone artifact reproduction, release evidence, signing, auditing, and
   publication belong to the release workflow.
-- Server and web image workflows do not run for pull requests or ordinary main
-  pushes. They run only when the manual release creates a version tag.
+- Server and web image publication does not run for pull requests or ordinary
+  main pushes. The manual release publishes the web image directly from its
+  exact version tag; the standalone web-image workflow is recovery-only.
 - Optional real-provider Codex and Claude probes do not serialize or multiply
   the normal pull-request suite.
 
