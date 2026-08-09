@@ -178,10 +178,18 @@ test('the real legacy and canonical entries migrate metadata once and preserve o
 
 	// Imported manager metadata cannot pretend that exact-session-origin browser
 	// credentials crossed the origin boundary. Both profiles remain visible and
-	// selecting one gives the user the required fresh-pairing recovery action.
+	// selecting one transfers control to that exact session origin, where its
+	// origin-bound reconnect state can be checked without involving the manager.
+	await page.route('https://build-host.sessions.example/**', (route) =>
+		route.fulfill({
+			body: '<!doctype html><title>Build host session</title>',
+			contentType: 'text/html',
+		}),
+	);
 	const buildHost = page.getByRole('option', { name: /Build host offline/u });
 	await buildHost.getByRole('button', { name: 'Switch to Build host' }).click();
-	await expect(page.getByRole('alert')).toContainText('fresh pairing URL');
+	await expect(page).toHaveURL('https://build-host.sessions.example/?route=workspace');
+	await expect(page).toHaveTitle('Build host session');
 
 	await expect
 		.poll(
