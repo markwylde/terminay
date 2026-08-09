@@ -37,6 +37,14 @@ test('transport runtime ignores old shared-origin WebRTC query hints on manager 
   assert.equal(runtime.pairingOrigin, 'https://app.terminay.com')
 })
 
+test('transport runtime also keeps the canonical manager distinct from session hosts', () => {
+  mockBrowserLocation('https://web.terminay.com/connect?mode=webrtc&sessionId=session-v1')
+  const runtime = createRemoteTransportRuntime()
+
+  assert.equal(runtime.mode, 'local')
+  assert.equal(runtime.pairingOrigin, 'https://web.terminay.com')
+})
+
 test('transport runtime keeps local network mode on localhost', () => {
   mockBrowserLocation('https://localhost:9443/')
   const runtime = createRemoteTransportRuntime()

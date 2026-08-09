@@ -13,7 +13,7 @@ test.afterAll(async () => {
 	await fixture.close();
 });
 
-test('shared Web Connections actions persist and converge across tabs without pairing fragments', async ({
+test('Connections pairing opens enrollment without saving metadata, while advanced imports converge across tabs', async ({
 	context,
 }) => {
 	const first = await context.newPage();
@@ -29,21 +29,49 @@ test('shared Web Connections actions persist and converge across tabs without pa
 	const secondConnections = second.locator(
 		'[data-shared-route-body="connections"]',
 	);
-	await firstConnections.getByRole('button', { name: 'Add server' }).click();
-	const add = firstConnections.getByRole('form', { name: 'Add connection' });
-	await add.getByLabel('Server ID').fill('server:shared');
-	await add.getByLabel('Name').fill('Shared server');
-	await add.getByLabel('Origin').fill('https://shared.example');
-	await add.getByRole('button', { name: 'Save server' }).click();
-	await expect(secondConnections).toContainText('Shared server');
-
-	await firstConnections.getByRole('button', { name: 'Pair device' }).click();
-	const pair = firstConnections.getByRole('form', { name: 'Pair device' });
+	await expect(firstConnections).toContainText('No saved servers yet');
+	await firstConnections
+		.getByRole('button', { name: 'Add connection…' })
+		.click();
+	const pair = firstConnections.getByRole('form', { name: 'Add connection' });
 	await pair
 		.getByLabel('Pairing URL')
-		.fill('https://paired.example/session#one-time-secret');
+		.fill(
+			`https://paired.example/?transport=webrtc#pairingSessionId=pairing-session-tabs&pairingToken=${'a'.repeat(32)}&pairingExpiresAt=${encodeURIComponent(new Date(Date.now() + 60_000).toISOString())}`,
+		);
 	await pair.getByRole('button', { name: 'Continue pairing' }).click();
-	await expect(secondConnections).toContainText('paired.example');
+
+	const enrollment = first.getByRole('dialog', {
+		name: 'Enroll browser device',
+	});
+	await expect(enrollment).toBeVisible();
+	await expect(enrollment.getByLabel('Device name')).toBeEditable();
+	await expect(enrollment.getByLabel('Pairing PIN')).toBeVisible();
+	await expect(secondConnections).toContainText('No saved servers yet');
+	const beforeEnrollment = await first.evaluate(
+		(key) => localStorage.getItem(key),
+		WEB_PROFILE_STORAGE_KEY,
+	);
+	expect(beforeEnrollment ?? '').not.toContain('paired.example');
+	expect(beforeEnrollment ?? '').not.toContain('pairing-session-tabs');
+	await enrollment.getByRole('button', { name: 'Cancel pairing' }).click();
+
+	await firstConnections
+		.getByRole('button', { name: 'Advanced: import profile metadata' })
+		.click();
+	const advancedImport = firstConnections.getByRole('region', {
+		name: 'Advanced profile metadata import',
+	});
+	await expect(advancedImport).toContainText(
+		'You will need a fresh pairing URL before this browser can connect.',
+	);
+	await advancedImport
+		.getByLabel('Profile metadata')
+		.fill(
+			'{"id":"server:shared","serverId":"server:shared","label":"Shared server","origin":"https://shared.example","status":"offline"}',
+		);
+	await advancedImport.getByRole('button', { name: 'Import metadata' }).click();
+	await expect(secondConnections).toContainText('Shared server');
 
 	const shared = firstConnections.getByRole('option', {
 		name: /Shared server offline/u,
@@ -60,9 +88,9 @@ test('shared Web Connections actions persist and converge across tabs without pa
 		(key) => localStorage.getItem(key),
 		WEB_PROFILE_STORAGE_KEY,
 	);
-	expect(persisted).toContain('https://paired.example');
-	expect(persisted).not.toContain('one-time-secret');
-	expect(persisted).not.toContain('/session');
+	expect(persisted).toContain('https://shared.example');
+	expect(persisted).not.toContain('pairing-session-tabs');
+	expect(persisted).not.toContain('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 
 	const remote = secondConnections.getByRole('option', {
 		name: /Renamed shared server offline/u,

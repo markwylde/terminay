@@ -1,3 +1,5 @@
+import { isTerminayManagerHost } from '@terminay/protocol';
+
 export type RemoteTransportMode = 'local' | 'webrtc';
 
 export type RemoteApiTransport = {
@@ -50,7 +52,6 @@ export type RemoteTransportRuntime = {
 
 const WEBRTC_SESSION_STORAGE_KEY = 'terminay-remote-transport';
 const WEBRTC_SESSION_ID_STORAGE_KEY = 'terminay-remote-webrtc-session-id';
-const TERMINAY_MANAGER_HOST = 'app.terminay.com';
 const TERMINAY_REMOTE_DOMAIN = 'terminay.com';
 
 function getRemoteWindow(): RemoteWindow {
@@ -131,7 +132,7 @@ function createPairingOrigin(
 function isTerminaySessionHost(hostname: string): boolean {
 	const normalized = hostname.toLowerCase();
 	return (
-		normalized !== TERMINAY_MANAGER_HOST &&
+		!isTerminayManagerHost(normalized) &&
 		normalized.endsWith(`.${TERMINAY_REMOTE_DOMAIN}`) &&
 		/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.terminay\.com$/.test(normalized)
 	);
@@ -221,9 +222,7 @@ function parseJsonMessage(raw: unknown): unknown {
 	}
 }
 
-async function resolveWebRtcChannel(
-	name: 'api',
-): Promise<RTCDataChannel> {
+async function resolveWebRtcChannel(name: 'api'): Promise<RTCDataChannel> {
 	const bridge = getRemoteWindow().__TERMINAY_REMOTE_WEBRTC__;
 	const directChannel =
 		name === 'api' ? bridge?.apiChannel : bridge?.terminalChannel;
@@ -326,7 +325,7 @@ export function createRemoteTransportRuntime(): RemoteTransportRuntime {
 	const searchParams = new URL(window.location.href).searchParams;
 	const config = remoteWindow.__TERMINAY_REMOTE_CONFIG__ ?? {};
 	const bridge = remoteWindow.__TERMINAY_REMOTE_WEBRTC__;
-	const isManagerHost = window.location.hostname.toLowerCase() === TERMINAY_MANAGER_HOST;
+	const isManagerHost = isTerminayManagerHost(window.location.hostname);
 	const queryMode = isManagerHost ? null : getQueryTransportMode(searchParams);
 	const configMode = normalizeTransportMode(config.transport);
 	const sessionMode = getSessionTransportMode();

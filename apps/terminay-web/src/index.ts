@@ -8,6 +8,10 @@ import {
 	type HostCapabilityProvider,
 } from '@terminay/client-core';
 import {
+	TERMINAY_LEGACY_MANAGER_ORIGIN,
+	TERMINAY_WEB_MANAGER_ORIGIN,
+} from '@terminay/protocol';
+import {
 	createResponsiveWorkspaceNavigation,
 	createSharedFileSelectionModel,
 	createSharedWorkspaceRouteRenderModel,
@@ -19,6 +23,15 @@ import {
 } from '@terminay/responsive-ui';
 
 export {
+	consumeLegacyManagerMigration,
+	LEGACY_MANAGER_HANDOFF_PREFIX,
+	LEGACY_MANAGER_PENDING_ACK_KEY,
+	LEGACY_MANAGER_PROFILE_STORAGE_KEY,
+	type LegacyMigrationResult,
+	type LegacyMigrationWindow,
+	runLegacyManagerMigration,
+} from './legacyMigration.js';
+export {
 	type SimulatedBrowserLifecycleEvent,
 	SimulatedBrowserLifecycleHarness,
 	type SimulatedBrowserLifecycleHost,
@@ -26,8 +39,8 @@ export {
 } from './simulatedLifecycle.js';
 
 /** Stable manager origin used by the hosted connection shell. */
-export const WEB_MANAGER_ORIGIN = 'https://web.terminay.com';
-export const LEGACY_WEB_MANAGER_ORIGIN = 'https://app.terminay.com';
+export const WEB_MANAGER_ORIGIN = TERMINAY_WEB_MANAGER_ORIGIN;
+export const LEGACY_WEB_MANAGER_ORIGIN = TERMINAY_LEGACY_MANAGER_ORIGIN;
 export const WEB_PROFILE_STORAGE_KEY = 'terminay.web.connection-profiles.v1';
 
 const RECONNECT_VAULT_DATABASE = 'terminay.web.reconnect.v1';
@@ -40,6 +53,13 @@ export interface OriginBoundReconnectCredential {
 	readonly origin: string;
 	readonly handle: string;
 	readonly signingOrigin: string;
+}
+
+export interface ReversibleReconnectEnrollment {
+	readonly credential: OriginBoundReconnectCredential;
+	/** Restores the credential replaced by this enrollment. The rollback is
+	 * conditional, so it cannot overwrite a newer enrollment from another tab. */
+	rollback(): Promise<void>;
 }
 
 interface StoredReconnectCredential extends OriginBoundReconnectCredential {
@@ -59,6 +79,12 @@ export interface WebReconnectVault {
 		readonly grant: string;
 		readonly signingOrigin: string;
 	}): Promise<OriginBoundReconnectCredential>;
+	enrollReversibly(input: {
+		readonly origin: string;
+		readonly handle: string;
+		readonly grant: string;
+		readonly signingOrigin: string;
+	}): Promise<ReversibleReconnectEnrollment>;
 	credential(
 		origin: string,
 	): Promise<OriginBoundReconnectCredential | undefined>;
@@ -68,6 +94,28 @@ export interface WebReconnectVault {
 		readonly signingInput: string;
 	}): Promise<string>;
 	forget(origin: string): Promise<void>;
+}
+
+/** Coordinates the two browser persistence authorities. Profile metadata is
+ * not reported as saved unless reconnect material has committed, and a failed
+ * metadata write restores the exact credential that a re-pair replaced. */
+export async function commitPairedWebConnection<T>(options: Readonly<{
+	vault: WebReconnectVault;
+	enrollment: Readonly<{
+		origin: string;
+		handle: string;
+		grant: string;
+		signingOrigin: string;
+	}>;
+	persistProfile(): T;
+}>): Promise<T> {
+	const enrollment = await options.vault.enrollReversibly(options.enrollment);
+	try {
+		return options.persistProfile();
+	} catch (cause) {
+		await enrollment.rollback();
+		throw cause;
+	}
 }
 
 /** Browser implementation backed by IndexedDB. No in-memory fallback is used
@@ -93,6 +141,15 @@ export class IndexedDbWebReconnectVault implements WebReconnectVault {
 		readonly grant: string;
 		readonly signingOrigin: string;
 	}): Promise<OriginBoundReconnectCredential> {
+		return (await this.enrollReversibly(input)).credential;
+	}
+
+	async enrollReversibly(input: {
+		readonly origin: string;
+		readonly handle: string;
+		readonly grant: string;
+		readonly signingOrigin: string;
+	}): Promise<ReversibleReconnectEnrollment> {
 		const origin = requireReconnectOrigin(input.origin);
 		const signingOrigin = requireReconnectSigningOrigin(input.signingOrigin);
 		if (!isReconnectHandle(input.handle) || !isReconnectGrant(input.grant))
@@ -101,14 +158,24 @@ export class IndexedDbWebReconnectVault implements WebReconnectVault {
 			this.requireCrypto(),
 			input.grant,
 		);
-		await this.put({
+		const replacement = {
 			origin,
 			handle: input.handle,
 			signingOrigin,
 			credentialId: createReconnectCredentialId(this.requireCrypto()),
 			key,
+		};
+		const previous = await this.get(origin);
+		await this.put(replacement);
+		return Object.freeze({
+			credential: Object.freeze({ origin, handle: input.handle, signingOrigin }),
+			rollback: async () => {
+				const current = await this.get(origin);
+				if (current?.credentialId !== replacement.credentialId) return;
+				if (previous === undefined) await this.forget(origin);
+				else await this.put(previous);
+			},
 		});
-		return Object.freeze({ origin, handle: input.handle, signingOrigin });
 	}
 
 	async sign(input: {
@@ -251,18 +318,37 @@ export class MemoryWebReconnectVault implements WebReconnectVault {
 		readonly grant: string;
 		readonly signingOrigin: string;
 	}): Promise<OriginBoundReconnectCredential> {
+		return (await this.enrollReversibly(input)).credential;
+	}
+
+	async enrollReversibly(input: {
+		readonly origin: string;
+		readonly handle: string;
+		readonly grant: string;
+		readonly signingOrigin: string;
+	}): Promise<ReversibleReconnectEnrollment> {
 		const origin = requireReconnectOrigin(input.origin);
 		const signingOrigin = requireReconnectSigningOrigin(input.signingOrigin);
 		if (!isReconnectHandle(input.handle) || !isReconnectGrant(input.grant))
 			throw new TypeError('reconnect enrollment is invalid');
-		this.credentials.set(origin, {
+		const previous = this.credentials.get(origin);
+		const replacement = {
 			origin,
 			handle: input.handle,
 			signingOrigin,
 			credentialId: createReconnectCredentialId(this.cryptoApi),
 			key: await deriveReconnectProofKey(this.cryptoApi, input.grant),
+		};
+		this.credentials.set(origin, replacement);
+		return Object.freeze({
+			credential: Object.freeze({ origin, handle: input.handle, signingOrigin }),
+			rollback: async () => {
+				if (this.credentials.get(origin)?.credentialId !== replacement.credentialId)
+					return;
+				if (previous === undefined) this.credentials.delete(origin);
+				else this.credentials.set(origin, previous);
+			},
 		});
-		return Object.freeze({ origin, handle: input.handle, signingOrigin });
 	}
 
 	async sign(input: {
@@ -442,7 +528,16 @@ export class WebConnectionHost {
 				? {}
 				: { id: existing.id, archived: existing.archived }),
 		});
-		this.persist();
+		try {
+			this.persist();
+		} catch (cause) {
+			// localStorage can fail after the in-memory store has accepted the
+			// profile (quota, blocked storage, browser shutdown). Restore the exact
+			// prior projection so callers cannot observe a metadata-only success.
+			if (existing === undefined) this.profiles.forget(profile.id, true);
+			else this.profiles.remember(existing);
+			throw cause;
+		}
 		return profile;
 	}
 
@@ -538,6 +633,7 @@ export class WebConnectionHost {
 			throw new RangeError('legacy manager profile count exceeds the limit');
 		const pending: ConnectionProfileInput[] = [];
 		const ids = new Set<string>();
+		const origins = new Set<string>();
 		for (const candidate of value.profiles) {
 			if (
 				!isRecord(candidate) ||
@@ -551,7 +647,10 @@ export class WebConnectionHost {
 			if (ids.has(candidate.id))
 				throw new TypeError('legacy manager profile ids must be unique');
 			ids.add(candidate.id);
-			requireSessionOrigin(candidate.origin);
+			const origin = requireSessionOrigin(candidate.origin);
+			if (origins.has(origin))
+				throw new TypeError('legacy manager profile origins must be unique');
+			origins.add(origin);
 			if (
 				!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(candidate.id) ||
 				!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(candidate.serverId)
@@ -568,7 +667,7 @@ export class WebConnectionHost {
 				id: candidate.id,
 				serverId: candidate.serverId,
 				label: candidate.label,
-				origin: candidate.origin,
+				origin,
 				status,
 				...(typeof candidate.createdAt === 'number'
 					? { createdAt: candidate.createdAt }
@@ -583,9 +682,22 @@ export class WebConnectionHost {
 				isLocal: false,
 			});
 		}
-		const existingIds = new Set(
-			this.profiles.snapshot().profiles.map((profile) => profile.id),
-		);
+		const existingProfiles = this.profiles.snapshot().profiles;
+		const existingIds = new Set(existingProfiles.map((profile) => profile.id));
+		for (const profile of pending) {
+			const byId = existingProfiles.find((existing) => existing.id === profile.id);
+			if (byId !== undefined && byId.origin !== profile.origin)
+				throw new TypeError(
+					'legacy manager profile identity does not match its saved origin',
+				);
+			const byOrigin = existingProfiles.find(
+				(existing) => existing.origin === profile.origin,
+			);
+			if (byOrigin !== undefined && byOrigin.serverId !== profile.serverId)
+				throw new TypeError(
+					'legacy manager profile server does not match its saved origin',
+				);
+		}
 		const newCount = pending.reduce(
 			(count, profile) =>
 				count +
@@ -705,9 +817,7 @@ export class WebConnectionHost {
 					// from being recovered from the host-local store.
 				}
 			}
-			if (
-				typeof parsed.currentProfileId === 'string'
-			) {
+			if (typeof parsed.currentProfileId === 'string') {
 				const currentId =
 					restoredIdAliases.get(parsed.currentProfileId) ??
 					parsed.currentProfileId;
@@ -1165,9 +1275,7 @@ function isLoopbackHostname(hostname: string): boolean {
 
 function isLoopbackAddressAlias(hostname: string): boolean {
 	return (
-		hostname === 'localhost' ||
-		hostname === '127.0.0.1' ||
-		hostname === '[::1]'
+		hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
 	);
 }
 
@@ -1191,10 +1299,7 @@ function parseOrigin(value: string, name: string): URL {
 
 function isAllowedSessionProtocol(parsed: URL): boolean {
 	if (parsed.protocol === 'https:') return true;
-	return (
-		parsed.protocol === 'http:' &&
-		isLoopbackHostname(parsed.hostname)
-	);
+	return parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

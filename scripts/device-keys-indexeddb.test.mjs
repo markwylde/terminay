@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { build } from 'esbuild'
 
-const { loadReconnectGrant, loadReconnectHandle, saveReconnectGrant } = await importDeviceKeys()
+const { loadPairing, loadReconnectGrant, loadReconnectHandle, saveEstablishedPairing, saveEstablishedPairingReversibly, saveReconnectGrant } = await importDeviceKeys()
 
 test('saveReconnectGrant queues IndexedDB writes before the transaction can auto-close', async () => {
   const indexedDB = createStrictIndexedDB()
@@ -47,6 +47,35 @@ test('saveReconnectGrant queues IndexedDB writes before the transaction can auto
   assert.equal(handle.origin, origin)
   assert.equal(handle.handle, 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
   assert.equal(indexedDB.transactions.some((transaction) => transaction.closedWithoutRequests), false)
+})
+
+test('interrupted re-pair persistence restores the prior exact-origin device compartment', async () => {
+  const indexedDB = createStrictIndexedDB()
+  globalThis.indexedDB = indexedDB
+  Object.defineProperty(globalThis, 'crypto', {
+    configurable: true,
+    value: {
+      subtle: {
+        async importKey(_format, _keyData, algorithm) {
+          return { type: typeof algorithm === 'string' ? 'hkdf-key' : 'hmac-proof-key' }
+        },
+        async deriveBits() { return new Uint8Array(32).buffer },
+      },
+    },
+  })
+  const origin = 'https://pair.example.test'
+  const grant = (handle, sessionId) => ({ expiresAt: null, grant: 'A'.repeat(43), handle, issuedAt: '2026-08-09T10:00:00.000Z', origin, protocolVersion: 'v1', sessionId })
+  await saveEstablishedPairing({ deviceId: 'old-device', deviceName: 'Old browser', origin, privateKey: { key: 'old' }, publicKeyPem: 'old-public-key' }, grant('B'.repeat(43), 'old-session'))
+
+  const replacement = await saveEstablishedPairingReversibly(
+    { deviceId: 'new-device', deviceName: 'New browser', origin, privateKey: { key: 'new' }, publicKeyPem: 'new-public-key' },
+    grant('C'.repeat(43), 'new-session'),
+  )
+  assert.equal((await loadPairing(origin)).deviceId, 'new-device')
+  await replacement.rollback()
+  assert.equal((await loadPairing(origin)).deviceId, 'old-device')
+  assert.equal((await loadReconnectHandle(origin)).handle, 'B'.repeat(43))
+  assert.equal((await loadReconnectGrant(origin)).sessionId, 'old-session')
 })
 
 async function importDeviceKeys() {

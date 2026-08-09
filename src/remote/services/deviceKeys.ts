@@ -38,6 +38,10 @@ export type IssuedReconnectGrant = {
   sessionId: string
 }
 
+export type ReversibleEstablishedPairing = Readonly<{
+  rollback(): Promise<void>
+}>
+
 const DB_NAME = 'terminay-remote'
 const DB_VERSION = 2
 const PAIRINGS_STORE = 'pairings'
@@ -188,10 +192,26 @@ export async function savePairing(pairing: PairingRecord): Promise<void> {
 /** Store a device registration and its reconnect material in one IndexedDB
  * transaction. Re-pairing removes old reconnect material when none is issued. */
 export async function saveEstablishedPairing(pairing: PairingRecord, issued?: IssuedReconnectGrant): Promise<void> {
+  await saveEstablishedPairingReversibly(pairing, issued)
+}
+
+/** Durably replaces all exact-origin device material and returns a conditional
+ * rollback. The rollback retains opaque CryptoKey objects only in memory and
+ * refuses to overwrite a newer pairing committed by another attempt/tab. */
+export async function saveEstablishedPairingReversibly(pairing: PairingRecord, issued?: IssuedReconnectGrant): Promise<ReversibleEstablishedPairing> {
   if (issued !== undefined && issued.origin !== pairing.origin) throw new Error('Reconnect grant belongs to another origin.')
   const reconnectKeys = issued === undefined ? undefined : await createReconnectKeys(issued.grant)
   const database = await openDatabase()
+  let previousPairing: PairingRecord | undefined
+  let previousGrant: ReconnectGrantRecord | undefined
+  let previousHandle: StoredReconnectHandle | undefined
   try {
+    const snapshotTransaction = database.transaction([PAIRINGS_STORE, RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readonly')
+    ;[previousPairing, previousGrant, previousHandle] = await Promise.all([
+      transactionRequest<PairingRecord | undefined>(snapshotTransaction.objectStore(PAIRINGS_STORE).get(pairing.origin)),
+      transactionRequest<ReconnectGrantRecord | undefined>(snapshotTransaction.objectStore(RECONNECT_GRANTS_STORE).get(pairing.origin)),
+      transactionRequest<StoredReconnectHandle | undefined>(snapshotTransaction.objectStore(RECONNECT_HANDLES_STORE).get(pairing.origin)),
+    ])
     const transaction = database.transaction([PAIRINGS_STORE, RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
     const complete = transactionComplete(transaction)
     const requests: Promise<unknown>[] = [
@@ -206,6 +226,42 @@ export async function saveEstablishedPairing(pairing: PairingRecord, issued?: Is
       requests.push(transactionRequest(transaction.objectStore(RECONNECT_HANDLES_STORE).put({ handle: issued.handle, origin: issued.origin, sessionId: issued.sessionId })))
     }
     await Promise.all([...requests, complete])
+  } finally {
+    database.close()
+  }
+  return Object.freeze({
+    rollback: () => rollbackEstablishedPairing({ pairing, issued, previousPairing, previousGrant, previousHandle }),
+  })
+}
+
+async function rollbackEstablishedPairing(input: Readonly<{
+  pairing: PairingRecord
+  issued?: IssuedReconnectGrant
+  previousPairing?: PairingRecord
+  previousGrant?: ReconnectGrantRecord
+  previousHandle?: StoredReconnectHandle
+}>): Promise<void> {
+  const database = await openDatabase()
+  try {
+    const current = await transactionRequest<PairingRecord | undefined>(
+      database.transaction(PAIRINGS_STORE, 'readonly').objectStore(PAIRINGS_STORE).get(input.pairing.origin),
+    )
+    if (current?.deviceId !== input.pairing.deviceId || current.publicKeyPem !== input.pairing.publicKeyPem) return
+    if (input.issued !== undefined) {
+      const handle = await transactionRequest<StoredReconnectHandle | undefined>(
+        database.transaction(RECONNECT_HANDLES_STORE, 'readonly').objectStore(RECONNECT_HANDLES_STORE).get(input.pairing.origin),
+      )
+      if (handle?.handle !== input.issued.handle) return
+    }
+    const transaction = database.transaction([PAIRINGS_STORE, RECONNECT_GRANTS_STORE, RECONNECT_HANDLES_STORE], 'readwrite')
+    const restore = (storeName: string, previous: unknown) => previous === undefined
+      ? transaction.objectStore(storeName).delete(input.pairing.origin)
+      : transaction.objectStore(storeName).put(previous)
+    const complete = transactionComplete(transaction)
+    restore(PAIRINGS_STORE, input.previousPairing)
+    restore(RECONNECT_GRANTS_STORE, input.previousGrant)
+    restore(RECONNECT_HANDLES_STORE, input.previousHandle)
+    await complete
   } finally {
     database.close()
   }
