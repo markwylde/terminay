@@ -233,7 +233,7 @@ Each Desktop connection window loads one selected server UI in a sandboxed,
 origin-bound partition. It uses a dedicated minimal preload; the existing broad
 `window.terminay` preload is never exposed to server-provided code.
 
-`web.terminay.com` is a thin parent connection shell containing one
+`app.terminay.com` is a thin parent connection shell containing one
 exact-session-origin frame. Cross-origin messages are source-checked,
 origin-checked, schema-validated, and limited to sanitized profile display data
 and explicit host actions.

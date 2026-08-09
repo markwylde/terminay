@@ -2,7 +2,7 @@
 
 ## Summary
 
-Terminay Desktop and `web.terminay.com` share one connection journey. The
+Terminay Desktop and `app.terminay.com` share one connection journey. The
 header server control is a current-server selector and connection menu.
 
 Desktop starts connected to its embedded server as **Local**. Browser clients
@@ -189,7 +189,7 @@ parallel legacy workspace-window owner.
 
 ## Web connection host
 
-- `web.terminay.com` has no Local server option and never claims browser
+- `app.terminay.com` has no Local server option and never claims browser
   filesystem/PTY authority.
 - Its disconnected state is a connection picker with add/import, remembered
   profiles, offline/revoked status, and clear recovery.
@@ -216,15 +216,15 @@ are consumed in memory and are not returned, persisted, or copied into the
 session URL. The host bridge accepts messages only from the exact selected
 session origin and expected window source, and rejects privileged payload keys.
 
-Legacy manager records are redirected from `app.terminay.com` to the stable
-`web.terminay.com` manager only as sanitized profile metadata. Profile ids,
+The new manager replaces the legacy manager at `app.terminay.com` and restores
+the existing same-origin record only as sanitized profile metadata. Profile ids,
 server ids, labels, fingerprints, and canonical origins may be retained;
 pairing fragments, device keys, reconnect grants, and other credentials are
 discarded. A session record retains only a canonical origin; legacy paths,
 queries, fragments, or origin userinfo are rejected rather than becoming
 manager state or a session credential.
 
-`web.terminay.com` is a stable host/manager, not a latest independent workspace
+`app.terminay.com` is a stable host/manager, not a latest independent workspace
 client. The selected server's verified bundle renders the workspace.
 
 ## Server-bundled workspace and host shell
@@ -398,7 +398,7 @@ Forbidden in connection-manager localStorage, URLs, host messages, and logs:
 - No arbitrary remote JavaScript with Electron/Node privileges.
 - No requirement that browser UI use native popup windows.
 - No independently versioned full workspace application at
-  `web.terminay.com`.
+  `app.terminay.com`.
 - No renderer-selected `mode=electron` or equivalent privilege switch.
 - No Desktop feature client or persisted workspace mirror used to translate
   between remote server application versions.

@@ -10,10 +10,10 @@ import {
 } from '../dist/index.js';
 
 test('manager authority uses exact origins and never classifies session subdomains', () => {
-	assert.equal(TERMINAY_WEB_MANAGER_ORIGIN, 'https://web.terminay.com');
-	assert.equal(TERMINAY_LEGACY_MANAGER_ORIGIN, 'https://app.terminay.com');
-	assert.equal(TERMINAY_WEB_MANAGER_HOST, 'web.terminay.com');
-	assert.equal(TERMINAY_LEGACY_MANAGER_HOST, 'app.terminay.com');
+	assert.equal(TERMINAY_WEB_MANAGER_ORIGIN, 'https://app.terminay.com');
+	assert.equal(TERMINAY_LEGACY_MANAGER_ORIGIN, 'https://web.terminay.com');
+	assert.equal(TERMINAY_WEB_MANAGER_HOST, 'app.terminay.com');
+	assert.equal(TERMINAY_LEGACY_MANAGER_HOST, 'web.terminay.com');
 	assert.equal(isTerminayManagerOrigin(TERMINAY_WEB_MANAGER_ORIGIN), true);
 	assert.equal(
 		isTerminayManagerOrigin('https://session.web.terminay.com'),
