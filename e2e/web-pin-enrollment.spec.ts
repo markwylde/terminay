@@ -91,7 +91,10 @@ test('opening a direct device link consumes its fragment and asks for the PIN im
 		pairingSessionId: 'direct-device-browser-pin',
 		pairingToken: 'direct-device-token-browser-pin-0123456789',
 	});
-	await page.goto(`${fixture.origin}/web.html#${fragment}`);
+	await page.goto(`${fixture.origin}/web.html#${fragment}`, {
+		waitUntil: 'domcontentloaded',
+		timeout: 15_000,
+	});
 	await expect(
 		page.getByRole('dialog', { name: 'Enroll browser device' }),
 	).toBeVisible();
