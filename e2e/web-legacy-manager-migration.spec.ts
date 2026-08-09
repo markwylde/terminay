@@ -138,10 +138,26 @@ test('the real legacy and canonical entries migrate metadata once and preserve o
 		timeout: 15_000,
 	});
 	await expect(page).toHaveURL(`${MANAGER_ORIGIN}/`, { timeout: 15_000 });
-	await expect(
-		page.getByText('Workstation one', { exact: true }),
-	).toBeVisible();
-	await expect(page.getByText('Build host', { exact: true })).toBeVisible();
+	// The final canonical navigation can commit before the React manager has
+	// restored its durable profile projection on a loaded CI shard. Synchronize
+	// on the migration's storage boundary before asserting the rendered cards.
+	await expect
+		.poll(
+			() =>
+				page.evaluate(
+					([key, expectedOrigin]) =>
+						localStorage.getItem(key)?.includes(expectedOrigin) === true,
+					[WEB_PROFILE_STORAGE_KEY, SESSION_ORIGIN],
+				),
+			{ timeout: 15_000 },
+		)
+		.toBe(true);
+	await expect(page.getByText('Workstation one', { exact: true })).toBeVisible({
+		timeout: 15_000,
+	});
+	await expect(page.getByText('Build host', { exact: true })).toBeVisible({
+		timeout: 15_000,
+	});
 
 	const canonicalState = await page.evaluate(
 		(key) => ({
