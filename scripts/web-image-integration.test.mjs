@@ -60,13 +60,13 @@ test('actual production web image satisfies the deployment verifier', {
 				allowHttp: true,
 			});
 			assert.equal(result.release.sourceRevision, revision);
-			const legacy = await requestWithHost(origin, '/', 'app.terminay.com');
+			const legacy = await requestWithHost(origin, '/', 'web.terminay.com');
 			assert.equal(legacy.status, 200);
 			assert.match(legacy.body, /Moving saved Terminay connections/u);
 			const crossAuthorityEntry = await requestWithHost(
 				origin,
 				'/web.html',
-				'app.terminay.com',
+				'web.terminay.com',
 			);
 			assert.equal(crossAuthorityEntry.status, 404);
 			const unknown = await requestWithHost(
