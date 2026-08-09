@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 FROM node:24.14.0-bookworm-slim AS build
+ARG TERMINAY_SOURCE_REVISION=local
 WORKDIR /workspace
 
 COPY package.json package-lock.json ./
@@ -16,8 +17,9 @@ COPY packages/server-core/package.json ./packages/server-core/package.json
 RUN --mount=type=cache,id=terminay-npm-cache-node24,target=/root/.npm,sharing=locked \
   npm ci --ignore-scripts
 
-COPY tsconfig.base.json tsconfig.json tsconfig.node.json tsconfig.web.json vite.web.config.ts web.html remote.html ./
+COPY tsconfig.base.json tsconfig.json tsconfig.node.json tsconfig.web.json vite.web.config.ts web.html remote.html legacy.html ./
 COPY scripts/build-ui-bundle-manifest.mjs ./scripts/build-ui-bundle-manifest.mjs
+COPY scripts/write-web-release-marker.mjs ./scripts/write-web-release-marker.mjs
 COPY public ./public
 COPY src ./src
 COPY apps ./apps
@@ -26,7 +28,8 @@ COPY packages ./packages
 RUN npm run build:shared \
   && npm run build --workspace @terminay/web \
   && npm run typecheck:web \
-  && npm run build:web
+  && npm run build:web \
+  && node scripts/write-web-release-marker.mjs dist-web "$TERMINAY_SOURCE_REVISION"
 
 FROM nginx:1.27-alpine AS runtime
 COPY docker/05-terminay-resolver.envsh /docker-entrypoint.d/05-terminay-resolver.envsh
@@ -40,4 +43,4 @@ ENV NGINX_ENVSUBST_OUTPUT_DIR=/tmp
 
 EXPOSE 8080
 STOPSIGNAL SIGTERM
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 CMD wget -q -O - http://127.0.0.1:8080/healthz | grep -q '^ok$'
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 CMD wget -q -O - http://127.0.0.1:8080/healthz | grep -q '^\{"ok":true\}$'

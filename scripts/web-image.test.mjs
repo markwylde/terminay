@@ -10,13 +10,16 @@ async function text(relativePath) {
 
 test('web image packages only the browser manager without Electron', async () => {
 	const manager = await text('dist-web/web.html');
-	const managerBundle = await text(findAsset(manager));
+	const managerBundles = await Promise.all(
+		findJavaScriptAssets(manager).map((asset) => text(`dist-web/${asset}`)),
+	);
+	const managerModuleGraph = managerBundles.join('\n');
 
 	assert.match(manager, /<title>Terminay Connections<\/title>/u);
-	assert.match(managerBundle, /Connections/u);
-	assert.match(managerBundle, /web\.terminay\.com/u);
+	assert.match(managerModuleGraph, /Connections/u);
+	assert.match(managerModuleGraph, /web\.terminay\.com/u);
 	assert.doesNotMatch(
-		managerBundle,
+		managerModuleGraph,
 		/ipcRenderer|electron\/|node:(?:fs|path|crypto|net)/u,
 	);
 	assert.doesNotMatch(
@@ -37,8 +40,22 @@ test('web image has an explicit static health and SPA fallback contract', async 
 
 	assert.match(nginx, /listen 8080/u);
 	assert.match(nginx, /location = \/healthz/u);
-	assert.match(nginx, /index web\.html/u);
-	assert.match(nginx, /try_files \$uri \$uri\/ \/web\.html/u);
+	assert.match(nginx, /default_type application\/json/u);
+	assert.match(nginx, /return 200 '\{"ok":true\}\\n';/u);
+	assert.match(nginx, /location = \/\.well-known\/terminay-release\.json/u);
+	assert.match(nginx, /web\.terminay\.com web\.html;/u);
+	assert.match(nginx, /app\.terminay\.com legacy\.html;/u);
+	assert.match(nginx, /localhost web\.html;/u);
+	assert.match(nginx, /default "";/u);
+	assert.match(
+		nginx,
+		/if \(\$terminay_entry_document = ""\) \{ return 421; \}/u,
+	);
+	assert.match(nginx, /location = \/web\.html \{ internal; \}/u);
+	assert.match(nginx, /location = \/legacy\.html \{ internal; \}/u);
+	assert.match(nginx, /try_files \/\$terminay_entry_document =404;/u);
+	assert.match(nginx, /try_files \$uri \$uri\/ \/\$terminay_entry_document/u);
+	assert.match(nginx, /location \/protocol\/[\s\S]*return 404/u);
 	assert.match(nginx, /resolver \$\{NGINX_RESOLVER\}[^\n]*valid=5s/u);
 	assert.match(
 		nginx,
@@ -59,6 +76,10 @@ test('web image has an explicit static health and SPA fallback contract', async 
 		nginx,
 		/add_header Permissions-Policy "geolocation=\(\), payment=\(\), usb=\(\)" always;/u,
 	);
+	assert.match(
+		nginx,
+		/add_header Cross-Origin-Opener-Policy "same-origin" always;/u,
+	);
 	assert.match(nginx, /add_header Referrer-Policy "no-referrer" always;/u);
 	assert.match(nginx, /add_header X-Content-Type-Options "nosniff" always;/u);
 	assert.match(nginx, /add_header X-Frame-Options "DENY" always;/u);
@@ -68,7 +89,10 @@ test('web image has an explicit static health and SPA fallback contract', async 
 	);
 	assert.match(resolverEnv, /\/etc\/resolv\.conf/u);
 	assert.match(resolverEnv, /export NGINX_RESOLVER/u);
-	assert.match(dockerfile, /vite\.web\.config\.ts web\.html remote\.html/u);
+	assert.match(
+		dockerfile,
+		/vite\.web\.config\.ts web\.html remote\.html legacy\.html/u,
+	);
 	assert.match(
 		dockerfile,
 		/COPY scripts\/build-ui-bundle-manifest\.mjs \.\/scripts\/build-ui-bundle-manifest\.mjs/u,
@@ -91,12 +115,15 @@ test('web image has an explicit static health and SPA fallback contract', async 
 	);
 	assert.match(dockerfile, /\/etc\/nginx\/templates\/default\.conf\.template/u);
 	assert.match(dockerfile, /HEALTHCHECK/u);
+	assert.match(dockerfile, /TERMINAY_SOURCE_REVISION/u);
+	assert.match(dockerfile, /write-web-release-marker\.mjs/u);
 	assert.doesNotMatch(
 		dockerfile,
 		/apps\/terminay-web\/(Dockerfile|server\.mjs)/u,
 	);
 	assert.match(workflow, /Dockerfile\.web/u);
 	assert.match(workflow, /tags: \['v\*\.\*\.\*'\]/u);
+	assert.match(workflow, /workflow_dispatch:/u);
 	assert.match(
 		workflow,
 		/IMAGE_NAME: ghcr\.io\/\$\{\{ github\.repository_owner \}\}\/terminay-web/u,
@@ -110,11 +137,19 @@ test('web image has an explicit static health and SPA fallback contract', async 
 	assert.match(workflow, /\$\{GITHUB_SHA\}/u);
 	assert.match(workflow, /sbom: true/u);
 	assert.match(workflow, /provenance: mode=max/u);
+	assert.match(workflow, /npm run test:web-image-integration/u);
+	assert.match(workflow, /TERMINAY_SOURCE_REVISION=\$\{\{ github\.sha \}\}/u);
 	await access(new URL('../web.html', import.meta.url));
 });
 
-function findAsset(html) {
-	const match = html.match(/(?:src|href)="(?:\.\/|\/)?(assets\/[^"?]+\.js)"/u);
-	if (!match) throw new Error('built HTML does not declare a JavaScript asset');
-	return `dist-web/${match[1]}`;
+function findJavaScriptAssets(html) {
+	const assets = [
+		...html.matchAll(/(?:src|href)="(?:\.\/|\/)?(assets\/[^"?]+\.js)"/gu),
+	].map((match) => match[1]);
+	assert.notEqual(
+		assets.length,
+		0,
+		'built HTML must declare JavaScript assets',
+	);
+	return [...new Set(assets)];
 }
