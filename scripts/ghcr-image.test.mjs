@@ -18,6 +18,10 @@ const webImageWorkflow = await readFile(
 	new URL('../.github/workflows/web-image.yml', import.meta.url),
 	'utf8',
 );
+const releaseWorkflow = await readFile(
+	new URL('../.github/workflows/trigger-release.yml', import.meta.url),
+	'utf8',
+);
 const operatorGuide = await readFile(
 	new URL('../specs/operations/docker-image-release.md', import.meta.url),
 	'utf8',
@@ -117,26 +121,21 @@ test('server and static-web GHCR releases retain their verified multi-architectu
 	assert.match(workflow, /github\.event_name == 'push'/u);
 
 	assert.match(
-		webImageWorkflow,
+		releaseWorkflow,
 		/IMAGE_NAME: ghcr\.io\/\$\{\{ github\.repository_owner \}\}\/terminay-web/u,
 	);
-	assert.match(webImageWorkflow, /type=semver,pattern=\{\{version\}\}/u);
+	assert.match(releaseWorkflow, /echo "\$IMAGE_NAME:\$VERSION"/u);
+	assert.match(releaseWorkflow, /echo "\$IMAGE_NAME:\$MAJOR_MINOR"/u);
+	assert.match(releaseWorkflow, /echo "\$IMAGE_NAME:sha-\$EXPECTED_COMMIT"/u);
+	assert.match(releaseWorkflow, /platforms: linux\/amd64,linux\/arm64/u);
+	assert.match(releaseWorkflow, /provenance: mode=max/u);
+	assert.match(releaseWorkflow, /sbom: true/u);
 	assert.match(
-		webImageWorkflow,
-		/type=semver,pattern=\{\{major\}\}\.\{\{minor\}\}/u,
-	);
-	assert.match(webImageWorkflow, /type=sha,prefix=sha-/u);
-	assert.match(
-		webImageWorkflow,
-		/type=raw,value=latest,enable=\{\{is_default_branch\}\}/u,
-	);
-	assert.match(webImageWorkflow, /platforms: linux\/amd64,linux\/arm64/u);
-	assert.match(webImageWorkflow, /provenance: mode=max/u);
-	assert.match(webImageWorkflow, /sbom: true/u);
-	assert.match(
-		webImageWorkflow,
+		releaseWorkflow,
 		/push: true/u,
 	);
+	assert.match(webImageWorkflow, /workflow_dispatch:/u);
+	assert.doesNotMatch(webImageWorkflow, /push:\s*\n\s+tags:/u);
 });
 
 test('Docker image operator guide requires digest-pinned controlled deployments', () => {
