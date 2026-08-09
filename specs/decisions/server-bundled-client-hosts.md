@@ -30,7 +30,7 @@ artifact and the matching `TerminayClient` application-protocol implementation.
 Local Desktop, remote Desktop, direct browser sessions, and the browser
 connection host all execute that exact verified bundle.
 
-Terminay Desktop and `web.terminay.com` are connection and presentation shells.
+Terminay Desktop and `app.terminay.com` are connection and presentation shells.
 They own authentication bootstrap, protected device credentials, transport
 establishment, verified bundle installation, execution isolation, connection
 profiles, and host-specific presentation. They do not implement workspace

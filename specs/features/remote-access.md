@@ -24,7 +24,7 @@ This feature works with
 - **Terminay Desktop** supervises its embedded Local server, stores
   client-device credentials securely, and opens sandboxed windows for local or
   remote servers.
-- **`web.terminay.com`** is a non-secret connection manager. It remembers
+- **`app.terminay.com`** is the non-secret connection manager. It remembers
   sanitized connection profiles and launches a selected server session.
 - **`https://<session>.terminay.com`** is the exact isolated browser origin for
   one server session identity. It stores that origin's device key and reconnect
@@ -228,7 +228,7 @@ distribution.
 - Static session UI responses set same-origin CSP, deny frame/object execution,
   send no referrer, and disable camera, microphone, geolocation, payment, USB,
   serial, and Bluetooth permissions.
-- `web.terminay.com` remains a connection host; it is not a separately evolving
+- `app.terminay.com` remains a connection host; it is not a separately evolving
   full workspace application.
 
 The stable browser host contains only connection management, pairing/reconnect,
@@ -318,7 +318,7 @@ does not yet prove a full Local-versus-remote client E2E path.
 
 ## Credentials and browser storage
 
-`web.terminay.com` may store only sanitized connection metadata:
+`app.terminay.com` may store only sanitized connection metadata:
 
 - stable server id/fingerprint;
 - exact non-secret session origin;
@@ -432,7 +432,7 @@ leaving Local and other devices available.
 - No hosted terminal or workspace proxy.
 - No cloud persistence of project or connection-manager secrets.
 - No trust based only on possession of a public session URL.
-- No independent latest workspace build at `web.terminay.com`.
+- No independent latest workspace build at `app.terminay.com`.
 - No browser-owned Local server.
 - No requirement that a client stay connected for its PTYs to continue.
 
@@ -456,7 +456,7 @@ leaving Local and other devices available.
   reconnect resume from confirmed revisions/positions without invisible loss.
 - Closing a window, browser tab, or network connection does not terminate an
   active PTY.
-- `web.terminay.com`, signaling storage, access logs, and analytics contain no
+- `app.terminay.com`, signaling storage, access logs, and analytics contain no
   terminal data, device private keys, reconnect grants, pairing fragments, or
   server secrets.
 - Revoking one device closes it and prevents reconnect without affecting other

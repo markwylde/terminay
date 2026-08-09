@@ -1,7 +1,7 @@
 # Web connection host deployment
 
 This runbook deploys the static Terminay connection manager to
-`https://web.terminay.com`. A healthy CDN endpoint alone is not deployment
+`https://app.terminay.com`. A healthy CDN endpoint alone is not deployment
 proof: the root document, its assets, and the required security headers must
 also pass the repository verifier.
 
@@ -41,13 +41,13 @@ editing them; this is the rollback target.
 
 In Bunny, update pull zone `5830725` so its origin URL and origin Host header
 target this static web origin, not the Terminay signaling/session service.
-Keep `web.terminay.com` attached as the custom hostname and purge the pull-zone
+Keep `app.terminay.com` attached as the custom hostname and purge the pull-zone
 cache after the origin change. This operation requires Bunny dashboard access
 or an API key and is intentionally not performed by repository CI.
 
-Routing must fail closed. `web.terminay.com` may route only to the selected
-static manager image, `app.terminay.com` may route only to the bounded legacy
-migration page, and session/signaling hostnames must remain on their own
+Routing must fail closed. `app.terminay.com` may route only to the selected
+static manager image, `web.terminay.com` may route only to the bounded retired
+manager redirect, and session/signaling hostnames must remain on their own
 service. Do not use the signaling service as an origin fallback for either
 manager hostname. The image returns HTTP 421 for every unrecognised Host;
 loopback hosts are accepted only so the container health check and local image
@@ -60,9 +60,9 @@ shared by the two checked-in entry points.
 ```sh
 TERMINAY_EXPECTED_WEB_REVISION=<40-character-source-revision> \
   node scripts/verify-web-host-deployment.mjs
-curl -fsS https://web.terminay.com/healthz
-curl -fsSI https://web.terminay.com/
-curl -fsS https://web.terminay.com/.well-known/terminay-release.json
+curl -fsS https://app.terminay.com/healthz
+curl -fsSI https://app.terminay.com/
+curl -fsS https://app.terminay.com/.well-known/terminay-release.json
 ```
 
 The verifier fails unless HTTPS serves:
