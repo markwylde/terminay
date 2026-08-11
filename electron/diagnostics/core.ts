@@ -72,8 +72,13 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.ready',
 	'local-server.failed',
 	'local-server.connection.failed',
+	'local-server.terminal-congestion',
 	'local-server.stopping',
 	'local-server.stopped',
+	'terminal.recovery.started',
+	'terminal.recovery.retrying',
+	'terminal.recovery.recovered',
+	'terminal.recovery.failed',
 ] as const;
 export type DiagnosticEventName = (typeof DIAGNOSTIC_EVENT_NAMES)[number];
 
