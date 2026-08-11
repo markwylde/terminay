@@ -81,3 +81,21 @@ test('a high-volume terminal burst cannot kill the shared local application conn
 	});
 	await expect(mainWindow.getByText('Server did not publish a terminal panel')).toHaveCount(0);
 });
+
+test('sustained terminal output keeps checkpoint recovery moving without waiting for silence', async ({ mainWindow }) => {
+	test.setTimeout(45_000);
+	const sessionId = await activeSessionId(mainWindow);
+	const panel = mainWindow.locator(`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`);
+	const rows = panel.locator('.xterm-rows');
+	const progress = `terminay-live-progress-${sessionId}`;
+	const complete = `terminay-live-complete-${sessionId}`;
+	const progressBase64 = Buffer.from(progress).toString('base64');
+	const completeBase64 = Buffer.from(complete).toString('base64');
+
+	// There is deliberately no 100 ms quiet window before the progress marker.
+	await writeToSession(mainWindow, sessionId, `i=0; while [ "$i" -lt 900 ]; do head -c 8192 /dev/zero | tr '\\0' x; i=$((i+1)); if [ "$i" -ge 180 ] && [ "$i" -le 700 ]; then printf '\\n'; printf '%s' ${JSON.stringify(progressBase64)} | base64 -d; printf '\\n'; fi; sleep 0.01; done; printf '\\n'; printf '%s' ${JSON.stringify(completeBase64)} | base64 -d; printf '\\n'\r`);
+
+	await expect.poll(async () => (await rows.textContent())?.includes(progress) ?? false, { timeout: 20_000 }).toBe(true);
+	await expect(panel.getByText('Loading terminal…')).toHaveCount(0, { timeout: 10_000 });
+	await expect.poll(async () => (await rows.textContent())?.includes(complete) ?? false, { timeout: 20_000 }).toBe(true);
+});

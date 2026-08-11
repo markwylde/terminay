@@ -131,6 +131,8 @@ const TERMINAL_CONTEXT_MAX_LINES = 200
 const TERMINAL_CONTEXT_MAX_CHARS = 20_000
 // Replay is base64 in a protocol header; leave room for the result envelope.
 const MAX_INITIAL_SERVER_TERMINAL_REPLAY_BYTES = 32 * 1024
+const TERMINAL_RECOVERY_RETRY_DELAY_MS = 100
+const TERMINAL_RECOVERY_ATTEMPT_DEADLINE_MS = 15_000
 const REMOTE_TERMINAL_SCALE_PROPERTY = '--terminal-remote-scale'
 const EMPTY_TERMINAL_ROOT_SIZE = { height: 0, width: 0 }
 const searchOptions = {
@@ -495,12 +497,32 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     }
     let panelAttachment: TerminalPanelAttachment | null = null
     let presentationRenewTimer: number | null = null
+    let recoveryRetryTimer: number | null = null
+    let recoveryDeadlineTimer: number | null = null
+    let recoveryAttempt = 0
+    let recoveryStartedAt = 0
+    let recoveryFailureReason: 'attach-error' | 'deadline' = 'attach-error'
     let pendingPanelResize: { cols: number; rows: number } | null = null
     let dataReplayDisposed = false
     let panelEventDisposer: (() => void) | null = null
+    const reportTerminalRecovery = (
+      phase: 'started' | 'retrying' | 'recovered' | 'failed',
+      fields: { durationMs?: number; fromPosition?: number; outputPosition?: number; reason?: 'congestion' | 'attach-error' | 'deadline'; replayFrom?: number } = {},
+    ) => {
+      try {
+        window.terminayDiagnosticsHost?.reportTerminalRecovery({ version: 1, phase, attempt: Math.max(1, recoveryAttempt), ...fields })
+      } catch {
+        // Recovery diagnostics cannot change terminal recovery behaviour.
+      }
+    }
     const failServerTransport = (error: unknown) => {
       if (serverAttachmentFailed || dataReplayDisposed) return
       serverAttachmentFailed = true
+      if (recoveryRetryTimer !== null) window.clearTimeout(recoveryRetryTimer)
+      recoveryRetryTimer = null
+      if (recoveryDeadlineTimer !== null) window.clearTimeout(recoveryDeadlineTimer)
+      recoveryDeadlineTimer = null
+      if (recoveryAttempt > 0) reportTerminalRecovery('failed', { durationMs: Math.max(0, Date.now() - recoveryStartedAt), reason: recoveryFailureReason })
       serverInputQueue?.close()
       panelEventDisposer?.()
       panelEventDisposer = null
@@ -757,10 +779,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         terminal.write(bytes, resolve)
       })
 
-    const renderTerminalResync = () => {
-      terminal.write('\r\n\x1b[33m[terminal output requires resync]\x1b[0m\r\n')
-    }
-
     if (useServerTerminal && panelClient !== undefined && panelIdentity !== undefined && panelClientId !== undefined) {
       const mode = props.params.terminalClientMode ?? 'attach'
       const request = {
@@ -775,19 +793,29 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         fromPosition,
         freshPresentation,
         forceResume,
+        recovery,
       }: {
         fromPosition: number | undefined
         freshPresentation: boolean
         forceResume: boolean
+        recovery: boolean
       }) => {
         const nextRequest = {
           ...request,
           ...(fromPosition === undefined ? {} : { fromPosition }),
           ...(freshPresentation ? { freshPresentation: true } : {}),
         }
+        if (recovery) {
+          recoveryDeadlineTimer = window.setTimeout(() => {
+            recoveryDeadlineTimer = null
+            if (dataReplayDisposed || serverAttachmentFailed) return
+            recoveryFailureReason = 'deadline'
+            failServerTransport(new Error('Terminal recovery timed out. Retry the connection to continue.'))
+          }, TERMINAL_RECOVERY_ATTEMPT_DEADLINE_MS)
+        }
         void (forceResume || mode === 'resume' ? panelClient.resume(nextRequest) : panelClient.attach(nextRequest))
           .then((attachment) => {
-            if (dataReplayDisposed) {
+            if (dataReplayDisposed || serverAttachmentFailed) {
               void attachment.detach().catch(() => {})
               return
             }
@@ -850,6 +878,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
                     // PTY output. SerializeAddon requires the geometry used to
                     // create the checkpoint, and neither that resize nor the
                     // restoration bytes may be acknowledged to the server.
+                    if (recovery) terminal.clear()
                     terminal.resize(event.checkpointDimensions.cols, event.checkpointDimensions.rows)
                     await writeTerminalPresentation(event.bytes)
                     renderedPositionRef.current = event.position
@@ -900,7 +929,16 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             const initialEventsRendered = terminalRenderQueue
             void initialEventsRendered.then(() => {
               if (dataReplayDisposed || panelAttachment !== attachment || serverAttachmentFailed || resyncing) return
+              if (recoveryDeadlineTimer !== null) window.clearTimeout(recoveryDeadlineTimer)
+              recoveryDeadlineTimer = null
               setIsTerminalHydrating(false)
+
+              if (recoveryAttempt > 0) {
+                reportTerminalRecovery('recovered', { durationMs: Math.max(0, Date.now() - recoveryStartedAt), outputPosition: renderedPositionRef.current ?? undefined })
+                recoveryAttempt = 0
+                recoveryStartedAt = 0
+                recoveryFailureReason = 'attach-error'
+              }
 
               serverInputQueue?.attach(attachment)
               if (pendingPanelResize !== null && terminalPresentationControllerRef.current) {
@@ -925,6 +963,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             })
           })
           .catch((error: unknown) => {
+            if (recoveryDeadlineTimer !== null) window.clearTimeout(recoveryDeadlineTimer)
+            recoveryDeadlineTimer = null
             if (dataReplayDisposed) return
             failServerTransport(error)
           })
@@ -932,6 +972,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       const beginTerminalResync = (_event: TerminalStreamResyncEvent) => {
         if (dataReplayDisposed || resyncing || serverAttachmentFailed) return
         resyncing = true
+        if (recoveryDeadlineTimer !== null) window.clearTimeout(recoveryDeadlineTimer)
+        recoveryDeadlineTimer = null
         setIsTerminalHydrating(true)
         panelEventDisposer?.()
         panelEventDisposer = null
@@ -939,23 +981,18 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         panelAttachment = null
         serverInputQueue?.close()
         serverInputQueue = new ServerTerminalInputQueue(failServerTransport)
-        terminal.clear()
-        renderTerminalResync()
         void staleAttachment?.detach().catch(() => {})
-				// Do not immediately chase a producer which is still flooding output:
-				// that creates an endless attach/resync loop. The server-owned PTY
-				// activity clock lets this one display wait without blocking the PTY,
-				// connection, other terminals, or workspace commands. Once quiet, a
-				// single current checkpoint replaces all obsolete repaint frames.
-				void panelClient
-					.waitForInactivity(panelIdentity.projectId, sessionId, 100)
-					.then(() => {
-						if (dataReplayDisposed || !resyncing || panelAttachment !== null) return
-						// This xterm has just been cleared, so its previous byte watermark is
-						// no longer presentation state. Force a safe byte-zero recovery.
-						attachServerTerminal({ fromPosition: 0, freshPresentation: true, forceResume: true })
-					})
-					.catch(failServerTransport)
+				if (recoveryAttempt === 0) recoveryStartedAt = Date.now()
+				recoveryAttempt += 1
+				reportTerminalRecovery(recoveryAttempt === 1 ? 'started' : 'retrying', { fromPosition: _event.fromPosition, replayFrom: _event.replayFrom, outputPosition: _event.outputPosition, reason: 'congestion' })
+				// A progress display may never become idle. Keep the last completed
+				// presentation visible and retry from a current bounded checkpoint.
+				recoveryRetryTimer = window.setTimeout(() => {
+					recoveryRetryTimer = null
+					if (dataReplayDisposed || !resyncing || panelAttachment !== null) return
+					resyncing = false
+					attachServerTerminal({ fromPosition: 0, freshPresentation: true, forceResume: true, recovery: true })
+				}, TERMINAL_RECOVERY_RETRY_DELAY_MS)
       }
       // The first attachment hydrates the newly created emulator. Later
       // reconnects use the exact cursor xterm has already rendered.
@@ -963,6 +1000,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         if (dataReplayDisposed) return
         serverAttachmentFailed = false
         resyncing = false
+        recoveryAttempt = 0
+        recoveryStartedAt = 0
+        recoveryFailureReason = 'attach-error'
         serverInputQueue?.close()
         serverInputQueue = new ServerTerminalInputQueue(failServerTransport)
         setServerTerminalError(null)
@@ -972,9 +1012,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           fromPosition: renderedPositionRef.current ?? 0,
           freshPresentation: false,
           forceResume: true,
+          recovery: false,
         })
       }
-      attachServerTerminal({ fromPosition: 0, freshPresentation: true, forceResume: false })
+      attachServerTerminal({ fromPosition: 0, freshPresentation: true, forceResume: false, recovery: false })
     } else {
       // A terminal surface is a detachable server client. There is no Local
       // Electron IPC fallback: doing so would make the renderer a second PTY
@@ -1327,6 +1368,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       dataDisposer.dispose()
       panelEventDisposer?.()
       if (presentationRenewTimer !== null) window.clearTimeout(presentationRenewTimer)
+      if (recoveryRetryTimer !== null) window.clearTimeout(recoveryRetryTimer)
+      if (recoveryDeadlineTimer !== null) window.clearTimeout(recoveryDeadlineTimer)
       dataReplayDisposed = true
       serverInputQueue?.close()
       const attachmentToDetach = panelAttachment
