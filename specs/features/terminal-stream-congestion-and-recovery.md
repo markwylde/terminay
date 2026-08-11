@@ -62,6 +62,15 @@ controlling display lacks a valid current presentation; it is restored after
 hydration without creating another PTY or silently changing presentation
 ownership.
 
+Recovery never waits indefinitely for complete PTY silence. A continuously
+updating prompt, progress display, or agent remains recoverable: the client
+requests current bounded checkpoints on a bounded retry schedule, replaces an
+obsolete recovery attempt when it falls behind again, and exposes the most
+recent completed presentation while it catches up. Each attempt has a bounded
+deadline. A failed attempt either advances to another checkpoint or becomes a
+visible retryable error; the terminal cannot remain on an unqualified loading
+surface with no deadline or diagnostic transition.
+
 Congestion is not reported as a transport failure. Increasing a global queue,
 silently dropping raw frames, replaying from an arbitrary byte suffix, and
 closing the shared application connection are not valid recovery strategies.
@@ -138,6 +147,9 @@ terminal clients.
   without duplicating PTYs, output, input, or workspace mutations.
 - Queue and recovery diagnostics identify the affected opaque lane and precise
   resource transition without including terminal content.
+- Sustained output that never becomes completely idle cannot pin a terminal on
+  **Loading terminal**; bounded checkpoint attempts continue until one commits,
+  and every start, retry, completion, timeout, and terminal failure is observable.
 - Thousands of pre-provider PTY callbacks publish only semantic activity
   transitions, keep the renderer connection open, and do not prevent another
   terminal from being created.
