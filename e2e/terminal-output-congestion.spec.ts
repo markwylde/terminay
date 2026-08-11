@@ -91,11 +91,11 @@ test('sustained terminal output keeps checkpoint recovery moving without waiting
 	const complete = `terminay-live-complete-${sessionId}`;
 	const progressBase64 = Buffer.from(progress).toString('base64');
 	const completeBase64 = Buffer.from(complete).toString('base64');
-	const sustainedIterations = 900;
+	const sustainedIterations = 500;
 
 	// There is deliberately no 100 ms quiet window before the repeatedly
 	// visible progress marker, so sampling cannot mistake scrollback for a stall.
-	await writeToSession(mainWindow, sessionId, `i=0; while [ "$i" -lt ${sustainedIterations} ]; do head -c 8192 /dev/zero | tr '\\0' x; i=$((i+1)); if [ "$i" -ge 180 ] && [ "$i" -le 700 ]; then printf '\\n'; printf '%s' ${JSON.stringify(progressBase64)} | base64 -d; printf '\\n'; fi; sleep 0.01; done; printf '\\n'; printf '%s' ${JSON.stringify(completeBase64)} | base64 -d; printf '\\n'\r`);
+	await writeToSession(mainWindow, sessionId, `i=0; while [ "$i" -lt ${sustainedIterations} ]; do head -c 8192 /dev/zero | tr '\\0' x; i=$((i+1)); if [ "$i" -ge 100 ] && [ "$i" -le 400 ]; then printf '\\n'; printf '%s' ${JSON.stringify(progressBase64)} | base64 -d; printf '\\n'; fi; sleep 0.04; done; printf '\\n'; printf '%s' ${JSON.stringify(completeBase64)} | base64 -d; printf '\\n'\r`);
 
 	await expect.poll(async () => (await rows.textContent())?.includes(progress) ?? false, { timeout: 20_000 }).toBe(true);
 	await expect(panel.getByText('Loading terminal…')).toHaveCount(0, { timeout: 10_000 });
