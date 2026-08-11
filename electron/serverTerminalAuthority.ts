@@ -43,6 +43,7 @@ import type { ShellProfileCatalogueService } from '../packages/server-core/src/s
 import type {
 	BinaryQueryHandlerResult,
 	CommandRequest,
+	ConnectionDeliveryDiagnostic,
 	QueryRequest,
 } from '../packages/server-core/src/types';
 import {
@@ -180,6 +181,8 @@ export interface ServerTerminalAuthorityOptions {
 	readonly resolveDefaultShell?: TerminalServiceOptions['resolveDefaultShell'];
 	readonly maxReplayBytes?: number;
 	readonly onEvent?: (event: TerminalEvent) => void;
+	/** Metadata-only observation of bounded protocol delivery pressure. */
+	readonly onDeliveryDiagnostic?: (diagnostic: ConnectionDeliveryDiagnostic) => void;
 	/** Host-only observer for input that server-core has already accepted. */
 	readonly onAcceptedWrite?: ServerTerminalHostObserver<ServerTerminalAcceptedWrite>;
 	/** Host-only observer for resize that server-core has already accepted. */
@@ -737,7 +740,9 @@ export class ServerTerminalAuthority {
 			this.service.serverId,
 		);
 		const transport = new ServerPortTransport(scopedPort);
-		const connection = this.composition.core.accept(transport);
+		const connection = this.composition.core.accept(transport, {
+			onDeliveryDiagnostic: this.options.onDeliveryDiagnostic,
+		});
 		void connection.start().catch((error) => {
 			mainServerPortDiagnostics.lastError =
 				error instanceof Error ? error.message : String(error);

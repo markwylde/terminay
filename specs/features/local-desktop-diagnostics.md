@@ -98,6 +98,10 @@ The normal diagnostic level records:
 - embedded Local server protocol-stream failures, including a client
   disconnect racing an event delivery, as a stable bounded error without
   protocol frames, terminal content, credentials, or remote addresses; and
+- embedded Local terminal presentation congestion plus renderer recovery
+  starts, retries, checkpoint commits, timeouts, and terminal failures, using
+  only bounded attempt counts, durations, byte positions, queue measurements,
+  and process-local correlation metadata; and
 - diagnostic-writer, cleanup, crash-dump, and retention failures.
 
 Normal user actions and high-frequency UI state do not produce one event per
@@ -265,6 +269,10 @@ raw authority-bearing ids are not diagnostic correlation keys.
 - A Local protocol client that disconnects while an event is being delivered
   produces one bounded connection-failure diagnostic, while Desktop and its
   Electron windows remain running.
+- A Local terminal congestion episode records the server queue boundary and
+  the renderer's bounded recovery lifecycle through completion or a visible
+  retryable failure, without persisting PTY bytes, session ids, project ids, or
+  terminal titles.
 - Console flooding and an oversized cyclic object cannot freeze Desktop,
   allocate unbounded memory, forge log lines, or exceed per-event and rotation
   bounds.
