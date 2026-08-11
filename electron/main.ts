@@ -932,6 +932,22 @@ serverTerminalAuthority = new ServerTerminalAuthority({
 		},
 	},
 	onEvent: handleServerTerminalEvent,
+	onDeliveryDiagnostic: (diagnostic) => {
+		if (diagnostic.phase !== 'terminal_congestion') return;
+		void desktopDiagnostics.record({
+			component: 'local-server',
+			event: 'local-server.terminal-congestion',
+			fields: {
+				code: diagnostic.code,
+				queuedBytes: diagnostic.queuedBytes,
+				queuedFrames: diagnostic.queuedFrames,
+				confirmedPosition: diagnostic.confirmedPosition,
+				headPosition: diagnostic.headPosition,
+			},
+			severity: 'warning',
+			source: 'local-server-protocol',
+		}, { channel: 'lifecycle' });
+	},
 	// These callbacks run only after the server has accepted the operation.
 	// Recording and remote bookkeeping must never be driven by renderer intent.
 	onAcceptedWrite: ({ sessionId, data }) => {
@@ -6260,6 +6276,25 @@ ipcMain.handle(
 
 const rendererRootDiagnosticKeys = new Map<number, Set<string>>();
 
+function readTerminalRecoveryDiagnosticPayload(value: unknown) {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+	const payload = value as Record<string, unknown>;
+	if (Object.keys(payload).some((key) => !['attempt', 'durationMs', 'fromPosition', 'outputPosition', 'phase', 'reason', 'replayFrom', 'version'].includes(key))) return undefined;
+	const optionalPosition = (candidate: unknown) => candidate === undefined || (Number.isSafeInteger(candidate) && (candidate as number) >= 0);
+	if (payload.version !== 1 || !['started', 'retrying', 'recovered', 'failed'].includes(String(payload.phase)) ||
+		!Number.isSafeInteger(payload.attempt) || (payload.attempt as number) <= 0 || (payload.attempt as number) > 1_000_000 ||
+		!optionalPosition(payload.durationMs) || !optionalPosition(payload.fromPosition) || !optionalPosition(payload.replayFrom) || !optionalPosition(payload.outputPosition) ||
+		(payload.reason !== undefined && !['congestion', 'attach-error', 'deadline'].includes(String(payload.reason)))) return undefined;
+	return payload;
+}
+
+const terminalRecoveryEventNames = {
+	started: 'terminal.recovery.started',
+	retrying: 'terminal.recovery.retrying',
+	recovered: 'terminal.recovery.recovered',
+	failed: 'terminal.recovery.failed',
+} as const;
+
 function readRendererRootDiagnosticPayload(
 	value: unknown,
 ):
@@ -6341,6 +6376,21 @@ ipcMain.on(
 		);
 	},
 );
+
+ipcMain.on('desktop:diagnostics-host:report-terminal-recovery', (event, value: unknown) => {
+	assertTrustedAppSender(event);
+	const payload = readTerminalRecoveryDiagnosticPayload(value);
+	if (payload === undefined) return;
+	const phase = payload.phase as keyof typeof terminalRecoveryEventNames;
+	const { version: _version, ...fields } = payload;
+	void desktopDiagnostics.record({
+		component: 'renderer',
+		event: terminalRecoveryEventNames[phase],
+		fields,
+		severity: phase === 'failed' ? 'error' : phase === 'recovered' ? 'info' : 'warning',
+		source: `renderer-${event.sender.id}`,
+	}, { channel: 'lifecycle' });
+});
 
 app.on('browser-window-created', (_event, window) => {
 	void desktopDiagnostics.record(

@@ -4,7 +4,10 @@ import {
 } from '@terminay/protocol';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { MacroDefinition } from '../src/types/macros';
-import type { RendererRootDiagnosticPayload } from '../src/types/desktopDiagnostics';
+import type {
+	RendererRootDiagnosticPayload,
+	TerminalRecoveryDiagnosticPayload,
+} from '../src/types/desktopDiagnostics';
 import type { TerminalSettings } from '../src/types/settings';
 import type {
 	AdoptedProjectPayload,
@@ -251,6 +254,20 @@ function isRendererRootDiagnosticPayload(
 			true,
 		)
 	);
+}
+
+function isTerminalRecoveryDiagnosticPayload(
+	value: unknown,
+): value is TerminalRecoveryDiagnosticPayload {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+	const payload = value as Record<string, unknown>;
+	if (Object.keys(payload).some((key) => !['attempt', 'durationMs', 'fromPosition', 'outputPosition', 'phase', 'reason', 'replayFrom', 'version'].includes(key))) return false;
+	const optionalPosition = (candidate: unknown) => candidate === undefined || (Number.isSafeInteger(candidate) && (candidate as number) >= 0);
+	return payload.version === DESKTOP_DIAGNOSTICS_HOST_BRIDGE_VERSION &&
+		['started', 'retrying', 'recovered', 'failed'].includes(String(payload.phase)) &&
+		Number.isSafeInteger(payload.attempt) && (payload.attempt as number) > 0 && (payload.attempt as number) <= 1_000_000 &&
+		optionalPosition(payload.durationMs) && optionalPosition(payload.fromPosition) && optionalPosition(payload.replayFrom) && optionalPosition(payload.outputPosition) &&
+		(payload.reason === undefined || ['congestion', 'attach-error', 'deadline'].includes(String(payload.reason)));
 }
 
 // Install this listener during preload evaluation so a fast did-finish-load
@@ -2217,6 +2234,10 @@ contextBridge.exposeInMainWorld(
 				'desktop:diagnostics-host:report-root-error',
 				payload,
 			);
+		},
+		reportTerminalRecovery: (payload: unknown) => {
+			if (!isTerminalRecoveryDiagnosticPayload(payload)) throw new TypeError('terminal recovery diagnostic payload is invalid');
+			ipcRenderer.send('desktop:diagnostics-host:report-terminal-recovery', payload);
 		},
 	}),
 );
