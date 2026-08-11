@@ -67,6 +67,7 @@ test('Local server diagnostics are semantic and PTY data paths never call the si
 		'local-server.connection.failed',
 		'local-server.stopping',
 		'local-server.stopped',
+		'local-server.terminal-congestion',
 	]) {
 		assert.match(main, new RegExp(`event: '${event.replaceAll('.', '\\.')}'`, 'u'));
 	}
@@ -84,6 +85,17 @@ test('Local server diagnostics are semantic and PTY data paths never call the si
 		/desktopDiagnostics/u,
 	);
 	assert.doesNotMatch(authority, /desktopDiagnostics/u);
+});
+
+test('terminal recovery diagnostics are metadata-only and trusted', () => {
+	assert.match(preload, /reportTerminalRecovery/u);
+	assert.match(preload, /desktop:diagnostics-host:report-terminal-recovery/u);
+	assert.match(main, /terminal\.recovery\.recovered/u);
+	const handlerStart = main.indexOf("'desktop:diagnostics-host:report-terminal-recovery'");
+	const handlerEnd = main.indexOf("app.on('browser-window-created'", handlerStart);
+	const handler = main.slice(handlerStart, handlerEnd);
+	assert.match(handler, /assertTrustedAppSender\(event\)/u);
+	for (const forbidden of ['sessionId', 'projectId', 'terminalTitle', 'bytes', 'outputText']) assert.equal(handler.includes(forbidden), false, forbidden);
 });
 
 test('existing application logs no longer persist raw model output or microphone identity', () => {

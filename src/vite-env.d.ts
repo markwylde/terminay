@@ -11,6 +11,9 @@ declare global {
 			reportRootError(
 				payload: import('./types/desktopDiagnostics').RendererRootDiagnosticPayload,
 			): void;
+			reportTerminalRecovery(
+				payload: import('./types/desktopDiagnostics').TerminalRecoveryDiagnosticPayload,
+			): void;
 		};
 		terminayBootstrapDiagnostic?: {
 			record(phase: string, count?: number): void;
