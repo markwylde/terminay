@@ -119,6 +119,16 @@ test("Puzed management and SSH runtime outages preserve the other side's durable
   const stored = (await environments.load()).environments[input.environmentId]; assert.equal(stored.providerState.sshBindingId, "binding-stable"); assert.equal(stored.status, "ready");
 });
 
+test("explicit VM deletion cannot implicitly remove the canonical project or SSH credential binding", async () => {
+  const f = fixture(); const generated = await f.call("generate-dedicated-key", { profileId: "platform", operationId: "operation" });
+  await f.call("bind-machine", { sshBindingId: generated.sshBindingId, machineId: "machine", host: "10.0.0.2", port: 22, username: "vms", root: "/srv/project" });
+  await f.call("open-project", { sshBindingId: generated.sshBindingId, logicalHostIdentity: "puzed:platform:machine", displayName: "Machine" });
+  // VM deletion is a Puzed lifecycle API action and deliberately has no
+  // composition-broker operation. Its independently retained project/key stay.
+  await assert.rejects(f.call("delete-machine", { machineId: "machine" }), /unsupported/);
+  const [binding] = await f.service.snapshot(); assert.equal(binding.id, generated.sshBindingId); assert.equal(f.secrets.size, 1); assert.equal(f.projectCalls(), 1);
+});
+
 test("production SSH adapter gives private secret metadata only to SSH and survives restart", async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-composed-ssh-")); const calls = [];
   const hosts = { async invokeProvider(input) { calls.push(structuredClone(input)); if (input.callback === "createEnvironment") return { state: "ready", providerState: { profileId: input.request.profileId, root: "/srv/app" }, status: { state: "available", defaultRoot: "/srv/app", revision: 1 } }; return { state: "available", defaultRoot: "/srv/app", revision: 1 }; } };
