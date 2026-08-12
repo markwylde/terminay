@@ -29,30 +29,30 @@ and there is no admin install/preview/update/rollback/remove lifecycle.
 
 ### Installer and store
 
-- [ ] Package pinned npm 11.9 with Desktop-embedded, standalone x64/arm64, and
+- [x] Package pinned npm 11.9 with Desktop-embedded, standalone x64/arm64, and
   Docker servers without introducing a system npm/compiler dependency.
-- [ ] Build sterile npmjs-only resolve/preview/confirm, exact lock/integrity,
+- [x] Build sterile npmjs-only resolve/preview/confirm, exact lock/integrity,
   scripts-disabled staging, bounded tree validation, immutable slots, receipts,
   atomic activation, crash recovery, and cleanup.
-- [ ] Reject aliases/git/file/URL/custom registry, native/build/install-script
+- [x] Reject aliases/git/file/URL/custom registry, native/build/install-script
   trees, bad symlinks/entrypoints, and missing integrity.
 
 ### Lifecycle and persistence
 
-- [ ] Implement installed/disabled/incompatible/failed/quarantined/pending states,
+- [x] Implement installed/disabled/incompatible/failed/quarantined/pending states,
   reference-aware enable/disable/remove, side-by-side update, drain/restart,
   retained known-good rollback, and namespaced data snapshots.
-- [ ] Block cascading project/profile/secret/external-resource deletion.
-- [ ] Add safe diagnostics, audit, support-bundle and backup/recovery coverage.
+- [x] Block cascading project/profile/secret/external-resource deletion.
+- [x] Add safe diagnostics, audit, support-bundle and backup/recovery coverage.
 
 ### Official catalogue/release inputs
 
-- [ ] Define hardcoded official SSH/Puzed catalogue records, resolve their exact
+- [x] Define hardcoded official SSH/Puzed catalogue records, resolve their exact
   npmjs versions/integrity through the ordinary preview/install path, and show
   an actionable offline/registry-unavailable state.
-- [ ] Verify signatures/provenance/audit as informational metadata and render
+- [x] Verify signatures/provenance/audit as informational metadata and render
   the trusted-code warning for custom packages.
-- [ ] Add deterministic artifact/SBOM/license/integrity checks.
+- [x] Add deterministic artifact/SBOM/license/integrity checks.
 
 ## Acceptance checks
 
