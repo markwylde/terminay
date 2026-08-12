@@ -440,7 +440,7 @@ type ProjectWorkspaceProps = {
 	isActive: boolean;
 	isMac: boolean;
 	macros: MacroDefinition[];
-	onAddProject: () => void;
+	onAddProject: () => Promise<void>;
 	onCloseProject: (
 		projectId: string,
 		options?: { skipConfirmation?: boolean },
@@ -2974,11 +2974,11 @@ const ProjectWorkspace = forwardRef<
 		const runAiTabMetadataRef = useRef(runAiTabMetadata);
 		runAiTabMetadataRef.current = runAiTabMetadata;
 
-		const createProject = useCallback(() => {
+		const createProject = useCallback(async () => {
 			setErrorText(null);
 			setIsMacroLauncherOpen(false);
 			setMacroQuery('');
-			onAddProject();
+			await onAddProject();
 		}, [onAddProject]);
 
 		const toggleFileExplorerSidebar = useCallback(() => {
@@ -3213,7 +3213,7 @@ const ProjectWorkspace = forwardRef<
 						isMac,
 					),
 					onSelect: () => {
-						createProject();
+						void createProject();
 					},
 				},
 				{
@@ -3521,7 +3521,7 @@ const ProjectWorkspace = forwardRef<
 						await addTerminal({});
 						break;
 					case 'new-project':
-						onAddProject();
+						await onAddProject();
 						break;
 					case 'split-horizontal':
 						await addTerminal({ direction: 'below' });
@@ -5877,7 +5877,7 @@ function App({
 						isActive={project.id === activeProjectId}
 						isMac={isMac}
 						macros={macros}
-						onAddProject={addProject}
+						onAddProject={createThisServerProject}
 						onCloseProject={closeProject}
 						onEditProject={openEditProjectWindow}
 						onMoveTerminalToProject={moveTerminalToProject}
