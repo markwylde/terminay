@@ -111,6 +111,11 @@ status must not be conflated with terminal or agent attention.
   remember any number of remote profiles.
 - A native window is bound to exactly one server at a time. Its title and
   security scope make the connection clear.
+- Reloading a native window preserves that exact server binding. Desktop
+  discards the document-scoped byte channel, reconnects the remembered remote
+  profile with its OS-protected credential, and transfers a fresh channel to
+  the new document. A reload must never attach Local merely because the remote
+  renderer transport was destroyed with the previous document.
 - Selecting a profile focuses an existing window for that connection/view when
   appropriate or opens a new sandboxed window. Rebinding the current window is
   an explicit action, not an accidental side effect of menu selection.
