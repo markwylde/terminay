@@ -5707,10 +5707,20 @@ ipcMain.handle(
 		}
 		const draft = request.draft as Record<string, unknown>;
 		if (
-			Object.keys(draft).length !== 6 ||
+			Object.keys(draft).length !== 10 ||
 			typeof draft.color !== 'string' ||
 			draft.color.length > 128 ||
 			(draft.defaultShellProfileId !== null && (typeof draft.defaultShellProfileId !== 'string' || draft.defaultShellProfileId.length === 0 || draft.defaultShellProfileId.length > 128)) ||
+			typeof draft.environmentLabel !== 'string' ||
+			draft.environmentLabel.length === 0 ||
+			draft.environmentLabel.length > 512 ||
+			typeof draft.environmentStatus !== 'string' ||
+			draft.environmentStatus.length === 0 ||
+			draft.environmentStatus.length > 128 ||
+			(draft.environmentDefaultRoot !== null && (typeof draft.environmentDefaultRoot !== 'string' || draft.environmentDefaultRoot.length > 32_768)) ||
+			typeof draft.projectEnvironmentId !== 'string' ||
+			draft.projectEnvironmentId.length === 0 ||
+			draft.projectEnvironmentId.length > 128 ||
 			typeof draft.emoji !== 'string' ||
 			draft.emoji.length > 64 ||
 			typeof draft.rootFolder !== 'string' ||

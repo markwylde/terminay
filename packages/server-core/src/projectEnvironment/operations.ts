@@ -57,7 +57,7 @@ export function createProjectEnvironmentOperationHandlers(options: ProjectEnviro
 				: await requiredProvider(options).validateRoot?.(environment, payload.root === undefined ? undefined : text(payload, 'root', 4096), providerContext(request.context))
 					?? (() => { throw failure('unavailable', 'project environment root validation is unavailable', true); })();
 			const projectId = uniqueId(`project:${request.envelope.commandId}`, options.workspace.state.projects);
-			const result = options.workspace.apply({ commandId: `env:${request.envelope.commandId}`.slice(0, 128), expectedRevision: request.context.expectedRevision, command: { type: 'project.create', projectId, viewId: text(payload, 'viewId', 256), root: boundedRoot(root), rootOrigin: payload.root === undefined ? 'environment-default' : 'explicit', name: projectId, projectEnvironmentId: environment.id, environmentRevision: environment.pinnedRevision } });
+			const result = options.workspace.apply({ commandId: `env:${request.envelope.commandId}`.slice(0, 128), expectedRevision: request.context.expectedRevision, command: { type: 'project.create', projectId, viewId: text(payload, 'viewId', 256), root: boundedRoot(root), rootOrigin: payload.root === undefined ? 'environment-default' : 'explicit', name: `Project ${Object.keys(options.workspace.state.projects).length + 1}`, projectEnvironmentId: environment.id, environmentRevision: environment.pinnedRevision } });
 			if (!result.ok) throw failure('conflict', result.conflict.message);
 			changed(options, state.revision);
 			return { result: operation(request.envelope.commandId, { environmentId: environment.id, projectId }), revision: result.revision };

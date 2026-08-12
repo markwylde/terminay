@@ -43,6 +43,7 @@ test('createProject validates This server root then commits one immutable worksp
   const project = subject.workspace.state.projects[response.result.projectId];
   assert.equal(project.root, '/home/server');
   assert.equal(project.rootOrigin, 'environment-default');
+  assert.equal(project.name, 'Project 1');
   assert.equal(project.projectEnvironmentId, 'terminay:this-server');
   assert.equal(project.environmentRevision, 1);
   assert.deepEqual(subject.events, [{revision:0}]);
