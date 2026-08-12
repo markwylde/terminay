@@ -49,6 +49,11 @@ test("manifest arrays reject duplicates and unsupported capabilities", () => {
   assert.ok(result.issues.some((issue) => issue.code === "unknown_capability"));
 });
 
+test("SSH agent access is an explicit supported manifest permission", () => {
+  const result = validateExtensionManifest({ ...validManifestFixture, permissions: ["network", "ssh-agent:use"] });
+  assert.equal(result.ok, true);
+});
+
 test("declarative form fixture validates and executable UI is rejected", () => {
   assert.equal(validateDeclarativeForm(validFormFixture).ok, true);
   const result = validateDeclarativeForm({ ...validFormFixture, html: "<script />" });
