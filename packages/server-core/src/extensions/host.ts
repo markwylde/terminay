@@ -2,8 +2,8 @@ import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { isChildFrame, frameByteLength, EXTENSION_HOST_PROTOCOL_VERSION, type ChildFrame, type HostFrame } from "./protocol.js";
 import { validateExtensionLaunchDescriptor } from "./descriptor.js";
-import type { ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProviderInvocation } from "./types.js";
-import { isNamespacedId, validateDeclarativeForm, validateEnvironmentActionResult, validateOptionSourceResult, validateProviderDefinition, validateProviderEnvironmentStatus, validateProvisioningResult, validateValidationIssues, type ProviderDefinition } from "@terminay/extension-api";
+import type { ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProfileBroker, ExtensionProviderInvocation, ExtensionSecretAccessBroker, ExtensionSshAgentBroker } from "./types.js";
+import { isNamespacedId, validateDeclarativeForm, validateEnvironmentActionResult, validateOptionSourceResult, validateProviderDefinition, validateProviderEnvironmentStatus, validateProvisioningResult, validateSshAgentIdentities, validateSshAgentSignature, validateValidationIssues, type ProviderDefinition } from "@terminay/extension-api";
 
 interface PendingCall {
   readonly resolve: (value: unknown) => void;
@@ -18,6 +18,9 @@ export interface ExtensionHostOptions {
   readonly nodeExecutable?: string;
   readonly childEntrypoint?: string;
   readonly now?: () => number;
+  readonly profiles?: ExtensionProfileBroker;
+  readonly secrets?: ExtensionSecretAccessBroker;
+  readonly sshAgent?: ExtensionSshAgentBroker;
 }
 
 const DEFAULTS = Object.freeze({
@@ -190,13 +193,57 @@ export class ExtensionHost {
     if (this.activeBrokerCalls.size >= this.limits.maxConcurrentInvocations) { this.sendBrokerResult(frame.id, undefined, "broker admission limit reached"); return; }
     const payload = record(frame.payload);
     const operation = payload?.operation;
-    if (operation !== "log" && operation !== "secret.resolve" && operation !== "provider.call") { this.sendBrokerResult(frame.id, undefined, "unsupported broker operation"); return; }
+    if (operation !== "log" && operation !== "secret.resolve" && operation !== "profile.get" && operation !== "agent.list" && operation !== "agent.sign" && operation !== "provider.call") { this.sendBrokerResult(frame.id, undefined, "unsupported broker operation"); return; }
     const controller = new AbortController(); this.activeBrokerCalls.set(frame.id, controller);
     try {
-      const result = await this.options.broker.request({ extensionId: this.extensionId, operation, payload: payload?.payload }, controller.signal);
+      const result = operation === "profile.get"
+        ? await this.readProfile(payload?.payload, controller.signal)
+        : operation === "secret.resolve"
+          ? await this.resolveSecret(payload?.payload, controller.signal)
+          : operation === "agent.list" || operation === "agent.sign"
+            ? await this.useSshAgent(operation, payload?.payload, controller.signal)
+          : await this.options.broker.request({ extensionId: this.extensionId, operation, payload: payload?.payload }, controller.signal);
       this.sendBrokerResult(frame.id, result);
     } catch (error) { this.sendBrokerResult(frame.id, undefined, error instanceof Error ? error.message : "broker request failed"); }
     finally { this.activeBrokerCalls.delete(frame.id); }
+  }
+
+  private async readProfile(input: unknown, signal: AbortSignal): Promise<unknown> {
+    if (this.options.profiles === undefined) throw new Error("extension profile broker is unavailable");
+    const request = record(input);
+    const providerId = boundedId(request?.providerId); const profileId = boundedId(request?.profileId);
+    if (providerId === undefined || profileId === undefined || !this.providers.some((provider) => provider.providerId === providerId)) throw new Error("extension profile access is denied");
+    return this.options.profiles.get(this.extensionId, providerId, profileId, signal);
+  }
+
+  private async useSshAgent(operation: "agent.list" | "agent.sign", input: unknown, signal: AbortSignal): Promise<unknown> {
+    if (this.options.sshAgent === undefined || this.descriptor === undefined || !this.descriptor.permissions.includes("ssh-agent:use")) throw new Error("SSH agent access is denied");
+    const request = record(input); const profileId = boundedId(request?.profileId);
+    if (profileId === undefined) throw new Error("SSH agent access is denied");
+    if (request?.purpose !== "ssh-user-authentication") throw new Error("SSH agent access is denied");
+    const principal = { extensionId: this.extensionId, profileId, purpose: "ssh-user-authentication" as const };
+    if (operation === "agent.list") return validated(validateSshAgentIdentities(await this.options.sshAgent.listIdentities(principal, signal)), "SSH agent returned invalid identities");
+    const identityId = boundedId(request?.identityId); const bytes = request?.challenge;
+    if (identityId === undefined || typeof request?.algorithm !== "string" || !Array.isArray(bytes) || bytes.length > 64 * 1024 || bytes.some((byte) => !Number.isInteger(byte) || Number(byte) < 0 || Number(byte) > 255)) throw new Error("SSH agent signing request is invalid");
+    return validated(validateSshAgentSignature(await this.options.sshAgent.sign(principal, { identityId, challenge: new Uint8Array(bytes as number[]), algorithm: request.algorithm }, signal)), "SSH agent returned invalid signature");
+  }
+
+  private async resolveSecret(input: unknown, signal: AbortSignal): Promise<unknown> {
+    if (this.options.secrets === undefined || this.descriptor === undefined) throw new Error("extension secret broker is unavailable");
+    if (signal.aborted) throw new Error("extension secret access cancelled");
+    const request = record(input); const profileId = boundedId(request?.profileId); const fieldId = boundedId(request?.fieldId);
+    if (profileId === undefined || fieldId === undefined) throw new Error("extension secret access is denied");
+    return this.options.secrets.withSecret(
+      { extensionId: this.extensionId, permissions: new Set(this.descriptor.permissions.map((permission) => permission === "secrets:resolve" ? "extension-secrets:resolve" : permission)) },
+      { profileId, fieldId },
+      (secret) => {
+        if (signal.aborted) throw new Error("extension secret access cancelled");
+        // The numeric array is the one bounded structured-clone copy crossing
+        // private IPC. The vault/broker-owned Uint8Array is cleared by its
+        // callback lifetime before this method returns.
+        return [...secret];
+      },
+    );
   }
 
   private sendBrokerResult(id: string, value?: unknown, failure?: string): void {
@@ -242,6 +289,7 @@ export class ExtensionHost {
 function record(value: unknown): Record<string, unknown> | undefined { return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
 function failureMessage(value: unknown): string { const message = record(value)?.message; return typeof message === "string" ? message.slice(0, 1_000) : "extension operation failed"; }
 function safeFailure(error: Error): string { return error.message.replace(/[\r\n]/gu, " ").slice(0, 1_000); }
+function boundedId(value: unknown): string | undefined { return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u.test(value) ? value : undefined; }
 function validateProviders(value: unknown, extensionId: string): readonly ProviderDefinition[] {
   if (!Array.isArray(value) || value.length > 32) throw new Error("extension returned invalid provider registrations");
   const seen = new Set<string>();

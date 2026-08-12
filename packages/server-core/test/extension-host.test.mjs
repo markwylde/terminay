@@ -33,7 +33,7 @@ test("one extension child activates, invokes methods, and uses an identity-scope
       context.registerProjectEnvironmentProvider({ providerId: "example.test/main", displayName: "Example", capabilities: ["terminal"] });
       return { methods: {
         echo(input) { return { input, extensionId: context.extensionId }; },
-        async secret(input) { return context.broker.request("secret.resolve", input); }
+        async log(input) { return context.broker.request("log", input); }
       }};
     }
   `);
@@ -43,9 +43,9 @@ test("one extension child activates, invokes methods, and uses an identity-scope
   assert.equal(host.status().state, "running");
   assert.deepEqual(host.status().providers.map((provider) => provider.providerId), ["example.test/main"]);
   assert.deepEqual(await host.invoke({ method: "echo", input: "hello" }), { input: "hello", extensionId: "example.test" });
-  assert.equal(await host.invoke({ method: "secret", input: { profileId: "profile-1" } }), "resolved-metadata");
+  assert.equal(await host.invoke({ method: "log", input: { message: "safe" } }), "resolved-metadata");
   assert.equal(requests[0].extensionId, "example.test");
-  assert.equal(requests[0].operation, "secret.resolve");
+  assert.equal(requests[0].operation, "log");
   await host.stop();
   assert.equal(host.status().state, "stopped");
 });
@@ -247,4 +247,48 @@ test("provider callbacks reject unsafe DTOs and honor cancellation and deadlines
   await assert.rejects(pending, /cancelled/);
   assert.equal((await manager.invokeProvider({ providerId, callback: "getStatus", request: { environmentId: "env", providerState: {} } })).state, "available");
   await manager.shutdown();
+});
+
+test("provider profile and secret brokers enforce ownership and zeroize child bytes", async () => {
+  const descriptor = await fixture("example.credentials", `export function activate(context) {
+    context.registerProjectEnvironmentProvider({ definition: { providerId: "example.credentials/main", displayName: "Credentials", capabilities: ["terminal"] }, runtime: {
+      async testProfile(request, call) {
+        const profile = await call.profiles.get(request.profileId);
+        let retained;
+        const decoded = await call.secrets.withValue({ profileId: request.profileId, fieldId: "apiKey", purpose: "test" }, bytes => { retained = bytes; return new TextDecoder().decode(bytes); });
+        return retained.every(byte => byte === 0) && profile.values.url && decoded === "secret-sentinel" ? [] : [{ code: "failed", message: "broker contract failed" }];
+      },
+      async resolveOptions(){ return {options:[]}; }, async createEnvironment(){ throw new Error("unused"); }, async resumeOperation(){ throw new Error("unused"); },
+      async getStatus(){ return {state:"available",revision:1}; }, async invokeAction(request){ return {state:"complete",providerState:request.providerState,status:{state:"available",revision:1}}; }
+    }});
+  }`);
+  let parentCopy;
+  const host = new ExtensionHost(descriptor.extensionId, {
+    broker: { async request() { throw new Error("unexpected generic broker"); } },
+    profiles: { async get(extensionId, providerId, profileId) { assert.equal(extensionId, "example.credentials"); assert.equal(providerId, "example.credentials/main"); assert.equal(profileId, "profile-1"); return { profileId, providerId, revision: 2, values: { url: "https://example.test" }, secretFields: ["apiKey"] }; } },
+    secrets: { async withSecret(principal, request, use) { assert.equal(principal.extensionId, "example.credentials"); assert.equal(request.profileId, "profile-1"); parentCopy = new TextEncoder().encode("secret-sentinel"); try { return await use(parentCopy); } finally { parentCopy.fill(0); } } },
+  });
+  await host.start(descriptor);
+  assert.deepEqual(await host.invokeProvider({ providerId: "example.credentials/main", callback: "testProfile", request: { profileId: "profile-1", values: {} } }), []);
+  assert.equal(parentCopy.every((byte) => byte === 0), true);
+  await assert.rejects(host.invokeProvider({ providerId: "example.other/main", callback: "testProfile", request: { profileId: "profile-1", values: {} } }), /not registered/);
+  await host.stop();
+});
+
+test("SSH agent broker is explicit, permission-scoped, and child environment stays sterile", async () => {
+  const source = `export function activate(context) { context.registerProjectEnvironmentProvider({ definition:{providerId:"example.agent/main",displayName:"Agent",capabilities:["terminal"]}, runtime:{
+    async testProfile(request, call) { const identities = await call.sshAgent.listIdentities({profileId:request.profileId,purpose:"ssh-user-authentication"}); return identities.length === 1 && process.env.SSH_AUTH_SOCK === undefined ? [] : [{code:"bad",message:"agent contract failed"}]; },
+    async resolveOptions(){return {options:[]}}, async createEnvironment(){throw new Error("unused")}, async resumeOperation(){throw new Error("unused")}, async getStatus(){return {state:"available",revision:1}}, async invokeAction(request){return {state:"complete",providerState:request.providerState,status:{state:"available",revision:1}}}
+  }}); }`;
+  const permitted = await fixture("example.agent", source); permitted.permissions = ["ssh-agent:use"];
+  const identity = { identityId: "identity-1", algorithm: "ssh-ed25519", publicKey: new Uint8Array([1,2,3]), fingerprint: "SHA256:fixture" };
+  const host = new ExtensionHost(permitted.extensionId, { broker:{async request(){}}, sshAgent:{ async listIdentities(principal){ assert.equal(principal.profileId,"profile-1"); return [identity]; }, async sign(){ return {algorithm:"ssh-ed25519",signature:new Uint8Array([4,5])}; } } });
+  await host.start(permitted);
+  assert.deepEqual(await host.invokeProvider({providerId:"example.agent/main",callback:"testProfile",request:{profileId:"profile-1",values:{}}}), []);
+  await host.stop();
+  const denied = await fixture("example.agent-denied", source.replaceAll("example.agent/main", "example.agent-denied/main"));
+  const deniedHost = new ExtensionHost(denied.extensionId, { broker:{async request(){}}, sshAgent:{async listIdentities(){return [identity]},async sign(){throw new Error("unused")}} });
+  await deniedHost.start(denied);
+  await assert.rejects(deniedHost.invokeProvider({providerId:"example.agent-denied/main",callback:"testProfile",request:{profileId:"profile-1",values:{}}}), /SSH agent access is denied/);
+  await deniedHost.stop();
 });

@@ -96,6 +96,21 @@ async function invokeProvider(input: unknown, invocationContext: { signal: Abort
         return brokerRequest("provider.call", { request, context: dependencyContext });
       },
     }),
+    profiles: Object.freeze({
+      get(profileId: string) { return brokerRequest("profile.get", { providerId, profileId }); },
+    }),
+    secrets: Object.freeze({
+      async withValue<T>(request: { profileId: string; fieldId: string; purpose: string }, use: (bytes: Uint8Array) => T | Promise<T>): Promise<T> {
+        const raw = await brokerRequest("secret.resolve", request);
+        if (!Array.isArray(raw) || raw.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new Error("secret broker returned invalid bytes");
+        const secret = new Uint8Array(raw);
+        try { return await use(secret); } finally { secret.fill(0); }
+      },
+    }),
+    sshAgent: Object.freeze({
+      listIdentities(request: { profileId: string; purpose: "ssh-user-authentication" }) { return brokerRequest("agent.list", request); },
+      sign(request: { profileId: string; purpose: "ssh-user-authentication"; identityId: string; algorithm: string; challenge: Uint8Array }) { return brokerRequest("agent.sign", { ...request, challenge: [...request.challenge] }); },
+    }),
   });
   const result = await (method as (request: unknown, context: unknown) => unknown).call(runtime, payload?.request, context);
   return { callId, ok: true, result };
@@ -114,8 +129,8 @@ async function invoke(frame: HostFrame): Promise<void> {
   finally { invocations.delete(frame.id); }
 }
 
-function brokerRequest(operation: "log" | "secret.resolve" | "provider.call", payload: unknown): Promise<unknown> {
-  if (operation !== "log" && operation !== "secret.resolve" && operation !== "provider.call") return Promise.reject(new Error("unsupported broker operation"));
+function brokerRequest(operation: "log" | "secret.resolve" | "profile.get" | "agent.list" | "agent.sign" | "provider.call", payload: unknown): Promise<unknown> {
+  if (operation !== "log" && operation !== "secret.resolve" && operation !== "profile.get" && operation !== "agent.list" && operation !== "agent.sign" && operation !== "provider.call") return Promise.reject(new Error("unsupported broker operation"));
   const id = `broker:${++sequence}`;
   return new Promise((resolve, reject) => {
     brokerCalls.set(id, { resolve, reject });

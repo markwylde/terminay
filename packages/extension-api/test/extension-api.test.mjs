@@ -20,6 +20,8 @@ import {
   validateProgressPresentation,
   validateProviderDefinition,
   validateProvisioningResult,
+  validateSshAgentIdentities,
+  validateSshAgentSignature,
   validateValidationIssues,
 } from "../dist/index.js";
 
@@ -78,6 +80,21 @@ test("provider callback DTO validators reject unsafe or executable values", () =
   assert.equal(validateOptionSourceResult({ options: [{ value: "one", label: "One", html: "<b>One</b>" }] }).ok, false);
   assert.equal(validateProvisioningResult({ state: "ready", providerState: { callback: () => {} }, status: { state: "available", revision: 1 } }).ok, false);
   assert.equal(validateValidationIssues([{ code: "bad", message: "bad", stack: "secret" }]).ok, false);
+});
+
+test("scoped broker types remain absent from JSON presentation contracts", () => {
+  const definition = structuredClone(validProviderDefinitionFixture);
+  assert.equal(validateProviderDefinition(definition).ok, true);
+  assert.equal("profiles" in definition, false);
+  assert.equal("secrets" in definition, false);
+  assert.equal("sshAgent" in definition, false);
+});
+
+test("SSH agent broker payloads are bounded public identities and signatures", () => {
+  assert.equal(validateSshAgentIdentities([{ identityId: "key-1", algorithm: "ssh-ed25519", publicKey: new Uint8Array([1]), fingerprint: "SHA256:fixture" }]).ok, true);
+  assert.equal(validateSshAgentSignature({ algorithm: "ssh-ed25519", signature: new Uint8Array([2]) }).ok, true);
+  assert.equal(validateSshAgentIdentities([{ identityId: "socket", algorithm: "ssh-ed25519", publicKey: new Uint8Array([1]), fingerprint: "x", socketPath: "/tmp/agent" }]).ok, false);
+  assert.equal(validateSshAgentSignature({ algorithm: "ssh-rsa", signature: new Uint8Array([2]) }).ok, false);
 });
 
 test("conformance CLI validates package identity and exported entrypoint", async () => {

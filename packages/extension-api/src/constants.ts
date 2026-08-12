@@ -18,6 +18,10 @@ export const EXTENSION_LIMITS = Object.freeze({
   actions: 32,
   messageBytes: 1024 * 1024,
   deadlineMs: 120_000,
+  sshAgentIdentities: 64,
+  sshAgentPublicKeyBytes: 16 * 1024,
+  sshAgentChallengeBytes: 256 * 1024,
+  sshAgentSignatureBytes: 16 * 1024,
 } as const);
 
 export const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{1,126}[a-z0-9])?$/;
