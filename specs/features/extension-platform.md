@@ -185,6 +185,10 @@ The server retains at least one known-good exact slot. Rollback probes and
 selects it atomically; it does not reverse external actions. Extension data is
 namespaced and versioned, with a recoverable snapshot before migration. An
 incompatible data rollback requires explicit restore/loss confirmation.
+The active code pointer changes only after a data migration succeeds. A failed
+migration restores the pre-migration namespace snapshot and leaves the old
+active slot selected; restart reconciliation retains that extension and every
+dependent project as explicitly failed or incompatible.
 
 Disable preserves profiles, environment records, data, and secret references.
 Uninstall is blocked while enabled, referenced by profiles/projects, required
