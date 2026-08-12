@@ -5,6 +5,13 @@ operator boundaries around it. The server is a supported standalone artifact
 on GNU/Linux x64 and arm64 with a Debian 12-compatible userspace. It does not
 daemonize itself, and a service manager must supervise the foreground process.
 
+Server-installed project-environment extensions follow the canonical
+[extension operations](./extensions.md) runbook. Supported artifacts include
+the pinned internal npm installer; extension packages are fetched from npmjs.
+Operators do not install system Node/npm or place packages in a project
+checkout. Extension packages, receipts, profiles, data, and encrypted secret
+references live under the configured server data root.
+
 ## Configuration and paths
 
 Command-line options take precedence over environment variables. A missing

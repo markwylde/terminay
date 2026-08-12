@@ -11,6 +11,14 @@ picker. Both hosts can add, remember, open, switch, inspect, and forget remote
 Terminay Server connections. An authorized local Desktop window can also expose
 its embedded server so other desktop or browser clients can pair with it.
 
+Terminay Server connections are distinct from
+[project environments](./project-environments.md). A server connection is the
+client-to-Terminay-Server transport selected by the host. A project environment
+is a server-owned outbound binding from that Terminay Server to a project
+machine. The header server selector never lists SSH servers or Puzed VMs;
+project creation and **Project Environments…** do. Desktop/web never install
+environment extensions, make those outbound connections, or hold their secrets.
+
 ## Concepts
 
 - A **server connection** is an authenticated relationship with one stable
