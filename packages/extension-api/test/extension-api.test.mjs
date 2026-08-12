@@ -12,8 +12,15 @@ import {
   namespacedId,
   validFormFixture,
   validManifestFixture,
+  validProviderDefinitionFixture,
   validateDeclarativeForm,
+  validateEnvironmentActionResult,
   validateExtensionManifest,
+  validateOptionSourceResult,
+  validateProgressPresentation,
+  validateProviderDefinition,
+  validateProvisioningResult,
+  validateValidationIssues,
 } from "../dist/index.js";
 
 test("valid fixture conforms to the closed manifest schema", () => {
@@ -55,6 +62,22 @@ test("namespacing rejects traversal and core-shaped local ids", () => {
 test("every fixed operation has exactly one transport permission policy", () => {
   assert.deepEqual(Object.keys(OPERATION_POLICIES).sort(), [...EXTENSION_OPERATION_NAMES].sort());
   assert.ok(EXTENSION_EVENT_NAMES.every((name) => name.includes(".")));
+});
+
+test("provider definition and callback DTOs stay bounded and declarative", () => {
+  assert.equal(validateProviderDefinition(validProviderDefinitionFixture).ok, true);
+  assert.equal(validateOptionSourceResult({ options: [{ value: "one", label: "One" }] }).ok, true);
+  const progress = { operationId: "op-1", title: "Creating", resumable: true, stages: [{ id: "boot", label: "Boot VM", state: "active" }] };
+  assert.equal(validateProgressPresentation(progress).ok, true);
+  assert.equal(validateProvisioningResult({ state: "pending", operationId: "op-1", providerState: { jobId: "1" }, progress, pollAfterMs: 1000 }).ok, true);
+  assert.equal(validateEnvironmentActionResult({ state: "pending", operationId: "op-1", providerState: {}, progress }).ok, true);
+  assert.equal(validateValidationIssues([{ fieldId: "url", code: "unreachable", message: "Host is unavailable" }]).ok, true);
+});
+
+test("provider callback DTO validators reject unsafe or executable values", () => {
+  assert.equal(validateOptionSourceResult({ options: [{ value: "one", label: "One", html: "<b>One</b>" }] }).ok, false);
+  assert.equal(validateProvisioningResult({ state: "ready", providerState: { callback: () => {} }, status: { state: "available", revision: 1 } }).ok, false);
+  assert.equal(validateValidationIssues([{ code: "bad", message: "bad", stack: "secret" }]).ok, false);
 });
 
 test("conformance CLI validates package identity and exported entrypoint", async () => {

@@ -18,7 +18,7 @@
     "node": "24.14.0"
   },
   "scripts": {
-    "build": "npm run build --workspace @terminay/server-core && tsc -p tsconfig.json && node ./scripts/write-release-integrity-manifest.mjs",
+    "build": "npm run build --workspace @terminay/server-core && tsc -p tsconfig.json && node ../../scripts/bundled-npm-evidence.mjs dist/bundled-npm-evidence.json && node ./scripts/write-release-integrity-manifest.mjs",
     "typecheck": "npm run build --workspace @terminay/server-core && tsc -p tsconfig.json --noEmit",
     "start": "node dist/cli.js",
     "test": "npm run build && npm run build --workspace @terminay/client-core && node --test test/*.test.mjs"

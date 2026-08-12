@@ -1,4 +1,4 @@
-import type { ProviderDefinition } from "@terminay/extension-api";
+import type { JsonValue, ProviderDefinition, ProviderRuntimeMethod } from "@terminay/extension-api";
 
 export type ExtensionHostState =
   | "stopped"
@@ -30,6 +30,18 @@ export interface ExtensionInvocation {
   readonly method: string;
   readonly input?: unknown;
   readonly deadlineMs?: number;
+  readonly signal?: AbortSignal;
+}
+
+export type ExtensionProviderCallback = ProviderRuntimeMethod;
+
+export interface ExtensionProviderInvocation {
+  readonly providerId: string;
+  readonly callback: ExtensionProviderCallback;
+  readonly request: JsonValue;
+  readonly deadlineMs?: number;
+  readonly idempotencyKey?: string;
+  readonly expectedRevision?: number;
   readonly signal?: AbortSignal;
 }
 

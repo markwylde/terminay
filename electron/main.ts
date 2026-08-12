@@ -42,6 +42,7 @@ import {
 } from 'electron';
 import WebSocket from 'ws';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
+import { FileProjectEnvironmentStateBackend, ProjectEnvironmentRepository } from '../packages/server-core/src/projectEnvironment/index';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -874,9 +875,16 @@ await desktopDiagnostics.record(
 	},
 	{ channel: 'lifecycle' },
 );
+const embeddedProjectEnvironments = new ProjectEnvironmentRepository(
+	new FileProjectEnvironmentStateBackend(path.join(app.getPath('userData'), 'project-environments.v1.json')),
+	'desktop-local',
+);
+await embeddedProjectEnvironments.load();
 serverTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
+	dataRoot: app.getPath('userData'),
 	defaultProjectRoot: () => app.getPath('home'),
+	projectEnvironmentRepository: embeddedProjectEnvironments,
 	shellProfiles: embeddedShellProfiles,
 	aiMetadata: aiTabMetadataService,
 	saveSparseFile: (request) => fileBufferService.saveSparseFile(request),

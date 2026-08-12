@@ -118,6 +118,7 @@ export class EmbeddedLanExposure {
 			protocolAuthenticatedClientForCredential: (credential, clientId) => ({
 				clientId: credentials.clientId(credential) ?? clientId,
 				authScope: 'admin',
+				permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
 			}),
 			rootDirectory: this.options.uiBundleDirectory,
 			allowedWebOrigins: [input.sessionOrigin],

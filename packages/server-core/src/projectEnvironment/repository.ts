@@ -1,6 +1,9 @@
 import type { ProjectEnvironmentState } from './types.js';
 import { createInitialProjectEnvironmentState } from './types.js';
 import { canonicalizeProjectEnvironmentState } from './validation.js';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 export interface ProjectEnvironmentStateBackend {
 	load(): Promise<unknown | undefined>;
@@ -12,7 +15,9 @@ export interface ProjectEnvironmentStateBackend {
  * atomic replace/transaction; corrupt state is rejected rather than replaced. */
 export class ProjectEnvironmentRepository {
 	private current: ProjectEnvironmentState | undefined;
-	constructor(private readonly backend: ProjectEnvironmentStateBackend, private readonly serverId: string) {}
+	constructor(private readonly backend: ProjectEnvironmentStateBackend, private readonly serverId: string, initialState?: ProjectEnvironmentState) {
+		if (initialState !== undefined) this.current = canonicalizeProjectEnvironmentState(initialState, serverId);
+	}
 
 	async load(): Promise<ProjectEnvironmentState> {
 		if (this.current !== undefined) return structuredClone(this.current);
@@ -40,4 +45,10 @@ export class ProjectEnvironmentRepository {
 export class ProjectEnvironmentConflictError extends Error {
 	readonly code = 'conflict';
 	constructor(readonly currentRevision: number) { super('project environment registry revision is stale'); this.name = 'ProjectEnvironmentConflictError'; }
+}
+
+export class FileProjectEnvironmentStateBackend implements ProjectEnvironmentStateBackend {
+	constructor(private readonly filePath: string) { if (filePath.length === 0) throw new TypeError('project environment state path is required'); }
+	async load(): Promise<unknown | undefined> { try { return JSON.parse(await readFile(this.filePath, 'utf8')) as unknown; } catch (error) { if ((error as { code?: string }).code === 'ENOENT') return undefined; throw error; } }
+	async commit(state: ProjectEnvironmentState): Promise<void> { await mkdir(dirname(this.filePath), { recursive: true }); const temporary = `${this.filePath}.${randomUUID()}.tmp`; await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { flag: 'wx', mode: 0o600 }); await rename(temporary, this.filePath); }
 }

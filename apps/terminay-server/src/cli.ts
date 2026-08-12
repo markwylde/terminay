@@ -30,6 +30,7 @@ import {
 	createNodeShellDiscoveryHost,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
+	createDefaultExtensionManagement,
 	ExactTerminalTargetRegistry,
 	FileCatalog,
 	FileContentStreamService,
@@ -39,6 +40,8 @@ import {
 	type NodePtyModuleLike,
 	OrderedEventJournal,
 	ProjectEnvironmentRegistry,
+	ProjectEnvironmentRepository,
+	FileProjectEnvironmentStateBackend,
 	ProjectEnvironmentRouter,
 	RecordingService,
 	type RemoteReconnectGrantRecord,
@@ -55,7 +58,6 @@ import {
 	TerminalActivityService,
 	TerminalReplayRegistry,
 	WorkspaceStore,
-	createInitialProjectEnvironmentState,
 } from '@terminay/server-core';
 import * as nodePty from 'node-pty';
 import {
@@ -281,11 +283,12 @@ async function createServerComposition(
 		options.serverId,
 		options.projectRoot,
 	);
-	const initialProjectEnvironments = createInitialProjectEnvironmentState(options.serverId);
+	const projectEnvironments = new ProjectEnvironmentRepository(new FileProjectEnvironmentStateBackend(join(options.dataRoot, 'project-environments.v1.json')), options.serverId);
+	await projectEnvironments.load();
 	const projectEnvironmentRouter = new ProjectEnvironmentRouter({
 		serverId: options.serverId,
 		workspaceSnapshot: () => workspace.state,
-		environmentSnapshot: () => initialProjectEnvironments,
+		environmentSnapshot: () => projectEnvironments.state,
 		registry: new ProjectEnvironmentRegistry(),
 	});
 	const gitService = new GitService({
@@ -327,6 +330,7 @@ async function createServerComposition(
 		}),
 		{ serverId: options.serverId },
 	);
+	const extensions = createDefaultExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: 'This server' });
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,
@@ -359,6 +363,7 @@ async function createServerComposition(
 		authenticate: ({ hello }) => ({
 			clientId: hello.clientId,
 			authScope: 'admin',
+			permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
 		}),
 		ptyFactory: createNodePtyFactory(nodePty as unknown as NodePtyModuleLike, {
 			resolveCwd: resolveTerminalProcessCwd,
@@ -367,6 +372,7 @@ async function createServerComposition(
 		agents,
 		workspace,
 		projectEnvironmentRouter,
+		projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.projectRoot },
 		workspaceOperations: {
 			prepareProjectRootUpdate: files.prepareProjectRootUpdate,
 		},
@@ -383,6 +389,7 @@ async function createServerComposition(
 			? { terminalSystemDefaultStartupMode: 'login' as const }
 			: {}),
 		recordings,
+		extensions,
 		git,
 		...(ai === undefined ? {} : { ai }),
 		serviceLifecycle: {
@@ -928,6 +935,7 @@ function createProtocolServer(
 		protocolAuthenticatedClientForCredential: (credential, clientId) => ({
 			clientId: credentials.clientId(credential) ?? clientId,
 			authScope: 'admin',
+			permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
 		}),
 		reconnect: {
 			enroll: ({ clientId }) => {

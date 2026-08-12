@@ -47,7 +47,7 @@ import type { ServerGitAdapter } from "./gitService/adapter.js";
 import type { RecordingAdapter } from "./recordingService/adapter.js";
 import { createSettingsOperationRegistry, type SettingsOperationRegistry } from "./settings/protocol.js";
 import type { ServerSettingsRepository } from "./settings/repository.js";
-import { createEnvironmentRoutedPtyFactory, routeProjectOperationRegistries, type ProjectEnvironmentRouter } from "./projectEnvironment/index.js";
+import { createEnvironmentRoutedPtyFactory, createProjectEnvironmentOperationHandlers, routeProjectOperationRegistries, type ProjectEnvironmentOperationOptions, type ProjectEnvironmentRouter } from "./projectEnvironment/index.js";
 import { createFileObservationEventProjector, type ServerFileObservationAdapter } from "./fileService/observationAdapter.js";
 import {
   createShellProfileOperationRegistry,
@@ -159,6 +159,8 @@ export interface ServerCoreCompositionOptions
    * Git, observation, agent and shell operation is routed before a local host
    * adapter can run. */
   readonly projectEnvironmentRouter?: ProjectEnvironmentRouter;
+  /** Canonical selected-server environment management authority. */
+  readonly projectEnvironments?: Omit<ProjectEnvironmentOperationOptions, 'workspace' | 'onChanged'>;
   /** Host-neutral startup/cleanup for optional authorities that require
    * asynchronous binding before any transport listener becomes ready. */
   readonly serviceLifecycle?: {
@@ -397,11 +399,17 @@ export function createServerCoreComposition(
     ...options.extensions,
     onChanged: (payload) => { eventJournal.append("extensions.changed", payload); },
   });
+  const projectEnvironmentOperations = options.projectEnvironments === undefined || options.workspace === undefined ? undefined : createProjectEnvironmentOperationHandlers({
+    ...options.projectEnvironments,
+    workspace: options.workspace,
+    ...(options.projectEnvironments.providerDefinitions !== undefined || options.extensions?.hosts === undefined ? {} : { providerDefinitions: () => options.extensions!.hosts!.statuses().flatMap((status) => status.providers ?? []) }),
+    onChanged: (payload) => { eventJournal.append('projectEnvironments.changed', payload); },
+  });
   const operations = mergeOperationRegistries(
     mergeOperationRegistries(mergeOperationRegistries(
       mergeOperationRegistries(
         mergeOperationRegistries(
-          mergeOperationRegistries(mergeOperationRegistries(options.operations ?? {}, extensionOperations ?? {}), options.fileObservations?.operations ?? {}),
+          mergeOperationRegistries(mergeOperationRegistries(mergeOperationRegistries(options.operations ?? {}, extensionOperations ?? {}), projectEnvironmentOperations ?? {}), options.fileObservations?.operations ?? {}),
           macroOperations?.operations ?? {},
         ),
         workspaceOperations?.operations ?? {},

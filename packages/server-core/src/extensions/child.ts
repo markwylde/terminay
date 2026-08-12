@@ -6,6 +6,7 @@ const invocations = new Map<string, AbortController>();
 const brokerCalls = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 let deactivate: (() => unknown | Promise<unknown>) | undefined;
 let callbacks: Record<string, (input: unknown, context: { signal: AbortSignal }) => unknown | Promise<unknown>> = {};
+const providerRuntimes = new Map<string, Record<string, unknown>>();
 let sequence = 0;
 
 process.on("message", (message: unknown) => { void receive(message); });
@@ -42,11 +43,19 @@ async function activateExtension(frame: HostFrame): Promise<void> {
     const activate = extension?.activate ?? imported.activate ?? imported.default;
     if (typeof activate !== "function") throw new Error("extension must export activate(context)");
     const providers: unknown[] = [];
+    providerRuntimes.clear();
     const result = await activate(Object.freeze({
       extensionId: payload.extensionId,
       apiVersion: typeof payload.apiVersion === "string" ? payload.apiVersion : "1.0.0",
       paths: Object.freeze({ configuration: payload.configDirectory, data: payload.dataDirectory, cache: payload.cacheDirectory }),
-      registerProjectEnvironmentProvider(definition: unknown) { providers.push(structuredClone(definition)); },
+      registerProjectEnvironmentProvider(registration: unknown) {
+        const value = object(registration);
+        const definition = object(value?.definition) ?? value;
+        const runtime = object(value?.runtime);
+        if (definition === undefined) throw new Error("invalid provider registration");
+        providers.push(structuredClone(definition));
+        if (runtime !== undefined && typeof definition.providerId === "string") providerRuntimes.set(definition.providerId, runtime);
+      },
       // Private broker capabilities are host-injected. They are deliberately
       // not application protocol handlers or raw transports.
       directories: Object.freeze({ config: payload.configDirectory, data: payload.dataDirectory, cache: payload.cacheDirectory }),
@@ -60,10 +69,36 @@ async function activateExtension(frame: HostFrame): Promise<void> {
       if (typeof callback !== "function" || name.length === 0 || name.length > 200) throw new Error("extension returned an invalid method definition");
       callbacks[name] = callback as typeof callbacks[string];
     }
+    callbacks["provider.invoke"] = invokeProvider;
     if (definition.deactivate !== undefined && typeof definition.deactivate !== "function") throw new Error("extension returned an invalid deactivate callback");
     deactivate = (extension?.deactivate ?? definition.deactivate) as typeof deactivate;
     send({ protocolVersion: 1, kind: "ready", id: frame.id, payload: { methods: Object.keys(callbacks).sort(), providers } });
   } catch (error) { failure(frame.id, error); }
+}
+
+async function invokeProvider(input: unknown, invocationContext: { signal: AbortSignal }): Promise<unknown> {
+  const payload = object(input);
+  const providerId = typeof payload?.providerId === "string" ? payload.providerId : "";
+  const callback = typeof payload?.method === "string" ? payload.method : "";
+  const callId = typeof payload?.callId === "string" ? payload.callId : "";
+  const runtime = providerRuntimes.get(providerId);
+  const method = runtime?.[callback];
+  if (typeof method !== "function") throw new Error("provider callback is unavailable");
+  const deadlineAt = typeof payload?.deadlineAt === "string" ? payload.deadlineAt : "";
+  if (!Number.isFinite(Date.parse(deadlineAt)) || Date.parse(deadlineAt) <= Date.now()) throw new Error("provider callback deadline expired");
+  const context = Object.freeze({
+    deadlineAt,
+    signal: invocationContext.signal,
+    ...(typeof payload?.idempotencyKey === "string" ? { idempotencyKey: payload.idempotencyKey } : {}),
+    ...(Number.isSafeInteger(payload?.expectedRevision) ? { expectedRevision: payload?.expectedRevision } : {}),
+    dependencies: Object.freeze({
+      call(request: unknown, dependencyContext: unknown) {
+        return brokerRequest("provider.call", { request, context: dependencyContext });
+      },
+    }),
+  });
+  const result = await (method as (request: unknown, context: unknown) => unknown).call(runtime, payload?.request, context);
+  return { callId, ok: true, result };
 }
 
 async function invoke(frame: HostFrame): Promise<void> {

@@ -8,8 +8,15 @@ import type {
   DeclarativeForm,
   ExtensionPermission,
   FormField,
+  OptionSourceResult,
+  ProgressPresentation,
+  ProvisioningResult,
   ProjectEnvironmentContribution,
+  ProviderDefinition,
+  ProviderEnvironmentStatus,
+  EnvironmentActionResult,
   TerminayExtensionManifest,
+  ValidationIssue,
 } from "./types.js";
 
 export interface SchemaIssue {
@@ -155,6 +162,140 @@ export function validateDeclarativeForm(value: unknown): ValidationResult<Declar
     unique(allFields, "$.sections[*].fields", out);
   }
   return out.length === 0 ? { ok: true, value: value as unknown as DeclarativeForm } : { ok: false, issues: out };
+}
+
+export function validateProviderDefinition(value: unknown): ValidationResult<ProviderDefinition> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["providerId", "displayName", "description", "icon", "capabilities", "profileForm", "createForm"]), "$", out);
+  string(value.providerId, "$.providerId", out, EXTENSION_LIMITS.providerIdLength);
+  string(value.displayName, "$.displayName", out, EXTENSION_LIMITS.displayNameLength);
+  if (value.description !== undefined) string(value.description, "$.description", out, EXTENSION_LIMITS.descriptionLength);
+  if (!Array.isArray(value.capabilities) || value.capabilities.length === 0 || value.capabilities.some((item) => !capabilities.has(String(item)))) out.push({ path: "$.capabilities", code: "invalid_capabilities", message: "Expected supported capabilities" });
+  for (const key of ["profileForm", "createForm"] as const) if (value[key] !== undefined) {
+    const result = validateDeclarativeForm(value[key]);
+    if (!result.ok) out.push(...result.issues.map((issue) => ({ ...issue, path: `$.${key}${issue.path.slice(1)}` })));
+  }
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderDefinition } : { ok: false, issues: out };
+}
+
+export function validateOptionSourceResult(value: unknown): ValidationResult<OptionSourceResult> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["options", "nextCursor"]), "$", out);
+  if (!Array.isArray(value.options) || value.options.length > EXTENSION_LIMITS.fieldOptions) out.push({ path: "$.options", code: "invalid_array", message: "Expected bounded options" });
+  else value.options.forEach((option, index) => { validateOption(option, `$.options[${index}]`, out); });
+  if (value.nextCursor !== undefined) string(value.nextCursor, "$.nextCursor", out, 512);
+  return out.length === 0 ? { ok: true, value: value as unknown as OptionSourceResult } : { ok: false, issues: out };
+}
+
+export function validateValidationIssues(value: unknown): ValidationResult<ValidationIssue[]> {
+  const out: SchemaIssue[] = [];
+  if (!Array.isArray(value) || value.length > 128) out.push({ path: "$", code: "invalid_array", message: "Expected bounded validation issues" });
+  else value.forEach((issue, index) => {
+    const path = `$[${index}]`;
+    if (!record(issue)) { out.push({ path, code: "invalid_type", message: "Expected object" }); return; }
+    closed(issue, new Set(["fieldId", "code", "message"]), path, out);
+    if (issue.fieldId !== undefined) string(issue.fieldId, `${path}.fieldId`, out, 64);
+    string(issue.code, `${path}.code`, out, 64); string(issue.message, `${path}.message`, out, 1024);
+  });
+  return out.length === 0 ? { ok: true, value: value as ValidationIssue[] } : { ok: false, issues: out };
+}
+
+export function validateProgressPresentation(value: unknown): ValidationResult<ProgressPresentation> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["operationId", "title", "stages", "resumable"]), "$", out);
+  string(value.operationId, "$.operationId", out, 256); string(value.title, "$.title", out, 128);
+  if (typeof value.resumable !== "boolean") out.push({ path: "$.resumable", code: "invalid_type", message: "Expected boolean" });
+  if (!Array.isArray(value.stages) || value.stages.length > EXTENSION_LIMITS.progressStages) out.push({ path: "$.stages", code: "invalid_array", message: "Expected bounded stages" });
+  else value.stages.forEach((stage, index) => {
+    const path = `$.stages[${index}]`;
+    if (!record(stage)) { out.push({ path, code: "invalid_type", message: "Expected object" }); return; }
+    closed(stage, new Set(["id", "label", "state", "detail"]), path, out);
+    string(stage.id, `${path}.id`, out, 64); string(stage.label, `${path}.label`, out, 128);
+    if (!["pending", "active", "complete", "failed"].includes(String(stage.state))) out.push({ path: `${path}.state`, code: "invalid_state", message: "Unknown progress state" });
+    if (stage.detail !== undefined) string(stage.detail, `${path}.detail`, out, 1024);
+  });
+  return out.length === 0 ? { ok: true, value: value as unknown as ProgressPresentation } : { ok: false, issues: out };
+}
+
+export function validateProviderEnvironmentStatus(value: unknown): ValidationResult<ProviderEnvironmentStatus> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["state", "message", "defaultRoot", "card", "progress", "revision"]), "$", out);
+  if (!["available", "connecting", "unavailable", "failed", "deleting"].includes(String(value.state))) out.push({ path: "$.state", code: "invalid_state", message: "Unknown environment state" });
+  if (!Number.isSafeInteger(value.revision) || Number(value.revision) < 0) out.push({ path: "$.revision", code: "invalid_revision", message: "Expected a non-negative integer" });
+  if (value.message !== undefined) string(value.message, "$.message", out, 1024);
+  if (value.defaultRoot !== undefined) string(value.defaultRoot, "$.defaultRoot", out, 4096);
+  if (value.card !== undefined) validateStatusCardInto(value.card, "$.card", out);
+  if (value.progress !== undefined) {
+    const result = validateProgressPresentation(value.progress);
+    if (!result.ok) out.push(...result.issues.map((issue) => ({ ...issue, path: `$.progress${issue.path.slice(1)}` })));
+  }
+  return out.length === 0 ? { ok: true, value: value as unknown as ProviderEnvironmentStatus } : { ok: false, issues: out };
+}
+
+export function validateProvisioningResult(value: unknown): ValidationResult<ProvisioningResult> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  if (value.state === "ready") {
+    closed(value, new Set(["state", "providerState", "status"]), "$", out);
+    ensureJson(value.providerState, "$.providerState", out);
+    const status = validateProviderEnvironmentStatus(value.status);
+    if (!status.ok) out.push(...status.issues.map((issue) => ({ ...issue, path: `$.status${issue.path.slice(1)}` })));
+  } else if (value.state === "pending") {
+    closed(value, new Set(["state", "operationId", "providerState", "progress", "pollAfterMs"]), "$", out);
+    string(value.operationId, "$.operationId", out, 256); ensureJson(value.providerState, "$.providerState", out);
+    const progress = validateProgressPresentation(value.progress);
+    if (!progress.ok) out.push(...progress.issues.map((issue) => ({ ...issue, path: `$.progress${issue.path.slice(1)}` })));
+    if (value.pollAfterMs !== undefined && (!Number.isSafeInteger(value.pollAfterMs) || Number(value.pollAfterMs) < 100 || Number(value.pollAfterMs) > EXTENSION_LIMITS.deadlineMs)) out.push({ path: "$.pollAfterMs", code: "invalid_poll_interval", message: "Poll interval is out of bounds" });
+  } else out.push({ path: "$.state", code: "invalid_state", message: "Unknown provisioning result state" });
+  return out.length === 0 ? { ok: true, value: value as unknown as ProvisioningResult } : { ok: false, issues: out };
+}
+
+export function validateEnvironmentActionResult(value: unknown): ValidationResult<EnvironmentActionResult> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  ensureJson(value.providerState, "$.providerState", out);
+  if (value.state === "complete") {
+    closed(value, new Set(["state", "providerState", "status"]), "$", out);
+    const status = validateProviderEnvironmentStatus(value.status);
+    if (!status.ok) out.push(...status.issues.map((issue) => ({ ...issue, path: `$.status${issue.path.slice(1)}` })));
+  } else if (value.state === "pending") {
+    closed(value, new Set(["state", "operationId", "providerState", "progress"]), "$", out);
+    string(value.operationId, "$.operationId", out, 256);
+    const progress = validateProgressPresentation(value.progress);
+    if (!progress.ok) out.push(...progress.issues.map((issue) => ({ ...issue, path: `$.progress${issue.path.slice(1)}` })));
+  } else out.push({ path: "$.state", code: "invalid_state", message: "Unknown action result state" });
+  return out.length === 0 ? { ok: true, value: value as unknown as EnvironmentActionResult } : { ok: false, issues: out };
+}
+
+function invalidObject<T>(): ValidationResult<T> { return { ok: false, issues: [{ path: "$", code: "invalid_type", message: "Expected an object" }] }; }
+function validateOption(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (!record(value)) { out.push({ path, code: "invalid_type", message: "Expected object" }); return; }
+  closed(value, new Set(["value", "label", "description", "disabledReason", "icon"]), path, out);
+  string(value.value, `${path}.value`, out, 1024); string(value.label, `${path}.label`, out, 128);
+  if (value.description !== undefined) string(value.description, `${path}.description`, out, 1024);
+  if (value.disabledReason !== undefined) string(value.disabledReason, `${path}.disabledReason`, out, 1024);
+}
+function validateStatusCardInto(value: unknown, path: string, out: SchemaIssue[]): void {
+  if (!record(value)) { out.push({ path, code: "invalid_type", message: "Expected object" }); return; }
+  closed(value, new Set(["id", "title", "summary", "icon", "tone", "facts", "actions", "httpsLink"]), path, out);
+  string(value.id, `${path}.id`, out, 64); string(value.title, `${path}.title`, out, 128); string(value.summary, `${path}.summary`, out, 1024);
+  if (value.actions !== undefined && (!Array.isArray(value.actions) || value.actions.length > EXTENSION_LIMITS.actions)) out.push({ path: `${path}.actions`, code: "invalid_array", message: "Expected bounded actions" });
+  if (value.httpsLink !== undefined) {
+    if (!record(value.httpsLink) || typeof value.httpsLink.url !== "string" || !value.httpsLink.url.startsWith("https://")) out.push({ path: `${path}.httpsLink`, code: "unsafe_url", message: "Only credential-free HTTPS links are supported" });
+    else if (/^[^/]*\/\/[^/]*@/.test(value.httpsLink.url)) out.push({ path: `${path}.httpsLink.url`, code: "credentialed_url", message: "URL credentials are forbidden" });
+  }
+}
+function ensureJson(value: unknown, path: string, out: SchemaIssue[], depth = 0): void {
+  if (depth > 24) { out.push({ path, code: "json_depth", message: "JSON nesting limit exceeded" }); return; }
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") { if (!Number.isFinite(value)) out.push({ path, code: "invalid_number", message: "Expected finite number" }); return; }
+  if (Array.isArray(value)) { if (value.length > 1024) out.push({ path, code: "json_size", message: "Array is too large" }); else value.forEach((item, index) => { ensureJson(item, `${path}[${index}]`, out, depth + 1); }); return; }
+  if (record(value)) { const entries = Object.entries(value); if (entries.length > 1024) out.push({ path, code: "json_size", message: "Object is too large" }); else entries.forEach(([key, item]) => { ensureJson(item, `${path}.${key}`, out, depth + 1); }); return; }
+  out.push({ path, code: "invalid_json", message: "Expected JSON-safe data" });
 }
 
 function validateField(value: unknown, path: string, out: SchemaIssue[]): void {

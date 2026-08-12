@@ -2,10 +2,12 @@ import { useMemo, useState } from 'react';
 import type { ProjectEnvironmentSummaryDto } from './uiModel';
 import { statusLabel } from './uiModel';
 
-export function ProjectEnvironmentManager({ environments, serverName, onCreateSsh, onTest, onRemove }: Readonly<{
+export function ProjectEnvironmentManager({ environments, providers, serverName, onCreate, onEdit, onTest, onRemove }: Readonly<{
 	environments: readonly ProjectEnvironmentSummaryDto[];
+	providers:readonly Readonly<{providerId:string;displayName:string;hasProfileForm:boolean}>[];
 	serverName: string;
-	onCreateSsh: () => void;
+	onCreate: (providerId:string) => void;
+	onEdit: (environment:ProjectEnvironmentSummaryDto) => void;
 	onTest: (id: string) => void;
 	onRemove: (id: string) => void;
 }>) {
@@ -15,7 +17,7 @@ export function ProjectEnvironmentManager({ environments, serverName, onCreateSs
 	const selected = environments.find((item) => item.id === selectedId) ?? filtered[0];
 	return (
 		<div className="environment-manager">
-			<header className="management-route-header"><div><p className="management-route-eyebrow">Selected Terminay Server</p><h2>Project Environments</h2><p>Profiles and credentials are stored by <strong>{serverName}</strong>.</p></div><button type="button" onClick={onCreateSsh}>New SSH connection</button></header>
+			<header className="management-route-header"><div><p className="management-route-eyebrow">Selected Terminay Server</p><h2>Project Environments</h2><p>Profiles and credentials are stored by <strong>{serverName}</strong>.</p></div><div className="management-route-actions">{providers.filter(provider=>provider.hasProfileForm).map(provider=><button key={provider.providerId} type="button" onClick={()=>onCreate(provider.providerId)}>New {provider.displayName}</button>)}</div></header>
 			<div className="management-route-grid">
 				<aside className="management-route-list" aria-label="Project environments">
 					<label><span className="sr-only">Search project environments</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search environments" /></label>
@@ -23,7 +25,7 @@ export function ProjectEnvironmentManager({ environments, serverName, onCreateSs
 					{filtered.length === 0 ? <p role="status">No matching environments.</p> : null}
 				</aside>
 				<section className="management-route-detail" aria-live="polite">
-					{selected ? <><div className="management-route-title"><span className="management-route-icon" aria-hidden="true">{selected.isThisServer ? '›_' : selected.providerLabel === 'SSH' ? '⇄' : '⬡'}</span><div><h3>{selected.name}</h3><p>{selected.providerLabel}</p></div></div><dl><div><dt>Status</dt><dd>{statusLabel(selected.status)}</dd></div><div><dt>Endpoint</dt><dd>{selected.endpointSummary}</dd></div><div><dt>Default root</dt><dd>{selected.defaultRoot ?? 'Environment home'}</dd></div><div><dt>Projects</dt><dd>{selected.referencedProjectCount}</dd></div></dl><div className="management-route-actions"><button type="button" disabled={selected.isThisServer} onClick={() => onTest(selected.id)}>Test</button><button type="button" disabled={selected.isThisServer}>Edit</button><button type="button" className="danger" disabled={selected.isThisServer || selected.referencedProjectCount > 0} onClick={() => onRemove(selected.id)}>Remove</button></div>{selected.referencedProjectCount > 0 ? <p className="management-route-note">Removal is blocked while projects reference this environment.</p> : null}</> : <p>Select an environment.</p>}
+					{selected ? <><div className="management-route-title"><span className="management-route-icon" aria-hidden="true">{selected.isThisServer ? '›_' : selected.providerLabel === 'SSH' ? '⇄' : '⬡'}</span><div><h3>{selected.name}</h3><p>{selected.providerLabel}</p></div></div><dl><div><dt>Status</dt><dd>{statusLabel(selected.status)}</dd></div><div><dt>Endpoint</dt><dd>{selected.endpointSummary}</dd></div><div><dt>Default root</dt><dd>{selected.defaultRoot ?? 'Environment home'}</dd></div><div><dt>Projects</dt><dd>{selected.referencedProjectCount}</dd></div></dl><div className="management-route-actions"><button type="button" disabled={selected.isThisServer||selected.profileId===undefined} onClick={() => selected.profileId&&onTest(selected.profileId)}>Test</button><button type="button" disabled={selected.isThisServer||selected.profileId===undefined} onClick={()=>onEdit(selected)}>Edit</button><button type="button" className="danger" disabled={selected.isThisServer || selected.profileId===undefined || selected.referencedProjectCount > 0} onClick={() => selected.profileId&&onRemove(selected.profileId)}>Remove</button></div>{selected.referencedProjectCount > 0 ? <p className="management-route-note">Removal is blocked while projects reference this environment.</p> : null}</> : <p>Select an environment.</p>}
 				</section>
 			</div>
 		</div>

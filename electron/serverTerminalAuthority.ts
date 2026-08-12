@@ -21,6 +21,7 @@ import {
 	createServerCoreComposition,
 	type ServerCoreComposition,
 } from '../packages/server-core/src/composition';
+import { createDefaultExtensionManagement } from '../packages/server-core/src/extensions/index';
 import { OrderedEventJournal } from '../packages/server-core/src/events';
 import {
 	CanonicalProjectPathResolver,
@@ -39,8 +40,9 @@ import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter
 import { GitService } from '../packages/server-core/src/gitService/service';
 import {
 	ProjectEnvironmentRegistry,
-	ProjectEnvironmentRouter,
+	ProjectEnvironmentRepository,
 	createInitialProjectEnvironmentState,
+	ProjectEnvironmentRouter,
 } from '../packages/server-core/src/projectEnvironment/index';
 import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
@@ -180,6 +182,7 @@ type ServerTerminalHostObserver<TEvent> = (
 
 export interface ServerTerminalAuthorityOptions {
 	readonly serverId: string;
+	readonly dataRoot?: string;
 	/** Test/host injection; production uses the embedded node-pty factory. */
 	readonly terminalService?: TerminalService;
 	/** Desktop-owned current shell settings for protocol-created sessions. */
@@ -201,6 +204,7 @@ export interface ServerTerminalAuthorityOptions {
 	/** Server-owned shell catalogue and target revalidation authority. */
 	readonly shellProfiles?: ShellProfileCatalogueService;
 	readonly defaultProjectRoot?: () => string;
+	readonly projectEnvironmentRepository?: ProjectEnvironmentRepository;
 	/** Desktop provider adapter retained behind the server protocol while the
 	 * canonical AI target registry is wired to workspace presentation state. */
 	readonly aiMetadata?: {
@@ -307,11 +311,11 @@ export class ServerTerminalAuthority {
 			projects: this.fileSessionProjects,
 		});
 		const eventJournal = new OrderedEventJournal();
-		const initialProjectEnvironments = createInitialProjectEnvironmentState(options.serverId);
+		const projectEnvironments = options.projectEnvironmentRepository ?? new ProjectEnvironmentRepository({ async load() { return undefined; }, async commit() {} }, options.serverId, createInitialProjectEnvironmentState(options.serverId));
 		const projectEnvironmentRouter = new ProjectEnvironmentRouter({
 			serverId: options.serverId,
 			workspaceSnapshot: () => this.workspace.state,
-			environmentSnapshot: () => initialProjectEnvironments,
+			environmentSnapshot: () => projectEnvironments.state,
 			registry: new ProjectEnvironmentRegistry(),
 		});
 		const fileObservations = new ServerFileObservationAdapter({
@@ -414,6 +418,7 @@ export class ServerTerminalAuthority {
 			authenticate: ({ hello }) => ({
 				clientId: hello.clientId,
 				authScope: 'admin',
+				permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
 			}),
 			workspace: this.workspace,
 			workspaceOperations: {
@@ -425,6 +430,8 @@ export class ServerTerminalAuthority {
 			git: gitAdapter,
 			eventJournal,
 			projectEnvironmentRouter,
+			projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.defaultProjectRoot?.() ?? process.cwd() },
+			...(options.dataRoot === undefined ? {} : { extensions: createDefaultExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: 'This server' }) }),
 			fileObservations,
 			...(options.recordings === undefined
 				? {}
