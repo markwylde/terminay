@@ -24,30 +24,30 @@ UI contracts are stable.
 
 ### Profiles, credentials, and trust
 
-- [ ] Scaffold the separate repo from the public SDK with precompiled ESM, no
+- [x] Scaffold the separate repo from the public SDK with precompiled ESM, no
   install/build scripts/native deps, packed-tarball conformance, and provenance.
-- [ ] Implement revisioned profiles, vault key/passphrase/password/agent auth,
+- [x] Implement revisioned profiles, vault key/passphrase/password/agent auth,
   connection stages/errors, pooling/keepalive/backoff, and default root.
-- [ ] Implement strict first-use challenge, exact host-key persistence,
+- [x] Implement strict first-use challenge, exact host-key persistence,
   mismatch/replace flow, and separately confirmed/audited per-profile unsafe
   bypass.
 
 ### Remote terminal
 
-- [ ] Adapt structured direct SSH PTY channels to TerminalService bytes, input,
+- [x] Adapt structured direct SSH PTY channels to TerminalService bytes, input,
   resize, exit, backpressure, kill, transport-loss interruption, and status.
-- [ ] Launch Remote system default at the provider-canonical root with strict
+- [x] Launch Remote system default at the provider-canonical root with strict
   POSIX quoting/generated commands and filtered provider-safe environment.
-- [ ] Prove no automatic replacement shell and explicit unsupported cwd/
+- [x] Prove no automatic replacement shell and explicit unsupported cwd/
   foreground/agent/MCP behavior.
 
 ### SFTP filesystem
 
-- [ ] Implement canonical home/root browser and bounded SFTP realpath/stat/
+- [x] Implement canonical home/root browser and bounded SFTP realpath/stat/
   lstat/list/read/write/create/rename/delete with normalized errors.
-- [ ] Preserve containment/symlink/conflict/large-file/draft rules, atomic-temp
+- [x] Preserve containment/symlink/conflict/large-file/draft rules, atomic-temp
   writes where supported, ambiguous outcome handling, and manual refresh.
-- [ ] Add same-profile/different-root isolation and failure/performance limits.
+- [x] Add same-profile/different-root isolation and failure/performance limits.
 
 ## Acceptance checks
 
