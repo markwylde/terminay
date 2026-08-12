@@ -835,9 +835,10 @@ export class ServerTerminalAuthority {
 		);
 		const transport = new ServerPortTransport(scopedPort);
 		const connection = this.composition.core.accept(transport, {
-			authenticatedClient: {
+			 authenticatedClient: {
 				clientId: `embedded-renderer-${randomBytes(16).toString('hex')}`,
 				authScope: 'admin',
+				permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
 			},
 			onDeliveryDiagnostic: this.options.onDeliveryDiagnostic,
 		});
