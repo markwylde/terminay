@@ -127,7 +127,7 @@ export class ExtensionHost {
       signal: invocation.signal,
     }));
     if (reply === undefined || reply.callId !== callId || reply.ok !== true || !("result" in reply)) throw new Error("provider returned an invalid runtime reply");
-    return validateProviderResult(invocation.callback, reply.result);
+    return validateProviderResult(invocation.callback, reply.result, invocation.request);
   }
 
   async stop(): Promise<void> {
@@ -306,11 +306,37 @@ function validateProviders(value: unknown, extensionId: string): readonly Provid
   }
   return Object.freeze(providers);
 }
-function validateProviderResult(callback: ExtensionProviderInvocation["callback"], result: unknown): unknown {
+function validateProviderResult(callback: ExtensionProviderInvocation["callback"], result: unknown, request?: unknown): unknown {
+  if (callback === "invokeService") return validateServiceResult(result, request);
   if (callback === "resolveOptions") return validated(validateOptionSourceResult(result), "provider returned invalid options");
   if (callback === "getStatus") return validated(validateProviderEnvironmentStatus(result), "provider returned invalid status");
   if (callback === "testProfile") return validated(validateValidationIssues(result), "provider returned invalid validation issues");
   if (callback === "createEnvironment" || callback === "resumeOperation") return validated(validateProvisioningResult(result), "provider returned an invalid provisioning result");
   return validated(validateEnvironmentActionResult(result), "provider returned an invalid action result");
+}
+function validateServiceResult(result: unknown, request: unknown): unknown {
+  const call = record(request); const value = record(result);
+  const capability = call?.capability; const operation = call?.operation;
+  if (value === undefined || hasExecutable(value)) throw new Error("provider returned an invalid service result");
+  if (capability === "terminal") {
+    if (operation === "create" && (typeof value.sessionId !== "string" || value.sessionId.length > 256 || value.shellProfile !== "remote-system-default")) throw new Error("provider returned an invalid terminal create result");
+    else if (operation === "read" && (value.encoding !== "base64" || typeof value.data !== "string" || value.data.length > 350_000 || !base64(value.data))) throw new Error("provider returned an invalid terminal read result");
+    else if (["input", "resize", "kill", "dispose"].includes(String(operation)) && value.accepted !== true) throw new Error("provider returned an invalid terminal acknowledgement");
+    else if (!["create", "read", "input", "resize", "kill", "dispose"].includes(String(operation))) throw new Error("provider returned an unknown terminal operation");
+  } else if (capability === "filesystem") {
+    if (!["resolveRoot", "browse", "realpath", "stat", "list", "read", "write", "createDirectory", "rename", "remove"].includes(String(operation))) throw new Error("provider returned an unknown filesystem operation");
+    if (operation === "read" && (value.encoding !== "base64" || typeof value.data !== "string" || value.data.length > 700_000 || !base64(value.data))) throw new Error("provider returned an invalid filesystem read result");
+  } else throw new Error("provider returned an unsupported service capability");
+  const encoded = JSON.stringify(result);
+  if (encoded === undefined || Buffer.byteLength(encoded) > 768 * 1024) throw new Error("provider returned an oversized service result");
+  return structuredClone(result);
+}
+function base64(value: string): boolean { return value.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(value); }
+function hasExecutable(value: unknown, seen = new Set<unknown>()): boolean {
+  if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint" || value === undefined) return true;
+  if (value === null || typeof value !== "object") return false;
+  if (seen.has(value)) return true; seen.add(value);
+  if (Object.getPrototypeOf(value) !== Object.prototype && !Array.isArray(value)) return true;
+  return Object.values(value as Record<string, unknown>).some((item) => hasExecutable(item, seen));
 }
 function validated<T>(result: { readonly ok: true; readonly value: T } | { readonly ok: false }, message: string): T { if (!result.ok) throw new Error(message); return structuredClone(result.value); }

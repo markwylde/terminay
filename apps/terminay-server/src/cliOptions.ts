@@ -19,6 +19,8 @@ export interface ServerCliOptions {
   /** Whether this standalone host should reconcile its managed provider hooks. */
   readonly agentIntegrationEnabled: boolean;
   readonly aiProviders: readonly ("codex" | "claude-code")[];
+  /** One-shot inherited descriptor containing the vault passphrase. */
+  readonly vaultUnlockFd?: number;
 }
 
 /** Expand only an explicitly configured loopback HTTP web origin to the
@@ -49,6 +51,7 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
   const healthPortValue = value(argv, "--health-port") ?? env.TERMINAY_HEALTH_PORT;
   const agentIntegrationValue = value(argv, "--agent-integration") ?? env.TERMINAY_AGENT_INTEGRATION;
   const aiProvidersValue = value(argv, "--ai-providers") ?? env.TERMINAY_AI_PROVIDERS;
+  const vaultUnlockFdValue = value(argv, "--vault-unlock-fd");
   return Object.freeze({
     command,
     serverId,
@@ -67,6 +70,7 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
     ...(uiBundle === undefined ? {} : { uiBundle }),
     agentIntegrationEnabled: parseAgentIntegration(agentIntegrationValue),
     aiProviders: parseAiProviders(aiProvidersValue),
+    ...(vaultUnlockFdValue === undefined ? {} : { vaultUnlockFd: parseInheritedFd(vaultUnlockFdValue) }),
   });
 }
 
@@ -89,11 +93,19 @@ export function formatServerHelp(): string {
     "  --ai-providers LIST  opt in to bounded server CLI providers: codex,claude-code (TERMINAY_AI_PROVIDERS)",
     "  --health-host HOST unauthenticated liveness/readiness bind host (TERMINAY_HEALTH_HOST)",
     "  --health-port PORT unauthenticated liveness/readiness port (TERMINAY_HEALTH_PORT)",
+    "  --vault-unlock-fd FD  consume vault passphrase from inherited FD >= 3; otherwise use an echo-disabled controlling terminal",
     "  --pairing          print a short-lived pairing handoff record",
     "  --status           print redacted runtime configuration",
     "  --version          print the server version",
     "  mcp                run the headless MCP stdio adapter (requires inherited control env)",
   ].join("\n")}\n`;
+}
+
+function parseInheritedFd(value: string): number {
+  if (!/^[0-9]+$/u.test(value)) throw new Error("--vault-unlock-fd must be an inherited fd of 3 or greater");
+  const fd = Number(value);
+  if (!Number.isSafeInteger(fd) || fd < 3) throw new Error("--vault-unlock-fd must be an inherited fd of 3 or greater");
+  return fd;
 }
 
 function parseAiProviders(value: string | undefined): readonly ("codex" | "claude-code")[] {

@@ -21,7 +21,10 @@ import {
 	createServerCoreComposition,
 	type ServerCoreComposition,
 } from '../packages/server-core/src/composition';
-import { createDefaultExtensionManagement } from '../packages/server-core/src/extensions/index';
+import {
+	createDefaultExtensionManagement,
+	createPuzedSshProductionExtensionManagement,
+} from '../packages/server-core/src/extensions/index';
 import { OrderedEventJournal } from '../packages/server-core/src/events';
 import {
 	CanonicalProjectPathResolver,
@@ -46,6 +49,7 @@ import {
 } from '../packages/server-core/src/projectEnvironment/index';
 import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
+import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
 import type {
 	BinaryQueryHandlerResult,
@@ -201,6 +205,8 @@ export interface ServerTerminalAuthorityOptions {
 	readonly recordings?: ServerCoreCompositionOptions['recordings'];
 	/** Durable server settings shared by Desktop and browser renderers. */
 	readonly settings?: ServerSettingsRepository;
+	/** Electron-owned OS-protected vault shared by server services and extension hosts. */
+	readonly vault?: ServerVaultComposition;
 	/** Server-owned shell catalogue and target revalidation authority. */
 	readonly shellProfiles?: ShellProfileCatalogueService;
 	readonly defaultProjectRoot?: () => string;
@@ -408,6 +414,21 @@ export class ServerTerminalAuthority {
 		) {
 			throw new RangeError('maxReplayBytes must be a positive safe integer');
 		}
+		const extensionManagement =
+			options.dataRoot === undefined
+				? undefined
+				: options.vault === undefined
+					? createDefaultExtensionManagement({
+							dataRoot: options.dataRoot,
+							authorityLabel: 'This server',
+						})
+					: createPuzedSshProductionExtensionManagement({
+							dataRoot: options.dataRoot,
+							authorityLabel: 'This server',
+							vault: options.vault,
+							projectEnvironments,
+							workspace: this.workspace,
+						});
 		this.composition = createServerCoreComposition({
 			serverId: options.serverId,
 			serverVersion: 'desktop-local',
@@ -431,7 +452,27 @@ export class ServerTerminalAuthority {
 			eventJournal,
 			projectEnvironmentRouter,
 			projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.defaultProjectRoot?.() ?? process.cwd() },
-			...(options.dataRoot === undefined ? {} : { extensions: createDefaultExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: 'This server' }) }),
+			...(extensionManagement === undefined ? {} : { extensions: extensionManagement }),
+			...(extensionManagement === undefined && options.vault === undefined
+				? {}
+				: {
+						serviceLifecycle: {
+							stop: async () => {
+								const results = await Promise.allSettled([
+									extensionManagement?.hosts.shutdown(),
+									options.vault?.lock(),
+								]);
+								const failures = results.flatMap((result) =>
+									result.status === 'rejected' ? [result.reason] : [],
+								);
+								if (failures.length > 0)
+									throw new AggregateError(
+										failures,
+										'embedded server service shutdown failed',
+									);
+							},
+						},
+					}),
 			fileObservations,
 			...(options.recordings === undefined
 				? {}

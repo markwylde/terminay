@@ -11,3 +11,6 @@ export * from "./installer.js";
 export * from "./operations.js";
 export * from "./composition.js";
 export * from "./puzedSshComposition.js";
+export * from "./puzedSshProjectAdapter.js";
+export * from "./projectEnvironmentRuntime.js";
+export * from "./composedSshRuntime.js";
