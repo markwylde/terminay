@@ -11,8 +11,8 @@ Phase 6 release convergence after Tasks 41–50.
 
 ## Dependencies
 
-- Tasks [41](./41-project-environment-domain-and-local-provider.md),
-  [42](./42-extension-api-manifest-and-host.md),
+- Tasks [41](../tasks_completed/41-project-environment-domain-and-local-provider.md),
+  [42](../tasks_completed/42-extension-api-manifest-and-host.md),
   [43](./43-environment-routed-project-services.md),
   [44](./44-extension-installation-and-management.md),
   [45](./45-project-environment-and-extension-ui.md),
