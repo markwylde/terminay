@@ -16,12 +16,12 @@ export function createDefaultExtensionManagement(options: DefaultExtensionManage
   const npm = new NpmCliRegistryClient({ workRoot: join(options.dataRoot, "extensions", "cache", "npm") });
   const installer = new ExtensionInstaller({
     dataRoot: options.dataRoot, registryClient: npm, materializer: npm,
-    probe: async ({ extensionId, packageRoot, entrypoint }) => {
+    probe: async ({ extensionId, packageRoot, entrypoint, manifest }) => {
       const root = join(options.dataRoot, "extensions"); const directories = { config: join(root, "config", extensionId), data: join(root, "data", extensionId), cache: join(root, "cache", extensionId) };
       await Promise.all(Object.values(directories).map((directory) => mkdir(directory, { recursive: true })));
+      if ("registerManifest" in broker && typeof broker.registerManifest === "function") broker.registerManifest(manifest);
       await hosts.start({ extensionId, packageRoot, entrypoint, configDirectory: directories.config, dataDirectory: directories.data, cacheDirectory: directories.cache, permissions: [] }); await hosts.stop(extensionId);
     },
   });
   return { installer, hosts, authorityLabel: options.authorityLabel, restart: async (extensionId) => { await hosts.stop(extensionId); } };
 }
-
