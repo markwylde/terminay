@@ -73,3 +73,16 @@ test("spawn adapts bounded provider polling into PTY bytes, input, resize and ex
   assert.equal(output, "hello"); assert.equal(exit.exitCode, 0);
   assert.deepEqual(calls.map((call) => call.request.operation).slice(0,5), ["create","read","input","resize","read"]);
 });
+
+test("provider PTY accepts bounded journals only for its exact remote session", async () => {
+  const journal = { type: "session_meta", payload: { id: "codex-remote", cli_version: "0.2.0" } }; let remoteSessionId;
+  const runtime = new ExtensionProjectEnvironmentRuntime(providerId, ["terminal", "agent-journal"], { async invokeProvider(call) { const { capability, operation, input } = call.request; if (capability === "terminal" && operation === "create") { remoteSessionId = input.sessionId; return { sessionId: remoteSessionId }; } if (capability === "terminal" && operation === "read") return { data: "", exit: undefined }; if (capability === "terminal") return { accepted: true }; return { sessionId: remoteSessionId, cursor: 1, records: [journal] }; } }, () => ({ ...state, environments: { [environment.id]: { ...environment, declaredCapabilities: ["terminal", "agent-journal"], availableCapabilities: ["terminal", "agent-journal"] } } }));
+  const pty = await runtime.invoke("terminal", "spawn", { rows: 24, cols: 80 }, context);
+  const seen = await new Promise((resolve, reject) => { const timeout=setTimeout(()=>reject(new Error("journal callback timed out")),1000); pty.onAgentJournal((event)=>{clearTimeout(timeout);resolve(event);}); });
+  assert.deepEqual(seen,{provider:"codex",record:journal}); await pty.dispose();
+});
+
+test("missing journal capability preserves terminal-output fallback", async () => {
+  let journalCalls=0; const runtime=new ExtensionProjectEnvironmentRuntime(providerId,["terminal"],{async invokeProvider(call){const {capability,operation,input}=call.request;if(capability==="agent-journal")journalCalls++;if(operation==="create")return{sessionId:input.sessionId};if(operation==="read")return{data:Buffer.from("fallback").toString("base64")};return{accepted:true};}},()=>state);
+  const pty=await runtime.invoke("terminal","spawn",{rows:24,cols:80},context);pty.onAgentJournal(()=>assert.fail("unexpected journal"));const output=await new Promise(resolve=>pty.onData(bytes=>resolve(Buffer.from(bytes).toString())));assert.equal(output,"fallback");assert.equal(journalCalls,0);await pty.dispose();
+});

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { EXTENSION_LIMITS, validateDeclarativeForm, validateOptionSourceResult } from "@terminay/extension-api";
-import { ExtensionHost } from "../dist/extensions/index.js";
+import { ExtensionHost, ProjectEnvironmentRepository, WorkspaceStore, createInitialWorkspace, createProjectEnvironmentOperationHandlers } from "../dist/index.js";
 
 async function hostFixture() {
   const root = await mkdtemp(join(tmpdir(), "terminay-extension-resource-"));
@@ -37,4 +37,25 @@ test("provider IPC rejects the seventeenth simultaneous invocation within a boun
   await Promise.allSettled(admitted);
   assert.equal(host.status().state, "running");
   await host.stop();
+});
+
+test("provisioning mutations are serialized so one server registry never runs concurrent creates", async () => {
+  let active = 0;
+  let maximum = 0;
+  const repository = new ProjectEnvironmentRepository({ async load() {}, async commit() {} }, "server-resource");
+  const workspace = new WorkspaceStore(createInitialWorkspace("server-resource"));
+  const providerId = "example.resources/provider";
+  const providerRuntime = { async invokeProvider(invocation) {
+    if (invocation.callback === "testProfile") return [];
+    if (invocation.callback !== "createEnvironment") throw new Error("unexpected callback");
+    active += 1; maximum = Math.max(maximum, active);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    active -= 1;
+    return { state: "ready", providerState: {}, status: { state: "available", revision: 1 } };
+  } };
+  const operations = createProjectEnvironmentOperationHandlers({ repository, workspace, thisServerRoot: () => "/tmp", providerDefinitions: () => [{ providerId, displayName: "Resource", capabilities: ["infrastructure"], createForm: { id: "create", title: "Create", sections: [], submitLabel: "Create" } }], providerRuntime });
+  const request = (commandId) => ({ envelope: { type: "command", commandId, correlationId: commandId, operation: "projectEnvironments.create", payload: { providerId, values: { name: commandId } } }, body: new Uint8Array(), context: { connectionId: "connection", clientId: "client", authScope: "admin", permissions: ["environments:manage"], signal: new AbortController().signal } });
+  await Promise.all(["one", "two", "three", "four"].map((id) => operations.commands["projectEnvironments.create"](request(id))));
+  assert.equal(maximum, 1);
+  assert.equal(Object.keys(repository.state.environments).length, 5);
 });
