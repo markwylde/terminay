@@ -1211,7 +1211,7 @@ contextBridge.exposeInMainWorld(
 				typeof draft !== 'object' ||
 				draft === null ||
 				Array.isArray(draft) ||
-				Object.keys(draft).length !== 7
+				Object.keys(draft).length !== 11
 			) {
 				throw new TypeError('project edit draft is invalid');
 			}
@@ -1220,6 +1220,16 @@ contextBridge.exposeInMainWorld(
 				typeof candidate.color !== 'string' ||
 				candidate.color.length > 128 ||
 				(candidate.defaultShellProfileId !== null && (typeof candidate.defaultShellProfileId !== 'string' || candidate.defaultShellProfileId.length === 0 || candidate.defaultShellProfileId.length > 128)) ||
+				typeof candidate.environmentLabel !== 'string' ||
+				candidate.environmentLabel.length === 0 ||
+				candidate.environmentLabel.length > 512 ||
+				typeof candidate.environmentStatus !== 'string' ||
+				candidate.environmentStatus.length === 0 ||
+				candidate.environmentStatus.length > 128 ||
+				(candidate.environmentDefaultRoot !== null && (typeof candidate.environmentDefaultRoot !== 'string' || candidate.environmentDefaultRoot.length > 32_768)) ||
+				typeof candidate.projectEnvironmentId !== 'string' ||
+				candidate.projectEnvironmentId.length === 0 ||
+				candidate.projectEnvironmentId.length > 128 ||
 				typeof candidate.projectId !== 'string' ||
 				candidate.projectId.length > 128 ||
 				typeof candidate.emoji !== 'string' ||
@@ -1239,6 +1249,10 @@ contextBridge.exposeInMainWorld(
 				draft: {
 					color: candidate.color,
 					defaultShellProfileId: candidate.defaultShellProfileId,
+					environmentLabel: candidate.environmentLabel,
+					environmentStatus: candidate.environmentStatus,
+					environmentDefaultRoot: candidate.environmentDefaultRoot,
+					projectEnvironmentId: candidate.projectEnvironmentId,
 					emoji: candidate.emoji,
 					rootFolder: candidate.rootFolder,
 					shellProfileOptions: candidate.shellProfileOptions,
