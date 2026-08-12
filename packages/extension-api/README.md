@@ -26,3 +26,5 @@ are bound to an own-provider profile and the fixed `ssh-user-authentication`
 purpose. They expose bounded public-key metadata and challenge signatures, not
 an agent socket, private key, forwarding primitive, ambient environment, or UI
 DTO. The host authorizes every list/sign request independently.
+Extensions using this broker must declare the visible `ssh-agent:use` manifest
+permission; undeclared calls fail closed.

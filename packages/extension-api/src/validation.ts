@@ -34,7 +34,7 @@ export type ValidationResult<T> =
 const permissions = new Set<ExtensionPermission>([
   "configuration:read", "configuration:write", "data:read", "data:write",
   "cache:write", "network", "secrets:resolve", "provider:depend",
-  "external-resources:manage",
+  "external-resources:manage", "ssh-agent:use",
 ]);
 const capabilities = new Set([
   "terminal", "filesystem", "filesystem-observation", "git", "process-observation",
