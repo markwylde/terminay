@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   ExtensionHost,
   ExtensionHostManager,
+  assertExtensionCompatible,
   extensionLaunchDescriptor,
   validateExtensionLaunchDescriptor,
 } from "../dist/index.js";
@@ -119,4 +120,75 @@ test("repeated activation failures quarantine only that extension", async () => 
   await assert.rejects(host.start(descriptor), /quarantined/);
   host.clearQuarantine();
   assert.equal(host.status().state, "stopped");
+});
+
+test("compatibility axes and extension dependencies fail before entrypoint import", () => {
+  const base = {
+    manifestVersion: 1, id: "example.compat", displayName: "Compatibility", api: "^1.0.0",
+    engines: { terminay: ">=1.0.0", node: ">=22.0.0" }, entrypoint: "extension.js", permissions: [],
+    contributes: { projectEnvironments: [{ id: "example.compat/main", displayName: "Main", capabilities: ["terminal"] }] },
+  };
+  assert.doesNotThrow(() => assertExtensionCompatible(base, { terminayVersion: "1.4.0", nodeVersion: "24.0.0", platform: "linux" }));
+  assert.throws(() => assertExtensionCompatible({ ...base, api: "^2.0.0" }, { terminayVersion: "1.4.0" }), /API/);
+  assert.throws(() => assertExtensionCompatible({ ...base, engines: { ...base.engines, terminay: ">=2.0.0" } }, { terminayVersion: "1.4.0" }), /Terminay/);
+  assert.throws(() => assertExtensionCompatible({ ...base, engines: { ...base.engines, node: ">=99.0.0" } }, { terminayVersion: "1.4.0" }), /Node/);
+  assert.throws(() => assertExtensionCompatible({ ...base, platforms: ["darwin"] }, { terminayVersion: "1.4.0", platform: "linux" }), /platform/);
+  const dependent = { ...base, extensionDependencies: [{ extensionId: "example.required", apiRange: "^1.0.0" }] };
+  assert.throws(() => assertExtensionCompatible(dependent, { terminayVersion: "1.4.0" }), /unavailable/);
+  assert.throws(() => assertExtensionCompatible(dependent, { terminayVersion: "1.4.0", installedExtensions: new Map([["example.required", { apiVersion: "2.0.0" }]]) }), /incompatible/);
+});
+
+test("malformed child IPC fails only its supervisor", async () => {
+  const descriptor = await fixture("example.malformed", "export function activate() {}");
+  const childEntrypoint = join(descriptor.packageRoot, "malformed-child.cjs");
+  await writeFile(childEntrypoint, `process.on("message", () => process.send({ totally: "invalid" }));`);
+  const host = new ExtensionHost(descriptor.extensionId, { broker: { async request() {} }, childEntrypoint });
+  await assert.rejects(host.start(descriptor), /malformed child message/);
+  assert.equal(host.status().state, "failed");
+});
+
+test("oversized and late child results are rejected or ignored without poisoning later calls", async () => {
+  const oversized = await fixture("example.oversized", `export function activate() { return { methods: { huge() { return "x".repeat(300000); } } }; }`);
+  const oversizedHost = new ExtensionHost(oversized.extensionId, { broker: { async request() {} }, limits: { maxMessageBytes: 8_000 } });
+  await oversizedHost.start(oversized);
+  await assert.rejects(oversizedHost.invoke({ method: "huge" }), /oversized child message|exited/);
+  assert.equal(oversizedHost.status().state, "failed");
+
+  const late = await fixture("example.late", `export function activate() { return { methods: {
+    late() { return new Promise(resolve => setTimeout(() => resolve("too late"), 40)); }, ping() { return "pong"; }
+  } }; }`);
+  const lateHost = new ExtensionHost(late.extensionId, { broker: { async request() {} } });
+  await lateHost.start(late);
+  await assert.rejects(lateHost.invoke({ method: "late", deadlineMs: 5 }), /timed out/);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(await lateHost.invoke({ method: "ping" }), "pong");
+  await lateHost.stop();
+});
+
+test("duplicate provider ids are rejected before provider publication", async () => {
+  const descriptor = await fixture("example.collision", `export function activate(context) {
+    const definition = { providerId: "example.collision/main", displayName: "Main", capabilities: ["terminal"] };
+    context.registerProjectEnvironmentProvider(definition); context.registerProjectEnvironmentProvider(definition);
+  }`);
+  const host = new ExtensionHost(descriptor.extensionId, { broker: { async request() {} } });
+  await assert.rejects(host.start(descriptor), /invalid provider registrations/);
+  assert.deepEqual(host.status().providers, []);
+});
+
+test("embedded and standalone supervisors publish the same safe provider DTO and cannot block This server readiness", async () => {
+  const descriptor = await fixture("example.portable", `export default { activate(context) {
+    context.registerProjectEnvironmentProvider({ providerId: "example.portable/main", displayName: "Portable", description: "Safe text", capabilities: ["terminal", "filesystem"] });
+  } };`);
+  const states = [];
+  for (const runtimeMode of ["embedded", "standalone"]) {
+    let thisServerReady = true;
+    const host = new ExtensionHost(descriptor.extensionId, { broker: { async request() {} } });
+    await host.start(descriptor);
+    states.push({ runtimeMode, providers: host.status().providers });
+    assert.equal(thisServerReady, true);
+    assert.equal(JSON.stringify(host.status().providers).includes("function"), false);
+    await host.stop();
+    thisServerReady = true;
+  }
+  assert.deepEqual(states[0].providers, states[1].providers);
 });

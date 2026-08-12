@@ -44,9 +44,9 @@ extension-management protocol.
 
 ### Compatibility and hostile fixtures
 
-- [ ] Validate manifest, entrypoint, API/engine/platform/dependencies and reject
+- [x] Validate manifest, entrypoint, API/engine/platform/dependencies and reject
   unknown/colliding/escaping inputs before import.
-- [ ] Add incompatible, malformed, oversized, late-IPC, collision, crash, and
+- [x] Add incompatible, malformed, oversized, late-IPC, collision, crash, and
   cross-extension secret-denial fixtures.
 - [x] Prove extension failures cannot block server or This server readiness.
 
