@@ -15,7 +15,7 @@ export interface ExtensionInstallerOptions {
   readonly registryClient: ExtensionRegistryClient;
   readonly materializer: ExtensionMaterializer;
   readonly now?: () => number;
-  readonly probe?: (input: { extensionId: string; packageRoot: string; entrypoint: string }) => Promise<void>;
+  readonly probe?: (input: { extensionId: string; packageRoot: string; entrypoint: string; manifest: ExtensionReceipt["manifest"] }) => Promise<void>;
   readonly references?: (extensionId: string) => Promise<ExtensionReferences>;
   readonly audit?: (event: Readonly<Record<string, unknown>>) => Promise<void> | void;
 }
@@ -163,7 +163,7 @@ export class ExtensionInstaller {
   private async recoverStaging(): Promise<void> { const staging = join(this.root, "staging"); await rm(staging, { recursive: true, force: true }); await mkdir(staging, { recursive: true }); }
   private async snapshotData(extensionId: string, revision: number): Promise<void> { const source = join(this.root, "data", extensionId); const destination = join(this.root, "data-snapshots", extensionId, String(revision)); try { await cp(source, destination, { recursive: true, errorOnExist: true }); } catch (error) { if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error; } }
   private async references(extensionId: string): Promise<ExtensionReferences> { return this.options.references?.(extensionId) ?? {}; }
-  private async probe(receipt: ExtensionReceipt, packageRoot: string): Promise<void> { await this.options.probe?.({ extensionId: receipt.extensionId, packageRoot, entrypoint: join(packageRoot, receipt.manifest.entrypoint) }); }
+  private async probe(receipt: ExtensionReceipt, packageRoot: string): Promise<void> { await this.options.probe?.({ extensionId: receipt.extensionId, packageRoot, entrypoint: join(packageRoot, receipt.manifest.entrypoint), manifest: receipt.manifest }); }
   private slotPackageRoot(slot: { receipt: ExtensionReceipt }): string { return join(this.root, "packages", slot.receipt.slotId, "node_modules", ...slot.receipt.packageName.split("/")); }
   private registryPath(): string { return join(this.root, "registry.v1.json"); }
   private serial<T>(work: () => Promise<T>): Promise<T> { const result = this.queue.then(work, work); this.queue = result.then(() => undefined, () => undefined); return result; }
