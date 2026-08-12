@@ -15,7 +15,7 @@ accepted.
 
 - [Task 46](./46-official-ssh-extension.md)
 - [Task 47](../tasks_completed/47-official-puzed-extension-foundation.md)
-- [Task 48](./48-puzed-vm-provisioning-experience.md)
+- [Task 48](../tasks_completed/48-puzed-vm-provisioning-experience.md)
 
 ## Governing specifications
 
