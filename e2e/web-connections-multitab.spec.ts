@@ -19,9 +19,11 @@ test('Connections pairing opens enrollment without saving metadata, while advanc
 	const first = await context.newPage();
 	const second = await context.newPage();
 	const url = `${fixture.origin}/web.html`;
-	// Cold Vite compilation is fixture bootstrap, not an application operation.
-	await first.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
-	await second.goto(url, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+	// Navigation commit proves the fixture accepted the request. The route content
+	// below is the authoritative application-readiness boundary; DOMContentLoaded
+	// can remain pending behind cold Vite compilation on a loaded Docker shard.
+	await first.goto(url, { waitUntil: 'commit' });
+	await second.goto(url, { waitUntil: 'commit' });
 
 	const firstConnections = first.locator(
 		'[data-shared-route-body="connections"]',
@@ -29,7 +31,12 @@ test('Connections pairing opens enrollment without saving metadata, while advanc
 	const secondConnections = second.locator(
 		'[data-shared-route-body="connections"]',
 	);
-	await expect(firstConnections).toContainText('No saved servers yet');
+	await expect(firstConnections).toContainText('No saved servers yet', {
+		timeout: 30_000,
+	});
+	await expect(secondConnections).toContainText('No saved servers yet', {
+		timeout: 30_000,
+	});
 	await firstConnections
 		.getByRole('button', { name: 'Add connection…' })
 		.click();
