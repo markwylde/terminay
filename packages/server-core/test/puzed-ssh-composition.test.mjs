@@ -12,6 +12,8 @@ import { ProjectEnvironmentRepository } from "../dist/projectEnvironment/reposit
 import { createInitialWorkspace, WorkspaceStore } from "../dist/workspace.js";
 import { ExtensionHostComposedSshRuntime } from "../dist/extensions/composedSshRuntime.js";
 import { mkdtemp } from "node:fs/promises";
+import { chmod, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +32,7 @@ function fixture(initial) {
       async createBinding(input) { calls.push(["create", structuredClone(input)]); profiles.set(input.bindingId, { ...input, revision: 1 }); return { revision: 1 }; },
       async updateBinding(input) { calls.push(["update", structuredClone(input)]); const prior = profiles.get(input.bindingId); profiles.set(input.bindingId, { ...prior, ...input, revision: input.expectedRevision + 1 }); return { revision: input.expectedRevision + 1 }; },
       async verifyBinding(input) { calls.push(["verify", structuredClone(input)]); const profile = profiles.get(input.bindingId); return { state: "ready", revision: profile.revision, canonicalRoot: "/srv/project", logicalHostIdentity: profile.logicalHostIdentity }; },
+      async approveTrust(input) { calls.push(["approve", structuredClone(input)]); return { revision: input.expectedRevision }; },
       async removeBinding(id) { profiles.delete(id); },
     },
     projects: { async open(input) { projectCalls++; calls.push(["open", structuredClone(input)]); return { projectId: "project-1", environmentId: input.environmentId }; } },
@@ -44,6 +47,14 @@ test("dedicated key stays host/SSH-owned and Puzed receives only public key plus
   assert.match(result.publicKey, /^ssh-ed25519 /); assert.match(result.sshBindingId, /^puzed-ssh:/); assert.deepEqual(Object.keys(result).sort(), ["publicKey", "sshBindingId"]);
   assert.equal(JSON.stringify(result).includes("PRIVATE KEY"), false); assert.equal(JSON.stringify(f.durable()).includes("PRIVATE KEY"), false);
   assert.equal(f.secrets.size, 1); assert.equal(f.calls[0][0], "create"); assert.match(f.calls[0][1].privateKeySecretId, /^extensions\.ssh\.composed\./);
+});
+
+test("dedicated vault key is standards-readable OpenSSH Ed25519 and matches its public half", async () => {
+  const context = fixture(); const generated = await context.service.generate({ profileId: "platform", operationId: "key-format" }, "key-format", new AbortController().signal);
+  const privateKey = [...context.secrets.values()][0]; assert.ok(privateKey);
+  const root = await mkdtemp(join(tmpdir(), "terminay-key-format-")); const file = join(root, "id_ed25519"); await writeFile(file, privateKey); await chmod(file, 0o600);
+  const parsed = spawnSync("ssh-keygen", ["-y", "-f", file], { encoding: "utf8" }); assert.equal(parsed.status, 0, parsed.stderr);
+  assert.equal(parsed.stdout.trim().split(" ").slice(0, 2).join(" "), generated.publicKey.split(" ").slice(0, 2).join(" "));
 });
 
 test("caller must declare exact SSH extension dependency and provider", async () => {
@@ -81,12 +92,12 @@ test("restart loads durable idempotency receipts without regenerating credential
 });
 
 test("SSH binding failure rolls back generated private key", async () => {
-  let removed; const service = new PuzedSshCompositionService({ backend: { async load() {}, async commit() {} }, vault: { async put() {}, async remove(id) { removed = id; } }, ssh: { async createBinding() { throw new Error("SSH unavailable"); }, async updateBinding() { throw new Error(); }, async verifyBinding() { throw new Error(); }, async removeBinding() {} }, projects: { async open() { throw new Error(); } } });
+  let removed; const service = new PuzedSshCompositionService({ backend: { async load() {}, async commit() {} }, vault: { async put() {}, async remove(id) { removed = id; } }, ssh: { async createBinding() { throw new Error("SSH unavailable"); }, async updateBinding() { throw new Error(); }, async verifyBinding() { throw new Error(); }, async approveTrust() { throw new Error(); }, async removeBinding() {} }, projects: { async open() { throw new Error(); } } });
   await assert.rejects(service.generate({ profileId: "platform", operationId: "operation" }, "key", new AbortController().signal), /SSH unavailable/); assert.match(removed, /^extensions\.ssh\.composed\./);
 });
 
 test("durable receipt failure compensates both SSH binding and vault secret", async () => {
-  const secrets = new Set(); const profiles = new Set(); const service = new PuzedSshCompositionService({ backend: { async load() {}, async commit() { throw new Error("disk full"); } }, vault: { async put(input) { secrets.add(input.id); }, async remove(id) { secrets.delete(id); } }, ssh: { async createBinding(input) { profiles.add(input.bindingId); return { revision: 1 }; }, async updateBinding() { throw new Error(); }, async verifyBinding() { throw new Error(); }, async removeBinding(id) { profiles.delete(id); } }, projects: { async open() { throw new Error(); } } });
+  const secrets = new Set(); const profiles = new Set(); const service = new PuzedSshCompositionService({ backend: { async load() {}, async commit() { throw new Error("disk full"); } }, vault: { async put(input) { secrets.add(input.id); }, async remove(id) { secrets.delete(id); } }, ssh: { async createBinding(input) { profiles.add(input.bindingId); return { revision: 1 }; }, async updateBinding() { throw new Error(); }, async verifyBinding() { throw new Error(); }, async approveTrust() { throw new Error(); }, async removeBinding(id) { profiles.delete(id); } }, projects: { async open() { throw new Error(); } } });
   await assert.rejects(service.generate({ profileId: "platform", operationId: "operation" }, "key", new AbortController().signal), /disk full/); assert.equal(secrets.size, 0); assert.equal(profiles.size, 0);
 });
 
