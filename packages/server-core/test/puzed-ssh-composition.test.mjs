@@ -52,10 +52,59 @@ test("dedicated key stays host/SSH-owned and Puzed receives only public key plus
 test("dedicated vault key is standards-readable OpenSSH Ed25519 and matches its public half", async () => {
   const context = fixture(); const generated = await context.service.generate({ profileId: "platform", operationId: "key-format" }, "key-format", new AbortController().signal);
   const privateKey = [...context.secrets.values()][0]; assert.ok(privateKey);
+  const decoded = decodeOpenSshEd25519Private(privateKey);
+  assert.equal(decoded.publicKey, generated.publicKey.split(" ").slice(0, 2).join(" "));
   const root = await mkdtemp(join(tmpdir(), "terminay-key-format-")); const file = join(root, "id_ed25519"); await writeFile(file, privateKey); await chmod(file, 0o600);
-  const parsed = spawnSync("ssh-keygen", ["-y", "-f", file], { encoding: "utf8" }); assert.equal(parsed.status, 0, parsed.stderr);
-  assert.equal(parsed.stdout.trim().split(" ").slice(0, 2).join(" "), generated.publicKey.split(" ").slice(0, 2).join(" "));
+  const parsed = spawnSync("ssh-keygen", ["-y", "-f", file], { encoding: "utf8" });
+  if (parsed.error?.code !== "ENOENT") {
+    assert.equal(parsed.status, 0, parsed.stderr || parsed.error?.message);
+    assert.equal(parsed.stdout.trim().split(" ").slice(0, 2).join(" "), decoded.publicKey);
+  }
 });
+
+function decodeOpenSshEd25519Private(bytes) {
+  const pem = new TextDecoder().decode(bytes);
+  assert.match(pem, /^-----BEGIN OPENSSH PRIVATE KEY-----\n(?:[A-Za-z0-9+/=]{1,70}\n)+-----END OPENSSH PRIVATE KEY-----\n$/);
+  const body = Buffer.from(pem.split("\n").slice(1, -2).join(""), "base64");
+  const magic = Buffer.from("openssh-key-v1\0");
+  assert.equal(body.subarray(0, magic.length).equals(magic), true);
+  let offset = magic.length;
+  const u32 = () => { assert.ok(offset + 4 <= body.length); const value = body.readUInt32BE(offset); offset += 4; return value; };
+  const part = () => { const length = u32(); assert.ok(offset + length <= body.length); const value = body.subarray(offset, offset + length); offset += length; return value; };
+  assert.equal(part().toString(), "none");
+  assert.equal(part().toString(), "none");
+  assert.equal(part().length, 0);
+  assert.equal(u32(), 1);
+  const publicBlob = part();
+  const privateBlob = part();
+  assert.equal(offset, body.length);
+
+  const parseBlob = (blob) => {
+    let at = 0;
+    const readU32 = () => { assert.ok(at + 4 <= blob.length); const value = blob.readUInt32BE(at); at += 4; return value; };
+    const readPart = () => { const length = readU32(); assert.ok(at + length <= blob.length); const value = blob.subarray(at, at + length); at += length; return value; };
+    return { readU32, readPart, offset: () => at };
+  };
+  const publicReader = parseBlob(publicBlob);
+  assert.equal(publicReader.readPart().toString(), "ssh-ed25519");
+  const publicKey = publicReader.readPart();
+  assert.equal(publicKey.length, 32);
+  assert.equal(publicReader.offset(), publicBlob.length);
+
+  const privateReader = parseBlob(privateBlob);
+  assert.equal(privateReader.readU32(), privateReader.readU32());
+  assert.equal(privateReader.readPart().toString(), "ssh-ed25519");
+  assert.equal(privateReader.readPart().equals(publicKey), true);
+  const secret = privateReader.readPart();
+  assert.equal(secret.length, 64);
+  assert.equal(secret.subarray(32).equals(publicKey), true);
+  assert.match(privateReader.readPart().toString(), /^terminay-puzed-ssh:/);
+  const padding = privateBlob.subarray(privateReader.offset());
+  assert.deepEqual([...padding], Array.from({ length: padding.length }, (_, index) => index + 1));
+
+  const field = (value) => { const size = Buffer.alloc(4); size.writeUInt32BE(value.length); return Buffer.concat([size, value]); };
+  return { publicKey: `ssh-ed25519 ${Buffer.concat([field(Buffer.from("ssh-ed25519")), field(publicKey)]).toString("base64")}` };
+}
 
 test("caller must declare exact SSH extension dependency and provider", async () => {
   const f = fixture(); const request = { operation: "provider.call", payload: { request: { providerId: SSH_PROVIDER_ID, operation: "verify", payload: { sshBindingId: "missing" } }, context: {} } };
