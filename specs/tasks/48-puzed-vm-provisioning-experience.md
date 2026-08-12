@@ -13,7 +13,7 @@ stable SSH provider contract/test double until live convergence.
 ## Dependencies
 
 - [Task 45](./45-project-environment-and-extension-ui.md)
-- [Task 47](./47-official-puzed-extension-foundation.md)
+- [Task 47](../tasks_completed/47-official-puzed-extension-foundation.md)
 
 ## Governing specification
 
