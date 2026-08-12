@@ -5,6 +5,7 @@ import test from "node:test";
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ExtensionHostManager,
   ExtensionHostComposedSshRuntime,
@@ -16,21 +17,23 @@ import {
   createInitialWorkspace,
 } from "../dist/index.js";
 
+const repository = fileURLToPath(new URL("../../..", import.meta.url));
+const puzedRepo = process.env.TERMINAY_PUZED_PLUGIN_REPO;
+const sshRepo = process.env.TERMINAY_SSH_PLUGIN_REPO;
 const enabled = process.env.TERMINAY_RUN_PACKED_COMPOSITION_E2E === "1";
-const puzedRepo = "/Users/mark/Documents/Projects/terminay/terminay-plugin-puzed-provisioning";
-const sshRepo = "/Users/mark/Documents/Projects/terminay/terminay-plugin-ssh-task46";
-const apiPackage = "/Users/mark/Documents/Projects/terminay/terminay-project-environments-specs/packages/extension-api";
+const apiPackage = join(repository, "packages/extension-api");
 const puzedId = "com.puzed.platform";
 const puzedProvider = "com.puzed.platform/vm";
 const sshId = "com.terminay.ssh";
 const sshProvider = "com.terminay.ssh/connection";
 
 test("packed Puzed child composes a private host key, SSH readiness, and one canonical project", { skip: !enabled, timeout: 120_000 }, async (t) => {
+  assert.ok(puzedRepo && sshRepo, "set TERMINAY_PUZED_PLUGIN_REPO and TERMINAY_SSH_PLUGIN_REPO to official plugin checkouts");
   const root = await mkdtemp(join(tmpdir(), "terminay-packed-composition-"));
   const image = `terminay-composition-${process.pid}`;
   assert.equal(run("docker", ["build", "-t", image, join(sshRepo, "test/e2e")]).status, 0);
   const started = run("docker", ["run", "-d", "-P", image]); assert.equal(started.status, 0, started.stderr); const container = started.stdout.trim();
-  t.after(() => run("docker", ["rm", "-f", container]));
+  t.after(() => { run("docker", ["rm", "-f", container]); run("docker", ["image", "rm", "-f", image]); });
   const sshPort = Number(run("docker", ["port", container, "22/tcp"]).stdout.trim().split(":").at(-1)); assert.ok(sshPort > 0);
   const [puzed, ssh] = await Promise.all([pack(puzedRepo, join(root, "puzed"), false), pack(sshRepo, join(root, "ssh"), true)]);
   const fake = await fakePuzedApi(sshPort); t.after(() => fake.close());
