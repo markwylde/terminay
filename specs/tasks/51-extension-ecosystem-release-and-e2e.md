@@ -19,7 +19,7 @@ Phase 6 release convergence after Tasks 41–50.
   [46](../tasks_completed/46-official-ssh-extension.md),
   [47](../tasks_completed/47-official-puzed-extension-foundation.md),
   [48](../tasks_completed/48-puzed-vm-provisioning-experience.md), and
-  [49](./49-puzed-to-ssh-environment-composition.md), plus
+  [49](../tasks_completed/49-puzed-to-ssh-environment-composition.md), plus
   [50](../tasks_completed/50-ssh-environment-service-parity.md).
 
 ## Governing specifications
