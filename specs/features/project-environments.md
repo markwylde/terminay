@@ -180,7 +180,10 @@ Safe public statuses include `ready`, `connecting`, `reconnecting`,
 
 The project bar uses an accessible split button:
 
-- the primary `+` immediately creates a new This server project; and
+- the primary `+` immediately creates a new This server project;
+- every equivalent native-menu, keyboard-shortcut, and command-palette action
+  invokes that same server-owned This server operation and acknowledges
+  completion only after the operation has settled; and
 - the arrow opens **Choose project environment**.
 
 Opening the chooser refreshes its inventory from the currently authenticated
