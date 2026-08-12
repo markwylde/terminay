@@ -19,6 +19,9 @@ export interface TerminalDimensions {
 }
 
 export interface PtySpawnOptions extends TerminalDimensions {
+	readonly projectId?: string;
+	readonly projectEnvironmentId?: string;
+	readonly environmentRevision?: number;
   /** Canonical shell executable. */
   readonly shellPath: string;
   /** Alias retained for adapters which call this field `shell`. */

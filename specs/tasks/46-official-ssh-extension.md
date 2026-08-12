@@ -14,7 +14,7 @@ UI contracts are stable.
 ## Dependencies
 
 - [Task 42](../tasks_completed/42-extension-api-manifest-and-host.md)
-- [Task 43](./43-environment-routed-project-services.md)
+- [Task 43](../tasks_completed/43-environment-routed-project-services.md)
 
 ## Governing specification
 

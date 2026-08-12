@@ -33,26 +33,26 @@ observation, and MCP environment are composed globally against the server host.
 
 ### Terminal and launch
 
-- [ ] Make PTY/runtime, shell catalogue, home/cwd/path validation, and launch
+- [x] Make PTY/runtime, shell catalogue, home/cwd/path validation, and launch
   environment resolve per canonical project environment.
-- [ ] Preserve session/stream/attachment/presentation contracts and filter
+- [x] Preserve session/stream/attachment/presentation contracts and filter
   server-local MCP/control/provider variables at remote boundaries.
-- [ ] Gate cwd/foreground observation and close protection by capabilities.
+- [x] Gate cwd/foreground observation and close protection by capabilities.
 
 ### Files, roots, and drafts
 
-- [ ] Route root prepare/browser, canonical resolver, catalog/content/session,
+- [x] Route root prepare/browser, canonical resolver, catalog/content/session,
   folder tasks, uploads, and observation through environment filesystems.
-- [ ] Normalize provider errors, preserve dirty drafts on disconnect, and model
+- [x] Normalize provider errors, preserve dirty drafts on disconnect, and model
   ambiguous writes without blind retry.
-- [ ] Commit root/context changes transactionally and remove generic bypasses.
+- [x] Commit root/context changes transactionally and remove generic bypasses.
 
 ### Optional services
 
-- [ ] Route Git/path/CLI only when declared; otherwise show unavailable.
-- [ ] Keep recording at the server stream boundary and terminal-output activity
+- [x] Route Git/path/CLI only when declared; otherwise show unavailable.
+- [x] Keep recording at the server stream boundary and terminal-output activity
   universal while gating agent journals/process observation.
-- [ ] Prevent local MCP sockets and local provider paths entering remote shells;
+- [x] Prevent local MCP sockets and local provider paths entering remote shells;
   route macro file fields through the environment.
 
 ## Acceptance checks

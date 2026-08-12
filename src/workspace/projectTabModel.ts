@@ -4,6 +4,10 @@ import type { SidebarPanelId, SidebarSettings } from '../types/settings';
 const PROJECT_TAB_COLOR_PALETTE_SIZE = 20;
 
 export type ProjectTab = {
+	projectEnvironmentId?: string;
+	environmentRevision?: number;
+	environmentLabel?: string;
+	environmentStatus?: string;
 	defaultShellProfileId?: string;
 	id: string;
 	title: string;
@@ -104,6 +108,10 @@ export function createProjectTab(
 ): ProjectTab {
 	const id = `project-${index}`;
 	return {
+		projectEnvironmentId: 'terminay:this-server',
+		environmentRevision: 1,
+		environmentLabel: 'This server',
+		environmentStatus: 'ready',
 		id,
 		title: `Project ${index}`,
 		color: getDeterministicProjectTabColor(`${colorScope}:${id}`, usedColors),

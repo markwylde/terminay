@@ -50,7 +50,7 @@ test("packed standalone node-pty resolves from its isolated closure despite host
         "@terminay/server-core": join(repositoryRoot, "packages/server-core"),
         "@terminay/protocol": join(repositoryRoot, "packages/protocol"),
       },
-      rootPackages: ["@terminay/server-core", "@terminay/protocol", "@modelcontextprotocol/sdk", "node-pty", "zod"],
+      rootPackages: ["@terminay/server-core", "@terminay/protocol", "@modelcontextprotocol/sdk", "node-pty", "npm", "zod"],
     });
 
     const hostileCwd = join(root, "hostile-cwd");

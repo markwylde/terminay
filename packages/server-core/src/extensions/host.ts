@@ -70,7 +70,7 @@ export class ExtensionHost {
       cwd: this.descriptor.packageRoot,
       execPath: this.options.nodeExecutable,
       execArgv: [],
-      env: { NODE_ENV: "production", TERMINAY_EXTENSION_HOST: "1" },
+      env: { NODE_ENV: "production", TERMINAY_EXTENSION_HOST: "1" } as unknown as NodeJS.ProcessEnv,
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       serialization: "json",
     });

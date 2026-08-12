@@ -38,6 +38,8 @@ import {
 	MacroRepository,
 	type NodePtyModuleLike,
 	OrderedEventJournal,
+	ProjectEnvironmentRegistry,
+	ProjectEnvironmentRouter,
 	RecordingService,
 	type RemoteReconnectGrantRecord,
 	type ServerCoreComposition,
@@ -53,6 +55,7 @@ import {
 	TerminalActivityService,
 	TerminalReplayRegistry,
 	WorkspaceStore,
+	createInitialProjectEnvironmentState,
 } from '@terminay/server-core';
 import * as nodePty from 'node-pty';
 import {
@@ -278,6 +281,13 @@ async function createServerComposition(
 		options.serverId,
 		options.projectRoot,
 	);
+	const initialProjectEnvironments = createInitialProjectEnvironmentState(options.serverId);
+	const projectEnvironmentRouter = new ProjectEnvironmentRouter({
+		serverId: options.serverId,
+		workspaceSnapshot: () => workspace.state,
+		environmentSnapshot: () => initialProjectEnvironments,
+		registry: new ProjectEnvironmentRegistry(),
+	});
 	const gitService = new GitService({
 		limits: {
 			maxOutputBytes: 512 * 1024,
@@ -356,6 +366,7 @@ async function createServerComposition(
 		activity,
 		agents,
 		workspace,
+		projectEnvironmentRouter,
 		workspaceOperations: {
 			prepareProjectRootUpdate: files.prepareProjectRootUpdate,
 		},

@@ -468,6 +468,9 @@ export class TerminalService {
       replayFrom: 0,
     };
     const spawnOptions: PtySpawnOptions = {
+		projectId: launch.identity.projectId,
+		projectEnvironmentId: launch.projectEnvironmentId,
+		environmentRevision: launch.environmentRevision,
       shellPath: launch.shellPath,
       shell: launch.shellPath,
       args: [...launch.args],

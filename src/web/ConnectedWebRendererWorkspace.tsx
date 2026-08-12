@@ -316,6 +316,8 @@ function ConnectedBrowserMenuBar({
 			file: [
 					{ id: 'new-terminal', label: 'New Terminal', onSelect: () => dispatchShortcut('t') },
 					{ id: 'new-project', label: 'New Project', onSelect: () => dispatchShortcut('p') },
+					{ id: 'project-environments', label: 'Project Environments…', onSelect: () => window.dispatchEvent(new Event('terminay-open-project-environments')) },
+					{ id: 'extensions', label: 'Extensions…', onSelect: () => window.dispatchEvent(new Event('terminay-open-extensions')) },
 					{ id: 'save', label: 'Save', onSelect: () => dispatchShortcut('s') },
 				{ id: 'settings', label: 'Settings', onSelect: () => onOpenAuxiliaryRoute('settings') },
 				{ id: 'macros', label: 'Macros', onSelect: () => onOpenAuxiliaryRoute('macros') },

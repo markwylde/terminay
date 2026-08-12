@@ -46,6 +46,18 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'open recordings timeline terminal session replay asciinema cast history',
   },
   {
+    command: 'open-project-environments',
+    title: 'Open Project Environments',
+    description: 'Manage environments on the selected Terminay Server.',
+    keywords: 'project environment connections ssh puzed server',
+  },
+  {
+    command: 'open-extensions',
+    title: 'Open Extensions',
+    description: 'Manage extensions on the selected Terminay Server.',
+    keywords: 'extensions plugins npm providers',
+  },
+  {
     command: 'split-horizontal',
     title: 'Split horizontally',
     description: 'Open a new terminal below the active tab.',
@@ -100,6 +112,8 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'new-project': 'CmdOrCtrl+P',
   'clear-terminal': 'CmdOrCtrl+K',
   'open-recordings': '',
+  'open-project-environments': '',
+  'open-extensions': '',
   'save-active': 'CmdOrCtrl+S',
   'split-horizontal': 'CmdOrCtrl+Shift+-',
   'split-vertical': 'CmdOrCtrl+Shift+\\',

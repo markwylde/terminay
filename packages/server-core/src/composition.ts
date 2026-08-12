@@ -47,12 +47,14 @@ import type { ServerGitAdapter } from "./gitService/adapter.js";
 import type { RecordingAdapter } from "./recordingService/adapter.js";
 import { createSettingsOperationRegistry, type SettingsOperationRegistry } from "./settings/protocol.js";
 import type { ServerSettingsRepository } from "./settings/repository.js";
+import { createEnvironmentRoutedPtyFactory, routeProjectOperationRegistries, type ProjectEnvironmentRouter } from "./projectEnvironment/index.js";
 import { createFileObservationEventProjector, type ServerFileObservationAdapter } from "./fileService/observationAdapter.js";
 import {
   createShellProfileOperationRegistry,
   type ShellProfileCatalogueService,
   type ShellStartupMode,
 } from "./shellProfiles/index.js";
+import { createExtensionOperationHandlers, type ExtensionOperationOptions } from "./extensions/index.js";
 
 /**
  * Internal lifecycle evidence emitted by a host PTY adapter when foreground
@@ -132,6 +134,9 @@ export interface ServerCoreCompositionOptions
   readonly agents?: AgentStatusService;
   /** Other server-owned operation handlers to merge with terminal handlers. */
   readonly operations?: OperationRegistries;
+  /** Optional selected-server extension manager. Fixed operations are merged
+   * into every transport and changes use the canonical ordered event stream. */
+  readonly extensions?: Omit<ExtensionOperationOptions, "onChanged">;
   /** Optional server-owned macro repository, runner, and exact PTY/vault environment. */
   readonly macros?: {
     readonly repository: MacroRepository;
@@ -150,6 +155,10 @@ export interface ServerCoreCompositionOptions
   readonly settings?: ServerSettingsRepository;
   /** Optional project-scoped filesystem watch and folder-size authority. */
   readonly fileObservations?: ServerFileObservationAdapter;
+  /** Canonical environment router. When present every project-scoped file,
+   * Git, observation, agent and shell operation is routed before a local host
+   * adapter can run. */
+  readonly projectEnvironmentRouter?: ProjectEnvironmentRouter;
   /** Host-neutral startup/cleanup for optional authorities that require
    * asynchronous binding before any transport listener becomes ready. */
   readonly serviceLifecycle?: {
@@ -235,6 +244,7 @@ export function createServerCoreComposition(
         serverId: options.serverId,
         profiles: options.terminalProfiles,
         workspaceSnapshot: () => options.workspace?.state as import("./workspace.js").WorkspaceState,
+		...(options.projectEnvironmentRouter === undefined ? {} : { projectEnvironmentRouter: options.projectEnvironmentRouter }),
         observeTerminalCwd: async (sessionId) => {
           const session = terminal.getSession(sessionId);
           return session === undefined ? null : (await terminal.currentCwd(session)).cwd;
@@ -257,6 +267,9 @@ export function createServerCoreComposition(
     ? undefined
     : createWorkspaceOperationRegistry(options.workspace, {
         ...options.workspaceOperations,
+		...(options.workspaceOperations?.prepareProjectRootUpdate === undefined || options.projectEnvironmentRouter === undefined
+			? {}
+			: { prepareProjectRootUpdate: (projectId: string, root: string) => prepareRoutedProjectRoot(options.projectEnvironmentRouter!, options.workspaceOperations!.prepareProjectRootUpdate!, projectId, root) }),
         closeTerminalSessions: async (sessionIds) => {
           await Promise.allSettled(sessionIds.map((sessionId) => terminal.kill(sessionId)));
           await options.workspaceOperations?.closeTerminalSessions?.(sessionIds);
@@ -380,11 +393,15 @@ export function createServerCoreComposition(
   const shellProfileOperations = options.shellProfiles === undefined
     ? undefined
     : createShellProfileOperationRegistry(options.shellProfiles);
+  const extensionOperations = options.extensions === undefined ? undefined : createExtensionOperationHandlers({
+    ...options.extensions,
+    onChanged: (payload) => { eventJournal.append("extensions.changed", payload); },
+  });
   const operations = mergeOperationRegistries(
     mergeOperationRegistries(mergeOperationRegistries(
       mergeOperationRegistries(
         mergeOperationRegistries(
-          mergeOperationRegistries(options.operations ?? {}, options.fileObservations?.operations ?? {}),
+          mergeOperationRegistries(mergeOperationRegistries(options.operations ?? {}, extensionOperations ?? {}), options.fileObservations?.operations ?? {}),
           macroOperations?.operations ?? {},
         ),
         workspaceOperations?.operations ?? {},
@@ -396,8 +413,11 @@ export function createServerCoreComposition(
       shellProfileOperations?.operations ?? {},
     ),
   );
+  const routedOperations = options.projectEnvironmentRouter === undefined
+    ? operations
+    : routeProjectOperationRegistries(operations, options.projectEnvironmentRouter);
   const completeOperations = mergeOperationRegistries(
-    operations,
+    routedOperations,
     terminalOperations.operations,
   );
   const onConnectionClosed = (clientId: string): void => {
@@ -449,6 +469,7 @@ export function createServerCoreComposition(
 		lifecycle = "starting";
 		startPromise = (async () => {
 			try {
+				await options.extensions?.installer.initialize();
 				await options.settings?.load();
 				await options.serviceLifecycle?.start?.();
 				await options.agents?.start();
@@ -515,6 +536,23 @@ export function createServerCoreComposition(
   };
 }
 
+async function prepareRoutedProjectRoot(
+	router: ProjectEnvironmentRouter,
+	local: NonNullable<WorkspaceOperationRegistryOptions['prepareProjectRootUpdate']>,
+	projectId: string,
+	root: string,
+): Promise<import('./workspaceProtocol.js').PreparedProjectRootUpdate> {
+	return router.route(projectId, 'filesystem', 'prepare-project-root', { root }, () => local(projectId, root)).then((prepared) => {
+		if (typeof prepared === 'object' && prepared !== null && 'commit' in prepared && typeof prepared.commit === 'function') return prepared as import('./workspaceProtocol.js').PreparedProjectRootUpdate;
+		const remote = prepared as { readonly canonicalRoot?: unknown; readonly preparationId?: unknown };
+		if (typeof remote.canonicalRoot !== 'string' || typeof remote.preparationId !== 'string') throw new Error('project environment returned an invalid prepared root');
+		return {
+			canonicalRoot: remote.canonicalRoot,
+			commit: async () => { await router.invoke(projectId, 'filesystem', 'commit-project-root', { preparationId: remote.preparationId }); },
+		};
+	});
+}
+
 function cleanupFailure(message: string, failures: readonly unknown[]): Error {
 	const error = new Error(message);
 	Object.defineProperty(error, "errors", { value: [...failures], enumerable: false });
@@ -539,7 +577,9 @@ function composeTerminal(options: ServerCoreCompositionOptions): TerminalService
   const terminal = new TerminalService({
     ...terminalOptions,
     serverId: options.serverId,
-    ptyFactory: options.ptyFactory,
+    ptyFactory: options.projectEnvironmentRouter === undefined
+		? options.ptyFactory
+		: createEnvironmentRoutedPtyFactory(options.projectEnvironmentRouter, options.ptyFactory),
     ...((options.activity === undefined && options.agents === undefined)
       ? {}
       : { sessionLifecycle: composeActivityLifecycle(options.activity, options.agents, terminalOptions.sessionLifecycle) }),
