@@ -214,6 +214,10 @@ Environment/profile management, secret replacement, host-trust changes,
 provider lifecycle, and infrastructure mutations require explicit
 transport-bound permissions. Project-scoped principals may use their exact
 project environment but cannot enumerate or manage unrelated profiles.
+The embedded Desktop renderer is also a transport-bound principal; its private
+MessagePort receives the same explicit environment and extension permissions
+as an authenticated administrative browser and never relies on its `admin`
+scope label as implicit authority.
 
 Audit records include the authenticated principal/device, opaque
 extension/profile/environment/project ids, safe action, result, revision, and
