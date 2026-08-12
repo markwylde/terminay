@@ -26,6 +26,23 @@ test('TerminalPanel resolves the shared connection client before compatibility A
 	assert.match(panel, /Retry connection/)
 })
 
+test('terminal retry requests host-owned transport replacement after a transport failure', () => {
+  const retryStart = panel.indexOf('      retryServerAttachmentRef.current = () => {')
+  const retryEnd = panel.indexOf('\n      attachServerTerminal({ fromPosition: 0', retryStart)
+  assert.notEqual(retryStart, -1)
+  assert.notEqual(retryEnd, -1)
+  const retry = panel.slice(retryStart, retryEnd)
+
+  assert.match(retry, /terminalPanelConnectionContext\?\.requestConnectionRecovery/)
+  assert.match(retry, /serverInputQueue\?\.close\(\)/)
+  assert.match(retry, /terminalPanelConnectionContext\.requestConnectionRecovery\(\)/)
+
+  const attachStart = panel.indexOf('      const attachServerTerminal = ({')
+  const attachEnd = panel.indexOf('\n      const beginTerminalResync', attachStart)
+  const attach = panel.slice(attachStart, attachEnd)
+  assert.match(attach, /panelClient\.resume\(nextRequest\)/)
+})
+
 test('workspace metadata and drop-upload changes do not rebuild a mounted terminal attachment', () => {
   const lifecycleStart = panel.indexOf('  useEffect(() => {\n    const container = containerRef.current')
   const lifecycleEnd = panel.indexOf('\n  useEffect(() => {\n    settingsRef.current = settings', lifecycleStart)
