@@ -319,19 +319,32 @@ function validateServiceResult(result: unknown, request: unknown): unknown {
   const capability = call?.capability; const operation = call?.operation;
   if (value === undefined || hasExecutable(value)) throw new Error("provider returned an invalid service result");
   if (capability === "terminal") {
-    if (operation === "create" && (typeof value.sessionId !== "string" || value.sessionId.length > 256 || value.shellProfile !== "remote-system-default")) throw new Error("provider returned an invalid terminal create result");
-    else if (operation === "read" && (value.encoding !== "base64" || typeof value.data !== "string" || value.data.length > 350_000 || !base64(value.data))) throw new Error("provider returned an invalid terminal read result");
-    else if (["input", "resize", "kill", "dispose"].includes(String(operation)) && value.accepted !== true) throw new Error("provider returned an invalid terminal acknowledgement");
+    if (operation === "create" && (!exactKeys(value, ["sessionId","profileId","revision","root","shellProfile","capabilities"]) || !boundedText(value.sessionId,256) || !boundedText(value.profileId,256) || !positive(value.revision) || !boundedText(value.root,4096) || value.shellProfile !== "remote-system-default" || record(value.capabilities) === undefined)) throw new Error("provider returned an invalid terminal create result");
+    else if (operation === "read" && (!exactKeys(value, ["data","encoding","exit"]) || value.encoding !== "base64" || typeof value.data !== "string" || value.data.length > 220_000 || !base64(value.data) || (value.exit !== undefined && !terminalExit(value.exit)))) throw new Error("provider returned an invalid terminal read result");
+    else if (["input", "resize", "kill", "dispose"].includes(String(operation)) && (!exactKeys(value,["accepted"]) || value.accepted !== true)) throw new Error("provider returned an invalid terminal acknowledgement");
     else if (!["create", "read", "input", "resize", "kill", "dispose"].includes(String(operation))) throw new Error("provider returned an unknown terminal operation");
   } else if (capability === "filesystem") {
     if (!["resolveRoot", "browse", "realpath", "stat", "list", "read", "write", "createDirectory", "rename", "remove"].includes(String(operation))) throw new Error("provider returned an unknown filesystem operation");
-    if (operation === "read" && (value.encoding !== "base64" || typeof value.data !== "string" || value.data.length > 700_000 || !base64(value.data))) throw new Error("provider returned an invalid filesystem read result");
+    if (operation === "resolveRoot" && (!exactKeys(value,["root"]) || !boundedText(value.root,4096))) throw new Error("provider returned an invalid root result");
+    else if (operation === "realpath" && (!exactKeys(value,["path"]) || !boundedText(value.path,4096))) throw new Error("provider returned an invalid realpath result");
+    else if (operation === "read" && (!exactKeys(value,["path","data","encoding","metadata"]) || !boundedText(value.path,4096) || value.encoding !== "base64" || typeof value.data !== "string" || value.data.length > 220_000 || !base64(value.data) || !metadata(value.metadata))) throw new Error("provider returned an invalid filesystem read result");
+    else if ((operation === "stat") && (!exactKeys(value,["path","size","mode","mtimeMs","atimeMs","type"]) || !metadata(value))) throw new Error("provider returned invalid metadata");
+    else if ((operation === "browse" || operation === "list") && (!exactKeys(value,["path","entries"]) || !boundedText(value.path,4096) || !Array.isArray(value.entries) || value.entries.length > 10_000 || value.entries.some((entry) => { const item=record(entry); return item===undefined || !exactKeys(item,["name","path","size","mode","mtimeMs","atimeMs","type"]) || !boundedText(item.name,1024) || !metadata(item); }))) throw new Error("provider returned an invalid directory result");
+    else if (operation === "write" && (!exactKeys(value,["outcome","metadata","atomic"]) || value.outcome !== "written" || typeof value.atomic !== "boolean" || !metadata(value.metadata))) throw new Error("provider returned an invalid write result");
+    else if (operation === "createDirectory" && (!exactKeys(value,["outcome","path"]) || value.outcome !== "created" || !boundedText(value.path,4096))) throw new Error("provider returned an invalid create result");
+    else if (operation === "rename" && (!exactKeys(value,["outcome","from","to"]) || value.outcome !== "renamed" || !boundedText(value.from,4096) || !boundedText(value.to,4096))) throw new Error("provider returned an invalid rename result");
+    else if (operation === "remove" && (!exactKeys(value,["outcome","path"]) || value.outcome !== "removed" || !boundedText(value.path,4096))) throw new Error("provider returned an invalid remove result");
   } else throw new Error("provider returned an unsupported service capability");
   const encoded = JSON.stringify(result);
   if (encoded === undefined || Buffer.byteLength(encoded) > 768 * 1024) throw new Error("provider returned an oversized service result");
   return structuredClone(result);
 }
-function base64(value: string): boolean { return value.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(value); }
+function base64(value: string): boolean { try { return Buffer.from(value,"base64").toString("base64") === value; } catch { return false; } }
+function exactKeys(value: Record<string,unknown>, allowed: string[]): boolean { return Object.keys(value).every((key)=>allowed.includes(key)); }
+function boundedText(value: unknown,max:number): value is string { return typeof value === "string" && value.length>0 && value.length<=max && !value.includes("\0"); }
+function positive(value:unknown):boolean{return Number.isSafeInteger(value)&&Number(value)>0;}
+function metadata(value:unknown):boolean{const item=record(value);return item!==undefined&&exactKeys(item,["path","size","mode","mtimeMs","atimeMs","type"])&&(item.path===undefined||boundedText(item.path,4096))&&Number.isFinite(item.size)&&Number(item.size)>=0&&Number.isFinite(item.mode)&&Number.isFinite(item.mtimeMs)&&Number.isFinite(item.atimeMs)&&["directory","symlink","file"].includes(String(item.type));}
+function terminalExit(value:unknown):boolean{const item=record(value);return item!==undefined&&exactKeys(item,["code","signal","interrupted","reason"])&&(item.code===null||Number.isInteger(item.code))&&(item.signal===null||boundedText(item.signal,64))&&typeof item.interrupted==="boolean"&&(item.reason===undefined||item.reason==="transport-lost");}
 function hasExecutable(value: unknown, seen = new Set<unknown>()): boolean {
   if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint" || value === undefined) return true;
   if (value === null || typeof value !== "object") return false;
