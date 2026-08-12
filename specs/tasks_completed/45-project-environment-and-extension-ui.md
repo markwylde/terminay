@@ -30,29 +30,29 @@ services.
 
 ### Navigation and project creation
 
-- [ ] Implement split primary-plus/arrow semantics, grouped recent targets,
+- [x] Implement split primary-plus/arrow semantics, grouped recent targets,
   searchable browse routes, This server naming, immediate Local shortcut, and
   atomic environment/root validation before project commit.
-- [ ] Add semantic File/Command Bar routes and server-name scope disclosure.
-- [ ] Show subtle provider/status on tabs/project editor without making
+- [x] Add semantic File/Command Bar routes and server-name scope disclosure.
+- [x] Show subtle provider/status on tabs/project editor without making
   environment retargeting editable.
 
 ### Management and schema renderer
 
-- [ ] Build Project Environments and Extensions wide/narrow routes with
+- [x] Build Project Environments and Extensions wide/narrow routes with
   search/list/detail, references, Test/Edit/Remove and lifecycle actions.
-- [ ] Render fields, sections/disclosures, async selects, preset cards,
+- [x] Render fields, sections/disclosures, async selects, preset cards,
   conditionals, validation/error summaries, progress, and confirmations from
   bounded schemas.
-- [ ] Implement official/custom catalogue previews, permissions/provenance/
+- [x] Implement official/custom catalogue previews, permissions/provenance/
   audit facts, selected-server trusted-code warning, and blocked dependants.
 
 ### Accessibility and acceptance
 
-- [ ] Correct project `tablist`/`tab`, split-button/menu/typeahead/focus, mobile
+- [x] Correct project `tablist`/`tab`, split-button/menu/typeahead/focus, mobile
   sheet, radio cards, live regions, alerts, 44px targets, forced colour, and
   reduced motion.
-- [ ] Prove Desktop native auxiliary and browser in-page routes share semantic
+- [x] Prove Desktop native auxiliary and browser in-page routes share semantic
   commands and server-owned state.
 
 ## Acceptance checks
