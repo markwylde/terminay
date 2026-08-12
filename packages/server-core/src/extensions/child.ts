@@ -71,7 +71,10 @@ async function invoke(frame: HostFrame): Promise<void> {
   const method = typeof payload?.method === "string" ? callbacks[payload.method] : undefined;
   if (method === undefined) { failure(frame.id, new Error("unknown extension method")); return; }
   const controller = new AbortController(); invocations.set(frame.id, controller);
-  try { const result = await method(payload?.input, { signal: controller.signal }); send({ protocolVersion: 1, kind: "result", id: frame.id, payload: result }); }
+  try {
+    const result = await method(payload?.input, { signal: controller.signal });
+    if (!send({ protocolVersion: 1, kind: "result", id: frame.id, payload: result })) process.exit(73);
+  }
   catch (error) { failure(frame.id, error); }
   finally { invocations.delete(frame.id); }
 }
