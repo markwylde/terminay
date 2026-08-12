@@ -84,6 +84,7 @@ interface MutableSession {
   dataUnsubscribe?: Unsubscribe;
   exitUnsubscribe?: Unsubscribe;
   foregroundProcessUnsubscribe?: Unsubscribe;
+  agentJournalUnsubscribe?: Unsubscribe;
 	checkpointPendingBytes: number;
 	checkpointPaused: boolean;
 	checkpointDraining: boolean;
@@ -712,6 +713,13 @@ export class TerminalService {
     if (process.onForegroundProcess !== undefined) {
       mutable.foregroundProcessUnsubscribe = normalizeUnsubscribe(process.onForegroundProcess(onForegroundProcess));
     }
+    if (process.onAgentJournal !== undefined) {
+      mutable.agentJournalUnsubscribe = normalizeUnsubscribe(process.onAgentJournal((event) => {
+        if (mutable.status !== "running") return;
+        try { this.sessionLifecycle?.agentJournalRecord?.(mutable.identity, event); }
+        catch { /* Journal observers cannot change PTY supervision. */ }
+      }));
+    }
   }
 
   private appendOutput(mutable: MutableSession, bytes: Uint8Array): void {
@@ -819,6 +827,7 @@ export class TerminalService {
     mutable.dataUnsubscribe?.();
     mutable.exitUnsubscribe?.();
     mutable.foregroundProcessUnsubscribe?.();
+    mutable.agentJournalUnsubscribe?.();
 		mutable.checkpointQueue.length = 0;
 		mutable.checkpointPendingBytes = 0;
     this.presentationCheckpoints?.closeSession(mutable.identity);
