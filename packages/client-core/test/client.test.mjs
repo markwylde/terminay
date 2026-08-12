@@ -239,6 +239,41 @@ test("a response that wins before abort does not produce a cancel frame", async 
   await client.close();
 });
 
+test("an in-flight web terminal write becomes outcome-unknown when its WebRTC client disconnects", async () => {
+  const transport = createTransport();
+  const client = new TerminayClient({ transport, clientId: "web-webrtc-reproduction" });
+  const connecting = client.connect();
+  transport.push({
+    type: "server_hello",
+    protocolVersion: 1,
+    serverId: "server-1",
+    serverVersion: "test",
+    clientId: "web-webrtc-reproduction",
+    capabilities: [],
+    limits: DEFAULT_PROTOCOL_LIMITS,
+    authScope: "write",
+  });
+  await connecting;
+
+  const pendingWrite = client.command("terminal.write", {
+    attachmentId: "attachment-mobile",
+    bytes: [97],
+  });
+  const sentWrite = transport.frames.find(
+    ({ envelope }) => envelope.type === "command" && envelope.operation === "terminal.write",
+  );
+  assert.ok(sentWrite, "the terminal write reached the transport before it disconnected");
+
+  transport.end();
+
+  await assert.rejects(pendingWrite, (error) => {
+    assert.equal(error?.name, "CommandOutcomeUnknownError");
+    assert.equal(error?.message, `command outcome is unknown: ${sentWrite.envelope.commandId}`);
+    assert.match(error?.commandId ?? "", /^web-webrtc-reproduction-/);
+    return true;
+  });
+});
+
 test("subscription buffers an initial replay until its caller attaches a listener", async () => {
   const { client, transport } = await connectedClient();
   const subscribing = client.subscribe("agent", { subscriptionId: "agent-subscription" });

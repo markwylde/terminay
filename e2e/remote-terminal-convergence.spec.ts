@@ -152,6 +152,58 @@ async function expectControlBarLayout(panel: Locator): Promise<void> {
 	expect(geometry.backgroundColor).not.toBe(geometry.terminalBackgroundColor);
 }
 
+async function dragTerminalScrollbackWithTouch(page: Page, panel: Locator): Promise<void> {
+	const screen = panel.locator('.xterm-screen');
+	const box = await screen.boundingBox();
+	if (box === null) throw new Error('Terminal screen has no touch geometry');
+	const session = await page.context().newCDPSession(page);
+	await session.send('Emulation.setTouchEmulationEnabled', {
+		enabled: true,
+		maxTouchPoints: 5,
+	});
+	const x = box.x + box.width / 2;
+	const startY = box.y + box.height * 0.3;
+	const endY = box.y + box.height * 0.75;
+	await session.send('Input.dispatchTouchEvent', {
+		type: 'touchStart',
+		touchPoints: [{ x, y: startY }],
+	});
+	for (let step = 1; step <= 6; step += 1) {
+		await session.send('Input.dispatchTouchEvent', {
+			type: 'touchMove',
+			touchPoints: [{ x, y: startY + ((endY - startY) * step) / 6 }],
+		});
+	}
+	await session.send('Input.dispatchTouchEvent', {
+		type: 'touchEnd',
+		touchPoints: [],
+	});
+}
+
+test('Mobile touch drag scrolls remote terminal scrollback', async ({ mainWindow, page }) => {
+	const pairingUrl = await exposeDesktopOnLan(mainWindow);
+	try {
+		await connectBrowser(page, pairingUrl);
+		const sessionId = await mainWindow.locator('.terminal-panel:visible').getAttribute('data-terminay-terminal-session-id');
+		if (!sessionId) throw new Error('Desktop terminal has no server session id.');
+		const desktopPanel = terminalPanel(mainWindow, sessionId);
+		const browserPanel = terminalPanel(page, sessionId);
+		await desktopPanel.locator('.xterm-helper-textarea').focus();
+		await mainWindow.keyboard.insertText(
+			`for i in $(seq 1 120); do printf '__TERMINAY_TOUCH_SCROLL__%s\\n' "$i"; done`,
+		);
+		await mainWindow.keyboard.press('Enter');
+		await expect(browserPanel).toContainText('__TERMINAY_TOUCH_SCROLL__120');
+		const renderedRows = browserPanel.locator('.xterm-rows');
+		const before = await renderedRows.innerText();
+		expect(before).toContain('__TERMINAY_TOUCH_SCROLL__120');
+		await dragTerminalScrollbackWithTouch(page, browserPanel);
+		await expect.poll(() => renderedRows.innerText()).not.toBe(before);
+	} finally {
+		await stopExposure(mainWindow);
+	}
+});
+
 test('Desktop and browser converge on terminal tabs and one shared PTY output stream', async ({
 	mainWindow,
 	page,
