@@ -9,7 +9,7 @@ generic declarative provider forms consistently in Desktop and web clients.
 
 Phase 2. Build first against Phase 1 protocol fixtures in parallel with
 [Tasks 43](../tasks_completed/43-environment-routed-project-services.md),
-[44](./44-extension-installation-and-management.md), and
+[44](../tasks_completed/44-extension-installation-and-management.md), and
 [47](../tasks_completed/47-official-puzed-extension-foundation.md), then integrate their live
 services.
 
@@ -18,7 +18,7 @@ services.
 - Protocol/schema fixtures from [Task 41](../tasks_completed/41-project-environment-domain-and-local-provider.md)
   and [Task 42](../tasks_completed/42-extension-api-manifest-and-host.md); final integration with
   [Task 43](../tasks_completed/43-environment-routed-project-services.md) and
-  [Task 44](./44-extension-installation-and-management.md).
+  [Task 44](../tasks_completed/44-extension-installation-and-management.md).
 
 ## Governing specifications
 
