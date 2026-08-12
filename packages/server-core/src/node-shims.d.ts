@@ -40,9 +40,14 @@ declare module "node:child_process" {
     readonly stdin: ChildInput;
     readonly stdout: ChildStream;
     readonly stderr: ChildStream;
+    readonly connected: boolean;
     kill(signal?: string): boolean;
+    send(message: unknown): boolean;
+    on(event: "message", listener: (message: unknown) => void): this;
     once(event: "error", listener: (error: NodeJS.ErrnoException) => void): this;
+    once(event: "exit", listener: (exitCode: number | null, signal: string | null) => void): this;
     once(event: "close", listener: (exitCode: number | null, signal: string | null) => void): this;
+    removeAllListeners(event?: string): this;
   }
   export function spawn(command: string, args?: readonly string[], options?: {
     readonly cwd?: string;
@@ -50,6 +55,14 @@ declare module "node:child_process" {
     readonly stdio?: readonly ("ignore" | "pipe")[];
     readonly windowsHide?: boolean;
     readonly signal?: AbortSignal;
+  }): ChildProcess;
+  export function fork(modulePath: string, args?: readonly string[], options?: {
+    readonly cwd?: string;
+    readonly execPath?: string;
+    readonly execArgv?: readonly string[];
+    readonly env?: Readonly<Record<string, string | undefined>>;
+    readonly stdio?: readonly ("ignore" | "pipe" | "ipc")[];
+    readonly serialization?: "json" | "advanced";
   }): ChildProcess;
 }
 

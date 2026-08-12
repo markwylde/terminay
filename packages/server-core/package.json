@@ -3,9 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" } },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "default": "./dist/index.js" },
+    "./remote": { "types": "./dist/remote/index.d.ts", "import": "./dist/remote/index.js", "default": "./dist/remote/index.js" },
+    "./ui-bundle": { "types": "./dist/uiBundle/index.d.ts", "import": "./dist/uiBundle/index.js", "default": "./dist/uiBundle/index.js" }
+  },
   "files": ["dist"],
   "dependencies": {
+    "@terminay/extension-api": "1.0.0",
     "@terminay/protocol": "1.0.0",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0"

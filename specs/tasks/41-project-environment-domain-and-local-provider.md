@@ -27,28 +27,28 @@ production compositions.
 
 ### Domain, persistence, and migration
 
-- [ ] Define runtime-validated environment/profile/revision/capability/status
+- [x] Define runtime-validated environment/profile/revision/capability/status
   records and a revisioned, crash-safe repository separate from workspace.
-- [ ] Reserve the undeletable This server environment and migrate every legacy
+- [x] Reserve the undeletable This server environment and migrate every legacy
   project/session idempotently without changing layouts or identities.
-- [ ] Advance workspace/protocol/client reconciliation with immutable project
+- [x] Advance workspace/protocol/client reconciliation with immutable project
   environment and matching terminal-session metadata.
 
 ### Authorization and workspace invariants
 
-- [ ] Bind actor/scope/project claim/explicit permissions to authenticated
+- [x] Bind actor/scope/project claim/explicit permissions to authenticated
   transports rather than `ClientHello`; cover embedded, standalone, and tests.
-- [ ] Derive source/destination project scope for every workspace mutation,
+- [x] Derive source/destination project scope for every workspace mutation,
   including panel create/update/close/move and generic project update.
-- [ ] Reject cross-environment panel moves before mutation and make generic
+- [x] Reject cross-environment panel moves before mutation and make generic
   project updates presentation-only; root changes use the prepared command.
 
 ### Built-in provider and conformance
 
-- [ ] Define the internal environment registry/router contract and implement
+- [x] Define the internal environment registry/router contract and implement
   This server using existing terminal/filesystem/Git/shell services.
-- [ ] Add capability/status queries and bounded safe presentation DTOs.
-- [ ] Prove existing Local launch, files, Git, recording, agents, MCP, macros,
+- [x] Add capability/status queries and bounded safe presentation DTOs.
+- [x] Prove existing Local launch, files, Git, recording, agents, MCP, macros,
   project moves, reconnect, and server restart are unchanged.
 
 ## Acceptance checks
