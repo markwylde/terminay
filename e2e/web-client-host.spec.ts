@@ -15,7 +15,11 @@ test.afterAll(async () => {
 })
 
 async function openHost(page: Page): Promise<{ sessionA: Frame; sessionB: Frame }> {
-  await page.goto(fixture.parentOrigin)
+  // Under the sharded Docker run Chromium can be CPU-starved between receiving
+  // the parent document and parsing its subresources.  Treat the HTTP response
+  // as navigation readiness, then use the host's own frame/message contract
+  // below as the authoritative application-readiness signal.
+  await page.goto(fixture.parentOrigin, { waitUntil: 'commit' })
   await expect(page.locator('#session-a')).toBeVisible()
   await expect(page.locator('#session-b')).toBeVisible()
   await expect
