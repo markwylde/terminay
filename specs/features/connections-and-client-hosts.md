@@ -240,6 +240,9 @@ The product has one full responsive workspace UI implementation:
   active terminal and surrounding content when the software keyboard appears.
   The focused terminal remains visible and interactive without trapping the
   page, and its previous geometry returns when the keyboard is dismissed.
+  Browser-chrome expansion and collapse relayout the complete terminal panel in
+  both dimensions; taking over an existing terminal cannot retain a stale
+  compact viewport height after more vertical space becomes available.
 
 Desktop and web connection hosts may wrap that workspace in a small stable
 shell. Cross-origin communication is narrow, versioned, and validated:
