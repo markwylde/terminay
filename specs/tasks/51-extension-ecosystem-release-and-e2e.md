@@ -53,7 +53,7 @@ Phase 6 release convergence after Tasks 41–50.
   Puzed API/SSE/job/address fixtures; add opt-in real Puzed smoke separately.
 - [ ] Prove Desktop/browser parity against embedded and standalone servers with
   one mixed This server/SSH/Puzed view and client reconnect/restart.
-- [ ] Add hostile package/IPC/auth/project-claim/secret/host-key/redirect/
+- [x] Add hostile package/IPC/auth/project-claim/secret/host-key/redirect/
   cross-environment/no-fallback sentinel suites and crash/resource recovery.
 - [ ] Measure bounded menus/forms/inventories, SFTP traversal, provider IPC,
   connection pools, event streams, and provisioning concurrency.
