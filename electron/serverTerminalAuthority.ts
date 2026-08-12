@@ -24,8 +24,14 @@ import {
 import {
 	createDefaultExtensionManagement,
 	createPuzedSshProductionExtensionManagement,
+	ExtensionProjectEnvironmentRuntime,
 } from '../packages/server-core/src/extensions/index';
 import { OrderedEventJournal } from '../packages/server-core/src/events';
+import {
+	RemoteMcpBridgeAuthority,
+	RemoteMcpEnvironmentCoordinator,
+	composeRemoteMcpTerminalLifecycle,
+} from '../packages/server-core/src/control/index';
 import {
 	CanonicalProjectPathResolver,
 	FileCatalog,
@@ -46,6 +52,7 @@ import {
 	ProjectEnvironmentRepository,
 	createInitialProjectEnvironmentState,
 	ProjectEnvironmentRouter,
+	createEnvironmentRoutedProjectServices,
 } from '../packages/server-core/src/projectEnvironment/index';
 import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
@@ -211,6 +218,14 @@ export interface ServerTerminalAuthorityOptions {
 	readonly shellProfiles?: ShellProfileCatalogueService;
 	readonly defaultProjectRoot?: () => string;
 	readonly projectEnvironmentRepository?: ProjectEnvironmentRepository;
+	/** Existing server-owned, project-implicit MCP dispatcher. Remote helper
+	 * frames receive no separate operation table or renderer authority. */
+	readonly remoteMcpDispatch?: (
+		sessionId: string,
+		op: string,
+		params: JsonValue,
+		signal: AbortSignal,
+	) => Promise<JsonValue>;
 	/** Desktop provider adapter retained behind the server protocol while the
 	 * canonical AI target registry is wired to workspace presentation state. */
 	readonly aiMetadata?: {
@@ -251,6 +266,7 @@ export class ServerTerminalAuthority {
 	readonly workspace: WorkspaceStore;
 	/** Server-owned Git authority shared by embedded Desktop and remote hosts. */
 	readonly git: GitService;
+	readonly remoteMcp?: RemoteMcpEnvironmentCoordinator;
 
 	private readonly options: ServerTerminalAuthorityOptions;
 	private readonly sessions = new Map<string, AuthoritySession>();
@@ -318,11 +334,12 @@ export class ServerTerminalAuthority {
 		});
 		const eventJournal = new OrderedEventJournal();
 		const projectEnvironments = options.projectEnvironmentRepository ?? new ProjectEnvironmentRepository({ async load() { return undefined; }, async commit() {} }, options.serverId, createInitialProjectEnvironmentState(options.serverId));
+		const projectEnvironmentRegistry = new ProjectEnvironmentRegistry();
 		const projectEnvironmentRouter = new ProjectEnvironmentRouter({
 			serverId: options.serverId,
 			workspaceSnapshot: () => this.workspace.state,
 			environmentSnapshot: () => projectEnvironments.state,
-			registry: new ProjectEnvironmentRegistry(),
+			registry: projectEnvironmentRegistry,
 		});
 		const fileObservations = new ServerFileObservationAdapter({
 			serverId: options.serverId,
@@ -429,6 +446,8 @@ export class ServerTerminalAuthority {
 							projectEnvironments,
 							workspace: this.workspace,
 						});
+		if (extensionManagement !== undefined && options.vault !== undefined) projectEnvironmentRegistry.register(new ExtensionProjectEnvironmentRuntime('com.terminay.ssh/connection', ['terminal', 'filesystem', 'mcp-bridge'], extensionManagement.hosts, () => projectEnvironments.state));
+		let remoteMcp: RemoteMcpEnvironmentCoordinator | undefined;
 		this.composition = createServerCoreComposition({
 			serverId: options.serverId,
 			serverVersion: 'desktop-local',
@@ -452,6 +471,9 @@ export class ServerTerminalAuthority {
 			eventJournal,
 			projectEnvironmentRouter,
 			projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.defaultProjectRoot?.() ?? process.cwd() },
+			terminalOptions: {
+				sessionLifecycle: composeRemoteMcpTerminalLifecycle(() => remoteMcp),
+			},
 			...(extensionManagement === undefined ? {} : { extensions: extensionManagement }),
 			...(extensionManagement === undefined && options.vault === undefined
 				? {}
@@ -539,6 +561,17 @@ export class ServerTerminalAuthority {
 					}
 				: { terminalService: options.terminalService }),
 		});
+		if (options.remoteMcpDispatch !== undefined) {
+			const authority = new RemoteMcpBridgeAuthority({
+				dispatch: (scope, op, params, { signal }) =>
+					options.remoteMcpDispatch!(scope.terminalSessionId, op, params, signal),
+			});
+			remoteMcp = new RemoteMcpEnvironmentCoordinator(
+				createEnvironmentRoutedProjectServices(projectEnvironmentRouter).mcpBridge,
+				authority,
+			);
+			this.remoteMcp = remoteMcp;
+		}
 		this.service = this.composition.terminal;
 		// Observe the final composed service in both production and injected-test
 		// modes. Host recording/remote cleanup must not depend on who constructed
@@ -1163,7 +1196,10 @@ export class ServerTerminalAuthority {
 		if (this.shutdownPromise !== undefined) return this.shutdownPromise;
 		this.shuttingDown = true;
 		this.consumers.clear();
-		this.shutdownPromise = this.composition.shutdown().finally(() => {
+		this.shutdownPromise = (async () => {
+			await this.remoteMcp?.shutdown();
+			await this.composition.shutdown();
+		})().finally(() => {
 			this.serviceEventsUnsubscribe?.();
 			this.serviceEventsUnsubscribe = undefined;
 		});
