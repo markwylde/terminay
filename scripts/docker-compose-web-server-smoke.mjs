@@ -904,7 +904,7 @@ async function launchComposeBrowser({ webOrigin, pairingUrl }) {
 	const gitState =
 		(await gitPane.textContent())?.replace(/\s+/gu, ' ').trim() ?? '';
 
-	await page.getByLabel('Add project tab').click();
+	await page.getByLabel('Create project on This server').click();
 	await page
 		.locator('.project-tab--active')
 		.filter({ hasText: 'Project 2' })
