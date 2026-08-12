@@ -13,7 +13,7 @@ accepted.
 
 ## Dependencies
 
-- [Task 46](./46-official-ssh-extension.md)
+- [Task 46](../tasks_completed/46-official-ssh-extension.md)
 - [Task 47](../tasks_completed/47-official-puzed-extension-foundation.md)
 - [Task 48](../tasks_completed/48-puzed-vm-provisioning-experience.md)
 
