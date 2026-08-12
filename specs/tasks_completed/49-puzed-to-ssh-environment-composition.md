@@ -25,17 +25,17 @@ accepted.
 
 ## Implementation slices
 
-- [ ] Finalize versioned provider-dependency RPC for public-key creation,
+- [x] Finalize versioned provider-dependency RPC for public-key creation,
   readiness/trust, runtime open, status, and credential/address/root updates.
-- [ ] Persist composed Puzed management + SSH runtime identities/revisions and
+- [x] Persist composed Puzed management + SSH runtime identities/revisions and
   stable machine-scoped host identity independent of DHCP dial address.
-- [ ] Atomically create projects only after environment/root validation while
+- [x] Atomically create projects only after environment/root validation while
   retaining recoverable provider operations that have already created a VM.
-- [ ] Keep Puzed API outage, VM lifecycle state, address changes, and SSH runtime
+- [x] Keep Puzed API outage, VM lifecycle state, address changes, and SSH runtime
   status independent; never retarget live sessions on address change.
-- [ ] Implement reference-aware disable/update/remove across both extensions and
+- [x] Implement reference-aware disable/update/remove across both extensions and
   exact recovery when either dependency is unavailable/incompatible.
-- [ ] Prove project close/server shutdown never changes VM power and explicit VM
+- [x] Prove project close/server shutdown never changes VM power and explicit VM
   deletion never silently deletes the Terminay project/credentials.
 
 ## Acceptance checks
@@ -53,3 +53,23 @@ accepted.
 
 Puzed is a composed infrastructure provider rather than a special-case or
 duplicate workspace runtime, with complete lifecycle and recovery evidence.
+
+## Completion evidence
+
+- `packages/server-core/test/puzed-ssh-composition.test.mjs` proves the
+  privileged dependency authorization, standards-readable dedicated key,
+  secret rollback, stable identity/address revisions, restart recovery,
+  independent outage state, atomic canonical open, and lifecycle isolation.
+- `packages/server-core/test/puzed-ssh-packed-composition.e2e.test.mjs` packs
+  both official extensions and drives a real Docker OpenSSH server through
+  strict explicit trust, root validation, project creation, restart, and
+  idempotent replay. Run it with `npm run test:e2e:puzed-ssh` and the two
+  documented `TERMINAY_*_PLUGIN_REPO` checkout paths.
+- Official Puzed provider tests prove tagged-only inventory, identical stable
+  SSH descriptors for retained running/stopped machines, non-cascading project
+  close/delete behavior, external deletion identity retention, and bounded
+  recovery. Official SSH tests prove exact host-key mismatch/replacement and
+  stable logical identity across dial-address changes.
+- `packages/server-core/test/extension-installer.test.mjs` proves referenced
+  extensions cannot be removed and disable/remove never cascades namespaced
+  provider data.
