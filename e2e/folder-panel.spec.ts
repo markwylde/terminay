@@ -12,6 +12,15 @@ function folderViewButton(page: Parameters<typeof test>[0]['mainWindow'], name: 
   return page.locator('.folder-viewer__view-button').filter({ hasText: name }).first()
 }
 
+async function ignoreMissing<T>(operation: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await operation()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
 test('folder panel supports view modes navigation and refresh', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'folder-panel',
@@ -222,20 +231,22 @@ test('folder panel context menu mirrors file operations', async ({ createWorkspa
   await expect(contextMenuItem(mainWindow, 'New File')).toBeVisible()
   await contextMenuItem(mainWindow, 'New File').click()
   await submitFileExplorerNameModal(mainWindow, 'File name', 'panel-created.txt')
-  await expect.poll(() => workspace.readText('ops-folder/actions-dir/panel-created.txt')).toBe('')
+  await expect.poll(() => ignoreMissing(() => workspace.readText('ops-folder/actions-dir/panel-created.txt'))).toBe('')
   await mainWindow.getByLabel('Close file tab').click()
 
   await actionsDirSummary.click({ button: 'right' })
   await expect(contextMenuItem(mainWindow, 'New Folder')).toBeVisible()
   await contextMenuItem(mainWindow, 'New Folder').click()
   await submitFileExplorerNameModal(mainWindow, 'Folder name', 'panel-created-folder')
-  await expect.poll(async () => (await stat(workspace.path('ops-folder', 'actions-dir', 'panel-created-folder'))).isDirectory()).toBe(true)
+  await expect.poll(async () => (
+    await ignoreMissing(() => stat(workspace.path('ops-folder', 'actions-dir', 'panel-created-folder')))
+  )?.isDirectory()).toBe(true)
 
   await mainWindow.locator('.folder-viewer__tree-file').filter({ hasText: 'folder-file.txt' }).click({ button: 'right' })
   await expect(contextMenuItem(mainWindow, 'Rename')).toBeVisible()
   await contextMenuItem(mainWindow, 'Rename').click()
   await submitFileExplorerNameModal(mainWindow, 'Name', 'folder-file-renamed.txt')
-  await expect.poll(() => workspace.readText('ops-folder/folder-file-renamed.txt')).toBe('folder file\n')
+  await expect.poll(() => ignoreMissing(() => workspace.readText('ops-folder/folder-file-renamed.txt'))).toBe('folder file\n')
   await refreshButton.click()
   await expect(mainWindow.locator('.folder-viewer__tree-file').filter({ hasText: 'folder-file-renamed.txt' })).toBeVisible()
 
