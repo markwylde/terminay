@@ -192,3 +192,59 @@ test("embedded and standalone supervisors publish the same safe provider DTO and
   }
   assert.deepEqual(states[0].providers, states[1].providers);
 });
+
+test("provider callbacks preserve bounded context and dependency handoff across IPC", async () => {
+  const descriptor = await fixture("example.callbacks", `export default { activate(context) {
+    context.registerProjectEnvironmentProvider({
+      definition: { providerId: "example.callbacks/main", displayName: "Callbacks", capabilities: ["terminal"] },
+      runtime: {
+        async testProfile(request, call) { await call.dependencies.call({ providerId: "dependency/main", operation: "validate", payload: request.values }, { deadlineAt: call.deadlineAt, signal: call.signal, idempotencyKey: call.idempotencyKey }); return []; },
+        async resolveOptions() { return { options: [{ value: "one", label: "One" }] }; },
+        async createEnvironment(request, call) { return { state: "ready", providerState: { key: request.environmentId, idempotencyKey: call.idempotencyKey, expectedRevision: call.expectedRevision }, status: { state: "available", revision: 1, defaultRoot: "/home/user" } }; },
+        async resumeOperation(request) { return { state: "pending", operationId: request.operationId, providerState: request.providerState, progress: { operationId: request.operationId, title: "Working", resumable: true, stages: [] }, pollAfterMs: 100 }; },
+        async getStatus() { return { state: "available", revision: 2 }; },
+        async invokeAction(request) { return { state: "complete", providerState: request.providerState, status: { state: "available", revision: 3 } }; }
+      }
+    });
+  } };`);
+  const brokerRequests = [];
+  const manager = new ExtensionHostManager({ broker: { async request(request) { brokerRequests.push(request); return { ok: true }; } } });
+  await manager.start(descriptor);
+  const providerId = "example.callbacks/main";
+  assert.deepEqual(await manager.invokeProvider({ providerId, callback: "resolveOptions", request: { sourceId: "images", values: {} } }), { options: [{ value: "one", label: "One" }] });
+  const created = await manager.invokeProvider({ providerId, callback: "createEnvironment", request: { environmentId: "env-1", displayName: "VM", values: {} }, idempotencyKey: "idem-1", expectedRevision: 7 });
+  assert.deepEqual(created.providerState, { key: "env-1", idempotencyKey: "idem-1", expectedRevision: 7 });
+  assert.equal(created.status.defaultRoot, "/home/user");
+  assert.deepEqual(await manager.invokeProvider({ providerId, callback: "getStatus", request: { environmentId: "env-1", providerState: {} } }), { state: "available", revision: 2 });
+  assert.deepEqual(await manager.invokeProvider({ providerId, callback: "testProfile", request: { values: { url: "https://example.test" } }, idempotencyKey: "test-1" }), []);
+  assert.equal(brokerRequests[0].extensionId, "example.callbacks");
+  assert.equal(brokerRequests[0].operation, "provider.call");
+  assert.equal(brokerRequests[0].payload.request.providerId, "dependency/main");
+  await manager.shutdown();
+});
+
+test("provider callbacks reject unsafe DTOs and honor cancellation and deadlines", async () => {
+  const descriptor = await fixture("example.hostile-runtime", `export function activate(context) {
+    context.registerProjectEnvironmentProvider({
+      definition: { providerId: "example.hostile-runtime/main", displayName: "Hostile", capabilities: ["terminal"] },
+      runtime: {
+        async testProfile() { return []; }, async resolveOptions() { return { options: [{ value: "x", label: "X", injected: "bad" }] }; },
+        async createEnvironment(_request, call) { return new Promise((_resolve, reject) => call.signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true })); },
+        async resumeOperation() { return { state: "pending", operationId: "x", providerState: {}, progress: { operationId: "x", title: "x", resumable: true, stages: [] } }; },
+        async getStatus() { return { state: "available", revision: 1 }; },
+        async invokeAction(request) { return { state: "complete", providerState: request.providerState, status: { state: "available", revision: 1 } }; }
+      }
+    });
+  }`);
+  const manager = new ExtensionHostManager({ broker: { async request() {} } });
+  await manager.start(descriptor);
+  const providerId = "example.hostile-runtime/main";
+  await assert.rejects(manager.invokeProvider({ providerId, callback: "resolveOptions", request: { sourceId: "x", values: {} } }), /invalid options/);
+  await assert.rejects(manager.invokeProvider({ providerId, callback: "createEnvironment", request: { environmentId: "env", displayName: "VM", values: {} }, deadlineMs: 10 }), /timed out/);
+  const controller = new AbortController();
+  const pending = manager.invokeProvider({ providerId, callback: "createEnvironment", request: { environmentId: "env", displayName: "VM", values: {} }, signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, /cancelled/);
+  assert.equal((await manager.invokeProvider({ providerId, callback: "getStatus", request: { environmentId: "env", providerState: {} } })).state, "available");
+  await manager.shutdown();
+});

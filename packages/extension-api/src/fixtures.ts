@@ -1,5 +1,5 @@
 import { namespacedId } from "./constants.js";
-import type { DeclarativeForm, TerminayExtensionManifest } from "./types.js";
+import type { DeclarativeForm, ProviderDefinition, TerminayExtensionManifest } from "./types.js";
 
 export const fixtureExtensionId = "dev.terminay.fixture";
 
@@ -49,3 +49,20 @@ export const hostileManifestFixtures: Readonly<Record<string, unknown>> = Object
   },
   unknownPermission: { ...validManifestFixture, permissions: ["server:everything"] },
 });
+
+export const validProviderDefinitionFixture: ProviderDefinition = Object.freeze({
+  providerId: namespacedId(fixtureExtensionId, "fixture"),
+  displayName: "Fixture",
+  capabilities: ["terminal", "filesystem"],
+  profileForm: validFormFixture,
+  createForm: {
+    id: "create",
+    title: "Create fixture environment",
+    sections: [{ id: "size", title: "Size", fields: [{
+      id: "preset", type: "preset-cards", label: "Preset", options: [
+        { value: "small", label: "Small" }, { value: "large", label: "Large" },
+      ],
+    }] }],
+    submitLabel: "Create",
+  },
+} satisfies ProviderDefinition);

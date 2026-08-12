@@ -2,8 +2,8 @@ import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { isChildFrame, frameByteLength, EXTENSION_HOST_PROTOCOL_VERSION, type ChildFrame, type HostFrame } from "./protocol.js";
 import { validateExtensionLaunchDescriptor } from "./descriptor.js";
-import type { ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor } from "./types.js";
-import { isNamespacedId, validateDeclarativeForm, type ProviderDefinition } from "@terminay/extension-api";
+import type { ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProviderInvocation } from "./types.js";
+import { isNamespacedId, validateDeclarativeForm, validateEnvironmentActionResult, validateOptionSourceResult, validateProviderDefinition, validateProviderEnvironmentStatus, validateProvisioningResult, validateValidationIssues, type ProviderDefinition } from "@terminay/extension-api";
 
 interface PendingCall {
   readonly resolve: (value: unknown) => void;
@@ -43,6 +43,7 @@ export class ExtensionHost {
   private readonly activeBrokerCalls = new Map<string, AbortController>();
   private readonly crashTimes: number[] = [];
   private sequence = 0;
+  private providerSequence = 0;
   private stopping = false;
   private providers: readonly ProviderDefinition[] = Object.freeze([]);
   private readonly limits: Required<ExtensionHostLimits>;
@@ -102,6 +103,28 @@ export class ExtensionHost {
     if (this.pending.size >= this.limits.maxConcurrentInvocations) throw new Error("extension invocation admission limit reached");
     if (typeof invocation.method !== "string" || invocation.method.length === 0 || invocation.method.length > 200) throw new TypeError("invalid extension method");
     return this.call("invoke", { method: invocation.method, input: invocation.input }, invocation.deadlineMs ?? this.limits.invocationTimeoutMs, invocation.signal);
+  }
+
+  async invokeProvider(invocation: ExtensionProviderInvocation): Promise<unknown> {
+    if (!this.providers.some((provider) => provider.providerId === invocation.providerId)) throw new Error("extension provider is not registered");
+    const timeoutMs = invocation.deadlineMs ?? this.limits.invocationTimeoutMs;
+    const callId = `${this.extensionId}:provider:${++this.providerSequence}`;
+    const reply = record(await this.invoke({
+      method: "provider.invoke",
+      input: {
+        callId,
+        providerId: invocation.providerId,
+        method: invocation.callback,
+        request: invocation.request,
+        deadlineAt: new Date(this.now() + timeoutMs).toISOString(),
+        ...(invocation.idempotencyKey === undefined ? {} : { idempotencyKey: invocation.idempotencyKey }),
+        ...(invocation.expectedRevision === undefined ? {} : { expectedRevision: invocation.expectedRevision }),
+      },
+      deadlineMs: timeoutMs,
+      signal: invocation.signal,
+    }));
+    if (reply === undefined || reply.callId !== callId || reply.ok !== true || !("result" in reply)) throw new Error("provider returned an invalid runtime reply");
+    return validateProviderResult(invocation.callback, reply.result);
   }
 
   async stop(): Promise<void> {
@@ -225,9 +248,8 @@ function validateProviders(value: unknown, extensionId: string): readonly Provid
   const providers: ProviderDefinition[] = [];
   for (const item of value) {
     const provider = record(item);
-    if (provider === undefined || typeof provider.providerId !== "string" || !isNamespacedId(provider.providerId, extensionId) || seen.has(provider.providerId)
-      || typeof provider.displayName !== "string" || provider.displayName.length === 0 || provider.displayName.length > 96
-      || !Array.isArray(provider.capabilities) || provider.capabilities.length === 0) throw new Error("extension returned invalid provider registrations");
+    const validation = validateProviderDefinition(item);
+    if (provider === undefined || !validation.ok || typeof provider.providerId !== "string" || !isNamespacedId(provider.providerId, extensionId) || seen.has(provider.providerId)) throw new Error("extension returned invalid provider registrations");
     for (const form of [provider.profileForm, provider.createForm]) {
       if (form !== undefined && !validateDeclarativeForm(form).ok) throw new Error("extension returned an invalid declarative form");
     }
@@ -236,3 +258,11 @@ function validateProviders(value: unknown, extensionId: string): readonly Provid
   }
   return Object.freeze(providers);
 }
+function validateProviderResult(callback: ExtensionProviderInvocation["callback"], result: unknown): unknown {
+  if (callback === "resolveOptions") return validated(validateOptionSourceResult(result), "provider returned invalid options");
+  if (callback === "getStatus") return validated(validateProviderEnvironmentStatus(result), "provider returned invalid status");
+  if (callback === "testProfile") return validated(validateValidationIssues(result), "provider returned invalid validation issues");
+  if (callback === "createEnvironment" || callback === "resumeOperation") return validated(validateProvisioningResult(result), "provider returned an invalid provisioning result");
+  return validated(validateEnvironmentActionResult(result), "provider returned an invalid action result");
+}
+function validated<T>(result: { readonly ok: true; readonly value: T } | { readonly ok: false }, message: string): T { if (!result.ok) throw new Error(message); return structuredClone(result.value); }
