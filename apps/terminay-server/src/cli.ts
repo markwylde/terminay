@@ -31,6 +31,7 @@ import {
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
 	createPuzedSshProductionExtensionManagement,
+	ExtensionProjectEnvironmentRuntime,
 	ExactTerminalTargetRegistry,
 	FileCatalog,
 	FileContentStreamService,
@@ -43,6 +44,10 @@ import {
 	ProjectEnvironmentRepository,
 	FileProjectEnvironmentStateBackend,
 	ProjectEnvironmentRouter,
+	RemoteMcpBridgeAuthority,
+	RemoteMcpEnvironmentCoordinator,
+	createEnvironmentRoutedProjectServices,
+	composeRemoteMcpTerminalLifecycle,
 	RecordingService,
 	type RemoteReconnectGrantRecord,
 	type ServerCoreComposition,
@@ -74,6 +79,8 @@ import {
 	createStandaloneServer,
 	type LocalUiServer,
 	runServerMcpStdio,
+	createServerTerminalControlAdapter,
+	createTerminalControlAdapter,
 	type ServerPairingHandoff,
 	type ServerRemoteExposure,
 } from './index.js';
@@ -294,11 +301,12 @@ async function createServerComposition(
 	);
 	const projectEnvironments = new ProjectEnvironmentRepository(new FileProjectEnvironmentStateBackend(join(options.dataRoot, 'project-environments.v1.json')), options.serverId);
 	await projectEnvironments.load();
+	const projectEnvironmentRegistry = new ProjectEnvironmentRegistry();
 	const projectEnvironmentRouter = new ProjectEnvironmentRouter({
 		serverId: options.serverId,
 		workspaceSnapshot: () => workspace.state,
 		environmentSnapshot: () => projectEnvironments.state,
-		registry: new ProjectEnvironmentRegistry(),
+		registry: projectEnvironmentRegistry,
 	});
 	const gitService = new GitService({
 		limits: {
@@ -345,6 +353,7 @@ async function createServerComposition(
 		...(options.vaultUnlockFd === undefined ? {} : { unlockFd: options.vaultUnlockFd }),
 	});
 	const extensions = createPuzedSshProductionExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: 'This server', vault, projectEnvironments, workspace });
+	projectEnvironmentRegistry.register(new ExtensionProjectEnvironmentRuntime('com.terminay.ssh/connection', ['terminal', 'filesystem', 'mcp-bridge'], extensions.hosts, () => projectEnvironments.state));
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,
@@ -369,6 +378,7 @@ async function createServerComposition(
 					),
 				});
 	let composition: ServerCoreComposition;
+	let remoteMcp: RemoteMcpEnvironmentCoordinator | undefined;
 	composition = createServerCoreComposition({
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
@@ -444,6 +454,7 @@ async function createServerComposition(
 			defaultEnvironment: process.env,
 			maxReplayBytes: 4 * 1024 * 1024,
 			maxQueuedOutputBytes: 512 * 1024,
+			sessionLifecycle: composeRemoteMcpTerminalLifecycle(() => remoteMcp),
 		},
 		operations: {
 			queries: {
@@ -458,7 +469,41 @@ async function createServerComposition(
 			},
 		},
 	});
+	const control = createTerminalControlAdapter({
+		adapter: createServerTerminalControlAdapter({
+			terminal: composition.terminal,
+			launchResolver: requireTerminalLaunchResolver(composition),
+			activity,
+		}),
+	});
+	const remoteMcpAuthority = new RemoteMcpBridgeAuthority({
+		dispatch: async (scope, op, params, { signal }) => {
+			const result = await control(
+				{ id: `${op}:${Date.now()}`, version: 1, op: op as never, params: params as Record<string, unknown> },
+				{ terminalSessionId: scope.terminalSessionId, projectId: scope.projectId, scope: scope.scope, connectionId: `remote-mcp:${scope.terminalSessionId}`, requestId: `${op}:${Date.now()}`, signal },
+			);
+			return JSON.parse(JSON.stringify(result)) as JsonValue;
+		},
+	});
+	remoteMcp = new RemoteMcpEnvironmentCoordinator(
+		createEnvironmentRoutedProjectServices(projectEnvironmentRouter).mcpBridge,
+		remoteMcpAuthority,
+	);
+	const baseShutdown = composition.shutdown;
+	composition = Object.freeze({
+		...composition,
+		shutdown: async () => {
+			await remoteMcp?.shutdown();
+			await baseShutdown();
+		},
+	});
 	return Object.freeze({ core: composition, vault, extensions });
+}
+
+function requireTerminalLaunchResolver(composition: ServerCoreComposition) {
+	if (composition.terminalLaunchResolver === undefined)
+		throw new Error('Remote MCP requires the canonical terminal launch resolver.');
+	return composition.terminalLaunchResolver;
 }
 
 function selectAiProviders(
