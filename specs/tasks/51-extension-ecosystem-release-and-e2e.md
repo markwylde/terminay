@@ -44,7 +44,7 @@ Phase 6 release convergence after Tasks 41–50.
 - [ ] Publish official packages with npm trusted publishing/provenance and
   verify resolved integrity, packed contents, dependency locks, SBOM/licenses,
   Node/npm/API compatibility, registry-failure behavior, and artifacts.
-- [ ] Exercise server upgrade with compatible/incompatible extensions, registry/
+- [x] Exercise server upgrade with compatible/incompatible extensions, registry/
   data migrations, failed activation, rollback, and retained unavailable projects.
 
 ### Acceptance and security
