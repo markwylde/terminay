@@ -7,12 +7,12 @@ import type { ProjectEnvironmentRepository } from './repository.js';
 import type { EnvironmentProfile, ProjectEnvironmentRecord, ProjectEnvironmentState } from './types.js';
 
 export const PROJECT_ENVIRONMENT_OPERATIONS = Object.freeze({
-	snapshot: 'projectEnvironments.snapshot', createProject: 'projectEnvironments.createProject',
-	createProfile: 'projectEnvironments.createProfile', updateProfile: 'projectEnvironments.updateProfile',
-	testProfile: 'projectEnvironments.testProfile', removeProfile: 'projectEnvironments.removeProfile',
-	invokeAction: 'projectEnvironments.invokeAction',
-	resolveOptions: 'projectEnvironments.resolveOptions',
-	createEnvironment: 'projectEnvironments.create',
+	snapshot: 'project-environments.snapshot', createProject: 'project-environments.create-project',
+	createProfile: 'project-environments.create-profile', updateProfile: 'project-environments.update-profile',
+	testProfile: 'project-environments.test-profile', removeProfile: 'project-environments.remove-profile',
+	invokeAction: 'project-environments.invoke-action',
+	resolveOptions: 'project-environments.resolve-options',
+	createEnvironment: 'project-environments.create',
 } as const);
 
 export interface ProjectEnvironmentProviderControl {

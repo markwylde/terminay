@@ -21,7 +21,7 @@ test("fixed extension operations expose bounded catalogue and preview DTOs", asy
   const handlers = createExtensionOperationHandlers({ installer: installer(), authorityLabel: "Remote Terminay" });
   const list = await handlers.queries["extensions.list"](query("extensions.list", {}));
   assert.equal(list.authorityLabel, "Remote Terminay"); assert.equal(list.catalogue.length, 2); assert.equal(list.catalogue[0].official, true);
-  const preview = await handlers.queries["extensions.previewInstall"](query("extensions.previewInstall", { spec: "fixture-extension" }, ["extensions:manage"]));
+  const preview = await handlers.queries["extensions.preview-install"](query("extensions.preview-install", { spec: "fixture-extension" }, ["extensions:manage"]));
   assert.equal(preview.exactVersion, "1.2.3"); assert.equal(preview.extensionId, "dev.example.fixture"); assert.deepEqual(preview.permissions, ["network"]); assert.equal(preview.trustedCodeWarning, "trusted code");
 });
 

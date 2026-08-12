@@ -27,7 +27,7 @@ extension-management protocol.
 
 - [x] Create dependency-light `@terminay/extension-api` types, runtime schemas,
   fixtures, conformance CLI, manifest/API/version rules, and namespacing.
-- [x] Define fixed `extensions.*`/`projectEnvironments.*` DTOs, policies,
+- [x] Define fixed `extensions.*`/`project-environments.*` DTOs, policies,
   permissions, idempotency, revisions, deadlines, and ordered events.
 - [x] Define bounded declarative forms/options/cards/progress/actions without
   renderer code or raw HTML/assets.

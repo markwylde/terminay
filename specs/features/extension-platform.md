@@ -97,7 +97,7 @@ install another extension without administrator confirmation.
 ## Declarative UI contributions
 
 Extension code never enters the renderer. Fixed `extensions.*` and
-`projectEnvironments.*` application-protocol operations return bounded schemas
+`project-environments.*` application-protocol operations return bounded schemas
 and safe status data. The server-bundled generic UI supports:
 
 - sections and accessible disclosures;
