@@ -404,7 +404,7 @@ export function createServerCoreComposition(
     workspace: options.workspace,
     ...(options.projectEnvironments.providerDefinitions !== undefined || options.extensions?.hosts === undefined ? {} : { providerDefinitions: () => options.extensions!.hosts!.statuses().flatMap((status) => status.providers ?? []) }),
     ...(options.projectEnvironments.providerRuntime !== undefined || options.extensions?.hosts === undefined ? {} : { providerRuntime: options.extensions.hosts }),
-    onChanged: (payload) => { eventJournal.append('projectEnvironments.changed', payload); },
+    onChanged: (payload) => { eventJournal.append('project-environments.changed', payload); },
   });
   const operations = mergeOperationRegistries(
     mergeOperationRegistries(mergeOperationRegistries(

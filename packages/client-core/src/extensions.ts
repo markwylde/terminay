@@ -2,7 +2,7 @@ import type { JsonValue } from '@terminay/protocol';
 import type { QueryCommandTransport } from './queryCommand.js';
 import type { CommandOptions, QueryOptions } from './types.js';
 
-export const EXTENSION_OPERATIONS = Object.freeze({ list:'extensions.list', get:'extensions.get', previewInstall:'extensions.previewInstall', install:'extensions.install', previewUpdate:'extensions.previewUpdate', enable:'extensions.enable', disable:'extensions.disable', restart:'extensions.restart', remove:'extensions.remove', update:'extensions.update', rollback:'extensions.rollback' } as const);
+export const EXTENSION_OPERATIONS = Object.freeze({ list:'extensions.list', get:'extensions.get', previewInstall:'extensions.preview-install', install:'extensions.install', previewUpdate:'extensions.preview-update', enable:'extensions.enable', disable:'extensions.disable', restart:'extensions.restart', remove:'extensions.remove', update:'extensions.update', rollback:'extensions.rollback' } as const);
 export type ExtensionAction = 'enable'|'disable'|'restart'|'remove'|'rollback';
 export interface ExtensionClientSummary { readonly id:string; readonly packageName:string; readonly displayName:string; readonly description:string; readonly version?:string; readonly state:'available'|'installed'|'disabled'|'incompatible'|'failed'|'quarantined'|'pending'; readonly official:boolean; readonly permissions:readonly string[]; readonly dependants:readonly string[]; readonly provenance?:string; }
 export interface ExtensionCatalogue { readonly authorityLabel:string; readonly revision:number; readonly extensions:readonly ExtensionClientSummary[]; }
