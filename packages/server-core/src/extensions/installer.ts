@@ -18,6 +18,9 @@ export interface ExtensionInstallerOptions {
   readonly probe?: (input: { extensionId: string; packageRoot: string; entrypoint: string; manifest: ExtensionReceipt["manifest"] }) => Promise<void>;
   readonly references?: (extensionId: string) => Promise<ExtensionReferences>;
   readonly audit?: (event: Readonly<Record<string, unknown>>) => Promise<void> | void;
+  /** Runs after a recoverable data snapshot exists and before the active code
+   * pointer changes. Throwing restores the snapshot and preserves old code. */
+  readonly migrateData?: (input: Readonly<{ extensionId: string; fromVersion: string; toVersion: string; dataRoot: string }>) => Promise<void>;
 }
 
 /** Transactional immutable-slot installer. The active registry pointer is the
@@ -88,7 +91,9 @@ export class ExtensionInstaller {
     if (current.pendingSlotId === undefined) throw new Error("extension has no pending update");
     const refs = await this.references(extensionId); if ((refs.activeUses ?? 0) > 0) throw new Error("extension is in active use and must be drained before activation");
     const slot = current.slots[current.pendingSlotId]; if (slot === undefined) throw new Error("pending extension slot is missing");
-    await this.probe(slot.receipt, this.slotPackageRoot(slot)); await this.snapshotData(extensionId, state.revision + 1);
+    await this.probe(slot.receipt, this.slotPackageRoot(slot));
+    const active = current.activeSlotId === undefined ? undefined : current.slots[current.activeSlotId];
+    if (active !== undefined && active.version !== slot.version) await this.migrateData(current, active.version, slot.version, state.revision + 1);
     return this.commit(state, { ...current, activeSlotId: slot.slotId, previousSlotId: current.activeSlotId, pendingSlotId: undefined, state: current.enabled ? "installed" : "disabled" }, "extension.updated");
   }); }
 
@@ -145,6 +150,12 @@ export class ExtensionInstaller {
       const slots = Object.freeze({ ...(previous?.slots ?? {}), [slotId]: slot });
       const refs = await this.references(receipt.extensionId);
       const activeUses = refs.activeUses ?? 0;
+      const immediateUpdate = previous?.activeSlotId !== undefined && activeUses === 0 && previous.activeSlotId !== slotId;
+      if (immediateUpdate) {
+        const active = previous.slots[previous.activeSlotId];
+        if (active === undefined) throw new Error("active extension slot is missing");
+        await this.migrateData(previous, active.version, slot.version, state.revision + 1);
+      }
       const next: InstalledExtensionRecord = Object.freeze({ extensionId: receipt.extensionId, packageName: receipt.packageName, state: activeUses > 0 && previous?.activeSlotId ? "pending" : "installed", enabled: previous?.enabled ?? true, activeSlotId: activeUses > 0 && previous?.activeSlotId ? previous.activeSlotId : slotId, ...(previous?.activeSlotId && previous.activeSlotId !== slotId ? { previousSlotId: previous.activeSlotId } : {}), ...(activeUses > 0 && previous?.activeSlotId ? { pendingSlotId: slotId } : {}), slots });
       return this.commit(state, next, "extension.installed");
     } catch (error) {
@@ -161,7 +172,19 @@ export class ExtensionInstaller {
   }
   private async write(state: ExtensionRegistrySnapshot): Promise<ExtensionRegistrySnapshot> { await mkdir(dirname(this.registryPath()), { recursive: true }); const temporary = `${this.registryPath()}.${randomUUID()}.tmp`; await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { flag: "wx", mode: 0o600 }); await rename(temporary, this.registryPath()); return validateRegistry(state); }
   private async recoverStaging(): Promise<void> { const staging = join(this.root, "staging"); await rm(staging, { recursive: true, force: true }); await mkdir(staging, { recursive: true }); }
-  private async snapshotData(extensionId: string, revision: number): Promise<void> { const source = join(this.root, "data", extensionId); const destination = join(this.root, "data-snapshots", extensionId, String(revision)); try { await cp(source, destination, { recursive: true, errorOnExist: true }); } catch (error) { if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error; } }
+  private async migrateData(current: InstalledExtensionRecord, fromVersion: string, toVersion: string, revision: number): Promise<void> {
+    const source = join(this.root, "data", current.extensionId);
+    const destination = join(this.root, "data-snapshots", current.extensionId, String(revision));
+    let snapshotExists = false;
+    try { await cp(source, destination, { recursive: true, errorOnExist: true }); snapshotExists = true; }
+    catch (error) { if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error; }
+    try { await this.options.migrateData?.({ extensionId: current.extensionId, fromVersion, toVersion, dataRoot: source }); }
+    catch (error) {
+      await rm(source, { recursive: true, force: true });
+      if (snapshotExists) await cp(destination, source, { recursive: true });
+      throw error;
+    }
+  }
   private async references(extensionId: string): Promise<ExtensionReferences> { return this.options.references?.(extensionId) ?? {}; }
   private async probe(receipt: ExtensionReceipt, packageRoot: string): Promise<void> { await this.options.probe?.({ extensionId: receipt.extensionId, packageRoot, entrypoint: join(packageRoot, receipt.manifest.entrypoint), manifest: receipt.manifest }); }
   private slotPackageRoot(slot: { receipt: ExtensionReceipt }): string { return join(this.root, "packages", slot.receipt.slotId, "node_modules", ...slot.receipt.packageName.split("/")); }
@@ -174,4 +197,4 @@ function validateRegistry(value: unknown): ExtensionRegistrySnapshot { if (typeo
 function required(state: ExtensionRegistrySnapshot, id: string): InstalledExtensionRecord { const value = state.extensions[id]; if (value === undefined) throw new Error("extension is not installed"); return value; }
 function digest(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 function canonicalJson(value: unknown): string { if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`; if (typeof value === "object" && value !== null) return `{${Object.entries(value).filter(([, item]) => item !== undefined).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`; return JSON.stringify(value) ?? "null"; }
-function safeFailure(error: unknown): string { const message = error instanceof Error ? error.message : "unknown"; return message.toLowerCase().replace(/[^a-z0-9]+/gu, "_").slice(0, 80); }
+function safeFailure(error: unknown): string { const message = error instanceof Error ? error.message : typeof error === "string" ? error : "unknown"; return message.toLowerCase().replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "").slice(0, 80); }
