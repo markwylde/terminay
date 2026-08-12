@@ -34,6 +34,8 @@ type ElectronFixtures = {
   userDataDir: string
 }
 
+const desktopAppReadyTimeoutMs = 15_000
+
 const contentTypes: Record<string, string> = {
   '.css': 'text/css',
   '.html': 'text/html',
@@ -270,8 +272,8 @@ export const test = base.extend<ElectronFixtures>({
 
   mainWindow: async ({ electronApp }, use) => {
     const mainWindow = await prepareWindow(await electronApp.firstWindow())
-    await expect(mainWindow.locator('.project-tabbar')).toBeVisible()
-    await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(1)
+    await expect(mainWindow.locator('.project-tabbar')).toBeVisible({ timeout: desktopAppReadyTimeoutMs })
+    await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(1, { timeout: desktopAppReadyTimeoutMs })
     await use(mainWindow)
   },
 
