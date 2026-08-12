@@ -9,6 +9,7 @@ export type ExtensionPermission =
   | "cache:write"
   | "network"
   | "secrets:resolve"
+  | "ssh-agent:use"
   | "provider:depend"
   | "external-resources:manage";
 
