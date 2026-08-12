@@ -9,7 +9,7 @@ selected server data root with scripts disabled, safe updates, and rollback.
 
 Phase 2, in parallel with [Tasks 43](./43-environment-routed-project-services.md),
 [45](./45-project-environment-and-extension-ui.md), and
-[47](./47-official-puzed-extension-foundation.md).
+[47](../tasks_completed/47-official-puzed-extension-foundation.md).
 
 ## Dependency
 
