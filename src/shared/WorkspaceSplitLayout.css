@@ -123,4 +123,8 @@
 		max-block-size: min(40dvh, 24rem);
 		overflow: auto;
 	}
+
+	.workspace-split-layout[data-navigation-visible="false"] {
+		grid-template-rows: minmax(0, 1fr);
+	}
 }
