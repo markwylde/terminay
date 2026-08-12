@@ -11,6 +11,8 @@ export const SSH_PROVIDER_ID = "com.terminay.ssh/connection";
 export interface CompositionVault {
   put(input: { id: string; label?: string; value: Uint8Array }): Promise<unknown>;
   remove(id: string): Promise<unknown>;
+  bindSshSecret?(input: Readonly<{ profileId: string; fieldId: string; secretId: string }>): void;
+  unbindSshSecret?(input: Readonly<{ profileId: string; fieldId: string }>): void;
 }
 
 export interface ComposedSshRuntime {
@@ -68,13 +70,13 @@ export class PuzedSshCompositionService {
       const pair = generateKeyPairSync("ed25519"); const privateBytes = new TextEncoder().encode(pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString());
       try {
         await this.options.vault.put({ id: secretId, label: `Terminay Puzed SSH key ${bindingId}`, value: privateBytes });
-        try { await this.options.ssh.createBinding({ bindingId, profileId: `composed:${bindingId}`, logicalHostIdentity, privateKeySecretId: secretId }, signal); created = { bindingId, secretId }; }
-        catch (error) { await this.options.vault.remove(secretId); throw error; }
+        const sshProfileId = `composed:${bindingId}`; this.options.vault.bindSshSecret?.({ profileId: sshProfileId, fieldId: secretId, secretId }); created = { bindingId, secretId };
+        await this.options.ssh.createBinding({ bindingId, profileId: sshProfileId, logicalHostIdentity, privateKeySecretId: secretId }, signal);
       } finally { privateBytes.fill(0); }
       const publicKey = opensshEd25519(pair.publicKey.export({ type: "spki", format: "der" }) as Buffer, `terminay-${bindingId}`);
       state.bindings[bindingId] = { id: bindingId, puzedProfileId: profileId, operationId, logicalHostIdentity, privateKeySecretId: secretId, sshRevision: 1, revision: 1 };
       return { publicKey, sshBindingId: bindingId };
-    }); } catch (error) { if (created !== undefined) { await Promise.allSettled([this.options.ssh.removeBinding(created.bindingId, signal), this.options.vault.remove(created.secretId)]); } throw error; }
+    }); } catch (error) { if (created !== undefined) { const profileId = `composed:${created.bindingId}`; this.options.vault.unbindSshSecret?.({ profileId, fieldId: created.secretId }); await Promise.allSettled([this.options.ssh.removeBinding(created.bindingId, signal), this.options.vault.remove(created.secretId)]); } throw error; }
   }
 
   async bindMachine(input: unknown, idempotencyKey: string, signal: AbortSignal): Promise<JsonValue> {
@@ -111,7 +113,7 @@ export class PuzedSshCompositionService {
 
   async snapshot(): Promise<readonly PuzedSshBindingRecord[]> { return Object.values((await this.load()).bindings).map((value) => safeBinding(value)); }
 
-  private async ensureDescriptorBound(value: Record<string, any>, signal: AbortSignal): Promise<void> {
+  private async ensureDescriptorBound(value: Record<string, unknown>, signal: AbortSignal): Promise<void> {
     if (value.host === undefined) return;
     const bindingId = text(value.sshBindingId, "sshBindingId"); const identity = text(value.logicalHostIdentity, "logicalHostIdentity"); const current = requiredBinding(await this.load(), bindingId);
     const prefix = `puzed:${current.puzedProfileId}:`; if (!identity.startsWith(prefix) || identity.length === prefix.length) throw new Error("logical Puzed host identity does not match the retained Platform profile");
@@ -163,7 +165,7 @@ function requiredBinding(state: { bindings: Readonly<Record<string, PuzedSshBind
 function safeBinding(value: PuzedSshBindingRecord): PuzedSshBindingRecord { const { privateKeySecretId: _secret, ...safe } = value; return safe as PuzedSshBindingRecord; }
 function opensshEd25519(spki: Buffer, comment: string): string { const key = spki.subarray(spki.length - 32); const name = Buffer.from("ssh-ed25519"); const part = (value: Buffer) => { const size = Buffer.from([(value.length >>> 24) & 255, (value.length >>> 16) & 255, (value.length >>> 8) & 255, value.length & 255]); return Buffer.concat([size, value]); }; return `ssh-ed25519 ${Buffer.concat([part(name), part(key)]).toString("base64")} ${comment}`; }
 function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
-function object(value: unknown): Record<string, any> { if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("provider dependency request is invalid"); return value as Record<string, any>; }
+function object(value: unknown): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("provider dependency request is invalid"); return value as Record<string, unknown>; }
 function text(value: unknown, field: string): string { if (typeof value !== "string" || value.length === 0 || value.length > 512 || value.includes("\0")) throw new Error(`${field} is invalid`); return value; }
 function optionalText(value: unknown): string | undefined { return value === undefined ? undefined : text(value, "value"); }
 function hostText(value: unknown): string { const host = text(value, "host"); if (/\s|[/@]/u.test(host)) throw new Error("host is invalid"); return host; }

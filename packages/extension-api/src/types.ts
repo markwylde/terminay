@@ -357,6 +357,18 @@ export interface InvokeEnvironmentActionRequest extends EnvironmentRuntimeReques
   values?: Record<string, JsonValue>;
 }
 
+/** Server-internal, environment-bound service call. This is deliberately not
+ * an arbitrary extension command surface: the host derives the provider state
+ * and binding, while each provider accepts only its documented capability and
+ * operation DTOs. */
+export interface EnvironmentServiceRequest extends EnvironmentRuntimeRequest {
+  capability: EnvironmentCapability;
+  operation: string;
+  projectId: string;
+  environmentRevision: number;
+  input: JsonValue;
+}
+
 export type EnvironmentActionResult =
   | { state: "complete"; providerState: JsonValue; status: ProviderEnvironmentStatus }
   | { state: "pending"; operationId: string; providerState: JsonValue; progress: ProgressPresentation };
@@ -368,6 +380,7 @@ export interface ProviderRuntime {
   resumeOperation(request: ResumeOperationRequest, context: ProviderCallContext): Promise<ProvisioningResult>;
   getStatus(request: EnvironmentRuntimeRequest, context: ProviderCallContext): Promise<ProviderEnvironmentStatus>;
   invokeAction(request: InvokeEnvironmentActionRequest, context: ProviderCallContext): Promise<EnvironmentActionResult>;
+  invokeService?(request: EnvironmentServiceRequest, context: ProviderCallContext): Promise<JsonValue>;
   updateEnvironment?(request: EnvironmentRuntimeRequest & { values: Record<string, JsonValue> }, context: ProviderCallContext): Promise<EnvironmentActionResult>;
   deleteEnvironment?(request: EnvironmentRuntimeRequest, context: ProviderCallContext): Promise<EnvironmentActionResult>;
 }
