@@ -180,7 +180,12 @@ function harness() {
 		},
 		router,
 	);
-	const request = (operation, payload, body = new Uint8Array()) => ({
+	const request = (
+		operation,
+		payload,
+		body = new Uint8Array(),
+		clientId = 'client',
+	) => ({
 		envelope: {
 			id: 'request',
 			operation,
@@ -189,7 +194,7 @@ function harness() {
 		body,
 		context: {
 			connectionId: 'connection',
-			clientId: 'client',
+			clientId,
 			authScope: 'admin',
 			signal: new AbortController().signal,
 		},
@@ -198,11 +203,16 @@ function harness() {
 		routed.queries.get(operation)(request(operation, payload));
 	const command = (operation, payload, body) =>
 		routed.commands.get(operation)(request(operation, payload, body));
+	const queryAs = (clientId, operation, payload) =>
+		routed.queries.get(operation)(
+			request(operation, payload, new Uint8Array(), clientId),
+		);
 	return {
 		files,
 		calls,
 		query,
 		command,
+		queryAs,
 		localCalls: () => localCalls,
 		setUnknownWrite: () => {
 			unknownWrite = true;
@@ -278,6 +288,19 @@ test('remote sessions retain server-owned drafts and save without host filesyste
 	assert.equal(
 		new TextDecoder().decode(app.files.get('/home/dev/readme.md')),
 		'changed remotely',
+	);
+	assert.equal(app.localCalls(), 0);
+});
+
+test('remote session identities are isolated by authenticated client', async () => {
+	const app = harness();
+	const opened = await app.query('files.open', { path: 'readme.md' });
+	await assert.rejects(
+		() =>
+			app.queryAs('another-client', 'files.metadata', {
+				sessionId: opened.sessionId,
+			}),
+		(error) => error.code === 'provider-operation-failed',
 	);
 	assert.equal(app.localCalls(), 0);
 });
