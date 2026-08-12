@@ -205,6 +205,80 @@ export interface ProviderCallContext {
   /** Optimistic-concurrency revision for mutations of existing state. */
   expectedRevision?: number;
   dependencies: ProviderDependencyBroker;
+  profiles: ProviderProfileBroker;
+  secrets: ProviderSecretBroker;
+  sshAgent: ProviderSshAgentBroker;
+}
+
+export interface ProviderProfileSnapshot {
+  profileId: string;
+  providerId: string;
+  /** Non-secret persisted values only; secret fields are omitted. */
+  values: Record<string, JsonValue>;
+  secretFields: string[];
+  revision: number;
+}
+
+export interface ProviderProfileBroker {
+  /** Reads an own-provider profile after host ownership/permission checks. */
+  get(profileId: string): Promise<ProviderProfileSnapshot>;
+}
+
+export interface ProviderSecretRequest {
+  profileId: string;
+  fieldId: string;
+  purpose: string;
+}
+
+export interface ProviderSecretBroker {
+  /**
+   * Resolves an own-extension/profile/field binding in the parent, transfers a
+   * transient copy to the child, invokes `use` there, then zeroizes the child
+   * copy in a finally block. `use` must not return the bytes or place them in
+   * provider state, presentation DTOs, logs, or errors.
+   */
+  withValue<T>(request: ProviderSecretRequest, use: (bytes: Uint8Array) => T | Promise<T>): Promise<T>;
+}
+
+export type SshSignatureAlgorithm =
+  | "ssh-ed25519"
+  | "rsa-sha2-256"
+  | "rsa-sha2-512"
+  | "ecdsa-sha2-nistp256"
+  | "ecdsa-sha2-nistp384"
+  | "ecdsa-sha2-nistp521";
+
+export interface SshAgentIdentity {
+  /** Host-issued opaque id; never a filesystem/socket/keychain identifier. */
+  identityId: string;
+  algorithm: SshSignatureAlgorithm;
+  publicKey: Uint8Array;
+  fingerprint: string;
+  comment?: string;
+}
+
+export interface SshAgentScope {
+  profileId: string;
+  purpose: "ssh-user-authentication";
+}
+
+export interface SshAgentSignRequest extends SshAgentScope {
+  identityId: string;
+  algorithm: SshSignatureAlgorithm;
+  /** SSH user-authentication challenge; bounded by the child/parent broker. */
+  challenge: Uint8Array;
+}
+
+export interface SshAgentSignature {
+  algorithm: SshSignatureAlgorithm;
+  signature: Uint8Array;
+}
+
+export interface ProviderSshAgentBroker {
+  /** Lists bounded public identity metadata from the selected Terminay Server. */
+  listIdentities(scope: SshAgentScope): Promise<SshAgentIdentity[]>;
+  /** Signs one bounded SSH authentication challenge after profile authorization. */
+  sign(request: SshAgentSignRequest): Promise<SshAgentSignature>;
 }
 
 export interface ProviderDependencyRequest {

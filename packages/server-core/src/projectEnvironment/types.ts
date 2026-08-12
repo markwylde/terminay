@@ -1,7 +1,7 @@
 import type { JsonValue, ProtocolId } from '@terminay/protocol';
 import { THIS_SERVER_ENVIRONMENT_ID } from '../workspace.js';
 
-export const PROJECT_ENVIRONMENT_SCHEMA_VERSION = 1 as const;
+export const PROJECT_ENVIRONMENT_SCHEMA_VERSION = 2 as const;
 export const THIS_SERVER_PROVIDER_ID = 'terminay:this-server' as const;
 
 export const PROJECT_ENVIRONMENT_CAPABILITIES = [
@@ -67,6 +67,24 @@ export interface ProjectEnvironmentRecord {
 	readonly projectReferenceCount: number;
 	readonly archived: boolean;
 	readonly builtIn: boolean;
+	/** Provider-private, JSON-safe durable state. Never projected to clients. */
+	readonly providerState: JsonValue;
+	readonly providerRevision: number;
+}
+
+export interface ProjectEnvironmentOperationRecord {
+	readonly id: ProtocolId;
+	readonly providerId: ProtocolId;
+	readonly environmentId: ProtocolId;
+	readonly kind: string;
+	readonly state: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+	readonly providerOperationId?: ProtocolId;
+	readonly providerState: JsonValue;
+	readonly progress?: JsonValue;
+	readonly failure?: EnvironmentFailure;
+	readonly createdAt: number;
+	readonly updatedAt: number;
+	readonly revision: number;
 }
 
 export interface ProjectEnvironmentState {
@@ -76,6 +94,7 @@ export interface ProjectEnvironmentState {
 	readonly cursor: string;
 	readonly profiles: Readonly<Record<ProtocolId, EnvironmentProfile>>;
 	readonly environments: Readonly<Record<ProtocolId, ProjectEnvironmentRecord>>;
+	readonly operations: Readonly<Record<ProtocolId, ProjectEnvironmentOperationRecord>>;
 }
 
 export interface ProjectEnvironmentSummary {
@@ -100,6 +119,7 @@ export function createInitialProjectEnvironmentState(serverId: ProtocolId): Proj
 		revision: 0,
 		cursor: '0',
 		profiles: {},
+		operations: {},
 		environments: {
 			[THIS_SERVER_ENVIRONMENT_ID]: {
 				id: THIS_SERVER_ENVIRONMENT_ID,
@@ -114,6 +134,8 @@ export function createInitialProjectEnvironmentState(serverId: ProtocolId): Proj
 				projectReferenceCount: 0,
 				archived: false,
 				builtIn: true,
+				providerState: null,
+				providerRevision: 1,
 			},
 		},
 	};

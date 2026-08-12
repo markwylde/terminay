@@ -47,8 +47,29 @@ export interface ExtensionProviderInvocation {
 
 export interface ExtensionBrokerRequest {
   readonly extensionId: string;
-  readonly operation: "log" | "secret.resolve" | "provider.call";
+  readonly operation: "log" | "secret.resolve" | "profile.get" | "agent.list" | "agent.sign" | "provider.call";
   readonly payload: unknown;
+}
+
+export interface ExtensionProfileSnapshot {
+  readonly profileId: string;
+  readonly providerId: string;
+  readonly revision: number;
+  readonly values: JsonValue;
+  readonly secretFields: readonly string[];
+}
+
+export interface ExtensionProfileBroker {
+  get(extensionId: string, providerId: string, profileId: string, signal: AbortSignal): Promise<ExtensionProfileSnapshot>;
+}
+
+export interface ExtensionSshAgentBroker {
+  listIdentities(principal: { extensionId: string; profileId: string; purpose: "ssh-user-authentication" }, signal: AbortSignal): Promise<unknown>;
+  sign(principal: { extensionId: string; profileId: string; purpose: "ssh-user-authentication" }, request: { identityId: string; challenge: Uint8Array; algorithm: string }, signal: AbortSignal): Promise<unknown>;
+}
+
+export interface ExtensionSecretAccessBroker {
+  withSecret<T>(principal: { extensionId: string; permissions: ReadonlySet<string> }, request: { profileId: string; fieldId: string }, callback: (secret: Uint8Array) => T | Promise<T>): Promise<T>;
 }
 
 export interface ExtensionBroker {

@@ -8,6 +8,7 @@ import {
   THIS_SERVER_ENVIRONMENT_ID,
   ThisServerEnvironmentRuntime,
   createInitialProjectEnvironmentState,
+  migrateProjectEnvironmentState,
   toProjectEnvironmentSummary,
 } from '../dist/index.js';
 
@@ -20,6 +21,17 @@ test('fresh registry persists one undeletable built-in This server environment',
   assert.equal(state.environments[THIS_SERVER_ENVIRONMENT_ID].status, 'ready');
   assert.equal(state.environments[THIS_SERVER_ENVIRONMENT_ID].builtIn, true);
   assert.equal(commits.length, 1);
+});
+
+test('v1 environment registries migrate provider state and operation storage idempotently', () => {
+  const current=createInitialProjectEnvironmentState('server-a');
+  const legacy={...current,schemaVersion:1,environments:Object.fromEntries(Object.entries(current.environments).map(([id,{providerState,providerRevision,...environment}])=>[id,environment]))};
+  const migrated=migrateProjectEnvironmentState(legacy,'server-a');
+  assert.equal(migrated.schemaVersion,2);
+  assert.equal(migrated.environments['terminay:this-server'].providerState,null);
+  assert.equal(migrated.environments['terminay:this-server'].providerRevision,1);
+  assert.deepEqual(migrated.operations,{});
+  assert.deepEqual(migrateProjectEnvironmentState(migrated,'server-a'),migrated);
 });
 
 test('registry repository rejects stale revisions and corrupt reserved environment', async () => {
