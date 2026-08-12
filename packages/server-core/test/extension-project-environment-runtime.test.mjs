@@ -36,3 +36,19 @@ test("oversized and non-JSON service inputs never reach the provider", async () 
   await assert.rejects(runtime.invoke("terminal", "input", { executable() {} }, context), /invalid|unknown fields/);
   assert.equal(called, false);
 });
+
+test("spawn adapts bounded provider polling into PTY bytes, input, resize and exit", async () => {
+  const calls = []; let reads = 0;
+  const runtime = new ExtensionProjectEnvironmentRuntime(providerId, ["terminal"], { async invokeProvider(call) {
+    calls.push(call); const request = call.request;
+    if (request.operation === "create") return { sessionId: request.input.sessionId, profileId: "profile-1", revision: 1, root: "/work", shellProfile: "remote-system-default", capabilities: {} };
+    if (request.operation === "read") return reads++ === 0 ? { data: Buffer.from("hello").toString("base64"), encoding: "base64" } : { data: "", encoding: "base64", exit: { code: 0, signal: null, interrupted: false } };
+    return { accepted: true };
+  } }, () => state);
+  const pty = await runtime.invoke("terminal", "spawn", { rows: 24, cols: 80, env: {} }, context);
+  const output = await new Promise((resolve) => pty.onData((bytes) => resolve(Buffer.from(bytes).toString())));
+  await pty.write(Buffer.from("x")); await pty.resize({ cols: 100, rows: 30 });
+  const exit = await new Promise((resolve) => pty.onExit(resolve));
+  assert.equal(output, "hello"); assert.equal(exit.exitCode, 0);
+  assert.deepEqual(calls.map((call) => call.request.operation).slice(0,5), ["create","read","input","resize","read"]);
+});
