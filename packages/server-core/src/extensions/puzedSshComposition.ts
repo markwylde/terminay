@@ -19,6 +19,7 @@ export interface ComposedSshRuntime {
   createBinding(input: Readonly<{ bindingId: string; profileId: string; logicalHostIdentity: string; privateKeySecretId: string }>, signal: AbortSignal): Promise<{ revision: number }>;
   updateBinding(input: Readonly<{ bindingId: string; expectedRevision: number; logicalHostIdentity: string; host: string; port: number; username: string; root: string }>, signal: AbortSignal): Promise<{ revision: number }>;
   verifyBinding(input: Readonly<{ bindingId: string; expectedRevision: number }>, signal: AbortSignal): Promise<ComposedSshVerification>;
+  approveTrust(input: Readonly<{ bindingId: string; expectedRevision: number; challengeId: string; action: "approve" | "replace" }>, signal: AbortSignal): Promise<{ revision: number }>;
   removeBinding(bindingId: string, signal: AbortSignal): Promise<void>;
 }
 
@@ -67,13 +68,13 @@ export class PuzedSshCompositionService {
       const existing = Object.values(state.bindings).find((binding) => binding.puzedProfileId === profileId && binding.operationId === operationId);
       if (existing !== undefined) throw new Error("composition binding exists without an idempotency receipt");
       const bindingId = `puzed-ssh:${randomUUID()}`; const secretId = `extensions.ssh.composed.${randomUUID()}`;
-      const pair = generateKeyPairSync("ed25519"); const privateBytes = new TextEncoder().encode(pair.privateKey.export({ type: "pkcs8", format: "pem" }).toString());
+      const pair = generateKeyPairSync("ed25519"); const publicDer = pair.publicKey.export({ type: "spki", format: "der" }) as Buffer; const privateDer = pair.privateKey.export({ type: "pkcs8", format: "der" }) as Buffer; const privateBytes = new TextEncoder().encode(opensshEd25519Private(publicDer, privateDer, `terminay-${bindingId}`));
       try {
         await this.options.vault.put({ id: secretId, label: `Terminay Puzed SSH key ${bindingId}`, value: privateBytes });
         const sshProfileId = `composed:${bindingId}`; this.options.vault.bindSshSecret?.({ profileId: sshProfileId, fieldId: secretId, secretId }); created = { bindingId, secretId };
         await this.options.ssh.createBinding({ bindingId, profileId: sshProfileId, logicalHostIdentity, privateKeySecretId: secretId }, signal);
       } finally { privateBytes.fill(0); }
-      const publicKey = opensshEd25519(pair.publicKey.export({ type: "spki", format: "der" }) as Buffer, `terminay-${bindingId}`);
+      const publicKey = opensshEd25519(publicDer, `terminay-${bindingId}`);
       state.bindings[bindingId] = { id: bindingId, puzedProfileId: profileId, operationId, logicalHostIdentity, privateKeySecretId: secretId, sshRevision: 1, revision: 1 };
       return { publicKey, sshBindingId: bindingId };
     }); } catch (error) { if (created !== undefined) { const profileId = `composed:${created.bindingId}`; this.options.vault.unbindSshSecret?.({ profileId, fieldId: created.secretId }); await Promise.allSettled([this.options.ssh.removeBinding(created.bindingId, signal), this.options.vault.remove(created.secretId)]); } throw error; }
@@ -111,6 +112,8 @@ export class PuzedSshCompositionService {
     });
   }
 
+  async approveTrust(input: unknown, signal: AbortSignal): Promise<JsonValue> { const value = object(input); const bindingId = text(value.sshBindingId, "sshBindingId"); const binding = requiredBinding(await this.load(), bindingId); const expectedRevision = integer(value.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER); if (expectedRevision !== binding.sshRevision) throw new Error("SSH trust revision changed"); const challengeId = text(value.challengeId, "challengeId"); const action = value.action === "approve" || value.action === "replace" ? value.action : (() => { throw new Error("SSH trust action is invalid"); })(); return this.options.ssh.approveTrust({ bindingId, expectedRevision, challengeId, action }, signal) as unknown as JsonValue; }
+
   async snapshot(): Promise<readonly PuzedSshBindingRecord[]> { return Object.values((await this.load()).bindings).map((value) => safeBinding(value)); }
 
   private async ensureDescriptorBound(value: Record<string, unknown>, signal: AbortSignal): Promise<void> {
@@ -143,6 +146,7 @@ export class PuzedSshCompositionBroker implements ExtensionBroker {
     if (operation === "generate-dedicated-key") return this.service.generate(dependency.payload, requiredKey(idempotencyKey), signal);
     if (operation === "bind-machine" || operation === "update-binding") return this.service.bindMachine(dependency.payload, requiredKey(idempotencyKey), signal);
     if (operation === "verify") return this.service.verify(dependency.payload, signal);
+    if (operation === "approve-trust") return this.service.approveTrust(dependency.payload, signal);
     if (operation === "open-project") return this.service.openProject(dependency.payload, requiredKey(idempotencyKey), signal);
     throw new Error("provider dependency operation is unsupported");
   }
@@ -164,6 +168,7 @@ function validateState(raw: unknown): CompositionState { if (raw === undefined) 
 function requiredBinding(state: { bindings: Readonly<Record<string, PuzedSshBindingRecord>> }, id: string): PuzedSshBindingRecord { const value = state.bindings[id]; if (value === undefined) throw new Error("Puzed SSH binding was not found"); return value; }
 function safeBinding(value: PuzedSshBindingRecord): PuzedSshBindingRecord { const { privateKeySecretId: _secret, ...safe } = value; return safe as PuzedSshBindingRecord; }
 function opensshEd25519(spki: Buffer, comment: string): string { const key = spki.subarray(spki.length - 32); const name = Buffer.from("ssh-ed25519"); const part = (value: Buffer) => { const size = Buffer.from([(value.length >>> 24) & 255, (value.length >>> 16) & 255, (value.length >>> 8) & 255, value.length & 255]); return Buffer.concat([size, value]); }; return `ssh-ed25519 ${Buffer.concat([part(name), part(key)]).toString("base64")} ${comment}`; }
+function opensshEd25519Private(spki: Buffer, pkcs8: Buffer, comment: string): string { const publicKey = spki.subarray(spki.length - 32); const seed = pkcs8.subarray(pkcs8.length - 32); const u32 = (value: number) => Buffer.from([(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255]); const part = (value: Buffer) => Buffer.concat([u32(value.length), value]); const type = Buffer.from("ssh-ed25519"); const publicBlob = Buffer.concat([part(type), part(publicKey)]); const checkValue = Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 8), 16); let privateBlob = Buffer.concat([u32(checkValue), u32(checkValue), part(type), part(publicKey), part(Buffer.concat([seed, publicKey])), part(Buffer.from(comment))]); const padding = Buffer.from(Array.from({ length: (8 - (privateBlob.length % 8)) % 8 || 8 }, (_, index) => index + 1)); privateBlob = Buffer.concat([privateBlob, padding]); const body = Buffer.concat([Buffer.from("openssh-key-v1\0"), part(Buffer.from("none")), part(Buffer.from("none")), part(Buffer.alloc(0)), u32(1), part(publicBlob), part(privateBlob)]).toString("base64").match(/.{1,70}/g)?.join("\n") ?? ""; return `-----BEGIN OPENSSH PRIVATE KEY-----\n${body}\n-----END OPENSSH PRIVATE KEY-----\n`; }
 function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 function object(value: unknown): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("provider dependency request is invalid"); return value as Record<string, unknown>; }
 function text(value: unknown, field: string): string { if (typeof value !== "string" || value.length === 0 || value.length > 512 || value.includes("\0")) throw new Error(`${field} is invalid`); return value; }
