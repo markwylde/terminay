@@ -28,7 +28,24 @@ function sha256(bytes) {
 function licenseOf(record) {
   if (typeof record.license === "string" && record.license.trim()) return record.license.trim();
   if (Array.isArray(record.licenses) && record.licenses.every((value) => typeof value === "string")) return record.licenses.join(" OR ");
+  if (Array.isArray(record.licenses) && record.licenses.every((value) => value && typeof value === "object" && typeof value.type === "string")) return record.licenses.map((value) => value.type.trim()).join(" OR ");
   return undefined;
+}
+
+function dependencyName(path) {
+  const marker = "node_modules/";
+  const index = path.lastIndexOf(marker);
+  return index >= 0 ? path.slice(index + marker.length) : basename(path);
+}
+
+function assertRegistryDependencies(packageJson) {
+  const sections = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
+  const unsupported = /^(?:file:|git(?:\+[^:]+)?:|https?:|github:|workspace:|link:|npm:|\.\.?\/|\/)/i;
+  for (const section of sections) {
+    for (const [name, spec] of Object.entries(packageJson[section] ?? {})) {
+      if (typeof spec !== "string" || unsupported.test(spec.trim()) || spec.includes("#")) fail(`${section} ${name} must use a registry semver specifier`);
+    }
+  }
 }
 
 async function main() {
@@ -37,16 +54,27 @@ async function main() {
   const manifestResult = validateExtensionManifest(packageJson.terminay);
   if (!manifestResult.ok) fail(`invalid Terminay manifest: ${manifestResult.issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
   if (lock.lockfileVersion !== 3) fail("package-lock.json must use lockfileVersion 3");
+  assertRegistryDependencies(packageJson);
   const root = lock.packages?.[""];
   if (!root || root.name !== packageJson.name || root.version !== packageJson.version) fail("package-lock root must match the exact package name and version");
 
   const components = [];
   for (const [path, record] of Object.entries(lock.packages ?? {})) {
     if (!record || path === "" || record.link || record.dev) continue;
-    const name = record.name ?? basename(path);
+    const name = record.name ?? dependencyName(path);
     if (!record.version || !record.integrity) fail(`production dependency ${name} must have exact version and integrity`);
-    if (!licenseOf(record)) fail(`production dependency ${name}@${record.version} has no declared license`);
-    components.push({ name, version: record.version, license: licenseOf(record), integrity: record.integrity });
+    let license = licenseOf(record);
+    if (!license) {
+      try {
+        const installed = JSON.parse(await readFile(join(packageDirectory, path, "package.json"), "utf8"));
+        if (installed.name !== name || installed.version !== record.version) fail(`installed metadata for ${name}@${record.version} does not match the lock`);
+        license = licenseOf(installed);
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("installed metadata")) throw error;
+      }
+    }
+    if (!license) fail(`production dependency ${name}@${record.version} has no declared license`);
+    components.push({ name, version: record.version, license, integrity: record.integrity });
   }
   components.sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`));
 

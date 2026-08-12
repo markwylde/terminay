@@ -19,15 +19,17 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24.14.0
           registry-url: https://registry.npmjs.org
-          cache: npm
+          package-manager-cache: false
+      - run: npm install --global npm@12.0.2
       - run: npm ci --ignore-scripts
+      - run: npm run build --if-present
       - run: npm test
-      - run: npx terminay-extension-conformance package.json
+      - run: npx --no-install terminay-extension-conformance package.json
       - run: node ./node_modules/@terminay/extension-api/scripts/verify-release.mjs . --output release-evidence
       - if: inputs.publish
         run: npm publish --provenance --access public
