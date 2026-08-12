@@ -90,6 +90,12 @@ async function readLogicalGridColumns(panel: Locator): Promise<number> {
 	return value;
 }
 
+async function readLogicalGridRows(panel: Locator): Promise<number> {
+	const value = Number(await panel.locator('.terminal-panel-root').getAttribute('data-terminal-rows'));
+	if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Unable to read the xterm logical grid rows');
+	return value;
+}
+
 async function expectMatchingLogicalGrid(first: Locator, second: Locator, expectedColumns: number): Promise<void> {
 	await expect.poll(async () => Promise.all([
 		readLogicalGridColumns(first),
@@ -285,6 +291,14 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		const browserColumns = await readTerminalColumns(page, browserPanel, '__TB1__');
 		expect(browserColumns).toBeLessThan(desktopColumnsBeforeTakeover);
 		await expectMatchingLogicalGrid(browserPanel, desktopPanel, browserColumns);
+		const browserGeometry = await browserPanel.evaluate((panel) => ({
+			bottom: panel.getBoundingClientRect().bottom,
+			height: panel.getBoundingClientRect().height,
+			viewportHeight: window.innerHeight,
+		}));
+		expect(browserGeometry.bottom).toBeGreaterThan(browserGeometry.viewportHeight * 0.9);
+		expect(browserGeometry.height).toBeGreaterThan(browserGeometry.viewportHeight * 0.75);
+		expect(await readLogicalGridRows(browserPanel)).toBeGreaterThan(30);
 		await page.setViewportSize({ width: 520, height: 900 });
 		await page.waitForTimeout(500);
 		const browserColumnsAfterResize = await readTerminalColumns(page, browserPanel, '__TB2__');
