@@ -2,10 +2,11 @@
 
 ## Summary
 
-Terminay provides native PTY terminals inside the project workspace. Terminay
-Server creates and owns each session; xterm renders it in a client panel and
-forwards input, resize, and lifecycle commands through the application
-protocol.
+Terminay provides terminal sessions inside the project workspace. Terminay
+Server creates and owns each session through the exact project's
+[environment](./project-environments.md): This server uses a native PTY, while
+providers may control a remote PTY. Xterm renders it in a client panel and
+forwards input, resize, and lifecycle commands through the application protocol.
 
 ## Behaviour
 
@@ -30,6 +31,9 @@ protocol.
 - PTY output fans out in Terminay Server to authorized clients and recording,
   activity, and agent integrations. These consumers do not change the terminal
   stream.
+- Provider capabilities govern cwd/foreground-process observation. Missing
+  observation is an explicit limited state and never inspects a similarly named
+  process on the Terminay Server host.
 
 ## Safety and accessibility
 
@@ -58,7 +62,10 @@ workspace connection.
 The server terminal boundary uses immutable `{serverId, projectId, sessionId}`
 identity. Input is accepted only for that exact live session and is bounded by
 the negotiated input-byte limit; resize and termination use the same
-authorization boundary. PTY output is counted in raw bytes, split into bounded
+authorization boundary. The server also verifies the session's stored
+environment equals its canonical project. Clients cannot choose the terminal
+adapter with an environment id.
+Terminal output is counted in raw bytes, split into bounded
 frames, and retained in a bounded replay window with a monotonically increasing
 byte position. A reconnect from a position older than the retained window
 receives an explicit resync/gap result rather than guessed or duplicate output.
@@ -258,8 +265,9 @@ query and injecting duplicate control responses.
   replaying acknowledged output.
 - Every terminal-creation route resolves the same profile and cwd for the same
   server, project, active panel, and explicit user choices.
-- System-default resolution happens on the server machine that will own the PTY;
-  Desktop and remote clients do not supply their host shell as a fallback.
+- System-default resolution happens in the exact project environment that will
+  own the PTY; Desktop and browser clients do not supply their host shell as a
+  fallback.
 - Every resolved Terminay PTY advertises the emulator it actually runs under
   with `TERM=xterm-256color` and `COLORTERM=truecolor`. Host launcher values
   such as `TERM=dumb` never cross into a terminal session, and profiles cannot

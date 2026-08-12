@@ -2,15 +2,25 @@
 
 ## Summary
 
-Terminay organizes work as project tabs. A project has an optional root folder,
-name, colour, icon, default shell-profile override, per-project navigation
+Terminay organizes work as project tabs. A project has one immutable
+[project environment](./project-environments.md), an optional root folder
+interpreted by that environment, name, colour, icon, default shell-profile override, per-project navigation
 state, and a Dockview layout holding terminal, file, and folder panels. Projects
-and panels are movable without turning a terminal title into an identity
-boundary.
+and panels are movable where environment boundaries permit without turning a
+terminal title into an identity boundary.
 
 ## User contract
 
 - Users can create, rename, reorder, close, and colour/icon project tabs.
+- The project-bar split button's primary `+` creates a project on **This
+  server** immediately. Its arrow opens an accessible environment chooser with
+  This server, recent SSH/Puzed targets, provider create/browse actions,
+  **Project Environments…**, and **Extensions…**. **This server** identifies the
+  selected Terminay Server because it may be remote from the client.
+- New projects use the selected environment profile's default root or verified
+  account home. They never copy an active project root from another
+  environment. Target/root validation completes before a normal tab is
+  committed.
 - Project creation commits its initial colour and icon atomically with the
   server-owned project so rapid creation cannot reuse an uncommitted colour.
 - A project root can be selected directly or derived from the active terminal's
@@ -26,6 +36,13 @@ boundary.
   default under the canonical
   [shell profiles and terminal launch](./shell-profiles-and-terminal-launch.md)
   policy. That selection affects future sessions only.
+- Project editing shows the immutable environment identity/status and lets the
+  user select a canonical root inside it or restore the environment default.
+  Retargeting a project is not an edit operation.
+- Moving a whole project between views preserves its environment. Moving a
+  panel between unequal environments is rejected atomically; a terminal is not
+  recreated on another machine. Same-environment moves remain unavailable
+  until every dependent identity can be rebound atomically.
 - Desktop presents workspace views as native windows. Project tabs can be
   dragged between them; web clients manage the same views in-page. Moving a
   project preserves its panels, live PTYs, scrollback, and service identities.
@@ -58,8 +75,8 @@ boundary.
 
 ## Boundaries and persistence
 
-Project identity, layout, panel membership, and logical workspace views are
-canonical server state under
+Project identity, immutable environment binding, layout, panel membership, and
+logical workspace views are canonical server state under
 [server-owned workspace state](./server-owned-workspace-state.md). Desktop
 windows and browser views are presentations of that state. A project is a
 navigation and authorization boundary, while the immutable server terminal
@@ -71,6 +88,8 @@ client focus.
 
 - Multi-project work remains independent when roots, tabs, layouts, or sidebar
   settings change.
+- One view may contain This server, SSH, and Puzed projects without clients
+  connecting directly to the target machines.
 - Moving or popping a project does not duplicate a terminal session or lose its
   connection to activity, agent, recording, or remote services.
 - After a project is torn into a new native window, the source window shows the
