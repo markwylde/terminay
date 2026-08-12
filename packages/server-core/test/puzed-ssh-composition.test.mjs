@@ -7,6 +7,13 @@ import {
   SSH_EXTENSION_ID,
   SSH_PROVIDER_ID,
 } from "../dist/extensions/puzedSshComposition.js";
+import { RepositoryCanonicalProjectOpener } from "../dist/extensions/puzedSshProjectAdapter.js";
+import { ProjectEnvironmentRepository } from "../dist/projectEnvironment/repository.js";
+import { createInitialWorkspace, WorkspaceStore } from "../dist/workspace.js";
+import { ExtensionHostComposedSshRuntime } from "../dist/extensions/composedSshRuntime.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const manifest = { id: PUZED_EXTENSION_ID, extensionDependencies: [{ extensionId: SSH_EXTENSION_ID, apiRange: "^1.0.0" }] };
 
@@ -81,4 +88,21 @@ test("SSH binding failure rolls back generated private key", async () => {
 test("durable receipt failure compensates both SSH binding and vault secret", async () => {
   const secrets = new Set(); const profiles = new Set(); const service = new PuzedSshCompositionService({ backend: { async load() {}, async commit() { throw new Error("disk full"); } }, vault: { async put(input) { secrets.add(input.id); }, async remove(id) { secrets.delete(id); } }, ssh: { async createBinding(input) { profiles.add(input.bindingId); return { revision: 1 }; }, async updateBinding() { throw new Error(); }, async verifyBinding() { throw new Error(); }, async removeBinding(id) { profiles.delete(id); } }, projects: { async open() { throw new Error(); } } });
   await assert.rejects(service.generate({ profileId: "platform", operationId: "operation" }, "key", new AbortController().signal), /disk full/); assert.equal(secrets.size, 0); assert.equal(profiles.size, 0);
+});
+
+test("canonical opener commits one immutable environment/project binding and replays", async () => {
+  let durable; const environments = new ProjectEnvironmentRepository({ async load() { return durable; }, async commit(value) { durable = structuredClone(value); } }, "server-a"); await environments.load();
+  const workspace = new WorkspaceStore(createInitialWorkspace("server-a")); const opener = new RepositoryCanonicalProjectOpener(environments, workspace); const input = { environmentId: "puzed:platform:machine", displayName: "Machine", sshBindingId: "binding-a", sshRevision: 3, canonicalRoot: "/srv/app", puzedProfileId: "platform", machineId: "machine" };
+  const first = await opener.open(input, new AbortController().signal); const replay = await opener.open(input, new AbortController().signal); assert.deepEqual(replay, first);
+  assert.equal(workspace.state.projects[first.projectId].projectEnvironmentId, input.environmentId); assert.equal(workspace.state.projects[first.projectId].environmentRevision, 3);
+  const stored = (await environments.load()).environments[input.environmentId]; assert.equal(stored.providerId, SSH_PROVIDER_ID); assert.equal(stored.providerState.sshBindingId, "binding-a"); assert.equal(stored.projectReferenceCount, 1);
+});
+
+test("production SSH adapter gives private secret metadata only to SSH and survives restart", async () => {
+  const root = await mkdtemp(join(tmpdir(), "terminay-composed-ssh-")); const calls = [];
+  const hosts = { async invokeProvider(input) { calls.push(structuredClone(input)); if (input.callback === "createEnvironment") return { state: "ready", providerState: { profileId: input.request.profileId, root: "/srv/app" }, status: { state: "available", defaultRoot: "/srv/app", revision: 1 } }; return { state: "available", defaultRoot: "/srv/app", revision: 1 }; } };
+  const first = new ExtensionHostComposedSshRuntime(join(root, "bindings.json"), hosts); await first.createBinding({ bindingId: "binding-a", profileId: "composed:binding-a", logicalHostIdentity: "pending", privateKeySecretId: "vault-secret-a" }, new AbortController().signal);
+  const updated = await first.updateBinding({ bindingId: "binding-a", expectedRevision: 1, logicalHostIdentity: "puzed:platform:machine", host: "192.0.2.4", port: 22, username: "vms", root: "~/app" }, new AbortController().signal); assert.equal(updated.revision, 2);
+  assert.equal(calls[0].providerId, SSH_PROVIDER_ID); assert.equal(calls[0].request.values.privateKeySecretRef, "vault-secret-a");
+  const restarted = new ExtensionHostComposedSshRuntime(join(root, "bindings.json"), hosts); const status = await restarted.verifyBinding({ bindingId: "binding-a", expectedRevision: 2 }, new AbortController().signal); assert.equal(status.state, "ready"); assert.equal(status.logicalHostIdentity, "puzed:platform:machine");
 });

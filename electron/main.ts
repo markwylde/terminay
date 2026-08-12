@@ -49,12 +49,17 @@ import {
 } from '../packages/server-core/src/recordingService/index';
 import type { RemoteReconnectGrantRecord } from '../packages/server-core/src/remote/reconnect';
 import { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
+import { createServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import {
 	createNodeShellDiscoveryHost,
 	ShellProfileCatalogueService,
 	ShellProfileDiscoveryService,
 } from '../packages/server-core/src/shellProfiles/index';
 import type { TerminalEvent } from '../packages/server-core/src/terminalService/index';
+import {
+	ElectronSafeStorageVaultAdapter,
+	FileSafeStorageVaultRepository,
+} from './vault/safeStorageVault';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -880,9 +885,27 @@ const embeddedProjectEnvironments = new ProjectEnvironmentRepository(
 	'desktop-local',
 );
 await embeddedProjectEnvironments.load();
+const embeddedVaultAdapter = await ElectronSafeStorageVaultAdapter.open({
+	repository: new FileSafeStorageVaultRepository(
+		path.join(app.getPath('userData'), 'vault', 'safe-storage.v1.json'),
+	),
+	codec: {
+		backend: selectedSafeStorageBackend,
+		decrypt: (encrypted) => safeStorage.decryptString(encrypted),
+		encrypt: (plainText) => safeStorage.encryptString(plainText),
+		isAvailable: () => safeStorage.isEncryptionAvailable(),
+	},
+});
+const embeddedVault = createServerVaultComposition(embeddedVaultAdapter);
+if (embeddedVault.status().state === 'locked') {
+	// safeStorage itself owns the OS unlock interaction; the common vault API
+	// receives no reusable passphrase or key material in embedded mode.
+	await embeddedVault.unlock({ secret: new Uint8Array() });
+}
 serverTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
 	dataRoot: app.getPath('userData'),
+	vault: embeddedVault,
 	defaultProjectRoot: () => app.getPath('home'),
 	projectEnvironmentRepository: embeddedProjectEnvironments,
 	shellProfiles: embeddedShellProfiles,
