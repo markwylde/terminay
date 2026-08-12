@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { ProjectEnvironmentRepository, FileProjectEnvironmentStateBackend } from '../packages/server-core/src/projectEnvironment/index'
 import { _electron as electron, expect, type ElectronApplication, type Page, test as base } from '@playwright/test'
 import {
   openChildWindow,
@@ -207,7 +208,8 @@ export const test = base.extend<ElectronFixtures>({
         providerRevision: 1,
       }
       const sshProviderId = 'com.terminay.ssh/connection'
-      await writeFile(path.join(userDataDir, 'project-environments.v1.json'), `${JSON.stringify({
+      const projectEnvironmentPath = path.join(userDataDir, 'project-environments.v1.json')
+      await writeFile(projectEnvironmentPath, `${JSON.stringify({
         schemaVersion: 2,
         serverId: 'desktop-local',
         revision: 7,
@@ -223,6 +225,16 @@ export const test = base.extend<ElectronFixtures>({
           'environment:puzed-ci': environment('environment:puzed-ci', sshProviderId, 'profile:puzed-ci', 'CI Puzed VM', 'puzed-ci:22', '/home/terminay/puzed-project', { sshBindingId: 'puzed-ssh:machine-ci' }),
         },
       }, null, 2)}\n`, { mode: 0o600 })
+      // Fail the fixture before Electron launch if its durable registry does not
+      // satisfy the exact production repository schema.
+      const seededRepository = new ProjectEnvironmentRepository(
+        new FileProjectEnvironmentStateBackend(projectEnvironmentPath),
+        'desktop-local',
+      )
+      const seededState = await seededRepository.load()
+      if (Object.keys(seededState.environments).length !== 3) {
+        throw new Error('Mixed project environment fixture did not seed three canonical environments.')
+      }
     }
     const rendererArtifact = await stageImmutableRendererArtifact({
       sourceRoot: path.resolve('dist'),
