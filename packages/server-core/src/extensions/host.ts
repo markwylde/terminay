@@ -346,6 +346,8 @@ function validateServiceResult(result: unknown, request: unknown): unknown {
     else if (operation === "poll" && !processObservationPoll(value)) throw new Error("provider returned an invalid process observation poll");
     else if (operation === "stop" && (!exactKeys(value,["observationId","stopped"]) || !boundedId(value.observationId) || value.stopped !== true)) throw new Error("provider returned an invalid process observation stop");
     else if (!["observe","report","poll","stop"].includes(String(operation))) throw new Error("provider returned an unknown process observation operation");
+  } else if (capability === "git") {
+    if (!["discover","status","branches","worktrees","diff","fetch","quickPush","cancel"].includes(String(operation)) || !gitServiceResult(String(operation), value)) throw new Error("provider returned an invalid Git service result");
   } else throw new Error("provider returned an unsupported service capability");
   const encoded = JSON.stringify(result);
   if (encoded === undefined || Buffer.byteLength(encoded) > 768 * 1024) throw new Error("provider returned an oversized service result");
@@ -359,6 +361,16 @@ function metadata(value:unknown):boolean{const item=record(value);return item!==
 function terminalExit(value:unknown):boolean{const item=record(value);return item!==undefined&&exactKeys(item,["code","signal","interrupted","reason"])&&(item.code===null||Number.isInteger(item.code))&&(item.signal===null||boundedText(item.signal,64))&&typeof item.interrupted==="boolean"&&(item.reason===undefined||item.reason==="transport-lost");}
 function filesystemObservationPoll(value:Record<string,unknown>):boolean{if(!exactKeys(value,["observationId","state","revision","events","root","manualRefreshAvailable","reason"])||!boundedId(value.observationId)||!["resync","changes","coalesced","degraded"].includes(String(value.state))||!Number.isSafeInteger(value.revision)||Number(value.revision)<0||!Array.isArray(value.events)||value.events.length>1000)return false;if(value.root!==undefined&&!boundedText(value.root,4096))return false;if(value.manualRefreshAvailable!==undefined&&typeof value.manualRefreshAvailable!=="boolean")return false;if(value.reason!==undefined&&!boundedText(value.reason,1000))return false;return value.events.every((entry)=>{const event=record(entry);return event!==undefined&&exactKeys(event,["kind","path"])&&["created","changed","removed"].includes(String(event.kind))&&boundedText(event.path,4096);});}
 function processObservationPoll(value:Record<string,unknown>):boolean{if(!exactKeys(value,["observationId","state","sequence","cwd","foregroundProcess","observedAt","lastObservedAt"])||!boundedId(value.observationId)||!["available","stale","unavailable"].includes(String(value.state)))return false;if(value.state==="available")return positive(value.sequence)&&boundedText(value.cwd,4096)&&(value.foregroundProcess===null||boundedText(value.foregroundProcess,512))&&Number.isFinite(value.observedAt);return value.cwd===null&&value.foregroundProcess===null&&(value.lastObservedAt===undefined||Number.isFinite(value.lastObservedAt));}
+function gitServiceResult(operation:string,value:Record<string,unknown>):boolean{
+  if(operation==="discover")return exactKeys(value,["state","repositoryRoot","repositoryId","worktreeId"])&&["ready","not-repository","git-unavailable"].includes(String(value.state))&&(value.repositoryRoot===null||boundedText(value.repositoryRoot,4096))&&(value.repositoryId===null||boundedId(value.repositoryId)!==undefined)&&(value.worktreeId===null||boundedId(value.worktreeId)!==undefined);
+  if(operation==="status")return exactKeys(value,["state","repositoryRoot","repositoryId","worktreeId","branch","head","entries","bounded"])&&typeof value.bounded==="boolean"&&Array.isArray(value.entries)&&value.entries.length<=10000;
+  if(operation==="branches")return exactKeys(value,["branches","bounded"])&&typeof value.bounded==="boolean"&&Array.isArray(value.branches)&&value.branches.length<=4096;
+  if(operation==="worktrees")return exactKeys(value,["worktrees","bounded"])&&typeof value.bounded==="boolean"&&Array.isArray(value.worktrees)&&value.worktrees.length<=256;
+  if(operation==="diff")return exactKeys(value,["patch","bounded","binary"])&&typeof value.patch==="string"&&Buffer.byteLength(value.patch)<=4*1024*1024&&typeof value.bounded==="boolean"&&typeof value.binary==="boolean";
+  if(operation==="fetch")return exactKeys(value,["applied","head","detail"])&&value.applied===true&&boundedText(value.head,256)&&typeof value.detail==="string"&&value.detail.length<=2048;
+  if(operation==="quickPush")return exactKeys(value,["proposalId","head","actions","expiresAt"])||exactKeys(value,["applied","completed","head"]);
+  return false;
+}
 function hasExecutable(value: unknown, seen = new Set<unknown>()): boolean {
   if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint" || value === undefined) return true;
   if (value === null || typeof value !== "object") return false;
