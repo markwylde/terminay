@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -157,6 +157,73 @@ export const test = base.extend<ElectronFixtures>({
   },
 
   electronApp: async ({ tempDir, userDataDir }, use, testInfo) => {
+    if (path.basename(testInfo.file) === 'mixed-project-environments.spec.ts') {
+      const now = Date.now()
+      const profile = (id: string, providerId: string, name: string, endpointSummary: string, configuration: Record<string, string>) => ({
+        id,
+        providerId,
+        name,
+        endpointSummary,
+        activeRevision: 1,
+        recommendedRevision: 1,
+        revisions: { '1': { revision: 1, createdAt: now, configuration, secretReferences: [] } },
+        archived: false,
+      })
+      const environment = (id: string, providerId: string, profileId: string, name: string, endpointSummary: string, defaultRoot: string, providerState: Record<string, string>) => ({
+        id,
+        providerId,
+        profileId,
+        pinnedRevision: 1,
+        name,
+        endpointSummary,
+        defaultRoot,
+        declaredCapabilities: ['terminal', 'filesystem', 'mcp-bridge'],
+        availableCapabilities: [],
+        // This metadata-only fixture intentionally has no activated external
+        // provider. Provisioning records remain visible without pretending a
+        // live SSH/Puzed runtime is available; packed-provider E2E owns that.
+        status: 'provisioning',
+        operationReferences: [],
+        projectReferenceCount: 0,
+        archived: false,
+        builtIn: false,
+        providerState,
+        providerRevision: 1,
+      })
+      const thisServer = {
+        id: 'terminay:this-server',
+        providerId: 'terminay:this-server',
+        pinnedRevision: 1,
+        name: 'This server',
+        endpointSummary: 'Local to this Terminay Server',
+        declaredCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'mcp-bridge', 'shell-discovery'],
+        availableCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'mcp-bridge', 'shell-discovery'],
+        status: 'ready',
+        operationReferences: [],
+        projectReferenceCount: 0,
+        archived: false,
+        builtIn: true,
+        providerState: null,
+        providerRevision: 1,
+      }
+      const sshProviderId = 'com.terminay.ssh/connection'
+      await writeFile(path.join(userDataDir, 'project-environments.v1.json'), `${JSON.stringify({
+        schemaVersion: 2,
+        serverId: 'desktop-local',
+        revision: 7,
+        cursor: '7',
+        profiles: {
+          'profile:ssh-ci': profile('profile:ssh-ci', sshProviderId, 'CI SSH', 'ssh-ci:22', { host: 'ssh-ci', user: 'terminay' }),
+          'profile:puzed-ci': profile('profile:puzed-ci', sshProviderId, 'CI Puzed VM', 'puzed-ci:22', { sshBindingId: 'puzed-ssh:machine-ci' }),
+        },
+        operations: {},
+        environments: {
+          'terminay:this-server': thisServer,
+          'environment:ssh-ci': environment('environment:ssh-ci', sshProviderId, 'profile:ssh-ci', 'CI SSH', 'ssh-ci:22', '/home/terminay/ssh-project', { profile: 'profile:ssh-ci' }),
+          'environment:puzed-ci': environment('environment:puzed-ci', sshProviderId, 'profile:puzed-ci', 'CI Puzed VM', 'puzed-ci:22', '/home/terminay/puzed-project', { sshBindingId: 'puzed-ssh:machine-ci' }),
+        },
+      }, null, 2)}\n`, { mode: 0o600 })
+    }
     const rendererArtifact = await stageImmutableRendererArtifact({
       sourceRoot: path.resolve('dist'),
       destinationParent: path.join(tempDir, 'immutable-build'),
