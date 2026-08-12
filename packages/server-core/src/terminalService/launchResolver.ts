@@ -221,7 +221,7 @@ export class TerminalLaunchResolver {
       : this.pathAuthority.canonicalDirectory(candidate);
   }
 
-  private async projectDirectory(root: string, rootOrigin: "explicit" | "server-default" | "legacy-unverified" | undefined): Promise<string> {
+  private async projectDirectory(root: string, rootOrigin: "explicit" | "server-default" | "environment-default" | "legacy-unverified" | undefined): Promise<string> {
     if (!validCwdInput(root) || root === ".") {
       throw new TerminalServiceError("missing_project_root", "The project does not have a usable folder.");
     }
@@ -229,7 +229,7 @@ export class TerminalLaunchResolver {
     if (canonical === null) {
       throw new TerminalServiceError("missing_project_root", "The project folder is missing or inaccessible.");
     }
-    if (this.pathAuthority.isRoot(canonical) && rootOrigin !== "explicit" && rootOrigin !== "server-default") {
+    if (this.pathAuthority.isRoot(canonical) && rootOrigin !== "explicit" && rootOrigin !== "server-default" && rootOrigin !== "environment-default") {
       throw new TerminalServiceError(
         "unsafe_legacy_root",
         "This legacy project points at a filesystem root. Confirm or change the project folder before opening a terminal.",

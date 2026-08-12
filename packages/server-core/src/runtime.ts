@@ -2,11 +2,13 @@ import type { ProtocolId } from "@terminay/protocol";
 import type { MacroTarget } from "./macroService/types.js";
 import type { ServerSettingsRepository } from "./settings/repository.js";
 import type { ServerVaultService, VaultStatus } from "./settings/vault.js";
+import type { ExtensionSecretBroker } from "./settings/extensionSecretBroker.js";
 import type { RemoteExposureService } from "./remote/exposure.js";
 import type { AgentStatusService } from "./activity/agentService.js";
 import type { TerminalActivityService } from "./activity/service.js";
 import { validateServerPlatformPaths, type ServerPlatformPaths } from "./platform.js";
 import type { TerminalInputSourceAdapter, TerminalService, TerminalServiceAdapter } from "./terminalService/index.js";
+import type { ExtensionHostManager } from "./extensions/manager.js";
 
 export type ServerRuntimeMode = "embedded" | "standalone";
 export type RuntimePhase = "created" | "starting" | "ready" | "stopping" | "stopped" | "failed";
@@ -32,6 +34,10 @@ export interface ServerRuntimeServices {
   readonly agents?: AgentStatusService;
   readonly settings?: ServerSettingsRepository;
   readonly vault?: ServerVaultService;
+  /** Same server-owned scoped broker in embedded and standalone modes. */
+  readonly extensionSecrets?: ExtensionSecretBroker;
+  /** Fault-isolated server-side extension processes. */
+  readonly extensionHosts?: ExtensionHostManager;
   /** Server-owned PTY authority. Client disconnects never stop this service. */
   readonly terminal?: TerminalService;
   /** Optional protocol-facing adapters composed around the PTY authority. */
@@ -118,6 +124,11 @@ export class ServerRuntime {
       }
       catch (error) {
         if (this.phase === "starting") this.phase = "failed";
+        try {
+          await this.services.vault?.restartLock();
+        } catch (lockError) {
+          throw new AggregateError([error, lockError], "server startup and vault fencing failed");
+        }
         throw error;
       }
     })();
@@ -141,7 +152,12 @@ export class ServerRuntime {
       // Terminal exit emits final lifecycle facts; stop agents only afterwards.
       await attempt(() => this.services.terminal?.shutdown());
       await attempt(() => this.services.agents?.stop());
+      await attempt(() => this.services.extensionHosts?.shutdown());
       await attempt(() => this.hooks.stopServices?.(deadline, this.services));
+      // Extension/service teardown runs before the vault is fenced so its
+      // bounded shutdown callbacks can finish. Regardless of teardown
+      // failures, discard all in-memory vault key material before stop ends.
+      await attempt(() => this.services.vault?.restartLock());
       if (failures.length > 0) throw cleanupFailure("server runtime shutdown failed", failures);
     })();
     const timeoutMs = this.config.shutdownTimeoutMs ?? 5_000;

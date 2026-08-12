@@ -25,21 +25,21 @@ extension-management protocol.
 
 ### Public SDK and protocol
 
-- [ ] Create dependency-light `@terminay/extension-api` types, runtime schemas,
+- [x] Create dependency-light `@terminay/extension-api` types, runtime schemas,
   fixtures, conformance CLI, manifest/API/version rules, and namespacing.
-- [ ] Define fixed `extensions.*`/`projectEnvironments.*` DTOs, policies,
+- [x] Define fixed `extensions.*`/`projectEnvironments.*` DTOs, policies,
   permissions, idempotency, revisions, deadlines, and ordered events.
-- [ ] Define bounded declarative forms/options/cards/progress/actions without
+- [x] Define bounded declarative forms/options/cards/progress/actions without
   renderer code or raw HTML/assets.
 
 ### Host and brokers
 
-- [ ] Implement one child per extension using bundled Node, private framed IPC,
+- [x] Implement one child per extension using bundled Node, private framed IPC,
   minimal environment/cwd, bounded admission/messages/timeouts, shutdown, and
   crash-loop control.
-- [ ] Expose only namespaced config/data/cache, scoped log/vault resolution,
+- [x] Expose only namespaced config/data/cache, scoped log/vault resolution,
   provider registration/dependency calls, cancellation, and lifecycle callbacks.
-- [ ] Complete embedded and headless vault composition/unlock so both runtime
+- [x] Complete embedded and headless vault composition/unlock so both runtime
   modes satisfy the same secret-broker contract.
 
 ### Compatibility and hostile fixtures
@@ -48,7 +48,7 @@ extension-management protocol.
   unknown/colliding/escaping inputs before import.
 - [ ] Add incompatible, malformed, oversized, late-IPC, collision, crash, and
   cross-extension secret-denial fixtures.
-- [ ] Prove extension failures cannot block server or This server readiness.
+- [x] Prove extension failures cannot block server or This server readiness.
 
 ## Acceptance checks
 

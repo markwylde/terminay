@@ -115,6 +115,10 @@ export class EmbeddedLanExposure {
 				input.exposure.pairing.metadata(input.handoff.roomId)?.state ===
 				'active',
 			acceptCredential: credentials.accept,
+			protocolAuthenticatedClientForCredential: (credential, clientId) => ({
+				clientId: credentials.clientId(credential) ?? clientId,
+				authScope: 'admin',
+			}),
 			rootDirectory: this.options.uiBundleDirectory,
 			allowedWebOrigins: [input.sessionOrigin],
 			host: settings.bindAddress.trim() || '0.0.0.0',
@@ -222,7 +226,7 @@ export class EmbeddedLanExposure {
 					};
 				},
 				complete: ({ attemptId, handle, clientNonce, proof }) => {
-					input.exposure.verifyReconnectProof({
+					const authenticated = input.exposure.verifyReconnectProof({
 						attemptId,
 						handle,
 						origin: input.sessionOrigin,
@@ -230,7 +234,7 @@ export class EmbeddedLanExposure {
 						proof,
 					});
 					this.publishReconnectRecords(input.exposure);
-					return credentials.issue();
+					return credentials.issue(authenticated.deviceId);
 				},
 			},
 			...(tls === undefined ? {} : { tls }),
@@ -318,25 +322,29 @@ export class EmbeddedLanExposure {
 
 function createProtocolCredentials(): Readonly<{
 	accept(token: string): boolean;
-	issue(): Readonly<{ ticket: string; expiresAt: number }>;
+	clientId(token: string): string | undefined;
+	issue(clientId: string): Readonly<{ ticket: string; expiresAt: number }>;
 }> {
-	const tickets = new Map<string, number>();
+	const tickets = new Map<string, Readonly<{ expiresAt: number; clientId: string }>>();
 	const prune = (now: number) => {
-		for (const [ticket, expiresAt] of tickets)
-			if (expiresAt <= now) tickets.delete(ticket);
+		for (const [ticket, value] of tickets)
+			if (value.expiresAt <= now) tickets.delete(ticket);
 	};
 	return {
 		accept(token) {
 			const now = Date.now();
 			prune(now);
-			return (tickets.get(token) ?? 0) > now;
+			return (tickets.get(token)?.expiresAt ?? 0) > now;
 		},
-		issue() {
+		clientId(token) {
+			return tickets.get(token)?.clientId;
+		},
+		issue(clientId) {
 			const now = Date.now();
 			prune(now);
 			const ticket = randomBytes(32).toString('base64url');
 			const expiresAt = now + 15 * 60 * 1000;
-			tickets.set(ticket, expiresAt);
+			tickets.set(ticket, { expiresAt, clientId });
 			return Object.freeze({ ticket, expiresAt });
 		},
 	};
