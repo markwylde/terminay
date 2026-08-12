@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ProjectEnvironmentSummaryDto } from './uiModel';
 import { statusLabel } from './uiModel';
 
-export function ProjectEnvironmentManager({ environments, providers, serverName, onCreate, onEdit, onTest, onRemove }: Readonly<{
+export function ProjectEnvironmentManager({ environments, providers, serverName, onCreate, onEdit, onTest, onRemove,onAction }: Readonly<{
 	environments: readonly ProjectEnvironmentSummaryDto[];
 	providers:readonly Readonly<{providerId:string;displayName:string;hasProfileForm:boolean}>[];
 	serverName: string;
@@ -10,6 +10,7 @@ export function ProjectEnvironmentManager({ environments, providers, serverName,
 	onEdit: (environment:ProjectEnvironmentSummaryDto) => void;
 	onTest: (id: string) => void;
 	onRemove: (id: string) => void;
+	onAction:(environment:ProjectEnvironmentSummaryDto,action:NonNullable<ProjectEnvironmentSummaryDto['statusCard']>['actions'][number])=>void;
 }>) {
 	const [query, setQuery] = useState('');
 	const [selectedId, setSelectedId] = useState(environments[0]?.id ?? '');
@@ -25,7 +26,7 @@ export function ProjectEnvironmentManager({ environments, providers, serverName,
 					{filtered.length === 0 ? <p role="status">No matching environments.</p> : null}
 				</aside>
 				<section className="management-route-detail" aria-live="polite">
-					{selected ? <><div className="management-route-title"><span className="management-route-icon" aria-hidden="true">{selected.isThisServer ? '›_' : selected.providerLabel === 'SSH' ? '⇄' : '⬡'}</span><div><h3>{selected.name}</h3><p>{selected.providerLabel}</p></div></div><dl><div><dt>Status</dt><dd>{statusLabel(selected.status)}</dd></div><div><dt>Endpoint</dt><dd>{selected.endpointSummary}</dd></div><div><dt>Default root</dt><dd>{selected.defaultRoot ?? 'Environment home'}</dd></div><div><dt>Projects</dt><dd>{selected.referencedProjectCount}</dd></div></dl><div className="management-route-actions"><button type="button" disabled={selected.isThisServer||selected.profileId===undefined} onClick={() => selected.profileId&&onTest(selected.profileId)}>Test</button><button type="button" disabled={selected.isThisServer||selected.profileId===undefined} onClick={()=>onEdit(selected)}>Edit</button><button type="button" className="danger" disabled={selected.isThisServer || selected.profileId===undefined || selected.referencedProjectCount > 0} onClick={() => selected.profileId&&onRemove(selected.profileId)}>Remove</button></div>{selected.referencedProjectCount > 0 ? <p className="management-route-note">Removal is blocked while projects reference this environment.</p> : null}</> : <p>Select an environment.</p>}
+					{selected ? <><div className="management-route-title"><span className="management-route-icon" aria-hidden="true">{selected.isThisServer ? '›_' : selected.providerLabel === 'SSH' ? '⇄' : '⬡'}</span><div><h3>{selected.name}</h3><p>{selected.providerLabel}</p></div></div><dl><div><dt>Status</dt><dd>{statusLabel(selected.status)}</dd></div><div><dt>Endpoint</dt><dd>{selected.endpointSummary}</dd></div><div><dt>Default root</dt><dd>{selected.defaultRoot ?? 'Environment home'}</dd></div><div><dt>Projects</dt><dd>{selected.referencedProjectCount}</dd></div></dl>{selected.statusCard?<section className="environment-trust-card" aria-label={selected.statusCard.title}><h4>{selected.statusCard.title}</h4><p>{selected.statusCard.summary}</p><dl>{selected.statusCard.facts.map(fact=><div key={fact.label}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl><div className="management-route-actions">{selected.statusCard.actions.map(action=><button key={action.id} type="button" className={action.kind==='destructive'?'danger':undefined} disabled={action.disabledReason!==undefined} onClick={()=>onAction(selected,action)}>{action.label}</button>)}</div></section>:null}<div className="management-route-actions"><button type="button" disabled={selected.isThisServer||selected.profileId===undefined} onClick={() => selected.profileId&&onTest(selected.profileId)}>Test</button><button type="button" disabled={selected.isThisServer||selected.profileId===undefined} onClick={()=>onEdit(selected)}>Edit</button><button type="button" className="danger" disabled={selected.isThisServer || selected.profileId===undefined || selected.referencedProjectCount > 0} onClick={() => selected.profileId&&onRemove(selected.profileId)}>Remove</button></div>{selected.referencedProjectCount > 0 ? <p className="management-route-note">Removal is blocked while projects reference this environment.</p> : null}</> : <p>Select an environment.</p>}
 				</section>
 			</div>
 		</div>
