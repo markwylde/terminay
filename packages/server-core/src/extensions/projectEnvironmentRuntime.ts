@@ -4,13 +4,14 @@ import type { ProjectEnvironmentCapability, ProjectEnvironmentState } from "../p
 import type { ExtensionHostManager } from "./manager.js";
 import { randomUUID } from "node:crypto";
 import type { PtyProcess } from "../terminalService/types.js";
+import { RemoteFileProtocol } from "./remoteFileProtocol.js";
 
 const OPERATIONS: Readonly<Record<ProjectEnvironmentCapability, ReadonlySet<string>>> = Object.freeze({
   terminal: new Set(["spawn", "create", "input", "resize", "read", "kill", "dispose"]),
   filesystem: new Set(["resolveRoot", "browse", "realpath", "stat", "list", "read", "write", "createDirectory", "rename", "remove"]),
-  "filesystem-observation": new Set(["observe", "poll", "stop"]),
+  "filesystem-observation": new Set(["observe", "poll", "stop", "manualRefresh"]),
   git: new Set(["discover", "status", "branches", "worktrees", "diff", "fetch", "quickPush", "cancel"]),
-  "process-observation": new Set(["observe", "stop"]),
+  "process-observation": new Set(["observe", "poll", "report", "stop"]),
   "agent-journal": new Set(["observe", "stop"]),
   "mcp-bridge": new Set(["open", "exchange", "close", "revoke"]),
   "shell-discovery": new Set(["list"]),
@@ -21,16 +22,22 @@ const OPERATIONS: Readonly<Record<ProjectEnvironmentCapability, ReadonlySet<stri
  * router. Provider state is always loaded from server-owned state, never from
  * a client request, and a revision change fails closed before child IPC. */
 export class ExtensionProjectEnvironmentRuntime implements ProjectEnvironmentRuntime {
+  private readonly remoteFiles: RemoteFileProtocol;
   constructor(
     readonly providerId: string,
     readonly capabilities: readonly ProjectEnvironmentCapability[],
     private readonly hosts: Pick<ExtensionHostManager, "invokeProvider">,
     private readonly snapshot: () => ProjectEnvironmentState,
-  ) {}
+  ) { this.remoteFiles = new RemoteFileProtocol((operation, input, context) => this.invokeService("filesystem", operation, input, context)); }
 
   async invoke(capability: ProjectEnvironmentCapability, operation: string, input: unknown, context: ProjectEnvironmentInvocationContext): Promise<unknown> {
-    if (!this.capabilities.includes(capability) || !OPERATIONS[capability].has(operation)) throw new Error("provider service operation is unavailable");
+    if (!this.capabilities.includes(capability)) throw new Error("provider service operation is unavailable");
+    if (capability === "filesystem" && (operation.startsWith("files.") || operation.startsWith("file."))) return this.remoteFiles.invoke(operation, input, context);
+    if (!OPERATIONS[capability].has(operation)) throw new Error("provider service operation is unavailable");
     if (capability === "terminal" && operation === "spawn") return this.spawn(input, context);
+    return this.invokeService(capability, operation, input, context);
+  }
+  private async invokeService(capability: ProjectEnvironmentCapability, operation: string, input: unknown, context: ProjectEnvironmentInvocationContext): Promise<unknown> {
     validateInput(capability, operation, input);
     const environment = this.snapshot().environments[context.projectEnvironmentId];
     if (environment === undefined || environment.providerId !== this.providerId || environment.pinnedRevision !== context.environmentRevision || environment.status !== "ready" || environment.archived) throw new Error("project environment binding changed");
@@ -81,12 +88,20 @@ function validateInput(capability: ProjectEnvironmentCapability, operation: stri
     ? ({ create: ["sessionId","term","rows","cols","environment"], input: ["sessionId","data"], resize: ["sessionId","cols","rows"], read: ["sessionId","maxBytes"], kill: ["sessionId","signal"], dispose: ["sessionId"] } as Record<string,string[]>)[operation]
     : capability === "filesystem"
       ? ({ resolveRoot: ["root"], browse: ["path"], realpath: ["path"], stat: ["path"], list: ["path"], read: ["path","offset","length"], write: ["path","data","encoding","expectedMtimeMs","mode"], createDirectory: ["path","mode"], rename: ["path","destination"], remove: ["path"] } as Record<string,string[]>)[operation]
+      : capability === "filesystem-observation"
+        ? ({ observe: [], poll: ["observationId"], stop: ["observationId"], manualRefresh: ["observationId"] } as Record<string,string[]>)[operation]
+      : capability === "process-observation"
+        ? ({ observe: ["sessionId"], poll: ["observationId","sessionId"], stop: ["observationId","sessionId"], report: ["observationId","sessionId","proof","version","sequence","cwd","foregroundProcess","observedAt"] } as Record<string,string[]>)[operation]
       : undefined;
   if (allowed === undefined || Object.keys(value).some((key) => !allowed.includes(key))) throw new TypeError("provider service input contains unknown fields");
   for (const key of ["sessionId","path","destination","signal","term"]) if (value[key] !== undefined && (typeof value[key] !== "string" || String(value[key]).length > 4096 || String(value[key]).includes("\0"))) throw new TypeError("provider service input is invalid");
   if (operation !== "create" && capability === "terminal" && typeof value.sessionId !== "string") throw new TypeError("terminal session identity is required");
   if (operation === "input" && (typeof value.data !== "string" || Buffer.byteLength(value.data) > 64 * 1024)) throw new TypeError("terminal input is invalid");
   if (operation === "write" && (typeof value.data !== "string" || value.data.length > 220_000 || ![undefined,"utf8","base64"].includes(value.encoding as never))) throw new TypeError("filesystem write input is invalid");
+  for (const key of ["observationId","proof","cwd","foregroundProcess"]) if (value[key] !== undefined && (typeof value[key] !== "string" || String(value[key]).length > 4096 || String(value[key]).includes("\0"))) throw new TypeError("observation input is invalid");
+  if (["poll","stop","manualRefresh","report"].includes(operation) && capability.includes("observation") && typeof value.observationId !== "string") throw new TypeError("observation identity is required");
+  if (capability === "process-observation" && typeof value.sessionId !== "string") throw new TypeError("terminal session identity is required");
+  if (operation === "report" && (!Number.isSafeInteger(value.version) || value.version !== 1 || !Number.isSafeInteger(value.sequence) || Number(value.sequence) < 1 || !Number.isFinite(value.observedAt))) throw new TypeError("process observation report is invalid");
 }
 
 function toJson(value: unknown): JsonValue {

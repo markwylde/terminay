@@ -37,6 +37,16 @@ test("oversized and non-JSON service inputs never reach the provider", async () 
   assert.equal(called, false);
 });
 
+test("observation services expose only their closed operation inputs", async () => {
+  const calls = [];
+  const runtime = new ExtensionProjectEnvironmentRuntime(providerId, ["filesystem-observation", "process-observation"], { async invokeProvider(call) { calls.push(call); return { accepted: true }; } }, () => ({ ...state, environments: { [environment.id]: { ...environment, declaredCapabilities: ["filesystem-observation","process-observation"], availableCapabilities: ["filesystem-observation","process-observation"] } } }));
+  await runtime.invoke("filesystem-observation", "manualRefresh", { observationId: "watch-a" }, context);
+  await runtime.invoke("process-observation", "report", { observationId: "process-a", sessionId: "session-a", proof: "secret", version: 1, sequence: 2, cwd: "/work", foregroundProcess: "codex", observedAt: Date.now() }, context);
+  assert.equal(calls.length, 2);
+  await assert.rejects(runtime.invoke("filesystem-observation", "poll", { observationId: "watch-a", injected: true }, context), /unknown fields/);
+  await assert.rejects(runtime.invoke("process-observation", "report", { observationId: "process-a", sessionId: "session-a", proof: "secret", version: 2, sequence: 2, cwd: "/work", observedAt: Date.now() }, context), /invalid/);
+});
+
 test("spawn adapts bounded provider polling into PTY bytes, input, resize and exit", async () => {
   const calls = []; let reads = 0;
   const runtime = new ExtensionProjectEnvironmentRuntime(providerId, ["terminal"], { async invokeProvider(call) {
