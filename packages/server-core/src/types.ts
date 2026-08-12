@@ -16,6 +16,9 @@ export interface AuthenticatedClient {
   /** Identity from the authentication layer, never from hello.authScope. */
   readonly clientId: ProtocolId;
   readonly authScope: AuthScope;
+  /** Named privileged operations granted by the transport/device authority.
+   * Scope remains the coarse read/write gate; services enforce these grants. */
+  readonly permissions?: readonly string[];
   /** Optional transport/application claims. Claims are never sent back to clients. */
   readonly claims?: JsonValue;
 }
@@ -42,6 +45,7 @@ export interface RequestContext {
   readonly connectionId: ProtocolId;
   readonly clientId: ProtocolId;
   readonly authScope: AuthScope;
+  readonly permissions?: readonly string[];
   readonly claims?: JsonValue;
   readonly signal: AbortSignal;
   readonly deadline?: number;
@@ -155,6 +159,10 @@ export interface OrderedEventJournalLike {
 
 export interface ConnectionOptions {
   readonly connectionId?: ProtocolId;
+  /** Authority established by the concrete transport before application
+   * framing starts. When present, ClientHello is negotiation metadata only and
+   * cannot replace the authenticated identity, scope, or claims. */
+  readonly authenticatedClient?: AuthenticatedClient;
   readonly signal?: AbortSignal;
   readonly handshakeTimeoutMs?: number;
 	/** Internal lifecycle observer; runs exactly once even for unauthenticated

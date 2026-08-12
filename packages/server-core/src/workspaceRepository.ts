@@ -1,5 +1,5 @@
 import type { WorkspaceState } from "./workspace.js";
-import { migrateWorkspaceState, validateWorkspace, WorkspaceStore } from "./workspace.js";
+import { migrateWorkspaceState, validateWorkspace, WorkspaceStore, WORKSPACE_SCHEMA_VERSION } from "./workspace.js";
 
 export interface WorkspaceStateBackend {
   load(): Promise<unknown | undefined>;
@@ -27,7 +27,10 @@ export class WorkspaceRepository {
     // A fresh server must persist its canonical workspace immediately. An
     // empty renderer layout is not a recoverable source of truth, so after
     // this point reloads always have a server-owned snapshot to migrate from.
-    if (raw === undefined) await this.backend.commit(state);
+    const rawSchemaVersion = typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).schemaVersion
+      : undefined;
+    if (raw === undefined || rawSchemaVersion !== WORKSPACE_SCHEMA_VERSION) await this.backend.commit(state);
     this.store = new WorkspaceStore(state); this.loaded = true; return this.store.state;
   }
 

@@ -200,7 +200,7 @@ async function updateProjectRoot(
 }
 
 async function applyCommand(workspace: WorkspaceStore, options: WorkspaceOperationRegistryOptions, request: CommandRequest, command: WorkspaceCommand): Promise<{ readonly result: JsonValue; readonly revision: number }> {
-  enforceProjectClaim(request, command);
+  enforceProjectClaim(workspace.state, request, command);
   if (command.type === "project.create" && options.prepareProjectRootUpdate !== undefined) {
     let prepared: PreparedProjectRootUpdate;
     try {
@@ -261,12 +261,56 @@ function terminalSessionIdsClosedBy(state: WorkspaceState, command: WorkspaceCom
   return [];
 }
 
-function enforceProjectClaim(request: CommandRequest, command: WorkspaceCommand): void {
-  const projectId = command.type === "project.move" || command.type === "project.activate" || command.type === "project.rename" || command.type === "project.close" || command.type === "project.root.update" || command.type === "project.shellProfile.set" || command.type === "project.shellProfile.clear" || command.type === "terminal.create" || command.type === "terminal.createPanel" || command.type === "panel.activate" || command.type === "panel.reorder" || command.type === "panel.split"
-    ? command.projectId
-    : undefined;
+function enforceProjectClaim(state: WorkspaceState, request: CommandRequest, command: WorkspaceCommand): void {
   const claimedProjectId = projectClaim(request);
-  if (projectId !== undefined && claimedProjectId !== undefined && projectId !== claimedProjectId) throw protocolError("forbidden", "project command is outside the authenticated project scope");
+  if (claimedProjectId === undefined) return;
+  const projectIds = commandProjectIds(state, command);
+  if (projectIds.length === 0 || projectIds.some((projectId) => projectId !== claimedProjectId)) {
+    throw protocolError("forbidden", "project command is outside the authenticated project scope");
+  }
+}
+
+/** Resolve authorization from canonical objects, never merely from ids chosen
+ * by the caller. Object-derived panel/session commands are security boundaries
+ * because their wire payloads do not carry a source project id. */
+function commandProjectIds(state: WorkspaceState, command: WorkspaceCommand): readonly string[] {
+  switch (command.type) {
+    case "project.create":
+    case "project.activate":
+    case "project.rename":
+    case "project.update":
+    case "project.move":
+    case "project.close":
+    case "project.root.update":
+    case "project.shellProfile.set":
+    case "project.shellProfile.clear":
+    case "terminal.create":
+    case "terminal.createPanel":
+    case "panel.reorder":
+    case "panel.split":
+    case "panel.activate":
+      return [command.projectId];
+    case "panel.create":
+      return [command.panel.projectId];
+    case "panel.update":
+    case "panel.close": {
+      const panel = state.panels[command.panelId];
+      return panel === undefined ? [] : [panel.projectId];
+    }
+    case "panel.move": {
+      const panel = state.panels[command.panelId];
+      return panel === undefined ? [] : [panel.projectId, command.targetProjectId];
+    }
+    case "terminal.markInterrupted": {
+      const session = state.terminalSessions[command.sessionId];
+      return session === undefined ? [] : [session.projectId];
+    }
+    case "project.shellProfile.replace":
+    case "view.create":
+    case "view.rename":
+    case "view.close":
+      return [];
+  }
 }
 
 /** A project claim is a read boundary as well as a command boundary. Never

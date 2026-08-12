@@ -1,0 +1,28 @@
+{
+  "name": "@terminay/extension-conformance-fixture",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./dist/extension.js"
+  },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "dev.terminay.fixture",
+    "displayName": "Fixture Environment",
+    "description": "A portable extension host fixture.",
+    "api": "^1.0.0",
+    "engines": {
+      "terminay": ">=1.0.0",
+      "node": ">=22"
+    },
+    "entrypoint": "dist/extension.js",
+    "permissions": ["configuration:read", "data:write"],
+    "contributes": {
+      "projectEnvironments": [{
+        "id": "dev.terminay.fixture/fixture",
+        "displayName": "Fixture",
+        "capabilities": ["terminal", "filesystem"]
+      }]
+    }
+  }
+}

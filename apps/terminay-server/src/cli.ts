@@ -914,6 +914,10 @@ function createProtocolServer(
 		authToken,
 		authTokenExpiresAt: handoffExpiresAt,
 		acceptCredential: credentials.accept,
+		protocolAuthenticatedClientForCredential: (credential, clientId) => ({
+			clientId: credentials.clientId(credential) ?? clientId,
+			authScope: 'admin',
+		}),
 		reconnect: {
 			enroll: ({ clientId }) => {
 				const issued = remote.issueReconnectGrant({
@@ -941,7 +945,7 @@ function createProtocolServer(
 				};
 			},
 			complete: ({ attemptId, handle, clientNonce, proof }) => {
-				remote.verifyReconnectProof({
+				const authenticated = remote.verifyReconnectProof({
 					attemptId,
 					handle,
 					origin: options.remoteOrigin,
@@ -949,7 +953,7 @@ function createProtocolServer(
 					proof,
 				});
 				persistReconnectRecords(remote.reconnect.list());
-				return credentials.issue();
+				return credentials.issue(authenticated.deviceId);
 			},
 		},
 		...(options.httpHost === undefined ? {} : { host: options.httpHost }),
@@ -965,7 +969,8 @@ function createProtocolServer(
 
 interface ProtocolCredentials {
 	readonly accept: (token: string) => boolean;
-	readonly issue: () => { readonly ticket: string; readonly expiresAt: number };
+	readonly clientId: (token: string) => string | undefined;
+	readonly issue: (clientId: string) => { readonly ticket: string; readonly expiresAt: number };
 }
 
 /** Short-lived application tickets are intentionally separate from the
@@ -977,24 +982,25 @@ function createProtocolCredentials(
 	_bootstrapExpiresAt: number,
 ): ProtocolCredentials {
 	const lifetimeMs = 15 * 60 * 1000;
-	const tickets = new Map<string, number>();
+	const tickets = new Map<string, Readonly<{ expiresAt: number; clientId: string }>>();
 	const prune = (now: number): void => {
-		for (const [ticket, expiresAt] of tickets)
-			if (expiresAt <= now) tickets.delete(ticket);
+		for (const [ticket, value] of tickets)
+			if (value.expiresAt <= now) tickets.delete(ticket);
 	};
 	return {
 		accept: (ticket) => {
 			const now = Date.now();
 			prune(now);
-			const expiresAt = tickets.get(ticket);
-			return expiresAt !== undefined && expiresAt > now;
+			const value = tickets.get(ticket);
+			return value !== undefined && value.expiresAt > now;
 		},
-		issue: () => {
+		clientId: (ticket) => tickets.get(ticket)?.clientId,
+		issue: (clientId) => {
 			const now = Date.now();
 			prune(now);
 			const ticket = randomBytes(32).toString('base64url');
 			const expiresAt = now + lifetimeMs;
-			tickets.set(ticket, expiresAt);
+			tickets.set(ticket, { expiresAt, clientId });
 			return { ticket, expiresAt };
 		},
 	};

@@ -741,6 +741,10 @@ export class ServerTerminalAuthority {
 		);
 		const transport = new ServerPortTransport(scopedPort);
 		const connection = this.composition.core.accept(transport, {
+			authenticatedClient: {
+				clientId: `embedded-renderer-${randomBytes(16).toString('hex')}`,
+				authScope: 'admin',
+			},
 			onDeliveryDiagnostic: this.options.onDeliveryDiagnostic,
 		});
 		void connection.start().catch((error) => {

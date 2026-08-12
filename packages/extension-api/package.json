@@ -1,0 +1,29 @@
+{
+  "name": "@terminay/extension-api",
+  "version": "1.0.0",
+  "description": "Public authoring contract for Terminay project-environment extensions.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "terminay-extension-conformance": "./dist/conformance.js"
+  },
+  "files": ["dist", "fixtures", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  }
+}

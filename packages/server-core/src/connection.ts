@@ -60,6 +60,7 @@ export class ServerConnection implements ServerConnectionLike {
   private readonly outbound: OutboundDeliveryPump;
   private readonly journal: OrderedEventJournalLike;
   private readonly authenticate: AuthenticateClient;
+  private readonly transportAuthenticatedClient: AuthenticatedClient | undefined;
   private readerTask: Promise<void> | undefined;
   private readonly abortController = new AbortController();
   private readonly inFlightRequests = new Map<string, InFlightRequest>();
@@ -76,6 +77,7 @@ export class ServerConnection implements ServerConnectionLike {
     this.connectionId = connectionOptions.connectionId ?? id();
     this.journal = options.eventJournal ?? new OrderedEventJournal();
     this.authenticate = options.authenticate ?? ((context) => ({ clientId: context.hello.clientId, authScope: "none" }));
+    this.transportAuthenticatedClient = connectionOptions.authenticatedClient;
     this.dispatcher = createOperationDispatcher(options);
 		this.onClosed = connectionOptions.onClosed;
 		this.onDeliveryDiagnostic = connectionOptions.onDeliveryDiagnostic;
@@ -198,7 +200,9 @@ export class ServerConnection implements ServerConnectionLike {
 
   private async handleHello(hello: ClientHello): Promise<void> {
     let auth: AuthenticatedClient | ReturnType<typeof authError>;
-    try { auth = await this.authenticate({ hello, signal: this.abortController.signal }); } catch { auth = authError(); }
+    try {
+      auth = this.transportAuthenticatedClient ?? await this.authenticate({ hello, signal: this.abortController.signal });
+    } catch { auth = authError(); }
     if ("code" in auth) { await this.send({ type: "error", error: auth }); await this.close(auth); return; }
     validateIdentity(auth.clientId, auth.authScope);
     const version = negotiateVersion(hello.protocolMin, hello.protocolMax);
@@ -363,7 +367,7 @@ export class ServerConnection implements ServerConnectionLike {
   }
 
   private context(request: QueryEnvelope | CommandEnvelope, signal: AbortSignal = this.abortController.signal) {
-    return { connectionId: this.connectionId, clientId: this.authenticatedClient?.clientId ?? "unknown", authScope: this.authenticatedClient?.authScope ?? "none", ...(this.authenticatedClient?.claims === undefined ? {} : { claims: this.authenticatedClient.claims }), signal, ...(request.deadlineMs === undefined ? {} : { deadline: Date.now() + request.deadlineMs }), ...(request.type === "command" && request.expectedRevision === undefined ? {} : request.type === "command" ? { expectedRevision: request.expectedRevision } : {}) };
+    return { connectionId: this.connectionId, clientId: this.authenticatedClient?.clientId ?? "unknown", authScope: this.authenticatedClient?.authScope ?? "none", ...(this.authenticatedClient?.permissions === undefined ? {} : { permissions: this.authenticatedClient.permissions }), ...(this.authenticatedClient?.claims === undefined ? {} : { claims: this.authenticatedClient.claims }), signal, ...(request.deadlineMs === undefined ? {} : { deadline: Date.now() + request.deadlineMs }), ...(request.type === "command" && request.expectedRevision === undefined ? {} : request.type === "command" ? { expectedRevision: request.expectedRevision } : {}) };
   }
 
   private async send(envelope: Envelope, body: Uint8Array = new Uint8Array()): Promise<void> {

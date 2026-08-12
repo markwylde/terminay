@@ -9,7 +9,10 @@ import {
 	type TransportCloseReason,
 	type TransportState,
 } from '@terminay/protocol';
-import type { ServerConnectionLike } from '../../packages/server-core/src/types';
+import type {
+	AuthenticatedClient,
+	ServerConnectionLike,
+} from '../../packages/server-core/src/types';
 import {
 	runHost,
 	type HostApi,
@@ -28,7 +31,7 @@ type PrivilegedWebRtcExposureOptions = Omit<
 	RemoteAccessServiceOptions,
 	'createWebRtcHostWindow'
 > & {
-	acceptApplicationTransport: (transport: ByteTransport) => ServerConnectionLike;
+	acceptApplicationTransport: (transport: ByteTransport, client: AuthenticatedClient) => ServerConnectionLike;
 };
 
 /**
@@ -105,7 +108,7 @@ class PrivilegedPeer {
 
 	constructor(
 		private readonly options: Readonly<{
-			acceptApplicationTransport: (transport: ByteTransport) => ServerConnectionLike;
+			acceptApplicationTransport: (transport: ByteTransport, client: AuthenticatedClient) => ServerConnectionLike;
 			id: number;
 			runtime: () => Promise<SecureWeriftRuntimeModule>;
 			service: () => RemoteAccessService;
@@ -228,7 +231,7 @@ class PrivilegedPeer {
 		if (this.applicationConnection !== undefined) {
 			throw new Error('The canonical application transport is already authenticated.');
 		}
-		await this.options.service().attachWebRtcApplication(
+		const authenticated = await this.options.service().attachWebRtcApplication(
 			this.options.id,
 			channelId,
 			ticket,
@@ -237,7 +240,10 @@ class PrivilegedPeer {
 		this.applicationChannelId = channelId;
 		try {
 			const transport = createRtcDataChannelTransport(channel);
-			const connection = this.options.acceptApplicationTransport(transport);
+			const connection = this.options.acceptApplicationTransport(transport, {
+				clientId: authenticated.deviceId,
+				authScope: 'admin',
+			});
 			this.applicationConnection = connection;
 			void connection.start().catch((error) => {
 				if (!this.closed) {

@@ -19,11 +19,14 @@ import {
 } from '@terminay/protocol';
 import {
 	DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
-	type ServerCore,
 	type UiBundleManifest,
 	type UiBundleStore,
 	type VerifiedUiBundle,
 	verifyUiBundle,
+} from '@terminay/server-core/ui-bundle';
+import type {
+	AuthenticatedClient,
+	ServerCore,
 } from '@terminay/server-core';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { ServerWebSocketByteTransport } from './webSocketByteTransport.js';
@@ -53,6 +56,12 @@ export interface LocalUiServerOptions {
 	readonly maxAssetBytes?: number;
 	/** Canonical framed protocol core used by remote stream transports. */
 	readonly protocolCore?: ServerCore;
+	/** Resolves the authority already established by the accepted WebSocket
+	 * credential. Production hosts must supply this instead of trusting hello. */
+	readonly protocolAuthenticatedClientForCredential?: (
+		token: string,
+		credentialClientId: string,
+	) => AuthenticatedClient;
 	/** Host-owned bounded diagnostics for a protocol connection that failed
 	 * after its WebSocket upgrade completed. */
 	readonly onConnectionError?: (error: unknown) => void;
@@ -369,11 +378,17 @@ export class LocalUiServer {
 			socket,
 			this.options.limits.maxFrameBytes,
 		);
+		const authenticatedClient =
+			this.options.protocolAuthenticatedClientForCredential?.(
+				token,
+				protocolConnectionId(token, 'client'),
+			);
 		const connection = core.accept(transport, {
 			connectionId: protocolConnectionId(
 				token,
 				`stream-${Date.now().toString(36)}`,
 			),
+			...(authenticatedClient === undefined ? {} : { authenticatedClient }),
 		});
 		void connection.start().catch((error) => {
 			try {

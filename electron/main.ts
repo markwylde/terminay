@@ -1076,11 +1076,13 @@ if (desktopWebRtcRuntimeRoot !== undefined) {
 	privilegedWebRtcExposure = new PrivilegedWebRtcExposure(
 		desktopWebRtcRuntimeRoot,
 		{
-			acceptApplicationTransport: (transport) => {
+			acceptApplicationTransport: (transport, authenticatedClient) => {
 				if (serverTerminalAuthority === null) {
 					throw new Error('The embedded server is unavailable.');
 				}
-				return serverTerminalAuthority.composition.core.accept(transport);
+				return serverTerminalAuthority.composition.core.accept(transport, {
+					authenticatedClient,
+				});
 			},
 			getControllableSession: (sessionId) => {
 				const authority = serverTerminalAuthority;
