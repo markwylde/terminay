@@ -10,7 +10,7 @@ generic declarative provider forms consistently in Desktop and web clients.
 Phase 2. Build first against Phase 1 protocol fixtures in parallel with
 [Tasks 43](./43-environment-routed-project-services.md),
 [44](./44-extension-installation-and-management.md), and
-[47](./47-official-puzed-extension-foundation.md), then integrate their live
+[47](../tasks_completed/47-official-puzed-extension-foundation.md), then integrate their live
 services.
 
 ## Dependencies

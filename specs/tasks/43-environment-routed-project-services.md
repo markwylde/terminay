@@ -10,7 +10,7 @@ capabilities explicitly.
 
 Phase 2, in parallel with [Tasks 44](./44-extension-installation-and-management.md),
 [45](./45-project-environment-and-extension-ui.md), and
-[47](./47-official-puzed-extension-foundation.md) after the Phase 1 contracts.
+[47](../tasks_completed/47-official-puzed-extension-foundation.md) after the Phase 1 contracts.
 
 ## Dependencies
 
