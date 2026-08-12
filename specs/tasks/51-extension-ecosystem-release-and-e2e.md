@@ -55,7 +55,7 @@ Phase 6 release convergence after Tasks 41–50.
   one mixed This server/SSH/Puzed view and client reconnect/restart.
 - [x] Add hostile package/IPC/auth/project-claim/secret/host-key/redirect/
   cross-environment/no-fallback sentinel suites and crash/resource recovery.
-- [ ] Measure bounded menus/forms/inventories, SFTP traversal, provider IPC,
+- [x] Measure bounded menus/forms/inventories, SFTP traversal, provider IPC,
   connection pools, event streams, and provisioning concurrency.
 
 ## Acceptance checks
