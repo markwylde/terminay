@@ -249,12 +249,15 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		// second attached renderer must not send another automatic OSC response.
 		const queryReplyProof = '__TERMINAY_OSC_REPLY_COUNT__1';
 		const colorQuery =
-			`node -e 'let b="";process.stdin.setRawMode(true);` +
-			`process.stdin.on("data",d=>b+=d);` +
-			`process.stdout.write("\\x1b]10;?\\x07");` +
-			`setTimeout(()=>{process.stdin.setRawMode(false);` +
+			`node -e 'let b="",done=false,settle;process.stdin.setRawMode(true);` +
+			`const finish=()=>{if(done)return;done=true;clearTimeout(settle);` +
+			`process.stdin.setRawMode(false);` +
 			`console.log("__TERMINAY_OSC_REPLY_COUNT__"+(b.match(/rgb:/g)||[]).length);` +
-			`process.exit()},500)'`;
+			`process.exit()};` +
+			`process.stdin.on("data",d=>{b+=d;` +
+			`if(/rgb:/.test(b)){clearTimeout(settle);settle=setTimeout(finish,250)}});` +
+			`process.stdout.write("\\x1b]10;?\\x07");` +
+			`setTimeout(finish,5000)'`;
 		await desktopInput.focus();
 		await mainWindow.keyboard.type(colorQuery);
 		await mainWindow.keyboard.press('Enter');
