@@ -232,7 +232,12 @@ test("provider callbacks reject unsafe DTOs and honor cancellation and deadlines
         async createEnvironment(_request, call) { return new Promise((_resolve, reject) => call.signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true })); },
         async resumeOperation() { return { state: "pending", operationId: "x", providerState: {}, progress: { operationId: "x", title: "x", resumable: true, stages: [] } }; },
         async getStatus() { return { state: "available", revision: 1 }; },
-        async invokeAction(request) { return { state: "complete", providerState: request.providerState, status: { state: "available", revision: 1 } }; }
+        async invokeAction(request) { return { state: "complete", providerState: request.providerState, status: { state: "available", revision: 1 } }; },
+        async invokeService(request) {
+          if (request.operation === "read") return { data: "not canonical base64", encoding: "base64", secret: "must-not-cross" };
+          if (request.operation === "input") return { accepted: false };
+          return { accepted: true };
+        }
       }
     });
   }`);
@@ -246,6 +251,10 @@ test("provider callbacks reject unsafe DTOs and honor cancellation and deadlines
   controller.abort();
   await assert.rejects(pending, /cancelled/);
   assert.equal((await manager.invokeProvider({ providerId, callback: "getStatus", request: { environmentId: "env", providerState: {} } })).state, "available");
+  const serviceBase = { environmentId: "env", providerState: {}, capability: "terminal", projectId: "project", environmentRevision: 1, input: {} };
+  await assert.rejects(manager.invokeProvider({ providerId, callback: "invokeService", request: { ...serviceBase, operation: "input" } }), /terminal acknowledgement/);
+  await assert.rejects(manager.invokeProvider({ providerId, callback: "invokeService", request: { ...serviceBase, operation: "read" } }), /terminal read|oversized/);
+  await assert.rejects(manager.invokeProvider({ providerId, callback: "invokeService", request: { ...serviceBase, capability: "infrastructure", operation: "run" } }), /unsupported service capability/);
   await manager.shutdown();
 });
 
