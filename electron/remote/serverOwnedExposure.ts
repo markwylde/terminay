@@ -1,4 +1,4 @@
-import type { RemoteReconnectGrantRecord } from '@terminay/server-core';
+import type { RemoteReconnectGrantRecord } from '@terminay/server-core/remote';
 import { createSecureWeriftHeadlessHost } from '../../apps/terminay-server/src/remote/secureWeriftHost';
 import { verifySelectedSecureWeriftRuntime } from '../../apps/terminay-server/src/remote/secureWeriftRuntime';
 import {
