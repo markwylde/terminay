@@ -3,13 +3,13 @@ import type { QueryCommandTransport } from './queryCommand.js';
 import type { CommandOptions, QueryOptions } from './types.js';
 
 export const PROJECT_ENVIRONMENT_OPERATIONS = Object.freeze({
-	snapshot: 'projectEnvironments.snapshot',
-	createProject: 'projectEnvironments.createProject',
-	createProfile: 'projectEnvironments.createProfile',
-	updateProfile: 'projectEnvironments.updateProfile',
-	testProfile: 'projectEnvironments.testProfile',
-	removeProfile: 'projectEnvironments.removeProfile',
-	invokeAction: 'projectEnvironments.invokeAction',
+	snapshot: 'project-environments.snapshot',
+	createProject: 'project-environments.create-project',
+	createProfile: 'project-environments.create-profile',
+	updateProfile: 'project-environments.update-profile',
+	testProfile: 'project-environments.test-profile',
+	removeProfile: 'project-environments.remove-profile',
+	invokeAction: 'project-environments.invoke-action',
 } as const);
 
 export type ProjectEnvironmentClientStatus = 'ready' | 'connecting' | 'reconnecting' | 'provisioning' | 'starting' | 'stopping' | 'offline' | 'authentication-required' | 'host-key-changed' | 'permission-denied' | 'extension-missing' | 'extension-disabled' | 'extension-incompatible' | 'unreachable' | 'failed';

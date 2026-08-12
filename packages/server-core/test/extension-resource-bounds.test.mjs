@@ -54,8 +54,8 @@ test("provisioning mutations are serialized so one server registry never runs co
     return { state: "ready", providerState: {}, status: { state: "available", revision: 1 } };
   } };
   const operations = createProjectEnvironmentOperationHandlers({ repository, workspace, thisServerRoot: () => "/tmp", providerDefinitions: () => [{ providerId, displayName: "Resource", capabilities: ["infrastructure"], createForm: { id: "create", title: "Create", sections: [], submitLabel: "Create" } }], providerRuntime });
-  const request = (commandId) => ({ envelope: { type: "command", commandId, correlationId: commandId, operation: "projectEnvironments.create", payload: { providerId, values: { name: commandId } } }, body: new Uint8Array(), context: { connectionId: "connection", clientId: "client", authScope: "admin", permissions: ["environments:manage"], signal: new AbortController().signal } });
-  await Promise.all(["one", "two", "three", "four"].map((id) => operations.commands["projectEnvironments.create"](request(id))));
+  const request = (commandId) => ({ envelope: { type: "command", commandId, correlationId: commandId, operation: "project-environments.create", payload: { providerId, values: { name: commandId } } }, body: new Uint8Array(), context: { connectionId: "connection", clientId: "client", authScope: "admin", permissions: ["environments:manage"], signal: new AbortController().signal } });
+  await Promise.all(["one", "two", "three", "four"].map((id) => operations.commands["project-environments.create"](request(id))));
   assert.equal(maximum, 1);
   assert.equal(Object.keys(repository.state.environments).length, 5);
 });

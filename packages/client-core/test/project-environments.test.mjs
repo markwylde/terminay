@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ExtensionsClient, ProjectEnvironmentsClient } from '../dist/index.js';
+import { EXTENSION_OPERATIONS, ExtensionsClient, PROJECT_ENVIRONMENT_OPERATIONS, ProjectEnvironmentsClient } from '../dist/index.js';
+
+test('all project environment and extension client operations obey the wire grammar',()=>{
+	const operationPattern=/^[a-z][a-z0-9._:-]{0,255}$/;
+	for(const operation of [...Object.values(PROJECT_ENVIRONMENT_OPERATIONS),...Object.values(EXTENSION_OPERATIONS)]) assert.match(operation,operationPattern,operation);
+});
 
 test('project environment client uses fixed operations and parses safe summaries', async () => {
 	const calls=[];
@@ -12,14 +17,14 @@ test('project environment client uses fixed operations and parses safe summaries
 	assert.equal(snapshot.environments[0].isThisServer,true);
 	assert.equal(snapshot.providers[0].profileForm.sections[0].fields[0].id,'host');
 	await client.createProject({environmentId:'ssh:one',viewId:'view-1',root:'/work'});
-	assert.deepEqual(calls.map(call=>call.operation),['projectEnvironments.snapshot','projectEnvironments.createProject']);
+	assert.deepEqual(calls.map(call=>call.operation),['project-environments.snapshot','project-environments.create-project']);
 	assert.equal(calls[1].payload.environmentId,'ssh:one');
 });
 
 test('extension client binds preview confirmation to exact digest and revision', async () => {
 	const calls=[];
 	const client=new ExtensionsClient({
-		async query(operation,payload){calls.push({kind:'query',operation,payload});return operation==='extensions.previewInstall'?{previewDigest:'digest',packageName:'demo',exactVersion:'1.2.3',registryIntegrity:'sha512-ok',official:false,permissions:['network'],provenance:'verified'}:{authorityLabel:'Production',revision:4,catalogue:[{extensionId:'demo.ext',packageName:'demo',displayName:'Demo',description:'Demo provider',official:false}],extensions:[]};},
+		async query(operation,payload){calls.push({kind:'query',operation,payload});return operation==='extensions.preview-install'?{previewDigest:'digest',packageName:'demo',exactVersion:'1.2.3',registryIntegrity:'sha512-ok',official:false,permissions:['network'],provenance:'verified'}:{authorityLabel:'Production',revision:4,catalogue:[{extensionId:'demo.ext',packageName:'demo',displayName:'Demo',description:'Demo provider',official:false}],extensions:[]};},
 		async command(operation,payload){calls.push({kind:'command',operation,payload});return {authorityLabel:'Production',revision:5,catalogue:[],extensions:[]};},
 	});
 	const preview=await client.previewInstall('demo@1.2.3');

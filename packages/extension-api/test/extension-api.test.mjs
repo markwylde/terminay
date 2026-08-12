@@ -25,6 +25,13 @@ import {
   validateValidationIssues,
 } from "../dist/index.js";
 
+test("every public extension operation and event obeys the wire protocol grammar", () => {
+  const operationPattern = /^[a-z][a-z0-9._:-]{0,255}$/;
+  for (const name of [...EXTENSION_OPERATION_NAMES, ...EXTENSION_EVENT_NAMES]) {
+    assert.match(name, operationPattern, name);
+  }
+});
+
 test("valid fixture conforms to the closed manifest schema", () => {
   assert.deepEqual(validateExtensionManifest(validManifestFixture), { ok: true, value: validManifestFixture });
 });

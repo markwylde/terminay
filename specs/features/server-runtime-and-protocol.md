@@ -185,7 +185,7 @@ Protocol types and runtime validators live in a dependency-light shared
 package. UI code consumes a `TerminayClient` interface and does not call
 Electron IPC, WebRTC, WebSocket, or server internals directly.
 
-Fixed `extensions.*` and `projectEnvironments.*` operations expose bounded
+Fixed `extensions.*` and `project-environments.*` operations expose bounded
 management/status/declarative-form DTOs. Extensions cannot register arbitrary
 public application operations. Every project operation derives its environment
 from canonical server state before dispatch.
