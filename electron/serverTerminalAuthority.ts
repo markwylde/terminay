@@ -37,6 +37,11 @@ import {
 } from '../packages/server-core/src/fileService/index';
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
 import { GitService } from '../packages/server-core/src/gitService/service';
+import {
+	ProjectEnvironmentRegistry,
+	ProjectEnvironmentRouter,
+	createInitialProjectEnvironmentState,
+} from '../packages/server-core/src/projectEnvironment/index';
 import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
@@ -302,6 +307,13 @@ export class ServerTerminalAuthority {
 			projects: this.fileSessionProjects,
 		});
 		const eventJournal = new OrderedEventJournal();
+		const initialProjectEnvironments = createInitialProjectEnvironmentState(options.serverId);
+		const projectEnvironmentRouter = new ProjectEnvironmentRouter({
+			serverId: options.serverId,
+			workspaceSnapshot: () => this.workspace.state,
+			environmentSnapshot: () => initialProjectEnvironments,
+			registry: new ProjectEnvironmentRegistry(),
+		});
 		const fileObservations = new ServerFileObservationAdapter({
 			serverId: options.serverId,
 			eventJournal,
@@ -412,6 +424,7 @@ export class ServerTerminalAuthority {
 			agents: this.agents,
 			git: gitAdapter,
 			eventJournal,
+			projectEnvironmentRouter,
 			fileObservations,
 			...(options.recordings === undefined
 				? {}

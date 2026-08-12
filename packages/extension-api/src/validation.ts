@@ -28,8 +28,8 @@ const permissions = new Set<ExtensionPermission>([
   "external-resources:manage",
 ]);
 const capabilities = new Set([
-  "terminal", "filesystem", "filesystem-watch", "git", "process-observation",
-  "agent-journal", "mcp",
+  "terminal", "filesystem", "filesystem-observation", "git", "process-observation",
+  "agent-journal", "mcp-bridge", "infrastructure", "shell-discovery",
 ]);
 const manifestKeys = new Set([
   "manifestVersion", "id", "displayName", "description", "api", "engines",

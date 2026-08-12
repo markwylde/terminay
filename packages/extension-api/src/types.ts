@@ -15,11 +15,13 @@ export type ExtensionPermission =
 export type EnvironmentCapability =
   | "terminal"
   | "filesystem"
-  | "filesystem-watch"
+  | "filesystem-observation"
   | "git"
   | "process-observation"
   | "agent-journal"
-  | "mcp";
+  | "mcp-bridge"
+  | "infrastructure"
+  | "shell-discovery";
 
 export interface ExtensionDependency {
   extensionId: string;

@@ -2740,6 +2740,14 @@ function createAppMenu(
 					click: () => sendCommandToFocusedWindow('new-project'),
 				},
 				{
+					label: 'Project Environments…',
+					click: () => sendCommandToFocusedWindow('open-project-environments'),
+				},
+				{
+					label: 'Extensions…',
+					click: () => sendCommandToFocusedWindow('open-extensions'),
+				},
+				{
 					type: 'separator',
 				},
 				{
