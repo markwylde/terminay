@@ -29,6 +29,7 @@ export type ProjectEnvironmentSummaryDto = Readonly<{
 	isThisServer?: boolean;
 	isFavourite?: boolean;
 	lastUsedAt?: string;
+	statusCard?:import('@terminay/client-core').ProjectEnvironmentStatusCard;
 }>;
 
 export type ExtensionSummaryDto = Readonly<{
