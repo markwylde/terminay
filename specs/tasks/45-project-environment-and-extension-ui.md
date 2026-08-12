@@ -15,8 +15,8 @@ services.
 
 ## Dependencies
 
-- Protocol/schema fixtures from [Task 41](./41-project-environment-domain-and-local-provider.md)
-  and [Task 42](./42-extension-api-manifest-and-host.md); final integration with
+- Protocol/schema fixtures from [Task 41](../tasks_completed/41-project-environment-domain-and-local-provider.md)
+  and [Task 42](../tasks_completed/42-extension-api-manifest-and-host.md); final integration with
   [Task 43](./43-environment-routed-project-services.md) and
   [Task 44](./44-extension-installation-and-management.md).
 

@@ -14,8 +14,8 @@ Phase 2, in parallel with [Tasks 44](./44-extension-installation-and-management.
 
 ## Dependencies
 
-- [Task 41](./41-project-environment-domain-and-local-provider.md)
-- [Task 42](./42-extension-api-manifest-and-host.md)
+- [Task 41](../tasks_completed/41-project-environment-domain-and-local-provider.md)
+- [Task 42](../tasks_completed/42-extension-api-manifest-and-host.md)
 
 ## Governing specifications
 
