@@ -39,6 +39,18 @@ async function createLaunchDirectory(): Promise<{
 	return { root, temp, userData };
 }
 
+async function removeLaunchDirectory(root: string): Promise<void> {
+	// Chromium can finish a final cache write immediately after Electron reports
+	// that it has closed. Let Node retry transient ENOTEMPTY/EBUSY failures rather
+	// than turning fixture cleanup into a product-test failure.
+	await rm(root, {
+		force: true,
+		maxRetries: 10,
+		recursive: true,
+		retryDelay: 100,
+	});
+}
+
 async function waitForEvent(
 	userData: string,
 	eventName: string,
@@ -171,7 +183,7 @@ test.describe('local Desktop diagnostics', () => {
 			expect(segmentMetadata.mode & 0o777).toBe(PRIVATE_FILE_MODE);
 		} finally {
 			await closeIfRunning(app);
-			await rm(launch.root, { force: true, recursive: true });
+			await removeLaunchDirectory(launch.root);
 		}
 	});
 
@@ -223,7 +235,7 @@ test.describe('local Desktop diagnostics', () => {
 		} finally {
 			await closeIfRunning(first);
 			await closeIfRunning(second);
-			await rm(launch.root, { force: true, recursive: true });
+			await removeLaunchDirectory(launch.root);
 		}
 	});
 
@@ -332,7 +344,7 @@ test.describe('local Desktop diagnostics', () => {
 			);
 		} finally {
 			await closeIfRunning(app);
-			await rm(launch.root, { force: true, recursive: true });
+			await removeLaunchDirectory(launch.root);
 		}
 	});
 
@@ -401,7 +413,7 @@ test.describe('local Desktop diagnostics', () => {
 			);
 		} finally {
 			await closeIfRunning(app);
-			await rm(launch.root, { force: true, recursive: true });
+			await removeLaunchDirectory(launch.root);
 		}
 	});
 
@@ -480,7 +492,7 @@ test.describe('local Desktop diagnostics', () => {
 			).toHaveLength(1);
 		} finally {
 			await closeIfRunning(app);
-			await rm(launch.root, { force: true, recursive: true });
+			await removeLaunchDirectory(launch.root);
 		}
 	});
 
@@ -568,7 +580,7 @@ test.describe('local Desktop diagnostics', () => {
 			).toBe(false);
 		} finally {
 			await closeIfRunning(app);
-			await rm(launch.root, { force: true, recursive: true });
+			await removeLaunchDirectory(launch.root);
 		}
 	});
 });
