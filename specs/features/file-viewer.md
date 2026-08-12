@@ -11,6 +11,13 @@ Terminay Server owns file identity, metadata, reads, saves, watches, preview
 sources, draft coordination, and Git diff generation. Clients render the
 appropriate responsive viewer through the application protocol.
 
+The server routes file identity and storage through the canonical project's
+[environment](./project-environments.md). A file session remains bound to that
+environment/root/revision; identical path text on another machine is a
+different authority. Cross-environment panel movement is rejected, disconnect
+preserves dirty drafts, and unavailable watch/Git capabilities degrade
+explicitly rather than using the Terminay Server filesystem.
+
 ## Opening and workspace behaviour
 
 - Double-clicking a file opens it; double-clicking a directory expands or

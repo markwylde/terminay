@@ -70,17 +70,21 @@ the proposal or protocol response.
 
 ## Safety and boundaries
 
-Git commands run in the selected Terminay Server with the target
-worktree/repository path, never in the client. Quick Push sends only the bounded
+Git commands run through the exact project's declared environment Git
+capability, authorized by Terminay Server and never in the client. This server
+uses its native Git service; remote providers supply their own bounded runner
+and path adapter or Git is unavailable. A remote-looking path is never passed
+to local Git. Quick Push sends only the bounded
 context needed to the selected provider, requires explicit user confirmation
 before mutation, and reports the exact failed Git/remote step. Credentials
-remain in the server machine's existing Git/SSH/CLI environment rather than
-being copied into Terminay settings.
+remain within the exact environment's bounded Git/SSH/CLI runner or its scoped
+server vault references rather than being copied into renderer state or generic
+Terminay settings.
 
 ## Ownership
 
-Git, worktree, provider CLI, and Quick Push execution run in the selected
-Terminay Server under
+Git, worktree, provider CLI, and Quick Push execution are routed by the selected
+Terminay Server to the project environment under
 [server-owned workspace state](./server-owned-workspace-state.md). Local and
 remote clients submit the same scoped commands. Review/confirmation remains a
 client interaction, while the server revalidates repository state and
