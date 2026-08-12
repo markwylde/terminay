@@ -10,3 +10,4 @@ export * from "./packageValidation.js";
 export * from "./installer.js";
 export * from "./operations.js";
 export * from "./composition.js";
+export * from "./puzedSshComposition.js";
