@@ -29,6 +29,7 @@ export type ProjectEnvironmentSummaryDto = Readonly<{
 	isThisServer?: boolean;
 	isFavourite?: boolean;
 	lastUsedAt?: string;
+	statusCard?: import('@terminay/client-core').ProjectEnvironmentStatusCard;
 }>;
 
 export type ExtensionSummaryDto = Readonly<{
@@ -37,7 +38,14 @@ export type ExtensionSummaryDto = Readonly<{
 	displayName: string;
 	description: string;
 	version?: string;
-	state: 'available' | 'installed' | 'disabled' | 'incompatible' | 'failed' | 'quarantined' | 'pending';
+	state:
+		| 'available'
+		| 'installed'
+		| 'disabled'
+		| 'incompatible'
+		| 'failed'
+		| 'quarantined'
+		| 'pending';
 	official: boolean;
 	permissions: readonly string[];
 	dependants: readonly string[];
@@ -47,11 +55,24 @@ export type ExtensionSummaryDto = Readonly<{
 export type DeclarativeFieldDto = Readonly<{
 	id: string;
 	label: string;
-	kind: 'text' | 'number' | 'url' | 'secret' | 'checkbox' | 'switch' | 'textarea' | 'select' | 'preset-cards';
+	kind:
+		| 'text'
+		| 'number'
+		| 'url'
+		| 'secret'
+		| 'checkbox'
+		| 'switch'
+		| 'textarea'
+		| 'select'
+		| 'preset-cards';
 	required?: boolean;
 	description?: string;
 	placeholder?: string;
-	options?: readonly Readonly<{ label: string; value: string; description?: string }>[];
+	options?: readonly Readonly<{
+		label: string;
+		value: string;
+		description?: string;
+	}>[];
 	optionSource?: string;
 	searchable?: boolean;
 	visibleWhen?: Readonly<{ fieldId: string; equals: string | boolean }>;
