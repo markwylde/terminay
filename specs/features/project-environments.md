@@ -8,6 +8,11 @@ capability routing, status, credentials, and lifecycle. A workspace view may
 contain projects using different environments while Desktop and browser clients
 remain presentation-only.
 
+All public project-environment operations and events use the protocol-valid
+`project-environments.*` namespace with lowercase kebab-case suffixes. Fixed
+names are checked against the protocol grammar before release so Desktop-local
+shortcuts cannot hide a name that authenticated browser transports reject.
+
 The built-in **This server** provider preserves current local behavior. The SSH
 extension connects to existing machines, and infrastructure extensions such as
 Puzed can provision or manage a machine before composing an SSH-backed project
