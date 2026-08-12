@@ -500,6 +500,10 @@ const activeRemoteByteConnectionsByWebContents = new Map<
 	number,
 	RemoteHttpConnection
 >();
+// BrowserWindow identity outlives a renderer document and its transferred
+// MessagePort. Keep the selected authority separately so a reload reconnects
+// the same profile instead of allowing the Local load hook to take over.
+const remoteProfileBindingsByWebContents = new Map<number, string>();
 const pendingRemoteConnectionWindowsByProfile = new Map<
 	string,
 	BrowserWindow
@@ -3065,6 +3069,7 @@ function createWindow(options?: {
 		const remoteConnection =
 			activeRemoteByteConnectionsByWebContents.get(windowWebContentsId);
 		activeRemoteByteConnectionsByWebContents.delete(windowWebContentsId);
+		remoteProfileBindingsByWebContents.delete(windowWebContentsId);
 		void remoteConnection?.close();
 	});
 
@@ -3127,11 +3132,38 @@ function createWindow(options?: {
 	let serverConnectionSentForLoad = false;
 	window.webContents.on('did-start-loading', () => {
 		serverConnectionSentForLoad = false;
+		const remoteConnection =
+			activeRemoteByteConnectionsByWebContents.get(windowWebContentsId);
+		if (remoteConnection !== undefined) {
+			activeRemoteByteConnectionsByWebContents.delete(windowWebContentsId);
+			void remoteConnection.close();
+		}
 	});
 	const sendServerConnection = () => {
 		if (window.isDestroyed() || !serverTerminalAuthority) return;
 		if (serverConnectionSentForLoad) return;
 		serverConnectionSentForLoad = true;
+		const remoteProfileId =
+			remoteProfileBindingsByWebContents.get(windowWebContentsId);
+		if (remoteProfileId !== undefined) {
+			loadRememberedRemoteConnections();
+			const profile = rememberedRemoteConnections.get(remoteProfileId);
+			if (profile === undefined || profile.kind !== 'device') {
+				console.error(
+					'[connection] selected remote profile is unavailable after reload',
+				);
+				return;
+			}
+			void reconnectRememberedRemoteProfile(window.webContents, profile).catch(
+				(error) =>
+					console.error(
+						'[connection] failed to restore selected remote profile after reload',
+						error,
+					),
+			);
+			return;
+		}
+		if (isPendingRemoteConnectionWindow(window)) return;
 		void ensureLocalWorkspaceSeed(window.webContents.id)
 			.catch((error) => {
 				console.error('[server] failed to seed local workspace', error);
@@ -3163,9 +3195,7 @@ function createWindow(options?: {
 				});
 			});
 	};
-	if (options?.initialServerConnection !== 'deferred') {
-		window.webContents.on('did-finish-load', sendServerConnection);
-	}
+	window.webContents.on('did-finish-load', sendServerConnection);
 
 	// A torn-off window boots in "adopt" mode so the renderer starts with no
 	// default project and instead pulls its adopted project on mount.
@@ -3445,7 +3475,6 @@ async function connectRemoteByteTransport(
 	if (window === null || window.isDestroyed() || !appWindows.has(window)) {
 		throw new Error('The target renderer is unavailable.');
 	}
-
 	const channel = new MessageChannelMain();
 	const mainPort = new ServerScopedMessagePort(
 		channel.port1 as unknown as ServerMessagePort,
@@ -3547,6 +3576,7 @@ async function connectRemoteByteTransport(
 		scopeId,
 	};
 	activeRemoteByteConnectionsByWebContents.set(sender.id, connection);
+	remoteProfileBindingsByWebContents.set(sender.id, profile.id);
 	if (previous !== null && previous.scopeId !== scopeId) {
 		await previous.close();
 	}
@@ -3608,6 +3638,43 @@ async function connectRemoteByteTransport(
 		.finally(() => {
 			if (handshakeTimeout !== undefined) clearTimeout(handshakeTimeout);
 		});
+}
+
+async function reconnectRememberedRemoteProfile(
+	sender: Electron.WebContents,
+	profile: RememberedRemoteConnection,
+): Promise<void> {
+	const connected = await createDesktopReconnectTransport({
+		origin: profile.origin,
+		store: createDesktopDeviceCredentialStore(),
+	});
+	if (connected.signalingBootstrap === undefined) {
+		await connectRemoteByteTransport(
+			sender,
+			connected.transport,
+			profile.label,
+			profile.origin,
+			profile,
+		);
+		return;
+	}
+	try {
+		const webRtcTransport = await createDesktopBootstrappedWebRtcTransport({
+			bootstrap: connected.signalingBootstrap,
+			expectedOrigin: profile.origin,
+		});
+		await connected.transport.close({ code: 'normal' });
+		await connectRemoteByteTransport(
+			sender,
+			webRtcTransport,
+			profile.label,
+			profile.origin,
+			profile,
+		);
+	} catch (error) {
+		await connected.transport.close({ code: 'normal' });
+		throw error;
+	}
 }
 
 function openMacrosWindow(): void {
@@ -5452,34 +5519,8 @@ ipcMain.handle(
 		}
 		pendingRemoteConnectionWindowsByProfile.set(profile.id, targetWindow);
 		targetWindow.focus();
-		const credentialStore = createDesktopDeviceCredentialStore();
 		try {
-			const connected = await createDesktopReconnectTransport({
-				origin: profile.origin,
-				store: credentialStore,
-			});
-			if (connected.signalingBootstrap === undefined) {
-				await connectRemoteByteTransport(
-					targetWindow.webContents,
-					connected.transport,
-					profile.label,
-					profile.origin,
-					profile,
-				);
-				return;
-			}
-			const webRtcTransport = await createDesktopBootstrappedWebRtcTransport({
-				bootstrap: connected.signalingBootstrap,
-				expectedOrigin: profile.origin,
-			});
-			await connected.transport.close({ code: 'normal' });
-			await connectRemoteByteTransport(
-				targetWindow.webContents,
-				webRtcTransport,
-				profile.label,
-				profile.origin,
-				profile,
-			);
+			await reconnectRememberedRemoteProfile(targetWindow.webContents, profile);
 		} catch (error) {
 			if (
 				!targetWindow.isDestroyed() &&
