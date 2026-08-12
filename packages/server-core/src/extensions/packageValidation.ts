@@ -18,7 +18,7 @@ export interface ValidatedExtensionTree {
 export async function validateMaterializedExtension(stagingRoot: string, resolution: RegistryPackageResolution): Promise<ValidatedExtensionTree> {
   const lockBytes = await readFile(join(stagingRoot, "package-lock.json"));
   const lock = parseObject(lockBytes, "package-lock.json");
-  validateLock(lock, resolution);
+  validateNpmLockfile(lock, resolution);
   const packageRoot = join(stagingRoot, "node_modules", ...resolution.packageName.split("/"));
   const canonicalStaging = await realpath(stagingRoot);
   const canonicalPackage = await realpath(packageRoot);
@@ -31,9 +31,13 @@ export async function validateMaterializedExtension(stagingRoot: string, resolut
   return Object.freeze({ packageRoot, manifest, lockHash: sha256(lockBytes), inventoryHash: sha256(JSON.stringify(inventory)) });
 }
 
-function validateLock(lock: Record<string, unknown>, resolution: RegistryPackageResolution): void {
-  if (lock.lockfileVersion !== 3 || typeof lock.packages !== "object" || lock.packages === null || Array.isArray(lock.packages)) throw new Error("exact npm lockfile v3 is required");
-  const packages = lock.packages as Record<string, unknown>;
+/** Validate the complete resolved closure before npm is allowed to materialize
+ * any package content or invoke package tooling. */
+export function validateNpmLockfile(lock: unknown, resolution: RegistryPackageResolution): void {
+  if (typeof lock !== "object" || lock === null || Array.isArray(lock)) throw new Error("exact npm lockfile v3 is required");
+  const lockRecord = lock as Record<string, unknown>;
+  if (lockRecord.lockfileVersion !== 3 || typeof lockRecord.packages !== "object" || lockRecord.packages === null || Array.isArray(lockRecord.packages)) throw new Error("exact npm lockfile v3 is required");
+  const packages = lockRecord.packages as Record<string, unknown>;
   const target = packages[`node_modules/${resolution.packageName}`];
   if (typeof target !== "object" || target === null || (target as Record<string, unknown>).version !== resolution.version || (target as Record<string, unknown>).integrity !== resolution.integrity) throw new Error("lockfile does not bind the confirmed package integrity");
   for (const [path, value] of Object.entries(packages)) {

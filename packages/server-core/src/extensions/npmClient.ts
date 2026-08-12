@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import type { ExtensionMaterializer, ExtensionRegistryClient, RegistryPackageResolution } from "./installerTypes.js";
+import { validateNpmLockfile } from "./packageValidation.js";
 
 const executeFile = promisify(execFile);
 const PUBLIC_REGISTRY = "https://registry.npmjs.org/";
@@ -20,7 +21,15 @@ export function parsePublicNpmSpec(input: string): { packageName: string; select
   return { packageName, selector };
 }
 
-export interface NpmCliOptions { readonly npmCliPath?: string; readonly workRoot: string; readonly npmVersion?: string; }
+type NpmRunner = (args: readonly string[], options: { readonly cwd: string; readonly signal?: AbortSignal; readonly env: NodeJS.ProcessEnv }) => Promise<{ stdout: string; stderr: string }>;
+export interface NpmCliOptions { readonly npmCliPath?: string; readonly workRoot: string; readonly npmVersion?: string; readonly runner?: NpmRunner; }
+
+export class NpmRegistryUnavailableError extends Error {
+  readonly code = "registry_unavailable";
+  readonly retryable = true;
+  readonly action = "Check the Terminay Server network connection and retry.";
+  constructor() { super("npmjs registry is unavailable"); this.name = "NpmRegistryUnavailableError"; }
+}
 
 export function bundledNpmCliPath(): string {
   const entry = createRequire(import.meta.url).resolve("npm");
@@ -61,7 +70,11 @@ export class NpmCliRegistryClient implements ExtensionRegistryClient, ExtensionM
   async materialize(resolution: RegistryPackageResolution, stagingRoot: string, signal?: AbortSignal): Promise<void> {
     await mkdir(stagingRoot, { recursive: false });
     await writeFile(join(stagingRoot, "package.json"), `${JSON.stringify({ private: true, dependencies: { [resolution.packageName]: resolution.version } }, null, 2)}\n`, { flag: "wx" });
-    await this.run(["install", `${resolution.packageName}@${resolution.version}`, "--save-exact", "--ignore-scripts", "--omit=dev", "--no-bin-links", "--package-lock=true", "--audit=false", "--fund=false"], stagingRoot, signal);
+    await this.run(["install", `${resolution.packageName}@${resolution.version}`, "--save-exact", "--package-lock-only", "--ignore-scripts", "--omit=dev", "--no-bin-links", "--workspaces=false", "--audit=false", "--fund=false"], stagingRoot, signal);
+    let lock: unknown;
+    try { lock = JSON.parse(await readFile(join(stagingRoot, "package-lock.json"), "utf8")); } catch { throw new Error("npm did not produce a valid exact lockfile"); }
+    validateNpmLockfile(lock, resolution);
+    await this.run(["ci", "--ignore-scripts", "--omit=dev", "--allow-git=none", "--workspaces=false", "--no-bin-links", "--audit=false", "--fund=false"], stagingRoot, signal);
   }
 
   private async run(args: readonly string[], cwd: string, signal?: AbortSignal): Promise<{ stdout: string; stderr: string }> {
@@ -72,13 +85,12 @@ export class NpmCliRegistryClient implements ExtensionRegistryClient, ExtensionM
     const userconfig = join(sterile, "npmrc");
     await writeFile(userconfig, `registry=${PUBLIC_REGISTRY}\nalways-auth=false\nignore-scripts=true\nbin-links=false\n`, { mode: 0o600 });
     try {
-      return await executeFile(process.execPath, [this.options.npmCliPath ?? bundledNpmCliPath(), ...args, "--registry", PUBLIC_REGISTRY, "--userconfig", userconfig], {
-        cwd, signal, timeout: 120_000, maxBuffer: 2 * 1024 * 1024,
-        env: { NODE_ENV: "production", HOME: join(sterile, "home"), npm_config_cache: join(sterile, "cache"), npm_config_registry: PUBLIC_REGISTRY, npm_config_userconfig: userconfig } as unknown as NodeJS.ProcessEnv,
-      });
+      const env = { NODE_ENV: "production", HOME: join(sterile, "home"), npm_config_cache: join(sterile, "cache"), npm_config_registry: PUBLIC_REGISTRY, npm_config_userconfig: userconfig } as unknown as NodeJS.ProcessEnv;
+      if (this.options.runner !== undefined) return await this.options.runner(args, { cwd, signal, env });
+      return await executeFile(process.execPath, [this.options.npmCliPath ?? bundledNpmCliPath(), ...args, "--registry", PUBLIC_REGISTRY, "--userconfig", userconfig], { cwd, signal, timeout: 120_000, maxBuffer: 2 * 1024 * 1024, env });
     } catch (error) {
       const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "unknown";
-      if (["ENETUNREACH", "ENOTFOUND", "ECONNREFUSED", "ETIMEDOUT"].includes(code)) throw new Error("npmjs registry is unavailable");
+      if (["ENETUNREACH", "ENOTFOUND", "ECONNREFUSED", "ETIMEDOUT"].includes(code)) throw new NpmRegistryUnavailableError();
       throw new Error(`bundled npm command failed (${code})`);
     }
   }
