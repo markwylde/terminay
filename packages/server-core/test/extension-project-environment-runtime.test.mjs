@@ -41,10 +41,10 @@ test("observation services expose only their closed operation inputs", async () 
   const calls = [];
   const runtime = new ExtensionProjectEnvironmentRuntime(providerId, ["filesystem-observation", "process-observation"], { async invokeProvider(call) { calls.push(call); return { accepted: true }; } }, () => ({ ...state, environments: { [environment.id]: { ...environment, declaredCapabilities: ["filesystem-observation","process-observation"], availableCapabilities: ["filesystem-observation","process-observation"] } } }));
   await runtime.invoke("filesystem-observation", "manualRefresh", { observationId: "watch-a" }, context);
-  await runtime.invoke("process-observation", "report", { observationId: "process-a", sessionId: "session-a", proof: "secret", version: 1, sequence: 2, cwd: "/work", foregroundProcess: "codex", observedAt: Date.now() }, context);
+  await runtime.invoke("process-observation", "poll", { observationId: "process-a", sessionId: "session-a" }, context);
   assert.equal(calls.length, 2);
   await assert.rejects(runtime.invoke("filesystem-observation", "poll", { observationId: "watch-a", injected: true }, context), /unknown fields/);
-  await assert.rejects(runtime.invoke("process-observation", "report", { observationId: "process-a", sessionId: "session-a", proof: "secret", version: 2, sequence: 2, cwd: "/work", observedAt: Date.now() }, context), /invalid/);
+  await assert.rejects(runtime.invoke("process-observation", "report", { observationId: "process-a", sessionId: "session-a" }, context), /unavailable/);
 });
 
 test("Git service accepts only the routed protocol envelope", async () => {
@@ -80,6 +80,23 @@ test("provider PTY accepts bounded journals only for its exact remote session", 
   const pty = await runtime.invoke("terminal", "spawn", { rows: 24, cols: 80 }, context);
   const seen = await new Promise((resolve, reject) => { const timeout=setTimeout(()=>reject(new Error("journal callback timed out")),1000); pty.onAgentJournal((event)=>{clearTimeout(timeout);resolve(event);}); });
   assert.deepEqual(seen,{provider:"codex",record:journal}); await pty.dispose();
+});
+
+test("provider PTY adapts proof-bound process polling into cwd and foreground signals", async () => {
+  let remoteSessionId; let processPolls=0;
+  const runtime = new ExtensionProjectEnvironmentRuntime(providerId, ["terminal", "process-observation"], { async invokeProvider(call) {
+    const { capability, operation, input }=call.request;
+    if(capability==="terminal"&&operation==="create"){remoteSessionId=input.sessionId;return{sessionId:remoteSessionId};}
+    if(capability==="terminal"&&operation==="read")return{data:"",exit:undefined};
+    if(capability==="terminal")return{accepted:true};
+    if(operation==="observe")return{observationId:"process-one",protocol:"terminay-target-helper/process-v1",version:1,state:"starting"};
+    if(operation==="poll"){processPolls++;return{observationId:"process-one",state:"available",cwd:"/work/sub",foregroundProcess:"codex",observedAt:Date.now()};}
+    return{observationId:"process-one",stopped:true};
+  } }, () => ({ ...state, environments:{[environment.id]:{...environment,declaredCapabilities:["terminal","process-observation"],availableCapabilities:["terminal","process-observation"]}} }));
+  const pty=await runtime.invoke("terminal","spawn",{rows:24,cols:80},context);
+  assert.equal(await pty.getCwd(),"/work/sub");
+  const foreground=await new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error("foreground callback timed out")),1000);pty.onForegroundProcess((event)=>{clearTimeout(timeout);resolve(event);});});
+  assert.deepEqual(foreground,{processName:"codex",shellForeground:false});assert.ok(processPolls>=2);await pty.dispose();
 });
 
 test("missing journal capability preserves terminal-output fallback", async () => {
