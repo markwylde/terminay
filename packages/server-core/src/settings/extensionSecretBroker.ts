@@ -88,6 +88,9 @@ export class ExtensionSecretBroker {
     for (const [key, binding] of next) this.bindings.set(key, binding);
   }
 
+  upsertBinding(binding: ExtensionSecretBinding): void { const normalized = normalizeBinding(binding); this.bindings.set(bindingKey(normalized.extensionId, normalized.profileId, normalized.fieldId), normalized); }
+  removeBinding(extensionId: ProtocolId, profileId: ProtocolId, fieldId: ProtocolId): void { this.bindings.delete(bindingKey(extensionId, profileId, fieldId)); }
+
   /**
    * Plaintext exists only for the duration of callback execution. A distinct
    * broker-owned copy is cleared even when authorization, vault access, or the

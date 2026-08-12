@@ -30,7 +30,7 @@ import {
 	createNodeShellDiscoveryHost,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
-	createDefaultExtensionManagement,
+	createPuzedSshProductionExtensionManagement,
 	ExactTerminalTargetRegistry,
 	FileCatalog,
 	FileContentStreamService,
@@ -53,6 +53,7 @@ import {
 	ServerGitAdapter,
 	ServerRecordingAdapter,
 	ServerSettingsRepository,
+	type ServerRuntimeServices,
 	ShellProfileCatalogueService,
 	ShellProfileDiscoveryService,
 	TerminalActivityService,
@@ -78,6 +79,7 @@ import {
 } from './index.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
+import { createStandaloneVaultComposition } from './headlessVault.js';
 
 declare const process: {
 	readonly argv: readonly string[];
@@ -140,11 +142,12 @@ else if (options.command === 'mcp') {
 			handoff.pairingToken,
 			handoff.expiresAt,
 		);
-		const composition = await createServerComposition(options, () => {
+		const serverComposition = await createServerComposition(options, () => {
 			if (runtime === undefined)
 				throw new Error('server runtime is not composed');
 			return runtimeHealth(runtime, protocolReady);
 		});
+		const composition = serverComposition.core;
 		let runtime: StandaloneRuntime | undefined;
 		const uiServer =
 			options.endpoint === 'disabled'
@@ -158,7 +161,11 @@ else if (options.command === 'mcp') {
 						credentials,
 						reconnectPersistence.save,
 					);
-		runtime = createRuntime(options, remote, uiServer);
+		runtime = createRuntime(options, remote, uiServer, {
+			vault: serverComposition.vault.vault,
+			extensionSecrets: serverComposition.vault.extensionSecrets,
+			extensionHosts: serverComposition.extensions.hosts,
+		});
 
 		// A runtime without a listener has no event-loop handle of its own. Keep
 		// the CLI in the foreground until SIGINT/SIGTERM so local launches and
@@ -242,6 +249,7 @@ function createRuntime(
 	options: ServerCliOptions,
 	remote: ServerRemoteExposure,
 	uiServer?: LocalUiServer,
+	serverServices: Pick<ServerRuntimeServices, 'vault' | 'extensionSecrets' | 'extensionHosts'> = {},
 ): StandaloneRuntime {
 	return createStandaloneServer({
 		serverId: options.serverId,
@@ -252,6 +260,7 @@ function createRuntime(
 		...(options.uiBundle === undefined ? {} : { uiBundle: options.uiBundle }),
 		services: {
 			remoteExposure: remote,
+			...serverServices,
 		},
 		...(uiServer === undefined ? {} : { uiServer }),
 	});
@@ -272,7 +281,7 @@ function createRemoteExposure(
 async function createServerComposition(
 	options: ServerCliOptions,
 	health: () => JsonValue,
-): Promise<ServerCoreComposition> {
+): Promise<Readonly<{ core: ServerCoreComposition; vault: Awaited<ReturnType<typeof createStandaloneVaultComposition>>; extensions: ReturnType<typeof createPuzedSshProductionExtensionManagement> }>> {
 	const eventJournal = new OrderedEventJournal();
 	const activity = new TerminalActivityService({ serverId: options.serverId });
 	const agents = new AgentStatusService({
@@ -330,7 +339,12 @@ async function createServerComposition(
 		}),
 		{ serverId: options.serverId },
 	);
-	const extensions = createDefaultExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: 'This server' });
+	const vault = await createStandaloneVaultComposition({
+		dataRoot: options.dataRoot,
+		serverId: options.serverId,
+		...(options.vaultUnlockFd === undefined ? {} : { unlockFd: options.vaultUnlockFd }),
+	});
+	const extensions = createPuzedSshProductionExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: 'This server', vault, projectEnvironments, workspace });
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,
@@ -444,7 +458,7 @@ async function createServerComposition(
 			},
 		},
 	});
-	return composition;
+	return Object.freeze({ core: composition, vault, extensions });
 }
 
 function selectAiProviders(
