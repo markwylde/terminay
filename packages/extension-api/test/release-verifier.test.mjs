@@ -50,3 +50,14 @@ test("release verifier rejects an unlocked package identity", async () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /package-lock root must match/);
 });
+
+test("release verifier rejects sibling-worktree development dependencies", async () => {
+  const directory = await makePackage({ devDependencies: { "@terminay/extension-api": "file:../extension-api" } });
+  const lockPath = join(directory, "package-lock.json");
+  const lock = JSON.parse(await readFile(lockPath, "utf8"));
+  lock.packages[""].devDependencies = { "@terminay/extension-api": "file:../extension-api" };
+  await writeFile(lockPath, JSON.stringify(lock));
+  const result = spawnSync(process.execPath, [resolve("scripts/verify-release.mjs"), directory], { encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /must use a registry semver specifier/);
+});
