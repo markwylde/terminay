@@ -51,7 +51,7 @@
 		"test:ci": "npm run smoke && npm run test --workspaces --if-present",
 		"release": "node scripts/create-release.mjs",
 		"release:prepare-credentials": "node scripts/prepare-release-credentials.mjs",
-		"test:e2e": "sh scripts/run-e2e-container.sh",
+		"test:e2e": "sh scripts/run-project-environment-e2e.sh && sh scripts/run-e2e-container.sh",
 		"test:e2e:puzed-ssh": "npm run build --workspace @terminay/server-core && TERMINAY_RUN_PACKED_COMPOSITION_E2E=1 node --test packages/server-core/test/puzed-ssh-packed-composition.e2e.test.mjs",
 		"test:e2e:host": "npm run build:app && playwright test",
 		"test:desktop-diagnostics": "node --test scripts/local-desktop-diagnostics-*.test.mjs scripts/renderer-root-diagnostics.test.mjs",
