@@ -25,31 +25,31 @@ Phase 2 after the Extension API contract, in parallel with
 
 ### Package and API client
 
-- [ ] Scaffold/publish the separate conformant package with SSH extension
+- [x] Scaffold/publish the separate conformant package with SSH extension
   dependency and no internal Terminay/Puzed UI imports.
-- [ ] Implement HTTPS exact-origin bounded API client, vault bearer key, `/me`
+- [x] Implement HTTPS exact-origin bounded API client, vault bearer key, `/me`
   organization/scope validation, safe URL/redirect/error policy, and audit.
-- [ ] Generate/use the current Go-authored OpenAPI contract without duplicating
+- [x] Generate/use the current Go-authored OpenAPI contract without duplicating
   hand-written provider DTOs.
 
 ### Inventory and lifecycle
 
-- [ ] Implement paginated `system:Terminay`-filtered VM inventory plus image/
+- [x] Implement paginated `system:Terminay`-filtered VM inventory plus image/
   worker/bridge/settings/job discovery, capability/disabled reasons, and exact
   Open in Puzed routes; unrelated machines are never selectable.
-- [ ] Share one authenticated resumable SSE stream per profile/org, process
+- [x] Share one authenticated resumable SSE stream per profile/org, process
   payload-free invalidations, refetch exact resources, and handle resync without
   polling.
-- [ ] Implement idempotent start/stop/resume/reboot/delete with revisions,
+- [x] Implement idempotent start/stop/resume/reboot/delete with revisions,
   operation conflicts, disk disposition, progress, and independent management
   status.
 
 ### Existing VM binding
 
-- [ ] Model stable Platform+machine identity, observed/static address and
+- [x] Model stable Platform+machine identity, observed/static address and
   overrides, retained SSH key binding, stopped/start-and-open, provisioning
   resume, stale/deleted state, and SSH handoff test doubles.
-- [ ] Reject untagged VMs and render a tagged VM with no retained private-key
+- [x] Reject untagged VMs and render a tagged VM with no retained private-key
   binding as non-openable rather than offering arbitrary credential adoption.
 
 ## Acceptance checks
