@@ -90,7 +90,7 @@ async function stop(child: ChildProcessWithoutNullStreams): Promise<void> {
 	if (child.exitCode === null) child.kill('SIGKILL');
 }
 
-test.fixme('Desktop and browser preserve one This server, SSH and Puzed inventory across reconnect and transport restart', async ({
+test('Desktop and browser preserve one This server, SSH and Puzed inventory across reconnect and transport restart', async ({
 	mainWindow,
 	page,
 }) => {
