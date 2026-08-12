@@ -124,12 +124,13 @@ declare module "node:fs/promises" {
     readonly mtimeMs: number;
     isDirectory(): boolean;
     isFile(): boolean;
+    isSymbolicLink(): boolean;
   }
   interface FileHandle {
     read(buffer: Buffer, offset: number, length: number, position: number): Promise<{ readonly bytesRead: number; readonly buffer: Buffer }>;
     close(): Promise<void>;
   }
-  interface Dirent { readonly name: string; isDirectory(): boolean; isFile(): boolean; }
+  interface Dirent { readonly name: string; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean; }
   export function open(path: string, flags: string): Promise<FileHandle>;
   export function readFile(path: string): Promise<Buffer>;
   export function readFile(path: string, encoding: "utf8"): Promise<string>;

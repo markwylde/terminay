@@ -187,6 +187,8 @@ const APP_COMMANDS = new Set<string>([
 	'new-terminal',
 	'open-command-bar',
 	'open-recordings',
+	'open-project-environments',
+	'open-extensions',
 	'popout-active',
 	'save-active',
 	'set-project-root-folder-to-working-directory',

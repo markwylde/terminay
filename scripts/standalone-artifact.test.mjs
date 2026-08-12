@@ -88,6 +88,7 @@ async function createFixture() {
 			version: '1.2.3',
 			files: ['dist'],
 			engines: { node: '24.14.0' },
+			dependencies: { npm: '11.9.0' },
 			bin: {
 				'terminay-server': 'dist/cli.js',
 				'terminay-mcp': 'dist/mcpEntry.js',
