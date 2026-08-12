@@ -69,17 +69,20 @@ export class ExtensionProjectEnvironmentRuntime implements ProjectEnvironmentRun
 function clean(value:Record<string,unknown>):Record<string,unknown>{return Object.fromEntries(Object.entries(value).filter(([,entry])=>entry!==undefined));}
 
 class ProviderPty implements PtyProcess {
-  private data = new Set<(bytes:Uint8Array)=>void>(); private exits = new Set<(exit:{exitCode?:number|null;signal?:number|null})=>void>(); private timer: ReturnType<typeof setTimeout>|undefined; private stopped=false;
+  private data = new Set<(bytes:Uint8Array)=>void>(); private exits = new Set<(exit:{exitCode?:number|null;signal?:number|null})=>void>(); private journals = new Set<(event:{provider:"codex";record:Readonly<Record<string,unknown>>})=>void>(); private timer: ReturnType<typeof setTimeout>|undefined; private journalTimer: ReturnType<typeof setTimeout>|undefined; private journalCursor=0; private stopped=false;
   constructor(private runtime:ExtensionProjectEnvironmentRuntime,private context:ProjectEnvironmentInvocationContext,private id:string){this.poll();}
   write=(bytes:Uint8Array)=>this.call("input",{sessionId:this.id,data:Buffer.from(bytes).toString("utf8")}).then(()=>undefined);
   resize=(dimensions:{cols:number;rows:number})=>this.call("resize",{sessionId:this.id,...dimensions}).then(()=>undefined);
   kill=(signal?:number|string)=>this.call("kill",{sessionId:this.id,...(signal===undefined?{}:{signal:String(signal)})}).then(()=>undefined);
-  dispose=()=>{this.stopped=true;if(this.timer)clearTimeout(this.timer);return this.call("dispose",{sessionId:this.id}).then(()=>undefined);};
+  dispose=()=>{this.stopped=true;if(this.timer)clearTimeout(this.timer);if(this.journalTimer)clearTimeout(this.journalTimer);return this.call("dispose",{sessionId:this.id}).then(()=>undefined);};
   onData=(listener:(bytes:Uint8Array)=>void)=>{this.data.add(listener);return()=>this.data.delete(listener);};
   onExit=(listener:(exit:{exitCode?:number|null;signal?:number|null})=>void)=>{this.exits.add(listener);return()=>this.exits.delete(listener);};
+  onAgentJournal=(listener:(event:{provider:"codex";record:Readonly<Record<string,unknown>>})=>void)=>{this.journals.add(listener);if(this.journals.size===1)this.pollJournals();return()=>{this.journals.delete(listener);if(this.journals.size===0&&this.journalTimer){clearTimeout(this.journalTimer);this.journalTimer=undefined;}};};
   private call(operation:string,input:unknown){return this.runtime.invoke("terminal",operation,input,this.context);}
   private poll=async()=>{if(this.stopped)return;try{const result=await this.call("read",{sessionId:this.id,maxBytes:65536}) as {data:string;exit?:{code:number|null;signal:string|null}};const bytes=Buffer.from(result.data,"base64");if(bytes.length)for(const listener of this.data)listener(bytes);if(result.exit){this.stopped=true;for(const listener of this.exits)listener({exitCode:result.exit.code,signal:null});return;}}catch{this.stopped=true;for(const listener of this.exits)listener({exitCode:null,signal:null});return;}this.timer=setTimeout(this.poll,15);};
+  private pollJournals=async()=>{if(this.stopped||this.journals.size===0)return;try{const result=await this.runtime.invoke("agent-journal","observe",{sessionId:this.id,cursor:this.journalCursor,maxRecords:32,maxBytes:262144},this.context);const parsed=parseJournalBatch(result,this.id,this.journalCursor);this.journalCursor=parsed.cursor;for(const record of parsed.records)for(const listener of this.journals)listener({provider:"codex",record});}catch{return;}this.journalTimer=setTimeout(this.pollJournals,250);};
 }
+function parseJournalBatch(value:unknown,sessionId:string,previousCursor:number):{cursor:number;records:Readonly<Record<string,unknown>>[]}{if(value===null||typeof value!=="object"||Array.isArray(value))throw new TypeError("invalid remote agent journal batch");const batch=value as Record<string,unknown>;if(batch.sessionId!==sessionId||!Number.isSafeInteger(batch.cursor)||(batch.cursor as number)<previousCursor||!Array.isArray(batch.records)||batch.records.length>32)throw new TypeError("invalid remote agent journal identity");let bytes=0;const records:Readonly<Record<string,unknown>>[]=[];for(const record of batch.records){if(record===null||typeof record!=="object"||Array.isArray(record)||containsNonJson(record))throw new TypeError("invalid remote agent journal record");bytes+=Buffer.byteLength(JSON.stringify(record));if(bytes>262144)throw new TypeError("remote agent journal batch is too large");records.push(Object.freeze({...record as Record<string,unknown>}));}return{cursor:batch.cursor as number,records};}
 
 function validateInput(capability: ProjectEnvironmentCapability, operation: string, input: unknown): void {
   if (input === null || typeof input !== "object" || Array.isArray(input)) throw new TypeError("provider service input is invalid");
@@ -92,6 +95,10 @@ function validateInput(capability: ProjectEnvironmentCapability, operation: stri
         ? ({ observe: [], poll: ["observationId"], stop: ["observationId"], manualRefresh: ["observationId"] } as Record<string,string[]>)[operation]
       : capability === "process-observation"
         ? ({ observe: ["sessionId"], poll: ["observationId","sessionId"], stop: ["observationId","sessionId"], report: ["observationId","sessionId","proof","version","sequence","cwd","foregroundProcess","observedAt"] } as Record<string,string[]>)[operation]
+      : capability === "git"
+        ? ["payload","body","request"]
+      : capability === "agent-journal"
+        ? ({ observe: ["sessionId","cursor","maxRecords","maxBytes"], stop: ["sessionId"] } as Record<string,string[]>)[operation]
       : undefined;
   if (allowed === undefined || Object.keys(value).some((key) => !allowed.includes(key))) throw new TypeError("provider service input contains unknown fields");
   for (const key of ["sessionId","path","destination","signal","term"]) if (value[key] !== undefined && (typeof value[key] !== "string" || String(value[key]).length > 4096 || String(value[key]).includes("\0"))) throw new TypeError("provider service input is invalid");
@@ -102,6 +109,14 @@ function validateInput(capability: ProjectEnvironmentCapability, operation: stri
   if (["poll","stop","manualRefresh","report"].includes(operation) && capability.includes("observation") && typeof value.observationId !== "string") throw new TypeError("observation identity is required");
   if (capability === "process-observation" && typeof value.sessionId !== "string") throw new TypeError("terminal session identity is required");
   if (operation === "report" && (!Number.isSafeInteger(value.version) || value.version !== 1 || !Number.isSafeInteger(value.sequence) || Number(value.sequence) < 1 || !Number.isFinite(value.observedAt))) throw new TypeError("process observation report is invalid");
+  if (capability === "git") {
+    if (value.payload === null || typeof value.payload !== "object" || Array.isArray(value.payload)) throw new TypeError("Git protocol payload is invalid");
+    if (value.body !== undefined && (typeof value.body !== "string" || value.body.length > 1_400_000)) throw new TypeError("Git protocol body is invalid");
+    const request = value.request;
+    if (request === null || typeof request !== "object" || Array.isArray(request)) throw new TypeError("Git protocol request is invalid");
+    const metadata = request as Record<string, unknown>;
+    if (Object.keys(metadata).some((key) => !["clientId","authScope","expectedRevision"].includes(key)) || typeof metadata.clientId !== "string" || typeof metadata.authScope !== "string" || (metadata.expectedRevision !== undefined && !Number.isSafeInteger(metadata.expectedRevision))) throw new TypeError("Git protocol request is invalid");
+  }
 }
 
 function toJson(value: unknown): JsonValue {

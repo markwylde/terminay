@@ -50,6 +50,14 @@ export interface PtyForegroundProcess {
 }
 
 export type PtyForegroundProcessListener = (event: PtyForegroundProcess) => void;
+/** Provider-owned journal evidence already bound to this exact PTY session.
+ * Records cross only the privileged provider/server boundary and are never
+ * part of terminal output or renderer-facing terminal snapshots. */
+export interface PtyAgentJournalRecord {
+  readonly provider: "codex";
+  readonly record: Readonly<Record<string, unknown>>;
+}
+export type PtyAgentJournalListener = (event: PtyAgentJournalRecord) => void;
 export type Unsubscribe = () => void;
 
 /** The only process API required by TerminalService. */
@@ -67,6 +75,8 @@ export interface PtyProcess {
   readonly getCwd?: (signal?: AbortSignal) => TerminalMaybePromise<string | null>;
   /** Optional host capability for trusted foreground-process observation. */
   readonly onForegroundProcess?: (listener: PtyForegroundProcessListener) => Unsubscribe | undefined;
+  /** Optional trusted provider callback. Absence preserves PTY-output fallback. */
+  readonly onAgentJournal?: (listener: PtyAgentJournalListener) => Unsubscribe | undefined;
   readonly dispose?: () => TerminalMaybePromise<void>;
 }
 
@@ -108,6 +118,10 @@ export interface TerminalSessionLifecycle {
   readonly foregroundProcessChanged?: (
     identity: TerminalIdentity,
     event: PtyForegroundProcess,
+  ) => void;
+  readonly agentJournalRecord?: (
+    identity: TerminalIdentity,
+    event: PtyAgentJournalRecord,
   ) => void;
 }
 
