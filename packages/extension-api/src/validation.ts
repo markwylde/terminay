@@ -14,6 +14,8 @@ import type {
   ProjectEnvironmentContribution,
   ProviderDefinition,
   ProviderEnvironmentStatus,
+  SshAgentIdentity,
+  SshAgentSignature,
   EnvironmentActionResult,
   TerminayExtensionManifest,
   ValidationIssue,
@@ -202,6 +204,32 @@ export function validateValidationIssues(value: unknown): ValidationResult<Valid
   return out.length === 0 ? { ok: true, value: value as ValidationIssue[] } : { ok: false, issues: out };
 }
 
+const sshSignatureAlgorithms = new Set(["ssh-ed25519", "rsa-sha2-256", "rsa-sha2-512", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521"]);
+
+export function validateSshAgentIdentities(value: unknown): ValidationResult<SshAgentIdentity[]> {
+  const out: SchemaIssue[] = [];
+  if (!Array.isArray(value) || value.length > EXTENSION_LIMITS.sshAgentIdentities) out.push({ path: "$", code: "invalid_array", message: "Expected bounded agent identities" });
+  else value.forEach((identity, index) => {
+    const path = `$[${index}]`;
+    if (!record(identity)) { out.push({ path, code: "invalid_type", message: "Expected object" }); return; }
+    closed(identity, new Set(["identityId", "algorithm", "publicKey", "fingerprint", "comment"]), path, out);
+    string(identity.identityId, `${path}.identityId`, out, 256); string(identity.fingerprint, `${path}.fingerprint`, out, 256);
+    if (!sshSignatureAlgorithms.has(String(identity.algorithm))) out.push({ path: `${path}.algorithm`, code: "invalid_algorithm", message: "Unsupported signing algorithm" });
+    bytes(identity.publicKey, `${path}.publicKey`, EXTENSION_LIMITS.sshAgentPublicKeyBytes, out);
+    if (identity.comment !== undefined) string(identity.comment, `${path}.comment`, out, 512);
+  });
+  return out.length === 0 ? { ok: true, value: value as SshAgentIdentity[] } : { ok: false, issues: out };
+}
+
+export function validateSshAgentSignature(value: unknown): ValidationResult<SshAgentSignature> {
+  const out: SchemaIssue[] = [];
+  if (!record(value)) return invalidObject();
+  closed(value, new Set(["algorithm", "signature"]), "$", out);
+  if (!sshSignatureAlgorithms.has(String(value.algorithm))) out.push({ path: "$.algorithm", code: "invalid_algorithm", message: "Unsupported signing algorithm" });
+  bytes(value.signature, "$.signature", EXTENSION_LIMITS.sshAgentSignatureBytes, out);
+  return out.length === 0 ? { ok: true, value: value as unknown as SshAgentSignature } : { ok: false, issues: out };
+}
+
 export function validateProgressPresentation(value: unknown): ValidationResult<ProgressPresentation> {
   const out: SchemaIssue[] = [];
   if (!record(value)) return invalidObject();
@@ -296,6 +324,9 @@ function ensureJson(value: unknown, path: string, out: SchemaIssue[], depth = 0)
   if (Array.isArray(value)) { if (value.length > 1024) out.push({ path, code: "json_size", message: "Array is too large" }); else value.forEach((item, index) => { ensureJson(item, `${path}[${index}]`, out, depth + 1); }); return; }
   if (record(value)) { const entries = Object.entries(value); if (entries.length > 1024) out.push({ path, code: "json_size", message: "Object is too large" }); else entries.forEach(([key, item]) => { ensureJson(item, `${path}.${key}`, out, depth + 1); }); return; }
   out.push({ path, code: "invalid_json", message: "Expected JSON-safe data" });
+}
+function bytes(value: unknown, path: string, maximum: number, out: SchemaIssue[]): void {
+  if (!(value instanceof Uint8Array) || value.byteLength === 0 || value.byteLength > maximum) out.push({ path, code: "invalid_bytes", message: `Expected 1-${maximum} bytes` });
 }
 
 function validateField(value: unknown, path: string, out: SchemaIssue[]): void {

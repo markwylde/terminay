@@ -1,10 +1,13 @@
-import type { ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProviderInvocation } from "./types.js";
+import type { ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProfileBroker, ExtensionProviderInvocation, ExtensionSecretAccessBroker, ExtensionSshAgentBroker } from "./types.js";
 import { ExtensionHost } from "./host.js";
 
 export interface ExtensionHostManagerOptions {
   readonly broker: ExtensionBroker;
   readonly limits?: ExtensionHostLimits;
   readonly nodeExecutable?: string;
+  readonly profiles?: ExtensionProfileBroker;
+  readonly secrets?: ExtensionSecretAccessBroker;
+  readonly sshAgent?: ExtensionSshAgentBroker;
 }
 
 /** Owns independent per-extension supervisors. No extension failure is allowed

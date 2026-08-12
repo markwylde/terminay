@@ -403,6 +403,7 @@ export function createServerCoreComposition(
     ...options.projectEnvironments,
     workspace: options.workspace,
     ...(options.projectEnvironments.providerDefinitions !== undefined || options.extensions?.hosts === undefined ? {} : { providerDefinitions: () => options.extensions!.hosts!.statuses().flatMap((status) => status.providers ?? []) }),
+    ...(options.projectEnvironments.providerRuntime !== undefined || options.extensions?.hosts === undefined ? {} : { providerRuntime: options.extensions.hosts }),
     onChanged: (payload) => { eventJournal.append('projectEnvironments.changed', payload); },
   });
   const operations = mergeOperationRegistries(
