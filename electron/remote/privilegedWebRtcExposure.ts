@@ -243,6 +243,7 @@ class PrivilegedPeer {
 			const connection = this.options.acceptApplicationTransport(transport, {
 				clientId: authenticated.deviceId,
 				authScope: 'admin',
+				permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
 			});
 			this.applicationConnection = connection;
 			void connection.start().catch((error) => {

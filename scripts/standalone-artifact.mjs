@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, sep } from 'node:path'
 
 const PACKAGE_NAME = '@terminay/server'
-const REQUIRED_FILES = ['package.json', 'dist/cli.js', 'dist/index.js', 'dist/mcpEntry.js']
+const REQUIRED_FILES = ['package.json', 'dist/cli.js', 'dist/index.js', 'dist/mcpEntry.js', 'dist/bundled-npm-evidence.json']
 const NODE_ENGINE = '24.14.0'
 const NPM_INSTALLER = '11.9.0'
 
@@ -46,6 +46,8 @@ export async function inspectStandaloneArtifact(root) {
   if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) fail('package version is missing')
   if (packageJson.engines?.node !== NODE_ENGINE) fail(`Node engine must be pinned to ${NODE_ENGINE}`)
   if (packageJson.dependencies?.npm !== NPM_INSTALLER) fail(`bundled npm installer must be pinned to ${NPM_INSTALLER}`)
+  const npmEvidence = JSON.parse((await readRegularFile(root, 'dist/bundled-npm-evidence.json')).bytes.toString('utf8'))
+  if (npmEvidence?.schemaVersion !== 1 || npmEvidence?.version !== NPM_INSTALLER || !Number.isSafeInteger(npmEvidence?.packageCount) || npmEvidence.packageCount < 50 || !Array.isArray(npmEvidence.packages) || npmEvidence.packages.length !== npmEvidence.packageCount || !/^[a-f0-9]{64}$/u.test(npmEvidence.closureSha256)) fail('bundled npm closure evidence is invalid')
   if (!Array.isArray(packageJson.files) || !packageJson.files.includes('dist')) fail('package files must include dist')
   if (packageJson.bin?.['terminay-server'] !== 'dist/cli.js') fail('terminay-server bin must point to dist/cli.js')
   if (packageJson.bin?.['terminay-mcp'] !== 'dist/mcpEntry.js') fail('terminay-mcp bin must point to dist/mcpEntry.js')

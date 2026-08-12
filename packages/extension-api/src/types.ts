@@ -196,6 +196,131 @@ export interface ProviderDefinition {
   createForm?: DeclarativeForm;
 }
 
+export interface ProviderCallContext {
+  /** Absolute ISO-8601 deadline assigned by the host. */
+  deadlineAt: string;
+  signal: CancellationSignal;
+  /** Present for retryable mutations and stable across retries. */
+  idempotencyKey?: string;
+  /** Optimistic-concurrency revision for mutations of existing state. */
+  expectedRevision?: number;
+  dependencies: ProviderDependencyBroker;
+}
+
+export interface ProviderDependencyRequest {
+  providerId: string;
+  operation: string;
+  payload: JsonValue;
+}
+
+export interface ProviderDependencyBroker {
+  call(request: ProviderDependencyRequest, context: {
+    deadlineAt: string;
+    signal: CancellationSignal;
+    idempotencyKey?: string;
+  }): Promise<JsonValue>;
+}
+
+export interface ProfileValuesRequest {
+  profileId?: string;
+  values: Record<string, JsonValue>;
+}
+
+export interface ResolveOptionsRequest {
+  sourceId: string;
+  profileId?: string;
+  query?: string;
+  cursor?: string;
+  values: Record<string, JsonValue>;
+}
+
+export interface OptionSourceResult {
+  options: SelectOption[];
+  nextCursor?: string;
+}
+
+export interface EnvironmentRuntimeRequest {
+  environmentId: string;
+  profileId?: string;
+  providerState: JsonValue;
+}
+
+export interface EnvironmentCreateRequest extends ProfileValuesRequest {
+  environmentId: string;
+  displayName: string;
+}
+
+export interface ProviderEnvironmentStatus {
+  state: "available" | "connecting" | "unavailable" | "failed" | "deleting";
+  message?: string;
+  defaultRoot?: string;
+  card?: StatusCard;
+  progress?: ProgressPresentation;
+  revision: number;
+}
+
+export type ProvisioningResult =
+  | {
+      state: "ready";
+      providerState: JsonValue;
+      status: ProviderEnvironmentStatus;
+    }
+  | {
+      state: "pending";
+      operationId: string;
+      providerState: JsonValue;
+      progress: ProgressPresentation;
+      pollAfterMs?: number;
+    };
+
+export interface ResumeOperationRequest extends EnvironmentRuntimeRequest {
+  operationId: string;
+}
+
+export interface InvokeEnvironmentActionRequest extends EnvironmentRuntimeRequest {
+  actionId: string;
+  values?: Record<string, JsonValue>;
+}
+
+export type EnvironmentActionResult =
+  | { state: "complete"; providerState: JsonValue; status: ProviderEnvironmentStatus }
+  | { state: "pending"; operationId: string; providerState: JsonValue; progress: ProgressPresentation };
+
+export interface ProviderRuntime {
+  testProfile(request: ProfileValuesRequest, context: ProviderCallContext): Promise<ValidationIssue[]>;
+  resolveOptions(request: ResolveOptionsRequest, context: ProviderCallContext): Promise<OptionSourceResult>;
+  createEnvironment(request: EnvironmentCreateRequest, context: ProviderCallContext): Promise<ProvisioningResult>;
+  resumeOperation(request: ResumeOperationRequest, context: ProviderCallContext): Promise<ProvisioningResult>;
+  getStatus(request: EnvironmentRuntimeRequest, context: ProviderCallContext): Promise<ProviderEnvironmentStatus>;
+  invokeAction(request: InvokeEnvironmentActionRequest, context: ProviderCallContext): Promise<EnvironmentActionResult>;
+  updateEnvironment?(request: EnvironmentRuntimeRequest & { values: Record<string, JsonValue> }, context: ProviderCallContext): Promise<EnvironmentActionResult>;
+  deleteEnvironment?(request: EnvironmentRuntimeRequest, context: ProviderCallContext): Promise<EnvironmentActionResult>;
+}
+
+export type ProviderRuntimeMethod = keyof ProviderRuntime;
+
+export interface ProviderRuntimeCall {
+  callId: string;
+  providerId: string;
+  method: ProviderRuntimeMethod;
+  deadlineAt: string;
+  idempotencyKey?: string;
+  expectedRevision?: number;
+  request: JsonValue;
+}
+
+export interface ProviderRuntimeReply {
+  callId: string;
+  ok: boolean;
+  result?: JsonValue;
+  error?: { code: string; message: string; retryable: boolean };
+}
+
+export interface ProviderRegistration {
+  definition: ProviderDefinition;
+  runtime: ProviderRuntime;
+}
+
 export interface CancellationSignal {
   readonly aborted: boolean;
   throwIfAborted(): void;
@@ -205,7 +330,7 @@ export interface ExtensionContext {
   extensionId: string;
   apiVersion: string;
   paths: { configuration: string; data: string; cache: string };
-  registerProjectEnvironmentProvider(definition: ProviderDefinition): void;
+  registerProjectEnvironmentProvider(registration: ProviderRegistration): void;
 }
 
 export interface TerminayExtension {

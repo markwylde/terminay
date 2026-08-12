@@ -6,6 +6,8 @@ const split=await readFile(new URL('../src/projectEnvironments/ProjectEnvironmen
 const app=await readFile(new URL('../src/App.tsx',import.meta.url),'utf8');
 const desktop=await readFile(new URL('../electron/main.ts',import.meta.url),'utf8');
 const browser=await readFile(new URL('../src/web/ConnectedWebRendererWorkspace.tsx',import.meta.url),'utf8');
+const forms=await readFile(new URL('../src/projectEnvironments/DeclarativeProviderForm.tsx',import.meta.url),'utf8');
+const surfaces=await readFile(new URL('../src/projectEnvironments/ProjectEnvironmentSurfaces.tsx',import.meta.url),'utf8');
 
 test('split button keeps primary This server and a separate accessible chooser',()=>{
 	assert.match(split,/aria-label="Create project on This server"/);
@@ -14,6 +16,20 @@ test('split button keeps primary This server and a separate accessible chooser',
 	assert.match(split,/ArrowUp/);
 	assert.match(split,/Escape/);
 	assert.match(split,/No matching environments/);
+});
+
+test('production forms originate from server provider descriptors without provider fixtures',()=>{
+	assert.match(surfaces,/snapshot\.providers/);
+	assert.match(surfaces,/provider\.profileForm/);
+	assert.match(surfaces,/updateProfile/);
+	assert.doesNotMatch(surfaces,/FIXTURE|terminay\.ssh|com\.terminay\.ssh/);
+});
+
+test('generic form renderer covers bounded async choices and accessible preset cards',()=>{
+	assert.match(forms,/optionSource/);
+	assert.match(forms,/AbortController/);
+	assert.match(forms,/type="radio"/);
+	assert.match(forms,/role="alert"/);
 });
 
 test('Desktop and browser File menus converge on shared management commands',()=>{

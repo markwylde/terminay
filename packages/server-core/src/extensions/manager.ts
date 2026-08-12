@@ -1,4 +1,4 @@
-import type { ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor } from "./types.js";
+import type { ExtensionBroker, ExtensionHostLimits, ExtensionHostStatus, ExtensionInvocation, ExtensionLaunchDescriptor, ExtensionProviderInvocation } from "./types.js";
 import { ExtensionHost } from "./host.js";
 
 export interface ExtensionHostManagerOptions {
@@ -11,6 +11,7 @@ export interface ExtensionHostManagerOptions {
  * to escape manager lifecycle methods or affect another host. */
 export class ExtensionHostManager {
   private readonly hosts = new Map<string, ExtensionHost>();
+  private readonly providerOwners = new Map<string, string>();
   constructor(private readonly options: ExtensionHostManagerOptions) {}
 
   statuses(): readonly ExtensionHostStatus[] { return Object.freeze([...this.hosts.values()].map((host) => host.status()).sort((a, b) => a.extensionId.localeCompare(b.extensionId))); }
@@ -22,7 +23,22 @@ export class ExtensionHostManager {
       this.hosts.set(descriptor.extensionId, host);
     }
     await host.start(descriptor);
+    for (const provider of host.status().providers ?? []) {
+      const owner = this.providerOwners.get(provider.providerId);
+      if (owner !== undefined && owner !== descriptor.extensionId) { await host.stop(); throw new Error(`project environment provider already registered: ${provider.providerId}`); }
+      this.providerOwners.set(provider.providerId, descriptor.extensionId);
+    }
     return host.status();
+  }
+
+  providerDefinitions() { return Object.freeze(this.statuses().flatMap((status) => status.state === "running" ? status.providers ?? [] : [])); }
+
+  invokeProvider(invocation: ExtensionProviderInvocation): Promise<unknown> {
+    const owner = this.providerOwners.get(invocation.providerId);
+    if (owner === undefined) return Promise.reject(new Error("extension provider is unavailable"));
+    const host = this.hosts.get(owner);
+    if (host === undefined) return Promise.reject(new Error("extension host does not exist"));
+    return host.invokeProvider(invocation);
   }
 
   invoke(extensionId: string, invocation: ExtensionInvocation): Promise<unknown> {
@@ -31,7 +47,10 @@ export class ExtensionHostManager {
     return host.invoke(invocation);
   }
 
-  async stop(extensionId: string): Promise<void> { await this.hosts.get(extensionId)?.stop(); }
+  async stop(extensionId: string): Promise<void> {
+    await this.hosts.get(extensionId)?.stop();
+    for (const [providerId, owner] of this.providerOwners) if (owner === extensionId) this.providerOwners.delete(providerId);
+  }
 
   async shutdown(): Promise<void> {
     const results = await Promise.allSettled([...this.hosts.values()].map((host) => host.stop()));
@@ -39,4 +58,3 @@ export class ExtensionHostManager {
     if (failures.length > 0) throw new AggregateError(failures.map((failure) => failure.reason), "extension host shutdown failed");
   }
 }
-

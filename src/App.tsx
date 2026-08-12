@@ -5327,10 +5327,6 @@ function App({
 	}, []);
 	const chooseProjectEnvironment = useCallback(
 		async (environment: ProjectEnvironmentSummaryDto) => {
-			if (environment.isThisServer) {
-				addProject();
-				return;
-			}
 			if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
 				setProjectEnvironmentNotice('The selected server workspace is not ready.');
 				return;
@@ -5344,8 +5340,27 @@ function App({
 				setProjectEnvironmentNotice(error instanceof Error ? error.message : String(error));
 			}
 		},
-		[addProject, boundWorkspaceViewId, projectEnvironmentsClient, terminalClientContext?.workspaceSnapshotStore],
+		[boundWorkspaceViewId, projectEnvironmentsClient, terminalClientContext?.workspaceSnapshotStore],
 	);
+	const createThisServerProject = useCallback(async () => {
+		if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
+			// Disconnected compatibility workspaces retain their existing local-only
+			// creation path; authenticated server workspaces never bypass validation.
+			addProject();
+			return;
+		}
+		setProjectEnvironmentNotice('Validating This server…');
+		try {
+			const operation = await projectEnvironmentsClient.createProject({
+				environmentId: 'terminay:this-server',
+				viewId: boundWorkspaceViewId,
+			});
+			setProjectEnvironmentNotice(operation.message ?? null);
+			await terminalClientContext?.workspaceSnapshotStore?.refresh();
+		} catch (error) {
+			setProjectEnvironmentNotice(error instanceof Error ? error.message : String(error));
+		}
+	}, [addProject, boundWorkspaceViewId, projectEnvironmentsClient, terminalClientContext?.workspaceSnapshotStore]);
 	const [terminalActivityItemsByProject, setTerminalActivityItemsByProject] =
 		useState<Record<string, TerminalActivityOverviewItem[]>>({});
 	const [agentStatusSnapshot, setAgentStatusSnapshot] =
@@ -5742,7 +5757,7 @@ function App({
 					<ProjectEnvironmentSplitButton
 						canCreate={canAddProject}
 						environments={projectEnvironmentChoices}
-						onCreateThisServer={addProject}
+						onCreateThisServer={() => void createThisServerProject()}
 						onChoose={chooseProjectEnvironment}
 						onManageEnvironments={() => setProjectEnvironmentSurface('environments')}
 						onManageExtensions={() => setProjectEnvironmentSurface('extensions')}
