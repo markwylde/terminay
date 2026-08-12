@@ -47,6 +47,17 @@ test("observation services expose only their closed operation inputs", async () 
   await assert.rejects(runtime.invoke("process-observation", "report", { observationId: "process-a", sessionId: "session-a", proof: "secret", version: 2, sequence: 2, cwd: "/work", observedAt: Date.now() }, context), /invalid/);
 });
 
+test("Git service accepts only the routed protocol envelope", async () => {
+  const calls = [];
+  const gitEnvironment = { ...environment, declaredCapabilities: ["git"], availableCapabilities: ["git"] };
+  const runtime = new ExtensionProjectEnvironmentRuntime(providerId, ["git"], { async invokeProvider(call) { calls.push(call); return { state: "not-repository", repositoryRoot: null, repositoryId: null, worktreeId: null }; } }, () => ({ ...state, environments: { [environment.id]: gitEnvironment } }));
+  const input = { payload: { projectId: "project-1" }, request: { clientId: "client-1", authScope: "read" } };
+  await runtime.invoke("git", "discover", input, context);
+  assert.deepEqual(calls[0].request.input, input);
+  await assert.rejects(runtime.invoke("git", "status", { ...input, executable: "git" }, context), /unknown fields/);
+  await assert.rejects(runtime.invoke("git", "fetch", { payload: [], request: input.request }, context), /payload is invalid/);
+});
+
 test("spawn adapts bounded provider polling into PTY bytes, input, resize and exit", async () => {
   const calls = []; let reads = 0;
   const runtime = new ExtensionProjectEnvironmentRuntime(providerId, ["terminal"], { async invokeProvider(call) {
