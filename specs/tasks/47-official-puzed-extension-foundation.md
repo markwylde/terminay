@@ -15,7 +15,7 @@ Phase 2 after the Extension API contract, in parallel with
 
 ## Dependency
 
-- [Task 42](./42-extension-api-manifest-and-host.md)
+- [Task 42](../tasks_completed/42-extension-api-manifest-and-host.md)
 
 ## Governing specification
 
