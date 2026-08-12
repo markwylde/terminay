@@ -35,6 +35,10 @@ configurable keyboard accelerators.
   application lifecycle are coordinated by Electron. Browser hosts provide a
   visible in-page menu bar for File, Edit, View, and Help so shared commands
   remain discoverable without native application menus.
+- File and the Command Bar expose **New Project with Environment…**, **Project
+  Environments…**, and **Extensions…** through the same semantic route/command
+  model. Desktop may use native auxiliary windows while web uses in-page
+  routes; both manage the selected Terminay Server, not client-local state.
 - Closing Terminay proceeds immediately when every terminal is at its shell
   prompt. If any terminal in any open project has a non-shell foreground
   process, Desktop reports the affected terminal count and asks whether to

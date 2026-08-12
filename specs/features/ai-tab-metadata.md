@@ -68,6 +68,9 @@ Provider adapters expose a common server interface:
 Codex and Claude Code execute on the server machine using that machine's
 configured CLI/provider environment. Provider-specific commands, model-list
 formats, response envelopes, stderr, and exit codes remain inside the adapter.
+This provider execution location does not change when the target terminal is
+SSH/Puzed-backed: bounded context comes from the server-owned terminal stream,
+and the adapter is never given a remote project path as a local filesystem path.
 
 The server implementation builds Codex and Claude Code adapters through
 `createServerAiProviderAdapters` in `packages/server-core`. It owns the bounded
