@@ -15,7 +15,7 @@ agents and MCP.
 ## Dependencies
 
 - [Task 43](../tasks_completed/43-environment-routed-project-services.md)
-- [Task 46](./46-official-ssh-extension.md)
+- [Task 46](../tasks_completed/46-official-ssh-extension.md)
 - [Task 49](./49-puzed-to-ssh-environment-composition.md) for composed Puzed
   acceptance; generic SSH work may start after Task 46.
 
