@@ -62,7 +62,7 @@ export class RemoteFileProtocol {
 		context: ProjectEnvironmentInvocationContext,
 	): Promise<unknown> {
 		const input = protocolInput(rawInput);
-		const bundle = await this.bundle(context);
+		const bundle = await this.bundle(context, input.request.clientId);
 		const query = bundle.queries[operation];
 		const command = bundle.commands[operation];
 		if (query === undefined && command === undefined)
@@ -75,8 +75,9 @@ export class RemoteFileProtocol {
 
 	private bundle(
 		context: ProjectEnvironmentInvocationContext,
+		clientId: string,
 	): Promise<Bundle> {
-		const key = `${context.projectEnvironmentId}\0${context.environmentRevision}\0${context.projectId}`;
+		const key = `${context.projectEnvironmentId}\0${context.environmentRevision}\0${context.projectId}\0${clientId}`;
 		let value = this.bundles.get(key);
 		if (value === undefined) {
 			value = this.createBundle(context);
