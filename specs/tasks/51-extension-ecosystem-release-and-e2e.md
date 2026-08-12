@@ -51,7 +51,7 @@ Phase 6 release convergence after Tasks 41–50.
 
 - [ ] Run all Electron E2E only through `npm run test:e2e` with Docker SSH and
   Puzed API/SSE/job/address fixtures; add opt-in real Puzed smoke separately.
-- [ ] Prove Desktop/browser parity against embedded and standalone servers with
+- [x] Prove Desktop/browser parity against embedded and standalone servers with
   one mixed This server/SSH/Puzed view and client reconnect/restart.
 - [x] Add hostile package/IPC/auth/project-claim/secret/host-key/redirect/
   cross-environment/no-fallback sentinel suites and crash/resource recovery.
