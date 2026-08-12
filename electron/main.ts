@@ -22,7 +22,7 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { type ByteTransport, decodeFrame } from '@terminay/protocol';
+import { type ByteTransport, decodeFrame, type JsonValue } from '@terminay/protocol';
 import {
 	app,
 	BrowserWindow,
@@ -913,6 +913,13 @@ serverTerminalAuthority = new ServerTerminalAuthority({
 	saveSparseFile: (request) => fileBufferService.saveSparseFile(request),
 	recordings: serverRecordingAdapter,
 	settings: embeddedServerSettings,
+	remoteMcpDispatch: async (sessionId, op, params, signal) =>
+		JSON.parse(JSON.stringify(await dispatchServerControlRequest(
+			sessionId,
+			op as ControlOp,
+			params,
+			signal,
+		))) as JsonValue,
 	macros: {
 		repository: embeddedMacros,
 		environmentFor: (request, target) => {
