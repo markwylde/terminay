@@ -94,6 +94,14 @@ detach and stale resume cursors cannot deliver duplicate output. Local sockets,
 browser transports, and WebRTC only provide the underlying command and event
 transport; they do not own the PTY.
 
+The client establishes an identity-scoped terminal subscription before it
+issues `terminal.attach` or `terminal.resume`, then accepts events only for the
+opaque attachment identity returned by that command. It buffers this bounded
+handoff until the command result and any authoritative checkpoint are applied.
+This ordering closes the live-only interval in which a newly spawned shell can
+write after the server allocates its attachment but before a post-command
+subscription exists; it does not relax strict contiguous-position validation.
+
 Initial attach and resume replay is capped independently of the retained server
 window so its base64 command-result representation always fits the default
 protocol header budget. The server enforces the cap even when a client omits or

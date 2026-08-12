@@ -2,6 +2,7 @@ import type { JsonValue } from '@terminay/protocol';
 import type {
 	ClientBinaryQueryResult,
 	ClientCommandResult,
+	ClientEvent,
 	ClientSubscription,
 	CommandOptions,
 	QueryOptions,
@@ -587,18 +588,66 @@ export class TerminayTerminalClient {
 		if (request.freshPresentation === true && request.fromPosition !== undefined && request.fromPosition !== 0) throw new TypeError('a fresh terminal presentation must start at position zero');
 		const fromPosition = request.freshPresentation === true ? 0 : request.fromPosition ?? highWatermark;
 		validatePosition(fromPosition);
-		const result = await this.invoke<TerminalAttachResult>(operation, {
-			clientId: request.clientId,
-			identity: identityPayload(request),
-			...(request.authorization === undefined
-				? {}
-				: { authorization: authorizationPayload(request.authorization) }),
-			fromPosition,
-			...(request.freshPresentation === true ? { freshPresentation: true } : {}),
-			...(request.maxInitialReplayBytes === undefined
-				? {}
-				: { maxInitialReplayBytes: request.maxInitialReplayBytes }),
-		} as { readonly [key: string]: JsonValue });
+		// Establish the identity-scoped journal subscription before allocating the
+		// opaque attachment. PTY output can begin as soon as terminal.attach runs;
+		// subscribing afterwards leaves an unobservable command-result handoff in
+		// which live-only terminal bytes can be lost. Events for the prior opaque
+		// attachment are harmless here: the exact attachment id returned below is
+		// still checked before strict byte-stream decoding.
+		const subscription = await this.transport.subscribe<TerminalWireEvent>(
+			'terminal',
+			{
+				payload: {
+					clientId: request.clientId,
+					serverId: request.serverId,
+					projectId: request.projectId,
+					sessionId: request.sessionId,
+				},
+			},
+		);
+		const pendingSubscriptionEvents: ClientEvent<TerminalWireEvent>[] = [];
+		let pendingSubscriptionBytes = 0;
+		let pendingSubscriptionFailure: Error | undefined;
+		let receiveSubscriptionEvent = (
+			event: ClientEvent<TerminalWireEvent>,
+		): void => {
+			pendingSubscriptionBytes += pendingOutputByteLength(
+				event,
+				request,
+				request.clientId,
+			);
+			if (pendingSubscriptionBytes > MAX_TERMINAL_HYDRATION_QUEUE_BYTES) {
+				pendingSubscriptionFailure = new Error(
+					'terminal attach handoff queue exceeded its byte limit',
+				);
+				return;
+			}
+			pendingSubscriptionEvents.push(event);
+		};
+		const unsubscribeEvent = subscription.onEvent((event) => {
+			receiveSubscriptionEvent(event);
+		});
+		let result: TerminalAttachResult;
+		try {
+			result = await this.invoke<TerminalAttachResult>(operation, {
+				clientId: request.clientId,
+				identity: identityPayload(request),
+				...(request.authorization === undefined
+					? {}
+					: { authorization: authorizationPayload(request.authorization) }),
+				fromPosition,
+				...(request.freshPresentation === true
+					? { freshPresentation: true }
+					: {}),
+				...(request.maxInitialReplayBytes === undefined
+					? {}
+					: { maxInitialReplayBytes: request.maxInitialReplayBytes }),
+			} as { readonly [key: string]: JsonValue });
+		} catch (error) {
+			unsubscribeEvent();
+			await subscription.unsubscribe().catch(() => undefined);
+			throw error;
+		}
 		validateAttachResult(result);
 		const checkpoint = result.checkpoint === undefined
 			? undefined
@@ -660,25 +709,13 @@ export class TerminayTerminalClient {
 			Math.max(this.highWatermarks.get(key) ?? 0, position),
 		);
 
-		const subscription = await this.transport.subscribe<TerminalWireEvent>(
-			'terminal',
-			{
-				payload: {
-					attachmentId: result.attachmentId,
-					clientId: request.clientId,
-					serverId: request.serverId,
-					projectId: request.projectId,
-					sessionId: request.sessionId,
-				},
-			},
-		);
 		const mutable: MutableAttachment = {
 			id: result.attachmentId,
 			identity: copyIdentity(request),
 			clientId: request.clientId,
 			listeners: new Set(),
 			subscription,
-			unsubscribeEvent: () => undefined,
+			unsubscribeEvent,
 			initialEvents: initialEvents.map(copyEvent),
 			position,
 			presentation: copyPresentation(result.presentation ?? { ...copyIdentity(request), revision: 0, role: 'read_only' }),
@@ -691,7 +728,9 @@ export class TerminayTerminalClient {
 			acknowledgementWaiters: [],
 		};
 		let hydrationFailure: Error | undefined;
-		mutable.unsubscribeEvent = subscription.onEvent((event) => {
+		const processSubscriptionEvent = (
+			event: ClientEvent<TerminalWireEvent>,
+		): void => {
 			if (mutable.closed) return;
 			if (!eventBelongsToAttachment(event.payload, mutable)) return;
 			const decoded = tryDecodeEvent(
@@ -743,8 +782,16 @@ export class TerminayTerminalClient {
 			} else {
 				for (const listener of mutable.listeners) listener(copyEvent(decoded));
 			}
-		});
+		};
+		receiveSubscriptionEvent = processSubscriptionEvent;
+		for (const event of pendingSubscriptionEvents.splice(0)) {
+			processSubscriptionEvent(event);
+		}
 		this.attachments.set(key, mutable);
+		if (pendingSubscriptionFailure !== undefined) {
+			await this.detachMutable(mutable).catch(() => undefined);
+			throw pendingSubscriptionFailure;
+		}
 		if (checkpoint !== undefined) {
 			try {
 				const hydrated = await this.fetchCheckpoint(request, mutable, checkpoint);
@@ -1481,6 +1528,32 @@ function acceptEvent(
 		throw new Error('terminal output has a retained replay gap');
 	marks.set(key, Math.max(marks.get(key) ?? 0, event.nextPosition));
 	return true;
+}
+
+function pendingOutputByteLength(
+	event: ClientEvent<TerminalWireEvent>,
+	identity: TerminalClientIdentity,
+	clientId: string,
+): number {
+	if (
+		typeof event.payload !== 'object' ||
+		event.payload === null ||
+		Array.isArray(event.payload)
+	)
+		return 0;
+	const candidate = event.payload as unknown as Record<string, unknown>;
+	if (
+		candidate.type !== 'output' ||
+		candidate.clientId !== clientId ||
+		candidate.serverId !== identity.serverId ||
+		candidate.projectId !== identity.projectId ||
+		candidate.sessionId !== identity.sessionId
+	)
+		return 0;
+	if (event.body instanceof Uint8Array) return event.body.byteLength;
+	// Counting the encoded representation deliberately overestimates decoded
+	// bytes and avoids allocating attacker-controlled base64 during handoff.
+	return typeof candidate.bytes === 'string' ? candidate.bytes.length : 0;
 }
 
 function eventBelongsToAttachment(
