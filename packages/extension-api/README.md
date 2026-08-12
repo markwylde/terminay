@@ -14,6 +14,15 @@ Extensions are trusted code running with the selected Terminay Server account's
 authority. The extension host provides lifecycle and crash isolation, not an OS
 security sandbox.
 
+Start with the complete [author guide](docs/author-guide.md), then use the
+[API reference](docs/api-reference.md), [manifest reference](docs/manifest.md), [provider and UI guide](docs/provider-ui.md),
+and [permissions/security reference](docs/permissions-and-security.md). A small
+working provider lives in [`examples/basic-provider`](examples/basic-provider).
+The [publishing guide](docs/publishing.md) and reusable workflow template cover
+packing, conformance, SBOM/license evidence, npm trusted publishing, and
+post-publication integrity checks for repositories maintained separately from
+Terminay.
+
 Provider callbacks receive host-owned brokers through `ProviderCallContext`.
 `profiles.get(profileId)` returns only non-secret values after provider
 ownership checks. `secrets.withValue(binding, use)` resolves that provider's

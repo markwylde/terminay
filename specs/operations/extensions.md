@@ -107,6 +107,65 @@ policy. Support bundles include only extension ids, versions, integrity/state,
 and bounded failure classes—not endpoints, roots, credentials, provider bodies,
 or terminal data.
 
+## Backup and restore
+
+Stop new administrative operations and record the server version before taking
+a consistent backup of the complete server data root. For Desktop this is the
+embedded server data root, not renderer storage; for standalone deployments it
+is the configured persistent volume. Include the extension registry, immutable
+package slots and receipts, namespaced data/migration snapshots, profiles,
+environment/project registry, trust records, and encrypted vault. Keep the
+vault's external unlock material separately; neither backup is useful as a
+substitute for the other.
+
+Restore into a stopped server of the recorded compatible version, with the same
+ownership/mode protections. Start without accepting clients, inspect recovery
+and compatibility diagnostics, then test one profile/environment per provider
+before reopening access. Never copy only `packages/` or rewrite active pointers
+by hand. If npmjs is unavailable, retained immutable slots can start, but a
+missing package cannot be freshly restored until the registry returns.
+
+## Server update and disaster rollback
+
+Before updating Terminay, take the backup above and verify installed extensions'
+API/Node/Terminay ranges. The updated server preserves incompatible extensions
+and their projects as unavailable; it never falls back to This server. Allow
+registry/data migrations to finish before client admission. A failed activation
+leaves the extension failed and other providers available.
+
+To roll back the server, stop it, restore the whole pre-update data-root snapshot
+and matching server artifact, then verify diagnostics. Do not run an older
+binary against data already migrated by a newer version unless that migration
+explicitly declares backward compatibility. Extension **Rollback** changes only
+the selected code slot and is not a server/data rollback.
+
+Embedded and standalone flows have the same rules. Desktop operators must quit
+all application windows so the embedded server is stopped; standalone operators
+must drain clients and stop the service/container while preserving its volume.
+
+## Compromise response
+
+If an extension is suspected of compromise:
+
+1. Disable it on every affected Terminay Server and prevent new activation or
+   installation of the package/version at the registry/network boundary.
+2. Preserve registry receipts, package/lock/inventory hashes, bounded audit and
+   process diagnostics, and the immutable slot for investigation. Do not execute
+   the suspect entrypoint to collect evidence.
+3. Assume every file/network resource available to the server account and every
+   secret intentionally brokered to that extension may be exposed. Rotate API
+   keys, SSH keys/agent identities, passwords, server access credentials, and
+   downstream tokens accordingly; revoke sessions and review provider audit.
+4. Inspect external resources for mutation. Uninstalling code does not undo VM,
+   filesystem, network, or credential actions.
+5. Install a reviewed exact replacement or restore a known-good pre-compromise
+   server backup, then explicitly re-enable and validate dependent environments.
+
+Record package name/version/integrity, extension id, server ids, first/last
+known execution time, granted permissions, affected profile bindings, response
+actions, and credential rotation completion without copying secret values into
+the incident record.
+
 ## Security posture
 
 Custom npm extensions are trusted code with the Terminay Server account's

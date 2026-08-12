@@ -32,10 +32,10 @@ Phase 6 release convergence after Tasks 41–50.
 
 ### Author and operator experience
 
-- [ ] Publish Extension API reference, manifest/permissions/UI/provider guides,
+- [x] Publish Extension API reference, manifest/permissions/UI/provider guides,
   trusted-code security model, conformance CLI, example provider, and separate
   official repository workflows.
-- [ ] Document embedded/standalone install, backup, restore, update, rollback,
+- [x] Document embedded/standalone install, backup, restore, update, rollback,
   disable/remove, npmjs availability requirements, diagnostics, and compromise
   response.
 
