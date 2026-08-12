@@ -3,6 +3,8 @@ export type AppCommand =
   | 'new-project'
   | 'save-active'
   | 'open-recordings'
+  | 'open-project-environments'
+  | 'open-extensions'
   | 'split-horizontal'
   | 'split-vertical'
   | 'popout-active'
@@ -601,13 +603,17 @@ export type QuickPushApplyResult = {
 export type ProjectEditWindowDraft = {
   color: string
 	defaultShellProfileId: string | null
+	environmentLabel: string
+	environmentStatus: string
+	environmentDefaultRoot: string | null
+	projectEnvironmentId: string
   emoji: string
   rootFolder: string
 	shellProfileOptions: Array<{ id: string; name: string; available: boolean }>
   title: string
 }
 
-export type ProjectEditWindowResult = Omit<ProjectEditWindowDraft, 'shellProfileOptions'>
+export type ProjectEditWindowResult = Omit<ProjectEditWindowDraft, 'shellProfileOptions' | 'environmentLabel' | 'environmentStatus' | 'environmentDefaultRoot' | 'projectEnvironmentId'>
 
 export type TerminalEditWindowDraft = {
   activityIndicatorsEnabled: boolean

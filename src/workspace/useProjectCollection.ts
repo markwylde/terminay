@@ -59,6 +59,13 @@ export function useProjectCollection<TTerminal>({
 				return {
 					...base,
 					id: serverProject.id,
+					projectEnvironmentId: serverProject.projectEnvironmentId,
+					environmentRevision: serverProject.environmentRevision,
+					environmentLabel:
+						serverProject.projectEnvironmentId === 'terminay:this-server'
+							? 'This server'
+							: 'Remote environment',
+					environmentStatus: 'ready',
 					title: serverProject.name,
 					rootFolder: serverProject.root,
 					color,
@@ -150,6 +157,13 @@ export function useProjectCollection<TTerminal>({
 					return {
 						...base,
 						id: serverProject.id,
+						projectEnvironmentId: serverProject.projectEnvironmentId,
+						environmentRevision: serverProject.environmentRevision,
+						environmentLabel:
+							serverProject.projectEnvironmentId === 'terminay:this-server'
+								? 'This server'
+								: 'Remote environment',
+						environmentStatus: 'ready',
 						title: serverProject.name,
 						rootFolder: serverProject.root,
 						color,
