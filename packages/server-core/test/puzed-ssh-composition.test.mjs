@@ -109,6 +109,16 @@ test("canonical opener commits one immutable environment/project binding and rep
   const stored = (await environments.load()).environments[input.environmentId]; assert.equal(stored.providerId, SSH_PROVIDER_ID); assert.equal(stored.providerState.sshBindingId, "binding-a"); assert.equal(stored.projectReferenceCount, 1);
 });
 
+test("Puzed management and SSH runtime outages preserve the other side's durable identity", async () => {
+  let durable; const environments = new ProjectEnvironmentRepository({ async load() { return durable; }, async commit(value) { durable = structuredClone(value); } }, "server-outage"); await environments.load();
+  const workspace = new WorkspaceStore(createInitialWorkspace("server-outage")); const opener = new RepositoryCanonicalProjectOpener(environments, workspace);
+  const input = { environmentId: "puzed:platform:machine", displayName: "Machine", sshBindingId: "binding-stable", sshRevision: 2, canonicalRoot: "/srv/app", puzedProfileId: "platform", machineId: "machine" };
+  const opened = await opener.open(input, new AbortController().signal);
+  const managementOutage = new PuzedSshCompositionService({ backend: { async load() { throw new Error("Puzed unavailable"); }, async commit() {} }, vault: { async put() {}, async remove() {} }, ssh: { async createBinding() { throw new Error(); }, async updateBinding() { throw new Error(); }, async verifyBinding() { throw new Error(); }, async approveTrust() { throw new Error(); }, async removeBinding() {} }, projects: opener });
+  await assert.rejects(managementOutage.snapshot(), /Puzed unavailable/); assert.equal(workspace.state.projects[opened.projectId].projectEnvironmentId, input.environmentId);
+  const stored = (await environments.load()).environments[input.environmentId]; assert.equal(stored.providerState.sshBindingId, "binding-stable"); assert.equal(stored.status, "ready");
+});
+
 test("production SSH adapter gives private secret metadata only to SSH and survives restart", async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-composed-ssh-")); const calls = [];
   const hosts = { async invokeProvider(input) { calls.push(structuredClone(input)); if (input.callback === "createEnvironment") return { state: "ready", providerState: { profileId: input.request.profileId, root: "/srv/app" }, status: { state: "available", defaultRoot: "/srv/app", revision: 1 } }; return { state: "available", defaultRoot: "/srv/app", revision: 1 }; } };
