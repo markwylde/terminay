@@ -15,7 +15,7 @@ Phase 6 release convergence after Tasks 41–50.
   [42](../tasks_completed/42-extension-api-manifest-and-host.md),
   [43](../tasks_completed/43-environment-routed-project-services.md),
   [44](../tasks_completed/44-extension-installation-and-management.md),
-  [45](./45-project-environment-and-extension-ui.md),
+  [45](../tasks_completed/45-project-environment-and-extension-ui.md),
   [46](./46-official-ssh-extension.md),
   [47](../tasks_completed/47-official-puzed-extension-foundation.md),
   [48](./48-puzed-vm-provisioning-experience.md), and
