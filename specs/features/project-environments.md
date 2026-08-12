@@ -178,6 +178,13 @@ The project bar uses an accessible split button:
 - the primary `+` immediately creates a new This server project; and
 - the arrow opens **Choose project environment**.
 
+Opening the chooser refreshes its inventory from the currently authenticated
+Terminay Server. A query attempted while the shared client is still connecting
+must not permanently cache an empty inventory: the chooser retries on open and
+continues to show the last successfully authenticated snapshot during transient
+transport recovery. Desktop and browser therefore converge on the same
+server-owned inventory without keeping a renderer-owned copy as authority.
+
 The menu groups **This Terminay Server**, recent/favourite SSH profiles, recent
 Puzed VMs by Platform profile, provider creation/browse actions, **Project
 Environments…**, and **Extensions…**. Large inventories use searchable pickers
