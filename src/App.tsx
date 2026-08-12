@@ -5306,12 +5306,22 @@ function App({
 	);
 	const [projectEnvironmentChoices, setProjectEnvironmentChoices] =
 		useState<readonly ProjectEnvironmentSummaryDto[]>([]);
+	const refreshProjectEnvironmentChoices = useCallback(async () => {
+		if (projectEnvironmentsClient === null) return;
+		try {
+			const snapshot = await projectEnvironmentsClient.snapshot();
+			setProjectEnvironmentChoices(snapshot.environments);
+		} catch {
+			// Preserve the last authenticated inventory during connection recovery.
+			// Opening the chooser retries against the current server transport.
+		}
+	}, [projectEnvironmentsClient]);
 	useEffect(() => {
 		let active = true;
 		if (projectEnvironmentsClient === null) return;
 		void projectEnvironmentsClient.snapshot().then(
 			(snapshot) => { if (active) setProjectEnvironmentChoices(snapshot.environments); },
-			() => { if (active) setProjectEnvironmentChoices([]); },
+			() => undefined,
 		);
 		return () => { active = false; };
 	}, [projectEnvironmentsClient]);
@@ -5759,6 +5769,7 @@ function App({
 						environments={projectEnvironmentChoices}
 						onCreateThisServer={() => void createThisServerProject()}
 						onChoose={chooseProjectEnvironment}
+						onOpen={() => void refreshProjectEnvironmentChoices()}
 						onManageEnvironments={() => setProjectEnvironmentSurface('environments')}
 						onManageExtensions={() => setProjectEnvironmentSurface('extensions')}
 					/>

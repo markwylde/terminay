@@ -8,6 +8,7 @@ export function ProjectEnvironmentSplitButton({
 	environments,
 	onCreateThisServer,
 	onChoose,
+	onOpen,
 	onManageEnvironments,
 	onManageExtensions,
 }: Readonly<{
@@ -15,6 +16,7 @@ export function ProjectEnvironmentSplitButton({
 	environments: readonly ProjectEnvironmentSummaryDto[];
 	onCreateThisServer: () => void;
 	onChoose: (environment: ProjectEnvironmentSummaryDto) => void;
+	onOpen?: () => void;
 	onManageEnvironments: () => void;
 	onManageExtensions: () => void;
 }>) {
@@ -45,6 +47,7 @@ export function ProjectEnvironmentSplitButton({
 
 	const openMenu = () => {
 		setOpen(true);
+		onOpen?.();
 		requestAnimationFrame(() => menuRef.current?.querySelector<HTMLElement>('input, [role="menuitem"]')?.focus());
 	};
 	const closeMenu = () => {

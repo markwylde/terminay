@@ -18,6 +18,13 @@ test('split button keeps primary This server and a separate accessible chooser',
 	assert.match(split,/No matching environments/);
 });
 
+test('chooser retries the authenticated server inventory without erasing the last good snapshot',()=>{
+	assert.match(split,/onOpen\?\.\(\)/);
+	assert.match(app,/onOpen=\{\(\) => void refreshProjectEnvironmentChoices\(\)\}/);
+	assert.match(app,/const refreshProjectEnvironmentChoices = useCallback/);
+	assert.doesNotMatch(app,/projectEnvironmentsClient\.snapshot\(\)\.then\([\s\S]{0,300}setProjectEnvironmentChoices\(\[\]\)/);
+});
+
 test('production forms originate from server provider descriptors without provider fixtures',()=>{
 	assert.match(surfaces,/snapshot\.providers/);
 	assert.match(surfaces,/provider\.profileForm/);
