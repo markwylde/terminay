@@ -33,6 +33,7 @@ test("one extension child activates, invokes methods, and uses an identity-scope
       context.registerProjectEnvironmentProvider({ providerId: "example.test/main", displayName: "Example", capabilities: ["terminal"] });
       return { methods: {
         echo(input) { return { input, extensionId: context.extensionId }; },
+        runtime() { return { electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE, nodeEnv: process.env.NODE_ENV }; },
         async log(input) { return context.broker.request("log", input); }
       }};
     }
@@ -43,6 +44,7 @@ test("one extension child activates, invokes methods, and uses an identity-scope
   assert.equal(host.status().state, "running");
   assert.deepEqual(host.status().providers.map((provider) => provider.providerId), ["example.test/main"]);
   assert.deepEqual(await host.invoke({ method: "echo", input: "hello" }), { input: "hello", extensionId: "example.test" });
+  assert.deepEqual(await host.invoke({ method: "runtime" }), { electronRunAsNode: "1", nodeEnv: "production" });
   assert.equal(await host.invoke({ method: "log", input: { message: "safe" } }), "resolved-metadata");
   assert.equal(requests[0].extensionId, "example.test");
   assert.equal(requests[0].operation, "log");
