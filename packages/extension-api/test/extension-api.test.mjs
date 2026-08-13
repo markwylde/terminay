@@ -80,6 +80,14 @@ test("every fixed operation has exactly one transport permission policy", () => 
 
 test("provider definition and callback DTOs stay bounded and declarative", () => {
   assert.equal(validateProviderDefinition(validProviderDefinitionFixture).ok, true);
+  const asynchronousPresetDefinition = structuredClone(validProviderDefinitionFixture);
+  asynchronousPresetDefinition.createForm.sections[0].fields[0] = {
+    id: "preset",
+    type: "preset-cards",
+    label: "Preset",
+    optionSource: "dev.terminay.fixture/sizes",
+  };
+  assert.equal(validateProviderDefinition(asynchronousPresetDefinition).ok, true);
   assert.equal(validateOptionSourceResult({ options: [{ value: "one", label: "One" }] }).ok, true);
   const progress = { operationId: "op-1", title: "Creating", resumable: true, stages: [{ id: "boot", label: "Boot VM", state: "active" }] };
   assert.equal(validateProgressPresentation(progress).ok, true);
