@@ -6,7 +6,9 @@ not treated as proven merely because it appears here.
 
 ## Runtime baseline
 
-- The build and release baseline is Node 24.15.0 with npm 12.0.2. Runtime,
+- The build and release baseline is Node 24.15.0 with npm 12.0.2. CI and every
+  Node-based container install that exact npm version before materializing the
+  lockfile, so the toolchain cannot silently drift with a base-image refresh. Runtime,
   container, CI, release, and local version-manager pins move together.
 - TypeScript and esbuild compile active application code for ES2022 and Node 24
   respectively; active build configuration must not retain a Node 22 target.

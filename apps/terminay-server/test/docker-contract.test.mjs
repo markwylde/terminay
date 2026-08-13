@@ -18,7 +18,7 @@ test('Docker server contract builds a non-root, read-only-root image with a boun
 		'utf8',
 	);
 
-	assert.match(dockerfile, /node:24\.14\.0-bookworm-slim AS build/u);
+	assert.match(dockerfile, /node:24\.15\.0-bookworm-slim AS build/u);
 	assert.match(
 		dockerfile,
 		/apt-get install --yes --no-install-recommends python3 make g\+\+/u,
@@ -35,6 +35,7 @@ test('Docker server contract builds a non-root, read-only-root image with a boun
 		dockerfile,
 		/--mount=type=cache,id=terminay-npm-cache-node24,target=\/root\/\.npm,sharing=locked/u,
 	);
+	assert.match(dockerfile, /npm install --global npm@12\.0\.2/u);
 	assert.match(dockerfile, /npm ci/u);
 	assert.ok(
 		dockerfile.indexOf('npm ci') < dockerfile.indexOf('COPY apps ./apps'),

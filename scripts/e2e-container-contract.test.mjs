@@ -18,6 +18,7 @@ test("local Electron E2E defaults to an isolated Linux container", async () => {
   assert.equal(scripts["test:e2e:host"], "npm run build:app && playwright test");
   assert.match(agents, /must run Electron end-to-end tests through `npm run test:e2e`/u);
   assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm-slim$/mu);
+  assert.match(dockerfile, /npm install --global npm@12\.0\.2/u);
   assert.match(dockerfile, /COPY --chown=node:node scripts\/ensure-node-pty-helper-mode\.mjs scripts\/ensure-node-pty-helper-mode\.mjs/u);
   assert.match(dockerfile, /USER node\nRUN npm ci \\\n\s+&& node node_modules\/electron\/install\.js \\\n\s+&& npx playwright install chromium/u);
   assert.match(dockerfile, /USER root\nRUN npx playwright install-deps chromium/u);
@@ -34,6 +35,7 @@ test("local Electron E2E defaults to an isolated Linux container", async () => {
 
 test("CI shards Electron E2E through the same isolated Docker entrypoint", async () => {
   const workflow = await text(".github/workflows/ci.yml");
+  assert.match(workflow, /npm install --global npm@12\.0\.2/u);
   assert.match(workflow, /shard: \[1, 2, 3, 4, 5\]/u);
   assert.match(workflow, /run: npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/5/u);
   assert.doesNotMatch(workflow, /run: xvfb-run -a npm run test:e2e:host/u);
