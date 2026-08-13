@@ -12,9 +12,17 @@ test('touch-mobile dictation renders state, provider error, cancel, and submit t
 		viewport: { width: 390, height: 844 },
 	})
 	const page = await context.newPage()
-	await page.goto(`${fixture.origin}/e2e/fixtures/mobile-dictation.html`)
+	// The shard can cold-compile this fixture while other Docker jobs are busy.
+	// Navigation commit proves the fixture accepted the request; the semantic
+	// surface assertion below remains the authoritative application readiness.
+	await page.goto(`${fixture.origin}/e2e/fixtures/mobile-dictation.html`, {
+		waitUntil: 'commit',
+		timeout: 15_000,
+	})
 	const surface = page.getByRole('region', { name: 'Mobile dictation' })
-	await expect(surface).toHaveAttribute('data-mobile-dictation-status', 'idle')
+	await expect(surface).toHaveAttribute('data-mobile-dictation-status', 'idle', {
+		timeout: 15_000,
+	})
 
 	await page.getByRole('button', { name: 'Start dictation' }).tap()
 	await expect(surface).toHaveAttribute('data-mobile-dictation-status', 'recording')
