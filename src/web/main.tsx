@@ -42,6 +42,11 @@ import { acquireHostedApplicationTransport, getSessionTransportHost } from './se
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
 import { enrollBrowserDevice } from './deviceEnrollment';
 import { PairingIntentController, type PairingIntent } from './pairingIntent';
+import {
+	isAutoRestorableProfile,
+	isBrowserReconnectOrigin,
+	reconnectNeedsFreshPairing,
+} from './reconnectPolicy';
 import { runBoundedBrowserRecoveryStep } from './reconnectAttempt';
 import { createWebClientId } from './webClientIdentity';
 import { classifyWebConnectionFailure } from './webConnectionFailure';
@@ -168,21 +173,7 @@ type ReconnectCompletion = Readonly<{
 	expiresAt: number;
 }>;
 
-const AUTO_RESTORE_PROFILE_STATUSES: ReadonlySet<ConnectionProfile['status']> =
-	new Set([
-		'connected',
-		'connecting',
-		'unreachable',
-	] satisfies ConnectionProfile['status'][]);
 const UNREACHABLE_AUTO_RESTORE_DELAY_MS = 1_250;
-
-function isAutoRestorableProfile(profile: ConnectionProfile): boolean {
-	return (
-		profile.archived !== true &&
-		profile.isLocal !== true &&
-		AUTO_RESTORE_PROFILE_STATUSES.has(profile.status)
-	);
-}
 
 function parseServerUrl(rawValue: string): ParsedServerUrl {
 	let parsed: URL;
@@ -276,18 +267,6 @@ function launchPairingOnSessionOrigin(rawUrl: string, origin: string): boolean {
 	return true;
 }
 
-function isBrowserReconnectOrigin(origin: string): boolean {
-	const parsed = new URL(origin);
-	if (parsed.protocol === 'https:') return true;
-	return (
-		parsed.protocol === 'http:' &&
-		(parsed.hostname === 'localhost' ||
-			parsed.hostname.endsWith('.localhost') ||
-			parsed.hostname === '127.0.0.1' ||
-			parsed.hostname === '[::1]')
-	);
-}
-
 function reconnectNonce(): string {
 	const bytes = new Uint8Array(24);
 	crypto.getRandomValues(bytes);
@@ -297,19 +276,6 @@ function reconnectNonce(): string {
 		.replace(/\+/g, '-')
 		.replace(/\//g, '_')
 		.replace(/=+$/g, '');
-}
-
-function reconnectNeedsFreshPairing(cause: unknown): boolean {
-	if (!(cause instanceof Error)) return false;
-	return (
-		cause.message === 'reconnect proof request is invalid' ||
-		cause.message === 'reconnect credential is unavailable for this server' ||
-		cause.message === 'reconnect credential changed while signing' ||
-		cause.message.includes('Saved reconnect credentials were rejected') ||
-		/Server reconnect request failed \((?:400|401|403|404)\)/u.test(
-			cause.message,
-		)
-	);
 }
 
 async function reconnectRequest<T>(
