@@ -36,13 +36,16 @@ test('standalone settings migration preserves the raw source and safely retries 
 				'disabled',
 				'--agent-integration',
 				'disabled',
+				'--vault-unlock-fd',
+				'3',
 			],
 			{
 				cwd: new URL('../', import.meta.url),
 				env: { ...process.env, HOME: root, TERMINAY_SERVER_VERSION: 'test' },
-				stdio: ['ignore', 'pipe', 'pipe'],
+				stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
 			},
 		);
+		child.stdio[3].end('test-vault-passphrase\n');
 		const ready = await readiness(child);
 		assert.equal(ready.ready, true);
 		assert.deepEqual(

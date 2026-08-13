@@ -3,7 +3,7 @@ import type {
 	HeadlessWebRtcRuntimeAdapter,
 	HeadlessWebRtcRuntimeContext,
 	RemoteTrafficChannel,
-} from '@terminay/server-core';
+} from '@terminay/server-core/remote';
 
 /** Minimal node-datachannel surface kept at the privileged application edge. */
 export interface NodeDataChannelLike {

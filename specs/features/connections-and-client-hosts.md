@@ -11,6 +11,14 @@ picker. Both hosts can add, remember, open, switch, inspect, and forget remote
 Terminay Server connections. An authorized local Desktop window can also expose
 its embedded server so other desktop or browser clients can pair with it.
 
+Terminay Server connections are distinct from
+[project environments](./project-environments.md). A server connection is the
+client-to-Terminay-Server transport selected by the host. A project environment
+is a server-owned outbound binding from that Terminay Server to a project
+machine. The header server selector never lists SSH servers or Puzed VMs;
+project creation and **Project Environments…** do. Desktop/web never install
+environment extensions, make those outbound connections, or hold their secrets.
+
 ## Concepts
 
 - A **server connection** is an authenticated relationship with one stable
@@ -71,10 +79,11 @@ keyboard/touch focus behavior (arrow wrapping, Home/End, Escape, and explicit
 activation). Host capabilities gate administrative actions such as exposure;
 the menu never invokes a native operation directly.
 
-The same package exposes a route registry for workspace, connections, settings,
-recordings, macros, file, and Git surfaces. Browser hosts keep every route
-in-page; Desktop may present eligible secondary routes in native auxiliary
-windows only when its `nativeWindows` capability is declared.
+The same package exposes a route registry for workspace, connections, settings
+(including Extensions), project environments, recordings, macros, file, and
+Git surfaces. Browser hosts keep every route in-page; Desktop may present
+eligible secondary routes in native auxiliary windows only when its
+`nativeWindows` capability is declared.
 
 Desktop development and auxiliary query routes render those same production
 shared route bodies against the authenticated embedded-server clients. They do
@@ -103,6 +112,11 @@ status must not be conflated with terminal or agent attention.
   remember any number of remote profiles.
 - A native window is bound to exactly one server at a time. Its title and
   security scope make the connection clear.
+- Reloading a native window preserves that exact server binding. Desktop
+  discards the document-scoped byte channel, reconnects the remembered remote
+  profile with its OS-protected credential, and transfers a fresh channel to
+  the new document. A reload must never attach Local merely because the remote
+  renderer transport was destroyed with the previous document.
 - Selecting a profile focuses an existing window for that connection/view when
   appropriate or opens a new sandboxed window. Rebinding the current window is
   an explicit action, not an accidental side effect of menu selection.
@@ -350,10 +364,12 @@ separate operation against that origin.
 - Native-only window operations are capability-gated. Web clients manage
   server-owned logical workspace views through in-page navigation rather than
   requiring popup windows.
-- Settings, macros, recordings, and edit-tab surfaces use shared
-  routes/components. Electron may present a route in a native auxiliary window;
-  the web host presents the same route in-page with equivalent open, focus,
-  save, cancel, and close semantics.
+- Settings (including Extensions), project environments, macros, recordings,
+  and edit-tab surfaces use shared routes/components. Electron presents
+  Project Environments as a first-class native management window consistent
+  with Settings, Macros, and Recordings, while edit-tab routes may use modal
+  project-editor chrome. The web host presents the same shared routes in-page
+  with equivalent open, focus, save, cancel, and close semantics.
 - Project-tab and terminal-tab double-click editing is a shared command. On
   Desktop it may open the native modal edit window. In web it opens the
   in-page edit-tab surface and returns focus to the edited project or terminal

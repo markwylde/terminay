@@ -21,6 +21,8 @@ export type ServerWorkspaceProject = Readonly<{
 	color?: string
 	icon?: string
 	viewId: string
+	projectEnvironmentId: string
+	environmentRevision: number
 	panelIds: readonly string[]
 	activePanelId?: string
 	defaultShellProfileId?: string
@@ -43,7 +45,7 @@ export type ServerWorkspaceSnapshot = Readonly<{
 	views: Readonly<Record<string, ServerWorkspaceView>>
 	projects: Readonly<Record<string, ServerWorkspaceProject>>
 	panels: Readonly<Record<string, ServerWorkspacePanel>>
-	terminalSessions: Readonly<Record<string, Readonly<{ id: string; serverId: string; projectId: string }>>>
+	terminalSessions: Readonly<Record<string, Readonly<{ id: string; serverId: string; projectId: string; projectEnvironmentId: string; environmentRevision: number }>>>
 }>
 
 export type ServerWorkspaceSelection = Readonly<{ viewId: string | null; projectId: string | null; panelId: string | null }>
@@ -74,7 +76,7 @@ export function reconcileServerWorkspaceSelection(snapshot: ServerWorkspaceSnaps
 export function parseServerWorkspaceSnapshot(value: unknown, expectedServerId: string, previous?: ServerWorkspaceSnapshot | null): ServerWorkspaceSnapshot {
 	if (!isRecord(value)) throw new Error('The server returned an incompatible workspace snapshot.')
 	const { schemaVersion, serverId, revision, cursor, viewOrder, views, projects, panels, terminalSessions } = value
-	if (schemaVersion !== 2 || serverId !== expectedServerId || typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0 || typeof cursor !== 'string' || cursor !== String(revision) || !isStringArray(viewOrder) || !isRecord(views) || !isRecord(projects) || !isRecord(panels) || !isRecord(terminalSessions)) throw new Error('The server returned an incompatible workspace snapshot.')
+	if (schemaVersion !== 3 || serverId !== expectedServerId || typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0 || typeof cursor !== 'string' || cursor !== String(revision) || !isStringArray(viewOrder) || !isRecord(views) || !isRecord(projects) || !isRecord(panels) || !isRecord(terminalSessions)) throw new Error('The server returned an incompatible workspace snapshot.')
 	const snapshot = value as unknown as ServerWorkspaceSnapshot
 	if (previous !== undefined && previous !== null && (snapshot.revision < previous.revision || (snapshot.revision === previous.revision && snapshot.cursor !== previous.cursor))) throw new Error('The server returned a stale workspace snapshot.')
 	if (new Set(snapshot.viewOrder).size !== snapshot.viewOrder.length || snapshot.viewOrder.some((id) => snapshot.views[id]?.id !== id)) throw new Error('The server returned invalid workspace view references.')
@@ -83,14 +85,15 @@ export function parseServerWorkspaceSnapshot(value: unknown, expectedServerId: s
 		if (view.activeProjectId !== undefined && !view.projectIds.includes(view.activeProjectId)) throw new Error('The server returned an invalid active project.')
 	}
 	for (const [id, project] of Object.entries(snapshot.projects)) {
-		if (project.id !== id || project.serverId !== expectedServerId || typeof project.name !== 'string' || typeof project.root !== 'string' || !['explicit', 'server-default', 'legacy-unverified'].includes(project.rootOrigin) || (project.color !== undefined && typeof project.color !== 'string') || (project.icon !== undefined && typeof project.icon !== 'string') || (project.defaultShellProfileId !== undefined && typeof project.defaultShellProfileId !== 'string') || snapshot.views[project.viewId]?.projectIds.includes(project.id) !== true || !isStringArray(project.panelIds) || new Set(project.panelIds).size !== project.panelIds.length || project.panelIds.some((panelId) => snapshot.panels[panelId]?.id !== panelId || snapshot.panels[panelId]?.projectId !== project.id)) throw new Error('The server returned invalid workspace panel references.')
+		if (project.id !== id || project.serverId !== expectedServerId || typeof project.projectEnvironmentId !== 'string' || !isPositiveSafeInteger(project.environmentRevision) || typeof project.name !== 'string' || typeof project.root !== 'string' || !['explicit', 'server-default', 'environment-default', 'legacy-unverified'].includes(project.rootOrigin) || (project.color !== undefined && typeof project.color !== 'string') || (project.icon !== undefined && typeof project.icon !== 'string') || (project.defaultShellProfileId !== undefined && typeof project.defaultShellProfileId !== 'string') || snapshot.views[project.viewId]?.projectIds.includes(project.id) !== true || !isStringArray(project.panelIds) || new Set(project.panelIds).size !== project.panelIds.length || project.panelIds.some((panelId) => snapshot.panels[panelId]?.id !== panelId || snapshot.panels[panelId]?.projectId !== project.id)) throw new Error('The server returned invalid workspace panel references.')
 		if (project.activePanelId !== undefined && !project.panelIds.includes(project.activePanelId)) throw new Error('The server returned an invalid active panel.')
 	}
 	for (const [id, panel] of Object.entries(snapshot.panels)) {
 		if (panel.id !== id || !['terminal', 'file', 'folder'].includes(panel.type) || snapshot.projects[panel.projectId] === undefined || (panel.title !== undefined && typeof panel.title !== 'string') || (panel.emoji !== undefined && typeof panel.emoji !== 'string') || (panel.color !== undefined && typeof panel.color !== 'string') || (panel.inheritsProjectColor !== undefined && typeof panel.inheritsProjectColor !== 'boolean') || (panel.activityIndicatorsEnabled !== undefined && typeof panel.activityIndicatorsEnabled !== 'boolean') || (panel.type === 'terminal' && (panel.sessionId === undefined || snapshot.terminalSessions[panel.sessionId]?.projectId !== panel.projectId))) throw new Error('The server returned an invalid workspace panel.')
 	}
 	for (const [id, session] of Object.entries(snapshot.terminalSessions)) {
-		if (session.id !== id || session.serverId !== expectedServerId || snapshot.projects[session.projectId] === undefined) throw new Error('The server returned an invalid terminal session.')
+		const project = snapshot.projects[session.projectId]
+		if (session.id !== id || session.serverId !== expectedServerId || project === undefined || session.projectEnvironmentId !== project.projectEnvironmentId || session.environmentRevision !== project.environmentRevision) throw new Error('The server returned an invalid terminal session.')
 	}
 	return snapshot
 }
@@ -127,4 +130,5 @@ export function hasTerminalPresentation(
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
 function isStringArray(value: unknown): value is readonly string[] { return Array.isArray(value) && value.every((entry) => typeof entry === 'string') }
+function isPositiveSafeInteger(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 }
 import { parseWorkspaceDeltaDto, type WorkspaceDeltaDto } from '@terminay/protocol'

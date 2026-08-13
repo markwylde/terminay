@@ -3,7 +3,7 @@ import {
   HeadlessChannelTransport,
   type HeadlessChannelTransportOptions,
   type RemoteTrafficChannel,
-} from '@terminay/server-core'
+} from '@terminay/server-core/remote'
 import {
   createNodeDataChannelRuntimeAdapter,
   loadNodeDataChannelRuntimeModule,

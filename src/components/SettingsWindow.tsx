@@ -1,7 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { Terminal } from '@xterm/xterm';
-import type { ShellProfilesClient } from '@terminay/client-core';
+import type { ShellProfilesClient, TerminayClient } from '@terminay/client-core';
 import type { ReactNode } from 'react';
 import {
 	type FormEvent,
@@ -57,8 +57,14 @@ import type {
 } from '../types/terminay';
 import '../settings.css';
 import { ShellProfilesSettings } from './ShellProfilesSettings';
+import { ExtensionSettingsSection } from './ExtensionSettingsSection';
 
-type CategoryId = (typeof terminalSettingsCategories)[number]['id'];
+type CategoryId = (typeof terminalSettingsCategories)[number]['id'] | 'extensions';
+
+const extensionSettingsCategory = Object.freeze({
+	id: 'extensions' as const,
+	label: 'Extensions',
+});
 
 function RemotePairingQrImage({
 	dataUrl,
@@ -526,6 +532,7 @@ function getCategoryIcon(id: CategoryId) {
 }
 
 export function SettingsWindow({
+	applicationClient,
 	aiTabMetadataClient: aiTabMetadataClientOverride,
 	initialSectionId,
 	remoteAccessStatusClient,
@@ -533,6 +540,7 @@ export function SettingsWindow({
 	shellProfilesClient,
 	serverIdentity = 'Connected server',
 }: Readonly<{
+	applicationClient?: TerminayClient;
 	aiTabMetadataClient?: AiTabMetadataClient;
 	initialSectionId?: string;
 	remoteAccessStatusClient: RemoteAccessStatusClient;
@@ -561,7 +569,9 @@ export function SettingsWindow({
 	);
 	const searchParams = new URLSearchParams(window.location.search);
 	const initialSectionFromUrl = initialSectionId ?? searchParams.get('section');
-	const initialCategoryFromUrl =
+	const initialCategoryFromUrl: CategoryId = initialSectionFromUrl === 'extensions'
+		? 'extensions'
+		:
 		terminalSettingsSections.find(
 			(section) => section.id === initialSectionFromUrl,
 		)?.categoryId ?? 'appearance';
@@ -875,13 +885,16 @@ export function SettingsWindow({
 	}, [normalizedQuery]);
 
 	const visibleCategories = useMemo(() => {
-		if (!normalizedQuery) return terminalSettingsCategories;
+		if (!normalizedQuery) return [...terminalSettingsCategories, extensionSettingsCategory];
 		const categoryIds = new Set(
 			filteredSections.map((section) => section.categoryId),
 		);
-		return terminalSettingsCategories.filter((category) =>
+		const settingsCategories = terminalSettingsCategories.filter((category) =>
 			categoryIds.has(category.id),
 		);
+		return 'extensions trusted code npm project connection providers'.includes(normalizedQuery)
+			? [...settingsCategories, extensionSettingsCategory]
+			: settingsCategories;
 	}, [filteredSections, normalizedQuery]);
 
 	const displayedCategories = useMemo(() => {
@@ -895,6 +908,10 @@ export function SettingsWindow({
 	}, [activeCategoryId, normalizedQuery, visibleCategories]);
 
 	useEffect(() => {
+		if (activeCategoryId === 'extensions') {
+			if (activeSectionId !== 'extensions') setActiveSectionId('extensions');
+			return;
+		}
 		const eligibleSections = normalizedQuery
 			? filteredSections
 			: filteredSections.filter(
@@ -912,6 +929,12 @@ export function SettingsWindow({
 		const unsubscribe =
 			window.terminaySettingsWindowHost?.subscribeFocusSection(
 				({ sectionId }) => {
+					if (sectionId === 'extensions') {
+						setActiveCategoryId('extensions');
+						setActiveSectionId('extensions');
+						setQuery('');
+						return;
+					}
 					const section = terminalSettingsSections.find(
 						(candidate) => candidate.id === sectionId,
 					);
@@ -3152,6 +3175,11 @@ export function SettingsWindow({
 			onQueryChange={setQuery}
 			onCategorySelect={(categoryId) => {
 				setActiveCategoryId(categoryId as CategoryId);
+				if (categoryId === 'extensions') {
+					setActiveSectionId('extensions');
+					setQuery('');
+					return;
+				}
 				const firstSection = filteredSections.find(
 					(s) => s.categoryId === categoryId,
 				);
@@ -3161,13 +3189,17 @@ export function SettingsWindow({
 					setTimeout(() => scrollToSection(firstSection.id), 0);
 				}
 			}}
-			onResetAll={() => void resetAll()}
+			onResetAll={activeCategoryId === 'extensions' ? undefined : () => void resetAll()}
 			contentRef={contentRef}
 			preview={settingsPreview}
 			collapsedPreview={collapsedSettingsPreview}
 			modal={pairingPinModal}
 		>
+			{displayedCategories.some((category) => category.id === 'extensions') ? (
+				<ExtensionSettingsSection applicationClient={applicationClient} serverName={serverIdentity} />
+			) : null}
 			{displayedCategories.map((cat) => {
+				if (cat.id === 'extensions') return null;
 				const sections = filteredSections.filter(
 					(s) => s.categoryId === cat.id,
 				);

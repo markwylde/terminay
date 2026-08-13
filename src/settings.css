@@ -239,6 +239,64 @@
   justify-content: space-between;
 }
 
+.settings-section-description {
+	margin: -8px 0 18px;
+	color: var(--settings-text-muted);
+}
+
+.settings-extension-group {
+	padding: 20px;
+}
+
+.extension-manager--settings {
+	min-height: 540px;
+}
+
+.extension-manager--settings .trusted-code-warning {
+	margin-bottom: 0;
+}
+
+.settings-inline-error,
+.settings-status-message {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 14px;
+	padding: 12px 14px;
+	border-radius: 8px;
+	background: var(--settings-control-bg);
+}
+
+.settings-inline-error {
+	color: #ffc1c1;
+	border: 1px solid rgba(181, 53, 53, 0.35);
+}
+
+.extension-manager--settings .management-route-list,
+.extension-manager--settings .management-route-detail {
+	background: var(--settings-card-bg);
+	border-color: var(--settings-border);
+}
+
+.extension-manager--settings .management-route-list input,
+.extension-manager--settings .extension-install input {
+	color: var(--settings-text);
+	background: var(--settings-input-bg);
+	border-color: var(--settings-input-border);
+}
+
+.extension-manager--settings .management-route-detail dl div {
+	background: var(--settings-input-bg);
+}
+
+.extension-manager--settings .management-route-header p,
+.extension-manager--settings .management-route-title p,
+.extension-manager--settings .management-route-detail dt,
+.extension-manager--settings .management-route-list small {
+	color: var(--settings-text-muted);
+}
+
 .settings-reset-all {
   padding: 6px 10px;
   border-radius: 6px;

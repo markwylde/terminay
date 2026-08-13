@@ -122,10 +122,10 @@ export class TerminayClientFacade implements QueryCommandTransport {
     };
   }
 
-  async commandWithBody<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}, body = new Uint8Array(), options: CommandOptions = {}): Promise<T> {
+  async commandWithBody<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}, body: Uint8Array = new Uint8Array(), options: CommandOptions = {}): Promise<T> {
 		const binaryClient = this.client as unknown as Pick<TerminayClient, "commandWithBody">;
 		if (typeof binaryClient.commandWithBody !== "function") throw new ClientBinaryUploadUnavailableError();
-		const result = await binaryClient.commandWithBody<T>(operation, payload, body, options);
+		const result = await binaryClient.commandWithBody<T>(operation, payload, Uint8Array.from(body), options);
     return (result.result ?? null) as T;
   }
 

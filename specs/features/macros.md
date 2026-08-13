@@ -14,6 +14,11 @@ are authorized against the exact target terminal/project and continue if the
 launching client disconnects only where the macro's documented cancellation
 policy permits.
 
+Macro terminal writes follow the terminal's canonical project environment.
+File fields browse through that environment's filesystem capability. A remote
+path is never read from the Terminay Server filesystem, and a missing provider
+capability makes the field/action unavailable rather than changing machines.
+
 See [server-owned workspace state](./server-owned-workspace-state.md).
 
 ## Template Syntax

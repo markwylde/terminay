@@ -9,10 +9,18 @@ profile and working directory from explicit, project, and server defaults.
 Startup, new-project, new-tab, split, Desktop, browser, local, and remote
 creation all resolve through this same boundary.
 
+Shell catalogue, System default, account home, executable validation, startup
+mode, cwd, and launch environment resolve against the exact
+[project environment](./project-environments.md). Existing server-local
+profiles remain valid for This server projects. An SSH project initially
+exposes its provider's Remote system default and never executes a local profile
+with a remote root. Project defaults must be valid for their environment;
+unavailable discovery or launch capability is reported rather than substituted.
+
 Terminay provides a **System default** profile that requires no configuration,
-discovers useful profiles on the server machine, and supports named custom
-profiles. Profile and working-directory changes affect only terminals created
-after the change.
+discovers profiles supported by the selected project environment, and supports
+named custom profiles where that environment permits them. Profile and
+working-directory changes affect only terminals created after the change.
 
 Related features:
 
@@ -23,9 +31,10 @@ Related features:
 
 ## Profile model
 
-Shell profiles belong to one Terminay Server. A client connected to another
-server sees that server's profiles and never sends a local executable path as
-the remote server's default.
+Shell-profile catalogues belong to one Terminay Server and are scoped by
+project-environment capability. A client connected to another server sees that
+server's catalogues and never sends a local executable path as another
+environment's default.
 
 The profile catalogue contains one reserved, undeletable **System default**
 profile, read-only profiles discovered from the server operating system, and
@@ -36,7 +45,7 @@ an ordered argument array, a startup mode, an environment overlay, and optional
 terminal icon and colour metadata. Renaming or restyling a profile does not
 change its identity. User-facing order is durable.
 
-A launch target is one of:
+A This server launch target is one of:
 
 - `system`, resolved from the server account at launch time;
 - `executable`, containing a native executable path or a platform-valid
@@ -51,12 +60,14 @@ unsupported combination is rejected instead of receiving a guessed flag.
 Additional arguments remain an array and are passed directly to the program
 without shell parsing, interpolation, or command-string execution.
 
-The reserved **System default** profile follows the host's platform policy. On
-macOS it launches a supported POSIX account shell as a login shell, matching a
-normal terminal login and allowing the user's login startup files to establish
-`PATH` and related command-discovery environment. This policy does not inspect
-or hard-code installed tool paths. An explicit custom profile's **Shell
-default** mode remains the selected shell's unmodified default behaviour.
+For This server, the reserved **System default** profile follows the host's
+platform policy. On macOS it launches a supported POSIX account shell as a
+login shell, matching a normal terminal login and allowing the user's login
+startup files to establish `PATH` and related command-discovery environment.
+This policy does not inspect or hard-code installed tool paths. An explicit
+custom profile's **Shell default** mode remains the selected shell's unmodified
+default behaviour. Other providers define their own bounded catalogue and
+system-default semantics.
 
 A WSL profile must name an explicit Linux shell before it can use startup mode,
 arguments, or an environment overlay. Terminay translates the structured WSL
@@ -83,10 +94,11 @@ over-budget records are reported without being persisted or executed.
 
 ## Discovery and system defaults
 
-Discovery executes on Terminay Server and returns capability data rather than
-persisted settings. Refreshing discovery can add, remove, or mark candidates
-unavailable without rewriting a custom profile or changing the selected
-default.
+Discovery executes through the target project environment and returns
+capability data rather than persisted settings. Refreshing discovery can add,
+remove, or mark candidates unavailable without rewriting a custom profile or
+changing the selected default. The native discovery rules below apply to This
+server; providers may expose a smaller provider-owned catalogue.
 
 On macOS and Linux, Terminay prefers the server account's configured login
 shell, then a valid absolute `SHELL` value, then executable entries from
@@ -161,15 +173,16 @@ start in** supports:
   cwd, the active folder, or the containing directory of the active file in the
   target project;
 - **Project folder**: use the canonical root of the target project; and
-- **Home folder**: use the verified home of the server account.
+- **Home folder**: use the verified account home reported by the exact project
+  environment.
 
 For the default policy, the resolver considers inputs in this order:
 
 1. an explicit cwd from an authorized user action;
 2. a verified live cwd from the active terminal, folder, or file panel;
 3. the target project's canonical root; and
-4. the server account's verified home only when the project has no usable root
-   by design.
+4. the project environment's verified account home only when the project has
+   no usable root by design.
 
 An explicitly requested missing or non-directory path fails; it is not
 retargeted. A stale observed panel cwd may fall through to the canonical project

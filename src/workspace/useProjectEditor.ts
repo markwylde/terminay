@@ -1,5 +1,6 @@
 import {
 	ClientError,
+	ProjectEnvironmentsClient,
 	ShellProfilesClient,
 	type TerminayClient,
 	TerminayClientFacade,
@@ -45,12 +46,20 @@ export function useProjectEditor({
 				const shellProfileCatalogue = applicationClient === undefined
 					? null
 					: await new ShellProfilesClient(new TerminayClientFacade(applicationClient)).catalogue();
+				const environmentSnapshot = applicationClient === undefined
+					? null
+					: await new ProjectEnvironmentsClient(new TerminayClientFacade(applicationClient)).snapshot();
+				const environment = environmentSnapshot?.environments.find((candidate) => candidate.id === project.projectEnvironmentId);
 				const result = await auxiliaryRoutes.editProjectTab({
 					kind: 'project',
 					projectId,
 						draft: {
 							color: project.color,
 							defaultShellProfileId: currentDefaultShellProfileId,
+							environmentLabel: environment?.name ?? project.environmentLabel ?? 'This server',
+							environmentStatus: environment?.status ?? project.environmentStatus ?? 'ready',
+							environmentDefaultRoot: environment?.defaultRoot ?? null,
+							projectEnvironmentId: project.projectEnvironmentId ?? 'terminay:this-server',
 							emoji: project.emoji,
 							rootFolder: project.rootFolder,
 							shellProfileOptions: (shellProfileCatalogue?.entries ?? []).filter((profile) => profile.kind !== 'discovered').map((profile) => ({ id: profile.id, name: profile.name, available: profile.availability.available })),

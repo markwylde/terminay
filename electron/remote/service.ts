@@ -2142,7 +2142,7 @@ export class RemoteAccessService {
     channelId: string,
     ticket: string,
     closePeer: (reason?: string) => void,
-  ): Promise<void> {
+  ): Promise<Readonly<{ connectionId: string; deviceId: string }>> {
     const ticketInfo = this.connectionStore.consumeTicket(ticket)
     const device = this.deviceStore.get(ticketInfo.deviceId)
     if (!device) throw new Error('This device is no longer trusted.')
@@ -2166,6 +2166,7 @@ export class RemoteAccessService {
     })
     this.webRtcStatusMessage = 'Browser connected over WebRTC. A fresh pairing QR remains available for another browser.'
     this.emitStatus()
+    return { connectionId: connection.connectionId, deviceId: connection.deviceId }
   }
 
   closeWebRtcApplication(channelId: string): void {

@@ -29,7 +29,10 @@ test('Electron validates the exact versioned project-edit request before opening
   assert.match(main, /assertTrustedAppSender\(event\)/u)
   assert.match(main, /Object\.keys\(request\)\.length !== 2/u)
   assert.match(main, /request\.version !== 1/u)
-  assert.match(main, /Object\.keys\(draft\)\.length !== 4/u)
+  assert.match(main, /Object\.keys\(draft\)\.length !== 10/u)
+  assert.match(main, /typeof draft\.projectEnvironmentId !== 'string'/u)
+  assert.match(main, /typeof draft\.environmentLabel !== 'string'/u)
+  assert.match(preload, /Object\.keys\(draft\)\.length !== 11/u)
 })
 
 test('the retired broad project-edit IPC and preload method cannot return', () => {

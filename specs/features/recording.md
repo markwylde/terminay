@@ -14,6 +14,11 @@ moving a view removes only that observer. Multiple observers receive the same
 server lifecycle snapshots, while each PTY boundary event is appended exactly
 once.
 
+Capture occurs at the Terminay Server's routed terminal-stream boundary, so a
+remote environment can be recorded without writing on the target. Environment
+identity is retained as non-secret provenance; cwd/root may be remote path text,
+while reveal/delete always act on the server recording store.
+
 ## Ownership
 
 Terminay Server owns:

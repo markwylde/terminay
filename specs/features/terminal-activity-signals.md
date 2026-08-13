@@ -14,6 +14,12 @@ Terminal escape sequences and raw PTY output are fallback evidence. They must
 never overwrite, synthesize transitions for, or otherwise compete with an
 authoritative journal-backed agent entry.
 
+PTY-byte signals work at the server-owned terminal stream boundary for Local,
+SSH, and Puzed-backed sessions. Native foreground-process and journal signals
+are used only when the exact project environment advertises and proves those
+capabilities; the Terminay Server's local SSH client process is never treated
+as the remote terminal's foreground process.
+
 ## Authority and fallback order
 
 For a terminal session, use the first available source:

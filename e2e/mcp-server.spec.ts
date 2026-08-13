@@ -73,7 +73,7 @@ test('MCP callers see and control only terminals in their own project', async ({
 	).toHaveCount(2);
 	const projectASessions = await activeSessionIds(mainWindow);
 
-	await mainWindow.getByLabel('Add project tab').click();
+	await mainWindow.getByLabel('Create project on This server').click();
 	await expect(mainWindow.locator('.project-tab--active')).toContainText(
 		'Project 2',
 	);

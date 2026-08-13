@@ -83,7 +83,11 @@ test('a high-volume terminal burst cannot kill the shared local application conn
 });
 
 test('sustained terminal output keeps checkpoint recovery moving without waiting for silence', async ({ mainWindow }) => {
-	test.setTimeout(45_000);
+	// The workload deliberately includes twenty seconds of sleeps plus 1,000
+	// short-lived producer processes. Keep its completion observation separate
+	// from that nominal floor so a busy Docker host does not turn scheduling
+	// latency into a false checkpoint-recovery failure.
+	test.setTimeout(75_000);
 	const sessionId = await activeSessionId(mainWindow);
 	const panel = mainWindow.locator(`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`);
 	const rows = panel.locator('.xterm-rows');
@@ -99,5 +103,5 @@ test('sustained terminal output keeps checkpoint recovery moving without waiting
 
 	await expect.poll(async () => (await rows.textContent())?.includes(progress) ?? false, { timeout: 20_000 }).toBe(true);
 	await expect(panel.getByText('Loading terminal…')).toHaveCount(0, { timeout: 10_000 });
-	await expect.poll(async () => (await rows.textContent())?.includes(complete) ?? false, { timeout: 20_000 }).toBe(true);
+	await expect.poll(async () => (await rows.textContent())?.includes(complete) ?? false, { timeout: 45_000 }).toBe(true);
 });

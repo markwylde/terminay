@@ -1,7 +1,7 @@
 import type {
 	HeadlessWebRtcRuntimeContext,
 	RemoteTrafficChannel,
-} from '@terminay/server-core';
+} from '@terminay/server-core/remote';
 import type {
 	NodeDataChannelLike,
 	NodeDataChannelRuntimeModule,

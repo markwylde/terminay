@@ -30,6 +30,8 @@ import {
 	createNodeShellDiscoveryHost,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
+	createPuzedSshProductionExtensionManagement,
+	ExtensionProjectEnvironmentRuntime,
 	ExactTerminalTargetRegistry,
 	FileCatalog,
 	FileContentStreamService,
@@ -38,6 +40,14 @@ import {
 	MacroRepository,
 	type NodePtyModuleLike,
 	OrderedEventJournal,
+	ProjectEnvironmentRegistry,
+	ProjectEnvironmentRepository,
+	FileProjectEnvironmentStateBackend,
+	ProjectEnvironmentRouter,
+	RemoteMcpBridgeAuthority,
+	RemoteMcpEnvironmentCoordinator,
+	createEnvironmentRoutedProjectServices,
+	composeRemoteMcpTerminalLifecycle,
 	RecordingService,
 	type RemoteReconnectGrantRecord,
 	type ServerCoreComposition,
@@ -48,6 +58,7 @@ import {
 	ServerGitAdapter,
 	ServerRecordingAdapter,
 	ServerSettingsRepository,
+	type ServerRuntimeServices,
 	ShellProfileCatalogueService,
 	ShellProfileDiscoveryService,
 	TerminalActivityService,
@@ -68,11 +79,14 @@ import {
 	createStandaloneServer,
 	type LocalUiServer,
 	runServerMcpStdio,
+	createServerTerminalControlAdapter,
+	createTerminalControlAdapter,
 	type ServerPairingHandoff,
 	type ServerRemoteExposure,
 } from './index.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
+import { createStandaloneVaultComposition } from './headlessVault.js';
 
 declare const process: {
 	readonly argv: readonly string[];
@@ -135,11 +149,12 @@ else if (options.command === 'mcp') {
 			handoff.pairingToken,
 			handoff.expiresAt,
 		);
-		const composition = await createServerComposition(options, () => {
+		const serverComposition = await createServerComposition(options, () => {
 			if (runtime === undefined)
 				throw new Error('server runtime is not composed');
 			return runtimeHealth(runtime, protocolReady);
 		});
+		const composition = serverComposition.core;
 		let runtime: StandaloneRuntime | undefined;
 		const uiServer =
 			options.endpoint === 'disabled'
@@ -153,7 +168,11 @@ else if (options.command === 'mcp') {
 						credentials,
 						reconnectPersistence.save,
 					);
-		runtime = createRuntime(options, remote, uiServer);
+		runtime = createRuntime(options, remote, uiServer, {
+			vault: serverComposition.vault.vault,
+			extensionSecrets: serverComposition.vault.extensionSecrets,
+			extensionHosts: serverComposition.extensions.hosts,
+		});
 
 		// A runtime without a listener has no event-loop handle of its own. Keep
 		// the CLI in the foreground until SIGINT/SIGTERM so local launches and
@@ -237,6 +256,7 @@ function createRuntime(
 	options: ServerCliOptions,
 	remote: ServerRemoteExposure,
 	uiServer?: LocalUiServer,
+	serverServices: Pick<ServerRuntimeServices, 'vault' | 'extensionSecrets' | 'extensionHosts'> = {},
 ): StandaloneRuntime {
 	return createStandaloneServer({
 		serverId: options.serverId,
@@ -247,6 +267,7 @@ function createRuntime(
 		...(options.uiBundle === undefined ? {} : { uiBundle: options.uiBundle }),
 		services: {
 			remoteExposure: remote,
+			...serverServices,
 		},
 		...(uiServer === undefined ? {} : { uiServer }),
 	});
@@ -267,7 +288,7 @@ function createRemoteExposure(
 async function createServerComposition(
 	options: ServerCliOptions,
 	health: () => JsonValue,
-): Promise<ServerCoreComposition> {
+): Promise<Readonly<{ core: ServerCoreComposition; vault: Awaited<ReturnType<typeof createStandaloneVaultComposition>>; extensions: ReturnType<typeof createPuzedSshProductionExtensionManagement> }>> {
 	const eventJournal = new OrderedEventJournal();
 	const activity = new TerminalActivityService({ serverId: options.serverId });
 	const agents = new AgentStatusService({
@@ -278,6 +299,15 @@ async function createServerComposition(
 		options.serverId,
 		options.projectRoot,
 	);
+	const projectEnvironments = new ProjectEnvironmentRepository(new FileProjectEnvironmentStateBackend(join(options.dataRoot, 'project-environments.v1.json')), options.serverId);
+	await projectEnvironments.load();
+	const projectEnvironmentRegistry = new ProjectEnvironmentRegistry();
+	const projectEnvironmentRouter = new ProjectEnvironmentRouter({
+		serverId: options.serverId,
+		workspaceSnapshot: () => workspace.state,
+		environmentSnapshot: () => projectEnvironments.state,
+		registry: projectEnvironmentRegistry,
+	});
 	const gitService = new GitService({
 		limits: {
 			maxOutputBytes: 512 * 1024,
@@ -317,6 +347,13 @@ async function createServerComposition(
 		}),
 		{ serverId: options.serverId },
 	);
+	const vault = await createStandaloneVaultComposition({
+		dataRoot: options.dataRoot,
+		serverId: options.serverId,
+		...(options.vaultUnlockFd === undefined ? {} : { unlockFd: options.vaultUnlockFd }),
+	});
+	const extensions = createPuzedSshProductionExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: 'This server', vault, projectEnvironments, workspace });
+	projectEnvironmentRegistry.register(new ExtensionProjectEnvironmentRuntime('com.terminay.ssh/connection', ['terminal', 'filesystem', 'mcp-bridge'], extensions.hosts, () => projectEnvironments.state));
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,
@@ -341,6 +378,7 @@ async function createServerComposition(
 					),
 				});
 	let composition: ServerCoreComposition;
+	let remoteMcp: RemoteMcpEnvironmentCoordinator | undefined;
 	composition = createServerCoreComposition({
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
@@ -349,6 +387,7 @@ async function createServerComposition(
 		authenticate: ({ hello }) => ({
 			clientId: hello.clientId,
 			authScope: 'admin',
+			permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
 		}),
 		ptyFactory: createNodePtyFactory(nodePty as unknown as NodePtyModuleLike, {
 			resolveCwd: resolveTerminalProcessCwd,
@@ -356,6 +395,8 @@ async function createServerComposition(
 		activity,
 		agents,
 		workspace,
+		projectEnvironmentRouter,
+		projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.projectRoot, ...(extensions !== undefined && "profiles" in extensions ? { providers: extensions.profiles } : {}) },
 		workspaceOperations: {
 			prepareProjectRootUpdate: files.prepareProjectRootUpdate,
 		},
@@ -372,6 +413,7 @@ async function createServerComposition(
 			? { terminalSystemDefaultStartupMode: 'login' as const }
 			: {}),
 		recordings,
+		extensions,
 		git,
 		...(ai === undefined ? {} : { ai }),
 		serviceLifecycle: {
@@ -412,6 +454,7 @@ async function createServerComposition(
 			defaultEnvironment: process.env,
 			maxReplayBytes: 4 * 1024 * 1024,
 			maxQueuedOutputBytes: 512 * 1024,
+			sessionLifecycle: composeRemoteMcpTerminalLifecycle(() => remoteMcp),
 		},
 		operations: {
 			queries: {
@@ -426,7 +469,41 @@ async function createServerComposition(
 			},
 		},
 	});
-	return composition;
+	const control = createTerminalControlAdapter({
+		adapter: createServerTerminalControlAdapter({
+			terminal: composition.terminal,
+			launchResolver: requireTerminalLaunchResolver(composition),
+			activity,
+		}),
+	});
+	const remoteMcpAuthority = new RemoteMcpBridgeAuthority({
+		dispatch: async (scope, op, params, { signal }) => {
+			const result = await control(
+				{ id: `${op}:${Date.now()}`, version: 1, op: op as never, params: params as Record<string, unknown> },
+				{ terminalSessionId: scope.terminalSessionId, projectId: scope.projectId, scope: scope.scope, connectionId: `remote-mcp:${scope.terminalSessionId}`, requestId: `${op}:${Date.now()}`, signal },
+			);
+			return JSON.parse(JSON.stringify(result)) as JsonValue;
+		},
+	});
+	remoteMcp = new RemoteMcpEnvironmentCoordinator(
+		createEnvironmentRoutedProjectServices(projectEnvironmentRouter).mcpBridge,
+		remoteMcpAuthority,
+	);
+	const baseShutdown = composition.shutdown;
+	composition = Object.freeze({
+		...composition,
+		shutdown: async () => {
+			await remoteMcp?.shutdown();
+			await baseShutdown();
+		},
+	});
+	return Object.freeze({ core: composition, vault, extensions });
+}
+
+function requireTerminalLaunchResolver(composition: ServerCoreComposition) {
+	if (composition.terminalLaunchResolver === undefined)
+		throw new Error('Remote MCP requires the canonical terminal launch resolver.');
+	return composition.terminalLaunchResolver;
 }
 
 function selectAiProviders(
@@ -914,6 +991,11 @@ function createProtocolServer(
 		authToken,
 		authTokenExpiresAt: handoffExpiresAt,
 		acceptCredential: credentials.accept,
+		protocolAuthenticatedClientForCredential: (credential, clientId) => ({
+			clientId: credentials.clientId(credential) ?? clientId,
+			authScope: 'admin',
+			permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
+		}),
 		reconnect: {
 			enroll: ({ clientId }) => {
 				const issued = remote.issueReconnectGrant({
@@ -941,7 +1023,7 @@ function createProtocolServer(
 				};
 			},
 			complete: ({ attemptId, handle, clientNonce, proof }) => {
-				remote.verifyReconnectProof({
+				const authenticated = remote.verifyReconnectProof({
 					attemptId,
 					handle,
 					origin: options.remoteOrigin,
@@ -949,7 +1031,7 @@ function createProtocolServer(
 					proof,
 				});
 				persistReconnectRecords(remote.reconnect.list());
-				return credentials.issue();
+				return credentials.issue(authenticated.deviceId);
 			},
 		},
 		...(options.httpHost === undefined ? {} : { host: options.httpHost }),
@@ -965,7 +1047,8 @@ function createProtocolServer(
 
 interface ProtocolCredentials {
 	readonly accept: (token: string) => boolean;
-	readonly issue: () => { readonly ticket: string; readonly expiresAt: number };
+	readonly clientId: (token: string) => string | undefined;
+	readonly issue: (clientId: string) => { readonly ticket: string; readonly expiresAt: number };
 }
 
 /** Short-lived application tickets are intentionally separate from the
@@ -977,24 +1060,25 @@ function createProtocolCredentials(
 	_bootstrapExpiresAt: number,
 ): ProtocolCredentials {
 	const lifetimeMs = 15 * 60 * 1000;
-	const tickets = new Map<string, number>();
+	const tickets = new Map<string, Readonly<{ expiresAt: number; clientId: string }>>();
 	const prune = (now: number): void => {
-		for (const [ticket, expiresAt] of tickets)
-			if (expiresAt <= now) tickets.delete(ticket);
+		for (const [ticket, value] of tickets)
+			if (value.expiresAt <= now) tickets.delete(ticket);
 	};
 	return {
 		accept: (ticket) => {
 			const now = Date.now();
 			prune(now);
-			const expiresAt = tickets.get(ticket);
-			return expiresAt !== undefined && expiresAt > now;
+			const value = tickets.get(ticket);
+			return value !== undefined && value.expiresAt > now;
 		},
-		issue: () => {
+		clientId: (ticket) => tickets.get(ticket)?.clientId,
+		issue: (clientId) => {
 			const now = Date.now();
 			prune(now);
 			const ticket = randomBytes(32).toString('base64url');
 			const expiresAt = now + lifetimeMs;
-			tickets.set(ticket, expiresAt);
+			tickets.set(ticket, { expiresAt, clientId });
 			return { ticket, expiresAt };
 		},
 	};

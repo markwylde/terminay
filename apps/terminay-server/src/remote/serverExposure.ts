@@ -15,7 +15,7 @@ import type {
 	RemoteReconnectGrantLifetime,
 	RemoteReconnectGrantRecord,
 	RemoteReconnectGrantStoreOptions,
-} from '@terminay/server-core';
+} from '@terminay/server-core/remote';
 import {
 	RemoteAuditLog as AuditLog,
 	RemoteDeviceStore as DeviceStore,
@@ -24,7 +24,7 @@ import {
 	RemotePairingStore,
 	RemoteRateLimiter,
 	RemoteReconnectGrantStore,
-} from '@terminay/server-core';
+} from '@terminay/server-core/remote';
 import {
 	NodeDataChannelHeadlessHost,
 	type NodeDataChannelHeadlessHostOptions,

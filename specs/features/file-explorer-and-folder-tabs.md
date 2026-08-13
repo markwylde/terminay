@@ -33,11 +33,18 @@ in a persistent, reorderable vertical stack.
 ## Ownership
 
 Filesystem listing, search, mutation, watch, and folder-task aggregation run on
-the selected Terminay Server under
+the exact project's environment adapter, authorized and routed by Terminay
+Server under
 [server-owned workspace state](./server-owned-workspace-state.md). The shared
 responsive client renders results through the application protocol and never
 uses browser or Electron filesystem authority. Path/project scoping,
 large-content safeguards, and explicit destructive actions remain required.
+
+Canonical paths and roots are interpreted only by that environment. A provider
+without filesystem observation presents manual refresh/unavailable observation;
+it never watches the same path on the Terminay Server. Disconnect preserves
+project state and dirty drafts, and ambiguous remote mutations are not blindly
+retried.
 
 The server catalog exposes project-relative, bounded directory pages, filename
 search, non-following folder-size traversal, and create/rename/delete commands.

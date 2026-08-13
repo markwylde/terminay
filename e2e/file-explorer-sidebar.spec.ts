@@ -518,9 +518,10 @@ test('collapsing a pane seeds new projects but leaves open projects untouched', 
   await mainWindow.waitForTimeout(400)
 
   // A newly created project inherits the collapsed-by-default Git pane.
-  await mainWindow.getByLabel('Add project tab').click()
+  await mainWindow.getByLabel('Create project on This server').click()
+  await expect(mainWindow.locator('.project-tab')).toHaveCount(2)
+  await expect(mainWindow.locator('.project-tab--active')).toContainText('Project 2')
   await setProjectRoot(mainWindow, workspace.rootDir)
-  await mainWindow.locator('.project-tab').filter({ hasText: 'Project 2' }).click()
   await openFileExplorer(mainWindow)
   const gitPane2 = activeGitPane()
   await expect(gitPane2).toBeVisible()
