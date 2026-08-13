@@ -47,7 +47,7 @@ Publish in dependency order:
    `npm-registry-proof.json`.
 
 Trusted publication runs only on a GitHub-hosted runner with `id-token: write`,
-Node 24.14.0, and npm 12.0.2. No `NODE_AUTH_TOKEN` is supplied to the publish
+Node 24.15.0, and npm 12.0.2. No `NODE_AUTH_TOKEN` is supplied to the publish
 step. A local npm credential is not a substitute for OIDC and must never be
 copied into repository secrets.
 
