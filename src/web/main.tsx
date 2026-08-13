@@ -40,6 +40,7 @@ import { parsePairingBootstrap } from '../remote/services/pairing';
 import { acquireHostedApplicationTransport, getSessionTransportHost } from './sessionTransportHost';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
 import { enrollBrowserDevice } from './deviceEnrollment';
+import { PairingIntentController, type PairingIntent } from './pairingIntent';
 import { runBoundedBrowserRecoveryStep } from './reconnectAttempt';
 import './index.css';
 
@@ -341,6 +342,7 @@ export default function WebManagerApp() {
 	const [host, setHost] = useState(createHost);
 	const connectModalRef = useRef<HTMLElement | null>(null);
 	const initialPairingUrlRef = useRef<string | null>(null);
+	const pairingIntents = useRef(new PairingIntentController());
 	// A browser reconnect has several asynchronous protocol steps. Keep the
 	// most recent user intent so forgetting a profile (or choosing another one)
 	// cannot let an older attempt revive a discarded server afterwards.
@@ -362,7 +364,7 @@ export default function WebManagerApp() {
 	const [status, setStatus] = useState<string | null>(null);
 	const [isConnecting, setIsConnecting] = useState(false);
 	const [pairingRequest, setPairingRequest] = useState<{
-		attempt: RendererConnectionAttempt;
+		intent: PairingIntent;
 		deviceName: string;
 		mode: 'direct' | 'webrtc';
 		origin: string;
@@ -550,6 +552,18 @@ export default function WebManagerApp() {
 		rerender((value) => value + 1);
 	}
 
+	function beginPairingIntent(): PairingIntent {
+		return pairingIntents.current.begin();
+	}
+
+	function isCurrentPairingIntent(intent: PairingIntent): boolean {
+		return pairingIntents.current.isCurrent(intent);
+	}
+
+	function cancelPairingIntent(): void {
+		pairingIntents.current.cancel();
+	}
+
 	function beginConnectionAttempt(profileId: string): RendererConnectionAttempt {
 		return connectionController.current!.begin(profileId);
 	}
@@ -609,9 +623,9 @@ export default function WebManagerApp() {
 				const pairingUrl = explicitWebRtcUrl ?? explicitDirectDeviceUrl!;
 				if (launchPairingOnSessionOrigin(rawServerUrl, pairingUrl.origin))
 					return;
-				const attempt = beginConnectionAttempt(`pairing:${pairingUrl.origin}`);
+				const intent = beginPairingIntent();
 				setPairingRequest({
-					attempt,
+					intent,
 					deviceName: 'Terminay Remote Browser',
 					mode: explicitWebRtcUrl === null ? 'direct' : 'webrtc',
 					origin:
@@ -876,7 +890,7 @@ export default function WebManagerApp() {
 					origin,
 					pairingPin,
 					});
-					if (!connectionController.current?.isCurrent(pairingRequest.attempt) === true)
+					if (!isCurrentPairingIntent(pairingRequest.intent))
 						throw new Error('This pairing attempt is no longer active.');
 					profile = host.profiles
 						.snapshot()
@@ -903,12 +917,13 @@ export default function WebManagerApp() {
 			}
 			await enrollBrowserDevice({
 				deviceName: pairingRequest.deviceName,
-				isCurrent: () =>
-					connectionController.current?.isCurrent(pairingRequest.attempt) === true,
+				isCurrent: () => isCurrentPairingIntent(pairingRequest.intent),
 				origin: pairingRequest.origin,
 				pairingPin,
 				pairingUrl: pairingRequest.pairingUrl,
 			});
+			if (!isCurrentPairingIntent(pairingRequest.intent))
+				throw new Error('This pairing attempt is no longer active.');
 			setPairingPin('');
 			await connectPairedWebRtcBrowser(pairingRequest.origin, pairingPin);
 			setPairingRequest(null);
@@ -926,7 +941,6 @@ export default function WebManagerApp() {
 		origin: string,
 		pairingPin?: string,
 	): Promise<void> {
-		const rendererAttempt = connectionController.current!.begin(origin);
 		const sessionHost = getSessionTransportHost();
 		if (sessionHost === undefined)
 			throw new Error('Browser device enrollment is unavailable.');
@@ -964,6 +978,7 @@ export default function WebManagerApp() {
 					origin: parsed.origin,
 					status: 'connected',
 				});
+			const rendererAttempt = connectionController.current!.begin(profile.id);
 			const context = await createConnectedServerClientContext(client, hello, {
 				onTransportClosed: () =>
 					handleTransportClosed(profile.id, rendererAttempt, client),
@@ -1485,9 +1500,7 @@ export default function WebManagerApp() {
 									type="button"
 									className="secondary"
 									onClick={() => {
-										invalidateConnectionAttempt(
-											`pairing:${new URL(pairingRequest.pairingUrl).origin}`,
-										);
+						cancelPairingIntent();
 										setPairingPin('');
 										setPairingRequest(null);
 										setServerUrl('');

@@ -52,6 +52,13 @@ test('browser recovery aborts a hung acquisition when its generation is cancelle
   await assert.rejects(pending, /superseded/)
 })
 
+test('pre-profile pairing never enters the profile-scoped connection controller', () => {
+	assert.match(source, /const intent = beginPairingIntent\(\)/u)
+	assert.doesNotMatch(source, /beginConnectionAttempt\(`pairing:|\.begin\(`pairing:/u)
+	assert.doesNotMatch(source, /connectionController\.current!?\.begin\(origin\)/u)
+	assert.match(source, /const rendererAttempt = connectionController\.current!\.begin\(profile\.id\)/u)
+})
+
 test('invalid persisted reconnect proofs stop retrying and require fresh pairing', () => {
 	assert.match(source, /function reconnectNeedsFreshPairing\(cause: unknown\): boolean/u)
 	assert.match(source, /cause\.message === 'reconnect proof request is invalid'/u)
