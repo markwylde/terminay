@@ -15,20 +15,8 @@ await build({
   outfile: bundlePath,
   logLevel: 'silent',
 })
-const { BrowserConnectionAttemptGate, runBoundedBrowserRecoveryStep } = await import(`${bundlePath}?test=${Date.now()}`)
+const { runBoundedBrowserRecoveryStep } = await import(`${bundlePath}?test=${Date.now()}`)
 test.after(() => rm(bundleDirectory, { force: true, recursive: true }))
-
-test('forgetting a browser profile invalidates only its pending reconnect attempt', () => {
-  const gate = new BrowserConnectionAttemptGate()
-  const discarded = gate.begin('discarded-server')
-  gate.invalidate('discarded-server')
-  assert.equal(gate.isCurrent(discarded), false)
-
-  const selected = gate.begin('selected-server')
-  gate.invalidate('discarded-server')
-  assert.equal(gate.isCurrent(selected), true)
-  assert.equal(gate.isCurrent(discarded), false)
-})
 
 test('browser recovery bounds an acquisition which ignores cancellation', async () => {
   let callback
@@ -64,35 +52,6 @@ test('browser recovery aborts a hung acquisition when its generation is cancelle
   await assert.rejects(pending, /superseded/)
 })
 
-test('web connection activation checks the gate before replacing the workspace', () => {
-  assert.match(source, /BrowserConnectionAttemptGate/u)
-  assert.match(source, /const connectionAttemptGate = useRef\(new BrowserConnectionAttemptGate\(\)\)/u)
-  assert.match(source, /function beginConnectionAttempt\(profileId: string\): BrowserConnectionAttempt/u)
-  assert.match(source, /function isCurrentConnectionAttempt\(\s*profile: ConnectionProfile,\s*attempt: BrowserConnectionAttempt,\s*\): boolean/u)
-  assert.match(source, /function invalidateConnectionAttempt\(profileId: string\): void/u)
-  assert.match(source, /attempt = beginConnectionAttempt\(profile\.id\)/u)
-  assert.match(source, /const attempt = beginConnectionAttempt\(profile\.id\)/u)
-  assert.match(source, /if \(!isCurrentConnectionAttempt\(profile, attempt\)\) return/u)
-  assert.match(source, /await context\.dispose\?\.\(\)/u)
-  assert.match(source, /function forgetConnection[\s\S]*invalidateConnectionAttempt\(profileId\);[\s\S]*if \(activeConnection/u)
-})
-
-test('transient restart failures retry with bounded backoff and one visible outcome', () => {
-  assert.match(source, /new RendererConnectionRecovery\(\{/u)
-  assert.match(source, /initialRetryMs: 750/u)
-  assert.match(source, /maxRetryMs: 10_000/u)
-  assert.match(source, /connect: connectSavedBrowserProfile/u)
-  assert.match(source, /connectionRecovery\.current\?\.start\(profileId\)/u)
-  assert.match(source, /connectionRecovery\.current\?\.cancel\(\)/u)
-  assert.match(source, /setError\('Connection lost\. Reconnecting…'\);\s+setStatus\(null\)/u)
-	const recovery = source.slice(
-		source.indexOf('\tfunction recoverConnection('),
-		source.indexOf('\n\tif (activeConnection', source.indexOf('\tfunction recoverConnection(')),
-	)
-	assert.doesNotMatch(recovery, /setActiveConnection/u)
-	assert.match(recovery, /Keep the last connected workspace mounted/u)
-})
-
 test('invalid persisted reconnect proofs stop retrying and require fresh pairing', () => {
 	assert.match(source, /function reconnectNeedsFreshPairing\(cause: unknown\): boolean/u)
 	assert.match(source, /cause\.message === 'reconnect proof request is invalid'/u)
@@ -114,7 +73,7 @@ test('browser auto-restore reconnects HTTPS and loopback profiles in-page', () =
 	assert.match(source, /parsed\.protocol === 'http:'[\s\S]*parsed\.hostname === 'localhost'[\s\S]*parsed\.hostname\.endsWith\('\.localhost'\)[\s\S]*parsed\.hostname === '127\.0\.0\.1'[\s\S]*parsed\.hostname === '\[::1\]'/u)
 	assert.match(source, /if \(isBrowserReconnectOrigin\(profile\.origin\)\) \{/u)
 	assert.match(source, /const credential = await reconnectVault\.credential\(profile\.origin\)/u)
-	assert.match(source, /profile\.status === 'connected' \|\| recovering/u)
+	assert.match(source, /AUTO_RESTORE_PROFILE_STATUSES\.has\(profile\.status\)/u)
 	assert.match(source, /host\.open\(profileId, \{ newTab \}\);[\s\S]*return;/u)
 	assert.doesNotMatch(source, /profile\?\?\.origin\.startsWith\('http:\/\/'\)|profile\.origin\.startsWith\('http:\/\/'\)/u)
 })

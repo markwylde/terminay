@@ -33,9 +33,11 @@ test('terminal retry requests host-owned transport replacement after a transport
   assert.notEqual(retryEnd, -1)
   const retry = panel.slice(retryStart, retryEnd)
 
-  assert.match(retry, /terminalPanelConnectionContext\?\.requestConnectionRecovery/)
+  assert.match(retry, /terminalPanelConnectionContext\?\.retryConnection/)
   assert.match(retry, /serverInputQueue\?\.close\(\)/)
-  assert.match(retry, /terminalPanelConnectionContext\.requestConnectionRecovery\(\)/)
+  assert.match(retry, /terminalPanelConnectionContext\.retryConnection\(\)/)
+  const hostRetry = retry.slice(0, retry.indexOf('\n        serverAttachmentFailed'))
+  assert.doesNotMatch(hostRetry, /setServerTerminalError|setIsTerminalHydrating/)
 
   const attachStart = panel.indexOf('      const attachServerTerminal = ({')
   const attachEnd = panel.indexOf('\n      const beginTerminalResync', attachStart)

@@ -80,8 +80,8 @@ export interface TerminalPanelClientContextValue {
   readonly clientId: string
   /** Host-owned display metadata for the authenticated current server. */
   readonly connectionLabel?: string
-  /** Ask the owning shell to replace this connection's transport generation. */
-  readonly requestConnectionRecovery?: () => void
+  /** Stable action on the owning connection controller. It never captures a client. */
+  readonly retryConnection?: () => void
   readonly serverCapabilities?: readonly string[]
 }
 
@@ -100,7 +100,7 @@ export type TerminalPanelClientResolution = {
  */
 type TerminalPanelConnectionContext = Pick<
   TerminalPanelClientContextValue,
-  'client' | 'serverId' | 'projectId' | 'clientId' | 'requestConnectionRecovery'
+  'client' | 'serverId' | 'projectId' | 'clientId' | 'retryConnection'
 >
 
 /** Resolve panel params with the connection context as the production path.
@@ -302,14 +302,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             clientId: terminalClientContext.clientId,
             projectId: terminalClientContext.projectId,
             serverId: terminalClientContext.serverId,
-            requestConnectionRecovery: terminalClientContext.requestConnectionRecovery,
+            retryConnection: terminalClientContext.retryConnection,
           },
     [
       terminalClientContext?.client,
       terminalClientContext?.clientId,
       terminalClientContext?.projectId,
       terminalClientContext?.serverId,
-      terminalClientContext?.requestConnectionRecovery,
+      terminalClientContext?.retryConnection,
     ],
   )
   const resolvedTerminalClient = useMemo(
@@ -1003,11 +1003,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       // reconnects use the exact cursor xterm has already rendered.
       retryServerAttachmentRef.current = () => {
         if (dataReplayDisposed) return
-        if (terminalPanelConnectionContext?.requestConnectionRecovery !== undefined) {
+        if (terminalPanelConnectionContext?.retryConnection !== undefined) {
           serverInputQueue?.close()
-          setServerTerminalError('Connection lost. Reconnecting…')
-          setIsTerminalHydrating(false)
-          terminalPanelConnectionContext.requestConnectionRecovery()
+          terminalPanelConnectionContext.retryConnection()
           return
         }
         serverAttachmentFailed = false
