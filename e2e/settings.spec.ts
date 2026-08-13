@@ -2,6 +2,8 @@ import { expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
 import { gzipSync } from 'node:zlib'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 
 function remoteOriginInput(page: Page) {
   return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Remote origin' }).locator('input')
@@ -47,7 +49,7 @@ test('opens settings focused to remote access and supports settings search', asy
   await expect(settingsWindow.getByRole('button', { name: 'Scrolling' })).toBeVisible()
 })
 
-test('shows selected-server extensions as an ordinary Settings category', async ({ appHarness, mainWindow }, testInfo) => {
+test('shows selected-server extensions and saves a secret-backed connection profile', async ({ appHarness, mainWindow, userDataDir }, testInfo) => {
   const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'extensions' })
 
   await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
@@ -58,7 +60,7 @@ test('shows selected-server extensions as an ordinary Settings category', async 
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-ssh' })).toBeVisible()
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-puzed' })).toBeVisible()
 
-  const profileForm = { id: 'fixture-profile', title: 'Fixture connection', description: 'Stored by the selected Terminay Server.', submitLabel: 'Save', sections: [{ id: 'connection', title: 'Connection', fields: [{ id: 'display-name', type: 'text', label: 'Name', description: 'Shown in the project environment chooser.', required: true }] }, { id: 'advanced', title: 'Advanced', description: 'Optional connection behavior.', disclosure: 'collapsed', fields: [{ id: 'default-root', type: 'text', label: 'Default root' }] }] }
+  const profileForm = { id: 'fixture-profile', title: 'Fixture connection', description: 'Stored by the selected Terminay Server.', submitLabel: 'Save', sections: [{ id: 'connection', title: 'Connection', fields: [{ id: 'display-name', type: 'text', label: 'Name', description: 'Shown in the project environment chooser.', required: true }, { id: 'api-key', type: 'secret', label: 'API key', description: 'Stored in the selected Terminay Server vault.', required: true }] }, { id: 'advanced', title: 'Advanced', description: 'Optional connection behavior.', disclosure: 'collapsed', fields: [{ id: 'default-root', type: 'text', label: 'Default root' }] }] }
   const packageJson = JSON.stringify({ name: 'terminay-e2e-uploaded-extension', version: '1.0.0', type: 'module', exports: { '.': './dist/extension.js' }, terminay: { manifestVersion: 1, id: 'dev.terminay.e2e-uploaded', displayName: 'E2E uploaded provider', api: '^1.0.0', engines: { terminay: '>=1', node: '>=22' }, entrypoint: 'dist/extension.js', permissions: [], contributes: { projectEnvironments: [{ id: 'dev.terminay.e2e-uploaded/main', displayName: 'E2E uploaded', capabilities: ['terminal', 'filesystem'] }] } } })
   const archive = npmPackArchive({ 'package/package.json': packageJson, 'package/dist/extension.js': `export async function activate(context) { context.registerProjectEnvironmentProvider({ definition: { providerId: "dev.terminay.e2e-uploaded/main", displayName: "E2E uploaded", capabilities: ["terminal", "filesystem"], profileForm: ${JSON.stringify(profileForm)} }, runtime: { testProfile: async () => [], resolveOptions: async () => ({ options: [] }), createEnvironment: async () => ({ state: "ready", providerState: {}, status: { state: "available", revision: 1 } }), resumeOperation: async () => ({ state: "ready", providerState: {}, status: { state: "available", revision: 1 } }), getStatus: async () => ({ state: "available", revision: 1 }), invokeAction: async () => ({ state: "complete", providerState: {}, status: { state: "available", revision: 1 } }) } }); }\n` })
   await settingsWindow.locator('input[type="file"][accept*=".tgz"]').setInputFiles({ name: 'terminay-e2e-uploaded-extension-1.0.0.tgz', mimeType: 'application/gzip', buffer: archive })
@@ -81,6 +83,15 @@ test('shows selected-server extensions as an ordinary Settings category', async 
   await expect(advanced).not.toHaveAttribute('open', '')
   await expect(advanced.locator('summary')).toBeVisible()
   await expect(environmentsWindow.locator('.declarative-provider-form__fields')).toHaveCount(0)
+  const secretSentinel = 'terminay-e2e-secret-profile-sentinel'
+  await environmentsWindow.getByLabel('Name').fill('Secret-backed E2E connection')
+  await environmentsWindow.getByLabel('API key').fill(secretSentinel)
+  await environmentsWindow.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(environmentsWindow.getByRole('button', { name: 'Secret-backed E2E connection' })).toBeVisible()
+  await expect(environmentsWindow.getByRole('status').filter({ hasText: 'Connection saved.' })).toBeVisible()
+
+  const persistedVault = await readFile(path.join(userDataDir, 'vault', 'safe-storage.v1.json'), 'utf8')
+  expect(persistedVault).not.toContain(secretSentinel)
   await testInfo.attach('declarative-provider-form', { body: await environmentsWindow.screenshot(), contentType: 'image/png' })
 })
 

@@ -37,6 +37,18 @@ test('diagnostics, Crashpad, and hang stack collection initialize before Local s
 	assert.match(main, /crashReporter,/u);
 });
 
+test('embedded vault unlock occurs after Electron readiness and before Local server admission', () => {
+	const ready = main.indexOf('app.whenReady().then');
+	const unlock = main.indexOf('await embeddedVault.unlock', ready);
+	const localReady = main.indexOf("event: 'local-server.ready'", ready);
+	const firstWindow = main.indexOf('createWindow();', ready);
+	assert.ok(ready > 0);
+	assert.ok(unlock > ready);
+	assert.ok(localReady > unlock);
+	assert.ok(firstWindow > localReady);
+	assert.equal(main.indexOf('await embeddedVault.unlock', 0), unlock);
+});
+
 test('renderer root reporting is a narrow versioned and trusted semantic channel', () => {
 	assert.match(
 		preload,

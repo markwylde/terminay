@@ -112,6 +112,31 @@ test('basic_text is unavailable and never encrypts', async () => {
 	assert.equal(encryptions, 0);
 });
 
+test('embedded vault can unlock after safeStorage becomes available at app readiness', async () => {
+	let available = false;
+	const protectedCodec = codec();
+	const repository = new MemoryRepository();
+	const adapter = await ElectronSafeStorageVaultAdapter.open({
+		repository,
+		codec: {
+			...protectedCodec,
+			isAvailable: () => available,
+		},
+	});
+
+	assert.equal(adapter.status(), 'unavailable');
+	available = true;
+	assert.equal(adapter.status(), 'locked');
+	await adapter.unlock({ secret: new Uint8Array() });
+	assert.equal(adapter.status(), 'unlocked');
+	await adapter.put({
+		id: 'puzed.api-key',
+		value: new TextEncoder().encode('puzed-secret-sentinel'),
+	});
+	assert.equal(adapter.list()[0]?.id, 'puzed.api-key');
+	assert.doesNotMatch(JSON.stringify(repository.value), /puzed-secret-sentinel/);
+});
+
 test('file repository atomically writes an owner-only encrypted record', async () => {
 	const directory = await mkdtemp(join(tmpdir(), 'terminay-vault-'));
 	const file = join(directory, 'vault', 'safe-storage.v1.json');
