@@ -6,6 +6,7 @@ export * from "./manager.js";
 export * from "./catalog.js";
 export * from "./installerTypes.js";
 export * from "./npmClient.js";
+export * from "./npmPackArchive.js";
 export * from "./packageValidation.js";
 export * from "./installer.js";
 export * from "./operations.js";

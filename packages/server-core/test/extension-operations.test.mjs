@@ -12,6 +12,7 @@ function installer() {
   return {
     snapshot: async () => snapshot,
     preview: async () => preview,
+    previewArchive: async (filename, bytes) => ({ ...preview, source: "uploaded", uploadedFilename: filename, integrity: `sha512-${Buffer.from(bytes).toString("base64")}` }),
     confirm: async () => snapshot = { ...snapshot, revision: snapshot.revision + 1 },
     enable: async () => snapshot, disable: async () => snapshot, remove: async () => snapshot, rollback: async () => snapshot,
   };
@@ -23,6 +24,14 @@ test("fixed extension operations expose bounded catalogue and preview DTOs", asy
   assert.equal(list.authorityLabel, "Remote Terminay"); assert.equal(list.catalogue.length, 2); assert.equal(list.catalogue[0].official, true);
   const preview = await handlers.queries["extensions.preview-install"](query("extensions.preview-install", { spec: "fixture-extension" }, ["extensions:manage"]));
   assert.equal(preview.exactVersion, "1.2.3"); assert.equal(preview.extensionId, "dev.example.fixture"); assert.deepEqual(preview.permissions, ["network"]); assert.equal(preview.trustedCodeWarning, "trusted code");
+});
+
+test("package-file preview is binary, permission-bound, and visibly unverified", async () => {
+  const handlers = createExtensionOperationHandlers({ installer: installer(), authorityLabel: "Remote Terminay" });
+  await assert.rejects(handlers.commands["extensions.preview-package-file"](command("extensions.preview-package-file", { filename: "fixture.tgz" }, 0, [])), (error) => error.code === "forbidden");
+  const request = command("extensions.preview-package-file", { filename: "fixture.tgz" }); request.body = Uint8Array.of(1, 2, 3);
+  const result = await handlers.commands["extensions.preview-package-file"](request);
+  assert.equal(result.result.source, "uploaded"); assert.equal(result.result.filename, "fixture.tgz"); assert.equal(result.result.official, false);
 });
 
 test("extension operations enforce transport permissions and optimistic revisions", async () => {

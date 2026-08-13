@@ -26,6 +26,7 @@ test('extension client binds preview confirmation to exact digest and revision',
 	const client=new ExtensionsClient({
 		async query(operation,payload){calls.push({kind:'query',operation,payload});return operation==='extensions.preview-install'?{previewDigest:'digest',packageName:'demo',exactVersion:'1.2.3',registryIntegrity:'sha512-ok',official:false,permissions:['network'],provenance:'verified'}:{authorityLabel:'Production',revision:4,catalogue:[{extensionId:'demo.ext',packageName:'demo',displayName:'Demo',description:'Demo provider',official:false}],extensions:[]};},
 		async command(operation,payload){calls.push({kind:'command',operation,payload});return {authorityLabel:'Production',revision:5,catalogue:[],extensions:[]};},
+		async commandWithBody(operation,payload,body){calls.push({kind:'binary',operation,payload,body:[...body]});return {previewDigest:'uploaded-digest',packageName:'demo-local',exactVersion:'1.0.0',registryIntegrity:'sha512-local',source:'uploaded',filename:'demo-local.tgz',official:false,permissions:[],providerIds:[],dependencies:[],audit:{}};},
 	});
 	const preview=await client.previewInstall('demo@1.2.3');
 	assert.equal(preview.version,'1.2.3');
@@ -33,6 +34,8 @@ test('extension client binds preview confirmation to exact digest and revision',
 	assert.equal(calls[1].payload.confirmation,true);
 	assert.equal(calls[1].payload.expectedRevision,4);
 	assert.match(calls[1].payload.idempotencyKey,/^ui-/);
+	const uploaded=await client.previewPackageFile('demo-local.tgz',Uint8Array.of(1,2));
+	assert.equal(uploaded.source,'uploaded');assert.equal(uploaded.filename,'demo-local.tgz');assert.equal(calls.at(-1).operation,EXTENSION_OPERATIONS.previewPackageFile);
 });
 
 test('clients reject unbounded or malformed server DTOs', async () => {

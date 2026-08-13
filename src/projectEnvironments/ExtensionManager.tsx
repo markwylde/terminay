@@ -9,6 +9,7 @@ export function ExtensionManager({
 	extensions,
 	serverName,
 	onPreview,
+	onPreviewPackageFile,
 	onInstall,
 	onUpdate,
 	onAction,
@@ -18,6 +19,7 @@ export function ExtensionManager({
 	serverName: string;
 	revision: number;
 	onPreview: (spec: string) => Promise<ExtensionInstallPreviewDto>;
+	onPreviewPackageFile: (file: File) => Promise<ExtensionInstallPreviewDto>;
 	onInstall: (digest: string) => Promise<void>;
 	onUpdate: (id: string, digest: string) => Promise<void>;
 	onAction: (action: ExtensionAction, id: string) => Promise<void>;
@@ -56,6 +58,13 @@ export function ExtensionManager({
 		} finally {
 			setBusy(false);
 		}
+	};
+	const previewFile = async (file: File | undefined) => {
+		if (file === undefined) return;
+		setBusy(true); setPreviewError('');
+		try { setPreview(await onPreviewPackageFile(file)); setPreviewUpdateId(null); }
+		catch (error) { setPreviewError(error instanceof Error ? error.message : String(error)); }
+		finally { setBusy(false); }
 	};
 
 	return (
@@ -99,6 +108,16 @@ export function ExtensionManager({
 					</form>
 				</div>
 				{previewError ? <p className="settings-inline-error" role="alert">{previewError}</p> : null}
+			</section>
+
+			<section className="settings-section">
+				<h3 className="settings-section-title">Install package file</h3>
+				<div className="settings-group">
+					<label className="settings-row extension-package-file-row">
+						<span className="settings-row-info"><span className="settings-row-label">npm pack archive</span><span className="settings-row-description">Upload a .tgz package (maximum 12 MiB) to {serverName}.</span></span>
+						<span className="settings-row-control"><span className="settings-secondary-button" aria-hidden="true">Choose package file…</span><input className="extension-package-file-input" type="file" accept=".tgz,application/gzip" disabled={busy} onChange={(event) => { const file=event.currentTarget.files?.[0]; event.currentTarget.value=''; void previewFile(file); }} /></span>
+					</label>
+				</div>
 			</section>
 
 			{preview === null ? null : (
@@ -217,6 +236,7 @@ function ExtensionPreview({ preview, serverName, update, onCancel, onConfirm }: 
 					<span className="settings-row-description">Review this exact package before running it on {serverName}.</span>
 				</div>
 				<PreviewRow label="Publisher" value={preview.publisher ?? 'Not provided'} />
+				<PreviewRow label="Source" value={preview.source === 'uploaded' ? `Uploaded package${preview.filename ? ` · ${preview.filename}` : ''} · Unverified` : 'npmjs.com'} />
 				<PreviewRow label="Integrity" value={preview.integrity} />
 				<PreviewRow label="Provenance" value={preview.provenance ?? 'Unavailable'} />
 				<PreviewRow label="Audit" value={`${preview.audit.critical} critical · ${preview.audit.high} high · ${preview.audit.moderate} moderate · ${preview.audit.low} low`} />

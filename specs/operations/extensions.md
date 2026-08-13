@@ -16,9 +16,10 @@ compiler. Official SSH and Puzed entries are hardcoded catalogue metadata, but
 their packages are fetched from the public npmjs registry and are not available
 for a fresh offline installation.
 
-Every package installation requires outbound HTTPS access from Terminay Server
-to the public npmjs registry. It does not use client/browser network access or
-npm credentials. Private/custom registries are outside v1.
+Registry installation and uploaded packages with production dependencies
+require outbound HTTPS access from Terminay Server to public npmjs. A package
+file with no external dependencies can be installed while npmjs is unavailable.
+Private/custom registries are outside v1.
 
 ## Data-root layout
 
@@ -54,9 +55,16 @@ For custom npm packages:
 3. Confirm against the named Terminay Server.
 4. Wait for Resolve, Download, Validate, Install, Probe, and Activate status.
 
+For an unpublished or locally packed package, choose **Install package file…**,
+select the `.tgz` emitted by `npm pack`, review the exact uploaded filename,
+name/version, archive SHA-512 integrity, permissions, and unverified trusted-code
+warning, then confirm. The browser/Desktop uploads bytes to the selected server;
+the server never interprets a client filesystem path. Files above 12 MiB and
+archives that are not safe npm-pack trees are rejected before preview.
+
 Terminay uses a sterile internal npm configuration, exact lock, production
 dependencies only, disabled lifecycle scripts, and no binary links. It rejects
-Git/file/URL/alias dependencies, missing integrity, native modules/build files,
+Git/file/URL/alias transitive dependencies, missing integrity, native modules/build files,
 required install scripts, escaping entrypoints/symlinks, incompatible manifests,
 and bounded file/size/count violations.
 
