@@ -991,6 +991,48 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         ptyCount: ptyFactory.processes.length,
         requiredLaneCount: requiredLaneLabels.length,
       })
+
+      // Hold the browser offline so automatic recovery cannot complete, then
+      // exercise repeated manual Retry while the controller is in backoff.
+      // The requests must coalesce into one live replacement generation once
+      // signaling becomes reachable again.
+      const offlineRuntime = runtime
+      const hostCountBeforeOffline = hostWindows.length
+      const writesBeforeOffline = terminalWrites.join('').length
+      await context.setOffline(true)
+      try {
+        offlineRuntime.closeLane('control')
+        const retry = reconnectPage.getByRole('button', { name: 'Retry connection' })
+        await expect(retry).toBeVisible({ timeout: 20_000 })
+        await retry.click()
+        if (await retry.isVisible().catch(() => false)) await retry.click()
+      } finally {
+        await context.setOffline(false)
+      }
+      const offlineReplacement = await waitFor(() => hostWindows.slice(hostCountBeforeOffline).find((host) =>
+        host.evidence.hostSignals.some((message) => message.type === 'reconnect-offer') &&
+        requiredLaneLabels.every((label) => host.laneState(label) === 'open')),
+      60_000,
+      'one replacement generation after repeated offline Retry')
+      runtime = offlineReplacement
+      expect(hostWindows.length).toBe(hostCountBeforeOffline + 1)
+      await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
+      expect(reconnectPage.url()).toBe(initialUrl)
+      const offlineRecoveryInput = `${runtimeName}-offline-retry-recovered\r`
+      await reconnectPage.getByRole('textbox', { name: 'Terminal input' }).focus()
+      await reconnectPage.keyboard.insertText(offlineRecoveryInput.slice(0, -1))
+      await reconnectPage.keyboard.press('Enter')
+      await expect.poll(() => terminalWrites.join('').slice(writesBeforeOffline)).toBe(offlineRecoveryInput)
+      matrixEvidence.push({
+        activeApplicationConnections: service.getStatus().activeConnectionCount,
+        closeReason: 'offline-required-lane-close',
+        hostGeneration: hostWindows.indexOf(offlineReplacement) + 1,
+        lifecycle: 'connected',
+        navigation: 'unchanged',
+        outcome: 'repeated-retry-coalesced',
+        profile: 'saved-webrtc-profile',
+        requiredLaneCount: requiredLaneLabels.length,
+      })
       await testInfo.attach('webrtc-required-lane-recovery-matrix.json', {
         body: Buffer.from(`${JSON.stringify(matrixEvidence, null, 2)}\n`),
         contentType: 'application/json',
