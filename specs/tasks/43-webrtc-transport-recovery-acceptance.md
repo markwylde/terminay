@@ -80,6 +80,11 @@ permission to weaken that permanent reproduction.
     device revocation.
 - [ ] Cover offline/online, signaling outage, delayed host registration, failed
   authentication, failed hydration, and repeated Retry during backoff.
+  - [x] Hold the mounted browser offline after a required-lane failure, invoke
+    Retry repeatedly during backoff, restore network reachability, and prove
+    the requests coalesce into one successful replacement generation.
+  - [ ] Cover an independent signaling-service outage, delayed host
+    registration, failed authentication, and failed hydration.
 - [ ] Assert exact peer, lane, transport generation, application client,
   workspace subscription, terminal attachment, and PTY counts throughout.
   - [x] Assert one replacement generation per fault, six created/two retired
