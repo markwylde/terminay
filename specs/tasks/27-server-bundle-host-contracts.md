@@ -71,19 +71,6 @@ blindness. It must not introduce another channel bridge or reconnect owner.
   module graph. Host packages depend only on bootstrap, bundle, transport,
   profile, and host-bridge contracts.
 
-### Compatibility evidence
-
-- [ ] Add minimum/current/maximum compatible fixtures for bundle format, host
-  bridge, execution runtime, and byte-endpoint versions.
-- [ ] Prove an older compatible host forwards a newer fixture bundle's unknown
-  application operation unchanged to its matching server.
-- [ ] Prove missing optional native capabilities preserve a usable workspace,
-  while a missing required boundary fails before launch and names the component
-  that must be upgraded.
-- [ ] Add static dependency checks preventing feature-specific clients,
-  workspace reducers, persistent feature DTOs, or a full workspace entry from
-  entering a host-contract package.
-
 ## Acceptance checks
 
 - A fixture server bundle constructs its own matching `TerminayClient` over the

@@ -990,12 +990,6 @@ rather than a separate fixture or compatibility renderer.
   17 canonical feature specs to shared UI surfaces, current parity status, and
   remaining shared work; `scripts/task16-feature-parity-matrix.test.mjs` fails
   if a feature spec is missing from the matrix.
-- [ ] Add visual/E2E proof that compares the actual production Electron and
-  web hosts using the same shared component tree and demonstrates wide-web
-  visual parity with the Electron workspace shown in the reference
-  screenshots. Existing route-marker, overflow, and isolated-fixture coverage
-  is necessary but does not prove this acceptance criterion.
-  coverage.
   - [x] Verify the shared responsive route-pane keyboard state machine:
     arrow/Home/End navigation auto-activates routes, explicit Enter/Space
     activation is supported, disabled routes are skipped, and unrelated keys
