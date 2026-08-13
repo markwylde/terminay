@@ -3,7 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { openFileExplorer, openProjectEditWindow } from './support/ui';
+import { fileExplorerItem, openFileExplorer, openProjectEditWindow, setProjectRoot } from './support/ui';
 
 const execFileAsync = promisify(execFile);
 
@@ -78,6 +78,37 @@ test.describe('workspace shell', () => {
 
 		await appHarness.sendAppCommand('close-active');
 		await expect(closeButtons).toHaveCount(1);
+	});
+
+	test('closes several terminal panels sequentially while a file panel remains', async ({
+		appHarness,
+		createWorkspace,
+		mainWindow,
+	}) => {
+		const workspace = await createWorkspace({
+			name: 'sequential-panel-close',
+			seed: { files: { 'README.md': 'remaining panel\n' } },
+		});
+		await setProjectRoot(mainWindow, workspace.rootDir);
+		for (let index = 1; index < 4; index += 1) {
+			await appHarness.sendAppCommand('new-terminal');
+		}
+		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(4);
+
+		await openFileExplorer(mainWindow);
+		await fileExplorerItem(mainWindow, 'README.md').dblclick();
+		await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1);
+
+		for (const title of ['Terminal 1', 'Terminal 2', 'Terminal 3', 'Terminal 4']) {
+			await mainWindow.locator('.dv-tab:visible').filter({ hasText: title }).first().click();
+			await appHarness.sendAppCommand('close-active');
+		}
+
+		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(0);
+		await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1);
+		await expect(
+			mainWindow.getByRole('alert').filter({ hasText: 'Workspace synchronization failed' }),
+		).toHaveCount(0);
 	});
 
 	test('warns only when closing a terminal with a foreground process', async ({
