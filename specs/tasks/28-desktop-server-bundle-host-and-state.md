@@ -21,7 +21,7 @@ documented connection, native-presentation, credential, cache, and OS allowlist.
 - [Task 19: Migration and compatibility cleanup](./19-migration-and-compatibility-cleanup.md)
 - [Task 23: Embedded Desktop WebRTC exposure](./23-embedded-desktop-remote-exposure.md)
   for production remote WebRTC evidence
-- [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
+- [Task 41: Single-owner WebRTC transport generations](../tasks_completed/41-single-owner-webrtc-transport-generations.md)
   for the opaque replaceable WebRTC endpoint contract
 
 ## Current gap

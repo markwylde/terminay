@@ -71,7 +71,10 @@ and subscription-control results use reliable control capacity.
 - [x] While one terminal emits the regression workload, create another terminal
   and complete workspace queries/commands on the same connection.
 - [x] Prove activity converges to the latest authoritative snapshot.
-- [ ] Pass focused server/client tests, lint, build, and Docker Electron coverage.
+- [x] Pass focused server/client tests, lint, build, and Docker Electron
+  coverage. Projection, activity, and congestion suites remain in the normal
+  build/lint/unit gate, and PR #50 plus post-merge main run 6749 passed all five
+  Docker Electron shards.
 
 ### 5. Close the agent projection gap
 
