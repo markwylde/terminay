@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, test } from '@playwright/test'
+import type { ByteTransport } from '@terminay/protocol'
 import { createPairingPinHash } from '../electron/remote/pin'
 import {
   createRtcDataChannelTransport,
@@ -147,6 +148,7 @@ type HeadlessHostWindow = {
   close(): void
   closeLane(label: RequiredLaneLabel): void
   closePeer(): void
+  failApplicationProtocolReader(): void
   iceState(): RTCIceConnectionState | null
   laneState(label: ObservedLaneLabel): RTCDataChannelState | null
   peerState(): RTCPeerConnectionState | null
@@ -156,6 +158,48 @@ type HeadlessHostWindow = {
   sendSignalMessage(message: unknown): void
   sendTerminalMessage(channelId: string, message: string): void
   webContentsId: number
+}
+
+function interruptibleServerTransport(delegate: ByteTransport): {
+  failReader(): void
+  transport: ByteTransport
+} {
+  let interrupted = false
+  let interrupt: (() => void) | undefined
+  const interruptedPromise = new Promise<void>((resolve) => {
+    interrupt = resolve
+  })
+  const transport: ByteTransport = {
+    get state() { return delegate.state },
+    get queuedBytes() { return delegate.queuedBytes },
+    get bufferedBytes() { return delegate.bufferedBytes },
+    incoming: {
+      [Symbol.asyncIterator]() {
+        const iterator = delegate.incoming[Symbol.asyncIterator]()
+        return {
+          async next() {
+            if (interrupted) return { done: true, value: undefined }
+            return Promise.race([
+              iterator.next(),
+              interruptedPromise.then(() => ({ done: true as const, value: undefined })),
+            ])
+          },
+        }
+      },
+    },
+    open: (signal) => delegate.open(signal),
+    send: (frame, options) => delegate.send(frame, options),
+    waitForWritable: (requiredBytes, signal) => delegate.waitForWritable(requiredBytes, signal),
+    close: (reason, options) => delegate.close(reason, options),
+    onStateChange: (listener) => delegate.onStateChange(listener),
+  }
+  return {
+    failReader() {
+      interrupted = true
+      interrupt?.()
+    },
+    transport,
+  }
 }
 
 const requiredLaneLabels = ['control', 'application', 'terminal', 'assets'] as const
@@ -293,6 +337,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     const terminalCloseListeners = new Set<(message: { channelId: string; reason?: string }) => void>()
     const terminalMessageListeners = new Set<(message: { channelId: string; message: string }) => void>()
     let cleanupHost: (() => void) | null = null
+    let failApplicationProtocolReader: (() => void) | undefined
     const observedLanes = new Map<ObservedLaneLabel, RTCDataChannel>()
     let hostPeer: RTCPeerConnection | null = null
     let closed = false
@@ -300,7 +345,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     const api: HostApi = {
       async attachApplication(channelId, ticket, channel) {
         await service.attachWebRtcApplication(webContentsId, channelId, ticket, () => hostWindow.close())
-        const connection = composition.core.accept(createRtcDataChannelTransport(channel))
+        const controlled = interruptibleServerTransport(createRtcDataChannelTransport(channel))
+        failApplicationProtocolReader = controlled.failReader
+        const connection = composition.core.accept(controlled.transport)
         void connection.start().catch(() => hostWindow.close())
       },
       closeApplication: (channelId) => service.closeWebRtcApplication(channelId),
@@ -356,6 +403,12 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       closePeer() {
         if (!hostPeer) throw new Error('Cannot close the native peer before it is created.')
         hostPeer.close()
+      },
+      failApplicationProtocolReader() {
+        if (!failApplicationProtocolReader) {
+          throw new Error('Cannot fail the application protocol before it is attached.')
+        }
+        failApplicationProtocolReader()
       },
       iceState() {
         return hostPeer?.iceConnectionState ?? null
@@ -699,6 +752,27 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     await expect.poll(() => terminalWrites.join('')).toContain(typingSoak)
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
     await expect(page.getByText('client is not connected', { exact: true })).toHaveCount(0)
+
+    // Reproduce the deployed failure shape: server-side application protocol
+    // authority disappears while the WebRTC peer and application data channel
+    // remain healthy. Lane-close tests do not exercise this split-brain state.
+    const protocolRuntime = await waitFor(
+      () => hostWindows.find((host) =>
+        host.peerState() === 'connected' && host.laneState('application') === 'open'),
+      30_000,
+      'the connected application protocol runtime',
+    )
+    protocolRuntime.failApplicationProtocolReader()
+    await expect.poll(() => protocolRuntime.peerState()).toBe('connected')
+    await expect.poll(() => protocolRuntime.laneState('application')).toBe('open')
+    const renewalFailure = page.getByText(
+      'terminal presentation renewal failed: client is not connected',
+      { exact: true },
+    )
+    await expect(renewalFailure).toBeVisible({ timeout: 30_000 })
+    throw new Error(
+      'Reproduced protocol-only disconnect: terminal presentation renewal failed while the WebRTC peer and application lane remained open.',
+    )
 
     const initialSignalLog = await page.evaluate(() =>
       (window as Window & {
