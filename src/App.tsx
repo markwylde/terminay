@@ -3443,6 +3443,7 @@ const ProjectWorkspace = forwardRef<
 		}, [filteredMacros]);
 
 		const requestClosePanel = useCallback(async (panelId: string) => {
+			window.terminayTest?.reportAppCommandStage(`close:${panelId}:started`);
 			const api = dockviewApiRef.current;
 			const panel = api?.getPanel(panelId);
 			if (!api || !panel) return;
@@ -3462,11 +3463,14 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 			if (workspaceStore !== undefined && canonicalPanel?.projectId === project.id) {
+				window.terminayTest?.reportAppCommandStage(`close:${panelId}:command-started`);
 				await workspaceStore.closePanel(panelId);
+				window.terminayTest?.reportAppCommandStage(`close:${panelId}:command-completed`);
 				const reconciled = await workspaceStore.waitForSnapshot(
 					(snapshot) => snapshot.panels[panelId] === undefined,
 					{ timeoutMs: 10_000 },
 				);
+				window.terminayTest?.reportAppCommandStage(`close:${panelId}:snapshot-completed`);
 				if (reconciled === null) {
 					const reconciliationError = workspaceStore.status.error;
 					throw new Error(
