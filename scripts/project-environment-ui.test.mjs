@@ -8,6 +8,9 @@ const desktop=await readFile(new URL('../electron/main.ts',import.meta.url),'utf
 const browser=await readFile(new URL('../src/web/ConnectedWebRendererWorkspace.tsx',import.meta.url),'utf8');
 const forms=await readFile(new URL('../src/projectEnvironments/DeclarativeProviderForm.tsx',import.meta.url),'utf8');
 const surfaces=await readFile(new URL('../src/projectEnvironments/ProjectEnvironmentSurfaces.tsx',import.meta.url),'utf8');
+const settings=await readFile(new URL('../src/components/SettingsWindow.tsx',import.meta.url),'utf8');
+const extensionSettings=await readFile(new URL('../src/components/ExtensionSettingsSection.tsx',import.meta.url),'utf8');
+const sharedSettings=await readFile(new URL('../src/shared/SharedSettingsRouteBody.tsx',import.meta.url),'utf8');
 
 test('split button keeps primary This server and a separate accessible chooser',()=>{
 	assert.match(split,/aria-label="Create project on This server"/);
@@ -45,6 +48,15 @@ test('Desktop and browser File menus converge on shared management commands',()=
 		assert.match(browser,new RegExp(command));
 		assert.match(app,new RegExp(command));
 	}
+});
+
+test('Extensions use the ordinary selected-server Settings surface',()=>{
+	assert.match(settings,/id: 'extensions'/);
+	assert.match(settings,/ExtensionSettingsSection applicationClient=\{applicationClient\}/);
+	assert.match(settings,/activeCategoryId === 'extensions' \? undefined/);
+	assert.match(extensionSettings,/new ExtensionsClient\(new TerminayClientFacade\(applicationClient\)\)/);
+	assert.match(extensionSettings,/className="settings-group settings-extension-group"/);
+	assert.match(sharedSettings,/onResetAll === undefined \? null/);
 });
 
 test('remote project selection invokes the server and never falls back to Local',()=>{
