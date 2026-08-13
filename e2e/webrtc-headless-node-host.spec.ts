@@ -143,6 +143,7 @@ type HostEvidence = {
 }
 
 type HeadlessHostWindow = {
+  channelLabels(): ObservedLaneLabel[]
   close(): void
   closeLane(label: RequiredLaneLabel): void
   iceState(): RTCIceConnectionState | null
@@ -333,6 +334,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     }
 
     const hostWindow: HeadlessHostWindow = {
+      channelLabels() {
+        return [...observedLanes.keys()].sort()
+      },
       close() {
         if (closed) return
         closed = true
@@ -822,6 +826,15 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       // generation; repairing or returning the individual closed lane is not
       // an acceptable recovery.
       for (const [laneIndex, lane] of requiredLaneLabels.entries()) {
+        expect(runtime.channelLabels()).toEqual([...bootstrapLaneLabels, ...requiredLaneLabels].sort())
+        for (const requiredLane of requiredLaneLabels) {
+          await expect.poll(() => runtime.laneState(requiredLane)).toBe('open')
+        }
+        for (const bootstrapLane of bootstrapLaneLabels) {
+          await expect.poll(() => runtime.laneState(bootstrapLane), {
+            message: `${bootstrapLane} must retire after canonical application handoff`,
+          }).toBe('closed')
+        }
         await expect.poll(() => runtime.laneState(lane), {
           message: `${lane} lane should be open before fault injection`,
         }).toBe('open')
@@ -834,6 +847,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
 
         const peerStateDuringLaneFailure = runtime.peerState()
         expect(peerStateDuringLaneFailure).toBe('connected')
+        const retiredRuntime = runtime
         runtime.closeLane(lane)
         await expect.poll(() => runtime.laneState(lane)).toBe('closed')
         const firstFailureEvidence = {
@@ -868,6 +882,16 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         60_000,
         `a fresh four-lane generation after ${lane} failure`)
         runtime = replacement
+        expect(hostWindows.length).toBe(hostCountBeforeFailure + 1)
+        await expect.poll(() => retiredRuntime.peerState()).toBe('closed')
+        for (const retiredLane of [...bootstrapLaneLabels, ...requiredLaneLabels]) {
+          await expect.poll(() => retiredRuntime.laneState(retiredLane)).toBe('closed')
+        }
+        expect(runtime.channelLabels()).toEqual([...bootstrapLaneLabels, ...requiredLaneLabels].sort())
+        expect(ptyFactory.processes).toHaveLength(1)
+        expect(Object.keys(workspace.state.projects)).toEqual(['project-1'])
+        expect(Object.keys(workspace.state.panels)).toEqual(['panel-1'])
+        expect(Object.keys(workspace.state.terminalSessions)).toEqual(['terminal-1'])
         await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
         await expect(reconnectPage.locator('.xterm-rows')).toContainText('headless-host-ready')
         await expect(reconnectPage.getByRole('button', { name: 'Retry connection' })).toHaveCount(0, {
@@ -900,9 +924,13 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
           () => terminalWrites.join('').slice(writesBeforeFailure),
           { message: `${lane} recovery input must arrive exactly once and in order` },
         ).toBe(exactInput)
+        expect(hostWindows.length).toBe(hostCountBeforeFailure + 1)
+        expect(service.getStatus().activeConnectionCount).toBe(1)
+        expect(ptyFactory.processes).toHaveLength(1)
 
         matrixEvidence.push({
           activeApplicationConnections: service.getStatus().activeConnectionCount,
+          bootstrapLaneCount: bootstrapLaneLabels.length,
           closeReason: 'injected-required-lane-close',
           hostGeneration: hostWindows.indexOf(replacement) + 1,
           lane,
@@ -910,9 +938,13 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
           navigation: 'unchanged',
           outcome: 'ordered-input-confirmed',
           orderedInputBytes: new TextEncoder().encode(exactInput).byteLength,
+          peerCountForGeneration: 1,
           peerStateDuringLaneFailure,
           profile: 'saved-webrtc-profile',
           retryAttemptDelta: 1,
+          requiredLaneCount: requiredLaneLabels.length,
+          ptyCount: ptyFactory.processes.length,
+          terminalSessionCount: Object.keys(workspace.state.terminalSessions).length,
         })
       }
       for (const bootstrapLane of bootstrapLaneLabels) {
