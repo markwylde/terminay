@@ -230,6 +230,12 @@ Every running provider with a profile form contributes a clear **New
 Platform stores its URL and API-key secret and exposes its VM creation/browse
 flow. Installing or enabling a provider makes these actions available without
 restarting the app, and focusing the window refreshes provider inventory.
+The embedded Desktop vault is unlocked only after Electron reports the app as
+ready and before the Local server is reported ready or any project window is
+created. A transient pre-ready `safeStorage` unavailable result must not become
+a durable unavailable vault state. On a supported OS-backed storage backend,
+the first secret-backed SSH or Puzed profile save after launch succeeds without
+requiring a restart or a separate vault action.
 Creation and editing are modes of this same management surface: the standard
 environment sidebar, search, server authority, and footer remain visible while
 the right-hand pane shows the form. Cancel and successful Save return to the
