@@ -54,3 +54,50 @@ jobs:
 
       - name: Run end-to-end test shard
         run: npm run test:e2e -- --shard=${{ matrix.shard }}/5
+
+  protocol-only-webrtc-reproduction:
+    name: Protocol-only WebRTC reproduction
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out Terminay
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: terminay
+          persist-credentials: false
+
+      - name: Check out the hosted session transport
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: markwylde/terminay.com
+          path: terminay.com
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.14.0
+          cache: npm
+          cache-dependency-path: |
+            terminay/package-lock.json
+            terminay.com/package-lock.json
+
+      - name: Install the application and hosted transport
+        run: |
+          npm ci --prefix terminay
+          npm ci --prefix terminay.com
+
+      - name: Build the mounted web application
+        working-directory: terminay
+        run: npm run build:app
+
+      - name: Install displayless Chromium
+        working-directory: terminay
+        run: npx playwright install --with-deps --only-shell chromium
+
+      - name: Reproduce protocol-only terminal renewal failure
+        working-directory: terminay
+        env:
+          TERMINAY_HOSTED_SERVER_REPO: ${{ github.workspace }}/terminay.com
+        run: npm run test:spike-production-headless-webrtc
