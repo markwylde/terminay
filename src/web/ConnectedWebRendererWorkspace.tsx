@@ -227,6 +227,7 @@ export function ConnectedWebRendererWorkspace({
 					) : auxiliaryRoute.kind === 'project-environments' ? (
 						<ProjectEnvironmentsWindow
 							applicationClient={terminalClientContext.applicationClient}
+							initialIntent={auxiliaryRoute.intent}
 							serverName={
 								terminalClientContext.connectionLabel ??
 								terminalClientContext.serverId
