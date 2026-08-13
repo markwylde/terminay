@@ -24,7 +24,7 @@ async function createArchive({ rootName, members }) {
 }
 
 test('archive probe accepts only the exact target root and safe member paths', async () => {
-  const rootName = 'terminay-server-node24.14.0-linux-x64'
+  const rootName = 'terminay-server-node24.15.0-linux-x64'
   const fixture = await createArchive({ rootName, members: { 'artifact-manifest.json': '{}' } })
   try {
     assert.equal(await inspectArchiveIndex(fixture.archive, 'linux-x64'), rootName)
@@ -35,7 +35,7 @@ test('archive probe accepts only the exact target root and safe member paths', a
 
 test('archive probe rejects a target/root mismatch before extraction', async () => {
   const fixture = await createArchive({
-    rootName: 'terminay-server-node24.14.0-linux-arm64',
+    rootName: 'terminay-server-node24.15.0-linux-arm64',
     members: { 'artifact-manifest.json': '{}' },
   })
   try {
@@ -46,7 +46,7 @@ test('archive probe rejects a target/root mismatch before extraction', async () 
 })
 
 test('archive probe rejects symlink members before extraction', async () => {
-  const rootName = 'terminay-server-node24.14.0-linux-x64'
+  const rootName = 'terminay-server-node24.15.0-linux-x64'
   const fixture = await createArchive({ rootName, members: { 'artifact-manifest.json': '{}' } })
   try {
     await symlink('/tmp', join(fixture.temporary, rootName, 'escape'))

@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { runProductionAudit } from './production-dependency-audit.mjs'
 import { checkWorkspace } from './check-workspace-boundaries.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -173,11 +174,7 @@ export async function writeReleaseEvidence(root = process.cwd(), outputDir = joi
 }
 
 export async function runOptionalAudit(root = process.cwd()) {
-  const { stdout } = await execFileAsync('npm', ['audit', '--json', '--omit=dev'], { cwd: root, maxBuffer: 8 * 1024 * 1024 })
-  const report = JSON.parse(stdout)
-  const counts = report.metadata?.vulnerabilities ?? {}
-  if ((counts.high ?? 0) > 0 || (counts.critical ?? 0) > 0) throw new Error(`npm audit found high/critical vulnerabilities: ${JSON.stringify(counts)}`)
-  return counts
+  return (await runProductionAudit(root)).counts
 }
 
 export function sha256(value) {

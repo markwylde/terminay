@@ -97,7 +97,7 @@ async function proveNode24Runtime(buildRoot) {
   await writeFile(proofPath, candidateProof)
   const result = await run(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['--yes', '--package=node@24.14.0', '--', 'node', proofPath],
+    ['--yes', '--package=node@24.15.0', '--', 'node', proofPath],
     { cwd: buildRoot, timeoutMs: 60_000 },
   )
   assert.equal(result.signal, null)

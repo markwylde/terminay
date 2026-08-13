@@ -34,14 +34,18 @@ function run(command, args, options = {}) {
 
 async function packAndExtract(workspace, destination) {
   await mkdir(destination, { recursive: true });
-  const packed = JSON.parse((await run("npm", ["pack", "--workspace", workspace, "--json", "--pack-destination", destination], {
+  const packed = normalizePackResult(JSON.parse((await run("npm", ["pack", "--workspace", workspace, "--json", "--pack-destination", destination], {
     cwd: repositoryRoot,
-  })).stdout);
+  })).stdout));
   assert.equal(packed.length, 1);
   const extracted = join(destination, "extracted");
   await mkdir(extracted);
   await run("tar", ["-xzf", join(destination, packed[0].filename), "-C", extracted]);
   return join(extracted, "package");
+}
+
+function normalizePackResult(value) {
+  return Array.isArray(value) ? value : Object.values(value ?? {});
 }
 
 async function reserveLoopbackPort() {

@@ -70,5 +70,5 @@ podman run \
   --env TERMINAY_PROOF_REQUIRE_CLEAN_LINUX=1 \
   --env TERMINAY_PROOF_RUNTIME="$proof_runtime" \
   --env TERMINAY_RUNTIME_ONLY="$runtime_only" \
-  docker.io/library/node:24.14.0-bookworm-slim \
+  docker.io/library/node:24.15.0-bookworm-slim \
   sh /source/scripts/support/production-headless-webrtc-linux-container.sh
