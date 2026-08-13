@@ -83,6 +83,7 @@ test('hosted fragment pairing classification uses the validated exact-origin hos
 test('replacement activation verifies the stable profile and authenticated server identity', async () => {
 	const source = await readFile('src/web/main.tsx', 'utf8');
 	assert.match(source, /currentProfile\?\.origin !== profile\.origin[\s\S]*currentProfile\.archived === true/u);
-	assert.match(source, /hello\.serverId !== profile\.serverId[\s\S]*Recovered server identity does not match the saved profile/u);
+	assert.match(source, /profile\.status !== 'connecting' &&[\s\S]*hello\.serverId !== profile\.serverId[\s\S]*Recovered server identity does not match the saved profile/u);
+	assert.match(source, /profile\.status === 'connecting'[\s\S]*serverId: hello\.serverId[\s\S]*status: 'connected'/u);
 	assert.match(source, /connectionController\.current!\.activate/u);
 });

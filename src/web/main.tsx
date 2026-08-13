@@ -1143,9 +1143,20 @@ export default function WebManagerApp() {
 				currentProfile.archived === true
 			)
 				throw new Error('That server is no longer saved in this browser.');
-			if (hello.serverId !== profile.serverId) {
+			if (
+				profile.status !== 'connecting' &&
+				hello.serverId !== profile.serverId
+			) {
 				throw new Error('Recovered server identity does not match the saved profile.');
 			}
+			const verifiedProfile =
+				profile.status === 'connecting'
+					? hostRef.current.addConnection({
+							...profile,
+							serverId: hello.serverId,
+							status: 'connected',
+						})
+					: profile;
 			const context = await createConnectedServerClientContext(client, hello, {
 				signal: recoveryAttempt.signal,
 				onTransportClosed: () => connectionController.current?.recover(profile.id),
@@ -1174,7 +1185,7 @@ export default function WebManagerApp() {
 				context: labelledContext,
 				dispose: () => labelledContext.dispose?.(),
 			});
-			return managedWebCandidate(profile, client, clientId, hello, candidate, terminalHydrated);
+			return managedWebCandidate(verifiedProfile, client, clientId, hello, candidate, terminalHydrated);
 		} catch (cause) {
 			await client.close().catch(() => undefined);
 			throw cause;
@@ -1208,7 +1219,10 @@ export default function WebManagerApp() {
 	): void {
 		if (recoveryState.phase === 'connected') return;
 		if (recoveryState.profileId !== undefined) {
-			hostRef.current.markStatus(recoveryState.profileId, 'unreachable');
+			const recoveringProfile = hostRef.current.profiles.get(recoveryState.profileId);
+			if (recoveringProfile?.status !== 'connecting') {
+				hostRef.current.markStatus(recoveryState.profileId, 'unreachable');
+			}
 		}
 		setStatus(null);
 		if (recoveryState.phase === 'retry-wait') {
