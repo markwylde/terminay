@@ -60,6 +60,8 @@ test('Extensions use the ordinary selected-server Settings surface',()=>{
 	assert.match(extensionSettings,/className="settings-category-header"/);
 	assert.match(extensionSettings,/<ExtensionManager/);
 	assert.match(extensionManager,/className="settings-group extension-card"/);
+	assert.match(extensionManager,/Install package file/);
+	assert.match(extensionManager,/type="file" accept="\.tgz,application\/gzip"/);
 	assert.match(sharedSettings,/onResetAll === undefined \? null/);
 });
 

@@ -20,9 +20,11 @@ Opening Extensions on a remote server manages that server, not Desktop's
 embedded server.
 
 Terminay ships a hardcoded official catalogue containing the SSH and Puzed npm
-packages and their expected metadata. Installing or restoring either package
-fetches it directly from the public npmjs registry; Terminay releases do not
-embed extension tarballs and extension installation requires registry access.
+packages and their expected metadata. The ordinary install path fetches these
+packages directly from the public npmjs registry; Terminay releases do not
+embed extension tarballs. An administrator may instead upload an npm-pack
+compatible `.tgz` package to the selected Terminay Server, including a package
+that has not yet been published.
 Official packages use the same public manifest, extension host, broker, and
 compatibility checks as custom packages. The **Official** badge is catalogue
 metadata, not a privileged runtime tier.
@@ -33,8 +35,31 @@ authorized confirmation bound to that preview. Active records store only the
 exact version and registry integrity. Terminay never silently follows `latest`
 or auto-updates.
 
-Aliases, Git, HTTP/tarball, file, directory, arbitrary registry, and shell-like
-package specifications are rejected in the first release.
+**Install package file…** accepts one bounded gzip tarball produced by
+`npm pack`. The client uploads its bytes to the selected Terminay Server; it
+never sends a local path for the server to open. The server hashes and inspects
+the archive before preview, binds confirmation to the exact uploaded digest,
+and feeds it through the same scripts-disabled validation, immutable-slot,
+probe, activation, update, and rollback path as a registry package. The v1
+compressed upload limit is 12 MiB. Preview state and uploaded bytes expire
+together after ten minutes and are removed after confirmation, failure, or
+server restart.
+
+An uploaded root package may resolve from its server-owned staging archive.
+All transitive packages must still resolve from public npmjs with integrity;
+aliases, Git, HTTP tarballs, arbitrary file/directory dependencies, arbitrary
+registries, and shell-like specifications remain rejected. Archive traversal,
+absolute paths, links, non-regular entries, duplicate package manifests, excess
+entry/unpacked-size bounds, malformed gzip/tar data, lifecycle/native build
+requirements, and a materialized manifest that differs from preview fail
+closed before extension code is imported.
+
+Uploaded packages are labelled **Uploaded package · Unverified**. A catalogue
+name or extension id alone never grants the Official badge; that badge on an
+uploaded archive requires a future release-pinned digest match. The preview
+shows filename, exact name/version, archive integrity, permissions, dependency
+facts, and the trusted-code warning. Desktop and browser clients retain no
+archive after the upload command completes.
 
 ## Package and manifest contract
 
