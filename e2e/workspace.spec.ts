@@ -88,6 +88,7 @@ test.describe('workspace shell', () => {
 		await appHarness.sendAppCommand('new-terminal');
 		const closeButtons = mainWindow.getByLabel('Close terminal');
 		await expect(closeButtons).toHaveCount(2);
+		await mainWindow.locator('.terminal-panel').last().click();
 		await electronApp.evaluate(({ dialog }) => {
 			const state = globalThis as typeof globalThis & {
 				closeDialog?: Electron.MessageBoxOptions;
@@ -135,6 +136,11 @@ test.describe('workspace shell', () => {
 		});
 		await closeButtons.last().click();
 		await expect(closeButtons).toHaveCount(1);
+		await expect(
+			mainWindow
+				.getByRole('alert')
+				.filter({ hasText: 'Workspace synchronization failed' }),
+		).toHaveCount(0);
 	});
 
 	test('closes the project when its last tab is closed', async ({
