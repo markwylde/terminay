@@ -112,7 +112,7 @@
 		"test:agent-ui": "node --test scripts/agent-ui-components.test.mjs",
 		"test:macro-preview": "node --test scripts/macro-preview.test.mjs",
 		"test:connection-menu": "node --test scripts/connection-menu-renderer.test.mjs",
-		"test:terminal-panel-context": "npm run build --workspace @terminay/client-core && node --test scripts/terminal-panel-context.test.mjs scripts/terminal-panel-migration.test.mjs scripts/terminal-panel-input-queue.test.mjs",
+		"test:terminal-panel-context": "npm run build --workspace @terminay/client-core && node --test scripts/terminal-panel-binding-fence.test.mjs scripts/terminal-panel-context.test.mjs scripts/terminal-panel-migration.test.mjs scripts/terminal-panel-input-queue.test.mjs",
 		"test:shared-responsive-entry": "node --test scripts/shared-responsive-entry.test.mjs",
 		"acceptance:app-identity": "node scripts/shared-app-component-identity-gate.mjs",
 		"acceptance:app-parity": "npm run acceptance:app-identity && playwright test --config scripts/shared-app-acceptance.playwright.config.ts --workers=1",
