@@ -97,6 +97,7 @@ export class TerminayClient {
   private readerStarted = false;
   private handshake: (Pending<ServerHello> & { readonly promise: Promise<ServerHello> }) | undefined;
   private closed = false;
+  private transportClosePromise: Promise<void> | undefined;
   private commandCounter = 0;
 
   constructor(options: TerminayClientOptions) {
@@ -278,8 +279,18 @@ export class TerminayClient {
     for (const pending of this.pending.values()) pending.reject(new ClientDisconnectedError("client is closing"));
     this.pending.clear();
     this.handshake?.reject(new ClientDisconnectedError("client is closing"));
-    await this.transport.close({ code: "normal" });
+    await this.closeTransport({ code: "normal" });
     this.setState("closed");
+  }
+
+  private closeTransport(reason: Parameters<ByteTransport["close"]>[0]): Promise<void> {
+    if (this.transportClosePromise !== undefined) return this.transportClosePromise;
+    try {
+      this.transportClosePromise = Promise.resolve(this.transport.close(reason));
+    } catch (error) {
+      this.transportClosePromise = Promise.reject(error);
+    }
+    return this.transportClosePromise;
   }
 
   private pendingPromise<T>(): Pending<T> & { readonly promise: Promise<T> } {
@@ -406,6 +417,15 @@ export class TerminayClient {
 
   private failDisconnected(cause: unknown): void {
     const error = new ClientDisconnectedError("transport disconnected", cause);
+    // The application protocol owns its ByteTransport. If its reader ends while
+    // the client is live, terminalize that transport before publishing stale so
+    // recovery cannot mistake an open underlying WebRTC lane for a live client.
+    // Explicit disposal racing this path observes the same close promise.
+    void this.closeTransport({
+      code: "unavailable",
+      message: "application protocol reader ended unexpectedly",
+      cause,
+    }).catch(() => undefined);
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
     this.handshake?.reject(error);
