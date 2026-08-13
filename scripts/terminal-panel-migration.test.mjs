@@ -146,7 +146,7 @@ test('server-backed TerminalPanel routes raw stream events through xterm and the
 	);
 	assert.match(
 		serverPath,
-		/attachServerTerminal\(\{ fromPosition: 0, freshPresentation: true, forceResume: true \}\)/,
+		/attachServerTerminal\(\{ fromPosition: 0, freshPresentation: true, forceResume: true, recovery: true \}\)/,
 	);
 	assert.match(
 		serverPath,
@@ -156,7 +156,7 @@ test('server-backed TerminalPanel routes raw stream events through xterm and the
 		serverPath,
 		/renderTerminalExit\(event\.exitCode, event\.signal\)/,
 	);
-	assert.match(serverPath, /renderTerminalResync\(\)/);
+	assert.match(serverPath, /beginTerminalResync\(event\)/);
 	assert.doesNotMatch(
 		serverPath,
 		/Terminal output history is no longer available/u,

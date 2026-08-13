@@ -18,6 +18,9 @@ forwards input, resize, and lifecycle commands through the application protocol.
 - Terminals support splits, search, copy/paste including bracketed-paste-aware
   input, dropped paths, guarded external links, resizing, scrollback, zoom, and
   exit handling.
+- On touch devices, a vertical drag over the terminal canvas scrolls xterm's
+  retained buffer without emitting terminal input. A tap remains available for
+  focus and the custom scrollbar remains an equivalent scroll control.
 - Dropping operating-system files onto a Desktop terminal inserts their native
   paths without copying the files. Dropping browser-local files onto a web
   terminal uploads bounded file contents into the selected server project's
