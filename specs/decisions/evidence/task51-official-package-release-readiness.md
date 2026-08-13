@@ -29,25 +29,29 @@ specifier until that dependency is published.
 
 ## Required release sequence
 
-- [ ] Choose public GitHub repositories and add exact `repository.url` metadata.
-- [ ] Publish a reviewed, inert bootstrap version of `@terminay/extension-api`;
+This is supporting evidence for the single release-supply-chain checkbox in
+Task 51. These are ordered release steps, not independent product tasks, so
+they deliberately use a numbered list rather than task checkboxes.
+
+1. Choose public GitHub repositories and add exact `repository.url` metadata.
+2. Publish a reviewed, inert bootstrap version of `@terminay/extension-api`;
   configure its trusted publisher; then publish the real API release through
   OIDC CI with provenance.
-- [ ] In each extension repository, replace local/optional-only API setup with
+3. In each extension repository, replace local/optional-only API setup with
   the exact registry API version as a development dependency and regenerate
   `package-lock.json` in a fresh clone using Node 24.15.0/npm 12.0.2.
-- [ ] Copy `official-extension-release.yml` into each repository, commit it,
+4. Copy `official-extension-release.yml` into each repository, commit it,
   reserve each package name with an inert bootstrap version, and configure npm
   trusted publishing for the exact repository/workflow with `npm publish`
   permission.
-- [ ] Run each workflow with `publish: false`; review tests, conformance, exact
+5. Run each workflow with `publish: false`; review tests, conformance, exact
   packed inventory, double-pack SHA-256, production dependency integrity,
   SPDX SBOM, license inventory, permissions, and compatibility.
-- [ ] Run `publish: true` from the reviewed immutable commit without an npm
+6. Run `publish: true` from the reviewed immutable commit without an npm
   token. Preserve the CI evidence artifact even on failure.
-- [ ] Require `npm-registry-proof.json` to match the local tarball integrity and
+7. Require `npm-registry-proof.json` to match the local tarball integrity and
   contain npm HTTPS provenance attestations for the exact version.
-- [ ] Install the exact registry versions into a clean supported Terminay Server
+8. Install the exact registry versions into a clean supported Terminay Server
   and retain packed activation plus registry-unavailable failure evidence.
 
 The authoritative commands and workflow are documented in
