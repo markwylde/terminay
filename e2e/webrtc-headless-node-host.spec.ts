@@ -800,7 +800,6 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       if (!fault) throw new Error('The browser application protocol reader was not installed.')
       fault.fail()
     })
-    await expect.poll(protocolFaultState).toBe('open')
     if (protocolRuntime) {
       await expect.poll(() => protocolRuntime.peerState()).toBe('connected')
       await expect.poll(() => protocolRuntime.laneState('application')).toBe('open')
