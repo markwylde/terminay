@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { parseSingleNpmJsonValue } from './npm-pack-result.mjs'
 
 import {
   parseSingleNpmPackResult,
@@ -12,9 +13,18 @@ test('runtime staging accepts exactly one npm 11 or npm 12 pack result', () => {
   const result = { filename: 'werift-0.24.1.tgz', version: '0.24.1' }
   assert.deepEqual(parseSingleNpmPackResult(JSON.stringify([result])), result)
   assert.deepEqual(parseSingleNpmPackResult(JSON.stringify(result)), result)
+  assert.deepEqual(parseSingleNpmPackResult(JSON.stringify({ werift: result })), result)
   assert.throws(() => parseSingleNpmPackResult('[]'), /unsupported metadata/u)
   assert.throws(() => parseSingleNpmPackResult(JSON.stringify([result, result])), /unsupported metadata/u)
+  assert.throws(() => parseSingleNpmPackResult(JSON.stringify({ a: result, b: result })), /unsupported metadata/u)
   assert.throws(() => parseSingleNpmPackResult('null'), /unsupported metadata/u)
+})
+
+test('npm metadata accepts scalar values from npm 11 and singleton arrays from npm 12', () => {
+  assert.equal(parseSingleNpmJsonValue(JSON.stringify('git-head')), 'git-head')
+  assert.equal(parseSingleNpmJsonValue(JSON.stringify(['git-head'])), 'git-head')
+  assert.throws(() => parseSingleNpmJsonValue(JSON.stringify([])), /unsupported JSON metadata/u)
+  assert.throws(() => parseSingleNpmJsonValue(JSON.stringify(['a', 'b'])), /unsupported JSON metadata/u)
 })
 
 test('candidate.1 source acquisition pins ranged transitive runtime dependencies', () => {
