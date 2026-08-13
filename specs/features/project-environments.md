@@ -199,6 +199,13 @@ Environments…**, and **Extensions…**. Large inventories use searchable picke
 instead of unbounded menus. **This server** includes secondary text such as
 `Local to Production Terminay`.
 
+Provider actions are derived from the currently authenticated server snapshot,
+not hardcoded client knowledge. A running provider with a profile form appears
+as **New <provider>…**. Each saved profile whose provider contributes a create
+form appears as a direct creation action, including **Create new Puzed VM…**.
+Choosing one opens the same Project Environments window with its sidebar and
+authority context preserved and the requested form already selected.
+
 Project creation is atomic from the user's perspective: the target and initial
 root validate before a normal project tab is committed. Provider glyph/status
 may appear subtly on the tab and environment chip, with complete accessible
@@ -258,6 +265,14 @@ only where comparison is materially useful, and remain contained within one
 stacked setting row. Forms end with the standard secondary **Cancel** and
 primary save/create actions. These rules apply equally to official SSH and
 Puzed forms and to third-party providers.
+
+Every field with `optionSource` is resolved through the fixed
+`project-environments.resolve-options` server operation using the exact
+provider, selected profile, current form values, query, deadline, and
+cancellation signal. The form loads initial options when it opens and reloads
+dependent choices when their inputs change; it presents loading, empty, and
+bounded provider-error states instead of an inert empty select. No renderer
+substitutes static Puzed images, sizes, workers, bridges, or profiles.
 
 ## Authorization and audit
 

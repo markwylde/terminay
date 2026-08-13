@@ -119,7 +119,8 @@ export interface SelectField extends BaseField {
 
 export interface PresetCardsField extends BaseField {
   type: "preset-cards";
-  options: Array<SelectOption & { icon?: ExtensionIcon }>;
+  options?: Array<SelectOption & { icon?: ExtensionIcon }>;
+  optionSource?: string;
 }
 
 export type FormField = TextField | NumberField | BooleanField | SelectField | PresetCardsField;
