@@ -77,11 +77,11 @@ test('mounted terminal keeps one client facade while replacement calls use the n
 
 test('a replacement hydration generation rebinds even when logical client identity is stable', () => {
   assert.match(panel, /boundHydrationReporterRef/u)
-  assert.match(panel, /terminalClientContext\?\.client, terminalClientContext\?\.reportConnectionHydrated/u)
-  assert.match(panel, /rebindServerAttachmentRef\.current\(replacementClient\)/u)
-  assert.match(panel, /const replacementClient = new TerminayTerminalPanelClient\(terminalClientContext\.client\)/u)
-  assert.match(panel, /rebindServerAttachmentRef\.current\(replacementClient\)/u)
+  assert.match(panel, /terminalClientContext\?\.applicationClient, terminalClientContext\?\.client, terminalClientContext\?\.clientId, terminalClientContext\?\.reportConnectionHydrated/u)
+  assert.match(panel, /new TerminayTerminalClient\(terminalClientContext\.applicationClient\)/u)
+  assert.match(panel, /rebindServerAttachmentRef\.current\(\{ client: replacementClient, clientId: terminalClientContext\.clientId \}\)/u)
   assert.match(panel, /client: replacementClient/u)
+  assert.match(panel, /clientId: replacementClientId/u)
   assert.match(panel, /attachmentClient\.resume\(nextRequest\)/u)
 })
 
