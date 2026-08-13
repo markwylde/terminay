@@ -144,6 +144,29 @@ test('coalesces changes arriving during refresh and cannot publish a regressing 
 	store.close()
 })
 
+test('command convergence refreshes authority when the workspace change notification is lost', async () => {
+	const client = fakeClient({
+		snapshots: [state(1)],
+		deltas: [delta(1, 2, ['panel-a', 'panel-b'])],
+	})
+	const store = new WorkspaceSnapshotStore({ client, serverId: 'server-a' })
+	await store.start()
+
+	const converged = await store.waitForSnapshot(
+		(snapshot) => snapshot.terminalSessions['session-panel-b'] !== undefined
+			&& Object.values(snapshot.panels).some(
+				(panel) => panel.type === 'terminal' && panel.sessionId === 'session-panel-b',
+			),
+	)
+
+	assert.equal(converged?.revision, 2)
+	assert.deepEqual(client.calls.map(([operation]) => operation), [
+		'workspace.snapshot',
+		'workspace.delta',
+	])
+	store.close()
+})
+
 test('resync preserves stale state until a full authorized snapshot is published', async () => {
 	const client = fakeClient({ snapshots: [state(1), state(2, ['panel-a', 'panel-b'])], deltas: [] })
 	const store = new WorkspaceSnapshotStore({ client, serverId: 'server-a' })

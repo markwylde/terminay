@@ -66,6 +66,10 @@ terminal title into an identity boundary.
 - Files and folders opened from project navigation become dockable panels in the
   relevant project. Closing a panel must dispose only that panel's resources;
   terminal termination is explicit terminal lifecycle behaviour.
+- Closing or moving the final canonical panel/project in a container leaves its
+  active selection absent rather than serializing an undefined optional field.
+  The resulting workspace revision remains a valid snapshot/delta that every
+  connected presentation can reconcile, including when local file panels remain.
 - Closing an idle terminal proceeds immediately. Closing a terminal whose PTY
   has a non-shell foreground process asks whether to **Close Terminal** or
   **Keep Running** before terminating it.
@@ -101,6 +105,9 @@ client focus.
   clearly when their required target is absent.
 - Reconnecting from a fresh client restores project and panel identity from
   server state without recreating live terminals.
+- Sequentially closing every canonical terminal while another local panel stays
+  visible removes each terminal exactly once and leaves workspace reconciliation
+  current; the final removal cannot strand an exited terminal presentation.
 - Reloading or closing a renderer detaches its presentation and must not turn
   Dockview disposal into canonical panel-close commands; restored renderers
   hydrate the same panels and terminal sessions.
