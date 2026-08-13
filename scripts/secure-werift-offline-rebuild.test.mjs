@@ -3,9 +3,19 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import {
+  parseSingleNpmPackResult,
   RETAINED_RUNTIME_PACKAGES,
   TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES,
 } from './build-secure-werift-candidate.mjs'
+
+test('runtime staging accepts exactly one npm 11 or npm 12 pack result', () => {
+  const result = { filename: 'werift-0.24.1.tgz', version: '0.24.1' }
+  assert.deepEqual(parseSingleNpmPackResult(JSON.stringify([result])), result)
+  assert.deepEqual(parseSingleNpmPackResult(JSON.stringify(result)), result)
+  assert.throws(() => parseSingleNpmPackResult('[]'), /unsupported metadata/u)
+  assert.throws(() => parseSingleNpmPackResult(JSON.stringify([result, result])), /unsupported metadata/u)
+  assert.throws(() => parseSingleNpmPackResult('null'), /unsupported metadata/u)
+})
 
 test('candidate.1 source acquisition pins ranged transitive runtime dependencies', () => {
   assert.deepEqual(TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES, {
