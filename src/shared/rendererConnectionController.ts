@@ -46,6 +46,7 @@ export type RendererConnectionControllerOptions<Candidate extends Disposable> = 
 	initialRetryMs?: number;
 	maxRetryMs?: number;
 	onActivated?(candidate: Candidate, state: RendererConnectionState): void | Promise<void>;
+	onCandidate?(candidate: Candidate, state: RendererConnectionState): void | Promise<void>;
 	onStateChange?(state: RendererConnectionState): void;
 }>;
 
@@ -81,6 +82,12 @@ export class RendererConnectionController<Candidate extends Disposable> {
 
 	readonly retry = (): void => {
 		if (this.stateValue.profileId === undefined || this.pipeline === undefined) return;
+		// The host may already have handed a fresh endpoint to an acquisition that
+		// cannot be synchronously cancelled. Retrying while that attempt is active
+		// would orphan the only usable endpoint and start a competing generation.
+		// Manual Retry is an acceleration of retry-wait, never supersession of an
+		// in-flight connecting/authenticating/hydrating attempt.
+		if (this.stateValue.phase !== 'retry-wait') return;
 		this.startAttempt(false);
 	};
 
@@ -220,6 +227,8 @@ export class RendererConnectionController<Candidate extends Disposable> {
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			this.publishPhase('hydrating', attempt);
 			await pipeline.hydrate(candidate, attempt);
+			if (!this.isCurrentAttempt(attempt, pipeline)) return;
+			await this.options.onCandidate?.(candidate, this.stateValue);
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			await pipeline.verify(candidate, attempt);
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;

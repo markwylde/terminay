@@ -82,6 +82,9 @@ export interface TerminalPanelClientContextValue {
   readonly connectionLabel?: string
   /** Stable action on the owning connection controller. It never captures a client. */
   readonly retryConnection?: () => void
+  /** Reports that this mounted panel rendered and attached the replacement client. */
+  readonly reportConnectionHydrated?: () => void
+  readonly reportConnectionHydrationFailed?: (error: unknown) => void
   readonly serverCapabilities?: readonly string[]
 }
 
@@ -100,7 +103,7 @@ export type TerminalPanelClientResolution = {
  */
 type TerminalPanelConnectionContext = Pick<
   TerminalPanelClientContextValue,
-  'client' | 'serverId' | 'projectId' | 'clientId' | 'retryConnection'
+  'client' | 'serverId' | 'projectId' | 'clientId' | 'retryConnection' | 'reportConnectionHydrated' | 'reportConnectionHydrationFailed'
 >
 
 /** Resolve panel params with the connection context as the production path.
@@ -303,6 +306,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             projectId: terminalClientContext.projectId,
             serverId: terminalClientContext.serverId,
             retryConnection: terminalClientContext.retryConnection,
+            reportConnectionHydrated: terminalClientContext.reportConnectionHydrated,
+            reportConnectionHydrationFailed: terminalClientContext.reportConnectionHydrationFailed,
           },
     [
       terminalClientContext?.client,
@@ -310,6 +315,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminalClientContext?.projectId,
       terminalClientContext?.serverId,
       terminalClientContext?.retryConnection,
+      terminalClientContext?.reportConnectionHydrated,
+      terminalClientContext?.reportConnectionHydrationFailed,
     ],
   )
   const resolvedTerminalClient = useMemo(
@@ -540,6 +547,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
       setIsTerminalHydrating(false)
       setServerTerminalError(error instanceof Error ? error.message : 'The server terminal connection failed.')
+      terminalPanelConnectionContext?.reportConnectionHydrationFailed?.(error)
     }
     let serverInputQueue = useServerTerminal ? new ServerTerminalInputQueue(failServerTransport) : null
 
@@ -937,6 +945,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
               if (recoveryDeadlineTimer !== null) window.clearTimeout(recoveryDeadlineTimer)
               recoveryDeadlineTimer = null
               setIsTerminalHydrating(false)
+              terminalPanelConnectionContext?.reportConnectionHydrated?.()
 
               if (recoveryAttempt > 0) {
                 reportTerminalRecovery('recovered', { durationMs: Math.max(0, Date.now() - recoveryStartedAt), outputPosition: renderedPositionRef.current ?? undefined })
