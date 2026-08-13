@@ -141,6 +141,13 @@ external navigation are not supported.
 
 ## Extension host and lifecycle
 
+An enabled extension is not successfully installed merely because its package
+passes a probe. After the immutable slot is committed, the Terminay Server
+activates that exact slot and keeps its provider process running. On server
+startup every enabled, compatible active slot is restored before provider
+catalogues are served. Activation failure is represented explicitly and never
+falls back to This server.
+
 Terminay Server runs each enabled extension in its own child process under the
 server's bundled Node runtime. The process uses a private inherited framed
 channel, a minimal environment, an immutable package-slot working directory,
@@ -290,6 +297,11 @@ The user confirms against the named selected server. Installation and
 activation progress remain resumable server operations. Actions include
 enable/disable, explicit update, rollback, restart, and uninstall, with
 dependants listed when an action is blocked.
+
+Official catalogue and installed records are merged by canonical extension
+identity, so one extension never appears as separate Available and Installed
+cards. A successful install replaces its review panel with an explicit success
+result instead of leaving the spent confirmation visible.
 
 ## Acceptance outcomes
 

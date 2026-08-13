@@ -11,6 +11,7 @@ export * from "./packageValidation.js";
 export * from "./installer.js";
 export * from "./operations.js";
 export * from "./composition.js";
+export * from "./profileService.js";
 export * from "./puzedSshComposition.js";
 export * from "./puzedSshProjectAdapter.js";
 export * from "./projectEnvironmentRuntime.js";

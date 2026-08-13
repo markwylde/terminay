@@ -11,6 +11,8 @@ export interface ExtensionOperationOptions {
   readonly authorityLabel: string;
   readonly onChanged?: (payload: JsonValue) => void;
   readonly restart?: (extensionId: string) => Promise<void>;
+  readonly activate?: (extensionId: string) => Promise<void>;
+  readonly activateEnabled?: () => Promise<void>;
   readonly audit?: (event: Readonly<Record<string, unknown>>) => Promise<void> | void;
 }
 
@@ -31,13 +33,13 @@ export function createExtensionOperationHandlers(options: ExtensionOperationOpti
   };
   const commands: Record<string, CommandHandler> = {
     "extensions.preview-package-file": async (request) => { permission(request.context, "extensions:manage"); const payload = exact(request.envelope.payload, ["filename", "idempotencyKey", "deadlineAt"]); return { result: previewDto(await options.installer.previewArchive(text(payload, "filename"), request.body)), revision: (await options.installer.snapshot()).revision }; },
-    "extensions.install": mutation(async (payload, signal) => { if (payload.confirmation !== true) throw failure("validation", "extension installation requires confirmation"); try { return await options.installer.confirm(text(payload, "previewDigest"), signal); } catch (error) { throw installFailure(error); } }),
-    "extensions.update": mutation(async (payload, signal) => { if (payload.confirmation !== true) throw failure("validation", "extension update requires confirmation"); const digest = text(payload, "previewDigest"); const extensionId = text(payload, "extensionId"); const preview = options.installer.confirmedPreview(digest); if (preview === undefined || typeof preview.manifestMetadata !== "object" || preview.manifestMetadata === null || !("id" in preview.manifestMetadata) || preview.manifestMetadata.id !== extensionId) throw failure("validation", "update preview did not resolve the selected extension"); return options.installer.confirm(digest, signal); }),
-    "extensions.enable": mutation((payload) => options.installer.enable(text(payload, "extensionId"))),
-    "extensions.disable": mutation((payload) => options.installer.disable(text(payload, "extensionId"))),
+    "extensions.install": mutation(async (payload, signal) => { if (payload.confirmation !== true) throw failure("validation", "extension installation requires confirmation"); const digest = text(payload, "previewDigest"); const preview = options.installer.confirmedPreview?.(digest); try { const next = await options.installer.confirm(digest, signal); if (preview !== undefined && typeof preview.manifestMetadata === "object" && preview.manifestMetadata !== null && "id" in preview.manifestMetadata) await options.activate?.(String(preview.manifestMetadata.id)); return next; } catch (error) { throw installFailure(error); } }),
+    "extensions.update": mutation(async (payload, signal) => { if (payload.confirmation !== true) throw failure("validation", "extension update requires confirmation"); const digest = text(payload, "previewDigest"); const extensionId = text(payload, "extensionId"); const preview = options.installer.confirmedPreview(digest); if (preview === undefined || typeof preview.manifestMetadata !== "object" || preview.manifestMetadata === null || !("id" in preview.manifestMetadata) || preview.manifestMetadata.id !== extensionId) throw failure("validation", "update preview did not resolve the selected extension"); const next = await options.installer.confirm(digest, signal); await options.activate?.(extensionId); return next; }),
+    "extensions.enable": mutation(async (payload) => { const extensionId = text(payload, "extensionId"); const next = await options.installer.enable(extensionId); await options.activate?.(extensionId); return next; }),
+    "extensions.disable": mutation(async (payload) => { const extensionId = text(payload, "extensionId"); const next = await options.installer.disable(extensionId); await options.hosts?.stop(extensionId); return next; }),
     "extensions.remove": mutation((payload) => options.installer.remove(text(payload, "extensionId"))),
-    "extensions.rollback": mutation((payload) => options.installer.rollback(text(payload, "extensionId"))),
-    "extensions.restart": mutation(async (payload) => { const extensionId = text(payload, "extensionId"); if (options.restart !== undefined) await options.restart(extensionId); else await options.hosts?.stop(extensionId); return options.installer.snapshot(); }),
+    "extensions.rollback": mutation(async (payload) => { const extensionId = text(payload, "extensionId"); const next = await options.installer.rollback(extensionId); await options.activate?.(extensionId); return next; }),
+    "extensions.restart": mutation(async (payload) => { const extensionId = text(payload, "extensionId"); if (options.restart !== undefined) await options.restart(extensionId); else { await options.hosts?.stop(extensionId); await options.activate?.(extensionId); } return options.installer.snapshot(); }),
   };
   const policies = Object.fromEntries([...Object.keys(queries).map((operation) => [operation, { scope: "read" }]), ...Object.keys(commands).map((operation) => [operation, { scope: "write" }])]) as OperationRegistries["policies"];
   return { queries, commands, policies };

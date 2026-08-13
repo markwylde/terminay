@@ -58,13 +58,18 @@ test('shows selected-server extensions as an ordinary Settings category', async 
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-ssh' })).toBeVisible()
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-puzed' })).toBeVisible()
 
+  const profileForm = { id: 'fixture-profile', title: 'Fixture connection', submitLabel: 'Save', sections: [{ id: 'connection', title: 'Connection', fields: [{ id: 'display-name', type: 'text', label: 'Name', required: true }] }] }
   const packageJson = JSON.stringify({ name: 'terminay-e2e-uploaded-extension', version: '1.0.0', type: 'module', exports: { '.': './dist/extension.js' }, terminay: { manifestVersion: 1, id: 'dev.terminay.e2e-uploaded', displayName: 'E2E uploaded provider', api: '^1.0.0', engines: { terminay: '>=1', node: '>=22' }, entrypoint: 'dist/extension.js', permissions: [], contributes: { projectEnvironments: [{ id: 'dev.terminay.e2e-uploaded/main', displayName: 'E2E uploaded', capabilities: ['terminal', 'filesystem'] }] } } })
-  const archive = npmPackArchive({ 'package/package.json': packageJson, 'package/dist/extension.js': 'export async function activate(context) { context.registerProjectEnvironmentProvider({ providerId: "dev.terminay.e2e-uploaded/main", displayName: "E2E uploaded", capabilities: ["terminal", "filesystem"] }); }\n' })
+  const archive = npmPackArchive({ 'package/package.json': packageJson, 'package/dist/extension.js': `export async function activate(context) { context.registerProjectEnvironmentProvider({ definition: { providerId: "dev.terminay.e2e-uploaded/main", displayName: "E2E uploaded", capabilities: ["terminal", "filesystem"], profileForm: ${JSON.stringify(profileForm)} }, runtime: { testProfile: async () => [], resolveOptions: async () => ({ options: [] }), createEnvironment: async () => ({ state: "ready", providerState: {}, status: { state: "available", revision: 1 } }), resumeOperation: async () => ({ state: "ready", providerState: {}, status: { state: "available", revision: 1 } }), getStatus: async () => ({ state: "available", revision: 1 }), invokeAction: async () => ({ state: "complete", providerState: {}, status: { state: "available", revision: 1 } }) } }); }\n` })
   await settingsWindow.locator('input[type="file"][accept*=".tgz"]').setInputFiles({ name: 'terminay-e2e-uploaded-extension-1.0.0.tgz', mimeType: 'application/gzip', buffer: archive })
   await expect(settingsWindow.getByRole('heading', { name: /Review terminay-e2e-uploaded-extension@1\.0\.0/u })).toBeVisible()
   await expect(settingsWindow.getByText(/Uploaded package.*Unverified/u)).toBeVisible()
   await settingsWindow.getByRole('button', { name: /Install on/u }).click()
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-e2e-uploaded-extension' })).toContainText('1.0.0', { timeout: 30_000 })
+  await expect(settingsWindow.getByRole('heading', { name: /Review terminay-e2e-uploaded-extension/u })).toHaveCount(0)
+  await expect(settingsWindow.getByRole('status').filter({ hasText: /was installed/u })).toBeVisible()
+  const environmentsWindow = await appHarness.openChildWindow(async () => { await mainWindow.evaluate(async () => { await window.terminayProjectEnvironmentsHost?.open() }) })
+  await expect(environmentsWindow.getByRole('button', { name: 'New E2E uploaded' })).toBeVisible()
 })
 
 function npmPackArchive(files: Readonly<Record<string, string>>): Buffer {
