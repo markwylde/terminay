@@ -56,14 +56,18 @@ export type DeclarativeFieldDto = Readonly<{
 	options?: readonly Readonly<{ label: string; value: string; description?: string }>[];
 	optionSource?: string;
 	searchable?: boolean;
-	visibleWhen?: Readonly<{ fieldId: string; equals: string | boolean }>;
+	visibleWhen?: Readonly<{
+		fieldId: string;
+		equals?: string | number | boolean | null;
+		notEquals?: string | number | boolean | null;
+	}>;
 }>;
 
 export type DeclarativeSectionDto = Readonly<{
 	id: string;
 	title: string;
 	description?: string;
-	disclosure?: boolean;
+	disclosure?: 'always' | 'expanded' | 'collapsed';
 	fields: readonly DeclarativeFieldDto[];
 }>;
 

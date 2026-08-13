@@ -42,6 +42,12 @@ test('generic form renderer covers bounded async choices and accessible preset c
 	assert.match(forms,/AbortController/);
 	assert.match(forms,/type="radio"/);
 	assert.match(forms,/role="alert"/);
+	assert.match(forms,/className="settings-category-header"/);
+	assert.match(forms,/className="settings-group declarative-provider-disclosure"/);
+	assert.match(forms,/className="settings-row-control declarative-provider-field__control"/);
+	assert.match(forms,/className="settings-primary-button"/);
+	assert.doesNotMatch(forms,/declarative-provider-form__fields/);
+	assert.doesNotMatch(forms,/grid-template-columns:\s*repeat\(2/);
 });
 
 test('Desktop and browser File menus converge on shared management commands',()=>{
