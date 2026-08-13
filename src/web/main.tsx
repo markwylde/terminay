@@ -998,6 +998,18 @@ export default function WebManagerApp() {
 		const profile = hostRef.current.profiles.get(recoveryAttempt.profileId);
 		if (profile === undefined || profile.archived === true)
 			throw new Error('That server is no longer saved in this browser.');
+		const sessionHost = getSessionTransportHost();
+		let transport;
+		if (sessionHost !== undefined) {
+			transport = await runBoundedBrowserRecoveryStep({
+				label: 'Reconnect session transport',
+				signal: recoveryAttempt.signal,
+				operation: () => sessionHost.connect({
+					onStateChange: () => {},
+					origin: profile.origin,
+				}),
+			});
+		} else {
 		const credential = await runBoundedBrowserRecoveryStep({
 			label: 'Reconnect credential lookup',
 			signal: recoveryAttempt.signal,
@@ -1054,7 +1066,7 @@ export default function WebManagerApp() {
 		});
 		throwIfRecoveryAborted(recoveryAttempt.signal);
 
-		const transport = await runBoundedBrowserRecoveryStep({
+		transport = await runBoundedBrowserRecoveryStep({
 			label: 'Reconnect transport',
 			signal: recoveryAttempt.signal,
 			operation: async () => {
@@ -1065,6 +1077,7 @@ export default function WebManagerApp() {
 						});
 			},
 		});
+		}
 		const clientId = `web-${Date.now().toString(36)}`;
 		const initialWatermark = recoveryWatermarks.current.get(profile.id);
 		const client = new TerminayClient({
@@ -1185,6 +1198,10 @@ export default function WebManagerApp() {
 		}
 		if (recovering) {
 			startBrowserRecovery(profile.id);
+			return;
+		}
+		if (getSessionTransportHost() !== undefined) {
+			await connectPairedWebRtcBrowser(profile.origin);
 			return;
 		}
 		const attempt = beginConnectionAttempt(profile.id);
