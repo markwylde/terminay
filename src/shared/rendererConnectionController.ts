@@ -9,6 +9,22 @@ export type RendererConnectionPhase =
 	| 'blocked'
 	| 'stopped';
 
+export type RendererConnectionFailureReason =
+	| 'offline'
+	| 'relay'
+	| 'route'
+	| 'revoked'
+	| 'expired'
+	| 'exposure-stopped'
+	| 'explicit-disconnect'
+	| 'forgotten'
+	| 'host-shutdown';
+
+export type RendererConnectionFailure = Readonly<{
+	disposition: 'retryable' | 'blocked' | 'stopped';
+	reason: RendererConnectionFailureReason;
+}>;
+
 export type RendererConnectionState = Readonly<{
 	attempt: number;
 	error?: unknown;
@@ -16,6 +32,7 @@ export type RendererConnectionState = Readonly<{
 	nextRetryMs?: number;
 	phase: RendererConnectionPhase;
 	profileId?: string;
+	reason?: RendererConnectionFailureReason;
 }>;
 
 export type RendererConnectionAttempt = Readonly<{
@@ -42,6 +59,7 @@ type Disposable = { readonly dispose?: () => void | Promise<void> };
 
 export type RendererConnectionControllerOptions<Candidate extends Disposable> = Readonly<{
 	clock?: RendererConnectionClock;
+	classifyFailure?(error: unknown): RendererConnectionFailure;
 	dispose?(candidate: Candidate): void | Promise<void>;
 	initialRetryMs?: number;
 	maxRetryMs?: number;
@@ -169,7 +187,7 @@ export class RendererConnectionController<Candidate extends Disposable> {
 		this.startAttempt(true);
 	}
 
-	async stop(profileId?: string): Promise<void> {
+	async stop(profileId?: string, reason: Extract<RendererConnectionFailureReason, 'explicit-disconnect' | 'forgotten' | 'host-shutdown'> = 'explicit-disconnect'): Promise<void> {
 		if (profileId !== undefined && profileId !== this.stateValue.profileId) return;
 		this.generation += 1;
 		this.controller?.abort();
@@ -180,7 +198,7 @@ export class RendererConnectionController<Candidate extends Disposable> {
 		await this.retireCandidate();
 		await this.retireActive();
 		await this.retirement;
-		this.publish({ attempt: 0, generation: this.generation, phase: 'stopped' });
+		this.publish({ attempt: 0, generation: this.generation, phase: 'stopped', reason });
 	}
 
 	private startAttempt(resetFailures: boolean): void {
@@ -253,7 +271,7 @@ export class RendererConnectionController<Candidate extends Disposable> {
 			this.publish(state);
 			await this.options.onActivated?.(candidate, state);
 		} catch (error) {
-			if (this.isCurrentAttempt(attempt, pipeline)) this.scheduleRetry(attempt, error);
+			if (this.isCurrentAttempt(attempt, pipeline)) this.handleFailure(attempt, error);
 		} finally {
 			if (candidate !== undefined && candidate !== this.active) {
 				if (this.candidate === candidate) this.candidate = undefined;
@@ -263,14 +281,32 @@ export class RendererConnectionController<Candidate extends Disposable> {
 	}
 
 	private scheduleRetry(attempt: RendererConnectionAttempt, error: unknown): void {
+		const failure = this.options.classifyFailure?.(error) ?? Object.freeze({ disposition: 'retryable' as const, reason: 'offline' as const });
 		this.failures += 1;
 		const delay = Math.min(this.maxRetryMs, this.initialRetryMs * 2 ** Math.min(this.failures - 1, 30));
-		this.publish({ attempt: this.failures, error, generation: attempt.generation, nextRetryMs: delay, phase: 'retry-wait', profileId: attempt.profileId });
+		this.publish({ attempt: this.failures, error, generation: attempt.generation, nextRetryMs: delay, phase: 'retry-wait', profileId: attempt.profileId, reason: failure.reason });
 		this.retryTimer = this.clock.setTimeout(() => {
 			this.retryTimer = undefined;
 			if (!this.isCurrentAttempt(attempt, this.pipeline)) return;
 			this.startAttempt(false);
 		}, delay);
+	}
+
+	private handleFailure(attempt: RendererConnectionAttempt, error: unknown): void {
+		const failure = this.options.classifyFailure?.(error) ?? Object.freeze({ disposition: 'retryable' as const, reason: 'offline' as const });
+		if (failure.disposition === 'retryable') {
+			this.scheduleRetry(attempt, error);
+			return;
+		}
+		this.clearRetry();
+		this.publish({
+			attempt: this.failures + 1,
+			error,
+			generation: attempt.generation,
+			phase: failure.disposition,
+			profileId: attempt.profileId,
+			reason: failure.reason,
+		});
 	}
 
 	private isCurrentAttempt(attempt: RendererConnectionAttempt, pipeline: RendererConnectionPipeline<Candidate> | undefined): boolean {

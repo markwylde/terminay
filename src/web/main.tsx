@@ -43,6 +43,7 @@ import { enrollBrowserDevice } from './deviceEnrollment';
 import { PairingIntentController, type PairingIntent } from './pairingIntent';
 import { runBoundedBrowserRecoveryStep } from './reconnectAttempt';
 import { createWebClientId } from './webClientIdentity';
+import { classifyWebConnectionFailure } from './webConnectionFailure';
 import './index.css';
 
 function openWindow(url: string, target: '_self' | '_blank'): void {
@@ -393,6 +394,7 @@ export default function WebManagerApp() {
 	>(undefined);
 	if (connectionController.current === undefined) {
 		connectionController.current = new RendererConnectionController({
+			classifyFailure: classifyWebConnectionFailure,
 			initialRetryMs: 750,
 			maxRetryMs: 10_000,
 			dispose: async (recovery) => {
@@ -774,6 +776,7 @@ export default function WebManagerApp() {
 				...context,
 				connectionLabel: connectedProfile.label,
 				retryConnection: connectionController.current?.retry,
+				canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 			});
 			const candidate = {
 				profileId: connectedProfile.id,
@@ -996,6 +999,7 @@ export default function WebManagerApp() {
 				...context,
 				connectionLabel: profile.label,
 				retryConnection: connectionController.current?.retry,
+				canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 			});
 			const candidate = {
 				profileId: profile.id,
@@ -1155,6 +1159,7 @@ export default function WebManagerApp() {
 				...context,
 				connectionLabel: profile.label,
 				retryConnection: connectionController.current?.retry,
+				canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 				reportConnectionHydrated: reportTerminalHydrated,
 				reportConnectionHydrationFailed: reportTerminalHydrationFailed,
 			});
@@ -1212,6 +1217,12 @@ export default function WebManagerApp() {
 					? recoveryState.error.message
 					: 'Connection recovery failed.';
 			setError(`${cause} Retrying in ${recoveryState.nextRetryMs ?? 0}ms…`);
+		} else if (recoveryState.phase === 'blocked' || recoveryState.phase === 'stopped') {
+			const cause = recoveryState.error instanceof Error
+				? recoveryState.error.message
+				: `Connection ${recoveryState.reason ?? recoveryState.phase}.`;
+			setError(cause);
+			if (recoveryState.phase === 'stopped') setActiveConnection(null);
 		} else {
 			if (recoveryState.phase === 'connecting')
 				recordReconnectDiagnostic('started', recoveryState.attempt);
@@ -1323,6 +1334,7 @@ export default function WebManagerApp() {
 						...context,
 						connectionLabel: profile.label,
 						retryConnection: connectionController.current?.retry,
+						canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 					});
 					const candidate = {
 						profileId: profile.id,
@@ -1389,7 +1401,7 @@ export default function WebManagerApp() {
 	async function forgetConnection(profileId: string): Promise<void> {
 		const origin = host.profiles.get(profileId)?.origin;
 		invalidateConnectionAttempt(profileId);
-		void connectionController.current?.stop(profileId);
+		void connectionController.current?.stop(profileId, 'forgotten');
 		if (activeConnection?.profileId === profileId) {
 			void connectionController.current?.stop(profileId);
 			setActiveConnection(null);

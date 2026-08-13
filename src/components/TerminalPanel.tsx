@@ -81,6 +81,7 @@ export interface TerminalPanelClientContextValue {
   readonly connectionLabel?: string
   /** Stable action on the owning connection controller. It never captures a client. */
   readonly retryConnection?: () => void
+  readonly canRetryConnection?: () => boolean
   /** Reports that this mounted panel rendered and attached the replacement client. */
   readonly reportConnectionHydrated?: () => void
   readonly reportConnectionHydrationFailed?: (error: unknown) => void
@@ -102,7 +103,7 @@ export type TerminalPanelClientResolution = {
  */
 type TerminalPanelConnectionContext = Pick<
   TerminalPanelClientContextValue,
-  'client' | 'serverId' | 'projectId' | 'clientId' | 'retryConnection' | 'reportConnectionHydrated' | 'reportConnectionHydrationFailed'
+  'client' | 'serverId' | 'projectId' | 'clientId' | 'retryConnection' | 'canRetryConnection' | 'reportConnectionHydrated' | 'reportConnectionHydrationFailed'
 >
 
 export function createReplaceableTerminalPanelClient(
@@ -341,6 +342,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             get projectId() { return connectionActionsRef.current!.projectId },
             get serverId() { return connectionActionsRef.current!.serverId },
             retryConnection: () => connectionActionsRef.current?.retryConnection?.(),
+            canRetryConnection: () => connectionActionsRef.current?.canRetryConnection?.() ?? false,
             reportConnectionHydrated: () => connectionActionsRef.current?.reportConnectionHydrated?.(),
             reportConnectionHydrationFailed: (error) => connectionActionsRef.current?.reportConnectionHydrationFailed?.(error),
           },
@@ -1796,7 +1798,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       {serverTerminalError ? (
         <div className="terminal-panel-connection-error" role="alert">
           <p>{serverTerminalError}</p>
-          {!presentationUnavailable ? (
+          {!presentationUnavailable && (terminalPanelConnectionContext?.canRetryConnection?.() ?? true) ? (
             <button type="button" onClick={() => retryServerAttachmentRef.current()}>
               Retry connection
             </button>
