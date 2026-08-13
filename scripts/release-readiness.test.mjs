@@ -86,5 +86,5 @@ test('release workflow keeps readiness, artifact builds, and hosted publication 
   assert.match(release, /npm run test:release-readiness/)
   assert.match(release, /npm run test:security-fuzz/)
   assert.match(release, /npm run test:security-boundaries/)
-  assert.match(release, /npm audit --omit=dev --audit-level=high/)
+  assert.match(release, /node scripts\/production-dependency-audit\.mjs/)
 })

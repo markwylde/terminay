@@ -26,14 +26,16 @@ export async function auditSupplyChain(root = process.cwd(), options = {}) {
     const name = lockEntry.name ?? packageNameFromPath(path)
     const manifest = await readInstalledManifest(root, path)
     const license = normalizeLicense(manifest?.license ?? manifest?.licenses ?? lockEntry.license)
+    const bundleOwner = lockEntry.inBundle === true ? findBundleOwner(lockfile.packages, path) : null
     const record = {
       path,
       name,
       version: lockEntry.version ?? manifest?.version ?? 'unknown',
-      resolved: typeof lockEntry.resolved === 'string' ? lockEntry.resolved : null,
-      integrity: typeof lockEntry.integrity === 'string' ? lockEntry.integrity : null,
+      resolved: bundleOwner?.resolved ?? (typeof lockEntry.resolved === 'string' ? lockEntry.resolved : null),
+      integrity: bundleOwner?.integrity ?? (typeof lockEntry.integrity === 'string' ? lockEntry.integrity : null),
       license: license ?? null,
-      source: 'registry',
+      source: bundleOwner === null ? 'registry' : 'bundled',
+      ...(bundleOwner === null ? {} : { bundleOwner: bundleOwner.path }),
     }
     entries.push(record)
     if (record.resolved === null || record.integrity === null || !INTEGRITY.test(record.integrity)) unresolved.integrity.push(path)
@@ -123,6 +125,24 @@ function packageNameFromPath(path) {
 
 function isWorkspacePath(path) {
   return /^(?:apps|packages)\/[^/]+$/u.test(path)
+}
+
+function findBundleOwner(packages, path) {
+  let boundary = path.lastIndexOf('/node_modules/')
+  while (boundary > 0) {
+    const ownerPath = path.slice(0, boundary)
+    const owner = packages?.[ownerPath]
+    if (
+      Array.isArray(owner?.bundleDependencies) &&
+      typeof owner.resolved === 'string' &&
+      typeof owner.integrity === 'string' &&
+      INTEGRITY.test(owner.integrity)
+    ) {
+      return { path: ownerPath, resolved: owner.resolved, integrity: owner.integrity }
+    }
+    boundary = ownerPath.lastIndexOf('/node_modules/')
+  }
+  return null
 }
 
 function assertRoot(packageJson, lockfile) {
