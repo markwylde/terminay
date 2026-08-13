@@ -205,26 +205,12 @@ test('a remounted blank emulator forces position-zero recovery despite a reconne
 	await fresh.detach();
 });
 
-test('output arriving during the subscription handoff is retained in initial events', async () => {
+test('subscription is live before attach so output emitted during the command handoff is retained', async () => {
 	const listeners = new Set();
 	const transport = {
 		async command(operation, payload) {
-			if (operation === 'terminal.attach')
-				return {
-					attachmentId: 'fast',
-					fromPosition: payload.fromPosition,
-					position: 0,
-					events: [],
-				};
-			return null;
-		},
-		async subscribe() {
-			return {
-				id: 'fast-sub',
-				fromRevision: 0,
-				unsubscribe: async () => {},
-				onEvent(listener) {
-					listeners.add(listener);
+			if (operation === 'terminal.attach') {
+				for (const listener of listeners) {
 					listener({
 						subscriptionId: 'fast-sub',
 						revision: 1,
@@ -236,6 +222,23 @@ test('output arriving during the subscription handoff is retained in initial eve
 							clientId: 'client-a',
 						},
 					});
+				}
+				return {
+					attachmentId: 'fast',
+					fromPosition: payload.fromPosition,
+					position: 0,
+					events: [],
+				};
+			}
+			return null;
+		},
+		async subscribe() {
+			return {
+				id: 'fast-sub',
+				fromRevision: 0,
+				unsubscribe: async () => {},
+				onEvent(listener) {
+					listeners.add(listener);
 					return () => listeners.delete(listener);
 				},
 			};

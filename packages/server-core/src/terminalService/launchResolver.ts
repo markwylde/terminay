@@ -12,6 +12,9 @@ import {
   type ShellStartupMode,
 } from "../shellProfiles/index.js";
 import type { WorkspacePanel, WorkspaceState } from "../workspace.js";
+import { THIS_SERVER_ENVIRONMENT_ID } from "../workspace.js";
+import type { ProjectEnvironmentRouter } from "../projectEnvironment/router.js";
+import type { RemoteTerminalLaunch } from "../projectEnvironment/serviceContracts.js";
 import { TerminalServiceError } from "./errors.js";
 import type { TerminalDimensions, TerminalIdentity } from "./types.js";
 
@@ -37,6 +40,7 @@ export interface TerminalLaunchResolverOptions {
   readonly serverId: ProtocolId;
   readonly profiles: ShellProfileLaunchAuthority;
   readonly workspaceSnapshot: () => WorkspaceState;
+	readonly projectEnvironmentRouter?: ProjectEnvironmentRouter;
   readonly observeTerminalCwd?: (sessionId: ProtocolId) => Promise<string | null>;
   readonly pathAuthority?: TerminalLaunchPathAuthority;
   readonly defaultEnvironment?: Readonly<Record<string, string | undefined>>;
@@ -70,6 +74,8 @@ export interface TerminalResolvedProfileMetadata {
  * deliberately absent from session/workspace metadata and protocol results. */
 export interface TerminalResolvedLaunch extends TerminalDimensions {
   readonly identity: TerminalIdentity;
+	readonly projectEnvironmentId: ProtocolId;
+	readonly environmentRevision: number;
   readonly workspaceRevision: number;
   readonly settingsRevision: number;
   readonly profile: TerminalResolvedProfileMetadata;
@@ -104,6 +110,23 @@ export class TerminalLaunchResolver {
     if (project === undefined) {
       throw new TerminalServiceError("invalid_identity", "terminal project is unavailable");
     }
+	if (project.projectEnvironmentId !== undefined && project.projectEnvironmentId !== THIS_SERVER_ENVIRONMENT_ID) {
+		if (this.options.projectEnvironmentRouter === undefined)
+			throw new TerminalServiceError('service_shutdown', 'Project environment launch routing is unavailable.');
+		const remote = await this.options.projectEnvironmentRouter.invoke<RemoteTerminalLaunch>(
+			project.id,
+			'terminal',
+			'resolve-launch',
+			{
+				...(intent.explicitProfileId === undefined ? {} : { profileId: intent.explicitProfileId }),
+				...(intent.explicitCwd === undefined ? {} : { cwd: intent.explicitCwd }),
+				...(intent.activePanelId === undefined ? {} : { activePanelId: intent.activePanelId }),
+				cols: intent.cols,
+				rows: intent.rows,
+			},
+		);
+		return remoteTerminalLaunch(intent, project, workspace.revision, remote, this.now());
+	}
     const catalogue = await this.options.profiles.catalogue();
     const selectedProfileId = intent.explicitProfileId
       ?? project.defaultShellProfileId
@@ -159,6 +182,8 @@ export class TerminalLaunchResolver {
     });
     return Object.freeze({
       identity: Object.freeze({ ...intent.identity }),
+		projectEnvironmentId: project.projectEnvironmentId ?? THIS_SERVER_ENVIRONMENT_ID,
+		environmentRevision: project.environmentRevision ?? 1,
       workspaceRevision: workspace.revision,
       settingsRevision: resolvedProfile.settingsRevision,
       profile,
@@ -221,7 +246,7 @@ export class TerminalLaunchResolver {
       : this.pathAuthority.canonicalDirectory(candidate);
   }
 
-  private async projectDirectory(root: string, rootOrigin: "explicit" | "server-default" | "legacy-unverified" | undefined): Promise<string> {
+  private async projectDirectory(root: string, rootOrigin: "explicit" | "server-default" | "environment-default" | "legacy-unverified" | undefined): Promise<string> {
     if (!validCwdInput(root) || root === ".") {
       throw new TerminalServiceError("missing_project_root", "The project does not have a usable folder.");
     }
@@ -229,7 +254,7 @@ export class TerminalLaunchResolver {
     if (canonical === null) {
       throw new TerminalServiceError("missing_project_root", "The project folder is missing or inaccessible.");
     }
-    if (this.pathAuthority.isRoot(canonical) && rootOrigin !== "explicit" && rootOrigin !== "server-default") {
+    if (this.pathAuthority.isRoot(canonical) && rootOrigin !== "explicit" && rootOrigin !== "server-default" && rootOrigin !== "environment-default") {
       throw new TerminalServiceError(
         "unsafe_legacy_root",
         "This legacy project points at a filesystem root. Confirm or change the project folder before opening a terminal.",
@@ -247,6 +272,34 @@ export class TerminalLaunchResolver {
     }
     return home;
   }
+}
+
+function remoteTerminalLaunch(intent: TerminalLaunchIntent, project: WorkspaceState['projects'][string], workspaceRevision: number, input: RemoteTerminalLaunch, createdAt: number): TerminalResolvedLaunch {
+	if (typeof input !== 'object' || input === null || typeof input.shellPath !== 'string' || input.shellPath.length === 0 || input.shellPath.length > 4096 || typeof input.cwd !== 'string' || !validCwdInput(input.cwd) || !Array.isArray(input.args) || input.args.length > 256 || !input.args.every((value) => typeof value === 'string' && value.length <= 4096))
+		throw new TerminalServiceError('spawn_failed', 'Project environment returned an invalid terminal launch.');
+	const profile = input.profile;
+	if (typeof profile !== 'object' || profile === null || typeof profile.id !== 'string' || typeof profile.revision !== 'number' || typeof profile.name !== 'string' || typeof profile.targetSummary !== 'string')
+		throw new TerminalServiceError('spawn_failed', 'Project environment returned invalid shell profile metadata.');
+	const env = filterRemoteLaunchEnvironment(input.env ?? {});
+	return Object.freeze({
+		identity: Object.freeze({ ...intent.identity }), projectEnvironmentId: project.projectEnvironmentId,
+		environmentRevision: project.environmentRevision, workspaceRevision,
+		settingsRevision: input.settingsRevision ?? profile.revision,
+		profile: Object.freeze({ ...profile }), shellPath: input.shellPath,
+		args: Object.freeze([...input.args]), cwd: input.cwd, env,
+		cols: intent.cols, rows: intent.rows, createdAt,
+	});
+}
+
+function filterRemoteLaunchEnvironment(input: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string | undefined>> {
+	const result: Record<string, string | undefined> = {};
+	for (const [key, value] of Object.entries(input)) {
+		const upper = key.toUpperCase();
+		if (upper.startsWith('TERMINAY_') || upper.startsWith('MCP_') || upper === 'SSH_AUTH_SOCK' || upper === 'NODE_OPTIONS' || upper === 'GIT_ASKPASS') continue;
+		result[key] = value;
+	}
+	result.TERM = 'xterm-256color'; result.COLORTERM = 'truecolor';
+	return Object.freeze(result);
 }
 
 export const nodeTerminalLaunchPathAuthority: TerminalLaunchPathAuthority = Object.freeze({

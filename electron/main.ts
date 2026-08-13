@@ -22,7 +22,7 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { type ByteTransport, decodeFrame } from '@terminay/protocol';
+import { type ByteTransport, decodeFrame, type JsonValue } from '@terminay/protocol';
 import {
 	app,
 	BrowserWindow,
@@ -42,18 +42,24 @@ import {
 } from 'electron';
 import WebSocket from 'ws';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
+import { FileProjectEnvironmentStateBackend, ProjectEnvironmentRepository } from '../packages/server-core/src/projectEnvironment/index';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
 } from '../packages/server-core/src/recordingService/index';
 import type { RemoteReconnectGrantRecord } from '../packages/server-core/src/remote/reconnect';
 import { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
+import { createServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import {
 	createNodeShellDiscoveryHost,
 	ShellProfileCatalogueService,
 	ShellProfileDiscoveryService,
 } from '../packages/server-core/src/shellProfiles/index';
 import type { TerminalEvent } from '../packages/server-core/src/terminalService/index';
+import {
+	ElectronSafeStorageVaultAdapter,
+	FileSafeStorageVaultRepository,
+} from './vault/safeStorageVault';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -282,6 +288,7 @@ function isTrustedAppWindow(window: BrowserWindow): boolean {
 		window === settingsWindow ||
 		window === macrosWindow ||
 		window === recordingsWindow ||
+		window === projectEnvironmentsWindow ||
 		[...pendingEditWindows.values()].some(
 			(pending) => pending.window === window,
 		)
@@ -490,10 +497,15 @@ let settingsWindow: BrowserWindow | null = null;
 let settingsWindowCloseBarrier: Promise<void> = Promise.resolve();
 let macrosWindow: BrowserWindow | null = null;
 let recordingsWindow: BrowserWindow | null = null;
+let projectEnvironmentsWindow: BrowserWindow | null = null;
 const activeRemoteByteConnectionsByWebContents = new Map<
 	number,
 	RemoteHttpConnection
 >();
+// BrowserWindow identity outlives a renderer document and its transferred
+// MessagePort. Keep the selected authority separately so a reload reconnects
+// the same profile instead of allowing the Local load hook to take over.
+const remoteProfileBindingsByWebContents = new Map<number, string>();
 const pendingRemoteConnectionWindowsByProfile = new Map<
 	string,
 	BrowserWindow
@@ -874,14 +886,47 @@ await desktopDiagnostics.record(
 	},
 	{ channel: 'lifecycle' },
 );
+const embeddedProjectEnvironments = new ProjectEnvironmentRepository(
+	new FileProjectEnvironmentStateBackend(path.join(app.getPath('userData'), 'project-environments.v1.json')),
+	'desktop-local',
+);
+await embeddedProjectEnvironments.load();
+const embeddedVaultAdapter = await ElectronSafeStorageVaultAdapter.open({
+	repository: new FileSafeStorageVaultRepository(
+		path.join(app.getPath('userData'), 'vault', 'safe-storage.v1.json'),
+	),
+	codec: {
+		backend: selectedSafeStorageBackend,
+		decrypt: (encrypted) => safeStorage.decryptString(encrypted),
+		encrypt: (plainText) => safeStorage.encryptString(plainText),
+		isAvailable: () => safeStorage.isEncryptionAvailable(),
+	},
+});
+const embeddedVault = createServerVaultComposition(embeddedVaultAdapter);
+if (embeddedVault.status().state === 'locked') {
+	// safeStorage itself owns the OS unlock interaction; the common vault API
+	// receives no reusable passphrase or key material in embedded mode.
+	await embeddedVault.unlock({ secret: new Uint8Array() });
+}
 serverTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
+	dataRoot: app.getPath('userData'),
+	extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
+	vault: embeddedVault,
 	defaultProjectRoot: () => app.getPath('home'),
+	projectEnvironmentRepository: embeddedProjectEnvironments,
 	shellProfiles: embeddedShellProfiles,
 	aiMetadata: aiTabMetadataService,
 	saveSparseFile: (request) => fileBufferService.saveSparseFile(request),
 	recordings: serverRecordingAdapter,
 	settings: embeddedServerSettings,
+	remoteMcpDispatch: async (sessionId, op, params, signal) =>
+		JSON.parse(JSON.stringify(await dispatchServerControlRequest(
+			sessionId,
+			op as ControlOp,
+			params,
+			signal,
+		))) as JsonValue,
 	macros: {
 		repository: embeddedMacros,
 		environmentFor: (request, target) => {
@@ -1076,11 +1121,13 @@ if (desktopWebRtcRuntimeRoot !== undefined) {
 	privilegedWebRtcExposure = new PrivilegedWebRtcExposure(
 		desktopWebRtcRuntimeRoot,
 		{
-			acceptApplicationTransport: (transport) => {
+			acceptApplicationTransport: (transport, authenticatedClient) => {
 				if (serverTerminalAuthority === null) {
 					throw new Error('The embedded server is unavailable.');
 				}
-				return serverTerminalAuthority.composition.core.accept(transport);
+				return serverTerminalAuthority.composition.core.accept(transport, {
+					authenticatedClient,
+				});
 			},
 			getControllableSession: (sessionId) => {
 				const authority = serverTerminalAuthority;
@@ -2645,6 +2692,7 @@ function bindAppShortcuts(webContents: Electron.WebContents): void {
 			settingsWindow?.webContents.id === webContents.id ||
 			macrosWindow?.webContents.id === webContents.id ||
 			recordingsWindow?.webContents.id === webContents.id ||
+			projectEnvironmentsWindow?.webContents.id === webContents.id ||
 			pendingEditWindows.has(webContents.id)
 		) {
 			return;
@@ -2736,6 +2784,14 @@ function createAppMenu(
 					label: 'Create a new project',
 					accelerator: getMenuShortcut(settings, 'new-project'),
 					click: () => sendCommandToFocusedWindow('new-project'),
+				},
+				{
+					label: 'Project Environments…',
+					click: () => sendCommandToFocusedWindow('open-project-environments'),
+				},
+				{
+					label: 'Extensions…',
+					click: () => sendCommandToFocusedWindow('open-extensions'),
 				},
 				{
 					type: 'separator',
@@ -3017,6 +3073,7 @@ function createWindow(options?: {
 		const remoteConnection =
 			activeRemoteByteConnectionsByWebContents.get(windowWebContentsId);
 		activeRemoteByteConnectionsByWebContents.delete(windowWebContentsId);
+		remoteProfileBindingsByWebContents.delete(windowWebContentsId);
 		void remoteConnection?.close();
 	});
 
@@ -3079,11 +3136,38 @@ function createWindow(options?: {
 	let serverConnectionSentForLoad = false;
 	window.webContents.on('did-start-loading', () => {
 		serverConnectionSentForLoad = false;
+		const remoteConnection =
+			activeRemoteByteConnectionsByWebContents.get(windowWebContentsId);
+		if (remoteConnection !== undefined) {
+			activeRemoteByteConnectionsByWebContents.delete(windowWebContentsId);
+			void remoteConnection.close();
+		}
 	});
 	const sendServerConnection = () => {
 		if (window.isDestroyed() || !serverTerminalAuthority) return;
 		if (serverConnectionSentForLoad) return;
 		serverConnectionSentForLoad = true;
+		const remoteProfileId =
+			remoteProfileBindingsByWebContents.get(windowWebContentsId);
+		if (remoteProfileId !== undefined) {
+			loadRememberedRemoteConnections();
+			const profile = rememberedRemoteConnections.get(remoteProfileId);
+			if (profile === undefined || profile.kind !== 'device') {
+				console.error(
+					'[connection] selected remote profile is unavailable after reload',
+				);
+				return;
+			}
+			void reconnectRememberedRemoteProfile(window.webContents, profile).catch(
+				(error) =>
+					console.error(
+						'[connection] failed to restore selected remote profile after reload',
+						error,
+					),
+			);
+			return;
+		}
+		if (isPendingRemoteConnectionWindow(window)) return;
 		void ensureLocalWorkspaceSeed(window.webContents.id)
 			.catch((error) => {
 				console.error('[server] failed to seed local workspace', error);
@@ -3115,9 +3199,7 @@ function createWindow(options?: {
 				});
 			});
 	};
-	if (options?.initialServerConnection !== 'deferred') {
-		window.webContents.on('did-finish-load', sendServerConnection);
-	}
+	window.webContents.on('did-finish-load', sendServerConnection);
 
 	// A torn-off window boots in "adopt" mode so the renderer starts with no
 	// default project and instead pulls its adopted project on mount.
@@ -3146,10 +3228,66 @@ function createWindow(options?: {
 	return window;
 }
 
-function attachAuxiliaryServerConnection(window: BrowserWindow): void {
+function selectedProfileIdForRequester(requester?: Electron.WebContents): string | undefined {
+	const source = requester ?? BrowserWindow.getFocusedWindow()?.webContents;
+	return source === undefined ? undefined : remoteProfileBindingsByWebContents.get(source.id);
+}
+
+function bindAuxiliaryServerAuthority(window: BrowserWindow, requester?: Electron.WebContents): void {
+	const profileId = selectedProfileIdForRequester(requester);
+	if (profileId === undefined) remoteProfileBindingsByWebContents.delete(window.webContents.id);
+	else remoteProfileBindingsByWebContents.set(window.webContents.id, profileId);
+}
+
+async function postSelectedServerConnection(
+	sender: Electron.WebContents,
+	replacement = false,
+): Promise<void> {
+	const remoteProfileId = remoteProfileBindingsByWebContents.get(sender.id);
+	if (remoteProfileId !== undefined) {
+		loadRememberedRemoteConnections();
+		const profile = rememberedRemoteConnections.get(remoteProfileId);
+		if (profile === undefined || profile.kind !== 'device') throw new Error('The selected remote Terminay Server is unavailable.');
+		await reconnectRememberedRemoteProfile(sender, profile);
+		return;
+	}
+	const authority = serverTerminalAuthority;
+	if (authority === null) throw new Error('The local server connection is unavailable.');
+	const channel = new MessageChannelMain();
+	authority.acceptRendererPort(channel.port1 as unknown as ServerMessagePort);
+	sender.postMessage(
+		'server:connection',
+		{
+			connectionId: randomUUID(),
+			label: 'Local',
+			...(replacement ? { replacement: true } : {}),
+			serverId: authority.service.serverId,
+		},
+		[channel.port2],
+	);
+}
+
+async function rebindAuxiliaryServerConnection(window: BrowserWindow, requester?: Electron.WebContents): Promise<void> {
+	const nextProfileId = selectedProfileIdForRequester(requester);
+	if (nextProfileId === remoteProfileBindingsByWebContents.get(window.webContents.id)) return;
+	bindAuxiliaryServerAuthority(window, requester);
+	const active = activeRemoteByteConnectionsByWebContents.get(window.webContents.id);
+	activeRemoteByteConnectionsByWebContents.delete(window.webContents.id);
+	await active?.close();
+	if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+		await postSelectedServerConnection(window.webContents, true);
+	}
+}
+
+function attachAuxiliaryServerConnection(window: BrowserWindow, requester?: Electron.WebContents): void {
+	bindAuxiliaryServerAuthority(window, requester);
+	const webContentsId = window.webContents.id;
 	let sentForLoad = false;
 	window.webContents.on('did-start-loading', () => {
 		sentForLoad = false;
+		const active = activeRemoteByteConnectionsByWebContents.get(webContentsId);
+		activeRemoteByteConnectionsByWebContents.delete(webContentsId);
+		void active?.close();
 	});
 	window.webContents.on('did-finish-load', () => {
 		if (
@@ -3160,19 +3298,13 @@ function attachAuxiliaryServerConnection(window: BrowserWindow): void {
 		)
 			return;
 		sentForLoad = true;
-		const channel = new MessageChannelMain();
-		serverTerminalAuthority.acceptRendererPort(
-			channel.port1 as unknown as ServerMessagePort,
-		);
-		window.webContents.postMessage(
-			'server:connection',
-			{
-				connectionId: randomUUID(),
-				serverId: serverTerminalAuthority.service.serverId,
-				label: 'Local',
-			},
-			[channel.port2],
-		);
+		void postSelectedServerConnection(window.webContents).catch((error) => console.error('[connection] failed to attach auxiliary window', error));
+	});
+	window.on('closed', () => {
+		const active = activeRemoteByteConnectionsByWebContents.get(webContentsId);
+		activeRemoteByteConnectionsByWebContents.delete(webContentsId);
+		remoteProfileBindingsByWebContents.delete(webContentsId);
+		void active?.close();
 	});
 }
 
@@ -3202,7 +3334,7 @@ function postLocalServerConnection(
 	);
 }
 
-async function openSettingsWindow(sectionId?: string): Promise<void> {
+async function openSettingsWindow(sectionId?: string, requester?: Electron.WebContents): Promise<void> {
 	// Page.close can resolve before the native BrowserWindow has emitted
 	// `closed`. Serialize replacement creation behind that native boundary.
 	await settingsWindowCloseBarrier;
@@ -3214,6 +3346,7 @@ async function openSettingsWindow(sectionId?: string): Promise<void> {
 		!settingsWindow.isDestroyed() &&
 		!settingsWindow.webContents.isDestroyed()
 	) {
+		await rebindAuxiliaryServerConnection(settingsWindow, requester);
 		settingsWindow.focus();
 		if (sectionId) {
 			settingsWindow.webContents.send('settings:focus-section', { sectionId });
@@ -3262,7 +3395,7 @@ async function openSettingsWindow(sectionId?: string): Promise<void> {
 	});
 	settingsWindow = createdSettingsWindow;
 	securePrimaryWindow(createdSettingsWindow);
-	attachAuxiliaryServerConnection(createdSettingsWindow);
+	attachAuxiliaryServerConnection(createdSettingsWindow, requester);
 
 	bindNativeWindowCloseBarrier(createdSettingsWindow, (barrier) => {
 		settingsWindowCloseBarrier = barrier;
@@ -3397,7 +3530,6 @@ async function connectRemoteByteTransport(
 	if (window === null || window.isDestroyed() || !appWindows.has(window)) {
 		throw new Error('The target renderer is unavailable.');
 	}
-
 	const channel = new MessageChannelMain();
 	const mainPort = new ServerScopedMessagePort(
 		channel.port1 as unknown as ServerMessagePort,
@@ -3499,6 +3631,7 @@ async function connectRemoteByteTransport(
 		scopeId,
 	};
 	activeRemoteByteConnectionsByWebContents.set(sender.id, connection);
+	remoteProfileBindingsByWebContents.set(sender.id, profile.id);
 	if (previous !== null && previous.scopeId !== scopeId) {
 		await previous.close();
 	}
@@ -3562,11 +3695,49 @@ async function connectRemoteByteTransport(
 		});
 }
 
-function openMacrosWindow(): void {
+async function reconnectRememberedRemoteProfile(
+	sender: Electron.WebContents,
+	profile: RememberedRemoteConnection,
+): Promise<void> {
+	const connected = await createDesktopReconnectTransport({
+		origin: profile.origin,
+		store: createDesktopDeviceCredentialStore(),
+	});
+	if (connected.signalingBootstrap === undefined) {
+		await connectRemoteByteTransport(
+			sender,
+			connected.transport,
+			profile.label,
+			profile.origin,
+			profile,
+		);
+		return;
+	}
+	try {
+		const webRtcTransport = await createDesktopBootstrappedWebRtcTransport({
+			bootstrap: connected.signalingBootstrap,
+			expectedOrigin: profile.origin,
+		});
+		await connected.transport.close({ code: 'normal' });
+		await connectRemoteByteTransport(
+			sender,
+			webRtcTransport,
+			profile.label,
+			profile.origin,
+			profile,
+		);
+	} catch (error) {
+		await connected.transport.close({ code: 'normal' });
+		throw error;
+	}
+}
+
+async function openMacrosWindow(requester?: Electron.WebContents): Promise<void> {
 	const preloadPath = path.join(__dirname, 'preload.mjs');
 	const windowIconPath = getWindowIconPath();
 
 	if (macrosWindow && !macrosWindow.isDestroyed()) {
+		await rebindAuxiliaryServerConnection(macrosWindow, requester);
 		macrosWindow.focus();
 		return;
 	}
@@ -3607,7 +3778,7 @@ function openMacrosWindow(): void {
 		},
 	});
 	securePrimaryWindow(macrosWindow);
-	attachAuxiliaryServerConnection(macrosWindow);
+	attachAuxiliaryServerConnection(macrosWindow, requester);
 
 	macrosWindow.on('closed', () => {
 		macrosWindow = null;
@@ -3622,11 +3793,12 @@ function openMacrosWindow(): void {
 	}
 }
 
-function openRecordingsWindow(): void {
+async function openRecordingsWindow(requester?: Electron.WebContents): Promise<void> {
 	const preloadPath = path.join(__dirname, 'preload.mjs');
 	const windowIconPath = getWindowIconPath();
 
 	if (recordingsWindow && !recordingsWindow.isDestroyed()) {
+		await rebindAuxiliaryServerConnection(recordingsWindow, requester);
 		recordingsWindow.focus();
 		return;
 	}
@@ -3667,7 +3839,7 @@ function openRecordingsWindow(): void {
 		},
 	});
 	securePrimaryWindow(recordingsWindow);
-	attachAuxiliaryServerConnection(recordingsWindow);
+	attachAuxiliaryServerConnection(recordingsWindow, requester);
 
 	recordingsWindow.on('closed', () => {
 		recordingsWindow = null;
@@ -3680,6 +3852,35 @@ function openRecordingsWindow(): void {
 			query: { view: 'recordings' },
 		});
 	}
+}
+
+async function openProjectEnvironmentsWindow(requester?: Electron.WebContents): Promise<void> {
+	if (projectEnvironmentsWindow && !projectEnvironmentsWindow.isDestroyed() && !projectEnvironmentsWindow.webContents.isDestroyed()) {
+		await rebindAuxiliaryServerConnection(projectEnvironmentsWindow, requester);
+		projectEnvironmentsWindow.focus();
+		return;
+	}
+	projectEnvironmentsWindow = null;
+	const isMac = process.platform === 'darwin';
+	const usesOverlayTitlebar = process.platform === 'win32';
+	const createdWindow = new BrowserWindow({
+		icon: getWindowIconPath(), width: 1180, height: 780, minWidth: 900, minHeight: 640,
+		title: 'Terminay Project Environments',
+		titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
+		titleBarOverlay: usesOverlayTitlebar ? { color: '#0d1117', symbolColor: '#9bb0c8', height: 38 } : false,
+		trafficLightPosition: isMac ? { x: 14, y: 12 } : undefined,
+		autoHideMenuBar: shouldAutoHideMenuBar(), backgroundColor: '#0d1117',
+		webPreferences: { preload: path.join(__dirname, 'preload.mjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, webviewTag: false },
+	});
+	projectEnvironmentsWindow = createdWindow;
+	securePrimaryWindow(createdWindow);
+	attachAuxiliaryServerConnection(createdWindow, requester);
+	createdWindow.on('closed', () => { if (projectEnvironmentsWindow === createdWindow) projectEnvironmentsWindow = null; });
+	if (VITE_DEV_SERVER_URL) {
+		const target = new URL(VITE_DEV_SERVER_URL);
+		target.searchParams.set('view', 'project-environments');
+		void createdWindow.loadURL(target.toString());
+	} else void createdWindow.loadFile(path.join(RENDERER_DIST, 'index.html'), { query: { view: 'project-environments' } });
 }
 
 function getEditWindowUrl(kind: EditWindowState['kind']): string {
@@ -5404,34 +5605,8 @@ ipcMain.handle(
 		}
 		pendingRemoteConnectionWindowsByProfile.set(profile.id, targetWindow);
 		targetWindow.focus();
-		const credentialStore = createDesktopDeviceCredentialStore();
 		try {
-			const connected = await createDesktopReconnectTransport({
-				origin: profile.origin,
-				store: credentialStore,
-			});
-			if (connected.signalingBootstrap === undefined) {
-				await connectRemoteByteTransport(
-					targetWindow.webContents,
-					connected.transport,
-					profile.label,
-					profile.origin,
-					profile,
-				);
-				return;
-			}
-			const webRtcTransport = await createDesktopBootstrappedWebRtcTransport({
-				bootstrap: connected.signalingBootstrap,
-				expectedOrigin: profile.origin,
-			});
-			await connected.transport.close({ code: 'normal' });
-			await connectRemoteByteTransport(
-				targetWindow.webContents,
-				webRtcTransport,
-				profile.label,
-				profile.origin,
-				profile,
-			);
+			await reconnectRememberedRemoteProfile(targetWindow.webContents, profile);
 		} catch (error) {
 			if (
 				!targetWindow.isDestroyed() &&
@@ -5618,10 +5793,20 @@ ipcMain.handle(
 		}
 		const draft = request.draft as Record<string, unknown>;
 		if (
-			Object.keys(draft).length !== 6 ||
+			Object.keys(draft).length !== 10 ||
 			typeof draft.color !== 'string' ||
 			draft.color.length > 128 ||
 			(draft.defaultShellProfileId !== null && (typeof draft.defaultShellProfileId !== 'string' || draft.defaultShellProfileId.length === 0 || draft.defaultShellProfileId.length > 128)) ||
+			typeof draft.environmentLabel !== 'string' ||
+			draft.environmentLabel.length === 0 ||
+			draft.environmentLabel.length > 512 ||
+			typeof draft.environmentStatus !== 'string' ||
+			draft.environmentStatus.length === 0 ||
+			draft.environmentStatus.length > 128 ||
+			(draft.environmentDefaultRoot !== null && (typeof draft.environmentDefaultRoot !== 'string' || draft.environmentDefaultRoot.length > 32_768)) ||
+			typeof draft.projectEnvironmentId !== 'string' ||
+			draft.projectEnvironmentId.length === 0 ||
+			draft.projectEnvironmentId.length > 128 ||
 			typeof draft.emoji !== 'string' ||
 			draft.emoji.length > 64 ||
 			typeof draft.rootFolder !== 'string' ||
@@ -5838,9 +6023,17 @@ ipcMain.handle(
 		) {
 			throw new TypeError('desktop settings window host request is invalid');
 		}
-		await openSettingsWindow(request.sectionId);
+		await openSettingsWindow(request.sectionId, event.sender);
 	},
 );
+
+ipcMain.handle('desktop:project-environments-host:open', async (event, payload: unknown) => {
+	assertTrustedAppSender(event);
+	if (typeof payload !== 'object' || payload === null || Array.isArray(payload) || Object.getPrototypeOf(payload) !== Object.prototype) throw new TypeError('desktop project environments host request is invalid');
+	const request = payload as Record<string, unknown>;
+	if (Object.keys(request).length !== 1 || request.version !== 1) throw new TypeError('desktop project environments host request is invalid');
+	await openProjectEnvironmentsWindow(event.sender);
+});
 
 ipcMain.handle('desktop:recordings-host:open', (event, payload: unknown) => {
 	assertTrustedAppSender(event);
@@ -5855,7 +6048,7 @@ ipcMain.handle('desktop:recordings-host:open', (event, payload: unknown) => {
 	if (Object.keys(request).length !== 1 || request.version !== 1) {
 		throw new TypeError('desktop recordings host request is invalid');
 	}
-	openRecordingsWindow();
+	void openRecordingsWindow(event.sender);
 });
 
 if (process.env.TERMINAY_TEST === '1') {

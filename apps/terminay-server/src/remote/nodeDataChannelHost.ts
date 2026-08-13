@@ -6,11 +6,11 @@ import type {
 	RemoteHeadlessSession,
 	RemoteHeadlessSessionSnapshot,
 	RemoteRateLimiterOptions,
-} from '@terminay/server-core';
+} from '@terminay/server-core/remote';
 import {
 	RemoteHeadlessWebRtcFactory,
 	RemoteRateLimiter,
-} from '@terminay/server-core';
+} from '@terminay/server-core/remote';
 import {
 	createNodeDataChannelOpenChannels,
 	type NodeDataChannelSignaling,

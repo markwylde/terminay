@@ -27,7 +27,9 @@ execution-runtime, and native-host-bridge compatibility boundaries explicit.
 
 Terminay has four distinct runtime roles:
 
-1. **Terminay Server** owns workspace and machine authority.
+1. **Terminay Server** owns workspace, trust, extension, project-environment
+   routing, and privileged-service authority. Its own host is one built-in
+   environment, not the only execution machine.
 2. **Terminay Desktop** owns native application windows, local-server
    supervision, OS integration, connection credentials, verified bundle
    installation, and opaque local/remote transport delivery.
@@ -131,12 +133,16 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
 - Reinstall/import and data-directory cloning must not accidentally advertise
   two live authorities with one identity. Identity rotation is explicit.
 - Workspace state, settings, macros, trust records, reconnect grants, audit
-  events, and service metadata live under one documented server data root.
+  events, extension packages/receipts/data, project-environment profiles, and
+  service metadata live under one documented server data root.
 - The embedded and standalone runtimes compose the revisioned settings
   repository and server vault as server-owned services. Runtime health and
   diagnostics may report settings revisions and vault lock/configuration
   metadata, but never secret values. Secret bytes are available only to a
   privileged server callback used by automation or provider adapters.
+- Both runtime modes compose the same extension manager, environment registry,
+  vault broker, and provider router. Extensions run on the selected server and
+  never depend on Electron or browser capabilities.
 - Workspace/project files and configured recording directories remain at their
   user-selected filesystem locations.
 - Writes that define canonical state are transactional or atomically
@@ -165,7 +171,8 @@ The protocol includes:
   server-bundled assets;
 - cancellation, deadlines, backpressure, and explicit resource limits;
 - structured errors that distinguish validation, authorization, conflict,
-  unavailable, incompatible, and internal failures; and
+  provider/capability unavailable, incompatible extension, connection/trust,
+  outcome-unknown, and internal failures; and
 - reconnect/resync rules that never require the client to guess whether a
   mutation committed.
 
@@ -177,6 +184,29 @@ with a typed component-specific incompatibility error.
 Protocol types and runtime validators live in a dependency-light shared
 package. UI code consumes a `TerminayClient` interface and does not call
 Electron IPC, WebRTC, WebSocket, or server internals directly.
+
+Fixed `extensions.*` and `project-environments.*` operations expose bounded
+management/status/declarative-form DTOs. Extensions cannot register arbitrary
+public application operations. Every project operation derives its environment
+from canonical server state before dispatch.
+
+## Extension and environment runtime
+
+The server includes the pinned npm installer needed by the canonical
+[extension platform](./extension-platform.md); standalone support continues to
+require no system Node, npm, compiler, or browser. Official pinned extension
+tarballs are release inputs. Installed packages live under the writable server
+data root and never mutate the signed/content-addressed UI/application bundle.
+
+Each enabled extension runs in a supervised server child process with bounded
+private IPC. Extension failure is provider-scoped and cannot prevent core/This
+server readiness. Arbitrary custom extensions remain trusted server-account
+code; process separation is not described as hostile-code sandboxing.
+
+The server-owned environment router resolves terminal, filesystem, Git, shell,
+agent, MCP, and lifecycle capabilities by canonical project identity. Renderer
+input, host bridges, paths, and labels cannot select an adapter. Missing or
+failed capabilities never fall back to the server machine.
 
 ## Client and host compatibility boundaries
 

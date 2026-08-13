@@ -82,11 +82,13 @@ test('standalone CLI emits a pairing handoff and remains foreground until termin
 		'--data-root', '/tmp/terminay-foreground-pairing-test',
 		'--health-host', '127.0.0.1',
 		'--health-port', '0',
+		'--vault-unlock-fd', '3',
 	], {
 		cwd: fileURLToPath(new URL('../', import.meta.url)),
 		env: { ...process.env, TERMINAY_SERVER_VERSION: 'test' },
-		stdio: ['ignore', 'pipe', 'pipe'],
+		stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
 	});
+	child.stdio[3].end('test-vault-passphrase\n');
 
 	let output = '';
 	const line = new Promise((resolve, reject) => {

@@ -40,9 +40,14 @@ declare module "node:child_process" {
     readonly stdin: ChildInput;
     readonly stdout: ChildStream;
     readonly stderr: ChildStream;
+    readonly connected: boolean;
     kill(signal?: string): boolean;
+    send(message: unknown): boolean;
+    on(event: "message", listener: (message: unknown) => void): this;
     once(event: "error", listener: (error: NodeJS.ErrnoException) => void): this;
+    once(event: "exit", listener: (exitCode: number | null, signal: string | null) => void): this;
     once(event: "close", listener: (exitCode: number | null, signal: string | null) => void): this;
+    removeAllListeners(event?: string): this;
   }
   export function spawn(command: string, args?: readonly string[], options?: {
     readonly cwd?: string;
@@ -50,6 +55,14 @@ declare module "node:child_process" {
     readonly stdio?: readonly ("ignore" | "pipe")[];
     readonly windowsHide?: boolean;
     readonly signal?: AbortSignal;
+  }): ChildProcess;
+  export function fork(modulePath: string, args?: readonly string[], options?: {
+    readonly cwd?: string;
+    readonly execPath?: string;
+    readonly execArgv?: readonly string[];
+    readonly env?: Readonly<Record<string, string | undefined>>;
+    readonly stdio?: readonly ("ignore" | "pipe" | "ipc")[];
+    readonly serialization?: "json" | "advanced";
   }): ChildProcess;
 }
 
@@ -111,12 +124,13 @@ declare module "node:fs/promises" {
     readonly mtimeMs: number;
     isDirectory(): boolean;
     isFile(): boolean;
+    isSymbolicLink(): boolean;
   }
   interface FileHandle {
     read(buffer: Buffer, offset: number, length: number, position: number): Promise<{ readonly bytesRead: number; readonly buffer: Buffer }>;
     close(): Promise<void>;
   }
-  interface Dirent { readonly name: string; isDirectory(): boolean; isFile(): boolean; }
+  interface Dirent { readonly name: string; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean; }
   export function open(path: string, flags: string): Promise<FileHandle>;
   export function readFile(path: string): Promise<Buffer>;
   export function readFile(path: string, encoding: "utf8"): Promise<string>;

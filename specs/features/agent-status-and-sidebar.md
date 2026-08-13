@@ -25,6 +25,12 @@ Provider journals are private privileged inputs. Their raw records, prompts,
 responses, instructions, reasoning, tool arguments, and tool output never cross
 the server boundary and are never logged by the integration.
 
+Foreground-process and journal discovery are project-environment capabilities.
+This server may use the native process tree. An SSH/Puzed environment without a
+proven remote source retains generic terminal activity but reports authoritative
+agent observation unavailable; the local SSH client PID or local provider home
+can never establish ownership of a remote journal.
+
 ## Product outcomes
 
 - Running `codex` normally in an interactive Terminay terminal is discovered
@@ -61,11 +67,14 @@ not replace root state, and a child stop updates only that child.
 
 ## Exact terminal identity
 
-Terminay records the spawned shell PID for every immutable
-`serverId`/`projectId`/`sessionId` terminal identity. When a supported provider
-becomes the foreground process, the privileged host discovers journal files
-held open by that provider process or its descendants. A journal becomes
-authoritative only when its writer belongs to the exact PTY process tree.
+For an environment exposing proven native process observation, Terminay records
+the spawned shell PID for the immutable
+`serverId`/`projectId`/`projectEnvironmentId`/`sessionId` terminal identity.
+When a supported provider becomes the foreground process, that environment's
+privileged host discovers journal files held open by the provider process or
+its descendants. A journal becomes authoritative only when its writer belongs
+to the exact PTY process tree. Environments without this capability use the
+documented terminal-activity fallback.
 
 The binding is immutable for one live provider-process incarnation. A resumed
 provider session may reopen the same journal in another terminal; the new

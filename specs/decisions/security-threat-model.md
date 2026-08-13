@@ -15,6 +15,11 @@ untrusted provider binaries become safe by themselves.
 | Server ↔ remote device/WebRTC | device keys, PIN/approval, reconnect grants, application data | admission follows proof and origin checks; channels are bounded and revoked peers are closed; application data never enters manager storage |
 | server UI bundle → client host | executable UI assets and protocol compatibility | manifest namespace, hashes, sizes, content types, and versions are verified before serving; host bridge checks origin/source/target/gesture |
 | vault/migration/logging → operators | provider secrets, safe-storage material, migration backups, diagnostics | only metadata crosses transport; secret bytes are scoped to privileged callbacks, zeroized, redacted, and never logged |
+| authenticated client → extension/environment management | server-account code, profiles, host trust, infrastructure | actor/scope come from the authenticated transport; explicit permissions, revisions, confirmations, and audit gate every privileged action |
+| npm registry → extension installer | server runtime and data root | exact npmjs version/integrity, sterile config, scripts disabled, bounded lock/tree validation, atomic activation, and rollback |
+| Server → extension child | workspace authority, broker APIs, other extensions | namespaced bounded IPC, minimal environment, deadlines, crash isolation, no raw Server Core or cross-extension secrets |
+| project → environment adapter | PTYs, files, Git, agents, MCP | the server derives immutable environment routing from canonical project state; copied ids/paths/labels cannot redirect and failures never fall back Local |
+| Server → SSH/Puzed endpoints | credentials, host identity, VMs | scoped vault resolution, strict SSH trust by default, bounded HTTPS/same-origin authorization, idempotent lifecycle, and redacted errors |
 
 ## Threats and mitigations
 
@@ -40,6 +45,17 @@ untrusted provider binaries become safe by themselves.
 - A vault or migration failure cannot disclose plaintext. Backups contain
   redacted metadata, marker state is resumable without secret values, and
   `withSecret` exposes only a zeroized scoped copy inside server code.
+- A custom npm extension is trusted code with the Terminay Server account's
+  effective authority. Child-process and broker boundaries contain normal
+  crashes/API mistakes but are not represented as a hostile-code sandbox.
+- A forged client hello cannot grant extension/environment administration.
+  Actor, scope, project claim, and explicit permissions come from the
+  authenticated transport/device record and object-derived project checks cover
+  source and destination mutations.
+- A remote path, host, environment id, or extension failure cannot cause a
+  project operation to execute on the server host. The canonical project
+  binding is resolved before capability dispatch and cross-environment moves
+  fail before mutation.
 
 ## Release evidence required
 

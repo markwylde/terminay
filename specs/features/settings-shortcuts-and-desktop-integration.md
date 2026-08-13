@@ -26,15 +26,23 @@ configurable keyboard accelerators.
 - The Command Bar searches built-in commands and saved macros. Built-ins honour
   the active panel/project requirement and display user-configured shortcuts.
 - The server-bundled UI requests semantic secondary-route presentation.
-  Desktop opens dedicated native windows for settings, macros, recordings, and
-  tab/project editing only when its negotiated `nativeWindows` capability is
-  present. Browser hosts and compatible Desktop shells without that capability
-  present the same routes in-page with modal or route semantics appropriate to
-  the viewport.
+  Desktop opens dedicated native windows for settings (including its
+  Extensions section), project-environment management, macros, and recordings,
+  and uses modal editing only for tab/project editing, when its negotiated
+  `nativeWindows` capability is present. Browser hosts and compatible Desktop
+  shells without that capability present the same routes in-page with route or
+  editing semantics appropriate to the viewport.
 - Native menus, macOS/Linux integration, external links, reveal actions, and
   application lifecycle are coordinated by Electron. Browser hosts provide a
   visible in-page menu bar for File, Edit, View, and Help so shared commands
   remain discoverable without native application menus.
+- File and the Command Bar expose **New Project with Environment…**, **Project
+  Environments…**, and **Extensions…** through the same semantic route/command
+  model. **Project Environments…** opens or focuses its dedicated management
+  window on Desktop; **Extensions…** opens or focuses the established Settings
+  window at the Extensions section. Web uses the corresponding in-page routes.
+  Both manage the selected Terminay Server, not client-local state, and neither
+  management surface uses project/tab editor sheet chrome.
 - Closing Terminay proceeds immediately when every terminal is at its shell
   prompt. If any terminal in any open project has a non-shell foreground
   process, Desktop reports the affected terminal count and asks whether to
@@ -85,6 +93,11 @@ forwarding paths, provider messages, or plaintext.
 - Keyboard accelerators reject reserved/invalid combinations and do not conflict
   with text entry unexpectedly.
 - Desktop actions preserve window/project/session boundaries.
+- Extensions appear within the ordinary Settings navigation, and all extension
+  commands focus that section rather than creating an Extensions-only modal.
+- Project Environments opens as a reusable management window consistent with
+  Settings, Macros, and Recordings on Desktop and as the equivalent shared
+  in-page route on web.
 - An idle application closes without a warning. When foreground work exists,
   dismissing the close alert or choosing **Keep Running** leaves every project
   and terminal running, while choosing **Quit Terminay** performs the normal

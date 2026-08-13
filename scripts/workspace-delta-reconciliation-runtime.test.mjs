@@ -16,15 +16,15 @@ test.after(async () => { await rm(outputDirectory, { recursive: true, force: tru
 
 function state(revision, panelIds = ['panel-a']) {
 	return {
-		schemaVersion: 2,
+		schemaVersion: 3,
 		serverId: 'server-a',
 		revision,
 		cursor: String(revision),
 		viewOrder: ['view-a'],
 		views: { 'view-a': { id: 'view-a', serverId: 'server-a', name: 'Workspace', projectIds: ['project-a'], activeProjectId: 'project-a' } },
-		projects: { 'project-a': { id: 'project-a', serverId: 'server-a', viewId: 'view-a', name: 'A', root: '/workspace/a', rootOrigin: 'explicit', panelIds, activePanelId: panelIds.at(-1) } },
+		projects: { 'project-a': { id: 'project-a', serverId: 'server-a', viewId: 'view-a', projectEnvironmentId: 'terminay:this-server', environmentRevision: 1, name: 'A', root: '/workspace/a', rootOrigin: 'explicit', panelIds, activePanelId: panelIds.at(-1) } },
 		panels: Object.fromEntries(panelIds.map((id) => [id, { id, projectId: 'project-a', type: 'terminal', sessionId: `session-${id}` }])),
-		terminalSessions: Object.fromEntries(panelIds.map((id) => [`session-${id}`, { id: `session-${id}`, serverId: 'server-a', projectId: 'project-a' }])),
+		terminalSessions: Object.fromEntries(panelIds.map((id) => [`session-${id}`, { id: `session-${id}`, serverId: 'server-a', projectId: 'project-a', projectEnvironmentId: 'terminay:this-server', environmentRevision: 1 }])),
 	}
 }
 

@@ -1,0 +1,43 @@
+name: Official extension release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the package after verification
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.14.0
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@12.0.2
+      - run: npm ci --ignore-scripts
+      - run: npm run build --if-present
+      - run: npm test
+      - run: npx --no-install terminay-extension-conformance package.json
+      - run: node ./node_modules/@terminay/extension-api/scripts/verify-release.mjs . --output release-evidence
+      - if: inputs.publish
+        run: npm publish --provenance --access public
+      - if: inputs.publish
+        run: node ./node_modules/@terminay/extension-api/scripts/verify-registry.mjs release-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extension-release-evidence
+          path: release-evidence/
+          if-no-files-found: error
