@@ -11,14 +11,14 @@
 		"url": "git@github.com:markwylde/terminay.git"
 	},
 	"type": "module",
-	"packageManager": "npm@11.9.0",
+	"packageManager": "npm@12.0.2",
 	"workspaces": [
 		"apps/*",
 		"packages/*"
 	],
 	"engines": {
-		"node": "24.14.0",
-		"npm": "11.9.0"
+		"node": "24.15.0",
+		"npm": "12.0.2"
 	},
 	"browserslist": [
 		"Chrome >= 132",
@@ -160,7 +160,7 @@
 		"markdown-it": "^14.2.0",
 		"monaco-editor": "^0.55.1",
 		"node-pty": "^1.1.0",
-		"npm": "11.9.0",
+		"npm": "12.0.2",
 		"openai": "^6.45.0",
 		"pdfjs-dist": "^6.0.227",
 		"qrcode": "^1.5.4",
@@ -171,9 +171,9 @@
 	},
 	"overrides": {
 		"@hono/node-server": "2.0.12",
-		"brace-expansion": "5.0.8",
+		"brace-expansion": "5.0.9",
 		"monaco-editor": {
-			"dompurify": "3.4.12"
+			"dompurify": "3.4.13"
 		},
 		"pvutils": "1.1.5"
 	},
@@ -195,5 +195,9 @@
 		"vite-plugin-electron": "^1.0.4",
 		"vite-plugin-electron-renderer": "^1.0.0"
 	},
-	"main": "dist-electron/main.js"
+	"main": "dist-electron/main.js",
+	"allowScripts": {
+		"node-pty@1.1.0": true,
+		"esbuild@0.28.1": true
+	}
 }

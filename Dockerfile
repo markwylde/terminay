@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24.14.0-bookworm-slim AS build
+FROM node:24.15.0-bookworm-slim AS build
 
 WORKDIR /workspace
+
+RUN npm install --global npm@12.0.2
 
 # Keep OS toolchain and npm dependency installation ahead of source copies so
 # ordinary code edits do not invalidate the slow apt/npm layers.
@@ -35,7 +37,7 @@ RUN npm run build --workspace @terminay/protocol \
   && npm run build --workspace @terminay/server \
   && npm prune --omit=dev
 
-FROM node:24.14.0-bookworm-slim AS runtime
+FROM node:24.15.0-bookworm-slim AS runtime
 
 ARG OCI_VERSION=0.0.0
 ARG OCI_REVISION=unknown

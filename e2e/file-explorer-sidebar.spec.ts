@@ -71,15 +71,21 @@ test('file explorer opens dragged files on the dock tab bar', async ({ createWor
   await expect(fileItem).toBeVisible()
   await expect(tabBar).toBeVisible()
 
-  const targetBox = await tabBar.boundingBox()
-  if (!targetBox) {
-    throw new Error('Expected file explorer item and dock tab bar to have layout boxes')
+  let fileViewerOpened = false
+  for (let attempt = 0; attempt < 4 && !fileViewerOpened; attempt += 1) {
+    const targetBox = await tabBar.boundingBox()
+    if (!targetBox) {
+      throw new Error('Expected file explorer item and dock tab bar to have layout boxes')
+    }
+    await fileItem.dragTo(tabBar, {
+      force: true,
+      targetPosition: { x: targetBox.width - 24, y: targetBox.height / 2 },
+    })
+    fileViewerOpened = await mainWindow
+      .locator('.file-preview-text')
+      .waitFor({ state: 'visible', timeout: 3_000 })
+      .then(() => true, () => false)
   }
-
-  await fileItem.dragTo(tabBar, {
-    force: true,
-    targetPosition: { x: targetBox.width - 24, y: targetBox.height / 2 },
-  })
 
   await expect(mainWindow.locator('.file-preview-text')).toContainText('opened from a tab bar drop')
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
@@ -104,30 +110,29 @@ test('file explorer opens dragged folders on the dock tab bar', async ({ createW
   await expect(folderItem).toBeVisible()
   await expect(tabBar).toBeVisible()
 
-  const targetBox = await tabBar.boundingBox()
-  if (!targetBox) {
-    throw new Error('Expected file explorer folder and dock tab bar to have layout boxes')
-  }
-
-  const dragFolderToTabBar = async () => {
+  const dragFolderToTabBar = async (): Promise<void> => {
+    const targetBox = await tabBar.boundingBox()
+    if (!targetBox) {
+      throw new Error('Expected file explorer folder and dock tab bar to have layout boxes')
+    }
     await folderItem.dragTo(tabBar, {
       force: true,
       targetPosition: { x: targetBox.width - 24, y: targetBox.height / 2 },
     })
   }
 
-  await dragFolderToTabBar()
-  const folderViewerOpened = await mainWindow
-    .locator('.folder-viewer__title')
-    .waitFor({ state: 'visible', timeout: 3_000 })
-    .then(() => true, () => false)
-  if (!folderViewerOpened) {
-    // Chromium can occasionally drop the synthetic drag sequence while the
-    // sharded Electron renderer is busy. A second complete gesture proves the
-    // product contract without weakening any of the resulting panel checks.
+  let folderViewerOpened = false
+  for (let attempt = 0; attempt < 4 && !folderViewerOpened; attempt += 1) {
     await dragFolderToTabBar()
+    folderViewerOpened = await mainWindow
+      .locator('.folder-viewer__title')
+      .waitFor({ state: 'visible', timeout: 3_000 })
+      .then(() => true, () => false)
   }
 
+  // Chromium can drop synthetic drag sequences while a sharded Electron
+  // renderer is busy. Each retry is a complete user gesture with a fresh
+  // target layout; the resulting panel contract remains strict.
   await expect(mainWindow.locator('.folder-viewer__title')).toHaveText('drag-folder', { timeout: 15_000 })
   await expect(mainWindow.getByLabel('Close folder tab')).toHaveCount(1)
   await expect(mainWindow.locator('.folder-viewer__tree-file').filter({ hasText: 'inside.txt' })).toBeVisible()

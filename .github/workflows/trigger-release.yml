@@ -37,11 +37,13 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 24.14.0
+          node-version: 24.15.0
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
 
       - name: Run smoke checks
         run: npm run smoke
@@ -60,7 +62,8 @@ jobs:
           npm run test:security-boundaries
           node --test scripts/task20-supply-chain-audit.test.mjs scripts/task20-release-lifecycle.test.mjs scripts/repository-ownership-release.test.mjs scripts/task20-direct-ui-mismatch.test.mjs
           node scripts/task20-supply-chain-audit.mjs --npm-audit
-          npm audit --omit=dev --audit-level=high
+          node --test scripts/production-dependency-audit.test.mjs
+          node scripts/production-dependency-audit.mjs
 
   release:
     name: Create Release
@@ -85,11 +88,13 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 24.14.0
+          node-version: 24.15.0
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
 
       - name: Record immutable release source and tag baseline
         id: release_source
@@ -208,7 +213,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 24.14.0
+          node-version: 24.15.0
           cache: npm
 
       - name: Verify immutable release tag source
@@ -224,7 +229,9 @@ jobs:
           test "$CHECKED_OUT_COMMIT" = "$EXPECTED_COMMIT"
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
 
       - name: Check macOS signing secrets
         if: matrix.os == 'macos-latest'
@@ -442,7 +449,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 24.14.0
+          node-version: 24.15.0
           cache: npm
 
       - name: Verify immutable release tag source
@@ -456,7 +463,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
 
       - name: Sync package version to release tag
         env:

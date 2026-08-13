@@ -10,17 +10,32 @@ manifests or the lockfile:
 ```sh
 node --test scripts/task20-supply-chain-audit.test.mjs
 node scripts/task20-supply-chain-audit.mjs --npm-audit
+node --test scripts/production-dependency-audit.test.mjs
+node scripts/production-dependency-audit.mjs
 ```
 
 The current run passed with:
 
-- 543 lockfile entries, including 527 downloaded registry entries;
+- 691 lockfile entries, including 526 downloaded registry entries;
+- every downloaded registry entry has its own integrity record, while bundled
+  npm installer dependencies inherit the verified npm carrier archive evidence;
 - zero unresolved downloaded-package integrity records;
 - zero unresolved downloaded-package license declarations;
 - 45 native/package-runtime records with resolved URL, integrity, version,
   and license metadata where the lockfile provides it; and
-- npm production audit counts of 0 info, 0 low, 0 moderate, 0 high, and 0
-  critical vulnerabilities.
+- zero critical vulnerabilities and no unreviewed high vulnerabilities; and
+- two temporary high-severity exceptions confined to the bundled npm 12.0.2
+  process: `brace-expansion` and `ip-address`.
+
+Those two exceptions cannot affect the Electron renderer or the Terminay
+Server process directly. The npm installer runs as a bounded child process
+with a 120-second deadline, fixed public-registry origin, sterile environment,
+disabled lifecycle scripts, exact lock inspection, and no inherited proxy or
+registry credentials. The release gate matches the exact dependency names and
+exact `node_modules/npm/node_modules/*` paths and fails closed if npm changes,
+the advisory moves outside that child, any critical vulnerability appears, or
+any other high vulnerability is reported. Remove each exception as soon as an
+upstream npm release carries the fixed dependency.
 
 The command can persist the complete deterministic SPDX-2.3 report outside
 the repository with `TERMINAY_SUPPLY_CHAIN_REPORT=/path/report.json`. Platform

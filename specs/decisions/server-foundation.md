@@ -6,7 +6,9 @@ not treated as proven merely because it appears here.
 
 ## Runtime baseline
 
-- The build and release baseline is Node 24.14.0 with npm 11.9.0. Runtime,
+- The build and release baseline is Node 24.15.0 with npm 12.0.2. CI and every
+  Node-based container install that exact npm version before materializing the
+  lockfile, so the toolchain cannot silently drift with a base-image refresh. Runtime,
   container, CI, release, and local version-manager pins move together.
 - TypeScript and esbuild compile active application code for ES2022 and Node 24
   respectively; active build configuration must not retain a Node 22 target.
@@ -433,7 +435,7 @@ Evidence recorded on 2026-07-27 with Node 22.23.1 on Darwin arm64:
 | Total proof time | 923 ms |
 | Active resources after close | one stdout `PipeWrap`; no Werift socket or timer |
 
-The same npm test also passes under the local Node 24.14.0 runtime.
+The same npm test also passes under the local Node 24.15.0 runtime.
 
 This proof is intentionally narrower than the selection gate. It does not
 prove the production signaling service, first pairing, saved reconnect,

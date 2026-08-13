@@ -39,7 +39,8 @@ const workflows = new Map(
 );
 
 test('server Dockerfile builds the standalone server and runs as a non-root user', () => {
-	assert.match(dockerfile, /^FROM node:24\.14\.0-bookworm-slim AS build/m);
+	assert.match(dockerfile, /^FROM node:24\.15\.0-bookworm-slim AS build/m);
+	assert.match(dockerfile, /npm install --global npm@12\.0\.2/u);
 	assert.match(
 		dockerfile,
 		/apt-get install --yes --no-install-recommends python3 make g\+\+/u,

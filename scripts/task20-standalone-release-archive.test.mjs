@@ -38,9 +38,9 @@ function assertSafeArchivePath(path) {
 test('standalone release archive contains only safe regular package entries and its integrity manifest binds every declared dist payload', async () => {
   const root = await mkdtemp(join(tmpdir(), 'terminay-task20-standalone-release-'))
   try {
-    const pack = JSON.parse((await run('npm', [
+    const pack = Object.values(JSON.parse((await run('npm', [
       'pack', '--workspace', '@terminay/server', '--json', '--pack-destination', root,
-    ])).stdout)
+    ])).stdout))
     assert.equal(pack.length, 1, 'release packaging must yield exactly one archive')
     const archive = join(root, pack[0].filename)
 

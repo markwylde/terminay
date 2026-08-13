@@ -44,7 +44,7 @@ test('the extracted standalone artifact executes its redacted status command wit
 		await mkdir(packed);
 		await mkdir(extracted);
 		const repositoryPath = new URL('.', repositoryRoot).pathname;
-		const pack = JSON.parse(
+		const pack = Object.values(JSON.parse(
 			(
 				await run(
 					'npm',
@@ -59,7 +59,7 @@ test('the extracted standalone artifact executes its redacted status command wit
 					{ cwd: repositoryPath },
 				)
 			).stdout,
-		);
+		));
 		assert.equal(pack.length, 1);
 		await run('tar', ['-xzf', join(packed, pack[0].filename), '-C', extracted]);
 
