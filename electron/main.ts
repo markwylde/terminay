@@ -911,6 +911,7 @@ if (embeddedVault.status().state === 'locked') {
 serverTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
 	dataRoot: app.getPath('userData'),
+	extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
 	vault: embeddedVault,
 	defaultProjectRoot: () => app.getPath('home'),
 	projectEnvironmentRepository: embeddedProjectEnvironments,
