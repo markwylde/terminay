@@ -38,9 +38,20 @@ async function proxyProductionManagerRequest(route: Route): Promise<void> {
 				? '/legacy.html'
 				: '/web.html'
 			: `${requested.pathname}${requested.search}`;
-	const response = await route.fetch({
-		url: `${fixture.origin}${fixturePath}`,
-	});
+	const fixtureUrl = `${fixture.origin}${fixturePath}`;
+	let response: Awaited<ReturnType<Route['fetch']>> | undefined;
+	for (let attempt = 1; attempt <= 3; attempt += 1) {
+		try {
+			response = await route.fetch({ url: fixtureUrl });
+			break;
+		} catch (error) {
+			const transientReset =
+				error instanceof Error && /\b(?:ECONNRESET|socket hang up)\b/u.test(error.message);
+			if (!transientReset || attempt === 3) throw error;
+			await new Promise((resolve) => setTimeout(resolve, attempt * 100));
+		}
+	}
+	if (!response) throw new Error(`Fixture proxy returned no response for ${fixturePath}`);
 	await route.fulfill({ response });
 }
 
