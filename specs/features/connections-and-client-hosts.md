@@ -408,6 +408,16 @@ Forbidden in connection-manager localStorage, URLs, host messages, and logs:
 - Required-channel failure replaces the entire transport generation even when
   the WebRTC peer still reports connected. Retry cannot reuse the closed lane,
   call a retired renderer callback, or depend on a page reload.
+- A mounted generation is live only while both its required byte lanes and its
+  server-side application-protocol connection are live. Completion or failure
+  of the protocol reader retires that complete generation even when the WebRTC
+  peer and application data channel still report open. Peer/channel state is
+  transport evidence, not application-liveness authority.
+- Protocol termination reaches the host-owned recovery controller as one typed,
+  generation-scoped failure. Automatic recovery and Retry each retire the old
+  peer and client, obtain a new host transport generation, authenticate, and
+  hydrate before reporting connected. Retry never waits on or reuses the
+  apparently-open data channel whose protocol reader has ended.
 - Connection errors remain visible and terminal input remains disabled until
   the new client, subscriptions, workspace, and mounted terminal attachments
   have hydrated successfully.
@@ -454,3 +464,8 @@ Forbidden in connection-manager localStorage, URLs, host messages, and logs:
   workspace connected and its terminals usable without a retry.
 - A malicious or compromised server bundle cannot obtain Electron Node access
   or another session origin's credentials through the host bridge.
+- With a mounted browser workspace, ending only the server application-protocol
+  reader while leaving its native WebRTC peer and application channel open
+  triggers one replacement generation. Automatic recovery, and manual Retry if
+  recovery is held offline, restore ordered terminal input without page reload,
+  duplicate PTYs, or a persistent `client is not connected` presentation.
