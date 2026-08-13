@@ -153,6 +153,13 @@ Electron application startup or create a Desktop window.
 The installer passes the manifest's validated relative entrypoint unchanged to
 the host; the host resolves and canonicalizes it within the immutable package
 slot immediately before import.
+Desktop packages the renderer-free extension child as an explicit immutable
+`dist-electron/extensionHostEntry.js` executable entrypoint and passes that
+regular file to the embedded server; bundled `import.meta.url` inference is not
+an execution authority.
+If materialization or activation fails, the selected server returns a bounded,
+actionable failure message to the management UI while leaving the previous
+installed version and active pointer unchanged.
 
 Per-extension processes isolate crashes and reduce accidental cross-extension
 secret sharing. They do not constitute an operating-system security sandbox;

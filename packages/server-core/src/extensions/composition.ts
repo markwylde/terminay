@@ -12,13 +12,13 @@ import { createPuzedSshCompositionBroker, SSH_EXTENSION_ID, type PuzedSshComposi
 import { ExtensionHostComposedSshRuntime } from "./composedSshRuntime.js";
 import { RepositoryCanonicalProjectOpener } from "./puzedSshProjectAdapter.js";
 
-export interface DefaultExtensionManagementOptions { readonly dataRoot: string; readonly authorityLabel: string; readonly broker?: ExtensionBroker; readonly secrets?: ExtensionSecretAccessBroker; readonly profiles?: ExtensionProfileBroker; }
+export interface DefaultExtensionManagementOptions { readonly dataRoot: string; readonly authorityLabel: string; readonly broker?: ExtensionBroker; readonly childEntrypoint?: string; readonly secrets?: ExtensionSecretAccessBroker; readonly profiles?: ExtensionProfileBroker; }
 
 /** Construct the identical selected-server extension authority for Desktop's
  * embedded server, standalone installations, and containers. */
 export function createDefaultExtensionManagement(options: DefaultExtensionManagementOptions): ExtensionOperationOptions & { readonly installer: ExtensionInstaller; readonly hosts: ExtensionHostManager } {
   const broker: ExtensionBroker = options.broker ?? { request: async () => { throw new Error("extension broker capability is unavailable"); } };
-  const hosts = new ExtensionHostManager({ broker, ...(options.secrets === undefined ? {} : { secrets: options.secrets }), ...(options.profiles === undefined ? {} : { profiles: options.profiles }) });
+  const hosts = new ExtensionHostManager({ broker, ...(options.childEntrypoint === undefined ? {} : { childEntrypoint: options.childEntrypoint }), ...(options.secrets === undefined ? {} : { secrets: options.secrets }), ...(options.profiles === undefined ? {} : { profiles: options.profiles }) });
   const npm = new NpmCliRegistryClient({ workRoot: join(options.dataRoot, "extensions", "cache", "npm") });
   const installer = new ExtensionInstaller({
     dataRoot: options.dataRoot, registryClient: npm, materializer: npm,
@@ -32,7 +32,7 @@ export function createDefaultExtensionManagement(options: DefaultExtensionManage
   return { installer, hosts, authorityLabel: options.authorityLabel, restart: async (extensionId) => { await hosts.stop(extensionId); } };
 }
 
-export function createPuzedSshProductionExtensionManagement(options: Readonly<{ dataRoot: string; authorityLabel: string; vault: ServerVaultComposition; projectEnvironments: ProjectEnvironmentRepository; workspace: WorkspaceStore }>) {
+export function createPuzedSshProductionExtensionManagement(options: Readonly<{ dataRoot: string; authorityLabel: string; childEntrypoint?: string; vault: ServerVaultComposition; projectEnvironments: ProjectEnvironmentRepository; workspace: WorkspaceStore }>) {
   let target: PuzedSshCompositionBroker | undefined;
   let ssh: ExtensionHostComposedSshRuntime | undefined;
   const proxy = {
@@ -40,7 +40,7 @@ export function createPuzedSshProductionExtensionManagement(options: Readonly<{ 
     registerManifest(manifest: Parameters<PuzedSshCompositionBroker["registerManifest"]>[0]) { target?.registerManifest(manifest); },
   };
   const profiles: ExtensionProfileBroker = { get(extensionId, providerId, profileId, signal) { if (extensionId !== SSH_EXTENSION_ID || providerId !== "com.terminay.ssh/connection" || ssh === undefined) return Promise.reject(new Error("extension profile access is denied")); return ssh.getProfile(profileId, signal); } };
-  const management = createDefaultExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: options.authorityLabel, broker: proxy, secrets: options.vault.extensionSecrets, profiles });
+  const management = createDefaultExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: options.authorityLabel, broker: proxy, ...(options.childEntrypoint === undefined ? {} : { childEntrypoint: options.childEntrypoint }), secrets: options.vault.extensionSecrets, profiles });
   ssh = new ExtensionHostComposedSshRuntime(join(options.dataRoot, "extensions", "composition", "ssh-bindings.v1.json"), management.hosts);
   const projects = new RepositoryCanonicalProjectOpener(options.projectEnvironments, options.workspace);
   const composed = createPuzedSshCompositionBroker({ dataRoot: options.dataRoot, ssh, projects, vault: {

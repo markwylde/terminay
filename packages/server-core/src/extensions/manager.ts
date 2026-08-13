@@ -3,6 +3,7 @@ import { ExtensionHost } from "./host.js";
 
 export interface ExtensionHostManagerOptions {
   readonly broker: ExtensionBroker;
+  readonly childEntrypoint?: string;
   readonly limits?: ExtensionHostLimits;
   readonly nodeExecutable?: string;
   readonly profiles?: ExtensionProfileBroker;

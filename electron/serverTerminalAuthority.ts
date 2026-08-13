@@ -194,6 +194,7 @@ type ServerTerminalHostObserver<TEvent> = (
 export interface ServerTerminalAuthorityOptions {
 	readonly serverId: string;
 	readonly dataRoot?: string;
+	readonly extensionHostChildEntrypoint?: string;
 	/** Test/host injection; production uses the embedded node-pty factory. */
 	readonly terminalService?: TerminalService;
 	/** Desktop-owned current shell settings for protocol-created sessions. */
@@ -438,10 +439,12 @@ export class ServerTerminalAuthority {
 					? createDefaultExtensionManagement({
 							dataRoot: options.dataRoot,
 							authorityLabel: 'This server',
+							...(options.extensionHostChildEntrypoint === undefined ? {} : { childEntrypoint: options.extensionHostChildEntrypoint }),
 						})
 					: createPuzedSshProductionExtensionManagement({
 							dataRoot: options.dataRoot,
 							authorityLabel: 'This server',
+							...(options.extensionHostChildEntrypoint === undefined ? {} : { childEntrypoint: options.extensionHostChildEntrypoint }),
 							vault: options.vault,
 							projectEnvironments,
 							workspace: this.workspace,
