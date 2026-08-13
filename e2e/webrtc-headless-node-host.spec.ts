@@ -770,9 +770,10 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       { exact: true },
     )
     await expect(renewalFailure).toBeVisible({ timeout: 30_000 })
-    throw new Error(
-      'Reproduced protocol-only disconnect: terminal presentation renewal failed while the WebRTC peer and application lane remained open.',
-    )
+    expect(
+      await renewalFailure.count(),
+      'protocol-only application failure must recover without a terminal renewal error while the peer and lane remain open',
+    ).toBe(0)
 
     const initialSignalLog = await page.evaluate(() =>
       (window as Window & {
