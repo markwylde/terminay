@@ -74,12 +74,12 @@ generation correctly.
 
 ### End-to-end correctness
 
-- [ ] Prove automatic recovery restores the mounted workspace without
+- [x] Prove automatic recovery restores the mounted workspace without
   navigation, enrollment UI, profile loss, duplicate project/panel/session, or
   duplicate command.
 - [ ] Prove Retry starts an immediate host generation, remains visibly pending,
   and does not report connected until a real application command succeeds.
-- [ ] Send unique human-paced, burst, paste, Unicode, escape-sequence, and
+- [x] Send unique human-paced, burst, paste, Unicode, escape-sequence, and
   newline-delimited inputs before, across, and after recovery. Assert exact PTY
   byte order and exactly-once delivery for every input with known outcome.
 - [ ] Force an unknown command outcome, prove later queued input is discarded,
@@ -88,7 +88,7 @@ generation correctly.
 - [ ] Prove terminal output, workspace revisions, presentation ownership,
   viewport size, confirmed render position, and checkpoint hydration converge
   after replacement.
-- [ ] Prove explicit browser refresh independently recreates the bootstrap and
+- [x] Prove explicit browser refresh independently recreates the bootstrap and
   remains supported without being required by Retry.
 
 ### Diagnostics and release evidence

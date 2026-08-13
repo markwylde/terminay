@@ -91,7 +91,7 @@ error before replacement transport and terminal attachment are usable.
   `RendererConnectionRecovery`, duplicated `recoverConnection` branches, and
   stale callback diagnostics after the unified controller owns their required
   invariants.
-- [ ] Delete transport-specific auto-restore suppression, origin/profile key
+- [x] Delete transport-specific auto-restore suppression, origin/profile key
   workarounds, fire-and-forget active-context disposal, and panel-local
   optimistic reconnect state.
 - [x] Replace source-regex tests for callback wiring with runtime state-machine

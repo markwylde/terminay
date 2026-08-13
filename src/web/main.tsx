@@ -42,6 +42,7 @@ import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
 import { enrollBrowserDevice } from './deviceEnrollment';
 import { PairingIntentController, type PairingIntent } from './pairingIntent';
 import { runBoundedBrowserRecoveryStep } from './reconnectAttempt';
+import { createWebClientId } from './webClientIdentity';
 import './index.css';
 
 function openWindow(url: string, target: '_self' | '_blank'): void {
@@ -706,7 +707,7 @@ export default function WebManagerApp() {
 			return;
 		}
 
-		const clientId = `web-${Date.now().toString(36)}`;
+		const clientId = createWebClientId();
 		const client = new TerminayClient({
 			transport: new WebSocketByteTransport({
 				origin: parsed.transportOrigin,
@@ -958,7 +959,7 @@ export default function WebManagerApp() {
 		const displayOrigin = origin.split('#', 1)[0] ?? origin;
 		const parsed = new URL(displayOrigin);
 		const stableProfileId = createProfileId(parsed.hostname);
-		const clientId = `web-${stableProfileId}`;
+		const clientId = createWebClientId('web-webrtc');
 		const client = new TerminayClient({
 			transport,
 			clientId,
@@ -1108,8 +1109,7 @@ export default function WebManagerApp() {
 			},
 		});
 		}
-		const clientId = connectionController.current?.current?.clientId ??
-			`web-${recoveryAttempt.profileId}`;
+		const clientId = createWebClientId();
 		const initialWatermark = recoveryWatermarks.current.get(profile.id);
 		const client = new TerminayClient({
 			transport,
@@ -1280,7 +1280,7 @@ export default function WebManagerApp() {
 						proof,
 					},
 				);
-				const clientId = `web-${Date.now().toString(36)}`;
+				const clientId = createWebClientId();
 				const hosted = await acquireHostedApplicationTransport(completion.ticket);
 				const transport = hosted ?? new WebSocketByteTransport({
 								origin: endpoint,
