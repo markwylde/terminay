@@ -76,6 +76,7 @@ import {
 	TerminalPanelClientContext,
 	type TerminalPanelClientContextValue,
 } from './components/TerminalPanel';
+import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
 import type {
 	TerminalActivityState,
 	TerminalContextReader,
@@ -1204,20 +1205,11 @@ const ProjectWorkspace = forwardRef<
 				() =>
 					terminalClientContext === undefined
 						? null
-						: { ...terminalClientContext, projectId: project.id, projectRoot: project.rootFolder },
+						: composeProjectTerminalClientContext(terminalClientContext, project.id, project.rootFolder),
 				[
 					project.id,
 					project.rootFolder,
-					terminalClientContext?.client,
-					terminalClientContext?.serverId,
-					terminalClientContext?.clientId,
-					terminalClientContext?.workspaceSnapshotStore,
-					terminalClientContext?.fileObservationClient,
-					terminalClientContext?.fileViewerClient,
-					terminalClientContext?.gitClient,
-					terminalClientContext?.recordingsClient,
-					terminalClientContext?.reportConnectionHydrated,
-					terminalClientContext?.reportConnectionHydrationFailed,
+					terminalClientContext,
 				],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;
