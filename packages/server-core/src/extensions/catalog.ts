@@ -10,7 +10,7 @@ export interface OfficialExtensionCatalogueRecord {
 /** Catalogue membership is presentation metadata, never extra runtime authority. */
 export const OFFICIAL_EXTENSION_CATALOGUE: readonly OfficialExtensionCatalogueRecord[] = Object.freeze([
   Object.freeze({
-    extensionId: "dev.terminay.ssh",
+    extensionId: "com.terminay.ssh",
     packageName: "terminay-plugin-ssh",
     displayName: "SSH",
     description: "Open Terminay projects on SSH servers.",
@@ -18,7 +18,7 @@ export const OFFICIAL_EXTENSION_CATALOGUE: readonly OfficialExtensionCatalogueRe
     official: true,
   }),
   Object.freeze({
-    extensionId: "dev.terminay.puzed",
+    extensionId: "com.puzed.platform",
     packageName: "terminay-plugin-puzed",
     displayName: "Puzed Platform",
     description: "Create and open Terminay projects on Puzed virtual machines.",
@@ -26,4 +26,3 @@ export const OFFICIAL_EXTENSION_CATALOGUE: readonly OfficialExtensionCatalogueRe
     official: true,
   }),
 ]);
-

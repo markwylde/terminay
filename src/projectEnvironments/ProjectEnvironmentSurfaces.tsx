@@ -22,6 +22,7 @@ type FormTarget = Readonly<{
 	providerId: string;
 	profileId?: string;
 	form: DeclarativeFormDto;
+	mode?: 'profile' | 'environment';
 }>;
 
 export function ProjectEnvironmentsWindow({
@@ -44,6 +45,7 @@ export function ProjectEnvironmentsWindow({
 		readonly ProjectEnvironmentSummaryDto[]
 	>([]);
 	const [providers, setProviders] = useState<readonly ProviderSummary[]>([]);
+	const [profiles, setProfiles] = useState<readonly import('@terminay/client-core').ProjectEnvironmentClientProfile[]>([]);
 	const [formTarget, setFormTarget] = useState<FormTarget | null>(null);
 	const [authorityLabel, setAuthorityLabel] = useState(serverName);
 	const [announcement, setAnnouncement] = useState('');
@@ -62,6 +64,7 @@ export function ProjectEnvironmentsWindow({
 		try {
 			const snapshot = await client.snapshot();
 			setEnvironments(snapshot.environments);
+			setProfiles(snapshot.profiles);
 			setProviders(
 				snapshot.providers.map((provider) => ({
 					...provider,
@@ -85,6 +88,11 @@ export function ProjectEnvironmentsWindow({
 
 	useEffect(() => {
 		void refresh();
+	}, [refresh]);
+	useEffect(() => {
+		const onFocus = () => { void refresh(); };
+		window.addEventListener('focus', onFocus);
+		return () => window.removeEventListener('focus', onFocus);
 	}, [refresh]);
 
 	const run = useCallback(
@@ -119,11 +127,12 @@ export function ProjectEnvironmentsWindow({
 				) : null}
 				{formTarget === null ? (
 					<ProjectEnvironmentManager
-						environments={environments}
+						environments={[...environments, ...profiles.filter((profile) => !environments.some((environment) => environment.profileId === profile.id)).map((profile) => ({ id: `profile-view:${profile.id}`, providerId: profile.providerId, profileId: profile.id, providerLabel: providers.find((provider) => provider.providerId === profile.providerId)?.displayName ?? profile.providerId, name: profile.name, endpointSummary: profile.endpointSummary, ...(profile.defaultRoot === undefined ? {} : { defaultRoot: profile.defaultRoot }), status: 'ready' as const, referencedProjectCount: 0, profileOnly: true }))]}
 						providers={providers.map((provider) => ({
 							providerId: provider.providerId,
 							displayName: provider.displayName,
 							hasProfileForm: provider.profileForm !== undefined,
+							hasCreateForm: provider.createForm !== undefined,
 						}))}
 						serverName={authorityLabel}
 						onCreate={(providerId) => {
@@ -131,8 +140,12 @@ export function ProjectEnvironmentsWindow({
 								(candidate) => candidate.providerId === providerId,
 							);
 							if (provider?.profileForm !== undefined) {
-								setFormTarget({ providerId, form: provider.profileForm });
+								setFormTarget({ providerId, form: provider.profileForm, mode: 'profile' });
 							}
+						}}
+						onCreateEnvironment={(providerId, profileId) => {
+							const provider = providers.find((candidate) => candidate.providerId === providerId);
+							if (provider?.createForm !== undefined) setFormTarget({ providerId, profileId, form: provider.createForm, mode: 'environment' });
 						}}
 						onEdit={(environment) => {
 							const provider = providers.find(
@@ -146,6 +159,7 @@ export function ProjectEnvironmentsWindow({
 									providerId: provider.providerId,
 									profileId: environment.profileId,
 									form: provider.profileForm,
+									mode: 'profile',
 								});
 							}
 						}}
@@ -186,7 +200,9 @@ export function ProjectEnvironmentsWindow({
 						form={formTarget.form}
 						onCancel={() => setFormTarget(null)}
 						onSubmit={async (values) => {
-							if (formTarget.profileId === undefined) {
+							if (formTarget.mode === 'environment' && formTarget.profileId !== undefined) {
+								await run(() => client!.createEnvironment(formTarget.providerId, formTarget.profileId!, values), 'Environment creation started.');
+							} else if (formTarget.profileId === undefined) {
 								await run(
 									() => client!.createProfile(formTarget.providerId, values),
 									'Connection saved.',

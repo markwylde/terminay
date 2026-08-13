@@ -450,6 +450,9 @@ export class ServerTerminalAuthority {
 							workspace: this.workspace,
 						});
 		if (extensionManagement !== undefined && options.vault !== undefined) projectEnvironmentRegistry.register(new ExtensionProjectEnvironmentRuntime('com.terminay.ssh/connection', ['terminal', 'filesystem', 'mcp-bridge'], extensionManagement.hosts, () => projectEnvironments.state));
+		const extensionProfiles = options.vault === undefined || extensionManagement === undefined
+			? undefined
+			: (extensionManagement as ReturnType<typeof createPuzedSshProductionExtensionManagement>).profiles;
 		let remoteMcp: RemoteMcpEnvironmentCoordinator | undefined;
 		this.composition = createServerCoreComposition({
 			serverId: options.serverId,
@@ -473,7 +476,7 @@ export class ServerTerminalAuthority {
 			git: gitAdapter,
 			eventJournal,
 			projectEnvironmentRouter,
-			projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.defaultProjectRoot?.() ?? process.cwd() },
+			projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.defaultProjectRoot?.() ?? process.cwd(), ...(extensionProfiles === undefined ? {} : { providers: extensionProfiles }) },
 			terminalOptions: {
 				sessionLifecycle: composeRemoteMcpTerminalLifecycle(() => remoteMcp),
 			},

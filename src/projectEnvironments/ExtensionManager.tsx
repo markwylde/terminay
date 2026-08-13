@@ -29,6 +29,7 @@ export function ExtensionManager({
 	const [preview, setPreview] = useState<ExtensionInstallPreviewDto | null>(null);
 	const [previewUpdateId, setPreviewUpdateId] = useState<string | null>(null);
 	const [previewError, setPreviewError] = useState('');
+	const [completion, setCompletion] = useState('');
 	const [busy, setBusy] = useState(false);
 	const filtered = useMemo(() => {
 		const normalized = query.trim().toLowerCase();
@@ -42,6 +43,7 @@ export function ExtensionManager({
 	const previewPackage = async (spec = npmPackage, updateId: string | null = null) => {
 		setBusy(true);
 		setPreviewError('');
+		setCompletion('');
 		try {
 			setPreview(await onPreview(spec));
 			setPreviewUpdateId(updateId);
@@ -62,9 +64,26 @@ export function ExtensionManager({
 	const previewFile = async (file: File | undefined) => {
 		if (file === undefined) return;
 		setBusy(true); setPreviewError('');
-		try { setPreview(await onPreviewPackageFile(file)); setPreviewUpdateId(null); }
+		try { setCompletion(''); setPreview(await onPreviewPackageFile(file)); setPreviewUpdateId(null); }
 		catch (error) { setPreviewError(error instanceof Error ? error.message : String(error)); }
 		finally { setBusy(false); }
+	};
+	const confirmPreview = async () => {
+		if (preview === null) return;
+		setBusy(true);
+		setPreviewError('');
+		try {
+			await (previewUpdateId === null
+				? onInstall(preview.previewDigest)
+				: onUpdate(previewUpdateId, preview.previewDigest));
+			setPreview(null);
+			setPreviewUpdateId(null);
+			setCompletion(`${preview.packageName}@${preview.version} was ${previewUpdateId === null ? 'installed' : 'updated'} on ${serverName}.`);
+		} catch (error) {
+			setPreviewError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	return (
@@ -129,13 +148,10 @@ export function ExtensionManager({
 						setPreview(null);
 						setPreviewUpdateId(null);
 					}}
-					onConfirm={() =>
-						previewUpdateId === null
-							? onInstall(preview.previewDigest)
-							: onUpdate(previewUpdateId, preview.previewDigest)
-					}
+					onConfirm={confirmPreview}
 				/>
 			)}
+			{completion ? <div className="settings-status-message" role="status">{completion}</div> : null}
 
 			<section className="settings-section">
 				<div className="settings-section-title-row">

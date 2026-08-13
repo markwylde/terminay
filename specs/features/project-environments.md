@@ -225,6 +225,12 @@ Command Bar action invoke that same semantic route. Extension installation and
 updates are not duplicated in this window: links that require an environment
 provider open Settings at its **Extensions** section.
 
+Every running provider with a profile form contributes a clear **New
+<provider>** action. Saving SSH creates a saved SSH environment; saving Puzed
+Platform stores its URL and API-key secret and exposes its VM creation/browse
+flow. Installing or enabling a provider makes these actions available without
+restarting the app, and focusing the window refreshes provider inventory.
+
 ## Authorization and audit
 
 Environment/profile management, secret replacement, host-trust changes,
