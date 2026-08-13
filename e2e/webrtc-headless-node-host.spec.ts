@@ -145,6 +145,7 @@ type HostEvidence = {
 type HeadlessHostWindow = {
   close(): void
   closeLane(label: RequiredLaneLabel): void
+  iceState(): RTCIceConnectionState | null
   laneState(label: ObservedLaneLabel): RTCDataChannelState | null
   peerState(): RTCPeerConnectionState | null
   closeTerminal(channelId: string, reason?: string): void
@@ -342,6 +343,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         const lane = observedLanes.get(label)
         if (!lane) throw new Error(`Cannot close ${label}: the native lane was not created.`)
         lane.close()
+      },
+      iceState() {
+        return hostPeer?.iceConnectionState ?? null
       },
       laneState(label) {
         return observedLanes.get(label)?.readyState ?? null
@@ -820,6 +824,21 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         expect(peerStateDuringLaneFailure).toBe('connected')
         runtime.closeLane(lane)
         await expect.poll(() => runtime.laneState(lane)).toBe('closed')
+        const firstFailureEvidence = {
+          attempt: recoveriesStartedBeforeRetry + 1,
+          closeReason: 'injected-required-lane-close',
+          iceState: runtime.iceState(),
+          lane,
+          lifecycle: 'reconnecting',
+          outcome: 'replacement-pending',
+          peerState: peerStateDuringLaneFailure,
+          profile: 'saved-webrtc-profile',
+          transportGeneration: hostWindows.indexOf(runtime) + 1,
+        }
+        await testInfo.attach(`webrtc-${lane}-first-failure.json`, {
+          body: Buffer.from(`${JSON.stringify(firstFailureEvidence, null, 2)}\n`),
+          contentType: 'application/json',
+        })
         const retry = reconnectPage.getByRole('button', { name: 'Retry connection' })
         await expect(retry).toBeVisible({ timeout: 20_000 })
         await retry.click()
