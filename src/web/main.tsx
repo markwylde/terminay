@@ -37,7 +37,7 @@ import {
 } from '../remote/services/deviceKeys';
 import { establishDevicePairing } from '../remote/services/devicePairingFlow';
 import { parsePairingBootstrap } from '../remote/services/pairing';
-import { createBrowserWebRtcTransport } from './browserWebRtcTransport';
+import { acquireHostedApplicationTransport, getSessionTransportHost } from './sessionTransportHost';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
 import { enrollBrowserDevice } from './deviceEnrollment';
 import { runBoundedBrowserRecoveryStep } from './reconnectAttempt';
@@ -435,7 +435,7 @@ export default function WebManagerApp() {
 		const url = new URL(window.location.href);
 		if (
 			initialPairingUrlRef.current !== null ||
-			window.__TERMINAY_BROWSER_ENROLLMENT__ === undefined ||
+			getSessionTransportHost() === undefined ||
 			new URLSearchParams(url.hash.slice(1)).has('pairingToken')
 		)
 			return;
@@ -453,7 +453,7 @@ export default function WebManagerApp() {
 	}, []);
 
 	useEffect(() => {
-		if (window.__TERMINAY_BROWSER_ENROLLMENT__ !== undefined) return;
+		if (getSessionTransportHost() !== undefined) return;
 		if (activeConnection !== null || isConnecting) return;
 		if (new URLSearchParams(window.location.hash.slice(1)).has('pairingToken'))
 			return;
@@ -919,10 +919,10 @@ export default function WebManagerApp() {
 		pairingPin?: string,
 	): Promise<void> {
 		const rendererAttempt = connectionController.current!.begin(origin);
-		const bridge = window.__TERMINAY_BROWSER_ENROLLMENT__;
-		if (bridge === undefined)
+		const sessionHost = getSessionTransportHost();
+		if (sessionHost === undefined)
 			throw new Error('Browser device enrollment is unavailable.');
-		const transport = await bridge.connect({
+		const transport = await sessionHost.connect({
 			origin,
 			pairingPin,
 			onStateChange: () => {},
@@ -1054,19 +1054,16 @@ export default function WebManagerApp() {
 		});
 		throwIfRecoveryAborted(recoveryAttempt.signal);
 
-		const bridge = window.__TERMINAY_REMOTE_WEBRTC__;
 		const transport = await runBoundedBrowserRecoveryStep({
 			label: 'Reconnect transport',
 			signal: recoveryAttempt.signal,
-			operation: async () =>
-				bridge?.getChannel === undefined
-					? new WebSocketByteTransport({
+			operation: async () => {
+				const hosted = await acquireHostedApplicationTransport(completion.ticket);
+				return hosted ?? new WebSocketByteTransport({
 							origin: endpoint,
 							authToken: completion.ticket,
-						})
-					: createBrowserWebRtcTransport((name) =>
-							bridge.getChannel!(name, completion.ticket),
-						),
+						});
+			},
 		});
 		const clientId = `web-${Date.now().toString(36)}`;
 		const initialWatermark = recoveryWatermarks.current.get(profile.id);
@@ -1225,16 +1222,11 @@ export default function WebManagerApp() {
 					},
 				);
 				const clientId = `web-${Date.now().toString(36)}`;
-				const bridge = window.__TERMINAY_REMOTE_WEBRTC__;
-				const transport =
-					bridge?.getChannel === undefined
-						? new WebSocketByteTransport({
+				const hosted = await acquireHostedApplicationTransport(completion.ticket);
+				const transport = hosted ?? new WebSocketByteTransport({
 								origin: endpoint,
 								authToken: completion.ticket,
-							})
-						: await createBrowserWebRtcTransport((name) =>
-								bridge.getChannel!(name, completion.ticket),
-							);
+							});
 				const initialWatermark = recoveryWatermarks.current.get(profile.id);
 				const client = new TerminayClient({
 					transport,
