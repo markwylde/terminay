@@ -404,6 +404,8 @@ export default function WebManagerApp() {
 				const labelledContext = Object.freeze({
 					...recovery.context,
 					connectionLabel: recovery.profile.label,
+					requestConnectionRecovery: () =>
+						recoverConnection(recovery.profile.id, recovery.rendererAttempt, recovery.client),
 				});
 				const candidate = Object.freeze({
 					profileId: recovery.profile.id,
@@ -782,6 +784,10 @@ export default function WebManagerApp() {
 			const labelledContext = Object.freeze({
 				...context,
 				connectionLabel: connectedProfile.label,
+				requestConnectionRecovery: () => {
+					if (rendererAttempt !== undefined)
+						recoverConnection(connectedProfile.id, rendererAttempt, client)
+				},
 			});
 			const candidate = {
 				profileId: connectedProfile.id,
@@ -1000,6 +1006,8 @@ export default function WebManagerApp() {
 			const labelledContext = Object.freeze({
 				...context,
 				connectionLabel: profile.label,
+				requestConnectionRecovery: () =>
+					recoverConnection(profile.id, rendererAttempt, client),
 			});
 			const candidate = {
 				profileId: profile.id,
@@ -1270,6 +1278,8 @@ export default function WebManagerApp() {
 					const labelledContext = Object.freeze({
 						...context,
 						connectionLabel: profile.label,
+						requestConnectionRecovery: () =>
+							recoverConnection(profile.id, rendererAttempt, client),
 					});
 					const candidate = {
 						profileId: profile.id,
