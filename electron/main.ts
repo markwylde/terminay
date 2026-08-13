@@ -3238,7 +3238,10 @@ function bindAuxiliaryServerAuthority(window: BrowserWindow, requester?: Electro
 	else remoteProfileBindingsByWebContents.set(window.webContents.id, profileId);
 }
 
-async function postSelectedServerConnection(sender: Electron.WebContents): Promise<void> {
+async function postSelectedServerConnection(
+	sender: Electron.WebContents,
+	replacement = false,
+): Promise<void> {
 	const remoteProfileId = remoteProfileBindingsByWebContents.get(sender.id);
 	if (remoteProfileId !== undefined) {
 		loadRememberedRemoteConnections();
@@ -3251,7 +3254,16 @@ async function postSelectedServerConnection(sender: Electron.WebContents): Promi
 	if (authority === null) throw new Error('The local server connection is unavailable.');
 	const channel = new MessageChannelMain();
 	authority.acceptRendererPort(channel.port1 as unknown as ServerMessagePort);
-	sender.postMessage('server:connection', { connectionId: randomUUID(), label: 'Local', replacement: true, serverId: authority.service.serverId }, [channel.port2]);
+	sender.postMessage(
+		'server:connection',
+		{
+			connectionId: randomUUID(),
+			label: 'Local',
+			...(replacement ? { replacement: true } : {}),
+			serverId: authority.service.serverId,
+		},
+		[channel.port2],
+	);
 }
 
 async function rebindAuxiliaryServerConnection(window: BrowserWindow, requester?: Electron.WebContents): Promise<void> {
@@ -3261,7 +3273,9 @@ async function rebindAuxiliaryServerConnection(window: BrowserWindow, requester?
 	const active = activeRemoteByteConnectionsByWebContents.get(window.webContents.id);
 	activeRemoteByteConnectionsByWebContents.delete(window.webContents.id);
 	await active?.close();
-	if (!window.isDestroyed() && !window.webContents.isDestroyed()) await postSelectedServerConnection(window.webContents);
+	if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+		await postSelectedServerConnection(window.webContents, true);
+	}
 }
 
 function attachAuxiliaryServerConnection(window: BrowserWindow, requester?: Electron.WebContents): void {
