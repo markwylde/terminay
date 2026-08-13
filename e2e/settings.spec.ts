@@ -63,7 +63,8 @@ test('shows selected-server extensions as an ordinary Settings category', async 
   await settingsWindow.locator('input[type="file"][accept*=".tgz"]').setInputFiles({ name: 'terminay-e2e-uploaded-extension-1.0.0.tgz', mimeType: 'application/gzip', buffer: archive })
   await expect(settingsWindow.getByRole('heading', { name: /Review terminay-e2e-uploaded-extension@1\.0\.0/u })).toBeVisible()
   await expect(settingsWindow.getByText(/Uploaded package.*Unverified/u)).toBeVisible()
-  await expect(settingsWindow.getByRole('button', { name: /Install on/u })).toBeEnabled()
+  await settingsWindow.getByRole('button', { name: /Install on/u }).click()
+  await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-e2e-uploaded-extension' })).toContainText('1.0.0', { timeout: 30_000 })
 })
 
 function npmPackArchive(files: Readonly<Record<string, string>>): Buffer {
