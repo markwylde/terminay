@@ -150,6 +150,23 @@ export class ExtensionInstaller {
     catch (error) { if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return EMPTY; throw error; }
   }
 
+  async launchDescriptor(extensionId: string): Promise<Readonly<{ extensionId: string; packageRoot: string; entrypoint: string; manifest: ExtensionReceipt["manifest"] }>> {
+    const state = await this.snapshot();
+    const current = required(state, extensionId);
+    if (!current.enabled || current.activeSlotId === undefined) throw new Error("extension is not enabled with an active slot");
+    const slot = current.slots[current.activeSlotId];
+    if (slot === undefined) throw new Error("active extension slot is missing");
+    return Object.freeze({ extensionId, packageRoot: this.slotPackageRoot(slot), entrypoint: slot.receipt.manifest.entrypoint, manifest: slot.receipt.manifest });
+  }
+
+  async enabledExtensionIds(): Promise<readonly string[]> {
+    const state = await this.snapshot();
+    return Object.freeze(Object.values(state.extensions)
+      .filter((record) => record.enabled && record.activeSlotId !== undefined && record.state !== "incompatible" && record.state !== "quarantined")
+      .map((record) => record.extensionId)
+      .sort());
+  }
+
   private async installExact(resolution: ExtensionInstallPreview, signal?: AbortSignal): Promise<ExtensionRegistrySnapshot> {
     const operationId = randomUUID(); const staging = join(this.root, "staging", operationId);
     try {

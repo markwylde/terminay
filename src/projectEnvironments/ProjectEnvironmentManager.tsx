@@ -7,6 +7,7 @@ type ProviderSummary = Readonly<{
 	providerId: string;
 	displayName: string;
 	hasProfileForm: boolean;
+	hasCreateForm: boolean;
 }>;
 
 type StatusAction = NonNullable<
@@ -18,6 +19,7 @@ export function ProjectEnvironmentManager({
 	providers,
 	serverName,
 	onCreate,
+	onCreateEnvironment,
 	onEdit,
 	onTest,
 	onRemove,
@@ -27,6 +29,7 @@ export function ProjectEnvironmentManager({
 	providers: readonly ProviderSummary[];
 	serverName: string;
 	onCreate: (providerId: string) => void;
+	onCreateEnvironment: (providerId: string, profileId: string) => void;
 	onEdit: (environment: ProjectEnvironmentSummaryDto) => void;
 	onTest: (id: string) => void;
 	onRemove: (id: string) => void;
@@ -84,6 +87,9 @@ export function ProjectEnvironmentManager({
 					</p>
 				</div>
 				<div className="settings-inline-actions">
+					{selected?.profileOnly && selected.profileId !== undefined && providers.find((provider) => provider.providerId === selected.providerId)?.hasCreateForm ? (
+						<button type="button" className="settings-primary-button" onClick={() => onCreateEnvironment(selected.providerId, selected.profileId!)}>New {providers.find((provider) => provider.providerId === selected.providerId)?.displayName} project</button>
+					) : null}
 					{providers
 						.filter((provider) => provider.hasProfileForm)
 						.map((provider) => (

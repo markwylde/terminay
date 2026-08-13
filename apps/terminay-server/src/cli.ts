@@ -396,7 +396,7 @@ async function createServerComposition(
 		agents,
 		workspace,
 		projectEnvironmentRouter,
-		projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.projectRoot },
+		projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.projectRoot, ...(extensions !== undefined && "profiles" in extensions ? { providers: extensions.profiles } : {}) },
 		workspaceOperations: {
 			prepareProjectRootUpdate: files.prepareProjectRootUpdate,
 		},
