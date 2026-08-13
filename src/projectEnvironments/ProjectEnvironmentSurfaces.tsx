@@ -245,7 +245,7 @@ function toUiForm(
 			...(section.description === undefined
 				? {}
 				: { description: section.description }),
-			disclosure: section.disclosure !== undefined,
+			...(section.disclosure === undefined ? {} : { disclosure: section.disclosure }),
 			fields: section.fields.map((field) => ({
 				id: field.id,
 				label: field.label,
@@ -264,6 +264,9 @@ function toUiForm(
 				...(field.searchable === undefined
 					? {}
 					: { searchable: field.searchable }),
+				...(field.visibleWhen === undefined
+					? {}
+					: { visibleWhen: field.visibleWhen }),
 			})),
 		})),
 	};

@@ -47,7 +47,7 @@ test('opens settings focused to remote access and supports settings search', asy
   await expect(settingsWindow.getByRole('button', { name: 'Scrolling' })).toBeVisible()
 })
 
-test('shows selected-server extensions as an ordinary Settings category', async ({ appHarness, mainWindow }) => {
+test('shows selected-server extensions as an ordinary Settings category', async ({ appHarness, mainWindow }, testInfo) => {
   const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'extensions' })
 
   await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
@@ -58,7 +58,7 @@ test('shows selected-server extensions as an ordinary Settings category', async 
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-ssh' })).toBeVisible()
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-puzed' })).toBeVisible()
 
-  const profileForm = { id: 'fixture-profile', title: 'Fixture connection', submitLabel: 'Save', sections: [{ id: 'connection', title: 'Connection', fields: [{ id: 'display-name', type: 'text', label: 'Name', required: true }] }] }
+  const profileForm = { id: 'fixture-profile', title: 'Fixture connection', description: 'Stored by the selected Terminay Server.', submitLabel: 'Save', sections: [{ id: 'connection', title: 'Connection', fields: [{ id: 'display-name', type: 'text', label: 'Name', description: 'Shown in the project environment chooser.', required: true }] }, { id: 'advanced', title: 'Advanced', description: 'Optional connection behavior.', disclosure: 'collapsed', fields: [{ id: 'default-root', type: 'text', label: 'Default root' }] }] }
   const packageJson = JSON.stringify({ name: 'terminay-e2e-uploaded-extension', version: '1.0.0', type: 'module', exports: { '.': './dist/extension.js' }, terminay: { manifestVersion: 1, id: 'dev.terminay.e2e-uploaded', displayName: 'E2E uploaded provider', api: '^1.0.0', engines: { terminay: '>=1', node: '>=22' }, entrypoint: 'dist/extension.js', permissions: [], contributes: { projectEnvironments: [{ id: 'dev.terminay.e2e-uploaded/main', displayName: 'E2E uploaded', capabilities: ['terminal', 'filesystem'] }] } } })
   const archive = npmPackArchive({ 'package/package.json': packageJson, 'package/dist/extension.js': `export async function activate(context) { context.registerProjectEnvironmentProvider({ definition: { providerId: "dev.terminay.e2e-uploaded/main", displayName: "E2E uploaded", capabilities: ["terminal", "filesystem"], profileForm: ${JSON.stringify(profileForm)} }, runtime: { testProfile: async () => [], resolveOptions: async () => ({ options: [] }), createEnvironment: async () => ({ state: "ready", providerState: {}, status: { state: "available", revision: 1 } }), resumeOperation: async () => ({ state: "ready", providerState: {}, status: { state: "available", revision: 1 } }), getStatus: async () => ({ state: "available", revision: 1 }), invokeAction: async () => ({ state: "complete", providerState: {}, status: { state: "available", revision: 1 } }) } }); }\n` })
   await settingsWindow.locator('input[type="file"][accept*=".tgz"]').setInputFiles({ name: 'terminay-e2e-uploaded-extension-1.0.0.tgz', mimeType: 'application/gzip', buffer: archive })
@@ -69,7 +69,15 @@ test('shows selected-server extensions as an ordinary Settings category', async 
   await expect(settingsWindow.getByRole('heading', { name: /Review terminay-e2e-uploaded-extension/u })).toHaveCount(0)
   await expect(settingsWindow.getByRole('status').filter({ hasText: /was installed/u })).toBeVisible()
   const environmentsWindow = await appHarness.openChildWindow(async () => { await mainWindow.evaluate(async () => { await window.terminayProjectEnvironmentsHost?.open() }) })
-  await expect(environmentsWindow.getByRole('button', { name: 'New E2E uploaded' })).toBeVisible()
+  await environmentsWindow.getByRole('button', { name: 'New E2E uploaded' }).click()
+  await expect(environmentsWindow.getByRole('heading', { name: 'Fixture connection' })).toBeVisible()
+  await expect(environmentsWindow.locator('.declarative-provider-form .settings-group')).toHaveCount(2)
+  await expect(environmentsWindow.locator('.declarative-provider-form .settings-row').filter({ hasText: 'Name' })).toBeVisible()
+  const advanced = environmentsWindow.locator('details').filter({ hasText: 'Advanced' })
+  await expect(advanced).not.toHaveAttribute('open', '')
+  await expect(advanced.locator('summary')).toBeVisible()
+  await expect(environmentsWindow.locator('.declarative-provider-form__fields')).toHaveCount(0)
+  await testInfo.attach('declarative-provider-form', { body: await environmentsWindow.screenshot(), contentType: 'image/png' })
 })
 
 function npmPackArchive(files: Readonly<Record<string, string>>): Buffer {
