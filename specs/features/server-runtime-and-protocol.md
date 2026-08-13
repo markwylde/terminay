@@ -117,6 +117,11 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
   engine, required CLI/MCP entrypoints, payload hashes, and absence of Electron
   imports before publication. Native OS/architecture/ABI probes remain release
   evidence; this manifest check does not claim signing or notarization.
+- Release artifact builds work from their narrow workspace entry points. A
+  server-core build first materializes every public workspace package it
+  imports, including the Extension API. Runtime staging accepts the pinned npm
+  major's exact single-result JSON shape and fails closed on missing, multiple,
+  or malformed pack results.
 - CI exercises node-pty through the canonical server-core terminal authority on
   native x64 and arm64 runners. Desktop packaging proves its extracted
   `@terminay/server` dependency closure; the removed Electron `ptyHost` child
