@@ -35,4 +35,4 @@
 - [x] Add geometry coverage for full-panel local sizing and bidirectional post-takeover resize.
 - [x] Cover local clear while a browser observer remains attached.
 - [x] Run native tests and the Docker Electron E2E suite.
-- [ ] Push a reviewable pull request and keep PR and post-merge main CI green.
+- [x] Push a reviewable pull request and keep PR and post-merge main CI green.
