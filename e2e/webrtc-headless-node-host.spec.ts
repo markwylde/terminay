@@ -324,6 +324,8 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
   let nextHostId = 1
   let service: RemoteAccessService
   let privilegedExposure: PrivilegedWebRtcExposure | null = null
+  let failApplicationProtocolReader: (() => void) | undefined
+  let applicationTransportState: (() => ByteTransport['state']) | undefined
 
   const createHostWindow = (): HeadlessHostWindow => {
     const webContentsId = nextHostId
@@ -337,7 +339,6 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     const terminalCloseListeners = new Set<(message: { channelId: string; reason?: string }) => void>()
     const terminalMessageListeners = new Set<(message: { channelId: string; message: string }) => void>()
     let cleanupHost: (() => void) | null = null
-    let failApplicationProtocolReader: (() => void) | undefined
     const observedLanes = new Map<ObservedLaneLabel, RTCDataChannel>()
     let hostPeer: RTCPeerConnection | null = null
     let closed = false
@@ -347,6 +348,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         await service.attachWebRtcApplication(webContentsId, channelId, ticket, () => hostWindow.close())
         const controlled = interruptibleServerTransport(createRtcDataChannelTransport(channel))
         failApplicationProtocolReader = controlled.failReader
+        applicationTransportState = () => controlled.transport.state
         const connection = composition.core.accept(controlled.transport)
         void connection.start().catch(() => hostWindow.close())
       },
@@ -499,7 +501,12 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       selectedWeriftRuntimeRoot,
       {
         ...serviceOptions,
-        acceptApplicationTransport: (transport) => composition.core.accept(transport),
+        acceptApplicationTransport: (transport) => {
+          const controlled = interruptibleServerTransport(transport)
+          failApplicationProtocolReader = controlled.failReader
+          applicationTransportState = () => controlled.transport.state
+          return composition.core.accept(controlled.transport)
+        },
       },
     )
     service = privilegedExposure.service
@@ -756,15 +763,24 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     // Reproduce the deployed failure shape: server-side application protocol
     // authority disappears while the WebRTC peer and application data channel
     // remain healthy. Lane-close tests do not exercise this split-brain state.
-    const protocolRuntime = await waitFor(
-      () => hostWindows.find((host) =>
-        host.peerState() === 'connected' && host.laneState('application') === 'open'),
-      30_000,
-      'the connected application protocol runtime',
-    )
-    protocolRuntime.failApplicationProtocolReader()
-    await expect.poll(() => protocolRuntime.peerState()).toBe('connected')
-    await expect.poll(() => protocolRuntime.laneState('application')).toBe('open')
+    const protocolRuntime = privilegedExposure
+      ? null
+      : await waitFor(
+          () => hostWindows.find((host) =>
+            host.peerState() === 'connected' && host.laneState('application') === 'open'),
+          30_000,
+          'the connected application protocol runtime',
+        )
+    expect(applicationTransportState?.()).toBe('open')
+    if (!failApplicationProtocolReader) {
+      throw new Error('The application protocol reader was not installed.')
+    }
+    failApplicationProtocolReader()
+    await expect.poll(() => applicationTransportState?.()).toBe('open')
+    if (protocolRuntime) {
+      await expect.poll(() => protocolRuntime.peerState()).toBe('connected')
+      await expect.poll(() => protocolRuntime.laneState('application')).toBe('open')
+    }
     const renewalFailure = page.getByText(
       'terminal presentation renewal failed: client is not connected',
       { exact: true },
