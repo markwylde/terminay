@@ -147,6 +147,9 @@ channel, a minimal environment, an immutable package-slot working directory,
 bounded messages, timeouts, cancellation, admission/concurrency limits, and
 rate-limited restart/backoff. Credentials are absent from argv, ordinary
 environment variables, logs, and inherited stdio.
+When Desktop supplies Electron's executable as that bundled runtime, the child
+is launched with `ELECTRON_RUN_AS_NODE=1`; extension activation must never enter
+Electron application startup or create a Desktop window.
 
 Per-extension processes isolate crashes and reduce accidental cross-extension
 secret sharing. They do not constitute an operating-system security sandbox;
