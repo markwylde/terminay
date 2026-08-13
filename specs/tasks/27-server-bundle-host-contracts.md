@@ -22,6 +22,10 @@ can still be constructed by compatibility host paths, and no single runtime
 contract proves that an older compatible host can forward a newer bundle's
 unknown application operations unchanged.
 
+## Dependency
+
+- [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
+
 ## Implementation slices
 
 ### Host bootstrap and capability contract
@@ -52,14 +56,14 @@ unknown application operations unchanged.
   connection failure; the shared route contract selects an in-page fallback or
   a clear unavailable action.
 
-### Protocol-blind byte endpoint
+### Consume the protocol-blind byte endpoint
 
-- [ ] Define the stable renderer-facing endpoint over a transferred MessagePort
-  or equivalent isolated primitive. It carries bounded framed bytes, lifecycle,
-  cancellation, and backpressure without exposing credentials or native
-  transport objects.
-- [ ] Bind the endpoint to one exact authenticated server/profile before
-  renderer delivery and reject cross-server or malformed stable envelopes.
+Task 41 owns the replaceable renderer-facing byte endpoint, its exact
+server/profile binding, lifecycle, cancellation, backpressure, and WebRTC
+transport-generation replacement. This task consumes that endpoint and owns
+only its bundle/bootstrap compatibility declaration and application-protocol
+blindness. It must not introduce another channel bridge or reconnect owner.
+
 - [ ] Remove host-side decoding/translation of feature operation names,
   results, workspace snapshots, and application events. Stable envelope and
   size validation remains application-version agnostic.
@@ -95,7 +99,8 @@ unknown application operations unchanged.
 
 ## Definition of done
 
-Bundle manifests, host bootstrap, byte endpoint, compatibility evaluation, and
-semantic host capabilities are versioned runtime contracts with cross-version
-and hostile-input evidence. Browser and Desktop adoption can proceed without
-creating feature-aware host adapters.
+Bundle manifests, host bootstrap, Task 41's byte endpoint compatibility,
+compatibility evaluation, and semantic host capabilities are versioned runtime
+contracts with cross-version and hostile-input evidence. Browser and Desktop
+adoption can proceed without feature-aware host adapters or another transport
+recovery layer.

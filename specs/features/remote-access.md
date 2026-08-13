@@ -175,26 +175,43 @@ ahead of relay-visible availability.
 Browser-host reconnect on a WebRTC session origin uses the same authenticated
 four-lane application transport as initial pairing; it does not downgrade the
 server-bundled UI to a direct WebSocket connection.
-When a hosted WebRTC bootstrap provides the browser enrollment bridge, that
-bridge owns initial reconnection for the mounted server UI; saved-profile
-auto-restore must not start a competing reconnect attempt in the same page.
-Refreshing a cached server-bundle entry first returns through that bootstrap;
-the cached entry never executes without a newly authenticated WebRTC bridge.
-After the server UI is mounted, a failed peer or a disconnect that outlasts a
-short ICE-recovery grace period returns through the same saved-session
-bootstrap. An offline browser waits for the network to return, then reconnects
-with its origin-bound device key and grant without replaying the pairing URL.
 
-The authenticated WebRTC session has one lifecycle authority across peer,
-ICE, and required data-channel state. A peer or ICE `disconnected` transition
-is recoverable: it starts one bounded grace period, keeps the authenticated
-application and terminal channels attached, and is cancelled when all
-recoverable transport state becomes healthy again. It never independently
-closes application traffic. Explicit peer/ICE `failed` or `closed`, required
-data-channel failure, revocation, host shutdown, or expiry of the recovery
-grace period is terminal and closes the affected connection exactly once with
-one metadata-only reason. Competing peer, ICE, channel, delivery, and host
-callbacks cannot widen teardown to another client or server-owned PTY.
+The exact session-origin bootstrap is the sole owner of the browser WebRTC
+transport lifecycle. It owns signaling, `RTCPeerConnection`, ICE, the complete
+required channel set, application-channel authentication, reconnect
+credentials, and transport-generation replacement from initial pairing until
+the browser view closes. The server-bundled renderer receives one opaque,
+generation-bound byte endpoint plus sanitized lifecycle state. It never
+receives raw `RTCDataChannel` objects, opens a signaling room, reads reconnect
+credentials, or runs a second WebRTC reconnect loop.
+
+Refreshing a cached server-bundle entry first returns through the bootstrap;
+the cached entry never executes without a newly authenticated transport
+generation. Refresh is a supported browser action, not the implementation of
+the in-page Retry control. A mounted workspace recovers without reloading the
+document, replacing its DOM, or replaying the one-time pairing URL.
+
+The transport owner evaluates peer, ICE, and every required data channel as
+one generation. Bootstrap-only enrollment and bundle-install lanes are retired
+at the authenticated application handoff; they are not kept as hidden runtime
+dependencies or compatibility channels. A peer or ICE `disconnected`
+transition starts one bounded
+grace period and keeps the current generation while it remains safe. A peer or
+ICE `failed`/`closed` transition, required-channel close/error, or expired grace
+period retires that generation exactly once and starts one saved-session
+replacement. A required channel cannot remain closed merely because the peer
+still reports `connected`, and a replacement never returns a channel from the
+retired generation.
+
+Automatic failure detection and explicit **Retry connection** call the same
+host-owned replacement controller. Concurrent signals coalesce by stable
+profile/session identity; Retry cancels pending backoff and starts one current
+attempt immediately. Revocation, explicit disconnect/forget, host shutdown,
+expired credentials, or stopped exposure terminate recovery with a typed
+actionable state instead of starting another generation. Offline recovery
+waits for the browser `online` transition. Competing peer, ICE, channel,
+delivery, renderer, and host callbacks cannot publish two replacements, revive
+a retired generation, or widen teardown to another client or server-owned PTY.
 
 For the local static-browser host, enrollment derives a non-extractable
 WebCrypto HMAC proof key in IndexedDB, partitioned by the selected server
@@ -245,6 +262,15 @@ the “Connect to Remote Server” enrollment dialog. That dialog returns only
 after explicit disconnect/forget, a credential failure that requires fresh
 pairing, or initial launch with no restorable connection.
 
+The mounted workspace treats recovery as one explicit lifecycle:
+`connected → reconnecting → authenticating → resubscribing → hydrating → connected`.
+Its old application client and terminal attachments become unusable as soon as
+their transport generation is retired. Input and unsafe mutations remain
+disabled until the replacement client, workspace subscriptions, and terminal
+attachments are current. Retry progress and error presentation come from this
+lifecycle; clicking Retry cannot clear the error or re-enable input before a
+post-recovery command can traverse the replacement endpoint.
+
 Terminay Desktop follows the same remote bootstrap and bundle-install flow. It
 keeps protected credentials and transport authority in the main process,
 launches the verified server bundle in a sandboxed origin/profile partition,
@@ -287,6 +313,12 @@ multiplexing scheme:
 - application commands and state events;
 - terminal streams; and
 - assets and bounded binary content.
+
+These canonical lanes are private implementation details of the privileged
+transport host. Bootstrap-only enrollment and bundle-install lanes exist only
+before application authentication and are closed at handoff. The
+server-bundled application sees one bounded byte endpoint and cannot select,
+cache, close, authenticate, or recover an individual WebRTC channel.
 
 The server transport boundary selects an explicitly configured headless runtime
 (`node-datachannel`, `werift`, or a test/custom adapter) and admits it only
@@ -393,6 +425,9 @@ project paths, filenames, command history, PINs, tokens, or private keys.
   explicit limits.
 - Failure in one traffic class or application service does not silently widen
   authorization or corrupt unrelated sessions.
+- Closing or failing any required WebRTC data channel retires the complete
+  transport generation even when the peer remains `connected`; the host then
+  supplies fresh authenticated lanes rather than returning a closed channel.
 - A failed application-event send transitions that peer to a visible
   disconnected/stale state and resumes its subscriptions on a new authenticated
   transport. The server never keeps accepting commands for a connection whose
@@ -445,6 +480,10 @@ leaving Local and other devices available.
 - Refreshing the mounted browser UI and switching or temporarily losing the
   browser network recreate the hosted WebRTC bridge and reconnect with the
   saved grant; neither path reuses or requests the one-time pairing URL.
+- Closing one required WebRTC lane while the peer remains connected triggers
+  one in-page replacement. Automatic recovery and **Retry connection** both
+  restore ordered terminal input without a page reload, stale client, duplicate
+  PTY, or duplicate workspace mutation.
 - A pairing room is single-use, but issuing another pairing URL does not disturb
   the session origin or existing peers.
 - WebRTC carries the full application protocol and exact server-bundled

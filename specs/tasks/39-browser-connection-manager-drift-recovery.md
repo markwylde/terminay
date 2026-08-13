@@ -20,6 +20,7 @@ only after its bounded, metadata-only migration path is working and verified.
 - [Remote access](../features/remote-access.md)
 - [Server runtime and application protocol](../features/server-runtime-and-protocol.md)
 - [Browser host and cross-version convergence](./29-browser-host-and-cross-version-convergence.md)
+- [WebRTC transport recovery acceptance](./43-webrtc-transport-recovery-acceptance.md)
 - [Web connection host deployment](../operations/web-host-deployment.md)
 
 ## Current gap
@@ -184,9 +185,10 @@ easier.
   saved reconnect -> rename -> forget, using `npm run test:e2e` and never the
   host Playwright Electron suite.
 - [ ] Add Docker browser E2E for re-pairing an existing origin, invalid/expired
-  links, wrong PIN, interrupted credential storage, server restart, revoked
-  device, offline retry, and two manager tabs without duplicate pairing or
-  reconnect attempts.
+  links, wrong PIN, interrupted credential storage, pre-activation server
+  restart, revoked device, manager-level offline retry, and two manager tabs
+  without duplicate pairing or reconnect attempts. Task 43 owns mounted WebRTC
+  transport failure and Retry; do not duplicate it in this manager journey.
 - [x] Add a migration E2E that begins at the real legacy origin with multiple
   sanitized saved profiles, lands on the canonical origin, clears the handoff,
   preserves session-origin credentials, and clearly requests fresh pairing

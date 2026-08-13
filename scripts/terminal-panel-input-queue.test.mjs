@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { build } from 'esbuild'
 import { pathToFileURL } from 'node:url'
+import { decodeFrame, encodeFrame, DEFAULT_PROTOCOL_LIMITS } from '@terminay/protocol'
+import { TerminayClient } from '@terminay/client-core'
 
 const outputDirectory = await mkdtemp(join(process.cwd(), 'scripts', '.terminal-panel-input-queue-'))
 await build({
@@ -26,6 +28,57 @@ function deferred() {
     resolve = nextResolve
   })
   return { promise, resolve }
+}
+
+function createDisconnectableTransport() {
+  const frames = []
+  const queued = []
+  let waiter
+  let closed = false
+  const incoming = {
+    [Symbol.asyncIterator]() {
+      return {
+        next() {
+          if (queued.length > 0) return Promise.resolve({ value: queued.shift(), done: false })
+          if (closed) return Promise.resolve({ value: undefined, done: true })
+          return new Promise((resolve) => { waiter = resolve })
+        },
+        return() {
+          closed = true
+          waiter?.({ value: undefined, done: true })
+          waiter = undefined
+          return Promise.resolve({ value: undefined, done: true })
+        },
+      }
+    },
+  }
+  return {
+    state: 'open',
+    incoming,
+    queuedBytes: 0,
+    bufferedBytes: 0,
+    frames,
+    open: async () => {},
+    async send(frame) { frames.push(decodeFrame(frame)) },
+    waitForWritable: async () => {},
+    async close() { this.disconnect() },
+    onStateChange: () => () => {},
+    disconnect() {
+      closed = true
+      waiter?.({ value: undefined, done: true })
+      waiter = undefined
+    },
+    push(envelope) {
+      const frame = encodeFrame(envelope, new Uint8Array(), DEFAULT_PROTOCOL_LIMITS)
+      if (waiter !== undefined) {
+        const resolve = waiter
+        waiter = undefined
+        resolve({ value: frame, done: false })
+      } else {
+        queued.push(frame)
+      }
+    },
+  }
 }
 
 test.after(async () => {
@@ -85,6 +138,62 @@ test('server-backed terminal input fails closed after an uncertain write failure
 
   assert.deepEqual(writes, ['bad'])
   assert.deepEqual(errors, ['disconnected'])
+})
+
+test('an outcome-unknown terminal command closes its queue and is never replayed on a replacement attachment', async () => {
+  const transport = createDisconnectableTransport()
+  const client = new TerminayClient({ transport, clientId: 'queue-unknown-outcome' })
+  const connecting = client.connect()
+  transport.push({
+    type: 'server_hello',
+    protocolVersion: 1,
+    serverId: 'server-1',
+    serverVersion: 'test',
+    clientId: 'queue-unknown-outcome',
+    capabilities: [],
+    limits: DEFAULT_PROTOCOL_LIMITS,
+    authScope: 'write',
+  })
+  await connecting
+
+  const errors = []
+  const queue = new ServerTerminalInputQueue((error) => errors.push(error))
+  queue.attach({
+    write(data) {
+      return client.command('terminal.input', { attachmentId: 'attachment-old', data })
+    },
+    async detach() {},
+  })
+
+  queue.enqueue('uncertain')
+  queue.enqueue('queued-after-uncertain')
+  assert.equal(
+    transport.frames.filter(({ envelope }) => envelope.type === 'command' && envelope.operation === 'terminal.input').length,
+    1,
+  )
+
+  transport.disconnect()
+  await tick()
+  await tick()
+
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0]?.name, 'CommandOutcomeUnknownError')
+
+  const replacementWrites = []
+  queue.enqueue('typed-after-failure')
+  queue.attach({
+    async write(data) { replacementWrites.push(data) },
+    async detach() {},
+  })
+  await tick()
+
+  assert.deepEqual(replacementWrites, [])
+  assert.deepEqual(
+    transport.frames
+      .filter(({ envelope }) => envelope.type === 'command' && envelope.operation === 'terminal.input')
+      .map(({ envelope }) => envelope.payload.data),
+    ['uncertain'],
+  )
 })
 
 test('presentation ownership changes discard stale queued input without failing the stream', async () => {
