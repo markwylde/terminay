@@ -79,3 +79,10 @@ test('hosted fragment pairing classification uses the validated exact-origin hos
 	assert.match(source, /searchParams\.get\('transport'\) === 'webrtc' \|\|[\s\S]*isHostedSessionPairing/u);
 	assert.doesNotMatch(source, /__TERMINAY_REMOTE_WEBRTC__|__TERMINAY_BROWSER_ENROLLMENT__/u);
 });
+
+test('replacement activation verifies the stable profile and authenticated server identity', async () => {
+	const source = await readFile('src/web/main.tsx', 'utf8');
+	assert.match(source, /currentProfile\?\.origin !== profile\.origin[\s\S]*currentProfile\.archived === true/u);
+	assert.match(source, /hello\.serverId !== profile\.serverId[\s\S]*Recovered server identity does not match the saved profile/u);
+	assert.match(source, /connectionController\.current!\.activate/u);
+});

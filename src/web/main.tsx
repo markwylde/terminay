@@ -1138,6 +1138,9 @@ export default function WebManagerApp() {
 				currentProfile.archived === true
 			)
 				throw new Error('That server is no longer saved in this browser.');
+			if (hello.serverId !== profile.serverId) {
+				throw new Error('Recovered server identity does not match the saved profile.');
+			}
 			const context = await createConnectedServerClientContext(client, hello, {
 				signal: recoveryAttempt.signal,
 				onTransportClosed: () => connectionController.current?.recover(profile.id),
