@@ -9,13 +9,13 @@ const json = async (path) => JSON.parse(await readFile(new URL(path, root), "utf
 
 test("Desktop and standalone servers pin the same npm installer with lock integrity and license metadata", async () => {
   const [desktop, server, npm, lock] = await Promise.all([json("package.json"), json("apps/terminay-server/package.json"), json("node_modules/npm/package.json"), json("package-lock.json")]);
-  assert.equal(desktop.packageManager, "npm@11.9.0");
-  assert.equal(desktop.dependencies.npm, "11.9.0");
-  assert.equal(server.dependencies.npm, "11.9.0");
-  assert.equal(npm.version, "11.9.0");
+  assert.equal(desktop.packageManager, "npm@12.0.2");
+  assert.equal(desktop.dependencies.npm, "12.0.2");
+  assert.equal(server.dependencies.npm, "12.0.2");
+  assert.equal(npm.version, "12.0.2");
   assert.equal(npm.license, "Artistic-2.0");
   const locked = lock.packages["node_modules/npm"];
-  assert.equal(locked.version, "11.9.0");
+  assert.equal(locked.version, "12.0.2");
   assert.match(locked.integrity, /^sha512-/u);
   assert.equal(locked.license, "Artistic-2.0");
 });

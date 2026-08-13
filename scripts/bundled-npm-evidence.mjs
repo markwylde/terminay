@@ -9,7 +9,7 @@ const readJson = async (path) => JSON.parse(await readFile(new URL(path, reposit
  * in its bundled production closure. No package code is executed. */
 export async function inspectBundledNpmEvidence() {
   const [npmPackage, lock] = await Promise.all([readJson("node_modules/npm/package.json"), readJson("package-lock.json")]);
-  if (npmPackage.version !== "11.9.0") throw new Error("bundled npm version is not pinned to 11.9.0");
+  if (npmPackage.version !== "12.0.2") throw new Error("bundled npm version is not pinned to 12.0.2");
   const npmLock = lock.packages["node_modules/npm"];
   if (typeof npmLock?.integrity !== "string") throw new Error("bundled npm archive lacks registry integrity");
   const names = ["npm", ...(npmPackage.bundleDependencies ?? [])].sort();

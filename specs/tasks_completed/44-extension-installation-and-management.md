@@ -29,7 +29,7 @@ and there is no admin install/preview/update/rollback/remove lifecycle.
 
 ### Installer and store
 
-- [x] Package pinned npm 11.9 with Desktop-embedded, standalone x64/arm64, and
+- [x] Package the pinned npm installer with Desktop-embedded, standalone x64/arm64, and
   Docker servers without introducing a system npm/compiler dependency.
 - [x] Build sterile npmjs-only resolve/preview/confirm, exact lock/integrity,
   scripts-disabled staging, bounded tree validation, immutable slots, receipts,

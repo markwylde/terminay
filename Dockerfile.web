@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24.14.0-bookworm-slim AS build
+FROM node:24.15.0-bookworm-slim AS build
 ARG TERMINAY_SOURCE_REVISION=local
 WORKDIR /workspace
+
+RUN npm install --global npm@12.0.2
 
 COPY package.json package-lock.json ./
 COPY apps/terminay-desktop/package.json ./apps/terminay-desktop/package.json

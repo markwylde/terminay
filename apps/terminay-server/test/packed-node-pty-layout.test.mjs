@@ -36,9 +36,9 @@ test("packed standalone node-pty resolves from its isolated closure despite host
     const archives = join(root, "archives");
     const extracted = join(root, "extracted");
     await Promise.all([mkdir(archives), mkdir(extracted)]);
-    const packed = JSON.parse((await run("npm", [
+    const packed = normalizePackResult(JSON.parse((await run("npm", [
       "pack", "--workspace", "@terminay/server", "--json", "--pack-destination", archives,
-    ], { cwd: repositoryRoot })).stdout);
+    ], { cwd: repositoryRoot })).stdout));
     assert.equal(packed.length, 1);
     await run("tar", ["-xzf", join(archives, packed[0].filename), "-C", extracted]);
 
@@ -90,3 +90,7 @@ terminal.onExit(() => { clearTimeout(timeout); process.stdout.write(JSON.stringi
     await rm(root, { recursive: true, force: true });
   }
 });
+
+function normalizePackResult(value) {
+  return Array.isArray(value) ? value : Object.values(value ?? {});
+}
