@@ -118,7 +118,7 @@ permission to weaken that permanent reproduction.
   transport generation, lane label, peer/ICE state, lifecycle phase, attempt,
   close reason, and outcome. Record no terminal bytes, paths, credentials, SDP,
   ICE candidates, or signaling secrets.
-- [ ] Replace broad `client is not connected` recovery diagnostics with the
+- [x] Replace broad `client is not connected` recovery diagnostics with the
   typed lifecycle state while preserving safe user-facing language.
 - [ ] Run the native node-datachannel proof on Linux x64 and arm64. Run the
   selected production Werift proof through the same behavioral matrix rather
