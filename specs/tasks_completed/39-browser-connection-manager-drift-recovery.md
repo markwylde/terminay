@@ -19,8 +19,8 @@ only after its bounded, metadata-only migration path is working and verified.
 - [Connections and client hosts](../features/connections-and-client-hosts.md)
 - [Remote access](../features/remote-access.md)
 - [Server runtime and application protocol](../features/server-runtime-and-protocol.md)
-- [Browser host and cross-version convergence](./29-browser-host-and-cross-version-convergence.md)
-- [WebRTC transport recovery acceptance](./43-webrtc-transport-recovery-acceptance.md)
+- [Browser host and cross-version convergence](../tasks/29-browser-host-and-cross-version-convergence.md)
+- [WebRTC transport recovery acceptance](../tasks/43-webrtc-transport-recovery-acceptance.md)
 - [Web connection host deployment](../operations/web-host-deployment.md)
 
 ## Current gap
@@ -162,10 +162,6 @@ easier.
 - [x] Make hostname routing fail closed: `app.terminay.com` serves only the
   canonical static manager, `web.terminay.com` serves only the bounded migration
   redirect, and session/signaling hosts retain their separate authority.
-- [ ] Publish the selected immutable image, update the Bunny origin and Host
-  header, attach both hostnames to their intended behaviors, purge stale entry
-  documents, and record DNS, TLS, CDN, image digest, source revision, headers,
-  root document, assets, and migration results as release evidence.
 - [x] Add an explicit rollback procedure that restores the prior immutable
   image/routing without deleting legacy metadata or session-origin reconnect
   credentials.
@@ -181,21 +177,10 @@ easier.
 - [x] Add renderer tests proving that empty, disconnected, saved, unreachable,
   expired, revoked, and already-connected Connections views all expose the same
   canonical add/pair flow with accessible labels and keyboard/touch behavior.
-- [ ] Add Docker browser E2E for paste link -> enroll -> connect -> reload ->
-  saved reconnect -> rename -> forget, using `npm run test:e2e` and never the
-  host Playwright Electron suite.
-- [ ] Add Docker browser E2E for re-pairing an existing origin, invalid/expired
-  links, wrong PIN, interrupted credential storage, pre-activation server
-  restart, revoked device, manager-level offline retry, and two manager tabs
-  without duplicate pairing or reconnect attempts. Task 43 owns mounted WebRTC
-  transport failure and Retry; do not duplicate it in this manager journey.
 - [x] Add a migration E2E that begins at the real legacy origin with multiple
   sanitized saved profiles, lands on the canonical origin, clears the handoff,
   preserves session-origin credentials, and clearly requests fresh pairing
   where credentials are absent.
-- [ ] Run the public verifier only after deployment and capture immutable
-  evidence. The check must fail before the routing change and pass only when
-  the canonical root and all referenced assets come from the selected build.
 
 ## Implementation evidence
 

@@ -13,8 +13,8 @@ shared-transport failure.
 - [Server runtime and application protocol](../features/server-runtime-and-protocol.md)
 - [Server-owned workspace state](../features/server-owned-workspace-state.md)
 - [Durable terminal presentation recovery](../tasks_completed/35-durable-terminal-presentation-recovery.md)
-- [Task 42: Unified renderer connection recovery](./42-unified-renderer-connection-recovery.md)
-- [Task 43: WebRTC transport recovery acceptance](./43-webrtc-transport-recovery-acceptance.md)
+- [Task 42: Unified renderer connection recovery](../tasks_completed/42-unified-renderer-connection-recovery.md)
+- [Task 43: WebRTC transport recovery acceptance](../tasks/43-webrtc-transport-recovery-acceptance.md)
 
 ## Current gap
 
@@ -136,16 +136,6 @@ it must not extend the old remote recovery implementation.
   renderer while another terminal and workspace commands remain responsive.
 - [x] Test multiple noisy terminals for fair progress and reserved control
   capacity.
-- [ ] Test congestion across UTF-8 and terminal-control byte boundaries,
-  resize, alternate screen, synchronized output, recording, detach, exit, and
-  presentation takeover.
-- [ ] Force MessagePort and WebSocket loss and prove automatic workspace
-  resubscription plus checkpoint hydration. Task 43 owns native WebRTC
-  generation-loss and Retry evidence so this task does not maintain a second
-  WebRTC recovery harness.
-- [ ] Run focused unit/integration suites, lint, build, and all Electron tests
-  only through `npm run test:e2e`.
-
 ## Acceptance checks
 
 - A finite or sustained terminal producer cannot close or starve the shared

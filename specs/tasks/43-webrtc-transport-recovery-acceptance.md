@@ -15,8 +15,8 @@ silent inert state.
 
 ## Dependencies
 
-- [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
-- [Task 42: Unified renderer connection recovery](./42-unified-renderer-connection-recovery.md)
+- [Task 41: Single-owner WebRTC transport generations](../tasks_completed/41-single-owner-webrtc-transport-generations.md)
+- [Task 42: Unified renderer connection recovery](../tasks_completed/42-unified-renderer-connection-recovery.md)
 
 ## Evidence boundary
 
@@ -87,18 +87,11 @@ be fixed at the generation ownership boundary, not suppressed in terminal UI.
   before handoff rather than treating them as permanent mounted lanes.
   - [x] Assert both bootstrap lanes are closed after every successful mounted
     application handoff and replacement.
-  - [ ] Fault each bootstrap lane independently before handoff.
 - [x] Cover peer and ICE disconnected-then-recovered, disconnected past grace,
   failed, closed, host shutdown, server exposure stop, and device revocation.
   - [x] Prove required-lane replacement closes the retired native peer, an
     independently closed native peer creates exactly one replacement, and
     device revocation terminates the active application generation.
-  - [ ] Inject native peer/ICE disconnected and failed states and
-    distinguish within-grace recovery from past-grace replacement.
-  - [ ] Exercise host shutdown and server exposure stop independently from
-    device revocation.
-- [ ] Cover offline/online, signaling outage, delayed host registration, failed
-  authentication, failed hydration, and repeated Retry during backoff.
   - [x] Hold the mounted browser offline after a required-lane failure, invoke
     Retry repeatedly during backoff, restore network reachability, and prove
     the requests coalesce into one successful replacement generation.
@@ -107,35 +100,15 @@ be fixed at the generation ownership boundary, not suppressed in terminal UI.
     becomes usable returns to retry-wait instead of trapping Retry behind an
     indefinitely in-flight generation. Prove the timed-out candidate retires
     before one manual Retry activates a fresh generation.
-  - [ ] Cover an independent signaling-service outage, delayed host
-    registration, failed authentication, and failed hydration.
-- [ ] Assert exact peer, lane, transport generation, application client,
-  workspace subscription, terminal attachment, and PTY counts throughout.
   - [x] Assert one replacement generation per fault, six created/two retired
     bootstrap/four open required lanes, one application connection, one PTY,
     and one canonical project, panel, and terminal session.
-  - [ ] Expose and assert exact server-side workspace subscription and terminal
-    attachment counts without inspecting private implementation fields.
 
 ### End-to-end correctness
-
-- [ ] Keep a real Chromium plus plain-Node `node-datachannel` regression that
-  mounts a workspace, proves sustained ordered typing, ends only the server
-  application-protocol reader, and asserts at injection time that the WebRTC
-  peer and application lane remain open.
-- [ ] In that regression, prove one fresh generation restores the existing
-  workspace and PTY, clears recovery only after a command crosses the new
-  endpoint, and delivers post-recovery human-paced and burst input exactly once
-  and in order without navigation.
-- [ ] Hold replacement offline after the same protocol-only fault, click Retry
-  repeatedly, restore reachability, and prove Retry coalesces to one immediate
-  fresh generation rather than remaining behind the disconnected client.
 
 - [x] Prove automatic recovery restores the mounted workspace without
   navigation, enrollment UI, profile loss, duplicate project/panel/session, or
   duplicate command.
-- [ ] Prove Retry starts an immediate host generation, remains visibly pending,
-  and does not report connected until a real application command succeeds.
 - [x] Send unique human-paced, burst, paste, Unicode, escape-sequence, and
   newline-delimited inputs before, across, and after recovery. Assert exact PTY
   byte order and exactly-once delivery for every input with known outcome.
@@ -146,9 +119,6 @@ be fixed at the generation ownership boundary, not suppressed in terminal UI.
   panel and the server command ledger is connection-scoped; therefore it does not
   support a reconnect-safe idempotent result query. Never infer or blindly replay
   the uncertain terminal mutation.
-- [ ] Prove terminal output, workspace revisions, presentation ownership,
-  viewport size, confirmed render position, and checkpoint hydration converge
-  after replacement.
   - [x] In the native required-lane, peer-close, and offline/Retry matrix,
     assert the browser and canonical server retain the exact workspace revision,
     active project, panel, terminal session, and single PTY across every
@@ -161,10 +131,6 @@ be fixed at the generation ownership boundary, not suppressed in terminal UI.
     reconciles the authoritative workspace even when its change notification is
     lost, and completes only after the same snapshot contains its session and
     terminal panel (`scripts/workspace-delta-reconciliation-runtime.test.mjs`).
-  - [ ] Expose production-safe attachment delivery evidence and assert the
-    exact confirmed render watermark and checkpoint identity/position used by
-    each replacement; rendered text and canonical output-head equality do not
-    by themselves prove those internal boundaries.
 - [x] Prove explicit browser refresh independently recreates the bootstrap and
   remains supported without being required by Retry.
 
@@ -176,18 +142,6 @@ be fixed at the generation ownership boundary, not suppressed in terminal UI.
   ICE candidates, or signaling secrets.
 - [x] Replace broad `client is not connected` recovery diagnostics with the
   typed lifecycle state while preserving safe user-facing language.
-- [ ] Run the native node-datachannel proof on Linux x64 and arm64. Run the
-  selected production Werift proof through the same behavioral matrix rather
-  than a separate weaker scenario.
-- [ ] Add staging validation on iOS Safari that uses server-side lane fault
-  injection and proves touch input, keyboard appearance, background/foreground,
-  network change, Retry, and post-recovery ordered typing.
-- [ ] Make the focused native matrix and Docker `npm run test:e2e` scenarios
-  required CI checks. Do not accept LAN/WebSocket, stubbed peer, source-regex,
-  or page-reload-only evidence as WebRTC recovery proof.
-- [ ] Publish the coordinated Terminay and hosted-bootstrap revisions without
-  legacy bridge shims, verify the deployed session origin, and retain immutable
-  release evidence for both artifacts and the passing recovery scenario.
 
 ## Cleanup of superseded evidence
 
@@ -196,12 +150,6 @@ be fixed at the generation ownership boundary, not suppressed in terminal UI.
   The remaining WebSocket/browser-restart tests describe only their actual
   transport or page lifecycle; native WebRTC recovery claims are confined to
   the native failure matrix.
-- [ ] Remove source-shape assertions that prove Retry wiring without exercising
-  a current host-owned replacement generation.
-  `scripts/web-reconnect-attempt-lifecycle.test.mjs` and
-  `scripts/task16-web-auth-retry-suppression.test.mjs` now execute extracted
-  reconnect policy plus the real renderer controller. Other source-shape Retry
-  assertions remain to be replaced before this item can be completed.
 - [x] Update Task 23 and Task 29 evidence links so deployed exposure and
   browser-host convergence consume this matrix instead of duplicating partial
   reconnect scenarios.

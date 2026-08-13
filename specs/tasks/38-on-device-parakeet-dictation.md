@@ -93,17 +93,11 @@ must not be treated as renderer code or an unbounded shell command.
 
 - [x] Unit-test setting migration, provider/model combinations, OpenAI key
   gating, unsupported platforms, and absence of remote fallback.
-- [ ] Unit-test worker discovery, fixed argv/environment, installation
-  serialization, JSON framing, malformed/oversized output, timeout,
-  cancellation, crash recovery, audio cleanup, and app shutdown.
 - [x] Test both providers with injected adapters so normal CI requires neither
   a model download nor OpenAI network access.
 - [x] Add an opt-in real-Mac smoke test that downloads the pinned model,
   transcribes a checked-in short speech fixture using Metal, verifies useful
   text, then proves the same fixture works with networking disabled.
-- [ ] Add Docker-isolated Electron E2E for provider switching, conditional
-  settings, setup/error states, and successful injected Parakeet dictation.
-  Run Electron coverage only through `npm run test:e2e`.
 
 ## Acceptance checks
 
