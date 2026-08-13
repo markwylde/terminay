@@ -59,6 +59,12 @@ test('pre-profile pairing never enters the profile-scoped connection controller'
 	assert.match(source, /const rendererAttempt = connectionController\.current!\.begin\(profile\.id\)/u)
 })
 
+test('mounted terminal resume is the recovery verification command', () => {
+	const pipeline = source.slice(source.indexOf('\tfunction browserRecoveryPipeline()'), source.indexOf('\n\tfunction startBrowserRecovery', source.indexOf('\tfunction browserRecoveryPipeline()')))
+	assert.match(pipeline, /await recovery\.terminalHydrated/u)
+	assert.doesNotMatch(pipeline, /ServerHealthClient|snapshot\(\)/u)
+})
+
 test('invalid persisted reconnect proofs stop retrying and require fresh pairing', () => {
 	assert.match(source, /function reconnectNeedsFreshPairing\(cause: unknown\): boolean/u)
 	assert.match(source, /cause\.message === 'reconnect proof request is invalid'/u)
