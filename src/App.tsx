@@ -102,10 +102,6 @@ import {
 } from './keyboardShortcuts';
 import { tryRenderMacroTemplate } from './macroSettings';
 import { ProjectEnvironmentSplitButton } from './projectEnvironments/ProjectEnvironmentSplitButton';
-import {
-	ProjectEnvironmentSurfaceDialog,
-	type ProjectEnvironmentSurface,
-} from './projectEnvironments/ProjectEnvironmentSurfaces';
 import type { ProjectEnvironmentSummaryDto } from './projectEnvironments/uiModel';
 import { getPathRelativeToRoot } from './pathUtils';
 import { createLegacyAiTabMetadataClient } from './services/ai/legacyAiTabMetadataClient';
@@ -5294,8 +5290,6 @@ function App({
 		useState<AppUpdateStatus | null>(null);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
-	const [projectEnvironmentSurface, setProjectEnvironmentSurface] =
-		useState<ProjectEnvironmentSurface | null>(null);
 	const [projectEnvironmentNotice, setProjectEnvironmentNotice] =
 		useState<string | null>(null);
 	const projectEnvironmentsClient = useMemo(
@@ -5326,15 +5320,19 @@ function App({
 		return () => { active = false; };
 	}, [projectEnvironmentsClient]);
 	useEffect(() => {
-		const openEnvironments = () => setProjectEnvironmentSurface('environments');
-		const openExtensions = () => setProjectEnvironmentSurface('extensions');
+		const openEnvironments = () => {
+			void auxiliaryRouteController.openProjectEnvironments();
+		};
+		const openExtensions = () => {
+			void auxiliaryRouteController.openSettings('extensions');
+		};
 		window.addEventListener('terminay-open-project-environments', openEnvironments);
 		window.addEventListener('terminay-open-extensions', openExtensions);
 		return () => {
 			window.removeEventListener('terminay-open-project-environments', openEnvironments);
 			window.removeEventListener('terminay-open-extensions', openExtensions);
 		};
-	}, []);
+	}, [auxiliaryRouteController]);
 	const chooseProjectEnvironment = useCallback(
 		async (environment: ProjectEnvironmentSummaryDto) => {
 			if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
@@ -5566,19 +5564,17 @@ function App({
 	const executeCommandOnActiveProject = useCallback(
 		(command: AppCommand): Promise<void> => {
 			if (command === 'open-project-environments') {
-				setProjectEnvironmentSurface('environments');
-				return Promise.resolve();
+				return auxiliaryRouteController.openProjectEnvironments();
 			}
 			if (command === 'open-extensions') {
-				setProjectEnvironmentSurface('extensions');
-				return Promise.resolve();
+				return auxiliaryRouteController.openSettings('extensions');
 			}
 			return (
 				workspaceRefs.current.get(activeProjectId)?.executeCommand(command) ??
 				Promise.resolve()
 			);
 		},
-		[activeProjectId],
+		[activeProjectId, auxiliaryRouteController],
 	);
 
 	const updateTerminalActivityOverview = useCallback(
@@ -5770,8 +5766,8 @@ function App({
 						onCreateThisServer={() => void createThisServerProject()}
 						onChoose={chooseProjectEnvironment}
 						onOpen={() => void refreshProjectEnvironmentChoices()}
-						onManageEnvironments={() => setProjectEnvironmentSurface('environments')}
-						onManageExtensions={() => setProjectEnvironmentSurface('extensions')}
+						onManageEnvironments={() => void auxiliaryRouteController.openProjectEnvironments()}
+						onManageExtensions={() => void auxiliaryRouteController.openSettings('extensions')}
 					/>
 				</div>
 				<div className="header-actions">
@@ -5892,15 +5888,6 @@ function App({
 					/>
 				))}
 			</div>
-
-			{projectEnvironmentSurface === null ? null : (
-				<ProjectEnvironmentSurfaceDialog
-					surface={projectEnvironmentSurface}
-					serverName={currentServerLabel === 'Local' ? 'This server' : currentServerLabel}
-					applicationClient={terminalClientContext?.applicationClient}
-					onClose={() => setProjectEnvironmentSurface(null)}
-				/>
-			)}
 
 			{isRemoteConnectionModalOpen ? (
 				<RemoteConnectionModal

@@ -21,11 +21,13 @@ test('auxiliary route controller owns native delegation and browser in-page fall
 
 	assert.match(controller, /export type AuxiliaryRouteController/u);
 	assert.match(controller, /openSettings/u);
+	assert.match(controller, /openProjectEnvironments/u);
 	assert.match(controller, /openMacros/u);
 	assert.match(controller, /openRecordings/u);
 	assert.match(controller, /editProjectTab/u);
 	assert.match(controller, /editTerminalTab/u);
 	assert.match(controller, /terminaySettingsWindowHost/u);
+	assert.match(controller, /terminayProjectEnvironmentsHost/u);
 	assert.match(controller, /terminayRecordingsHost/u);
 	assert.match(controller, /terminayProjectEditHost/u);
 	assert.match(controller, /terminayTerminalEditHost/u);
@@ -33,11 +35,14 @@ test('auxiliary route controller owns native delegation and browser in-page fall
 	assert.match(app, /createAuxiliaryRouteController\(\)/u);
 	assert.match(app, /auxiliaryRoutes\.openRecordings\(\)/u);
 	assert.match(app, /auxiliaryRoutes\.openSettings\('git-push-agent'\)/u);
+	assert.match(app, /auxiliaryRouteController\.openSettings\('extensions'\)/u);
+	assert.match(app, /auxiliaryRouteController\.openProjectEnvironments\(\)/u);
 	assert.match(app, /auxiliaryRoutes\.editTerminalTab\(/u);
 	assert.match(projectEditor, /auxiliaryRoutes\.editProjectTab\(/u);
 
 	assert.doesNotMatch(app, /window\.terminayRecordingsHost\?\.open\(/u);
 	assert.doesNotMatch(app, /window\.terminayTerminalEditHost\?\.open\(/u);
+	assert.doesNotMatch(app, /ProjectEnvironmentSurfaceDialog/u);
 	assert.doesNotMatch(projectEditor, /window\.terminayProjectEditHost\?\.open\(/u);
 
 	assert.match(sharedWorkspace, /auxiliaryRoutes\?: AuxiliaryRouteController/u);
@@ -48,5 +53,6 @@ test('auxiliary route controller owns native delegation and browser in-page fall
 	assert.doesNotMatch(webWorkspace, /window\.terminay(?:SettingsWindowHost|RecordingsHost|ProjectEditHost|TerminalEditHost)/u);
 	assert.match(webWorkspace, /SharedEditTabRouteBody/u);
 	assert.match(webWorkspace, /SettingsWindow/u);
+	assert.match(webWorkspace, /ProjectEnvironmentsWindow/u);
 	assert.match(webWorkspace, /RecordingsWindow/u);
 });
