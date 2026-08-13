@@ -710,6 +710,7 @@ export interface TerminayTestApi {
     terminalSessionId: string,
   ) => Promise<{ socketPath: string; token: string }>
   sendAppCommand: (command: AppCommand) => Promise<void>
+  reportAppCommandStage: (stage: string) => void
   setAiTabMetadataMock: (mock: {
     error?: string | null
     models?: AiTabMetadataModel[]
