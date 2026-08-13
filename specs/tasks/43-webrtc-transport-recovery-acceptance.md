@@ -52,6 +52,9 @@ generation correctly.
   and screenshots on failure.
 - [ ] Add independent fault injection for `control`, `application`, `terminal`,
   and `assets` lane close/error while the browser peer stays connected.
+- [ ] Prove bootstrap-only `api` and singular `asset` lanes are closed and
+  unreachable after canonical application handoff; test their pre-handoff
+  failure separately rather than treating them as permanent mounted lanes.
 - [ ] Cover peer and ICE disconnected-then-recovered, disconnected past grace,
   failed, closed, host shutdown, server exposure stop, and device revocation.
 - [ ] Cover offline/online, signaling outage, delayed host registration, failed
