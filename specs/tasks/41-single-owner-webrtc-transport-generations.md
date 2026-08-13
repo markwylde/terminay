@@ -69,6 +69,10 @@ starts, its presentation clears, and later input never reaches the PTY.
 - [ ] Evaluate peer, ICE, `control`, `application`, `terminal`, and `assets`
   health through one state machine. Close/error of any required lane is a
   terminal failure of that generation even if the peer remains connected.
+- [ ] Treat legacy/bootstrap `api` and `asset` lanes as attempt-scoped
+  enrollment/bundle-install resources only. Close and delete them at the
+  authenticated canonical-lane handoff; they cannot remain renderer-visible or
+  generation-critical after the mounted application starts.
 - [ ] Preserve the bounded grace period only for recoverable peer/ICE
   `disconnected` state. Cancel it when the complete generation becomes healthy;
   replace immediately for explicit failed/closed state or required-lane loss.
@@ -93,6 +97,9 @@ starts, its presentation clears, and later input never reaches the PTY.
 - [ ] Delete `getChannel()` from the renderer-facing surface, raw `apiChannel`
   and `terminalChannel` compatibility access, renderer-side channel caching,
   and any renderer-side WebRTC transport constructor.
+- [ ] Delete mounted virtual-HTTP dependence on the bootstrap `api` lane and
+  singular `asset` compatibility lane after bundle installation. Do not carry
+  six permanent lanes merely to preserve the old bridge.
 - [ ] Delete the mounted-app `location.replace('/v1/')` recovery mechanism.
   Normal browser refresh still enters `/v1/`, but automatic and manual
   recovery replace the transport in-page.
@@ -107,6 +114,8 @@ starts, its presentation clears, and later input never reaches the PTY.
 - Closing each required data lane independently while the peer remains
   connected retires one generation and produces one fresh authenticated
   endpoint without a page reload.
+- Bootstrap `api` and singular `asset` lanes are absent after authenticated
+  handoff; the mounted application cannot request or revive them.
 - Peer/ICE disconnected-then-connected preserves a healthy generation inside
   the grace period; failed, closed, or expired grace replaces it exactly once.
 - Automatic recovery and Retry cannot create concurrent signaling rooms,
