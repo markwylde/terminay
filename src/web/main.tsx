@@ -1180,9 +1180,11 @@ export default function WebManagerApp() {
 			verify: async (recovery: WebRecoveryContext) => {
 				if (recovery.candidate === undefined)
 					throw new Error('Recovered browser connection was not hydrated.');
-				await new ServerHealthClient(
-					new TerminayClientFacade(recovery.client),
-				).snapshot();
+				// Terminal attachment/resume traverses the replacement application
+				// client and receives a confirmed server result. It is the hydration
+				// probe. A separate query here can reject and dispose the candidate
+				// before React commits the context queued by onCandidate, leaving the
+				// mounted panel with a new callback bound to already-closed authority.
 				await recovery.terminalHydrated;
 			},
 		};
