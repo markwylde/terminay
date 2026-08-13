@@ -12,7 +12,9 @@ shared-transport failure.
 - [Terminal workspace](../features/terminal-workspace.md)
 - [Server runtime and application protocol](../features/server-runtime-and-protocol.md)
 - [Server-owned workspace state](../features/server-owned-workspace-state.md)
-- [Durable terminal presentation recovery](./35-durable-terminal-presentation-recovery.md)
+- [Durable terminal presentation recovery](../tasks_completed/35-durable-terminal-presentation-recovery.md)
+- [Task 42: Unified renderer connection recovery](./42-unified-renderer-connection-recovery.md)
+- [Task 43: WebRTC transport recovery acceptance](./43-webrtc-transport-recovery-acceptance.md)
 
 ## Current gap
 
@@ -62,7 +64,7 @@ MessagePort.
 - Repeated congestion remains bounded and repeatable. It cannot create an
   unbounded retry, checkpoint-pin, event-journal, or hydration queue.
 
-### Connection recovery
+### Existing connection-recovery baseline
 
 - True transport failure invalidates the old application client and enters an
   observable reconnect state.
@@ -72,6 +74,12 @@ MessagePort.
 - Workspace state reload and terminal hydration complete before mutations are
   re-enabled. Failed attempts remain visible and retryable instead of leaving
   disposed clients mounted.
+
+This completed baseline exposed the remaining overlapping renderer recovery
+owners. Task 42 supersedes that lifecycle machinery with the one final
+connection controller. This task retains ownership only of terminal congestion,
+attachment-scoped resynchronization, and forced MessagePort/WebSocket evidence;
+it must not extend the old remote recovery implementation.
 
 ## Implementation slices
 
@@ -131,8 +139,10 @@ MessagePort.
 - [ ] Test congestion across UTF-8 and terminal-control byte boundaries,
   resize, alternate screen, synchronized output, recording, detach, exit, and
   presentation takeover.
-- [ ] Force MessagePort, WebSocket, and WebRTC loss and prove automatic
-  workspace resubscription plus checkpoint hydration.
+- [ ] Force MessagePort and WebSocket loss and prove automatic workspace
+  resubscription plus checkpoint hydration. Task 43 owns native WebRTC
+  generation-loss and Retry evidence so this task does not maintain a second
+  WebRTC recovery harness.
 - [ ] Run focused unit/integration suites, lint, build, and all Electron tests
   only through `npm run test:e2e`.
 

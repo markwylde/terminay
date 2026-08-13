@@ -60,6 +60,31 @@ test('a late close callback from a retired generation cannot dispose its replace
   assert.deepEqual(disposed, ['old', 'replacement'])
 })
 
+test('a mounted panel cannot retry through its original callback once disconnect disposal invalidates that generation', async () => {
+  const diagnostics = []
+  const generation = new RendererConnectionGeneration()
+  const mountedPanelAttempt = generation.begin('server-a')
+  await generation.activate(mountedPanelAttempt, { dispose: () => diagnostics.push('disposed') })
+
+  const recoverThroughMountedPanel = () => {
+    if (!generation.isCurrent(mountedPanelAttempt)) {
+      diagnostics.push('stale-close-ignored')
+      return false
+    }
+    void generation.disposeActive('server-a')
+    diagnostics.push('recovery-started')
+    return true
+  }
+
+  assert.equal(recoverThroughMountedPanel(), true)
+  assert.deepEqual(diagnostics, ['disposed', 'recovery-started'])
+
+  // The disconnected workspace intentionally stays mounted while recovery
+  // runs, so its button still owns this exact callback. This is the deployed
+  // Retry path before a replacement context has activated.
+  assert.equal(recoverThroughMountedPanel(), true)
+})
+
 test('supersession while disposing the previous context cannot retain a disposed candidate', async () => {
   let releasePrevious
   const previousDisposed = new Promise((resolve) => {

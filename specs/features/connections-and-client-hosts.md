@@ -199,6 +199,9 @@ parallel legacy workspace-window owner.
   bootstrap, WebRTC/signaling compatibility, bundle verification/installation,
   and safe launch/failure UI only. It does not contain a full fallback
   workspace application.
+- The exact session-origin shell owns one replaceable transport generation for
+  its mounted workspace. It exposes an opaque byte endpoint and lifecycle
+  operations, not raw WebRTC peers/channels or reconnect credentials.
 - The host stores only non-secret connection metadata in localStorage or an
   equivalent browser store.
 - Origin-bound device keys and reconnect grants remain in IndexedDB/WebCrypto
@@ -384,7 +387,14 @@ Forbidden in connection-manager localStorage, URLs, host messages, and logs:
 
 - A failed remote connection never falls back to Local or another remembered
   server silently.
-- Offline preserves the profile and credentials and offers Retry.
+- Offline preserves the profile and credentials and offers Retry through the
+  same host-owned recovery controller used by automatic transport failure.
+- Required-channel failure replaces the entire transport generation even when
+  the WebRTC peer still reports connected. Retry cannot reuse the closed lane,
+  call a retired renderer callback, or depend on a page reload.
+- Connection errors remain visible and terminal input remains disabled until
+  the new client, subscriptions, workspace, and mounted terminal attachments
+  have hydrated successfully.
 - Expired/revoked explains whether fresh pairing or server-side approval is
   required.
 - Forget and revoke require confirmation explaining their different scopes.
