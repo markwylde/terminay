@@ -21,7 +21,7 @@ test('release pack consumers accept npm 12 single-object metadata', async () => 
 		resolve(root, 'scripts/build-secure-werift-candidate.mjs'),
 		'utf8',
 	);
-	assert.match(workflow, /const result = Array\.isArray\(value\)/u);
+	assert.match(workflow, /node scripts\/npm-pack-result\.mjs/u);
 	assert.doesNotMatch(workflow, /!Array\.isArray\(result\) \|\| result\.length !== 1/u);
 	assert.equal(
 		[...secureRuntimeBuilder.matchAll(/parseSingleNpmPackResult\(packed\.stdout\)/gu)].length,
