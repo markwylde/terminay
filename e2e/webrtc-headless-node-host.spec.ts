@@ -856,6 +856,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         runtime = replacement
         await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
         await expect(reconnectPage.locator('.xterm-rows')).toContainText('headless-host-ready')
+        await expect(reconnectPage.getByRole('button', { name: 'Retry connection' })).toHaveCount(0, {
+          timeout: 20_000,
+        })
         expect(reconnectPage.url()).toBe(initialUrl)
 
         const terminalInput = reconnectPage.getByRole('textbox', { name: 'Terminal input' })
