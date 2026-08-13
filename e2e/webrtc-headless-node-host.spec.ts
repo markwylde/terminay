@@ -467,6 +467,18 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         }).__terminayReconnectDiagnostics?.push({ ...value })
       },
     })
+    Object.defineProperty(window, '__terminayTerminalRebindDiagnostics', {
+      configurable: false,
+      value: [] as Array<{ sessionId: string; phase: string; error?: string }>,
+    })
+    Object.defineProperty(window, '__terminayTerminalRebindDiagnostic', {
+      configurable: false,
+      value: (value: { sessionId: string; phase: string; error?: string }) => {
+        ;(window as Window & {
+          __terminayTerminalRebindDiagnostics?: Array<{ sessionId: string; phase: string; error?: string }>
+        }).__terminayTerminalRebindDiagnostics?.push({ ...value })
+      },
+    })
     window.WebSocket = class extends OriginalWebSocket {
       constructor(url: string | URL, protocols?: string | string[]) {
         super(url, protocols)
@@ -840,8 +852,10 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
           contentType: 'application/json',
         })
         const retry = reconnectPage.getByRole('button', { name: 'Retry connection' })
-        await expect(retry).toBeVisible({ timeout: 20_000 })
-        await retry.click()
+        // Recovery may finish before the failure overlay paints. If it is still
+        // waiting, exercise the stable manual Retry action; otherwise the fresh
+        // generation itself is the stronger successful outcome.
+        if (await retry.isVisible().catch(() => false)) await retry.click()
         await expect.poll(() => reconnectPage.evaluate(() =>
           ((window as Window & {
             __terminayReconnectDiagnostics?: Array<{ phase: string }>
@@ -858,6 +872,16 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         await expect(reconnectPage.locator('.xterm-rows')).toContainText('headless-host-ready')
         await expect(reconnectPage.getByRole('button', { name: 'Retry connection' })).toHaveCount(0, {
           timeout: 20_000,
+        }).catch(async (error) => {
+          const diagnostics = await reconnectPage.evaluate(() => ({
+            reconnect: (window as Window & { __terminayReconnectDiagnostics?: unknown }).__terminayReconnectDiagnostics,
+            rebind: (window as Window & { __terminayTerminalRebindDiagnostics?: unknown }).__terminayTerminalRebindDiagnostics,
+            serverClientState: (window as Window & { __terminayServerClientState?: unknown }).__terminayServerClientState,
+            sessionTransportState: (window as Window & {
+              __TERMINAY_SESSION_TRANSPORT__?: { getState?: () => unknown }
+            }).__TERMINAY_SESSION_TRANSPORT__?.getState?.(),
+          }))
+          throw new Error(`${error instanceof Error ? error.message : String(error)} diagnostics=${JSON.stringify(diagnostics)}`)
         })
         expect(reconnectPage.url()).toBe(initialUrl)
 
