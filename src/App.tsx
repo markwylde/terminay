@@ -127,7 +127,10 @@ import type {
 } from './types/agentStatus';
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
-import type { ServerWorkspacePanel } from './shared/serverWorkspaceReconciliation';
+import {
+	hasTerminalPresentation,
+	type ServerWorkspacePanel,
+} from './shared/serverWorkspaceReconciliation';
 import type {
 	SidebarPanelId,
 	SidebarSettings,
@@ -2161,7 +2164,7 @@ const ProjectWorkspace = forwardRef<
 						hydrateRecordingStateForSession(sessionId);
 					}
 					const synchronized = await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
-						(snapshot) => sessionId in snapshot.terminalSessions,
+						(snapshot) => hasTerminalPresentation(snapshot, sessionId),
 					);
 					if (synchronized === null) {
 						throw new Error('Server did not publish a terminal panel for the created session.');
@@ -3003,7 +3006,7 @@ const ProjectWorkspace = forwardRef<
 					? undefined
 					: async (sessionId) =>
 							(await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
-								(snapshot) => sessionId in snapshot.terminalSessions,
+								(snapshot) => hasTerminalPresentation(snapshot, sessionId),
 							)) !== null,
 		});
 

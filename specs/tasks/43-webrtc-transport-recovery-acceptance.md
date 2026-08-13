@@ -126,6 +126,10 @@ permission to weaken that permanent reproduction.
     dimensions, the PTY received that exact resize, retained output remains
     painted, the replacement owns writable presentation control, and new
     canonical output reaches both the server output head and mounted xterm.
+  - [x] Prove a terminal created immediately after replacement actively
+    reconciles the authoritative workspace even when its change notification is
+    lost, and completes only after the same snapshot contains its session and
+    terminal panel (`scripts/workspace-delta-reconciliation-runtime.test.mjs`).
   - [ ] Expose production-safe attachment delivery evidence and assert the
     exact confirmed render watermark and checkpoint identity/position used by
     each replacement; rendered text and canonical output-head equality do not
