@@ -120,7 +120,8 @@ cleanup rather than a workspace or PTY lifecycle command.
 - Closing a canonical terminal panel is command-first: the renderer waits for
   the server close result and a reconciled snapshot before completing the UI
   action. Dockview removal is a projection of that confirmed state and must not
-  launch a second close command from a stale revision.
+  launch a second close command from a stale revision. Busy PTY teardown and
+  snapshot convergence share a bounded 10-second lifecycle budget.
 
 This is multi-client consistency, not collaborative document editing. File
 editing continues to use the file-viewer conflict contract.
