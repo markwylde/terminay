@@ -60,6 +60,7 @@ export function getSessionTransportHost(): SessionTransportHost | undefined {
 	for (const name of ['sessionId', 'origin'] as const) {
 		if (typeof value[name] !== 'string' || value[name].length === 0) fail(name);
 	}
+	if (new URL(value.origin as string).origin !== window.location.origin) fail('origin binding');
 	for (const name of ['postJson', 'acquireApplicationEndpoint', 'registerApplication', 'connect', 'enroll'] as const) {
 		if (typeof value[name] !== 'function') fail(name);
 	}

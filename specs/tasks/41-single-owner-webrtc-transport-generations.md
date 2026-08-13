@@ -69,7 +69,7 @@ starts, its presentation clears, and later input never reaches the PTY.
 - [x] Evaluate peer, ICE, `control`, `application`, `terminal`, and `assets`
   health through one state machine. Close/error of any required lane is a
   terminal failure of that generation even if the peer remains connected.
-- [ ] Treat legacy/bootstrap `api` and `asset` lanes as attempt-scoped
+- [x] Treat legacy/bootstrap `api` and `asset` lanes as attempt-scoped
   enrollment/bundle-install resources only. Close and delete them at the
   authenticated canonical-lane handoff; they cannot remain renderer-visible or
   generation-critical after the mounted application starts.
@@ -97,13 +97,13 @@ starts, its presentation clears, and later input never reaches the PTY.
 - [x] Delete `getChannel()` from the renderer-facing surface, raw `apiChannel`
   and `terminalChannel` compatibility access, renderer-side channel caching,
   and any renderer-side WebRTC transport constructor.
-- [ ] Delete mounted virtual-HTTP dependence on the bootstrap `api` lane and
+- [x] Delete mounted virtual-HTTP dependence on the bootstrap `api` lane and
   singular `asset` compatibility lane after bundle installation. Do not carry
   six permanent lanes merely to preserve the old bridge.
 - [x] Delete the mounted-app `location.replace('/v1/')` recovery mechanism.
   Normal browser refresh still enters `/v1/`, but automatic and manual
   recovery replace the transport in-page.
-- [ ] Delete duplicate reconnect timers, online listeners, credential reads,
+- [x] Delete duplicate reconnect timers, online listeners, credential reads,
   and signaling starts outside the session transport host.
 - [x] Remove compatibility aliases, fallback globals, and old source-shape
   tests in the same change. An incompatible host contract fails explicitly;
