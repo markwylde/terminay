@@ -18,6 +18,16 @@ silent inert state.
 - [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
 - [Task 42: Unified renderer connection recovery](./42-unified-renderer-connection-recovery.md)
 
+## Evidence boundary
+
+Repository implementation can complete deterministic fault injection, native
+Linux scenarios available to the configured runners, Docker Electron/browser
+coverage, diagnostics, and release-workflow gates. Linux arm64 native evidence,
+physical iOS Safari evidence, branch-protection activation, coordinated artifact
+publication, and deployed-origin verification remain unchecked until those
+external systems produce revision-bound evidence. A local substitute, emulated
+browser, or workflow source assertion cannot mark those outcomes complete.
+
 ## Current gap and permanent reproduction
 
 The former browser convergence test used Local Network pairing and fell back to
