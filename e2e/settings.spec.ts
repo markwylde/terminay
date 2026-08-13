@@ -46,6 +46,18 @@ test('opens settings focused to remote access and supports settings search', asy
   await expect(settingsWindow.getByRole('button', { name: 'Scrolling' })).toBeVisible()
 })
 
+test('shows selected-server extensions as an ordinary Settings category', async ({ appHarness, mainWindow }) => {
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'extensions' })
+
+  await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  await expect(settingsWindow.getByRole('button', { name: 'Extensions' })).toHaveAttribute('aria-current', 'true')
+  await expect(settingsWindow.locator('#section-extensions')).toBeVisible()
+  await expect(settingsWindow.getByText('Third-party extensions are trusted code.')).toBeVisible()
+  await expect(settingsWindow.getByRole('button', { name: 'Reset to defaults' })).toHaveCount(0)
+  await expect(settingsWindow.getByRole('button', { name: /SSH Official terminay-plugin-ssh/ })).toBeVisible()
+  await expect(settingsWindow.getByRole('button', { name: /Puzed Platform Official terminay-plugin-puzed/ })).toBeVisible()
+})
+
 test('persists settings edits across reopening the settings window', async ({ appHarness, mainWindow }) => {
   const updatedOrigin = 'https://e2e-settings.terminay.test:9443'
 
