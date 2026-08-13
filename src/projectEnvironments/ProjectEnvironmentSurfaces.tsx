@@ -125,8 +125,7 @@ export function ProjectEnvironmentsWindow({
 						</button>
 					</div>
 				) : null}
-				{formTarget === null ? (
-					<ProjectEnvironmentManager
+				<ProjectEnvironmentManager
 						environments={[...environments, ...profiles.filter((profile) => !environments.some((environment) => environment.profileId === profile.id)).map((profile) => ({ id: `profile-view:${profile.id}`, providerId: profile.providerId, profileId: profile.id, providerLabel: providers.find((provider) => provider.providerId === profile.providerId)?.displayName ?? profile.providerId, name: profile.name, endpointSummary: profile.endpointSummary, ...(profile.defaultRoot === undefined ? {} : { defaultRoot: profile.defaultRoot }), status: 'ready' as const, referencedProjectCount: 0, profileOnly: true }))]}
 						providers={providers.map((provider) => ({
 							providerId: provider.providerId,
@@ -194,9 +193,8 @@ export function ProjectEnvironmentsWindow({
 								`${action.label} completed.`,
 							);
 						}}
-					/>
-				) : (
-					<DeclarativeProviderForm
+						detail={formTarget === null ? undefined : (
+						<DeclarativeProviderForm
 						form={formTarget.form}
 						onCancel={() => setFormTarget(null)}
 						onSubmit={async (values) => {
@@ -216,7 +214,8 @@ export function ProjectEnvironmentsWindow({
 							setFormTarget(null);
 						}}
 					/>
-				)}
+					)}
+				/>
 				{busy ? (
 					<div className="settings-status-message environment-window-status" role="status">
 						<progress /> Working on {authorityLabel}…

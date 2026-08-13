@@ -160,12 +160,7 @@ jobs:
 
       - name: Use fallback release notes
         if: steps.release_tag.outputs.no_release != 'true' && (steps.release_notes_credential.outputs.available != 'true' || steps.generate_release_notes.outcome != 'success')
-        run: |
-          cat <<EOF > RELEASE.md
-          ## Release Notes
-
-          This release was created successfully without AI-assisted release notes.
-          EOF
+        run: node scripts/generate-fallback-release-notes.mjs "${{ steps.release_tag.outputs.tag }}"
 
       - name: Upload release notes artifact
         if: steps.release_tag.outputs.no_release != 'true'

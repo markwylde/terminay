@@ -1,7 +1,8 @@
-import { execFile, spawn } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
+import { requestReleaseNotes } from './release-notes-openrouter.mjs'
 
 const tag = process.argv[2]
 const execFileAsync = promisify(execFile)
@@ -69,6 +70,7 @@ const promptPath = resolve(
 )
 
 const releaseContext = await getReleaseContext(tag)
+const instructions = await readFile(promptPath, 'utf8')
 const message = [
   'Generate the markdown changelog body for Terminay release',
   tag,
@@ -96,56 +98,11 @@ const message = [
   releaseContext.diffStat,
 ].join('\n')
 
-const args = [
-  'opencode-ai@latest',
-  'run',
-  '--model',
-  'openrouter/anthropic/claude-haiku-4.5',
-  '-f',
-  promptPath,
-]
-
-const permission = {
-  read: { '*': 'allow' },
-  glob: { '*': 'allow' },
-  edit: { '*': 'allow' },
-  bash: {
-    '*': 'deny',
-    'cat *': 'allow',
-    'git *': 'allow',
-    'ls *': 'allow',
-    'rg *': 'allow',
-  },
-}
-
-const child = spawn('npx', args, {
-  stdio: ['pipe', 'inherit', 'inherit'],
-  env: {
-    ...process.env,
-    OPENCODE_PERMISSION: JSON.stringify(permission),
-  },
+const notes = await requestReleaseNotes({
+  apiKey: process.env.OPENROUTER_API_KEY,
+  instructions,
+  message,
 })
-child.stdin.end(message)
-
-const exitCode = await new Promise((resolveExit) => {
-  child.on('close', resolveExit)
-})
-
-if (exitCode !== 0) {
-  process.exit(exitCode)
-}
 
 const releasePath = resolve(process.cwd(), 'RELEASE.md')
-let notes = ''
-
-try {
-  notes = await readFile(releasePath, 'utf8')
-} catch {
-  console.error('Release notes file missing')
-  process.exit(1)
-}
-
-if (!notes.trim()) {
-  console.error('Release notes content missing')
-  process.exit(1)
-}
+await writeFile(releasePath, notes, { mode: 0o600 })
