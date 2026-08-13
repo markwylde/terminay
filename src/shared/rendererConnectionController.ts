@@ -71,6 +71,7 @@ export class RendererConnectionController<Candidate extends Disposable> {
 	private retryTimer: unknown;
 	private pipeline: RendererConnectionPipeline<Candidate> | undefined;
 	private active: Candidate | undefined;
+	private retirement: Promise<void> = Promise.resolve();
 	private candidate: Candidate | undefined;
 	private running = false;
 	private pending = false;
@@ -150,7 +151,7 @@ export class RendererConnectionController<Candidate extends Disposable> {
 		const switchingProfile = this.stateValue.profileId !== profileId;
 		this.pipeline = pipeline;
 		this.failures = 0;
-		if (switchingProfile) void this.retireActive();
+		if (switchingProfile) this.queueActiveRetirement();
 		this.publish({ attempt: 1, generation: this.generation, phase: 'connecting', profileId });
 		this.startAttempt(true);
 	}
@@ -164,7 +165,7 @@ export class RendererConnectionController<Candidate extends Disposable> {
 	recover(profileId: string): void {
 		if (profileId !== this.stateValue.profileId || this.pipeline === undefined) return;
 		if (this.stateValue.phase !== 'connected') return;
-		void this.retireActive();
+		this.queueActiveRetirement();
 		this.startAttempt(true);
 	}
 
@@ -178,6 +179,7 @@ export class RendererConnectionController<Candidate extends Disposable> {
 		this.pipeline = undefined;
 		await this.retireCandidate();
 		await this.retireActive();
+		await this.retirement;
 		this.publish({ attempt: 0, generation: this.generation, phase: 'stopped' });
 	}
 
@@ -216,6 +218,11 @@ export class RendererConnectionController<Candidate extends Disposable> {
 	private async run(attempt: RendererConnectionAttempt, pipeline: RendererConnectionPipeline<Candidate>): Promise<void> {
 		let candidate: Candidate | undefined;
 		try {
+			// A stable client id cannot overlap generations: a late close from the
+			// retired protocol client can otherwise unregister the replacement after
+			// its handshake. Finish old context/client disposal before acquisition.
+			await this.retirement;
+			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			candidate = await pipeline.acquire(attempt);
 			this.candidate = candidate;
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;
@@ -290,6 +297,13 @@ export class RendererConnectionController<Candidate extends Disposable> {
 		const active = this.active;
 		this.active = undefined;
 		if (active !== undefined) await this.dispose(active);
+	}
+
+	private queueActiveRetirement(): void {
+		const active = this.active;
+		this.active = undefined;
+		if (active === undefined) return;
+		this.retirement = this.retirement.then(() => this.dispose(active));
 	}
 
 	private async dispose(candidate: Candidate): Promise<void> {

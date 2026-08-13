@@ -55,6 +55,7 @@ test('late retired generation cannot replace the current client', async () => {
   const controller = new RendererConnectionController()
   const pipeline = (acquire) => ({ acquire, resubscribe: async () => {}, hydrate: async () => {}, verify: async () => {} })
   controller.connect('server-a', pipeline(() => new Promise((resolve) => { release = resolve })))
+  await settle(() => release !== undefined)
   controller.connect('server-a', pipeline(async () => ({ id: 'current', dispose: () => disposed.push('current') })))
   release({ id: 'retired', dispose: () => disposed.push('retired') })
   await settle(() => controller.current?.id === 'current')
@@ -69,10 +70,31 @@ test('repeated Retry does not orphan an in-flight host endpoint acquisition', as
     acquire: () => { acquisitions += 1; return new Promise((resolve) => { release = resolve }) },
     resubscribe: async () => {}, hydrate: async () => {}, verify: async () => {},
   })
+  await settle(() => acquisitions === 1)
   controller.retry()
   controller.retry()
   assert.equal(acquisitions, 1)
   release({ dispose() {} })
   await settle(() => controller.state.phase === 'connected')
   assert.equal(acquisitions, 1)
+})
+
+test('stable client id replacement waits for retired client close', async () => {
+  let releaseRetirement
+  const retired = new Promise((resolve) => { releaseRetirement = resolve })
+  let acquired = false
+  const controller = new RendererConnectionController()
+  const initial = controller.begin('server-a')
+  await controller.activate(initial, { id: 'old', dispose: () => retired })
+  controller.setRecoveryPipeline('server-a', {
+    acquire: async () => { acquired = true; return { id: 'new', dispose() {} } },
+    resubscribe: async () => {}, hydrate: async () => {}, verify: async () => {},
+  })
+  controller.recover('server-a')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(acquired, false)
+  releaseRetirement()
+  await settle(() => controller.state.phase === 'connected')
+  assert.equal(acquired, true)
+  assert.equal(controller.current.id, 'new')
 })
