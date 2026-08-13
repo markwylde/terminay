@@ -119,7 +119,6 @@ export class ElectronSafeStorageVaultAdapter implements SecretVaultAdapter {
 		const stored = parseStoredVault(raw);
 		adapter.revision = stored.revision;
 		adapter.entries = new Map(stored.entries.map((entry) => [entry.id, entry]));
-		if (!adapter.protectorAvailable()) adapter.state = 'unavailable';
 		return adapter;
 	}
 
