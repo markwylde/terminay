@@ -110,7 +110,11 @@ mounted terminal from its confirmed position or a fresh checkpoint. Recovery
 uses bounded retry with backoff and remains active until it succeeds, the user
 selects another connection, or the window closes. A failed recovery is visible
 and actionable; the application never remains silently mounted with disposed
-terminal clients.
+terminal clients. A terminal-panel retry after a connection failure requests a
+fresh host-owned transport generation; it never calls attach or resume on the
+failed client. Once a terminal write has an uncertain outcome, later queued
+input is discarded and the panel accepts no more input until a replacement
+client has hydrated and reattached the terminal.
 
 ## Resource and security boundaries
 
