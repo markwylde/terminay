@@ -15,7 +15,7 @@ export interface SharedSettingsRouteBodyProps {
   readonly status: string
   readonly onQueryChange: (query: string) => void
   readonly onCategorySelect: (categoryId: string) => void
-  readonly onResetAll: () => void
+  readonly onResetAll?: () => void
   readonly contentRef?: Ref<HTMLDivElement>
   readonly children: ReactNode
   readonly preview?: ReactNode
@@ -95,9 +95,11 @@ export function SharedSettingsRouteBody({
 
           <footer className="settings-sidebar-footer">
             <div className="settings-status">{status}</div>
-            <button className="settings-reset-all" type="button" onClick={onResetAll}>
-              Reset to defaults
-            </button>
+            {onResetAll === undefined ? null : (
+              <button className="settings-reset-all" type="button" onClick={onResetAll}>
+                Reset to defaults
+              </button>
+            )}
           </footer>
         </aside>
 
