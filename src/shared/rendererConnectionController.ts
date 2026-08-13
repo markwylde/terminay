@@ -101,6 +101,43 @@ export class RendererConnectionController<Candidate extends Disposable> {
 		return () => this.listeners.delete(listener);
 	}
 
+	/** Begin an externally acquired initial/pairing attempt. The returned token
+	 * is owned by this controller and is the only authority allowed to publish
+	 * the eventual fully-hydrated candidate. */
+	begin(profileId: string): RendererConnectionAttempt {
+		if (profileId.length === 0) throw new Error('stable profile id is required');
+		this.generation += 1;
+		this.controller?.abort();
+		this.clearRetry();
+		const controller = new AbortController();
+		this.controller = controller;
+		this.publish({ attempt: 1, generation: this.generation, phase: 'connecting', profileId });
+		return Object.freeze({ attempt: 1, generation: this.generation, profileId, signal: controller.signal });
+	}
+
+	isCurrent(attempt: RendererConnectionAttempt): boolean {
+		return this.isCurrentAttempt(attempt, undefined);
+	}
+
+	async activate(attempt: RendererConnectionAttempt, candidate: Candidate): Promise<boolean> {
+		if (!this.isCurrent(attempt)) {
+			await this.dispose(candidate);
+			return false;
+		}
+		const previous = this.active;
+		this.active = candidate;
+		if (previous !== undefined && previous !== candidate) await this.dispose(previous);
+		if (!this.isCurrent(attempt)) {
+			if (this.active === candidate) this.active = undefined;
+			await this.dispose(candidate);
+			return false;
+		}
+		const state = Object.freeze({ attempt: 0, generation: attempt.generation, phase: 'connected' as const, profileId: attempt.profileId });
+		this.publish(state);
+		await this.options.onActivated?.(candidate, state);
+		return true;
+	}
+
 	connect(profileId: string, pipeline: RendererConnectionPipeline<Candidate>): void {
 		if (profileId.length === 0) throw new Error('stable profile id is required');
 		const switchingProfile = this.stateValue.profileId !== profileId;
@@ -111,8 +148,15 @@ export class RendererConnectionController<Candidate extends Disposable> {
 		this.startAttempt(true);
 	}
 
+	setRecoveryPipeline(profileId: string, pipeline: RendererConnectionPipeline<Candidate>): void {
+		if (profileId !== this.stateValue.profileId)
+			throw new Error('recovery pipeline must target the current stable profile');
+		this.pipeline = pipeline;
+	}
+
 	recover(profileId: string): void {
 		if (profileId !== this.stateValue.profileId || this.pipeline === undefined) return;
+		if (this.stateValue.phase !== 'connected') return;
 		void this.retireActive();
 		this.startAttempt(true);
 	}
@@ -167,23 +211,23 @@ export class RendererConnectionController<Candidate extends Disposable> {
 		try {
 			candidate = await pipeline.acquire(attempt);
 			this.candidate = candidate;
-			if (!this.isCurrent(attempt, pipeline)) return;
+			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			this.publishPhase('authenticating', attempt);
 			await pipeline.authenticate?.(candidate, attempt);
-			if (!this.isCurrent(attempt, pipeline)) return;
+			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			this.publishPhase('resubscribing', attempt);
 			await pipeline.resubscribe(candidate, attempt);
-			if (!this.isCurrent(attempt, pipeline)) return;
+			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			this.publishPhase('hydrating', attempt);
 			await pipeline.hydrate(candidate, attempt);
-			if (!this.isCurrent(attempt, pipeline)) return;
+			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			await pipeline.verify(candidate, attempt);
-			if (!this.isCurrent(attempt, pipeline)) return;
+			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			const previous = this.active;
 			this.active = candidate;
 			this.candidate = undefined;
 			if (previous !== undefined && previous !== candidate) await this.dispose(previous);
-			if (!this.isCurrent(attempt, pipeline)) {
+			if (!this.isCurrentAttempt(attempt, pipeline)) {
 				if (this.active === candidate) this.active = undefined;
 				await this.dispose(candidate);
 				return;
@@ -193,7 +237,7 @@ export class RendererConnectionController<Candidate extends Disposable> {
 			this.publish(state);
 			await this.options.onActivated?.(candidate, state);
 		} catch (error) {
-			if (this.isCurrent(attempt, pipeline)) this.scheduleRetry(attempt, error);
+			if (this.isCurrentAttempt(attempt, pipeline)) this.scheduleRetry(attempt, error);
 		} finally {
 			if (candidate !== undefined && candidate !== this.active) {
 				if (this.candidate === candidate) this.candidate = undefined;
@@ -208,13 +252,13 @@ export class RendererConnectionController<Candidate extends Disposable> {
 		this.publish({ attempt: this.failures, error, generation: attempt.generation, nextRetryMs: delay, phase: 'retry-wait', profileId: attempt.profileId });
 		this.retryTimer = this.clock.setTimeout(() => {
 			this.retryTimer = undefined;
-			if (!this.isCurrent(attempt, this.pipeline)) return;
+			if (!this.isCurrentAttempt(attempt, this.pipeline)) return;
 			this.startAttempt(false);
 		}, delay);
 	}
 
-	private isCurrent(attempt: RendererConnectionAttempt, pipeline: RendererConnectionPipeline<Candidate> | undefined): boolean {
-		return !attempt.signal.aborted && attempt.generation === this.generation && attempt.profileId === this.stateValue.profileId && pipeline === this.pipeline;
+	private isCurrentAttempt(attempt: RendererConnectionAttempt, pipeline: RendererConnectionPipeline<Candidate> | undefined): boolean {
+		return !attempt.signal.aborted && attempt.generation === this.generation && attempt.profileId === this.stateValue.profileId && (pipeline === undefined || pipeline === this.pipeline);
 	}
 
 	private publishPhase(phase: RendererConnectionPhase, attempt: RendererConnectionAttempt): void {
