@@ -2,6 +2,7 @@ import type { FileViewerClient } from '@terminay/client-core';
 import {
 	type ActivitySessionSnapshot,
 	MacroClient,
+	ProjectEnvironmentsClient,
 	RecordingsClient as ServerRecordingsClient,
 	SettingsClient,
 	type ShellProfileCatalogueEntry,
@@ -101,6 +102,8 @@ import {
 	getCommandShortcutLabel,
 } from './keyboardShortcuts';
 import { tryRenderMacroTemplate } from './macroSettings';
+import { ProjectEnvironmentSplitButton } from './projectEnvironments/ProjectEnvironmentSplitButton';
+import type { ProjectEnvironmentSummaryDto } from './projectEnvironments/uiModel';
 import { getPathRelativeToRoot } from './pathUtils';
 import { createLegacyAiTabMetadataClient } from './services/ai/legacyAiTabMetadataClient';
 import { useOptionalDisconnectedFileCompatibility } from './services/fileViewer/DisconnectedFileCompatibilityProvider';
@@ -437,7 +440,7 @@ type ProjectWorkspaceProps = {
 	isActive: boolean;
 	isMac: boolean;
 	macros: MacroDefinition[];
-	onAddProject: () => void;
+	onAddProject: () => Promise<void>;
 	onCloseProject: (
 		projectId: string,
 		options?: { skipConfirmation?: boolean },
@@ -2964,11 +2967,11 @@ const ProjectWorkspace = forwardRef<
 		const runAiTabMetadataRef = useRef(runAiTabMetadata);
 		runAiTabMetadataRef.current = runAiTabMetadata;
 
-		const createProject = useCallback(() => {
+		const createProject = useCallback(async () => {
 			setErrorText(null);
 			setIsMacroLauncherOpen(false);
 			setMacroQuery('');
-			onAddProject();
+			await onAddProject();
 		}, [onAddProject]);
 
 		const toggleFileExplorerSidebar = useCallback(() => {
@@ -3203,7 +3206,7 @@ const ProjectWorkspace = forwardRef<
 						isMac,
 					),
 					onSelect: () => {
-						createProject();
+						void createProject();
 					},
 				},
 				{
@@ -3533,7 +3536,7 @@ const ProjectWorkspace = forwardRef<
 						await addTerminal({});
 						break;
 					case 'new-project':
-						onAddProject();
+						await onAddProject();
 						break;
 					case 'split-horizontal':
 						await addTerminal({ direction: 'below' });
@@ -5306,6 +5309,85 @@ function App({
 		useState<AppUpdateStatus | null>(null);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
 	const [isActivityMenuOpen, setIsActivityMenuOpen] = useState(false);
+	const [projectEnvironmentNotice, setProjectEnvironmentNotice] =
+		useState<string | null>(null);
+	const projectEnvironmentsClient = useMemo(
+		() => terminalClientContext?.applicationClient === undefined
+			? null
+			: new ProjectEnvironmentsClient(new TerminayClientFacade(terminalClientContext.applicationClient)),
+		[terminalClientContext?.applicationClient],
+	);
+	const [projectEnvironmentChoices, setProjectEnvironmentChoices] =
+		useState<readonly ProjectEnvironmentSummaryDto[]>([]);
+	const refreshProjectEnvironmentChoices = useCallback(async () => {
+		if (projectEnvironmentsClient === null) return;
+		try {
+			const snapshot = await projectEnvironmentsClient.snapshot();
+			setProjectEnvironmentChoices(snapshot.environments);
+		} catch {
+			// Preserve the last authenticated inventory during connection recovery.
+			// Opening the chooser retries against the current server transport.
+		}
+	}, [projectEnvironmentsClient]);
+	useEffect(() => {
+		let active = true;
+		if (projectEnvironmentsClient === null) return;
+		void projectEnvironmentsClient.snapshot().then(
+			(snapshot) => { if (active) setProjectEnvironmentChoices(snapshot.environments); },
+			() => undefined,
+		);
+		return () => { active = false; };
+	}, [projectEnvironmentsClient]);
+	useEffect(() => {
+		const openEnvironments = () => {
+			void auxiliaryRouteController.openProjectEnvironments();
+		};
+		const openExtensions = () => {
+			void auxiliaryRouteController.openSettings('extensions');
+		};
+		window.addEventListener('terminay-open-project-environments', openEnvironments);
+		window.addEventListener('terminay-open-extensions', openExtensions);
+		return () => {
+			window.removeEventListener('terminay-open-project-environments', openEnvironments);
+			window.removeEventListener('terminay-open-extensions', openExtensions);
+		};
+	}, [auxiliaryRouteController]);
+	const chooseProjectEnvironment = useCallback(
+		async (environment: ProjectEnvironmentSummaryDto) => {
+			if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
+				setProjectEnvironmentNotice('The selected server workspace is not ready.');
+				return;
+			}
+			setProjectEnvironmentNotice(`Validating ${environment.name}…`);
+			try {
+				const operation = await projectEnvironmentsClient.createProject({ environmentId: environment.id, viewId: boundWorkspaceViewId, ...(environment.defaultRoot === undefined ? {} : { root: environment.defaultRoot }) });
+				setProjectEnvironmentNotice(operation.message ?? `Project creation ${operation.state}.`);
+				await terminalClientContext?.workspaceSnapshotStore?.refresh();
+			} catch (error) {
+				setProjectEnvironmentNotice(error instanceof Error ? error.message : String(error));
+			}
+		},
+		[boundWorkspaceViewId, projectEnvironmentsClient, terminalClientContext?.workspaceSnapshotStore],
+	);
+	const createThisServerProject = useCallback(async () => {
+		if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
+			// Disconnected compatibility workspaces retain their existing local-only
+			// creation path; authenticated server workspaces never bypass validation.
+			addProject();
+			return;
+		}
+		setProjectEnvironmentNotice('Validating This server…');
+		try {
+			const operation = await projectEnvironmentsClient.createProject({
+				environmentId: 'terminay:this-server',
+				viewId: boundWorkspaceViewId,
+			});
+			setProjectEnvironmentNotice(operation.message ?? null);
+			await terminalClientContext?.workspaceSnapshotStore?.refresh();
+		} catch (error) {
+			setProjectEnvironmentNotice(error instanceof Error ? error.message : String(error));
+		}
+	}, [addProject, boundWorkspaceViewId, projectEnvironmentsClient, terminalClientContext?.workspaceSnapshotStore]);
 	const [terminalActivityItemsByProject, setTerminalActivityItemsByProject] =
 		useState<Record<string, TerminalActivityOverviewItem[]>>({});
 	const [agentStatusSnapshot, setAgentStatusSnapshot] =
@@ -5500,12 +5582,18 @@ function App({
 
 	const executeCommandOnActiveProject = useCallback(
 		(command: AppCommand): Promise<void> => {
+			if (command === 'open-project-environments') {
+				return auxiliaryRouteController.openProjectEnvironments();
+			}
+			if (command === 'open-extensions') {
+				return auxiliaryRouteController.openSettings('extensions');
+			}
 			return (
 				workspaceRefs.current.get(activeProjectId)?.executeCommand(command) ??
 				Promise.resolve()
 			);
 		},
-		[activeProjectId],
+		[activeProjectId, auxiliaryRouteController],
 	);
 
 	const updateTerminalActivityOverview = useCallback(
@@ -5691,31 +5779,15 @@ function App({
 					projects={projects}
 				/>
 				<div className="project-tab-add-box">
-					<button
-						type="button"
-						className="project-tab-add"
-						onClick={addProject}
-						disabled={!canAddProject}
-						aria-label="Add project tab"
-						title="Add project tab"
-					>
-						<svg
-							aria-hidden="true"
-							width="14"
-							height="14"
-							viewBox="0 0 12 12"
-							fill="none"
-							xmlns="http://www.w3.org/2000/svg"
-						>
-							<path
-								d="M6 2V10M2 6H10"
-								stroke="currentColor"
-								strokeWidth="2"
-								strokeLinecap="round"
-								strokeLinejoin="round"
-							/>
-						</svg>
-					</button>
+					<ProjectEnvironmentSplitButton
+						canCreate={canAddProject}
+						environments={projectEnvironmentChoices}
+						onCreateThisServer={() => void createThisServerProject()}
+						onChoose={chooseProjectEnvironment}
+						onOpen={() => void refreshProjectEnvironmentChoices()}
+						onManageEnvironments={() => void auxiliaryRouteController.openProjectEnvironments()}
+						onManageExtensions={() => void auxiliaryRouteController.openSettings('extensions')}
+					/>
 				</div>
 				<div className="header-actions">
 					{hasAppUpdate ? (
@@ -5782,6 +5854,12 @@ function App({
 			</header>
 
 			<div className="workspace-stack">
+				{projectEnvironmentNotice !== null ? (
+					<div className="workspace-empty-state" role="status">
+						{projectEnvironmentNotice}
+						<button type="button" onClick={() => setProjectEnvironmentNotice(null)}>Dismiss</button>
+					</div>
+				) : null}
 				{isWorkspaceHydrating ? (
 					<div className="workspace-empty-state" role="status">
 						Loading workspace...
@@ -5814,7 +5892,7 @@ function App({
 						isActive={project.id === activeProjectId}
 						isMac={isMac}
 						macros={macros}
-						onAddProject={addProject}
+						onAddProject={createThisServerProject}
 						onCloseProject={closeProject}
 						onEditProject={openEditProjectWindow}
 						onMoveTerminalToProject={moveTerminalToProject}

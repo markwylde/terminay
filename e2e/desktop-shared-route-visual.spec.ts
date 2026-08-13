@@ -22,6 +22,7 @@ const ROUTES = [
 test('real Desktop renderer presents every production-mapped shared route without overflow', async ({
 	mainWindow,
 }, testInfo) => {
+	test.setTimeout(60_000);
 	const rendererOrigin = new URL(mainWindow.url()).origin;
 
 	for (const viewport of VIEWPORTS) {

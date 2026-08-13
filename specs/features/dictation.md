@@ -45,6 +45,11 @@ Terminay Server:
 - revalidates the target terminal and request identity; and
 - writes the transcript through the normal PTY input path.
 
+That input path resolves the terminal's immutable project-environment binding.
+Dictation never connects to a project host itself, changes environment
+selection, or falls back to a local PTY when a remote environment is
+unavailable.
+
 The server-side provider adapter can resolve its configured vault entry only
 through a scoped callback. The callback is not part of any client or status
 DTO, and no vault value is included in the selected-server/provider disclosure

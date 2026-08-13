@@ -38,7 +38,7 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Add project tab').click();
+		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 
 		const editWindow = await openProjectEditWindow(mainWindow);
@@ -144,7 +144,7 @@ test.describe('project tabs', () => {
 		electronApp,
 		mainWindow,
 	}) => {
-		await mainWindow.getByLabel('Add project tab').click();
+		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		const draggedProject = mainWindow.locator('.project-tab').last();
 		const projectBox = await draggedProject.boundingBox();
@@ -237,7 +237,7 @@ test.describe('project tabs', () => {
 		const initialProjectTab = mainWindow.locator('.project-tab').first();
 		await expect(initialProjectTab).toContainText('Project');
 
-		await mainWindow.getByLabel('Add project tab').click();
+		await mainWindow.getByLabel('Create project on This server').click();
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		await expect(mainWindow.locator('.project-tab--active')).toContainText(
 			'Project 2',
@@ -290,7 +290,7 @@ test.describe('project tabs', () => {
 	test('new project tabs do not reuse palette colours until the palette is exhausted', async ({
 		mainWindow,
 	}) => {
-		const addProjectButton = mainWindow.getByLabel('Add project tab');
+		const addProjectButton = mainWindow.getByLabel('Create project on This server');
 
 		for (let index = 0; index < 19; index += 1) {
 			await addProjectButton.click();

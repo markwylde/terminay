@@ -1,5 +1,6 @@
 import { AnimatePresence, Reorder } from 'framer-motion';
 import type { CSSProperties } from 'react';
+import type { KeyboardEvent } from 'react';
 import type { ProjectTab } from './projectTabModel';
 
 export type ProjectTabDropPreview = {
@@ -56,12 +57,27 @@ export function ProjectTabList({
 	onReorder,
 	projects,
 }: ProjectTabListProps) {
+	const handleTabKeyDown = (event: KeyboardEvent<HTMLElement>, projectIndex: number) => {
+		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+		event.preventDefault();
+		const nextIndex = event.key === 'Home'
+			? 0
+			: event.key === 'End'
+				? projects.length - 1
+				: (projectIndex + (event.key === 'ArrowRight' ? 1 : -1) + projects.length) % projects.length;
+		const next = projects[nextIndex];
+		if (next === undefined) return;
+		onActivate(next.id);
+		requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-project-id="${CSS.escape(next.id)}"]`)?.focus());
+	};
 	return (
 		<Reorder.Group
 			axis="x"
 			values={projects}
 			onReorder={onReorder}
 			className="project-tabbar-list"
+			role="tablist"
+			aria-label="Projects"
 		>
 			<AnimatePresence initial={false}>
 				{projects.flatMap((project, projectIndex) => [
@@ -76,15 +92,36 @@ export function ProjectTabList({
 						animate={{ opacity: 1, scale: 1 }}
 						exit={{ opacity: 0, scale: 0.95 }}
 						className={`project-tab${project.id === activeProjectId ? ' project-tab--active' : ''}${project.id === draggingProjectId ? ' project-tab--dragging' : ''}${project.id === draggingProjectId && isDraggingTabTornOff ? ' project-tab--torn-off' : ''}`}
+						role="tab"
+						aria-selected={project.id === activeProjectId}
+						tabIndex={project.id === activeProjectId ? 0 : -1}
 						style={{ '--project-color': project.color } as CSSProperties}
 						onDragStart={() => onDragStart(project.id)}
 						onDragEnd={() => void onDragEnd(project.id)}
 						onClick={() => onActivate(project.id)}
 						onDoubleClick={() => void onEdit(project.id)}
+						onKeyDown={(event) => {
+							if (event.key === 'Enter' || event.key === ' ') {
+								event.preventDefault();
+								onActivate(project.id);
+								return;
+							}
+							handleTabKeyDown(event, projectIndex);
+						}}
 						whileDrag={{ scale: 1.05, zIndex: 50 }}
 						title="Double-click to edit tab"
 					>
 						<span className="project-tab-main">
+							{project.projectEnvironmentId && project.projectEnvironmentId !== 'terminay:this-server' ? (
+								<span
+									className={`project-tab-environment project-tab-environment--${project.environmentStatus ?? 'ready'}`}
+									role="img"
+									aria-label={`${project.environmentLabel ?? 'Remote environment'} — ${project.environmentStatus ?? 'ready'}`}
+									title={`${project.environmentLabel ?? 'Remote environment'} — ${project.environmentStatus ?? 'ready'}`}
+								>
+									⇄
+								</span>
+							) : null}
 							{project.emoji ? (
 								<span className="project-tab-emoji" aria-hidden="true">
 									{project.emoji}

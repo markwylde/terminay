@@ -994,6 +994,19 @@
   flex-shrink: 0;
 }
 
+.project-tab-environment {
+  color: #8cb7ff;
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.project-tab-environment--offline,
+.project-tab-environment--failed,
+.project-tab-environment--unreachable {
+  color: #f09a9a;
+}
+
 .project-tab-title {
   font-weight: 500;
   white-space: nowrap;

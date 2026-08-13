@@ -17,6 +17,7 @@ import { EditTabWindow } from './components/EditTabWindow.tsx';
 import { MacrosWindow } from './components/MacrosWindow.tsx';
 import { RecordingsWindow } from './components/RecordingsWindow.tsx';
 import { SettingsWindow } from './components/SettingsWindow.tsx';
+import { ProjectEnvironmentsWindow } from './projectEnvironments/ProjectEnvironmentSurfaces.tsx';
 import {
 	createServerMacroSettingsClient,
 	LegacyMacroSettingsProvider,
@@ -61,7 +62,7 @@ import { recordBoundedRendererRender } from './shared/renderLoopGuard.ts';
 
 const searchParams = new URLSearchParams(window.location.search);
 const view = searchParams.get('view');
-const applicationOnlyViews = new Set(['settings', 'macros', 'recordings']);
+const applicationOnlyViews = new Set(['settings', 'project-environments', 'macros', 'recordings']);
 const usesApplicationOnlyServerClient = applicationOnlyViews.has(view ?? '');
 const usesServerClient = view !== 'edit-tab';
 
@@ -612,6 +613,7 @@ export function RendererEntry() {
 					)
 				) : (
 					<SettingsWindow
+						applicationClient={activeApplicationClient}
 						remoteAccessStatusClient={window.terminayRemoteAccessStatusHost}
 						settingsClient={serverSettingsClient}
 						shellProfilesClient={shellProfilesClient}
@@ -634,6 +636,21 @@ export function RendererEntry() {
 					)
 				) : (
 					<MacrosWindow macroSettingsClient={serverMacroSettingsClient} />
+				);
+			case 'project-environments':
+				return auxiliaryClientContext === undefined ? (
+					serverConnectionError === undefined ? (
+						<AuxiliaryPendingSurface />
+					) : (
+						<main className="terminay-server-connecting" role="alert">
+							Server connection unavailable: {serverConnectionError}
+						</main>
+					)
+				) : (
+					<ProjectEnvironmentsWindow
+						applicationClient={auxiliaryClientContext.applicationClient}
+						serverName={auxiliaryClientContext.connectionLabel ?? auxiliaryClientContext.serverId}
+					/>
 				);
 			case 'recordings':
 				return serverRecordingsClient === undefined ? (
