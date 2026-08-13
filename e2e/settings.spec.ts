@@ -1,6 +1,7 @@
 import { expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
+import { gzipSync } from 'node:zlib'
 
 function remoteOriginInput(page: Page) {
   return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Remote origin' }).locator('input')
@@ -56,7 +57,24 @@ test('shows selected-server extensions as an ordinary Settings category', async 
   await expect(settingsWindow.getByRole('button', { name: 'Reset to defaults' })).toHaveCount(0)
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-ssh' })).toBeVisible()
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-puzed' })).toBeVisible()
+
+  const packageJson = JSON.stringify({ name: 'terminay-e2e-uploaded-extension', version: '1.0.0', type: 'module', exports: { '.': './dist/extension.js' }, terminay: { manifestVersion: 1, id: 'dev.terminay.e2e-uploaded', displayName: 'E2E uploaded provider', api: '^1.0.0', engines: { terminay: '>=1', node: '>=22' }, entrypoint: 'dist/extension.js', permissions: [], contributes: { projectEnvironments: [{ id: 'dev.terminay.e2e-uploaded/main', displayName: 'E2E uploaded', capabilities: ['terminal', 'filesystem'] }] } } })
+  const archive = npmPackArchive({ 'package/package.json': packageJson, 'package/dist/extension.js': 'export async function activate(context) { context.registerProjectEnvironmentProvider({ providerId: "dev.terminay.e2e-uploaded/main", displayName: "E2E uploaded", capabilities: ["terminal", "filesystem"] }); }\n' })
+  await settingsWindow.locator('input[type="file"][accept*=".tgz"]').setInputFiles({ name: 'terminay-e2e-uploaded-extension-1.0.0.tgz', mimeType: 'application/gzip', buffer: archive })
+  await expect(settingsWindow.getByRole('heading', { name: /Review terminay-e2e-uploaded-extension@1\.0\.0/u })).toBeVisible()
+  await expect(settingsWindow.getByText(/Uploaded package.*Unverified/u)).toBeVisible()
+  await expect(settingsWindow.getByRole('button', { name: /Install on/u })).toBeEnabled()
 })
+
+function npmPackArchive(files: Readonly<Record<string, string>>): Buffer {
+  const blocks: Buffer[] = []
+  for (const [path, contents] of Object.entries(files)) {
+    const body = Buffer.from(contents); const header = Buffer.alloc(512); header.write(path, 0, 100, 'utf8'); writeOctal(header, 100, 8, 0o644); writeOctal(header, 108, 8, 0); writeOctal(header, 116, 8, 0); writeOctal(header, 124, 12, body.length); writeOctal(header, 136, 12, 0); header.fill(0x20, 148, 156); header[156] = 0x30; header.write('ustar\0', 257, 6, 'ascii'); header.write('00', 263, 2, 'ascii'); writeOctal(header, 148, 8, header.reduce((sum, byte) => sum + byte, 0)); blocks.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512))
+  }
+  blocks.push(Buffer.alloc(1024)); return gzipSync(Buffer.concat(blocks))
+}
+
+function writeOctal(target: Buffer, offset: number, length: number, value: number): void { const text = value.toString(8).padStart(length - 2, '0'); target.write(`${text}\0 `, offset, length, 'ascii') }
 
 test('opens Project Environments as a full auxiliary window', async ({ appHarness, mainWindow }) => {
   const environmentsWindow = await appHarness.openChildWindow(async () => {

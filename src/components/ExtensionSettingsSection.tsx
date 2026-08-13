@@ -81,6 +81,7 @@ export function ExtensionSettingsSection({
 					serverName={authorityLabel}
 					revision={revision}
 					onPreview={(spec) => client!.previewInstall(spec)}
+					onPreviewPackageFile={async (file) => client!.previewPackageFile(file.name, new Uint8Array(await file.arrayBuffer()))}
 					onInstall={(digest) => run(() => client!.install(digest, revision), 'Extension installed.')}
 					onUpdate={(id, digest) => run(() => client!.update(id, digest, revision), 'Extension updated.')}
 					onAction={(action, id) => run(() => client!.action(action, id, revision), `Extension ${action} completed.`)}

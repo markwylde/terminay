@@ -69,8 +69,9 @@ export class NpmCliRegistryClient implements ExtensionRegistryClient, ExtensionM
 
   async materialize(resolution: RegistryPackageResolution, stagingRoot: string, signal?: AbortSignal): Promise<void> {
     await mkdir(stagingRoot, { recursive: false });
-    await writeFile(join(stagingRoot, "package.json"), `${JSON.stringify({ private: true, dependencies: { [resolution.packageName]: resolution.version } }, null, 2)}\n`, { flag: "wx" });
-    await this.run(["install", `${resolution.packageName}@${resolution.version}`, "--save-exact", "--package-lock-only", "--ignore-scripts", "--omit=dev", "--no-bin-links", "--workspaces=false", "--audit=false", "--fund=false"], stagingRoot, signal);
+    const dependency = resolution.source === "uploaded" ? requiredArchivePath(resolution) : resolution.version;
+    await writeFile(join(stagingRoot, "package.json"), `${JSON.stringify({ private: true, dependencies: { [resolution.packageName]: dependency } }, null, 2)}\n`, { flag: "wx" });
+    await this.run(["install", ...(resolution.source === "uploaded" ? [dependency] : [`${resolution.packageName}@${resolution.version}`]), "--save-exact", "--package-lock-only", "--ignore-scripts", "--omit=dev", "--no-bin-links", "--workspaces=false", "--audit=false", "--fund=false"], stagingRoot, signal);
     let lock: unknown;
     try { lock = JSON.parse(await readFile(join(stagingRoot, "package-lock.json"), "utf8")); } catch { throw new Error("npm did not produce a valid exact lockfile"); }
     validateNpmLockfile(lock, resolution);
@@ -95,3 +96,5 @@ export class NpmCliRegistryClient implements ExtensionRegistryClient, ExtensionM
     }
   }
 }
+
+function requiredArchivePath(resolution: RegistryPackageResolution): string { if (typeof resolution.archivePath !== "string" || resolution.archivePath.length === 0) throw new Error("uploaded extension archive is unavailable"); return resolution.archivePath; }

@@ -6,6 +6,7 @@ import { parseExtensionManifest } from "@terminay/extension-api";
 import type { ExtensionInstallPreview, ExtensionMaterializer, ExtensionReceipt, ExtensionReferences, ExtensionRegistryClient, ExtensionRegistrySnapshot, InstalledExtensionRecord, RegistryPackageResolution } from "./installerTypes.js";
 import { parsePublicNpmSpec } from "./npmClient.js";
 import { validateMaterializedExtension } from "./packageValidation.js";
+import { inspectNpmPackArchive, MAX_EXTENSION_ARCHIVE_BYTES } from "./npmPackArchive.js";
 
 const WARNING = "This is third-party trusted code. It runs on the selected Terminay Server and can access files and networks available to that server account.";
 const EMPTY: ExtensionRegistrySnapshot = Object.freeze({ schemaVersion: 1, revision: 0, extensions: Object.freeze({}) });
@@ -28,13 +29,33 @@ export interface ExtensionInstallerOptions {
 export class ExtensionInstaller {
   private readonly root: string;
   private readonly previews = new Map<string, ExtensionInstallPreview>();
+  private readonly previewTimers = new Map<string, NodeJS.Timeout>();
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private readonly options: ExtensionInstallerOptions) { this.root = join(options.dataRoot, "extensions"); }
 
   async initialize(): Promise<ExtensionRegistrySnapshot> {
-    await Promise.all([mkdir(join(this.root, "packages"), { recursive: true }), mkdir(join(this.root, "staging"), { recursive: true }), mkdir(join(this.root, "data"), { recursive: true }), mkdir(join(this.root, "cache"), { recursive: true })]);
+    await Promise.all([mkdir(join(this.root, "packages"), { recursive: true }), mkdir(join(this.root, "staging"), { recursive: true }), mkdir(join(this.root, "uploads"), { recursive: true }), mkdir(join(this.root, "data"), { recursive: true }), mkdir(join(this.root, "cache"), { recursive: true })]);
     await this.recoverStaging();
     return this.snapshot();
+  }
+
+  async previewArchive(filename: string, bytes: Uint8Array): Promise<ExtensionInstallPreview> {
+    if (!/^[^/\\\0]{1,200}\.tgz$/iu.test(filename)) throw new Error("choose an npm pack .tgz package file");
+    if (bytes.byteLength > MAX_EXTENSION_ARCHIVE_BYTES) throw new Error("extension package file exceeds the 12 MiB limit");
+    const inspected = await inspectNpmPackArchive(bytes);
+    const packageName = inspected.packageJson.name; const version = inspected.packageJson.version;
+    if (typeof packageName !== "string" || typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)) throw new Error("extension package archive is missing an exact name and version");
+    parsePublicNpmSpec(`${packageName}@${version}`);
+    const manifest = parseExtensionManifest(inspected.packageJson.terminay);
+    const uploadId = randomUUID(); const archivePath = join(this.root, "uploads", `${uploadId}.tgz`);
+    await writeFile(archivePath, bytes, { flag: "wx", mode: 0o600 });
+    const expiresAt = (this.options.now ?? Date.now)() + 10 * 60_000;
+    const resolution: RegistryPackageResolution = Object.freeze({ packageName, version, integrity: inspected.integrity, source: "uploaded", uploadedFilename: filename, archivePath, manifestMetadata: inspected.packageJson.terminay, provenance: "unverified", dependencyCount: typeof inspected.packageJson.dependencies === "object" && inspected.packageJson.dependencies !== null ? Object.keys(inspected.packageJson.dependencies).length : 0 });
+    const previewDigest = digest(canonicalJson({ packageName, version, integrity: inspected.integrity, manifest, expiresAt, uploadId }));
+    const preview = Object.freeze({ ...resolution, previewDigest, expiresAt, official: false, trustedCodeWarning: WARNING, declaredPermissions: Object.freeze([...manifest.permissions]), declaredProviderIds: Object.freeze(manifest.contributes.projectEnvironments.map((provider) => provider.id)) });
+    this.previews.set(previewDigest, preview);
+    this.expirePreview(previewDigest, preview);
+    return preview;
   }
 
   async preview(spec: string, signal?: AbortSignal): Promise<ExtensionInstallPreview> {
@@ -47,6 +68,7 @@ export class ExtensionInstaller {
     const previewDigest = digest(canonicalJson({ resolution, manifest, expiresAt }));
     const preview = Object.freeze({ ...resolution, previewDigest, expiresAt, official, declaredPermissions: Object.freeze([...manifest.permissions]), declaredProviderIds: Object.freeze(manifest.contributes.projectEnvironments.map((provider) => provider.id)), ...(!official ? { trustedCodeWarning: WARNING } : {}) });
     this.previews.set(previewDigest, preview);
+    this.expirePreview(previewDigest, preview);
     return preview;
   }
 
@@ -54,8 +76,9 @@ export class ExtensionInstaller {
     return this.serial(async () => {
       const preview = this.previews.get(previewDigest);
       this.previews.delete(previewDigest);
-      if (preview === undefined || preview.expiresAt < (this.options.now ?? Date.now)()) throw new Error("extension install preview expired or changed");
-      return this.installExact(preview, signal);
+      const timer = this.previewTimers.get(previewDigest); if (timer !== undefined) clearTimeout(timer); this.previewTimers.delete(previewDigest);
+      if (preview === undefined || preview.expiresAt < (this.options.now ?? Date.now)()) { await cleanupArchive(preview); throw new Error("extension install preview expired or changed"); }
+      try { return await this.installExact(preview, signal); } finally { await cleanupArchive(preview); }
     });
   }
 
@@ -135,7 +158,7 @@ export class ExtensionInstaller {
       const previewManifest = parseExtensionManifest(resolution.manifestMetadata);
       if (canonicalJson(previewManifest) !== canonicalJson(validated.manifest)) throw new Error("materialized extension manifest differs from the confirmed preview");
       const slotId = `${validated.manifest.id}-${resolution.version}-${validated.inventoryHash.slice(0, 16)}`.replace(/[^a-zA-Z0-9._-]/gu, "_");
-      const receipt: ExtensionReceipt = Object.freeze({ schemaVersion: 1, extensionId: validated.manifest.id, slotId, packageName: resolution.packageName, version: resolution.version, integrity: resolution.integrity, ...(resolution.tarballUrl ? { tarballUrl: resolution.tarballUrl } : {}), installedAt: new Date((this.options.now ?? Date.now)()).toISOString(), npmVersion: this.options.materializer.npmVersion, lockHash: validated.lockHash, inventoryHash: validated.inventoryHash, permissions: Object.freeze([...validated.manifest.permissions]), manifest: validated.manifest, ...(resolution.provenance ? { provenance: resolution.provenance } : {}), ...(resolution.audit ? { audit: resolution.audit } : {}) });
+      const receipt: ExtensionReceipt = Object.freeze({ schemaVersion: 1, extensionId: validated.manifest.id, slotId, packageName: resolution.packageName, version: resolution.version, integrity: resolution.integrity, source: resolution.source ?? "npmjs", ...(resolution.uploadedFilename ? { uploadedFilename: resolution.uploadedFilename } : {}), ...(resolution.tarballUrl ? { tarballUrl: resolution.tarballUrl } : {}), installedAt: new Date((this.options.now ?? Date.now)()).toISOString(), npmVersion: this.options.materializer.npmVersion, lockHash: validated.lockHash, inventoryHash: validated.inventoryHash, permissions: Object.freeze([...validated.manifest.permissions]), manifest: validated.manifest, ...(resolution.provenance ? { provenance: resolution.provenance } : {}), ...(resolution.audit ? { audit: resolution.audit } : {}) });
       await writeFile(join(staging, "terminay-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`, { flag: "wx" });
       const packageRoot = join(staging, "node_modules", ...resolution.packageName.split("/"));
       await this.probe(receipt, packageRoot);
@@ -171,7 +194,7 @@ export class ExtensionInstaller {
     return next;
   }
   private async write(state: ExtensionRegistrySnapshot): Promise<ExtensionRegistrySnapshot> { await mkdir(dirname(this.registryPath()), { recursive: true }); const temporary = `${this.registryPath()}.${randomUUID()}.tmp`; await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { flag: "wx", mode: 0o600 }); await rename(temporary, this.registryPath()); return validateRegistry(state); }
-  private async recoverStaging(): Promise<void> { const staging = join(this.root, "staging"); await rm(staging, { recursive: true, force: true }); await mkdir(staging, { recursive: true }); }
+  private async recoverStaging(): Promise<void> { for (const name of ["staging", "uploads"]) { const directory = join(this.root, name); await rm(directory, { recursive: true, force: true }); await mkdir(directory, { recursive: true }); } }
   private async migrateData(current: InstalledExtensionRecord, fromVersion: string, toVersion: string, revision: number): Promise<void> {
     const source = join(this.root, "data", current.extensionId);
     const destination = join(this.root, "data-snapshots", current.extensionId, String(revision));
@@ -187,12 +210,14 @@ export class ExtensionInstaller {
   }
   private async references(extensionId: string): Promise<ExtensionReferences> { return this.options.references?.(extensionId) ?? {}; }
   private async probe(receipt: ExtensionReceipt, packageRoot: string): Promise<void> { await this.options.probe?.({ extensionId: receipt.extensionId, packageRoot, entrypoint: join(packageRoot, receipt.manifest.entrypoint), manifest: receipt.manifest }); }
+  private expirePreview(digestValue: string, preview: ExtensionInstallPreview): void { const timer = setTimeout(() => { if (this.previews.get(digestValue) !== preview) return; this.previews.delete(digestValue); this.previewTimers.delete(digestValue); void cleanupArchive(preview); }, Math.max(1, preview.expiresAt - (this.options.now ?? Date.now)())); timer.unref?.(); this.previewTimers.set(digestValue, timer); }
   private slotPackageRoot(slot: { receipt: ExtensionReceipt }): string { return join(this.root, "packages", slot.receipt.slotId, "node_modules", ...slot.receipt.packageName.split("/")); }
   private registryPath(): string { return join(this.root, "registry.v1.json"); }
   private serial<T>(work: () => Promise<T>): Promise<T> { const result = this.queue.then(work, work); this.queue = result.then(() => undefined, () => undefined); return result; }
 }
 
 function validateResolution(value: RegistryPackageResolution, expectedName: string): void { if (value.packageName !== expectedName || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(value.version) || !/^(?:sha512|sha256)-[A-Za-z0-9+/=]+$/u.test(value.integrity)) throw new Error("npmjs resolution is not exact or lacks integrity"); if (value.tarballUrl !== undefined && !value.tarballUrl.startsWith("https://registry.npmjs.org/")) throw new Error("resolved tarball is not hosted by public npmjs"); }
+async function cleanupArchive(preview: ExtensionInstallPreview | undefined): Promise<void> { if (preview?.source === "uploaded" && preview.archivePath !== undefined) await rm(preview.archivePath, { force: true }); }
 function validateRegistry(value: unknown): ExtensionRegistrySnapshot { if (typeof value !== "object" || value === null || Array.isArray(value) || (value as { schemaVersion?: unknown }).schemaVersion !== 1 || !Number.isSafeInteger((value as { revision?: unknown }).revision) || typeof (value as { extensions?: unknown }).extensions !== "object" || (value as { extensions?: unknown }).extensions === null) throw new Error("extension registry is invalid"); return structuredClone(value) as ExtensionRegistrySnapshot; }
 function required(state: ExtensionRegistrySnapshot, id: string): InstalledExtensionRecord { const value = state.extensions[id]; if (value === undefined) throw new Error("extension is not installed"); return value; }
 function digest(value: string): string { return createHash("sha256").update(value).digest("hex"); }

@@ -45,7 +45,10 @@ export function validateNpmLockfile(lock: unknown, resolution: RegistryPackageRe
     if (!path.startsWith("node_modules/") || typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("lockfile contains an invalid package record");
     const record = value as Record<string, unknown>;
     if (typeof record.integrity !== "string" || record.integrity.length < 20) throw new Error("every dependency requires registry integrity");
-    if (typeof record.resolved === "string" && !record.resolved.startsWith("https://registry.npmjs.org/")) throw new Error("dependency did not resolve from public npmjs");
+    if (typeof record.resolved === "string" && !record.resolved.startsWith("https://registry.npmjs.org/")) {
+      const uploadedRoot = path === `node_modules/${resolution.packageName}` && resolution.source === "uploaded" && record.resolved.startsWith("file:");
+      if (!uploadedRoot) throw new Error("dependency did not resolve from public npmjs");
+    }
     if (record.link === true) throw new Error("linked dependencies are unsupported");
     const scripts = record.hasInstallScript;
     if (scripts === true) throw new Error("install-script-dependent packages are unsupported");
