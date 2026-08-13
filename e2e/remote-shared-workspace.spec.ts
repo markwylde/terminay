@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+	installSessionTransportHostStub,
 	type SharedWebShellFixture,
 	startSharedWebShellFixture,
 } from './support/shared-web-shell-fixture';
@@ -17,20 +18,20 @@ test.afterAll(async () => {
 test('remote entry uses the shared browser connection and workspace runtime', async ({
 	page,
 }) => {
-	test.setTimeout(90_000);
+	const pageErrors: Error[] = [];
+	page.on('pageerror', (error) => pageErrors.push(error));
+	await installSessionTransportHostStub(page);
 	const pairingUrl = `${fixture.origin}/remote.html#pairingToken=${'a'.repeat(32)}`;
-	// The Vite fixture can still be compiling the browser graph on a cold CI
-	// worker. Treat receiving the document as navigation completion; the UI
-	// assertions below remain the bounded readiness check.
-	await page.goto(pairingUrl, { waitUntil: 'commit' });
+	await page.goto(pairingUrl, { waitUntil: 'domcontentloaded' });
 
 	await expect(
 		page.getByRole('dialog', { name: 'Connect to Remote Server' }),
-	).toBeVisible({ timeout: 60_000 });
+	).toBeVisible();
 	await expect(page.getByLabel('Pairing URL')).toHaveValue(pairingUrl);
 	await expect(
 		page.getByRole('listbox', { name: 'Saved Terminay servers' }),
 	).toBeAttached();
 	await expect(page.locator('.remote-shell')).toHaveCount(0);
 	await expect(page.locator('.remote-workspace')).toHaveCount(0);
+	expect(pageErrors).toEqual([]);
 });
