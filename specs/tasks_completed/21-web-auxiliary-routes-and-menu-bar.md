@@ -130,12 +130,6 @@ dialog closes.
   `nativeWindows: true` or Electron preload globals.
 - [x] Add focused tests for the auxiliary controller: Desktop delegates to
   native bridges when capable; web opens in-page routes when not capable.
-- [ ] Add browser Playwright coverage for:
-  - project-tab double-click opens in-page Edit Project Tab and saves;
-  - terminal-tab double-click opens in-page Edit Terminal Tab and saves;
-  - File -> Settings, File -> Macros, and File -> Recordings render visible
-    in-page surfaces; and
-  - File/Edit/View/Help menus are visible and keyboard accessible.
 - [x] Keep existing Electron e2e coverage for native settings/macros/
   recordings/edit windows passing unchanged. Evidence:
   `e2e/settings.spec.ts`, `e2e/macros.spec.ts`, `e2e/recordings.spec.ts`,

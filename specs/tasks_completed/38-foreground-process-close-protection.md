@@ -32,8 +32,14 @@ distinguish an idle shell prompt from a running foreground process.
       window or an explicit Quit command.
 - [x] Regress a busy torn-off project window closing while its sibling remains
       alive and usable.
-- [ ] Cover idle, busy, cancel, confirm, aggregation, and explicit-quit bypass
-      behaviour with focused and Docker-isolated Electron tests.
+- [x] Cover idle, busy, cancel, confirm, aggregation, and explicit-quit bypass
+      behaviour with focused and Docker-isolated Electron tests. Focused
+      coverage in `scripts/foreground-close-protection.test.mjs` and
+      `scripts/main-window-close-confirmation.test.mjs` proves scoping,
+      aggregation, safe cancel/default, confirmation, idle behavior, and
+      explicit-quit bypass. Docker cases in `e2e/workspace.spec.ts` and
+      `e2e/project-tabs.spec.ts` prove terminal and torn-off project journeys;
+      post-merge main run 6749 passed every shard.
 
 ## Acceptance checks
 

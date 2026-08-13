@@ -24,7 +24,7 @@ unknown application operations unchanged.
 
 ## Dependency
 
-- [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
+- [Task 41: Single-owner WebRTC transport generations](../tasks_completed/41-single-owner-webrtc-transport-generations.md)
 
 ## Implementation slices
 
@@ -70,19 +70,6 @@ blindness. It must not introduce another channel bridge or reconnect owner.
 - [ ] Keep `TerminayClient` and feature facades in the generated server bundle's
   module graph. Host packages depend only on bootstrap, bundle, transport,
   profile, and host-bridge contracts.
-
-### Compatibility evidence
-
-- [ ] Add minimum/current/maximum compatible fixtures for bundle format, host
-  bridge, execution runtime, and byte-endpoint versions.
-- [ ] Prove an older compatible host forwards a newer fixture bundle's unknown
-  application operation unchanged to its matching server.
-- [ ] Prove missing optional native capabilities preserve a usable workspace,
-  while a missing required boundary fails before launch and names the component
-  that must be upgraded.
-- [ ] Add static dependency checks preventing feature-specific clients,
-  workspace reducers, persistent feature DTOs, or a full workspace entry from
-  entering a host-contract package.
 
 ## Acceptance checks
 

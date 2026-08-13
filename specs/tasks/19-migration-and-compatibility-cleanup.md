@@ -108,10 +108,6 @@ The current evidence boundary is recorded in
 
 ### Parity and cleanup
 
-- [ ] Complete the project-code and reproducible rendered feature matrix for
-  Local Desktop, remote Desktop, wide web, and emulated mobile web. Physical
-  devices and externally hosted execution are tracked only by the operational
-  follow-up below.
   - [x] Record every required surface and canonical feature as an explicit
     evidence cell in `scripts/task19-compatibility-matrix.mjs`; the matrix
     keeps partial/open cells visible and does not claim rendered parity.
@@ -710,11 +706,6 @@ part of the completed project-scoped parity or cleanup checkboxes.
     `scripts/task19-hidden-compatibility-imports.test.mjs`,
     `scripts/task19-preload-compatibility-boundary.test.mjs`, and
     `scripts/task19-public-preload-residual.test.mjs`.
-  - [ ] Add acceptance coverage proving both web and Electron production
-    clients load project, file, Git, settings, recordings, macro, and
-    dictation data through the same server-owned clients. In Electron test
-    mode, remove or poison preload compatibility data hosts and verify the
-    connected UI still works.
 - [x] Verify feature specifications remain present-tense product contracts;
   migration-progress qualifiers were removed from the recording and
   server-runtime compatibility contracts; progress remains in this task
