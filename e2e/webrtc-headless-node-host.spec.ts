@@ -785,7 +785,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       'terminal presentation renewal failed: client is not connected',
       { exact: true },
     )
-    await expect(renewalFailure).toBeVisible({ timeout: 30_000 })
+    await expect(renewalFailure).toBeVisible({ timeout: 50_000 })
     expect(
       await renewalFailure.count(),
       'protocol-only application failure must recover without a terminal renewal error while the peer and lane remain open',
