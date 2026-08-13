@@ -87,7 +87,7 @@ post-recovery input.
 - [x] Reset peer, signaling, channel map, authentication promise, listeners,
   timers, and attempt-local state before acquiring replacement lanes. Never
   wait on or consult a closed lane from the retired generation.
-- [ ] Distinguish retryable offline/relay/route failures from terminal revoked,
+- [x] Distinguish retryable offline/relay/route failures from terminal revoked,
   expired, stopped-exposure, explicit-disconnect, forget, and host-shutdown
   states.
 
