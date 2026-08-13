@@ -231,6 +231,23 @@ Platform stores its URL and API-key secret and exposes its VM creation/browse
 flow. Installing or enabling a provider makes these actions available without
 restarting the app, and focusing the window refreshes provider inventory.
 
+Provider-contributed forms do not introduce a second visual language. The
+generic renderer uses the same category header, uppercase section labels,
+bordered Settings groups, single setting rows, field descriptions, controls,
+buttons, validation banners, and action spacing as the existing Settings,
+Macros, and Recordings surfaces. Each ordinary field is one responsive row
+with its label and help text on the left and its control on the right. Related
+fields are never arranged as an arbitrary dashboard grid.
+
+Provider sections marked as disclosures render as compact Settings rows with a
+chevron and optional summary. A collapsed disclosure occupies one normal row;
+it must not appear as a large empty card. Expanding it reveals ordinary setting
+rows within the same group. Preset choices may use compact selectable cards
+only where comparison is materially useful, and remain contained within one
+stacked setting row. Forms end with the standard secondary **Cancel** and
+primary save/create actions. These rules apply equally to official SSH and
+Puzed forms and to third-party providers.
+
 ## Authorization and audit
 
 Environment/profile management, secret replacement, host-trust changes,
@@ -258,6 +275,9 @@ terminal bytes, complete provider responses, and root paths.
 - One view contains This server, SSH, and Puzed projects simultaneously.
 - Desktop and browser clients connected to one server see identical environment
   bindings and statuses and hold no environment credentials locally.
+- Every provider profile/create form uses the established Settings row/group
+  primitives; collapsed sections are compact rows and no provider can create
+  oversized empty cards or a two-column dashboard-style field grid.
 - A remote Terminay Server can execute its own This server project and connect
   outward to other environments.
 - Existing projects migrate to This server without identity/layout changes.

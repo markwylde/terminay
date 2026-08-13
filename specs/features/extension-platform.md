@@ -139,6 +139,13 @@ Icons come from a Terminay-owned allowlist. Strings render as text; raw HTML,
 CSS, SVG, scripts, React components, iframes, generic routes, and arbitrary
 external navigation are not supported.
 
+The schema controls content and progressive disclosure, not visual styling.
+Terminay alone maps every contribution onto its shared Settings primitives:
+category headers, section labels, groups, rows, controls, compact disclosures,
+validation, and action footers. Extensions cannot request grids, arbitrary card
+containers, spacing, colours, or sizing. The same schema must look native to
+Terminay across SSH, Puzed, third-party providers, Desktop, and browser hosts.
+
 ## Extension host and lifecycle
 
 An enabled extension is not successfully installed merely because its package
