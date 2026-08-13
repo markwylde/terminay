@@ -3856,9 +3856,23 @@ async function openRecordingsWindow(requester?: Electron.WebContents): Promise<v
 	}
 }
 
-async function openProjectEnvironmentsWindow(requester?: Electron.WebContents): Promise<void> {
+type ProjectEnvironmentWindowIntent = Readonly<{
+	providerId: string;
+	mode: 'profile' | 'environment';
+	profileId?: string;
+}>;
+async function openProjectEnvironmentsWindow(
+	requester?: Electron.WebContents,
+	intent?: ProjectEnvironmentWindowIntent,
+): Promise<void> {
 	if (projectEnvironmentsWindow && !projectEnvironmentsWindow.isDestroyed() && !projectEnvironmentsWindow.webContents.isDestroyed()) {
 		await rebindAuxiliaryServerConnection(projectEnvironmentsWindow, requester);
+		if (intent !== undefined) {
+			projectEnvironmentsWindow.webContents.send(
+				'desktop:project-environments-host:intent',
+				intent,
+			);
+		}
 		projectEnvironmentsWindow.focus();
 		return;
 	}
@@ -3881,8 +3895,30 @@ async function openProjectEnvironmentsWindow(requester?: Electron.WebContents): 
 	if (VITE_DEV_SERVER_URL) {
 		const target = new URL(VITE_DEV_SERVER_URL);
 		target.searchParams.set('view', 'project-environments');
+		if (intent !== undefined) {
+			target.searchParams.set('providerId', intent.providerId);
+			target.searchParams.set('mode', intent.mode);
+			if (intent.profileId !== undefined) {
+				target.searchParams.set('profileId', intent.profileId);
+			}
+		}
 		void createdWindow.loadURL(target.toString());
-	} else void createdWindow.loadFile(path.join(RENDERER_DIST, 'index.html'), { query: { view: 'project-environments' } });
+	} else {
+		void createdWindow.loadFile(path.join(RENDERER_DIST, 'index.html'), {
+			query: {
+				view: 'project-environments',
+				...(intent === undefined
+					? {}
+					: {
+							providerId: intent.providerId,
+							mode: intent.mode,
+							...(intent.profileId === undefined
+								? {}
+								: { profileId: intent.profileId }),
+						}),
+			},
+		});
+	}
 }
 
 function getEditWindowUrl(kind: EditWindowState['kind']): string {
@@ -6033,8 +6069,32 @@ ipcMain.handle('desktop:project-environments-host:open', async (event, payload: 
 	assertTrustedAppSender(event);
 	if (typeof payload !== 'object' || payload === null || Array.isArray(payload) || Object.getPrototypeOf(payload) !== Object.prototype) throw new TypeError('desktop project environments host request is invalid');
 	const request = payload as Record<string, unknown>;
-	if (Object.keys(request).length !== 1 || request.version !== 1) throw new TypeError('desktop project environments host request is invalid');
-	await openProjectEnvironmentsWindow(event.sender);
+	if (
+		(Object.keys(request).length !== 1 && Object.keys(request).length !== 2) ||
+		request.version !== 1
+	) throw new TypeError('desktop project environments host request is invalid');
+	let intent: ProjectEnvironmentWindowIntent | undefined;
+	if (request.intent !== undefined) {
+		if (
+			typeof request.intent !== 'object' ||
+			request.intent === null ||
+			Array.isArray(request.intent)
+		) throw new TypeError('desktop project environments host request is invalid');
+		const value = request.intent as Record<string, unknown>;
+		if (
+			!['profile', 'environment'].includes(String(value.mode)) ||
+			typeof value.providerId !== 'string' ||
+			value.providerId.length > 256 ||
+			(value.profileId !== undefined &&
+				(typeof value.profileId !== 'string' || value.profileId.length > 256))
+		) throw new TypeError('desktop project environments host request is invalid');
+		intent = {
+			providerId: value.providerId,
+			mode: value.mode as 'profile' | 'environment',
+			...(value.profileId === undefined ? {} : { profileId: value.profileId as string }),
+		};
+	}
+	await openProjectEnvironmentsWindow(event.sender, intent);
 });
 
 ipcMain.handle('desktop:recordings-host:open', (event, payload: unknown) => {
