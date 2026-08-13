@@ -99,6 +99,13 @@ A real transport failure uses an explicit client state machine:
 
 `connected → reconnecting → authenticating → resubscribing → hydrating → connected`.
 
+For this state machine, application-protocol liveness is part of transport
+generation liveness. If the server protocol reader ends or fails, the mounted
+client is no longer usable even when its WebRTC peer and required data channels
+remain open. That signal retires the whole client/peer generation; it is not a
+terminal-panel error and cannot be repaired by renewing an attachment on the
+retired client.
+
 The renderer visibly marks mounted terminal panels as reconnecting and rejects
 unsafe mutations promptly while the old client is unusable. Desktop supplies a
 fresh server-scoped MessagePort; the browser session host replaces its complete
@@ -156,6 +163,11 @@ endpoint.
 - A required WebRTC lane closing while the peer remains connected is a full
   transport-generation failure. Automatic recovery and manual Retry each
   replace all lanes and restore exact ordered input without reloading the page.
+- A server application-protocol reader ending while the native peer and
+  application lane remain open follows the same full-generation replacement
+  path. A real Chromium/native-WebRTC test proves the peer and lane are still
+  open at injection, observes recovery rather than a permanently mounted
+  `client is not connected` state, and proves post-recovery input exactly once.
 - Queue and recovery diagnostics identify the affected opaque lane and precise
   resource transition without including terminal content.
 - Sustained output that never becomes completely idle cannot pin a terminal on

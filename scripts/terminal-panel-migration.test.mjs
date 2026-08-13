@@ -115,7 +115,7 @@ test('server-backed TerminalPanel routes raw stream events through xterm and the
 	assert.match(serverPath, /forceResume \|\| mode === 'resume'/);
 	assert.match(
 		serverPath,
-		/panelClient\.resume\(nextRequest\) : panelClient\.attach\(nextRequest\)/,
+		/attachmentClient\.resume\(nextRequest\) : attachmentClient\.attach\(nextRequest\)/,
 	);
 	assert.match(serverPath, /for \(const event of attachment\.initialEvents\)/);
 
@@ -125,7 +125,7 @@ test('server-backed TerminalPanel routes raw stream events through xterm and the
 	);
 	assert.match(
 		terminalPanel,
-		/attachment\.ack\(nextPosition\)\.catch\(failServerTransport\)/,
+		/attachment\.ack\(nextPosition\)\.catch\(\(error\) => \{[\s\S]*panelAttachment === attachment[\s\S]*failServerTransport\(error\)/,
 	);
 	assert.match(
 		serverPath,
@@ -150,7 +150,7 @@ test('server-backed TerminalPanel routes raw stream events through xterm and the
 	);
 	assert.match(
 		serverPath,
-		/serverInputQueue = new ServerTerminalInputQueue\(failServerTransport\)/,
+		/serverInputQueue = new ServerTerminalInputQueue\(\(error\) => failServerTransport\(error, binding\)\)/,
 	);
 	assert.match(
 		serverPath,
@@ -162,7 +162,7 @@ test('server-backed TerminalPanel routes raw stream events through xterm and the
 		/Terminal output history is no longer available/u,
 	);
 	assert.doesNotMatch(serverPath, /window\.terminay\./);
-	assert.match(serverPath, /failServerTransport\(error\)/);
+	assert.match(serverPath, /failServerTransport\(error, binding\)/);
 });
 
 test('server-backed terminal transport stays isolated from application IPC', () => {
