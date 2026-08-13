@@ -19,6 +19,7 @@ test('connected browser workspace owns an in-page auxiliary presenter and menu b
 	}
 	assert.match(webWorkspace, /data-connected-web-auxiliary-route=\{route\.kind\}/u);
 	assert.match(webWorkspace, /<SettingsWindow/u);
+	assert.match(webWorkspace, /<ProjectEnvironmentsWindow/u);
 	assert.match(webWorkspace, /initialSectionId=\{auxiliaryRoute\.sectionId\}/u);
 	assert.match(webWorkspace, /remoteAccessStatusClient=\{remoteAccessStatusClient\}/u);
 	assert.match(webWorkspace, /settingsClient=\{serverSettingsClient\}/u);
