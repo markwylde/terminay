@@ -2339,6 +2339,9 @@ if (process.env.TERMINAY_TEST === '1') {
 			}) as Promise<{ socketPath: string; token: string }>,
 		sendAppCommand: (command) =>
 			ipcRenderer.invoke('test:send-app-command', command) as Promise<void>,
+		reportAppCommandStage: (stage) => {
+			ipcRenderer.send('test:app-command-stage', stage);
+		},
 		setAiTabMetadataMock: (mock) =>
 			ipcRenderer.invoke(
 				'test:set-ai-tab-metadata-mock',

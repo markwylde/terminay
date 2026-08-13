@@ -19,7 +19,10 @@ documented connection, native-presentation, credential, cache, and OS allowlist.
 - [Task 27: Server bundle and host contracts](./27-server-bundle-host-contracts.md)
 - [Task 16: Shared responsive server UI](./16-shared-responsive-server-ui.md)
 - [Task 19: Migration and compatibility cleanup](./19-migration-and-compatibility-cleanup.md)
-- [Task 23: Embedded Desktop WebRTC exposure](./23-embedded-desktop-remote-exposure.md) for production remote WebRTC evidence
+- [Task 23: Embedded Desktop WebRTC exposure](./23-embedded-desktop-remote-exposure.md)
+  for production remote WebRTC evidence
+- [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
+  for the opaque replaceable WebRTC endpoint contract
 
 ## Current gap
 
@@ -50,8 +53,8 @@ against the server/host state classification.
   commit a content-addressed cache scoped to exact server identity.
 - [ ] Launch the remote bundle in a sandboxed, context-isolated, opaque
   per-profile partition with Node integration and the broad preload disabled.
-- [ ] Deliver only the remote byte endpoint and negotiated host context; keep
-  keys, reconnect grants, signaling credentials, WebRTC objects, and cache
+- [ ] Deliver only the Task 41 remote byte endpoint and negotiated host context;
+  keep keys, reconnect grants, signaling credentials, WebRTC objects, and cache
   filesystem paths in Desktop main.
 - [ ] Retain the last complete verified bundle after interrupted/invalid
   replacement. Never run the embedded Local bundle against a remote profile.

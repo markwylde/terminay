@@ -9,12 +9,18 @@ import {
 import { authenticateDevice } from './services/auth';
 import { parsePairingBootstrap } from './services/pairing';
 import { createRemoteTransportRuntime } from './services/transport';
-import { createBrowserWebRtcTransport } from '../web/browserWebRtcTransport';
+import { acquireHostedApplicationTransport, getSessionTransportHost } from '../web/sessionTransportHost';
 
-window.__TERMINAY_BROWSER_ENROLLMENT__ = {
+const sessionHost = getSessionTransportHost();
+if (sessionHost === undefined) throw new Error('Terminay session transport host is unavailable.');
+sessionHost.registerApplication({
 	async connect(options) {
 		const runtime = createRemoteTransportRuntime();
-		const pairing = await loadPairing(options.origin);
+		const canonicalOrigin = `${sessionHost.origin}#transport=webrtc:${sessionHost.origin}`;
+		if (options.origin !== sessionHost.origin && options.origin !== canonicalOrigin) {
+			throw new Error('Saved browser profile belongs to a different session origin.');
+		}
+		const pairing = await loadPairing(canonicalOrigin);
 		if (pairing === null) throw new Error('This browser has no saved pairing.');
 		const authenticated = await authenticateDevice({
 			api: runtime.api,
@@ -23,13 +29,8 @@ window.__TERMINAY_BROWSER_ENROLLMENT__ = {
 			signChallenge: (input) => signDeviceChallenge(pairing.privateKey, input),
 		});
 		options.onStateChange('connecting');
-		const bridge = window.__TERMINAY_REMOTE_WEBRTC__;
-		if (bridge?.getChannel === undefined) {
-			throw new Error('The canonical WebRTC application transport is unavailable.');
-		}
-		const transport = await createBrowserWebRtcTransport(
-			(name) => bridge.getChannel!(name, authenticated.ticket),
-		);
+		const transport = await acquireHostedApplicationTransport(authenticated.ticket);
+		if (transport === undefined) throw new Error('Terminay session transport host is unavailable.');
 		transport.onStateChange((state) => {
 			if (state === 'open') options.onStateChange('live');
 			else if (state === 'closed' || state === 'failed') options.onStateChange('closed');
@@ -60,10 +61,7 @@ window.__TERMINAY_BROWSER_ENROLLMENT__ = {
 			origin: options.origin,
 		});
 	},
-	validatePairingUrl(pairingUrl) {
-		parsePairingBootstrap(pairingUrl);
-	},
-};
+});
 
 const root = document.getElementById('remote-root');
 if (root === null) throw new Error('remote root element is missing');

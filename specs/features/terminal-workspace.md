@@ -157,6 +157,11 @@ server-owned workspace snapshot. Creating a terminal is a server-owned
 workspace mutation: the server creates the PTY session and the corresponding
 terminal panel record, commits both under the next workspace revision, and
 publishes the ordered workspace event consumed by every connected client.
+The event accelerates reconciliation but is not an acknowledgement: after the
+create command returns, the initiating client actively reads the authoritative
+delta and completes only when one atomic projection contains both the returned
+session and its terminal panel. This remains correct if a change notification
+is lost during transport replacement.
 Renderer code must not create durable terminal panel identity as a fallback for
 missing server state. It may only mount the xterm body for a server-owned panel,
 attach through `TerminayTerminalPanelClient`, and keep temporary local

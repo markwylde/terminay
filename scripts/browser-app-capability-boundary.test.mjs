@@ -40,9 +40,9 @@ test('browser mounts the real App with the exact authenticated client context', 
 	);
 	assert.match(
 		remoteEntry,
-		/bridge\.getChannel!\(name, authenticated\.ticket\)/u,
+		/acquireHostedApplicationTransport\(authenticated\.ticket\)/u,
 	);
-	assert.doesNotMatch(remoteEntry, /ticket\s*:\s*['"`]|getChannel!\(name\)/u);
+	assert.doesNotMatch(remoteEntry, /ticket\s*:\s*['"`]|getChannel|RTCDataChannel/u);
 });
 
 test('browser composition omits native host authority instead of fabricating preload globals', () => {

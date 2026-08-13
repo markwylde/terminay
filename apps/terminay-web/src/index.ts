@@ -515,7 +515,13 @@ export class WebConnectionHost {
 		const existing = this.profiles
 			.snapshot()
 			.profiles.find((profile) => profile.origin === origin);
-		if (existing !== undefined && existing.serverId !== input.serverId) {
+		const authenticatingProvisionalProfile =
+			existing?.status === 'connecting' && input.status === 'connected';
+		if (
+			existing !== undefined &&
+			existing.serverId !== input.serverId &&
+			!authenticatingProvisionalProfile
+		) {
 			throw new TypeError(
 				'saved server identity does not match its canonical origin',
 			);

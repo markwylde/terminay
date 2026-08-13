@@ -33,19 +33,61 @@ test('terminal retry requests host-owned transport replacement after a transport
   assert.notEqual(retryEnd, -1)
   const retry = panel.slice(retryStart, retryEnd)
 
-  assert.match(retry, /terminalPanelConnectionContext\?\.requestConnectionRecovery/)
+  assert.match(retry, /terminalPanelConnectionContext\?\.retryConnection/)
   assert.match(retry, /serverInputQueue\?\.close\(\)/)
-  assert.match(retry, /terminalPanelConnectionContext\.requestConnectionRecovery\(\)/)
+  assert.match(retry, /terminalPanelConnectionContext\.retryConnection\(\)/)
+  const hostRetry = retry.slice(0, retry.indexOf('\n        serverAttachmentFailed'))
+  assert.doesNotMatch(hostRetry, /setServerTerminalError|setIsTerminalHydrating/)
 
   const attachStart = panel.indexOf('      const attachServerTerminal = ({')
   const attachEnd = panel.indexOf('\n      const beginTerminalResync', attachStart)
   const attach = panel.slice(attachStart, attachEnd)
-  assert.match(attach, /panelClient\.resume\(nextRequest\)/)
+  assert.match(attach, /attachmentClient\.resume\(nextRequest\)/)
+})
+
+test('replacement context reports mounted attachment hydration only after rendering initial events', () => {
+  const renderStart = panel.indexOf('            const initialEventsRendered = terminalRenderQueue')
+  const attachStart = panel.indexOf('              serverInputQueue?.attach(attachment)', renderStart)
+  const hydrationReport = panel.indexOf('terminalPanelConnectionContext?.reportConnectionHydrated?.()', renderStart)
+  assert.notEqual(renderStart, -1)
+  assert.ok(hydrationReport > renderStart)
+  assert.ok(hydrationReport < attachStart)
+})
+
+test('mounted terminal keeps one client facade while replacement calls use the new delegate', async () => {
+  const outputDirectory = await mkdtemp(join(process.cwd(), 'scripts', '.terminal-panel-replacement-'))
+  try {
+    await build({
+      absWorkingDir: process.cwd(), bundle: true, entryPoints: ['src/components/TerminalPanel.tsx'],
+      external: ['react', 'react-dom', '@terminay/client-core'], format: 'esm', loader: { '.css': 'empty' },
+      outdir: outputDirectory, platform: 'node',
+      plugins: [{ name: 'stubs', setup(api) {
+        api.onResolve({ filter: /^@xterm\/|^lucide-react$/ }, (args) => ({ path: args.path, namespace: 'stub' }))
+        api.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'export class Terminal {}; export class FitAddon {}; export class SearchAddon {}; export class Unicode11Addon {}; export class WebLinksAddon {}; export const AlertTriangle=0, Mic=0, RotateCcw=0, Square=0, X=0;', loader: 'js' }))
+      } }],
+    })
+    const module = await import(pathToFileURL(join(outputDirectory, 'TerminalPanel.js')).href)
+    let delegate = { attach: async () => 'old' }
+    const facade = module.createReplaceableTerminalPanelClient(() => delegate)
+    assert.equal(await facade.attach({}), 'old')
+    delegate = { attach: async () => 'replacement' }
+    assert.equal(await facade.attach({}), 'replacement')
+  } finally { await rm(outputDirectory, { force: true, recursive: true }) }
+})
+
+test('a replacement hydration generation rebinds even when logical client identity is stable', () => {
+  assert.match(panel, /boundHydrationReporterRef/u)
+  assert.match(panel, /terminalClientContext\?\.applicationClient, terminalClientContext\?\.client, terminalClientContext\?\.clientId, terminalClientContext\?\.reportConnectionHydrated/u)
+  assert.match(panel, /new TerminayTerminalClient\(terminalClientContext\.applicationClient\)/u)
+  assert.match(panel, /rebindServerAttachmentRef\.current\(\{ client: replacementClient, clientId: terminalClientContext\.clientId \}\)/u)
+  assert.match(panel, /client: replacementClient/u)
+  assert.match(panel, /clientId: replacementClientId/u)
+  assert.match(panel, /attachmentClient\.resume\(nextRequest\)/u)
 })
 
 test('workspace metadata and drop-upload changes do not rebuild a mounted terminal attachment', () => {
   const lifecycleStart = panel.indexOf('  useEffect(() => {\n    const container = containerRef.current')
-  const lifecycleEnd = panel.indexOf('\n  useEffect(() => {\n    settingsRef.current = settings', lifecycleStart)
+  const lifecycleEnd = panel.indexOf('\n  useEffect(() => {\n    if (terminalClientContext?.client === undefined)', lifecycleStart)
   assert.notEqual(lifecycleStart, -1)
   assert.notEqual(lifecycleEnd, -1)
   const lifecycle = panel.slice(lifecycleStart, lifecycleEnd)

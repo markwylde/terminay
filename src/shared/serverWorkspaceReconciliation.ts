@@ -116,6 +116,18 @@ export function parseServerWorkspaceDelta(value: unknown, expectedServerId: stri
 	return { state, events: delta.events }
 }
 
+/** A created terminal is presentable only when the same atomic workspace
+ * projection owns both its session and its terminal panel. */
+export function hasTerminalPresentation(
+	snapshot: ServerWorkspaceSnapshot,
+	sessionId: string,
+): boolean {
+	return snapshot.terminalSessions[sessionId] !== undefined
+		&& Object.values(snapshot.panels).some(
+			(panel) => panel.type === 'terminal' && panel.sessionId === sessionId,
+		)
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
 function isStringArray(value: unknown): value is readonly string[] { return Array.isArray(value) && value.every((entry) => typeof entry === 'string') }
 function isPositiveSafeInteger(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 }

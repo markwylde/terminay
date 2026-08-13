@@ -3,7 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { openFileExplorer, openProjectEditWindow } from './support/ui';
+import { fileExplorerItem, openFileExplorer, openProjectEditWindow, setProjectRoot } from './support/ui';
 
 const execFileAsync = promisify(execFile);
 
@@ -80,6 +80,44 @@ test.describe('workspace shell', () => {
 		await expect(closeButtons).toHaveCount(1);
 	});
 
+	test('closes several terminal panels sequentially while a file panel remains', async ({
+		appHarness,
+		createWorkspace,
+		electronApp,
+		mainWindow,
+	}) => {
+		await electronApp.evaluate(({ dialog }) => {
+			dialog.showMessageBox = async () => ({
+				checkboxChecked: false,
+				response: 0,
+			});
+		});
+		const workspace = await createWorkspace({
+			name: 'sequential-panel-close',
+			seed: { files: { 'README.md': 'remaining panel\n' } },
+		});
+		await setProjectRoot(mainWindow, workspace.rootDir);
+		for (let index = 1; index < 4; index += 1) {
+			await appHarness.sendAppCommand('new-terminal');
+		}
+		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(4);
+
+		await openFileExplorer(mainWindow);
+		await fileExplorerItem(mainWindow, 'README.md').dblclick();
+		await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1);
+
+		for (const [index, title] of ['Terminal 1', 'Terminal 2', 'Terminal 3', 'Terminal 4'].entries()) {
+			await mainWindow.locator('.dv-tab:visible').filter({ hasText: title }).first().click();
+			await appHarness.sendAppCommand('close-active');
+			await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(3 - index);
+		}
+
+		await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1);
+		await expect(
+			mainWindow.getByRole('alert').filter({ hasText: 'Workspace synchronization failed' }),
+		).toHaveCount(0);
+	});
+
 	test('warns only when closing a terminal with a foreground process', async ({
 		appHarness,
 		electronApp,
@@ -88,6 +126,7 @@ test.describe('workspace shell', () => {
 		await appHarness.sendAppCommand('new-terminal');
 		const closeButtons = mainWindow.getByLabel('Close terminal');
 		await expect(closeButtons).toHaveCount(2);
+		await mainWindow.locator('.terminal-panel').last().click();
 		await electronApp.evaluate(({ dialog }) => {
 			const state = globalThis as typeof globalThis & {
 				closeDialog?: Electron.MessageBoxOptions;
@@ -135,6 +174,11 @@ test.describe('workspace shell', () => {
 		});
 		await closeButtons.last().click();
 		await expect(closeButtons).toHaveCount(1);
+		await expect(
+			mainWindow
+				.getByRole('alert')
+				.filter({ hasText: 'Workspace synchronization failed' }),
+		).toHaveCount(0);
 	});
 
 	test('closes the project when its last tab is closed', async ({
