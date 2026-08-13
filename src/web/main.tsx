@@ -955,7 +955,10 @@ export default function WebManagerApp() {
 			pairingPin,
 			onStateChange: () => {},
 		});
-		const clientId = `web-webrtc-${Date.now().toString(36)}`;
+		const displayOrigin = origin.split('#', 1)[0] ?? origin;
+		const parsed = new URL(displayOrigin);
+		const stableProfileId = createProfileId(parsed.hostname);
+		const clientId = `web-${stableProfileId}`;
 		const client = new TerminayClient({
 			transport,
 			clientId,
@@ -970,15 +973,13 @@ export default function WebManagerApp() {
 		});
 		try {
 			const hello = await client.connect();
-			const displayOrigin = origin.split('#', 1)[0] ?? origin;
-			const parsed = new URL(displayOrigin);
 			const existing = host.profiles
 				.snapshot()
 				.profiles.find((profile) => profile.origin === parsed.origin);
 			const profile =
 				existing ??
-				host.addConnection({
-					id: createProfileId(parsed.hostname),
+					host.addConnection({
+					id: stableProfileId,
 					serverId: hello.serverId,
 					label: parsed.host,
 					origin: parsed.origin,
@@ -1107,7 +1108,8 @@ export default function WebManagerApp() {
 			},
 		});
 		}
-		const clientId = `web-${Date.now().toString(36)}`;
+		const clientId = connectionController.current?.current?.clientId ??
+			`web-${recoveryAttempt.profileId}`;
 		const initialWatermark = recoveryWatermarks.current.get(profile.id);
 		const client = new TerminayClient({
 			transport,
