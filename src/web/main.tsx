@@ -1,4 +1,5 @@
 import type { ConnectionProfile } from '@terminay/client-core';
+import type { ByteTransport } from '@terminay/protocol';
 import {
 	ConnectionProfileStore,
 	ServerHealthClient,
@@ -1034,7 +1035,7 @@ export default function WebManagerApp() {
 		if (profile === undefined || profile.archived === true)
 			throw new Error('That server is no longer saved in this browser.');
 		const sessionHost = getSessionTransportHost();
-		let transport;
+		let transport: ByteTransport;
 		if (sessionHost !== undefined) {
 			transport = await runBoundedBrowserRecoveryStep({
 				label: 'Reconnect session transport',
