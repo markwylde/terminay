@@ -4,7 +4,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, test } from '@playwright/test'
-import type { ByteTransport } from '@terminay/protocol'
 import { createPairingPinHash } from '../electron/remote/pin'
 import {
   createRtcDataChannelTransport,
@@ -148,7 +147,6 @@ type HeadlessHostWindow = {
   close(): void
   closeLane(label: RequiredLaneLabel): void
   closePeer(): void
-  failApplicationProtocolReader(): void
   iceState(): RTCIceConnectionState | null
   laneState(label: ObservedLaneLabel): RTCDataChannelState | null
   peerState(): RTCPeerConnectionState | null
@@ -158,48 +156,6 @@ type HeadlessHostWindow = {
   sendSignalMessage(message: unknown): void
   sendTerminalMessage(channelId: string, message: string): void
   webContentsId: number
-}
-
-function interruptibleServerTransport(delegate: ByteTransport): {
-  failReader(): void
-  transport: ByteTransport
-} {
-  let interrupted = false
-  let interrupt: (() => void) | undefined
-  const interruptedPromise = new Promise<void>((resolve) => {
-    interrupt = resolve
-  })
-  const transport: ByteTransport = {
-    get state() { return delegate.state },
-    get queuedBytes() { return delegate.queuedBytes },
-    get bufferedBytes() { return delegate.bufferedBytes },
-    incoming: {
-      [Symbol.asyncIterator]() {
-        const iterator = delegate.incoming[Symbol.asyncIterator]()
-        return {
-          async next() {
-            if (interrupted) return { done: true, value: undefined }
-            return Promise.race([
-              iterator.next(),
-              interruptedPromise.then(() => ({ done: true as const, value: undefined })),
-            ])
-          },
-        }
-      },
-    },
-    open: (signal) => delegate.open(signal),
-    send: (frame, options) => delegate.send(frame, options),
-    waitForWritable: (requiredBytes, signal) => delegate.waitForWritable(requiredBytes, signal),
-    close: (reason, options) => delegate.close(reason, options),
-    onStateChange: (listener) => delegate.onStateChange(listener),
-  }
-  return {
-    failReader() {
-      interrupted = true
-      interrupt?.()
-    },
-    transport,
-  }
 }
 
 const requiredLaneLabels = ['control', 'application', 'terminal', 'assets'] as const
@@ -324,8 +280,6 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
   let nextHostId = 1
   let service: RemoteAccessService
   let privilegedExposure: PrivilegedWebRtcExposure | null = null
-  let failApplicationProtocolReader: (() => void) | undefined
-  let applicationTransportState: (() => ByteTransport['state']) | undefined
 
   const createHostWindow = (): HeadlessHostWindow => {
     const webContentsId = nextHostId
@@ -346,10 +300,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     const api: HostApi = {
       async attachApplication(channelId, ticket, channel) {
         await service.attachWebRtcApplication(webContentsId, channelId, ticket, () => hostWindow.close())
-        const controlled = interruptibleServerTransport(createRtcDataChannelTransport(channel))
-        failApplicationProtocolReader = controlled.failReader
-        applicationTransportState = () => controlled.transport.state
-        const connection = composition.core.accept(controlled.transport)
+        const connection = composition.core.accept(createRtcDataChannelTransport(channel))
         void connection.start().catch(() => hostWindow.close())
       },
       closeApplication: (channelId) => service.closeWebRtcApplication(channelId),
@@ -405,12 +356,6 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       closePeer() {
         if (!hostPeer) throw new Error('Cannot close the native peer before it is created.')
         hostPeer.close()
-      },
-      failApplicationProtocolReader() {
-        if (!failApplicationProtocolReader) {
-          throw new Error('Cannot fail the application protocol before it is attached.')
-        }
-        failApplicationProtocolReader()
       },
       iceState() {
         return hostPeer?.iceConnectionState ?? null
@@ -501,12 +446,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       selectedWeriftRuntimeRoot,
       {
         ...serviceOptions,
-        acceptApplicationTransport: (transport) => {
-          const controlled = interruptibleServerTransport(transport)
-          failApplicationProtocolReader = controlled.failReader
-          applicationTransportState = () => controlled.transport.state
-          return composition.core.accept(controlled.transport)
-        },
+        acceptApplicationTransport: (transport) => composition.core.accept(transport),
       },
     )
     service = privilegedExposure.service
@@ -522,6 +462,83 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
 
   const context = await browser.newContext()
   await context.addInitScript(() => {
+    type BrowserTransport = {
+      readonly state: string
+      readonly queuedBytes: number
+      readonly bufferedBytes: number
+      readonly incoming: AsyncIterable<Uint8Array>
+      open(signal?: AbortSignal): Promise<void>
+      send(frame: Uint8Array, options?: { signal?: AbortSignal }): Promise<void>
+      waitForWritable(requiredBytes?: number, signal?: AbortSignal): Promise<void>
+      close(reason?: unknown, options?: { drain?: boolean }): Promise<void>
+      onStateChange(listener: (state: string) => void): () => void
+    }
+    type ApplicationDelegate = {
+      connect(options: unknown): Promise<BrowserTransport>
+      enroll(options: unknown): Promise<unknown>
+    }
+    type SessionHost = Record<string, unknown> & {
+      registerApplication(delegate: ApplicationDelegate): void
+    }
+    let sessionHost: unknown
+    Object.defineProperty(window, '__TERMINAY_SESSION_TRANSPORT__', {
+      configurable: true,
+      get: () => sessionHost,
+      set(value: unknown) {
+        const host = value as SessionHost
+        sessionHost = Object.freeze({
+          ...host,
+          registerApplication(delegate: ApplicationDelegate) {
+            host.registerApplication({
+              ...delegate,
+              async connect(options: unknown) {
+                const endpoint = await delegate.connect(options)
+                let interrupted = false
+                let interrupt: (() => void) | undefined
+                const interruptedPromise = new Promise<void>((resolve) => {
+                  interrupt = resolve
+                })
+                const wrapped: BrowserTransport = {
+                  get state() { return endpoint.state },
+                  get queuedBytes() { return endpoint.queuedBytes },
+                  get bufferedBytes() { return endpoint.bufferedBytes },
+                  incoming: {
+                    [Symbol.asyncIterator]() {
+                      const iterator = endpoint.incoming[Symbol.asyncIterator]()
+                      return {
+                        async next() {
+                          if (interrupted) return { done: true, value: undefined }
+                          return Promise.race([
+                            iterator.next(),
+                            interruptedPromise.then(() => ({ done: true as const, value: undefined })),
+                          ])
+                        },
+                      }
+                    },
+                  },
+                  open: (signal) => endpoint.open(signal),
+                  send: (frame, options) => endpoint.send(frame, options),
+                  waitForWritable: (requiredBytes, signal) => endpoint.waitForWritable(requiredBytes, signal),
+                  close: (reason, options) => endpoint.close(reason, options),
+                  onStateChange: (listener) => endpoint.onStateChange(listener),
+                }
+                Object.defineProperty(window, '__terminayProtocolOnlyFault', {
+                  configurable: true,
+                  value: {
+                    fail() {
+                      interrupted = true
+                      interrupt?.()
+                    },
+                    state: () => endpoint.state,
+                  },
+                })
+                return wrapped
+              },
+            })
+          },
+        })
+      },
+    })
     const OriginalWebSocket = window.WebSocket
     const signalLog: Array<{ data: unknown; direction: string }> = []
     Object.defineProperty(window, '__terminayHeadlessSignalLog', {
@@ -760,9 +777,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
     await expect(page.getByText('client is not connected', { exact: true })).toHaveCount(0)
 
-    // Reproduce the deployed failure shape: server-side application protocol
-    // authority disappears while the WebRTC peer and application data channel
-    // remain healthy. Lane-close tests do not exercise this split-brain state.
+    // Reproduce the deployed failure shape: the mounted application's protocol
+    // reader ends while its WebRTC peer and application data channel remain
+    // healthy. Lane-close tests do not exercise this split-brain state.
     const protocolRuntime = privilegedExposure
       ? null
       : await waitFor(
@@ -771,12 +788,19 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
           30_000,
           'the connected application protocol runtime',
         )
-    expect(applicationTransportState?.()).toBe('open')
-    if (!failApplicationProtocolReader) {
-      throw new Error('The application protocol reader was not installed.')
-    }
-    failApplicationProtocolReader()
-    await expect.poll(() => applicationTransportState?.()).toBe('open')
+    const protocolFaultState = () => page.evaluate(() =>
+      (window as Window & {
+        __terminayProtocolOnlyFault?: { state(): string }
+      }).__terminayProtocolOnlyFault?.state())
+    await expect.poll(protocolFaultState).toBe('open')
+    await page.evaluate(() => {
+      const fault = (window as Window & {
+        __terminayProtocolOnlyFault?: { fail(): void }
+      }).__terminayProtocolOnlyFault
+      if (!fault) throw new Error('The browser application protocol reader was not installed.')
+      fault.fail()
+    })
+    await expect.poll(protocolFaultState).toBe('open')
     if (protocolRuntime) {
       await expect.poll(() => protocolRuntime.peerState()).toBe('connected')
       await expect.poll(() => protocolRuntime.laneState('application')).toBe('open')
