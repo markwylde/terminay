@@ -319,6 +319,11 @@ fully inset from the viewport at narrow sizes. Starting a fresh pairing flow
 does not show a missing-saved-credential warning; enrollment errors appear only
 after an enrollment attempt fails.
 
+Browser acceptance tests treat navigation commit as transport readiness and
+the visible enrollment dialog as application readiness. They do not use the
+page `load` event as a proxy for either: cold asset compilation or a loaded CI
+runner may delay that event without changing the pairing contract.
+
 Desktop may accept the pairing URL in its connection menu even when the URL
 would otherwise open a browser. Browser and Desktop flows must produce the same
 server-side device and audit semantics.
