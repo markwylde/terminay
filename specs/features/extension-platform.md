@@ -223,7 +223,9 @@ destroy shared environments.
 Extensions are a first-class **Extensions** section inside **Settings**, using
 the same navigation, header, spacing, controls, responsive behaviour, and
 native-window chrome as every other Settings section. They are not presented
-in a project-editor sheet or in a bespoke full-screen modal. The section names
+in a project-editor sheet, a bespoke full-screen modal, or a second list/detail
+application nested inside Settings. Providers use ordinary Settings groups,
+rows, fields, buttons, badges, and disclosure patterns. The section names
 the selected Terminay Server as the authority and shows official SSH/Puzed
 cards, installed and disabled states, available explicit updates,
 compatibility/failure details, permissions, dependants, and **Install from
