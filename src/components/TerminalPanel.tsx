@@ -322,16 +322,15 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminalClientContext === null
         ? null
         : {
-            client: terminalClientContext.client,
-            clientId: terminalClientContext.clientId,
-            projectId: terminalClientContext.projectId,
-            serverId: terminalClientContext.serverId,
+            get client() { return connectionActionsRef.current!.client },
+            get clientId() { return connectionActionsRef.current!.clientId },
+            get projectId() { return connectionActionsRef.current!.projectId },
+            get serverId() { return connectionActionsRef.current!.serverId },
             retryConnection: () => connectionActionsRef.current?.retryConnection?.(),
             reportConnectionHydrated: () => connectionActionsRef.current?.reportConnectionHydrated?.(),
             reportConnectionHydrationFailed: (error) => connectionActionsRef.current?.reportConnectionHydrationFailed?.(error),
           },
     [
-      terminalClientContext?.clientId,
       terminalClientContext?.projectId,
       terminalClientContext?.serverId,
     ],
