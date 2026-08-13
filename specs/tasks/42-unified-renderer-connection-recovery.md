@@ -37,64 +37,64 @@ error before replacement transport and terminal attachment are usable.
 
 ### One stable connection identity and controller
 
-- [ ] Define one controller keyed only by stable profile id plus verified
+- [x] Define one controller keyed only by stable profile id plus verified
   server/session identity. URL, origin marker, client id, React mount, and
   transport attempt are not alternative generation keys.
-- [ ] Give the controller one monotonic attempt/generation sequence and one
+- [x] Give the controller one monotonic attempt/generation sequence and one
   explicit state union covering idle, connecting, authenticating,
   resubscribing, hydrating, connected, retry-wait, blocked, and stopped.
-- [ ] Make the controller own the active client/context, confirmed workspace
+- [x] Make the controller own the active client/context, confirmed workspace
   and terminal watermarks, abort signal, retry timer, candidate disposal, and
   atomic activation. React only subscribes to its immutable state.
-- [ ] Model transport acquisition as an injected host operation. WebRTC uses
+- [x] Model transport acquisition as an injected host operation. WebRTC uses
   the Task 41 session host; direct WebSocket and Desktop MessagePort providers
   satisfy the same replacement interface without transport-specific branches
   in the renderer state machine.
 
 ### One activation and recovery path
 
-- [ ] Complete pairing/enrollment before creating or updating the stable
+- [x] Complete pairing/enrollment before creating or updating the stable
   profile, then activate that profile through the same controller used for a
   remembered profile. Remove the separate connected-context construction
   branches.
-- [ ] Route initial open, auto-restore, explicit profile selection, transport
+- [x] Route initial open, auto-restore, explicit profile selection, transport
   close, application-send failure, and Retry through controller events rather
   than directly constructing clients or starting nested recoveries.
-- [ ] Dispose and fence the old client synchronously at generation retirement;
+- [x] Dispose and fence the old client synchronously at generation retirement;
   fully authenticate, resubscribe, load the authoritative workspace, and
   hydrate terminal panels before publishing the candidate as connected.
-- [ ] Preserve the mounted workspace presentation during recoverable failure,
+- [x] Preserve the mounted workspace presentation during recoverable failure,
   but never preserve its command authority. Explicit disconnect, forget,
   credential replacement, and profile switch unmount it deterministically.
-- [ ] Make retries bounded per attempt with backoff but persistent across
+- [x] Make retries bounded per attempt with backoff but persistent across
   retryable failure. Manual Retry cancels the wait and starts a fresh current
   attempt immediately.
 
 ### Stable UI and terminal boundary
 
-- [ ] Replace `requestConnectionRecovery` closures captured from a client with
+- [x] Replace `requestConnectionRecovery` closures captured from a client with
   one stable controller `retry()` action supplied by current profile identity.
-- [ ] Drive connection banners, terminal overlay, button availability,
+- [x] Drive connection banners, terminal overlay, button availability,
   accessibility announcements, and input enablement solely from controller
   state plus terminal-attachment hydration state.
-- [ ] Close and discard an uncertain terminal input queue immediately. Do not
+- [x] Close and discard an uncertain terminal input queue immediately. Do not
   accept later keys until the new attachment is current; do not replay input
   whose delivery outcome is unknown.
-- [ ] Keep the prior terminal emulator and confirmed render position, then
+- [x] Keep the prior terminal emulator and confirmed render position, then
   resume/checkpoint-hydrate it against the replacement client exactly once.
-- [ ] Clear recovery presentation only after the replacement attachment can
+- [x] Clear recovery presentation only after the replacement attachment can
   deliver a probe/real command and receive its confirmed result.
 
 ### Delete superseded lifecycle code
 
-- [ ] Delete `BrowserConnectionAttemptGate`, `RendererConnectionGeneration`,
+- [x] Delete `BrowserConnectionAttemptGate`, `RendererConnectionGeneration`,
   `RendererConnectionRecovery`, duplicated `recoverConnection` branches, and
   stale callback diagnostics after the unified controller owns their required
   invariants.
 - [ ] Delete transport-specific auto-restore suppression, origin/profile key
   workarounds, fire-and-forget active-context disposal, and panel-local
   optimistic reconnect state.
-- [ ] Replace source-regex tests for callback wiring with runtime state-machine
+- [x] Replace source-regex tests for callback wiring with runtime state-machine
   and mounted-panel behavior tests. Do not retain compatibility wrappers around
   the deleted classes.
 

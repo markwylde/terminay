@@ -26,11 +26,11 @@ describe('RendererConnectionController', () => {
 		let release!: (value: { id: string; dispose(): void }) => void;
 		const disposed: string[] = [];
 		const controller = new RendererConnectionController<{ id: string; dispose(): void }>();
-		const pipeline = (id: string, acquire: () => Promise<{ id: string; dispose(): void }>) => ({
+		const pipeline = (acquire: () => Promise<{ id: string; dispose(): void }>) => ({
 			acquire, resubscribe: async () => {}, hydrate: async () => {}, verify: async () => {},
 		});
-		controller.connect('profile-1', pipeline('old', () => new Promise((resolve) => { release = resolve; })));
-		controller.connect('profile-1', pipeline('new', async () => ({ id: 'new', dispose: () => disposed.push('new') })));
+		controller.connect('profile-1', pipeline(() => new Promise((resolve) => { release = resolve; })));
+		controller.connect('profile-1', pipeline(async () => ({ id: 'new', dispose: () => disposed.push('new') })));
 		release({ id: 'old', dispose: () => disposed.push('old') });
 		await settle(() => controller.current?.id === 'new');
 		expect(controller.current?.id).toBe('new');
