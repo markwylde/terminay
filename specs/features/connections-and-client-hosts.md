@@ -79,10 +79,11 @@ keyboard/touch focus behavior (arrow wrapping, Home/End, Escape, and explicit
 activation). Host capabilities gate administrative actions such as exposure;
 the menu never invokes a native operation directly.
 
-The same package exposes a route registry for workspace, connections, settings,
-recordings, macros, file, and Git surfaces. Browser hosts keep every route
-in-page; Desktop may present eligible secondary routes in native auxiliary
-windows only when its `nativeWindows` capability is declared.
+The same package exposes a route registry for workspace, connections, settings
+(including Extensions), project environments, recordings, macros, file, and
+Git surfaces. Browser hosts keep every route in-page; Desktop may present
+eligible secondary routes in native auxiliary windows only when its
+`nativeWindows` capability is declared.
 
 Desktop development and auxiliary query routes render those same production
 shared route bodies against the authenticated embedded-server clients. They do
@@ -360,10 +361,12 @@ separate operation against that origin.
 - Native-only window operations are capability-gated. Web clients manage
   server-owned logical workspace views through in-page navigation rather than
   requiring popup windows.
-- Settings, macros, recordings, and edit-tab surfaces use shared
-  routes/components. Electron may present a route in a native auxiliary window;
-  the web host presents the same route in-page with equivalent open, focus,
-  save, cancel, and close semantics.
+- Settings (including Extensions), project environments, macros, recordings,
+  and edit-tab surfaces use shared routes/components. Electron presents
+  Project Environments as a first-class native management window consistent
+  with Settings, Macros, and Recordings, while edit-tab routes may use modal
+  project-editor chrome. The web host presents the same shared routes in-page
+  with equivalent open, focus, save, cancel, and close semantics.
 - Project-tab and terminal-tab double-click editing is a shared command. On
   Desktop it may open the native modal edit window. In web it opens the
   in-page edit-tab surface and returns focus to the edited project or terminal

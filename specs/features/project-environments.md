@@ -205,11 +205,22 @@ may appear subtly on the tab and environment chip, with complete accessible
 text. Project editing shows immutable environment identity/status, root,
 **Use environment default**, appearance, and environment-valid shell choices.
 
-**File → Project Environments…** opens a server-owned responsive route. It
-shows which selected Terminay Server owns the profiles, searchable provider
-groups, safe endpoint/default-root/status metadata, project references, and
-Test/Edit/Remove actions. Desktop may present the route in a native auxiliary
-window; web presents the same route in-page.
+**File → Project Environments…** opens or focuses a first-class management
+surface named **Project Environments**. It shows which selected Terminay Server
+owns the profiles, searchable provider groups, safe
+endpoint/default-root/status metadata, project references, and Test/Edit/Remove
+actions. On Desktop it is a dedicated native auxiliary window with the same
+window chrome, content frame, responsive layout conventions, and focus/reuse
+behaviour as Settings, Macros, and Recordings. It is not a project-editor sheet
+and must not use that sheet's oversized centered-dialog presentation. In a
+browser, the same shared route is presented in-page with equivalent management
+semantics. Repeated invocation focuses the existing presentation instead of
+opening duplicates.
+
+The project-bar chooser's **Project Environments…** action and the matching
+Command Bar action invoke that same semantic route. Extension installation and
+updates are not duplicated in this window: links that require an environment
+provider open Settings at its **Extensions** section.
 
 ## Authorization and audit
 
@@ -229,6 +240,12 @@ terminal bytes, complete provider responses, and root paths.
 
 ## Acceptance outcomes
 
+- Desktop Project Environments management uses a dedicated, reusable native
+  management window visually consistent with Settings, Macros, and Recordings;
+  it never renders in project/tab editor modal chrome.
+- File, Command Bar, and project-chooser entry points all open or focus the
+  same Project Environments presentation, while browsers render its shared
+  route in-page.
 - One view contains This server, SSH, and Puzed projects simultaneously.
 - Desktop and browser clients connected to one server see identical environment
   bindings and statuses and hold no environment credentials locally.
