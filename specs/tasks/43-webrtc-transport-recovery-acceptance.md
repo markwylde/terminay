@@ -15,8 +15,8 @@ silent inert state.
 
 ## Dependencies
 
-- [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
-- [Task 42: Unified renderer connection recovery](./42-unified-renderer-connection-recovery.md)
+- [Task 41: Single-owner WebRTC transport generations](../tasks_completed/41-single-owner-webrtc-transport-generations.md)
+- [Task 42: Unified renderer connection recovery](../tasks_completed/42-unified-renderer-connection-recovery.md)
 
 ## Evidence boundary
 

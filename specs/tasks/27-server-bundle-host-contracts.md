@@ -24,7 +24,7 @@ unknown application operations unchanged.
 
 ## Dependency
 
-- [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
+- [Task 41: Single-owner WebRTC transport generations](../tasks_completed/41-single-owner-webrtc-transport-generations.md)
 
 ## Implementation slices
 

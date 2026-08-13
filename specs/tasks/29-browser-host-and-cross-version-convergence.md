@@ -19,7 +19,7 @@ compatibility window.
 - [Task 27: Server bundle and host contracts](./27-server-bundle-host-contracts.md)
 - [Task 28: Desktop server-bundle host and state extraction](./28-desktop-server-bundle-host-and-state.md)
 - [Task 23: Embedded Desktop WebRTC exposure](./23-embedded-desktop-remote-exposure.md)
-- [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
+- [Task 41: Single-owner WebRTC transport generations](../tasks_completed/41-single-owner-webrtc-transport-generations.md)
 - [Task 43: WebRTC transport recovery acceptance](./43-webrtc-transport-recovery-acceptance.md)
 
 ## Current gap

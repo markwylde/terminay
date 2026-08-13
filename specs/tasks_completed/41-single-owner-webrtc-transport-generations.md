@@ -16,7 +16,7 @@ WebRTC channels.
 
 ## Related active contract
 
-- [Task 27: Server bundle and host contracts](./27-server-bundle-host-contracts.md)
+- [Task 27: Server bundle and host contracts](../tasks/27-server-bundle-host-contracts.md)
   consumes this task's opaque endpoint and owns its bundle compatibility
   declaration; it does not own WebRTC generation recovery.
 

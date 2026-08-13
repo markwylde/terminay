@@ -105,11 +105,13 @@ Relevant Electron contracts:
   lines, rotation/retention, resume cleanup, aggregate eviction, permissions,
   unknown-file and symlink preservation, rate limiting, redaction, lifecycle
   deduplication, clean/interrupted launch markers, and degraded writes.
-- [ ] Add Docker-isolated Electron E2E cases for packaged-style no-terminal
+- [x] Add Docker-isolated Electron E2E cases for packaged-style no-terminal
   startup, renderer load/preload/root failures, renderer crash/OOM, GPU or child
   failure fixture, hang/recovery, in-process Local composition lifecycle,
-  reveal/clear actions, and post-crash readability. Run them only through
-  `npm run test:e2e`.
+  reveal/clear actions, and post-crash readability. The six cases in
+  `e2e/local-desktop-diagnostics.spec.ts` exercise those boundaries through the
+  Docker-only `npm run test:e2e` suite; PR #50 and post-merge main run 6749
+  passed all five shards.
 - [x] Add a release-build inspection that confirms crash upload is disabled,
   no diagnostics/network transport dependency or endpoint is present, and no
   raw Chromium/net logging switch is enabled in the always-on profile.
