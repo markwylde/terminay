@@ -139,6 +139,18 @@ export class WorkspaceSnapshotStore {
 				unsubscribe()
 				resolve(snapshot)
 			})
+			// Change events are an acceleration signal, not a delivery guarantee. A
+			// command response establishes that the authority may have advanced, so
+			// explicitly reconcile after installing the listener. This closes both
+			// the command/event ordering window and a lost-event recovery window.
+			void this.refresh().catch((error) => {
+				if (settled) return
+				settled = true
+				window.clearTimeout(timeout)
+				unsubscribe()
+				this.reportBackgroundFailure(error)
+				resolve(null)
+			})
 		})
 	}
 
