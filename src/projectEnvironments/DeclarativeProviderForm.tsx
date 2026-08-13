@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import type { DeclarativeFieldDto, DeclarativeFormDto } from './uiModel';
 
@@ -10,13 +10,15 @@ export function DeclarativeProviderForm({
 	onCancel,
 	onSubmit,
 	onLoadOptions,
+	initialValues = {},
 }: Readonly<{
 	form: DeclarativeFormDto;
 	onCancel: () => void;
 	onSubmit: (values: Readonly<Record<string, FormValue>>) => Promise<void> | void;
-	onLoadOptions?: (fieldId: string, source: string, query: string, signal: AbortSignal) => Promise<readonly SelectOption[]>;
+	onLoadOptions?: (fieldId: string, source: string, query: string, values: Readonly<Record<string, FormValue>>, signal: AbortSignal) => Promise<readonly SelectOption[]>;
+	initialValues?: Readonly<Record<string, FormValue>>;
 }>) {
-	const [values, setValues] = useState<Record<string, FormValue>>({});
+	const [values, setValues] = useState<Record<string, FormValue>>({ ...initialValues });
 	const [errors, setErrors] = useState<readonly string[]>([]);
 	const [submitting, setSubmitting] = useState(false);
 	const visibleSections = useMemo(() => form.sections.map((section) => ({
@@ -69,6 +71,7 @@ export function DeclarativeProviderForm({
 						value={values[field.id]}
 						onChange={(value) => setValues((current) => ({ ...current, [field.id]: value }))}
 						onLoadOptions={onLoadOptions}
+						values={values}
 					/>
 				));
 				if (section.disclosure === 'expanded' || section.disclosure === 'collapsed') {
@@ -108,26 +111,41 @@ function DeclarativeField({
 	value,
 	onChange,
 	onLoadOptions,
+	values,
 }: Readonly<{
 	field: DeclarativeFieldDto;
 	value?: FormValue;
 	onChange: (value: FormValue) => void;
-	onLoadOptions?: (fieldId: string, source: string, query: string, signal: AbortSignal) => Promise<readonly SelectOption[]>;
+	onLoadOptions?: (fieldId: string, source: string, query: string, values: Readonly<Record<string, FormValue>>, signal: AbortSignal) => Promise<readonly SelectOption[]>;
+	values: Readonly<Record<string, FormValue>>;
 }>) {
 	const describedBy = field.description === undefined ? undefined : `${field.id}-description`;
 	const [options, setOptions] = useState(field.options ?? []);
 	const [query, setQuery] = useState('');
 	const [loading, setLoading] = useState(false);
-	const loadOptions = async () => {
+	const [loadError, setLoadError] = useState('');
+	const valuesKey = JSON.stringify(values);
+	const loadOptions = async (signal?: AbortSignal) => {
 		if (field.optionSource === undefined || onLoadOptions === undefined) return;
-		const controller = new AbortController();
+		const controller = signal === undefined ? new AbortController() : null;
 		setLoading(true);
+		setLoadError('');
 		try {
-			setOptions(await onLoadOptions(field.id, field.optionSource, query, controller.signal));
+			setOptions(await onLoadOptions(field.id, field.optionSource, query, values, signal ?? controller!.signal));
+		} catch (error) {
+			if (!(error instanceof DOMException && error.name === 'AbortError')) {
+				setLoadError(error instanceof Error ? error.message : String(error));
+			}
 		} finally {
 			setLoading(false);
 		}
 	};
+	useEffect(() => {
+		if (field.optionSource === undefined || onLoadOptions === undefined) return;
+		const controller = new AbortController();
+		void loadOptions(controller.signal);
+		return () => controller.abort();
+	}, [field.id, field.optionSource, onLoadOptions, valuesKey]);
 
 	if (field.kind === 'checkbox' || field.kind === 'switch') {
 		return (
@@ -156,6 +174,7 @@ function DeclarativeField({
 						</label>
 					))}
 				</div>
+				{loadError?<span className="settings-row-description declarative-provider-option-error" role="alert">{loadError}</span>:!loading&&field.optionSource!==undefined&&options.length===0?<span className="settings-row-description" role="status">No options available.</span>:null}
 			</fieldset>
 		);
 	}
@@ -176,6 +195,7 @@ function DeclarativeField({
 					<option value="">Choose…</option>
 					{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
 				</select>
+				{loadError?<span className="settings-row-description declarative-provider-option-error" role="alert">{loadError}</span>:!loading&&field.optionSource!==undefined&&options.length===0?<span className="settings-row-description" role="status">No options available.</span>:null}
 			</div>
 		);
 	} else {

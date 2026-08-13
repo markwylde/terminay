@@ -35,7 +35,8 @@ test("packed Puzed child composes a private host key, SSH readiness, and one can
   const started = run("docker", ["run", "-d", "-P", image]); assert.equal(started.status, 0, started.stderr); const container = started.stdout.trim();
   t.after(() => { run("docker", ["rm", "-f", container]); run("docker", ["image", "rm", "-f", image]); });
   const sshPort = Number(run("docker", ["port", container, "22/tcp"]).stdout.trim().split(":").at(-1)); assert.ok(sshPort > 0);
-  const [puzed, ssh] = await Promise.all([pack(puzedRepo, join(root, "puzed"), false), pack(sshRepo, join(root, "ssh"), true)]);
+  const puzed = await pack(puzedRepo, join(root, "puzed"), false);
+  const ssh = await pack(sshRepo, join(root, "ssh"), true);
   const fake = await fakePuzedApi(sshPort); t.after(() => fake.close());
 
   const secrets = new Map([["puzed-api-key", new TextEncoder().encode("api-secret-sentinel")]]);
@@ -88,6 +89,11 @@ test("packed Puzed child composes a private host key, SSH readiness, and one can
   await manager.start(descriptor(ssh, root));
   await manager.start(descriptor(puzed, root));
   assert.deepEqual(manager.providerDefinitions().map(({ providerId }) => providerId).sort(), [puzedProvider, sshProvider]);
+
+  const imageOptions=await manager.invokeProvider({providerId:puzedProvider,callback:"resolveOptions",request:{sourceId:"com.puzed.platform/images",profileId:"platform-1",values:{}}});
+  assert.deepEqual(imageOptions.options.map(option=>[option.value,option.label]),[["image-1","Debian"]]);
+  const sizeOptions=await manager.invokeProvider({providerId:puzedProvider,callback:"resolveOptions",request:{sourceId:"com.puzed.platform/sizes",profileId:"platform-1",values:{}}});
+  assert.deepEqual(sizeOptions.options.map(option=>option.value),["medium","custom"]);
 
   // The packed SSH child separately resolves a host-owned profile. A refused
   // loopback port is intentional: this proof substitutes only external SSH.
@@ -146,7 +152,7 @@ test("packed Puzed child composes a private host key, SSH readiness, and one can
 async function pack(repo, destination, install) {
   await mkdir(destination, { recursive: true });
   const packed = run("npm", ["pack", "--pack-destination", destination, "--json"], repo); assert.equal(packed.status, 0, packed.stderr);
-  const filename = JSON.parse(packed.stdout)[0].filename; assert.equal(run("tar", ["-xzf", join(destination, filename), "-C", destination]).status, 0);
+  const result=JSON.parse(packed.stdout),entries=Array.isArray(result)?result:Object.values(result);assert.equal(entries.length,1,`npm pack did not produce exactly one archive: ${packed.stdout}`);const filename=entries[0].filename; assert.equal(run("tar", ["-xzf", join(destination, filename), "-C", destination]).status, 0);
   const packageRoot = join(destination, "package");
   if (install) { const result = run("npm", ["install", "--ignore-scripts", "--omit=dev", "--legacy-peer-deps"], packageRoot); assert.equal(result.status, 0, result.stderr); }
   const scope = join(packageRoot, "node_modules", "@terminay"); await mkdir(scope, { recursive: true }); await symlink(apiPackage, join(scope, "extension-api"), "dir");

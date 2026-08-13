@@ -7,7 +7,10 @@ import type {
 
 export type AuxiliaryRouteRequest =
 	| { readonly kind: 'settings'; readonly sectionId?: string }
-	| { readonly kind: 'project-environments' }
+	| {
+			readonly kind: 'project-environments';
+			readonly intent?: ProjectEnvironmentRouteIntent;
+	  }
 	| { readonly kind: 'macros' }
 	| { readonly kind: 'recordings' }
 	| {
@@ -27,7 +30,9 @@ export type AuxiliaryRouteRequestHandler = (
 
 export type AuxiliaryRouteController = Readonly<{
 	openSettings: (sectionId?: string) => Promise<void>;
-	openProjectEnvironments: () => Promise<void>;
+	openProjectEnvironments: (
+		intent?: ProjectEnvironmentRouteIntent,
+	) => Promise<void>;
 	openMacros: () => Promise<void>;
 	openRecordings: () => Promise<void>;
 	editProjectTab: (
@@ -36,6 +41,11 @@ export type AuxiliaryRouteController = Readonly<{
 	editTerminalTab: (
 		state: Extract<EditWindowState, { readonly kind: 'terminal' }>,
 	) => Promise<TerminalEditWindowResult | null>;
+}>;
+export type ProjectEnvironmentRouteIntent = Readonly<{
+	providerId: string;
+	mode: 'profile' | 'environment';
+	profileId?: string;
 }>;
 
 export type AuxiliaryRouteControllerOptions = Readonly<{
@@ -65,13 +75,16 @@ export function createAuxiliaryRouteController({
 			}
 			await requestInPage({ kind: 'settings', sectionId });
 		},
-		async openProjectEnvironments() {
+		async openProjectEnvironments(intent) {
 			const host = getWindow()?.terminayProjectEnvironmentsHost;
 			if (host !== undefined) {
-				await host.open();
+				await host.open(intent);
 				return;
 			}
-			await requestInPage({ kind: 'project-environments' });
+			await requestInPage({
+				kind: 'project-environments',
+				...(intent === undefined ? {} : { intent }),
+			});
 		},
 		async openMacros() {
 			await requestInPage({ kind: 'macros' });

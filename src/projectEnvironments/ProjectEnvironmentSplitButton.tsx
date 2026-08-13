@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { ProjectEnvironmentSummaryDto } from './uiModel';
 import { statusLabel } from './uiModel';
+export type ProjectEnvironmentCreateAction=Readonly<{providerId:string;label:string;profileId?:string;description?:string}>;
 
 export function ProjectEnvironmentSplitButton({
 	canCreate,
 	environments,
 	onCreateThisServer,
+	createActions,
 	onChoose,
+	onCreateProvider,
 	onOpen,
 	onManageEnvironments,
 	onManageExtensions,
@@ -15,7 +18,9 @@ export function ProjectEnvironmentSplitButton({
 	canCreate: boolean;
 	environments: readonly ProjectEnvironmentSummaryDto[];
 	onCreateThisServer: () => void;
+	createActions:readonly ProjectEnvironmentCreateAction[];
 	onChoose: (environment: ProjectEnvironmentSummaryDto) => void;
+	onCreateProvider:(action:ProjectEnvironmentCreateAction)=>void;
 	onOpen?: () => void;
 	onManageEnvironments: () => void;
 	onManageExtensions: () => void;
@@ -115,6 +120,7 @@ export function ProjectEnvironmentSplitButton({
 						{choices.length === 0 ? <p role="status">No matching environments.</p> : null}
 					</div>
 					<footer>
+						{createActions.map(action=><button key={`${action.providerId}:${action.profileId??'profile'}`} type="button" role="menuitem" onClick={()=>{closeMenu();onCreateProvider(action);}}><span><strong>{action.label}</strong>{action.description?<small>{action.description}</small>:null}</span></button>)}
 						<button type="button" role="menuitem" onClick={() => { closeMenu(); onManageEnvironments(); }}>Project Environments…</button>
 						<button type="button" role="menuitem" onClick={() => { closeMenu(); onManageExtensions(); }}>Extensions…</button>
 					</footer>

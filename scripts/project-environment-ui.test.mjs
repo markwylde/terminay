@@ -40,6 +40,8 @@ test('production forms originate from server provider descriptors without provid
 test('generic form renderer covers bounded async choices and accessible preset cards',()=>{
 	assert.match(forms,/optionSource/);
 	assert.match(forms,/AbortController/);
+	assert.match(surfaces,/client!\.resolveOptions/);
+	assert.match(forms,/No options available/);
 	assert.match(forms,/type="radio"/);
 	assert.match(forms,/role="alert"/);
 	assert.match(forms,/className="settings-category-header"/);
@@ -77,11 +79,19 @@ test('Project Environments use a full auxiliary window rather than an editor dia
 	assert.doesNotMatch(surfaces,/ProjectEnvironmentSurfaceDialog|aria-modal|role="dialog"|surface-backdrop/);
 	assert.doesNotMatch(surfaces,/ExtensionManager|ExtensionsClient/);
 	assert.doesNotMatch(app,/ProjectEnvironmentSurfaceDialog|projectEnvironmentSurface/);
-	assert.match(desktop,/openProjectEnvironmentsWindow\(event\.sender\)/);
+	assert.match(desktop,/openProjectEnvironmentsWindow\(event\.sender,intent\)/);
 	assert.match(environmentManager,/sidebarAction=/);
 	assert.match(environmentManager,/Add connection/);
 	assert.match(environmentManager,/\{detail \?\? \(/);
 	assert.match(surfaces,/detail=\{formTarget === null \? undefined : \(/);
+});
+
+test('installed provider actions open the exact profile or environment journey',()=>{
+	assert.match(app,/projectEnvironmentProviders\.flatMap/);
+	assert.match(app,/Create new Puzed VM/);
+	assert.match(split,/createActions\.map/);
+	assert.match(desktop,/desktop:project-environments-host:intent/);
+	assert.match(surfaces,/subscribeIntent/);
 });
 
 test('remote project selection invokes the server and never falls back to Local',()=>{
