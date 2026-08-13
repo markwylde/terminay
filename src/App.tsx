@@ -3468,7 +3468,12 @@ const ProjectWorkspace = forwardRef<
 					{ timeoutMs: 10_000 },
 				);
 				if (reconciled === null) {
-					throw new Error('Timed out waiting for the closed panel to reconcile.');
+					const reconciliationError = workspaceStore.status.error;
+					throw new Error(
+						reconciliationError === undefined
+							? 'Timed out waiting for the closed panel to reconcile.'
+							: `Unable to reconcile the closed panel. ${reconciliationError.message}`,
+					);
 				}
 				return;
 			}
