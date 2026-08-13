@@ -220,10 +220,21 @@ destroy shared environments.
 
 ## Extensions experience
 
-**File → Extensions…** opens the selected server's responsive manager and names
-that authority prominently. It shows official SSH/Puzed cards, installed and
-disabled states, available explicit updates, compatibility/failure details,
-permissions, dependants, and **Install from npm…**.
+Extensions are a first-class **Extensions** section inside **Settings**, using
+the same navigation, header, spacing, controls, responsive behaviour, and
+native-window chrome as every other Settings section. They are not presented
+in a project-editor sheet or in a bespoke full-screen modal. The section names
+the selected Terminay Server as the authority and shows official SSH/Puzed
+cards, installed and disabled states, available explicit updates,
+compatibility/failure details, permissions, dependants, and **Install from
+npm…**.
+
+**File → Extensions…**, the Command Bar action, and **Extensions…** in the new
+project environment chooser all open or focus Settings at its **Extensions**
+section. On Desktop this uses the established Settings auxiliary window. In a
+browser it uses the established in-page Settings route and selects the same
+section. Repeated invocation focuses the existing Settings presentation rather
+than stacking another dialog.
 
 Custom installation displays exact package/version, publisher/maintainers,
 repository, registry integrity, provenance/audit information when available,
@@ -239,6 +250,11 @@ dependants listed when an action is blocked.
 
 ## Acceptance outcomes
 
+- Extensions render as a normal Settings section in both Desktop and browser;
+  no Extensions-specific modal or project-editor sheet is created.
+- Every Extensions entry point focuses the same selected-server Settings
+  section, and its visual/window behaviour matches the existing Settings
+  experience.
 - Embedded and standalone servers install and run the same extension package;
   Desktop/browser clients neither store nor execute it.
 - Official and custom packages pass the same public manifest/host contract.
