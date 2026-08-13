@@ -47,7 +47,7 @@
 		"test:boundaries": "node --test scripts/workspace-boundaries.test.mjs",
 		"typecheck:workspaces": "npm run build:shared && npm run typecheck --workspaces --if-present",
 		"smoke:workspaces": "npm run check:boundaries && npm run test:boundaries && npm run typecheck:workspaces && npm run check:deterministic-artifacts && npm run build:applications",
-		"smoke": "npm run lint && npm run test:desktop-diagnostics && node --test scripts/e2e-container-contract.test.mjs scripts/provider-portable-ci.test.mjs && npm run build:app && npm run smoke:workspaces",
+		"smoke": "npm run lint && npm run test:desktop-diagnostics && node --test scripts/e2e-container-contract.test.mjs scripts/provider-portable-ci.test.mjs scripts/release-artifact-build-contract.test.mjs && npm run build:app && npm run smoke:workspaces",
 		"test:ci": "npm run smoke && npm run test --workspaces --if-present",
 		"release": "node scripts/create-release.mjs",
 		"release:prepare-credentials": "node scripts/prepare-release-credentials.mjs",
