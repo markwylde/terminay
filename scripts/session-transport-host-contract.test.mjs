@@ -72,3 +72,10 @@ test('production sources contain no retired raw-channel globals or adapter', asy
 		assert.doesNotMatch(source, /__TERMINAY_REMOTE_WEBRTC__|__TERMINAY_BROWSER_ENROLLMENT__|getChannel|RTCDataChannel/u);
 	}
 });
+
+test('hosted fragment pairing classification uses the validated exact-origin host', async () => {
+	const source = await readFile('src/web/main.tsx', 'utf8');
+	assert.match(source, /sessionHost !== undefined &&[\s\S]*pairingUrl\.origin === sessionHost\.origin &&[\s\S]*has\('pairingToken'\)/u);
+	assert.match(source, /searchParams\.get\('transport'\) === 'webrtc' \|\|[\s\S]*isHostedSessionPairing/u);
+	assert.doesNotMatch(source, /__TERMINAY_REMOTE_WEBRTC__|__TERMINAY_BROWSER_ENROLLMENT__/u);
+});
