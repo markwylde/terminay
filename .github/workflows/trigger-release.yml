@@ -488,7 +488,7 @@ jobs:
           npm pack --workspace @terminay/server --json --pack-destination "$OUTPUT" > "$RUNNER_TEMP/terminay-server-pack.json"
 
           EXPECTED="terminay-server-$VERSION.tgz"
-          test "$(node -e 'const result = require(process.argv[1]); if (!Array.isArray(result) || result.length !== 1) process.exit(1); process.stdout.write(result[0].filename)' "$RUNNER_TEMP/terminay-server-pack.json")" = "$EXPECTED"
+          test "$(node -e 'const value = require(process.argv[1]); const result = Array.isArray(value) ? value.length === 1 ? value[0] : null : value; if (!result || typeof result !== "object" || Array.isArray(result)) process.exit(1); process.stdout.write(result.filename)' "$RUNNER_TEMP/terminay-server-pack.json")" = "$EXPECTED"
           test -f "$OUTPUT/$EXPECTED"
           test "$(find "$OUTPUT" -maxdepth 1 -type f -name '*.tgz' -print | wc -l | tr -d '[:space:]')" = 1
 
