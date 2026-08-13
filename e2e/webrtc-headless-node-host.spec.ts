@@ -167,6 +167,7 @@ function createProofPtyFactory(writes: string[]) {
   const processes: Array<{
     emitData(value: Uint8Array): void
     listeners: Set<(value: Uint8Array) => void>
+    resizes: Array<{ cols: number; rows: number }>
   }> = []
   return {
     processes,
@@ -174,6 +175,7 @@ function createProofPtyFactory(writes: string[]) {
       const listeners = new Set<(value: Uint8Array) => void>()
       const process = {
         listeners,
+        resizes: [] as Array<{ cols: number; rows: number }>,
         emitData(value: Uint8Array) {
           for (const listener of listeners) listener(value)
         },
@@ -184,7 +186,9 @@ function createProofPtyFactory(writes: string[]) {
         },
         onExit() { return () => {} },
         pid: 9001,
-        resize() {},
+        resize(dimensions: { cols: number; rows: number }) {
+          process.resizes.push({ ...dimensions })
+        },
         write(value: Uint8Array) { writes.push(new TextDecoder().decode(value)) },
       }
       processes.push(process)
@@ -821,6 +825,44 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       typeof message.keyId === 'string')).toBe(true)
     expect(reconnectMessages.some((message) => 'signalingAuthToken' in message)).toBe(false)
 
+    const convergenceMarker = `${runtimeName}-canonical-output-before-replacement`
+    ptyFactory.processes[0]?.emitData(new TextEncoder().encode(`${convergenceMarker}\r\n`))
+    await expect(reconnectPage.locator('.xterm-rows')).toContainText(convergenceMarker)
+
+    const readBrowserConvergence = () => reconnectPage.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>('[data-terminay-app-component]')
+      const terminalPanels = [...document.querySelectorAll<HTMLElement>('[data-terminay-terminal-session-id]')]
+      const panelIds = [...document.querySelectorAll<HTMLElement>('[data-panel-id]')]
+        .map((element) => element.dataset.panelId)
+        .filter((value): value is string => typeof value === 'string')
+      return {
+        activeProjectId: shell?.dataset.terminayActiveProjectId ?? null,
+        panelIds: [...new Set(panelIds)].sort(),
+        readOnlyPresentationCount: document.querySelectorAll('.terminal-presentation-control').length,
+        renderedText: document.querySelector('.xterm-rows')?.textContent ?? '',
+        terminalSessionIds: terminalPanels
+          .map((element) => element.dataset.terminayTerminalSessionId)
+          .filter((value): value is string => typeof value === 'string')
+          .sort(),
+        visibleRows: document.querySelectorAll('.xterm-rows > div').length,
+        workspaceRevision: shell?.dataset.terminayWorkspaceRevision ?? null,
+      }
+    })
+    const canonicalWorkspaceRevision = workspace.state.revision
+    const initialTerminalSnapshot = composition.terminal.getSession('terminal-1')
+    expect(initialTerminalSnapshot).toBeDefined()
+    const initialConvergence = await readBrowserConvergence()
+    expect(initialConvergence).toMatchObject({
+      activeProjectId: 'project-1',
+      panelIds: expect.arrayContaining(['panel-1']),
+      readOnlyPresentationCount: 0,
+      terminalSessionIds: ['terminal-1'],
+      workspaceRevision: String(canonicalWorkspaceRevision),
+    })
+    expect(initialConvergence.renderedText).toContain(convergenceMarker)
+    expect(initialConvergence.visibleRows).toBe(initialTerminalSnapshot?.dimensions.rows)
+    expect(ptyFactory.processes[0]?.resizes.at(-1)).toEqual(initialTerminalSnapshot?.dimensions)
+
     if (!privilegedExposure && reconnectRuntime) {
       const initialUrl = reconnectPage.url()
       let runtime = reconnectRuntime
@@ -897,6 +939,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         expect(Object.keys(workspace.state.projects)).toEqual(['project-1'])
         expect(Object.keys(workspace.state.panels)).toEqual(['panel-1'])
         expect(Object.keys(workspace.state.terminalSessions)).toEqual(['terminal-1'])
+        expect(workspace.state.revision).toBe(canonicalWorkspaceRevision)
         await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
         await expect(reconnectPage.locator('.xterm-rows')).toContainText('headless-host-ready')
         await expect(reconnectPage.getByRole('button', { name: 'Retry connection' })).toHaveCount(0, {
@@ -914,6 +957,20 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         })
         expect(reconnectPage.url()).toBe(initialUrl)
 
+        const replacementTerminalSnapshot = composition.terminal.getSession('terminal-1')
+        const replacementConvergence = await readBrowserConvergence()
+        expect(replacementConvergence).toMatchObject({
+          activeProjectId: 'project-1',
+          panelIds: expect.arrayContaining(['panel-1']),
+          readOnlyPresentationCount: 0,
+          terminalSessionIds: ['terminal-1'],
+          workspaceRevision: String(canonicalWorkspaceRevision),
+        })
+        expect(replacementConvergence.renderedText).toContain(convergenceMarker)
+        expect(replacementTerminalSnapshot?.dimensions).toEqual(initialTerminalSnapshot?.dimensions)
+        expect(replacementConvergence.visibleRows).toBe(replacementTerminalSnapshot?.dimensions.rows)
+        expect(ptyFactory.processes[0]?.resizes.at(-1)).toEqual(replacementTerminalSnapshot?.dimensions)
+
         const terminalInput = reconnectPage.getByRole('textbox', { name: 'Terminal input' })
         await terminalInput.focus()
         const human = `${runtimeName}-${laneIndex}-${lane}-human`
@@ -929,6 +986,11 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
           () => terminalWrites.join('').slice(writesBeforeFailure),
           { message: `${lane} recovery input must arrive exactly once and in order` },
         ).toBe(exactInput)
+        // A successful write is accepted only from the exact attachment which
+        // currently owns the server presentation lease. This proves the
+        // replacement surface recovered control rather than merely painting a
+        // retained terminal frame.
+        expect((await readBrowserConvergence()).readOnlyPresentationCount).toBe(0)
         expect(hostWindows.length).toBe(hostCountBeforeFailure + 1)
         expect(service.getStatus().activeConnectionCount).toBe(1)
         expect(ptyFactory.processes).toHaveLength(1)
@@ -949,7 +1011,10 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
           retryAttemptDelta: 1,
           requiredLaneCount: requiredLaneLabels.length,
           ptyCount: ptyFactory.processes.length,
+          terminalDimensions: replacementTerminalSnapshot?.dimensions,
+          terminalOutputPosition: replacementTerminalSnapshot?.outputPosition,
           terminalSessionCount: Object.keys(workspace.state.terminalSessions).length,
+          workspaceRevision: canonicalWorkspaceRevision,
         })
       }
       for (const bootstrapLane of bootstrapLaneLabels) {
@@ -979,6 +1044,13 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       await reconnectPage.keyboard.press('Enter')
       await expect.poll(() => terminalWrites.join('').slice(writesBeforePeerFailure)).toBe(peerRecoveryInput)
       expect(ptyFactory.processes).toHaveLength(1)
+      expect(await readBrowserConvergence()).toMatchObject({
+        activeProjectId: 'project-1',
+        panelIds: expect.arrayContaining(['panel-1']),
+        readOnlyPresentationCount: 0,
+        terminalSessionIds: ['terminal-1'],
+        workspaceRevision: String(canonicalWorkspaceRevision),
+      })
       matrixEvidence.push({
         activeApplicationConnections: service.getStatus().activeConnectionCount,
         closeReason: 'injected-native-peer-close',
@@ -1005,7 +1077,13 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         const retry = reconnectPage.getByRole('button', { name: 'Retry connection' })
         await expect(retry).toBeVisible({ timeout: 20_000 })
         await retry.click()
-        if (await retry.isVisible().catch(() => false)) await retry.click()
+        // The pending recovery state may replace the button node between the
+        // visibility check and the deliberately repeated click. A detached
+        // second target means the first request already advanced lifecycle;
+        // it is not a failure of the replacement generation under test.
+        if (await retry.isVisible().catch(() => false)) {
+          await retry.click({ timeout: 1_000 }).catch(() => undefined)
+        }
       } finally {
         await context.setOffline(false)
       }
@@ -1023,6 +1101,26 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       await reconnectPage.keyboard.insertText(offlineRecoveryInput.slice(0, -1))
       await reconnectPage.keyboard.press('Enter')
       await expect.poll(() => terminalWrites.join('').slice(writesBeforeOffline)).toBe(offlineRecoveryInput)
+      const finalOutputMarker = `${runtimeName}-canonical-output-after-replacement`
+      const outputPositionBeforeMarker = composition.terminal.getSession('terminal-1')?.outputPosition
+      expect(outputPositionBeforeMarker).toEqual(expect.any(Number))
+      ptyFactory.processes[0]?.emitData(new TextEncoder().encode(`${finalOutputMarker}\r\n`))
+      await expect(reconnectPage.locator('.xterm-rows')).toContainText(finalOutputMarker)
+      const finalTerminalSnapshot = composition.terminal.getSession('terminal-1')
+      expect(finalTerminalSnapshot?.outputPosition).toBe(
+        (outputPositionBeforeMarker ?? 0) + new TextEncoder().encode(`${finalOutputMarker}\r\n`).byteLength,
+      )
+      const finalConvergence = await readBrowserConvergence()
+      expect(finalConvergence).toMatchObject({
+        activeProjectId: 'project-1',
+        panelIds: expect.arrayContaining(['panel-1']),
+        readOnlyPresentationCount: 0,
+        terminalSessionIds: ['terminal-1'],
+        workspaceRevision: String(canonicalWorkspaceRevision),
+      })
+      expect(finalConvergence.renderedText).toContain(convergenceMarker)
+      expect(finalConvergence.renderedText).toContain(finalOutputMarker)
+      expect(finalConvergence.visibleRows).toBe(finalTerminalSnapshot?.dimensions.rows)
       matrixEvidence.push({
         activeApplicationConnections: service.getStatus().activeConnectionCount,
         closeReason: 'offline-required-lane-close',
@@ -1032,6 +1130,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         outcome: 'repeated-retry-coalesced',
         profile: 'saved-webrtc-profile',
         requiredLaneCount: requiredLaneLabels.length,
+        terminalDimensions: finalTerminalSnapshot?.dimensions,
+        terminalOutputPosition: finalTerminalSnapshot?.outputPosition,
+        workspaceRevision: canonicalWorkspaceRevision,
       })
       await testInfo.attach('webrtc-required-lane-recovery-matrix.json', {
         body: Buffer.from(`${JSON.stringify(matrixEvidence, null, 2)}\n`),

@@ -113,6 +113,18 @@ permission to weaken that permanent reproduction.
 - [ ] Prove terminal output, workspace revisions, presentation ownership,
   viewport size, confirmed render position, and checkpoint hydration converge
   after replacement.
+  - [x] In the native required-lane, peer-close, and offline/Retry matrix,
+    assert the browser and canonical server retain the exact workspace revision,
+    active project, panel, terminal session, and single PTY across every
+    replacement.
+  - [x] Assert the mounted xterm row geometry equals the canonical terminal
+    dimensions, the PTY received that exact resize, retained output remains
+    painted, the replacement owns writable presentation control, and new
+    canonical output reaches both the server output head and mounted xterm.
+  - [ ] Expose production-safe attachment delivery evidence and assert the
+    exact confirmed render watermark and checkpoint identity/position used by
+    each replacement; rendered text and canonical output-head equality do not
+    by themselves prove those internal boundaries.
 - [x] Prove explicit browser refresh independently recreates the bootstrap and
   remains supported without being required by Retry.
 
