@@ -18,15 +18,19 @@ test.afterAll(async () => {
 test('remote entry uses the shared browser connection and workspace runtime', async ({
 	page,
 }) => {
+	test.setTimeout(90_000);
 	const pageErrors: Error[] = [];
 	page.on('pageerror', (error) => pageErrors.push(error));
 	await installSessionTransportHostStub(page);
 	const pairingUrl = `${fixture.origin}/remote.html#pairingToken=${'a'.repeat(32)}`;
-	await page.goto(pairingUrl, { waitUntil: 'domcontentloaded' });
+	// Cold CI workers can still be compiling the Vite module graph after the
+	// document commits. Navigation only proves that the session route exists;
+	// the bounded UI assertion below proves that the hosted contract mounted.
+	await page.goto(pairingUrl, { waitUntil: 'commit' });
 
 	await expect(
 		page.getByRole('dialog', { name: 'Connect to Remote Server' }),
-	).toBeVisible();
+	).toBeVisible({ timeout: 60_000 });
 	await expect(page.getByLabel('Pairing URL')).toHaveValue(pairingUrl);
 	await expect(
 		page.getByRole('listbox', { name: 'Saved Terminay servers' }),
