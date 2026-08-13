@@ -583,6 +583,33 @@ function stack(
 	};
 }
 
+function withActiveProject(
+	view: WorkspaceView,
+	projectIds: readonly ProtocolId[],
+	activeProjectId: ProtocolId | undefined,
+): WorkspaceView {
+	const { activeProjectId: _previousActiveProjectId, ...rest } = view;
+	return {
+		...rest,
+		projectIds: [...projectIds],
+		...(activeProjectId === undefined ? {} : { activeProjectId }),
+	};
+}
+
+function withActivePanel(
+	project: WorkspaceProject,
+	panelIds: readonly ProtocolId[],
+	activePanelId: ProtocolId | undefined,
+): WorkspaceProject {
+	const { activePanelId: _previousActivePanelId, ...rest } = project;
+	return {
+		...rest,
+		panelIds: [...panelIds],
+		...(activePanelId === undefined ? {} : { activePanelId }),
+		layout: stack(panelIds, activePanelId),
+	};
+}
+
 /** In-memory authoritative workspace reducer. Persistence adapters can commit
  * the returned state atomically; no renderer/window identity is involved. */
 export class WorkspaceStore {
@@ -866,14 +893,12 @@ export class WorkspaceStore {
 				const project = requireProject(state, command.projectId);
 				const from = requireView(state, project.viewId);
 				const to = requireView(state, command.targetViewId);
-				state.views[project.viewId] = {
-					...from,
-					projectIds: from.projectIds.filter((id) => id !== project.id),
-					activeProjectId:
-						from.activeProjectId === project.id
-							? from.projectIds.find((id) => id !== project.id)
-							: from.activeProjectId,
-				};
+				const sourceProjectIds = from.projectIds.filter((id) => id !== project.id);
+				state.views[project.viewId] = withActiveProject(
+					from,
+					sourceProjectIds,
+					from.activeProjectId === project.id ? sourceProjectIds[0] : from.activeProjectId,
+				);
 				const ids = to.projectIds.filter((id) => id !== project.id);
 				ids.splice(indexAt(command.index, ids.length), 0, project.id);
 				state.views[command.targetViewId] = {
@@ -906,14 +931,11 @@ export class WorkspaceStore {
 				const remainingProjectIds = view.projectIds.filter(
 					(id) => id !== project.id,
 				);
-				state.views[view.id] = {
-					...view,
-					projectIds: remainingProjectIds,
-					activeProjectId:
-						view.activeProjectId === project.id
-							? remainingProjectIds[0]
-							: view.activeProjectId,
-				};
+				state.views[view.id] = withActiveProject(
+					view,
+					remainingProjectIds,
+					view.activeProjectId === project.id ? remainingProjectIds[0] : view.activeProjectId,
+				);
 				changed.push(project.id, view.id);
 				break;
 			}
@@ -1014,13 +1036,11 @@ export class WorkspaceStore {
 				const sourceIds = from.panelIds.filter((id) => id !== panel.id);
 				const targetIds = to.panelIds.filter((id) => id !== panel.id);
 				targetIds.splice(indexAt(command.index, targetIds.length), 0, panel.id);
-				state.projects[from.id] = {
-					...from,
-					panelIds: sourceIds,
-					activePanelId:
-						from.activePanelId === panel.id ? sourceIds[0] : from.activePanelId,
-					layout: stack(sourceIds),
-				};
+				state.projects[from.id] = withActivePanel(
+					from,
+					sourceIds,
+					from.activePanelId === panel.id ? sourceIds[0] : from.activePanelId,
+				);
 				state.projects[to.id] = {
 					...to,
 					panelIds: targetIds,
@@ -1052,20 +1072,11 @@ export class WorkspaceStore {
 					changed.push(panel.sessionId);
 				}
 				const panelIds = project.panelIds.filter((id) => id !== panel.id);
-				state.projects[project.id] = {
-					...project,
+				state.projects[project.id] = withActivePanel(
+					project,
 					panelIds,
-					activePanelId:
-						project.activePanelId === panel.id
-							? panelIds[0]
-							: project.activePanelId,
-					layout: stack(
-						panelIds,
-						project.activePanelId === panel.id
-							? panelIds[0]
-							: project.activePanelId,
-					),
-				};
+					project.activePanelId === panel.id ? panelIds[0] : project.activePanelId,
+				);
 				changed.push(panel.id, project.id);
 				break;
 			}
