@@ -144,6 +144,7 @@ type HostEvidence = {
 
 type HeadlessHostWindow = {
   close(): void
+  closeApplicationChannel(): void
   closeTerminal(channelId: string, reason?: string): void
   evidence: HostEvidence
   sendConfig(config: HostConfig): void
@@ -278,10 +279,12 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     const terminalCloseListeners = new Set<(message: { channelId: string; reason?: string }) => void>()
     const terminalMessageListeners = new Set<(message: { channelId: string; message: string }) => void>()
     let cleanupHost: (() => void) | null = null
+    let applicationChannel: RTCDataChannel | null = null
     let closed = false
 
     const api: HostApi = {
       async attachApplication(channelId, ticket, channel) {
+        applicationChannel = channel
         await service.attachWebRtcApplication(webContentsId, channelId, ticket, () => hostWindow.close())
         const connection = composition.core.accept(createRtcDataChannelTransport(channel))
         void connection.start().catch(() => hostWindow.close())
@@ -327,6 +330,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         closed = true
         cleanupHost?.()
         cleanupHost = null
+      },
+      closeApplicationChannel() {
+        applicationChannel?.close()
       },
       closeTerminal(channelId, reason) {
         for (const listener of terminalCloseListeners) listener({ channelId, reason })
@@ -417,6 +423,18 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     Object.defineProperty(window, '__terminayHeadlessSignalLog', {
       configurable: false,
       value: signalLog,
+    })
+    Object.defineProperty(window, '__terminayReconnectDiagnostics', {
+      configurable: false,
+      value: [] as Array<{ attempt: number; phase: string }>,
+    })
+    Object.defineProperty(window, '__terminayReconnectDiagnostic', {
+      configurable: false,
+      value: (value: { attempt: number; phase: string }) => {
+        ;(window as Window & {
+          __terminayReconnectDiagnostics?: Array<{ attempt: number; phase: string }>
+        }).__terminayReconnectDiagnostics?.push({ ...value })
+      },
     })
     window.WebSocket = class extends OriginalWebSocket {
       constructor(url: string | URL, protocols?: string | string[]) {
@@ -616,6 +634,16 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     await page.keyboard.type(terminalInput)
     await expect.poll(() => terminalWrites.join('')).toContain(terminalInput)
 
+    // Exercise the real application channel with sustained, mobile-like
+    // one-character input before inducing any failure. This distinguishes a
+    // transport killed by ordinary typing from a stale transport first exposed
+    // by the next keypress.
+    const typingSoak = `${runtimeName}-typing-soak-${'abcdefghij'.repeat(20)}`
+    await page.keyboard.type(typingSoak, { delay: 5 })
+    await expect.poll(() => terminalWrites.join('')).toContain(typingSoak)
+    await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
+    await expect(page.getByText('client is not connected', { exact: true })).toHaveCount(0)
+
     const initialSignalLog = await page.evaluate(() =>
       (window as Window & {
         __terminayHeadlessSignalLog?: Array<{
@@ -626,6 +654,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     const firstRuntime = hostWindows.find((host) =>
       host.evidence.hostSignals.some((message) => message.type === 'offer'))
     if (!privilegedExposure) expect(firstRuntime).toBeTruthy()
+
     const signedOffer = privilegedExposure
       ? initialSignalLog.find((entry) => entry.direction === 'in' && entry.data?.type === 'offer')?.data
       : firstRuntime?.evidence.hostSignals.find((message) => message.type === 'offer')
@@ -739,6 +768,38 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       typeof message.salt === 'string' &&
       typeof message.keyId === 'string')).toBe(true)
     expect(reconnectMessages.some((message) => 'signalingAuthToken' in message)).toBe(false)
+
+    if (!privilegedExposure && reconnectRuntime) {
+      // Reproduce the deployed saved-profile failure without a second page
+      // reload: one application data channel disappears while the WebRTC peer
+      // itself remains connected. The bootstrap therefore retains its closed
+      // channel map, while the embedded application tries to recover through
+      // that same bootstrap bridge.
+      await reconnectPage.getByRole('textbox', { name: 'Terminal input' }).focus()
+      reconnectRuntime.closeApplicationChannel()
+      await reconnectPage.keyboard.type('x')
+      const panelError = reconnectPage.getByText('client is not connected', { exact: true })
+      await expect(panelError).toBeVisible({ timeout: 20_000 })
+      await expect(reconnectPage.getByRole('button', { name: 'Retry connection' })).toBeVisible()
+      const recoveriesStartedBeforeRetry = await reconnectPage.evaluate(() =>
+        ((window as Window & {
+          __terminayReconnectDiagnostics?: Array<{ phase: string }>
+        }).__terminayReconnectDiagnostics ?? []).filter((entry) => entry.phase === 'started').length)
+      const retry = reconnectPage.getByRole('button', { name: 'Retry connection' })
+      await retry.click()
+      await expect.poll(() => reconnectPage.evaluate(() =>
+        ((window as Window & {
+          __terminayReconnectDiagnostics?: Array<{ phase: string }>
+        }).__terminayReconnectDiagnostics ?? []).filter((entry) => entry.phase === 'started').length)
+      ).toBeGreaterThan(recoveriesStartedBeforeRetry)
+      // A working in-page retry must replace the closed WebRTC lanes and
+      // rehydrate this mounted terminal without requiring location.reload().
+      await expect(panelError).toHaveCount(0, { timeout: 20_000 })
+      await reconnectPage.getByRole('textbox', { name: 'Terminal input' }).focus()
+      const recoveredInput = `${runtimeName}-post-retry-input`
+      await reconnectPage.keyboard.type(recoveredInput, { delay: 5 })
+      await expect.poll(() => terminalWrites.join('')).toContain(recoveredInput)
+    }
 
     await service.revokeDevice(stored.deviceId)
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(0)

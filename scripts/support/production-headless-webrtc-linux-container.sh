@@ -25,6 +25,7 @@ tar --directory /hosted-source \
 cd /work/terminay
 npm ci --ignore-scripts
 npm ci --prefix "$TERMINAY_HOSTED_SERVER_REPO"
+npm run build:app
 if [ "$TERMINAY_PROOF_RUNTIME" != "secure-werift" ] || [ "$TERMINAY_RUNTIME_ONLY" != "1" ]; then
   npx playwright install --with-deps --only-shell chromium
 fi
