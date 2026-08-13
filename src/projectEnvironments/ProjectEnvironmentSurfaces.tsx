@@ -28,9 +28,15 @@ type FormTarget = Readonly<{
 export function ProjectEnvironmentsWindow({
 	serverName,
 	applicationClient,
+	initialIntent,
 }: Readonly<{
 	serverName: string;
 	applicationClient?: TerminayClient;
+	initialIntent?: Readonly<{
+		providerId: string;
+		mode: 'profile' | 'environment';
+		profileId?: string;
+	}>;
 }>) {
 	const client = useMemo(
 		() =>
@@ -51,6 +57,9 @@ export function ProjectEnvironmentsWindow({
 	const [announcement, setAnnouncement] = useState('');
 	const [error, setError] = useState('');
 	const [busy, setBusy] = useState(false);
+	const [pendingIntent, setPendingIntent] = useState(
+		() => initialIntent ?? intentFromLocation(),
+	);
 
 	const refresh = useCallback(async () => {
 		if (client === null) {
@@ -89,6 +98,32 @@ export function ProjectEnvironmentsWindow({
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
+	useEffect(
+		() => window.terminayProjectEnvironmentsHost?.subscribeIntent(setPendingIntent),
+		[],
+	);
+	useEffect(() => {
+		if (pendingIntent === undefined) return;
+		const provider = providers.find(
+			(item) => item.providerId === pendingIntent.providerId,
+		);
+		const form = pendingIntent.mode === 'profile'
+			? provider?.profileForm
+			: provider?.createForm;
+		if (
+			form === undefined ||
+			(pendingIntent.mode === 'environment' && pendingIntent.profileId === undefined)
+		) return;
+		setFormTarget({
+			providerId: pendingIntent.providerId,
+			mode: pendingIntent.mode,
+			form,
+			...(pendingIntent.profileId === undefined
+				? {}
+				: { profileId: pendingIntent.profileId }),
+		});
+		setPendingIntent(undefined);
+	}, [pendingIntent, providers]);
 	useEffect(() => {
 		const onFocus = () => { void refresh(); };
 		window.addEventListener('focus', onFocus);
@@ -196,6 +231,20 @@ export function ProjectEnvironmentsWindow({
 						detail={formTarget === null ? undefined : (
 						<DeclarativeProviderForm
 						form={formTarget.form}
+						{...(formTarget.profileId === undefined
+							? {}
+							: { initialValues: { 'profile-id': formTarget.profileId } })}
+						onLoadOptions={async (_fieldId, sourceId, query, values, signal) => (
+							await client!.resolveOptions({
+								providerId: formTarget.providerId,
+								sourceId,
+								...(formTarget.profileId === undefined
+									? {}
+									: { profileId: formTarget.profileId }),
+								query,
+								values,
+							}, { signal })
+						).options}
 						onCancel={() => setFormTarget(null)}
 						onSubmit={async (values) => {
 							if (formTarget.mode === 'environment' && formTarget.profileId !== undefined) {
@@ -228,6 +277,21 @@ export function ProjectEnvironmentsWindow({
 				) : null}
 		</div>
 	);
+}
+
+function intentFromLocation(): Readonly<{
+	providerId: string;
+	mode: 'profile' | 'environment';
+	profileId?: string;
+}> | undefined {
+	const query = new URLSearchParams(window.location.search);
+	const providerId = query.get('providerId');
+	const mode = query.get('mode');
+	const profileId = query.get('profileId');
+	if (providerId === null || (mode !== 'profile' && mode !== 'environment')) {
+		return undefined;
+	}
+	return { providerId, mode, ...(profileId === null ? {} : { profileId }) };
 }
 
 function toUiForm(

@@ -1989,10 +1989,21 @@ contextBridge.exposeInMainWorld(
 	'terminayProjectEnvironmentsHost',
 	Object.freeze({
 		version: DESKTOP_PROJECT_ENVIRONMENTS_HOST_BRIDGE_VERSION,
-		open: () =>
+		open: (intent?: Readonly<{ providerId: string; mode: 'profile' | 'environment'; profileId?: string }>) =>
 			ipcRenderer.invoke('desktop:project-environments-host:open', {
 				version: DESKTOP_PROJECT_ENVIRONMENTS_HOST_BRIDGE_VERSION,
+				...(intent === undefined ? {} : { intent }),
 			}) as Promise<void>,
+		subscribeIntent: (
+			listener: (intent: Readonly<{ providerId: string; mode: 'profile' | 'environment'; profileId?: string }>) => void,
+		) => {
+			const handler = (
+				_event: Electron.IpcRendererEvent,
+				intent: Readonly<{ providerId: string; mode: 'profile' | 'environment'; profileId?: string }>,
+			) => listener(intent);
+			ipcRenderer.on('desktop:project-environments-host:intent', handler);
+			return () => ipcRenderer.removeListener('desktop:project-environments-host:intent', handler);
+		},
 	}),
 );
 
