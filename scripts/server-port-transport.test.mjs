@@ -338,6 +338,117 @@ test('canonical renderer setup closes a client whose subscription never settles'
   assert.equal(closed, 1)
 })
 
+function successfulRendererClient(overrides = {}) {
+  return {
+    close: async () => {},
+    onStateChange: () => () => {},
+    subscribe: async () => ({
+      onEvent: () => () => {},
+      onResync: () => () => {},
+      unsubscribe: async () => {},
+    }),
+    query: async (operation) => {
+      if (operation === 'activity.snapshot') {
+        return {
+          result: {
+            serverId: 'desktop-local',
+            revision: 0,
+            cursor: '0',
+            sessions: {},
+          },
+        }
+      }
+      if (operation === 'agent.snapshot') {
+        return { result: { revision: 0, cursor: '0', entries: {} } }
+      }
+      if (operation === 'workspace.snapshot') {
+        return {
+          result: {
+            schemaVersion: 2,
+            serverId: 'desktop-local',
+            revision: 0,
+            cursor: '0',
+            viewOrder: [],
+            views: {},
+            projects: {},
+            panels: {},
+            terminalSessions: {},
+          },
+        }
+      }
+      throw new Error(`unexpected query ${operation}`)
+    },
+    command: async () => ({ result: null }),
+    ...overrides,
+  }
+}
+
+test('connected renderer disposal is promise-idempotent', async () => {
+  let releaseClose
+  let closeCalls = 0
+  let holdClose = false
+  const closeBarrier = new Promise((resolve) => { releaseClose = resolve })
+  const context = await createConnectedServerClientContext(
+    successfulRendererClient({
+      close: async () => {
+        closeCalls += 1
+        if (holdClose) await closeBarrier
+      },
+    }),
+    { clientId: 'client', serverId: 'desktop-local', capabilities: [] },
+  )
+  holdClose = true
+
+  const first = context.dispose()
+  const second = context.dispose()
+  assert.equal(first, second)
+  assert.equal(closeCalls, 1)
+  releaseClose()
+  await first
+  assert.equal(closeCalls, 1)
+})
+
+test('unexpected transport closure requests recovery only after disposal settles', async () => {
+  let stateListener
+  let releaseClose
+  let holdClose = false
+  const events = []
+  const closeBarrier = new Promise((resolve) => { releaseClose = resolve })
+  const context = await createConnectedServerClientContext(
+    successfulRendererClient({
+      close: async () => {
+        events.push('dispose-started')
+        if (holdClose) await closeBarrier
+        events.push('dispose-settled')
+      },
+      onStateChange: (listener) => {
+        stateListener = listener
+        return () => events.push('listener-removed')
+      },
+    }),
+    { clientId: 'client', serverId: 'desktop-local', capabilities: [] },
+    { onTransportClosed: () => events.push('recovery-requested') },
+  )
+  holdClose = true
+
+  stateListener({
+    previous: { state: 'connected' },
+    current: { state: 'stale', error: new Error('reader ended') },
+  })
+  const concurrentDispose = context.dispose()
+  assert.deepEqual(events, ['listener-removed', 'dispose-started'])
+
+  releaseClose()
+  await concurrentDispose
+  await Promise.resolve()
+  assert.deepEqual(events, [
+    'listener-removed',
+    'dispose-started',
+    'dispose-settled',
+    'recovery-requested',
+  ])
+})
+
 test('application handshake context is promoted without reconnecting its live transport', async () => {
   let closed = 0
   const applicationClient = {

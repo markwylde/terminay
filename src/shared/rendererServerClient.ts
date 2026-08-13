@@ -278,15 +278,17 @@ export async function createConnectedServerClientContext(
 			(result): result is PromiseRejectedResult => result.status === 'rejected',
 		);
 		if (failedSetup !== undefined) throw failedSetup.reason;
-		let disposed = false;
-		const dispose = async () => {
-			if (disposed) return;
-			disposed = true;
-			store.close();
-			candidateActivityClient.close();
-			candidateAgentStatusClient.close();
-			removeStateListener();
-			await client.close().catch(() => undefined);
+		let disposePromise: Promise<void> | undefined;
+		const dispose = (): Promise<void> => {
+			if (disposePromise !== undefined) return disposePromise;
+			disposePromise = (async () => {
+				store.close();
+				candidateActivityClient.close();
+				candidateAgentStatusClient.close();
+				removeStateListener();
+				await client.close().catch(() => undefined);
+			})();
+			return disposePromise;
 		};
 		const removeStateListener = client.onStateChange((change) => {
 			(
@@ -300,9 +302,11 @@ export async function createConnectedServerClientContext(
 				change.current.state === 'closed' ||
 				change.current.state === 'failed'
 			) {
-				const unexpectedlyClosed = !disposed;
-				void dispose();
-				if (unexpectedlyClosed) options.onTransportClosed?.();
+				const unexpectedlyClosed = disposePromise === undefined;
+				const settledDisposal = dispose();
+				if (unexpectedlyClosed) {
+					void settledDisposal.then(() => options.onTransportClosed?.());
+				}
 			}
 		});
 		return {

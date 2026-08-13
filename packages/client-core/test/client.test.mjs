@@ -14,20 +14,25 @@ function createTransport() {
   const frames = [];
   const queued = [];
   let waiter;
+  let waiterReject;
   let closed = false;
+  let incomingError;
+  const closeReasons = [];
 
   const incoming = {
     [Symbol.asyncIterator]() {
       return {
         next() {
+          if (incomingError !== undefined) return Promise.reject(incomingError);
           if (queued.length > 0) return Promise.resolve({ value: queued.shift(), done: false });
           if (closed) return Promise.resolve({ value: undefined, done: true });
-          return new Promise((resolve) => { waiter = resolve; });
+          return new Promise((resolve, reject) => { waiter = resolve; waiterReject = reject; });
         },
         return() {
           closed = true;
           waiter?.({ value: undefined, done: true });
           waiter = undefined;
+          waiterReject = undefined;
           return Promise.resolve({ value: undefined, done: true });
         },
       };
@@ -40,23 +45,33 @@ function createTransport() {
     queuedBytes: 0,
     bufferedBytes: 0,
     frames,
+    closeReasons,
     open: async () => {},
     async send(frame, options = {}) {
       if (options.signal?.aborted) throw options.signal.reason ?? new DOMException("The operation was aborted", "AbortError");
       frames.push(decodeFrame(frame));
     },
     waitForWritable: async () => {},
-    async close() {
+    async close(reason) {
+      closeReasons.push(reason);
       closed = true;
       waiter?.({ value: undefined, done: true });
       waiter = undefined;
+      waiterReject = undefined;
     },
     onStateChange: () => () => {},
 		end() {
 			closed = true;
 			waiter?.({ value: undefined, done: true });
 			waiter = undefined;
+			waiterReject = undefined;
 		},
+    fail(error) {
+      incomingError = error;
+      waiterReject?.(error);
+      waiter = undefined;
+      waiterReject = undefined;
+    },
     push(envelope) {
       const frame = encodeFrame(envelope, new Uint8Array(), DEFAULT_PROTOCOL_LIMITS);
       if (waiter !== undefined) {
@@ -137,6 +152,24 @@ test("disconnect marks confirmed state stale and a fresh client resumes subscrip
 	await subscribing;
 	await secondClient.close();
 });
+
+for (const [name, interrupt] of [
+  ["completion", (transport) => transport.end()],
+  ["error", (transport) => transport.fail(new Error("reader failed"))],
+]) {
+  test(`unexpected incoming ${name} terminalizes the owned transport exactly once`, async () => {
+    const { client, transport } = await connectedClient();
+
+    interrupt(transport);
+    await new Promise((resolve) => setImmediate(resolve));
+    await client.close();
+
+    assert.equal(client.snapshot.state, "closed");
+    assert.equal(transport.closeReasons.length, 1);
+    assert.equal(transport.closeReasons[0]?.code, "unavailable");
+    assert.notEqual(transport.closeReasons[0]?.code, "normal");
+  });
+}
 
 test("a reconnect watermark must be canonical and internally consistent", () => {
 	for (const initialWatermark of [
