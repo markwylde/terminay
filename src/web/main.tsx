@@ -121,6 +121,7 @@ type WebRecoveryContext = {
 	context?: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	candidate?: ActiveTerminalConnection;
 	dispose: () => Promise<void>;
+	terminalHydrated: Promise<void>;
 };
 
 function managedWebCandidate(
@@ -129,6 +130,7 @@ function managedWebCandidate(
 	clientId: string,
 	hello: Awaited<ReturnType<TerminayClient['connect']>>,
 	candidate: ActiveTerminalConnection,
+	terminalHydrated: Promise<void> = Promise.resolve(),
 ): WebRecoveryContext {
 	return {
 		profile,
@@ -136,6 +138,7 @@ function managedWebCandidate(
 		clientId,
 		hello,
 		candidate,
+		terminalHydrated,
 		context: candidate.context,
 		dispose: async () => {
 			await candidate.dispose();
@@ -406,6 +409,9 @@ export default function WebManagerApp() {
 				setError(null);
 				setStatus(null);
 				refresh();
+			},
+			onCandidate: (recovery) => {
+				if (recovery.candidate !== undefined) setActiveConnection(recovery.candidate);
 			},
 			onStateChange: (recoveryState) =>
 				publishBrowserRecoveryState(recoveryState),
@@ -1134,10 +1140,18 @@ export default function WebManagerApp() {
 				signal: recoveryAttempt.signal,
 				onTransportClosed: () => connectionController.current?.recover(profile.id),
 			});
+			let reportTerminalHydrated!: () => void;
+			let reportTerminalHydrationFailed!: (error: unknown) => void;
+			const terminalHydrated = new Promise<void>((resolve, reject) => {
+				reportTerminalHydrated = resolve;
+				reportTerminalHydrationFailed = reject;
+			});
 			const labelledContext = Object.freeze({
 				...context,
 				connectionLabel: profile.label,
 				retryConnection: connectionController.current?.retry,
+				reportConnectionHydrated: reportTerminalHydrated,
+				reportConnectionHydrationFailed: reportTerminalHydrationFailed,
 			});
 			const candidate = Object.freeze({
 				profileId: profile.id,
@@ -1149,7 +1163,7 @@ export default function WebManagerApp() {
 				context: labelledContext,
 				dispose: () => labelledContext.dispose?.(),
 			});
-			return managedWebCandidate(profile, client, clientId, hello, candidate);
+			return managedWebCandidate(profile, client, clientId, hello, candidate, terminalHydrated);
 		} catch (cause) {
 			await client.close().catch(() => undefined);
 			throw cause;
@@ -1167,6 +1181,7 @@ export default function WebManagerApp() {
 				await new ServerHealthClient(
 					new TerminayClientFacade(recovery.client),
 				).snapshot();
+				await recovery.terminalHydrated;
 			},
 		};
 	}

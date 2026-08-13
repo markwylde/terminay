@@ -1216,6 +1216,8 @@ const ProjectWorkspace = forwardRef<
 					terminalClientContext?.fileViewerClient,
 					terminalClientContext?.gitClient,
 					terminalClientContext?.recordingsClient,
+					terminalClientContext?.reportConnectionHydrated,
+					terminalClientContext?.reportConnectionHydrationFailed,
 				],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;

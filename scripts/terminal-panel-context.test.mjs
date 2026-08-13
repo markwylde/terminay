@@ -45,6 +45,15 @@ test('terminal retry requests host-owned transport replacement after a transport
   assert.match(attach, /panelClient\.resume\(nextRequest\)/)
 })
 
+test('replacement context reports mounted attachment hydration only after rendering initial events', () => {
+  const renderStart = panel.indexOf('            const initialEventsRendered = terminalRenderQueue')
+  const attachStart = panel.indexOf('              serverInputQueue?.attach(attachment)', renderStart)
+  const hydrationReport = panel.indexOf('terminalPanelConnectionContext?.reportConnectionHydrated?.()', renderStart)
+  assert.notEqual(renderStart, -1)
+  assert.ok(hydrationReport > renderStart)
+  assert.ok(hydrationReport < attachStart)
+})
+
 test('workspace metadata and drop-upload changes do not rebuild a mounted terminal attachment', () => {
   const lifecycleStart = panel.indexOf('  useEffect(() => {\n    const container = containerRef.current')
   const lifecycleEnd = panel.indexOf('\n  useEffect(() => {\n    settingsRef.current = settings', lifecycleStart)
