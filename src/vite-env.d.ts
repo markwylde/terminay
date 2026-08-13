@@ -144,8 +144,12 @@ declare global {
 		/** Native microphone, credential-store, and transcription capability. */
 		terminayDictationHost?: {
 			readonly version: 1;
-			getParakeetStatus(): Promise<import('./types/terminay').ParakeetRuntimeStatus>;
-			installParakeet(): Promise<import('./types/terminay').ParakeetRuntimeStatus>;
+			getParakeetStatus(): Promise<
+				import('./types/terminay').ParakeetRuntimeStatus
+			>;
+			installParakeet(): Promise<
+				import('./types/terminay').ParakeetRuntimeStatus
+			>;
 			getKeyStatus(): Promise<import('./types/terminay').DictationKeyStatus>;
 			saveKey(
 				apiKey: string,
@@ -288,6 +292,11 @@ declare global {
 				listener: (message: { sectionId: string }) => void,
 			): () => void;
 			open(sectionId?: string): Promise<void>;
+		};
+		/** Bounded native project-environments window capability. */
+		terminayProjectEnvironmentsHost?: {
+			readonly version: 1;
+			open(): Promise<void>;
 		};
 		/** Bounded native tab-bar presentation for the current Desktop window. */
 		terminayProjectTabHost?: {
