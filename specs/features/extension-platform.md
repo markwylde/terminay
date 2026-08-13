@@ -150,6 +150,9 @@ environment variables, logs, and inherited stdio.
 When Desktop supplies Electron's executable as that bundled runtime, the child
 is launched with `ELECTRON_RUN_AS_NODE=1`; extension activation must never enter
 Electron application startup or create a Desktop window.
+The installer passes the manifest's validated relative entrypoint unchanged to
+the host; the host resolves and canonicalizes it within the immutable package
+slot immediately before import.
 
 Per-extension processes isolate crashes and reduce accidental cross-extension
 secret sharing. They do not constitute an operating-system security sandbox;
