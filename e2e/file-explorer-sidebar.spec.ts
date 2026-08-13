@@ -77,6 +77,7 @@ test('file explorer opens dragged files on the dock tab bar', async ({ createWor
   }
 
   await fileItem.dragTo(tabBar, {
+    force: true,
     targetPosition: { x: targetBox.width - 24, y: targetBox.height / 2 },
   })
 
@@ -109,6 +110,7 @@ test('file explorer opens dragged folders on the dock tab bar', async ({ createW
   }
 
   await folderItem.dragTo(tabBar, {
+    force: true,
     targetPosition: { x: targetBox.width - 24, y: targetBox.height / 2 },
   })
 
