@@ -139,10 +139,17 @@ permission to weaken that permanent reproduction.
 
 ## Cleanup of superseded evidence
 
-- [ ] Remove or rename tests whose descriptions claim WebRTC recovery while
+- [x] Remove or rename tests whose descriptions claim WebRTC recovery while
   their runtime selects WebSocket or only reconnects after page close.
+  The remaining WebSocket/browser-restart tests describe only their actual
+  transport or page lifecycle; native WebRTC recovery claims are confined to
+  the native failure matrix.
 - [ ] Remove source-shape assertions that prove Retry wiring without exercising
   a current host-owned replacement generation.
+  `scripts/web-reconnect-attempt-lifecycle.test.mjs` and
+  `scripts/task16-web-auth-retry-suppression.test.mjs` now execute extracted
+  reconnect policy plus the real renderer controller. Other source-shape Retry
+  assertions remain to be replaced before this item can be completed.
 - [x] Update Task 23 and Task 29 evidence links so deployed exposure and
   browser-host convergence consume this matrix instead of duplicating partial
   reconnect scenarios.

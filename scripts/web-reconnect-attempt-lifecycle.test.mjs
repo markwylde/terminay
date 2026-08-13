@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { build } from 'esbuild'
 import { join } from 'node:path'
 import test from 'node:test'
 
-const source = await readFile(new URL('../src/web/main.tsx', import.meta.url), 'utf8')
 const bundleDirectory = await mkdtemp(join(process.cwd(), '.web-reconnect-attempt-'))
 const bundlePath = join(bundleDirectory, 'reconnectAttempt.mjs')
+const policyBundlePath = join(bundleDirectory, 'reconnectPolicy.mjs')
 await build({
   entryPoints: ['src/web/reconnectAttempt.ts'],
   bundle: true,
@@ -15,7 +15,17 @@ await build({
   outfile: bundlePath,
   logLevel: 'silent',
 })
+await build({
+  entryPoints: ['src/web/reconnectPolicy.ts'],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  outfile: policyBundlePath,
+  logLevel: 'silent',
+})
 const { runBoundedBrowserRecoveryStep } = await import(`${bundlePath}?test=${Date.now()}`)
+const { isAutoRestorableProfile, isBrowserReconnectOrigin, reconnectNeedsFreshPairing } =
+  await import(`${policyBundlePath}?test=${Date.now()}`)
 test.after(() => rm(bundleDirectory, { force: true, recursive: true }))
 
 test('browser recovery bounds an acquisition which ignores cancellation', async () => {
@@ -52,51 +62,36 @@ test('browser recovery aborts a hung acquisition when its generation is cancelle
   await assert.rejects(pending, /superseded/)
 })
 
-test('pre-profile pairing never enters the profile-scoped connection controller', () => {
-	assert.match(source, /const intent = beginPairingIntent\(\)/u)
-	assert.doesNotMatch(source, /beginConnectionAttempt\(`pairing:|\.begin\(`pairing:/u)
-	assert.doesNotMatch(source, /connectionController\.current!?\.begin\(origin\)/u)
-	assert.match(source, /const rendererAttempt = connectionController\.current!\.begin\(profile\.id\)/u)
+test('browser reconnect policy accepts HTTPS and exact loopback development origins', () => {
+  for (const origin of [
+    'https://session.example.test',
+    'http://localhost:4317',
+    'http://server.localhost:4317',
+    'http://127.0.0.1:4317',
+    'http://[::1]:4317',
+  ]) assert.equal(isBrowserReconnectOrigin(origin), true, origin)
+  for (const origin of ['http://example.test', 'ws://localhost:4317'])
+    assert.equal(isBrowserReconnectOrigin(origin), false, origin)
 })
 
-test('mounted terminal resume is the recovery verification command', () => {
-	const pipeline = source.slice(source.indexOf('\tfunction browserRecoveryPipeline()'), source.indexOf('\n\tfunction startBrowserRecovery', source.indexOf('\tfunction browserRecoveryPipeline()')))
-	assert.match(pipeline, /await recovery\.terminalHydrated/u)
-	assert.doesNotMatch(pipeline, /ServerHealthClient|snapshot\(\)/u)
+test('browser auto-restore is limited to active remote profiles in recoverable states', () => {
+  const profile = { id: 'profile-a', label: 'Server', origin: 'https://server.test', status: 'unreachable' }
+  assert.equal(isAutoRestorableProfile(profile), true)
+  assert.equal(isAutoRestorableProfile({ ...profile, status: 'connected' }), true)
+  assert.equal(isAutoRestorableProfile({ ...profile, status: 'connecting' }), true)
+  assert.equal(isAutoRestorableProfile({ ...profile, status: 'disconnected' }), false)
+  assert.equal(isAutoRestorableProfile({ ...profile, archived: true }), false)
+  assert.equal(isAutoRestorableProfile({ ...profile, isLocal: true }), false)
 })
 
-test('invalid persisted reconnect proofs stop retrying and require fresh pairing', () => {
-	assert.match(source, /function reconnectNeedsFreshPairing\(cause: unknown\): boolean/u)
-	assert.match(source, /cause\.message === 'reconnect proof request is invalid'/u)
-	assert.match(source, /Saved reconnect credentials were rejected/u)
-	assert.match(source, /400\|401\|403\|404/u)
-	assert.match(source, /if \(reconnectNeedsFreshPairing\(cause\)\) \{/u)
-	assert.match(source, /invalidateConnectionAttempt\(profile\.id\)/u)
-	assert.match(source, /host\.disconnect\(profile\.id\)/u)
-	assert.match(source, /const AUTO_RESTORE_PROFILE_STATUSES:[\s\S]*?new Set/u)
-	assert.match(source, /'connected',\s+'connecting',\s+'unreachable'/u)
-	assert.match(source, /function isAutoRestorableProfile\(profile: ConnectionProfile\): boolean/u)
-	assert.match(source, /await reconnectVault\.forget\(profile\.origin\)/u)
-	assert.match(source, /Saved reconnect credentials are no longer valid\. Paste a fresh pairing URL\./u)
-})
-
-test('browser auto-restore reconnects HTTPS and loopback profiles in-page', () => {
-	assert.match(source, /function isBrowserReconnectOrigin\(origin: string\): boolean/u)
-	assert.match(source, /parsed\.protocol === 'https:'/u)
-	assert.match(source, /parsed\.protocol === 'http:'[\s\S]*parsed\.hostname === 'localhost'[\s\S]*parsed\.hostname\.endsWith\('\.localhost'\)[\s\S]*parsed\.hostname === '127\.0\.0\.1'[\s\S]*parsed\.hostname === '\[::1\]'/u)
-	assert.match(source, /if \(isBrowserReconnectOrigin\(profile\.origin\)\) \{/u)
-	assert.match(source, /const credential = await reconnectVault\.credential\(profile\.origin\)/u)
-	assert.match(source, /AUTO_RESTORE_PROFILE_STATUSES\.has\(profile\.status\)/u)
-	assert.match(source, /host\.open\(profileId, \{ newTab \}\);[\s\S]*return;/u)
-	assert.doesNotMatch(source, /profile\?\?\.origin\.startsWith\('http:\/\/'\)|profile\.origin\.startsWith\('http:\/\/'\)/u)
-})
-
-test('browser auto-restore retries the current unreachable profile after restart', () => {
-	assert.match(source, /const autoRestoreAttemptedProfileId = useRef<string \| null>\(null\)/u)
-	assert.match(source, /snapshot\.current !== undefined &&\s+isAutoRestorableProfile\(snapshot\.current\)/u)
-	assert.match(source, /const profile = currentProfile \?\? latestProfile/u)
-	assert.match(source, /if \(autoRestoreAttemptedProfileId\.current === profile\.id\) return/u)
-	assert.match(source, /void openConnection\(profile\.id, false, true\)\.catch/u)
-	assert.doesNotMatch(source, /const autoRestoreAttempted = useRef\(false\)/u)
-	assert.doesNotMatch(source, /candidate\.status !== 'connected'/u)
+test('only permanent reconnect proof failures require fresh pairing', () => {
+  for (const message of [
+    'reconnect proof request is invalid',
+    'reconnect credential is unavailable for this server',
+    'reconnect credential changed while signing',
+    'Saved reconnect credentials were rejected during protocol handshake.',
+    'Server reconnect request failed (401)',
+  ]) assert.equal(reconnectNeedsFreshPairing(new Error(message)), true, message)
+  for (const cause of [new Error('client is not connected'), new Error('Server reconnect request failed (502)'), '401'])
+    assert.equal(reconnectNeedsFreshPairing(cause), false)
 })
