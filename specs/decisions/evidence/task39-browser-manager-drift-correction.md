@@ -6,7 +6,7 @@ This note corrects the scope of historical browser-manager migration evidence.
 It does not rewrite the archived task records, invalidate the sanitizer and
 reconnect tests they cite, or claim that the Task 39 recovery work has shipped.
 The active recovery checklist is
-[Task 39: Browser connection manager drift recovery](../../tasks/39-browser-connection-manager-drift-recovery.md).
+[Task 39: Browser connection manager drift recovery](../../tasks_completed/39-browser-connection-manager-drift-recovery.md).
 
 ## What the historical evidence proves
 

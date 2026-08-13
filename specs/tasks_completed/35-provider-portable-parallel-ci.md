@@ -18,5 +18,7 @@
 
 - [x] Update workflow contract tests.
 - [x] Run the affected local workflow contract tests.
-- [ ] Confirm Gitea creates exactly six eligible PR jobs.
-- [ ] Keep the Gitea pull request and post-merge main checks green.
+- [x] Confirm Gitea creates exactly six eligible PR jobs. PR #50 run 6747
+  created one build/lint/unit job plus five independent E2E shards.
+- [x] Keep the Gitea pull request and post-merge main checks green. PR #50 run
+  6747 and post-merge main run 6749 completed all six jobs successfully.

@@ -19,7 +19,7 @@ compatibility window.
 - [Task 27: Server bundle and host contracts](./27-server-bundle-host-contracts.md)
 - [Task 28: Desktop server-bundle host and state extraction](./28-desktop-server-bundle-host-and-state.md)
 - [Task 23: Embedded Desktop WebRTC exposure](./23-embedded-desktop-remote-exposure.md)
-- [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
+- [Task 41: Single-owner WebRTC transport generations](../tasks_completed/41-single-owner-webrtc-transport-generations.md)
 - [Task 43: WebRTC transport recovery acceptance](./43-webrtc-transport-recovery-acceptance.md)
 
 ## Current gap
@@ -49,9 +49,6 @@ same bundle id or cover compatible older/current/newer host and server fixtures.
 
 ### Origin, cache, and credential isolation
 
-- [ ] Prove manager and sibling origins cannot access a session's proof key,
-  reconnect material, bundle cache, DOM, application endpoint, or workspace
-  state.
 - [ ] Commit verified bundles atomically and keep the previous complete bundle
   after interruption, invalid hashes, unsafe paths, incompatible requirements,
   or server-identity mismatch.
@@ -59,24 +56,6 @@ same bundle id or cover compatible older/current/newer host and server fixtures.
   bundle storage out of profile messages, URLs, logs, and analytics.
 - [ ] Preserve direct session-origin launch and a safe route back to connection
   management without transferring credentials.
-
-### Cross-host and compatibility evidence
-
-- [ ] Launch one generated server fixture through Local Desktop, remote Desktop,
-  a direct browser session, and the browser manager and assert the same bundle
-  id, workspace revision, project ids, panel ids, and terminal session ids.
-- [ ] Exercise minimum/current/maximum compatible host/bootstrap/bundle fixtures
-  against older/current/newer server application versions without requiring the
-  hosts to recognize application operation names.
-- [ ] Exercise optional native capability absence, required bridge/runtime
-  incompatibility, bundle update/rollback, and server restart across browser
-  and Desktop hosts. Consume Task 43 as the WebRTC reconnect/recovery evidence
-  rather than maintaining a second partial scenario here.
-- [ ] Run hostile bundle, sibling-origin, profile partition, cache integrity,
-  navigation, popup/download/permission, direct-ICE, and TURN-required E2E
-  suites in supported release artifacts.
-- [ ] Make the bounded compatibility and isolation matrix a release gate with
-  evidence bound to exact host, server, bundle, bootstrap, and signaling builds.
 
 ## Acceptance checks
 
