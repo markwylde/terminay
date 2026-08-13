@@ -103,9 +103,13 @@ permission to weaken that permanent reproduction.
 - [x] Send unique human-paced, burst, paste, Unicode, escape-sequence, and
   newline-delimited inputs before, across, and after recovery. Assert exact PTY
   byte order and exactly-once delivery for every input with known outcome.
-- [ ] Force an unknown command outcome, prove later queued input is discarded,
-  query the idempotent command result where supported, and never blindly replay
-  the uncertain mutation.
+- [x] Force an unknown terminal-input outcome, prove the active queue closes and
+  discards both already-queued and later input, and prove attaching a replacement
+  cannot replay any of it (`scripts/terminal-panel-input-queue.test.mjs`). The
+  current terminal-input contract does not expose its generated command id to the
+  panel and the server command ledger is connection-scoped; therefore it does not
+  support a reconnect-safe idempotent result query. Never infer or blindly replay
+  the uncertain terminal mutation.
 - [ ] Prove terminal output, workspace revisions, presentation ownership,
   viewport size, confirmed render position, and checkpoint hydration converge
   after replacement.
