@@ -133,9 +133,8 @@ test('AI release notes generator passes bounded git context to the model', () =>
   assert.match(script, /Commits in range:/)
   assert.match(script, /Changed files in range:/)
   assert.match(script, /Do not include features, fixes, or dependency updates from earlier releases/)
-  assert.match(script, /stdio: \['pipe', 'inherit', 'inherit'\]/)
-  assert.match(script, /child\.stdin\.end\(message\)/)
-  assert.doesNotMatch(script, /'--',\s+message/)
+	assert.match(script, /requestReleaseNotes/)
+	assert.doesNotMatch(script, /opencode-ai/)
 })
 
 test('optional AI release notes fall back without blocking release artifacts', () => {
@@ -145,6 +144,8 @@ test('optional AI release notes fall back without blocking release artifacts', (
   assert.match(workflow, /continue-on-error:\s+true/)
   assert.match(workflow, /name:\s+Use fallback release notes/)
   assert.match(workflow, /steps\.generate_release_notes\.outcome != 'success'/)
+  assert.match(workflow, /generate-fallback-release-notes\.mjs/)
+  assert.doesNotMatch(workflow, /without AI-assisted release notes/)
 })
 
 test('release publication creates the tag through the step-scoped GitHub API token', () => {

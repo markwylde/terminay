@@ -18,6 +18,13 @@
 .project-environments-window > .settings-shell { height: 100%; }
 .environment-category-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .environment-category-header > div:first-child { min-width: 0; }
+.environment-add-menu { position: relative; -webkit-app-region: no-drag; }
+.environment-add-menu > summary { display: block; list-style: none; text-align: center; cursor: pointer; }
+.environment-add-menu > summary::-webkit-details-marker { display: none; }
+.environment-add-menu__items { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; right: 0; overflow: hidden; padding: 4px; background: var(--settings-card-bg); border: 1px solid var(--settings-border); border-radius: 8px; box-shadow: 0 12px 28px rgba(0,0,0,.3); }
+.environment-add-menu__items button { display: block; width: 100%; padding: 8px 10px; color: var(--settings-text); background: transparent; border: 0; border-radius: 5px; font: inherit; text-align: left; cursor: pointer; }
+.environment-add-menu__items button:hover,
+.environment-add-menu__items button:focus-visible { background: var(--settings-nav-hover); outline: none; }
 .environment-nav-status { display: grid; place-items: center; width: 12px; height: 12px; }
 .environment-nav-status > span:first-child { width: 7px; height: 7px; border-radius: 50%; background: var(--settings-text-muted); }
 .environment-nav-status--ready > span:first-child { background: var(--settings-success); }
@@ -49,7 +56,7 @@
 .extension-state--incompatible { color: var(--settings-danger); }
 .extension-card-footer { gap: 16px; }
 .extension-card-footer .settings-chip-row { justify-content: flex-end; }
-.declarative-provider-form { width:min(100%,960px); margin:0 auto; padding:40px 48px 56px; color:var(--settings-text); }
+.declarative-provider-form { color:var(--settings-text); }
 .declarative-provider-form .settings-category-header { margin-bottom:32px; }
 .declarative-provider-section { margin-bottom:32px; }
 .declarative-provider-section__description { margin:-2px 16px 8px; }

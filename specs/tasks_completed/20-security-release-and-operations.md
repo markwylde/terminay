@@ -119,8 +119,11 @@ The current evidence boundary is recorded in
     availability output; the credential-free fallback never receives the
     secret. Large release context is streamed to the generator over stdin
     instead of a size-limited process argument, and an unavailable or failed
-    optional generator selects the fallback without blocking verified release
-    artifacts. Evidence: `.github/workflows/trigger-release.yml`,
+    optional generator selects a useful deterministic changelog assembled from
+    the exact bounded release range without blocking verified release
+    artifacts. The generator calls the provider's HTTP API directly rather
+    than depending on an npm package's lifecycle-installed executable.
+    Evidence: `.github/workflows/trigger-release.yml`,
     `scripts/generate-release-notes.mjs`, `scripts/release-config.test.mjs`,
     and `scripts/task20-ci-security.test.mjs`.
   - [x] Require every release-workflow shell step to run under a workflow-wide

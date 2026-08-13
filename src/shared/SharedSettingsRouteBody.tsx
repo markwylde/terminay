@@ -16,6 +16,7 @@ export interface SharedSettingsRouteBodyProps {
   readonly onQueryChange: (query: string) => void
   readonly onCategorySelect: (categoryId: string) => void
   readonly onResetAll?: () => void
+  readonly sidebarAction?: ReactNode
   readonly contentRef?: Ref<HTMLDivElement>
   readonly children: ReactNode
   readonly preview?: ReactNode
@@ -41,6 +42,7 @@ export function SharedSettingsRouteBody({
   onQueryChange,
   onCategorySelect,
   onResetAll,
+  sidebarAction,
   contentRef,
   children,
   preview,
@@ -55,6 +57,7 @@ export function SharedSettingsRouteBody({
             <div className="settings-brand">
               <h1>{title}</h1>
             </div>
+            {sidebarAction}
             <div className="settings-search-container">
               <input
                 type="search"
