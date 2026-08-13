@@ -35,7 +35,7 @@ specifier until that dependency is published.
   OIDC CI with provenance.
 - [ ] In each extension repository, replace local/optional-only API setup with
   the exact registry API version as a development dependency and regenerate
-  `package-lock.json` in a fresh clone using Node 24.14.0/npm 12.0.2.
+  `package-lock.json` in a fresh clone using Node 24.15.0/npm 12.0.2.
 - [ ] Copy `official-extension-release.yml` into each repository, commit it,
   reserve each package name with an inert bootstrap version, and configure npm
   trusted publishing for the exact repository/workflow with `npm publish`
