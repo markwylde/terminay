@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { assertJsonValue } from "@terminay/protocol";
 import { WorkspaceStore, canonicalizeWorkspaceState, createInitialWorkspace, migrateWorkspaceState, validateWorkspace } from "../dist/index.js";
 
 test("workspace store creates, moves, and atomically commits canonical objects", () => {
@@ -14,6 +15,8 @@ test("workspace store creates, moves, and atomically commits canonical objects",
   assert.equal(store.state.projects["project-a"].viewId, "view-b");
   assert.equal(store.state.views[view].projectIds.includes("project-a"), false);
   assert.equal(store.state.views["view-b"].projectIds.includes("project-a"), true);
+  assert.equal(Object.hasOwn(store.state.views[view], "activeProjectId"), false);
+  assertJsonValue(store.state);
   assert.deepEqual(store.delta(0).events.map((event) => event.revision), [1, 2, 3]);
   const bounded = new WorkspaceStore(createInitialWorkspace("server-b"), { maxHistory: 1 });
   bounded.apply({ commandId: "v", command: { type: "view.create", viewId: "view-c", name: "C" } });
@@ -105,6 +108,37 @@ test("terminal panel close removes the terminal session record", () => {
   assert.deepEqual(store.state.projects["project-a"].panelIds, ["panel-1", "panel-3"]);
   assert.deepEqual(Object.keys(store.state.terminalSessions).sort(), ["session-1", "session-3"]);
   validateWorkspace(store.state);
+});
+
+test("empty project and view selections remain valid JSON after final removals", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const viewId = store.state.viewOrder[0];
+  assert.equal(store.apply({ commandId: "project", command: { type: "project.create", projectId: "project-a", viewId, root: "/tmp/a", name: "A" } }).ok, true);
+  assert.equal(store.apply({ commandId: "terminal", command: { type: "terminal.createPanel", sessionId: "session-a", projectId: "project-a", panelId: "panel-a", title: "Terminal 1", cwd: "/tmp/a", createdAt: 1 } }).ok, true);
+
+  assert.equal(store.apply({ commandId: "close-panel", command: { type: "panel.close", panelId: "panel-a" } }).ok, true);
+  assert.deepEqual(store.state.projects["project-a"].panelIds, []);
+  assert.equal(Object.hasOwn(store.state.projects["project-a"], "activePanelId"), false);
+  assertJsonValue(store.state);
+
+  assert.equal(store.apply({ commandId: "close-project", command: { type: "project.close", projectId: "project-a" } }).ok, true);
+  assert.deepEqual(store.state.views[viewId].projectIds, []);
+  assert.equal(Object.hasOwn(store.state.views[viewId], "activeProjectId"), false);
+  assertJsonValue(store.state);
+});
+
+test("moving the final panel omits the empty source project's active selection", () => {
+  const store = new WorkspaceStore(createInitialWorkspace("server-a"));
+  const viewId = store.state.viewOrder[0];
+  for (const projectId of ["project-a", "project-b"]) {
+    assert.equal(store.apply({ commandId: projectId, command: { type: "project.create", projectId, viewId, root: `/tmp/${projectId}`, name: projectId } }).ok, true);
+  }
+  assert.equal(store.apply({ commandId: "terminal", command: { type: "terminal.createPanel", sessionId: "session-a", projectId: "project-a", panelId: "panel-a", title: "Terminal 1", cwd: "/tmp/project-a", createdAt: 1 } }).ok, true);
+
+  assert.equal(store.apply({ commandId: "move-panel", command: { type: "panel.move", panelId: "panel-a", targetProjectId: "project-b" } }).ok, true);
+  assert.deepEqual(store.state.projects["project-a"].panelIds, []);
+  assert.equal(Object.hasOwn(store.state.projects["project-a"], "activePanelId"), false);
+  assertJsonValue(store.state);
 });
 
 test("two client command streams get one ordered commit and one explicit stale conflict", () => {
