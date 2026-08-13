@@ -32,29 +32,6 @@ async function writeToActiveTerminal(page: Page, data: string): Promise<string> 
 	return sessionId;
 }
 
-async function waitForActiveTerminalToBeIdle(page: Page): Promise<void> {
-	const activePanel = page.locator(
-		'.project-workspace--active .terminal-panel:visible',
-	);
-	await expect(activePanel).toHaveCount(1);
-	const sessionId = await activePanel.getAttribute(
-		'data-terminay-terminal-session-id',
-	);
-	if (!sessionId) {
-		throw new Error('Active terminal session id is unavailable');
-	}
-	await expect
-		.poll(async () => {
-			const activity = await page.evaluate(
-				(nextSessionId) =>
-					window.terminayTest!.getServerTerminalActivity(nextSessionId),
-				sessionId,
-			);
-			return activity?.foregroundBusy ?? true;
-		})
-		.toBe(false);
-}
-
 async function getAppMenuItemAccelerator(
 	electronApp: ElectronApplication,
 	label: string,
@@ -106,8 +83,15 @@ test.describe('workspace shell', () => {
 	test('closes several terminal panels sequentially while a file panel remains', async ({
 		appHarness,
 		createWorkspace,
+		electronApp,
 		mainWindow,
 	}) => {
+		await electronApp.evaluate(({ dialog }) => {
+			dialog.showMessageBox = async () => ({
+				checkboxChecked: false,
+				response: 0,
+			});
+		});
 		const workspace = await createWorkspace({
 			name: 'sequential-panel-close',
 			seed: { files: { 'README.md': 'remaining panel\n' } },
@@ -124,7 +108,6 @@ test.describe('workspace shell', () => {
 
 		for (const [index, title] of ['Terminal 1', 'Terminal 2', 'Terminal 3', 'Terminal 4'].entries()) {
 			await mainWindow.locator('.dv-tab:visible').filter({ hasText: title }).first().click();
-			await waitForActiveTerminalToBeIdle(mainWindow);
 			await appHarness.sendAppCommand('close-active');
 			await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(3 - index);
 		}
