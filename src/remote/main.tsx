@@ -16,7 +16,11 @@ if (sessionHost === undefined) throw new Error('Terminay session transport host 
 sessionHost.registerApplication({
 	async connect(options) {
 		const runtime = createRemoteTransportRuntime();
-		const pairing = await loadPairing(options.origin);
+		const canonicalOrigin = `${sessionHost.origin}#transport=webrtc:${sessionHost.origin}`;
+		if (options.origin !== sessionHost.origin && options.origin !== canonicalOrigin) {
+			throw new Error('Saved browser profile belongs to a different session origin.');
+		}
+		const pairing = await loadPairing(canonicalOrigin);
 		if (pairing === null) throw new Error('This browser has no saved pairing.');
 		const authenticated = await authenticateDevice({
 			api: runtime.api,
