@@ -97,12 +97,13 @@ from terminal journal ingestion, may close the application connection.
 
 A real transport failure uses an explicit client state machine:
 
-`connected → reconnecting → resubscribing → hydrating → connected`.
+`connected → reconnecting → authenticating → resubscribing → hydrating → connected`.
 
 The renderer visibly marks mounted terminal panels as reconnecting and rejects
 unsafe mutations promptly while the old client is unusable. Desktop supplies a
-fresh server-scoped MessagePort; browser and remote hosts establish a fresh
-authenticated transport. The client never reuses a half-closed connection.
+fresh server-scoped MessagePort; the browser session host replaces its complete
+WebRTC transport generation and supplies a fresh opaque endpoint. The client
+never reuses a half-closed connection or obtains raw transport channels.
 
 After reconnecting, the client reloads the authoritative workspace snapshot,
 resubscribes feature projections from confirmed revisions, and reattaches each
@@ -110,11 +111,14 @@ mounted terminal from its confirmed position or a fresh checkpoint. Recovery
 uses bounded retry with backoff and remains active until it succeeds, the user
 selects another connection, or the window closes. A failed recovery is visible
 and actionable; the application never remains silently mounted with disposed
-terminal clients. A terminal-panel retry after a connection failure requests a
-fresh host-owned transport generation; it never calls attach or resume on the
-failed client. Once a terminal write has an uncertain outcome, later queued
-input is discarded and the panel accepts no more input until a replacement
-client has hydrated and reattached the terminal.
+terminal clients. Automatic recovery and a terminal-panel retry invoke the
+same stable, connection-scoped recovery controller. Retry never calls a
+callback captured from a retired renderer generation, and it never calls
+attach or resume on the failed client. Once a terminal write has an uncertain
+outcome, later queued input is discarded and the panel accepts no more input
+until a replacement client has hydrated and reattached the terminal. Recovery
+UI clears only after a post-recovery command can traverse the replacement
+endpoint.
 
 ## Resource and security boundaries
 
@@ -149,6 +153,9 @@ client has hydrated and reattached the terminal.
 - Forced Local MessagePort, WebSocket, and WebRTC failures automatically
   reconnect, reload workspace state, and hydrate existing terminal panels
   without duplicating PTYs, output, input, or workspace mutations.
+- A required WebRTC lane closing while the peer remains connected is a full
+  transport-generation failure. Automatic recovery and manual Retry each
+  replace all lanes and restore exact ordered input without reloading the page.
 - Queue and recovery diagnostics identify the affected opaque lane and precise
   resource transition without including terminal content.
 - Sustained output that never becomes completely idle cannot pin a terminal on
