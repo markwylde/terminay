@@ -28,56 +28,32 @@ Tasks 30, 35, 37, and foreground-close Task 38 are fully complete after these
 corrections. Tasks 41 and 42 already had no unchecked items. All six files move
 to `specs/tasks_completed/` so the active directory reflects actual work.
 
-## Honest remaining inventory
+## Implementation-only pruning
 
-After the corrections, **108 checkboxes genuinely remain**:
+A second pass applies the active-task policy that an unchecked checkbox must
+describe product, runtime, migration, packaging, or enforcement code an agent
+can implement. Manual validation, test-only coverage, production observation,
+CI-green bookkeeping, publication/deployment evidence, and platform spot checks
+remain useful acceptance context but are not active implementation tasks.
 
-| Active area | Files | Remaining | Audit result |
+That pass removes 54 evidence-only checkboxes and moves Tasks 21, 36, 39, 40,
+51, and 53 to `specs/tasks_completed/`. Their governing feature contracts and
+completed implementation history remain intact.
+
+## Honest implementation inventory
+
+After both passes, **54 direct implementation checkboxes remain**:
+
+| Active area | Files | Remaining | Implementation still required |
 | --- | --- | ---: | --- |
-| Shared UI, migration, and verified server-bundle host cutover | Tasks 16, 19, 23, 27, 28, 29 | 64 | Genuine. Current production still contains `legacyFallback`, the legacy Electron renderer launch, broad compatibility host paths, the old Local Network/WebRTC Relay presentation, and no completed four-host/cross-version bundle gate. |
-| WebRTC transport recovery | Task 43 | 21 | Genuine. Task 41/42 architecture is complete, but protocol-reader-only failure, remaining native fault injection, exact attachment evidence, Linux arm64/iOS staging, required CI, deployment, and cleanup evidence are not complete. Parent and nested checkboxes intentionally express both outcomes and their remaining slices. |
-| On-device Parakeet dictation | on-device Task 38 | 5 | Genuine. Disclosure, audio conversion, pinned runtime/model/license packaging, worker adverse tests, and injected Docker Electron acceptance remain. |
-| Browser manager and public deployment | Tasks 39, 40 | 8 | Genuine. Two repository E2E journeys and six public image/CDN/origin/deployment proofs remain. These cannot be inferred from local source tests. |
-| Terminal congestion | Task 36 | 3 | Genuine. Boundary/control-state matrix, MessagePort/WebSocket recovery, and final complete verification remain. |
-| Browser auxiliary routes | Task 21 | 1 | Genuine. Static/controller coverage exists, but the listed browser Playwright user journeys are not present as one acceptance flow. |
-| Extension and Project Environment release convergence | Tasks 51, 53 | 6 | Genuine. Official npm publication/provenance, full mixed Desktop/browser embedded/standalone acceptance, actual packed-Puzed Electron option journey, corrected completion evidence, and post-release artifact/deployment verification remain. |
+| Shared UI and migration cleanup | Tasks 16, 19 | 7 | Replace remaining legacy renderer/preload data authority and make the extracted shared route tree the production Desktop and web UI. |
+| Embedded remote exposure | Task 23 | 5 | Replace the old dual transport presentation, keep Local private, prevent listener fallback, and compose the pinned WebRTC runtime. |
+| Server-bundle host architecture | Tasks 27, 28, 29 | 36 | Implement closed host capabilities, signed bundle compatibility, Local/remote Desktop bundle launch, isolated browser bundle execution, state migration, and legacy-host deletion. |
+| On-device Parakeet dictation | on-device Task 38 | 3 | Complete disclosure, audio conversion, and pinned runtime/model/license packaging. |
+| WebRTC protocol-reader recovery | Task 43 | 3 | Retire a split-brain transport generation and create one fresh generation after application-protocol reader failure. |
 
-Total: `64 + 21 + 5 + 8 + 3 + 1 + 6 = 108`.
+Total: `7 + 5 + 36 + 3 + 3 = 54`.
 
-## File-by-file disposition
-
-| Task | Before | After | Disposition |
-| --- | ---: | ---: | --- |
-| 16 shared responsive server UI | 3 | 3 | Current and genuine |
-| 19 migration and compatibility cleanup | 7 | 7 | Current and genuine; tied to Tasks 16 and 27–29 |
-| 21 web auxiliary routes/menu | 1 | 1 | Current and genuine acceptance gap |
-| 23 embedded Desktop exposure | 6 | 6 | Current and genuine; old dual-mode UI still exists in source |
-| 27 server-bundle host contracts | 14 | 14 | Current future architecture; partial seams do not satisfy the closed contract/evidence |
-| 28 Desktop server-bundle host/state | 20 | 20 | Current future migration; normal Electron startup still uses legacy packaged renderer |
-| 29 browser host/cross-version | 14 | 14 | Current future migration and compatibility gate |
-| 30 Local Desktop diagnostics | 1 | 0 | Stale checkbox corrected; task completed |
-| 35 PR confidence gate | 2 | 0 | Stale external verification corrected; task completed |
-| 36 terminal congestion | 3 | 3 | Current and genuine |
-| 37 PTY-derived state isolation | 1 | 0 | Stale final verification corrected; task completed |
-| 38 foreground close protection | 1 | 0 | Stale verification corrected; task completed |
-| 38 on-device Parakeet | 5 | 5 | Current and genuine |
-| 39 browser manager drift recovery | 4 | 4 | Current: two repository journeys and two deployment proofs |
-| 40 app manager authority cutover | 4 | 4 | Current external deployment work |
-| 41 single-owner WebRTC generations | 0 | 0 | Completed file was left active; moved |
-| 42 unified renderer recovery | 0 | 0 | Completed file was left active; moved |
-| 43 WebRTC recovery acceptance | 21 | 21 | Current and genuine |
-| 51 extension ecosystem release/E2E | 3 | 3 | Current and genuine |
-| 53 provider journey convergence | 3 | 3 | Current and genuine |
-
-## Important interpretation
-
-An unchecked parent outcome and its unchecked child slice can both appear in
-the Tasks viewer. They are not two independent implementation owners, but both
-remain honest checkboxes because the parent outcome is not achieved and the
-child identifies why. The progress total is therefore a Markdown checklist
-count, not a count of isolated engineering tickets.
-
-No remaining checkbox was marked complete merely because related code or a
-weaker source/static test exists. External publication, physical-device,
-deployed-origin, immutable-artifact, and cross-host claims remain open until
-their exact evidence exists.
+Every remaining checkbox now names code or product behaviour to implement. Test
+expectations may accompany implementation in acceptance prose, but they no
+longer inflate the active task count as standalone work.

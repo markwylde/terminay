@@ -86,12 +86,6 @@ does not maintain another reconnect controller or weaker recovery harness.
   `asset` bootstrap lanes remain narrowly scoped to enrollment and verified UI
   installation; the authenticated ticket is consumed exactly once before the
   embedded `ServerCore` accepts the application lane.
-- [ ] Verify real hosted WebRTC pairing, full workspace/terminal traffic,
-  revocation, exposure stop, direct ICE, and TURN-required routing against the
-  deployed signaling compatibility window. Consume Task 43 for mounted
-  reconnect/Retry recovery. A second Desktop and a browser must install the
-  same selected-server bundle id through the Tasks 28–29 launch paths.
-
 ## Acceptance checks
 
 - Starting the advanced direct network listener from a Local Desktop window
