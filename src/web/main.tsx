@@ -583,7 +583,15 @@ export default function WebManagerApp() {
 		let explicitDirectDeviceUrl: URL | null = null;
 		try {
 			const pairingUrl = new URL(rawServerUrl);
-			if (pairingUrl.searchParams.get('transport') === 'webrtc')
+			const sessionHost = getSessionTransportHost();
+			const isHostedSessionPairing =
+				sessionHost !== undefined &&
+				pairingUrl.origin === sessionHost.origin &&
+				new URLSearchParams(pairingUrl.hash.slice(1)).has('pairingToken');
+			if (
+				pairingUrl.searchParams.get('transport') === 'webrtc' ||
+				isHostedSessionPairing
+			)
 				explicitWebRtcUrl = pairingUrl;
 			if (
 				new URLSearchParams(pairingUrl.hash.slice(1)).get('pairingFlow') ===
