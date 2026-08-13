@@ -3,9 +3,9 @@
 ## Summary
 
 Terminay Server owns the canonical workspace model and every privileged service
-that acts on the server machine. Desktop and browser clients render that model,
-submit validated commands, and keep only device-local presentation and
-connection state.
+that acts on its own host or a bound project environment. Desktop and browser
+clients render that model, submit validated commands, and keep only
+device-local presentation and connection state.
 
 The model must preserve the current project, panel, and immutable terminal
 session boundaries while allowing multiple clients to observe one server
@@ -13,16 +13,23 @@ without tying process lifetime to any renderer.
 
 ## Canonical model
 
-- A **server** is one authority, data root, trust domain, and machine context.
+- A **server** is one workspace, trust, persistence, extension, and project-
+  environment routing authority with one data root. Its own machine is the
+  built-in This server environment, not the only possible project target.
 - A **workspace view** is a server-owned logical grouping of projects that can
   be presented as an Electron native window or as an in-browser view/tab.
-- A **project** has a stable id, root folder, name, colour, icon, optional
+- A **project environment** is a stable server-owned execution binding held in
+  the separate environment registry. Workspace state stores its opaque id but
+  never provider credentials or configuration.
+- A **project** has a stable id, immutable project-environment id, root folder
+  interpreted by that environment, name, colour, icon, optional
   default shell-profile id, sidebar state, ordered panels, and logical layout.
 - A **panel** has a stable id, type, project ownership, presentation metadata,
   and type-specific state.
-- A **terminal session** has an immutable server-issued id and PTY lifecycle
-  independent of panel mounts. A terminal panel references a session; moving
-  the panel does not recreate the session.
+- A **terminal session** has an immutable server-issued id and runtime lifecycle
+  independent of panel mounts. It snapshots its project's environment id and
+  validation requires them to match. A terminal panel references a session;
+  moving the panel does not recreate the session.
 - File and folder panels reference canonical paths within their owning project
   scope. Their view mode and navigation state are durable workspace state.
 
@@ -36,8 +43,8 @@ workspace view are separate actions.
 The server persists and publishes:
 
 - ordered workspace views and their active project;
-- projects, roots, names, colours, icons, default shell-profile references, and
-  sidebar configuration;
+- projects, roots, names, colours, icons, default shell-profile references,
+  immutable environment references, and sidebar configuration;
 - logical panel layout, active panel, splits, order, notes, and appearance;
 - terminal identity, lifecycle, metadata, bounded output position, activity,
   and recording state;
@@ -148,10 +155,12 @@ editing continues to use the file-viewer conflict contract.
 
 ## Privileged service ownership
 
-The following run in Terminay Server and are reached only through the
-application protocol:
+The following are authorized, routed, and lifecycle-owned by Terminay Server
+and reached only through the application protocol. Their concrete execution
+adapter is resolved from the canonical project environment:
 
-- PTY creation, input, resize, cwd inspection, output replay, and termination;
+- PTY/remote-terminal creation, input, resize, cwd inspection where supported,
+  output replay, and termination;
 - terminal signal parsing and fallback activity reduction;
 - filesystem listing/search/read/write/watch and file-conflict detection;
 - Git status, diff, worktree lifecycle, Quick Push, and provider CLI execution;
@@ -166,6 +175,10 @@ Client hosts retain native-only operations such as BrowserWindow lifecycle,
 application updates, operating-system clipboard/dialogs, external-link
 confirmation, and local credential storage.
 
+The This server provider uses native host services. SSH and other providers
+must implement declared capabilities or return unavailable; an identical path
+or executable on the Terminay Server is never a fallback.
+
 The host may map a local native window or browser tab to a server-owned logical
 view, but that mapping is presentation metadata only. Opening, focusing, or
 closing a native window does not create, mutate, transfer, or delete server
@@ -178,8 +191,11 @@ and insertion into the intended terminal remain server-authorized operations.
 
 ## Project and path boundaries
 
-- Every panel and terminal belongs to an exact server/project/view identity.
+- Every project has one exact environment binding, and every panel/terminal
+  belongs to an exact server/project/view identity consistent with it.
 - Requests carry ids, not titles, labels, or client-selected roots as authority.
+- Project-scoped requests derive environment routing from the canonical project;
+  a supplied environment/provider/hostname/IP/URL is never authority.
 - Filesystem paths are resolved and validated on the server against the
   operation's allowed scope.
 - Symlinks, worktrees, renames, deleted roots, and platform case rules are
@@ -188,6 +204,7 @@ and insertion into the intended terminal remain server-authorized operations.
   renderer focus cannot widen scope.
 - A connected device cannot refer to a session or object from another server
   using a copied id.
+- Panel movement between unequal environment ids fails before mutation.
 
 ## Settings and secrets
 
@@ -244,6 +261,9 @@ and insertion into the intended terminal remain server-authorized operations.
   writing plaintext migration files.
 - Legacy state that was never persisted is represented by a new default
   workspace; the migration does not claim to recover unavailable data.
+- Legacy projects without an environment id migrate idempotently to the
+  reserved This server environment without changing project, panel, or view
+  identities.
 - Existing recordings and project files are referenced in place unless the user
   explicitly requests a move.
 - Embedded migration preflight produces a bounded, metadata-only inventory of

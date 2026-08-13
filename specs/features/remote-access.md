@@ -7,6 +7,11 @@ Desktop and browser clients. Remote connections use the same application
 protocol and server-owned state as Local connections; WebRTC changes the
 transport, not the product model or available workspace features.
 
+This client-to-Terminay-Server remote access is not a remote project
+environment. Once connected, the selected Terminay Server may run This server,
+SSH, and Puzed projects through its own installed extensions. Neither WebRTC nor
+the web/Desktop connection host connects directly to those project machines.
+
 The hosted Terminay service provides the web connection host, isolated session
 origins, signed bootstrap assets, signaling, and relay coordination. It does not
 terminate or store terminal, filesystem, project, settings, agent, recording,

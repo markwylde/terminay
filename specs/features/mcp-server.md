@@ -21,6 +21,12 @@ hop.
 The control socket is local to the server machine. It does not use WebRTC,
 remote device credentials, browser storage, or the hosted signaling service.
 
+That socket is available to This server terminals only. SSH/Puzed shells never
+receive a Terminay Server-local socket path or capability token in their launch
+environment. Remote MCP requires a future authenticated project-environment
+bridge/helper capability; without it MCP is visibly unavailable and never
+targets local sibling sessions as a fallback.
+
 The server dispatches each validated operation through an explicit
 operation-to-handler table. A handler receives the immutable terminal/project
 scope and request cancellation signal, never the raw capability token. An
@@ -172,7 +178,8 @@ revocation, target exit, or server shutdown.
 
 ## Security
 
-- MCP is enabled only on the server machine and is never network-exposed.
+- MCP v1 is enabled only for This server project environments and its control
+  socket is never network-exposed.
 - One random token maps to one calling terminal and one implicit project scope.
 - Every request revalidates that scope against canonical server state.
 - File, Git, settings, secrets, recordings, remote administration, and

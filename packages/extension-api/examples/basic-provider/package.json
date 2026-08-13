@@ -1,0 +1,24 @@
+{
+  "name": "terminay-example-provider",
+  "version": "1.0.0",
+  "type": "module",
+  "license": "MIT",
+  "exports": { ".": "./extension.js" },
+  "terminay": {
+    "manifestVersion": 1,
+    "id": "dev.example.basic",
+    "displayName": "Example server",
+    "description": "Minimal project-environment provider.",
+    "api": "^1.0.0",
+    "engines": { "terminay": ">=1.0.0", "node": ">=22" },
+    "entrypoint": "extension.js",
+    "permissions": [],
+    "contributes": {
+      "projectEnvironments": [{
+        "id": "dev.example.basic/server",
+        "displayName": "Example server",
+        "capabilities": ["infrastructure"]
+      }]
+    }
+  }
+}

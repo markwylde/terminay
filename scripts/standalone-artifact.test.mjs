@@ -88,6 +88,7 @@ async function createFixture() {
 			version: '1.2.3',
 			files: ['dist'],
 			engines: { node: '24.14.0' },
+			dependencies: { npm: '11.9.0' },
 			bin: {
 				'terminay-server': 'dist/cli.js',
 				'terminay-mcp': 'dist/mcpEntry.js',
@@ -106,6 +107,7 @@ async function createFixture() {
 		join(root, 'dist/mcpEntry.js'),
 		'export const mcpEntry = true\n',
 	);
+	await writeFile(join(root, 'dist/bundled-npm-evidence.json'), JSON.stringify({ schemaVersion: 1, version: '11.9.0', packageCount: 50, closureSha256: 'a'.repeat(64), packages: Array.from({ length: 50 }, (_, index) => ({ name: `p${index}` })) }));
 	return root;
 }
 
@@ -125,7 +127,7 @@ test('standalone artifact manifest is deterministic and validates exact payload 
 			first.provenance.generatedBy,
 			'scripts/standalone-artifact.mjs',
 		);
-		assert.equal(first.files.length, 4);
+		assert.equal(first.files.length, 5);
 		assert.ok(first.files.every((file) => /^[a-f0-9]{64}$/u.test(file.sha256)));
 	} finally {
 		await rm(root, { recursive: true, force: true });

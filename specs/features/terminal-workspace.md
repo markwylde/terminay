@@ -2,10 +2,11 @@
 
 ## Summary
 
-Terminay provides native PTY terminals inside the project workspace. Terminay
-Server creates and owns each session; xterm renders it in a client panel and
-forwards input, resize, and lifecycle commands through the application
-protocol.
+Terminay provides terminal sessions inside the project workspace. Terminay
+Server creates and owns each session through the exact project's
+[environment](./project-environments.md): This server uses a native PTY, while
+providers may control a remote PTY. Xterm renders it in a client panel and
+forwards input, resize, and lifecycle commands through the application protocol.
 
 ## Behaviour
 
@@ -33,6 +34,9 @@ protocol.
 - PTY output fans out in Terminay Server to authorized clients and recording,
   activity, and agent integrations. These consumers do not change the terminal
   stream.
+- Provider capabilities govern cwd/foreground-process observation. Missing
+  observation is an explicit limited state and never inspects a similarly named
+  process on the Terminay Server host.
 
 ## Safety and accessibility
 
@@ -61,7 +65,10 @@ workspace connection.
 The server terminal boundary uses immutable `{serverId, projectId, sessionId}`
 identity. Input is accepted only for that exact live session and is bounded by
 the negotiated input-byte limit; resize and termination use the same
-authorization boundary. PTY output is counted in raw bytes, split into bounded
+authorization boundary. The server also verifies the session's stored
+environment equals its canonical project. Clients cannot choose the terminal
+adapter with an environment id.
+Terminal output is counted in raw bytes, split into bounded
 frames, and retained in a bounded replay window with a monotonically increasing
 byte position. A reconnect from a position older than the retained window
 receives an explicit resync/gap result rather than guessed or duplicate output.
@@ -89,6 +96,14 @@ does not match the requested session. Client/session high-water marks survive a
 detach and stale resume cursors cannot deliver duplicate output. Local sockets,
 browser transports, and WebRTC only provide the underlying command and event
 transport; they do not own the PTY.
+
+The client establishes an identity-scoped terminal subscription before it
+issues `terminal.attach` or `terminal.resume`, then accepts events only for the
+opaque attachment identity returned by that command. It buffers this bounded
+handoff until the command result and any authoritative checkpoint are applied.
+This ordering closes the live-only interval in which a newly spawned shell can
+write after the server allocates its attachment but before a post-command
+subscription exists; it does not relax strict contiguous-position validation.
 
 Initial attach and resume replay is capped independently of the retained server
 window so its base64 command-result representation always fits the default
@@ -266,8 +281,9 @@ query and injecting duplicate control responses.
   replaying acknowledged output.
 - Every terminal-creation route resolves the same profile and cwd for the same
   server, project, active panel, and explicit user choices.
-- System-default resolution happens on the server machine that will own the PTY;
-  Desktop and remote clients do not supply their host shell as a fallback.
+- System-default resolution happens in the exact project environment that will
+  own the PTY; Desktop and browser clients do not supply their host shell as a
+  fallback.
 - Every resolved Terminay PTY advertises the emulator it actually runs under
   with `TERM=xterm-256color` and `COLORTERM=truecolor`. Host launcher values
   such as `TERM=dumb` never cross into a terminal session, and profiles cannot
