@@ -146,6 +146,7 @@ type HeadlessHostWindow = {
   channelLabels(): ObservedLaneLabel[]
   close(): void
   closeLane(label: RequiredLaneLabel): void
+  closePeer(): void
   iceState(): RTCIceConnectionState | null
   laneState(label: ObservedLaneLabel): RTCDataChannelState | null
   peerState(): RTCPeerConnectionState | null
@@ -347,6 +348,10 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         const lane = observedLanes.get(label)
         if (!lane) throw new Error(`Cannot close ${label}: the native lane was not created.`)
         lane.close()
+      },
+      closePeer() {
+        if (!hostPeer) throw new Error('Cannot close the native peer before it is created.')
+        hostPeer.close()
       },
       iceState() {
         return hostPeer?.iceConnectionState ?? null
@@ -951,6 +956,41 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         expect(runtime.laneState(bootstrapLane),
           `${bootstrapLane} is a pre-handoff lane and must not remain reachable`).toBe('closed')
       }
+
+      // A complete native peer close is distinct from a single-lane failure
+      // and must enter the same replacement path without page navigation.
+      const peerFailureRuntime = runtime
+      const hostCountBeforePeerFailure = hostWindows.length
+      const writesBeforePeerFailure = terminalWrites.join('').length
+      peerFailureRuntime.closePeer()
+      await expect.poll(() => peerFailureRuntime.peerState()).toBe('closed')
+      const peerReplacement = await waitFor(() => hostWindows.slice(hostCountBeforePeerFailure).find((host) =>
+        host.evidence.hostSignals.some((message) => message.type === 'reconnect-offer') &&
+        requiredLaneLabels.every((label) => host.laneState(label) === 'open')),
+      60_000,
+      'a fresh four-lane generation after native peer close')
+      runtime = peerReplacement
+      expect(hostWindows.length).toBe(hostCountBeforePeerFailure + 1)
+      expect(reconnectPage.url()).toBe(initialUrl)
+      await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
+      const peerRecoveryInput = `${runtimeName}-peer-close-recovered\r`
+      await reconnectPage.getByRole('textbox', { name: 'Terminal input' }).focus()
+      await reconnectPage.keyboard.insertText(peerRecoveryInput.slice(0, -1))
+      await reconnectPage.keyboard.press('Enter')
+      await expect.poll(() => terminalWrites.join('').slice(writesBeforePeerFailure)).toBe(peerRecoveryInput)
+      expect(ptyFactory.processes).toHaveLength(1)
+      matrixEvidence.push({
+        activeApplicationConnections: service.getStatus().activeConnectionCount,
+        closeReason: 'injected-native-peer-close',
+        hostGeneration: hostWindows.indexOf(peerReplacement) + 1,
+        lane: null,
+        lifecycle: 'connected',
+        navigation: 'unchanged',
+        outcome: 'ordered-input-confirmed',
+        peerStateDuringFailure: 'closed',
+        ptyCount: ptyFactory.processes.length,
+        requiredLaneCount: requiredLaneLabels.length,
+      })
       await testInfo.attach('webrtc-required-lane-recovery-matrix.json', {
         body: Buffer.from(`${JSON.stringify(matrixEvidence, null, 2)}\n`),
         contentType: 'application/json',
