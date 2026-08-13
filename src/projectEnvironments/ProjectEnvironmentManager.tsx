@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { SharedSettingsRouteBody } from '../shared/SharedSettingsRouteBody';
 import type { ProjectEnvironmentSummaryDto } from './uiModel';
 import { statusLabel } from './uiModel';
@@ -24,6 +24,7 @@ export function ProjectEnvironmentManager({
 	onTest,
 	onRemove,
 	onAction,
+	detail,
 }: Readonly<{
 	environments: readonly ProjectEnvironmentSummaryDto[];
 	providers: readonly ProviderSummary[];
@@ -37,8 +38,10 @@ export function ProjectEnvironmentManager({
 		environment: ProjectEnvironmentSummaryDto,
 		action: StatusAction,
 	) => void;
+	detail?: ReactNode;
 }>) {
 	const [query, setQuery] = useState('');
+	const [addMenuOpen, setAddMenuOpen] = useState(false);
 	const [selectedId, setSelectedId] = useState(environments[0]?.id ?? '');
 	const filtered = useMemo(() => {
 		const normalized = query.trim().toLowerCase();
@@ -76,7 +79,34 @@ export function ProjectEnvironmentManager({
 			status={`${environments.length} ${environments.length === 1 ? 'environment' : 'environments'} on ${serverName}`}
 			onQueryChange={setQuery}
 			onCategorySelect={setSelectedId}
+			sidebarAction={
+				providers.some((provider) => provider.hasProfileForm) ? (
+					<details
+						className="environment-add-menu"
+						open={addMenuOpen}
+						onToggle={(event) => setAddMenuOpen(event.currentTarget.open)}
+					>
+						<summary className="settings-primary-button">Add connection</summary>
+						<div className="environment-add-menu__items">
+							{providers.filter((provider) => provider.hasProfileForm).map((provider) => (
+								<button
+									key={provider.providerId}
+									type="button"
+									onClick={() => {
+										setAddMenuOpen(false);
+										onCreate(provider.providerId);
+									}}
+								>
+									New {provider.displayName}
+								</button>
+							))}
+						</div>
+					</details>
+				) : undefined
+			}
 		>
+			{detail ?? (
+			<>
 			<div className="settings-category-header environment-category-header">
 				<div>
 					<h2>{selected?.name ?? 'Project Environments'}</h2>
@@ -90,18 +120,6 @@ export function ProjectEnvironmentManager({
 					{selected?.profileOnly && selected.profileId !== undefined && providers.find((provider) => provider.providerId === selected.providerId)?.hasCreateForm ? (
 						<button type="button" className="settings-primary-button" onClick={() => onCreateEnvironment(selected.providerId, selected.profileId!)}>New {providers.find((provider) => provider.providerId === selected.providerId)?.displayName} project</button>
 					) : null}
-					{providers
-						.filter((provider) => provider.hasProfileForm)
-						.map((provider) => (
-							<button
-								key={provider.providerId}
-								type="button"
-								className="settings-primary-button"
-								onClick={() => onCreate(provider.providerId)}
-							>
-								New {provider.displayName}
-							</button>
-						))}
 				</div>
 			</div>
 
@@ -174,6 +192,8 @@ export function ProjectEnvironmentManager({
 						</div>
 					</section>
 				</>
+			)}
+			</>
 			)}
 		</SharedSettingsRouteBody>
 	);

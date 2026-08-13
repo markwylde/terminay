@@ -230,6 +230,11 @@ Every running provider with a profile form contributes a clear **New
 Platform stores its URL and API-key secret and exposes its VM creation/browse
 flow. Installing or enabling a provider makes these actions available without
 restarting the app, and focusing the window refreshes provider inventory.
+Creation and editing are modes of this same management surface: the standard
+environment sidebar, search, server authority, and footer remain visible while
+the right-hand pane shows the form. Cancel and successful Save return to the
+selected environment. Provider creation is offered as one compact sidebar
+action/menu, not as a row of floating buttons in the detail header.
 
 Provider-contributed forms do not introduce a second visual language. The
 generic renderer uses the same category header, uppercase section labels,
