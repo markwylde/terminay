@@ -54,7 +54,7 @@ starts, its presentation clears, and later input never reaches the PTY.
 - [x] Define one runtime-validated session transport host contract for initial
   pairing, saved reconnect, current generation state, opaque application byte
   endpoint acquisition, replacement, cancellation, and terminal failure.
-- [ ] Bind the host to one exact session origin, server identity, profile id,
+- [x] Bind the host to one exact session origin, server identity, profile id,
   device credential compartment, and browser view. Reject another origin,
   source, profile, server, or retired generation.
 - [x] Keep signaling sockets, reconnect credentials, application tickets,
