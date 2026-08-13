@@ -15,7 +15,6 @@ const [
 	terminalPanel,
 	inputQueue,
 	remoteEntry,
-	browserWebRtcTransport,
 ] = await Promise.all([
 	Promise.all(
 		featureFiles.map(async (path) => [path, await readFile(path, 'utf8')]),
@@ -23,7 +22,6 @@ const [
 	readFile('src/components/TerminalPanel.tsx', 'utf8'),
 	readFile('src/components/terminalPanelInputQueue.ts', 'utf8'),
 	readFile('src/remote/main.tsx', 'utf8'),
-	readFile('src/web/browserWebRtcTransport.ts', 'utf8'),
 ]);
 
 test('production feature renderers retain no broad preload authority', () => {
@@ -48,13 +46,9 @@ test('App-originated terminal commands reach the exact shared-client attachment 
 	);
 });
 
-test('remote entry reuses the shared browser workspace through the canonical application lane', () => {
+test('remote entry reuses the shared browser workspace through the opaque session endpoint', () => {
 	assert.match(remoteEntry, /mountWebManagerApp/u);
 	assert.doesNotMatch(remoteEntry, /new WebSocket|\.send\(/u);
-	assert.match(
-		browserWebRtcTransport,
-		/class BrowserApplicationTransport implements ByteTransport/u,
-	);
-	assert.match(browserWebRtcTransport, /'control',[\s\S]*'application',[\s\S]*'terminal',[\s\S]*'assets'/u);
-	assert.doesNotMatch(browserWebRtcTransport, /session-list|attach-session|new WebSocket/u);
+	assert.match(remoteEntry, /acquireHostedApplicationTransport\(authenticated\.ticket\)/u);
+	assert.doesNotMatch(remoteEntry, /RTCDataChannel|getChannel/u);
 });
