@@ -11,9 +11,8 @@ import type {
   TerminalStreamResyncEvent,
   TerminayClient,
   TerminayGitClient,
-  TerminayTerminalClient,
 } from '@terminay/client-core'
-import { TerminayTerminalPanelClient } from '@terminay/client-core'
+import { TerminayTerminalClient, TerminayTerminalPanelClient } from '@terminay/client-core'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
@@ -80,8 +79,12 @@ export interface TerminalPanelClientContextValue {
   readonly clientId: string
   /** Host-owned display metadata for the authenticated current server. */
   readonly connectionLabel?: string
-  /** Ask the owning shell to replace this connection's transport generation. */
-  readonly requestConnectionRecovery?: () => void
+  /** Stable action on the owning connection controller. It never captures a client. */
+  readonly retryConnection?: () => void
+  readonly canRetryConnection?: () => boolean
+  /** Reports that this mounted panel rendered and attached the replacement client. */
+  readonly reportConnectionHydrated?: () => void
+  readonly reportConnectionHydrationFailed?: (error: unknown) => void
   readonly serverCapabilities?: readonly string[]
 }
 
@@ -100,8 +103,21 @@ export type TerminalPanelClientResolution = {
  */
 type TerminalPanelConnectionContext = Pick<
   TerminalPanelClientContextValue,
-  'client' | 'serverId' | 'projectId' | 'clientId' | 'requestConnectionRecovery'
+  'client' | 'serverId' | 'projectId' | 'clientId' | 'retryConnection' | 'canRetryConnection' | 'reportConnectionHydrated' | 'reportConnectionHydrationFailed'
 >
+
+export function createReplaceableTerminalPanelClient(
+  current: () => TerminayTerminalPanelClient | undefined,
+): TerminayTerminalPanelClient {
+  return new Proxy({} as TerminayTerminalPanelClient, {
+    get: (_target, property) => {
+      const delegate = current()
+      if (delegate === undefined) throw new Error('The server terminal client is unavailable.')
+      const value = Reflect.get(delegate, property)
+      return typeof value === 'function' ? value.bind(delegate) : value
+    },
+  })
+}
 
 /** Resolve panel params with the connection context as the production path.
  * Explicit params remain useful for moved/embedded panels and tests; a null
@@ -138,6 +154,20 @@ const TERMINAL_RECOVERY_RETRY_DELAY_MS = 100
 const TERMINAL_RECOVERY_ATTEMPT_DEADLINE_MS = 15_000
 const REMOTE_TERMINAL_SCALE_PROPERTY = '--terminal-remote-scale'
 const EMPTY_TERMINAL_ROOT_SIZE = { height: 0, width: 0 }
+
+function reportTerminalRebindDiagnostic(sessionId: string, phase: 'started' | 'attached' | 'failed', error?: unknown): void {
+  try {
+    ;(globalThis as typeof globalThis & {
+      __terminayTerminalRebindDiagnostic?: (event: Readonly<{ sessionId: string; phase: string; error?: string }>) => void
+    }).__terminayTerminalRebindDiagnostic?.(Object.freeze({
+      sessionId,
+      phase,
+      ...(error === undefined ? {} : { error: error instanceof Error ? error.message : String(error) }),
+    }))
+  } catch {
+    // Metadata-only diagnostics cannot affect terminal attachment lifecycle.
+  }
+}
 const searchOptions = {
   incremental: true,
   decorations: {
@@ -269,6 +299,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const terminalPanelResizeRef = useRef<(cols: number, rows: number) => void>(() => {})
   const terminalPresentationActionRef = useRef<() => Promise<void>>(() => Promise.resolve())
   const retryServerAttachmentRef = useRef<() => void>(() => {})
+  const rebindServerAttachmentRef = useRef<(binding: Readonly<{ client: TerminayTerminalPanelClient; clientId: string }>) => void>(() => {})
   const terminalPresentationControllerRef = useRef(false)
   // This belongs to the mounted xterm, rather than to a connection attempt.
   // A retry can therefore resume a display that still contains its prior bytes.
@@ -281,6 +312,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const remoteSizeOverrideRef = useRef<{ cols: number; rows: number } | null>(null)
   const { settings } = useTerminalSettings()
   const terminalClientContext = useContext(TerminalPanelClientContext)
+  const connectionActionsRef = useRef(terminalClientContext)
+  connectionActionsRef.current = terminalClientContext
+  const boundTerminalClientRef = useRef(terminalClientContext?.client)
+  const boundHydrationReporterRef = useRef(terminalClientContext?.reportConnectionHydrated)
+  const panelClientDelegateRef = useRef<TerminayTerminalPanelClient | undefined>(undefined)
+  panelClientDelegateRef.current = terminalClientContext === null
+    ? undefined
+    : new TerminayTerminalPanelClient(terminalClientContext.client)
   browserFileDropContextRef.current =
     terminalClientContext === null
       ? undefined
@@ -289,27 +328,27 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           projectId: terminalClientContext.projectId,
           projectRoot: terminalClientContext.projectRoot,
         }
-  const contextPanelClient = useMemo(
-    () => (terminalClientContext === null ? undefined : new TerminayTerminalPanelClient(terminalClientContext.client)),
-    [terminalClientContext?.client],
-  )
+  const contextPanelClient = useMemo(() => {
+    if (terminalClientContext === null) return undefined
+    return createReplaceableTerminalPanelClient(() => panelClientDelegateRef.current)
+  }, [terminalClientContext?.serverId, terminalClientContext?.projectId])
   const terminalPanelConnectionContext = useMemo<TerminalPanelConnectionContext | null>(
     () =>
       terminalClientContext === null
         ? null
         : {
-            client: terminalClientContext.client,
-            clientId: terminalClientContext.clientId,
-            projectId: terminalClientContext.projectId,
-            serverId: terminalClientContext.serverId,
-            requestConnectionRecovery: terminalClientContext.requestConnectionRecovery,
+            get client() { return connectionActionsRef.current!.client },
+            get clientId() { return connectionActionsRef.current!.clientId },
+            get projectId() { return connectionActionsRef.current!.projectId },
+            get serverId() { return connectionActionsRef.current!.serverId },
+            retryConnection: () => connectionActionsRef.current?.retryConnection?.(),
+            canRetryConnection: () => connectionActionsRef.current?.canRetryConnection?.() ?? false,
+            reportConnectionHydrated: () => connectionActionsRef.current?.reportConnectionHydrated?.(),
+            reportConnectionHydrationFailed: (error) => connectionActionsRef.current?.reportConnectionHydrationFailed?.(error),
           },
     [
-      terminalClientContext?.client,
-      terminalClientContext?.clientId,
       terminalClientContext?.projectId,
       terminalClientContext?.serverId,
-      terminalClientContext?.requestConnectionRecovery,
     ],
   )
   const resolvedTerminalClient = useMemo(
@@ -540,6 +579,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
       setIsTerminalHydrating(false)
       setServerTerminalError(error instanceof Error ? error.message : 'The server terminal connection failed.')
+      terminalPanelConnectionContext?.reportConnectionHydrationFailed?.(error)
+      reportTerminalRebindDiagnostic(sessionId, 'failed', error)
     }
     let serverInputQueue = useServerTerminal ? new ServerTerminalInputQueue(failServerTransport) : null
 
@@ -774,7 +815,12 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
               detail: { nextPosition, sessionId },
             }),
           )
-          void attachment.ack(nextPosition).catch(failServerTransport)
+          void attachment.ack(nextPosition).catch((error) => {
+            // Acknowledgements from the retired attachment may reject after a
+            // replacement is already mounted. They cannot fail the new
+            // generation's hydration or dispose its connected client.
+            if (panelAttachment === attachment) failServerTransport(error)
+          })
           resolve()
         })
       })
@@ -795,18 +841,24 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       }
       let resyncing = false
       const attachServerTerminal = ({
+		client,
+		clientId,
         fromPosition,
         freshPresentation,
         forceResume,
         recovery,
       }: {
+		client?: TerminayTerminalPanelClient
+		clientId?: string
         fromPosition: number | undefined
         freshPresentation: boolean
         forceResume: boolean
         recovery: boolean
       }) => {
+		const attachmentClient = client ?? panelClient
         const nextRequest = {
           ...request,
+		  ...(clientId === undefined ? {} : { clientId }),
           ...(fromPosition === undefined ? {} : { fromPosition }),
           ...(freshPresentation ? { freshPresentation: true } : {}),
         }
@@ -818,7 +870,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             failServerTransport(new Error('Terminal recovery timed out. Retry the connection to continue.'))
           }, TERMINAL_RECOVERY_ATTEMPT_DEADLINE_MS)
         }
-        void (forceResume || mode === 'resume' ? panelClient.resume(nextRequest) : panelClient.attach(nextRequest))
+        void (forceResume || mode === 'resume' ? attachmentClient.resume(nextRequest) : attachmentClient.attach(nextRequest))
           .then((attachment) => {
             if (dataReplayDisposed || serverAttachmentFailed) {
               void attachment.detach().catch(() => {})
@@ -845,7 +897,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
                 presentationRenewTimer = window.setTimeout(() => {
                   void attachment.changePresentation('renew').then(applyPresentation).catch((error: unknown) => {
                     if (!isTerminalPresentationOwnershipError(error)) {
-                      failServerTransport(error)
+                      failServerTransport(new Error(`terminal presentation renewal failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }))
                       return
                     }
                     applyPresentation({
@@ -917,7 +969,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
                     beginTerminalResync(event)
                   }
                 })
-                .catch(failServerTransport)
+                .catch((error) => failServerTransport(new Error(
+                  `terminal event render failed: ${error instanceof Error ? error.message : String(error)}`,
+                  { cause: error },
+                )))
             }
             // Install one catch-all listener before consuming initialEvents. Three
             // sequential filtered listeners leave a handoff window in which a fast
@@ -937,6 +992,8 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
               if (recoveryDeadlineTimer !== null) window.clearTimeout(recoveryDeadlineTimer)
               recoveryDeadlineTimer = null
               setIsTerminalHydrating(false)
+              terminalPanelConnectionContext?.reportConnectionHydrated?.()
+              reportTerminalRebindDiagnostic(sessionId, 'attached')
 
               if (recoveryAttempt > 0) {
                 reportTerminalRecovery('recovered', { durationMs: Math.max(0, Date.now() - recoveryStartedAt), outputPosition: renderedPositionRef.current ?? undefined })
@@ -971,7 +1028,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             if (recoveryDeadlineTimer !== null) window.clearTimeout(recoveryDeadlineTimer)
             recoveryDeadlineTimer = null
             if (dataReplayDisposed) return
-            failServerTransport(error)
+            failServerTransport(new Error(`terminal attachment open failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }))
           })
       }
       const beginTerminalResync = (_event: TerminalStreamResyncEvent) => {
@@ -1003,11 +1060,9 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       // reconnects use the exact cursor xterm has already rendered.
       retryServerAttachmentRef.current = () => {
         if (dataReplayDisposed) return
-        if (terminalPanelConnectionContext?.requestConnectionRecovery !== undefined) {
+        if (terminalPanelConnectionContext?.retryConnection !== undefined) {
           serverInputQueue?.close()
-          setServerTerminalError('Connection lost. Reconnecting…')
-          setIsTerminalHydrating(false)
-          terminalPanelConnectionContext.requestConnectionRecovery()
+          terminalPanelConnectionContext.retryConnection()
           return
         }
         serverAttachmentFailed = false
@@ -1021,6 +1076,33 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         setPresentationUnavailable(false)
         setIsTerminalHydrating(true)
         attachServerTerminal({
+          fromPosition: renderedPositionRef.current ?? 0,
+          freshPresentation: false,
+          forceResume: true,
+          recovery: false,
+        })
+      }
+      rebindServerAttachmentRef.current = ({ client: replacementClient, clientId: replacementClientId }) => {
+        if (dataReplayDisposed) return
+        reportTerminalRebindDiagnostic(sessionId, 'started')
+        serverAttachmentFailed = false
+        resyncing = false
+        if (presentationRenewTimer !== null) window.clearTimeout(presentationRenewTimer)
+        presentationRenewTimer = null
+        terminalPresentationActionRef.current = () => Promise.resolve()
+        panelEventDisposer?.()
+        panelEventDisposer = null
+        const staleAttachment = panelAttachment
+        panelAttachment = null
+        serverInputQueue?.close()
+        serverInputQueue = new ServerTerminalInputQueue(failServerTransport)
+        void staleAttachment?.detach().catch(() => {})
+        setServerTerminalError(null)
+        setPresentationUnavailable(false)
+        setIsTerminalHydrating(true)
+        attachServerTerminal({
+			client: replacementClient,
+			clientId: replacementClientId,
           fromPosition: renderedPositionRef.current ?? 0,
           freshPresentation: false,
           forceResume: true,
@@ -1392,6 +1474,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminalPanelResizeRef.current = () => {}
       terminalPresentationActionRef.current = () => Promise.resolve()
       retryServerAttachmentRef.current = () => {}
+      rebindServerAttachmentRef.current = () => {}
       terminalPresentationControllerRef.current = false
       pendingPanelResize = null
       if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
@@ -1418,6 +1501,22 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     props.params.terminalPanelClient,
     resolvedTerminalClient,
   ])
+
+  useEffect(() => {
+    if (terminalClientContext?.client === undefined) return
+    if (
+      boundTerminalClientRef.current === terminalClientContext.client &&
+      boundHydrationReporterRef.current === terminalClientContext.reportConnectionHydrated
+    ) return
+    boundTerminalClientRef.current = terminalClientContext.client
+    boundHydrationReporterRef.current = terminalClientContext.reportConnectionHydrated
+    const replacementTerminalClient = terminalClientContext.applicationClient === undefined
+      ? terminalClientContext.client
+      : new TerminayTerminalClient(terminalClientContext.applicationClient)
+    const replacementClient = new TerminayTerminalPanelClient(replacementTerminalClient)
+    panelClientDelegateRef.current = replacementClient
+    rebindServerAttachmentRef.current({ client: replacementClient, clientId: terminalClientContext.clientId })
+  }, [terminalClientContext?.applicationClient, terminalClientContext?.client, terminalClientContext?.clientId, terminalClientContext?.reportConnectionHydrated])
 
   useEffect(() => {
     settingsRef.current = settings
@@ -1699,7 +1798,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       {serverTerminalError ? (
         <div className="terminal-panel-connection-error" role="alert">
           <p>{serverTerminalError}</p>
-          {!presentationUnavailable ? (
+          {!presentationUnavailable && (terminalPanelConnectionContext?.canRetryConnection?.() ?? true) ? (
             <button type="button" onClick={() => retryServerAttachmentRef.current()}>
               Retry connection
             </button>

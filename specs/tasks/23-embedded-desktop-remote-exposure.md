@@ -30,7 +30,9 @@ interpreted as a working Desktop WebRTC exposure path.
 host contracts and launching the selected server's verified UI bundle after
 connection. This task owns the simplified exposure/direct-listener
 presentation, privileged WebRTC runtime, registrar, signaling, and real network
-evidence.
+evidence. [Task 43](./43-webrtc-transport-recovery-acceptance.md) owns mounted
+WebRTC failure/recovery and Retry evidence; this task consumes that matrix and
+does not maintain another reconnect controller or weaker recovery harness.
 
 ## Implementation slices
 
@@ -85,10 +87,10 @@ evidence.
   installation; the authenticated ticket is consumed exactly once before the
   embedded `ServerCore` accepts the application lane.
 - [ ] Verify real hosted WebRTC pairing, full workspace/terminal traffic,
-  reconnect, revocation, exposure stop, direct ICE, and TURN-required routing
-  against the deployed signaling compatibility window. A second Desktop and a
-  browser must install the same selected-server bundle id through the Tasks
-  28–29 launch paths.
+  revocation, exposure stop, direct ICE, and TURN-required routing against the
+  deployed signaling compatibility window. Consume Task 43 for mounted
+  reconnect/Retry recovery. A second Desktop and a browser must install the
+  same selected-server bundle id through the Tasks 28–29 launch paths.
 
 ## Acceptance checks
 

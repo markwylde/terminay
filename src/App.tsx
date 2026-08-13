@@ -76,6 +76,7 @@ import {
 	TerminalPanelClientContext,
 	type TerminalPanelClientContextValue,
 } from './components/TerminalPanel';
+import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
 import type {
 	TerminalActivityState,
 	TerminalContextReader,
@@ -126,7 +127,10 @@ import type {
 } from './types/agentStatus';
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
-import type { ServerWorkspacePanel } from './shared/serverWorkspaceReconciliation';
+import {
+	hasTerminalPresentation,
+	type ServerWorkspacePanel,
+} from './shared/serverWorkspaceReconciliation';
 import type {
 	SidebarPanelId,
 	SidebarSettings,
@@ -1204,18 +1208,11 @@ const ProjectWorkspace = forwardRef<
 				() =>
 					terminalClientContext === undefined
 						? null
-						: { ...terminalClientContext, projectId: project.id, projectRoot: project.rootFolder },
+						: composeProjectTerminalClientContext(terminalClientContext, project.id, project.rootFolder),
 				[
 					project.id,
 					project.rootFolder,
-					terminalClientContext?.client,
-					terminalClientContext?.serverId,
-					terminalClientContext?.clientId,
-					terminalClientContext?.workspaceSnapshotStore,
-					terminalClientContext?.fileObservationClient,
-					terminalClientContext?.fileViewerClient,
-					terminalClientContext?.gitClient,
-					terminalClientContext?.recordingsClient,
+					terminalClientContext,
 				],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;
@@ -2167,7 +2164,7 @@ const ProjectWorkspace = forwardRef<
 						hydrateRecordingStateForSession(sessionId);
 					}
 					const synchronized = await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
-						(snapshot) => sessionId in snapshot.terminalSessions,
+						(snapshot) => hasTerminalPresentation(snapshot, sessionId),
 					);
 					if (synchronized === null) {
 						throw new Error('Server did not publish a terminal panel for the created session.');
@@ -3009,7 +3006,7 @@ const ProjectWorkspace = forwardRef<
 					? undefined
 					: async (sessionId) =>
 							(await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
-								(snapshot) => sessionId in snapshot.terminalSessions,
+								(snapshot) => hasTerminalPresentation(snapshot, sessionId),
 							)) !== null,
 		});
 
