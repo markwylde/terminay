@@ -462,6 +462,83 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
 
   const context = await browser.newContext()
   await context.addInitScript(() => {
+    type BrowserTransport = {
+      readonly state: string
+      readonly queuedBytes: number
+      readonly bufferedBytes: number
+      readonly incoming: AsyncIterable<Uint8Array>
+      open(signal?: AbortSignal): Promise<void>
+      send(frame: Uint8Array, options?: { signal?: AbortSignal }): Promise<void>
+      waitForWritable(requiredBytes?: number, signal?: AbortSignal): Promise<void>
+      close(reason?: unknown, options?: { drain?: boolean }): Promise<void>
+      onStateChange(listener: (state: string) => void): () => void
+    }
+    type ApplicationDelegate = {
+      connect(options: unknown): Promise<BrowserTransport>
+      enroll(options: unknown): Promise<unknown>
+    }
+    type SessionHost = Record<string, unknown> & {
+      registerApplication(delegate: ApplicationDelegate): void
+    }
+    let sessionHost: unknown
+    Object.defineProperty(window, '__TERMINAY_SESSION_TRANSPORT__', {
+      configurable: true,
+      get: () => sessionHost,
+      set(value: unknown) {
+        const host = value as SessionHost
+        sessionHost = Object.freeze({
+          ...host,
+          registerApplication(delegate: ApplicationDelegate) {
+            host.registerApplication({
+              ...delegate,
+              async connect(options: unknown) {
+                const endpoint = await delegate.connect(options)
+                let interrupted = false
+                let interrupt: (() => void) | undefined
+                const interruptedPromise = new Promise<void>((resolve) => {
+                  interrupt = resolve
+                })
+                const wrapped: BrowserTransport = {
+                  get state() { return endpoint.state },
+                  get queuedBytes() { return endpoint.queuedBytes },
+                  get bufferedBytes() { return endpoint.bufferedBytes },
+                  incoming: {
+                    [Symbol.asyncIterator]() {
+                      const iterator = endpoint.incoming[Symbol.asyncIterator]()
+                      return {
+                        async next() {
+                          if (interrupted) return { done: true, value: undefined }
+                          return Promise.race([
+                            iterator.next(),
+                            interruptedPromise.then(() => ({ done: true as const, value: undefined })),
+                          ])
+                        },
+                      }
+                    },
+                  },
+                  open: (signal) => endpoint.open(signal),
+                  send: (frame, options) => endpoint.send(frame, options),
+                  waitForWritable: (requiredBytes, signal) => endpoint.waitForWritable(requiredBytes, signal),
+                  close: (reason, options) => endpoint.close(reason, options),
+                  onStateChange: (listener) => endpoint.onStateChange(listener),
+                }
+                Object.defineProperty(window, '__terminayProtocolOnlyFault', {
+                  configurable: true,
+                  value: {
+                    fail() {
+                      interrupted = true
+                      interrupt?.()
+                    },
+                    state: () => endpoint.state,
+                  },
+                })
+                return wrapped
+              },
+            })
+          },
+        })
+      },
+    })
     const OriginalWebSocket = window.WebSocket
     const signalLog: Array<{ data: unknown; direction: string }> = []
     Object.defineProperty(window, '__terminayHeadlessSignalLog', {
@@ -699,6 +776,43 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     await expect.poll(() => terminalWrites.join('')).toContain(typingSoak)
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
     await expect(page.getByText('client is not connected', { exact: true })).toHaveCount(0)
+
+    // Reproduce the deployed failure shape: the mounted application's protocol
+    // reader ends while its WebRTC peer and application data channel remain
+    // healthy. Lane-close tests do not exercise this split-brain state.
+    const protocolRuntime = privilegedExposure
+      ? null
+      : await waitFor(
+          () => hostWindows.find((host) =>
+            host.peerState() === 'connected' && host.laneState('application') === 'open'),
+          30_000,
+          'the connected application protocol runtime',
+        )
+    const protocolFaultState = () => page.evaluate(() =>
+      (window as Window & {
+        __terminayProtocolOnlyFault?: { state(): string }
+      }).__terminayProtocolOnlyFault?.state())
+    await expect.poll(protocolFaultState).toBe('open')
+    await page.evaluate(() => {
+      const fault = (window as Window & {
+        __terminayProtocolOnlyFault?: { fail(): void }
+      }).__terminayProtocolOnlyFault
+      if (!fault) throw new Error('The browser application protocol reader was not installed.')
+      fault.fail()
+    })
+    if (protocolRuntime) {
+      await expect.poll(() => protocolRuntime.peerState()).toBe('connected')
+      await expect.poll(() => protocolRuntime.laneState('application')).toBe('open')
+    }
+    const renewalFailure = page.getByText(
+      'terminal presentation renewal failed: client is not connected',
+      { exact: true },
+    )
+    await expect(renewalFailure).toBeVisible({ timeout: 50_000 })
+    expect(
+      await renewalFailure.count(),
+      'protocol-only application failure must recover without a terminal renewal error while the peer and lane remain open',
+    ).toBe(0)
 
     const initialSignalLog = await page.evaluate(() =>
       (window as Window & {
