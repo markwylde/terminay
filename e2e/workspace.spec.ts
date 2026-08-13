@@ -99,12 +99,12 @@ test.describe('workspace shell', () => {
 		await fileExplorerItem(mainWindow, 'README.md').dblclick();
 		await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1);
 
-		for (const title of ['Terminal 1', 'Terminal 2', 'Terminal 3', 'Terminal 4']) {
+		for (const [index, title] of ['Terminal 1', 'Terminal 2', 'Terminal 3', 'Terminal 4'].entries()) {
 			await mainWindow.locator('.dv-tab:visible').filter({ hasText: title }).first().click();
 			await appHarness.sendAppCommand('close-active');
+			await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(3 - index);
 		}
 
-		await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(0);
 		await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1);
 		await expect(
 			mainWindow.getByRole('alert').filter({ hasText: 'Workspace synchronization failed' }),
