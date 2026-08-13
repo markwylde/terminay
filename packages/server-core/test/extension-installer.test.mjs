@@ -14,7 +14,7 @@ function packageJson(version, extra = {}) { return {
 }; }
 
 class FixtureNpm {
-  npmVersion = "11.9.0";
+  npmVersion = "12.0.2";
   versions = new Map([["latest", "1.0.0"]]);
   extraPackage = {};
   invalidLock = false;
@@ -46,7 +46,7 @@ test("custom npm preview binds exact metadata and commits an immutable validated
     const state = await fixture.installer.confirm(preview.previewDigest);
     const installed = state.extensions["dev.example.fixture"];
     assert.equal(installed.state, "installed"); assert.equal(installed.enabled, true);
-    assert.equal(installed.slots[installed.activeSlotId].receipt.npmVersion, "11.9.0");
+    assert.equal(installed.slots[installed.activeSlotId].receipt.npmVersion, "12.0.2");
     assert.equal(installed.slots[installed.activeSlotId].receipt.integrity, INTEGRITY);
     assert.equal(fixture.audits.at(-1).kind, "extension.installed");
     assert.doesNotMatch(await readFile(join(fixture.dataRoot, "extensions", "registry.v1.json"), "utf8"), /trusted code/u);

@@ -1,6 +1,6 @@
 # PTY runtime distribution evidence
 
-> Superseded runtime target (2026-08-05): active builds now pin Node 24.14.0.
+> Superseded runtime target (2026-08-05): active builds now pin Node 24.15.0.
 > The Node 22.23.1 results below remain the historical evidence for the
 > original distribution decision; CI and release lanes requalify the active
 > Node 24 artifacts rather than rewriting those recorded results.

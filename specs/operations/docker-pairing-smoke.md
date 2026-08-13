@@ -28,7 +28,7 @@ npm run smoke:docker-pairing -- --strict
 ```
 
 The harness uses the local image
-`docker.io/library/node:24.14.0-bookworm-slim` with `--pull=never`. If Docker,
+`docker.io/library/node:24.15.0-bookworm-slim` with `--pull=never`. If Docker,
 the image, or the server build is unavailable, it reports a named blocker
 without attempting a network pull. Pairing URLs and tokens are redacted from
 the report.

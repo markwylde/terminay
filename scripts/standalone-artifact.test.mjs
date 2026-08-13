@@ -87,8 +87,8 @@ async function createFixture() {
 			name: '@terminay/server',
 			version: '1.2.3',
 			files: ['dist'],
-			engines: { node: '24.14.0' },
-			dependencies: { npm: '11.9.0' },
+			engines: { node: '24.15.0' },
+			dependencies: { npm: '12.0.2' },
 			bin: {
 				'terminay-server': 'dist/cli.js',
 				'terminay-mcp': 'dist/mcpEntry.js',
@@ -107,7 +107,7 @@ async function createFixture() {
 		join(root, 'dist/mcpEntry.js'),
 		'export const mcpEntry = true\n',
 	);
-	await writeFile(join(root, 'dist/bundled-npm-evidence.json'), JSON.stringify({ schemaVersion: 1, version: '11.9.0', packageCount: 50, closureSha256: 'a'.repeat(64), packages: Array.from({ length: 50 }, (_, index) => ({ name: `p${index}` })) }));
+	await writeFile(join(root, 'dist/bundled-npm-evidence.json'), JSON.stringify({ schemaVersion: 1, version: '12.0.2', packageCount: 50, closureSha256: 'a'.repeat(64), packages: Array.from({ length: 50 }, (_, index) => ({ name: `p${index}` })) }));
 	return root;
 }
 
@@ -197,20 +197,20 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 			'--json',
 			'--pack-destination',
 		];
-		const firstPack = JSON.parse(
+		const firstPack = normalizePackResult(JSON.parse(
 			(
 				await run('npm', [...packArguments, first], {
 					cwd: new URL('.', repositoryRoot).pathname,
 				})
 			).stdout,
-		);
-		const secondPack = JSON.parse(
+		));
+		const secondPack = normalizePackResult(JSON.parse(
 			(
 				await run('npm', [...packArguments, second], {
 					cwd: new URL('.', repositoryRoot).pathname,
 				})
 			).stdout,
-		);
+		));
 		assert.equal(firstPack.length, 1);
 		assert.equal(secondPack.length, 1);
 		assert.deepEqual(secondPack[0].files, firstPack[0].files);
@@ -440,6 +440,13 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 	}
 });
 
+function normalizePackResult(value) {
+	if (Array.isArray(value)) return value;
+	const workspace = value?.['@terminay/server'];
+	if (workspace && typeof workspace === 'object') return [workspace];
+	throw new TypeError('npm pack returned an unsupported result');
+}
+
 async function assertNoSymlinks(root) {
 	for (const entry of await readdir(root, { withFileTypes: true })) {
 		const path = join(root, entry.name);
@@ -456,6 +463,7 @@ async function assertNoSymlinks(root) {
 function readForegroundReadiness(child) {
 	return new Promise((resolve, reject) => {
 		let output = '';
+		let errors = '';
 		const timeout = setTimeout(
 			() =>
 				reject(
@@ -467,11 +475,14 @@ function readForegroundReadiness(child) {
 			clearTimeout(timeout);
 			reject(
 				new Error(
-					`packed foreground server exited before readiness (${code}): ${output}`,
+					`packed foreground server exited before readiness (${code}): ${output}${errors}`,
 				),
 			);
 		};
 		child.once('exit', onExit);
+		child.stderr.on('data', (chunk) => {
+			errors += chunk;
+		});
 		child.stdout.on('data', (chunk) => {
 			output += chunk;
 			const lineEnd = output.indexOf('\n');
