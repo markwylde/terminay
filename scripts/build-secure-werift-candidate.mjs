@@ -55,6 +55,15 @@ export const TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES = {
   pvutils: '1.1.5',
 }
 
+export function parseSingleNpmPackResult(stdout) {
+  const metadata = JSON.parse(stdout)
+  const result = Array.isArray(metadata)
+    ? metadata.length === 1 ? metadata[0] : null
+    : metadata
+  assert.ok(result && typeof result === 'object' && !Array.isArray(result), 'npm pack returned unsupported metadata')
+  return result
+}
+
 // The install path is the key because npm retains a second tslib version
 // beneath tsyringe. Version, integrity, and declared license are all pinned.
 export const RETAINED_RUNTIME_PACKAGES = {
@@ -142,7 +151,7 @@ export async function prepareSecureWeriftSourceMirror(mirrorRoot) {
       { cwd: temporary, env: environment },
     )
     assert.equal(packed.code, 0, packed.stderr || packed.stdout)
-    const [packResult] = JSON.parse(packed.stdout)
+    const packResult = parseSingleNpmPackResult(packed.stdout)
     assert.equal(packResult.integrity, WERIFT_TARBALL_INTEGRITY)
     const tarball = await readFile(path.join(temporary, packResult.filename))
     assert.equal(createHash('sha512').update(tarball).digest('hex'), WERIFT_TARBALL_SHA512)
@@ -516,7 +525,8 @@ export async function buildSecureWeriftCandidate(workRoot, { sourceMirror } = {}
   )
   assert.equal(packed.signal, null)
   assert.equal(packed.code, 0, packed.stderr || packed.stdout)
-  const [packResult] = JSON.parse(packed.stdout)
+  // npm 11 returns an array while npm 12 returns the single packed object.
+  const packResult = parseSingleNpmPackResult(packed.stdout)
   assert.equal(packResult.version, WERIFT_VERSION)
   assert.equal(packResult.integrity, WERIFT_TARBALL_INTEGRITY)
   const tarballPath = path.join(workRoot, packResult.filename)
@@ -772,7 +782,7 @@ export async function packSecureWeriftCandidate(artifactRoot) {
   )
   assert.equal(packed.signal, null)
   assert.equal(packed.code, 0, packed.stderr || packed.stdout)
-  const [archive] = JSON.parse(packed.stdout)
+  const archive = parseSingleNpmPackResult(packed.stdout)
   assert.equal(archive.name, '@terminay/werift-runtime-proof')
   assert.equal(archive.version, WERIFT_CANDIDATE_VERSION)
   const archivePath = path.join(artifactRoot, archive.filename)
