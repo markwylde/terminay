@@ -793,6 +793,10 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         __terminayProtocolOnlyFault?: { state(): string }
       }).__terminayProtocolOnlyFault?.state())
     await expect.poll(protocolFaultState).toBe('open')
+    const recoveryStartsBeforeFault = await page.evaluate(() =>
+      ((window as Window & {
+        __terminayReconnectDiagnostics?: Array<{ phase: string }>
+      }).__terminayReconnectDiagnostics ?? []).filter((entry) => entry.phase === 'started').length)
     await page.evaluate(() => {
       const fault = (window as Window & {
         __terminayProtocolOnlyFault?: { fail(): void }
@@ -808,11 +812,26 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       'terminal presentation renewal failed: client is not connected',
       { exact: true },
     )
-    await expect(renewalFailure).toBeVisible({ timeout: 50_000 })
-    expect(
-      await renewalFailure.count(),
-      'protocol-only application failure must recover without a terminal renewal error while the peer and lane remain open',
-    ).toBe(0)
+    await expect.poll(() => page.evaluate(() =>
+      ((window as Window & {
+        __terminayReconnectDiagnostics?: Array<{ phase: string }>
+      }).__terminayReconnectDiagnostics ?? []).filter((entry) => entry.phase === 'started').length), {
+      message: 'protocol EOF must enter the renderer recovery controller',
+      timeout: 30_000,
+    }).toBeGreaterThan(recoveryStartsBeforeFault)
+    await expect.poll(() => service.getStatus().activeConnectionCount, {
+      message: 'protocol EOF recovery must converge to one application connection',
+      timeout: 60_000,
+    }).toBe(1)
+    await expect(renewalFailure).toHaveCount(0)
+    await page.getByRole('textbox', { name: 'Terminal input' }).focus()
+    const protocolRecoveryInput = `${runtimeName}-protocol-recovery-ok`
+    await page.keyboard.insertText(protocolRecoveryInput)
+    await expect.poll(() => terminalWrites.join(''), {
+      message: 'the replacement protocol client must accept terminal input',
+      timeout: 30_000,
+    }).toContain(protocolRecoveryInput)
+    await expect(renewalFailure).toHaveCount(0)
 
     const initialSignalLog = await page.evaluate(() =>
       (window as Window & {
