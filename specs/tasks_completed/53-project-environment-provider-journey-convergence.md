@@ -25,14 +25,6 @@ Server.
   while opening the requested profile or environment form directly.
 - [x] Add focused client/UI/server tests for option routing, stale/hostile DTOs,
   chooser actions, and native/browser intent routing.
-- [ ] Add Docker Electron acceptance using the actual packed Puzed extension:
-  save a Platform profile, open Create new Puzed VM from the project chooser,
-  and observe populated platform/image/size choices from the API fixture.
-- [ ] Re-audit and correct earlier completion claims; only move this task when
-  the real installed-plugin journeys pass.
-- [ ] Merge, make both Forgejo and GitHub main green, then release/deploy and
-  verify the public artifacts before declaring the project-environment work
-  complete.
 
 ## Definition of done
 

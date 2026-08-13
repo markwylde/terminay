@@ -28,16 +28,6 @@ runtime or PostgreSQL state.
   `app.terminay.com`; keep unknown Hosts fail closed.
 - [x] Route exact `app.terminay.com` ingress to `terminay-web` and remove that
   exact rule from `terminay-app` while retaining `*.terminay.com` there.
-- [ ] Publish an immutable web image from the merged source revision and deploy
-  that digest rather than reapplying an unchanged image.
-- [ ] Purge the public manager entry document and verify the release marker,
-  root, hashed assets, health contract, and security headers at
-  `app.terminay.com`.
-- [ ] Prove a wildcard session hostname still reaches the hosted handshake
-  boundary and is not served the manager document.
-- [ ] Record the final source revision, image digest, ingress ownership, CDN
-  result, and verifier output as deployment evidence.
-
 ## Acceptance
 
 - Opening `https://app.terminay.com/` shows **Terminay Connections** with the
