@@ -83,6 +83,11 @@ permission to weaken that permanent reproduction.
   - [x] Hold the mounted browser offline after a required-lane failure, invoke
     Retry repeatedly during backoff, restore network reachability, and prove
     the requests coalesce into one successful replacement generation.
+  - [x] Bound the complete renderer generation, including terminal hydration
+    and verification, so a transport which has acquired an endpoint but never
+    becomes usable returns to retry-wait instead of trapping Retry behind an
+    indefinitely in-flight generation. Prove the timed-out candidate retires
+    before one manual Retry activates a fresh generation.
   - [ ] Cover an independent signaling-service outage, delayed host
     registration, failed authentication, and failed hydration.
 - [ ] Assert exact peer, lane, transport generation, application client,

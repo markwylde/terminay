@@ -62,6 +62,7 @@ export type RendererConnectionControllerOptions<Candidate extends Disposable> = 
 	classifyFailure?(error: unknown): RendererConnectionFailure;
 	dispose?(candidate: Candidate): void | Promise<void>;
 	initialRetryMs?: number;
+	attemptTimeoutMs?: number;
 	maxRetryMs?: number;
 	onActivated?(candidate: Candidate, state: RendererConnectionState): void | Promise<void>;
 	onCandidate?(candidate: Candidate, state: RendererConnectionState): void | Promise<void>;
@@ -81,6 +82,7 @@ const defaultClock: RendererConnectionClock = {
 export class RendererConnectionController<Candidate extends Disposable> {
 	private readonly clock: RendererConnectionClock;
 	private readonly initialRetryMs: number;
+	private readonly attemptTimeoutMs: number;
 	private readonly maxRetryMs: number;
 	private readonly listeners = new Set<(state: RendererConnectionState) => void>();
 	private generation = 0;
@@ -113,6 +115,7 @@ export class RendererConnectionController<Candidate extends Disposable> {
 	constructor(private readonly options: RendererConnectionControllerOptions<Candidate> = {}) {
 		this.clock = options.clock ?? defaultClock;
 		this.initialRetryMs = positiveDelay(options.initialRetryMs, 750);
+		this.attemptTimeoutMs = positiveDelay(options.attemptTimeoutMs, 30_000);
 		this.maxRetryMs = positiveDelay(options.maxRetryMs, 10_000);
 		if (this.initialRetryMs > this.maxRetryMs)
 			throw new Error('initial retry delay cannot exceed maximum retry delay');
@@ -226,36 +229,51 @@ export class RendererConnectionController<Candidate extends Disposable> {
 			signal: controller.signal,
 		});
 		const pipeline = this.pipeline;
-		void this.run(attempt, pipeline).finally(() => {
+		void this.run(attempt, pipeline, controller).finally(() => {
 			this.running = false;
 			if (this.controller === controller) this.controller = undefined;
 			this.drain();
 		});
 	}
 
-	private async run(attempt: RendererConnectionAttempt, pipeline: RendererConnectionPipeline<Candidate>): Promise<void> {
+	private async run(attempt: RendererConnectionAttempt, pipeline: RendererConnectionPipeline<Candidate>, controller: AbortController): Promise<void> {
 		let candidate: Candidate | undefined;
+		let rejectDeadline!: (reason: unknown) => void;
+		const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
+		const deadlineTimer = this.clock.setTimeout(
+			() => {
+				const error = new Error(`connection generation timed out after ${this.attemptTimeoutMs}ms`);
+				// Cancel every transport operation owned by this generation as its
+				// deadline expires. The generation remains the lifecycle owner long
+				// enough for the catch path to publish retry-wait.
+				controller.abort(error);
+				rejectDeadline(error);
+			},
+			this.attemptTimeoutMs,
+		);
+		const bounded = <Value>(operation: Promise<Value>): Promise<Value> =>
+			Promise.race([operation, deadline]);
 		try {
 			// A stable client id cannot overlap generations: a late close from the
 			// retired protocol client can otherwise unregister the replacement after
 			// its handshake. Finish old context/client disposal before acquisition.
-			await this.retirement;
+			await bounded(this.retirement);
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;
-			candidate = await pipeline.acquire(attempt);
+			candidate = await bounded(pipeline.acquire(attempt));
 			this.candidate = candidate;
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			this.publishPhase('authenticating', attempt);
-			await pipeline.authenticate?.(candidate, attempt);
+			await bounded(pipeline.authenticate?.(candidate, attempt) ?? Promise.resolve());
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			this.publishPhase('resubscribing', attempt);
-			await pipeline.resubscribe(candidate, attempt);
+			await bounded(pipeline.resubscribe(candidate, attempt));
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			this.publishPhase('hydrating', attempt);
-			await pipeline.hydrate(candidate, attempt);
+			await bounded(pipeline.hydrate(candidate, attempt));
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;
-			await this.options.onCandidate?.(candidate, this.stateValue);
+			await bounded(Promise.resolve(this.options.onCandidate?.(candidate, this.stateValue)));
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;
-			await pipeline.verify(candidate, attempt);
+			await bounded(pipeline.verify(candidate, attempt));
 			if (!this.isCurrentAttempt(attempt, pipeline)) return;
 			const previous = this.active;
 			this.active = candidate;
@@ -271,8 +289,9 @@ export class RendererConnectionController<Candidate extends Disposable> {
 			this.publish(state);
 			await this.options.onActivated?.(candidate, state);
 		} catch (error) {
-			if (this.isCurrentAttempt(attempt, pipeline)) this.handleFailure(attempt, error);
+			if (this.isOwnedAttempt(attempt, pipeline)) this.handleFailure(attempt, error);
 		} finally {
+			this.clock.clearTimeout(deadlineTimer);
 			if (candidate !== undefined && candidate !== this.active) {
 				if (this.candidate === candidate) this.candidate = undefined;
 				await this.dispose(candidate);
@@ -310,7 +329,11 @@ export class RendererConnectionController<Candidate extends Disposable> {
 	}
 
 	private isCurrentAttempt(attempt: RendererConnectionAttempt, pipeline: RendererConnectionPipeline<Candidate> | undefined): boolean {
-		return !attempt.signal.aborted && attempt.generation === this.generation && attempt.profileId === this.stateValue.profileId && (pipeline === undefined || pipeline === this.pipeline);
+		return !attempt.signal.aborted && this.isOwnedAttempt(attempt, pipeline);
+	}
+
+	private isOwnedAttempt(attempt: RendererConnectionAttempt, pipeline: RendererConnectionPipeline<Candidate> | undefined): boolean {
+		return attempt.generation === this.generation && attempt.profileId === this.stateValue.profileId && (pipeline === undefined || pipeline === this.pipeline);
 	}
 
 	private publishPhase(phase: RendererConnectionPhase, attempt: RendererConnectionAttempt): void {
