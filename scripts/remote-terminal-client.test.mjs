@@ -10,6 +10,8 @@ test('browser enrollment uses the opaque session application endpoint', async ()
 	]);
 	assert.match(entry, /acquireHostedApplicationTransport/u);
 	assert.match(entry, /authenticated\.ticket/u);
+	assert.match(entry, /canonicalOrigin = `\$\{sessionHost\.origin\}#transport=webrtc:\$\{sessionHost\.origin\}`/u);
+	assert.match(entry, /loadPairing\(canonicalOrigin\)/u);
 	assert.doesNotMatch(entry, /apiChannel|terminalChannel|createDataChannel|getChannel|RTCDataChannel/u);
 	assert.match(manager, /new TerminayClient/u);
 	assert.match(manager, /createConnectedServerClientContext/u);
