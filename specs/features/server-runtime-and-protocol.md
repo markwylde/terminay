@@ -120,8 +120,9 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
 - Release artifact builds work from their narrow workspace entry points. A
   server-core build first materializes every public workspace package it
   imports, including the Extension API. Runtime staging accepts the pinned npm
-  major's exact single-result JSON shape and fails closed on missing, multiple,
-  or malformed pack results.
+  major's exact single-result JSON shape, including npm 12's package-name map
+  and singleton metadata arrays, and fails closed on missing, multiple, or
+  malformed results.
 - CI exercises node-pty through the canonical server-core terminal authority on
   native x64 and arm64 runners. Desktop packaging proves its extracted
   `@terminay/server` dependency closure; the removed Electron `ptyHost` child
