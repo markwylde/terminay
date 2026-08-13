@@ -236,10 +236,13 @@ test('a wrong PIN reports the server denial and persists no connection', async (
 		pairingSessionId: 'wrong-pin-browser-pairing',
 		pairingToken: 'wrong-pin-browser-token-0123456789abcdef',
 	});
-	await page.goto(`${fixture.origin}/web.html#${fragment}`);
+	await page.goto(`${fixture.origin}/web.html#${fragment}`, {
+		waitUntil: 'commit',
+	});
 	const enrollment = page.getByRole('dialog', {
 		name: 'Enroll browser device',
 	});
+	await expect(enrollment).toBeVisible({ timeout: 30_000 });
 	await enrollment.getByLabel('Device name').fill('Wrong PIN browser');
 	await enrollment.getByLabel('Pairing PIN').fill('654321');
 	await enrollment.getByRole('button', { name: 'Pair and connect' }).click();
