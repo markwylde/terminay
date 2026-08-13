@@ -51,7 +51,7 @@ export function DeclarativeProviderForm({
 	};
 
 	return (
-		<form className="declarative-provider-form settings-content" onSubmit={submit} noValidate aria-busy={submitting}>
+		<form className="declarative-provider-form" onSubmit={submit} noValidate aria-busy={submitting}>
 			<header className="settings-category-header">
 				<h2>{form.title}</h2>
 				{form.description ? <p>{form.description}</p> : null}
