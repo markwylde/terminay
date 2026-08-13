@@ -154,6 +154,16 @@ const TERMINAL_RECOVERY_RETRY_DELAY_MS = 100
 const TERMINAL_RECOVERY_ATTEMPT_DEADLINE_MS = 15_000
 const REMOTE_TERMINAL_SCALE_PROPERTY = '--terminal-remote-scale'
 const EMPTY_TERMINAL_ROOT_SIZE = { height: 0, width: 0 }
+
+function reportTerminalRebindDiagnostic(sessionId: string, phase: 'started' | 'attached' | 'failed'): void {
+  try {
+    ;(globalThis as typeof globalThis & {
+      __terminayTerminalRebindDiagnostic?: (event: Readonly<{ sessionId: string; phase: string }>) => void
+    }).__terminayTerminalRebindDiagnostic?.(Object.freeze({ sessionId, phase }))
+  } catch {
+    // Metadata-only diagnostics cannot affect terminal attachment lifecycle.
+  }
+}
 const searchOptions = {
   incremental: true,
   decorations: {
@@ -301,6 +311,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const connectionActionsRef = useRef(terminalClientContext)
   connectionActionsRef.current = terminalClientContext
   const boundTerminalClientRef = useRef(terminalClientContext?.client)
+  const boundHydrationReporterRef = useRef(terminalClientContext?.reportConnectionHydrated)
   const panelClientDelegateRef = useRef<TerminayTerminalPanelClient | undefined>(undefined)
   panelClientDelegateRef.current = terminalClientContext === null
     ? undefined
@@ -564,6 +575,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       setIsTerminalHydrating(false)
       setServerTerminalError(error instanceof Error ? error.message : 'The server terminal connection failed.')
       terminalPanelConnectionContext?.reportConnectionHydrationFailed?.(error)
+      reportTerminalRebindDiagnostic(sessionId, 'failed')
     }
     let serverInputQueue = useServerTerminal ? new ServerTerminalInputQueue(failServerTransport) : null
 
@@ -962,6 +974,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
               recoveryDeadlineTimer = null
               setIsTerminalHydrating(false)
               terminalPanelConnectionContext?.reportConnectionHydrated?.()
+              reportTerminalRebindDiagnostic(sessionId, 'attached')
 
               if (recoveryAttempt > 0) {
                 reportTerminalRecovery('recovered', { durationMs: Math.max(0, Date.now() - recoveryStartedAt), outputPosition: renderedPositionRef.current ?? undefined })
@@ -1052,6 +1065,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       }
       rebindServerAttachmentRef.current = () => {
         if (dataReplayDisposed) return
+        reportTerminalRebindDiagnostic(sessionId, 'started')
         serverAttachmentFailed = false
         resyncing = false
         panelEventDisposer?.()
@@ -1466,10 +1480,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
   useEffect(() => {
     if (terminalClientContext?.client === undefined) return
-    if (boundTerminalClientRef.current === terminalClientContext.client) return
+    if (
+      boundTerminalClientRef.current === terminalClientContext.client &&
+      boundHydrationReporterRef.current === terminalClientContext.reportConnectionHydrated
+    ) return
     boundTerminalClientRef.current = terminalClientContext.client
+    boundHydrationReporterRef.current = terminalClientContext.reportConnectionHydrated
     rebindServerAttachmentRef.current()
-  }, [terminalClientContext?.client])
+  }, [terminalClientContext?.client, terminalClientContext?.reportConnectionHydrated])
 
   useEffect(() => {
     settingsRef.current = settings
