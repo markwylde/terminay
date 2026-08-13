@@ -83,8 +83,15 @@ test.describe('workspace shell', () => {
 	test('closes several terminal panels sequentially while a file panel remains', async ({
 		appHarness,
 		createWorkspace,
+		electronApp,
 		mainWindow,
 	}) => {
+		await electronApp.evaluate(({ dialog }) => {
+			dialog.showMessageBox = async () => ({
+				checkboxChecked: false,
+				response: 0,
+			});
+		});
 		const workspace = await createWorkspace({
 			name: 'sequential-panel-close',
 			seed: { files: { 'README.md': 'remaining panel\n' } },
