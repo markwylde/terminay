@@ -41,18 +41,11 @@ Phase 6 release convergence after Tasks 41–50.
 
 ### Release supply chain
 
-- [ ] Publish official packages with npm trusted publishing/provenance and
-  verify resolved integrity, packed contents, dependency locks, SBOM/licenses,
-  Node/npm/API compatibility, registry-failure behavior, and artifacts.
 - [x] Exercise server upgrade with compatible/incompatible extensions, registry/
   data migrations, failed activation, rollback, and retained unavailable projects.
 
 ### Acceptance and security
 
-- [ ] Run all Electron E2E only through `npm run test:e2e` with Docker SSH and
-  Puzed API/SSE/job/address fixtures; add opt-in real Puzed smoke separately.
-- [ ] Prove Desktop/browser parity against embedded and standalone servers with
-  one mixed This server/SSH/Puzed view and client reconnect/restart.
 - [x] Add hostile package/IPC/auth/project-claim/secret/host-key/redirect/
   cross-environment/no-fallback sentinel suites and crash/resource recovery.
 - [x] Measure bounded menus/forms/inventories, SFTP traversal, provider IPC,

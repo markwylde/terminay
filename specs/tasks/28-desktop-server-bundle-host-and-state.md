@@ -75,9 +75,6 @@ against the server/host state classification.
 
 ### State audit and migration
 
-- [ ] Inventory every Electron main, preload, renderer, localStorage, settings,
-  and file-backed persisted field as server-owned, host-owned, verified-cache
-  metadata, transient, or unsupported legacy state.
 - [ ] Enforce the Desktop allowlist: sanitized profiles, OS-protected device
   credentials, native window geometry, exact window-to-profile/view bindings,
   verified bundle-cache metadata, updates, OS permission decisions, and
@@ -86,8 +83,6 @@ against the server/host state classification.
   application DTOs, project roots, panel layouts, terminal state, server
   settings, and feature capability projections without overwriting newer server
   authority.
-- [ ] Prove renderer caches are disposable: restart/reconnect reconstructs the
-  workspace from server snapshot/revisions plus only its local window binding.
 - [ ] Add a static ownership check preventing new feature-specific persistence
   or broad host APIs without an updated classification contract.
 
