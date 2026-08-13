@@ -53,9 +53,28 @@ The native matrix is now green for all four required-lane failures and peer
 closure; remaining unchecked cases below are additional release evidence, not
 permission to weaken that permanent reproduction.
 
+A later production reproduction exposed a distinct split-brain case that the
+required-lane matrix did not cover: the server-side application-protocol reader
+ended while the native WebRTC peer and application data channel remained open.
+The server discarded the application client, but the host continued to present
+the transport as connected. Terminal renewal then surfaced
+`terminal presentation renewal failed: client is not connected`, and Retry
+reused or waited behind the stale generation instead of creating a usable one.
+This protocol-only failure is now part of the permanent reproduction and must
+be fixed at the generation ownership boundary, not suppressed in terminal UI.
+
 ## Implementation slices
 
 ### Deterministic native failure matrix
+
+- [ ] Treat server application-protocol reader completion/failure as failure of
+  the whole host-owned transport generation even when the native peer and every
+  required data channel remain open.
+- [ ] Deliver that failure once, with the exact generation identity, to the
+  unified renderer recovery controller; retire the stale application client,
+  peer, lanes, subscriptions, and attachments before replacement begins.
+- [ ] Ensure automatic recovery and manual Retry create a fresh host generation
+  rather than consulting, awaiting, or reusing the stale peer/channel state.
 
 - [x] Keep the clean Linux native proof self-contained: build workspace
   packages and the production application, install the selected prebuilt
@@ -99,6 +118,18 @@ permission to weaken that permanent reproduction.
     attachment counts without inspecting private implementation fields.
 
 ### End-to-end correctness
+
+- [ ] Keep a real Chromium plus plain-Node `node-datachannel` regression that
+  mounts a workspace, proves sustained ordered typing, ends only the server
+  application-protocol reader, and asserts at injection time that the WebRTC
+  peer and application lane remain open.
+- [ ] In that regression, prove one fresh generation restores the existing
+  workspace and PTY, clears recovery only after a command crosses the new
+  endpoint, and delivers post-recovery human-paced and burst input exactly once
+  and in order without navigation.
+- [ ] Hold replacement offline after the same protocol-only fault, click Retry
+  repeatedly, restore reachability, and prove Retry coalesces to one immediate
+  fresh generation rather than remaining behind the disconnected client.
 
 - [x] Prove automatic recovery restores the mounted workspace without
   navigation, enrollment UI, profile loss, duplicate project/panel/session, or
@@ -181,6 +212,9 @@ permission to weaken that permanent reproduction.
 
 - Every required-lane and peer failure either recovers automatically or reaches
   a typed terminal state; no mounted workspace is silently inert.
+- Application-protocol reader termination is detected even while the native
+  peer and application lane remain open, and follows the same single-owner
+  generation replacement lifecycle.
 - Retry creates a fresh native WebRTC generation and post-Retry terminal input
   arrives exactly once and in order without `location.reload()`.
 - Normal sustained typing does not close the transport, reorder characters, or
