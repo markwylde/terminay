@@ -28,7 +28,7 @@ publication, and deployed-origin verification remain unchecked until those
 external systems produce revision-bound evidence. A local substitute, emulated
 browser, or workflow source assertion cannot mark those outcomes complete.
 
-## Current gap and permanent reproduction
+## Historical failure and permanent reproduction
 
 The former browser convergence test used Local Network pairing and fell back to
 `WebSocketByteTransport`; it did not exercise WebRTC. The production headless
@@ -47,10 +47,11 @@ The investigation extends the real Chromium plus plain-Node
 6. click **Retry connection**; and
 7. send a post-Retry sequence.
 
-Current production fails step 7: Retry starts and its initial error
-presentation clears, but the post-Retry sequence never reaches the PTY. This
-test remains red until Tasks 41 and 42 replace the transport and renderer
-generation correctly.
+The original production build failed step 7: Retry started and its initial
+error presentation cleared, but the post-Retry sequence never reached the PTY.
+The native matrix is now green for all four required-lane failures and peer
+closure; remaining unchecked cases below are additional release evidence, not
+permission to weaken that permanent reproduction.
 
 ## Implementation slices
 
