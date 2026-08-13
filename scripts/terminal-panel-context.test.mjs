@@ -42,7 +42,7 @@ test('terminal retry requests host-owned transport replacement after a transport
   const attachStart = panel.indexOf('      const attachServerTerminal = ({')
   const attachEnd = panel.indexOf('\n      const beginTerminalResync', attachStart)
   const attach = panel.slice(attachStart, attachEnd)
-  assert.match(attach, /panelClient\.resume\(nextRequest\)/)
+  assert.match(attach, /attachmentClient\.resume\(nextRequest\)/)
 })
 
 test('replacement context reports mounted attachment hydration only after rendering initial events', () => {
@@ -78,7 +78,11 @@ test('mounted terminal keeps one client facade while replacement calls use the n
 test('a replacement hydration generation rebinds even when logical client identity is stable', () => {
   assert.match(panel, /boundHydrationReporterRef/u)
   assert.match(panel, /terminalClientContext\?\.client, terminalClientContext\?\.reportConnectionHydrated/u)
-  assert.match(panel, /rebindServerAttachmentRef\.current\(\)/u)
+  assert.match(panel, /rebindServerAttachmentRef\.current\(replacementClient\)/u)
+  assert.match(panel, /const replacementClient = new TerminayTerminalPanelClient\(terminalClientContext\.client\)/u)
+  assert.match(panel, /rebindServerAttachmentRef\.current\(replacementClient\)/u)
+  assert.match(panel, /client: replacementClient/u)
+  assert.match(panel, /attachmentClient\.resume\(nextRequest\)/u)
 })
 
 test('workspace metadata and drop-upload changes do not rebuild a mounted terminal attachment', () => {
