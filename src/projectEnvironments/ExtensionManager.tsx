@@ -2,7 +2,8 @@ import type { ExtensionAction, ExtensionInstallPreviewDto } from '@terminay/clie
 import { useMemo, useState } from 'react';
 import type { ExtensionSummaryDto } from './uiModel';
 
-export function ExtensionManager({ extensions, serverName, onPreview, onInstall, onUpdate, onAction }: Readonly<{
+export function ExtensionManager({ embedded = false, extensions, serverName, onPreview, onInstall, onUpdate, onAction }: Readonly<{
+	embedded?: boolean;
 	extensions: readonly ExtensionSummaryDto[];
 	serverName: string;
 	revision: number;
@@ -15,8 +16,8 @@ export function ExtensionManager({ extensions, serverName, onPreview, onInstall,
 	const filtered=useMemo(()=>extensions.filter(item=>`${item.displayName} ${item.packageName} ${item.description}`.toLowerCase().includes(query.trim().toLowerCase())),[extensions,query]); const selected=extensions.find(item=>item.id===selectedId)??filtered[0];
 	const previewPackage=async()=>{setBusy(true);setPreviewError('');try{setPreview(await onPreview(npmPackage));}catch(error){setPreviewError(error instanceof Error?error.message:String(error));}finally{setBusy(false);}};
 	const act=async(action:ExtensionAction,id:string)=>{setBusy(true);try{await onAction(action,id);}finally{setBusy(false);}};
-	return <div className="environment-manager extension-manager" aria-busy={busy}>
-		<header className="management-route-header"><div><p className="management-route-eyebrow">Selected Terminay Server</p><h2>Extensions</h2><p>Extensions run as trusted code on <strong>{serverName}</strong>.</p></div></header>
+	return <div className={`environment-manager extension-manager${embedded ? ' extension-manager--settings' : ''}`} aria-busy={busy}>
+		{embedded ? null : <header className="management-route-header"><div><p className="management-route-eyebrow">Selected Terminay Server</p><h2>Extensions</h2><p>Extensions run as trusted code on <strong>{serverName}</strong>.</p></div></header>}
 		<div className="trusted-code-warning" role="note"><strong>Third-party extensions are trusted code.</strong><span>They can access files and networks available to the selected server account.</span></div>
 		<form className="extension-install" onSubmit={event=>{event.preventDefault();void previewPackage();}}><label><span>Install from npm</span><input value={npmPackage} onChange={event=>setNpmPackage(event.target.value)} placeholder="package-name or package-name@version" /></label><button type="submit" disabled={busy||npmPackage.trim()===''}>Preview</button></form>
 		{previewError?<p role="alert">{previewError}</p>:null}
