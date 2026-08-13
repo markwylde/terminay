@@ -51,38 +51,38 @@ starts, its presentation clears, and later input never reaches the PTY.
 
 ### One session transport host
 
-- [ ] Define one runtime-validated session transport host contract for initial
+- [x] Define one runtime-validated session transport host contract for initial
   pairing, saved reconnect, current generation state, opaque application byte
   endpoint acquisition, replacement, cancellation, and terminal failure.
 - [ ] Bind the host to one exact session origin, server identity, profile id,
   device credential compartment, and browser view. Reject another origin,
   source, profile, server, or retired generation.
-- [ ] Keep signaling sockets, reconnect credentials, application tickets,
+- [x] Keep signaling sockets, reconnect credentials, application tickets,
   `RTCPeerConnection`, ICE, and all `RTCDataChannel` objects private to the
   session host. The server-bundled application receives none of them.
-- [ ] Give each complete peer/channel set one monotonic generation identity.
+- [x] Give each complete peer/channel set one monotonic generation identity.
   An endpoint and every lifecycle event name that generation; an endpoint from
   a retired generation cannot send, reactivate, or be returned again.
 
 ### Complete-generation health and replacement
 
-- [ ] Evaluate peer, ICE, `control`, `application`, `terminal`, and `assets`
+- [x] Evaluate peer, ICE, `control`, `application`, `terminal`, and `assets`
   health through one state machine. Close/error of any required lane is a
   terminal failure of that generation even if the peer remains connected.
 - [ ] Treat legacy/bootstrap `api` and `asset` lanes as attempt-scoped
   enrollment/bundle-install resources only. Close and delete them at the
   authenticated canonical-lane handoff; they cannot remain renderer-visible or
   generation-critical after the mounted application starts.
-- [ ] Preserve the bounded grace period only for recoverable peer/ICE
+- [x] Preserve the bounded grace period only for recoverable peer/ICE
   `disconnected` state. Cancel it when the complete generation becomes healthy;
   replace immediately for explicit failed/closed state or required-lane loss.
-- [ ] Coalesce concurrent peer, ICE, channel, application-send, online/offline,
+- [x] Coalesce concurrent peer, ICE, channel, application-send, online/offline,
   and renderer requests into one replacement attempt. Cleanup and publication
   happen exactly once per generation.
-- [ ] Make manual Retry call the same controller, cancel its pending backoff,
+- [x] Make manual Retry call the same controller, cancel its pending backoff,
   and start one immediate attempt. It does not reload the document or create a
   parallel signaling room.
-- [ ] Reset peer, signaling, channel map, authentication promise, listeners,
+- [x] Reset peer, signaling, channel map, authentication promise, listeners,
   timers, and attempt-local state before acquiring replacement lanes. Never
   wait on or consult a closed lane from the retired generation.
 - [ ] Distinguish retryable offline/relay/route failures from terminal revoked,
@@ -91,21 +91,21 @@ starts, its presentation clears, and later input never reaches the PTY.
 
 ### Delete the split bridge model
 
-- [ ] Replace the raw-channel `__TERMINAY_REMOTE_WEBRTC__` contract and the
+- [x] Replace the raw-channel `__TERMINAY_REMOTE_WEBRTC__` contract and the
   separate `__TERMINAY_BROWSER_ENROLLMENT__` contract with the one session
   transport host contract.
-- [ ] Delete `getChannel()` from the renderer-facing surface, raw `apiChannel`
+- [x] Delete `getChannel()` from the renderer-facing surface, raw `apiChannel`
   and `terminalChannel` compatibility access, renderer-side channel caching,
   and any renderer-side WebRTC transport constructor.
 - [ ] Delete mounted virtual-HTTP dependence on the bootstrap `api` lane and
   singular `asset` compatibility lane after bundle installation. Do not carry
   six permanent lanes merely to preserve the old bridge.
-- [ ] Delete the mounted-app `location.replace('/v1/')` recovery mechanism.
+- [x] Delete the mounted-app `location.replace('/v1/')` recovery mechanism.
   Normal browser refresh still enters `/v1/`, but automatic and manual
   recovery replace the transport in-page.
 - [ ] Delete duplicate reconnect timers, online listeners, credential reads,
   and signaling starts outside the session transport host.
-- [ ] Remove compatibility aliases, fallback globals, and old source-shape
+- [x] Remove compatibility aliases, fallback globals, and old source-shape
   tests in the same change. An incompatible host contract fails explicitly;
   no legacy bridge remains in production.
 
