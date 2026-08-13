@@ -79,6 +79,41 @@ test('repeated Retry does not orphan an in-flight host endpoint acquisition', as
   assert.equal(acquisitions, 1)
 })
 
+test('a generation whose terminal hydration never settles becomes retryable and is replaced', async () => {
+  const timers = []
+  const disposed = []
+  let attempts = 0
+  const controller = new RendererConnectionController({
+    attemptTimeoutMs: 25,
+    clock: {
+      clearTimeout: (handle) => { handle.cleared = true },
+      setTimeout: (callback, delay) => {
+        const handle = { callback, cleared: false, delay }
+        timers.push(handle)
+        return handle
+      },
+    },
+  })
+  controller.connect('server-a', {
+    acquire: async () => ({ id: ++attempts, dispose() { disposed.push(this.id) } }),
+    resubscribe: async () => {},
+    hydrate: async () => {},
+    verify: async (candidate) => {
+      if (candidate.id === 1) await new Promise(() => {})
+    },
+  })
+  await settle(() => controller.state.phase === 'hydrating')
+  const firstDeadline = timers.find((timer) => timer.delay === 25 && !timer.cleared)
+  assert.ok(firstDeadline, 'the complete generation owns a deadline')
+  firstDeadline.callback()
+  await settle(() => controller.state.phase === 'retry-wait')
+  assert.deepEqual(disposed, [1])
+
+  controller.retry()
+  await settle(() => controller.state.phase === 'connected')
+  assert.equal(controller.current.id, 2)
+})
+
 test('stable client id replacement waits for retired client close', async () => {
   let releaseRetirement
   const retired = new Promise((resolve) => { releaseRetirement = resolve })
