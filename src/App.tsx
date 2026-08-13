@@ -3446,6 +3446,8 @@ const ProjectWorkspace = forwardRef<
 			const api = dockviewApiRef.current;
 			const panel = api?.getPanel(panelId);
 			if (!api || !panel) return;
+			const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
+			const canonicalPanel = workspaceStore?.snapshot?.panels[panelId];
 			const sessionId = panelSessionMapRef.current.get(panelId);
 			if (sessionId !== undefined) {
 				const running = getRunningTerminalSessionIds(
@@ -3459,8 +3461,18 @@ const ProjectWorkspace = forwardRef<
 				onCloseProject(project.id, { skipConfirmation: true });
 				return;
 			}
+			if (workspaceStore !== undefined && canonicalPanel?.projectId === project.id) {
+				await workspaceStore.closePanel(panelId);
+				const reconciled = await workspaceStore.waitForSnapshot(
+					(snapshot) => snapshot.panels[panelId] === undefined,
+				);
+				if (reconciled === null) {
+					throw new Error('Timed out waiting for the closed panel to reconcile.');
+				}
+				return;
+			}
 			panel.api.close();
-		}, [onCloseProject, project.id, serverActivityClient]);
+		}, [onCloseProject, project.id, serverActivityClient, terminalClientContext?.workspaceSnapshotStore]);
 
 		useEffect(() => {
 			const listener = (event: Event) => {
