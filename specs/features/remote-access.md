@@ -192,7 +192,10 @@ the in-page Retry control. A mounted workspace recovers without reloading the
 document, replacing its DOM, or replaying the one-time pairing URL.
 
 The transport owner evaluates peer, ICE, and every required data channel as
-one generation. A peer or ICE `disconnected` transition starts one bounded
+one generation. Bootstrap-only enrollment and bundle-install lanes are retired
+at the authenticated application handoff; they are not kept as hidden runtime
+dependencies or compatibility channels. A peer or ICE `disconnected`
+transition starts one bounded
 grace period and keeps the current generation while it remains safe. A peer or
 ICE `failed`/`closed` transition, required-channel close/error, or expired grace
 period retires that generation exactly once and starts one saved-session
@@ -311,9 +314,11 @@ multiplexing scheme:
 - terminal streams; and
 - assets and bounded binary content.
 
-These lanes are private implementation details of the privileged transport
-host. The server-bundled application sees one bounded byte endpoint and cannot
-select, cache, close, authenticate, or recover an individual WebRTC channel.
+These canonical lanes are private implementation details of the privileged
+transport host. Bootstrap-only enrollment and bundle-install lanes exist only
+before application authentication and are closed at handoff. The
+server-bundled application sees one bounded byte endpoint and cannot select,
+cache, close, authenticate, or recover an individual WebRTC channel.
 
 The server transport boundary selects an explicitly configured headless runtime
 (`node-datachannel`, `werift`, or a test/custom adapter) and admits it only
