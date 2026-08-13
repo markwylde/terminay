@@ -14,6 +14,7 @@ import { MacrosWindow } from '../components/MacrosWindow';
 import { RecordingsWindow } from '../components/RecordingsWindow';
 import { SettingsWindow } from '../components/SettingsWindow';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
+import { ProjectEnvironmentsWindow } from '../projectEnvironments/ProjectEnvironmentSurfaces';
 import {
 	LegacyMacroSettingsProvider,
 } from '../hooks/useMacroSettings';
@@ -223,11 +224,20 @@ export function ConnectedWebRendererWorkspace({
 							onCancel={cancelAuxiliaryRoute}
 							onSubmit={submitEditTabRoute}
 						/>
+					) : auxiliaryRoute.kind === 'project-environments' ? (
+						<ProjectEnvironmentsWindow
+							applicationClient={terminalClientContext.applicationClient}
+							serverName={
+								terminalClientContext.connectionLabel ??
+								terminalClientContext.serverId
+							}
+						/>
 					) : (
 						<TerminalSettingsClientProvider client={settingsClient}>
 							<LegacyMacroSettingsProvider capability={macroCapability}>
 								{auxiliaryRoute.kind === 'settings' ? (
 									<SettingsWindow
+										applicationClient={applicationClient}
 										initialSectionId={auxiliaryRoute.sectionId}
 										remoteAccessStatusClient={remoteAccessStatusClient}
 										settingsClient={serverSettingsClient}
@@ -556,6 +566,8 @@ function getAuxiliaryRouteTitle(route: AuxiliaryRouteRequest): string {
 			return 'Macros';
 		case 'recordings':
 			return 'Recordings';
+		case 'project-environments':
+			return 'Project Environments';
 		case 'edit-tab':
 			return route.state.kind === 'project'
 				? 'Edit Project Tab'
