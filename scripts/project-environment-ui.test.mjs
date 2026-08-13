@@ -78,6 +78,10 @@ test('Project Environments use a full auxiliary window rather than an editor dia
 	assert.doesNotMatch(surfaces,/ExtensionManager|ExtensionsClient/);
 	assert.doesNotMatch(app,/ProjectEnvironmentSurfaceDialog|projectEnvironmentSurface/);
 	assert.match(desktop,/openProjectEnvironmentsWindow\(event\.sender\)/);
+	assert.match(environmentManager,/sidebarAction=/);
+	assert.match(environmentManager,/Add connection/);
+	assert.match(environmentManager,/\{detail \?\? \(/);
+	assert.match(surfaces,/detail=\{formTarget === null \? undefined : \(/);
 });
 
 test('remote project selection invokes the server and never falls back to Local',()=>{

@@ -197,7 +197,10 @@ remain represented, and no feature substitutes This server state.
 
 ## Setup experience
 
-**Add SSH server…** opens a declarative form in Project Environments:
+**Add SSH server…** keeps the Project Environments navigation and selected
+Terminay Server context visible while the right-hand detail pane becomes the
+declarative connection form. The user can cancel or save back to the same
+environment list without opening an unrelated full-window form:
 
 1. display name;
 2. hostname, port (default 22), and username;
