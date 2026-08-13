@@ -10,6 +10,9 @@ const directory = await mkdtemp(join(tmpdir(), 'terminay-privileged-rtc-'));
 const output = join(directory, 'rtcTransport.cjs');
 await build({
 	absWorkingDir: process.cwd(),
+	alias: {
+		'@terminay/protocol': join(process.cwd(), 'packages/protocol/src/index.ts'),
+	},
 	bundle: true,
 	stdin: {
 		contents:
