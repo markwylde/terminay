@@ -65,12 +65,20 @@ generation correctly.
 - [ ] Prove bootstrap-only `api` and singular `asset` lanes are closed and
   unreachable after canonical application handoff, and fault them independently
   before handoff rather than treating them as permanent mounted lanes.
+  - [x] Assert both bootstrap lanes are closed after every successful mounted
+    application handoff and replacement.
+  - [ ] Fault each bootstrap lane independently before handoff.
 - [ ] Cover peer and ICE disconnected-then-recovered, disconnected past grace,
   failed, closed, host shutdown, server exposure stop, and device revocation.
 - [ ] Cover offline/online, signaling outage, delayed host registration, failed
   authentication, failed hydration, and repeated Retry during backoff.
 - [ ] Assert exact peer, lane, transport generation, application client,
   workspace subscription, terminal attachment, and PTY counts throughout.
+  - [x] Assert one replacement generation per fault, six created/two retired
+    bootstrap/four open required lanes, one application connection, one PTY,
+    and one canonical project, panel, and terminal session.
+  - [ ] Expose and assert exact server-side workspace subscription and terminal
+    attachment counts without inspecting private implementation fields.
 
 ### End-to-end correctness
 
