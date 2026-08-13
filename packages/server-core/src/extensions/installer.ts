@@ -209,7 +209,7 @@ export class ExtensionInstaller {
     }
   }
   private async references(extensionId: string): Promise<ExtensionReferences> { return this.options.references?.(extensionId) ?? {}; }
-  private async probe(receipt: ExtensionReceipt, packageRoot: string): Promise<void> { await this.options.probe?.({ extensionId: receipt.extensionId, packageRoot, entrypoint: join(packageRoot, receipt.manifest.entrypoint), manifest: receipt.manifest }); }
+  private async probe(receipt: ExtensionReceipt, packageRoot: string): Promise<void> { await this.options.probe?.({ extensionId: receipt.extensionId, packageRoot, entrypoint: receipt.manifest.entrypoint, manifest: receipt.manifest }); }
   private expirePreview(digestValue: string, preview: ExtensionInstallPreview): void { const timer = setTimeout(() => { if (this.previews.get(digestValue) !== preview) return; this.previews.delete(digestValue); this.previewTimers.delete(digestValue); void cleanupArchive(preview); }, Math.max(1, preview.expiresAt - (this.options.now ?? Date.now)())); timer.unref?.(); this.previewTimers.set(digestValue, timer); }
   private slotPackageRoot(slot: { receipt: ExtensionReceipt }): string { return join(this.root, "packages", slot.receipt.slotId, "node_modules", ...slot.receipt.packageName.split("/")); }
   private registryPath(): string { return join(this.root, "registry.v1.json"); }
