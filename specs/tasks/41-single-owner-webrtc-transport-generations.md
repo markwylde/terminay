@@ -28,9 +28,9 @@ separate worktree. The hosted bootstrap owns peer/channel generations and
 origin credentials. Terminay owns the opaque endpoint contract, server-side
 admission, application client, and server-bundled renderer consumption.
 
-## Current gap
+## Reproduced root cause
 
-The mounted session currently has two recovery owners. The hosted bootstrap
+The mounted session had two recovery owners. The hosted bootstrap
 owns `RTCPeerConnection` and a mutable named-channel map, while the embedded
 renderer owns another reconnect loop and calls `getChannel()` through a global
 bridge. The bootstrap reacts to peer `failed`/`disconnected` state but not to a
@@ -43,9 +43,11 @@ surfaces. This exposes raw `RTCDataChannel` objects to the server bundle and
 splits signaling, credential, transport, and renderer-generation ownership.
 Adding another callback or retry path would preserve the contradiction.
 
-The native Linux proof now closes only the application lane while the Chromium
+The native Linux proof closes each required lane while the Chromium
 peer stays connected. The next key produces `client is not connected`; Retry
-starts, its presentation clears, and later input never reaches the PTY.
+formerly reused retired authority and later input never reached the PTY. The
+permanent matrix now proves a fresh single-owner generation and exact ordered
+post-recovery input.
 
 ## Architecture decisions
 
