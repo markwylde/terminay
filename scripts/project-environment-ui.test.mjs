@@ -59,6 +59,14 @@ test('Extensions use the ordinary selected-server Settings surface',()=>{
 	assert.match(sharedSettings,/onResetAll === undefined \? null/);
 });
 
+test('Project Environments use a full auxiliary window rather than an editor dialog',()=>{
+	assert.match(surfaces,/<main className="project-environments-window"/);
+	assert.doesNotMatch(surfaces,/ProjectEnvironmentSurfaceDialog|aria-modal|role="dialog"|surface-backdrop/);
+	assert.doesNotMatch(surfaces,/ExtensionManager|ExtensionsClient/);
+	assert.doesNotMatch(app,/ProjectEnvironmentSurfaceDialog|projectEnvironmentSurface/);
+	assert.match(desktop,/openProjectEnvironmentsWindow\(event\.sender\)/);
+});
+
 test('remote project selection invokes the server and never falls back to Local',()=>{
 	assert.match(app,/projectEnvironmentsClient\.createProject/);
 	assert.doesNotMatch(app,/environment\.isThisServer[\s\S]{0,600}catch[\s\S]{0,300}addProject\(\)/);
