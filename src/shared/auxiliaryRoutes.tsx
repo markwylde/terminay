@@ -1,9 +1,4 @@
-import {
-	createContext,
-	type ReactNode,
-	useContext,
-	useMemo,
-} from 'react';
+import { createContext, type ReactNode, useContext, useMemo } from 'react';
 import type {
 	EditWindowState,
 	ProjectEditWindowResult,
@@ -12,6 +7,7 @@ import type {
 
 export type AuxiliaryRouteRequest =
 	| { readonly kind: 'settings'; readonly sectionId?: string }
+	| { readonly kind: 'project-environments' }
 	| { readonly kind: 'macros' }
 	| { readonly kind: 'recordings' }
 	| {
@@ -31,6 +27,7 @@ export type AuxiliaryRouteRequestHandler = (
 
 export type AuxiliaryRouteController = Readonly<{
 	openSettings: (sectionId?: string) => Promise<void>;
+	openProjectEnvironments: () => Promise<void>;
 	openMacros: () => Promise<void>;
 	openRecordings: () => Promise<void>;
 	editProjectTab: (
@@ -47,8 +44,7 @@ export type AuxiliaryRouteControllerOptions = Readonly<{
 }>;
 
 export function createAuxiliaryRouteController({
-	getWindow = () =>
-		typeof window === 'undefined' ? undefined : window,
+	getWindow = () => (typeof window === 'undefined' ? undefined : window),
 	onRequest,
 }: AuxiliaryRouteControllerOptions = {}): AuxiliaryRouteController {
 	const requestInPage = async (
@@ -68,6 +64,14 @@ export function createAuxiliaryRouteController({
 				return;
 			}
 			await requestInPage({ kind: 'settings', sectionId });
+		},
+		async openProjectEnvironments() {
+			const host = getWindow()?.terminayProjectEnvironmentsHost;
+			if (host !== undefined) {
+				await host.open();
+				return;
+			}
+			await requestInPage({ kind: 'project-environments' });
 		},
 		async openMacros() {
 			await requestInPage({ kind: 'macros' });

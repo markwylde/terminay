@@ -9,11 +9,12 @@ import './projectEnvironments.css';
 
 export type ProjectEnvironmentSurface = 'environments' | 'extensions';
 
-export function ProjectEnvironmentSurfaceDialog({ surface: requestedSurface, serverName, applicationClient, onClose }: Readonly<{
+export function ProjectEnvironmentSurfaceDialog({ surface: requestedSurface, serverName, applicationClient, onClose, presentation = 'dialog' }: Readonly<{
 	surface: ProjectEnvironmentSurface;
 	serverName: string;
 	applicationClient?: TerminayClient;
 	onClose: () => void;
+	presentation?: 'dialog' | 'window';
 }>) {
 	const closeRef = useRef<HTMLButtonElement>(null);
 	const surface = requestedSurface;
@@ -50,11 +51,12 @@ export function ProjectEnvironmentSurfaceDialog({ surface: requestedSurface, ser
 	}, [clients, surface]);
 	useEffect(() => { void refresh(); }, [refresh]);
 	useEffect(() => {
-		closeRef.current?.focus();
+		if (presentation === 'dialog') closeRef.current?.focus();
 		const keydown = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+		if (presentation === 'window') return;
 		window.addEventListener('keydown', keydown);
 		return () => window.removeEventListener('keydown', keydown);
-	}, [onClose]);
+	}, [onClose, presentation]);
 	const run = useCallback(async (action: () => Promise<unknown>, success: string) => {
 		setBusy(true); setError(''); setAnnouncement('Operation started.');
 		try { await action(); setAnnouncement(success); await refresh(); }
@@ -62,10 +64,10 @@ export function ProjectEnvironmentSurfaceDialog({ surface: requestedSurface, ser
 		finally { setBusy(false); }
 	}, [refresh]);
 	return (
-		<div className="project-environment-surface-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-			<section className="project-environment-surface" role="dialog" aria-modal="true" aria-label={surface === 'extensions' ? 'Extensions' : formTarget ? formTarget.form.title : 'Project Environments'} aria-busy={busy}>
-				<div className="project-environment-surface__close"><button ref={closeRef} type="button" onClick={onClose} aria-label="Close">×</button></div>
-				<div className="project-environment-surface__body">
+		<div className={presentation === 'window' ? 'project-environments-window' : 'project-environment-surface-backdrop'} role="presentation" onMouseDown={(event) => { if (presentation === 'dialog' && event.target === event.currentTarget) onClose(); }}>
+			<section className={presentation === 'window' ? 'project-environments-window__body' : 'project-environment-surface'} role={presentation === 'window' ? undefined : 'dialog'} aria-modal={presentation === 'window' ? undefined : 'true'} aria-label={surface === 'extensions' ? 'Extensions' : formTarget ? formTarget.form.title : 'Project Environments'} aria-busy={busy}>
+				{presentation === 'dialog' ? <div className="project-environment-surface__close"><button ref={closeRef} type="button" onClick={onClose} aria-label="Close">×</button></div> : null}
+				<div className={presentation === 'window' ? undefined : 'project-environment-surface__body'}>
 					{error ? <div className="declarative-provider-form__errors" role="alert"><strong>Unable to complete the server operation</strong><p>{error}</p><button type="button" onClick={() => void refresh()}>Retry</button></div> : null}
 					{surface === 'environments'&&formTarget===null ? <ProjectEnvironmentManager environments={environments} providers={providers.map(provider=>({providerId:provider.providerId,displayName:provider.displayName,hasProfileForm:provider.profileForm!==undefined}))} serverName={authorityLabel} onCreate={(providerId)=>{const provider=providers.find(candidate=>candidate.providerId===providerId);if(provider?.profileForm)setFormTarget({providerId,form:provider.profileForm});}} onEdit={(environment)=>{const provider=providers.find(candidate=>candidate.providerId===environment.providerId);if(provider?.profileForm&&environment.profileId)setFormTarget({providerId:provider.providerId,profileId:environment.profileId,form:provider.profileForm});}} onTest={(id) => run(() => clients!.environments.testProfile(id), 'Connection test completed.')} onRemove={(id) => run(() => clients!.environments.removeProfile(id), 'Environment removed.')} onAction={(environment,action)=>{if(action.confirmation&&!window.confirm(`${action.confirmation.title}\n\n${action.confirmation.message}`))return;void run(()=>clients!.environments.invokeAction(environment.id,action.id,{},action.confirmation?{expectedRevision:action.confirmation.expectedRevision}:{}),`${action.label} completed.`);}} /> : null}
 					{surface === 'extensions' ? <ExtensionManager extensions={extensions} serverName={authorityLabel} revision={extensionRevision} onPreview={(spec) => clients!.extensions.previewInstall(spec)} onInstall={(digest) => run(() => clients!.extensions.install(digest, extensionRevision), 'Extension installed.')} onUpdate={(id,digest)=>run(()=>clients!.extensions.update(id,digest,extensionRevision),'Extension updated.')} onAction={(action,id) => run(() => clients!.extensions.action(action,id,extensionRevision), `Extension ${action} completed.`)} /> : null}
@@ -76,6 +78,10 @@ export function ProjectEnvironmentSurfaceDialog({ surface: requestedSurface, ser
 			</section>
 		</div>
 	);
+}
+
+export function ProjectEnvironmentsWindow({ serverName, applicationClient }: Readonly<{ serverName: string; applicationClient?: TerminayClient }>) {
+	return <ProjectEnvironmentSurfaceDialog surface="environments" serverName={serverName} applicationClient={applicationClient} onClose={() => undefined} presentation="window" />;
 }
 
 function toUiForm(form:import('@terminay/client-core').ProjectEnvironmentForm):DeclarativeFormDto{return {id:form.id,title:form.title,submitLabel:form.submitLabel,...(form.description===undefined?{}:{description:form.description}),sections:form.sections.map(section=>({id:section.id,title:section.title,...(section.description===undefined?{}:{description:section.description}),disclosure:section.disclosure!==undefined,fields:section.fields.map(field=>({id:field.id,label:field.label,kind:field.type,...(field.description===undefined?{}:{description:field.description}),...(field.required===undefined?{}:{required:field.required}),...(field.placeholder===undefined?{}:{placeholder:field.placeholder}),...(field.options===undefined?{}:{options:field.options}),...(field.optionSource===undefined?{}:{optionSource:field.optionSource}),...(field.searchable===undefined?{}:{searchable:field.searchable})}))}))};}
