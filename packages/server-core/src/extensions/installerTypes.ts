@@ -14,6 +14,10 @@ export interface RegistryPackageResolution {
   readonly audit?: Readonly<{ critical: number; high: number; moderate: number; low: number }>;
   readonly dependencyCount?: number;
   readonly manifestMetadata?: unknown;
+  readonly source?: "npmjs" | "uploaded";
+  readonly uploadedFilename?: string;
+  /** Private server staging path. Never serialized into receipts or DTOs. */
+  readonly archivePath?: string;
 }
 
 export interface ExtensionInstallPreview extends RegistryPackageResolution {
