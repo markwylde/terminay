@@ -40,7 +40,7 @@ export function bundledNpmCliPath(): string {
  * sterile home/cache/userconfig and never inherits registry credentials. */
 export class NpmCliRegistryClient implements ExtensionRegistryClient, ExtensionMaterializer {
   readonly npmVersion: string;
-  constructor(private readonly options: NpmCliOptions) { this.npmVersion = options.npmVersion ?? "11.9.0"; }
+  constructor(private readonly options: NpmCliOptions) { this.npmVersion = options.npmVersion ?? "12.0.2"; }
 
   async resolve(packageName: string, selector: string, signal?: AbortSignal): Promise<RegistryPackageResolution> {
     const spec = `${packageName}@${selector}`;
