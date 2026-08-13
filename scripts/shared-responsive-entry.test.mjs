@@ -50,11 +50,11 @@ test('unsupported legacy views retain the direct fallback path without a hidden 
 test('Desktop recording auxiliary renders from an application-only server client', () => {
 	assert.match(
 		mainSource,
-		/const applicationOnlyViews = new Set\(\['settings', 'macros', 'recordings'\]\)/u,
+		/const applicationOnlyViews = new Set\(\['settings', 'project-environments', 'macros', 'recordings'\]\)/u,
 	);
 	assert.match(
 		mainSource,
-		/connectRendererApplicationClient\(message\.serverId, undefined/u,
+		/connectRendererApplicationClient\(message\.serverId, message\.connectionId, undefined/u,
 	);
 	assert.match(
 		mainSource,

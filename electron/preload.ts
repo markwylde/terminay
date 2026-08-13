@@ -105,6 +105,7 @@ const DESKTOP_TERMINAL_EDIT_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_DICTATION_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_WINDOW_LIFECYCLE_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_SETTINGS_WINDOW_HOST_BRIDGE_VERSION = 1 as const;
+const DESKTOP_PROJECT_ENVIRONMENTS_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_PROJECT_TAB_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_WORKSPACE_TRANSFER_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_APP_COMMAND_HOST_BRIDGE_VERSION = 1 as const;
@@ -1980,6 +1981,18 @@ contextBridge.exposeInMainWorld(
 				version: DESKTOP_SETTINGS_WINDOW_HOST_BRIDGE_VERSION,
 			}) as Promise<void>;
 		},
+	}),
+);
+
+/** Opens the selected server's reusable Project Environments window. */
+contextBridge.exposeInMainWorld(
+	'terminayProjectEnvironmentsHost',
+	Object.freeze({
+		version: DESKTOP_PROJECT_ENVIRONMENTS_HOST_BRIDGE_VERSION,
+		open: () =>
+			ipcRenderer.invoke('desktop:project-environments-host:open', {
+				version: DESKTOP_PROJECT_ENVIRONMENTS_HOST_BRIDGE_VERSION,
+			}) as Promise<void>,
 	}),
 );
 
