@@ -112,6 +112,29 @@ test("web host upserts a fresh pairing for the exact saved origin without persis
   assert.equal(persisted.includes("pairingSecret"), false);
 });
 
+test("web host replaces a provisional pairing identity exactly once after authenticated hello", () => {
+  const host = new WebConnectionHost({ storage: memoryStorage() });
+  const provisional = host.addConnection({
+    id: "direct-pairing",
+    serverId: "localhost",
+    label: "Loopback",
+    origin: "http://localhost:4317",
+    status: "connecting",
+  });
+  const verified = host.addConnection({
+    ...provisional,
+    serverId: "authenticated-server",
+    status: "connected",
+  });
+  assert.equal(verified.id, provisional.id);
+  assert.equal(verified.serverId, "authenticated-server");
+  assert.throws(() => host.addConnection({
+    ...verified,
+    serverId: "different-server",
+    status: "connected",
+  }), /saved server identity does not match/);
+});
+
 test("loopback aliases share one saved profile and reconnect credential identity", async () => {
   const host = new WebConnectionHost();
   const first = host.addConnection({
