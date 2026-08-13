@@ -3465,6 +3465,7 @@ const ProjectWorkspace = forwardRef<
 				await workspaceStore.closePanel(panelId);
 				const reconciled = await workspaceStore.waitForSnapshot(
 					(snapshot) => snapshot.panels[panelId] === undefined,
+					{ timeoutMs: 10_000 },
 				);
 				if (reconciled === null) {
 					throw new Error('Timed out waiting for the closed panel to reconcile.');
