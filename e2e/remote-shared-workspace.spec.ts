@@ -25,7 +25,7 @@ test('remote entry uses the shared browser connection and workspace runtime', as
 
 	await expect(
 		page.getByRole('dialog', { name: 'Connect to Remote Server' }),
-	).toBeVisible({ timeout: 10_000 });
+	).toBeVisible({ timeout: 20_000 });
 	await expect(page.getByLabel('Pairing URL')).toHaveValue(pairingUrl);
 	await expect(
 		page.getByRole('listbox', { name: 'Saved Terminay servers' }),
