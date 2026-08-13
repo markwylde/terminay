@@ -77,6 +77,7 @@ import {
 	TerminalPanelClientContext,
 	type TerminalPanelClientContextValue,
 } from './components/TerminalPanel';
+import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
 import type {
 	TerminalActivityState,
 	TerminalContextReader,
@@ -129,7 +130,10 @@ import type {
 } from './types/agentStatus';
 import type { FileViewerMode } from './types/fileViewer';
 import type { MacroDefinition, MacroFieldValue } from './types/macros';
-import type { ServerWorkspacePanel } from './shared/serverWorkspaceReconciliation';
+import {
+	hasTerminalPresentation,
+	type ServerWorkspacePanel,
+} from './shared/serverWorkspaceReconciliation';
 import type {
 	SidebarPanelId,
 	SidebarSettings,
@@ -1207,18 +1211,11 @@ const ProjectWorkspace = forwardRef<
 				() =>
 					terminalClientContext === undefined
 						? null
-						: { ...terminalClientContext, projectId: project.id, projectRoot: project.rootFolder },
+						: composeProjectTerminalClientContext(terminalClientContext, project.id, project.rootFolder),
 				[
 					project.id,
 					project.rootFolder,
-					terminalClientContext?.client,
-					terminalClientContext?.serverId,
-					terminalClientContext?.clientId,
-					terminalClientContext?.workspaceSnapshotStore,
-					terminalClientContext?.fileObservationClient,
-					terminalClientContext?.fileViewerClient,
-					terminalClientContext?.gitClient,
-					terminalClientContext?.recordingsClient,
+					terminalClientContext,
 				],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;
@@ -2170,7 +2167,7 @@ const ProjectWorkspace = forwardRef<
 						hydrateRecordingStateForSession(sessionId);
 					}
 					const synchronized = await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
-						(snapshot) => sessionId in snapshot.terminalSessions,
+						(snapshot) => hasTerminalPresentation(snapshot, sessionId),
 					);
 					if (synchronized === null) {
 						throw new Error('Server did not publish a terminal panel for the created session.');
@@ -3012,7 +3009,7 @@ const ProjectWorkspace = forwardRef<
 					? undefined
 					: async (sessionId) =>
 							(await terminalPanelClientContext.workspaceSnapshotStore?.waitForSnapshot(
-								(snapshot) => sessionId in snapshot.terminalSessions,
+								(snapshot) => hasTerminalPresentation(snapshot, sessionId),
 							)) !== null,
 		});
 
@@ -3449,9 +3446,12 @@ const ProjectWorkspace = forwardRef<
 		}, [filteredMacros]);
 
 		const requestClosePanel = useCallback(async (panelId: string) => {
+			window.terminayTest?.reportAppCommandStage(`close:${panelId}:started`);
 			const api = dockviewApiRef.current;
 			const panel = api?.getPanel(panelId);
 			if (!api || !panel) return;
+			const workspaceStore = terminalClientContext?.workspaceSnapshotStore;
+			const canonicalPanel = workspaceStore?.snapshot?.panels[panelId];
 			const sessionId = panelSessionMapRef.current.get(panelId);
 			if (sessionId !== undefined) {
 				const running = getRunningTerminalSessionIds(
@@ -3465,8 +3465,27 @@ const ProjectWorkspace = forwardRef<
 				onCloseProject(project.id, { skipConfirmation: true });
 				return;
 			}
+			if (workspaceStore !== undefined && canonicalPanel?.projectId === project.id) {
+				window.terminayTest?.reportAppCommandStage(`close:${panelId}:command-started`);
+				await workspaceStore.closePanel(panelId);
+				window.terminayTest?.reportAppCommandStage(`close:${panelId}:command-completed`);
+				const reconciled = await workspaceStore.waitForSnapshot(
+					(snapshot) => snapshot.panels[panelId] === undefined,
+					{ timeoutMs: 10_000 },
+				);
+				window.terminayTest?.reportAppCommandStage(`close:${panelId}:snapshot-completed`);
+				if (reconciled === null) {
+					const reconciliationError = workspaceStore.status.error;
+					throw new Error(
+						reconciliationError === undefined
+							? 'Timed out waiting for the closed panel to reconcile.'
+							: `Unable to reconcile the closed panel. ${reconciliationError.message}`,
+					);
+				}
+				return;
+			}
 			panel.api.close();
-		}, [onCloseProject, project.id, serverActivityClient]);
+		}, [onCloseProject, project.id, serverActivityClient, terminalClientContext?.workspaceSnapshotStore]);
 
 		useEffect(() => {
 			const listener = (event: Event) => {

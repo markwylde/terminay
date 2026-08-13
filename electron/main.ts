@@ -6250,16 +6250,26 @@ if (process.env.TERMINAY_TEST === '1') {
 		},
 	);
 
+	const appCommandStagesBySender = new Map<number, string>();
+	ipcMain.on('test:app-command-stage', (event, stage: unknown) => {
+		assertTrustedAppSender(event);
+		if (typeof stage === 'string' && stage.length <= 200) {
+			appCommandStagesBySender.set(event.sender.id, stage);
+		}
+	});
+
 	ipcMain.handle(
 		'test:send-app-command',
 		async (event, command: AppCommand) => {
 			assertTrustedAppSender(event);
 			const requestId = randomUUID();
 			const requestSenderId = event.sender.id;
+			appCommandStagesBySender.set(requestSenderId, `dispatched:${command}`);
 			await new Promise<void>((resolve, reject) => {
 				const timeout = setTimeout(() => {
+					const stage = appCommandStagesBySender.get(requestSenderId) ?? 'unknown';
 					cleanup();
-					reject(new Error('renderer app command completion timed out'));
+					reject(new Error(`renderer app command completion timed out (last stage: ${stage})`));
 				// App commands acknowledge their real asynchronous completion. Large
 				// sparse saves and other bounded host operations can legitimately exceed
 				// Playwright's per-action timeout on a loaded CI runner, so this test-only
@@ -6287,6 +6297,7 @@ if (process.env.TERMINAY_TEST === '1') {
 				const cleanup = () => {
 					clearTimeout(timeout);
 					ipcMain.removeListener('test:app-command-complete', onComplete);
+					appCommandStagesBySender.delete(requestSenderId);
 				};
 				ipcMain.on('test:app-command-complete', onComplete);
 				event.sender.send('app:command', command, requestId);

@@ -3,11 +3,13 @@ import { expect, test } from './fixtures'
 import { sendAppCommand } from './support/app'
 
 async function getActiveSessionId(page: Page): Promise<string> {
-  const sessionId = await page
-    .locator(
-      '.project-workspace--active .terminal-panel:has(.xterm-helper-textarea:focus)',
-    )
-    .getAttribute('data-terminay-terminal-session-id')
+  const activePresentation = page.locator(
+    '.project-workspace--active .terminal-panel:visible',
+  )
+  await expect(activePresentation).toHaveCount(1)
+  const sessionId = await activePresentation.getAttribute(
+    'data-terminay-terminal-session-id',
+  )
 
   if (!sessionId) {
     throw new Error('Active terminal session id is unavailable')

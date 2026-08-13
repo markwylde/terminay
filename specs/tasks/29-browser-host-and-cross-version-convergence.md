@@ -19,6 +19,8 @@ compatibility window.
 - [Task 27: Server bundle and host contracts](./27-server-bundle-host-contracts.md)
 - [Task 28: Desktop server-bundle host and state extraction](./28-desktop-server-bundle-host-and-state.md)
 - [Task 23: Embedded Desktop WebRTC exposure](./23-embedded-desktop-remote-exposure.md)
+- [Task 41: Single-owner WebRTC transport generations](./41-single-owner-webrtc-transport-generations.md)
+- [Task 43: WebRTC transport recovery acceptance](./43-webrtc-transport-recovery-acceptance.md)
 
 ## Current gap
 
@@ -40,8 +42,8 @@ same bundle id or cover compatible older/current/newer host and server fixtures.
 - [ ] Install and execute each server bundle only in its exact isolated session
   origin. Never execute unrelated server code or credentials in the manager
   origin.
-- [ ] Pass only the Task 27 browser host context and opaque byte endpoint across
-  a closed exact-source/exact-origin bridge.
+- [ ] Pass only the Task 27 browser host context and Task 41 opaque byte
+  endpoint across a closed exact-source/exact-origin bridge.
 - [ ] Keep `app.terminay.com` canonical, preserve its same-origin sanitized
   profile metadata, and use `web.terminay.com` only as a retired redirect.
 
@@ -67,8 +69,9 @@ same bundle id or cover compatible older/current/newer host and server fixtures.
   against older/current/newer server application versions without requiring the
   hosts to recognize application operation names.
 - [ ] Exercise optional native capability absence, required bridge/runtime
-  incompatibility, bundle update/rollback, reconnect, and server restart across
-  browser and Desktop hosts.
+  incompatibility, bundle update/rollback, and server restart across browser
+  and Desktop hosts. Consume Task 43 as the WebRTC reconnect/recovery evidence
+  rather than maintaining a second partial scenario here.
 - [ ] Run hostile bundle, sibling-origin, profile partition, cache integrity,
   navigation, popup/download/permission, direct-ICE, and TURN-required E2E
   suites in supported release artifacts.

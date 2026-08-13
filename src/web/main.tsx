@@ -1,4 +1,5 @@
 import type { ConnectionProfile } from '@terminay/client-core';
+import type { ByteTransport } from '@terminay/protocol';
 import {
 	ConnectionProfileStore,
 	ServerHealthClient,
@@ -18,11 +19,11 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
-import { RendererConnectionGeneration } from '../shared/rendererConnectionGeneration';
 import {
-	RendererConnectionRecovery,
-	type RendererConnectionRecoveryState,
-} from '../shared/rendererConnectionRecovery';
+	RendererConnectionController,
+	type RendererConnectionAttempt,
+	type RendererConnectionState,
+} from '../shared/rendererConnectionController';
 import { createConnectedServerClientContext } from '../shared/rendererServerClient';
 import {
 	SharedConnectionsRouteBody,
@@ -37,14 +38,18 @@ import {
 } from '../remote/services/deviceKeys';
 import { establishDevicePairing } from '../remote/services/devicePairingFlow';
 import { parsePairingBootstrap } from '../remote/services/pairing';
-import { createBrowserWebRtcTransport } from './browserWebRtcTransport';
+import { acquireHostedApplicationTransport, getSessionTransportHost } from './sessionTransportHost';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
 import { enrollBrowserDevice } from './deviceEnrollment';
+import { PairingIntentController, type PairingIntent } from './pairingIntent';
 import {
-	type BrowserConnectionAttempt,
-	BrowserConnectionAttemptGate,
-	runBoundedBrowserRecoveryStep,
-} from './reconnectAttempt';
+	isAutoRestorableProfile,
+	isBrowserReconnectOrigin,
+	reconnectNeedsFreshPairing,
+} from './reconnectPolicy';
+import { runBoundedBrowserRecoveryStep } from './reconnectAttempt';
+import { createWebClientId } from './webClientIdentity';
+import { classifyWebConnectionFailure } from './webConnectionFailure';
 import './index.css';
 
 function openWindow(url: string, target: '_self' | '_blank'): void {
@@ -121,12 +126,34 @@ type WebRecoveryContext = {
 	client: TerminayClient;
 	clientId: string;
 	hello: Awaited<ReturnType<TerminayClient['connect']>>;
-	rendererAttempt: ReturnType<
-		RendererConnectionGeneration<ActiveTerminalConnection>['begin']
-	>;
 	context?: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	candidate?: ActiveTerminalConnection;
+	dispose: () => Promise<void>;
+	terminalHydrated: Promise<void>;
 };
+
+function managedWebCandidate(
+	profile: ConnectionProfile,
+	client: TerminayClient,
+	clientId: string,
+	hello: Awaited<ReturnType<TerminayClient['connect']>>,
+	candidate: ActiveTerminalConnection,
+	terminalHydrated: Promise<void> = Promise.resolve(),
+): WebRecoveryContext {
+	return {
+		profile,
+		client,
+		clientId,
+		hello,
+		candidate,
+		terminalHydrated,
+		context: candidate.context,
+		dispose: async () => {
+			await candidate.dispose();
+			await client.close().catch(() => undefined);
+		},
+	};
+}
 
 type ReconnectEnrollment = Readonly<{
 	handle: string;
@@ -146,21 +173,7 @@ type ReconnectCompletion = Readonly<{
 	expiresAt: number;
 }>;
 
-const AUTO_RESTORE_PROFILE_STATUSES: ReadonlySet<ConnectionProfile['status']> =
-	new Set([
-		'connected',
-		'connecting',
-		'unreachable',
-	] satisfies ConnectionProfile['status'][]);
 const UNREACHABLE_AUTO_RESTORE_DELAY_MS = 1_250;
-
-function isAutoRestorableProfile(profile: ConnectionProfile): boolean {
-	return (
-		profile.archived !== true &&
-		profile.isLocal !== true &&
-		AUTO_RESTORE_PROFILE_STATUSES.has(profile.status)
-	);
-}
 
 function parseServerUrl(rawValue: string): ParsedServerUrl {
 	let parsed: URL;
@@ -254,18 +267,6 @@ function launchPairingOnSessionOrigin(rawUrl: string, origin: string): boolean {
 	return true;
 }
 
-function isBrowserReconnectOrigin(origin: string): boolean {
-	const parsed = new URL(origin);
-	if (parsed.protocol === 'https:') return true;
-	return (
-		parsed.protocol === 'http:' &&
-		(parsed.hostname === 'localhost' ||
-			parsed.hostname.endsWith('.localhost') ||
-			parsed.hostname === '127.0.0.1' ||
-			parsed.hostname === '[::1]')
-	);
-}
-
 function reconnectNonce(): string {
 	const bytes = new Uint8Array(24);
 	crypto.getRandomValues(bytes);
@@ -275,19 +276,6 @@ function reconnectNonce(): string {
 		.replace(/\+/g, '-')
 		.replace(/\//g, '_')
 		.replace(/=+$/g, '');
-}
-
-function reconnectNeedsFreshPairing(cause: unknown): boolean {
-	if (!(cause instanceof Error)) return false;
-	return (
-		cause.message === 'reconnect proof request is invalid' ||
-		cause.message === 'reconnect credential is unavailable for this server' ||
-		cause.message === 'reconnect credential changed while signing' ||
-		cause.message.includes('Saved reconnect credentials were rejected') ||
-		/Server reconnect request failed \((?:400|401|403|404)\)/u.test(
-			cause.message,
-		)
-	);
 }
 
 async function reconnectRequest<T>(
@@ -326,10 +314,10 @@ export default function WebManagerApp() {
 	const [host, setHost] = useState(createHost);
 	const connectModalRef = useRef<HTMLElement | null>(null);
 	const initialPairingUrlRef = useRef<string | null>(null);
+	const pairingIntents = useRef(new PairingIntentController());
 	// A browser reconnect has several asynchronous protocol steps. Keep the
 	// most recent user intent so forgetting a profile (or choosing another one)
 	// cannot let an older attempt revive a discarded server afterwards.
-	const connectionAttemptGate = useRef(new BrowserConnectionAttemptGate());
 	const [, rerender] = useState(0);
 	const [serverUrl, setServerUrl] = useState(() => {
 		if (window.location.hash.length <= 1) return '';
@@ -348,7 +336,7 @@ export default function WebManagerApp() {
 	const [status, setStatus] = useState<string | null>(null);
 	const [isConnecting, setIsConnecting] = useState(false);
 	const [pairingRequest, setPairingRequest] = useState<{
-		attempt: BrowserConnectionAttempt;
+		intent: PairingIntent;
 		deviceName: string;
 		mode: 'direct' | 'webrtc';
 		origin: string;
@@ -357,9 +345,6 @@ export default function WebManagerApp() {
 	const [pairingPin, setPairingPin] = useState('');
 	const [activeConnection, setActiveConnection] =
 		useState<ActiveTerminalConnection | null>(null);
-	const connectionGeneration = useRef(
-		new RendererConnectionGeneration<ActiveTerminalConnection>(),
-	);
 	const recoveryWatermarks = useRef(
 		new Map<string, Readonly<{ revision: number; cursor: string }>>(),
 	);
@@ -371,78 +356,32 @@ export default function WebManagerApp() {
 	hostRef.current = host;
 	const reconnectVaultRef = useRef(reconnectVault);
 	reconnectVaultRef.current = reconnectVault;
-	const connectionRecovery = useRef<
-		RendererConnectionRecovery<WebRecoveryContext> | undefined
+	const connectionController = useRef<
+		RendererConnectionController<WebRecoveryContext> | undefined
 	>(undefined);
-	if (connectionRecovery.current === undefined) {
-		connectionRecovery.current = new RendererConnectionRecovery({
+	if (connectionController.current === undefined) {
+		connectionController.current = new RendererConnectionController({
+			classifyFailure: classifyWebConnectionFailure,
 			initialRetryMs: 750,
 			maxRetryMs: 10_000,
-			connect: connectSavedBrowserProfile,
 			dispose: async (recovery) => {
-				await recovery.context?.dispose?.().catch(() => undefined);
-				await recovery.client.close().catch(() => undefined);
+				await recovery.dispose();
 			},
-			resubscribe: async (recovery, attempt) => {
-				recovery.context = await createConnectedServerClientContext(
-					recovery.client,
-					recovery.hello,
-					{
-						signal: attempt.signal,
-						onTransportClosed: () =>
-							recoverConnection(
-								recovery.profile.id,
-								recovery.rendererAttempt,
-								recovery.client,
-							),
-					},
-				);
-			},
-			hydrate: async (recovery) => {
-				if (recovery.context === undefined)
-					throw new Error('Recovered browser context is unavailable.');
-				const labelledContext = Object.freeze({
-					...recovery.context,
-					connectionLabel: recovery.profile.label,
-					requestConnectionRecovery: () =>
-						recoverConnection(recovery.profile.id, recovery.rendererAttempt, recovery.client),
-				});
-				const candidate = Object.freeze({
-					profileId: recovery.profile.id,
-					label: recovery.profile.label,
-					origin: recovery.profile.origin,
-					client: recovery.client,
-					serverId: recovery.hello.serverId,
-					clientId: recovery.clientId,
-					context: labelledContext,
-					dispose: () => labelledContext.dispose?.(),
-				});
-				recovery.candidate = candidate;
-			},
-			onRecovered: async (recovery) => {
+			onActivated: async (recovery) => {
 				if (recovery.candidate === undefined)
 					throw new Error('Recovered browser connection was not hydrated.');
-				if (
-					!(await connectionGeneration.current.activate(
-						recovery.rendererAttempt,
-						recovery.candidate,
-					))
-				)
-					throw new Error('Browser connection attempt was superseded.');
-				try {
-					setActiveConnection(recovery.candidate);
-					hostRef.current.markStatus(recovery.profile.id, 'connected');
-					recordReconnectDiagnostic(
-						'succeeded',
-						connectionRecovery.current?.state.attempt ?? 0,
-					);
-					setError(null);
-					setStatus(null);
-					refresh();
-				} catch (error) {
-					await connectionGeneration.current.disposeActive(recovery.profile.id);
-					throw error;
-				}
+				setActiveConnection(recovery.candidate);
+				hostRef.current.markStatus(recovery.profile.id, 'connected');
+				recordReconnectDiagnostic(
+					'succeeded',
+					connectionController.current?.state.attempt ?? 0,
+				);
+				setError(null);
+				setStatus(null);
+				refresh();
+			},
+			onCandidate: (recovery) => {
+				if (recovery.candidate !== undefined) setActiveConnection(recovery.candidate);
 			},
 			onStateChange: (recoveryState) =>
 				publishBrowserRecoveryState(recoveryState),
@@ -474,7 +413,7 @@ export default function WebManagerApp() {
 		const url = new URL(window.location.href);
 		if (
 			initialPairingUrlRef.current !== null ||
-			window.__TERMINAY_BROWSER_ENROLLMENT__ === undefined ||
+			getSessionTransportHost() === undefined ||
 			new URLSearchParams(url.hash.slice(1)).has('pairingToken')
 		)
 			return;
@@ -492,7 +431,7 @@ export default function WebManagerApp() {
 	}, []);
 
 	useEffect(() => {
-		if (window.__TERMINAY_BROWSER_ENROLLMENT__ !== undefined) return;
+		if (getSessionTransportHost() !== undefined) return;
 		if (activeConnection !== null || isConnecting) return;
 		if (new URLSearchParams(window.location.hash.slice(1)).has('pairingToken'))
 			return;
@@ -589,25 +528,36 @@ export default function WebManagerApp() {
 		rerender((value) => value + 1);
 	}
 
-	function beginConnectionAttempt(profileId: string): BrowserConnectionAttempt {
-		connectionRecovery.current?.cancel();
-		return connectionAttemptGate.current.begin(profileId);
+	function beginPairingIntent(): PairingIntent {
+		return pairingIntents.current.begin();
+	}
+
+	function isCurrentPairingIntent(intent: PairingIntent): boolean {
+		return pairingIntents.current.isCurrent(intent);
+	}
+
+	function cancelPairingIntent(): void {
+		pairingIntents.current.cancel();
+	}
+
+	function beginConnectionAttempt(profileId: string): RendererConnectionAttempt {
+		return connectionController.current!.begin(profileId);
 	}
 
 	function isCurrentConnectionAttempt(
 		profile: ConnectionProfile,
-		attempt: BrowserConnectionAttempt,
+		attempt: RendererConnectionAttempt,
 	): boolean {
 		const stored = host.profiles.get(profile.id);
 		return (
-			connectionAttemptGate.current.isCurrent(attempt) &&
+			connectionController.current?.isCurrent(attempt) === true &&
 			stored?.origin === profile.origin &&
 			stored.archived !== true
 		);
 	}
 
 	function invalidateConnectionAttempt(profileId: string): void {
-		connectionAttemptGate.current.invalidate(profileId);
+		void connectionController.current?.stop(profileId);
 	}
 
 	async function connectServer(
@@ -623,7 +573,15 @@ export default function WebManagerApp() {
 		let explicitDirectDeviceUrl: URL | null = null;
 		try {
 			const pairingUrl = new URL(rawServerUrl);
-			if (pairingUrl.searchParams.get('transport') === 'webrtc')
+			const sessionHost = getSessionTransportHost();
+			const isHostedSessionPairing =
+				sessionHost !== undefined &&
+				pairingUrl.origin === sessionHost.origin &&
+				new URLSearchParams(pairingUrl.hash.slice(1)).has('pairingToken');
+			if (
+				pairingUrl.searchParams.get('transport') === 'webrtc' ||
+				isHostedSessionPairing
+			)
 				explicitWebRtcUrl = pairingUrl;
 			if (
 				new URLSearchParams(pairingUrl.hash.slice(1)).get('pairingFlow') ===
@@ -641,9 +599,9 @@ export default function WebManagerApp() {
 				const pairingUrl = explicitWebRtcUrl ?? explicitDirectDeviceUrl!;
 				if (launchPairingOnSessionOrigin(rawServerUrl, pairingUrl.origin))
 					return;
-				const attempt = beginConnectionAttempt(`pairing:${pairingUrl.origin}`);
+				const intent = beginPairingIntent();
 				setPairingRequest({
-					attempt,
+					intent,
 					deviceName: 'Terminay Remote Browser',
 					mode: explicitWebRtcUrl === null ? 'direct' : 'webrtc',
 					origin:
@@ -677,10 +635,10 @@ export default function WebManagerApp() {
 					serverId: string;
 			  }>
 			| undefined;
-		let attempt: BrowserConnectionAttempt | undefined;
+		let attempt: RendererConnectionAttempt | undefined;
 		let rendererAttempt:
 			| ReturnType<
-					RendererConnectionGeneration<ActiveTerminalConnection>['begin']
+					RendererConnectionController<WebRecoveryContext>['begin']
 			  >
 			| undefined;
 		try {
@@ -708,7 +666,7 @@ export default function WebManagerApp() {
 				origin: parsed.displayOrigin,
 			};
 			attempt = beginConnectionAttempt(pendingProfile.id);
-			rendererAttempt = connectionGeneration.current.begin(pendingProfile.id);
+			rendererAttempt = connectionController.current!.begin(pendingProfile.id);
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : 'Unable to add that server.',
@@ -718,7 +676,7 @@ export default function WebManagerApp() {
 			return;
 		}
 
-		const clientId = `web-${Date.now().toString(36)}`;
+		const clientId = createWebClientId();
 		const client = new TerminayClient({
 			transport: new WebSocketByteTransport({
 				origin: parsed.transportOrigin,
@@ -760,7 +718,7 @@ export default function WebManagerApp() {
 					signingOrigin: enrollment.signingOrigin,
 				},
 				persistProfile: () => {
-					if (!connectionAttemptGate.current.isCurrent(attempt))
+					if (!connectionController.current?.isCurrent(attempt) === true)
 						throw new Error('This pairing attempt is no longer active.');
 					return host.addConnection({
 						...pendingProfile,
@@ -772,10 +730,10 @@ export default function WebManagerApp() {
 			profile = connectedProfile;
 			host.markStatus(connectedProfile.id, 'connected');
 			const context = await createConnectedServerClientContext(client, hello, {
-				onTransportClosed: () => {
-					if (rendererAttempt !== undefined)
-						recoverConnection(connectedProfile.id, rendererAttempt, client);
-				},
+					onTransportClosed: () => {
+						if (rendererAttempt !== undefined)
+							handleTransportClosed(connectedProfile.id, rendererAttempt, client);
+					},
 			});
 			if (!isCurrentConnectionAttempt(connectedProfile, attempt)) {
 				await context.dispose?.();
@@ -784,10 +742,8 @@ export default function WebManagerApp() {
 			const labelledContext = Object.freeze({
 				...context,
 				connectionLabel: connectedProfile.label,
-				requestConnectionRecovery: () => {
-					if (rendererAttempt !== undefined)
-						recoverConnection(connectedProfile.id, rendererAttempt, client)
-				},
+				retryConnection: connectionController.current?.retry,
+				canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 			});
 			const candidate = {
 				profileId: connectedProfile.id,
@@ -801,13 +757,14 @@ export default function WebManagerApp() {
 			};
 			if (rendererAttempt === undefined) return;
 			if (
-				!(await connectionGeneration.current.activate(
+				!(await connectionController.current!.activate(
 					rendererAttempt,
-					candidate,
+					managedWebCandidate(connectedProfile, client, clientId, hello, candidate),
 				))
 			)
 				return;
 			setActiveConnection(candidate);
+			connectionController.current!.setRecoveryPipeline(connectedProfile.id, browserRecoveryPipeline());
 			keepClient = true;
 			setStatus(
 				`${hello.serverId} connected${ready ? ' and ready' : ''}. This browser can reconnect without the pairing link.`,
@@ -817,7 +774,7 @@ export default function WebManagerApp() {
 		} catch (cause) {
 			if (
 				attempt === undefined ||
-				!connectionAttemptGate.current.isCurrent(attempt)
+				!connectionController.current?.isCurrent(attempt) === true
 			)
 				return;
 			invalidateConnectionAttempt(attempt.profileId);
@@ -910,7 +867,7 @@ export default function WebManagerApp() {
 					origin,
 					pairingPin,
 					});
-					if (!connectionAttemptGate.current.isCurrent(pairingRequest.attempt))
+					if (!isCurrentPairingIntent(pairingRequest.intent))
 						throw new Error('This pairing attempt is no longer active.');
 					profile = host.profiles
 						.snapshot()
@@ -937,12 +894,13 @@ export default function WebManagerApp() {
 			}
 			await enrollBrowserDevice({
 				deviceName: pairingRequest.deviceName,
-				isCurrent: () =>
-					connectionAttemptGate.current.isCurrent(pairingRequest.attempt),
+				isCurrent: () => isCurrentPairingIntent(pairingRequest.intent),
 				origin: pairingRequest.origin,
 				pairingPin,
 				pairingUrl: pairingRequest.pairingUrl,
 			});
+			if (!isCurrentPairingIntent(pairingRequest.intent))
+				throw new Error('This pairing attempt is no longer active.');
 			setPairingPin('');
 			await connectPairedWebRtcBrowser(pairingRequest.origin, pairingPin);
 			setPairingRequest(null);
@@ -960,16 +918,18 @@ export default function WebManagerApp() {
 		origin: string,
 		pairingPin?: string,
 	): Promise<void> {
-		const rendererAttempt = connectionGeneration.current.begin(origin);
-		const bridge = window.__TERMINAY_BROWSER_ENROLLMENT__;
-		if (bridge === undefined)
+		const sessionHost = getSessionTransportHost();
+		if (sessionHost === undefined)
 			throw new Error('Browser device enrollment is unavailable.');
-		const transport = await bridge.connect({
+		const transport = await sessionHost.connect({
 			origin,
 			pairingPin,
 			onStateChange: () => {},
 		});
-		const clientId = `web-webrtc-${Date.now().toString(36)}`;
+		const displayOrigin = origin.split('#', 1)[0] ?? origin;
+		const parsed = new URL(displayOrigin);
+		const stableProfileId = createProfileId(parsed.hostname);
+		const clientId = createWebClientId('web-webrtc');
 		const client = new TerminayClient({
 			transport,
 			clientId,
@@ -984,30 +944,29 @@ export default function WebManagerApp() {
 		});
 		try {
 			const hello = await client.connect();
-			const displayOrigin = origin.split('#', 1)[0] ?? origin;
-			const parsed = new URL(displayOrigin);
 			const existing = host.profiles
 				.snapshot()
 				.profiles.find((profile) => profile.origin === parsed.origin);
 			const profile =
 				existing ??
-				host.addConnection({
-					id: createProfileId(parsed.hostname),
+					host.addConnection({
+					id: stableProfileId,
 					serverId: hello.serverId,
 					label: parsed.host,
 					origin: parsed.origin,
 					status: 'connected',
 				});
+			const rendererAttempt = connectionController.current!.begin(profile.id);
 			const context = await createConnectedServerClientContext(client, hello, {
 				onTransportClosed: () =>
-					recoverConnection(profile.id, rendererAttempt, client),
+					handleTransportClosed(profile.id, rendererAttempt, client),
 			});
 			host.markStatus(profile.id, 'connected');
 			const labelledContext = Object.freeze({
 				...context,
 				connectionLabel: profile.label,
-				requestConnectionRecovery: () =>
-					recoverConnection(profile.id, rendererAttempt, client),
+				retryConnection: connectionController.current?.retry,
+				canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 			});
 			const candidate = {
 				profileId: profile.id,
@@ -1020,13 +979,14 @@ export default function WebManagerApp() {
 				dispose: () => labelledContext.dispose?.(),
 			};
 			if (
-				!(await connectionGeneration.current.activate(
+				!(await connectionController.current!.activate(
 					rendererAttempt,
-					candidate,
+					managedWebCandidate(profile, client, clientId, hello, candidate),
 				))
 			)
 				return;
 			setActiveConnection(candidate);
+			connectionController.current!.setRecoveryPipeline(profile.id, browserRecoveryPipeline());
 			refresh();
 		} catch (error) {
 			await client.close().catch(() => undefined);
@@ -1035,11 +995,23 @@ export default function WebManagerApp() {
 	}
 
 	async function connectSavedBrowserProfile(
-		recoveryAttempt: Readonly<{ key: string; signal: AbortSignal }>,
+		recoveryAttempt: Readonly<{ profileId: string; signal: AbortSignal }>,
 	): Promise<WebRecoveryContext> {
-		const profile = hostRef.current.profiles.get(recoveryAttempt.key);
+		const profile = hostRef.current.profiles.get(recoveryAttempt.profileId);
 		if (profile === undefined || profile.archived === true)
 			throw new Error('That server is no longer saved in this browser.');
+		const sessionHost = getSessionTransportHost();
+		let transport: ByteTransport;
+		if (sessionHost !== undefined) {
+			transport = await runBoundedBrowserRecoveryStep({
+				label: 'Reconnect session transport',
+				signal: recoveryAttempt.signal,
+				operation: () => sessionHost.connect({
+					onStateChange: () => {},
+					origin: profile.origin,
+				}),
+			});
+		} else {
 		const credential = await runBoundedBrowserRecoveryStep({
 			label: 'Reconnect credential lookup',
 			signal: recoveryAttempt.signal,
@@ -1096,21 +1068,19 @@ export default function WebManagerApp() {
 		});
 		throwIfRecoveryAborted(recoveryAttempt.signal);
 
-		const bridge = window.__TERMINAY_REMOTE_WEBRTC__;
-		const transport = await runBoundedBrowserRecoveryStep({
+		transport = await runBoundedBrowserRecoveryStep({
 			label: 'Reconnect transport',
 			signal: recoveryAttempt.signal,
-			operation: async () =>
-				bridge?.getChannel === undefined
-					? new WebSocketByteTransport({
+			operation: async () => {
+				const hosted = await acquireHostedApplicationTransport(completion.ticket);
+				return hosted ?? new WebSocketByteTransport({
 							origin: endpoint,
 							authToken: completion.ticket,
-						})
-					: createBrowserWebRtcTransport((name) =>
-							bridge.getChannel!(name, completion.ticket),
-						),
+						});
+			},
 		});
-		const clientId = `web-${Date.now().toString(36)}`;
+		}
+		const clientId = createWebClientId();
 		const initialWatermark = recoveryWatermarks.current.get(profile.id);
 		const client = new TerminayClient({
 			transport,
@@ -1139,39 +1109,106 @@ export default function WebManagerApp() {
 				currentProfile.archived === true
 			)
 				throw new Error('That server is no longer saved in this browser.');
-			return {
-				profile,
+			if (
+				profile.status !== 'connecting' &&
+				hello.serverId !== profile.serverId
+			) {
+				throw new Error('Recovered server identity does not match the saved profile.');
+			}
+			const verifiedProfile =
+				profile.status === 'connecting'
+					? hostRef.current.addConnection({
+							...profile,
+							serverId: hello.serverId,
+							status: 'connected',
+						})
+					: profile;
+			const context = await createConnectedServerClientContext(client, hello, {
+				signal: recoveryAttempt.signal,
+				onTransportClosed: () => connectionController.current?.recover(profile.id),
+			});
+			let reportTerminalHydrated!: () => void;
+			let reportTerminalHydrationFailed!: (error: unknown) => void;
+			const terminalHydrated = new Promise<void>((resolve, reject) => {
+				reportTerminalHydrated = resolve;
+				reportTerminalHydrationFailed = reject;
+			});
+			const labelledContext = Object.freeze({
+				...context,
+				connectionLabel: profile.label,
+				retryConnection: connectionController.current?.retry,
+				canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
+				reportConnectionHydrated: reportTerminalHydrated,
+				reportConnectionHydrationFailed: reportTerminalHydrationFailed,
+			});
+			const candidate = Object.freeze({
+				profileId: profile.id,
+				label: profile.label,
+				origin: profile.origin,
 				client,
+				serverId: hello.serverId,
 				clientId,
-				hello,
-				rendererAttempt: connectionGeneration.current.begin(profile.id),
-			};
+				context: labelledContext,
+				dispose: () => labelledContext.dispose?.(),
+			});
+			return managedWebCandidate(verifiedProfile, client, clientId, hello, candidate, terminalHydrated);
 		} catch (cause) {
 			await client.close().catch(() => undefined);
 			throw cause;
 		}
 	}
 
+	function browserRecoveryPipeline() {
+		return {
+			acquire: connectSavedBrowserProfile,
+			resubscribe: async () => {},
+			hydrate: async () => {},
+			verify: async (recovery: WebRecoveryContext) => {
+				if (recovery.candidate === undefined)
+					throw new Error('Recovered browser connection was not hydrated.');
+				// Terminal attachment/resume traverses the replacement application
+				// client and receives a confirmed server result. It is the hydration
+				// probe. A separate query here can reject and dispose the candidate
+				// before React commits the context queued by onCandidate, leaving the
+				// mounted panel with a new callback bound to already-closed authority.
+				await recovery.terminalHydrated;
+			},
+		};
+	}
+
+	function startBrowserRecovery(profileId: string): void {
+		connectionController.current?.connect(profileId, browserRecoveryPipeline());
+	}
+
 	function publishBrowserRecoveryState(
-		recoveryState: RendererConnectionRecoveryState,
+		recoveryState: RendererConnectionState,
 	): void {
 		if (recoveryState.phase === 'connected') return;
-		if (recoveryState.key !== undefined) {
-			hostRef.current.markStatus(recoveryState.key, 'unreachable');
+		if (recoveryState.profileId !== undefined) {
+			const recoveringProfile = hostRef.current.profiles.get(recoveryState.profileId);
+			if (recoveringProfile?.status !== 'connecting') {
+				hostRef.current.markStatus(recoveryState.profileId, 'unreachable');
+			}
 		}
 		setStatus(null);
-		if (recoveryState.phase === 'failed') {
+		if (recoveryState.phase === 'retry-wait') {
 			recordReconnectDiagnostic('failed', recoveryState.attempt);
 			const cause =
 				recoveryState.error instanceof Error
 					? recoveryState.error.message
 					: 'Connection recovery failed.';
 			setError(`${cause} Retrying in ${recoveryState.nextRetryMs ?? 0}ms…`);
+		} else if (recoveryState.phase === 'blocked' || recoveryState.phase === 'stopped') {
+			const cause = recoveryState.error instanceof Error
+				? recoveryState.error.message
+				: `Connection ${recoveryState.reason ?? recoveryState.phase}.`;
+			setError(cause);
+			if (recoveryState.phase === 'stopped') setActiveConnection(null);
 		} else {
-			if (recoveryState.phase === 'reconnecting')
+			if (recoveryState.phase === 'connecting')
 				recordReconnectDiagnostic('started', recoveryState.attempt);
 			setError(
-				recoveryState.phase === 'reconnecting'
+				recoveryState.phase === 'connecting'
 					? 'Connection lost. Reconnecting…'
 					: recoveryState.phase === 'resubscribing'
 						? 'Connection restored. Resubscribing…'
@@ -1197,11 +1234,15 @@ export default function WebManagerApp() {
 			return;
 		}
 		if (recovering) {
-			connectionRecovery.current?.start(profile.id);
+			startBrowserRecovery(profile.id);
+			return;
+		}
+		if (getSessionTransportHost() !== undefined) {
+			await connectPairedWebRtcBrowser(profile.origin);
 			return;
 		}
 		const attempt = beginConnectionAttempt(profile.id);
-		const rendererAttempt = connectionGeneration.current.begin(profile.id);
+		const rendererAttempt = connectionController.current!.begin(profile.id);
 		try {
 			if (isBrowserReconnectOrigin(profile.origin)) {
 				const credential = await reconnectVault.credential(profile.origin);
@@ -1234,17 +1275,12 @@ export default function WebManagerApp() {
 						proof,
 					},
 				);
-				const clientId = `web-${Date.now().toString(36)}`;
-				const bridge = window.__TERMINAY_REMOTE_WEBRTC__;
-				const transport =
-					bridge?.getChannel === undefined
-						? new WebSocketByteTransport({
+				const clientId = createWebClientId();
+				const hosted = await acquireHostedApplicationTransport(completion.ticket);
+				const transport = hosted ?? new WebSocketByteTransport({
 								origin: endpoint,
 								authToken: completion.ticket,
-							})
-						: await createBrowserWebRtcTransport((name) =>
-								bridge.getChannel!(name, completion.ticket),
-							);
+							});
 				const initialWatermark = recoveryWatermarks.current.get(profile.id);
 				const client = new TerminayClient({
 					transport,
@@ -1268,7 +1304,7 @@ export default function WebManagerApp() {
 						hello,
 						{
 							onTransportClosed: () =>
-								recoverConnection(profile.id, rendererAttempt, client),
+								handleTransportClosed(profile.id, rendererAttempt, client),
 						},
 					);
 					if (!isCurrentConnectionAttempt(profile, attempt)) {
@@ -1278,8 +1314,8 @@ export default function WebManagerApp() {
 					const labelledContext = Object.freeze({
 						...context,
 						connectionLabel: profile.label,
-						requestConnectionRecovery: () =>
-							recoverConnection(profile.id, rendererAttempt, client),
+						retryConnection: connectionController.current?.retry,
+						canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 					});
 					const candidate = {
 						profileId: profile.id,
@@ -1292,13 +1328,14 @@ export default function WebManagerApp() {
 						dispose: () => labelledContext.dispose?.(),
 					};
 					if (
-						!(await connectionGeneration.current.activate(
+						!(await connectionController.current!.activate(
 							rendererAttempt,
-							candidate,
+							managedWebCandidate(profile, client, clientId, hello, candidate),
 						))
 					)
 						return;
 					setActiveConnection(candidate);
+					connectionController.current!.setRecoveryPipeline(profile.id, browserRecoveryPipeline());
 					host.markStatus(profile.id, 'connected');
 					recordReconnectDiagnostic('succeeded', 0);
 					setError(null);
@@ -1319,7 +1356,7 @@ export default function WebManagerApp() {
 			setStatus(null);
 			if (reconnectNeedsFreshPairing(cause)) {
 				invalidateConnectionAttempt(profile.id);
-				connectionRecovery.current?.cancel();
+				void connectionController.current?.stop(profile.id);
 				host.disconnect(profile.id);
 				await reconnectVault.forget(profile.origin).catch(() => undefined);
 				setActiveConnection((current) =>
@@ -1345,9 +1382,9 @@ export default function WebManagerApp() {
 	async function forgetConnection(profileId: string): Promise<void> {
 		const origin = host.profiles.get(profileId)?.origin;
 		invalidateConnectionAttempt(profileId);
-		connectionRecovery.current?.cancel();
+		void connectionController.current?.stop(profileId, 'forgotten');
 		if (activeConnection?.profileId === profileId) {
-			void connectionGeneration.current.disposeActive(profileId);
+			void connectionController.current?.stop(profileId);
 			setActiveConnection(null);
 		}
 		if (origin !== undefined) {
@@ -1361,17 +1398,17 @@ export default function WebManagerApp() {
 		refresh();
 	}
 
-	function recoverConnection(
+	function handleTransportClosed(
 		profileId: string,
 		attempt: ReturnType<
-			RendererConnectionGeneration<ActiveTerminalConnection>['begin']
+			RendererConnectionController<WebRecoveryContext>['begin']
 		>,
 		client: TerminayClient,
 	): void {
 		// A close callback belongs to one exact renderer generation. Once a new
 		// attempt begins or activates, a late callback from the retired context
 		// must not dispose the replacement merely because it has the same profile.
-		if (!connectionGeneration.current.isCurrent(attempt)) {
+		if (!connectionController.current!.isCurrent(attempt)) {
 			recordReconnectDiagnostic('stale-close-ignored', 0);
 			return;
 		}
@@ -1379,7 +1416,6 @@ export default function WebManagerApp() {
 			revision: client.snapshot.revision,
 			cursor: client.snapshot.cursor,
 		});
-		void connectionGeneration.current.disposeActive(profileId);
 		// Keep the last connected workspace mounted while its replacement
 		// generation reconnects. Dropping it here flashes the initial pairing
 		// modal on every transient transport loss.
@@ -1387,7 +1423,7 @@ export default function WebManagerApp() {
 		setError('Connection lost. Reconnecting…');
 		setStatus(null);
 		refresh();
-		connectionRecovery.current?.start(profileId);
+		connectionController.current?.recover(profileId);
 	}
 
 	if (activeConnection !== null && pairingRequest === null) {
@@ -1414,10 +1450,7 @@ export default function WebManagerApp() {
 					},
 				}}
 				onBack={() => {
-					connectionRecovery.current?.cancel();
-					void connectionGeneration.current.disposeActive(
-						activeConnection.profileId,
-					);
+					void connectionController.current?.stop(activeConnection.profileId);
 					setActiveConnection(null);
 				}}
 			/>
@@ -1482,9 +1515,7 @@ export default function WebManagerApp() {
 									type="button"
 									className="secondary"
 									onClick={() => {
-										invalidateConnectionAttempt(
-											`pairing:${new URL(pairingRequest.pairingUrl).origin}`,
-										);
+						cancelPairingIntent();
 										setPairingPin('');
 										setPairingRequest(null);
 										setServerUrl('');
