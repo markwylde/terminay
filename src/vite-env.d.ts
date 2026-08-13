@@ -373,13 +373,6 @@ declare global {
 			): Promise<unknown>;
 		};
 		terminayTest?: TerminayTestApi;
-		__TERMINAY_REMOTE_WEBRTC__?: {
-			managerUrl?: string;
-			getChannel?(
-				name: 'control' | 'application' | 'terminal' | 'assets',
-				ticket: string,
-			): RTCDataChannel | Promise<RTCDataChannel>;
-		};
 	}
 }
 

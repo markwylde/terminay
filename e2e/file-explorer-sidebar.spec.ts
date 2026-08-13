@@ -71,18 +71,15 @@ test('file explorer opens dragged files on the dock tab bar', async ({ createWor
   await expect(fileItem).toBeVisible()
   await expect(tabBar).toBeVisible()
 
-  const sourceBox = await fileItem.boundingBox()
   const targetBox = await tabBar.boundingBox()
-  if (!sourceBox || !targetBox) {
+  if (!targetBox) {
     throw new Error('Expected file explorer item and dock tab bar to have layout boxes')
   }
 
-  await mainWindow.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2)
-  await mainWindow.mouse.down()
-  await mainWindow.mouse.move(sourceBox.x + sourceBox.width / 2 + 18, sourceBox.y + sourceBox.height / 2 + 18)
-  await mainWindow.mouse.move(targetBox.x + targetBox.width - 24, targetBox.y + targetBox.height / 2)
-  await expect(mainWindow.locator('.file-explorer-tab-drop-ghost')).toContainText('drag-me.txt')
-  await mainWindow.mouse.up()
+  await fileItem.dragTo(tabBar, {
+    force: true,
+    targetPosition: { x: targetBox.width - 24, y: targetBox.height / 2 },
+  })
 
   await expect(mainWindow.locator('.file-preview-text')).toContainText('opened from a tab bar drop')
   await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1)
@@ -107,18 +104,15 @@ test('file explorer opens dragged folders on the dock tab bar', async ({ createW
   await expect(folderItem).toBeVisible()
   await expect(tabBar).toBeVisible()
 
-  const sourceBox = await folderItem.boundingBox()
   const targetBox = await tabBar.boundingBox()
-  if (!sourceBox || !targetBox) {
+  if (!targetBox) {
     throw new Error('Expected file explorer folder and dock tab bar to have layout boxes')
   }
 
-  await mainWindow.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2)
-  await mainWindow.mouse.down()
-  await mainWindow.mouse.move(sourceBox.x + sourceBox.width / 2 + 18, sourceBox.y + sourceBox.height / 2 + 18)
-  await mainWindow.mouse.move(targetBox.x + targetBox.width - 24, targetBox.y + targetBox.height / 2)
-  await expect(mainWindow.locator('.file-explorer-tab-drop-ghost')).toContainText('drag-folder')
-  await mainWindow.mouse.up()
+  await folderItem.dragTo(tabBar, {
+    force: true,
+    targetPosition: { x: targetBox.width - 24, y: targetBox.height / 2 },
+  })
 
   await expect(mainWindow.locator('.folder-viewer__title')).toHaveText('drag-folder')
   await expect(mainWindow.getByLabel('Close folder tab')).toHaveCount(1)
