@@ -13,7 +13,7 @@ await build({
 	bundle: true,
 	stdin: {
 		contents:
-			"export { createRtcDataChannelTransport } from './electron/remote/privilegedWebRtcExposure.ts'",
+			"export { createRtcDataChannelTransport, superviseApplicationConnection } from './electron/remote/privilegedWebRtcExposure.ts'",
 		loader: 'ts',
 		resolveDir: process.cwd(),
 	},
@@ -24,9 +24,8 @@ await build({
 	target: 'node20',
 	treeShaking: true,
 });
-const { createRtcDataChannelTransport } = await import(
-	pathToFileURL(output).href
-);
+const { createRtcDataChannelTransport, superviseApplicationConnection } =
+	await import(pathToFileURL(output).href);
 
 test.after(async () => rm(directory, { force: true, recursive: true }));
 
@@ -73,6 +72,77 @@ test('privileged WebRTC backpressure wait observes abort', async () => {
 	await assert.rejects(waiting, /scripted Werift abort/u);
 	assert.equal(transport.state, 'open');
 	await transport.close();
+});
+
+test('privileged peer closes when its application protocol reader resolves', async () => {
+	const events = [];
+	await superviseApplicationConnection({
+		connection: { start: async () => undefined },
+		isCurrent: () => true,
+		onRejected: (error) => events.push(['rejected', error]),
+		onTerminal: () => events.push(['terminal']),
+	});
+
+	assert.deepEqual(events, [['terminal']]);
+});
+
+test('privileged peer reports and closes when its application protocol reader rejects', async () => {
+	const failure = new Error('scripted protocol failure');
+	const events = [];
+	await superviseApplicationConnection({
+		connection: {
+			start: async () => {
+				throw failure;
+			},
+		},
+		isCurrent: () => true,
+		onRejected: (error) => events.push(['rejected', error]),
+		onTerminal: () => events.push(['terminal']),
+	});
+
+	assert.deepEqual(events, [['rejected', failure], ['terminal']]);
+});
+
+test('privileged peer still closes when failure reporting itself throws', async () => {
+	let closed = false;
+	await assert.rejects(
+		superviseApplicationConnection({
+			connection: { start: async () => Promise.reject(undefined) },
+			isCurrent: () => true,
+			onRejected: () => {
+				throw new Error('scripted status failure');
+			},
+			onTerminal: () => {
+				closed = true;
+			},
+		}),
+		/scripted status failure/u,
+	);
+
+	assert.equal(closed, true);
+});
+
+test('stale application protocol completion cannot close its replacement', async () => {
+	let settle;
+	let currentGeneration = 1;
+	const events = [];
+	const supervision = superviseApplicationConnection({
+		connection: {
+			start: () =>
+				new Promise((resolve) => {
+					settle = resolve;
+				}),
+		},
+		isCurrent: () => currentGeneration === 1,
+		onRejected: (error) => events.push(['rejected', error]),
+		onTerminal: () => events.push(['terminal']),
+	});
+
+	currentGeneration = 2;
+	settle();
+	await supervision;
+
+	assert.deepEqual(events, []);
 });
 
 class FakeRtcDataChannel {
