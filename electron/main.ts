@@ -895,19 +895,21 @@ const embeddedVaultAdapter = await ElectronSafeStorageVaultAdapter.open({
 	repository: new FileSafeStorageVaultRepository(
 		path.join(app.getPath('userData'), 'vault', 'safe-storage.v1.json'),
 	),
-	codec: {
-		backend: selectedSafeStorageBackend,
-		decrypt: (encrypted) => safeStorage.decryptString(encrypted),
-		encrypt: (plainText) => safeStorage.encryptString(plainText),
-		isAvailable: () => safeStorage.isEncryptionAvailable(),
-	},
+	codec: desktopTestCredentialCodec === undefined
+		? {
+				backend: selectedSafeStorageBackend,
+				decrypt: (encrypted) => safeStorage.decryptString(encrypted),
+				encrypt: (plainText) => safeStorage.encryptString(plainText),
+				isAvailable: () => safeStorage.isEncryptionAvailable(),
+			}
+		: {
+				backend: desktopTestCredentialCodec.backend ?? (() => 'terminay_test_ephemeral'),
+				decrypt: desktopTestCredentialCodec.decrypt,
+				encrypt: desktopTestCredentialCodec.encrypt,
+				isAvailable: desktopTestCredentialCodec.isAvailable,
+			},
 });
 const embeddedVault = createServerVaultComposition(embeddedVaultAdapter);
-if (embeddedVault.status().state === 'locked') {
-	// safeStorage itself owns the OS unlock interaction; the common vault API
-	// receives no reusable passphrase or key material in embedded mode.
-	await embeddedVault.unlock({ secret: new Uint8Array() });
-}
 serverTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
 	dataRoot: app.getPath('userData'),
@@ -6771,6 +6773,15 @@ app.on('activate', () => {
 app.whenReady().then(async () => {
 	app.setName('Terminay');
 	app.setAboutPanelOptions({ applicationName: 'Terminay' });
+	// Electron safeStorage can report unavailable before app readiness even when
+	// the OS-backed protector is available immediately afterwards. Keep the
+	// server vault locked during module composition, then unlock it inside the
+	// readiness gate before admitting any renderer or reporting the Local server
+	// ready. safeStorage owns the OS interaction; no reusable passphrase or key
+	// material is supplied by Terminay in embedded mode.
+	if (embeddedVault.status().state === 'locked') {
+		await embeddedVault.unlock({ secret: new Uint8Array() });
+	}
 	powerMonitor.on('resume', () => {
 		void desktopDiagnostics.cleanup();
 	});
