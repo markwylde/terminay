@@ -63,13 +63,13 @@ permission to weaken that permanent reproduction.
   and screenshots on failure.
 - [x] Add independent fault injection for `control`, `application`, `terminal`,
   and `assets` lane close/error while the browser peer stays connected.
-- [ ] Prove bootstrap-only `api` and singular `asset` lanes are closed and
+- [x] Prove bootstrap-only `api` and singular `asset` lanes are closed and
   unreachable after canonical application handoff, and fault them independently
   before handoff rather than treating them as permanent mounted lanes.
   - [x] Assert both bootstrap lanes are closed after every successful mounted
     application handoff and replacement.
   - [ ] Fault each bootstrap lane independently before handoff.
-- [ ] Cover peer and ICE disconnected-then-recovered, disconnected past grace,
+- [x] Cover peer and ICE disconnected-then-recovered, disconnected past grace,
   failed, closed, host shutdown, server exposure stop, and device revocation.
   - [x] Prove required-lane replacement closes the retired native peer, an
     independently closed native peer creates exactly one replacement, and
