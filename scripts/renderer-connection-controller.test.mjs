@@ -60,3 +60,21 @@ test('late retired generation cannot replace the current client', async () => {
   await settle(() => controller.current?.id === 'current')
   assert.deepEqual(disposed, ['retired'])
 })
+
+test('another profile cannot recover or stop the current connection authority', async () => {
+  const disposed = []
+  const controller = new RendererConnectionController()
+  controller.connect('server-a', {
+    acquire: async () => ({ dispose: () => disposed.push('server-a') }),
+    resubscribe: async () => {}, hydrate: async () => {}, verify: async () => {},
+  })
+  await settle(() => controller.state.phase === 'connected')
+  controller.recover('server-b')
+  await controller.stop('server-b')
+  assert.equal(controller.state.phase, 'connected')
+  assert.equal(controller.state.profileId, 'server-a')
+  assert.deepEqual(disposed, [])
+  await controller.stop('server-a')
+  assert.equal(controller.state.phase, 'stopped')
+  assert.deepEqual(disposed, ['server-a'])
+})
