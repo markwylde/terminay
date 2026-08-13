@@ -86,7 +86,7 @@ export class NpmCliRegistryClient implements ExtensionRegistryClient, ExtensionM
     const userconfig = join(sterile, "npmrc");
     await writeFile(userconfig, `registry=${PUBLIC_REGISTRY}\nalways-auth=false\nignore-scripts=true\nbin-links=false\n`, { mode: 0o600 });
     try {
-      const env = { NODE_ENV: "production", HOME: join(sterile, "home"), npm_config_cache: join(sterile, "cache"), npm_config_registry: PUBLIC_REGISTRY, npm_config_userconfig: userconfig } as unknown as NodeJS.ProcessEnv;
+      const env = { ELECTRON_RUN_AS_NODE: "1", NODE_ENV: "production", HOME: join(sterile, "home"), npm_config_cache: join(sterile, "cache"), npm_config_registry: PUBLIC_REGISTRY, npm_config_userconfig: userconfig } as unknown as NodeJS.ProcessEnv;
       if (this.options.runner !== undefined) return await this.options.runner(args, { cwd, signal, env });
       return await executeFile(process.execPath, [this.options.npmCliPath ?? bundledNpmCliPath(), ...args, "--registry", PUBLIC_REGISTRY, "--userconfig", userconfig], { cwd, signal, timeout: 120_000, maxBuffer: 2 * 1024 * 1024, env });
     } catch (error) {

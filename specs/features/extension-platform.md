@@ -171,6 +171,9 @@ Node, npm, compiler, shell profile, or user configuration. npm runs through a
 sterile Terminay-owned configuration fixed to the public npmjs registry and a
 private directory under the server data root. It does not inherit the user's
 `.npmrc`, tokens, workspace, lifecycle policy, or project cwd.
+When the server is embedded in Desktop, the bundled npm CLI runs through the
+Electron executable with `ELECTRON_RUN_AS_NODE=1`; installing an extension must
+never launch another Desktop application instance or window.
 
 Installation:
 

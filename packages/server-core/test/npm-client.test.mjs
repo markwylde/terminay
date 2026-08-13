@@ -22,13 +22,14 @@ test("npm materialization validates the generated lock before npm ci can materia
 });
 
 test("safe closure uses package-lock-only followed by exact scriptless npm ci", async () => {
-  const root = await mkdtemp(join(tmpdir(), "terminay-npm-two-phase-")); const calls = [];
+  const root = await mkdtemp(join(tmpdir(), "terminay-npm-two-phase-")); const calls = []; const environments = [];
   try {
     const client = new NpmCliRegistryClient({ workRoot: join(root, "work"), runner: async (args, options) => {
-      calls.push([...args]); if (args[0] === "install") await writeFile(join(options.cwd, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: { "": {}, "node_modules/safe-extension": { version: "1.0.0", integrity, resolved: resolution.tarballUrl } } })); return { stdout: "", stderr: "" };
+      calls.push([...args]); environments.push(options.env); if (args[0] === "install") await writeFile(join(options.cwd, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: { "": {}, "node_modules/safe-extension": { version: "1.0.0", integrity, resolved: resolution.tarballUrl } } })); return { stdout: "", stderr: "" };
     } });
     await client.materialize(resolution, join(root, "stage")); assert.equal(calls.length, 2); assert.equal(calls[1][0], "ci");
     for (const flag of ["--ignore-scripts", "--omit=dev", "--allow-git=none", "--workspaces=false", "--no-bin-links"]) assert.ok(calls[1].includes(flag));
+    assert.ok(environments.every((env) => env.ELECTRON_RUN_AS_NODE === "1"));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -39,4 +40,3 @@ test("registry network failures expose a typed actionable preview state", async 
     await assert.rejects(client.resolve("safe-extension", "latest"), (error) => error instanceof NpmRegistryUnavailableError && error.code === "registry_unavailable" && error.retryable === true && /retry/u.test(error.action));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
-
