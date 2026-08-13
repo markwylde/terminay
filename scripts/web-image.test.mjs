@@ -101,6 +101,7 @@ test('web image has an explicit static health and SPA fallback contract', async 
 		dockerfile,
 		/--mount=type=cache,id=terminay-npm-cache-node24,target=\/root\/\.npm,sharing=locked/u,
 	);
+	assert.match(dockerfile, /npm install --global npm@12\.0\.2/u);
 	assert.ok(
 		dockerfile.indexOf('npm ci --ignore-scripts') <
 			dockerfile.indexOf('COPY src ./src'),

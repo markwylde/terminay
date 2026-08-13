@@ -41,7 +41,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
 
       - name: Run smoke checks
         run: npm run smoke
@@ -90,7 +92,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
 
       - name: Record immutable release source and tag baseline
         id: release_source
@@ -225,7 +229,9 @@ jobs:
           test "$CHECKED_OUT_COMMIT" = "$EXPECTED_COMMIT"
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
 
       - name: Check macOS signing secrets
         if: matrix.os == 'macos-latest'
@@ -457,7 +463,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm install --global npm@12.0.2
+          npm ci
 
       - name: Sync package version to release tag
         env:

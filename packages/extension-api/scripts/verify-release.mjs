@@ -80,14 +80,14 @@ async function main() {
 
   const apiRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
   run(process.execPath, [join(apiRoot, "dist/conformance.js"), join(packageDirectory, "package.json")], packageDirectory);
-  const dryRun = JSON.parse(run("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], packageDirectory))[0];
+  const dryRun = firstPackResult(JSON.parse(run("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], packageDirectory)));
   if (!dryRun?.files?.length) fail("npm pack returned an empty inventory");
 
   const first = await mkdtemp(join(tmpdir(), "terminay-extension-pack-a-"));
   const second = await mkdtemp(join(tmpdir(), "terminay-extension-pack-b-"));
   try {
-    const firstPack = JSON.parse(run("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", first], packageDirectory))[0];
-    const secondPack = JSON.parse(run("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", second], packageDirectory))[0];
+    const firstPack = firstPackResult(JSON.parse(run("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", first], packageDirectory)));
+    const secondPack = firstPackResult(JSON.parse(run("npm", ["pack", "--json", "--ignore-scripts", "--pack-destination", second], packageDirectory)));
     const firstBytes = await readFile(join(first, firstPack.filename));
     const secondBytes = await readFile(join(second, secondPack.filename));
     if (sha256(firstBytes) !== sha256(secondBytes)) fail("two clean npm pack runs produced different bytes");
@@ -113,6 +113,12 @@ async function main() {
   } finally {
     await Promise.all([rm(first, { recursive: true, force: true }), rm(second, { recursive: true, force: true })]);
   }
+}
+
+function firstPackResult(value) {
+  const results = Array.isArray(value) ? value : Object.values(value ?? {});
+  if (results.length !== 1) fail("npm pack must return exactly one package");
+  return results[0];
 }
 
 main().catch((error) => {

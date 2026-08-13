@@ -8,7 +8,8 @@ WORKDIR /workspace
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends build-essential ca-certificates git python3 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install --global npm@12.0.2
 
 COPY --chown=node:node package.json package-lock.json ./
 COPY --chown=node:node apps/terminay-desktop/package.json apps/terminay-desktop/package.json

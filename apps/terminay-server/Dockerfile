@@ -3,6 +3,8 @@
 FROM node:24.15.0-bookworm-slim AS build
 WORKDIR /workspace
 
+RUN npm install --global npm@12.0.2
+
 COPY package.json package-lock.json ./
 COPY apps/terminay-desktop/package.json ./apps/terminay-desktop/package.json
 COPY apps/terminay-server/package.json ./apps/terminay-server/package.json
