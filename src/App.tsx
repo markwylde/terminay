@@ -2,6 +2,8 @@ import type { FileViewerClient } from '@terminay/client-core';
 import {
 	type ActivitySessionSnapshot,
 	MacroClient,
+	type ProjectEnvironmentClientProfile,
+	type ProjectEnvironmentProviderDescriptor,
 	ProjectEnvironmentsClient,
 	RecordingsClient as ServerRecordingsClient,
 	SettingsClient,
@@ -5319,25 +5321,37 @@ function App({
 	);
 	const [projectEnvironmentChoices, setProjectEnvironmentChoices] =
 		useState<readonly ProjectEnvironmentSummaryDto[]>([]);
+	const [projectEnvironmentProviders, setProjectEnvironmentProviders] =
+		useState<readonly ProjectEnvironmentProviderDescriptor[]>([]);
+	const [projectEnvironmentProfiles, setProjectEnvironmentProfiles] =
+		useState<readonly ProjectEnvironmentClientProfile[]>([]);
+	const applyProjectEnvironmentSnapshot = useCallback(
+		(snapshot: Awaited<ReturnType<ProjectEnvironmentsClient['snapshot']>>) => {
+			setProjectEnvironmentChoices(snapshot.environments);
+			setProjectEnvironmentProviders(snapshot.providers);
+			setProjectEnvironmentProfiles(snapshot.profiles);
+		},
+		[],
+	);
 	const refreshProjectEnvironmentChoices = useCallback(async () => {
 		if (projectEnvironmentsClient === null) return;
 		try {
 			const snapshot = await projectEnvironmentsClient.snapshot();
-			setProjectEnvironmentChoices(snapshot.environments);
+			applyProjectEnvironmentSnapshot(snapshot);
 		} catch {
 			// Preserve the last authenticated inventory during connection recovery.
 			// Opening the chooser retries against the current server transport.
 		}
-	}, [projectEnvironmentsClient]);
+	}, [applyProjectEnvironmentSnapshot, projectEnvironmentsClient]);
 	useEffect(() => {
 		let active = true;
 		if (projectEnvironmentsClient === null) return;
 		void projectEnvironmentsClient.snapshot().then(
-			(snapshot) => { if (active) setProjectEnvironmentChoices(snapshot.environments); },
+			(snapshot) => { if (active) applyProjectEnvironmentSnapshot(snapshot); },
 			() => undefined,
 		);
 		return () => { active = false; };
-	}, [projectEnvironmentsClient]);
+	}, [applyProjectEnvironmentSnapshot, projectEnvironmentsClient]);
 	useEffect(() => {
 		const openEnvironments = () => {
 			void auxiliaryRouteController.openProjectEnvironments();
@@ -5782,6 +5796,30 @@ function App({
 					<ProjectEnvironmentSplitButton
 						canCreate={canAddProject}
 						environments={projectEnvironmentChoices}
+						createActions={projectEnvironmentProviders.flatMap((provider) => [
+							...(provider.profileForm === undefined || provider.providerId === 'terminay:this-server'
+								? []
+								: [{
+									providerId: provider.providerId,
+									label: `New ${provider.displayName}…`,
+									description: provider.description,
+								}]),
+							...projectEnvironmentProfiles
+								.filter((profile) => profile.providerId === provider.providerId && provider.createForm !== undefined)
+								.map((profile) => ({
+									providerId: provider.providerId,
+									profileId: profile.id,
+									label: provider.displayName.toLocaleLowerCase().includes('puzed')
+										? 'Create new Puzed VM…'
+										: `New ${provider.displayName} project…`,
+									description: profile.name,
+								})),
+						])}
+						onCreateProvider={(action) => void auxiliaryRouteController.openProjectEnvironments({
+							providerId: action.providerId,
+							mode: action.profileId === undefined ? 'profile' : 'environment',
+							...(action.profileId === undefined ? {} : { profileId: action.profileId }),
+						})}
 						onCreateThisServer={() => void createThisServerProject()}
 						onChoose={chooseProjectEnvironment}
 						onOpen={() => void refreshProjectEnvironmentChoices()}

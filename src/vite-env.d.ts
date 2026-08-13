@@ -296,7 +296,22 @@ declare global {
 		/** Bounded native project-environments window capability. */
 		terminayProjectEnvironmentsHost?: {
 			readonly version: 1;
-			open(): Promise<void>;
+			open(
+				intent?: Readonly<{
+					providerId: string;
+					mode: 'profile' | 'environment';
+					profileId?: string;
+				}>,
+			): Promise<void>;
+			subscribeIntent(
+				listener: (
+					intent: Readonly<{
+						providerId: string;
+						mode: 'profile' | 'environment';
+						profileId?: string;
+					}>,
+				) => void,
+			): () => void;
 		};
 		/** Bounded native tab-bar presentation for the current Desktop window. */
 		terminayProjectTabHost?: {
