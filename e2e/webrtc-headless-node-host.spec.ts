@@ -1,5 +1,5 @@
-import { createRequire } from 'node:module'
 import { mkdtemp, rm } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -17,7 +17,7 @@ import {
   TerminalActivityService,
   WorkspaceStore,
 } from '../packages/server-core/src/index'
-import { runHost, type HostApi, type HostConfig } from '../scripts/support/webRtcHostRuntime'
+import { type HostApi, type HostConfig, runHost } from '../scripts/support/webRtcHostRuntime'
 import { startHostedServer } from './support/hosted-server'
 
 const runtimeName = process.env.TERMINAY_WEBRTC_SPIKE_RUNTIME ?? 'node-datachannel'
@@ -144,7 +144,9 @@ type HostEvidence = {
 
 type HeadlessHostWindow = {
   close(): void
-  closeApplicationChannel(): void
+  closeLane(label: RequiredLaneLabel): void
+  laneState(label: ObservedLaneLabel): RTCDataChannelState | null
+  peerState(): RTCPeerConnectionState | null
   closeTerminal(channelId: string, reason?: string): void
   evidence: HostEvidence
   sendConfig(config: HostConfig): void
@@ -152,6 +154,11 @@ type HeadlessHostWindow = {
   sendTerminalMessage(channelId: string, message: string): void
   webContentsId: number
 }
+
+const requiredLaneLabels = ['control', 'application', 'terminal', 'assets'] as const
+type RequiredLaneLabel = typeof requiredLaneLabels[number]
+const bootstrapLaneLabels = ['api', 'asset'] as const
+type ObservedLaneLabel = RequiredLaneLabel | typeof bootstrapLaneLabels[number]
 
 function createProofPtyFactory(writes: string[]) {
   const processes: Array<{
@@ -214,7 +221,7 @@ function waitFor<T>(
 
 test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} host`, async ({
   browser,
-}) => {
+}, testInfo) => {
   test.setTimeout(240_000)
   if (!HeadlessPeerConnection || (runtimeName === 'node-datachannel' && !nodeDataChannel)) {
     throw new Error(`The isolated ${runtimeName} runtime is unavailable.`)
@@ -279,12 +286,12 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     const terminalCloseListeners = new Set<(message: { channelId: string; reason?: string }) => void>()
     const terminalMessageListeners = new Set<(message: { channelId: string; message: string }) => void>()
     let cleanupHost: (() => void) | null = null
-    let applicationChannel: RTCDataChannel | null = null
+    const observedLanes = new Map<ObservedLaneLabel, RTCDataChannel>()
+    let hostPeer: RTCPeerConnection | null = null
     let closed = false
 
     const api: HostApi = {
       async attachApplication(channelId, ticket, channel) {
-        applicationChannel = channel
         await service.attachWebRtcApplication(webContentsId, channelId, ticket, () => hostWindow.close())
         const connection = composition.core.accept(createRtcDataChannelTransport(channel))
         void connection.start().catch(() => hostWindow.close())
@@ -331,8 +338,16 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         cleanupHost?.()
         cleanupHost = null
       },
-      closeApplicationChannel() {
-        applicationChannel?.close()
+      closeLane(label) {
+        const lane = observedLanes.get(label)
+        if (!lane) throw new Error(`Cannot close ${label}: the native lane was not created.`)
+        lane.close()
+      },
+      laneState(label) {
+        return observedLanes.get(label)?.readyState ?? null
+      },
+      peerState() {
+        return hostPeer?.connectionState ?? null
       },
       closeTerminal(channelId, reason) {
         for (const listener of terminalCloseListeners) listener({ channelId, reason })
@@ -341,7 +356,19 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       sendConfig(config) {
         void runHost(config, {
           api,
-          createPeerConnection: createHeadlessPeerConnection,
+          createPeerConnection(configuration) {
+            const peer = createHeadlessPeerConnection(configuration)
+            hostPeer = peer
+            const createDataChannel = peer.createDataChannel.bind(peer)
+            peer.createDataChannel = ((label: string, options?: RTCDataChannelInit) => {
+              const channel = createDataChannel(label, options)
+              if ([...requiredLaneLabels, ...bootstrapLaneLabels].includes(label as ObservedLaneLabel)) {
+                observedLanes.set(label as ObservedLaneLabel, channel)
+              }
+              return channel
+            }) as RTCPeerConnection['createDataChannel']
+            return peer
+          },
         }).then((cleanup) => {
           if (closed) {
             cleanup()
@@ -770,35 +797,86 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     expect(reconnectMessages.some((message) => 'signalingAuthToken' in message)).toBe(false)
 
     if (!privilegedExposure && reconnectRuntime) {
-      // Reproduce the deployed saved-profile failure without a second page
-      // reload: one application data channel disappears while the WebRTC peer
-      // itself remains connected. The bootstrap therefore retains its closed
-      // channel map, while the embedded application tries to recover through
-      // that same bootstrap bridge.
-      await reconnectPage.getByRole('textbox', { name: 'Terminal input' }).focus()
-      reconnectRuntime.closeApplicationChannel()
-      await reconnectPage.keyboard.type('x')
-      const panelError = reconnectPage.getByText('client is not connected', { exact: true })
-      await expect(panelError).toBeVisible({ timeout: 20_000 })
-      await expect(reconnectPage.getByRole('button', { name: 'Retry connection' })).toBeVisible()
-      const recoveriesStartedBeforeRetry = await reconnectPage.evaluate(() =>
-        ((window as Window & {
-          __terminayReconnectDiagnostics?: Array<{ phase: string }>
-        }).__terminayReconnectDiagnostics ?? []).filter((entry) => entry.phase === 'started').length)
-      const retry = reconnectPage.getByRole('button', { name: 'Retry connection' })
-      await retry.click()
-      await expect.poll(() => reconnectPage.evaluate(() =>
-        ((window as Window & {
-          __terminayReconnectDiagnostics?: Array<{ phase: string }>
-        }).__terminayReconnectDiagnostics ?? []).filter((entry) => entry.phase === 'started').length)
-      ).toBeGreaterThan(recoveriesStartedBeforeRetry)
-      // A working in-page retry must replace the closed WebRTC lanes and
-      // rehydrate this mounted terminal without requiring location.reload().
-      await expect(panelError).toHaveCount(0, { timeout: 20_000 })
-      await reconnectPage.getByRole('textbox', { name: 'Terminal input' }).focus()
-      const recoveredInput = `${runtimeName}-post-retry-input`
-      await reconnectPage.keyboard.type(recoveredInput, { delay: 5 })
-      await expect.poll(() => terminalWrites.join('')).toContain(recoveredInput)
+      const initialUrl = reconnectPage.url()
+      let runtime = reconnectRuntime
+      const matrixEvidence: Array<Record<string, unknown>> = []
+
+      // Every required lane belongs to one transport generation. Closing one
+      // lane while the peer remains connected must replace the entire native
+      // generation; repairing or returning the individual closed lane is not
+      // an acceptable recovery.
+      for (const [laneIndex, lane] of requiredLaneLabels.entries()) {
+        await expect.poll(() => runtime.laneState(lane), {
+          message: `${lane} lane should be open before fault injection`,
+        }).toBe('open')
+        const hostCountBeforeFailure = hostWindows.length
+        const writesBeforeFailure = terminalWrites.join('').length
+        const recoveriesStartedBeforeRetry = await reconnectPage.evaluate(() =>
+          ((window as Window & {
+            __terminayReconnectDiagnostics?: Array<{ phase: string }>
+          }).__terminayReconnectDiagnostics ?? []).filter((entry) => entry.phase === 'started').length)
+
+        const peerStateDuringLaneFailure = runtime.peerState()
+        expect(peerStateDuringLaneFailure).toBe('connected')
+        runtime.closeLane(lane)
+        await expect.poll(() => runtime.laneState(lane)).toBe('closed')
+        const retry = reconnectPage.getByRole('button', { name: 'Retry connection' })
+        await expect(retry).toBeVisible({ timeout: 20_000 })
+        await retry.click()
+        await expect.poll(() => reconnectPage.evaluate(() =>
+          ((window as Window & {
+            __terminayReconnectDiagnostics?: Array<{ phase: string }>
+          }).__terminayReconnectDiagnostics ?? []).filter((entry) => entry.phase === 'started').length)
+        ).toBeGreaterThan(recoveriesStartedBeforeRetry)
+
+        const replacement = await waitFor(() => hostWindows.slice(hostCountBeforeFailure).find((host) =>
+          host.evidence.hostSignals.some((message) => message.type === 'reconnect-offer') &&
+          requiredLaneLabels.every((label) => host.laneState(label) === 'open')),
+        60_000,
+        `a fresh four-lane generation after ${lane} failure`)
+        runtime = replacement
+        await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
+        await expect(reconnectPage.locator('.xterm-rows')).toContainText('headless-host-ready')
+        expect(reconnectPage.url()).toBe(initialUrl)
+
+        const terminalInput = reconnectPage.getByRole('textbox', { name: 'Terminal input' })
+        await terminalInput.focus()
+        const human = `${runtimeName}-${laneIndex}-${lane}-human`
+        const burst = '-burst-12345'
+        const pastedUnicode = '-paste-αβ🙂'
+        await reconnectPage.keyboard.type(human, { delay: 5 })
+        await reconnectPage.keyboard.insertText(burst)
+        await reconnectPage.keyboard.insertText(pastedUnicode)
+        await reconnectPage.keyboard.press('ArrowUp')
+        await reconnectPage.keyboard.press('Enter')
+        const exactInput = `${human}${burst}${pastedUnicode}\u001b[A\r`
+        await expect.poll(
+          () => terminalWrites.join('').slice(writesBeforeFailure),
+          { message: `${lane} recovery input must arrive exactly once and in order` },
+        ).toBe(exactInput)
+
+        matrixEvidence.push({
+          activeApplicationConnections: service.getStatus().activeConnectionCount,
+          closeReason: 'injected-required-lane-close',
+          hostGeneration: hostWindows.indexOf(replacement) + 1,
+          lane,
+          lifecycle: 'connected',
+          navigation: 'unchanged',
+          outcome: 'ordered-input-confirmed',
+          orderedInputBytes: new TextEncoder().encode(exactInput).byteLength,
+          peerStateDuringLaneFailure,
+          profile: 'saved-webrtc-profile',
+          retryAttemptDelta: 1,
+        })
+      }
+      for (const bootstrapLane of bootstrapLaneLabels) {
+        expect(runtime.laneState(bootstrapLane),
+          `${bootstrapLane} is a pre-handoff lane and must not remain reachable`).toBe('closed')
+      }
+      await testInfo.attach('webrtc-required-lane-recovery-matrix.json', {
+        body: Buffer.from(`${JSON.stringify(matrixEvidence, null, 2)}\n`),
+        contentType: 'application/json',
+      })
     }
 
     await service.revokeDevice(stored.deviceId)

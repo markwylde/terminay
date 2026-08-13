@@ -56,15 +56,15 @@ generation correctly.
 
 ### Deterministic native failure matrix
 
-- [ ] Keep the clean Linux native proof self-contained: build workspace
+- [x] Keep the clean Linux native proof self-contained: build workspace
   packages and the production application, install the selected prebuilt
   runtime, run without DISPLAY/Wayland or compiler toolchain, and retain traces
   and screenshots on failure.
-- [ ] Add independent fault injection for `control`, `application`, `terminal`,
+- [x] Add independent fault injection for `control`, `application`, `terminal`,
   and `assets` lane close/error while the browser peer stays connected.
 - [ ] Prove bootstrap-only `api` and singular `asset` lanes are closed and
-  unreachable after canonical application handoff; test their pre-handoff
-  failure separately rather than treating them as permanent mounted lanes.
+  unreachable after canonical application handoff, and fault them independently
+  before handoff rather than treating them as permanent mounted lanes.
 - [ ] Cover peer and ICE disconnected-then-recovered, disconnected past grace,
   failed, closed, host shutdown, server exposure stop, and device revocation.
 - [ ] Cover offline/online, signaling outage, delayed host registration, failed
@@ -93,7 +93,7 @@ generation correctly.
 
 ### Diagnostics and release evidence
 
-- [ ] Record metadata-only first-failure evidence containing opaque profile,
+- [x] Record metadata-only first-failure evidence containing opaque profile,
   transport generation, lane label, peer/ICE state, lifecycle phase, attempt,
   close reason, and outcome. Record no terminal bytes, paths, credentials, SDP,
   ICE candidates, or signaling secrets.
@@ -118,10 +118,10 @@ generation correctly.
   their runtime selects WebSocket or only reconnects after page close.
 - [ ] Remove source-shape assertions that prove Retry wiring without exercising
   a current host-owned replacement generation.
-- [ ] Update Task 23 and Task 29 evidence links so deployed exposure and
+- [x] Update Task 23 and Task 29 evidence links so deployed exposure and
   browser-host convergence consume this matrix instead of duplicating partial
   reconnect scenarios.
-- [ ] Preserve the completed transient ICE-grace task as historical evidence;
+- [x] Preserve the completed transient ICE-grace task as historical evidence;
   do not reinterpret it as proof of required-lane replacement.
 
 ## Acceptance checks
