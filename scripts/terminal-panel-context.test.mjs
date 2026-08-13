@@ -75,6 +75,12 @@ test('mounted terminal keeps one client facade while replacement calls use the n
   } finally { await rm(outputDirectory, { force: true, recursive: true }) }
 })
 
+test('a replacement hydration generation rebinds even when logical client identity is stable', () => {
+  assert.match(panel, /boundHydrationReporterRef/u)
+  assert.match(panel, /terminalClientContext\?\.client, terminalClientContext\?\.reportConnectionHydrated/u)
+  assert.match(panel, /rebindServerAttachmentRef\.current\(\)/u)
+})
+
 test('workspace metadata and drop-upload changes do not rebuild a mounted terminal attachment', () => {
   const lifecycleStart = panel.indexOf('  useEffect(() => {\n    const container = containerRef.current')
   const lifecycleEnd = panel.indexOf('\n  useEffect(() => {\n    if (terminalClientContext?.client === undefined)', lifecycleStart)
