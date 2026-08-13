@@ -106,6 +106,19 @@ type TerminalPanelConnectionContext = Pick<
   'client' | 'serverId' | 'projectId' | 'clientId' | 'retryConnection' | 'reportConnectionHydrated' | 'reportConnectionHydrationFailed'
 >
 
+export function createReplaceableTerminalPanelClient(
+  current: () => TerminayTerminalPanelClient | undefined,
+): TerminayTerminalPanelClient {
+  return new Proxy({} as TerminayTerminalPanelClient, {
+    get: (_target, property) => {
+      const delegate = current()
+      if (delegate === undefined) throw new Error('The server terminal client is unavailable.')
+      const value = Reflect.get(delegate, property)
+      return typeof value === 'function' ? value.bind(delegate) : value
+    },
+  })
+}
+
 /** Resolve panel params with the connection context as the production path.
  * Explicit params remain useful for moved/embedded panels and tests; a null
  * result intentionally selects the legacy preload compatibility path. */
@@ -272,6 +285,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const terminalPanelResizeRef = useRef<(cols: number, rows: number) => void>(() => {})
   const terminalPresentationActionRef = useRef<() => Promise<void>>(() => Promise.resolve())
   const retryServerAttachmentRef = useRef<() => void>(() => {})
+  const rebindServerAttachmentRef = useRef<() => void>(() => {})
   const terminalPresentationControllerRef = useRef(false)
   // This belongs to the mounted xterm, rather than to a connection attempt.
   // A retry can therefore resume a display that still contains its prior bytes.
@@ -284,6 +298,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   const remoteSizeOverrideRef = useRef<{ cols: number; rows: number } | null>(null)
   const { settings } = useTerminalSettings()
   const terminalClientContext = useContext(TerminalPanelClientContext)
+  const connectionActionsRef = useRef(terminalClientContext)
+  connectionActionsRef.current = terminalClientContext
+  const boundTerminalClientRef = useRef(terminalClientContext?.client)
+  const panelClientDelegateRef = useRef<TerminayTerminalPanelClient | undefined>(undefined)
+  panelClientDelegateRef.current = terminalClientContext === null
+    ? undefined
+    : new TerminayTerminalPanelClient(terminalClientContext.client)
   browserFileDropContextRef.current =
     terminalClientContext === null
       ? undefined
@@ -292,10 +313,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           projectId: terminalClientContext.projectId,
           projectRoot: terminalClientContext.projectRoot,
         }
-  const contextPanelClient = useMemo(
-    () => (terminalClientContext === null ? undefined : new TerminayTerminalPanelClient(terminalClientContext.client)),
-    [terminalClientContext?.client],
-  )
+  const contextPanelClient = useMemo(() => {
+    if (terminalClientContext === null) return undefined
+    return createReplaceableTerminalPanelClient(() => panelClientDelegateRef.current)
+  }, [terminalClientContext?.serverId, terminalClientContext?.projectId])
   const terminalPanelConnectionContext = useMemo<TerminalPanelConnectionContext | null>(
     () =>
       terminalClientContext === null
@@ -305,18 +326,14 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             clientId: terminalClientContext.clientId,
             projectId: terminalClientContext.projectId,
             serverId: terminalClientContext.serverId,
-            retryConnection: terminalClientContext.retryConnection,
-            reportConnectionHydrated: terminalClientContext.reportConnectionHydrated,
-            reportConnectionHydrationFailed: terminalClientContext.reportConnectionHydrationFailed,
+            retryConnection: () => connectionActionsRef.current?.retryConnection?.(),
+            reportConnectionHydrated: () => connectionActionsRef.current?.reportConnectionHydrated?.(),
+            reportConnectionHydrationFailed: (error) => connectionActionsRef.current?.reportConnectionHydrationFailed?.(error),
           },
     [
-      terminalClientContext?.client,
       terminalClientContext?.clientId,
       terminalClientContext?.projectId,
       terminalClientContext?.serverId,
-      terminalClientContext?.retryConnection,
-      terminalClientContext?.reportConnectionHydrated,
-      terminalClientContext?.reportConnectionHydrationFailed,
     ],
   )
   const resolvedTerminalClient = useMemo(
@@ -1034,6 +1051,27 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           recovery: false,
         })
       }
+      rebindServerAttachmentRef.current = () => {
+        if (dataReplayDisposed) return
+        serverAttachmentFailed = false
+        resyncing = false
+        panelEventDisposer?.()
+        panelEventDisposer = null
+        const staleAttachment = panelAttachment
+        panelAttachment = null
+        serverInputQueue?.close()
+        serverInputQueue = new ServerTerminalInputQueue(failServerTransport)
+        void staleAttachment?.detach().catch(() => {})
+        setServerTerminalError(null)
+        setPresentationUnavailable(false)
+        setIsTerminalHydrating(true)
+        attachServerTerminal({
+          fromPosition: renderedPositionRef.current ?? 0,
+          freshPresentation: false,
+          forceResume: true,
+          recovery: false,
+        })
+      }
       attachServerTerminal({ fromPosition: 0, freshPresentation: true, forceResume: false, recovery: false })
     } else {
       // A terminal surface is a detachable server client. There is no Local
@@ -1399,6 +1437,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       terminalPanelResizeRef.current = () => {}
       terminalPresentationActionRef.current = () => Promise.resolve()
       retryServerAttachmentRef.current = () => {}
+      rebindServerAttachmentRef.current = () => {}
       terminalPresentationControllerRef.current = false
       pendingPanelResize = null
       if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
@@ -1425,6 +1464,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     props.params.terminalPanelClient,
     resolvedTerminalClient,
   ])
+
+  useEffect(() => {
+    if (terminalClientContext?.client === undefined) return
+    if (boundTerminalClientRef.current === terminalClientContext.client) return
+    boundTerminalClientRef.current = terminalClientContext.client
+    rebindServerAttachmentRef.current()
+  }, [terminalClientContext?.client])
 
   useEffect(() => {
     settingsRef.current = settings

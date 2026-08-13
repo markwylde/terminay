@@ -54,9 +54,30 @@ test('replacement context reports mounted attachment hydration only after render
   assert.ok(hydrationReport < attachStart)
 })
 
+test('mounted terminal keeps one client facade while replacement calls use the new delegate', async () => {
+  const outputDirectory = await mkdtemp(join(process.cwd(), 'scripts', '.terminal-panel-replacement-'))
+  try {
+    await build({
+      absWorkingDir: process.cwd(), bundle: true, entryPoints: ['src/components/TerminalPanel.tsx'],
+      external: ['react', 'react-dom', '@terminay/client-core'], format: 'esm', loader: { '.css': 'empty' },
+      outdir: outputDirectory, platform: 'node',
+      plugins: [{ name: 'stubs', setup(api) {
+        api.onResolve({ filter: /^@xterm\/|^lucide-react$/ }, (args) => ({ path: args.path, namespace: 'stub' }))
+        api.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'export class Terminal {}; export class FitAddon {}; export class SearchAddon {}; export class Unicode11Addon {}; export class WebLinksAddon {}; export const AlertTriangle=0, Mic=0, RotateCcw=0, Square=0, X=0;', loader: 'js' }))
+      } }],
+    })
+    const module = await import(pathToFileURL(join(outputDirectory, 'TerminalPanel.js')).href)
+    let delegate = { attach: async () => 'old' }
+    const facade = module.createReplaceableTerminalPanelClient(() => delegate)
+    assert.equal(await facade.attach({}), 'old')
+    delegate = { attach: async () => 'replacement' }
+    assert.equal(await facade.attach({}), 'replacement')
+  } finally { await rm(outputDirectory, { force: true, recursive: true }) }
+})
+
 test('workspace metadata and drop-upload changes do not rebuild a mounted terminal attachment', () => {
   const lifecycleStart = panel.indexOf('  useEffect(() => {\n    const container = containerRef.current')
-  const lifecycleEnd = panel.indexOf('\n  useEffect(() => {\n    settingsRef.current = settings', lifecycleStart)
+  const lifecycleEnd = panel.indexOf('\n  useEffect(() => {\n    if (terminalClientContext?.client === undefined)', lifecycleStart)
   assert.notEqual(lifecycleStart, -1)
   assert.notEqual(lifecycleEnd, -1)
   const lifecycle = panel.slice(lifecycleStart, lifecycleEnd)
