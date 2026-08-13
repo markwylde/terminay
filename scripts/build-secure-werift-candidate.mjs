@@ -15,6 +15,7 @@ import { builtinModules } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseSingleNpmJsonValue, parseSingleNpmPackResult } from './npm-pack-result.mjs'
 import { build as bundleWithEsbuild, version as ESBUILD_VERSION } from 'esbuild'
 
 const NODE_BUILTINS = new Set(
@@ -55,14 +56,7 @@ export const TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES = {
   pvutils: '1.1.5',
 }
 
-export function parseSingleNpmPackResult(stdout) {
-  const metadata = JSON.parse(stdout)
-  const result = Array.isArray(metadata)
-    ? metadata.length === 1 ? metadata[0] : null
-    : metadata
-  assert.ok(result && typeof result === 'object' && !Array.isArray(result), 'npm pack returned unsupported metadata')
-  return result
-}
+export { parseSingleNpmPackResult }
 
 // The install path is the key because npm retains a second tslib version
 // beneath tsyringe. Version, integrity, and declared license are all pinned.
@@ -544,7 +538,7 @@ export async function buildSecureWeriftCandidate(workRoot, { sourceMirror } = {}
     )
     assert.equal(registryMetadata.signal, null)
     assert.equal(registryMetadata.code, 0, registryMetadata.stderr || registryMetadata.stdout)
-    assert.equal(JSON.parse(registryMetadata.stdout), WERIFT_GIT_HEAD)
+    assert.equal(parseSingleNpmJsonValue(registryMetadata.stdout), WERIFT_GIT_HEAD)
   }
 
   const upstreamRoot = path.join(workRoot, 'upstream')
