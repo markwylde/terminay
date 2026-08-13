@@ -1,28 +1,242 @@
-import type { ExtensionAction, ExtensionInstallPreviewDto } from '@terminay/client-core';
+import type {
+	ExtensionAction,
+	ExtensionInstallPreviewDto,
+} from '@terminay/client-core';
 import { useMemo, useState } from 'react';
 import type { ExtensionSummaryDto } from './uiModel';
 
-export function ExtensionManager({ embedded = false, extensions, serverName, onPreview, onInstall, onUpdate, onAction }: Readonly<{
+export function ExtensionManager({
+	extensions,
+	serverName,
+	onPreview,
+	onInstall,
+	onUpdate,
+	onAction,
+}: Readonly<{
 	embedded?: boolean;
 	extensions: readonly ExtensionSummaryDto[];
 	serverName: string;
 	revision: number;
-	onPreview: (spec:string) => Promise<ExtensionInstallPreviewDto>;
-	onInstall: (digest:string) => Promise<void>;
-	onUpdate: (id:string,digest:string) => Promise<void>;
-	onAction: (action:ExtensionAction,id:string) => Promise<void>;
+	onPreview: (spec: string) => Promise<ExtensionInstallPreviewDto>;
+	onInstall: (digest: string) => Promise<void>;
+	onUpdate: (id: string, digest: string) => Promise<void>;
+	onAction: (action: ExtensionAction, id: string) => Promise<void>;
 }>) {
-	const [query,setQuery]=useState(''); const [selectedId,setSelectedId]=useState(extensions[0]?.id??''); const [npmPackage,setNpmPackage]=useState(''); const [preview,setPreview]=useState<ExtensionInstallPreviewDto|null>(null); const [previewUpdateId,setPreviewUpdateId]=useState<string|null>(null); const [previewError,setPreviewError]=useState(''); const [busy,setBusy]=useState(false);
-	const filtered=useMemo(()=>extensions.filter(item=>`${item.displayName} ${item.packageName} ${item.description}`.toLowerCase().includes(query.trim().toLowerCase())),[extensions,query]); const selected=extensions.find(item=>item.id===selectedId)??filtered[0];
-	const previewPackage=async()=>{setBusy(true);setPreviewError('');try{setPreview(await onPreview(npmPackage));}catch(error){setPreviewError(error instanceof Error?error.message:String(error));}finally{setBusy(false);}};
-	const act=async(action:ExtensionAction,id:string)=>{setBusy(true);try{await onAction(action,id);}finally{setBusy(false);}};
-	return <div className={`environment-manager extension-manager${embedded ? ' extension-manager--settings' : ''}`} aria-busy={busy}>
-		{embedded ? null : <header className="management-route-header"><div><p className="management-route-eyebrow">Selected Terminay Server</p><h2>Extensions</h2><p>Extensions run as trusted code on <strong>{serverName}</strong>.</p></div></header>}
-		<div className="trusted-code-warning" role="note"><strong>Third-party extensions are trusted code.</strong><span>They can access files and networks available to the selected server account.</span></div>
-		<form className="extension-install" onSubmit={event=>{event.preventDefault();void previewPackage();}}><label><span>Install from npm</span><input value={npmPackage} onChange={event=>setNpmPackage(event.target.value)} placeholder="package-name or package-name@version" /></label><button type="submit" disabled={busy||npmPackage.trim()===''}>Preview</button></form>
-		{previewError?<p role="alert">{previewError}</p>:null}
-		{preview?<section className="extension-preview" aria-label="Extension installation preview"><h3>Confirm {preview.packageName}@{preview.version}</h3><dl><div><dt>Integrity</dt><dd>{preview.integrity}</dd></div><div><dt>Publisher</dt><dd>{preview.publisher??'Not provided'}</dd></div><div><dt>Provenance</dt><dd>{preview.provenance??'Unavailable'}</dd></div><div><dt>Audit</dt><dd>{preview.audit.critical} critical · {preview.audit.high} high · {preview.audit.moderate} moderate · {preview.audit.low} low</dd></div><div><dt>Dependencies</dt><dd>{preview.dependencies.length===0?'None':preview.dependencies.join(', ')}</dd></div></dl><h4>Permissions</h4><ul>{preview.permissions.map(permission=><li key={permission}>{permission}</li>)}</ul>{preview.trustedCodeWarning?<p className="trusted-code-warning">{preview.trustedCodeWarning}</p>:null}<div className="management-route-actions"><button type="button" onClick={()=>{setPreview(null);setPreviewUpdateId(null);}}>Cancel</button><button type="button" onClick={()=>void(previewUpdateId===null?onInstall(preview.previewDigest):onUpdate(previewUpdateId,preview.previewDigest))}>{previewUpdateId===null?'Install':'Update'} on {serverName}</button></div></section>:null}
-		<div className="management-route-grid"><aside className="management-route-list" aria-label="Extensions"><label><span className="sr-only">Search extensions</span><input type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder="Search extensions" /></label>{filtered.map(item=><button type="button" key={item.id} className={item.id===selected?.id?'is-selected':''} onClick={()=>setSelectedId(item.id)}><span><strong>{item.displayName} {item.official?<em>Official</em>:null}</strong><small>{item.packageName}</small></span><span>{item.state}</span></button>)}</aside>
-		<section className="management-route-detail" aria-live="polite">{selected?<><div className="management-route-title"><span className="management-route-icon" aria-hidden="true">⌘</span><div><h3>{selected.displayName}</h3><p>{selected.description}</p></div></div><dl><div><dt>Package</dt><dd>{selected.packageName}</dd></div><div><dt>Version</dt><dd>{selected.version??'Not installed'}</dd></div><div><dt>Source</dt><dd>{selected.provenance??'npmjs.com'}</dd></div><div><dt>State</dt><dd>{selected.state}</dd></div></dl><h4>Permissions</h4><ul>{selected.permissions.map(permission=><li key={permission}>{permission}</li>)}</ul>{selected.dependants.length>0?<p className="management-route-note"><strong>Required by:</strong> {selected.dependants.join(', ')}</p>:null}<div className="management-route-actions">{selected.state==='available'?<button type="button" onClick={()=>{setNpmPackage(selected.packageName);setPreviewUpdateId(null);void onPreview(selected.packageName).then(setPreview);}}>Install</button>:<button type="button" onClick={()=>void act(selected.state==='disabled'?'enable':'disable',selected.id)}>{selected.state==='disabled'?'Enable':'Disable'}</button>}<button type="button" disabled={selected.version===undefined} onClick={()=>{setPreviewUpdateId(selected.id);void onPreview(`${selected.packageName}@latest`).then(setPreview);}}>Update</button><button type="button" disabled={selected.version===undefined} onClick={()=>void act('restart',selected.id)}>Restart</button><button type="button" disabled={selected.version===undefined} onClick={()=>void act('rollback',selected.id)}>Rollback</button><button type="button" className="danger" disabled={selected.dependants.length>0||selected.version===undefined} onClick={()=>void act('remove',selected.id)}>Uninstall</button></div></>:<p>Select an extension.</p>}</section></div>
-	</div>;
+	const [query, setQuery] = useState('');
+	const [npmPackage, setNpmPackage] = useState('');
+	const [preview, setPreview] = useState<ExtensionInstallPreviewDto | null>(null);
+	const [previewUpdateId, setPreviewUpdateId] = useState<string | null>(null);
+	const [previewError, setPreviewError] = useState('');
+	const [busy, setBusy] = useState(false);
+	const filtered = useMemo(() => {
+		const normalized = query.trim().toLowerCase();
+		return extensions.filter((item) =>
+			`${item.displayName} ${item.packageName} ${item.description}`
+				.toLowerCase()
+				.includes(normalized),
+		);
+	}, [extensions, query]);
+
+	const previewPackage = async (spec = npmPackage, updateId: string | null = null) => {
+		setBusy(true);
+		setPreviewError('');
+		try {
+			setPreview(await onPreview(spec));
+			setPreviewUpdateId(updateId);
+		} catch (error) {
+			setPreviewError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setBusy(false);
+		}
+	};
+	const act = async (action: ExtensionAction, id: string) => {
+		setBusy(true);
+		try {
+			await onAction(action, id);
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<div className="extension-settings" aria-busy={busy}>
+			<section className="settings-section">
+				<h3 className="settings-section-title">Security</h3>
+				<div className="settings-group">
+					<div className="settings-row settings-row--stacked extension-trust-row" role="note">
+						<span className="settings-row-label">Third-party extensions are trusted code</span>
+						<span className="settings-row-description">
+							They run on {serverName} and can access files and networks available to that server account.
+						</span>
+					</div>
+				</div>
+			</section>
+
+			<section className="settings-section">
+				<h3 className="settings-section-title">Install from npm</h3>
+				<div className="settings-group">
+					<form
+						className="settings-row extension-install-row"
+						onSubmit={(event) => {
+							event.preventDefault();
+							void previewPackage();
+						}}
+					>
+						<div className="settings-row-info">
+							<label className="settings-row-label" htmlFor="extension-package">Package</label>
+							<span className="settings-row-description">Enter a public npm package name and optional version.</span>
+						</div>
+						<div className="settings-row-control extension-install-control">
+							<input
+								id="extension-package"
+								className="settings-input-text"
+								value={npmPackage}
+								onChange={(event) => setNpmPackage(event.target.value)}
+								placeholder="package-name@version"
+							/>
+							<button type="submit" className="settings-secondary-button" disabled={busy || npmPackage.trim() === ''}>Preview</button>
+						</div>
+					</form>
+				</div>
+				{previewError ? <p className="settings-inline-error" role="alert">{previewError}</p> : null}
+			</section>
+
+			{preview === null ? null : (
+				<ExtensionPreview
+					preview={preview}
+					serverName={serverName}
+					update={previewUpdateId !== null}
+					onCancel={() => {
+						setPreview(null);
+						setPreviewUpdateId(null);
+					}}
+					onConfirm={() =>
+						previewUpdateId === null
+							? onInstall(preview.previewDigest)
+							: onUpdate(previewUpdateId, preview.previewDigest)
+					}
+				/>
+			)}
+
+			<section className="settings-section">
+				<div className="settings-section-title-row">
+					<h3 className="settings-section-title">Connection providers</h3>
+					<input
+						type="search"
+						className="settings-search-input extension-search-input"
+						aria-label="Search extensions"
+						placeholder="Search"
+						value={query}
+						onChange={(event) => setQuery(event.target.value)}
+					/>
+				</div>
+				<div className="extension-card-list">
+					{filtered.map((extension) => (
+						<ExtensionCard
+							key={extension.id}
+							extension={extension}
+							busy={busy}
+							onInstall={() => void previewPackage(extension.packageName)}
+							onUpdate={() => void previewPackage(`${extension.packageName}@latest`, extension.id)}
+							onAction={(action) => void act(action, extension.id)}
+						/>
+					))}
+					{filtered.length === 0 ? <p className="settings-empty-state">No matching extensions.</p> : null}
+				</div>
+			</section>
+		</div>
+	);
+}
+
+function ExtensionCard({ extension, busy, onInstall, onUpdate, onAction }: Readonly<{
+	extension: ExtensionSummaryDto;
+	busy: boolean;
+	onInstall: () => void;
+	onUpdate: () => void;
+	onAction: (action: ExtensionAction) => void;
+}>) {
+	return (
+		<article className="settings-group extension-card">
+			<div className="settings-row extension-card-heading">
+				<div className="settings-row-info">
+					<span className="settings-row-label extension-card-title">
+						{extension.displayName}
+						{extension.official ? <span className="settings-chip">Official</span> : null}
+					</span>
+					<span className="settings-row-description">{extension.description}</span>
+				</div>
+				<span className={`extension-state extension-state--${extension.state}`}>{extension.state}</span>
+			</div>
+			<div className="settings-row">
+				<div className="settings-row-info">
+					<span className="settings-row-label">{extension.packageName}</span>
+					<span className="settings-row-description">
+						{extension.version === undefined ? 'Not installed' : `Version ${extension.version}`}
+						{extension.provenance === undefined ? '' : ` · ${extension.provenance}`}
+					</span>
+				</div>
+				<div className="settings-row-control settings-inline-actions">
+					{extension.state === 'available' ? (
+						<button type="button" className="settings-primary-button" disabled={busy} onClick={onInstall}>Install</button>
+					) : (
+						<button type="button" className="settings-secondary-button" disabled={busy} onClick={() => onAction(extension.state === 'disabled' ? 'enable' : 'disable')}>{extension.state === 'disabled' ? 'Enable' : 'Disable'}</button>
+					)}
+					{extension.version === undefined ? null : (
+						<>
+							<button type="button" className="settings-secondary-button" disabled={busy} onClick={onUpdate}>Update</button>
+							<button type="button" className="settings-secondary-button" disabled={busy} onClick={() => onAction('restart')}>Restart</button>
+							<button type="button" className="settings-secondary-button" disabled={busy} onClick={() => onAction('rollback')}>Rollback</button>
+							<button type="button" className="settings-danger-button" disabled={busy || extension.dependants.length > 0} onClick={() => onAction('remove')}>Uninstall</button>
+						</>
+					)}
+				</div>
+			</div>
+			{extension.permissions.length === 0 ? null : (
+				<div className="settings-group-footer extension-card-footer">
+					<span className="settings-row-description">Permissions</span>
+					<div className="settings-chip-row">{extension.permissions.map((permission) => <span className="settings-chip" key={permission}>{permission}</span>)}</div>
+				</div>
+			)}
+		</article>
+	);
+}
+
+function ExtensionPreview({ preview, serverName, update, onCancel, onConfirm }: Readonly<{
+	preview: ExtensionInstallPreviewDto;
+	serverName: string;
+	update: boolean;
+	onCancel: () => void;
+	onConfirm: () => Promise<void>;
+}>) {
+	return (
+		<section className="settings-section" aria-label="Extension installation preview">
+			<h3 className="settings-section-title">Review {preview.packageName}@{preview.version}</h3>
+			<div className="settings-group">
+				<div className="settings-row settings-row--stacked">
+					<span className="settings-row-label">Trusted code confirmation</span>
+					<span className="settings-row-description">Review this exact package before running it on {serverName}.</span>
+				</div>
+				<PreviewRow label="Publisher" value={preview.publisher ?? 'Not provided'} />
+				<PreviewRow label="Integrity" value={preview.integrity} />
+				<PreviewRow label="Provenance" value={preview.provenance ?? 'Unavailable'} />
+				<PreviewRow label="Audit" value={`${preview.audit.critical} critical · ${preview.audit.high} high · ${preview.audit.moderate} moderate · ${preview.audit.low} low`} />
+				<div className="settings-group-footer">
+					<span />
+					<div className="settings-inline-actions">
+						<button type="button" className="settings-secondary-button" onClick={onCancel}>Cancel</button>
+						<button type="button" className="settings-primary-button" onClick={() => void onConfirm()}>{update ? 'Update' : 'Install'} on {serverName}</button>
+					</div>
+				</div>
+			</div>
+		</section>
+	);
+}
+
+function PreviewRow({ label, value }: Readonly<{ label: string; value: string }>) {
+	return (
+		<div className="settings-row">
+			<div className="settings-row-info"><span className="settings-row-label">{label}</span></div>
+			<div className="settings-row-control extension-preview-value">{value}</div>
+		</div>
+	);
 }

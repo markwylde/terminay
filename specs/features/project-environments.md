@@ -212,7 +212,10 @@ endpoint/default-root/status metadata, project references, and Test/Edit/Remove
 actions. On Desktop it is a dedicated native auxiliary window with the same
 window chrome, content frame, responsive layout conventions, and focus/reuse
 behaviour as Settings, Macros, and Recordings. It is not a project-editor sheet
-and must not use that sheet's oversized centered-dialog presentation. In a
+and must not use that sheet's oversized centered-dialog presentation or an
+independent dashboard-style list/detail frame. The environment list is the
+standard Settings/Macros sidebar; environment facts and actions use ordinary
+Settings headers, groups, and rows. In a
 browser, the same shared route is presented in-page with equivalent management
 semantics. Repeated invocation focuses the existing presentation instead of
 opening duplicates.

@@ -52,10 +52,10 @@ test('shows selected-server extensions as an ordinary Settings category', async 
   await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
   await expect(settingsWindow.getByRole('button', { name: 'Extensions' })).toHaveAttribute('aria-current', 'true')
   await expect(settingsWindow.locator('#section-extensions')).toBeVisible()
-  await expect(settingsWindow.getByText('Third-party extensions are trusted code.')).toBeVisible()
+  await expect(settingsWindow.getByText('Third-party extensions are trusted code')).toBeVisible()
   await expect(settingsWindow.getByRole('button', { name: 'Reset to defaults' })).toHaveCount(0)
-  await expect(settingsWindow.getByRole('button', { name: /SSH Official terminay-plugin-ssh/ })).toBeVisible()
-  await expect(settingsWindow.getByRole('button', { name: /Puzed Platform Official terminay-plugin-puzed/ })).toBeVisible()
+  await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-ssh' })).toBeVisible()
+  await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-plugin-puzed' })).toBeVisible()
 })
 
 test('opens Project Environments as a full auxiliary window', async ({ appHarness, mainWindow }) => {

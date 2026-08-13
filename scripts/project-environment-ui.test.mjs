@@ -10,6 +10,8 @@ const forms=await readFile(new URL('../src/projectEnvironments/DeclarativeProvid
 const surfaces=await readFile(new URL('../src/projectEnvironments/ProjectEnvironmentSurfaces.tsx',import.meta.url),'utf8');
 const settings=await readFile(new URL('../src/components/SettingsWindow.tsx',import.meta.url),'utf8');
 const extensionSettings=await readFile(new URL('../src/components/ExtensionSettingsSection.tsx',import.meta.url),'utf8');
+const extensionManager=await readFile(new URL('../src/projectEnvironments/ExtensionManager.tsx',import.meta.url),'utf8');
+const environmentManager=await readFile(new URL('../src/projectEnvironments/ProjectEnvironmentManager.tsx',import.meta.url),'utf8');
 const sharedSettings=await readFile(new URL('../src/shared/SharedSettingsRouteBody.tsx',import.meta.url),'utf8');
 
 test('split button keeps primary This server and a separate accessible chooser',()=>{
@@ -55,12 +57,15 @@ test('Extensions use the ordinary selected-server Settings surface',()=>{
 	assert.match(settings,/ExtensionSettingsSection applicationClient=\{applicationClient\}/);
 	assert.match(settings,/activeCategoryId === 'extensions' \? undefined/);
 	assert.match(extensionSettings,/new ExtensionsClient\(new TerminayClientFacade\(applicationClient\)\)/);
-	assert.match(extensionSettings,/className="settings-group settings-extension-group"/);
+	assert.match(extensionSettings,/className="settings-category-header"/);
+	assert.match(extensionSettings,/<ExtensionManager/);
+	assert.match(extensionManager,/className="settings-group extension-card"/);
 	assert.match(sharedSettings,/onResetAll === undefined \? null/);
 });
 
 test('Project Environments use a full auxiliary window rather than an editor dialog',()=>{
-	assert.match(surfaces,/<main className="project-environments-window"/);
+	assert.match(surfaces,/<div className="project-environments-window"/);
+	assert.match(environmentManager,/<SharedSettingsRouteBody/);
 	assert.doesNotMatch(surfaces,/ProjectEnvironmentSurfaceDialog|aria-modal|role="dialog"|surface-backdrop/);
 	assert.doesNotMatch(surfaces,/ExtensionManager|ExtensionsClient/);
 	assert.doesNotMatch(app,/ProjectEnvironmentSurfaceDialog|projectEnvironmentSurface/);

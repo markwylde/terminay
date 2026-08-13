@@ -64,21 +64,19 @@ export function ExtensionSettingsSection({
 
 	return (
 		<section id="section-extensions" className="settings-section" aria-busy={busy}>
-			<div className="settings-section-title-row">
-				<h3 className="settings-section-title">Extensions</h3>
+			<div className="settings-category-header">
+				<h2>Extensions</h2>
+				<p>
+					Install and manage project connection providers on <strong>{authorityLabel}</strong>.
+				</p>
 			</div>
-			<p className="settings-section-description">
-				Install and manage project connection providers on <strong>{authorityLabel}</strong>.
-			</p>
 			{error ? (
 				<div className="settings-inline-error" role="alert">
 					<span>{error}</span>
 					<button type="button" className="settings-secondary-button settings-secondary-button--small" onClick={() => void refresh()}>Retry</button>
 				</div>
 			) : null}
-			<div className="settings-group settings-extension-group">
-				<ExtensionManager
-					embedded
+			<ExtensionManager
 					extensions={extensions}
 					serverName={authorityLabel}
 					revision={revision}
@@ -86,8 +84,7 @@ export function ExtensionSettingsSection({
 					onInstall={(digest) => run(() => client!.install(digest, revision), 'Extension installed.')}
 					onUpdate={(id, digest) => run(() => client!.update(id, digest, revision), 'Extension updated.')}
 					onAction={(action, id) => run(() => client!.action(action, id, revision), `Extension ${action} completed.`)}
-				/>
-			</div>
+			/>
 			{busy ? <div className="settings-status-message" role="status"><progress /> Working on {authorityLabel}…</div> : null}
 			{announcement ? <div className="settings-status-message" role="status">{announcement}</div> : null}
 		</section>

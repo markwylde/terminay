@@ -1,34 +1,185 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { SharedSettingsRouteBody } from '../shared/SharedSettingsRouteBody';
 import type { ProjectEnvironmentSummaryDto } from './uiModel';
 import { statusLabel } from './uiModel';
 
-export function ProjectEnvironmentManager({ environments, providers, serverName, onCreate, onEdit, onTest, onRemove,onAction }: Readonly<{
+type ProviderSummary = Readonly<{
+	providerId: string;
+	displayName: string;
+	hasProfileForm: boolean;
+}>;
+
+type StatusAction = NonNullable<
+	ProjectEnvironmentSummaryDto['statusCard']
+>['actions'][number];
+
+export function ProjectEnvironmentManager({
+	environments,
+	providers,
+	serverName,
+	onCreate,
+	onEdit,
+	onTest,
+	onRemove,
+	onAction,
+}: Readonly<{
 	environments: readonly ProjectEnvironmentSummaryDto[];
-	providers:readonly Readonly<{providerId:string;displayName:string;hasProfileForm:boolean}>[];
+	providers: readonly ProviderSummary[];
 	serverName: string;
-	onCreate: (providerId:string) => void;
-	onEdit: (environment:ProjectEnvironmentSummaryDto) => void;
+	onCreate: (providerId: string) => void;
+	onEdit: (environment: ProjectEnvironmentSummaryDto) => void;
 	onTest: (id: string) => void;
 	onRemove: (id: string) => void;
-	onAction:(environment:ProjectEnvironmentSummaryDto,action:NonNullable<ProjectEnvironmentSummaryDto['statusCard']>['actions'][number])=>void;
+	onAction: (
+		environment: ProjectEnvironmentSummaryDto,
+		action: StatusAction,
+	) => void;
 }>) {
 	const [query, setQuery] = useState('');
 	const [selectedId, setSelectedId] = useState(environments[0]?.id ?? '');
-	const filtered = useMemo(() => environments.filter((item) => `${item.name} ${item.providerLabel} ${item.endpointSummary}`.toLowerCase().includes(query.trim().toLowerCase())), [environments, query]);
-	const selected = environments.find((item) => item.id === selectedId) ?? filtered[0];
+	const filtered = useMemo(() => {
+		const normalized = query.trim().toLowerCase();
+		return environments.filter((item) =>
+			`${item.name} ${item.providerLabel} ${item.endpointSummary}`
+				.toLowerCase()
+				.includes(normalized),
+		);
+	}, [environments, query]);
+	const selected =
+		environments.find((item) => item.id === selectedId) ?? filtered[0];
+
+	useEffect(() => {
+		if (selectedId === '' && environments[0] !== undefined) {
+			setSelectedId(environments[0].id);
+		}
+	}, [environments, selectedId]);
+
 	return (
-		<div className="environment-manager">
-			<header className="management-route-header"><div><p className="management-route-eyebrow">Selected Terminay Server</p><h2>Project Environments</h2><p>Profiles and credentials are stored by <strong>{serverName}</strong>.</p></div><div className="management-route-actions">{providers.filter(provider=>provider.hasProfileForm).map(provider=><button key={provider.providerId} type="button" onClick={()=>onCreate(provider.providerId)}>New {provider.displayName}</button>)}</div></header>
-			<div className="management-route-grid">
-				<aside className="management-route-list" aria-label="Project environments">
-					<label><span className="sr-only">Search project environments</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search environments" /></label>
-					{filtered.map((item) => <button type="button" key={item.id} className={item.id === selected?.id ? 'is-selected' : ''} onClick={() => setSelectedId(item.id)}><span><strong>{item.name}</strong><small>{item.providerLabel} · {item.endpointSummary}</small></span><span className={`environment-status environment-status--${item.status}`}>{statusLabel(item.status)}</span></button>)}
-					{filtered.length === 0 ? <p role="status">No matching environments.</p> : null}
-				</aside>
-				<section className="management-route-detail" aria-live="polite">
-					{selected ? <><div className="management-route-title"><span className="management-route-icon" aria-hidden="true">{selected.isThisServer ? '›_' : selected.providerLabel === 'SSH' ? '⇄' : '⬡'}</span><div><h3>{selected.name}</h3><p>{selected.providerLabel}</p></div></div><dl><div><dt>Status</dt><dd>{statusLabel(selected.status)}</dd></div><div><dt>Endpoint</dt><dd>{selected.endpointSummary}</dd></div><div><dt>Default root</dt><dd>{selected.defaultRoot ?? 'Environment home'}</dd></div><div><dt>Projects</dt><dd>{selected.referencedProjectCount}</dd></div></dl>{selected.statusCard?<section className="environment-trust-card" aria-label={selected.statusCard.title}><h4>{selected.statusCard.title}</h4><p>{selected.statusCard.summary}</p><dl>{selected.statusCard.facts.map(fact=><div key={fact.label}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl><div className="management-route-actions">{selected.statusCard.actions.map(action=><button key={action.id} type="button" className={action.kind==='destructive'?'danger':undefined} disabled={action.disabledReason!==undefined} onClick={()=>onAction(selected,action)}>{action.label}</button>)}</div></section>:null}<div className="management-route-actions"><button type="button" disabled={selected.isThisServer||selected.profileId===undefined} onClick={() => selected.profileId&&onTest(selected.profileId)}>Test</button><button type="button" disabled={selected.isThisServer||selected.profileId===undefined} onClick={()=>onEdit(selected)}>Edit</button><button type="button" className="danger" disabled={selected.isThisServer || selected.profileId===undefined || selected.referencedProjectCount > 0} onClick={() => selected.profileId&&onRemove(selected.profileId)}>Remove</button></div>{selected.referencedProjectCount > 0 ? <p className="management-route-note">Removal is blocked while projects reference this environment.</p> : null}</> : <p>Select an environment.</p>}
-				</section>
+		<SharedSettingsRouteBody
+			title="Project Environments"
+			query={query}
+			queryPlaceholder="Search environments..."
+			categories={filtered.map((environment) => ({
+				id: environment.id,
+				label: environment.name,
+				icon: (
+					<span className={`environment-nav-status environment-nav-status--${environment.status}`}>
+						<span aria-hidden="true" />
+						<span className="sr-only">{statusLabel(environment.status)}</span>
+					</span>
+				),
+			}))}
+			activeCategoryId={selected?.id ?? ''}
+			status={`${environments.length} ${environments.length === 1 ? 'environment' : 'environments'} on ${serverName}`}
+			onQueryChange={setQuery}
+			onCategorySelect={setSelectedId}
+		>
+			<div className="settings-category-header environment-category-header">
+				<div>
+					<h2>{selected?.name ?? 'Project Environments'}</h2>
+					<p>
+						{selected === undefined
+							? `Profiles and credentials stored by ${serverName}.`
+							: `${selected.providerLabel} · ${selected.endpointSummary}`}
+					</p>
+				</div>
+				<div className="settings-inline-actions">
+					{providers
+						.filter((provider) => provider.hasProfileForm)
+						.map((provider) => (
+							<button
+								key={provider.providerId}
+								type="button"
+								className="settings-primary-button"
+								onClick={() => onCreate(provider.providerId)}
+							>
+								New {provider.displayName}
+							</button>
+						))}
+				</div>
 			</div>
+
+			{selected === undefined ? (
+				<div className="settings-empty-hero">
+					<h2>No matching environments</h2>
+					<p>Change your search or add a connection provider.</p>
+				</div>
+			) : (
+				<>
+					<section className="settings-section">
+						<h3 className="settings-section-title">Connection</h3>
+						<div className="settings-group">
+							<EnvironmentRow label="Status" value={statusLabel(selected.status)} />
+							<EnvironmentRow label="Endpoint" value={selected.endpointSummary} />
+							<EnvironmentRow label="Default root" value={selected.defaultRoot ?? 'Environment home'} />
+							<EnvironmentRow label="Projects" value={String(selected.referencedProjectCount)} />
+						</div>
+					</section>
+
+					{selected.statusCard === undefined ? null : (
+						<section className="settings-section" aria-label={selected.statusCard.title}>
+							<h3 className="settings-section-title">{selected.statusCard.title}</h3>
+							<div className="settings-group">
+								<div className="settings-row settings-row--stacked">
+									<span className="settings-row-description">{selected.statusCard.summary}</span>
+								</div>
+								{selected.statusCard.facts.map((fact) => (
+									<EnvironmentRow key={fact.label} label={fact.label} value={fact.value} />
+								))}
+								<div className="settings-group-footer">
+									<div className="settings-inline-actions">
+										{selected.statusCard.actions.map((action) => (
+											<button
+												key={action.id}
+												type="button"
+												className={action.kind === 'destructive' ? 'settings-danger-button' : 'settings-secondary-button'}
+												disabled={action.disabledReason !== undefined}
+												onClick={() => onAction(selected, action)}
+											>
+												{action.label}
+											</button>
+										))}
+									</div>
+								</div>
+							</div>
+						</section>
+					)}
+
+					<section className="settings-section">
+						<h3 className="settings-section-title">Management</h3>
+						<div className="settings-group">
+							<div className="settings-row">
+								<div className="settings-row-info">
+									<span className="settings-row-label">Connection profile</span>
+									<span className="settings-row-description">
+										{selected.isThisServer
+											? 'This built-in environment is managed by Terminay.'
+											: selected.referencedProjectCount > 0
+												? `Used by ${selected.referencedProjectCount} project${selected.referencedProjectCount === 1 ? '' : 's'}. Removal is unavailable while referenced.`
+												: 'Test, edit, or remove this saved connection.'}
+									</span>
+								</div>
+								<div className="settings-row-control settings-inline-actions">
+									<button type="button" className="settings-secondary-button" disabled={selected.isThisServer || selected.profileId === undefined} onClick={() => selected.profileId && onTest(selected.profileId)}>Test</button>
+									<button type="button" className="settings-secondary-button" disabled={selected.isThisServer || selected.profileId === undefined} onClick={() => onEdit(selected)}>Edit</button>
+									<button type="button" className="settings-danger-button" disabled={selected.isThisServer || selected.profileId === undefined || selected.referencedProjectCount > 0} onClick={() => selected.profileId && onRemove(selected.profileId)}>Remove</button>
+								</div>
+							</div>
+						</div>
+					</section>
+				</>
+			)}
+		</SharedSettingsRouteBody>
+	);
+}
+
+function EnvironmentRow({ label, value }: Readonly<{ label: string; value: string }>) {
+	return (
+		<div className="settings-row">
+			<div className="settings-row-info">
+				<span className="settings-row-label">{label}</span>
+			</div>
+			<div className="settings-row-control environment-setting-value">{value}</div>
 		</div>
 	);
 }

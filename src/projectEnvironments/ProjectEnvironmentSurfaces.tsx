@@ -7,6 +7,7 @@ import type {
 	DeclarativeFormDto,
 	ProjectEnvironmentSummaryDto,
 } from './uiModel';
+import '../settings.css';
 import './projectEnvironments.css';
 
 type ProviderSummary = Readonly<{
@@ -106,10 +107,9 @@ export function ProjectEnvironmentsWindow({
 	);
 
 	return (
-		<main className="project-environments-window" aria-busy={busy}>
-			<div className="project-environments-window__body">
+		<div className="project-environments-window" aria-busy={busy}>
 				{error ? (
-					<div className="declarative-provider-form__errors" role="alert">
+					<div className="settings-error-banner environment-window-banner" role="alert">
 						<strong>Unable to complete the server operation</strong>
 						<p>{error}</p>
 						<button type="button" onClick={() => void refresh()}>
@@ -202,17 +202,16 @@ export function ProjectEnvironmentsWindow({
 					/>
 				)}
 				{busy ? (
-					<div className="management-route-announcement" role="status">
+					<div className="settings-status-message environment-window-status" role="status">
 						<progress /> Working on {authorityLabel}…
 					</div>
 				) : null}
 				{announcement ? (
-					<div className="management-route-announcement" role="status">
+					<div className="settings-status-message environment-window-status" role="status">
 						{announcement}
 					</div>
 				) : null}
-			</div>
-		</main>
+		</div>
 	);
 }
 
