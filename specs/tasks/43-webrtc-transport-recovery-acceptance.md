@@ -70,6 +70,12 @@ generation correctly.
   - [ ] Fault each bootstrap lane independently before handoff.
 - [ ] Cover peer and ICE disconnected-then-recovered, disconnected past grace,
   failed, closed, host shutdown, server exposure stop, and device revocation.
+  - [x] Prove required-lane replacement closes the retired native peer and
+    device revocation terminates the active application generation.
+  - [ ] Inject native peer/ICE disconnected, failed, and closed states and
+    distinguish within-grace recovery from past-grace replacement.
+  - [ ] Exercise host shutdown and server exposure stop independently from
+    device revocation.
 - [ ] Cover offline/online, signaling outage, delayed host registration, failed
   authentication, failed hydration, and repeated Retry during backoff.
 - [ ] Assert exact peer, lane, transport generation, application client,
