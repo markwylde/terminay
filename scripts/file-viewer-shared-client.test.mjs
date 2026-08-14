@@ -509,6 +509,16 @@ test('Desktop file observation treats every atomic inode replacement as authorit
 	);
 });
 
+test('active file save dispatch uses the registered live panel handler', async () => {
+	const [app, panel] = await Promise.all([
+		readFile('src/App.tsx', 'utf8'),
+		readFile('src/components/file-viewer/FilePanel.tsx', 'utf8'),
+	]);
+	assert.match(panel, /useFilePanelSaveRegistration\(props\.api\.id, saveCurrentFile\)/u);
+	assert.match(app, /filePanelSaveHandlersRef\.current\.get\(activePanel\.id\)/u);
+	assert.match(app, /await registeredSave\(\)/u);
+});
+
 test('connected sparse saves use canonical revision authority', async () => {
 	const panel = await readFile(
 		'src/components/file-viewer/FilePanel.tsx',

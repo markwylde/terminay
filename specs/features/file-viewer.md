@@ -229,6 +229,9 @@ state rather than disabling the Diff mode.
 - A dirty file differs from its confirmed disk revision.
 - Dirty panels show an accessible dirty indicator.
 - Save is available through the File menu and keyboard command.
+- The active file panel registers its current save handler with its project
+  workspace. Menu/keyboard save dispatch resolves that registry by active panel
+  identity; it does not depend on a mutable Dockview parameter snapshot.
 - Save declares the expected disk revision and writes atomically using a
   temporary file plus replace.
 - A successful save advances the base revision and clears dirty state.
