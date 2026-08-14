@@ -37,7 +37,7 @@
 		"docs:build": "npm run docs:screenshots && npm --prefix docs run build",
 		"lint": "biome lint .",
 		"build:workspaces": "npm run build --workspaces --if-present",
-		"build:server-ui": "npm run build --workspace @terminay/web && vite build --config vite.web.config.ts && vite build --config vite.server-ui.config.ts && node scripts/build-ui-bundle-manifest.mjs dist-web $npm_package_version 1 server.html",
+		"build:server-ui": "npm run build --workspace @terminay/web && vite build --config vite.web.config.ts && vite build --config vite.server-ui.config.ts",
 		"build:web": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/client-core && npm run build --workspace @terminay/responsive-ui && npm run build:server-ui",
 		"build:applications": "npm run build:shared && npm run build --workspace @terminay/server && npm run build --workspace @terminay/desktop && npm run build --workspace @terminay/web",
 		"typecheck:web": "tsc -p tsconfig.web.json --noEmit",

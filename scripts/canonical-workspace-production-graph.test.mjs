@@ -33,15 +33,32 @@ test('the Desktop renderer build contains no second full-workspace entry', async
 test('development watches the same generated server workspace used by releases', async () => {
 	const packageJson = JSON.parse(await read('package.json'));
 	const runner = await read('scripts/run-canonical-development.mjs');
+	const serverUiConfig = await read('vite.server-ui.config.ts');
+	const manifestBuilder = await read('scripts/build-ui-bundle-manifest.mjs');
 
 	assert.match(packageJson.scripts.dev, /run-canonical-development\.mjs/u);
 	assert.match(packageJson.scripts['build:app'], /remote\.html/u);
 	assert.match(runner, /vite\.server-ui\.config\.ts/u);
 	assert.match(runner, /build.*--watch/su);
+	assert.match(serverUiConfig, /writeBundle\(\)/u);
+	assert.match(serverUiConfig, /buildUiBundleManifest/u);
+	assert.match(serverUiConfig, /manifestPublication\.then/u);
+	assert.match(manifestBuilder, /rename\(temporaryManifestPath, manifestPath\)/u);
+	assert.doesNotMatch(
+		packageJson.scripts['build:server-ui'],
+		/build-ui-bundle-manifest/u,
+	);
 	assert.doesNotMatch(
 		packageJson.scripts.dev,
 		/VITE_DEV_SERVER_URL=.*index\.html/u,
 	);
+});
+
+test('the packaged graph excludes superseded preload and MCP adapters', async () => {
+	const vite = await read('vite.config.ts');
+	assert.doesNotMatch(vite, /electron\/preload\.ts/u);
+	assert.doesNotMatch(vite, /electron\/mcpEntry\.ts/u);
+	assert.match(vite, /apps\/terminay-server\/src\/mcpEntry\.ts/u);
 });
 
 test('renderer-owned workspace seeding is absent from Desktop production code', async () => {
