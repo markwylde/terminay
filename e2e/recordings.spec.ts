@@ -246,12 +246,14 @@ test.describe('recordings UI', () => {
     expect(
       await recordingsWindow.evaluate(async () => {
         return {
-          boundedRead: typeof window.terminayRecordingServiceHost?.readTerminalRecordingChunk === 'function',
+          canonicalHostPresent: typeof window.terminayHost?.requestAction === 'function',
+          nativeRecordingPreloadPresent: Reflect.has(window, 'terminayRecordingServiceHost'),
           broadPreloadPresent: Reflect.has(window, 'terminay'),
         }
       }),
     ).toEqual({
-      boundedRead: true,
+      canonicalHostPresent: true,
+      nativeRecordingPreloadPresent: false,
       broadPreloadPresent: false,
     })
     await expect(recordingsWindow.getByPlaceholder('Search recordings')).toBeVisible()
