@@ -55,9 +55,19 @@ async function exposeDirectAndReadPairingLink(
 		await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
 		await expect(pinDialog).toHaveCount(0);
 	}
+	const directListenerError = settings.getByTestId(
+		'direct-listener-operation-error',
+	);
 	await expect(
-		settings.getByRole('button', { name: 'Stop direct listener' }),
+		settings
+			.getByRole('button', { name: 'Stop direct listener' })
+			.or(directListenerError),
 	).toBeVisible({ timeout: 20_000 });
+	if (await directListenerError.isVisible().catch(() => false)) {
+		throw new Error(
+			`Direct listener start was rejected: ${await directListenerError.innerText()}`,
+		);
+	}
 	const showPairing = settings.getByRole('button', { name: 'Show QR Code' });
 	await expect(showPairing).toBeVisible();
 	await expect(showPairing).toBeEnabled();

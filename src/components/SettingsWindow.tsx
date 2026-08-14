@@ -636,6 +636,9 @@ export function SettingsWindow({
 	const [remoteActionError, setRemoteActionError] = useState<string | null>(
 		null,
 	);
+	const [directListenerActionError, setDirectListenerActionError] = useState<
+		string | null
+	>(null);
 	const [, setSelectedRemotePairingMode] = useState<'lan' | 'webrtc'>('webrtc');
 	const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
 	const [isPairingPinModalOpen, setIsPairingPinModalOpen] = useState(false);
@@ -2193,16 +2196,26 @@ export function SettingsWindow({
 
 	const toggleDirectNetworkListener = async () => {
 		setIsTogglingRemoteAccess(true);
-		setRemoteActionError(null);
+		setDirectListenerActionError(null);
 		try {
 			if (
 				!remoteStatus?.directListenerRunning &&
 				!(await ensureRemoteAccessPairingPin('lan'))
 			)
 				return;
-			setRemoteStatus(await remoteAccessStatusClient.toggleDirectListener());
+			const wasRunning = remoteStatus?.directListenerRunning === true;
+			const nextStatus =
+				await remoteAccessStatusClient.toggleDirectListener();
+			if (nextStatus.directListenerRunning === wasRunning) {
+				throw new Error(
+					`This server did not confirm that the direct network listener ${
+						wasRunning ? 'stopped' : 'started'
+					}.`,
+				);
+			}
+			setRemoteStatus(nextStatus);
 		} catch (error) {
-			setRemoteActionError(
+			setDirectListenerActionError(
 				error instanceof Error
 					? error.message
 					: 'Unable to change the direct network listener.',
@@ -2514,6 +2527,24 @@ export function SettingsWindow({
 									</button>
 								)}
 							</div>
+							{selectedRemoteTab === 'lan' && directListenerActionError ? (
+								<div
+									role="alert"
+									data-testid="direct-listener-operation-error"
+									style={{
+										marginBottom: '20px',
+										padding: '12px 14px',
+										border: '1px solid var(--settings-danger)',
+										borderRadius: '8px',
+										color: 'var(--settings-danger)',
+										fontSize: '13px',
+										lineHeight: 1.5,
+									}}
+								>
+									<strong>Direct network listener could not be changed.</strong>{' '}
+									{directListenerActionError}
+								</div>
+							) : null}
 
 							<div
 								className="settings-row"
