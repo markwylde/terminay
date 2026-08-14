@@ -15,37 +15,34 @@ export async function resolveTerminalProcessCwd(rootPid: number, signal?: AbortS
  * on every Unix host; TPGID is the kernel-owned foreground authority. */
 export async function resolveTerminalForegroundProcess(rootPid: number, signal?: AbortSignal): Promise<string | null> {
 	if (!Number.isSafeInteger(rootPid) || rootPid <= 0 || process.platform === 'win32') return null
+	const rootCommand = await resolveProcessCommand(rootPid, signal)
+	const descendants = await resolveTerminalLeafProcesses(rootPid, signal)
+	// A '+' in ps STAT is the kernel's foreground process-group marker. It
+	// remains reliable when a non-job-control shell shares its process group
+	// with the current command, where TPGID alone points back to the shell.
+	const foregroundDescendants = descendants.filter(
+		(entry) => entry.foreground && entry.command !== rootCommand,
+	)
+	if (foregroundDescendants.length === 1) {
+		return foregroundDescendants[0].command
+	}
+	const nonShellDescendants = descendants.filter(
+		(entry) => entry.command !== rootCommand,
+	)
+	if (nonShellDescendants.length === 1) {
+		return nonShellDescendants[0].command
+	}
 	try {
 		const { stdout: groupOutput } = await execFileAsync('ps', ['-o', 'tpgid=', '-p', String(rootPid)], { signal })
 		const groupPid = Number.parseInt(groupOutput.trim(), 10)
 		const groupCommand = Number.isSafeInteger(groupPid) && groupPid > 0
 			? await resolveProcessCommand(groupPid, signal)
 			: null
-		const rootCommand = await resolveProcessCommand(rootPid, signal)
-
-		// Some PTY hosts keep the shell and its foreground job in one process
-		// group. In that case TPGID points back to the shell and cannot identify
-		// the destructive foreground child. Follow the single-child shell chain
-		// before falling back to the shell title reported by node-pty.
-		const descendants = await resolveTerminalLeafProcesses(rootPid, signal)
-		// A '+' in ps STAT is the kernel's foreground process-group marker. It
-		// remains reliable when a non-job-control shell shares its process group
-		// with the current command, where TPGID alone points back to the shell.
-		const foregroundDescendants = descendants.filter(
-			(entry) => entry.foreground && entry.command !== rootCommand && entry.command !== groupCommand,
-		)
-		if (foregroundDescendants.length === 1) {
-			return foregroundDescendants[0].command
-		}
-		const nonShellDescendants = descendants.filter(
-			(entry) => entry.command !== rootCommand && entry.command !== groupCommand,
-		);
-		if (nonShellDescendants.length === 1) {
-			return nonShellDescendants[0].command
-		}
 		return groupCommand ?? rootCommand
 	} catch {
-		return null
+		// TPGID is an enhancement, not a prerequisite: constrained hosts can
+		// deny this one ps query while still allowing direct child observation.
+		return rootCommand
 	}
 }
 
