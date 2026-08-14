@@ -306,7 +306,7 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Rename')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Delete')).toBeVisible()
-  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toHaveCount(0)
   await expect(contextMenuItem(mainWindow, 'Create new file')).toHaveCount(0)
   await mainWindow.keyboard.press('Escape')
 
@@ -481,7 +481,7 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   await expect(contextMenuItem(mainWindow, 'Copy path')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Copy relative path')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeVisible()
-  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toHaveCount(0)
   await mainWindow.keyboard.press('Escape')
 
   // The worktree row exposes a push-agent menu offering the four commit-and-push actions.
