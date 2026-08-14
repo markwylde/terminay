@@ -15,7 +15,7 @@ async function configureWebRtcHostedDomain(
 	hostedDomain: string,
 ): Promise<void> {
 	const settings = await appHarness.openSettingsWindow({ page, sectionId: 'remote-access-host' });
-	await settings.getByLabel('Pairing mode').selectOption('webrtc');
+	await settings.getByLabel('Exposure route').selectOption('webrtc');
 	await settings.locator('#section-remote-access-host .settings-row').filter({ hasText: 'WebRTC hosted domain' }).locator('input').fill(hostedDomain);
 	await expect(settings.locator('.settings-status')).toContainText('Saved');
 	await settings.close();
@@ -329,7 +329,7 @@ test('keeps the configured PIN out of the server-owned LAN handoff', async ({
 	appHarness, mainWindow,
 }) => {
 	const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' });
-	await settingsWindow.getByLabel('Pairing mode').selectOption('lan');
+	await settingsWindow.getByLabel('Exposure route').selectOption('lan');
 	await expect(settingsWindow.locator('.settings-status')).toContainText('Saved');
 	await settingsWindow.close();
 	await mainWindow.evaluate(async () => {
@@ -367,7 +367,7 @@ test('rotates and stops server-owned LAN pairing without a legacy renderer API',
 	appHarness, mainWindow,
 }) => {
 	const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' });
-	await settingsWindow.getByLabel('Pairing mode').selectOption('lan');
+	await settingsWindow.getByLabel('Exposure route').selectOption('lan');
 	await expect(settingsWindow.locator('.settings-status')).toContainText('Saved');
 	await settingsWindow.close();
 	await mainWindow.evaluate(async () => {
