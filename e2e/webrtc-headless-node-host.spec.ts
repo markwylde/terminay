@@ -228,15 +228,45 @@ function waitFor<T>(
   })
 }
 
+async function cleanupWithin(
+	phase: string,
+	cleanup: () => Promise<unknown> | unknown,
+	timeoutMs = 10_000,
+): Promise<void> {
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			Promise.resolve().then(cleanup),
+			new Promise<never>((_, reject) => {
+				timeout = setTimeout(
+					() => reject(new Error(`Timed out during ${phase}.`)),
+					timeoutMs,
+				);
+			}),
+		]);
+	} catch (error) {
+		console.warn(
+			`[webrtc-hosted-proof] ${phase} did not settle: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	} finally {
+		if (timeout) clearTimeout(timeout);
+	}
+}
+
 test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} host`, async ({
   browser,
 }, testInfo) => {
-  test.setTimeout(240_000)
+	test.setTimeout(240_000)
+	const markPhase = (phase: string) => {
+		console.info(`[webrtc-hosted-proof] phase=${phase}`)
+	}
+	markPhase('starting-hosted-server')
   if (!HeadlessPeerConnection || (runtimeName === 'node-datachannel' && !nodeDataChannel)) {
     throw new Error(`The isolated ${runtimeName} runtime is unavailable.`)
   }
 
-  const hostedServer = await startHostedServer()
+	const hostedServer = await startHostedServer()
+	markPhase('hosted-server-ready')
   const userDataDir = await mkdtemp(path.join(os.tmpdir(), 'terminay-headless-production-webrtc-'))
   const hostWindows: HeadlessHostWindow[] = []
   const statuses: ReturnType<RemoteAccessService['getStatus']>[] = []
@@ -667,7 +697,8 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     page.on('console', (message) => {
       if (message.type() === 'error') browserRuntimeErrors.push(message.text())
     })
-    await page.goto(pairingUrl, { waitUntil: 'domcontentloaded' })
+		markPhase('opening-pairing-url')
+		await page.goto(pairingUrl, { waitUntil: 'domcontentloaded' })
     // This must be the browser's native WebRTC implementation.  A stubbed
     // constructor would make the headless runtime proof look interoperable
     // without exercising Chromium's SDP/data-channel implementation.
@@ -754,14 +785,16 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         `host=${JSON.stringify(hostEvidence)}`,
       )
     }
-    await page.getByLabel('Pairing PIN').fill('123456')
-    await page.getByRole('button', { name: 'Pair and connect' }).click()
-    await expect(page.locator('.xterm-rows')).toContainText('headless-host-ready', { timeout: 60_000 }).catch(async (error) => {
+		await page.getByLabel('Pairing PIN').fill('123456')
+		await page.getByRole('button', { name: 'Pair and connect' }).click()
+		markPhase('pairing-submitted')
+		await expect(page.locator('.xterm-rows')).toContainText('headless-host-ready', { timeout: 60_000 }).catch(async (error) => {
       throw new Error(
         `${error instanceof Error ? error.message : String(error)} ` +
         `page=${JSON.stringify(await page.locator('body').innerText().catch(() => ''))}`,
       )
-    })
+		})
+		markPhase('verified-bundle-mounted')
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
 
     const firstDevice = service.getStatus().pairedDevices[0]
@@ -831,7 +864,10 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     // real Chromium answerer has fetched and verified the server-owned assets,
     // mounted them, authenticated, and exchanged application bytes with the
     // plain-Node Werift offerer. Recovery/revocation remain the broader suite.
-    if (hostedProofScope === 'bundle') return
+		if (hostedProofScope === 'bundle') {
+			markPhase('bundle-proof-complete')
+			return
+		}
 
     // Reproduce the deployed failure shape: the mounted application's protocol
     // reader ends while its WebRTC peer and application data channel remain
@@ -1366,17 +1402,24 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
 
     expect(statuses.some((status) => status.pairedDeviceCount === 1)).toBe(true)
     expect(service.getStatus().pairedDeviceCount).toBe(0)
-  } finally {
-    await context.close().catch(() => undefined)
-    if (privilegedExposure) {
-      await privilegedExposure.shutdown().catch(() => undefined)
-    } else if (service.getStatus().isRunning) {
-      await service.toggle().catch(() => undefined)
-    }
-    for (const hostWindow of hostWindows) hostWindow.close()
-    nodeDataChannel?.cleanup()
-    await hostedServer.stop()
-    await composition.shutdown().catch(() => undefined)
-    await rm(userDataDir, { force: true, recursive: true })
-  }
+	} finally {
+		markPhase('teardown-start')
+		// Retire the privileged transport owner before asking Chromium to close.
+		// Closing the context first can wait forever on a live Werift data channel,
+		// consuming the test's outer timeout without a useful Playwright stack.
+		if (privilegedExposure) {
+			await cleanupWithin('privileged WebRTC shutdown', () => privilegedExposure.shutdown())
+		} else if (service.getStatus().isRunning) {
+			await cleanupWithin('remote access service shutdown', () => service.toggle())
+		}
+		for (const hostWindow of hostWindows) hostWindow.close()
+		nodeDataChannel?.cleanup()
+		await cleanupWithin('browser context close', () => context.close())
+		await cleanupWithin('hosted server stop', () => hostedServer.stop())
+		await cleanupWithin('server composition shutdown', () => composition.shutdown())
+		await cleanupWithin('temporary user-data removal', () =>
+			rm(userDataDir, { force: true, recursive: true }),
+		)
+		markPhase('teardown-complete')
+	}
 })
