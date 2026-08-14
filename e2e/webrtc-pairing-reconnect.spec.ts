@@ -8,7 +8,7 @@ async function configureWebRtcRemoteAccess(
 ) {
 	const settings = await appHarness.openSettingsWindow({ page, sectionId: 'remote-access-host' });
 	const rows = settings.locator('#section-remote-access-host .settings-row');
-	await settings.getByLabel('Pairing mode').selectOption('webrtc');
+	await settings.getByLabel('Exposure route').selectOption('webrtc');
 	await rows.filter({ hasText: 'Bind address' }).locator('input').fill('127.0.0.1');
 	await rows.filter({ hasText: 'Remote origin' }).locator('input').fill(`https://127.0.0.1:${options.lanPort}`);
 	await rows.filter({ hasText: 'Saved reconnect lifetime' }).locator('select').selectOption('24h');
