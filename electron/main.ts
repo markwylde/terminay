@@ -2900,7 +2900,14 @@ function createWindow(options?: {
 					const requested = new URL(options.auxiliary.route, 'https://terminay.invalid');
 					entryUrl.search = requested.search;
 				}
-				if (options?.workspaceViewId) entryUrl.hash = `view=${encodeURIComponent(options.workspaceViewId)}`;
+				// `route.present` is a canonical application route, whose logical view
+				// lives in the query string.  Preserve that route when Desktop opens a
+				// second workspace presentation instead of translating it into a hash:
+				// the server bundle's route shell (and not only App's workspace picker)
+				// then mounts the intended view before the source presentation closes.
+				if (options?.workspaceViewId) {
+					entryUrl.searchParams.set('view', options.workspaceViewId);
+				}
 				const connectionProfiles = sanitizedDesktopConnectionProfiles(
 					launch.context.profileId,
 				);

@@ -159,10 +159,16 @@ export function ConnectedWebRendererWorkspace({
 		hostContext?.capabilities.nativeWindows !== undefined;
 	const [isConnectionManagerOpen, setIsConnectionManagerOpen] = useState(false);
 	const nativeAuxiliaryDocument = useMemo(initialAuxiliaryRoute, []);
-	const requestedView = useMemo(
-		() => new URLSearchParams(window.location.search).get('view'),
-		[],
-	);
+	const requestedView = useMemo(() => {
+		// Canonical route presentations use the query form.  Retain fragment
+		// compatibility for documents opened by older Desktop versions rather
+		// than rendering those child windows as the unscoped default workspace.
+		const query = new URLSearchParams(window.location.search);
+		return (
+			query.get('view') ??
+			new URLSearchParams(window.location.hash.slice(1)).get('view')
+		);
+	}, []);
 	const sharedRoute = useMemo(
 		() => sharedRouteForView(requestedView),
 		[requestedView],
