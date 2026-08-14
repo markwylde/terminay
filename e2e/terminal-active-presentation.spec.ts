@@ -35,16 +35,28 @@ test('a protocol-created terminal launches the configured shell', async ({
 	await settings.getByLabel('Default shell profile').selectOption({ label: 'E2E Bash' });
 	await settings.close();
 
+	const activeTerminal = mainWindow.locator('.terminal-panel:visible');
+	const previousSessionId = await activeTerminal.getAttribute(
+		'data-terminay-terminal-session-id',
+	);
+	expect(previousSessionId).not.toBeNull();
 	await sendAppCommand(mainWindow, 'new-terminal');
-	const terminal = mainWindow.locator('.terminal-panel:visible');
-	await expect(terminal).toHaveAttribute(
+	await expect
+		.poll(() =>
+			activeTerminal.getAttribute('data-terminay-terminal-session-id'),
+		)
+		.not.toBe(previousSessionId);
+	await expect(activeTerminal).toHaveAttribute(
 		'data-terminay-terminal-session-id',
 		/.+/,
 	);
-	await terminal.locator('.xterm-helper-textarea').focus();
-	await mainWindow.keyboard.insertText(
-		`printf '__TERMINAY_BASH__:%s\\n' "\${BASH_VERSION:-missing}"`,
-	);
+	await expect(activeTerminal).toContainText(/[$#]\s*$/u);
+	await activeTerminal.locator('.xterm-helper-textarea').focus();
+	await mainWindow.keyboard.insertText('printenv BASH_VERSION');
 	await mainWindow.keyboard.press('Enter');
-	await expect(terminal).toContainText(/__TERMINAY_BASH__:\d/u);
+	await expect(
+		activeTerminal
+			.locator('.xterm-rows > div')
+			.filter({ hasText: /^\d+\.\d+(?:\.\d+)?(?:\(\d+\)-release)?$/u }),
+	).not.toHaveCount(0);
 });
