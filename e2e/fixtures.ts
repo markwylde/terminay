@@ -9,6 +9,7 @@ import {
   openChildWindow,
   openMacroLauncher,
   openMacrosWindow,
+  openProjectEnvironmentsWindow,
   openSettingsWindow,
   prepareWindow,
   sendAppCommand,
@@ -23,6 +24,7 @@ type ElectronFixtures = {
     openChildWindow: (action: () => Promise<void>) => Promise<Page>
     openMacroLauncher: (page?: Page, options?: { attempts?: number }) => Promise<void>
     openMacrosWindow: (page?: Page) => Promise<Page>
+    openProjectEnvironmentsWindow: (page?: Page) => Promise<Page>
     openSettingsWindow: (options?: { page?: Page; sectionId?: string }) => Promise<Page>
     prepareWindow: (page: Page) => Promise<Page>
     sendAppCommand: (command: import('../src/types/terminay').AppCommand, page?: Page) => Promise<void>
@@ -289,6 +291,8 @@ export const test = base.extend<ElectronFixtures>({
       openChildWindow: (action) => openChildWindow(electronApp, action),
       openMacroLauncher: (page = mainWindow, options) => openMacroLauncher(page, options),
       openMacrosWindow: (page = mainWindow) => openMacrosWindow(electronApp, page),
+      openProjectEnvironmentsWindow: (page = mainWindow) =>
+        openProjectEnvironmentsWindow(electronApp, page),
       openSettingsWindow: (options) =>
         openSettingsWindow(electronApp, options?.page ?? mainWindow, { sectionId: options?.sectionId }),
       prepareWindow,

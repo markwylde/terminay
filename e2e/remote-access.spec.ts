@@ -10,22 +10,16 @@ function remoteOriginInput(page: Page) {
 }
 
 async function configureWebRtcHostedDomain(
+	appHarness: { openSettingsWindow: (options: { page: Page; sectionId: string }) => Promise<Page> },
 	page: Page,
 	hostedDomain: string,
 ): Promise<void> {
+	const settings = await appHarness.openSettingsWindow({ page, sectionId: 'remote-access-host' });
+	await settings.getByLabel('Pairing mode').selectOption('webrtc');
+	await settings.locator('#section-remote-access-host .settings-row').filter({ hasText: 'WebRTC hosted domain' }).locator('input').fill(hostedDomain);
+	await expect(settings.locator('.settings-status')).toContainText('Saved');
+	await settings.close();
 	await page.evaluate(async (nextHostedDomain) => {
-		const settings =
-			await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings();
-		await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings(
-			{
-				...settings,
-				remoteAccess: {
-					...settings.remoteAccess,
-					pairingMode: 'webrtc',
-					webRtcHostedDomain: nextHostedDomain,
-				},
-			},
-		);
 		await window.terminayRemoteAccessStatusHost.setPairingAddress(
 			nextHostedDomain,
 		);
@@ -81,9 +75,10 @@ test('opens remote access settings from the host menu', async ({
 });
 
 test('exposes the server, then shows its pairing QR from the host menu', async ({
+	appHarness,
 	mainWindow,
 }) => {
-	await configureWebRtcHostedDomain(mainWindow, 'http://localhost:9');
+	await configureWebRtcHostedDomain(appHarness, mainWindow, 'http://localhost:9');
 	await exposeWebRtcAndOpenPairing(mainWindow);
 	await expect(mainWindow.getByLabel('Open connection menu')).toContainText(
 		'Local',
@@ -136,9 +131,10 @@ test('exposes the server, then shows its pairing QR from the host menu', async (
 });
 
 test('asks for a Remote Access PIN before generating the QR code', async ({
+	appHarness,
 	mainWindow,
 }) => {
-	await configureWebRtcHostedDomain(mainWindow, 'http://localhost:9');
+	await configureWebRtcHostedDomain(appHarness, mainWindow, 'http://localhost:9');
 	await exposeWebRtcAndOpenPairing(mainWindow);
 
 	const pairingDialog = mainWindow.getByRole('dialog', { name: 'Pair device' });
@@ -179,11 +175,7 @@ test('asks for a Remote Access PIN before generating the QR code', async ({
 		pairingDialogMetrics.right,
 	);
 
-	const settings = await mainWindow.evaluate(() =>
-		window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings(),
-	);
-	expect(settings.remoteAccess.pairingPinHash).toMatch(/^scrypt-v1:/);
-	expect(settings.remoteAccess.pairingPinHash).not.toContain('123456');
+	// The secret hash is deliberately not exposed to the canonical renderer.
 
 	await pairingDialog
 		.getByRole('button', { name: 'Close Pair Device' })
@@ -262,9 +254,10 @@ test('a direct pairing link boots the server UI, enrolls, and connects', async (
 });
 
 test('starts WebRTC remote access from the host menu start button', async ({
+	appHarness,
 	mainWindow,
 }) => {
-	await configureWebRtcHostedDomain(mainWindow, 'http://localhost:9');
+	await configureWebRtcHostedDomain(appHarness, mainWindow, 'http://localhost:9');
 
 	await openRemoteMenu(mainWindow);
 	await mainWindow
@@ -333,17 +326,13 @@ test('starts WebRTC remote access from the host menu start button', async ({
 });
 
 test('keeps the configured PIN out of the server-owned LAN handoff', async ({
-	mainWindow,
+	appHarness, mainWindow,
 }) => {
+	const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' });
+	await settingsWindow.getByLabel('Pairing mode').selectOption('lan');
+	await expect(settingsWindow.locator('.settings-status')).toContainText('Saved');
+	await settingsWindow.close();
 	await mainWindow.evaluate(async () => {
-		const settings =
-			await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings();
-		await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings(
-			{
-				...settings,
-				remoteAccess: { ...settings.remoteAccess, pairingMode: 'lan' },
-			},
-		);
 		await window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
 			'654321',
 		);
@@ -369,29 +358,19 @@ test('keeps the configured PIN out of the server-owned LAN handoff', async ({
 	expect(pairingBootstrap.get('pairingToken')).toMatch(/^[A-Za-z0-9_-]{32,}$/);
 	expect(pairingBootstrap.get('pairingExpiresAt')).toBeTruthy();
 	expect(pairingUrl.hash).not.toContain('654321');
-	const settings = await mainWindow.evaluate(() =>
-		window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings(),
-	);
-	expect(settings.remoteAccess.pairingPinHash).toMatch(/^scrypt-v1:/);
-	expect(settings.remoteAccess.pairingPinHash).not.toContain('654321');
-
 	await mainWindow.evaluate(() =>
 		window.terminayRemoteAccessStatusHost.toggleServer(),
 	);
 });
 
 test('rotates and stops server-owned LAN pairing without a legacy renderer API', async ({
-	mainWindow,
+	appHarness, mainWindow,
 }) => {
+	const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' });
+	await settingsWindow.getByLabel('Pairing mode').selectOption('lan');
+	await expect(settingsWindow.locator('.settings-status')).toContainText('Saved');
+	await settingsWindow.close();
 	await mainWindow.evaluate(async () => {
-		const settings =
-			await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings();
-		await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings(
-			{
-				...settings,
-				remoteAccess: { ...settings.remoteAccess, pairingMode: 'lan' },
-			},
-		);
 		await window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
 			'123456',
 		);

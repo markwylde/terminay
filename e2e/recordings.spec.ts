@@ -218,17 +218,11 @@ test.describe('recordings UI', () => {
   }) => {
     const recordingDir = path.join(tempDir, 'ui-recordings')
     await mkdir(recordingDir, { recursive: true })
-    await mainWindow.evaluate(async (nextRecordingDir) => {
-      const settings = await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()
-      await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings({
-        ...settings,
-        recording: {
-          ...settings.recording,
-          directory: nextRecordingDir,
-          openTimelineAfterSaving: false,
-        },
-      })
-    }, recordingDir)
+    const settings = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'recording-defaults' })
+    await settings.locator('#section-recording-defaults .settings-row').filter({ hasText: 'Recording directory' }).locator('input').fill(recordingDir)
+    await settings.getByLabel('Open timeline after saving').uncheck()
+    await expect(settings.locator('.settings-status')).toContainText('Saved')
+    await settings.close()
 
     const terminalTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
     await terminalTab.click({ button: 'right' })
