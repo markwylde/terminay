@@ -75,6 +75,9 @@ The shared terminal-settings hook reads and observes server settings through
 the transport-neutral `SettingsClient` bundled with the selected server UI;
 the host bridge never answers or translates server settings operations. Shared
 components do not subscribe to preload events directly.
+No legacy terminal-settings preload global or snapshot adapter exists; missing
+selected-server settings authority is reported as unavailable rather than
+falling back to device-local settings.
 File-panel diff-layout changes use the same settings command facade and remain
 server-authoritative across the shared UI hosts.
 Macro definitions and secret actions likewise require an explicitly supplied

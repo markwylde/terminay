@@ -270,7 +270,10 @@ packet bound to the exact server identity before it reaches `TerminayClient`.
 The privileged host fixes that identity when constructing the endpoint;
 inbound packets for another server or with an invalid bounded shape are
 rejected, while feature-level frame contents remain opaque to the host. The
-renderer receives no raw native transport or credential authority.
+renderer receives no raw native transport or credential authority. The
+canonical renderer accepts only that selected-server byte endpoint. It has no
+preload-frame adapter, connection-generation fallback, or legacy server
+connection global that can bypass the endpoint's fixed identity.
 
 ## Transports
 
