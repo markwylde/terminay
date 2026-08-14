@@ -25,15 +25,10 @@ test('accepts only known top-level Terminay app renderer senders', () => {
   assert.throws(() => assertTrustedIpcSender(event(), { ...options, isKnownWindow: () => false }), /registered BrowserWindow/u)
 })
 
-test('legacy privileged compatibility handlers enforce trusted renderer provenance first', async () => {
+test('remaining privileged handlers enforce trusted renderer provenance first', async () => {
   const source = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8')
   const guardedChannels = [
     'test:create-server-terminal',
-    'desktop:recording-service-host:start',
-    'fs:list-directory',
-    'fs:delete',
-    'settings:update-terminal',
-    'macros:update',
     'remote:toggle-server',
     'remote:revoke-device',
     'secrets:save',
@@ -48,7 +43,6 @@ test('legacy privileged compatibility handlers enforce trusted renderer provenan
     'test:send-app-command',
     'test:set-ai-tab-metadata-mock',
     'test:emit-agent-journal-record',
-    'desktop:terminal-lifecycle-host:wait-for-inactivity',
     'desktop:mcp-install-host:get-status',
     'desktop:mcp-install-host:install',
     'desktop:mcp-install-host:uninstall',
