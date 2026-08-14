@@ -188,8 +188,6 @@ const APP_COMMANDS = new Set<string>([
 	'new-terminal',
 	'open-command-bar',
 	'open-recordings',
-	'open-settings',
-	'open-macros',
 	'open-project-environments',
 	'open-extensions',
 	'popout-active',
