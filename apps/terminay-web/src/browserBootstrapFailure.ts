@@ -143,8 +143,6 @@ function compatibilityDetail(failure: CompatibilityFailure): string {
 		failure.capability !== undefined
 	)
 		return `Required browser capability is incompatible: ${capabilityLabel(failure.capability)}.`;
-	if (failure.component === 'execution-runtime')
-		return 'The negotiated browser execution runtime is not compatible with this workspace.';
 	if (failure.component === 'application-protocol')
 		return 'The server application protocol is not compatible with this workspace host.';
 	if (
