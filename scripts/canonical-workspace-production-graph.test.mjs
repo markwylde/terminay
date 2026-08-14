@@ -110,6 +110,11 @@ test('direct and WebRTC remote connections both launch the canonical server bund
 
 test('renderer-owned workspace seeding is absent from Desktop production code', async () => {
 	const main = await read('electron/main.ts');
+	assert.match(
+		main,
+		/let serverTerminalAuthority: ServerTerminalAuthority \| null = null;/u,
+		'pre-authority shell discovery must observe an explicit unpublished state',
+	);
 	assert.doesNotMatch(main, /ensureLocalWorkspaceSeed/u);
 	assert.doesNotMatch(main, /localWorkspaceSeedPromise/u);
 	assert.match(main, /workspace\.v3\.json/u);
