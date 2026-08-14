@@ -65,8 +65,19 @@ export type HostedBrowserSessionAuthority = Omit<SessionTransportHost, 'version'
 
 declare global {
 	interface Window {
+		__TERMINAY_HOSTED_SESSION_AUTHORITY__?: unknown;
 		__TERMINAY_SESSION_TRANSPORT__?: unknown;
 	}
+}
+
+/** Consume the hosted shell's narrow authority exactly once. The shell cannot
+ * install or replace the application-facing host contract itself. */
+export function bootstrapHostedBrowserSession(): SessionTransportHost | undefined {
+	const installed = getSessionTransportHost();
+	if (installed !== undefined) return installed;
+	const authority = window.__TERMINAY_HOSTED_SESSION_AUTHORITY__;
+	if (!isHostedBrowserSessionAuthority(authority)) return undefined;
+	return installHostedBrowserSession(authority);
 }
 
 /** Sole browser producer for the privileged session host. Hosted bootstrap
@@ -142,6 +153,40 @@ function validateEndpoint(value: unknown): ByteTransport {
 
 function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
 	return typeof value === 'object' && value !== null;
+}
+
+function isHostedBrowserSessionAuthority(
+	value: unknown,
+): value is HostedBrowserSessionAuthority {
+	if (!isRecord(value)) return false;
+	const allowed = new Set([
+		'sessionId', 'origin', 'managerUrl', 'managerAction', 'serverId',
+		'hostContext', 'assetManifest', 'readAsset', 'byteEndpoint', 'postJson',
+		'acquireApplicationEndpoint', 'registerApplication', 'connect', 'enroll',
+	]);
+	if (Object.keys(value).some((name) => !allowed.has(name))) return false;
+	for (const name of ['sessionId', 'origin', 'serverId'] as const) {
+		if (typeof value[name] !== 'string' || value[name].length === 0) return false;
+	}
+	const origin = value.origin;
+	if (typeof origin !== 'string') return false;
+	try {
+		if (new URL(origin).origin !== window.location.origin) return false;
+	} catch {
+		return false;
+	}
+	for (const name of ['managerUrl', 'managerAction'] as const) {
+		if (value[name] !== undefined && typeof value[name] !== 'string') return false;
+	}
+	for (const name of [
+		'assetManifest', 'readAsset', 'postJson', 'acquireApplicationEndpoint',
+		'registerApplication', 'connect', 'enroll',
+	] as const) {
+		if (typeof value[name] !== 'function') return false;
+	}
+	if (!isRecord(value.byteEndpoint)) return false;
+	if (typeof value.byteEndpoint.send !== 'function' || typeof value.byteEndpoint.subscribe !== 'function') return false;
+	return isRecord(value.hostContext);
 }
 
 function fail(field: string): never {
