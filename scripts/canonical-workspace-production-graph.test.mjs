@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -64,10 +64,38 @@ test('the packaged graph excludes superseded preload and MCP adapters', async ()
 	assert.doesNotMatch(vite, /electron\/preload\.ts/u);
 	assert.doesNotMatch(vite, /electron\/mcpEntry\.ts/u);
 	assert.match(vite, /apps\/terminay-server\/src\/mcpEntry\.ts/u);
+	for (const path of [
+		'index.html',
+		'src/main.tsx',
+		'src/rendererApp.tsx',
+		'src/rendererRuntime.tsx',
+		'electron/preload.ts',
+		'electron/mcpEntry.ts',
+	]) {
+		await assert.rejects(access(new URL(`../${path}`, import.meta.url)));
+	}
+});
+
+test('direct and WebRTC remote connections both launch the canonical server bundle', async () => {
+	const main = await read('electron/main.ts');
+	const server = await read('apps/terminay-server/src/localUiServer.ts');
+	assert.doesNotMatch(main, /function connectRemoteByteTransport/u);
+	assert.doesNotMatch(main, /postMessage\(\s*'server:connection'/u);
+	assert.match(main, /prepareCanonicalHttpRemoteLaunch/u);
+	assert.match(main, /openCanonicalHttpRemoteServerWindow/u);
+	assert.match(main, /remoteServerUiBundleHost\.prepareRemote/u);
+	assert.match(server, /\/host-bootstrap\.json/u);
 });
 
 test('renderer-owned workspace seeding is absent from Desktop production code', async () => {
 	const main = await read('electron/main.ts');
 	assert.doesNotMatch(main, /ensureLocalWorkspaceSeed/u);
 	assert.doesNotMatch(main, /localWorkspaceSeedPromise/u);
+	assert.match(main, /workspace\.v3\.json/u);
+	assert.match(main, /openCanonicalWorkspace/u);
+	assert.match(main, /workspaceRepository:\s*embeddedWorkspace/u);
+	const initialize = main.indexOf('await serverTerminalAuthority.initializeWorkspace()');
+	const ready = main.indexOf("event: 'local-server.ready'");
+	const create = main.lastIndexOf('createWindow();');
+	assert.ok(initialize >= 0 && initialize < ready && ready < create);
 });
