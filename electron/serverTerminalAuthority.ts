@@ -863,9 +863,7 @@ export class ServerTerminalAuthority {
 		this.consumers = new DetachableTerminalConsumerRegistry(this.service);
 	}
 
-	/** Complete fresh repository hydration before the host publishes readiness.
-	 * Restored non-reattachable sessions remain interrupted and are never
-	 * silently replaced with a different PTY identity. */
+	/** Complete canonical workspace hydration before the host publishes readiness. */
 	async initializeWorkspace(): Promise<void> {
 		await this.composition.start();
 		// File/Git/query authorities are process-local. Rebuild their bindings for
@@ -875,10 +873,21 @@ export class ServerTerminalAuthority {
 			await this.registerProjectRoot(project.id, project.root);
 		}
 		if (this.workspaceRepository?.wasCreated !== true) {
-			// Persisted "running" is not proof of an attachable PTY after process
-			// restart. Only a session composed into this authority generation can
-			// satisfy startup readiness.
+			// Local Desktop owns these PTYs. They cannot survive this authority
+			// generation, so reopening their persisted panels would manufacture a
+			// row of unusable interrupted tabs. Keep projects and non-terminal
+			// panels, then start one fresh terminal below.
 			if (this.sessions.size > 0) return;
+			for (const panel of Object.values(this.workspace.state.panels)) {
+				if (panel.type !== 'terminal') continue;
+				const closed = this.composition.workspaceOperations?.applyHostCommand(
+					`authority:restart-close:${panel.id}`.slice(0, 128),
+					{ type: 'panel.close', panelId: panel.id },
+					this.workspace.state.revision,
+				);
+				if (closed === undefined || !closed.ok)
+					throw new Error('could not clear stale local terminal panels');
+			}
 			const activeView =
 				this.workspace.state.views[this.workspace.state.viewOrder[0] ?? ''];
 			const projectId =
