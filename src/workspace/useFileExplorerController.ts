@@ -682,9 +682,15 @@ export function useFileExplorerController({
 		},
 		[gitClient, onOperationError, onSetError, refreshFileExplorerTree],
 	);
-	const handleRevealWorktree = useCallback((worktree: GitWorktreeStatus) => {
-		void window.terminayRevealHost?.reveal(worktree.path);
-	}, []);
+	const handleRevealWorktree = useCallback(
+		(worktree: GitWorktreeStatus) => {
+			const reference = referencesRef.current.get(worktree.path);
+			if (gitClient !== undefined && reference !== undefined) {
+				void gitClient.reveal(reference);
+			}
+		},
+		[gitClient],
+	);
 	const handleOpenTerminalAtWorktree = useCallback(
 		(worktree: GitWorktreeStatus) =>
 			openTerminalAtWorktree(worktree, onOpenTerminalAt),
