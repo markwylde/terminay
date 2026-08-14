@@ -196,9 +196,9 @@ Performant uses ranged reads and virtualization. Monaco loads a complete
 bounded model after the user chooses it. A user can switch from Performant to
 Monaco from inside the panel.
 The Performant viewer requests bounded `file.text-metadata` and
-`file.text-lines` queries through the shared `FileViewerClient`; a host-local
-compatibility transport may bridge those queries while the Desktop connection
-is being migrated, but the component does not access preload APIs directly.
+`file.text-lines` queries through the shared `FileViewerClient` over the
+selected server's application transport. The component does not access preload
+APIs directly and Desktop does not translate file operations.
 
 All modes apply independent limits for range size, concurrent reads, decoded
 image dimensions, Markdown work, diff work, and client memory. Cancellation and

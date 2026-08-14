@@ -145,12 +145,11 @@ acknowledged position after transient transport loss. Only a genuinely new
 emulator, such as one created after renderer reload or window restoration,
 requests checkpoint hydration.
 
-The incremental panel migration uses `TerminayTerminalPanelClient`, a
-transport-neutral view over that attachment. It exposes raw-byte output,
+`TerminayTerminalPanelClient` is the transport-neutral view over an attachment.
+It exposes raw-byte output,
 exit/resync notifications, and attachment-scoped input, resize, kill, and
 acknowledgement commands. The adapter has no Electron or Node dependency, so a
-Desktop panel can adopt it while retaining xterm's existing rendering and
-host-only preload capabilities.
+shared panel uses it identically in Desktop and browser hosts.
 
 The production shared Terminal route body is project-scoped from the current
 server-owned workspace snapshot. Creating a terminal is a server-owned
@@ -167,14 +166,6 @@ missing server state. It may only mount the xterm body for a server-owned panel,
 attach through `TerminayTerminalPanelClient`, and keep temporary local
 measurements that are either discarded or committed through explicit workspace
 commands.
-
-While the remaining Desktop renderer paths are migrated, their terminal
-mutations use the compatibility-only `DesktopTerminalAuthorityAdapter`. It is
-a thin view over `TerminayTerminalClient` and accepts only the immutable
-server/project/session identity plus client authorization; legacy
-`webContentsId`, `windowId`, and `rendererId` ownership fields are rejected.
-This boundary does not import Electron or call `window.terminay`, and it does
-not change the server-owned PTY lifetime.
 
 `TerminalInputSourceAdapter` is the server-side write boundary for keyboard,
 paste, macro, dictation, MCP, and remote sources. It validates the exact
