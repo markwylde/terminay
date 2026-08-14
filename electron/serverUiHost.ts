@@ -170,12 +170,12 @@ function isAllowedNavigation(
 }
 
 function denyDownloadForWindow(
-	targetWebContents: WebContents,
+	targetWebContentsId: number,
 	event: Event,
 	item: DownloadItem,
 	sourceWebContents: WebContents,
 ): void {
-	if (sourceWebContents.id !== targetWebContents.id) {
+	if (sourceWebContents.id !== targetWebContentsId) {
 		return;
 	}
 	event.preventDefault();
@@ -254,6 +254,7 @@ export function bindServerUiWindow(
 	const targetWebContents = window.webContents;
 	const webContentsId = targetWebContents.id;
 	const targetSession = targetWebContents.session;
+	let targetWebContentsDestroyed = false;
 	releaseServerUiWindowBinding(webContentsId, 'server-switch');
 	const lifecycle = new DesktopDocumentLifecycle(options.onLifecycleDiagnostic);
 	const allowedFileRoot =
@@ -309,6 +310,10 @@ export function bindServerUiWindow(
 	// a verified bundle from the newly selected server, leaving the old
 	// Connections dialog visible indefinitely.
 	lifecycle.add('navigation-policy', () => {
+		// Electron has already invalidated this object when the destroyed
+		// callback releases the lifecycle. Its listeners disappear with it, so
+		// there is nothing left to detach and no safe WebContents API to call.
+		if (targetWebContentsDestroyed) return;
 		targetWebContents.off('will-attach-webview', denyWebviewAttachment);
 		targetWebContents.off('will-frame-navigate', restrictFrameNavigation);
 		targetWebContents.off('will-navigate', restrictNavigation);
@@ -319,7 +324,7 @@ export function bindServerUiWindow(
 		event: Event,
 		item: DownloadItem,
 		sourceWebContents: WebContents,
-	) => denyDownloadForWindow(targetWebContents, event, item, sourceWebContents);
+	) => denyDownloadForWindow(webContentsId, event, item, sourceWebContents);
 	targetSession.on('will-download', denyDownload);
 	lifecycle.add('download-listener', () => {
 		targetSession.off('will-download', denyDownload);
@@ -334,8 +339,11 @@ export function bindServerUiWindow(
 	});
 
 	// Capture every Electron-owned object above. A destroyed callback must never
-	// reach back through WebContents to obtain its id or Session.
-	targetWebContents.once('destroyed', () => lifecycle.release('window-close'));
+	// reach back through WebContents to obtain its id, Session, or listener API.
+	targetWebContents.once('destroyed', () => {
+		targetWebContentsDestroyed = true;
+		lifecycle.release('window-close');
+	});
 	window.once('closed', () => lifecycle.release('window-close'));
 
 	return window;

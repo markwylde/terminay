@@ -88,8 +88,9 @@ export function bindWebContentsDiagnostics(options: {
 	const { app, contents, diagnostics } = options;
 	if (registeredContents.has(contents)) return;
 	registeredContents.add(contents);
+	const webContentsId = contents.id;
 	const now = options.now ?? Date.now;
-	const source = `renderer-${contents.id}`;
+	const source = `renderer-${webContentsId}`;
 	let processId = contents.getOSProcessId();
 
 	contents.on('console-message', (details) => {
@@ -170,12 +171,12 @@ export function bindWebContentsDiagnostics(options: {
 			},
 			{ channel: 'lifecycle' },
 		);
-		rendererEpisodes.delete(contents.id);
+		rendererEpisodes.delete(webContentsId);
 	});
 	contents.on('unresponsive', () => {
-		if (rendererEpisodes.has(contents.id)) return;
+		if (rendererEpisodes.has(webContentsId)) return;
 		processId = contents.getOSProcessId() || processId;
-		rendererEpisodes.set(contents.id, { startedAt: now() });
+		rendererEpisodes.set(webContentsId, { startedAt: now() });
 		void diagnostics.record(
 			{
 				component: 'renderer',
@@ -203,9 +204,9 @@ export function bindWebContentsDiagnostics(options: {
 		);
 	});
 	contents.on('responsive', () => {
-		const episode = rendererEpisodes.get(contents.id);
+		const episode = rendererEpisodes.get(webContentsId);
 		if (episode === undefined) return;
-		rendererEpisodes.delete(contents.id);
+		rendererEpisodes.delete(webContentsId);
 		void diagnostics.record(
 			{
 				component: 'renderer',
@@ -218,7 +219,7 @@ export function bindWebContentsDiagnostics(options: {
 		);
 	});
 	contents.once('destroyed', () => {
-		rendererEpisodes.delete(contents.id);
+		rendererEpisodes.delete(webContentsId);
 		void diagnostics.record(
 			{
 				component: 'main',
