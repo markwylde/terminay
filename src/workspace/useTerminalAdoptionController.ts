@@ -5,13 +5,13 @@ import {
 	type SetStateAction,
 	useCallback,
 } from 'react';
-import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';
 import type {
 	TerminalContextReader,
 	TerminalPanelParams,
 	TerminalTabMacroRun,
 	TerminalTabMoveProject,
 } from '../components/TerminalTab';
+import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';
 import {
 	getServerTerminalPresentationTitle,
 	type MovedTerminalTab,
@@ -44,10 +44,7 @@ type UseTerminalAdoptionControllerOptions = {
 		sessionId: string,
 		reader: TerminalContextReader,
 	) => () => void;
-	replaceMacroRuns: (
-		sessionId: string,
-		runs: TerminalTabMacroRun[],
-	) => void;
+	replaceMacroRuns: (sessionId: string, runs: TerminalTabMacroRun[]) => void;
 	revealRecording: (recordingId: string) => Promise<unknown>;
 	setFocusedSessionId: Dispatch<SetStateAction<string | null>>;
 	showActiveTabActivityIndicator: boolean;
@@ -88,9 +85,7 @@ export function useTerminalAdoptionController({
 			recordBootstrapDiagnostic('app.workspace.adopt.begin');
 			const api = apiRef.current;
 			if (
-				[...panelSessionsRef.current.values()].includes(
-					movedTerminal.sessionId,
-				)
+				[...panelSessionsRef.current.values()].includes(movedTerminal.sessionId)
 			) {
 				return true;
 			}
@@ -100,16 +95,15 @@ export function useTerminalAdoptionController({
 			}
 
 			terminalCounterRef.current += 1;
-			const panelId = movedTerminal.panelId ?? `terminal-${terminalCounterRef.current}`;
+			const panelId =
+				movedTerminal.panelId ?? `terminal-${terminalCounterRef.current}`;
 			const inheritsProjectColor = movedTerminal.inheritsProjectColor === true;
 			const color = inheritsProjectColor
 				? project.color
 				: (movedTerminal.color ?? project.color);
 			const macroRuns = movedTerminal.macroRuns ?? [];
 
-			recordBootstrapDiagnostic(
-				'app.workspace.adopt.before-add-panel',
-			);
+			recordBootstrapDiagnostic('app.workspace.adopt.before-add-panel');
 			const panel = api.addPanel<TerminalPanelParams>({
 				component: 'terminal',
 				id: panelId,
@@ -128,12 +122,9 @@ export function useTerminalAdoptionController({
 						clearMacroRun(movedTerminal.sessionId, runId),
 					onMoveToProject: (targetProjectId) =>
 						onMoveToProject(project.id, panelId, targetProjectId),
-					onRevealRecording: (recordingId) =>
-						void revealRecording(recordingId),
-					onStartRecording: () =>
-						void startRecording(movedTerminal.sessionId),
-					onStopRecording: () =>
-						void stopRecording(movedTerminal.sessionId),
+					onRevealRecording: (recordingId) => void revealRecording(recordingId),
+					onStartRecording: () => void startRecording(movedTerminal.sessionId),
+					onStopRecording: () => void stopRecording(movedTerminal.sessionId),
 					onUpdateNote: (terminalNote) =>
 						apiRef.current
 							?.getPanel(panelId)
@@ -155,6 +146,7 @@ export function useTerminalAdoptionController({
 					terminalActivityState:
 						movedTerminal.terminalActivityState ?? 'viewed',
 					terminalClientFromPosition: 0,
+					terminalSessionStatus: movedTerminal.terminalSessionStatus,
 					terminalClientIdentity:
 						terminalServerIdentity && movedTerminal.serverProjectId
 							? {
@@ -167,18 +159,14 @@ export function useTerminalAdoptionController({
 				tabComponent: 'terminalTab',
 				title: movedTerminal.title,
 			});
-			recordBootstrapDiagnostic(
-				'app.workspace.adopt.after-add-panel',
-			);
+			recordBootstrapDiagnostic('app.workspace.adopt.after-add-panel');
 
 			panelSessionsRef.current.set(panel.id, movedTerminal.sessionId);
 			if (macroRuns.length > 0) {
 				replaceMacroRuns(movedTerminal.sessionId, macroRuns);
 			}
 			hydrateRecording(movedTerminal.sessionId);
-			recordBootstrapDiagnostic(
-				'app.workspace.adopt.before-activate',
-			);
+			recordBootstrapDiagnostic('app.workspace.adopt.before-activate');
 			panel.api.setActive();
 			setFocusedSessionId(movedTerminal.sessionId);
 			onError(null);
@@ -214,10 +202,14 @@ export function useTerminalAdoptionController({
 	);
 
 	const acceptServerTerminal = useCallback(
-		(panelId: string, sessionId: string, title?: string, cwd?: string) => {
-			if (
-				[...panelSessionsRef.current.values()].includes(sessionId)
-			) {
+		(
+			panelId: string,
+			sessionId: string,
+			title?: string,
+			cwd?: string,
+			terminalSessionStatus?: 'running' | 'exited' | 'interrupted',
+		) => {
+			if ([...panelSessionsRef.current.values()].includes(sessionId)) {
 				return true;
 			}
 			return acceptMovedTerminal({
@@ -226,18 +218,14 @@ export function useTerminalAdoptionController({
 				panelId,
 				serverProjectId: project.id,
 				sessionId,
+				terminalSessionStatus,
 				title: getServerTerminalPresentationTitle(
 					title,
 					terminalCounterRef.current + 1,
 				),
 			});
 		},
-		[
-			acceptMovedTerminal,
-			panelSessionsRef,
-			project.id,
-			terminalCounterRef,
-		],
+		[acceptMovedTerminal, panelSessionsRef, project.id, terminalCounterRef],
 	);
 
 	return { acceptMovedTerminal, acceptServerTerminal };
