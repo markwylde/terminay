@@ -284,6 +284,8 @@ test("extracted Desktop package starts the extracted shared embedded server runt
     // adapter below: it proves the packaged Desktop payload has no hidden
     // workspace/Electron dependency for the server's lifecycle, health, and
     // clean signal shutdown paths.
+    const foregroundHome = join(root, "foreground-home");
+    await mkdir(foregroundHome);
     const foreground = startForeground(process.execPath, [
       join(modules, "@terminay/server", serverPackage.bin["terminay-server"]),
       "--server-id", "packed-desktop-foreground",
@@ -297,7 +299,7 @@ test("extracted Desktop package starts the extracted shared embedded server runt
       cwd: desktopRoot,
       env: {
         ...process.env,
-        HOME: join(root, "foreground-home"),
+        HOME: foregroundHome,
         TERMINAY_SERVER_VERSION: serverPackage.version,
       },
     });
