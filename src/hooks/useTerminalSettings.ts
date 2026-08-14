@@ -4,6 +4,7 @@ import { createContext, createElement, type ReactNode, useContext, useEffect, us
 import {
 	defaultTerminalSettings,
 	normalizeTerminalSettings,
+	selectDeviceTerminalSettings,
 } from '../terminalSettings';
 import type { TerminalSettings } from '../types/settings';
 
@@ -34,28 +35,74 @@ export function useTerminalSettingsClient(): TerminalSettingsClient {
 export function createServerTerminalSettingsClient(
 	client: SettingsClient,
 ): TerminalSettingsClient {
+	let connectionHostSettings = readConnectionHostSettings();
+	const effectiveSettings = (server: JsonValue) =>
+		normalizeTerminalSettings(
+			mergeSettings(
+				mergeSettings(defaultTerminalSettings, serverSettings(server)),
+				connectionHostSettings,
+			),
+		);
 	return {
 		async get<T>() {
-			return normalizeTerminalSettings(
-				mergeSettings(defaultTerminalSettings, serverSettings(await client.get<JsonValue>())),
-			) as T;
+			return effectiveSettings(await client.get<JsonValue>()) as T;
 		},
 		async update<T>(settings: JsonValue) {
 			const current = serverSettings(await client.get<JsonValue>());
 			const serverUpdate = selectServerSettings(settings, current);
+			connectionHostSettings = selectConnectionHostSettings(settings);
+			writeConnectionHostSettings(connectionHostSettings);
 			const state = serverSettings(await client.update<JsonValue>(serverUpdate));
-			return normalizeTerminalSettings(mergeSettings(defaultTerminalSettings, state)) as T;
+			return normalizeTerminalSettings(
+				mergeSettings(mergeSettings(defaultTerminalSettings, state), connectionHostSettings),
+			) as T;
 		},
 		async reset<T>() {
+			connectionHostSettings = {};
+			writeConnectionHostSettings(connectionHostSettings);
 			const state = serverSettings(await client.reset<JsonValue>());
 			return normalizeTerminalSettings(mergeSettings(defaultTerminalSettings, state)) as T;
 		},
 		onChanged: (listener) => client.onChanged((state) => {
-			listener(normalizeTerminalSettings(
-				mergeSettings(defaultTerminalSettings, serverSettings(state)),
-			) as unknown as JsonValue);
+			listener(effectiveSettings(state) as unknown as JsonValue);
 		}),
 	};
+}
+
+const CONNECTION_HOST_SETTINGS_KEY = 'terminay.connection-host-settings.v1';
+
+function selectConnectionHostSettings(value: JsonValue): JsonValue {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		throw new TypeError('Settings must be objects.');
+	return selectDeviceTerminalSettings(
+		normalizeTerminalSettings(value),
+	) as JsonValue;
+}
+
+function readConnectionHostSettings(): JsonValue {
+	if (typeof window === 'undefined') return {};
+	try {
+		const value = window.localStorage.getItem(CONNECTION_HOST_SETTINGS_KEY);
+		if (value === null) return {};
+		const parsed = JSON.parse(value) as unknown;
+		return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+			? (parsed as JsonValue)
+			: {};
+	} catch {
+		return {};
+	}
+}
+
+function writeConnectionHostSettings(settings: JsonValue): void {
+	if (typeof window === 'undefined') return;
+	try {
+		window.localStorage.setItem(
+			CONNECTION_HOST_SETTINGS_KEY,
+			JSON.stringify(settings),
+		);
+	} catch {
+		// An unavailable host store must not prevent selected-server settings writes.
+	}
 }
 
 function selectServerSettings(value: JsonValue, shape: JsonValue): JsonValue {
