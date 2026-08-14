@@ -18,7 +18,6 @@ const requirements = {
 	bundleFormat: { minimum: 1, maximum: 1 },
 	hostBridge: { minimum: 1, maximum: 2 },
 	byteEndpoint: { minimum: 1, maximum: 1 },
-	executionRuntime: { minimum: 120, maximum: 140 },
 	requiredCapabilities: { clipboardWrite: { minimum: 1, maximum: 1 } },
 	optionalCapabilities: { nativeWindows: { minimum: 1, maximum: 2 } },
 };
@@ -124,7 +123,6 @@ test('host compatibility separates required failures from optional degradation',
 		bundleFormatVersion: 1,
 		hostBridgeVersion: 1,
 		byteEndpointVersion: 1,
-		executionRuntimeVersion: 125,
 		capabilities: { clipboardWrite: 1 },
 	});
 	assert.deepEqual(compatible, {
@@ -137,7 +135,6 @@ test('host compatibility separates required failures from optional degradation',
 		bundleFormatVersion: 1,
 		hostBridgeVersion: 1,
 		byteEndpointVersion: 1,
-		executionRuntimeVersion: 125,
 		capabilities: {},
 	});
 	assert.deepEqual(missing, {
@@ -148,17 +145,10 @@ test('host compatibility separates required failures from optional degradation',
 		required: { minimum: 1, maximum: 1 },
 	});
 
-	const runtime = evaluateTerminayHostCompatibility(requirements, {
-		bootstrapVersion: 1,
-		bundleFormatVersion: 1,
-		hostBridgeVersion: 1,
-		byteEndpointVersion: 1,
-		executionRuntimeVersion: 119,
-		capabilities: { clipboardWrite: 1 },
-	});
-	assert.equal(runtime.compatible, false);
-	assert.equal(runtime.component, 'execution-runtime');
-	assert.equal(runtime.code, 'below-minimum');
+	assert.throws(
+		() => parseTerminayHostCompatibilityRequirements({ ...requirements, executionRuntime: { minimum: 1, maximum: 1 } }),
+		/fields are invalid/u,
+	);
 });
 
 test('workspace drag actions and state are closed logical-view contracts', () => {
@@ -463,7 +453,6 @@ test('browser-safe bundle compatibility accepts the canonical manifest wire shap
 			bundleFormatVersion: 1,
 			hostBridgeVersion: 1,
 			byteEndpointVersion: 1,
-			executionRuntimeVersion: 125,
 			capabilities: { clipboardWrite: 1 },
 		}),
 		{ compatible: true, unavailableOptionalCapabilities: ['nativeWindows'] },

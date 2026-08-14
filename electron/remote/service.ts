@@ -2309,7 +2309,7 @@ export class RemoteAccessService {
 		const hostCompatibility = {
 			bootstrap: { minimum: 1, maximum: 1 }, bundleFormat: { minimum: 1, maximum: 1 },
 			hostBridge: { minimum: 1, maximum: 1 }, byteEndpoint: { minimum: 1, maximum: 1 },
-			executionRuntime: { minimum: 120, maximum: 255 }, requiredCapabilities: {},
+			requiredCapabilities: {},
 			optionalCapabilities: { clipboardWrite: { minimum: 1, maximum: 1 }, notifications: { minimum: 1, maximum: 1 } },
 		} as const;
 		const serverVersion = this.serverVersion;
