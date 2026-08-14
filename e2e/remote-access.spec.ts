@@ -10,13 +10,18 @@ function remoteOriginInput(page: Page) {
 }
 
 async function configureWebRtcHostedDomain(
-	appHarness: { openChildWindow: (action: () => Promise<void>) => Promise<Page> },
+	appHarness: {
+		openSettingsWindow: (options: {
+			page: Page;
+			sectionId: string;
+		}) => Promise<Page>;
+	},
 	page: Page,
 	hostedDomain: string,
 ): Promise<void> {
-	await openRemoteMenu(page);
-	const settings = await appHarness.openChildWindow(async () => {
-		await page.getByRole('button', { name: 'Remote Access Settings' }).click();
+	const settings = await appHarness.openSettingsWindow({
+		page,
+		sectionId: 'remote-access-host',
 	});
 	await settings.getByLabel('Exposure route').selectOption('webrtc');
 	await settings.locator('#section-remote-access-host .settings-row').filter({ hasText: 'WebRTC hosted domain' }).locator('input').fill(hostedDomain);

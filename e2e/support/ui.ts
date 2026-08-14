@@ -101,7 +101,9 @@ export async function setMonacoValue(page: Page, value: string): Promise<void> {
 }
 
 export async function openRemoteMenu(page: Page): Promise<void> {
-  const menu = page.getByRole('menu', { name: 'Connection menu' })
+  // Responsive shells may retain an inactive copy of the workspace. Operate
+  // only on the menu belonging to the currently visible shell.
+  const menu = page.locator('[role="menu"][aria-label="Connection menu"]:visible').first()
   if (await menu.isVisible().catch(() => false)) {
     return
   }
