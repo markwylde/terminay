@@ -153,7 +153,7 @@ test('folder panel aggregates markdown tasks recursively', async ({ createWorksp
   await expect(contextMenuItem(mainWindow, 'Copy path')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Copy relative path')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeVisible()
-  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toHaveCount(0)
   await mainWindow.keyboard.press('Escape')
 
   await workspace.writeText('work/nested/fresh.md', ['# Fresh', '', '- [ ] Watched nested task', ''].join('\n'))
