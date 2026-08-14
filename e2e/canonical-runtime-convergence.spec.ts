@@ -67,10 +67,52 @@ test('clean canonical development launch is ready without renderer self-healing'
 	await mainWindow.getByLabel('Toggle file explorer').click();
 	await expect(mainWindow.locator('.file-explorer-sidebar')).toBeVisible();
 	await expect(mainWindow.getByText(/^query failed$/iu)).toHaveCount(0);
+	await electronApp.evaluate(({ Menu }) => {
+		const find = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
+			for (const item of items) {
+				if (item.label === 'Toggle File Explorer Sidebar') return item;
+				const nested = item.submenu == null ? undefined : find(item.submenu.items);
+				if (nested !== undefined) return nested;
+			}
+			return undefined;
+		};
+		const command = find(Menu.getApplicationMenu()?.items ?? []);
+		if (command === undefined) throw new Error('native sidebar command is absent');
+		command.click();
+	});
+	await expect(mainWindow.locator('.file-explorer-sidebar')).toBeHidden();
+	await mainWindow.getByLabel('Toggle file explorer').click();
+	await expect(mainWindow.locator('.file-explorer-sidebar')).toBeVisible();
+	const sidebarProject = await mainWindow
+		.locator('.app-shell')
+		.getAttribute('data-terminay-active-project-id');
+
+	await mainWindow.getByLabel('New terminal tab').click();
+	await expect(mainWindow.locator('.terminal-panel')).toHaveCount(2);
+	const expanded = await canonicalIdentity(mainWindow);
+	expect(expanded.projectIds).toEqual(identity.projectIds);
+	expect(new Set(expanded.sessionIds).size).toBe(2);
+	expect(mainWindow.locator('.file-explorer-sidebar')).toBeVisible();
+	expect(
+		await mainWindow
+			.locator('.app-shell')
+			.getAttribute('data-terminay-active-project-id'),
+	).toBe(sidebarProject);
+	await expect(mainWindow.getByText(/^query failed$/iu)).toHaveCount(0);
 
 	await mainWindow.reload({ waitUntil: 'domcontentloaded' });
 	const reloaded = await canonicalIdentity(mainWindow);
-	expect(reloaded).toEqual(identity);
+	expect(reloaded).toEqual(expanded);
+});
+
+test('canonical Desktop quits cleanly with a hydrated workspace', async ({
+	electronApp,
+	mainWindow,
+}) => {
+	await canonicalIdentity(mainWindow);
+	await electronApp.close();
+	expect(electronApp.process().exitCode).not.toBeNull();
+	expect(electronApp.process().signalCode).toBeNull();
 });
 
 test('populated canonical workspace reloads without duplicate projects or sessions', async ({
