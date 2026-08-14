@@ -9,6 +9,19 @@ async function getActiveSessionId(page: Page): Promise<string> {
 	return sessionId;
 }
 
+async function createTerminalAndGetActiveSessionId(page: Page): Promise<string> {
+	const previousSessionId = await getActiveSessionId(page);
+	await sendAppCommand(page, 'new-terminal');
+	let createdSessionId = previousSessionId;
+	await expect.poll(async () => {
+		createdSessionId = await getActiveSessionId(page);
+		return createdSessionId;
+	}, {
+		message: 'the newly-created canonical terminal should become active',
+	}).not.toBe(previousSessionId);
+	return createdSessionId;
+}
+
 async function emitJournalRecord(page: Page, terminalSessionId: string, record: Record<string, unknown>): Promise<void> {
 	await page.evaluate(async ({ value, sessionId }) => {
 		if (!window.terminayAgentStatusTest) throw new Error('Agent status test seam is unavailable');
@@ -25,8 +38,7 @@ async function beginCodexSession(page: Page, terminalSessionId: string, provider
 }
 
 test('Codex rollout state projects to the terminal indicator and Agents sidebar', async ({ mainWindow }) => {
-	await sendAppCommand(mainWindow, 'new-terminal');
-	const terminalSessionId = await getActiveSessionId(mainWindow);
+	const terminalSessionId = await createTerminalAndGetActiveSessionId(mainWindow);
 	const agentTab = mainWindow.locator('.terminal-tab-content').filter({ hasText: 'Terminal 2' });
 	await mainWindow.locator('.terminal-tab-content').filter({ hasText: 'Terminal 1' }).click();
 	await beginCodexSession(mainWindow, terminalSessionId, 'codex-e2e-root');
@@ -89,8 +101,7 @@ test('a completed agent resumes working while a second running agent appears', a
 		firstAgent.locator('.agent-status-indicator[data-agent-state="working"]'),
 	).toBeVisible();
 
-	await sendAppCommand(mainWindow, 'new-terminal');
-	const secondTerminalSessionId = await getActiveSessionId(mainWindow);
+	const secondTerminalSessionId = await createTerminalAndGetActiveSessionId(mainWindow);
 	await beginCodexSession(
 		mainWindow,
 		secondTerminalSessionId,
