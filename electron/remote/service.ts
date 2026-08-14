@@ -449,8 +449,10 @@ function isAddressInUseError(error: unknown): boolean {
 
 function isRemoteAppAssetEntry(entry: string): boolean {
 	return (
-		entry === 'remote.html' ||
-		entry === 'remote.webmanifest' ||
+		// The remote-access shell exposes the server-owned workspace artifact,
+		// not the retired browser-specific workspace entry.  `server.html` is
+		// generated alongside its manifest and is also what Local Desktop loads.
+		entry === 'server.html' ||
 		entry === 'terminay.svg' ||
 		entry.startsWith('assets/')
 	);
@@ -2323,7 +2325,7 @@ export class RemoteAccessService {
 				size: record.size,
 			})),
 			bundleId,
-			entryPath: `/remote-app/${bundleId}/remote.html`,
+			entryPath: `/remote-app/${bundleId}/server.html`,
 			protocolVersion: '1',
 			serverVersion,
 			contentSecurityPolicy: DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
@@ -2665,7 +2667,7 @@ export class RemoteAccessService {
 	private async handleStaticRequest(
 		pathname: string,
 	): Promise<{ body: Buffer; contentType: string; status: number } | null> {
-		const cleanedPath = pathname === '/' ? '/remote.html' : pathname;
+		const cleanedPath = pathname === '/' ? '/server.html' : pathname;
 		const safeRelative = cleanedPath.replace(/^\/+/, '');
 		const candidateDist = path.resolve(this.rendererDistDir, safeRelative);
 		const candidatePublic = path.resolve(this.publicDir, safeRelative);

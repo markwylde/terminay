@@ -1223,8 +1223,11 @@ if (desktopWebRtcRuntimeRoot !== undefined) {
 			getRemoteAccessSettings: readEmbeddedRemoteAccessSettings,
 			notifyTerminalRemoteSizeOverride: () => undefined,
 			onStatusChanged: () => undefined,
-			publicDir: process.env.VITE_PUBLIC ?? RENDERER_DIST,
-			rendererDistDir: RENDERER_DIST,
+			// Direct-browser/WebRTC exposure serves the identical generated server
+			// workspace artifact used by Local Desktop.  `dist` only contains the
+			// host shell and must never become a second workspace release line.
+			publicDir: SERVER_UI_DIST,
+			rendererDistDir: SERVER_UI_DIST,
 			saveGeneratedTlsPaths: () => undefined,
 			userDataPath: app.getPath('userData'),
 		},

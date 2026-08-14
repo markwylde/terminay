@@ -20,7 +20,7 @@ test('browser manager keeps connection management separate from the server works
 	test.setTimeout(90_000);
 	const pageErrors: Error[] = [];
 	page.on('pageerror', (error) => pageErrors.push(error));
-	const pairingUrl = `${fixture.origin}/remote.html#pairingToken=${'a'.repeat(32)}`;
+	const pairingUrl = `${fixture.origin}/server.html#pairingToken=${'a'.repeat(32)}`;
 	// Cold CI workers can still be compiling the Vite module graph after the
 	// document commits. Navigation only proves that the session route exists;
 	// the bounded UI assertion below proves that the hosted contract mounted.

@@ -90,6 +90,7 @@ test('the packaged graph excludes superseded preload and MCP adapters', async ()
 test('direct and WebRTC remote connections both launch the canonical server bundle', async () => {
 	const main = await read('electron/main.ts');
 	const server = await read('apps/terminay-server/src/localUiServer.ts');
+	const remoteService = await read('electron/remote/service.ts');
 	const presentation = main.slice(
 		main.indexOf('async function presentCanonicalAuxiliaryRoute('),
 		main.indexOf('\nasync function openEmbeddedWorkspaceWithRecovery'),
@@ -114,6 +115,16 @@ test('direct and WebRTC remote connections both launch the canonical server bund
 	assert.match(httpLaunch, /bootstrap\.streamPath !== '\/protocol\/stream'/u);
 	assert.match(httpLaunch, /remoteServerUiBundleHost\.prepareRemote/u);
 	assert.match(server, /\/host-bootstrap\.json/u);
+	assert.match(
+		main,
+		/rendererDistDir:\s*SERVER_UI_DIST/u,
+		'direct-browser and WebRTC exposure must serve the same generated UI root as Local Desktop',
+	);
+	assert.match(remoteService, /entry === 'server\.html'/u);
+	assert.match(remoteService, /entryPath: `\/remote-app\/\$\{bundleId\}\/server\.html`/u);
+	assert.match(remoteService, /pathname === '\/' \? '\/server\.html'/u);
+	assert.doesNotMatch(remoteService, /entry === 'remote\.html'/u);
+	assert.doesNotMatch(remoteService, /\/remote-app\/\$\{bundleId\}\/remote\.html/u);
 });
 
 test('renderer-owned workspace seeding is absent from Desktop production code', async () => {
