@@ -52,35 +52,39 @@ artifact's complete startup, restoration, sidebar, menu, and shutdown journey.
 - [ ] Make development Local, packaged Local, signed Local, Desktop remote,
   direct browser, and browser-manager sessions launch the same generated
   server workspace entry and matching application client.
-- [ ] Make the development watcher rebuild/serve that canonical Local server
+- [x] Make the development watcher rebuild/serve that canonical Local server
   bundle without selecting a different renderer entry, preload, connection
   facade, state owner, or route tree.
-- [ ] Remove environment/build-mode branching that chooses between a complete
+- [x] Remove environment/build-mode branching that chooses between a complete
   Electron renderer and the server-bundled renderer. Environment values may
   select asset locations and diagnostics only.
-- [ ] Ensure main workspace and auxiliary routes obtain the selected server,
+- [x] Ensure main workspace and auxiliary routes obtain the selected server,
   host context, and application byte endpoint through the same canonical
   composition in development and packaged builds.
+- [ ] Replace browser user-agent/runtime-brand startup gates with an explicit
+  capability negotiation for direct-browser and manager bootstrap. Bundle
+  acceptance must use protocol/schema revisions and required capabilities, not
+  Chromium/browser-version ranges.
 
 ### 2. Delete the superseded renderer architecture
 
-- [ ] Delete the old full-workspace Electron HTML/TypeScript entry and its
+- [x] Delete the old full-workspace Electron HTML/TypeScript entry and its
   renderer bootstrap after every production responsibility is represented by
   the server bundle or the narrow host shell.
-- [ ] Delete the broad workspace preload/MessagePort bootstrap and retain only
+- [x] Delete the broad workspace preload/MessagePort bootstrap and retain only
   closed, source-bound host capabilities plus the opaque application byte
   endpoint.
-- [ ] Delete live Desktop feature-compatibility adapters for terminals, files,
+- [x] Delete live Desktop feature-compatibility adapters for terminals, files,
   recordings, macros, settings, workspace seeding, and server-frame ownership;
   shared components must call the selected server's bundled client directly.
-- [ ] Delete the legacy Electron AI-metadata and dictation adapters, renderer
+- [x] Delete the legacy Electron AI-metadata and dictation adapters, renderer
   fallbacks, and global declarations. Model discovery, credentials, runtime
   management, and transcription use the selected-server client; microphone
   capture uses the browser media capability without gaining provider authority.
-- [ ] Delete duplicate renderer state stores, feature DTO projections, fallback
+- [x] Delete duplicate renderer state stores, feature DTO projections, fallback
   route bodies, and conditionals whose only purpose is to keep the superseded
   workspace path executable.
-- [ ] Add a static production-graph gate that fails if a second full workspace
+- [x] Add a static production-graph gate that fails if a second full workspace
   entry, broad preload, renderer-owned workspace seed, or feature-aware Desktop
   transport adapter is introduced.
 
@@ -109,45 +113,45 @@ persisted-data recovery.
 
 ### 3. Canonical server persistence and first launch
 
-- [ ] Compose the same durable `WorkspaceRepository` and transaction boundary
+- [x] Compose the same durable `WorkspaceRepository` and transaction boundary
   into embedded and standalone server startup; a bare in-memory `WorkspaceStore`
   is not a production authority.
-- [ ] On a genuinely new data root, atomically create one workspace view, one
+- [x] On a genuinely new data root, atomically create one workspace view, one
   This server project, one terminal panel, and its terminal session before the
   server reports the workspace ready.
-- [ ] Make first-run initialization idempotent across concurrent clients,
+- [x] Make first-run initialization idempotent across concurrent clients,
   renderer reload, additional windows, embedded-server restart, and process
   restart.
-- [ ] Restore an existing repository without manufacturing another project or
+- [x] Restore an existing repository without manufacturing another project or
   retaining unusable Local terminal tabs. A Local Desktop server restart removes
   stale terminal panels/sessions and creates exactly one fresh active terminal;
   a still-running remote server retains its live terminal sessions across
   reconnect.
-- [ ] Fail startup/recovery with a bounded actionable state when canonical
+- [x] Fail startup/recovery with a bounded actionable state when canonical
   persistence cannot be read or committed. A renderer must never repair it by
   creating local identities.
 
 ### 4. Host-specific menu and native chrome
 
-- [ ] Drive menu presentation solely from the negotiated native-menu host
+- [x] Drive menu presentation solely from the negotiated native-menu host
   capability: Desktop uses the native application menu, while browser hosts
   render the in-page File/Edit/View/Help menu.
-- [ ] Ensure the server bundle renders no browser menu bar in Electron,
+- [x] Ensure the server bundle renders no browser menu bar in Electron,
   including development mode, packaged mode, Local, remote, reload, and
   auxiliary routes.
-- [ ] Reserve the native macOS title-bar and traffic-light inset before placing
+- [x] Reserve the native macOS title-bar and traffic-light inset before placing
   project tabs and controls; no shared control may overlap native chrome.
-- [ ] Keep browser command availability and keyboard behaviour equivalent
+- [x] Keep browser command availability and keyboard behaviour equivalent
   without exposing Desktop-only window/update/DevTools commands.
 
 ### 5. Complete initial workspace hydration
 
-- [ ] Do not present a connected workspace as ready until the initial or
+- [x] Do not present a connected workspace as ready until the initial or
   restored snapshot has a valid active view/project/panel projection or an
   explicit empty-state contract.
-- [ ] A fresh normal Local launch must show the initial project, active terminal
+- [x] A fresh normal Local launch must show the initial project, active terminal
   tab, live shell, and enabled sidebar without a user-created repair action.
-- [ ] Project/terminal creation reconciles from the authoritative command
+- [x] Project/terminal creation reconciles from the authoritative command
   result and revision exactly once; it cannot race initialization into
   duplicate default projects or sessions.
 - [ ] Reloading a window reconstructs the same project, panel, session,
@@ -158,15 +162,15 @@ persisted-data recovery.
 
 ### 6. Sidebar and feature-query authority
 
-- [ ] Route Explorer, Agents, Git, files, recordings, macros, settings, and
+- [x] Route Explorer, Agents, Git, files, recordings, macros, settings, and
   related sidebar queries through the canonical selected-server client with
   the active server/project/environment identity from the hydrated snapshot.
-- [ ] Remove host-local query facades and generic `query failed` collapse paths
+- [x] Remove host-local query facades and generic `query failed` collapse paths
   that hide operation, scope, repository, or transport failures.
-- [ ] Keep the sidebar disabled only for a typed unavailable state. A valid
+- [x] Keep the sidebar disabled only for a typed unavailable state. A valid
   active project enables it, and failures display bounded actionable copy
   without losing the terminal workspace.
-- [ ] Prove creating a second project or terminal does not change the authority
+- [x] Prove creating a second project or terminal does not change the authority
   used by the sidebar and does not require a reload.
 
 ### 7. Lifecycle correctness
@@ -176,47 +180,54 @@ persisted-data recovery.
   a destroyed Electron object.
 - [ ] Make window close, reload, server switch, application quit, failed bundle
   launch, and superseded transport teardown idempotent and exception-free.
-- [ ] Preserve server/project/session lifetime independently of a renderer
+- [x] Preserve server/project/session lifetime independently of a renderer
   document while releasing document-scoped ports, subscriptions, downloads,
   and host bindings exactly once.
 - [ ] Convert bootstrap and teardown failures into bounded diagnostics/recovery
   UI rather than an uncaught Electron main-process dialog or blank window.
+- [ ] Render a typed, visible direct-browser bootstrap failure that identifies
+  each missing required capability or failed bootstrap step; no incompatible,
+  reduced, or spoofed user agent may cause a blank document or top-level
+  uncaught throw.
 
 ### 8. Replace misleading test coverage
 
-- [ ] Run the canonical server-bundle entry in normal development E2E; tests
+- [x] Run the canonical server-bundle entry in normal development E2E; tests
   must not exercise a deleted development-only workspace renderer.
-- [ ] Add a dev-versus-packaged parity test that starts both from equivalent
+- [x] Add a dev-versus-packaged parity test that starts both from equivalent
   canonical server repositories and compares bundle identity, host capability
   projection, workspace revision, projects, panels, sessions, menu mode, and
   sidebar readiness.
-- [ ] Add fresh-data-root, populated-data-root, reload, restart, multi-window,
+- [x] Add fresh-data-root, populated-data-root, reload, restart, multi-window,
   and remote-profile fixtures against the same startup composition.
-- [ ] Assert that a fresh startup already contains a live terminal and working
+- [x] Assert that a fresh startup already contains a live terminal and working
   sidebar. The harness must not click New Project/New Terminal to repair a
   missing initial state before making its readiness assertion.
-- [ ] Add focused Explorer/query coverage that fails on an unscoped or
+- [x] Add focused Explorer/query coverage that fails on an unscoped or
   host-local request and requires actionable rendering for a real failure.
-- [ ] Add clean-close/reload/quit coverage that treats any main-process
+- [x] Add clean-close/reload/quit coverage that treats any main-process
   exception, `Object has been destroyed`, unexpected dialog, renderer crash,
   or unresolved listener as a test failure.
-- [ ] Remove or rewrite tests whose success depends on the superseded entry,
+- [x] Remove or rewrite tests whose success depends on the superseded entry,
   preload, seed adapter, feature transport, or fallback route.
+- [ ] Add direct-browser compatibility coverage for Firefox, Chromium, and
+  reduced/spoofed user-agent strings with the same required capabilities, plus
+  a typed visible failure assertion for genuinely missing capabilities.
 
 ### 9. Release artifact gate
 
-- [ ] Make the release smoke install/extract and launch the actual packaged
+- [x] Make the release smoke install/extract and launch the actual packaged
   artifact produced by that workflow, with its packaged resources and canonical
   preload, rather than a development server or synthetic loose build.
-- [ ] Require visible project and terminal readiness, successful sidebar query,
+- [x] Require visible project and terminal readiness, successful sidebar query,
   Desktop-native/browser-menu absence, terminal input/output, reload
   restoration, and clean shutdown from a clean data root.
-- [ ] Run the same smoke with a pre-populated canonical repository and require
+- [x] Run the same smoke with a pre-populated canonical repository and require
   restoration without duplicate seed state.
-- [ ] Forbid smoke-test self-healing: no readiness helper may create a project,
+- [x] Forbid smoke-test self-healing: no readiness helper may create a project,
   terminal, or workspace when the expected restored/initialized state is
   absent.
-- [ ] Preserve startup, renderer, server, and shutdown diagnostics as release
+- [x] Preserve startup, renderer, server, and shutdown diagnostics as release
   artifacts on failure and fail the release before publication.
 
 ## Acceptance checks
