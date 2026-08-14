@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { build } from 'esbuild';
 
-const { getRunningTerminalSessionIds } = await importCloseProtection();
+const { getRunningTerminalSessionIds, refreshRunningTerminalSessionIds } =
+	await importCloseProtection();
 
 const session = (sessionId, projectId, foregroundBusy) => ({
 	sessionId,
@@ -50,6 +51,34 @@ test('presentation working state cannot create a close warning', () => {
 	assert.deepEqual(getRunningTerminalSessionIds(snapshot), []);
 });
 
+test('destructive close refreshes canonical activity before deciding', async () => {
+	const store = {
+		snapshot: {
+			revision: 1,
+			cursor: '1',
+			sessions: { busyA: session('busyA', 'project-a', false) },
+		},
+	};
+	let refreshes = 0;
+	const client = {
+		store,
+		async refresh() {
+			refreshes += 1;
+			store.snapshot = {
+				revision: 2,
+				cursor: '2',
+				sessions: { busyA: session('busyA', 'project-a', true) },
+			};
+		},
+	};
+
+	assert.deepEqual(
+		await refreshRunningTerminalSessionIds(client, 'project-a'),
+		['busyA'],
+	);
+	assert.equal(refreshes, 1);
+});
+
 async function importCloseProtection() {
 	const directory = await mkdtemp(join(tmpdir(), 'terminay-close-protection-'));
 	const outputPath = join(directory, 'close-protection.mjs');
@@ -60,7 +89,7 @@ async function importCloseProtection() {
 			outfile: outputPath,
 			platform: 'node',
 			stdin: {
-				contents: `export { getRunningTerminalSessionIds } from ${JSON.stringify(new URL('../src/workspace/closeProtection.ts', import.meta.url).pathname)}`,
+				contents: `export { getRunningTerminalSessionIds, refreshRunningTerminalSessionIds } from ${JSON.stringify(new URL('../src/workspace/closeProtection.ts', import.meta.url).pathname)}`,
 				loader: 'ts',
 				resolveDir: process.cwd(),
 			},

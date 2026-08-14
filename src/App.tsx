@@ -150,7 +150,7 @@ import type {
 } from './types/terminay';
 import {
 	confirmRunningTerminalClose,
-	getRunningTerminalSessionIds,
+	refreshRunningTerminalSessionIds,
 } from './workspace/closeProtection';
 import { FileExplorerTree } from './workspace/FileExplorerTree';
 import { ProjectTabList } from './workspace/ProjectTabList';
@@ -3431,8 +3431,8 @@ const ProjectWorkspace = forwardRef<
 				const canonicalPanel = workspaceStore?.snapshot?.panels[panelId];
 				const sessionId = panelSessionMapRef.current.get(panelId);
 				if (sessionId !== undefined) {
-					const running = getRunningTerminalSessionIds(
-						serverActivityClient?.store.snapshot,
+					const running = (
+						await refreshRunningTerminalSessionIds(serverActivityClient)
 					).includes(sessionId);
 					if (
 						!(await confirmRunningTerminalClose('terminal', running ? 1 : 0))
@@ -5062,9 +5062,9 @@ function App({
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
 	const confirmProjectClose = useCallback(
-		(projectId: string) => {
-			const running = getRunningTerminalSessionIds(
-				terminalClientContext?.activityClient?.store.snapshot,
+		async (projectId: string) => {
+			const running = await refreshRunningTerminalSessionIds(
+				terminalClientContext?.activityClient,
 				projectId,
 			);
 			return confirmRunningTerminalClose('project', running.length);
