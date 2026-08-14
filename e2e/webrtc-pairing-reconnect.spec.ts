@@ -12,8 +12,11 @@ test('fails a hosted pairing closed when Desktop has no selected server-owned We
 	});
 	await expect(expose).toBeDisabled();
 	await expect(expose).toContainText('Unavailable in this build');
+	const openMenu = mainWindow
+		.locator('[role="menu"][aria-label="Connection menu"]:visible')
+		.first();
 	await expect(
-		mainWindow.locator('.remote-access-menu').getByText(runtimeError, {
+		openMenu.getByText(runtimeError, {
 			exact: true,
 		}),
 	).toBeVisible();
