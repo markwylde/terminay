@@ -39,16 +39,15 @@ async function exposeWebRtcAndOpenPairing(page: Page): Promise<void> {
 	await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
 	await expect(pinDialog).toHaveCount(0);
 
-	await expect
-		.poll(async () => {
-			const status = await page.evaluate(() =>
-				window.terminayRemoteAccessStatusHost.getStatus(),
-			);
-			return status.isRunning && Boolean(status.webRtcPairingUrl);
-		})
-		.toBe(true);
 	await openRemoteMenu(page);
-	await page.getByRole('button', { name: 'Show pairing link and QR' }).click();
+	const showPairing = page.getByRole('button', {
+		name: 'Show pairing link and QR',
+	});
+	// The connection menu is driven by the selected Terminay Server's
+	// remote-access subscription. Its exposed action is the user-visible proof
+	// that the server has started and published a pairing URL.
+	await expect(showPairing).toBeVisible();
+	await showPairing.click();
 }
 
 test('opens remote access settings from the host menu', async ({
