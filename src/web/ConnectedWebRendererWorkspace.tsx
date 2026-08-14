@@ -56,6 +56,70 @@ export type ConnectedWebRendererWorkspaceProps = Readonly<{
 
 type BrowserAuxiliaryRoute = 'settings' | 'macros' | 'recordings';
 
+function initialAuxiliaryRoute(): AuxiliaryRouteRequest | null {
+	const params = new URLSearchParams(window.location.search);
+	switch (params.get('auxiliary')) {
+		case 'settings': {
+			const sectionId = params.get('section');
+			return {
+				kind: 'settings',
+				...(sectionId === null ? {} : { sectionId }),
+			};
+		}
+		case 'macros':
+			return { kind: 'macros' };
+		case 'recordings':
+			return { kind: 'recordings' };
+		case 'project-environments': {
+			const providerId = params.get('provider');
+			const mode = params.get('mode');
+			const profileId = params.get('profile');
+			return {
+				kind: 'project-environments',
+				...(providerId !== null &&
+				(mode === 'profile' || mode === 'environment')
+					? {
+							intent: {
+								providerId,
+								mode,
+								...(profileId === null ? {} : { profileId }),
+							},
+						}
+					: {}),
+			};
+		}
+		default:
+			return null;
+	}
+}
+
+function nativeAuxiliaryRoute(request: AuxiliaryRouteRequest): string | null {
+	const params = new URLSearchParams();
+	switch (request.kind) {
+		case 'settings':
+			params.set('auxiliary', 'settings');
+			if (request.sectionId !== undefined)
+				params.set('section', request.sectionId);
+			break;
+		case 'macros':
+		case 'recordings':
+			params.set('auxiliary', request.kind);
+			break;
+		case 'project-environments':
+			params.set('auxiliary', 'project-environments');
+			if (request.intent !== undefined) {
+				params.set('provider', request.intent.providerId);
+				params.set('mode', request.intent.mode);
+				if (request.intent.profileId !== undefined)
+					params.set('profile', request.intent.profileId);
+			}
+			break;
+		case 'edit-tab':
+			return null;
+	}
+	return `/?${params.toString()}`;
+}
+
 type BrowserMenuId = 'file' | 'edit' | 'view' | 'help';
 
 type BrowserMenuItem = Readonly<{
@@ -86,8 +150,9 @@ export function ConnectedWebRendererWorkspace({
 	const hasNativeWindowControls =
 		hostContext?.capabilities.nativeWindows !== undefined;
 	const [isConnectionManagerOpen, setIsConnectionManagerOpen] = useState(false);
+	const nativeAuxiliaryDocument = useMemo(initialAuxiliaryRoute, []);
 	const [auxiliaryRoute, setAuxiliaryRoute] =
-		useState<AuxiliaryRouteRequest | null>(null);
+		useState<AuxiliaryRouteRequest | null>(nativeAuxiliaryDocument);
 	const pendingEditResolveRef = useRef<
 		((result: SharedEditTabResult | null) => void) | null
 	>(null);
@@ -168,9 +233,35 @@ export function ConnectedWebRendererWorkspace({
 		() =>
 			createAuxiliaryRouteController({
 				getWindow: () => undefined,
-				onRequest: handleAuxiliaryRouteRequest,
+				onRequest: async (request) => {
+					const route = nativeAuxiliaryRoute(request);
+					if (
+						hasNativeWindowControls &&
+						route !== null &&
+						hostContext !== undefined &&
+						window.terminayHost !== undefined
+					) {
+						await window.terminayHost.requestAction({
+							bridgeVersion: hostContext.hostBridgeVersion,
+							profileId: hostContext.profileId,
+							schemaVersion: hostContext.schemaVersion,
+							serverId: hostContext.serverId,
+							sourceId: hostContext.sourceId,
+							userGesture: true,
+							windowId: hostContext.windowId,
+							action: {
+								disposition: 'native-window',
+								logicalViewId: request.kind,
+								route,
+								type: 'route.present',
+							},
+						});
+						return undefined;
+					}
+					return handleAuxiliaryRouteRequest(request);
+				},
 			}),
-		[handleAuxiliaryRouteRequest],
+		[handleAuxiliaryRouteRequest, hasNativeWindowControls, hostContext],
 	);
 	const restoreAuxiliaryFocus = useCallback(() => {
 		const target = auxiliaryFocusReturnRef.current;
@@ -210,6 +301,57 @@ export function ConnectedWebRendererWorkspace({
 		},
 		[restoreAuxiliaryFocus],
 	);
+	const auxiliaryContent = (route: AuxiliaryRouteRequest) =>
+		route.kind === 'edit-tab' ? (
+			<SharedEditTabRouteBody
+				state={route.state}
+				onCancel={cancelAuxiliaryRoute}
+				onSubmit={submitEditTabRoute}
+			/>
+		) : route.kind === 'project-environments' ? (
+			<ProjectEnvironmentsWindow
+				applicationClient={terminalClientContext.applicationClient}
+				initialIntent={route.intent}
+				serverName={
+					terminalClientContext.connectionLabel ??
+					terminalClientContext.serverId
+				}
+			/>
+		) : (
+			<TerminalSettingsClientProvider client={settingsClient}>
+			<>
+					{route.kind === 'settings' ? (
+						<SettingsWindow
+							applicationClient={applicationClient}
+							aiTabMetadataClient={aiMetadataClient}
+							initialSectionId={route.sectionId}
+							remoteAccessStatusClient={remoteAccessStatusClient}
+							settingsClient={serverSettingsClient}
+							shellProfilesClient={shellProfilesClient}
+							serverIdentity={
+								terminalClientContext.connectionLabel ??
+								terminalClientContext.serverId
+							}
+						/>
+					) : route.kind === 'macros' ? (
+						<MacrosWindow macroSettingsClient={macroSettingsClient} />
+					) : (
+						<RecordingsWindow client={recordingsClient} />
+					)}
+			</>
+			</TerminalSettingsClientProvider>
+		);
+
+	if (nativeAuxiliaryDocument !== null) {
+		return (
+			<main
+				className="connected-web-native-auxiliary"
+				data-connected-native-auxiliary-route={nativeAuxiliaryDocument.kind}
+			>
+				{auxiliaryContent(nativeAuxiliaryDocument)}
+			</main>
+		);
+	}
 
 	return (
 		<div className="connected-web-renderer-workspace">
@@ -242,45 +384,7 @@ export function ConnectedWebRendererWorkspace({
 					route={auxiliaryRoute}
 					onClose={cancelAuxiliaryRoute}
 				>
-					{auxiliaryRoute.kind === 'edit-tab' ? (
-						<SharedEditTabRouteBody
-							state={auxiliaryRoute.state}
-							onCancel={cancelAuxiliaryRoute}
-							onSubmit={submitEditTabRoute}
-						/>
-					) : auxiliaryRoute.kind === 'project-environments' ? (
-						<ProjectEnvironmentsWindow
-							applicationClient={terminalClientContext.applicationClient}
-							initialIntent={auxiliaryRoute.intent}
-							serverName={
-								terminalClientContext.connectionLabel ??
-								terminalClientContext.serverId
-							}
-						/>
-					) : (
-						<TerminalSettingsClientProvider client={settingsClient}>
-							<>
-								{auxiliaryRoute.kind === 'settings' ? (
-									<SettingsWindow
-										applicationClient={applicationClient}
-										aiTabMetadataClient={aiMetadataClient}
-										initialSectionId={auxiliaryRoute.sectionId}
-										remoteAccessStatusClient={remoteAccessStatusClient}
-										settingsClient={serverSettingsClient}
-										shellProfilesClient={shellProfilesClient}
-										serverIdentity={
-											terminalClientContext.connectionLabel ??
-											terminalClientContext.serverId
-										}
-									/>
-								) : auxiliaryRoute.kind === 'macros' ? (
-									<MacrosWindow macroSettingsClient={macroSettingsClient} />
-								) : (
-									<RecordingsWindow client={recordingsClient} />
-								)}
-							</>
-						</TerminalSettingsClientProvider>
-					)}
+					{auxiliaryContent(auxiliaryRoute)}
 				</ConnectedBrowserAuxiliaryDialog>
 			)}
 			{isConnectionManagerOpen ? (

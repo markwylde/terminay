@@ -58,6 +58,7 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'main.window.created',
 	'main.window.destroyed',
 	'renderer.console',
+	'renderer.bootstrap.failed',
 	'renderer.root-error',
 	'renderer.preload-failed',
 	'renderer.load-failed',
