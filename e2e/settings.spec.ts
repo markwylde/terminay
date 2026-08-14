@@ -119,7 +119,7 @@ test('opens Project Environments as a full auxiliary window', async ({ appHarnes
   await expect(environmentsWindow.locator('.project-environments-window')).toBeVisible()
   await expect(environmentsWindow.locator('[role="dialog"]')).toHaveCount(0)
   await expect(environmentsWindow.locator('.project-environment-surface-backdrop')).toHaveCount(0)
-  expect(new URL(environmentsWindow.url()).searchParams.get('view')).toBe('project-environments')
+	expect(new URL(environmentsWindow.url()).searchParams.get('auxiliary')).toBe('project-environments')
 })
 
 test('persists settings edits across reopening the settings window', async ({ appHarness, mainWindow }) => {

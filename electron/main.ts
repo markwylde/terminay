@@ -3497,6 +3497,8 @@ if (process.env.TERMINAY_TEST === '1') {
 				controlTokensBySession.get(terminalSessionId) ??
 				registerControlToken(terminalSessionId, event.sender.id);
 			return {
+				projectId: serverSession.projectId,
+				sessionId: serverSession.id,
 				socketPath: getControlSocketPath(),
 				token,
 			};

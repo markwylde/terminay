@@ -216,22 +216,19 @@ test.describe('terminal behavior', () => {
 	});
 
 	test('terminal tab context menu opens settings and moves a tab to another project', async ({
-		appHarness,
 		mainWindow,
 	}) => {
-		const settingsWindow = await appHarness.openChildWindow(async () => {
-			await mainWindow
-				.locator('.project-workspace--active .terminal-tab-content')
-				.first()
-				.click({ button: 'right' });
-			await contextMenuItem(mainWindow, 'Open Settings').click();
-		});
+		await mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.first()
+			.click({ button: 'right' });
+		await contextMenuItem(mainWindow, 'Open Settings').click();
 
 		await expect(
-			settingsWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+			mainWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
 		).toBeVisible();
-		await settingsWindow.getByPlaceholder('Terminal name').fill('Move Me');
-		await submitEditWindow(settingsWindow);
+		await mainWindow.getByPlaceholder('Terminal name').fill('Move Me');
+		await submitEditWindow(mainWindow);
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-title'),
 		).toHaveText('Move Me');
@@ -954,7 +951,6 @@ test.describe('terminal behavior', () => {
 	});
 
 	test('terminal tab settings can disable activity indicators for one tab', async ({
-		appHarness,
 		mainWindow,
 	}) => {
 		await sendAppCommand(mainWindow, 'new-terminal');
@@ -972,16 +968,14 @@ test.describe('terminal behavior', () => {
 		await quietTab.click();
 		const quietSessionId = await getActiveSessionId(mainWindow);
 
-		const settingsWindow = await appHarness.openChildWindow(async () => {
-			await quietTab.click({ button: 'right' });
-			await contextMenuItem(mainWindow, 'Open Settings').click();
-		});
-		const activitySwitch = settingsWindow.getByLabel(
+		await quietTab.click({ button: 'right' });
+		await contextMenuItem(mainWindow, 'Open Settings').click();
+		const activitySwitch = mainWindow.getByLabel(
 			'Enable activity indicators',
 		);
 		await expect(activitySwitch).toBeChecked();
 		await activitySwitch.uncheck();
-		await submitEditWindow(settingsWindow);
+		await submitEditWindow(mainWindow);
 		await writeToTerminalSession(
 			mainWindow,
 			quietSessionId,

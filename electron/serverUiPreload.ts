@@ -229,7 +229,12 @@ if (
 			getControlEnvironment: (terminalSessionId: string) =>
 				ipcRenderer.invoke('test:get-mcp-control-environment', {
 					terminalSessionId,
-				}) as Promise<{ socketPath: string; token: string }>,
+				}) as Promise<{
+					projectId: string;
+					sessionId: string;
+					socketPath: string;
+					token: string;
+				}>,
 		}),
 	);
 	contextBridge.exposeInMainWorld(

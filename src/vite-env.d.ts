@@ -56,7 +56,12 @@ declare global {
 		terminayMcpControlTest?: {
 			getControlEnvironment: (
 				terminalSessionId: string,
-			) => Promise<{ socketPath: string; token: string }>;
+			) => Promise<{
+				projectId: string;
+				sessionId: string;
+				socketPath: string;
+				token: string;
+			}>;
 		};
 		terminayRemoteProtocolFaultTest?: {
 			listConnections: () => Promise<readonly string[]>;

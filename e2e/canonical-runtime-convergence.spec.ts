@@ -111,6 +111,10 @@ test('canonical Desktop quits cleanly with a hydrated workspace', async ({
 	mainWindow,
 }) => {
 	await canonicalIdentity(mainWindow);
+	const process = electronApp.process();
+	const exited = new Promise<{ code: number | null; signal: string | null }>(
+		(resolve) => process.once('exit', (code, signal) => resolve({ code, signal })),
+	);
 	// A hydrated Local workspace contains a live shell. Confirm the real native
 	// quit warning rather than letting Electron wait indefinitely for input.
 	await electronApp.evaluate(({ dialog }) => {
@@ -120,8 +124,7 @@ test('canonical Desktop quits cleanly with a hydrated workspace', async ({
 		});
 	});
 	await electronApp.close();
-	expect(electronApp.process().exitCode).not.toBeNull();
-	expect(electronApp.process().signalCode).toBeNull();
+	expect(await exited).toEqual({ code: 0, signal: null });
 });
 
 test('populated canonical workspace reloads without duplicate projects or sessions', async ({
