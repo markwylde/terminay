@@ -19,6 +19,7 @@ type Diagnostic = (resource: string, message: string) => void;
 
 const activeRemoteEndpoints = new Map<number, () => void>();
 const REPLACE_BYTE_ENDPOINT = 'server-ui-host:replace-byte-endpoint';
+const DOCUMENT_READY = 'server-ui-host:document-ready';
 
 /** Attach a fresh Local document port after every successful load. Navigation
  * releases only the old document port; the embedded server and its PTYs remain
@@ -54,10 +55,15 @@ export function bindLocalServerUiDocumentEndpoint(options: {
 	const onReplace = (event: Electron.IpcMainEvent) => {
 		if (event.sender === sender) attach();
 	};
+	const onDocumentReady = (event: Electron.IpcMainEvent) => {
+		if (event.sender === sender) attach();
+	};
 	ipcMain.on(REPLACE_BYTE_ENDPOINT, onReplace);
-	const unbind = lifecycle.bind(attach);
+	ipcMain.on(DOCUMENT_READY, onDocumentReady);
+	const unbind = lifecycle.bind(attach, undefined, false);
 	return () => {
 		ipcMain.off(REPLACE_BYTE_ENDPOINT, onReplace);
+		ipcMain.off(DOCUMENT_READY, onDocumentReady);
 		unbind();
 	};
 }
@@ -69,6 +75,10 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	readonly sender: WebContents;
 	readonly launch: DesktopBundleLaunch;
 	readonly transport: ByteTransport;
+	/** Recreate the authenticated server lane after its byte stream ends.  A
+	 * replacement document port alone cannot recover a dead WebSocket/WebRTC
+	 * transport. */
+	readonly reconnect?: () => Promise<ByteTransport>;
 	readonly diagnostic?: Diagnostic;
 }): () => void {
 	const sender = options.sender;
@@ -77,6 +87,8 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	const lifecycle = navigationLifecycle(sender, options.diagnostic);
 	let documentPort: MessagePortMain | undefined;
 	let connectionClosed = false;
+	let reconnecting: Promise<void> | undefined;
+	let transport = options.transport;
 
 	const closeConnection = () => {
 		if (connectionClosed) return;
@@ -84,7 +96,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 		lifecycle.close();
 		if (activeRemoteEndpoints.get(senderId) === closeConnection)
 			activeRemoteEndpoints.delete(senderId);
-		void options.transport
+		void transport
 			.close({ code: 'normal' })
 			.catch((error) =>
 				options.diagnostic?.('remote-transport', boundedMessage(error)),
@@ -108,7 +120,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 					data,
 					options.launch.context.serverId,
 				);
-				void options.transport.send(packet.frame).catch(closeConnection);
+				void transport.send(packet.frame).catch(recoverConnection);
 			} catch {
 				closeConnection();
 			}
@@ -129,19 +141,31 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 			onFailure: (message) => options.diagnostic?.('message-port', message),
 		});
 	};
-	const unbind = lifecycle.bind(attach, closeConnection);
+	const unbind = lifecycle.bind(attach, closeConnection, false);
 	const onReplace = (event: Electron.IpcMainEvent) => {
-		if (event.sender === sender) attach();
+		if (event.sender !== sender || connectionClosed) return;
+		// The renderer asks for a new endpoint after it receives the deliberate
+		// transport-failure edge below.  Do not hand it a port backed by the
+		// retired remote lane while its authenticated replacement is still being
+		// established. Recovery itself sends exactly one replacement port once the
+		// new lane is live; sending a second one would invalidate that fresh port.
+		if (reconnecting !== undefined) return;
+		attach();
+	};
+	const onDocumentReady = (event: Electron.IpcMainEvent) => {
+		if (event.sender === sender && !connectionClosed) attach();
 	};
 	ipcMain.on(REPLACE_BYTE_ENDPOINT, onReplace);
+	ipcMain.on(DOCUMENT_READY, onDocumentReady);
 
-	void options.transport
-		.open()
-		.then(async () => {
-			if (connectionClosed || sender.isDestroyed()) return;
-			try {
-				for await (const frame of options.transport.incoming) {
-					if (connectionClosed) return;
+	const startTransport = () => {
+		const activeTransport = transport;
+		void activeTransport
+			.open()
+			.then(async () => {
+				if (connectionClosed || sender.isDestroyed()) return;
+				for await (const frame of activeTransport.incoming) {
+					if (connectionClosed || transport !== activeTransport) return;
 					documentPort?.postMessage(
 						createTerminayHostBytePacket(
 							options.launch.context.serverId,
@@ -149,16 +173,46 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 						),
 					);
 				}
-			} finally {
-				closeConnection();
-			}
-		})
-		.catch((error) => {
-			options.diagnostic?.('remote-transport', boundedMessage(error));
+				if (transport === activeTransport) recoverConnection();
+			})
+			.catch((error) => {
+				options.diagnostic?.('remote-transport', boundedMessage(error));
+				if (transport === activeTransport) recoverConnection();
+			});
+	};
+	function recoverConnection(): void {
+		if (connectionClosed || options.reconnect === undefined) {
 			closeConnection();
-		});
+			return;
+		}
+		if (reconnecting !== undefined) return;
+		reconnecting = (async () => {
+			try {
+				// A new remote server connection is a new protocol connection.  Make
+				// the renderer retire its client before we hand it the new lane; an
+				// otherwise-valid fresh port would forward stale protocol frames.
+				documentPort?.postMessage(null);
+				await transport.close({ code: 'normal' }).catch(() => undefined);
+				if (connectionClosed) return;
+				transport = await options.reconnect!();
+				if (connectionClosed) {
+					await transport.close({ code: 'normal' }).catch(() => undefined);
+					return;
+				}
+				attach();
+				startTransport();
+			} catch (error) {
+				options.diagnostic?.('remote-reconnect', boundedMessage(error));
+				closeConnection();
+			} finally {
+				reconnecting = undefined;
+			}
+		})();
+	}
+	startTransport();
 	return () => {
 		ipcMain.off(REPLACE_BYTE_ENDPOINT, onReplace);
+		ipcMain.off(DOCUMENT_READY, onDocumentReady);
 		unbind();
 		closeConnection();
 	};
@@ -170,6 +224,7 @@ function navigationLifecycle(sender: WebContents, diagnostic?: Diagnostic) {
 	);
 	let closed = false;
 	let attachListener: (() => void) | undefined;
+	let attachesOnDidFinishLoad = true;
 	const onNavigation = (
 		_event: unknown,
 		_url: string,
@@ -187,11 +242,16 @@ function navigationLifecycle(sender: WebContents, diagnostic?: Diagnostic) {
 			);
 			return current;
 		},
-		bind(attach: () => void, onDestroyed?: () => void) {
+		bind(
+			attach: () => void,
+			onDestroyed?: () => void,
+			attachOnDidFinishLoad = true,
+		) {
 			attachListener = attach;
+			attachesOnDidFinishLoad = attachOnDidFinishLoad;
 			sender.on('did-start-navigation', onNavigation);
 			sender.on('render-process-gone', onGone);
-			sender.on('did-finish-load', attach);
+			if (attachOnDidFinishLoad) sender.on('did-finish-load', attach);
 			sender.once('destroyed', onDestroyed ?? (() => owner.close()));
 			return () => owner.close();
 		},
@@ -202,7 +262,7 @@ function navigationLifecycle(sender: WebContents, diagnostic?: Diagnostic) {
 			if (!sender.isDestroyed()) {
 				sender.off('did-start-navigation', onNavigation);
 				sender.off('render-process-gone', onGone);
-				if (attachListener !== undefined)
+				if (attachesOnDidFinishLoad && attachListener !== undefined)
 					sender.off('did-finish-load', attachListener);
 			}
 			attachListener = undefined;
