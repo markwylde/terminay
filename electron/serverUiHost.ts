@@ -34,7 +34,7 @@ type ServerUiBinding = {
 	onHostAction?: (
 		action: TerminayHostActionRequest,
 		context: TerminayHostContext,
-	) => Promise<void> | void;
+	) => Promise<unknown> | unknown;
 	window: BrowserWindow;
 	lifecycle: DesktopDocumentLifecycle;
 };
@@ -125,7 +125,7 @@ function installIpcHandlers(): void {
 				binding.context.capabilities[capability] === undefined
 			)
 				throw new Error(`Host capability is unavailable: ${capability}`);
-			await binding.onHostAction?.(action, binding.context);
+			return binding.onHostAction?.(action, binding.context);
 		},
 	);
 }

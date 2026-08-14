@@ -4,7 +4,7 @@ import type { TerminayHostActionRequest, TerminayHostContext, TerminayHostEvent 
  * the two IPC operations and must never define a second action schema. */
 export type ServerUiHostBridge = Readonly<{
 	getContext(): Promise<TerminayHostContext>;
-	requestAction(request: TerminayHostActionRequest): Promise<void>;
+	requestAction(request: TerminayHostActionRequest): Promise<unknown>;
 	subscribeEvent(listener: (event: TerminayHostEvent) => Promise<void> | void): () => void;
 }>;
 

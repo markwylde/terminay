@@ -51,7 +51,11 @@ import {
 	EMPTY_AGENT_STATUS_SNAPSHOT,
 	selectLiveAgentStatusesForTerminal,
 } from './agentStatusStore';
-import { openExternalUrl, writeClipboardText } from './host/nativeActions';
+import {
+	checkForAppUpdate,
+	openExternalUrl,
+	writeClipboardText,
+} from './host/nativeActions';
 import {
 	AgentsSidebar,
 	type AgentsSidebarItem,
@@ -5862,7 +5866,7 @@ function App({
 		let isMounted = true;
 
 		const refreshUpdateStatus = async (force = false) => {
-			const status = await window.terminayUpdateHost?.getStatus(force);
+			const status = force ? await checkForAppUpdate() : null;
 			if (!status) {
 				return;
 			}

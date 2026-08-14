@@ -3254,9 +3254,12 @@ function createWindow(options?: {
 						const action = request.action;
 						switch (action.type) {
 							case 'clipboard.write': clipboard.writeText(action.text); return;
-							case 'file.choose': await dialog.showOpenDialog(window, { properties: action.multiple ? ['openFile', 'multiSelections'] : ['openFile'] }); return;
+							case 'file.choose': {
+								const result = await dialog.showOpenDialog(window, { properties: action.multiple ? ['openFile', 'multiSelections'] : ['openFile'] });
+								return result.canceled ? [] : result.filePaths;
+							}
 							case 'notification.show': new Notification({ title: action.title, ...(action.body === undefined ? {} : { body: action.body }) }).show(); return;
-							case 'updater.check': await getAppUpdateStatus({ force: true }); return;
+							case 'updater.check': return getAppUpdateStatus({ force: true });
 							case 'os.open-external': await openInBrowser(action.url); return;
 							case 'route.close': window.close(); return;
 							case 'route.focus': window.focus(); return;
