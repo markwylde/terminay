@@ -1435,12 +1435,20 @@ export default function WebManagerApp() {
 				try {
 					const hello = await client.connect();
 					if (!isCurrentConnectionAttempt(profile, attempt)) return;
+					const verifiedProfile =
+						profile.status === 'connecting'
+							? host.addConnection({
+									...profile,
+									serverId: hello.serverId,
+									status: 'connected',
+								})
+							: profile;
 					const context = await createConnectedServerClientContext(
 						client,
 						hello,
 						{
 							onTransportClosed: () =>
-								handleTransportClosed(profile.id, rendererAttempt, client),
+								handleTransportClosed(verifiedProfile.id, rendererAttempt, client),
 						},
 					);
 					if (!isCurrentConnectionAttempt(profile, attempt)) {
@@ -1449,14 +1457,14 @@ export default function WebManagerApp() {
 					}
 					const labelledContext = Object.freeze({
 						...context,
-						connectionLabel: profile.label,
+						connectionLabel: verifiedProfile.label,
 						retryConnection: connectionController.current?.retry,
 						canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 					});
 					const candidate = {
-						profileId: profile.id,
-						label: profile.label,
-						origin: profile.origin,
+						profileId: verifiedProfile.id,
+						label: verifiedProfile.label,
+						origin: verifiedProfile.origin,
 						client,
 						serverId: hello.serverId,
 						clientId,
@@ -1466,13 +1474,22 @@ export default function WebManagerApp() {
 					if (
 						!(await connectionController.current!.activate(
 							rendererAttempt,
-							managedWebCandidate(profile, client, clientId, hello, candidate),
+							managedWebCandidate(
+								verifiedProfile,
+								client,
+								clientId,
+								hello,
+								candidate,
+							),
 						))
 					)
 						return;
 					setActiveConnection(candidate);
-					connectionController.current!.setRecoveryPipeline(profile.id, browserRecoveryPipeline());
-					host.markStatus(profile.id, 'connected');
+					connectionController.current!.setRecoveryPipeline(
+						verifiedProfile.id,
+						browserRecoveryPipeline(),
+					);
+					host.markStatus(verifiedProfile.id, 'connected');
 					recordReconnectDiagnostic('succeeded', 0);
 					setError(null);
 					setStatus(null);
