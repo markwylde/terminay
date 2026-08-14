@@ -51,17 +51,19 @@ import {
 	selectLiveAgentStatusesForTerminal,
 } from './agentStatusStore';
 import {
-	checkForAppUpdate,
-	openExternalUrl,
-	writeClipboardText,
-} from './host/nativeActions';
-import {
 	AgentsSidebar,
 	type AgentsSidebarItem,
 } from './components/AgentsSidebar';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
-import type { FilePanelInstanceParams, FilePanelSaveHandler } from './components/file-viewer';
-import { FilePanel, FilePanelSaveRegistryProvider, FileTab } from './components/file-viewer';
+import type {
+	FilePanelInstanceParams,
+	FilePanelSaveHandler,
+} from './components/file-viewer';
+import {
+	FilePanel,
+	FilePanelSaveRegistryProvider,
+	FileTab,
+} from './components/file-viewer';
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
@@ -94,6 +96,11 @@ import {
 	useTerminalSettings,
 } from './hooks/useTerminalSettings';
 import {
+	checkForAppUpdate,
+	openExternalUrl,
+	writeClipboardText,
+} from './host/nativeActions';
+import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
 	getCommandShortcutLabel,
@@ -103,15 +110,19 @@ import { getPathRelativeToRoot } from './pathUtils';
 import { ProjectEnvironmentSplitButton } from './projectEnvironments/ProjectEnvironmentSplitButton';
 import type { ProjectEnvironmentSummaryDto } from './projectEnvironments/uiModel';
 import {
+	createServerMcpInstallClient,
+	createServerRemoteAccessClients,
+} from './services/serverApplicationFeatureClients';
+import {
 	type AuxiliaryRouteController,
 	createAuxiliaryRouteController,
 } from './shared/auxiliaryRoutes';
-import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
 import {
 	describeFeatureFailure,
 	describeServerFeatureFailure,
 	resolveProjectFeatureAuthority,
 } from './shared/featureQueryAuthority';
+import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
 import {
 	adaptServerAgentSnapshot,
 	subscribeServerAgentSnapshots,
@@ -161,9 +172,9 @@ import {
 } from './workspace/RemoteAccessConnectionMenu';
 import {
 	buildTerminalActivityOverview,
-	type TerminalPresentationActivityState,
 	TerminalActivityOverview,
 	type TerminalActivityOverviewItem,
+	type TerminalPresentationActivityState,
 } from './workspace/TerminalActivityOverview';
 import {
 	activateTerminalPanel,
@@ -193,7 +204,6 @@ import { useProjectEditor } from './workspace/useProjectEditor';
 import { useProjectTabTransfer } from './workspace/useProjectTabTransfer';
 import { useProjectTerminalCwd } from './workspace/useProjectTerminalCwd';
 import { useRemoteAccessController } from './workspace/useRemoteAccessController';
-import { createServerMcpInstallClient, createServerRemoteAccessClients } from './services/serverApplicationFeatureClients';
 import { useTerminalActivityController } from './workspace/useTerminalActivityController';
 import { useTerminalAdoptionController } from './workspace/useTerminalAdoptionController';
 import {
@@ -396,6 +406,7 @@ type ProjectWorkspaceHandle = {
 		sessionId: string,
 		title?: string,
 		cwd?: string,
+		terminalSessionStatus?: 'running' | 'exited' | 'interrupted',
 	) => boolean;
 	reconcileServerPanels: (panels: readonly ServerWorkspacePanel[]) => void;
 	activateTerminal: (panelId: string, sessionId: string) => void;
@@ -1250,19 +1261,29 @@ const ProjectWorkspace = forwardRef<
 				),
 			);
 		}, [terminalClientContext?.applicationClient]);
-		const mcpInstallClient = useMemo(() =>
-			terminalClientContext?.applicationClient === undefined ? undefined :
-				createServerMcpInstallClient(terminalClientContext.applicationClient),
-		[terminalClientContext?.applicationClient]);
-		const { settings, settingsClient, error: settingsError } =
-			useTerminalSettings(serverSettingsClient);
+		const mcpInstallClient = useMemo(
+			() =>
+				terminalClientContext?.applicationClient === undefined
+					? undefined
+					: createServerMcpInstallClient(
+							terminalClientContext.applicationClient,
+						),
+			[terminalClientContext?.applicationClient],
+		);
+		const {
+			settings,
+			settingsClient,
+			error: settingsError,
+		} = useTerminalSettings(serverSettingsClient);
 		const serverFileViewerClient = featureAuthority?.fileViewerClient;
 		const fileViewerClient = useMemo(
-			() => serverFileViewerClient ?? unavailableFileViewerClient(
-				featureAvailability.state === 'unavailable'
-					? featureAvailability.reason
-					: 'Explorer is unavailable on the selected server.',
-			),
+			() =>
+				serverFileViewerClient ??
+				unavailableFileViewerClient(
+					featureAvailability.state === 'unavailable'
+						? featureAvailability.reason
+						: 'Explorer is unavailable on the selected server.',
+				),
 			[featureAvailability, serverFileViewerClient],
 		);
 		const fileClientPath = useCallback(
@@ -1300,15 +1321,21 @@ const ProjectWorkspace = forwardRef<
 		>(() => {});
 		const focusedSessionIdRef = useRef<string | null>(null);
 		const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
-		const filePanelSaveHandlersRef = useRef<Map<string, FilePanelSaveHandler>>(new Map());
-		const filePanelSaveRegistry = useMemo(() => ({
-			register: (panelId: string, handler: FilePanelSaveHandler) => {
-				filePanelSaveHandlersRef.current.set(panelId, handler);
-				return () => {
-					if (filePanelSaveHandlersRef.current.get(panelId) === handler) filePanelSaveHandlersRef.current.delete(panelId);
-				};
-			},
-		}), []);
+		const filePanelSaveHandlersRef = useRef<Map<string, FilePanelSaveHandler>>(
+			new Map(),
+		);
+		const filePanelSaveRegistry = useMemo(
+			() => ({
+				register: (panelId: string, handler: FilePanelSaveHandler) => {
+					filePanelSaveHandlersRef.current.set(panelId, handler);
+					return () => {
+						if (filePanelSaveHandlersRef.current.get(panelId) === handler)
+							filePanelSaveHandlersRef.current.delete(panelId);
+					};
+				},
+			}),
+			[],
+		);
 		const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
 		const terminalCounterRef = useRef(0);
 		const filePanelCounterRef = useRef(0);
@@ -1342,7 +1369,8 @@ const ProjectWorkspace = forwardRef<
 			[featureAvailability],
 		);
 		useEffect(() => {
-			if (settingsError !== null) reportFeatureFailure('Settings', settingsError);
+			if (settingsError !== null)
+				reportFeatureFailure('Settings', settingsError);
 		}, [reportFeatureFailure, settingsError]);
 		const [focusedSessionId, setFocusedSessionId] = useState<string | null>(
 			null,
@@ -2861,8 +2889,13 @@ const ProjectWorkspace = forwardRef<
 				}
 
 				try {
-					if (serverAiClient === undefined || terminalClientContext === undefined)
-						throw new Error('AI metadata is unavailable on the selected server.');
+					if (
+						serverAiClient === undefined ||
+						terminalClientContext === undefined
+					)
+						throw new Error(
+							'AI metadata is unavailable on the selected server.',
+						);
 					const result = await serverAiClient.generateMetadata({
 						model,
 						provider: provider === 'claudeCode' ? 'claude-code' : provider,
@@ -3508,17 +3541,23 @@ const ProjectWorkspace = forwardRef<
 
 		const saveActivePanel = useCallback(async () => {
 			const activePanel = dockviewApiRef.current?.activePanel;
-			const registeredSave = activePanel === undefined ? undefined : filePanelSaveHandlersRef.current.get(activePanel.id);
+			const registeredSave =
+				activePanel === undefined
+					? undefined
+					: filePanelSaveHandlersRef.current.get(activePanel.id);
 			if (registeredSave !== undefined) {
-				try { await registeredSave(); }
-				catch (error) { setErrorText(error instanceof Error ? error.message : String(error)); }
+				try {
+					await registeredSave();
+				} catch (error) {
+					setErrorText(error instanceof Error ? error.message : String(error));
+				}
 				return;
 			}
 			await saveActiveDockviewPanel({
-					api: dockviewApiRef.current,
-					onError: setErrorText,
-					onSaved: () => undefined,
-				});
+				api: dockviewApiRef.current,
+				onError: setErrorText,
+				onSaved: () => undefined,
+			});
 		}, []);
 
 		const popoutActivePanel = useCallback(
@@ -4245,28 +4284,29 @@ const ProjectWorkspace = forwardRef<
 							<RefreshCw size={14} aria-hidden="true" />
 						</button>
 					),
-					children: featureAvailability.state === 'unavailable' ? (
-						<FeatureUnavailableState reason={featureAvailability.reason} />
-					) : (
-						<FileExplorerTree
-							directoryChildren={directoryChildren}
-							directoryErrors={directoryErrors}
-							expandedPaths={expandedPaths}
-							gitStatuses={gitStatuses}
-							loadingPaths={loadingPaths}
-							onOpenFile={openFile}
-							onOpenFolder={openFolder}
-							onToggleDirectory={toggleDirectory}
-							onRename={handleRename}
-							onDelete={handleDelete}
-							onNewFile={handleNewFile}
-							onNewFolder={handleNewFolder}
-							onOpenTerminal={handleOpenTerminalAt}
-							onCopyPath={handleCopyPath}
-							onCopyRelativePath={handleCopyRelativePath}
-							rootPath={project.rootFolder}
-						/>
-					),
+					children:
+						featureAvailability.state === 'unavailable' ? (
+							<FeatureUnavailableState reason={featureAvailability.reason} />
+						) : (
+							<FileExplorerTree
+								directoryChildren={directoryChildren}
+								directoryErrors={directoryErrors}
+								expandedPaths={expandedPaths}
+								gitStatuses={gitStatuses}
+								loadingPaths={loadingPaths}
+								onOpenFile={openFile}
+								onOpenFolder={openFolder}
+								onToggleDirectory={toggleDirectory}
+								onRename={handleRename}
+								onDelete={handleDelete}
+								onNewFile={handleNewFile}
+								onNewFolder={handleNewFolder}
+								onOpenTerminal={handleOpenTerminalAt}
+								onCopyPath={handleCopyPath}
+								onCopyRelativePath={handleCopyRelativePath}
+								rootPath={project.rootFolder}
+							/>
+						),
 				},
 				agents: {
 					id: 'agents',
@@ -4279,39 +4319,40 @@ const ProjectWorkspace = forwardRef<
 						});
 					},
 					count: projectAgentItems.length,
-					children: featureAvailability.state === 'unavailable' ? (
-						<FeatureUnavailableState reason={featureAvailability.reason} />
-					) : (
-						<AgentsSidebar
-							projectId={project.id}
-							agents={projectAgentItems}
-							expandedEntryIds={project.expandedAgentEntryIds}
-							onToggleEntryExpanded={(entryId) => {
-								const expanded =
-									project.expandedAgentEntryIds.includes(entryId);
-								onUpdateProject(project.id, {
-									expandedAgentEntryIds: expanded
-										? project.expandedAgentEntryIds.filter(
-												(candidate) => candidate !== entryId,
-											)
-										: [...project.expandedAgentEntryIds, entryId],
-								});
-							}}
-							onActivateTerminal={activateAgentTerminal}
-							onAcknowledgeEntry={(entryId) => {
-								const entry = agentStatusSnapshot.entries[entryId];
-								if (entry !== undefined) {
-									void serverAgentStatusClient
-										?.acknowledge({
-											projectId: project.id,
-											sessionId: entry.activationTerminalSessionId,
-											entryId,
-									})
-									.catch((error) => reportFeatureFailure('Agents', error));
-								}
-							}}
-						/>
-					),
+					children:
+						featureAvailability.state === 'unavailable' ? (
+							<FeatureUnavailableState reason={featureAvailability.reason} />
+						) : (
+							<AgentsSidebar
+								projectId={project.id}
+								agents={projectAgentItems}
+								expandedEntryIds={project.expandedAgentEntryIds}
+								onToggleEntryExpanded={(entryId) => {
+									const expanded =
+										project.expandedAgentEntryIds.includes(entryId);
+									onUpdateProject(project.id, {
+										expandedAgentEntryIds: expanded
+											? project.expandedAgentEntryIds.filter(
+													(candidate) => candidate !== entryId,
+												)
+											: [...project.expandedAgentEntryIds, entryId],
+									});
+								}}
+								onActivateTerminal={activateAgentTerminal}
+								onAcknowledgeEntry={(entryId) => {
+									const entry = agentStatusSnapshot.entries[entryId];
+									if (entry !== undefined) {
+										void serverAgentStatusClient
+											?.acknowledge({
+												projectId: project.id,
+												sessionId: entry.activationTerminalSessionId,
+												entryId,
+											})
+											.catch((error) => reportFeatureFailure('Agents', error));
+									}
+								}}
+							/>
+						),
 				},
 				git: {
 					id: 'git',
@@ -4331,32 +4372,33 @@ const ProjectWorkspace = forwardRef<
 					accessory: currentGitBranch ? (
 						<span className="sidebar-pane__branch">{currentGitBranch}</span>
 					) : null,
-					children: featureAvailability.state === 'unavailable' ? (
-						<FeatureUnavailableState reason={featureAvailability.reason} />
-					) : (
-						<WorktreesPanel
-							activePushMenuWorktreePath={
-								gitPushMenuPosition?.target?.worktreePath ?? null
-							}
-							deletingWorktreePaths={deletingWorktreePaths}
-							status={worktreePanelStatus}
-							viewMode={settings.sidebar.gitPanelViewMode}
-							onDeletePath={handleDelete}
-							onNewFile={handleNewFile}
-							onNewFolder={handleNewFolder}
-							onDeleteWorktree={handleDeleteWorktree}
-							onOpenEntry={handleOpenGitEntry}
-							onOpenFolder={handleOpenGitFolder}
-							onOpenPushMenu={handleOpenWorktreePushMenu}
-							onOpenTerminal={handleOpenTerminalAtWorktree}
-							onOpenTerminalAtPath={handleOpenTerminalAt}
-							onPullFromOrigin={handlePullWorktreeFromOrigin}
-							onRenameWorktree={handleRenameWorktree}
-							onRenamePath={handleRename}
-							onRevealWorktree={handleRevealWorktree}
-							onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
-						/>
-					),
+					children:
+						featureAvailability.state === 'unavailable' ? (
+							<FeatureUnavailableState reason={featureAvailability.reason} />
+						) : (
+							<WorktreesPanel
+								activePushMenuWorktreePath={
+									gitPushMenuPosition?.target?.worktreePath ?? null
+								}
+								deletingWorktreePaths={deletingWorktreePaths}
+								status={worktreePanelStatus}
+								viewMode={settings.sidebar.gitPanelViewMode}
+								onDeletePath={handleDelete}
+								onNewFile={handleNewFile}
+								onNewFolder={handleNewFolder}
+								onDeleteWorktree={handleDeleteWorktree}
+								onOpenEntry={handleOpenGitEntry}
+								onOpenFolder={handleOpenGitFolder}
+								onOpenPushMenu={handleOpenWorktreePushMenu}
+								onOpenTerminal={handleOpenTerminalAtWorktree}
+								onOpenTerminalAtPath={handleOpenTerminalAt}
+								onPullFromOrigin={handlePullWorktreeFromOrigin}
+								onRenameWorktree={handleRenameWorktree}
+								onRenamePath={handleRename}
+								onRevealWorktree={handleRevealWorktree}
+								onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
+							/>
+						),
 				},
 			};
 		const visibleSidebarPanelIds = project.sidebarPanelOrder.filter(
@@ -4370,9 +4412,7 @@ const ProjectWorkspace = forwardRef<
 			<section
 				className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
 				data-terminay-git-client={
-					featureAuthority?.gitClient === undefined
-						? 'unavailable'
-						: 'server'
+					featureAuthority?.gitClient === undefined ? 'unavailable' : 'server'
 				}
 				data-terminay-project-root={project.rootFolder}
 				data-new-terminal-shortcut={getCommandShortcut(
@@ -4466,13 +4506,13 @@ const ProjectWorkspace = forwardRef<
 								value={terminalPanelClientContext}
 							>
 								<FilePanelSaveRegistryProvider registry={filePanelSaveRegistry}>
-								<DockviewReact
-									components={dockviewComponents}
-									tabComponents={dockviewTabComponents}
-									popoutUrl={popoutUrl}
-									onReady={handleDockviewReady}
-									floatingGroupBounds="boundedWithinViewport"
-								/>
+									<DockviewReact
+										components={dockviewComponents}
+										tabComponents={dockviewTabComponents}
+										popoutUrl={popoutUrl}
+										onReady={handleDockviewReady}
+										floatingGroupBounds="boundedWithinViewport"
+									/>
 								</FilePanelSaveRegistryProvider>
 							</TerminalPanelClientContext.Provider>
 						</div>
@@ -5032,7 +5072,9 @@ function App({
 			),
 		);
 	}, [terminalClientContext?.applicationClient]);
-	const { macros, error: macroSettingsError } = useMacroSettings(serverMacroSettingsClient);
+	const { macros, error: macroSettingsError } = useMacroSettings(
+		serverMacroSettingsClient,
+	);
 	const serverSettingsClient = useMemo(() => {
 		if (terminalClientContext?.applicationClient === undefined)
 			throw new Error('The selected server settings client is unavailable.');
@@ -5042,20 +5084,33 @@ function App({
 			),
 		);
 	}, [terminalClientContext?.applicationClient]);
-	const remoteAccessClients = useMemo(() =>
-		terminalClientContext?.applicationClient === undefined ? undefined :
-			createServerRemoteAccessClients(terminalClientContext.applicationClient),
-	[terminalClientContext?.applicationClient]);
-	const { settings, error: terminalSettingsError, isLoading: areTerminalSettingsLoading } =
-		useTerminalSettings(serverSettingsClient);
+	const remoteAccessClients = useMemo(
+		() =>
+			terminalClientContext?.applicationClient === undefined
+				? undefined
+				: createServerRemoteAccessClients(
+						terminalClientContext.applicationClient,
+					),
+		[terminalClientContext?.applicationClient],
+	);
+	const {
+		settings,
+		error: terminalSettingsError,
+		isLoading: areTerminalSettingsLoading,
+	} = useTerminalSettings(serverSettingsClient);
 	const connectionFeatureError = useMemo(() => {
-		const failed = macroSettingsError === null
-			? terminalSettingsError === null
-				? null
-				: ['Settings', terminalSettingsError] as const
-			: ['Macros', macroSettingsError] as const;
+		const failed =
+			macroSettingsError === null
+				? terminalSettingsError === null
+					? null
+					: (['Settings', terminalSettingsError] as const)
+				: (['Macros', macroSettingsError] as const);
 		if (failed === null) return null;
-		const failure = describeServerFeatureFailure(failed[0], failed[1], currentServerId);
+		const failure = describeServerFeatureFailure(
+			failed[0],
+			failed[1],
+			currentServerId,
+		);
 		return `${failure.title}. ${failure.detail}`;
 	}, [currentServerId, macroSettingsError, terminalSettingsError]);
 	const workspaceRefs = useRef(
@@ -5184,10 +5239,13 @@ function App({
 		(profileId: string) => {
 			setConnectionSwitcherError(null);
 			const select = (id: string) =>
-					window.terminayHost?.requestAction({
-						type: 'connection.select',
-						profileId: id,
-					}) ?? Promise.reject(new Error('Connection switching is unavailable in this host.'));
+				window.terminayHost?.requestAction({
+					type: 'connection.select',
+					profileId: id,
+				}) ??
+				Promise.reject(
+					new Error('Connection switching is unavailable in this host.'),
+				);
 			void select(profileId)
 				.then(() => {
 					setIsRemoteMenuOpen(false);
@@ -5390,9 +5448,7 @@ function App({
 			);
 			if (reconcileFrame !== null) window.cancelAnimationFrame(reconcileFrame);
 			reconcileFrame = window.requestAnimationFrame(() => {
-				recordBootstrapDiagnostic(
-					'app.workspace.reconcile-frame',
-				);
+				recordBootstrapDiagnostic('app.workspace.reconcile-frame');
 				reconcileFrame = null;
 				if (disposed) return;
 				let pendingPresentations = 0;
@@ -5417,6 +5473,7 @@ function App({
 						session.id,
 						panel.title,
 						panel.cwd,
+						session.status,
 					);
 					if (!accepted) {
 						pendingPresentations += 1;
@@ -5793,9 +5850,7 @@ function App({
 								type="button"
 								className="app-update-button"
 								onClick={() =>
-									void openExternalUrl(
-										appUpdateStatus.releaseUrl as string,
-									)
+									void openExternalUrl(appUpdateStatus.releaseUrl as string)
 								}
 								title={`Open release page for v${appUpdateStatus?.latestVersion}`}
 							>
@@ -5827,7 +5882,11 @@ function App({
 						menuRef={remoteMenuRef}
 						onDisconnect={onDisconnect}
 						onOpenConnection={
-						onOpenConnectionManager ?? (() => setConnectionSwitcherError('Connection management is unavailable in this host.'))
+							onOpenConnectionManager ??
+							(() =>
+								setConnectionSwitcherError(
+									'Connection management is unavailable in this host.',
+								))
 						}
 						onOpenPairingQr={() => void openPairingQr()}
 						onOpenSettings={() =>
@@ -6033,9 +6092,7 @@ function App({
 													className="remote-pairing-modal__copy-btn"
 													onClick={() => {
 														void (
-													writeClipboardText(
-																selectedPairingUrl,
-															) ??
+															writeClipboardText(selectedPairingUrl) ??
 															navigator.clipboard.writeText(selectedPairingUrl)
 														)
 															.then(() => {

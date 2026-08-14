@@ -98,8 +98,8 @@ import {
 	createInitialWorkspace,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
-import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
 import { resolveWorkspaceHydration } from '../packages/server-core/src/workspaceHydration';
+import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
 import {
 	type ServerMessagePort,
 	ServerPortTransport,
@@ -118,7 +118,10 @@ import {
 	type AgentStatusIpcAuthority,
 	createServerAgentStatusIpcAdapter,
 } from './agentStatus/serverAdapter';
-import { resolveTerminalForegroundProcess, resolveTerminalProcessCwd } from './processCwd';
+import {
+	resolveTerminalForegroundProcess,
+	resolveTerminalProcessCwd,
+} from './processCwd';
 
 const require = createRequire(import.meta.url);
 type MainServerPortDiagnostics = {
@@ -278,7 +281,10 @@ export interface ServerTerminalAuthorityOptions {
 	readonly applicationFeatures?: {
 		readonly remoteAccess?: {
 			getStatus(): RemoteAccessStatus | Promise<RemoteAccessStatus>;
-			command(operation: string, value?: string): Promise<RemoteAccessStatus | boolean | unknown>;
+			command(
+				operation: string,
+				value?: string,
+			): Promise<RemoteAccessStatus | boolean | unknown>;
 		};
 		readonly mcpInstall?: {
 			getStatus(): McpInstallStatus | Promise<McpInstallStatus>;
@@ -347,9 +353,9 @@ export class ServerTerminalAuthority {
 		}
 		this.options = options;
 		this.workspaceRepository = options.workspaceRepository;
-		this.workspace = options.workspaceRepository?.workspace ?? new WorkspaceStore(
-			createInitialWorkspace(options.serverId),
-		);
+		this.workspace =
+			options.workspaceRepository?.workspace ??
+			new WorkspaceStore(createInitialWorkspace(options.serverId));
 		this.activity = new TerminalActivityService({ serverId: options.serverId });
 		this.agents = new AgentStatusService({ activity: this.activity });
 		this.git = new GitService({
@@ -385,15 +391,26 @@ export class ServerTerminalAuthority {
 		const eventJournal = new OrderedEventJournal();
 		const remoteAccess = options.applicationFeatures?.remoteAccess;
 		const mcpInstall = options.applicationFeatures?.mcpInstall;
-		const payloadText = (request: QueryRequest | CommandRequest, key: string) => {
+		const payloadText = (
+			request: QueryRequest | CommandRequest,
+			key: string,
+		) => {
 			const value = (request.envelope.payload as Record<string, unknown>)[key];
 			if (typeof value !== 'string' || value.length === 0 || value.length > 512)
 				throw new TypeError(`${key} is invalid`);
 			return value;
 		};
-		const remoteCommand = async (request: CommandRequest, operation: string, key?: string) => {
-			if (remoteAccess === undefined) throw new Error('Remote access is unavailable on this server.');
-			const result = await remoteAccess.command(operation, key === undefined ? undefined : payloadText(request, key));
+		const remoteCommand = async (
+			request: CommandRequest,
+			operation: string,
+			key?: string,
+		) => {
+			if (remoteAccess === undefined)
+				throw new Error('Remote access is unavailable on this server.');
+			const result = await remoteAccess.command(
+				operation,
+				key === undefined ? undefined : payloadText(request, key),
+			);
 			eventJournal.append('remote-access.changed', { changed: true });
 			return result as unknown as JsonValue;
 		};
@@ -717,13 +734,22 @@ export class ServerTerminalAuthority {
 					}),
 			operations: {
 				queries: {
-					...(remoteAccess === undefined ? {} : {
-						'remote-access.status': async () => await remoteAccess.getStatus() as unknown as JsonValue,
-						'remote-access.pairing-pin-status': async () => await remoteAccess.command('pairing-pin-status') as JsonValue,
-					}),
-					...(mcpInstall === undefined ? {} : {
-						'mcp-install.status': async () => await mcpInstall.getStatus() as unknown as JsonValue,
-					}),
+					...(remoteAccess === undefined
+						? {}
+						: {
+								'remote-access.status': async () =>
+									(await remoteAccess.getStatus()) as unknown as JsonValue,
+								'remote-access.pairing-pin-status': async () =>
+									(await remoteAccess.command(
+										'pairing-pin-status',
+									)) as JsonValue,
+							}),
+					...(mcpInstall === undefined
+						? {}
+						: {
+								'mcp-install.status': async () =>
+									(await mcpInstall.getStatus()) as unknown as JsonValue,
+							}),
 					...dictationOperations?.queries,
 					...(options.aiMetadata === undefined
 						? {}
@@ -740,18 +766,36 @@ export class ServerTerminalAuthority {
 						this.getFileMutationRevision(request),
 				},
 				commands: {
-					...(remoteAccess === undefined ? {} : {
-						'remote-access.toggle-server': (request: CommandRequest) => remoteCommand(request, 'toggle-server'),
-						'remote-access.toggle-direct-listener': (request: CommandRequest) => remoteCommand(request, 'toggle-direct-listener'),
-						'remote-access.revoke-device': (request: CommandRequest) => remoteCommand(request, 'revoke-device', 'deviceId'),
-						'remote-access.close-connection': (request: CommandRequest) => remoteCommand(request, 'close-connection', 'connectionId'),
-						'remote-access.set-pairing-address': (request: CommandRequest) => remoteCommand(request, 'set-pairing-address', 'address'),
-						'remote-access.set-pairing-pin': (request: CommandRequest) => remoteCommand(request, 'set-pairing-pin', 'pin'),
-					}),
-					...(mcpInstall === undefined ? {} : {
-						'mcp-install.install': (request: CommandRequest) => mcpInstall.install(payloadText(request, 'agent') as McpAgentId) as unknown as Promise<JsonValue>,
-						'mcp-install.uninstall': (request: CommandRequest) => mcpInstall.uninstall(payloadText(request, 'agent') as McpAgentId) as unknown as Promise<JsonValue>,
-					}),
+					...(remoteAccess === undefined
+						? {}
+						: {
+								'remote-access.toggle-server': (request: CommandRequest) =>
+									remoteCommand(request, 'toggle-server'),
+								'remote-access.toggle-direct-listener': (
+									request: CommandRequest,
+								) => remoteCommand(request, 'toggle-direct-listener'),
+								'remote-access.revoke-device': (request: CommandRequest) =>
+									remoteCommand(request, 'revoke-device', 'deviceId'),
+								'remote-access.close-connection': (request: CommandRequest) =>
+									remoteCommand(request, 'close-connection', 'connectionId'),
+								'remote-access.set-pairing-address': (
+									request: CommandRequest,
+								) => remoteCommand(request, 'set-pairing-address', 'address'),
+								'remote-access.set-pairing-pin': (request: CommandRequest) =>
+									remoteCommand(request, 'set-pairing-pin', 'pin'),
+							}),
+					...(mcpInstall === undefined
+						? {}
+						: {
+								'mcp-install.install': (request: CommandRequest) =>
+									mcpInstall.install(
+										payloadText(request, 'agent') as McpAgentId,
+									) as unknown as Promise<JsonValue>,
+								'mcp-install.uninstall': (request: CommandRequest) =>
+									mcpInstall.uninstall(
+										payloadText(request, 'agent') as McpAgentId,
+									) as unknown as Promise<JsonValue>,
+							}),
 					...dictationOperations?.commands,
 					...fileSessionOperations.commands,
 					...fileCatalogOperations.commands,
@@ -824,7 +868,34 @@ export class ServerTerminalAuthority {
 	 * silently replaced with a different PTY identity. */
 	async initializeWorkspace(): Promise<void> {
 		await this.composition.start();
-		if (this.workspaceRepository?.wasCreated !== true) return;
+		// File/Git/query authorities are process-local. Rebuild their bindings for
+		// every persisted project before publishing the restored workspace; PTY
+		// creation is not the only operation that requires a canonical root.
+		for (const project of Object.values(this.workspace.state.projects)) {
+			await this.registerProjectRoot(project.id, project.root);
+		}
+		if (this.workspaceRepository?.wasCreated !== true) {
+			// Persisted "running" is not proof of an attachable PTY after process
+			// restart. Only a session composed into this authority generation can
+			// satisfy startup readiness.
+			if (this.sessions.size > 0) return;
+			const activeView =
+				this.workspace.state.views[this.workspace.state.viewOrder[0] ?? ''];
+			const projectId =
+				activeView?.activeProjectId ?? activeView?.projectIds[0];
+			const project =
+				projectId === undefined
+					? undefined
+					: this.workspace.state.projects[projectId];
+			if (project === undefined) return;
+			await this.create({
+				projectId: project.id,
+				cwd: project.root,
+				cols: 100,
+				rows: 30,
+			});
+			return;
+		}
 		const hydration = resolveWorkspaceHydration(this.workspace.state);
 		if (hydration.state !== 'ready')
 			throw new Error('fresh canonical workspace has no active terminal');
@@ -1175,10 +1246,17 @@ export class ServerTerminalAuthority {
 			resolver === undefined
 				? await this.service.createSession(options)
 				: await (async () => {
-						const identity = this.service.allocateIdentity(
+						let identity = this.service.allocateIdentity(
 							options.projectId,
 							options.sessionId,
 						);
+						while (
+							options.sessionId === undefined &&
+							this.workspace.state.terminalSessions[identity.sessionId] !==
+								undefined
+						) {
+							identity = this.service.allocateIdentity(options.projectId);
+						}
 						const resolved = await resolver.resolve({
 							identity,
 							...(options.profileId === undefined
