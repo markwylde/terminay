@@ -149,7 +149,7 @@ test.describe('workspace shell', () => {
 		const foregroundStarted = `foreground-started-${Date.now()}`;
 		await writeToActiveTerminal(
 			mainWindow,
-			`sleep 1; printf '${foregroundStarted}\\n'; sleep 30\n`,
+			`sleep 2.1; printf '${foregroundStarted}\\n'; sleep 30\n`,
 		);
 		await expect(
 			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
