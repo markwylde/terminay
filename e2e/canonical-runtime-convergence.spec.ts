@@ -32,13 +32,15 @@ async function canonicalIdentity(page: Page): Promise<CanonicalIdentity> {
 		),
 		revision,
 		serverId: context?.serverId ?? '',
-		activeSessionId:
+	activeSessionId:
 			(await page
-				.locator('.terminal-panel:visible')
+				.locator('.project-workspace--active .terminal-panel:visible')
 				.getAttribute('data-terminay-terminal-session-id')) ?? '',
 		// Dockview mounts only the active terminal body. Tab content is the
 		// visible, production-owned presentation for inactive terminal sessions.
-		terminalTabCount: await page.locator('.terminal-tab-content').count(),
+		terminalTabCount: await page
+			.locator('.project-workspace--active .terminal-tab-content')
+			.count(),
 		windowId: context?.windowId ?? '',
 	};
 }

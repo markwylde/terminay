@@ -27,20 +27,43 @@ export async function resolveTerminalForegroundProcess(rootPid: number, signal?:
 		// group. In that case TPGID points back to the shell and cannot identify
 		// the destructive foreground child. Follow the single-child shell chain
 		// before falling back to the shell title reported by node-pty.
-		const deepestPid = await resolveDeepestProcessPid(rootPid, signal)
-		if (deepestPid !== rootPid) {
-			const deepestCommand = await resolveProcessCommand(deepestPid, signal)
-			if (
-				deepestCommand !== null &&
-				(groupCommand === null || groupCommand === rootCommand)
-			) {
-				return deepestCommand
-			}
+		const descendantCommands = await resolveTerminalLeafCommands(rootPid, signal)
+		const nonShellDescendants = descendantCommands.filter(
+			(command) => command !== rootCommand && command !== groupCommand,
+		);
+		if (nonShellDescendants.length === 1) {
+			return nonShellDescendants[0]
 		}
 		return groupCommand ?? rootCommand
 	} catch {
 		return null
 	}
+}
+
+async function resolveTerminalLeafCommands(
+	rootPid: number,
+	signal?: AbortSignal,
+): Promise<string[]> {
+	const pending = [rootPid]
+	const visited = new Set<number>([rootPid])
+	const leaves: number[] = []
+	while (pending.length > 0 && visited.size <= 64) {
+		const parent = pending.shift()!
+		const children = (await childProcessIds(parent, signal)).filter(
+			(pid) => !visited.has(pid),
+		)
+		if (children.length === 0) {
+			if (parent !== rootPid) leaves.push(parent)
+			continue
+		}
+		for (const child of children) {
+			visited.add(child)
+			pending.push(child)
+		}
+	}
+	return (
+		await Promise.all(leaves.map((pid) => resolveProcessCommand(pid, signal)))
+	).filter((command): command is string => command !== null)
 }
 
 async function resolveProcessCommand(pid: number, signal?: AbortSignal): Promise<string | null> {
