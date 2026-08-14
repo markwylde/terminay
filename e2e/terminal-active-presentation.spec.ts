@@ -42,7 +42,7 @@ test('a protocol-created terminal launches the configured shell', async ({
 		/.+/,
 	);
 	await terminal.locator('.xterm-helper-textarea').focus();
-	await mainWindow.keyboard.type(
+	await mainWindow.keyboard.insertText(
 		`printf '__TERMINAY_BASH__:%s\\n' "\${BASH_VERSION:-missing}"`,
 	);
 	await mainWindow.keyboard.press('Enter');
