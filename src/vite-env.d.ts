@@ -63,28 +63,6 @@ declare global {
 				) => void,
 			): () => void;
 		};
-		/** Bounded renderer transport for the preload-owned server MessagePort. */
-		terminayServerConnectionHost: {
-			readonly version: 1;
-			closeServerConnection(connectionId: string): void;
-			onServerConnection(
-				listener: (message: {
-					connectionId: string;
-					serverId: string;
-					label?: string;
-					replacement?: boolean;
-				}) => void,
-			): () => void;
-			requestServerConnection(serverId: string): Promise<void>;
-			sendServerFrame(connectionId: string, frame: Uint8Array): void;
-			onServerFrame(
-				connectionId: string,
-				listener: (frame: Uint8Array | null) => void,
-			): () => void;
-		};
-		terminayTerminalSettingsCompatibilityHost: import('./services/settings/legacySettingsCapability').LegacySettingsApi & {
-			readonly version: 1;
-		};
 		terminayEditWindowHost: import('./components/EditTabWindow').EditWindowClient & {
 			readonly version: 1;
 		};
