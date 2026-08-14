@@ -41,12 +41,15 @@ test('application features have no renderer-owned Electron IPC backdoors', () =>
 });
 
 test('obsolete renderer-owned profile and broadcast helpers stay deleted', () => {
+	// `rememberRemoteConnection` is intentionally not listed here. It is a
+	// main-process-only, atomic persistence helper for the sanitized Desktop
+	// profile projection; it neither exposes renderer IPC nor retains pairing
+	// credentials.
 	for (const helper of [
 		'connectRemoteServer',
 		'openCanonicalRemoteServerWindow',
 		'openCanonicalHttpRemoteServerWindow',
 		'reconnectRememberedRemoteProfile',
-		'rememberRemoteConnection',
 		'saveRememberedRemoteConnections',
 		'requireMutableDesktopConnectionProfile',
 		'broadcastRemoteAccessStatus',
