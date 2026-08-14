@@ -170,11 +170,9 @@ declare global {
 			readonly version: 1;
 			getStatus(force?: boolean): Promise<AppUpdateStatus>;
 		};
-		/** Narrow OS clipboard capability used by terminal presentation only. */
+		/** Temporary dictation-only declaration; Task 38 owns its final migration. */
 		terminayClipboardHost?: {
 			readonly version: 1;
-			subscribeCopyRequest(listener: () => void): () => void;
-			readText(): Promise<string>;
 			writeText(text: string): Promise<void>;
 		};
 		/** Read-only native terminal presentation state. */

@@ -37,6 +37,17 @@ export async function writeClipboardText(text: string): Promise<void> {
 	await navigator.clipboard.writeText(text);
 }
 
+/** Clipboard reads remain an exact-document, user-gesture browser capability.
+ * They are deliberately not elevated through the privileged Desktop host. */
+export async function readClipboardText(): Promise<string> {
+	if (navigator.clipboard?.readText === undefined) return '';
+	return navigator.clipboard.readText();
+}
+
+export function canReadClipboardText(): boolean {
+	return navigator.clipboard?.readText !== undefined;
+}
+
 /** External navigation is privileged in Desktop and ordinary browser
  * navigation elsewhere. Only HTTPS/mail/tel URLs pass the protocol parser. */
 export async function openExternalUrl(url: string): Promise<void> {
