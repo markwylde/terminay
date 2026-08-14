@@ -181,6 +181,9 @@ Settings, recordings, and project/terminal editors request the canonical
 auxiliary route controller exclusively. They never probe ambient native-window
 globals; the presenter chooses an in-page or native disposition from the
 negotiated host context.
+Project and terminal tab editors use the canonical in-page auxiliary dialog.
+Their shared route body owns the single visible heading and Save/Cancel journey;
+opening a separate Electron child window is not part of this contract.
 
 A normal arrangement may therefore be one Local window plus three windows
 connected to three remote servers.
