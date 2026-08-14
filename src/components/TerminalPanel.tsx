@@ -19,7 +19,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { ILinkHandler } from '@xterm/xterm'
 import { Terminal } from '@xterm/xterm'
-import { openExternalUrl, writeClipboardText } from '../host/nativeActions'
+import { canReadClipboardText, openExternalUrl, readClipboardText, writeClipboardText } from '../host/nativeActions'
 import type { IDockviewPanelProps } from 'dockview'
 import type { CSSProperties } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
@@ -659,7 +659,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           return false
         }
 
-        void pasteTerminalClipboard(() => window.terminayClipboardHost?.readText() ?? Promise.resolve(''), {
+        void pasteTerminalClipboard(readClipboardText, {
           // xterm emits this paste through onData, so both local and
           // server-backed panels use writePanelInput below. Do not call a
           // terminal preload write method from this UI-only clipboard path.
@@ -1688,7 +1688,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       return
     }
 
-    void pasteTerminalClipboard(() => window.terminayClipboardHost?.readText() ?? Promise.resolve(''), {
+    void pasteTerminalClipboard(readClipboardText, {
       announceInput: () => {
         window.dispatchEvent(
           new CustomEvent('terminay-terminal-user-input', {
@@ -1853,7 +1853,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             {
               key: 'terminal-paste',
               label: 'Paste',
-              disabled: window.terminayClipboardHost === undefined,
+              disabled: !canReadClipboardText(),
               onClick: pasteFromContextMenu,
             },
             ...(terminalContextMenu.link
