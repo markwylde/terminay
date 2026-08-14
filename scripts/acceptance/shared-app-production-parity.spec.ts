@@ -365,6 +365,8 @@ function startServer(
 			dataRoot,
 			'--project-root',
 			projectRoot,
+			'--ui-bundle',
+			path.resolve('dist'),
 			'--web-origin',
 			webOrigin,
 			'--http-host',
@@ -377,7 +379,7 @@ function startServer(
 			env: {
 				...process.env,
 				TERMINAY_AGENT_INTEGRATION: 'disabled',
-				TERMINAY_SERVER_VERSION: '1.0.0',
+				TERMINAY_SERVER_VERSION: '0.0.0',
 			},
 			stdio: ['ignore', 'pipe', 'pipe'],
 		},
