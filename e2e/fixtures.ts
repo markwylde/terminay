@@ -10,6 +10,7 @@ import {
   openMacroLauncher,
   openMacrosWindow,
   openProjectEnvironmentsWindow,
+  openRecordingsWindow,
   openSettingsWindow,
   prepareWindow,
   sendAppCommand,
@@ -25,6 +26,7 @@ type ElectronFixtures = {
     openMacroLauncher: (page?: Page, options?: { attempts?: number }) => Promise<void>
     openMacrosWindow: (page?: Page) => Promise<Page>
     openProjectEnvironmentsWindow: (page?: Page) => Promise<Page>
+    openRecordingsWindow: (page?: Page) => Promise<Page>
     openSettingsWindow: (options?: { page?: Page; sectionId?: string }) => Promise<Page>
     prepareWindow: (page: Page) => Promise<Page>
     sendAppCommand: (command: import('../src/types/terminay').AppCommand, page?: Page) => Promise<void>
@@ -240,9 +242,12 @@ export const test = base.extend<ElectronFixtures>({
         throw new Error('Mixed project environment fixture did not seed three canonical environments.')
       }
     }
+    const rendererArtifactParent = await mkdtemp(path.join(os.tmpdir(), 'terminay-e2e-renderer-'))
     const rendererArtifact = await stageImmutableRendererArtifact({
       sourceRoot: path.resolve('dist'),
-      destinationParent: path.join(tempDir, 'immutable-build'),
+      // The app owns both userData and TMP. Keep the immutable application
+      // bytes in an independent fixture root until after Electron exits.
+      destinationParent: rendererArtifactParent,
     })
     const staticServer = await createStaticServer(rendererArtifact.rootDirectory)
     const electronApp = await electron.launch({
@@ -272,6 +277,7 @@ export const test = base.extend<ElectronFixtures>({
       await closeElectronAppGracefully(electronApp)
       await staticServer.close()
       await rendererArtifact.assertUnchanged()
+      await rm(rendererArtifactParent, { recursive: true, force: true })
     }
   },
 
@@ -293,6 +299,7 @@ export const test = base.extend<ElectronFixtures>({
       openMacrosWindow: (page = mainWindow) => openMacrosWindow(electronApp, page),
       openProjectEnvironmentsWindow: (page = mainWindow) =>
         openProjectEnvironmentsWindow(electronApp, page),
+      openRecordingsWindow: (page = mainWindow) => openRecordingsWindow(electronApp, page),
       openSettingsWindow: (options) =>
         openSettingsWindow(electronApp, options?.page ?? mainWindow, { sectionId: options?.sectionId }),
       prepareWindow,

@@ -91,9 +91,11 @@ export async function openSettingsWindow(
 ): Promise<Page> {
   return openChildWindow(electronApp, async () => {
     const section = options?.sectionId
+    const params = new URLSearchParams({ auxiliary: 'settings' })
+    if (section) params.set('section', section)
     await presentNativeRoute(
       page,
-      section ? `/settings/${encodeURIComponent(section)}` : '/settings',
+      `/?${params.toString()}`,
       'settings',
     )
   })
@@ -104,7 +106,16 @@ export async function openProjectEnvironmentsWindow(
   page: Page,
 ): Promise<Page> {
   return openChildWindow(electronApp, () =>
-    presentNativeRoute(page, '/project-environments', 'project-environments'),
+    presentNativeRoute(page, '/?auxiliary=project-environments', 'project-environments'),
+  )
+}
+
+export async function openRecordingsWindow(
+  electronApp: ElectronApplication,
+  page: Page,
+): Promise<Page> {
+  return openChildWindow(electronApp, () =>
+    presentNativeRoute(page, '/?auxiliary=recordings', 'recordings'),
   )
 }
 
