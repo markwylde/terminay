@@ -11,7 +11,12 @@ import {
 
 export interface DesktopByteBridge {
 	readonly version: 1;
-	replaceEndpoint(): Promise<void>;
+	/**
+	 * Present only in preloads that can replace a failed Desktop document port.
+	 * A normal bootstrap uses the port already handed to the document, so a
+	 * renderer hot update remains compatible with the currently loaded preload.
+	 */
+	replaceEndpoint?(): Promise<void>;
 	send(frame: Uint8Array): Promise<void>;
 	subscribe(listener: (frame: Uint8Array | null) => void): () => void;
 }
@@ -185,11 +190,18 @@ export class DesktopByteTransport implements ByteTransport {
 export async function acquireDesktopServerBootstrap(
 	host: DesktopHostBridge | undefined,
 	bytes: DesktopByteBridge | undefined,
+	options: Readonly<{ replaceEndpoint?: boolean }> = {},
 ): Promise<DesktopServerBootstrap | undefined> {
 	if (host === undefined && bytes === undefined) return undefined;
 	if (host === undefined || bytes === undefined || bytes.version !== 1)
 		throw new Error('Desktop server bootstrap is incomplete.');
-	await bytes.replaceEndpoint();
+	if (options.replaceEndpoint === true) {
+		if (typeof bytes.replaceEndpoint !== 'function')
+			throw new Error(
+				'Desktop connection recovery requires restarting the Electron window.',
+			);
+		await bytes.replaceEndpoint();
+	}
 	const context = await host.getContext();
 	if (context.hostKind !== 'desktop')
 		throw new Error('Desktop server bootstrap has the wrong host kind.');

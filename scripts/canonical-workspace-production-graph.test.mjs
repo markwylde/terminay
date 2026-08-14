@@ -42,6 +42,11 @@ test('development watches the same generated server workspace used by releases',
 	const manifestBuilder = await read('scripts/build-ui-bundle-manifest.mjs');
 
 	assert.match(packageJson.scripts.dev, /run-canonical-development\.mjs/u);
+	assert.match(
+		packageJson.scripts.dev,
+		/^npm run build:app &&/u,
+		'development must start from the same current Electron main, narrow preload, and server bundle artifacts as a release build',
+	);
 	assert.match(packageJson.scripts['build:app'], /remote\.html/u);
 	assert.match(runner, /vite\.server-ui\.config\.ts/u);
 	assert.match(runner, /build.*--watch/su);
