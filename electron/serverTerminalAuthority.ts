@@ -98,6 +98,8 @@ import {
 	createInitialWorkspace,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
+import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
+import { resolveWorkspaceHydration } from '../packages/server-core/src/workspaceHydration';
 import {
 	type ServerMessagePort,
 	ServerPortTransport,
@@ -241,6 +243,9 @@ export interface ServerTerminalAuthorityOptions {
 	readonly shellProfiles?: ShellProfileCatalogueService;
 	readonly defaultProjectRoot?: () => string;
 	readonly projectEnvironmentRepository?: ProjectEnvironmentRepository;
+	/** Already-loaded canonical repository. Production hosts must inject this;
+	 * the in-memory default remains available only to focused authority tests. */
+	readonly workspaceRepository?: WorkspaceRepository;
 	/** Existing server-owned, project-implicit MCP dispatcher. Remote helper
 	 * frames receive no separate operation table or renderer authority. */
 	readonly remoteMcpDispatch?: (
@@ -315,6 +320,7 @@ export class ServerTerminalAuthority {
 	private serviceEventsUnsubscribe: Unsubscribe | undefined;
 	private shuttingDown = false;
 	private shutdownPromise: Promise<void> | undefined;
+	private readonly workspaceRepository: WorkspaceRepository | undefined;
 
 	constructor(options: ServerTerminalAuthorityOptions) {
 		if (
@@ -325,7 +331,8 @@ export class ServerTerminalAuthority {
 			throw new TypeError('serverId is required');
 		}
 		this.options = options;
-		this.workspace = new WorkspaceStore(
+		this.workspaceRepository = options.workspaceRepository;
+		this.workspace = options.workspaceRepository?.workspace ?? new WorkspaceStore(
 			createInitialWorkspace(options.serverId),
 		);
 		this.activity = new TerminalActivityService({ serverId: options.serverId });
@@ -759,6 +766,34 @@ export class ServerTerminalAuthority {
 			this.handleEvent(event),
 		);
 		this.consumers = new DetachableTerminalConsumerRegistry(this.service);
+	}
+
+	/** Complete fresh repository hydration before the host publishes readiness.
+	 * Restored non-reattachable sessions remain interrupted and are never
+	 * silently replaced with a different PTY identity. */
+	async initializeWorkspace(): Promise<void> {
+		await this.composition.start();
+		if (this.workspaceRepository?.wasCreated !== true) return;
+		const hydration = resolveWorkspaceHydration(this.workspace.state);
+		if (hydration.state !== 'ready')
+			throw new Error('fresh canonical workspace has no active terminal');
+		if (this.service.getSession(hydration.sessionId) !== undefined) return;
+		const project = this.workspace.state.projects[hydration.projectId];
+		if (project === undefined)
+			throw new Error('fresh canonical workspace project is unavailable');
+		try {
+			await this.create({
+				projectId: hydration.projectId,
+				sessionId: hydration.sessionId,
+				cwd: project.root,
+				projectRootOrigin: 'server-default',
+				cols: 100,
+				rows: 30,
+			});
+		} catch (error) {
+			this.workspace.markInterruptedSessions();
+			throw error;
+		}
 	}
 
 	private async getFileDiff(
