@@ -251,6 +251,9 @@ export const test = base.extend<ElectronFixtures>({
         TEMP: tempDir,
         TERMINAY_E2E_TEMP_DIR: tempDir,
         TERMINAY_TEST: '1',
+		...(path.basename(testInfo.file) === 'embedded-workspace-persistence-recovery.spec.ts'
+			? { TERMINAY_TEST_WORKSPACE_PERSISTENCE_FAULT: persistenceFaultForTest(testInfo.title) }
+			: {}),
         ...(path.basename(testInfo.file) === 'remote-access.spec.ts'
           ? { TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI: '1' }
           : {}),
@@ -299,3 +302,9 @@ export const test = base.extend<ElectronFixtures>({
 })
 
 export { expect }
+
+function persistenceFaultForTest(title: string): 'unreadable' | 'invalid' | 'uncommittable' {
+	if (title.includes('unreadable')) return 'unreadable';
+	if (title.includes('invalid')) return 'invalid';
+	return 'uncommittable';
+}
