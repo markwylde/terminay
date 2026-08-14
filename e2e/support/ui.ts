@@ -18,7 +18,7 @@ export async function openProjectEditWindow(page: Page): Promise<Page> {
 }
 
 export async function openTerminalEditWindow(page: Page): Promise<Page> {
-  await page.locator('.project-workspace--active .terminal-tab-content').first().evaluate((element) => {
+  await page.locator('.project-workspace--active .terminal-tab-content--active').evaluate((element) => {
     element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }))
   })
   await expect(page.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
