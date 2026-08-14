@@ -39,10 +39,12 @@ const context = Object.freeze({
 test('Desktop bootstrap carries bounded bidirectional bytes for the exact host context', async () => {
 	const listeners = new Set();
 	const sent = [];
+	let replacements = 0;
 	const bootstrap = await acquireDesktopServerBootstrap(
 		{ getContext: async () => context },
 		{
 			version: 1,
+			replaceEndpoint: async () => { replacements += 1; },
 			send: async (frame) => sent.push([...frame]),
 			subscribe: (listener) => {
 				listeners.add(listener);
@@ -50,6 +52,7 @@ test('Desktop bootstrap carries bounded bidirectional bytes for the exact host c
 			},
 		},
 	);
+	assert.equal(replacements, 1);
 	assert.equal(bootstrap.context, context);
 	await bootstrap.transport.open();
 	await bootstrap.transport.send(new Uint8Array([1, 2, 3]));
@@ -72,7 +75,7 @@ test('Desktop bootstrap fails closed for partial or non-Desktop bridges', async 
 	await assert.rejects(
 		acquireDesktopServerBootstrap(
 			{ getContext: async () => ({ ...context, hostKind: 'browser' }) },
-			{ version: 1, send: async () => {}, subscribe: () => () => {} },
+			{ version: 1, replaceEndpoint: async () => {}, send: async () => {}, subscribe: () => () => {} },
 		),
 		/wrong host kind/u,
 	);
@@ -84,6 +87,7 @@ test('Desktop byte endpoint failure terminates pending reads', async () => {
 		{ getContext: async () => context },
 		{
 			version: 1,
+			replaceEndpoint: async () => {},
 			send: async () => {},
 			subscribe: (next) => {
 				listener = next;
