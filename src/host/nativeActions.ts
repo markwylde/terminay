@@ -12,6 +12,7 @@ type NativeHostBridge = Readonly<{
 }>;
 
 function bridge(): NativeHostBridge | undefined {
+	if (typeof window === 'undefined') return undefined;
 	return window.terminayHost as unknown as NativeHostBridge | undefined;
 }
 
@@ -92,6 +93,15 @@ export async function updateNativeMenuAccelerators(
 	accelerators: readonly TerminayHostMenuAccelerator[],
 ): Promise<void> {
 	await request({ type: 'menu.accelerators.update', accelerators });
+}
+
+export async function updateDeviceTerminalSettings(
+	settings: import('@terminay/protocol').JsonValue,
+): Promise<import('@terminay/protocol').JsonValue | null> {
+	const response = await request({ type: 'device.settings.update', settings });
+	return response.handled
+		? (response.result as import('@terminay/protocol').JsonValue)
+		: null;
 }
 
 export type WorkspaceDragDecision =

@@ -87,3 +87,55 @@ test('connection-host changes propagate between renderer windows', async () => {
 		else Object.defineProperty(globalThis, 'window', previousWindow);
 	}
 });
+
+test('native host settings events cross isolated renderer partitions', async () => {
+	const listeners = new Set<(event: unknown) => void>();
+	const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+	const context = {
+		schemaVersion: 1, bridgeVersion: 1, sourceId: 'source', windowId: 'window',
+		profileId: 'profile', serverId: 'server',
+	};
+	Object.defineProperty(globalThis, 'window', {
+		configurable: true,
+		value: {
+			terminayHost: {
+				async getContext() { return context; },
+				async requestAction(request: { action: { type: string; settings: unknown } }) {
+					if (request.action.type !== 'device.settings.update') return undefined;
+					for (const listener of listeners) listener({ event: {
+						type: 'device.settings.changed', settings: request.action.settings,
+					} });
+					return request.action.settings;
+				},
+				subscribeEvent(listener: (event: unknown) => void) {
+					listeners.add(listener);
+					return () => listeners.delete(listener);
+				},
+			},
+		},
+	});
+	try {
+		const rawClient = {
+			async get() { return { revision: 1, settings: { scrollback: 5000 } }; },
+			async update(value: unknown) { return { revision: 2, settings: value }; },
+			async reset() { return { revision: 3, settings: {} }; },
+			onChanged() { return () => undefined; },
+		} as never;
+		const workspace = createServerTerminalSettingsClient(rawClient);
+		const settingsWindow = createServerTerminalSettingsClient(rawClient);
+		await workspace.get();
+		let observed: unknown;
+		const stop = workspace.onChanged((value) => { observed = value; });
+		await settingsWindow.update({ keyboardShortcuts: { 'new-terminal': 'CmdOrCtrl+Y' } });
+		await Promise.resolve();
+		assert.equal(
+			(observed as { keyboardShortcuts: { 'new-terminal': string } }).keyboardShortcuts['new-terminal'],
+			'CmdOrCtrl+Y',
+		);
+		stop();
+		assert.equal(listeners.size, 0);
+	} finally {
+		if (previousWindow === undefined) Reflect.deleteProperty(globalThis, 'window');
+		else Object.defineProperty(globalThis, 'window', previousWindow);
+	}
+});
