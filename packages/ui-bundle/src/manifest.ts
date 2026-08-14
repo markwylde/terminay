@@ -464,7 +464,6 @@ function canonicalBundleIdentity(identity: UiBundleIdentityMetadata): string {
       bundleFormat: requirements.bundleFormat,
       hostBridge: requirements.hostBridge,
       byteEndpoint: requirements.byteEndpoint,
-      executionRuntime: requirements.executionRuntime,
       requiredCapabilities: capabilities(requirements.requiredCapabilities),
       optionalCapabilities: capabilities(requirements.optionalCapabilities),
     },
