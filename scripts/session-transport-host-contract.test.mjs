@@ -32,6 +32,7 @@ function install(overrides = {}) {
 			version: 1,
 			sessionId: 'room',
 			origin: 'https://room.terminay.com',
+			prepareWorkspace: async () => ({}),
 			postJson: async () => ({}),
 			acquireApplicationEndpoint: async () => ({ generation: 2, endpoint: endpoint() }),
 			registerApplication() {},
@@ -47,6 +48,32 @@ test('accepts and returns only a runtime-validated opaque endpoint', async () =>
 	const transport = await contract.acquireHostedApplicationTransport('ticket');
 	assert.equal(transport.state, 'open');
 	assert.equal('channel' in transport, false);
+});
+
+test('production bootstrap installs one immutable host from the narrow hosted authority', async () => {
+	const byteEndpoint = { send: async () => {}, subscribe: () => () => {} };
+	globalThis.window = {
+		location: { origin: 'https://room.terminay.com' },
+		__TERMINAY_HOSTED_SESSION_AUTHORITY__: {
+			serverId: 'server-a',
+			hostContext: { serverId: 'server-a' },
+			assetManifest: async () => ({ bundleId: 'bundle-a' }),
+			readAsset: async () => new Uint8Array(),
+			byteEndpoint,
+			sessionId: 'room',
+			origin: 'https://room.terminay.com',
+			postJson: async () => ({}),
+			acquireApplicationEndpoint: async () => ({ generation: 1, endpoint: endpoint() }),
+			registerApplication() {},
+			connect: async () => endpoint(),
+			enroll: async () => ({}),
+		},
+	};
+	const host = contract.bootstrapHostedBrowserSession();
+	assert.equal(host, globalThis.window.__TERMINAY_SESSION_TRANSPORT__);
+	assert.equal(Object.isFrozen(host), true);
+	assert.equal((await host.prepareWorkspace()).expectedServerId, 'server-a');
+	assert.throws(() => { globalThis.window.__TERMINAY_SESSION_TRANSPORT__ = {}; }, /read only|assign/u);
 });
 
 test('rejects incompatible versions, origins, generations, and endpoint shapes', async () => {
@@ -71,6 +98,13 @@ test('production sources contain no retired raw-channel globals or adapter', asy
 	for (const source of sources) {
 		assert.doesNotMatch(source, /__TERMINAY_REMOTE_WEBRTC__|__TERMINAY_BROWSER_ENROLLMENT__|getChannel|RTCDataChannel/u);
 	}
+});
+
+test('remote production entry consumes hosted authority before workspace preparation without reloading', async () => {
+	const source = await readFile('src/remote/main.tsx', 'utf8');
+	assert.match(source, /const sessionHost = bootstrapHostedBrowserSession\(\);[\s\S]*sessionHost\.prepareWorkspace\(\)/u);
+	assert.match(source, /window\.history\.replaceState/u);
+	assert.doesNotMatch(source, /window\.location\.replace\(preparedWorkspace\.entryUrl\)/u);
 });
 
 test('hosted fragment pairing classification uses the validated exact-origin host', async () => {
