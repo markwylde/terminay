@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ClientError } from '@terminay/client-core';
 import {
+	clearSucceededFeatureFailure,
 	describeFeatureFailure,
 	describeServerFeatureFailure,
 	resolveProjectFeatureAuthority,
@@ -80,6 +81,25 @@ describe('project feature authority', () => {
 });
 
 describe('feature failures', () => {
+	it('clears a stale Explorer failure only after Explorer recovers', () => {
+		const failure = {
+			feature: 'Explorer' as const,
+			message: 'Explorer could not be loaded. files.list failed.',
+		};
+		assert.equal(
+			clearSucceededFeatureFailure(failure, 'Explorer', failure.message),
+			null,
+		);
+		assert.deepEqual(
+			clearSucceededFeatureFailure(failure, 'Explorer', 'Failed to open terminal.'),
+			failure,
+		);
+		assert.deepEqual(
+			clearSucceededFeatureFailure(failure, 'Git', failure.message),
+			failure,
+		);
+	});
+
 	it('keeps operation and scope when the server returns a generic message', () => {
 		const error = Object.assign(new ClientError('internal', 'query failed'), {
 			operation: 'files.list',
