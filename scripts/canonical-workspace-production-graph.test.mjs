@@ -14,7 +14,12 @@ test('normal Desktop windows always launch the canonical server workspace', asyn
 	assert.match(createWindow, /serverUiPreload\.cjs/u);
 	assert.match(createWindow, /localServerUiSession\.prepare/u);
 	assert.match(createWindow, /bindServerUiWindow/u);
-	assert.match(createWindow, /server-ui-host:byte-endpoint/u);
+	assert.match(createWindow, /bindLocalServerUiDocumentEndpoint/u);
+	const documentEndpoint = await readFile(
+		new URL('../electron/serverUiDocumentEndpoint.ts', import.meta.url),
+		'utf8',
+	);
+	assert.match(documentEndpoint, /server-ui-host:byte-endpoint/u);
 	assert.doesNotMatch(createWindow, /VITE_DEV_SERVER_URL/u);
 	assert.doesNotMatch(createWindow, /preload\.mjs/u);
 	assert.doesNotMatch(createWindow, /server:connection/u);
