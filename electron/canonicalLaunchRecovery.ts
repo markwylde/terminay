@@ -37,7 +37,10 @@ export async function showCanonicalLaunchRecovery(
 		event.preventDefault();
 		options.onRecoveryState(false);
 		options.window.webContents.off('will-navigate', retryNavigation);
-		void options.retry();
+		// Let Electron finish cancelling the synthetic navigation before retrying.
+		// Loading the recovery document again from inside `will-navigate` leaves the
+		// webContents in a permanently pending navigation state on macOS/Linux CI.
+		setImmediate(() => void options.retry());
 	};
 	options.window.webContents.on('will-navigate', retryNavigation);
 	options.onRecoveryState(true);
