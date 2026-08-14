@@ -35,7 +35,6 @@ const appInput = {
 
 const electronInput = {
   main: path.join(__dirname, 'electron/main.ts'),
-  serverUiPreload: path.join(__dirname, 'electron/serverUiPreload.ts'),
   extensionHostEntry: path.join(__dirname, 'packages/server-core/src/extensions/child.ts'),
   // Keep the packaged desktop MCP process on the server-owned adapter. The
   // legacy Electron entry remains available for compatibility tests, but the
