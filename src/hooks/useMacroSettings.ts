@@ -1,6 +1,5 @@
 import { createContext, createElement, type ReactNode, useContext, useEffect, useState } from 'react'
 import type { MacroClient } from '@terminay/client-core'
-import { defaultMacros } from '../macroSettings'
 import type { LegacyMacroSettingsCapability } from '../services/macros/legacyMacroSettingsCapability'
 import type { MacroDefinition } from '../types/macros'
 
@@ -27,10 +26,7 @@ export function useLegacyMacroSettingsCapability(): LegacyMacroSettingsCapabilit
 }
 
 /**
- * Desktop keeps presentation-only macro fields in the host store while the
- * executable definition and revision are committed to the server authority.
- * The host event remains the single UI projection so the two awaited writes
- * cannot race a stale partial definition into the editor.
+ * Adapt the selected server's canonical macro client to the editor contract.
  */
 export function createServerMacroSettingsClient(
   client: MacroClient,
@@ -52,16 +48,16 @@ export function createServerMacroSettingsClient(
 }
 
 /**
- * The named Desktop compatibility caller for legacy macro settings. The
- * capability is frozen before the effect subscribes, so no hook state keeps
- * the broad preload API alive.
+ * Subscribe to the selected authority. A failed initial query remains visible
+ * to the caller; it must never be disguised as a successful default payload.
  */
 export function useMacroSettings(override?: MacroSettingsClient) {
   const injectedCapability = useContext(LegacyMacroSettingsContext)
   const capability = override ?? injectedCapability
   if (capability === undefined) throw new Error('Macro settings client is unavailable')
-  const [macros, setMacros] = useState<MacroDefinition[]>(defaultMacros)
+  const [macros, setMacros] = useState<MacroDefinition[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<Error | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -71,17 +67,19 @@ export function useMacroSettings(override?: MacroSettingsClient) {
       }
 
       setMacros(nextMacros)
+      setError(null)
       setIsLoading(false)
-    }).catch(() => {
+    }).catch((cause: unknown) => {
       if (!mounted) {
         return
       }
-      setMacros(defaultMacros)
+      setError(cause instanceof Error ? cause : new Error(String(cause)))
       setIsLoading(false)
     })
 
     const unsubscribe = capability.onMacrosChanged((message) => {
       setMacros(message.macros)
+      setError(null)
       setIsLoading(false)
     })
 
@@ -91,5 +89,5 @@ export function useMacroSettings(override?: MacroSettingsClient) {
     }
   }, [capability])
 
-  return { macros, isLoading, setMacros }
+  return { macros, error, isLoading, setMacros }
 }

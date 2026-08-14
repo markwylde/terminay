@@ -506,9 +506,8 @@ export function RendererEntry() {
 						new SettingsClient(
 							new TerminayClientFacade(activeApplicationClient),
 						),
-						legacySettingsClient,
 					),
-		[activeApplicationClient, legacySettingsClient],
+		[activeApplicationClient],
 	);
 	const serverMacroSettingsClient = useMemo(
 		() =>

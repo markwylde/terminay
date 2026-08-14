@@ -141,9 +141,8 @@ export function ConnectedWebRendererWorkspace({
 		}
 		return createServerTerminalSettingsClient(
 			new SettingsClient(new TerminayClientFacade(applicationClient)),
-			settingsClient,
 		);
-	}, [applicationClient, settingsClient]);
+	}, [applicationClient]);
 	const shellProfilesClient = useMemo(() => {
 		if (applicationClient === undefined)
 			throw new Error(

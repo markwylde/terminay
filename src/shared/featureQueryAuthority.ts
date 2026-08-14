@@ -115,6 +115,43 @@ export function describeFeatureFailure(
 	};
 }
 
+/** Bounded, actionable copy for settings shared by every project on a server. */
+export function describeServerFeatureFailure(
+	feature: string,
+	error: unknown,
+	serverId: string,
+): FeatureFailure {
+	const operation = readOperation(error);
+	const source = operation !== undefined && typeof error === 'object' && error !== null && 'cause' in error && error.cause !== undefined
+		? error.cause
+		: error;
+	const code = source instanceof ClientError ? source.code : undefined;
+	const retryable = source instanceof ClientError ? source.retryable : false;
+	if (code === 'disconnected' || code === 'unavailable') {
+		return {
+			title: `${feature} is temporarily unavailable`,
+			detail: `Reconnect to ${serverId} and retry${operation === undefined ? '.' : ` ${operation}.`}`,
+			retryable: true,
+			...(operation === undefined ? {} : { operation }),
+		};
+	}
+	if (code === 'unauthorized' || code === 'forbidden') {
+		return {
+			title: `${feature} access was denied`,
+			detail: `The selected server account cannot access ${feature.toLowerCase()} on server ${serverId}.`,
+			retryable: false,
+			...(operation === undefined ? {} : { operation }),
+		};
+	}
+	const message = error instanceof Error ? error.message : String(error);
+	return {
+		title: `${feature} could not be loaded`,
+		detail: `${operation === undefined ? 'The request' : operation} failed on server ${serverId}: ${boundedText(message)}`,
+		retryable,
+		...(operation === undefined ? {} : { operation }),
+	};
+}
+
 function scopeForProject(serverId: string, project: ServerWorkspaceProject): FeatureQueryScope {
 	return {
 		serverId,
