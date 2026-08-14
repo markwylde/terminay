@@ -17,7 +17,10 @@ test('canonical workspace selects menu and window chrome from negotiated capabil
 	assert.match(workspace, /hostContext\?\.capabilities\.nativeWindows/);
 	assert.match(composition, /hostPresentation=\{host\.presentation\}/);
 	assert.match(app, /hostPresentation\?\.nativeWindowControls/);
-	assert.match(css, /\.app-shell--macos \.project-tabbar\s*\{[^}]*padding-left:\s*86px/s);
+	assert.match(
+		css,
+		/\.app-shell--macos \.project-tabbar\s*\{[^}]*padding-left:\s*86px/s,
+	);
 });
 
 test('canonical preload exposes only protocol-validated semantic host events', async () => {
@@ -30,11 +33,25 @@ test('canonical preload exposes only protocol-validated semantic host events', a
 	assert.match(preload, /subscribeEvent:/);
 	assert.match(preload, /const eventListeners = new Set/);
 	assert.match(preload, /const latestEvents = new Map/);
-	assert.match(preload, /ipcRenderer\.on\('server-ui-host:event', hostEventWrapper\)/);
+	assert.match(
+		preload,
+		/ipcRenderer\.on\('server-ui-host:event', hostEventWrapper\)/,
+	);
 	assert.match(preload, /eventListeners\.add\(listener\)/);
 	assert.match(preload, /eventListeners\.delete\(listener\)/);
-	assert.match(preload, /latestEvents\.set\(parsed\.event\.type, parsed\)/);
-	assert.match(preload, /for \(const event of latestEvents\.values\(\)\) deliverEvent\(listener, event\)/);
+	assert.match(preload, /const isReplayableHostEvent/u);
+	assert.match(preload, /event\.event\.type === 'terminal\.zoom'/u);
+	assert.match(preload, /event\.event\.type === 'workspace\.drag-state'/u);
+	assert.match(preload, /event\.event\.type === 'device\.settings\.changed'/u);
+	assert.match(preload, /if \(isReplayableHostEvent\(parsed\)\)/u);
+	assert.doesNotMatch(
+		preload,
+		/latestEvents\.set\(parsed\.event\.type, parsed\);\n\s*for/u,
+	);
+	assert.match(
+		preload,
+		/for \(const event of latestEvents\.values\(\)\) deliverEvent\(listener, event\)/,
+	);
 	assert.match(preload, /parseTerminayHostEvent/);
 	assert.match(protocol, /type:\s*'menu\.command'/);
 	assert.match(protocol, /type:\s*'terminal\.zoom'/);
@@ -53,8 +70,13 @@ test('canonical preload exposes only protocol-validated semantic host events', a
 
 test('auxiliary routes remain inside the capability-governed workspace shell', async () => {
 	const workspace = await read('src/web/ConnectedWebRendererWorkspace.tsx');
-	const shellStart = workspace.indexOf('<div className="connected-web-renderer-workspace">');
-	const shell = workspace.slice(shellStart, workspace.indexOf('\n\t);', shellStart));
+	const shellStart = workspace.indexOf(
+		'<div className="connected-web-renderer-workspace">',
+	);
+	const shell = workspace.slice(
+		shellStart,
+		workspace.indexOf('\n\t);', shellStart),
+	);
 
 	assert.ok(shellStart >= 0);
 	assert.match(shell, /hasNativeMenus \? null : \(/);
@@ -65,7 +87,9 @@ test('auxiliary routes remain inside the capability-governed workspace shell', a
 
 test('browser menu omits Desktop-only update, window, and DevTools commands', async () => {
 	const workspace = await read('src/web/ConnectedWebRendererWorkspace.tsx');
-	const browserMenu = workspace.slice(workspace.indexOf('function ConnectedBrowserMenuBar'));
+	const browserMenu = workspace.slice(
+		workspace.indexOf('function ConnectedBrowserMenuBar'),
+	);
 
 	assert.doesNotMatch(browserMenu, /updater\.check|toggleDevTools|windowMenu/);
 	for (const label of ['File', 'Edit', 'View', 'Help']) {

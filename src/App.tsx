@@ -181,7 +181,6 @@ import {
 	findTerminalFocusTarget,
 	findTerminalPanel,
 	getActiveTerminalSessionId,
-	popoutActiveDockviewPanel,
 	saveActiveDockviewPanel,
 } from './workspace/terminalDockviewCommands';
 import {
@@ -446,6 +445,7 @@ type ProjectWorkspaceProps = {
 		panelId: string,
 		targetProjectId: string,
 	) => void;
+	onPopoutProject: (projectId: string) => Promise<void>;
 	onTerminalActivityOverviewChange: (
 		projectId: string,
 		items: TerminalActivityOverviewItem[],
@@ -1193,6 +1193,7 @@ const ProjectWorkspace = forwardRef<
 			onCloseProject,
 			onEditProject,
 			onMoveTerminalToProject,
+			onPopoutProject,
 			onTerminalActivityOverviewChange,
 			onUpdateProject,
 			popoutUrl,
@@ -3561,12 +3562,8 @@ const ProjectWorkspace = forwardRef<
 		}, []);
 
 		const popoutActivePanel = useCallback(
-			() =>
-				popoutActiveDockviewPanel({
-					api: dockviewApiRef.current,
-					popoutUrl,
-				}),
-			[popoutUrl],
+			() => onPopoutProject(project.id),
+			[onPopoutProject, project.id],
 		);
 
 		const executeAppCommand = useCallback(
@@ -4052,13 +4049,19 @@ const ProjectWorkspace = forwardRef<
 					detail.exitCode === 0 &&
 					detail.signal == null
 				) {
-					getPanelForSession(detail.sessionId)?.api.close();
+					const panel = getPanelForSession(detail.sessionId);
+					if (panel !== undefined) {
+						// A Dockview-only close is immediately undone by canonical
+						// workspace reconciliation. Route successful-exit cleanup through
+						// the same authoritative panel command as a user close.
+						void requestClosePanel(panel.id);
+					}
 				}
 			};
 			window.addEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
 			return () =>
 				window.removeEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
-		}, [cancelMacroRunsForSession, getPanelForSession]);
+		}, [cancelMacroRunsForSession, getPanelForSession, requestClosePanel]);
 
 		useTerminalDockviewWindowController({
 			addTerminal,
@@ -5165,6 +5168,7 @@ function App({
 		handleProjectTabDragStart,
 		isDraggingTabTornOff,
 		isProjectDropTarget,
+		popoutProject,
 		projectTabBarRef,
 	} = useProjectTabTransfer({
 		projectsRef,
@@ -5375,7 +5379,9 @@ function App({
 						: { root: environment.defaultRoot }),
 				});
 				if (operation.projectId === undefined) {
-					throw new Error('The selected server did not return the new project identity.');
+					throw new Error(
+						'The selected server did not return the new project identity.',
+					);
 				}
 				await createInitialTerminalForProject(operation.projectId);
 				setProjectEnvironmentNotice(
@@ -5409,7 +5415,9 @@ function App({
 				viewId: boundWorkspaceViewId,
 			});
 			if (operation.projectId === undefined) {
-				throw new Error('The selected server did not return the new project identity.');
+				throw new Error(
+					'The selected server did not return the new project identity.',
+				);
 			}
 			await createInitialTerminalForProject(operation.projectId);
 			setProjectEnvironmentNotice(operation.message ?? null);
@@ -5994,6 +6002,7 @@ function App({
 						onCloseProject={closeProject}
 						onEditProject={openEditProjectWindow}
 						onMoveTerminalToProject={moveTerminalToProject}
+						onPopoutProject={popoutProject}
 						onTerminalActivityOverviewChange={updateTerminalActivityOverview}
 						onUpdateProject={updateProject}
 						popoutUrl={popoutUrl}

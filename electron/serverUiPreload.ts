@@ -30,11 +30,24 @@ const latestEvents = new Map<
 	ReturnType<typeof parseTerminayHostEvent>['event']['type'],
 	ReturnType<typeof parseTerminayHostEvent>
 >();
+
+/**
+ * Commands are edges, not state. Replaying a native menu command whenever a
+ * React consumer re-subscribes repeats destructive actions (for example,
+ * creating a new project). Only stateful host publications are eligible for
+ * late-subscriber replay.
+ */
+const isReplayableHostEvent = (
+	event: ReturnType<typeof parseTerminayHostEvent>,
+): boolean =>
+	event.event.type === 'terminal.zoom' ||
+	event.event.type === 'workspace.drag-state' ||
+	event.event.type === 'device.settings.changed';
 let hostEventsSubscribed = false;
 const deliverEvent = (
-	listener: (event: ReturnType<typeof parseTerminayHostEvent>) =>
-		| Promise<void>
-		| void,
+	listener: (
+		event: ReturnType<typeof parseTerminayHostEvent>,
+	) => Promise<void> | void,
 	event: ReturnType<typeof parseTerminayHostEvent>,
 ) => {
 	try {
@@ -63,8 +76,11 @@ const hostEventWrapper = (
 			),
 		)
 		.then((parsed) => {
-			latestEvents.set(parsed.event.type, parsed);
-			for (const listener of [...eventListeners]) deliverEvent(listener, parsed);
+			if (isReplayableHostEvent(parsed)) {
+				latestEvents.set(parsed.event.type, parsed);
+			}
+			for (const listener of [...eventListeners])
+				deliverEvent(listener, parsed);
 		})
 		.catch(() => undefined);
 };
@@ -206,7 +222,11 @@ if (
 				models?: readonly Readonly<{ id: string; label: string }>[];
 				noteResult?: string;
 				titleResult?: string;
-			}) => ipcRenderer.invoke('test:set-ai-tab-metadata-mock', mock) as Promise<void>,
+			}) =>
+				ipcRenderer.invoke(
+					'test:set-ai-tab-metadata-mock',
+					mock,
+				) as Promise<void>,
 		}),
 	);
 	contextBridge.exposeInMainWorld(

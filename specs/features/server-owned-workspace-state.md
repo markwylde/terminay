@@ -139,6 +139,9 @@ editing continues to use the file-viewer conflict contract.
 - A client may keep temporary local split measurements while dragging, then
   commit normalized weights.
 - Native popout/adoption becomes movement between server-owned workspace views.
+  Popping out an active terminal moves its owning project into a new logical
+  view and presents that view as a native window; a renderer must never create
+  an independent terminal-only browser window or transfer PTY ownership.
   It never transfers PTY ownership between renderers.
 - A native project-host window binds to one exact server-owned workspace view
   and derives its project tabs only from that view's ordered project ids. The
