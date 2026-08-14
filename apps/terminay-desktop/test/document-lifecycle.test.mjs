@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
+	closeDesktopDocumentTransport,
 	DesktopDocumentLifecycle,
 	handoffDocumentResource,
 } from '../dist/index.js';
@@ -72,6 +73,39 @@ test('every native teardown reason is idempotent', () => {
 	}
 });
 
+test('transport close failures and failing diagnostics remain bounded during teardown', async () => {
+	let closeCalls = 0;
+	const rejected = await closeDesktopDocumentTransport(
+		{
+			close() {
+				closeCalls += 1;
+				throw new Error('private transport failure');
+			},
+		},
+		() => {
+			throw new Error('diagnostic sink failed');
+		},
+	);
+	assert.equal(rejected, false);
+	assert.equal(closeCalls, 1);
+	const asyncRejected = await closeDesktopDocumentTransport({
+		async close() {
+			closeCalls += 1;
+			throw new Error('async private transport failure');
+		},
+	});
+	assert.equal(asyncRejected, false);
+	assert.equal(closeCalls, 2);
+
+	const resolved = await closeDesktopDocumentTransport({
+		async close() {
+			closeCalls += 1;
+		},
+	});
+	assert.equal(resolved, true);
+	assert.equal(closeCalls, 3);
+});
+
 test('destroyed renderer handoff races release ports and stay bounded', () => {
 	for (const failurePoint of ['authority', 'renderer']) {
 		let releases = 0;
@@ -123,6 +157,11 @@ test('Electron destruction callbacks use captured ids and sessions', async () =>
 	);
 	assert.match(endpoint, /current\.release\('reload'\)/u);
 	assert.match(endpoint, /activeRemoteEndpoints\.get\(senderId\)\?\.\(\)/u);
+	assert.match(endpoint, /closeDesktopDocumentTransport\(transport/u);
+	assert.match(
+		endpoint,
+		/Promise\.resolve\(\)\s*\.then\(\(\) => activeTransport\.open\(\)\)/u,
+	);
 	assert.match(endpoint, /documentPort\?\.postMessage/u);
 	assert.equal(
 		(endpoint.match(/handoffDocumentResource\(\{/gu) ?? []).length,
