@@ -61,10 +61,11 @@ test("Desktop has no second host action/context schema", async () => {
 });
 
 test("normal packaged Desktop startup launches the verified bundle through the canonical narrow preload", async () => {
-  const [main, vite, host] = await Promise.all([
+  const [main, vite, host, endpoint] = await Promise.all([
     readFile(new URL("../../../electron/main.ts", import.meta.url), "utf8"),
     readFile(new URL("../../../vite.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../../../electron/serverUiHost.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../../electron/serverUiDocumentEndpoint.ts", import.meta.url), "utf8"),
   ]);
   assert.match(main, /new LocalServerUiSession/u);
   assert.match(main, /bindServerUiWindow\(\{/u);
@@ -79,7 +80,7 @@ test("normal packaged Desktop startup launches the verified bundle through the c
     preload,
     /parseTerminayHostBytePacket\(\s*message\.data,\s*bound\.serverId,?\s*\)/u,
   );
-  assert.match(main, /server-ui-host:byte-endpoint/u);
+  assert.match(endpoint, /server-ui-host:byte-endpoint/u);
 });
 
 test("actual Local Desktop, remote Desktop, direct browser, and manager compositions launch one server identity", async () => {
