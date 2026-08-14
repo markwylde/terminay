@@ -96,10 +96,25 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         ...(options.env === undefined ? {} : { env: cleanEnvironment(options.env) }),
       });
       const foreground = createForegroundObserver(child, shellName(options.shellPath), foregroundPolling);
-      // This observer is intentionally independent from TerminalService's
-      // exit subscription: foreground polling must be released even when a
-      // host creates a PTY before the service attaches its own listener.
-      child.onExit(() => foreground.dispose());
+      const dataListeners = new Set<(data: string) => void>();
+      const exitListeners = new Set<(event: { readonly exitCode: number; readonly signal?: number }) => void>();
+      const pendingData: string[] = [];
+      let pendingExit: { readonly exitCode: number; readonly signal?: number } | undefined;
+      const childData = child.onData((data) => {
+        if (dataListeners.size === 0) {
+          pendingData.push(data);
+          return;
+        }
+        for (const listener of [...dataListeners]) listener(data);
+      });
+      const childExit = child.onExit((event) => {
+        foreground.dispose();
+        if (exitListeners.size === 0) {
+          pendingExit = event;
+          return;
+        }
+        for (const listener of [...exitListeners]) listener(event);
+      });
       return {
         ...(typeof child.pid === "number" ? { pid: child.pid } : {}),
         write: (bytes) => child.write(new TextDecoder().decode(bytes)),
@@ -107,8 +122,26 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         kill: (signal) => child.kill(signal),
 				...(typeof child.pause === "function" ? { pause: () => child.pause?.() } : {}),
 				...(typeof child.resume === "function" ? { resume: () => child.resume?.() } : {}),
-        onData: (listener: PtyDataListener) => normalizeDisposable(child.onData((data) => listener(new TextEncoder().encode(data)))),
-        onExit: (listener: PtyExitListener) => normalizeDisposable(child.onExit((event) => listener({ exitCode: event.exitCode, signal: event.signal ?? null }))),
+        onData: (listener: PtyDataListener) => {
+          const forward = (data: string) => listener(new TextEncoder().encode(data));
+          dataListeners.add(forward);
+          if (pendingData.length > 0) {
+            const initial = pendingData.splice(0);
+            for (const data of initial) forward(data);
+          }
+          return () => dataListeners.delete(forward);
+        },
+        onExit: (listener: PtyExitListener) => {
+          const forward = (event: { readonly exitCode: number; readonly signal?: number }) =>
+            listener({ exitCode: event.exitCode, signal: event.signal ?? null });
+          exitListeners.add(forward);
+          if (pendingExit !== undefined) {
+            const initial = pendingExit;
+            pendingExit = undefined;
+            forward(initial);
+          }
+          return () => exitListeners.delete(forward);
+        },
         ...(typeof child.pid === "number" && factoryOptions.resolveCwd !== undefined
           ? { getCwd: (signal?: AbortSignal) => factoryOptions.resolveCwd!(child.pid!, signal) }
           : {}),
@@ -118,7 +151,15 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         // down a wedged child).  Its generic process disposal hook must also
         // release this adapter-owned interval; waiting only for `onExit`
         // leaves the Node event loop alive.
-        dispose: () => foreground.dispose(),
+        dispose: () => {
+          foreground.dispose();
+          childData?.dispose();
+          childExit?.dispose();
+          dataListeners.clear();
+          exitListeners.clear();
+          pendingData.splice(0);
+          pendingExit = undefined;
+        },
       };
     },
   };
@@ -126,10 +167,6 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
 
 /** Alias that makes host composition read naturally at the server boundary. */
 export const createServerPtyFactory = createNodePtyFactory;
-
-function normalizeDisposable(value: NodePtyDisposable | undefined): Unsubscribe | undefined {
-  return value === undefined ? undefined : () => value.dispose();
-}
 
 function cleanEnvironment(value: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
   const result: Record<string, string> = {};
