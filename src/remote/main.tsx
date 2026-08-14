@@ -13,10 +13,10 @@ import {
 	acquireHostedApplicationTransport,
 	bootstrapHostedBrowserSession,
 } from '../web/sessionTransportHost';
-import { createDirectBrowserBundleHost, currentBrowserExecutionRuntime } from '@terminay/web';
+import { createDirectBrowserBundleHost } from '@terminay/web';
 
 // Standalone session-origin composition uses its own isolated cache namespace.
-export const directBrowserBundleHost = createDirectBrowserBundleHost(caches, currentBrowserExecutionRuntime(navigator.userAgent));
+export const directBrowserBundleHost = createDirectBrowserBundleHost(caches);
 
 const sessionHost = bootstrapHostedBrowserSession();
 if (sessionHost === undefined) throw new Error('Terminay session transport host is unavailable.');

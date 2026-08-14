@@ -2,7 +2,11 @@ import {
 	evaluateTerminayBundleCompatibility,
 	parseTerminayHostContext,
 	parseTerminayUiBundleCompatibilityManifest,
+	TERMINAY_HOST_CAPABILITY_NAMES,
 	type TerminayBundleCompatibilityResult,
+	type TerminayHostCapability,
+	type TerminayHostCompatibilityFailure,
+	type TerminayHostCapabilityVersions,
 	type TerminayHostContext,
 	type TerminayHostRuntimeSupport,
 } from '@terminay/protocol';
@@ -29,6 +33,13 @@ export interface OpaqueBrowserByteEndpoint {
 	subscribe(listener: (frame: Uint8Array) => void): () => void;
 }
 
+/** The only browser presentation capabilities. They are derived from concrete
+ * APIs, never from a browser name, runtime brand, or user-agent string. */
+export interface BrowserCapabilityPlatform {
+	readonly clipboard?: Readonly<{ writeText?: unknown }>;
+	readonly Notification?: unknown;
+}
+
 export interface BrowserBundleLaunch {
 	readonly context: TerminayHostContext;
 	readonly bundle: VerifiedBrowserBundle;
@@ -39,10 +50,15 @@ export interface BrowserBundleLaunch {
 
 export class BrowserHostUpgradeRequiredError extends Error {
 	readonly failure: Exclude<TerminayBundleCompatibilityResult, { compatible: true }>;
-	constructor(failure: Exclude<TerminayBundleCompatibilityResult, { compatible: true }>) {
+	readonly failures: readonly Exclude<TerminayBundleCompatibilityResult, { compatible: true }>[];
+	constructor(
+		failure: Exclude<TerminayBundleCompatibilityResult, { compatible: true }>,
+		failures: readonly Exclude<TerminayBundleCompatibilityResult, { compatible: true }>[] = [failure],
+	) {
 		super(`browser host upgrade required: ${failure.component}/${failure.code}`);
 		this.name = 'BrowserHostUpgradeRequiredError';
 		this.failure = failure;
+		this.failures = Object.freeze([...failures]);
 	}
 }
 
@@ -129,7 +145,14 @@ export class BrowserSessionBundleHost {
 	}>): Promise<BrowserBundleLaunch> {
 		const origin = exactSessionOrigin(input.sessionOrigin);
 		const manifest = parseBrowserBundleManifest(input.manifest);
-		const context = parseTerminayHostContext(input.context);
+		const suppliedContext = parseTerminayHostContext(input.context);
+		/* The browser shell is the trusted producer of presentation capabilities.
+		 * Do not accept a server/bootstrap claim that this browser has a native
+		 * capability just because it appeared in the supplied host context. */
+		const context = parseTerminayHostContext({
+			...suppliedContext,
+			capabilities: this.options.runtime.capabilities,
+		});
 		if (
 			context.hostKind !== 'browser' ||
 			context.serverId !== input.expectedServerId ||
@@ -142,7 +165,10 @@ export class BrowserSessionBundleHost {
 			this.options.runtime,
 		);
 		if (!compatibility.compatible)
-			throw new BrowserHostUpgradeRequiredError(compatibility);
+			throw new BrowserHostUpgradeRequiredError(
+				compatibility,
+				browserCompatibilityFailures(manifest, this.options.runtime, compatibility),
+			);
 
 		const assets = new Map<string, Uint8Array>();
 		for (const asset of manifest.assets) {
@@ -168,41 +194,82 @@ export class BrowserSessionBundleHost {
 
 export function createBrowserManagerBundleHost(
 	cacheStorage: CacheStorage,
-	executionRuntimeVersion: number,
+	capabilities: TerminayHostCapabilityVersions = negotiateBrowserHostCapabilities(),
 ): BrowserSessionBundleHost {
 	return new BrowserSessionBundleHost({
 		store: new CacheStorageBrowserBundleStore(cacheStorage, 'terminay.manager-session-bundles.v1'),
-		runtime: browserRuntime(executionRuntimeVersion),
+		runtime: browserRuntime(capabilities),
 	});
 }
 
 export function createDirectBrowserBundleHost(
 	cacheStorage: CacheStorage,
-	executionRuntimeVersion: number,
+	capabilities: TerminayHostCapabilityVersions = negotiateBrowserHostCapabilities(),
 ): BrowserSessionBundleHost {
 	return new BrowserSessionBundleHost({
 		store: new CacheStorageBrowserBundleStore(cacheStorage, 'terminay.direct-session-bundles.v1'),
-		runtime: browserRuntime(executionRuntimeVersion),
+		runtime: browserRuntime(capabilities),
 	});
 }
 
-export function currentBrowserExecutionRuntime(userAgent: string): number {
-	const match = /(?:Chrom(?:e|ium)|CriOS)\/(\d+)/u.exec(userAgent);
-	const version = match === null ? Number.NaN : Number(match[1]);
-	if (!Number.isSafeInteger(version) || version < 1 || version > 65_535)
-		throw new Error('This browser does not expose a supported Chromium execution runtime.');
-	return version;
+export function negotiateBrowserHostCapabilities(
+	platform: BrowserCapabilityPlatform = browserCapabilityPlatform(),
+): TerminayHostCapabilityVersions {
+	const capabilities: Partial<Record<TerminayHostCapability, number>> = {};
+	if (typeof platform.clipboard?.writeText === 'function') capabilities.clipboardWrite = 1;
+	if (typeof platform.Notification === 'function') capabilities.notifications = 1;
+	return Object.freeze(capabilities);
 }
 
-function browserRuntime(executionRuntimeVersion: number): TerminayHostRuntimeSupport {
+function browserRuntime(capabilities: TerminayHostCapabilityVersions): TerminayHostRuntimeSupport {
 	return Object.freeze({
 		bootstrapVersion: 1,
 		bundleFormatVersion: 1,
 		hostBridgeVersion: 1,
 		byteEndpointVersion: 1,
-		executionRuntimeVersion,
-		capabilities: Object.freeze({ clipboardWrite: 1, notifications: 1 }),
+		capabilities: browserCapabilities(capabilities),
 	});
+}
+
+function browserCapabilityPlatform(): BrowserCapabilityPlatform {
+	const browser = globalThis as typeof globalThis & {
+		navigator?: { clipboard?: Readonly<{ writeText?: unknown }> };
+		Notification?: unknown;
+	};
+	return Object.freeze({
+		clipboard: browser.navigator?.clipboard,
+		Notification: browser.Notification,
+	});
+}
+
+function browserCapabilities(value: TerminayHostCapabilityVersions): TerminayHostCapabilityVersions {
+	const capabilities: Partial<Record<TerminayHostCapability, number>> = {};
+	for (const capability of ['clipboardWrite', 'notifications'] as const) {
+		if (value[capability] === 1) capabilities[capability] = 1;
+	}
+	return Object.freeze(capabilities);
+}
+
+function browserCompatibilityFailures(
+	manifest: UiBundleManifest,
+	runtime: TerminayHostRuntimeSupport,
+	primary: Exclude<TerminayBundleCompatibilityResult, { compatible: true }>,
+): readonly Exclude<TerminayBundleCompatibilityResult, { compatible: true }>[] {
+	const failures: Exclude<TerminayBundleCompatibilityResult, { compatible: true }>[] = [primary];
+	for (const capability of TERMINAY_HOST_CAPABILITY_NAMES) {
+		const required = manifest.hostCompatibility?.requiredCapabilities[capability];
+		if (required === undefined) continue;
+		const actual = runtime.capabilities[capability];
+		const failure: TerminayHostCompatibilityFailure | undefined = actual === undefined
+			? Object.freeze({ compatible: false, component: 'host-capability', code: 'missing-capability', capability, required })
+			: actual < required.minimum
+				? Object.freeze({ compatible: false, component: 'host-capability', code: 'below-minimum', capability, required, actual })
+				: actual > required.maximum
+					? Object.freeze({ compatible: false, component: 'host-capability', code: 'above-maximum', capability, required, actual })
+					: undefined;
+		if (failure !== undefined && !failures.some((candidate) => candidate.component === failure.component && candidate.code === failure.code && candidate.capability === failure.capability)) failures.push(failure);
+	}
+	return Object.freeze(failures);
 }
 
 export function parseBrowserBundleManifest(value: unknown): UiBundleManifest {
