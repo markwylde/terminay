@@ -37,6 +37,7 @@ export function createServerTerminalSettingsClient(
 	client: SettingsClient,
 ): TerminalSettingsClient {
 	let connectionHostSettings = readConnectionHostSettings();
+	let lastServerState: JsonValue | null = null;
 	const effectiveSettings = (server: JsonValue) =>
 		normalizeTerminalSettings(
 			mergeSettings(
@@ -46,7 +47,8 @@ export function createServerTerminalSettingsClient(
 		);
 	return {
 		async get<T>() {
-			return effectiveSettings(await client.get<JsonValue>()) as T;
+			lastServerState = await client.get<JsonValue>();
+			return effectiveSettings(lastServerState) as T;
 		},
 		async update<T>(settings: JsonValue) {
 			const current = serverSettings(await client.get<JsonValue>());
@@ -54,7 +56,8 @@ export function createServerTerminalSettingsClient(
 			connectionHostSettings = selectConnectionHostSettings(settings);
 			writeConnectionHostSettings(connectionHostSettings);
 			await publishNativeAccelerators(settings);
-			const state = serverSettings(await client.update<JsonValue>(serverUpdate));
+			lastServerState = await client.update<JsonValue>(serverUpdate);
+			const state = serverSettings(lastServerState);
 			return normalizeTerminalSettings(
 				mergeSettings(mergeSettings(defaultTerminalSettings, state), connectionHostSettings),
 			) as T;
@@ -63,12 +66,32 @@ export function createServerTerminalSettingsClient(
 			connectionHostSettings = {};
 			writeConnectionHostSettings(connectionHostSettings);
 			await publishNativeAccelerators(defaultTerminalSettings as unknown as JsonValue);
-			const state = serverSettings(await client.reset<JsonValue>());
+			lastServerState = await client.reset<JsonValue>();
+			const state = serverSettings(lastServerState);
 			return normalizeTerminalSettings(mergeSettings(defaultTerminalSettings, state)) as T;
 		},
-		onChanged: (listener) => client.onChanged((state) => {
-			listener(effectiveSettings(state) as unknown as JsonValue);
-		}),
+		onChanged: (listener) => {
+			const stopServer = client.onChanged((state) => {
+				lastServerState = state;
+				listener(effectiveSettings(state) as unknown as JsonValue);
+			});
+			const onStorage = (event: StorageEvent) => {
+				if (event.key !== CONNECTION_HOST_SETTINGS_KEY) return;
+				connectionHostSettings = parseConnectionHostSettings(event.newValue);
+				const emit = async () => {
+					if (lastServerState === null) lastServerState = await client.get<JsonValue>();
+					listener(effectiveSettings(lastServerState) as unknown as JsonValue);
+				};
+				void emit().catch(() => {
+					// The selected-server subscription owns availability reporting.
+				});
+			};
+			if (typeof window !== 'undefined') window.addEventListener('storage', onStorage);
+			return () => {
+				stopServer();
+				if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
+			};
+		},
 	};
 }
 
@@ -85,8 +108,15 @@ function selectConnectionHostSettings(value: JsonValue): JsonValue {
 function readConnectionHostSettings(): JsonValue {
 	if (typeof window === 'undefined') return {};
 	try {
-		const value = window.localStorage.getItem(CONNECTION_HOST_SETTINGS_KEY);
-		if (value === null) return {};
+		return parseConnectionHostSettings(window.localStorage.getItem(CONNECTION_HOST_SETTINGS_KEY));
+	} catch {
+		return {};
+	}
+}
+
+function parseConnectionHostSettings(value: string | null): JsonValue {
+	if (value === null) return {};
+	try {
 		const parsed = JSON.parse(value) as unknown;
 		return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
 			? (parsed as JsonValue)
