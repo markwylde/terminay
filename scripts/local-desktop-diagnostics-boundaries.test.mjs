@@ -39,7 +39,7 @@ test('diagnostics initialize before Electron readiness, recovery window, and Loc
 });
 
 test('embedded vault unlock occurs after recovery setup and before Local renderer admission', () => {
-	const ready = main.indexOf('app.whenReady().then');
+	const ready = main.indexOf('async function completeDesktopStartup');
 	const embeddedReady = main.indexOf(
 		'await embeddedRuntimeReady',
 		ready,

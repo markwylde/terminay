@@ -219,6 +219,47 @@ export const SERVER_UI_DIST = path.join(process.env.APP_ROOT, 'dist-web');
 
 let localServerUiSession: LocalServerUiSession;
 let remoteServerUiBundleHost: DesktopServerBundleHost;
+let embeddedStartupWindowForRecovery: BrowserWindow | null = null;
+
+/** A window can be closed while Local startup is deliberately paused on the
+ * host-owned recovery document. The UI session does not exist yet in that
+ * state, so teardown must be a no-op instead of throwing from Electron's
+ * `closed` callback. */
+function releaseLocalServerUiSessionSafely(webContentsId: number): void {
+	try {
+		localServerUiSession?.release(webContentsId);
+	} catch (error) {
+		void desktopDiagnostics
+			.record(
+				{
+					component: 'renderer',
+					event: 'renderer.bootstrap.failed',
+					message: error,
+					severity: 'warning',
+					source: 'canonical-window-teardown',
+				},
+				{ channel: 'lifecycle' },
+			)
+			.catch(() => undefined);
+	}
+}
+
+/** Recovery diagnostics are intentionally best effort: their writer may be
+ * the failed dependency, and must never make a caught startup failure fatal. */
+function recordCanonicalRecoveryDiagnostic(message: unknown): Promise<void> {
+	return desktopDiagnostics
+		.record(
+			{
+				component: 'renderer',
+				event: 'renderer.bootstrap.failed',
+				message,
+				severity: 'error',
+				source: 'canonical-launch-recovery',
+			},
+			{ channel: 'lifecycle' },
+		)
+		.catch(() => undefined);
+}
 const localServerUiPartitionKey = createHash('sha256')
 	.update('desktop-local\0local:embedded')
 	.digest('base64url');
@@ -928,6 +969,7 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 await app.whenReady();
 const embeddedStartupWindow = createWindow({ deferCanonicalLaunch: true });
 if (embeddedStartupWindow === null) throw new Error('The embedded workspace window could not be created.');
+embeddedStartupWindowForRecovery = embeddedStartupWindow;
 const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(embeddedStartupWindow);
 const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
@@ -2709,10 +2751,7 @@ async function recoverEmbeddedWorkspaceOperation<T>(
 						if (active) launchRecoveryWebContents.add(window.webContents.id);
 						else launchRecoveryWebContents.delete(window.webContents.id);
 					},
-					onDiagnostic: (message) => desktopDiagnostics.record({
-					component: 'renderer', event: 'renderer.bootstrap.failed', message,
-					severity: 'error', source: 'canonical-launch-recovery',
-				}, { channel: 'lifecycle' }),
+					onDiagnostic: recordCanonicalRecoveryDiagnostic,
 				});
 				if (!window.isDestroyed()) window.show();
 			};
@@ -2838,7 +2877,7 @@ function createWindow(options?: {
 			windowWebContentsId,
 			isQuitting ? 'application-quit' : 'window-close',
 		);
-		localServerUiSession.release(windowWebContentsId);
+		releaseLocalServerUiSessionSafely(windowWebContentsId);
 		appWindows.delete(window);
 		workspaceViewByWebContents.delete(windowWebContentsId);
 		if (options?.auxiliary !== undefined) {
@@ -3050,7 +3089,7 @@ function createWindow(options?: {
 		try {
 			const remote = await prepareCanonicalDesktopRemoteConnection(profile);
 			releaseServerUiWindowBinding(windowWebContentsId, 'server-switch');
-			localServerUiSession.release(windowWebContentsId);
+			releaseLocalServerUiSessionSafely(windowWebContentsId);
 			remoteProfileBindingsByWebContents.set(windowWebContentsId, profile.id);
 			await mountCanonicalLaunch(remote.launch, remote.transport);
 			rememberRemoteConnection(profile);
@@ -3074,7 +3113,7 @@ function createWindow(options?: {
 		} catch (error) {
 			console.error('[window] canonical server UI launch failed', error);
 			releaseServerUiWindowBinding(windowWebContentsId, 'failed-launch');
-			localServerUiSession.release(windowWebContentsId);
+			releaseLocalServerUiSessionSafely(windowWebContentsId);
 			await showCanonicalLaunchRecovery({
 				window,
 				error,
@@ -3083,16 +3122,7 @@ function createWindow(options?: {
 					if (active) launchRecoveryWebContents.add(windowWebContentsId);
 					else launchRecoveryWebContents.delete(windowWebContentsId);
 				},
-				onDiagnostic: (message) => desktopDiagnostics.record(
-					{
-						component: 'renderer',
-						event: 'renderer.bootstrap.failed',
-						message,
-						severity: 'error',
-						source: 'canonical-launch-recovery',
-					},
-					{ channel: 'lifecycle' },
-				),
+				onDiagnostic: recordCanonicalRecoveryDiagnostic,
 			});
 		}
 	};
@@ -4173,7 +4203,7 @@ app.on('activate', () => {
 	}
 });
 
-app.whenReady().then(async () => {
+async function completeDesktopStartup(): Promise<void> {
 	const embeddedStartupWindow = await embeddedRuntimeReady;
 	app.setName('Terminay');
 	app.setAboutPanelOptions({ applicationName: 'Terminay' });
@@ -4227,4 +4257,39 @@ app.whenReady().then(async () => {
 	}
 	await launchDeferredCanonicalWindow(embeddedStartupWindow);
 	applyControlServerSetting();
-});
+}
+
+async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
+	console.error('[main] Desktop bootstrap failed', error);
+	const window = embeddedStartupWindowForRecovery;
+	if (window === null || window.isDestroyed()) {
+		// There is no native surface on which a recovery state could be rendered.
+		// Contain the rejected readiness chain rather than allowing Electron to
+		// produce its own uncaught-error dialog.
+		void recordCanonicalRecoveryDiagnostic(error);
+		return;
+	}
+	const windowWebContentsId = window.webContents.id;
+	await showCanonicalLaunchRecovery({
+		window,
+		error: new Error(
+			'Terminay could not finish starting. Retry after checking that application storage is available.',
+		),
+		retry: async () => {
+			// A failed main-process composition may have partially initialized native
+			// services. Relaunching is the bounded recovery boundary; it avoids
+			// reusing those services or presenting a blank native shell.
+			app.relaunch();
+			app.exit(0);
+		},
+		onDiagnostic: recordCanonicalRecoveryDiagnostic,
+		onRecoveryState: (active) => {
+			if (active) launchRecoveryWebContents.add(windowWebContentsId);
+			else launchRecoveryWebContents.delete(windowWebContentsId);
+		},
+	});
+}
+
+void app.whenReady()
+	.then(completeDesktopStartup)
+	.catch((error) => recoverFailedDesktopBootstrap(error));

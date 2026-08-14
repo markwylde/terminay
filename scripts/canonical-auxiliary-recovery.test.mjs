@@ -48,3 +48,24 @@ test('canonical launch failures retain a bounded retry surface', async () => {
 		/embedded server UI verification failed[\s\S]{0,300}window\.close/u,
 	);
 });
+
+test('bootstrap and recovery-document races stay contained in the main process', async () => {
+	const [main, recovery] = await Promise.all([
+		read('electron/main.ts'),
+		read('electron/canonicalLaunchRecovery.ts'),
+	]);
+	assert.match(main, /releaseLocalServerUiSessionSafely/u);
+	assert.match(main, /localServerUiSession\?\.release/u);
+	assert.match(main, /embeddedStartupWindowForRecovery/u);
+	assert.match(main, /recoverFailedDesktopBootstrap/u);
+	assert.match(
+		main,
+		/void app\.whenReady\(\)[\s\S]*?\.catch\(\(error\) => recoverFailedDesktopBootstrap\(error\)\)/u,
+	);
+	assert.match(main, /app\.relaunch\(\);[\s\S]*?app\.exit\(0\)/u);
+	assert.match(recovery, /await options\.onDiagnostic\(message\)/u);
+	assert.match(recovery, /full or unavailable diagnostics volume/u);
+	assert.match(recovery, /const targetWebContents = options\.window\.webContents/u);
+	assert.match(recovery, /targetWebContents\.off\('will-navigate', retryNavigation\)/u);
+	assert.match(recovery, /Promise\.resolve\(\)[\s\S]*?showCanonicalLaunchRecovery/u);
+});
