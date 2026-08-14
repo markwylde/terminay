@@ -5129,6 +5129,13 @@ const requestedWorkspaceViewId =
 
 export type AppProps = {
 	auxiliaryRoutes?: AuxiliaryRouteController;
+	hostPresentation?: Readonly<{
+		nativeMenus: boolean;
+		nativeWindowControls: boolean;
+	}>;
+	subscribeAppCommands?: (
+		listener: (command: AppCommand) => Promise<void> | void,
+	) => () => void;
 	/** Connection-scoped shared client supplied by a migrated host shell. */
 	terminalClientContext?: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	/** Narrow Desktop host client injected at the renderer composition root. */
@@ -5203,9 +5210,11 @@ function describeConnectionHostError(cause: unknown): string {
 
 function App({
 	auxiliaryRoutes,
+	hostPresentation,
 	onDisconnect,
 	onOpenConnectionManager,
 	quickPushClient,
+	subscribeAppCommands,
 	terminalClientContext,
 }: AppProps) {
 	const auxiliaryRouteController = useMemo(
@@ -5223,6 +5232,7 @@ function App({
 	}, []);
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
 	const hasNativeWindowControls =
+		hostPresentation?.nativeWindowControls ??
 		typeof window.terminayWindowLifecycleHost !== 'undefined';
 	const currentServerId = terminalClientContext?.serverId ?? 'desktop-local';
 	const currentServerLabel =
@@ -5825,6 +5835,12 @@ function App({
 			if (command === 'open-extensions') {
 				return auxiliaryRouteController.openSettings('extensions');
 			}
+			if (command === 'open-settings') {
+				return auxiliaryRouteController.openSettings();
+			}
+			if (command === 'open-macros') {
+				return auxiliaryRouteController.openMacros();
+			}
 			return (
 				workspaceRefs.current.get(activeProjectId)?.executeCommand(command) ??
 				Promise.resolve()
@@ -5878,14 +5894,13 @@ function App({
 	);
 
 	useEffect(() => {
-		const unsubscribeCommand = window.terminayAppCommandHost?.subscribe(
-			executeCommandOnActiveProject,
-		);
+		const unsubscribeCommand = (subscribeAppCommands ??
+			window.terminayAppCommandHost?.subscribe)?.(executeCommandOnActiveProject);
 
 		return () => {
 			unsubscribeCommand?.();
 		};
-	}, [executeCommandOnActiveProject]);
+	}, [executeCommandOnActiveProject, subscribeAppCommands]);
 
 	useEffect(() => {
 		let isMounted = true;
