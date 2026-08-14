@@ -2521,33 +2521,53 @@ async function presentCanonicalAuxiliaryRoute(
 
 function waitForCanonicalWorkspaceDocument(window: BrowserWindow): Promise<void> {
 	return new Promise((resolve, reject) => {
-		// createWindow starts its canonical launch immediately.  A cached local
-		// bundle can finish loading before the caller has installed this waiter;
-		// treating that already-loaded document as pending made every such popout
-		// time out and roll its authoritative workspace move back.
-		const currentUrl = window.webContents.getURL();
-		if (
-			currentUrl.length > 0 &&
-			currentUrl !== 'about:blank' &&
-			!window.webContents.isLoadingMainFrame()
-		) {
-			resolve();
-			return;
-		}
-		const timeout = setTimeout(() => {
-			cleanup();
-			reject(new Error('Timed out loading the canonical workspace window.'));
-		}, 15_000);
+		// A popout's logical view is already authoritative before this call.  Do
+		// not close/rebind the source window merely because the child has finished
+		// parsing HTML: its server port and React workspace projection still need
+		// to mount.  Waiting for the canonical root keeps the move atomic from the
+		// user's point of view and prevents a blank secondary presentation.
+		let settled = false;
+		let retry: ReturnType<typeof setTimeout> | undefined;
+		let timeout: ReturnType<typeof setTimeout> | undefined;
 		const cleanup = () => {
-			clearTimeout(timeout);
+			if (timeout !== undefined) clearTimeout(timeout);
+			if (retry !== undefined) clearTimeout(retry);
 			window.webContents.off('did-finish-load', onLoaded);
 			window.webContents.off('did-fail-load', onFailed);
 			window.off('closed', onClosed);
 		};
-		const onLoaded = () => {
+		const settle = (error?: Error) => {
+			if (settled) return;
+			settled = true;
 			cleanup();
-			resolve();
+			if (error === undefined) resolve();
+			else reject(error);
 		};
+		const waitForMountedRoot = () => {
+			if (settled || window.isDestroyed()) return;
+			const currentUrl = window.webContents.getURL();
+			if (
+				currentUrl.length === 0 ||
+				currentUrl === 'about:blank' ||
+				window.webContents.isLoadingMainFrame()
+			) {
+				retry = setTimeout(waitForMountedRoot, 25);
+				return;
+			}
+			void window.webContents
+				.executeJavaScript(
+					'Boolean(document.querySelector("[data-terminay-app-component]"))',
+				)
+				.then((mounted) => {
+					if (settled) return;
+					if (mounted === true) settle();
+					else retry = setTimeout(waitForMountedRoot, 25);
+				})
+				.catch(() => {
+					if (!settled) retry = setTimeout(waitForMountedRoot, 25);
+				});
+		};
+		const onLoaded = () => waitForMountedRoot();
 		const onFailed = (
 			_event: Electron.Event,
 			errorCode: number,
@@ -2556,20 +2576,24 @@ function waitForCanonicalWorkspaceDocument(window: BrowserWindow): Promise<void>
 			isMainFrame: boolean,
 		) => {
 			if (!isMainFrame || errorCode === -3) return;
-			cleanup();
-			reject(
+			settle(
 				new Error(
 					`Unable to load the canonical workspace window: ${errorDescription}.`,
 				),
 			);
 		};
 		const onClosed = () => {
-			cleanup();
-			reject(new Error('The canonical workspace window closed before loading.'));
+			settle(new Error('The canonical workspace window closed before mounting.'));
 		};
-		window.webContents.once('did-finish-load', onLoaded);
+		window.webContents.on('did-finish-load', onLoaded);
 		window.webContents.on('did-fail-load', onFailed);
 		window.once('closed', onClosed);
+		timeout = setTimeout(() => {
+			settle(
+				new Error('Timed out mounting the canonical workspace window.'),
+			);
+		}, 15_000);
+		waitForMountedRoot();
 	});
 }
 
