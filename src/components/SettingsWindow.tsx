@@ -2504,9 +2504,13 @@ export function SettingsWindow({
 										onClick={() => void toggleDirectNetworkListener()}
 										disabled={isTogglingRemoteAccess}
 									>
-										{remoteStatus?.directListenerRunning
-											? 'Stop direct listener'
-											: 'Start direct listener'}
+										{isTogglingRemoteAccess
+											? remoteStatus?.directListenerRunning
+												? 'Stopping direct listener…'
+												: 'Starting direct listener…'
+											: remoteStatus?.directListenerRunning
+												? 'Stop direct listener'
+												: 'Start direct listener'}
 									</button>
 								)}
 							</div>
