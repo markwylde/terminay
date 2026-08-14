@@ -8,6 +8,7 @@ import type {
 	DictationOverlayProps,
 	DictationOverlayState,
 } from '../components/DictationOverlay';
+import { writeClipboardText } from '../host/nativeActions';
 import type { TerminalSettings } from '../types/settings';
 import {
 	DICTATION_INITIAL_SILENCE_GRACE_MS,
@@ -131,7 +132,7 @@ export function useDictationController({
 	const insertTranscript = useCallback(
 		async (sessionId: string, transcript: string) => {
 			if (!hasTargetSession(sessionId)) {
-				await window.terminayClipboardHost?.writeText(transcript);
+				await writeClipboardText(transcript);
 				throw new Error(
 					'The target terminal closed. Transcript copied to clipboard.',
 				);
