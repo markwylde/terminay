@@ -2,12 +2,12 @@ import {
 	abortIfSignalled,
 	type ByteTransport,
 	type TerminayHostContext,
+	type TerminayHostEvent,
 	type TransportCloseReason,
 	type TransportSendOptions,
 	type TransportState,
 	validateTransportFrame,
 } from '@terminay/protocol';
-import type { AppCommand } from '../types/terminay';
 
 export interface DesktopByteBridge {
 	readonly version: 1;
@@ -17,7 +17,7 @@ export interface DesktopByteBridge {
 
 export interface DesktopHostBridge {
 	getContext(): Promise<TerminayHostContext>;
-	subscribeAppCommands(listener: (command: AppCommand) => Promise<void> | void): () => void;
+	subscribeEvent(listener: (event: TerminayHostEvent) => Promise<void> | void): () => void;
 }
 
 export type DesktopServerBootstrap = Readonly<{
