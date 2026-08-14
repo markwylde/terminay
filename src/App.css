@@ -3001,6 +3001,18 @@
   font-size: 12px;
 }
 
+.sidebar-feature-unavailable {
+	display: grid;
+	gap: 0.25rem;
+	padding: 0.75rem;
+	color: var(--text-secondary);
+	font-size: 0.8rem;
+}
+
+.sidebar-feature-unavailable strong {
+	color: var(--text-primary);
+}
+
 /* Context Menu */
 .context-menu {
   min-width: 180px;

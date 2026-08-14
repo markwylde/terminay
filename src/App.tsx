@@ -5,7 +5,6 @@ import {
 	type ProjectEnvironmentClientProfile,
 	type ProjectEnvironmentProviderDescriptor,
 	ProjectEnvironmentsClient,
-	RecordingsClient as ServerRecordingsClient,
 	SettingsClient,
 	type ShellProfileCatalogueEntry,
 	ShellProfilesClient,
@@ -114,6 +113,7 @@ import {
 	createAuxiliaryRouteController,
 } from './shared/auxiliaryRoutes';
 import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
+import { resolveProjectFeatureAuthority } from './shared/featureQueryAuthority';
 import {
 	adaptServerAgentSnapshot,
 	subscribeServerAgentSnapshots,
@@ -1171,6 +1171,15 @@ function joinFileExplorerPath(dirPath: string, name: string): string {
 	return `${dirPath}/${name}`;
 }
 
+function FeatureUnavailableState({ reason }: Readonly<{ reason: string }>) {
+	return (
+		<div className="sidebar-feature-unavailable" role="status">
+			<strong>Unavailable</strong>
+			<span>{reason}</span>
+		</div>
+	);
+}
+
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
@@ -1209,6 +1218,14 @@ const ProjectWorkspace = forwardRef<
 			`project-workspace:${project.id}`,
 			`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}:${project.rootFolder}`,
 		);
+		const featureAvailability = resolveProjectFeatureAuthority(
+			terminalClientContext,
+			project.id,
+		);
+		const featureAuthority =
+			featureAvailability.state === 'available'
+				? featureAvailability.authority
+				: undefined;
 		const terminalPanelClientContext =
 			useMemo<TerminalPanelClientContextValue | null>(
 				() =>
@@ -1222,7 +1239,7 @@ const ProjectWorkspace = forwardRef<
 				[project.id, project.rootFolder, terminalClientContext],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;
-		const serverAgentStatusClient = terminalClientContext?.agentStatusClient;
+		const serverAgentStatusClient = featureAuthority?.agentStatusClient;
 		const serverMacroClient = useMemo(
 			() =>
 				terminalClientContext?.applicationClient === undefined
@@ -1251,7 +1268,7 @@ const ProjectWorkspace = forwardRef<
 		);
 		const { settings, settingsClient } =
 			useTerminalSettings(serverSettingsClient);
-		const serverFileViewerClient = terminalClientContext?.fileViewerClient;
+		const serverFileViewerClient = featureAuthority?.fileViewerClient;
 		const disconnectedFileViewerClient = useMemo(() => {
 			if (terminalClientContext !== undefined) return undefined;
 			if (serverFileViewerClient !== undefined) return undefined;
@@ -1290,48 +1307,7 @@ const ProjectWorkspace = forwardRef<
 			}
 			return createLegacyRecordingsClient(window.terminayRecordingServiceHost);
 		}, [terminalClientContext?.applicationClient]);
-		const serverRecordingsClient = useMemo(
-			() =>
-				terminalClientContext?.applicationClient === undefined
-					? undefined
-					: new ServerRecordingsClient({
-							query: async <
-								T extends
-									import('@terminay/protocol').JsonValue = import('@terminay/protocol').JsonValue,
-							>(
-								operation: string,
-								payload?: import('@terminay/protocol').JsonValue,
-								options?: Parameters<
-									typeof terminalClientContext.applicationClient.query
-								>[2],
-							) =>
-								(
-									await terminalClientContext.applicationClient!.query(
-										operation,
-										payload,
-										options,
-									)
-								).result as T,
-							command: async <
-								T extends
-									import('@terminay/protocol').JsonValue = import('@terminay/protocol').JsonValue,
-							>(
-								operation: string,
-								payload?: import('@terminay/protocol').JsonValue,
-								options?: Parameters<
-									typeof terminalClientContext.applicationClient.command
-								>[2],
-							) =>
-								(
-									await terminalClientContext.applicationClient!.command(
-										operation,
-										payload,
-										options,
-									)
-								).result as T,
-						}),
-			[terminalClientContext?.applicationClient],
-		);
+		const serverRecordingsClient = featureAuthority?.recordingsClient;
 		const aiTabMetadataClient = useMemo(
 			() =>
 				terminalClientContext?.applicationClient === undefined
@@ -2267,9 +2243,9 @@ const ProjectWorkspace = forwardRef<
 			toggleDirectory,
 			worktreePanelStatus,
 		} = useFileExplorerController({
-			fileObservationClient: terminalClientContext?.fileObservationClient,
+			fileObservationClient: featureAuthority?.fileObservationClient,
 			fileViewerClient,
-			gitClient: terminalClientContext?.gitClient,
+			gitClient: featureAuthority?.gitClient,
 			isServerFileViewer: serverFileViewerClient !== undefined,
 			onOpenFile: openFile,
 			onOpenTerminalAt: handleOpenTerminalAt,
@@ -4448,7 +4424,9 @@ const ProjectWorkspace = forwardRef<
 							<RefreshCw size={14} aria-hidden="true" />
 						</button>
 					),
-					children: (
+					children: featureAvailability.state === 'unavailable' ? (
+						<FeatureUnavailableState reason={featureAvailability.reason} />
+					) : (
 						<FileExplorerTree
 							directoryChildren={directoryChildren}
 							directoryErrors={directoryErrors}
@@ -4480,7 +4458,9 @@ const ProjectWorkspace = forwardRef<
 						});
 					},
 					count: projectAgentItems.length,
-					children: (
+					children: featureAvailability.state === 'unavailable' ? (
+						<FeatureUnavailableState reason={featureAvailability.reason} />
+					) : (
 						<AgentsSidebar
 							projectId={project.id}
 							agents={projectAgentItems}
@@ -4530,7 +4510,9 @@ const ProjectWorkspace = forwardRef<
 					accessory: currentGitBranch ? (
 						<span className="sidebar-pane__branch">{currentGitBranch}</span>
 					) : null,
-					children: (
+					children: featureAvailability.state === 'unavailable' ? (
+						<FeatureUnavailableState reason={featureAvailability.reason} />
+					) : (
 						<WorktreesPanel
 							activePushMenuWorktreePath={
 								gitPushMenuPosition?.target?.worktreePath ?? null
@@ -4567,7 +4549,7 @@ const ProjectWorkspace = forwardRef<
 			<section
 				className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
 				data-terminay-git-client={
-					terminalClientContext?.gitClient === undefined
+					featureAuthority?.gitClient === undefined
 						? 'unavailable'
 						: 'server'
 				}
@@ -4578,7 +4560,7 @@ const ProjectWorkspace = forwardRef<
 				)}
 			>
 				{errorText ? (
-					<div className="error-banner">Terminal error: {errorText}</div>
+					<div className="error-banner">Operation failed: {errorText}</div>
 				) : null}
 
 				<WorkspaceSplitLayout
