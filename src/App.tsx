@@ -4051,17 +4051,35 @@ const ProjectWorkspace = forwardRef<
 				) {
 					const panel = getPanelForSession(detail.sessionId);
 					if (panel !== null && panel !== undefined) {
-						// A Dockview-only close is immediately undone by canonical
-						// workspace reconciliation. Route successful-exit cleanup through
-						// the same authoritative panel command as a user close.
-						void requestClosePanel(panel.id);
+						// The session has already exited, so this is not a destructive user
+						// close and must not wait for the activity/confirmation path.  Persist
+						// the canonical panel removal directly; a Dockview-only close would
+						// immediately be restored by workspace reconciliation.
+						const store = terminalClientContext?.workspaceSnapshotStore;
+						const canonicalPanel = store?.snapshot?.panels[panel.id];
+						if (store !== undefined && canonicalPanel?.projectId === project.id) {
+							void store.closePanel(panel.id).catch((error: unknown) =>
+								setErrorText(
+									error instanceof Error
+										? error.message
+										: 'Unable to close the completed terminal tab.',
+								),
+							);
+						} else {
+							panel.api.close();
+						}
 					}
 				}
 			};
 			window.addEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
 			return () =>
 				window.removeEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
-		}, [cancelMacroRunsForSession, getPanelForSession, requestClosePanel]);
+		}, [
+			cancelMacroRunsForSession,
+			getPanelForSession,
+			project.id,
+			terminalClientContext?.workspaceSnapshotStore,
+		]);
 
 		useTerminalDockviewWindowController({
 			addTerminal,
