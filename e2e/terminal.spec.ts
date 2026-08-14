@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
+import { typeInVisibleTerminal } from './support/terminal-input';
 import {
 	cancelEditWindow,
 	contextMenuItem,
@@ -44,12 +45,7 @@ async function writeToTerminalSession(
 	sessionId: string,
 	data: string,
 ): Promise<void> {
-	await page.evaluate(
-		async ({ nextData, nextSessionId }) => {
-			await window.terminayTest!.writeServerTerminal(nextSessionId, nextData);
-		},
-		{ nextData: data, nextSessionId: sessionId },
-	);
+	await typeInVisibleTerminal(page, data, sessionId);
 }
 
 async function readCssVariableFromStyle(
@@ -811,6 +807,11 @@ test.describe('terminal behavior', () => {
 			);
 		if (!backgroundSessionId)
 			throw new Error('Terminal 2 session id is unavailable');
+		await writeToTerminalSession(
+			mainWindow,
+			backgroundSessionId,
+			"sleep 2.1; printf 'overview-activity-hit\\n'; printf '\\033]9;4;0;\\007'\r",
+		);
 
 		await mainWindow
 			.locator('.project-workspace--active .terminal-tab-content')
@@ -825,12 +826,6 @@ test.describe('terminal behavior', () => {
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 		).toHaveCount(1);
 
-		await mainWindow.waitForTimeout(1_100);
-		await writeToTerminalSession(
-			mainWindow,
-			backgroundSessionId,
-			"sleep 2.1; printf 'overview-activity-hit\\n'; printf '\\033]9;4;0;\\007'\r",
-		);
 		await expect
 			.poll(() =>
 				mainWindow.evaluate(
@@ -904,20 +899,13 @@ test.describe('terminal behavior', () => {
 
 		await quickTab.click();
 		const quickSessionId = await getActiveSessionId(mainWindow);
-		await mainWindow.evaluate((sessionId) => {
-			window.dispatchEvent(
-				new CustomEvent('terminay-terminal-user-input', {
-					detail: { sessionId },
-				}),
-			);
-		}, quickSessionId);
-
-		await firstTab.click();
 		await writeToTerminalSession(
 			mainWindow,
 			quickSessionId,
-			"printf 'quick-activity-suppressed\\n'\r",
+			"sleep 0.1; printf 'quick-activity-suppressed\\n'\r",
 		);
+
+		await firstTab.click();
 
 		await mainWindow.waitForTimeout(250);
 		await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed');
@@ -950,13 +938,13 @@ test.describe('terminal behavior', () => {
 		await quietTab.click();
 		const quietSessionId = await getActiveSessionId(mainWindow);
 		await mainWindow.waitForTimeout(1_100);
-
-		await firstTab.click();
 		await writeToTerminalSession(
 			mainWindow,
 			quietSessionId,
-			"printf 'focus-change-noise\\n'\r",
+			"sleep 0.1; printf 'focus-change-noise\\n'\r",
 		);
+
+		await firstTab.click();
 
 		await mainWindow.waitForTimeout(250);
 		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
@@ -994,14 +982,14 @@ test.describe('terminal behavior', () => {
 		await expect(activitySwitch).toBeChecked();
 		await activitySwitch.uncheck();
 		await submitEditWindow(settingsWindow);
-
-		await firstTab.click();
-		await mainWindow.waitForTimeout(1_100);
 		await writeToTerminalSession(
 			mainWindow,
 			quietSessionId,
-			"printf 'quiet-activity-hidden\\n'\r",
+			"sleep 1.2; printf 'quiet-activity-hidden\\n'\r",
 		);
+
+		await firstTab.click();
+		await mainWindow.waitForTimeout(1_100);
 
 		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
 		await expect(
