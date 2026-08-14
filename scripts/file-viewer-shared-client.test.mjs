@@ -472,6 +472,11 @@ test('FilePanel preserves an explicit large-file engine choice and does not thro
 		panel,
 		/acknowledgedWatchRevisionRef\.current = \{\s*mtimeMs: nextInfo\.mtimeMs,\s*path: nextInfo\.path,\s*size: nextInfo\.size,/u,
 	);
+	assert.match(
+		panel,
+		/if \(conflictRef\.current\) \{\s*throw new Error\(\s*'Choose Reload from disk or Keep local edits before saving\.'/u,
+	);
+	assert.match(panel, /onKeepLocal=\{\(\) => \{\s*conflictRef\.current = false;/u);
 	assert.ok(
 		panel.indexOf(
 			'const acknowledged = acknowledgedWatchRevisionRef.current;',

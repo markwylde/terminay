@@ -222,6 +222,7 @@ function CanonicalFilePanel(
 	const fileInfoRef = useRef<FileInfo | null>(fileInfo);
 	const engineRef = useRef<FileViewerEngine>(engine);
 	const isDirtyRef = useRef(isDirty);
+	const conflictRef = useRef(conflict);
 	const isHexValidRef = useRef(isHexValid);
 	const modeRef = useRef(mode);
 	const sessionStoreRef = useRef(sessionStore);
@@ -229,6 +230,7 @@ function CanonicalFilePanel(
 	fileInfoRef.current = fileInfo;
 	engineRef.current = engine;
 	isDirtyRef.current = isDirty;
+	conflictRef.current = conflict;
 	isHexValidRef.current = isHexValid;
 	modeRef.current = mode;
 	sessionStoreRef.current = sessionStore;
@@ -519,6 +521,7 @@ function CanonicalFilePanel(
 			setFileInfo(nextInfo);
 			setIsDirty(false);
 			sessionStoreRef.current?.setDirty(false);
+			conflictRef.current = false;
 			setConflict(false);
 			sessionStoreRef.current?.setConflict({ kind: 'none' });
 			// A sparse save must remain sparse. Building an eager Git diff for a
@@ -529,6 +532,7 @@ function CanonicalFilePanel(
 			}
 			return nextInfo;
 		} catch (error) {
+			conflictRef.current = true;
 			setConflict(true);
 			sessionStoreRef.current?.setConflict({
 				diskMtimeMs: expectedMtimeMs,
@@ -846,6 +850,7 @@ function CanonicalFilePanel(
 			}
 
 			if (isDirtyRef.current) {
+				conflictRef.current = true;
 				setConflict(true);
 				sessionStoreRef.current?.setConflict({
 					diskMtimeMs: event.mtimeMs ?? 0,
@@ -888,6 +893,11 @@ function CanonicalFilePanel(
 				const currentFileInfo = fileInfoRef.current;
 				if (!currentFileInfo) {
 					return false;
+				}
+				if (conflictRef.current) {
+					throw new Error(
+						'Choose Reload from disk or Keep local edits before saving.',
+					);
 				}
 
 				if (sparseEditsRef.current.size > 0) {
@@ -935,12 +945,20 @@ function CanonicalFilePanel(
 				} else {
 					draftBufferRef.current.replaceBytes(payload.base64);
 				}
+				acknowledgedWatchRevisionRef.current = {
+					mtimeMs: nextInfo.mtimeMs,
+					path: nextInfo.path,
+					size: nextInfo.size,
+				};
 				setFileInfo(nextInfo);
 				setIsDirty(false);
 				sessionStoreRef.current?.setDirty(false);
+				conflictRef.current = false;
 				setConflict(false);
 				sessionStoreRef.current?.setConflict({ kind: 'none' });
-				await refreshDiff(nextInfo.path);
+				if (modeRef.current === 'diff' || modeRef.current === 'tasks') {
+					void refreshDiff(nextInfo.path);
+				}
 				return true;
 			},
 			preferredEngine: engine,
@@ -1018,6 +1036,7 @@ function CanonicalFilePanel(
 			{conflict ? (
 				<FileConflictBanner
 					onKeepLocal={() => {
+						conflictRef.current = false;
 						setConflict(false);
 						sessionStore?.setConflict({ kind: 'none' });
 					}}
@@ -1033,6 +1052,7 @@ function CanonicalFilePanel(
 							setDraftText(await fileGateway.readFileText(nextInfo.path));
 						}
 						setIsDirty(false);
+						conflictRef.current = false;
 						setConflict(false);
 						sessionStore?.setDirty(false);
 						sessionStore?.setConflict({ kind: 'none' });
