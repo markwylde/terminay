@@ -34,9 +34,13 @@ test(
 			evidence.push(restored);
 
 			assert.deepEqual(
-				restored.identity,
-				fresh.identity,
+				stableIdentity(restored.identity),
+				stableIdentity(fresh.identity),
 				'restarting the packaged artifact must restore exact canonical identities without duplicate seed state',
+			);
+			assert.ok(
+				restored.identity.revision >= fresh.identity.revision,
+				'restart may advance recovery state but must never regress its canonical revision',
 			);
 		} catch (error) {
 			await retainDiagnostics(userData, evidence, error);
@@ -76,7 +80,10 @@ async function requireCanonicalArtifactInventory() {
 		'utf8',
 	);
 	for (const forbidden of [
+		'dist/index.html',
+		'dist/legacy.html',
 		'dist/server.html',
+		'dist-electron/preload.mjs',
 		'dist-electron/serverUiPreload.js',
 		'dist-electron/rendererRuntime.js',
 	]) {
@@ -84,6 +91,13 @@ async function requireCanonicalArtifactInventory() {
 			entries.has(forbidden),
 			false,
 			`legacy workspace artifact must not ship: ${forbidden}`,
+		);
+	}
+	for (const entry of entries) {
+		assert.doesNotMatch(
+			entry,
+			/(?:^|\/)(?:rendererRuntime|legacyRenderer|renderer-bootstrap)(?:[-.].*)?\.(?:js|mjs)$/u,
+			`legacy renderer entry chunk must not ship: ${entry}`,
 		);
 	}
 }
@@ -114,7 +128,8 @@ async function exerciseLaunch({ expected, mode, userData }) {
 		captureRendererFailures(window, failures);
 
 		const identity = await requireCanonicalReadiness(window);
-		if (expected !== undefined) assert.deepEqual(identity, expected);
+		if (expected !== undefined)
+			assert.deepEqual(stableIdentity(identity), stableIdentity(expected));
 		await requireNativeMenu(electronApp, window);
 		await requireSidebarQuery(window);
 		await requireTerminalInputOutput(window, mode);
@@ -145,6 +160,11 @@ async function exerciseLaunch({ expected, mode, userData }) {
 	}
 }
 
+function stableIdentity(identity) {
+	const { revision: _revision, ...stable } = identity;
+	return stable;
+}
+
 async function requireCanonicalReadiness(window) {
 	const app = window.locator('[data-terminay-app-component]');
 	await app.waitFor({ state: 'visible', timeout: 30_000 });
@@ -165,6 +185,8 @@ async function requireCanonicalReadiness(window) {
 	assert.equal(context?.hostKind, 'desktop');
 	assert.match(context?.bundleId ?? '', /^[A-Za-z0-9._:-]{8,256}$/u);
 	assert.equal(typeof context?.capabilities, 'object');
+	assert.match(context?.profileId ?? '', /^[A-Za-z0-9._:-]{1,256}$/u);
+	assert.match(context?.windowId ?? '', /^[A-Za-z0-9._:-]{1,256}$/u);
 
 	const projectId = await app.getAttribute('data-terminay-active-project-id');
 	const serverId = await app.getAttribute('data-terminay-server-id');
@@ -184,12 +206,16 @@ async function requireCanonicalReadiness(window) {
 	})) {
 		assert.ok(value, `${name} must be present at canonical readiness`);
 	}
+	assert.ok(Number.isSafeInteger(Number(revision)) && Number(revision) > 0);
 	return Object.freeze({
 		bundleId: context.bundleId,
+		environmentBinding: context.profileId,
 		panelId,
 		projectId,
+		revision: Number(revision),
 		serverId,
 		sessionId,
+		viewId: context.windowId,
 	});
 }
 
