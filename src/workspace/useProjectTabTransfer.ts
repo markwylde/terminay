@@ -99,6 +99,44 @@ export function useProjectTabTransfer({
 		[projectsRef, workspaceSnapshotStore, workspaceViewId],
 	);
 
+	/** A native popout is a second presentation of a server-owned workspace
+	 * view, never a renderer-created Dockview window.  Moving the active
+	 * project preserves its terminal/session ownership while the host presents
+	 * the newly-created logical view. */
+	const popoutProject = useCallback(
+		async (projectId: string) => {
+			if (workspaceSnapshotStore === undefined || workspaceViewId === null)
+				return;
+			const project = projectsRef.current.find((item) => item.id === projectId);
+			if (project === undefined) return;
+			const targetViewId = `view-${crypto.randomUUID()}`;
+			let created = false;
+			try {
+				await workspaceSnapshotStore.createView({
+					viewId: targetViewId,
+					name: project.title,
+				});
+				created = true;
+				await workspaceSnapshotStore.moveProject({ projectId, targetViewId });
+				await presentWorkspaceView(targetViewId, { x: 120, y: 120 });
+				if (projectsRef.current.length === 1) {
+					await workspaceSnapshotStore.closeView(workspaceViewId);
+					await closeHostPresentation();
+				}
+			} catch {
+				await workspaceSnapshotStore
+					.moveProject({ projectId, targetViewId: workspaceViewId })
+					.catch(() => undefined);
+				if (created) {
+					await workspaceSnapshotStore
+						.closeView(targetViewId)
+						.catch(() => undefined);
+				}
+			}
+		},
+		[projectsRef, workspaceSnapshotStore, workspaceViewId],
+	);
+
 	return {
 		draggingProjectId,
 		dropPreview: null as {
@@ -109,6 +147,7 @@ export function useProjectTabTransfer({
 		handleProjectTabDragStart,
 		isDraggingTabTornOff,
 		isProjectDropTarget: false,
+		popoutProject,
 		projectTabBarRef,
 	};
 }

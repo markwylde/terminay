@@ -105,10 +105,8 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 		expect(readiness.serverId).toBe('remote-desktop-rendered-proof');
 
 		await openRemoteMenu(mainWindow);
-		await mainWindow
-			.getByRole('button', { name: /Add connection/u })
-			.click();
-	const dialog = mainWindow.getByRole('dialog', {
+		await mainWindow.getByRole('button', { name: /Add connection/u }).click();
+		const dialog = mainWindow.getByRole('dialog', {
 			name: 'Connections',
 		});
 		await expect(dialog).toBeVisible();
@@ -117,7 +115,9 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 		// journey; it is intentionally not imported into a remote host document.
 		await dialog.getByRole('button', { name: 'Add connection…' }).click();
 		await dialog.getByLabel('Pairing URL').fill(readiness.pairing.pairingUrl);
-		await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
+		await dialog
+			.getByRole('button', { name: 'Continue pairing', exact: true })
+			.click();
 		await expect(dialog).toHaveCount(0);
 
 		const remoteHost = new URL(readiness.protocolEndpoint).host;

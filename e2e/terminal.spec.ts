@@ -112,7 +112,8 @@ test.describe('terminal behavior', () => {
 			.allTextContents();
 		const firstBox = await terminalTabs.first().boundingBox();
 		const secondBox = await terminalTabs.nth(1).boundingBox();
-		if (!firstBox || !secondBox) throw new Error('Terminal tab drag geometry is unavailable');
+		if (!firstBox || !secondBox)
+			throw new Error('Terminal tab drag geometry is unavailable');
 
 		await mainWindow.mouse.move(
 			firstBox.x + firstBox.width / 2,
@@ -456,8 +457,6 @@ test.describe('terminal behavior', () => {
 	test('terminal edit window focuses the title and saves it with Enter', async ({
 		mainWindow,
 	}) => {
-	const editedTab = mainWindow
-			.locator('.project-workspace--active .terminal-tab-content--active');
 		const editWindow = await openTerminalEditWindow(mainWindow);
 		const titleInput = editWindow.getByPlaceholder('Terminal name');
 
@@ -478,18 +477,10 @@ test.describe('terminal behavior', () => {
 			.toBe(true);
 
 		await titleInput.fill('Keyboard Shell');
-		const closePromise = editWindow.waitForEvent('close');
-		try {
-			await titleInput.press('Enter');
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			if (
-				!message.includes('Target page, context or browser has been closed')
-			) {
-				throw error;
-			}
-		}
-		await closePromise;
+		await titleInput.press('Enter');
+		await expect(
+			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+		).toHaveCount(0);
 
 		await expect(
 			mainWindow
@@ -813,7 +804,6 @@ test.describe('terminal behavior', () => {
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 		).toHaveCount(1);
 
-
 		const activityButton = mainWindow.getByRole('button', {
 			name: 'Open terminal activity menu',
 		});
@@ -948,9 +938,7 @@ test.describe('terminal behavior', () => {
 
 		await quietTab.click({ button: 'right' });
 		await contextMenuItem(mainWindow, 'Open Settings').click();
-		const activitySwitch = mainWindow.getByLabel(
-			'Enable activity indicators',
-		);
+		const activitySwitch = mainWindow.getByLabel('Enable activity indicators');
 		await expect(activitySwitch).toBeChecked();
 		await activitySwitch.uncheck();
 		await submitEditWindow(mainWindow);
@@ -1005,7 +993,9 @@ test.describe('terminal behavior', () => {
 			sectionId: 'shell-lifecycle',
 		});
 		await settingsWindow.getByLabel('Close tabs on successful exit').check();
-		await expect(settingsWindow.locator('.settings-status')).toContainText('Saved');
+		await expect(settingsWindow.locator('.settings-status')).toContainText(
+			'Saved',
+		);
 		await settingsWindow.close();
 
 		await sendAppCommand(mainWindow, 'new-terminal');
