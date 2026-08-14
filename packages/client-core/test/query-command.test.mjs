@@ -117,10 +117,10 @@ test("FileViewerClient uses a bounded canonical query operation", async () => {
     },
     async command() { return null; },
   });
-  assert.deepEqual(await client.getGitDiff("src/App.tsx"), { path: "src/App.tsx", hunks: [] });
-  assert.deepEqual(calls, [["file.get-git-diff", { path: "src/App.tsx" }]]);
-  await assert.rejects(() => client.getGitDiff(""), /file path/);
-  await assert.rejects(() => client.getGitDiff("bad\0path"), /file path/);
+  assert.deepEqual(await client.getGitDiff("src/App.tsx", "project-a"), { path: "src/App.tsx", hunks: [] });
+  assert.deepEqual(calls, [["file.get-git-diff", { path: "src/App.tsx", projectId: "project-a" }]]);
+  await assert.rejects(() => client.getGitDiff("", "project-a"), /file path/);
+  await assert.rejects(() => client.getGitDiff("bad\0path", "project-a"), /file path/);
 });
 
 test("FileViewerClient bounds raw content ranges to the framed response budget", async () => {
