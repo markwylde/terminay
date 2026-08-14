@@ -63,9 +63,14 @@ test('production hosts use the shared selected-server bundle and complete parity
 		'Electron and authenticated web must both mount the exact ConnectedRendererWorkspace -> App production tree',
 	);
 	assert.match(desktopMain, /remoteServerUiBundleHost\.prepareRemote\(\{/u);
-	assert.match(desktopMain, /serverUiPreload\.js/u);
+	assert.match(desktopMain, /serverUiPreload\.cjs/u);
 	assert.match(desktopMain, /server-ui-host:byte-endpoint/u);
-	assert.match(desktopMain, /if \(VITE_DEV_SERVER_URL\)/u);
+	const normalWorkspace = desktopMain.slice(
+		desktopMain.indexOf('function createWindow('),
+		desktopMain.indexOf('function selectedProfileIdForRequester'),
+	);
+	assert.match(normalWorkspace, /localServerUiSession\.prepare\(windowWebContentsId\)/u);
+	assert.doesNotMatch(normalWorkspace, /VITE_DEV_SERVER_URL|loadFile\(|loadURL\([^e]/u);
 	assert.doesNotMatch(desktopMain, /renderer remains the compatibility surface/u);
 
 	for (const item of REQUIRED_COMPLETE_TASK16_ITEMS) {
