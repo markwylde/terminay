@@ -17,6 +17,29 @@ export interface WorkspaceStateBackend {
 export interface RepositoryConflict { readonly code: "conflict"; readonly currentRevision: number; }
 export type RepositoryCommitResult = { readonly ok: true; readonly state: WorkspaceState } | { readonly ok: false; readonly conflict: RepositoryConflict };
 
+export type WorkspacePersistenceFailureCode =
+  | "persistence_unreadable"
+  | "persistence_invalid"
+  | "persistence_uncommittable";
+
+/** Safe startup/transaction failure. Backend paths, bytes, and platform error
+ * details remain in the cause for privileged diagnostics and never enter the
+ * renderer-facing message. */
+export class WorkspacePersistenceError extends Error {
+  readonly retryable: boolean;
+  constructor(readonly code: WorkspacePersistenceFailureCode, options: { readonly cause?: unknown } = {}) {
+    super(workspacePersistenceMessage(code), options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "WorkspacePersistenceError";
+    this.retryable = code !== "persistence_invalid";
+  }
+}
+
+function workspacePersistenceMessage(code: WorkspacePersistenceFailureCode): string {
+  if (code === "persistence_unreadable") return "The canonical workspace could not be read. Check the server data directory and retry.";
+  if (code === "persistence_invalid") return "The canonical workspace is invalid. Restore its server-owned backup before retrying.";
+  return "The canonical workspace could not be saved. Check available storage and server data-directory permissions, then retry.";
+}
+
 /** Persistence boundary for canonical workspace state. The backend owns the
  * actual SQLite/file transaction; this layer owns schema migration, revision
  * checks, backup ordering, and never substitutes a default over corrupt data. */
@@ -37,12 +60,17 @@ export class WorkspaceRepository {
   }
 
   private async loadOnce(): Promise<WorkspaceState> {
-    const raw = await this.backend.load();
+    let raw: unknown | undefined;
+    try { raw = await this.backend.load(); }
+    catch (error) { throw persistenceFailure("persistence_unreadable", error); }
     this.created = raw === undefined;
-    let state = raw === undefined
-      ? (this.initialState?.() ?? migrateWorkspaceState({ schemaVersion: 0, serverId: this.serverId, projects: {} }, this.serverId))
-      : migrateWorkspaceState(raw, this.serverId);
-    validateWorkspace(state);
+    let state: WorkspaceState;
+    try {
+      state = raw === undefined
+        ? (this.initialState?.() ?? migrateWorkspaceState({ schemaVersion: 0, serverId: this.serverId, projects: {} }, this.serverId))
+        : migrateWorkspaceState(raw, this.serverId);
+      validateWorkspace(state);
+    } catch (error) { throw persistenceFailure("persistence_invalid", error); }
     if (raw !== undefined) {
       const restored = new WorkspaceStore(state);
       state = restored.markInterruptedSessions();
@@ -54,27 +82,46 @@ export class WorkspaceRepository {
       ? (raw as Record<string, unknown>).schemaVersion
       : undefined;
     const recoveryChanged = raw !== undefined && state.revision !== (raw as { revision?: unknown }).revision;
-    if (raw === undefined || rawSchemaVersion !== WORKSPACE_SCHEMA_VERSION || recoveryChanged) await this.backend.commit(state);
+    if (raw === undefined || rawSchemaVersion !== WORKSPACE_SCHEMA_VERSION || recoveryChanged) {
+      try { await this.backend.commit(state); }
+      catch (error) { throw persistenceFailure("persistence_uncommittable", error); }
+    }
     this.store = new WorkspaceStore(state, {
-      ...(this.backend.commitSync === undefined ? {} : { commit: (next) => this.backend.commitSync!(next) }),
+      ...(this.backend.commitSync === undefined ? {} : { commit: (next) => {
+        try { this.backend.commitSync!(next); }
+        catch (error) { throw persistenceFailure("persistence_uncommittable", error); }
+      } }),
     });
     this.loaded = true; return this.store.state;
   }
 
   async apply(command: Parameters<WorkspaceStore["apply"]>[0]): Promise<RepositoryCommitResult> {
     const store = this.store ?? new WorkspaceStore(await this.load());
-    const before = store.state; const result = store.apply(command);
+    const before = store.state;
+    // Async-only backends cannot participate in WorkspaceStore's synchronous
+    // pre-publication hook. Reduce against an isolated candidate and publish
+    // it only after the durable commit succeeds.
+    const candidate = this.backend.commitSync === undefined ? new WorkspaceStore(before) : store;
+    const result = candidate.apply(command);
     if (!result.ok) return { ok: false, conflict: { code: "conflict", currentRevision: result.conflict.currentRevision } };
-    if (this.backend.backup !== undefined) await this.backend.backup(before);
+    try { if (this.backend.backup !== undefined) await this.backend.backup(before); }
+    catch (error) { throw persistenceFailure("persistence_uncommittable", error); }
     // A synchronous transactional backend was invoked by WorkspaceStore before
     // it published the revision. Async-only repositories commit here.
-    if (this.backend.commitSync === undefined) await this.backend.commit(result.state);
-    this.store = store; return { ok: true, state: result.state };
+    if (this.backend.commitSync === undefined) {
+      try { await this.backend.commit(result.state); }
+      catch (error) { throw persistenceFailure("persistence_uncommittable", error); }
+    }
+    this.store = candidate; return { ok: true, state: result.state };
   }
 
   get state(): WorkspaceState { if (this.store === undefined) throw new Error("workspace repository is not loaded"); return this.store.state; }
   get workspace(): WorkspaceStore { if (this.store === undefined) throw new Error("workspace repository is not loaded"); return this.store; }
   get wasCreated(): boolean { if (!this.loaded) throw new Error("workspace repository is not loaded"); return this.created; }
+}
+
+function persistenceFailure(code: WorkspacePersistenceFailureCode, cause: unknown): WorkspacePersistenceError {
+  return cause instanceof WorkspacePersistenceError ? cause : new WorkspacePersistenceError(code, { cause });
 }
 
 /** Atomic JSON backend shared by embedded Desktop and standalone servers. */
