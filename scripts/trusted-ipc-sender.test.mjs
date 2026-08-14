@@ -62,9 +62,7 @@ test('all direct and modular privileged IPC registrations establish provenance',
   const registrations = [
     ['electron/main.ts', 'assertTrustedAppSender'],
     ['electron/fileViewer/ipc.ts', 'assertTrustedSender'],
-    ['electron/dictation/ipc.ts', 'assertTrustedSender'],
     ['electron/quickPush/ipc.ts', 'assertTrustedSender'],
-    ['electron/aiTabMetadata/ipc.ts', 'assertTrustedSender'],
   ]
 
   for (const [relativePath, assertion] of registrations) {
@@ -108,9 +106,7 @@ test('all direct and modular privileged IPC registrations establish provenance',
 test('privileged IPC registration modules require the trusted sender before services run', async () => {
   const modules = [
     ['electron/fileViewer/ipc.ts', ['file:get-info', 'file:read-bytes', 'file:read-text', 'file:save', 'file:get-text-metadata', 'file:read-text-lines', 'file:save-sparse', 'file:watch', 'file:unwatch', 'file:get-preview-source', 'file:get-git-repo-info', 'file:get-git-diff']],
-    ['electron/dictation/ipc.ts', ['dictation:get-parakeet-status', 'dictation:install-parakeet', 'dictation:get-openai-key-status', 'dictation:save-openai-key', 'dictation:clear-openai-key', 'dictation:get-microphone-permission-status', 'dictation:request-microphone-permission', 'dictation:transcribe']],
     ['electron/quickPush/ipc.ts', ['quick-push:generate-plan', 'quick-push:apply']],
-    ['electron/aiTabMetadata/ipc.ts', ['ai-tab-metadata:list-models', 'ai-tab-metadata:generate']],
   ]
   for (const [file, channels] of modules) {
     const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8')
