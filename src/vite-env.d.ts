@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import type { HostCapabilitySet } from '@terminay/client-core';
-import type { AppUpdateStatus, TerminayTestApi } from './types/terminay';
+import type { TerminayTestApi } from './types/terminay';
 
 declare global {
 	interface Window {
@@ -86,9 +86,6 @@ declare global {
 		terminayTerminalSettingsCompatibilityHost: import('./services/settings/legacySettingsCapability').LegacySettingsApi & {
 			readonly version: 1;
 		};
-		terminayAiMetadataHost: import('./services/ai/legacyAiTabMetadataClient').LegacyAiTabMetadataApi & {
-			readonly version: 1;
-		};
 		terminayEditWindowHost: import('./components/EditTabWindow').EditWindowClient & {
 			readonly version: 1;
 		};
@@ -140,35 +137,6 @@ declare global {
 			open(
 				draft: import('./types/terminay').TerminalEditWindowDraft,
 			): Promise<import('./types/terminay').TerminalEditWindowResult | null>;
-		};
-		/** Native microphone, credential-store, and transcription capability. */
-		terminayDictationHost?: {
-			readonly version: 1;
-			getParakeetStatus(): Promise<
-				import('./types/terminay').ParakeetRuntimeStatus
-			>;
-			installParakeet(): Promise<
-				import('./types/terminay').ParakeetRuntimeStatus
-			>;
-			getKeyStatus(): Promise<import('./types/terminay').DictationKeyStatus>;
-			saveKey(
-				apiKey: string,
-			): Promise<import('./types/terminay').DictationKeyStatus>;
-			clearKey(): Promise<import('./types/terminay').DictationKeyStatus>;
-			getMicrophonePermissionStatus(): Promise<
-				import('./types/terminay').DictationMicrophonePermissionStatus
-			>;
-			requestMicrophonePermission(): Promise<
-				import('./types/terminay').DictationMicrophonePermissionStatus
-			>;
-			transcribe(
-				request: import('./types/terminay').DictationTranscribeRequest,
-			): Promise<import('./types/terminay').DictationTranscribeResult>;
-		};
-		/** Temporary dictation-only declaration; Task 38 owns its final migration. */
-		terminayClipboardHost?: {
-			readonly version: 1;
-			writeText(text: string): Promise<void>;
 		};
 		/** Read-only native terminal presentation state. */
 		terminayTerminalPresentationHost?: {

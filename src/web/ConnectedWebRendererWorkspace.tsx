@@ -120,11 +120,6 @@ export function ConnectedWebRendererWorkspace({
 			new TerminayClientFacade(applicationClient),
 		);
 		return Object.freeze({
-			async generate() {
-				throw new Error(
-					'AI metadata generation requires an exact terminal target.',
-				);
-			},
 			async listModels(provider: 'codex' | 'claudeCode') {
 				return client.listModels(
 					provider === 'claudeCode' ? 'claude-code' : provider,

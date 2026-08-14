@@ -186,10 +186,6 @@ export type TerminalDataMessage = {
 	data: string;
 };
 
-export type DictationKeyStatus = {
-	configured: boolean;
-};
-
 export type ParakeetRuntimeState =
 	| 'unsupported'
 	| 'not-installed'
@@ -210,21 +206,6 @@ export type DictationMicrophonePermissionStatus =
 	| 'denied'
 	| 'restricted'
 	| 'unknown';
-
-export type DictationTranscribeRequest = {
-	audioBase64: string;
-	fileName: string;
-	language?: string;
-	mimeType: string;
-	model?: import('./settings').DictationTranscriptionModel;
-	provider?: import('./settings').DictationProvider;
-	prompt?: string;
-};
-
-export type DictationTranscribeResult = {
-	model: string;
-	text: string;
-};
 
 export type {
 	TerminalActivityMessage,

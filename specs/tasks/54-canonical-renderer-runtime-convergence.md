@@ -73,6 +73,10 @@ artifact's complete startup, restoration, sidebar, menu, and shutdown journey.
 - [ ] Delete live Desktop feature-compatibility adapters for terminals, files,
   recordings, macros, settings, workspace seeding, and server-frame ownership;
   shared components must call the selected server's bundled client directly.
+- [x] Delete the legacy Electron AI-metadata and dictation adapters, renderer
+  fallbacks, and global declarations. Model discovery, credentials, runtime
+  management, and transcription use the selected-server client; microphone
+  capture uses the browser media capability without gaining provider authority.
 - [ ] Delete duplicate renderer state stores, feature DTO projections, fallback
   route bodies, and conditionals whose only purpose is to keep the superseded
   workspace path executable.
