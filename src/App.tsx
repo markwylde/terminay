@@ -167,10 +167,6 @@ import {
 	RemoteAccessConnectionMenu,
 } from './workspace/RemoteAccessConnectionMenu';
 import {
-	type ManagedDesktopConnection,
-	RemoteConnectionModal,
-} from './workspace/RemoteConnectionModal';
-import {
 	buildTerminalActivityOverview,
 	type LegacyTerminalActivityOverviewState,
 	TerminalActivityOverview,
@@ -204,7 +200,7 @@ import { useProjectEditor } from './workspace/useProjectEditor';
 import { useProjectTabTransfer } from './workspace/useProjectTabTransfer';
 import { useProjectTerminalCwd } from './workspace/useProjectTerminalCwd';
 import { useRemoteAccessController } from './workspace/useRemoteAccessController';
-import { useRemoteConnectionForm } from './workspace/useRemoteConnectionForm';
+import { createServerMcpInstallClient, createServerRemoteAccessClients } from './services/serverApplicationFeatureClients';
 import { useTerminalActivityController } from './workspace/useTerminalActivityController';
 import { useTerminalAdoptionController } from './workspace/useTerminalAdoptionController';
 import {
@@ -1272,6 +1268,10 @@ const ProjectWorkspace = forwardRef<
 				),
 			);
 		}, [terminalClientContext?.applicationClient]);
+		const mcpInstallClient = useMemo(() =>
+			terminalClientContext?.applicationClient === undefined ? undefined :
+				createServerMcpInstallClient(terminalClientContext.applicationClient),
+		[terminalClientContext?.applicationClient]);
 		const { settings, settingsClient, error: settingsError } =
 			useTerminalSettings(serverSettingsClient);
 		const serverFileViewerClient = featureAuthority?.fileViewerClient;
@@ -4636,6 +4636,7 @@ const ProjectWorkspace = forwardRef<
 				/>
 
 				<McpInstallModal
+					client={mcpInstallClient}
 					open={isMcpInstallModalOpen}
 					onClose={() => setIsMcpInstallModalOpen(false)}
 				/>
@@ -5222,6 +5223,10 @@ function App({
 			),
 		);
 	}, [terminalClientContext?.applicationClient]);
+	const remoteAccessClients = useMemo(() =>
+		terminalClientContext?.applicationClient === undefined ? undefined :
+			createServerRemoteAccessClients(terminalClientContext.applicationClient),
+	[terminalClientContext?.applicationClient]);
 	const { settings, error: terminalSettingsError, isLoading: areTerminalSettingsLoading } =
 		useTerminalSettings(serverSettingsClient);
 	const connectionFeatureError = useMemo(() => {
@@ -5317,7 +5322,6 @@ function App({
 	});
 	const {
 		addresses: remoteAddresses,
-		closeMenu: closeRemoteMenu,
 		closePinModal: closePairingPinModal,
 		isAdvancedOpen: isRemoteAdvancedOpen,
 		isLinkCopied,
@@ -5348,8 +5352,8 @@ function App({
 		tone: remoteButtonTone,
 		visibleQrCodeDataUrl: visiblePairingQrCodeDataUrl,
 	} = useRemoteAccessController(
-		window.terminayRemotePairingPinHost,
-		window.terminayRemoteAccessStatusHost,
+		remoteAccessClients?.pairingPin,
+		remoteAccessClients?.status,
 		serverSettingsClient,
 		auxiliaryRouteController.openSettings,
 	);
@@ -5359,18 +5363,6 @@ function App({
 	const [connectionSwitcherError, setConnectionSwitcherError] = useState<
 		string | null
 	>(null);
-	const [managedDesktopConnections, setManagedDesktopConnections] = useState<
-		ManagedDesktopConnection[]
-	>([]);
-	const refreshManagedDesktopConnections = useCallback(async () => {
-		const host = window.terminayConnectionHost;
-		if (host === undefined) {
-			setManagedDesktopConnections([]);
-			return;
-		}
-		const snapshot = await host.list();
-		setManagedDesktopConnections(snapshot.profiles);
-	}, []);
 	const refreshConnectionSwitcherEntries = useCallback(() => {
 		void (async () => {
 			try {
@@ -5382,14 +5374,6 @@ function App({
 						setConnectionSwitcherEntries(entries);
 						return;
 					}
-				}
-				if (window.terminayConnectionHost !== undefined) {
-					setConnectionSwitcherEntries(
-						normalizeConnectionSwitcherEntries(
-							await window.terminayConnectionHost.list(),
-						),
-					);
-					return;
 				}
 			} catch {
 				// Fall through to the empty web/unsupported state.
@@ -5404,13 +5388,11 @@ function App({
 	const selectConnectionProfile = useCallback(
 		(profileId: string) => {
 			setConnectionSwitcherError(null);
-			const select =
-				window.terminayConnectionHost?.select ??
-				((id: string) =>
+			const select = (id: string) =>
 					window.terminayHost?.requestAction({
 						type: 'connection.select',
 						profileId: id,
-					}) ?? Promise.resolve());
+					}) ?? Promise.reject(new Error('Connection switching is unavailable in this host.'));
 			void select(profileId)
 				.then(() => {
 					setIsRemoteMenuOpen(false);
@@ -5426,27 +5408,6 @@ function App({
 		[refreshConnectionSwitcherEntries, setIsRemoteMenuOpen],
 	);
 	const pairingModal = useDraggableModal(isPairingModalOpen);
-	const {
-		close: closeRemoteConnectionModal,
-		error: remoteConnectionError,
-		isOpen: isRemoteConnectionModalOpen,
-		isOpening: isOpeningRemoteConnection,
-		notice: remoteConnectionNotice,
-		open: openRemoteConnectionModal,
-		pairingPin: remoteConnectionPairingPin,
-		setError: setRemoteConnectionError,
-		setNotice: setRemoteConnectionNotice,
-		setPairingPin: setRemoteConnectionPairingPin,
-		setUrl: setRemoteConnectionUrl,
-		submit: submitRemoteConnection,
-		url: remoteConnectionUrl,
-	} = useRemoteConnectionForm(closeRemoteMenu);
-	useEffect(() => {
-		if (!isRemoteConnectionModalOpen) return;
-		void refreshManagedDesktopConnections().catch(() =>
-			setManagedDesktopConnections([]),
-		);
-	}, [isRemoteConnectionModalOpen, refreshManagedDesktopConnections]);
 	const [appUpdateStatus, setAppUpdateStatus] =
 		useState<AppUpdateStatus | null>(null);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
@@ -6071,7 +6032,7 @@ function App({
 						menuRef={remoteMenuRef}
 						onDisconnect={onDisconnect}
 						onOpenConnection={
-							onOpenConnectionManager ?? openRemoteConnectionModal
+						onOpenConnectionManager ?? (() => setConnectionSwitcherError('Connection management is unavailable in this host.'))
 						}
 						onOpenPairingQr={() => void openPairingQr()}
 						onOpenSettings={() =>
@@ -6160,48 +6121,6 @@ function App({
 				))}
 			</div>
 
-			{isRemoteConnectionModalOpen ? (
-				<RemoteConnectionModal
-					error={remoteConnectionError}
-					isOpening={isOpeningRemoteConnection}
-					notice={remoteConnectionNotice}
-					onClose={closeRemoteConnectionModal}
-					onForget={async (profileId) => {
-						await window.terminayConnectionHost.forget(profileId);
-						await refreshManagedDesktopConnections();
-						refreshConnectionSwitcherEntries();
-					}}
-					onPairingPinChange={(value) => {
-						setRemoteConnectionPairingPin(value);
-						setRemoteConnectionError(null);
-						setRemoteConnectionNotice(null);
-					}}
-					onRename={async (profileId, label) => {
-						await window.terminayConnectionHost.rename(profileId, label);
-						await refreshManagedDesktopConnections();
-						refreshConnectionSwitcherEntries();
-					}}
-					onRevoke={async (profileId) => {
-						await window.terminayConnectionHost.revoke(profileId);
-						await refreshManagedDesktopConnections();
-						refreshConnectionSwitcherEntries();
-					}}
-					onSelect={async (profileId) => {
-						await window.terminayConnectionHost.select(profileId);
-						await refreshManagedDesktopConnections();
-						refreshConnectionSwitcherEntries();
-					}}
-					onSubmit={submitRemoteConnection}
-					onUrlChange={(value) => {
-						setRemoteConnectionUrl(value);
-						setRemoteConnectionError(null);
-						setRemoteConnectionNotice(null);
-					}}
-					pairingPin={remoteConnectionPairingPin}
-					profiles={managedDesktopConnections}
-					url={remoteConnectionUrl}
-				/>
-			) : null}
 			{isPairingPinModalOpen ? (
 				<ModalBackdrop onClose={() => closePairingPinModal(false)}>
 					<form

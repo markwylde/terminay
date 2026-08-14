@@ -109,6 +109,10 @@ import type {
 	AiTabMetadataGenerateRequest,
 	AiTabMetadataGenerateResult,
 	FileViewerSparseFileSaveRequest,
+	McpAgentId,
+	McpInstallActionResult,
+	McpInstallStatus,
+	RemoteAccessStatus,
 } from '../src/types/terminay';
 import {
 	type AgentStatusIpcAuthority,
@@ -271,6 +275,17 @@ export interface ServerTerminalAuthorityOptions {
 	readonly saveSparseFile?: (
 		request: FileViewerSparseFileSaveRequest,
 	) => Promise<unknown>;
+	readonly applicationFeatures?: {
+		readonly remoteAccess?: {
+			getStatus(): RemoteAccessStatus | Promise<RemoteAccessStatus>;
+			command(operation: string, value?: string): Promise<RemoteAccessStatus | boolean | unknown>;
+		};
+		readonly mcpInstall?: {
+			getStatus(): McpInstallStatus | Promise<McpInstallStatus>;
+			install(agent: McpAgentId): Promise<McpInstallActionResult>;
+			uninstall(agent: McpAgentId): Promise<McpInstallActionResult>;
+		};
+	};
 }
 
 interface AuthoritySession {
@@ -368,6 +383,20 @@ export class ServerTerminalAuthority {
 			projects: this.fileSessionProjects,
 		});
 		const eventJournal = new OrderedEventJournal();
+		const remoteAccess = options.applicationFeatures?.remoteAccess;
+		const mcpInstall = options.applicationFeatures?.mcpInstall;
+		const payloadText = (request: QueryRequest | CommandRequest, key: string) => {
+			const value = (request.envelope.payload as Record<string, unknown>)[key];
+			if (typeof value !== 'string' || value.length === 0 || value.length > 512)
+				throw new TypeError(`${key} is invalid`);
+			return value;
+		};
+		const remoteCommand = async (request: CommandRequest, operation: string, key?: string) => {
+			if (remoteAccess === undefined) throw new Error('Remote access is unavailable on this server.');
+			const result = await remoteAccess.command(operation, key === undefined ? undefined : payloadText(request, key));
+			eventJournal.append('remote-access.changed', { changed: true });
+			return result as unknown as JsonValue;
+		};
 		const projectEnvironments =
 			options.projectEnvironmentRepository ??
 			new ProjectEnvironmentRepository(
@@ -688,6 +717,13 @@ export class ServerTerminalAuthority {
 					}),
 			operations: {
 				queries: {
+					...(remoteAccess === undefined ? {} : {
+						'remote-access.status': async () => await remoteAccess.getStatus() as unknown as JsonValue,
+						'remote-access.pairing-pin-status': async () => await remoteAccess.command('pairing-pin-status') as JsonValue,
+					}),
+					...(mcpInstall === undefined ? {} : {
+						'mcp-install.status': async () => await mcpInstall.getStatus() as unknown as JsonValue,
+					}),
 					...dictationOperations?.queries,
 					...(options.aiMetadata === undefined
 						? {}
@@ -704,6 +740,18 @@ export class ServerTerminalAuthority {
 						this.getFileMutationRevision(request),
 				},
 				commands: {
+					...(remoteAccess === undefined ? {} : {
+						'remote-access.toggle-server': (request: CommandRequest) => remoteCommand(request, 'toggle-server'),
+						'remote-access.toggle-direct-listener': (request: CommandRequest) => remoteCommand(request, 'toggle-direct-listener'),
+						'remote-access.revoke-device': (request: CommandRequest) => remoteCommand(request, 'revoke-device', 'deviceId'),
+						'remote-access.close-connection': (request: CommandRequest) => remoteCommand(request, 'close-connection', 'connectionId'),
+						'remote-access.set-pairing-address': (request: CommandRequest) => remoteCommand(request, 'set-pairing-address', 'address'),
+						'remote-access.set-pairing-pin': (request: CommandRequest) => remoteCommand(request, 'set-pairing-pin', 'pin'),
+					}),
+					...(mcpInstall === undefined ? {} : {
+						'mcp-install.install': (request: CommandRequest) => mcpInstall.install(payloadText(request, 'agent') as McpAgentId) as unknown as Promise<JsonValue>,
+						'mcp-install.uninstall': (request: CommandRequest) => mcpInstall.uninstall(payloadText(request, 'agent') as McpAgentId) as unknown as Promise<JsonValue>,
+					}),
 					...dictationOperations?.commands,
 					...fileSessionOperations.commands,
 					...fileCatalogOperations.commands,
