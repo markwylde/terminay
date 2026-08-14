@@ -1043,13 +1043,13 @@ export function SettingsWindow({
 	);
 
 	const saveDraft = useCallback(
-		(nextDraft: TerminalSettings) =>
+		(nextDraft: TerminalSettings, optimistic = true) =>
 			runSettingsMutation(
 				() =>
 					settingsClient.update<TerminalSettings>(
 						nextDraft as unknown as import('@terminay/protocol').JsonValue,
 					),
-				nextDraft,
+				optimistic ? nextDraft : undefined,
 			),
 		[runSettingsMutation, settingsClient],
 	);
@@ -1076,7 +1076,11 @@ export function SettingsWindow({
 			const normalizedValue =
 				value.trim().length === 0 ? '' : normalizeAccelerator(value);
 			const nextDraft = setValueAtPath(draftRef.current, key, normalizedValue);
-			await saveDraft(nextDraft);
+			// A captured accelerator is presented as changed only after both the
+			// selected-server mutation and the device-host projection commit. This
+			// prevents closing an isolated Settings window from abandoning a save
+			// that merely looked complete because its draft was optimistic.
+			await saveDraft(nextDraft, false);
 		},
 		[saveDraft],
 	);
