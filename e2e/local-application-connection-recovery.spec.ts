@@ -1,6 +1,11 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 
+// A recovered Desktop connection rebuilds its bounded application bootstrap
+// (handshake plus workspace subscriptions). That bootstrap permits 15 seconds,
+// so a five-second E2E assertion races a healthy but busy CI runner.
+const LOCAL_RECOVERY_TIMEOUT_MS = 20_000;
+
 async function activeSessionId(page: Page): Promise<string> {
 	const sessionId = await page
 		.locator('.terminal-panel:visible')
@@ -12,7 +17,7 @@ async function activeSessionId(page: Page): Promise<string> {
 test('a Local application transport loss recovers without replacing the terminal session', async ({
 	mainWindow,
 }) => {
-	test.setTimeout(30_000);
+	test.setTimeout(45_000);
 	const sessionId = await activeSessionId(mainWindow);
 	const panel = mainWindow.locator(
 		`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
@@ -48,7 +53,7 @@ test('a Local application transport loss recovers without replacing the terminal
 							window as Window & { __terminayServerClientState?: string }
 						).__terminayServerClientState,
 				),
-			{ timeout: 5_000 },
+			{ timeout: LOCAL_RECOVERY_TIMEOUT_MS },
 		)
 		.toBe('connected');
 	await expect(panel).toHaveCount(1);
