@@ -136,7 +136,7 @@ test('destroyed renderer handoff races release ports and stay bounded', () => {
 });
 
 test('Electron destruction callbacks use captured ids and sessions', async () => {
-	const [host, endpoint, main] = await Promise.all([
+	const [host, endpoint, main, diagnostics] = await Promise.all([
 		readFile(
 			new URL('../../../electron/serverUiHost.ts', import.meta.url),
 			'utf8',
@@ -146,14 +146,50 @@ test('Electron destruction callbacks use captured ids and sessions', async () =>
 			'utf8',
 		),
 		readFile(new URL('../../../electron/main.ts', import.meta.url), 'utf8'),
+		readFile(
+			new URL(
+				'../../../electron/diagnostics/electronEvents.ts',
+				import.meta.url,
+			),
+			'utf8',
+		),
 	]);
 	assert.match(host, /const webContentsId = targetWebContents\.id/u);
 	assert.match(host, /const targetSession = targetWebContents\.session/u);
+	assert.match(host, /let targetWebContentsDestroyed = false/u);
 	assert.match(host, /setPermissionCheckHandler\(null\)/u);
 	assert.match(host, /setPermissionRequestHandler\(null\)/u);
+	assert.match(
+		host,
+		/targetWebContents\.once\('destroyed', \(\) => \{\s*targetWebContentsDestroyed = true;[\s\S]{0,100}lifecycle\.release\('window-close'\)/u,
+	);
+	assert.match(
+		host,
+		/if \(targetWebContentsDestroyed\) return;[\s\S]{0,200}targetWebContents\.off/u,
+	);
+	assert.match(
+		host,
+		/denyDownloadForWindow\(webContentsId, event, item, sourceWebContents\)/u,
+	);
 	assert.doesNotMatch(
 		host,
-		/once\('destroyed',[\s\S]{0,180}targetWebContents\.(?:id|session)/u,
+		/once\('destroyed',[\s\S]{0,180}targetWebContents\.(?:id|session|off)/u,
+	);
+	assert.match(
+		main,
+		/app\.on\('web-contents-created', \(_event, contents\) => \{\s*const webContentsId = contents\.id;/u,
+	);
+	assert.doesNotMatch(
+		main,
+		/contents\.once\('destroyed',[\s\S]{0,180}contents\.id/u,
+	);
+	assert.match(
+		diagnostics,
+		/registeredContents\.add\(contents\);\s*const webContentsId = contents\.id;/u,
+	);
+	assert.doesNotMatch(
+		diagnostics,
+		/contents\.once\('destroyed',[\s\S]{0,180}contents\.id/u,
 	);
 	assert.match(endpoint, /current\.release\('reload'\)/u);
 	assert.match(endpoint, /activeRemoteEndpoints\.get\(senderId\)\?\.\(\)/u);
@@ -163,6 +199,12 @@ test('Electron destruction callbacks use captured ids and sessions', async () =>
 		/Promise\.resolve\(\)\s*\.then\(\(\) => activeTransport\.open\(\)\)/u,
 	);
 	assert.match(endpoint, /documentPort\?\.postMessage/u);
+	assert.match(endpoint, /let senderDestroyed = false/u);
+	assert.match(
+		endpoint,
+		/destroyedListener = \(\) => \{\s*senderDestroyed = true;/u,
+	);
+	assert.doesNotMatch(endpoint, /sender\.isDestroyed\(\)/u);
 	assert.equal(
 		(endpoint.match(/handoffDocumentResource\(\{/gu) ?? []).length,
 		2,
