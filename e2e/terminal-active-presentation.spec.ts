@@ -52,11 +52,12 @@ test('a protocol-created terminal launches the configured shell', async ({
 	);
 	await expect(activeTerminal).toContainText(/[$#]\s*$/u);
 	await activeTerminal.locator('.xterm-helper-textarea').focus();
-	await mainWindow.keyboard.insertText('printenv BASH_VERSION');
+	await mainWindow.keyboard.insertText('shopt login_shell');
 	await mainWindow.keyboard.press('Enter');
+	await expect(activeTerminal).toContainText('shopt login_shell');
 	await expect(
 		activeTerminal
 			.locator('.xterm-rows > div')
-			.filter({ hasText: /^\d+\.\d+(?:\.\d+)?(?:\(\d+\)-release)?$/u }),
+			.filter({ hasText: /^login_shell\s+off$/u }),
 	).not.toHaveCount(0);
 });
