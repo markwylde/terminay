@@ -1188,7 +1188,6 @@ const ProjectWorkspace = forwardRef<
 			project,
 			projects,
 			terminalClientContext,
-			adoptedTerminals,
 		},
 		ref,
 	) => {
@@ -1277,23 +1276,11 @@ const ProjectWorkspace = forwardRef<
 						),
 			[terminalClientContext?.applicationClient],
 		);
-		// Latest adopted terminals, read lazily when the workspace seeds so the seed
-		// effect needn't depend on prop identity.
-		const adoptedTerminalsRef = useRef(adoptedTerminals);
-		adoptedTerminalsRef.current = adoptedTerminals;
 		const settingsRef = useRef(settings);
 		useEffect(() => {
 			settingsRef.current = settings;
 		}, [settings]);
 		const dockviewApiRef = useRef<DockviewApi | null>(null);
-		const initialTerminalSeededRef = useRef(false);
-		// Dockview may repeat onReady while React is reconciling its wrapper.
-		// This latch is deliberately independent from the layout's seeded flag,
-		// which Dockview lifecycle resets when a new API instance is published.
-		const initialTerminalSeedStartedRef = useRef(false);
-		const initialTerminalSeedPromiseRef = useRef<Promise<unknown> | null>(null);
-		const [initialTerminalSeedAttempt, setInitialTerminalSeedAttempt] =
-			useState(0);
 		const panelSessionMapRef = useRef<Map<string, string>>(new Map());
 		const terminalContextReadersRef = useRef<
 			Map<string, TerminalContextReader>
@@ -3763,98 +3750,6 @@ const ProjectWorkspace = forwardRef<
 			syncPanelFocusState,
 			terminalActivityTimersRef,
 		});
-
-		useEffect(() => {
-			if (!isDockviewReady) {
-				return;
-			}
-
-			const api = dockviewApiRef.current;
-			if (
-				!api ||
-				initialTerminalSeededRef.current ||
-				initialTerminalSeedStartedRef.current
-			) {
-				return;
-			}
-
-			const hasPanels = api.groups.some((group) => group.panels.length > 0);
-			if (hasPanels) {
-				initialTerminalSeededRef.current = true;
-				return;
-			}
-
-			initialTerminalSeededRef.current = true;
-			initialTerminalSeedStartedRef.current = true;
-			recordBootstrapDiagnostic('app.workspace.seed.begin', 1);
-
-			// Adopted project (popped out / merged): reattach its existing sessions
-			// instead of spawning a brand-new terminal.
-			const adopted = adoptedTerminalsRef.current;
-			if (adopted && adopted.length > 0) {
-				for (const terminal of adopted) {
-					acceptMovedTerminal(terminal);
-				}
-				recordBootstrapDiagnostic('app.workspace.seed.end', 1);
-				return;
-			}
-
-			const serverSnapshot =
-				terminalClientContext?.workspaceSnapshotStore?.snapshot;
-			const serverSessions = Object.values(
-				serverSnapshot?.terminalSessions ?? {},
-			).filter((session) => session.projectId === project.id);
-			if (serverSessions.length > 0) {
-				for (const session of serverSessions) {
-					const serverPanel = Object.values(serverSnapshot?.panels ?? {}).find(
-						(panel) => panel.sessionId === session.id,
-					);
-					if (serverPanel === undefined) continue;
-					acceptServerTerminal(
-						serverPanel.id,
-						session.id,
-						serverPanel.title,
-						serverPanel.cwd,
-					);
-				}
-				recordBootstrapDiagnostic('app.workspace.seed.end', 1);
-				return;
-			}
-
-			recordBootstrapDiagnostic(
-				'app.workspace.seed.before-create',
-			);
-			const seedPromise = new Promise<Awaited<ReturnType<typeof addTerminal>>>(
-				(resolve) => {
-					window.setTimeout(() => resolve(addTerminal({})), 0);
-				},
-			);
-			initialTerminalSeedPromiseRef.current = seedPromise;
-			void seedPromise.then((result) => {
-				if (initialTerminalSeedPromiseRef.current === seedPromise) {
-					initialTerminalSeedPromiseRef.current = null;
-				}
-				if (result === null && initialTerminalSeedAttempt < 1) {
-					// One bounded retry recovers a transient transport failure without
-					// turning repeated Dockview readiness into a create loop.
-					initialTerminalSeedStartedRef.current = false;
-					initialTerminalSeededRef.current = false;
-					setInitialTerminalSeedAttempt((attempt) => attempt + 1);
-				}
-				recordBootstrapDiagnostic(
-					'app.workspace.seed.after-create',
-					result === null ? 0 : 1,
-				);
-			});
-		}, [
-			acceptMovedTerminal,
-			acceptServerTerminal,
-			addTerminal,
-			initialTerminalSeedAttempt,
-			isDockviewReady,
-			project.id,
-			terminalClientContext?.workspaceSnapshotStore,
-		]);
 
 		useEffect(() => {
 			const onOpenFileEvent = (event: Event) => {
