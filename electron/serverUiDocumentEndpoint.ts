@@ -257,7 +257,12 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 				startTransport();
 			} catch (error) {
 				options.diagnostic?.('remote-reconnect', boundedMessage(error));
-				closeConnection();
+				// A server may be briefly unavailable while it restarts. Keep this
+				// Desktop-owned endpoint dormant so the next real document boundary
+				// can make one fresh, credential-protected reconnect attempt. Retrying
+				// here would spin against an unavailable server; closing would discard
+				// the only main-process owner able to reconnect after a reload.
+				transportReady = false;
 			} finally {
 				reconnecting = undefined;
 			}
