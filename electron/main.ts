@@ -40,7 +40,6 @@ import {
 	safeStorage,
 	screen,
 	shell,
-	systemPreferences,
 	webContents,
 } from 'electron';
 import WebSocket from 'ws';
@@ -51,6 +50,7 @@ import {
 	DesktopServerBundleHost,
 } from '../apps/terminay-desktop/src/main/serverBundleHost';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
+import { ParakeetRuntime } from '../packages/server-core/src/aiService/parakeetRuntime';
 import {
 	FileProjectEnvironmentStateBackend,
 	ProjectEnvironmentRepository,
@@ -101,7 +101,6 @@ import type {
 	TerminalRecordingStartMetadata,
 	TerminalRecordingState,
 } from '../src/types/terminay';
-import { registerAiTabMetadataIpcHandlers } from './aiTabMetadata/ipc';
 import {
 	AiTabMetadataService,
 	warmAiTabMetadataProviderEnv,
@@ -136,9 +135,6 @@ import {
 	bindFatalProcessDiagnostics,
 	initializeDesktopDiagnostics,
 } from './diagnostics/service';
-import { registerDictationIpcHandlers } from './dictation/ipc';
-import { ParakeetRuntime } from './dictation/parakeetRuntime';
-import { DictationService } from './dictation/service';
 import { normalizeExternalHttpsUrl } from './externalUrl';
 import { FileExplorerWatchService } from './fileExplorerWatchService';
 import { FileBufferService } from './fileViewer/fileBufferService';
@@ -687,11 +683,6 @@ const gitDiffService = new GitDiffService(fileBufferService);
 const aiTabMetadataService = new AiTabMetadataService(app.getPath('home'));
 const parakeetRuntime = new ParakeetRuntime({
 	rootDirectory: path.join(app.getPath('userData'), 'dictation', 'parakeet'),
-});
-const dictationService = new DictationService({
-	apiKeyProvider: () => readDictationOpenAiKey(),
-	providerProvider: () => readTerminalSettings().dictation.provider,
-	parakeetRuntime,
 });
 const quickPushService = new QuickPushService(aiTabMetadataService);
 warmAiTabMetadataProviderEnv();
@@ -1590,122 +1581,6 @@ function readSecrets(): SecretRecord[] {
 function writeSecrets(secrets: SecretRecord[]): void {
 	mkdirSync(path.dirname(getSecretsPath()), { recursive: true });
 	writeFileSync(getSecretsPath(), JSON.stringify(secrets, null, 2));
-}
-
-function getDictationOpenAiSecret(
-	secrets = readSecrets(),
-): SecretRecord | null {
-	return (
-		secrets.find(
-			(secret) =>
-				secret.id === DICTATION_OPENAI_SECRET_ID ||
-				secret.name === DICTATION_OPENAI_SECRET_NAME,
-		) ?? null
-	);
-}
-
-function getDictationOpenAiKeyStatus(): { configured: boolean } {
-	return { configured: getDictationOpenAiSecret() !== null };
-}
-
-function getDictationMicrophonePermissionStatus():
-	| 'not-determined'
-	| 'granted'
-	| 'denied'
-	| 'restricted'
-	| 'unknown' {
-	if (process.platform !== 'darwin') {
-		return 'granted';
-	}
-
-	return systemPreferences.getMediaAccessStatus('microphone');
-}
-
-async function requestDictationMicrophonePermission(): Promise<
-	'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown'
-> {
-	if (process.platform !== 'darwin') {
-		return 'granted';
-	}
-
-	const currentStatus = systemPreferences.getMediaAccessStatus('microphone');
-	if (
-		currentStatus === 'granted' ||
-		currentStatus === 'denied' ||
-		currentStatus === 'restricted'
-	) {
-		return currentStatus;
-	}
-
-	const granted = await systemPreferences.askForMediaAccess('microphone');
-	return granted
-		? 'granted'
-		: systemPreferences.getMediaAccessStatus('microphone');
-}
-
-function saveDictationOpenAiKey(apiKey: string): { configured: boolean } {
-	const trimmedApiKey = apiKey.trim();
-	if (!trimmedApiKey) {
-		throw new Error('OpenAI API key is required.');
-	}
-
-	if (!safeStorage.isEncryptionAvailable()) {
-		throw new Error('Encryption is not available on this system.');
-	}
-
-	const secrets = readSecrets();
-	const encryptedValue = safeStorage
-		.encryptString(trimmedApiKey)
-		.toString('base64');
-	const existingIndex = secrets.findIndex(
-		(secret) =>
-			secret.id === DICTATION_OPENAI_SECRET_ID ||
-			secret.name === DICTATION_OPENAI_SECRET_NAME,
-	);
-	const record: SecretRecord = {
-		id: DICTATION_OPENAI_SECRET_ID,
-		name: DICTATION_OPENAI_SECRET_NAME,
-		encryptedValue,
-	};
-
-	if (existingIndex === -1) {
-		secrets.push(record);
-	} else {
-		secrets[existingIndex] = record;
-	}
-
-	writeSecrets(secrets);
-	return { configured: true };
-}
-
-function clearDictationOpenAiKey(): boolean {
-	const secrets = readSecrets();
-	const nextSecrets = secrets.filter(
-		(secret) =>
-			secret.id !== DICTATION_OPENAI_SECRET_ID &&
-			secret.name !== DICTATION_OPENAI_SECRET_NAME,
-	);
-	if (nextSecrets.length === secrets.length) {
-		return false;
-	}
-
-	writeSecrets(nextSecrets);
-	return true;
-}
-
-function readDictationOpenAiKey(): string | null {
-	if (!safeStorage.isEncryptionAvailable()) {
-		throw new Error('Encryption is not available on this system.');
-	}
-
-	const secret = getDictationOpenAiSecret();
-	if (!secret) {
-		return null;
-	}
-
-	return safeStorage.decryptString(
-		Buffer.from(secret.encryptedValue, 'base64'),
-	);
 }
 
 function shellEscapePath(pathValue: string): string {
@@ -6117,25 +5992,6 @@ registerFileViewerIpcHandlers({
 	fileWatchService,
 	gitDiffService,
 	ipcMain,
-});
-
-registerAiTabMetadataIpcHandlers({
-	assertTrustedSender: assertTrustedAppSender,
-	aiTabMetadataService,
-	ipcMain,
-});
-
-registerDictationIpcHandlers({
-	assertTrustedSender: assertTrustedAppSender,
-	clearOpenAiKey: clearDictationOpenAiKey,
-	dictationService,
-	getParakeetStatus: () => parakeetRuntime.getStatus(),
-	installParakeet: () => parakeetRuntime.install(),
-	getMicrophonePermissionStatus: getDictationMicrophonePermissionStatus,
-	getOpenAiKeyStatus: getDictationOpenAiKeyStatus,
-	ipcMain,
-	requestMicrophonePermission: requestDictationMicrophonePermission,
-	saveOpenAiKey: saveDictationOpenAiKey,
 });
 
 registerQuickPushIpcHandlers({
