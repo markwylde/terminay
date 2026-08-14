@@ -7,8 +7,6 @@ const DISCONNECTED_ALLOWLIST = [
   /^src\/compatibility\//u,
   /^src\/remote\/services\//u,
   /^src\/services\/[^/]+\/legacy[^/]*\.[cm]?[jt]sx?$/u,
-  /^src\/services\/fileViewer\/disconnected[^/]*\.[cm]?[jt]sx?$/u,
-  /^src\/services\/fileViewer\/terminayFileGateway\.ts$/u,
 ]
 
 // Native presentation surfaces do not own application state and are allowed.
@@ -63,10 +61,7 @@ export async function auditOneServerModel(root = process.cwd()) {
         const host = match[1]
         if (PRESENTATION_HOSTS.has(host)) continue
         if (AUTHORITY_HOSTS.has(host)) {
-          // Resolving a dropped browser File into a native path is a
-          // user-gesture presentation bridge, not filesystem authority.
-          if (host === 'terminayFileExplorerHost' && line.includes('resolveDroppedFilePath')) continue
-          violations.push({ path, line: index + 1, symbol: host, source: line.trim() })
+		  violations.push({ path, line: index + 1, symbol: host, source: line.trim() })
         }
       }
       for (const symbol of COMPATIBILITY_SYMBOLS) {

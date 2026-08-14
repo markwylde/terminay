@@ -2,8 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-const gateway = await readFile('src/services/fileViewer/terminayFileGateway.ts', 'utf8')
-const compatibility = await readFile('src/services/fileViewer/legacyFileViewerTransport.ts', 'utf8')
+const gateway = await readFile('src/services/fileViewer/serverFileGateway.ts', 'utf8')
 const performantTextViewer = await readFile('src/components/file-viewer/modes/PerformantTextViewer.tsx', 'utf8')
 const filePanel = await readFile('src/components/file-viewer/FilePanel.tsx', 'utf8')
 const settingsHook = await readFile('src/hooks/useTerminalSettings.ts', 'utf8')
@@ -11,27 +10,19 @@ const recordingsWindow = await readFile('src/components/RecordingsWindow.tsx', '
 const app = await readFile('src/App.tsx', 'utf8')
 const recordingController = await readFile('src/workspace/useTerminalRecordingController.ts', 'utf8')
 
-test('file diff UI path uses the shared client facade with an injected narrow compatibility capability', () => {
+test('file diff UI path uses only the canonical selected-server client', () => {
   assert.match(gateway, /FileViewerClient/)
-  assert.match(gateway, /fileViewerClient\.getGitDiff/)
+  assert.match(gateway, /options\.client\.getGitDiff/)
   assert.doesNotMatch(gateway, /window\.terminay\.getGitDiff/)
-  assert.match(compatibility, /createLegacyFileViewerTransport\(api: LegacyFileViewerApi\)/)
-  assert.match(compatibility, /api\.getGitDiff\(path\)/)
-  assert.doesNotMatch(compatibility, /window\.terminay/)
-  assert.match(compatibility, /Compatibility-only adapter/)
+	assert.doesNotMatch(gateway, /compatibilityGateway|legacyFileViewerTransport/)
 })
 
-test('performant text viewer uses shared ranged text queries, with preload isolated to compatibility adapter', () => {
+test('performant text viewer uses shared ranged text queries', () => {
   assert.match(performantTextViewer, /fileViewerClient: FileViewerClient/)
-  assert.match(performantTextViewer, /\.getTextMetadata\(/)
-  assert.match(performantTextViewer, /\.readTextLines\(/)
+	assert.match(performantTextViewer, /\.getServerTextMetadata\(/)
+	assert.match(performantTextViewer, /\.readServerTextLines\(/)
   assert.doesNotMatch(performantTextViewer, /window\.terminay\.getFileTextMetadata/)
   assert.doesNotMatch(performantTextViewer, /window\.terminay\.readFileTextLines/)
-  assert.match(compatibility, /file\.text-metadata/)
-  assert.match(compatibility, /file\.text-lines/)
-  assert.match(compatibility, /api\.getFileTextMetadata/)
-  assert.match(compatibility, /api\.readFileTextLines/)
-  assert.doesNotMatch(compatibility, /window\.terminay/)
 })
 
 test('terminal settings hook uses the selected server SettingsClient', () => {
@@ -42,15 +33,15 @@ test('terminal settings hook uses the selected server SettingsClient', () => {
   assert.doesNotMatch(settingsHook, /window\.terminay\.onTerminalSettingsChanged/)
 })
 
-test('file panel uses shared file/settings clients, with preload isolated to adapters', () => {
-  assert.match(filePanel, /disconnectedFilePanelCompatibility\.createClient\(\)/)
-  assert.match(filePanel, /\.getTextMetadata\(/)
-  assert.match(filePanel, /\.readTextLines\(/)
+test('file panel uses selected-server file/settings clients and no compatibility adapter', () => {
+	assert.match(filePanel, /terminalClientContext\.fileViewerClient/)
+	assert.match(filePanel, /\.getServerTextMetadata\(/)
+	assert.match(filePanel, /\.readServerTextLines\(/)
   assert.match(filePanel, /\.saveSparseFile\(/)
   assert.match(filePanel, /useTerminalSettings\(\)/)
   assert.match(filePanel, /settingsClient\.update\(/)
   assert.doesNotMatch(filePanel, /window\.terminay\./)
-  assert.match(compatibility, /file\.save-sparse/)
+	assert.doesNotMatch(filePanel, /DisconnectedFileCompatibility|disconnectedFilePanelCompatibility/)
 })
 
 test('recordings timeline requires the selected server shared client with no compatibility adapter', () => {

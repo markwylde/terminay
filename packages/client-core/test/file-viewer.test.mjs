@@ -53,6 +53,18 @@ test("FileViewerClient lists a bounded server-authorized folder page", async () 
   assert.deepEqual(calls, [{ operation: "files.list", payload: { path: "docs", projectId: "project-a" } }]);
 });
 
+test("FileViewerClient rejects unscoped Explorer queries before transport", async () => {
+  let transportCalls = 0;
+  const client = new FileViewerClient({
+    async query() { transportCalls += 1; throw new Error("must not reach transport"); },
+    async command() { transportCalls += 1; throw new Error("must not reach transport"); },
+  });
+  await assert.rejects(() => client.listFolder("docs"), /project id is required/);
+  await assert.rejects(() => client.searchFolder("docs", "readme"), /project id is required/);
+  await assert.rejects(() => client.createDirectory("docs"), /project id is required/);
+  assert.equal(transportCalls, 0);
+});
+
 test("FileViewerClient sends canonical catalog mutation commands", async () => {
   const commands = [];
   const client = new FileViewerClient({
@@ -115,7 +127,7 @@ test("capability validation rejects an unsafe server snapshot that claims previe
     async query() { return capability({ previewKind: "unsupported", safePreview: true }); },
     async command() { return null; },
   });
-  await assert.rejects(() => client.getCapabilities("archive.bin"), /capability is inconsistent/);
+  await assert.rejects(() => client.getCapabilities("archive.bin", "project-a"), /capability is inconsistent/);
 });
 
 test("FileViewerClient streams bounded large-text and binary ranges with resumable offsets", async () => {

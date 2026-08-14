@@ -11,7 +11,7 @@ test('connected renderer authority boundary remains at the exact-zero baseline',
   assert.deepEqual(current, [], `connected renderer authority violations:\n${JSON.stringify(current, null, 2)}`)
 })
 
-test('audit distinguishes canonical clients, presentation hosts, and disconnected compatibility modules', async () => {
+test('audit distinguishes canonical clients and presentation hosts without compatibility exemptions', async () => {
   const root = await mkdtemp(join(process.cwd(), '.one-server-boundary-'))
   test.after(async () => rm(root, { recursive: true, force: true }))
   await mkdir(join(root, 'src/components'), { recursive: true })
@@ -33,5 +33,6 @@ test('audit distinguishes canonical clients, presentation hosts, and disconnecte
   assert.deepEqual(violations.map(({ path, line, symbol }) => ({ path, line, symbol })), [
     { path: 'src/App.tsx', line: 3, symbol: 'terminayFileExplorerHost' },
     { path: 'src/components/Panel.tsx', line: 2, symbol: 'createLegacyFileViewerClient' },
+	{ path: 'src/components/Panel.tsx', line: 3, symbol: 'terminayFileExplorerHost' },
   ])
 })
