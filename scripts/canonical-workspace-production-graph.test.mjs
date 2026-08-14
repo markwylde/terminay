@@ -48,7 +48,10 @@ test('development watches the same generated server workspace used by releases',
 	assert.match(serverUiConfig, /writeBundle\(\)/u);
 	assert.match(serverUiConfig, /buildUiBundleManifest/u);
 	assert.match(serverUiConfig, /manifestPublication\.then/u);
-	assert.match(manifestBuilder, /rename\(temporaryManifestPath, manifestPath\)/u);
+	assert.match(
+		manifestBuilder,
+		/rename\(temporaryManifestPath, manifestPath\)/u,
+	);
 	assert.doesNotMatch(
 		packageJson.scripts['build:server-ui'],
 		/build-ui-bundle-manifest/u,
@@ -79,11 +82,29 @@ test('the packaged graph excludes superseded preload and MCP adapters', async ()
 test('direct and WebRTC remote connections both launch the canonical server bundle', async () => {
 	const main = await read('electron/main.ts');
 	const server = await read('apps/terminay-server/src/localUiServer.ts');
+	const presentation = main.slice(
+		main.indexOf('async function presentCanonicalAuxiliaryRoute('),
+		main.indexOf('\nasync function openEmbeddedWorkspaceWithRecovery'),
+	);
+	const httpLaunch = main.slice(
+		main.indexOf('async function prepareCanonicalHttpRemoteLaunch('),
+		main.indexOf('\nfunction bindServerUiWindow'),
+	);
 	assert.doesNotMatch(main, /function connectRemoteByteTransport/u);
 	assert.doesNotMatch(main, /postMessage\(\s*'server:connection'/u);
-	assert.match(main, /prepareCanonicalHttpRemoteLaunch/u);
-	assert.match(main, /openCanonicalHttpRemoteServerWindow/u);
-	assert.match(main, /remoteServerUiBundleHost\.prepareRemote/u);
+	assert.match(presentation, /createDesktopReconnectTransport/u);
+	assert.match(presentation, /prepareCanonicalHttpRemoteLaunch/u);
+	assert.match(presentation, /createDesktopBootstrappedWebRtcConnection/u);
+	assert.match(presentation, /remoteServerUiBundleHost\.prepareRemote/u);
+	assert.match(presentation, /serverUiLaunch:\s*launch/u);
+	assert.match(
+		presentation,
+		/serverUiTransport:\s*(?:connected|webRtc)\.transport/u,
+	);
+	assert.match(httpLaunch, /new URL\('\/host-bootstrap\.json', origin\)/u);
+	assert.match(httpLaunch, /bootstrap\.manifestPath !== '\/manifest\.json'/u);
+	assert.match(httpLaunch, /bootstrap\.streamPath !== '\/protocol\/stream'/u);
+	assert.match(httpLaunch, /remoteServerUiBundleHost\.prepareRemote/u);
 	assert.match(server, /\/host-bootstrap\.json/u);
 });
 
@@ -94,8 +115,25 @@ test('renderer-owned workspace seeding is absent from Desktop production code', 
 	assert.match(main, /workspace\.v3\.json/u);
 	assert.match(main, /openCanonicalWorkspace/u);
 	assert.match(main, /workspaceRepository:\s*embeddedWorkspace/u);
-	const initialize = main.indexOf('await serverTerminalAuthority.initializeWorkspace()');
-	const ready = main.indexOf("event: 'local-server.ready'");
-	const create = main.lastIndexOf('createWindow();');
-	assert.ok(initialize >= 0 && initialize < ready && ready < create);
+	const runtime = main.slice(
+		main.indexOf('async function prepareEmbeddedRuntime()'),
+		main.indexOf('\nasync function presentCanonicalAuxiliaryRoute('),
+	);
+	assert.match(runtime, /createWindow\(\{ deferCanonicalLaunch: true \}\)/u);
+	assert.match(
+		runtime,
+		/openEmbeddedWorkspaceWithRecovery\(embeddedStartupWindow\)/u,
+	);
+	const initialize = runtime.indexOf('() => authority.initializeWorkspace()');
+	const publish = runtime.indexOf('serverTerminalAuthority = authority');
+	assert.ok(initialize >= 0 && initialize < publish);
+	const readiness = main.slice(
+		main.indexOf('app.whenReady().then(async () => {'),
+	);
+	const awaitRuntime = readiness.indexOf('await embeddedRuntimeReady');
+	const ready = readiness.indexOf("event: 'local-server.ready'");
+	const launch = readiness.indexOf(
+		'await launchDeferredCanonicalWindow(embeddedStartupWindow)',
+	);
+	assert.ok(awaitRuntime >= 0 && awaitRuntime < ready && ready < launch);
 });
