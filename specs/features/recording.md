@@ -177,6 +177,12 @@ The timeline lists recordings newest first and supports:
 Missing or malformed metadata does not crash the timeline. A valid cast can be
 shown with reduced metadata; missing cast data is shown as unavailable.
 
+The timeline and terminal recording controls require the selected server's
+canonical `RecordingsClient`. They never consult a Desktop recording-service
+global, translate legacy host method names, or subscribe to a host-local
+recording state stream. Missing selected-server capability is a typed
+unavailable state; canonical workspace reconciliation owns recording state.
+
 Deleting a recording is explicit and cannot escape the configured recording
 roots. It does not close or alter a live terminal. Deleting an actively written
 recording requires stopping it first or confirming a combined stop-and-delete

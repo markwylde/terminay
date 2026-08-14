@@ -4,8 +4,11 @@ import {
 	type TerminayClient,
 } from '@terminay/client-core';
 import type { JsonValue } from '@terminay/protocol';
+import {
+	MacroSettingsUnavailableError,
+	type MacroSettingsClient,
+} from '../hooks/useMacroSettings';
 import type { TerminalSettingsClient } from '../hooks/useTerminalSettings';
-import type { LegacyMacroSettingsCapability } from '../services/macros/legacyMacroSettingsCapability';
 import { defaultTerminalSettings, normalizeTerminalSettings } from '../terminalSettings';
 import type { MacroDefinition } from '../types/macros';
 
@@ -56,9 +59,9 @@ export function createBrowserTerminalSettingsClient(): TerminalSettingsClient {
 
 /** Macro definitions remain server-owned in a connected browser. Native secret
  * storage is capability-gated: the browser exposes no secret mutation surface. */
-export function createBrowserMacroSettingsCapability(
+export function createBrowserMacroSettingsClient(
 	client: TerminayClient,
-): LegacyMacroSettingsCapability {
+): MacroSettingsClient {
 	const macros = new MacroClient(new TerminayClientFacade(client));
 	return Object.freeze({
 		async getMacros() {
@@ -79,13 +82,19 @@ export function createBrowserMacroSettingsCapability(
 			return [];
 		},
 		async getDecryptedSecret() {
-			throw new Error('Browser secret storage is unavailable');
+			throw new MacroSettingsUnavailableError(
+				'Secret storage is unavailable on the selected server.',
+			);
 		},
 		async saveSecret() {
-			throw new Error('Browser secret storage is unavailable');
+			throw new MacroSettingsUnavailableError(
+				'Secret storage is unavailable on the selected server.',
+			);
 		},
 		async deleteSecret() {
-			throw new Error('Browser secret storage is unavailable');
+			throw new MacroSettingsUnavailableError(
+				'Secret storage is unavailable on the selected server.',
+			);
 		},
 	});
 }
