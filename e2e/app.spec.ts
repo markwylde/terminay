@@ -108,7 +108,7 @@ test('opens and closes the file explorer sidebar', async ({ mainWindow }) => {
 
 test('opens the settings window', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
-    await presentNativeRoute(mainWindow, '/settings', 'settings')
+    await presentNativeRoute(mainWindow, '/?auxiliary=settings', 'settings')
   })
 
   await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
@@ -117,7 +117,7 @@ test('opens the settings window', async ({ electronApp, mainWindow }) => {
 
 test('captures and resets command shortcuts in settings', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
-    await presentNativeRoute(mainWindow, '/settings', 'settings')
+    await presentNativeRoute(mainWindow, '/?auxiliary=settings', 'settings')
   })
 
   await settingsWindow.getByRole('button', { name: /Shortcuts/ }).click()
@@ -154,7 +154,7 @@ test('captures and resets command shortcuts in settings', async ({ electronApp, 
 
 test('updates menu accelerators when command shortcuts are cleared and reset', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
-    await presentNativeRoute(mainWindow, '/settings', 'settings')
+    await presentNativeRoute(mainWindow, '/?auxiliary=settings', 'settings')
   })
 
   await settingsWindow.getByRole('button', { name: /Shortcuts/ }).click()
