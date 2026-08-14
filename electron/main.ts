@@ -592,6 +592,56 @@ function selectedSafeStorageBackend(): string | undefined {
 // macros / recordings / edit windows. Multi-window project tabs are peers.
 const appWindows = new Set<BrowserWindow>();
 const workspaceViewByWebContents = new Map<number, string>();
+// A server-UI document has exactly one opaque byte endpoint.  Rebinding a
+// Desktop window from Local to a paired server must retire the Local endpoint
+// before the new preload announces readiness; otherwise both endpoint owners
+// can race to deliver a port and the new document can reconnect to Local.
+const documentEndpointUnbindByWebContents = new Map<number, () => void>();
+
+function sanitizedDesktopConnectionProfiles(selectedProfileId: string): Readonly<{
+	profile: Readonly<{
+		id: string;
+		isLocal: boolean;
+		label: string;
+		status: 'connected' | 'offline' | 'unavailable';
+	}>;
+	profiles: readonly Readonly<{
+		id: string;
+		isLocal: boolean;
+		label: string;
+		status: 'connected' | 'offline' | 'unavailable';
+	}>[];
+}> {
+	loadRememberedRemoteConnections();
+	const profiles = [
+		{
+			id: LocalServerUiSession.profileId,
+			isLocal: true,
+			label: 'Local',
+			status: selectedProfileId === LocalServerUiSession.profileId
+				? ('connected' as const)
+				: ('offline' as const),
+		},
+		...[...rememberedRemoteConnections.values()]
+			.sort((left, right) => left.label.localeCompare(right.label))
+			.map((remote) => ({
+				id: remote.id,
+				isLocal: false,
+				label: remote.label,
+				status:
+					remote.id === selectedProfileId
+						? ('connected' as const)
+						: ('offline' as const),
+			})),
+	];
+	const profile = profiles.find((candidate) => candidate.id === selectedProfileId);
+	if (profile === undefined)
+		throw new Error('The Desktop window profile is unavailable.');
+	return Object.freeze({
+		profile: Object.freeze(profile),
+		profiles: Object.freeze(profiles.map((candidate) => Object.freeze(candidate))),
+	});
+}
 
 function getRunningTerminalCount(): number {
 	const authority = serverTerminalAuthority;
@@ -2766,6 +2816,8 @@ function createWindow(options?: {
 	}
 
 	window.on('closed', () => {
+		documentEndpointUnbindByWebContents.get(windowWebContentsId)?.();
+		documentEndpointUnbindByWebContents.delete(windowWebContentsId);
 		releaseServerUiWindowBinding(
 			windowWebContentsId,
 			isQuitting ? 'application-quit' : 'window-close',
@@ -2841,15 +2893,24 @@ function createWindow(options?: {
 		transport?: ByteTransport,
 	): Promise<void> => {
 				if (window.isDestroyed()) return;
+				documentEndpointUnbindByWebContents.get(windowWebContentsId)?.();
+				documentEndpointUnbindByWebContents.delete(windowWebContentsId);
 				const entryUrl = pathToFileURL(path.join(launch.assetRoot, launch.entryPath));
 				if (options?.auxiliary !== undefined) {
 					const requested = new URL(options.auxiliary.route, 'https://terminay.invalid');
 					entryUrl.search = requested.search;
 				}
 				if (options?.workspaceViewId) entryUrl.hash = `view=${encodeURIComponent(options.workspaceViewId)}`;
+				const connectionProfiles = sanitizedDesktopConnectionProfiles(
+					launch.context.profileId,
+				);
 				bindServerUiWindow({
 					window,
-					context: launch.context,
+					context: {
+						...launch.context,
+						profile: connectionProfiles.profile,
+						profiles: connectionProfiles.profiles,
+					},
 					expectedOrigin: entryUrl.toString(),
 					hostPartitionKey: launch.partitionKey,
 					initialUrl: entryUrl.toString(),
@@ -2930,7 +2991,7 @@ function createWindow(options?: {
 				};
 				const targetWebContents = window.webContents;
 				if (transport !== undefined) {
-					bindRemoteServerUiDocumentEndpoint({
+					const unbindEndpoint = bindRemoteServerUiDocumentEndpoint({
 						diagnostic: endpointDiagnostic,
 						launch,
 						reconnect: () =>
@@ -2940,11 +3001,19 @@ function createWindow(options?: {
 						sender: targetWebContents,
 						transport,
 					});
+					documentEndpointUnbindByWebContents.set(
+						windowWebContentsId,
+						unbindEndpoint,
+					);
 				} else if (serverTerminalAuthority !== null) {
-					bindLocalServerUiDocumentEndpoint({
+					const unbindEndpoint = bindLocalServerUiDocumentEndpoint({
 						acceptPort: (port) => serverTerminalAuthority?.acceptRendererPort(port as unknown as ServerMessagePort),
 						diagnostic: endpointDiagnostic, handle: launch.byteEndpointHandle, sender: targetWebContents,
 					});
+					documentEndpointUnbindByWebContents.set(
+						windowWebContentsId,
+						unbindEndpoint,
+					);
 				}
 				await window.loadURL(entryUrl.toString());
 				if (options?.deferCanonicalLaunch === true && !window.isDestroyed()) window.show();
