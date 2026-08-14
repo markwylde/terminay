@@ -6,7 +6,6 @@ import {
 	expect,
 	test,
 	type ElectronApplication,
-	type Page,
 } from '@playwright/test';
 
 type RuntimeEvidence = Readonly<{

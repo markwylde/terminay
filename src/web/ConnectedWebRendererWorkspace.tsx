@@ -317,8 +317,7 @@ export function ConnectedWebRendererWorkspace({
 			/>
 		) : (
 			<TerminalSettingsClientProvider client={settingsClient}>
-			<>
-					{route.kind === 'settings' ? (
+				{route.kind === 'settings' ? (
 						<SettingsWindow
 							applicationClient={applicationClient}
 							aiTabMetadataClient={aiMetadataClient}
@@ -336,8 +335,7 @@ export function ConnectedWebRendererWorkspace({
 						<MacrosWindow macroSettingsClient={macroSettingsClient} />
 					) : (
 						<RecordingsWindow client={recordingsClient} />
-					)}
-			</>
+				)}
 			</TerminalSettingsClientProvider>
 		);
 
