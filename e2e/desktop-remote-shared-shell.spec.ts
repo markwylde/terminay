@@ -118,7 +118,11 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 		await dialog
 			.getByRole('button', { name: 'Continue pairing', exact: true })
 			.click();
-		await expect(dialog).toHaveCount(0);
+		// Establishing the authenticated client also hydrates the selected server's
+		// verified bundle.  Assert the actual handoff rather than treating the
+		// local connection-manager shell disappearing within Playwright's short
+		// default as the connection contract.
+		await expect(dialog).toHaveCount(0, { timeout: 20_000 });
 
 		const remoteHost = new URL(readiness.protocolEndpoint).host;
 		await expect(mainWindow.getByLabel('Open connection menu')).toContainText(
