@@ -223,7 +223,7 @@ test('direct-browser and manager launches accept Firefox, Chromium, and reduced 
 		'TerminayBrowser/1.0',
 		'Mozilla/5.0 Chrome/999.0.0.0 Safari/537.36 Terminay-spoof',
 	];
-	for (const userAgent of userAgents) {
+	for (const [userAgentIndex, userAgent] of userAgents.entries()) {
 		const capabilities = negotiateBrowserHostCapabilities({
 			// A user agent is deliberately irrelevant to negotiation. Keeping it on
 			// the platform fixture makes this a regression test against brand gates.
@@ -241,7 +241,7 @@ test('direct-browser and manager launches accept Firefox, Chromium, and reduced 
 				manifest: selected.manifest,
 				expectedServerId: 'server-prod',
 				sessionOrigin: 'https://prod.example.test',
-				context: context(selected.manifest.bundleId, { sourceId: `${kind}-${userAgent}` }),
+				context: context(selected.manifest.bundleId, { sourceId: `${kind}-${userAgentIndex}` }),
 				endpoint: endpoint(),
 				readAsset: async (path) => selected.assets.get(path),
 			});

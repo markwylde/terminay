@@ -47,7 +47,7 @@ disconnecting existing peers; expired, consumed, and locked rooms are bounded
 and reclaimed.
 
 The isolated browser host supports current Chromium and Firefox releases when
-they provide the declared execution-runtime and host capabilities. It
+they provide the declared protocol/schema revisions and host capabilities. It
 capability-negotiates those requirements before running server-provided assets;
 browser brand, user-agent string, and browser-version ranges must never gate
 startup or authorize compatibility. A user agent may be retained only for

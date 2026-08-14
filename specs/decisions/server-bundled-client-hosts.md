@@ -95,7 +95,7 @@ The bundle manifest binds the immutable asset inventory to:
 
 - bundle format and id;
 - server and application-protocol versions;
-- minimum execution-runtime requirements;
+- bootstrap, bundle-format, and host-bridge revision requirements;
 - supported host-bridge range; and
 - required and optional host capabilities.
 
@@ -155,7 +155,7 @@ Cross-version launch checks five smaller boundaries independently:
 2. framed byte-transport ABI and negotiated resource limits;
 3. bundle manifest and asset-transfer format;
 4. host-bridge version plus required capabilities; and
-5. browser/Electron execution-runtime support.
+5. required and optional host capabilities.
 
 Optional capability mismatch is not a connection failure. The shared UI uses
 browser-equivalent in-page behavior or presents a clear unavailable action.
@@ -167,7 +167,7 @@ An incompatible required boundary fails before the new connection/window is
 committed and reports whether the Server, Desktop, or hosted bootstrap must be
 upgraded. Hosts publish and retain a bounded compatibility window for deployed
 server bundles; compatibility is not an unbounded promise that every historic
-JavaScript bundle runs on every future Chromium runtime.
+bundle runs on every future browser implementation.
 
 ## Exposure consequence
 
@@ -217,7 +217,7 @@ QR is offered to a new device.
 - An older compatible Desktop shell launches a newer fixture bundle whose
   application operation names it does not recognize, proving opaque forwarding.
 - Missing optional host capabilities retain a usable workspace; missing
-  required bridge/runtime compatibility fails before launch with a typed error.
+required revision/capability compatibility fails before launch with a typed error.
 - A hostile bundle cannot obtain Node, generic IPC, credentials, another
   profile's partition/cache, or arbitrary native-window authority.
 - Restarting either host reconstructs workspace exclusively from server state

@@ -28,7 +28,7 @@ test('Electron detaches authority consumers when a renderer is destroyed', async
 
   assert.match(
     main,
-    /app\.on\('web-contents-created',[\s\S]*?contents\.once\('destroyed',[\s\S]*?detachSessionsForWebContents\(contents\.id\)/u,
+    /app\.on\('web-contents-created',[\s\S]*?const webContentsId = contents\.id;[\s\S]*?contents\.once\('destroyed',[\s\S]*?detachSessionsForWebContents\(webContentsId\)/u,
   )
   assert.match(
     main,
