@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const main = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
 const preload = await readFile(
-	new URL('../electron/preload.ts', import.meta.url),
+	new URL('../electron/serverUiPreload.ts', import.meta.url),
 	'utf8',
 );
 const authority = await readFile(
@@ -49,26 +49,13 @@ test('embedded vault unlock occurs after Electron readiness and before Local ser
 	assert.equal(main.indexOf('await embeddedVault.unlock', 0), unlock);
 });
 
-test('renderer root reporting is a narrow versioned and trusted semantic channel', () => {
-	assert.match(
-		preload,
-		/contextBridge\.exposeInMainWorld\(\s*'terminayDiagnosticsHost'/u,
-	);
-	assert.match(
-		preload,
-		/'desktop:diagnostics-host:report-root-error'/u,
-	);
-	assert.doesNotMatch(
-		preload,
-		/terminayDiagnosticsHost[\s\S]{0,800}(?:readFile|writeFile|openPath|clear|reveal)/u,
-	);
-	const handler = main.slice(
-		main.indexOf("'desktop:diagnostics-host:report-root-error'"),
-		main.indexOf("app.on('browser-window-created'"),
-	);
-	assert.match(handler, /assertTrustedAppSender\(event\)/u);
-	assert.match(handler, /rendererRootDiagnosticKeys/u);
-	assert.match(handler, /event: 'renderer.root-error'/u);
+test('canonical preload exposes only negotiated host actions and bounded server bytes', () => {
+	assert.match(preload, /exposeInMainWorld\('terminayHost', bridge\)/u);
+	assert.match(preload, /exposeInMainWorld\('terminayBytes', bytes\)/u);
+	assert.match(preload, /parseTerminayHostContext/u);
+	assert.match(preload, /parseTerminayHostActionRequest/u);
+	assert.match(preload, /parseTerminayHostBytePacket/u);
+	assert.doesNotMatch(preload, /terminayDiagnosticsHost|desktop:diagnostics-host/u);
 });
 
 test('Local server diagnostics are semantic and PTY data paths never call the sink', () => {
@@ -97,17 +84,6 @@ test('Local server diagnostics are semantic and PTY data paths never call the si
 		/desktopDiagnostics/u,
 	);
 	assert.doesNotMatch(authority, /desktopDiagnostics/u);
-});
-
-test('terminal recovery diagnostics are metadata-only and trusted', () => {
-	assert.match(preload, /reportTerminalRecovery/u);
-	assert.match(preload, /desktop:diagnostics-host:report-terminal-recovery/u);
-	assert.match(main, /terminal\.recovery\.recovered/u);
-	const handlerStart = main.indexOf("'desktop:diagnostics-host:report-terminal-recovery'");
-	const handlerEnd = main.indexOf("app.on('browser-window-created'", handlerStart);
-	const handler = main.slice(handlerStart, handlerEnd);
-	assert.match(handler, /assertTrustedAppSender\(event\)/u);
-	for (const forbidden of ['sessionId', 'projectId', 'terminalTitle', 'bytes', 'outputText']) assert.equal(handler.includes(forbidden), false, forbidden);
 });
 
 test('existing application logs no longer persist raw model output or microphone identity', () => {
