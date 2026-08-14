@@ -28,9 +28,12 @@ test('npm metadata accepts scalar values from npm 11 and singleton arrays from n
 })
 
 test('candidate.1 source acquisition pins ranged transitive runtime dependencies', () => {
-  assert.deepEqual(TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES, {
-    pvutils: RETAINED_RUNTIME_PACKAGES['node_modules/pvutils'][0],
-  })
+  const expected = Object.fromEntries(
+    Object.entries(RETAINED_RUNTIME_PACKAGES)
+      .filter(([path]) => path.startsWith('node_modules/@peculiar/asn1-') || path === 'node_modules/pvutils')
+      .map(([path, [version]]) => [path.replace(/^node_modules\//u, ''), version]),
+  )
+  assert.deepEqual(TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES, expected)
 })
 
 test('candidate.1 offline rebuild gate separates mirror acquisition from the network-free proof', async () => {
