@@ -3657,13 +3657,11 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-			const unsubscribeCopyRequest =
-				window.terminayClipboardHost?.subscribeCopyRequest(
-					copyActiveTerminalSelection,
-				);
+			const onCopyRequest = () => copyActiveTerminalSelection();
+			document.addEventListener('copy', onCopyRequest);
 
 			return () => {
-				unsubscribeCopyRequest?.();
+				document.removeEventListener('copy', onCopyRequest);
 			};
 		}, [copyActiveTerminalSelection, isActive]);
 
