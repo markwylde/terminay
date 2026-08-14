@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 
 globalThis.window = Object.assign(globalThis, {
-	terminayBootstrapDiagnostic: { record() {} },
+	__terminayRendererDiagnostic() {},
 })
 
 const outputDirectory = await mkdtemp(join(process.cwd(), 'scripts', '.workspace-delta-runtime-'))

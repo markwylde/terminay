@@ -39,3 +39,20 @@ test('canonical workspace remains outside privileged diagnostics and Electron AP
 		['terminayHost', 'terminayBytes'],
 	);
 });
+
+test('renderer diagnostics stay local and legacy privileged bridges remain absent', async () => {
+	const [main, declarations, diagnostics] = await Promise.all([
+		readFile('electron/main.ts', 'utf8'),
+		readFile('src/vite-env.d.ts', 'utf8'),
+		readFile('src/shared/rendererDiagnostics.ts', 'utf8'),
+	]);
+	for (const source of [main, declarations]) {
+		assert.doesNotMatch(
+			source,
+			/terminayDiagnosticsHost|terminayBootstrapDiagnostic|desktop:diagnostics-host/u,
+		);
+	}
+	assert.match(diagnostics, /__terminayRendererDiagnostic/u);
+	assert.match(diagnostics, /Object\.freeze/u);
+	assert.match(diagnostics, /catch \{/u);
+});

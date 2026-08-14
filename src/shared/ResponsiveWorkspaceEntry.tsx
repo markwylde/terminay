@@ -10,6 +10,7 @@ import {
 } from '@terminay/responsive-ui';
 import { type ReactNode, useEffect } from 'react';
 import './ResponsiveWorkspaceEntry.css';
+import { recordBootstrapDiagnostic } from './rendererDiagnostics';
 
 /**
  * Map the legacy window views onto the shared route vocabulary. The mapping is
@@ -74,9 +75,9 @@ export function ResponsiveWorkspaceEntry({
 	const routeEntry: SharedWorkspaceRouteEntry | undefined = routes.find(
 		(entry) => entry.route === route,
 	);
-	window.terminayBootstrapDiagnostic?.record('responsive.render');
+	recordBootstrapDiagnostic('responsive.render');
 	useEffect(() => {
-		window.terminayBootstrapDiagnostic?.record('responsive.commit');
+		recordBootstrapDiagnostic('responsive.commit');
 	});
 
 	if (routeEntry === undefined) return <>{children}</>;

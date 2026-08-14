@@ -27,6 +27,13 @@ Electron lifecycle and console events for a known `WebContents`; a renderer
 does not receive a general-purpose logging IPC method, file path, file handle,
 or permission to read existing diagnostics.
 
+Canonical renderer bootstrap and terminal-recovery observations do not regain a
+privileged preload or IPC diagnostics channel. They use one bounded,
+observation-only renderer callback for release evidence; callback absence or
+failure cannot alter startup, workspace reconciliation, or recovery. Native
+process, crash, Local server lifecycle, and shutdown diagnostics remain owned by
+Desktop main.
+
 Desktop records bounded lifecycle failures from its in-process embedded Local
 Terminay Server composition. Its application logging follows the bounded main
 process output route; it does not create a fictitious child stdout/stderr

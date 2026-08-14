@@ -25,6 +25,7 @@ import type { CSSProperties } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useTerminalSettings } from '../hooks/useTerminalSettings'
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore'
+import { recordRendererDiagnostic } from '../shared/rendererDiagnostics'
 import { formatBracketedPaste } from '../terminalInput'
 import { buildTerminalOptions, resolveTerminalTheme } from '../terminalSettings'
 import type { TerminalSettings } from '../types/settings'
@@ -555,11 +556,13 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       phase: 'started' | 'retrying' | 'recovered' | 'failed',
       fields: { durationMs?: number; fromPosition?: number; outputPosition?: number; reason?: 'congestion' | 'attach-error' | 'deadline'; replayFrom?: number } = {},
     ) => {
-      try {
-        window.terminayDiagnosticsHost?.reportTerminalRecovery({ version: 1, phase, attempt: Math.max(1, recoveryAttempt), ...fields })
-      } catch {
-        // Recovery diagnostics cannot change terminal recovery behaviour.
-      }
+      recordRendererDiagnostic({
+        kind: 'terminal-recovery',
+        phase,
+        attempt: Math.max(1, recoveryAttempt),
+        ...(fields.durationMs === undefined ? {} : { durationMs: fields.durationMs }),
+        ...(fields.reason === undefined ? {} : { reason: fields.reason }),
+      })
     }
     const failServerTransport = (error: unknown, binding = activeBinding) => {
       if (binding === null || !bindingFence.isCurrent(binding)) return

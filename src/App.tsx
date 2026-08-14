@@ -220,6 +220,7 @@ import { useTerminalDockviewWindowController } from './workspace/useTerminalDock
 import { useTerminalRecordingController } from './workspace/useTerminalRecordingController';
 import { useTerminalSwitcherController } from './workspace/useTerminalSwitcherController';
 import './App.css';
+import { recordBootstrapDiagnostic } from './shared/rendererDiagnostics';
 
 type GitPushAgentAction = QuickPushAction;
 type GitPushAgentActionGroup = 'current' | 'new' | 'default';
@@ -3858,7 +3859,7 @@ const ProjectWorkspace = forwardRef<
 
 			initialTerminalSeededRef.current = true;
 			initialTerminalSeedStartedRef.current = true;
-			window.terminayBootstrapDiagnostic?.record('app.workspace.seed.begin', 1);
+			recordBootstrapDiagnostic('app.workspace.seed.begin', 1);
 
 			// Adopted project (popped out / merged): reattach its existing sessions
 			// instead of spawning a brand-new terminal.
@@ -3867,7 +3868,7 @@ const ProjectWorkspace = forwardRef<
 				for (const terminal of adopted) {
 					acceptMovedTerminal(terminal);
 				}
-				window.terminayBootstrapDiagnostic?.record('app.workspace.seed.end', 1);
+				recordBootstrapDiagnostic('app.workspace.seed.end', 1);
 				return;
 			}
 
@@ -3889,11 +3890,11 @@ const ProjectWorkspace = forwardRef<
 						serverPanel.cwd,
 					);
 				}
-				window.terminayBootstrapDiagnostic?.record('app.workspace.seed.end', 1);
+				recordBootstrapDiagnostic('app.workspace.seed.end', 1);
 				return;
 			}
 
-			window.terminayBootstrapDiagnostic?.record(
+			recordBootstrapDiagnostic(
 				'app.workspace.seed.before-create',
 			);
 			const seedPromise = new Promise<Awaited<ReturnType<typeof addTerminal>>>(
@@ -3913,7 +3914,7 @@ const ProjectWorkspace = forwardRef<
 					initialTerminalSeededRef.current = false;
 					setInitialTerminalSeedAttempt((attempt) => attempt + 1);
 				}
-				window.terminayBootstrapDiagnostic?.record(
+				recordBootstrapDiagnostic(
 					'app.workspace.seed.after-create',
 					result === null ? 0 : 1,
 				);
@@ -5183,9 +5184,9 @@ function App({
 		'app',
 		`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}`,
 	);
-	window.terminayBootstrapDiagnostic?.record('app.render');
+	recordBootstrapDiagnostic('app.render');
 	useEffect(() => {
-		window.terminayBootstrapDiagnostic?.record('app.commit');
+		recordBootstrapDiagnostic('app.commit');
 	}, []);
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
 	const hasNativeWindowControls =
@@ -5643,13 +5644,13 @@ function App({
 				reconcileRetryRevision = snapshot.revision;
 				reconcileRetryDeadline = performance.now() + 2_000;
 			}
-			window.terminayBootstrapDiagnostic?.record(
+			recordBootstrapDiagnostic(
 				'app.workspace.reconcile',
 				Object.keys(snapshot.terminalSessions).length,
 			);
 			if (reconcileFrame !== null) window.cancelAnimationFrame(reconcileFrame);
 			reconcileFrame = window.requestAnimationFrame(() => {
-				window.terminayBootstrapDiagnostic?.record(
+				recordBootstrapDiagnostic(
 					'app.workspace.reconcile-frame',
 				);
 				reconcileFrame = null;
@@ -5703,7 +5704,7 @@ function App({
 					}, 50);
 				}
 			});
-			window.terminayBootstrapDiagnostic?.record('app.workspace.reconcile.end');
+			recordBootstrapDiagnostic('app.workspace.reconcile.end');
 		};
 		const unsubscribe = store.subscribe(reconcile);
 		return () => {
