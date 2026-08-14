@@ -2396,8 +2396,7 @@ function getControlSocketPath(): string {
 
 function getMcpEntryPath(): string {
 	// serverMcpEntry.js is asar-unpacked because it runs under
-	// ELECTRON_RUN_AS_NODE. This is the server-owned, renderer-free adapter;
-	// the legacy Electron entry is retained only for compatibility fixtures.
+	// ELECTRON_RUN_AS_NODE. This is the server-owned, renderer-free entry.
 	const entry = path.join(MAIN_DIST, 'serverMcpEntry.js');
 	return entry.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
 }
