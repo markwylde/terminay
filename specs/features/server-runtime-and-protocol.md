@@ -252,13 +252,20 @@ Compatibility is gated independently for:
 - the framed byte-transport ABI and resource limits;
 - the signed/content-addressed bundle manifest and asset transfer protocol;
 - the host bridge version and required versus optional capabilities; and
-- the host execution runtime, including minimum supported Chromium features.
+- the declared required execution/runtime capabilities for the selected host.
+
+For browser hosts, compatibility is established by the manifest's
+protocol/schema revisions and declared required capabilities. Browser brand,
+user-agent strings, and numeric browser or Chromium version ranges are not
+compatibility boundaries and must not gate bootstrap or bundle execution.
 
 An unsupported optional host capability falls back to the browser-equivalent
 in-page behavior or a clear disabled action. An incompatible required bridge,
-bundle format, transport/bootstrap version, or execution runtime fails before
-the bundle is launched or connection state is committed and identifies the
-component that must be upgraded.
+bundle format, transport/bootstrap version, or declared capability fails before
+the workspace is launched or connection state is committed and identifies the
+component that must be upgraded. Direct-browser bootstrap renders that failure
+as typed, visible, non-secret recovery UI rather than leaving a blank document
+or top-level uncaught error.
 
 Feature-owned client facades inside the server bundle may reduce the shared
 query/command envelope to typed feature results. A host bridge never satisfies
@@ -333,10 +340,12 @@ inspect the application protocol.
 - The manifest is schema-versioned and gives each bundle a deterministic id,
   exact entry path, content type, byte length, and SHA-256 content hash. Asset
   paths remain inside the bundle's `/remote-app/<bundle-id>/` namespace.
-- The manifest declares its application protocol, bundle format, minimum
-  execution runtime, supported host-bridge range, and required/optional host
-  capabilities. Optional native capabilities never become requirements merely
-  because the bundle is running inside Desktop.
+- The manifest declares its application protocol, bundle format, supported
+  host-bridge range, and required/optional execution and host capabilities.
+  Browser compatibility uses those declarations and the protocol/schema
+  revisions; it never uses browser brand, user agent, or numeric browser or
+  Chromium runtime-version ranges. Optional native capabilities never become
+  requirements merely because the bundle is running inside Desktop.
 - The privileged server validates the manifest before serving or transferring
   it: traversal, duplicate paths, namespace escapes, malformed versions,
   oversized bundles, and hash/byte-length mismatches are rejected. Verified
