@@ -88,13 +88,11 @@ import { TerminalTab } from './components/TerminalTab';
 import { publishTerminalPresentationMetadata } from './components/terminalPresentationHost';
 import {
 	createServerMacroSettingsClient,
-	useLegacyMacroSettingsCapability,
 	useMacroSettings,
 } from './hooks/useMacroSettings';
 import {
 	createServerTerminalSettingsClient,
 	useTerminalSettings,
-	useTerminalSettingsClient,
 } from './hooks/useTerminalSettings';
 import {
 	findCommandForKeyboardEvent,
@@ -105,15 +103,16 @@ import { tryRenderMacroTemplate } from './macroSettings';
 import { getPathRelativeToRoot } from './pathUtils';
 import { ProjectEnvironmentSplitButton } from './projectEnvironments/ProjectEnvironmentSplitButton';
 import type { ProjectEnvironmentSummaryDto } from './projectEnvironments/uiModel';
-import { createLegacyAiTabMetadataClient } from './services/ai/legacyAiTabMetadataClient';
-import { useOptionalDisconnectedFileCompatibility } from './services/fileViewer/DisconnectedFileCompatibilityProvider';
-import { createLegacyRecordingsClient } from './services/recordings/legacyRecordingsClient';
 import {
 	type AuxiliaryRouteController,
 	createAuxiliaryRouteController,
 } from './shared/auxiliaryRoutes';
 import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
-import { resolveProjectFeatureAuthority } from './shared/featureQueryAuthority';
+import {
+	describeFeatureFailure,
+	describeServerFeatureFailure,
+	resolveProjectFeatureAuthority,
+} from './shared/featureQueryAuthority';
 import {
 	adaptServerAgentSnapshot,
 	subscribeServerAgentSnapshots,
@@ -1180,6 +1179,12 @@ function FeatureUnavailableState({ reason }: Readonly<{ reason: string }>) {
 	);
 }
 
+function unavailableFileViewerClient(reason: string): FileViewerClient {
+	return new Proxy({} as FileViewerClient, {
+		get: () => () => Promise.reject(new Error(reason)),
+	});
+}
+
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
@@ -1210,17 +1215,17 @@ const ProjectWorkspace = forwardRef<
 			path: string;
 			worktreeRoot: string;
 		} | null>(null);
-		const legacySettingsClient = useTerminalSettingsClient();
-		const macroSettingsCapability = useLegacyMacroSettingsCapability();
-		const disconnectedFileCompatibility =
-			useOptionalDisconnectedFileCompatibility();
 		recordBoundedRendererRender(
 			`project-workspace:${project.id}`,
 			`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}:${project.rootFolder}`,
 		);
-		const featureAvailability = resolveProjectFeatureAuthority(
-			terminalClientContext,
-			project.id,
+		const featureAvailability = useMemo(
+			() => resolveProjectFeatureAuthority(terminalClientContext, project.id),
+			[
+				project.id,
+				terminalClientContext,
+				terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision,
+			],
 		);
 		const featureAuthority =
 			featureAvailability.state === 'available'
@@ -1252,69 +1257,32 @@ const ProjectWorkspace = forwardRef<
 		const getServerTerminalCwd = useProjectTerminalCwd(
 			terminalPanelClientContext,
 		);
-		const serverSettingsClient = useMemo(
-			() =>
-				terminalClientContext?.applicationClient === undefined
-					? undefined
-					: createServerTerminalSettingsClient(
-							new SettingsClient(
-								new TerminayClientFacade(
-									terminalClientContext.applicationClient,
-								),
-							),
-							legacySettingsClient,
-						),
-			[legacySettingsClient, terminalClientContext?.applicationClient],
-		);
-		const { settings, settingsClient } =
+		const serverSettingsClient = useMemo(() => {
+			if (terminalClientContext?.applicationClient === undefined)
+				throw new Error('The selected server settings client is unavailable.');
+			return createServerTerminalSettingsClient(
+				new SettingsClient(
+					new TerminayClientFacade(terminalClientContext.applicationClient),
+				),
+			);
+		}, [terminalClientContext?.applicationClient]);
+		const { settings, settingsClient, error: settingsError } =
 			useTerminalSettings(serverSettingsClient);
 		const serverFileViewerClient = featureAuthority?.fileViewerClient;
-		const disconnectedFileViewerClient = useMemo(() => {
-			if (terminalClientContext !== undefined) return undefined;
-			if (serverFileViewerClient !== undefined) return undefined;
-			if (disconnectedFileCompatibility === null) {
-				throw new Error(
-					'Disconnected file compatibility is unavailable without a canonical server file client',
-				);
-			}
-			return disconnectedFileCompatibility.filePanel.createClient();
-		}, [
-			disconnectedFileCompatibility,
-			serverFileViewerClient,
-			terminalClientContext,
-		]);
-		const fileViewerClient =
-			serverFileViewerClient ?? disconnectedFileViewerClient;
-		if (fileViewerClient === undefined) {
-			throw new Error(
-				'Connected file viewer client is unavailable for this project.',
-			);
-		}
+		const fileViewerClient = useMemo(
+			() => serverFileViewerClient ?? unavailableFileViewerClient(
+				featureAvailability.state === 'unavailable'
+					? featureAvailability.reason
+					: 'Explorer is unavailable on the selected server.',
+			),
+			[featureAvailability, serverFileViewerClient],
+		);
 		const fileClientPath = useCallback(
-			(path: string) =>
-				serverFileViewerClient === undefined
-					? path
-					: getPathRelativeToRoot(path, project.rootFolder),
-			[project.rootFolder, serverFileViewerClient],
+			(path: string) => getPathRelativeToRoot(path, project.rootFolder),
+			[project.rootFolder],
 		);
-		const fileClientProjectId =
-			serverFileViewerClient === undefined ? undefined : project.id;
-		const recordingsClient = useMemo(() => {
-			if (terminalClientContext?.applicationClient !== undefined)
-				return undefined;
-			if (window.terminayRecordingServiceHost === undefined) {
-				throw new Error('Desktop recording service capability is unavailable');
-			}
-			return createLegacyRecordingsClient(window.terminayRecordingServiceHost);
-		}, [terminalClientContext?.applicationClient]);
+		const fileClientProjectId = project.id;
 		const serverRecordingsClient = featureAuthority?.recordingsClient;
-		const aiTabMetadataClient = useMemo(
-			() =>
-				terminalClientContext?.applicationClient === undefined
-					? createLegacyAiTabMetadataClient(window.terminayAiMetadataHost)
-					: undefined,
-			[terminalClientContext?.applicationClient],
-		);
 		const serverAiClient = useMemo(
 			() =>
 				terminalClientContext?.applicationClient === undefined
@@ -1371,6 +1339,26 @@ const ProjectWorkspace = forwardRef<
 		);
 		const deferredTerminalActivityFlushTimerRef = useRef<number | null>(null);
 		const [errorText, setErrorText] = useState<string | null>(null);
+		const reportFeatureFailure = useCallback(
+			(feature: 'Explorer' | 'Agents' | 'Git' | 'Settings', error: unknown) => {
+				if (featureAvailability.state === 'unavailable') {
+					setErrorText(featureAvailability.reason);
+					return featureAvailability.reason;
+				}
+				const failure = describeFeatureFailure(
+					feature,
+					error,
+					featureAvailability.authority.scope,
+				);
+				const message = `${failure.title}. ${failure.detail}`;
+				setErrorText(message);
+				return message;
+			},
+			[featureAvailability],
+		);
+		useEffect(() => {
+			if (settingsError !== null) reportFeatureFailure('Settings', settingsError);
+		}, [reportFeatureFailure, settingsError]);
 		const [focusedSessionId, setFocusedSessionId] = useState<string | null>(
 			null,
 		);
@@ -1629,7 +1617,7 @@ const ProjectWorkspace = forwardRef<
 		} = useTerminalRecordingController({
 			applyState: applyTerminalRecordingState,
 			getStartMetadata: getRecordingStartMetadataForSession,
-			legacyClient: recordingsClient,
+			legacyClient: undefined,
 			projectId: project.id,
 			serverClient: serverRecordingsClient,
 			setErrorText,
@@ -1986,8 +1974,9 @@ const ProjectWorkspace = forwardRef<
 		} = useMacroRunController({
 			focusActiveTerminal,
 			getActiveSessionId,
-			getDecryptedSecret: (secretId) =>
-				macroSettingsCapability.getDecryptedSecret(secretId),
+			getDecryptedSecret: async () => {
+				throw new Error('Macro secrets are resolved by the selected server.');
+			},
 			sendInput: sendTerminalPanelInput,
 			setErrorText,
 			waitForInactivity: waitForSessionInactivity,
@@ -2246,9 +2235,10 @@ const ProjectWorkspace = forwardRef<
 			fileObservationClient: featureAuthority?.fileObservationClient,
 			fileViewerClient,
 			gitClient: featureAuthority?.gitClient,
-			isServerFileViewer: serverFileViewerClient !== undefined,
+			isServerFileViewer: true,
 			onOpenFile: openFile,
 			onOpenTerminalAt: handleOpenTerminalAt,
+			onOperationError: reportFeatureFailure,
 			onSetError: setErrorText,
 			onUpdateProject,
 			project,
@@ -2914,8 +2904,6 @@ const ProjectWorkspace = forwardRef<
 					return;
 				}
 
-				const reader = terminalContextReadersRef.current.get(sessionId);
-				const terminalContext = reader?.() ?? { recentOutput: '' };
 				const previousTitle = activePanel.title ?? 'Terminal';
 				aiGenerationInFlightRef.current.add(inFlightKey);
 				setErrorText(null);
@@ -2926,34 +2914,20 @@ const ProjectWorkspace = forwardRef<
 				}
 
 				try {
-					const result =
-						serverAiClient === undefined
-							? await aiTabMetadataClient!.generate({
-									context: {
-										currentTitle: previousTitle,
-										existingNote: activePanel.params?.terminalNote,
-										projectRoot: project.rootFolder,
-										projectTitle: project.title,
-										recentOutput: terminalContext.recentOutput,
-										sessionId,
-									},
-									model,
-									provider,
-									target,
-								})
-							: await serverAiClient.generateMetadata({
-									model,
-									provider:
-										provider === 'claudeCode' ? 'claude-code' : provider,
-									requestId: crypto.randomUUID(),
-									target: {
-										panelId: activePanel.id,
-										projectId: project.id,
-										serverId: terminalClientContext!.serverId,
-										sessionId,
-									},
-									targetType: target === 'title' ? 'title' : 'note',
-								});
+					if (serverAiClient === undefined || terminalClientContext === undefined)
+						throw new Error('AI metadata is unavailable on the selected server.');
+					const result = await serverAiClient.generateMetadata({
+						model,
+						provider: provider === 'claudeCode' ? 'claude-code' : provider,
+						requestId: crypto.randomUUID(),
+						target: {
+							panelId: activePanel.id,
+							projectId: project.id,
+							serverId: terminalClientContext.serverId,
+							sessionId,
+						},
+						targetType: target === 'title' ? 'title' : 'note',
+					});
 					const text =
 						typeof result === 'object' &&
 						result !== null &&
@@ -3004,7 +2978,6 @@ const ProjectWorkspace = forwardRef<
 				project.id,
 				project.rootFolder,
 				project.title,
-				aiTabMetadataClient,
 				serverAiClient,
 				publishTerminalActivityOverview,
 				settings.aiTabMetadata,
@@ -4485,8 +4458,8 @@ const ProjectWorkspace = forwardRef<
 											projectId: project.id,
 											sessionId: entry.activationTerminalSessionId,
 											entryId,
-										})
-										.catch(() => undefined);
+									})
+									.catch((error) => reportFeatureFailure('Agents', error));
 								}
 							}}
 						/>
@@ -5203,7 +5176,6 @@ function App({
 		() => auxiliaryRoutes ?? createAuxiliaryRouteController(),
 		[auxiliaryRoutes],
 	);
-	const legacySettingsClient = useTerminalSettingsClient();
 	recordBoundedRendererRender(
 		'app',
 		`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}`,
@@ -5228,34 +5200,37 @@ function App({
 		() => new URL('popout.html', window.location.href).toString(),
 		[],
 	);
-	// Keep the remaining macro compatibility path explicit at the renderer
-	// boundary rather than letting the hook retain ambient preload authority.
-	const serverMacroSettingsClient = useMemo(
-		() =>
-			terminalClientContext?.applicationClient === undefined
-				? undefined
-				: createServerMacroSettingsClient(
-						new MacroClient(
-							new TerminayClientFacade(terminalClientContext.applicationClient),
-						),
-					),
-		[terminalClientContext?.applicationClient],
-	);
-	const { macros } = useMacroSettings(serverMacroSettingsClient);
-	const serverSettingsClient = useMemo(
-		() =>
-			terminalClientContext?.applicationClient === undefined
-				? undefined
-				: createServerTerminalSettingsClient(
-						new SettingsClient(
-							new TerminayClientFacade(terminalClientContext.applicationClient),
-						),
-						legacySettingsClient,
-					),
-		[legacySettingsClient, terminalClientContext?.applicationClient],
-	);
-	const { settings, isLoading: areTerminalSettingsLoading } =
+	const serverMacroSettingsClient = useMemo(() => {
+		if (terminalClientContext?.applicationClient === undefined)
+			throw new Error('The selected server macro client is unavailable.');
+		return createServerMacroSettingsClient(
+			new MacroClient(
+				new TerminayClientFacade(terminalClientContext.applicationClient),
+			),
+		);
+	}, [terminalClientContext?.applicationClient]);
+	const { macros, error: macroSettingsError } = useMacroSettings(serverMacroSettingsClient);
+	const serverSettingsClient = useMemo(() => {
+		if (terminalClientContext?.applicationClient === undefined)
+			throw new Error('The selected server settings client is unavailable.');
+		return createServerTerminalSettingsClient(
+			new SettingsClient(
+				new TerminayClientFacade(terminalClientContext.applicationClient),
+			),
+		);
+	}, [terminalClientContext?.applicationClient]);
+	const { settings, error: terminalSettingsError, isLoading: areTerminalSettingsLoading } =
 		useTerminalSettings(serverSettingsClient);
+	const connectionFeatureError = useMemo(() => {
+		const failed = macroSettingsError === null
+			? terminalSettingsError === null
+				? null
+				: ['Settings', terminalSettingsError] as const
+			: ['Macros', macroSettingsError] as const;
+		if (failed === null) return null;
+		const failure = describeServerFeatureFailure(failed[0], failed[1], currentServerId);
+		return `${failure.title}. ${failure.detail}`;
+	}, [currentServerId, macroSettingsError, terminalSettingsError]);
 	const workspaceRefs = useRef(
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
@@ -5387,7 +5362,7 @@ function App({
 	} = useRemoteAccessController(
 		window.terminayRemotePairingPinHost,
 		window.terminayRemoteAccessStatusHost,
-		legacySettingsClient,
+		serverSettingsClient,
 	);
 	const [connectionSwitcherEntries, setConnectionSwitcherEntries] = useState<
 		ConnectionSwitcherEntry[]
@@ -6155,6 +6130,14 @@ function App({
 						role="alert"
 					>
 						{workspaceSynchronizationError}
+					</div>
+				) : null}
+				{connectionFeatureError !== null ? (
+					<div
+						className="workspace-empty-state workspace-empty-state--error"
+						role="alert"
+					>
+						{connectionFeatureError}
 					</div>
 				) : null}
 				{projects.map((project) => (

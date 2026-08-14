@@ -56,6 +56,7 @@ type Options = {
 	isServerFileViewer: boolean;
 	onOpenFile: OpenFile;
 	onOpenTerminalAt: (path: string, isDirectory?: boolean) => unknown;
+	onOperationError: (feature: 'Explorer' | 'Git', error: unknown) => string;
 	onSetError: (message: string | null) => void;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
 	project: ProjectTab;
@@ -171,6 +172,7 @@ export function useFileExplorerController({
 	isServerFileViewer,
 	onOpenFile,
 	onOpenTerminalAt,
+	onOperationError,
 	onSetError,
 	onUpdateProject,
 	project,
@@ -297,9 +299,10 @@ export function useFileExplorerController({
 							)
 						)
 							return;
+						const message = onOperationError('Explorer', error);
 						setDirectoryErrors((current) => ({
 							...current,
-							[dirPath]: error instanceof Error ? error.message : String(error),
+							[dirPath]: message,
 						}));
 					} finally {
 						if (
@@ -323,6 +326,7 @@ export function useFileExplorerController({
 			clientProjectId,
 			fileViewerClient,
 			isServerFileViewer,
+			onOperationError,
 			project.rootFolder,
 		],
 	);
@@ -372,7 +376,7 @@ export function useFileExplorerController({
 					? current
 					: projection.worktrees,
 			);
-		} catch {
+		} catch (error) {
 			if (
 				gitRefreshRequestIdRef.current !== requestId ||
 				latestGitRootRef.current !== targetRootFolder
@@ -382,8 +386,9 @@ export function useFileExplorerController({
 			// projection yet, publish a stable empty state instead of leaving the Git
 			// sidebar in an indefinite loading state.
 			setWorktreePanelStatus((current) => current ?? EMPTY_WORKTREE_PANEL_STATUS);
+			onOperationError('Git', error);
 		}
-	}, [gitClient, project.id]);
+	}, [gitClient, onOperationError, project.id]);
 	const scheduleDirectoryRefresh = useCallback(
 		(dirPath: string) => {
 			const existing = refreshTimersRef.current.get(dirPath);
@@ -454,7 +459,7 @@ export function useFileExplorerController({
 				);
 				void loadDirectory(parent || project.rootFolder);
 			} catch (error) {
-				onSetError(`Failed to rename: ${String(error)}`);
+				onOperationError('Explorer', error);
 			}
 		},
 		[
@@ -463,6 +468,7 @@ export function useFileExplorerController({
 			fileViewerClient,
 			loadDirectory,
 			onSetError,
+			onOperationError,
 			project.rootFolder,
 			requestFileExplorerName,
 		],
@@ -483,7 +489,7 @@ export function useFileExplorerController({
 						project.rootFolder,
 				);
 			} catch (error) {
-				onSetError(`Failed to delete: ${String(error)}`);
+				onOperationError('Explorer', error);
 			}
 		},
 		[
@@ -492,6 +498,7 @@ export function useFileExplorerController({
 			fileViewerClient,
 			loadDirectory,
 			onSetError,
+			onOperationError,
 			project.rootFolder,
 		],
 	);
@@ -514,7 +521,7 @@ export function useFileExplorerController({
 				void loadDirectory(dirPath);
 				void onOpenFile(path, { initialMode: 'text' });
 			} catch (error) {
-				onSetError(`Failed to create file: ${String(error)}`);
+				onOperationError('Explorer', error);
 			}
 		},
 		[
@@ -524,6 +531,7 @@ export function useFileExplorerController({
 			loadDirectory,
 			onOpenFile,
 			onSetError,
+			onOperationError,
 			requestFileExplorerName,
 		],
 	);
@@ -543,7 +551,7 @@ export function useFileExplorerController({
 				);
 				void loadDirectory(dirPath);
 			} catch (error) {
-				onSetError(`Failed to create folder: ${String(error)}`);
+				onOperationError('Explorer', error);
 			}
 		},
 		[
@@ -552,6 +560,7 @@ export function useFileExplorerController({
 			fileViewerClient,
 			loadDirectory,
 			onSetError,
+			onOperationError,
 			requestFileExplorerName,
 		],
 	);
@@ -598,13 +607,14 @@ export function useFileExplorerController({
 				}
 				void loadDirectory(parent || project.rootFolder);
 			} catch (error) {
-				onSetError(`Failed to rename worktree: ${String(error)}`);
+				onOperationError('Git', error);
 			}
 		},
 		[
 			gitClient,
 			loadDirectory,
 			onSetError,
+			onOperationError,
 			onUpdateProject,
 			project.id,
 			project.rootFolder,
@@ -633,7 +643,7 @@ export function useFileExplorerController({
 				void loadDirectory(parentPath(worktree.path) || project.rootFolder);
 			} catch (error) {
 				console.error('[terminay] git.worktree.remove failed', error);
-				onSetError(`Failed to delete worktree: ${String(error)}`);
+				onOperationError('Git', error);
 			} finally {
 				setDeletingWorktreePaths((current) => {
 					const next = new Set(current);
@@ -649,6 +659,7 @@ export function useFileExplorerController({
 			gitClient,
 			loadDirectory,
 			onSetError,
+			onOperationError,
 			project.rootFolder,
 			refreshGitStatusesForRoot,
 		],
@@ -663,12 +674,12 @@ export function useFileExplorerController({
 				await gitClient.pull(reference);
 				onSetError(null);
 			} catch (error) {
-				onSetError(`Failed to pull from origin: ${String(error)}`);
+				onOperationError('Git', error);
 			} finally {
 				refreshFileExplorerTree();
 			}
 		},
-		[gitClient, onSetError, refreshFileExplorerTree],
+		[gitClient, onOperationError, onSetError, refreshFileExplorerTree],
 	);
 	const handleRevealWorktree = useCallback((worktree: GitWorktreeStatus) => {
 		void window.terminayRevealHost?.reveal(worktree.path);
@@ -811,9 +822,10 @@ export function useFileExplorerController({
 						unsubscribe();
 						void fileObservationClient.stopWatch(handle.subscriptionId);
 					});
-				} catch {
+				} catch (error) {
 					if (!disposed && !unavailableWatchFallbacksRef.current.has(path)) {
 						unavailableWatchFallbacksRef.current.add(path);
+						onOperationError('Explorer', error);
 						scheduleDirectoryRefresh(path);
 					}
 				}
@@ -826,6 +838,7 @@ export function useFileExplorerController({
 	}, [
 		expandedWatchPaths,
 		fileObservationClient,
+		onOperationError,
 		loadDirectory,
 		project.id,
 		project.isFileExplorerOpen,
