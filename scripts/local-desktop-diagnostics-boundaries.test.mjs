@@ -20,16 +20,21 @@ const dictation = await readFile(
 	'utf8',
 );
 
-test('diagnostics, Crashpad, and hang stack collection initialize before Local server and renderers', () => {
+test('diagnostics initialize before Electron readiness, recovery window, and Local server', () => {
 	const diagnosticsStart = main.indexOf('await initializeDesktopDiagnostics');
+	const ready = main.indexOf('await app.whenReady()', diagnosticsStart);
+	const recoveryWindow = main.indexOf(
+		'createWindow({ deferCanonicalLaunch: true })',
+		ready,
+	);
 	const localServerConstruction = main.indexOf(
 		'new ServerTerminalAuthority',
-		diagnosticsStart,
+		recoveryWindow,
 	);
-	const ready = main.indexOf('app.whenReady()');
 	assert.ok(diagnosticsStart > 0);
-	assert.ok(localServerConstruction > diagnosticsStart);
-	assert.ok(ready > localServerConstruction);
+	assert.ok(ready > diagnosticsStart);
+	assert.ok(recoveryWindow > ready);
+	assert.ok(localServerConstruction > recoveryWindow);
 	assert.ok(
 		main.indexOf('DocumentPolicyIncludeJSCallStacksInCrashReports') <
 			diagnosticsStart,
@@ -37,15 +42,23 @@ test('diagnostics, Crashpad, and hang stack collection initialize before Local s
 	assert.match(main, /crashReporter,/u);
 });
 
-test('embedded vault unlock occurs after Electron readiness and before Local server admission', () => {
+test('embedded vault unlock occurs after recovery setup and before Local renderer admission', () => {
 	const ready = main.indexOf('app.whenReady().then');
+	const embeddedReady = main.indexOf(
+		'await embeddedRuntimeReady',
+		ready,
+	);
 	const unlock = main.indexOf('await embeddedVault.unlock', ready);
 	const localReady = main.indexOf("event: 'local-server.ready'", ready);
-	const firstWindow = main.indexOf('createWindow();', ready);
+	const launch = main.indexOf(
+		'await launchDeferredCanonicalWindow(embeddedStartupWindow)',
+		ready,
+	);
 	assert.ok(ready > 0);
-	assert.ok(unlock > ready);
+	assert.ok(embeddedReady > ready);
+	assert.ok(unlock > embeddedReady);
 	assert.ok(localReady > unlock);
-	assert.ok(firstWindow > localReady);
+	assert.ok(launch > localReady);
 	assert.equal(main.indexOf('await embeddedVault.unlock', 0), unlock);
 });
 
