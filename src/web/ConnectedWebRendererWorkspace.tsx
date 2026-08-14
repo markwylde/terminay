@@ -41,7 +41,6 @@ import { defaultTerminalSettings } from '../terminalSettings';
 import type { RemoteAccessStatus } from '../types/terminay';
 import {
 	createBrowserMacroSettingsClient,
-	createBrowserTerminalSettingsClient,
 } from './browserRendererHostAdapters';
 import './connectedRendererWorkspace.css';
 import { isProjectEditCommitted } from './projectEditSettlement';
@@ -160,7 +159,6 @@ export function ConnectedWebRendererWorkspace({
 		resolve: (result: SharedEditTabResult | null) => void;
 	} | null>(null);
 	const auxiliaryFocusReturnRef = useRef<HTMLElement | null>(null);
-	const settingsClient = useMemo(createBrowserTerminalSettingsClient, []);
 	const applicationClient = terminalClientContext.applicationClient;
 	const macroSettingsClient = useMemo(() => {
 		if (applicationClient === undefined) {
@@ -331,7 +329,7 @@ export function ConnectedWebRendererWorkspace({
 				}
 			/>
 		) : (
-			<TerminalSettingsClientProvider client={settingsClient}>
+			<TerminalSettingsClientProvider client={serverSettingsClient}>
 				{route.kind === 'settings' ? (
 						<SettingsWindow
 							applicationClient={applicationClient}
@@ -367,7 +365,7 @@ export function ConnectedWebRendererWorkspace({
 
 	return (
 		<div className="connected-web-renderer-workspace">
-			<TerminalSettingsClientProvider client={settingsClient}>
+			<TerminalSettingsClientProvider client={serverSettingsClient}>
 				<>
 					{hasNativeMenus ? null : (
 						<ConnectedBrowserMenuBar

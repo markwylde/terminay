@@ -80,6 +80,9 @@ selected-server settings authority is reported as unavailable rather than
 falling back to device-local settings.
 File-panel diff-layout changes use the same settings command facade and remain
 server-authoritative across the shared UI hosts.
+File-extension defaults saved in Settings are observed by already-mounted
+Desktop and browser workspaces through that same selected-server client; the
+file panel must not consult a separate browser-local settings snapshot.
 Macro definitions and secret actions likewise require an explicitly supplied
 selected-server client. There is no ambient macro compatibility context or
 preload-shaped fallback; a host without secret capability returns a typed

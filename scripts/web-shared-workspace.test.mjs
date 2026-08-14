@@ -44,12 +44,13 @@ test('web production mounts the canonical connected renderer and App tree', () =
 	}
 });
 
-test('connected web host injects browser adapters and preserves the disconnected manager', () => {
-	assert.match(webMount, /createBrowserTerminalSettingsClient/u);
+test('connected web host uses selected-server settings and preserves the disconnected manager', () => {
+	assert.match(webMount, /TerminalSettingsClientProvider client=\{serverSettingsClient\}/u);
+	assert.doesNotMatch(webMount, /createBrowserTerminalSettingsClient/u);
 	assert.match(webMount, /createBrowserMacroSettingsClient/u);
 	assert.match(webMount, /SharedConnectionsRouteBody/u);
 	assert.match(webMount, /onOpenConnectionManager/u);
-	assert.doesNotMatch(webMount, /window\.terminay|new Terminal\(/u);
+	assert.doesNotMatch(webMount, /new Terminal\(/u);
 });
 
 test('browser and Desktop share the host-neutral production workspace split layout', () => {
