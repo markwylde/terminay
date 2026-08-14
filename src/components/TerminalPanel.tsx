@@ -122,9 +122,8 @@ export function createReplaceableTerminalPanelClient(
   })
 }
 
-/** Resolve panel params with the connection context as the production path.
- * Explicit params remain useful for moved/embedded panels and tests; a null
- * result intentionally selects the legacy preload compatibility path. */
+/** Resolve panel params from canonical server context or an explicit moved /
+ * embedded panel binding. There is no preload-owned terminal fallback. */
 export function resolveTerminalPanelClient(
   params: Pick<TerminalPanelParams, 'terminalPanelClient' | 'terminalClientIdentity' | 'terminalClientId'>,
   context: TerminalPanelConnectionContext | null,
@@ -442,7 +441,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       isMac,
       // Opening a terminal link is an explicit operating-system action. Keep
       // it on the narrow, versioned host bridge rather than giving the
-      // workspace's terminal renderer the broad compatibility preload API.
+      // workspace's terminal renderer a broad preload API.
       openExternal: openExternalUrl,
       pointerTarget: document.body,
     })
