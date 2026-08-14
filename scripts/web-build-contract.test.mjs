@@ -16,6 +16,10 @@ const managerOutput = await readFile(
 	path.join(root, 'dist-web', 'web.html'),
 	'utf8',
 );
+const serverOutput = await readFile(
+	path.join(root, 'dist-web', 'server.html'),
+	'utf8',
+);
 
 test('hosted web build uses the dedicated shared-web manager entry', () => {
 	assert.match(managerEntry, /id="web-root"/u);
@@ -45,4 +49,17 @@ test('hosted web build is standalone and excludes the retired terminal-only remo
 	assert.match(managerOutput, /<title>Terminay Connections<\/title>/u);
 	assert.match(managerOutput, /<script type="module"[^>]+src="\/assets\//u);
 	assert.doesNotMatch(managerOutput, /src\/web\/main\.tsx/u);
+});
+
+test('built server UI resolves every generated asset beside its file entry', async () => {
+	assert.match(serverConfig, /base:\s*['"]\.\/['"]/u);
+	const references = Array.from(
+		serverOutput.matchAll(/(?:src|href)="([^"]+)"/gu),
+		(match) => match[1],
+	);
+	assert.ok(references.length > 0);
+	for (const reference of references) {
+		assert.match(reference, /^\.\//u);
+		await access(path.join(root, 'dist-web', reference));
+	}
 });

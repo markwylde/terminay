@@ -11,21 +11,28 @@ const [ci, serverImage, webImage, triggerRelease, decision] = await Promise.all(
   read("specs/decisions/provider-portable-parallel-ci.md"),
 ]);
 
-test("pull-request CI contains one fast gate and five E2E shards", () => {
+test("pull-request CI contains a packaged macOS smoke, one fast gate, and five E2E shards", () => {
   assert.deepEqual(
     [...ci.slice(ci.indexOf("jobs:\n")).matchAll(/^ {2}([a-z][a-z0-9-]+):$/gmu)].map((match) => match[1]),
-    ["build-and-test", "e2e-test"],
+    ["packaged-macos-smoke", "build-and-test", "e2e-test"],
   );
+  assert.match(ci, /name: Packaged macOS startup smoke/u);
+  assert.match(ci, /run: npm run test:packaged-startup-macos/u);
   assert.match(ci, /name: Build, lint, and unit tests/u);
   assert.match(ci, /run: npm run test:ci/u);
   assert.match(ci, /shard: \[1, 2, 3, 4, 5\]/u);
   assert.match(ci, /name: E2E \(\$\{\{ matrix\.shard \}\}\/5\)/u);
-  assert.doesNotMatch(ci, /ubuntu-24\.04|arm64|standalone-server|WebRTC|image/u);
+  assert.doesNotMatch(ci, /ubuntu-24\.04|standalone-server|WebRTC|image/u);
 });
 
-test("all six PR jobs are independent and use portable runners", () => {
+test("all seven PR jobs are independent and use declared runners", () => {
   assert.doesNotMatch(ci, /^ {4}needs:/mu);
   assert.equal((ci.match(/^ {4}runs-on: ubuntu-latest$/gmu) ?? []).length, 2);
+  assert.match(
+    ci,
+    /runs-on: \$\{\{ github\.server_url == 'https:\/\/github\.com' && 'macos-latest' \|\| 'ubuntu-latest' \}\}/u,
+  );
+  assert.match(ci, /if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}/u);
   assert.match(ci, /group: terminay-ci-\$\{\{ github\.ref \}\}/u);
   assert.match(ci, /cancel-in-progress: true/u);
 });
