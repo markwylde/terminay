@@ -236,7 +236,10 @@ and insertion into the intended terminal remain server-authorized operations.
 ## Lifecycle and recovery
 
 - Client disconnect never deletes projects, closes panels, or kills PTYs.
-- Terminal exit updates all referencing panels and connected clients once.
+- Terminal exit updates all referencing panels and connected clients once. A
+  successful-exit close decision uses the terminal surface's already-observed
+  setting at the exit boundary; it does not wait for another settings request
+  after the session has ended.
 - Server restart reloads durable workspace state and marks formerly live PTYs
   interrupted unless the process can be safely reattached.
 - A missing project root or recording path remains represented with a
