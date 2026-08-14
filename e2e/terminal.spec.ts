@@ -457,6 +457,11 @@ test.describe('terminal behavior', () => {
 	test('terminal edit window focuses the title and saves it with Enter', async ({
 		mainWindow,
 	}) => {
+		const editedTab = mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.first();
+		const panelId = await editedTab.getAttribute('data-panel-id');
+		if (panelId === null) throw new Error('Edited terminal panel identity is unavailable.');
 		const editWindow = await openTerminalEditWindow(mainWindow);
 		const titleInput = editWindow.getByPlaceholder('Terminal name');
 
@@ -492,8 +497,9 @@ test.describe('terminal behavior', () => {
 
 		await expect(
 			mainWindow
-				.locator('.terminal-tab-content')
-				.first()
+				.locator(
+					`.project-workspace--active .terminal-tab-content[data-panel-id="${panelId}"]`,
+				)
 				.locator('.terminal-tab-title'),
 		).toHaveText('Keyboard Shell');
 		await expectTerminalInputFocused(mainWindow);
