@@ -1901,4 +1901,15 @@ export function mountWebManagerApp(root: HTMLElement): void {
 }
 
 const root = document.getElementById('web-root');
-if (root !== null) mountWebManagerApp(root);
+if (root !== null) {
+	if (window.__TERMINAY_HOSTED_SESSION_AUTHORITY__ !== undefined) {
+		// The canonical server entry also runs on the isolated WebRTC session
+		// origin. Let the narrow hosted authority install its pairing/transport
+		// delegate before the shared workspace renders any enrollment UI.
+		void import('../remote/main').then(({ launchDirectBrowserWorkspace }) =>
+			launchDirectBrowserWorkspace(root),
+		);
+	} else {
+		mountWebManagerApp(root);
+	}
+}

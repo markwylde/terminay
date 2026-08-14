@@ -125,6 +125,23 @@ test('direct and WebRTC remote connections both launch the canonical server bund
 	assert.match(remoteService, /pathname === '\/' \? '\/server\.html'/u);
 	assert.doesNotMatch(remoteService, /entry === 'remote\.html'/u);
 	assert.doesNotMatch(remoteService, /\/remote-app\/\$\{bundleId\}\/remote\.html/u);
+	const hostedProof = await read('e2e/webrtc-headless-node-host.spec.ts');
+	assert.match(
+		hostedProof,
+		/rendererDistDir:\s*path\.resolve\('dist-web'\)/u,
+		'the cross-repository proof must install the same server bundle that production serves',
+	);
+	assert.doesNotMatch(
+		hostedProof,
+		/rendererDistDir:\s*path\.resolve\('dist'\)/u,
+		'the cross-repository proof must never regress to the retired remote renderer build',
+	);
+	const webEntry = await read('src/web/main.tsx');
+	const browserBootstrap = await read('src/remote/main.tsx');
+	assert.match(webEntry, /__TERMINAY_HOSTED_SESSION_AUTHORITY__/u);
+	assert.match(webEntry, /import\('\.\.\/remote\/main'\)/u);
+	assert.match(browserBootstrap, /export async function launchDirectBrowserWorkspace/u);
+	assert.match(browserBootstrap, /mountRoot \?\? document\.getElementById\('remote-root'\)/u);
 });
 
 test('renderer-owned workspace seeding is absent from Desktop production code', async () => {
