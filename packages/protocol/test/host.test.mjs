@@ -10,6 +10,7 @@ import {
   parseTerminayHostBytePacket,
   parseTerminayHostCompatibilityRequirements,
   parseTerminayHostContext,
+  parseTerminayHostEvent,
 } from "../dist/index.js";
 
 const requirements = {
@@ -49,6 +50,43 @@ test("host context is closed, immutable, and cannot select Electron mode", () =>
     () =>
       parseTerminayHostContext({ ...context, capabilities: { rootShell: 1 } }),
     /unknown capability/u,
+  );
+});
+
+test("host menu events are closed and bound to their negotiated context", () => {
+  const context = parseTerminayHostContext({
+    schemaVersion: 1,
+    bootstrapVersion: 1,
+    sourceId: "source-a",
+    windowId: "window-a",
+    serverId: "server-a",
+    profileId: "profile-a",
+    bundleId: "bundle_12345678",
+    applicationProtocolVersion: "1",
+    hostKind: "desktop",
+    hostBridgeVersion: 1,
+    byteEndpointVersion: 1,
+    capabilities: { nativeMenus: 1 },
+  });
+  const event = parseTerminayHostEvent({
+    schemaVersion: 1,
+    bridgeVersion: 1,
+    sourceId: "source-a",
+    windowId: "window-a",
+    profileId: "profile-a",
+    serverId: "server-a",
+    event: { type: "menu.command", command: "open-settings" },
+  }, context);
+  assert.equal(event.event.command, "open-settings");
+  assert.equal(Object.isFrozen(event), true);
+  assert.equal(Object.isFrozen(event.event), true);
+  assert.throws(
+    () => parseTerminayHostEvent({ ...event, windowId: "window-b" }, context),
+    /outside its binding/u,
+  );
+  assert.throws(
+    () => parseTerminayHostEvent({ ...event, event: { type: "menu.command", command: "open-devtools" } }, context),
+    /menu command is invalid/u,
   );
 });
 

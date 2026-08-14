@@ -115,6 +115,42 @@ export type TerminayHostRouteDisposition =
   | "native-window"
   | "browser-tab";
 
+export const TERMINAY_HOST_MENU_COMMANDS = [
+  "clear-terminal",
+  "close-active",
+  "new-project",
+  "new-terminal",
+  "open-command-bar",
+  "open-extensions",
+  "open-macros",
+  "open-project-environments",
+  "open-recordings",
+  "open-settings",
+  "popout-active",
+  "save-active",
+  "set-project-root-folder-to-working-directory",
+  "split-horizontal",
+  "split-vertical",
+  "start-dictation",
+  "toggle-file-explorer-sidebar",
+] as const;
+
+export type TerminayHostMenuCommand =
+  (typeof TERMINAY_HOST_MENU_COMMANDS)[number];
+
+export type TerminayHostEvent = Readonly<{
+  schemaVersion: typeof TERMINAY_HOST_CONTEXT_SCHEMA_VERSION;
+  bridgeVersion: typeof TERMINAY_HOST_BRIDGE_VERSION;
+  sourceId: string;
+  windowId: string;
+  profileId: string;
+  serverId: string;
+  event: Readonly<{
+    type: "menu.command";
+    command: TerminayHostMenuCommand;
+  }>;
+}>;
+
 export type TerminayHostAction =
   | Readonly<{
       type: "route.present";
@@ -124,7 +160,7 @@ export type TerminayHostAction =
     }>
   | Readonly<{ type: "route.focus"; presentationId: string }>
   | Readonly<{ type: "route.close"; presentationId?: string }>
-  | Readonly<{ type: "menu.invoke"; command: string }>
+  | Readonly<{ type: "menu.invoke"; command: TerminayHostMenuCommand }>
   | Readonly<{
       type: "file.choose";
       multiple?: boolean;
@@ -152,6 +188,58 @@ const BUNDLE_ID = /^[A-Za-z0-9_-]{8,128}$/u;
 const MAX_VERSION = 65_535;
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const CAPABILITY_NAMES = new Set<string>(TERMINAY_HOST_CAPABILITY_NAMES);
+const MENU_COMMANDS = new Set<string>(TERMINAY_HOST_MENU_COMMANDS);
+
+export function parseTerminayHostMenuCommand(
+  value: unknown,
+): TerminayHostMenuCommand {
+  if (typeof value !== "string" || !MENU_COMMANDS.has(value))
+    throw new TypeError("host menu command is invalid");
+  return value as TerminayHostMenuCommand;
+}
+
+export function parseTerminayHostEvent(
+  value: unknown,
+  contextValue: unknown,
+): TerminayHostEvent {
+  const context = parseTerminayHostContext(contextValue);
+  const input = record(value, "host event");
+  exactKeys(
+    input,
+    ["schemaVersion", "bridgeVersion", "sourceId", "windowId", "profileId", "serverId", "event"],
+    "host event",
+  );
+  if (
+    input.schemaVersion !== TERMINAY_HOST_CONTEXT_SCHEMA_VERSION ||
+    input.bridgeVersion !== TERMINAY_HOST_BRIDGE_VERSION
+  )
+    throw new TypeError("host event version is unsupported");
+  for (const [field, expected] of [
+    ["sourceId", context.sourceId],
+    ["windowId", context.windowId],
+    ["profileId", context.profileId],
+    ["serverId", context.serverId],
+  ] as const) {
+    if (input[field] !== expected)
+      throw new TypeError(`host event ${field} is outside its binding`);
+  }
+  const event = record(input.event, "host event payload");
+  exactKeys(event, ["type", "command"], "host menu event");
+  if (event.type !== "menu.command")
+    throw new TypeError("host event type is invalid");
+  return Object.freeze({
+    schemaVersion: TERMINAY_HOST_CONTEXT_SCHEMA_VERSION,
+    bridgeVersion: TERMINAY_HOST_BRIDGE_VERSION,
+    sourceId: context.sourceId,
+    windowId: context.windowId,
+    profileId: context.profileId,
+    serverId: context.serverId,
+    event: Object.freeze({
+      type: "menu.command",
+      command: parseTerminayHostMenuCommand(event.command),
+    }),
+  });
+}
 
 export function parseTerminayHostContext(value: unknown): TerminayHostContext {
   const input = record(value, "host context");
@@ -466,7 +554,7 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
       exactKeys(action, ["type", "command"], "menu action");
       return Object.freeze({
         type: "menu.invoke",
-        command: identifier(action.command, "menu command", ID),
+        command: parseTerminayHostMenuCommand(action.command),
       });
     case "file.choose": {
       exactOptionalKeys(

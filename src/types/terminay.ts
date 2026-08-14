@@ -1,21 +1,6 @@
-export type AppCommand =
-	| 'new-terminal'
-	| 'new-project'
-	| 'save-active'
-	| 'open-recordings'
-	| 'open-settings'
-	| 'open-macros'
-	| 'open-project-environments'
-	| 'open-extensions'
-	| 'split-horizontal'
-	| 'split-vertical'
-	| 'popout-active'
-	| 'close-active'
-	| 'open-command-bar'
-	| 'start-dictation'
-	| 'clear-terminal'
-	| 'toggle-file-explorer-sidebar'
-	| 'set-project-root-folder-to-working-directory';
+import type { TerminayHostMenuCommand } from '@terminay/protocol';
+
+export type AppCommand = TerminayHostMenuCommand;
 
 // A project tab torn off / merged across windows. `project` is a ProjectTab and
 // `terminals` are MovedTerminalTab entries (kept loose here to avoid coupling

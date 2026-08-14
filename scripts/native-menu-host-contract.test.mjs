@@ -20,16 +20,18 @@ test('canonical workspace selects menu and window chrome from negotiated capabil
 	assert.match(css, /\.app-shell--macos \.project-tabbar\s*\{[^}]*padding-left:\s*86px/s);
 });
 
-test('canonical preload exposes only validated semantic native menu commands', async () => {
-	const [preload, commands] = await Promise.all([
+test('canonical preload exposes only protocol-validated semantic host events', async () => {
+	const [preload, protocol, legacyPreload] = await Promise.all([
 		read('electron/serverUiPreload.ts'),
-		read('src/types/terminay.ts'),
+		read('packages/protocol/src/host.ts'),
+		read('electron/preload.ts'),
 	]);
 
 	assert.match(preload, /const bridge: ServerUiHostBridge/);
-	assert.match(preload, /subscribeAppCommands:/);
+	assert.match(preload, /subscribeEvent:/);
 	assert.match(preload, /ipcRenderer\.on\('app:command', wrapper\)/);
-	assert.match(preload, /if \(isAppCommand\(command\)\)/);
+	assert.match(preload, /parseTerminayHostEvent/);
+	assert.match(protocol, /type:\s*"menu\.command"/);
 	for (const command of [
 		'new-terminal',
 		'new-project',
@@ -39,9 +41,10 @@ test('canonical preload exposes only validated semantic native menu commands', a
 		'open-project-environments',
 		'open-extensions',
 	]) {
-		assert.match(commands, new RegExp(`\\| '${command}'`));
-		assert.match(preload, new RegExp(`'${command}'`));
+		assert.match(protocol, new RegExp(`"${command}"`));
 	}
+	assert.doesNotMatch(legacyPreload, /'open-settings'/);
+	assert.doesNotMatch(legacyPreload, /'open-macros'/);
 });
 
 test('browser menu omits Desktop-only update, window, and DevTools commands', async () => {
