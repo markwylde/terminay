@@ -62,20 +62,30 @@ if (
 	contextBridge.exposeInMainWorld('terminayHost', bridge);
 
 let bytePort: MessagePort | undefined;
-let resolveBytePort: ((port: MessagePort) => void) | undefined;
-const bytePortReady = new Promise<MessagePort>((resolve) => {
-	resolveBytePort = resolve;
-});
+let bytePortGeneration = 0;
+const bytePortWaiters = new Set<{
+	afterGeneration: number;
+	resolve: (port: MessagePort) => void;
+}>();
+const waitForBytePort = (afterGeneration = -1): Promise<MessagePort> => {
+	if (bytePort !== undefined && bytePortGeneration > afterGeneration)
+		return Promise.resolve(bytePort);
+	return new Promise((resolve) =>
+		bytePortWaiters.add({ afterGeneration, resolve }),
+	);
+};
 const byteListeners = new Set<(frame: Uint8Array | null) => void>();
 ipcRenderer.on('server-ui-host:byte-endpoint', (event) => {
 	const port = event.ports[0];
-	if (!port || bytePort !== undefined) {
-		port?.close();
-		return;
-	}
+	if (!port) return;
+	bytePort?.close();
 	bytePort = port;
-	resolveBytePort?.(port);
-	resolveBytePort = undefined;
+	bytePortGeneration += 1;
+	for (const waiter of [...bytePortWaiters]) {
+		if (bytePortGeneration <= waiter.afterGeneration) continue;
+		bytePortWaiters.delete(waiter);
+		waiter.resolve(port);
+	}
 	port.onmessage = (message) =>
 		void context().then((bound) => {
 			try {
@@ -96,6 +106,11 @@ ipcRenderer.on('server-ui-host:byte-endpoint', (event) => {
 
 const bytes = Object.freeze({
 	version: 1,
+	replaceEndpoint: async () => {
+		const generation = bytePortGeneration;
+		ipcRenderer.send('server-ui-host:replace-byte-endpoint');
+		await waitForBytePort(generation);
+	},
 	send: async (frame: Uint8Array) => {
 		const bound = await context();
 		if (
@@ -104,7 +119,7 @@ const bytes = Object.freeze({
 			frame.byteLength > 16_777_216
 		)
 			throw new TypeError('server frame must be bounded bytes');
-		const port = bytePort ?? (await bytePortReady);
+		const port = bytePort ?? (await waitForBytePort());
 		port.postMessage(createTerminayHostBytePacket(bound.serverId, frame));
 	},
 	subscribe: (listener: (frame: Uint8Array | null) => void) => {
@@ -138,6 +153,7 @@ if (
 				}
 				const bound = await context();
 				for (const listener of [...byteListeners]) listener(null);
+				await bytes.replaceEndpoint();
 				return { connectionId: `local:${bound.windowId}` };
 			},
 		}),

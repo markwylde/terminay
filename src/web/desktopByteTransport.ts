@@ -11,6 +11,7 @@ import {
 
 export interface DesktopByteBridge {
 	readonly version: 1;
+	replaceEndpoint(): Promise<void>;
 	send(frame: Uint8Array): Promise<void>;
 	subscribe(listener: (frame: Uint8Array | null) => void): () => void;
 }
@@ -188,6 +189,7 @@ export async function acquireDesktopServerBootstrap(
 	if (host === undefined && bytes === undefined) return undefined;
 	if (host === undefined || bytes === undefined || bytes.version !== 1)
 		throw new Error('Desktop server bootstrap is incomplete.');
+	await bytes.replaceEndpoint();
 	const context = await host.getContext();
 	if (context.hostKind !== 'desktop')
 		throw new Error('Desktop server bootstrap has the wrong host kind.');

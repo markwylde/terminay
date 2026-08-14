@@ -6,6 +6,7 @@ import {
 import {
 	MessageChannelMain,
 	type MessagePortMain,
+	ipcMain,
 	type WebContents,
 } from 'electron';
 import {
@@ -17,6 +18,7 @@ import type { DesktopBundleLaunch } from '../apps/terminay-desktop/src/main/serv
 type Diagnostic = (resource: string, message: string) => void;
 
 const activeRemoteEndpoints = new Map<number, () => void>();
+const REPLACE_BYTE_ENDPOINT = 'server-ui-host:replace-byte-endpoint';
 
 /** Attach a fresh Local document port after every successful load. Navigation
  * releases only the old document port; the embedded server and its PTYs remain
@@ -49,7 +51,15 @@ export function bindLocalServerUiDocumentEndpoint(options: {
 			onFailure: (message) => options.diagnostic?.('message-port', message),
 		});
 	};
-	return lifecycle.bind(attach);
+	const onReplace = (event: Electron.IpcMainEvent) => {
+		if (event.sender === sender) attach();
+	};
+	ipcMain.on(REPLACE_BYTE_ENDPOINT, onReplace);
+	const unbind = lifecycle.bind(attach);
+	return () => {
+		ipcMain.off(REPLACE_BYTE_ENDPOINT, onReplace);
+		unbind();
+	};
 }
 
 /** One connection transport may outlive many renderer documents. Reload swaps
@@ -120,6 +130,10 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 		});
 	};
 	const unbind = lifecycle.bind(attach, closeConnection);
+	const onReplace = (event: Electron.IpcMainEvent) => {
+		if (event.sender === sender) attach();
+	};
+	ipcMain.on(REPLACE_BYTE_ENDPOINT, onReplace);
 
 	void options.transport
 		.open()
@@ -144,6 +158,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 			closeConnection();
 		});
 	return () => {
+		ipcMain.off(REPLACE_BYTE_ENDPOINT, onReplace);
 		unbind();
 		closeConnection();
 	};
