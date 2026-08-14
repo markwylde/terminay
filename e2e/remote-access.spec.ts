@@ -21,7 +21,11 @@ async function configureWebRtcHostedDomain(
 	const settings = await appHarness.openSettingsWindow({ page, sectionId: 'remote-access-host' });
 	await settings.getByLabel('Exposure route').selectOption('webrtc');
 	await settings.locator('#section-remote-access-host .settings-row').filter({ hasText: 'WebRTC hosted domain' }).locator('input').fill(hostedDomain);
-	await expect(settings.locator('.settings-status')).toContainText('Saved');
+	// "Saved" is also the initial status. Observe this mutation enter the
+	// canonical save pipeline before accepting its committed state; otherwise a
+	// fast close can leave the exposure using the previous LAN origin.
+	await expect(settings.locator('.settings-status')).toHaveText('Saving...');
+	await expect(settings.locator('.settings-status')).toHaveText('Saved');
 	await settings.close();
 }
 
@@ -350,8 +354,13 @@ test('starts WebRTC remote access from the host menu start button', async ({
 		await showPairing.click();
 		const webRtcPairingUrl = new URL(await readPairingLink(mainWindow));
 		await mainWindow.getByRole('button', { name: 'Close Pair Device' }).click();
-		expect(webRtcPairingUrl.protocol).toBe('https:');
+		// The configured test registrar is loopback HTTP. Its randomized reserved
+		// .localhost session name remains a distinct origin; production hosted
+		// registrars use HTTPS under their configured public domain.
+		expect(webRtcPairingUrl.protocol).toBe('http:');
+		expect(webRtcPairingUrl.hostname).toMatch(/^[a-f0-9]{32}\.localhost$/u);
 		expect(webRtcPairingUrl.hostname).not.toBe('localhost');
+		expect(webRtcPairingUrl.port).toBe('9');
 		expect(webRtcPairingUrl.username).toBe('');
 		expect(webRtcPairingUrl.password).toBe('');
 		expect(webRtcPairingUrl.pathname).toBe('/v1/');
