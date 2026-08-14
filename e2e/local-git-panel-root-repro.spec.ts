@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
+import { submitTerminalCommand } from './support/terminal'
 import { fileExplorerItem, setProjectRoot } from './support/ui'
 
 const TARGET_REPO = '/Users/mark/Documents/Projects/terminay/terminay'
@@ -27,10 +28,7 @@ async function getActiveSessionId(page: Page): Promise<string> {
 }
 
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
-  const sessionId = await getActiveSessionId(page)
-  await page.evaluate(async ({ nextData, nextSessionId }) => {
-    await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
-  }, { nextData: data, nextSessionId: sessionId })
+  await submitTerminalCommand(page, data)
 }
 
 test('local repro: git panel refreshes after Cmd+O then Cmd+R into the terminay main repo', async ({ mainWindow }) => {
