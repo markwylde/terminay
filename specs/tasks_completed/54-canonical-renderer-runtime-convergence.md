@@ -49,7 +49,7 @@ artifact's complete startup, restoration, sidebar, menu, and shutdown journey.
 
 ### 1. One workspace execution graph
 
-- [ ] Make development Local, packaged Local, signed Local, Desktop remote,
+- [x] Make development Local, packaged Local, signed Local, Desktop remote,
   direct browser, and browser-manager sessions launch the same generated
   server workspace entry and matching application client.
 - [x] Make the development watcher rebuild/serve that canonical Local server
@@ -61,7 +61,7 @@ artifact's complete startup, restoration, sidebar, menu, and shutdown journey.
 - [x] Ensure main workspace and auxiliary routes obtain the selected server,
   host context, and application byte endpoint through the same canonical
   composition in development and packaged builds.
-- [ ] Replace browser user-agent/runtime-brand startup gates with an explicit
+- [x] Replace browser user-agent/runtime-brand startup gates with an explicit
   capability negotiation for direct-browser and manager bootstrap. Bundle
   acceptance must use protocol/schema revisions and required capabilities, not
   Chromium/browser-version ranges.
@@ -175,17 +175,17 @@ persisted-data recovery.
 
 ### 7. Lifecycle correctness
 
-- [ ] Capture every required `WebContents`, `session`, id, partition, and
+- [x] Capture every required `WebContents`, `session`, id, partition, and
   listener handle before registering destruction callbacks; never dereference
   a destroyed Electron object.
-- [ ] Make window close, reload, server switch, application quit, failed bundle
+- [x] Make window close, reload, server switch, application quit, failed bundle
   launch, and superseded transport teardown idempotent and exception-free.
 - [x] Preserve server/project/session lifetime independently of a renderer
   document while releasing document-scoped ports, subscriptions, downloads,
   and host bindings exactly once.
 - [x] Convert bootstrap and teardown failures into bounded diagnostics/recovery
   UI rather than an uncaught Electron main-process dialog or blank window.
-- [ ] Render a typed, visible direct-browser bootstrap failure that identifies
+- [x] Render a typed, visible direct-browser bootstrap failure that identifies
   each missing required capability or failed bootstrap step; no incompatible,
   reduced, or spoofed user agent may cause a blank document or top-level
   uncaught throw.
@@ -210,7 +210,7 @@ persisted-data recovery.
   or unresolved listener as a test failure.
 - [x] Remove or rewrite tests whose success depends on the superseded entry,
   preload, seed adapter, feature transport, or fallback route.
-- [ ] Add direct-browser compatibility coverage for Firefox, Chromium, and
+- [x] Add direct-browser compatibility coverage for Firefox, Chromium, and
   reduced/spoofed user-agent strings with the same required capabilities, plus
   a typed visible failure assertion for genuinely missing capabilities.
 
