@@ -165,11 +165,6 @@ declare global {
 				request: import('./types/terminay').DictationTranscribeRequest,
 			): Promise<import('./types/terminay').DictationTranscribeResult>;
 		};
-		/** Read-only native update availability for the current Desktop shell. */
-		terminayUpdateHost?: {
-			readonly version: 1;
-			getStatus(force?: boolean): Promise<AppUpdateStatus>;
-		};
 		/** Temporary dictation-only declaration; Task 38 owns its final migration. */
 		terminayClipboardHost?: {
 			readonly version: 1;
