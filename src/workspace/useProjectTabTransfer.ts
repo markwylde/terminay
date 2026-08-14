@@ -32,34 +32,6 @@ export function useProjectTabTransfer({
 	const projectTabBarRef = useRef<HTMLDivElement | null>(null);
 	useEffect(() => subscribeWorkspaceDragState(setDraggingTabTornOff), []);
 
-	/** A native window may only be presented after the source renderer has
-	 * observed the server-authoritative move.  Presenting on the command ack
-	 * alone races the workspace delta: two renderers can briefly claim the
-	 * project, and a just-created child can be torn down with that stale view. */
-	const awaitProjectMove = useCallback(
-		async (projectId: string, targetViewId: string) => {
-			const snapshot = await workspaceSnapshotStore?.waitForSnapshot(
-				(candidate) =>
-					candidate.views[workspaceViewId ?? '']?.projectIds.includes(
-						projectId,
-					) === false &&
-					candidate.views[targetViewId]?.projectIds.includes(projectId) ===
-						true,
-				{ timeoutMs: 10_000 },
-			);
-			if (snapshot === null || snapshot === undefined) {
-				const reason = workspaceSnapshotStore?.status.error?.message;
-				throw new Error(
-					reason === undefined
-						? 'Timed out waiting for the project move to reconcile.'
-						: `Unable to reconcile the project move. ${reason}`,
-				);
-			}
-			return snapshot;
-		},
-		[workspaceSnapshotStore, workspaceViewId],
-	);
-
 	const handleProjectTabDragStart = useCallback(
 		(projectId: string) => {
 			setDraggingProjectId(projectId);
@@ -96,6 +68,9 @@ export function useProjectTabTransfer({
 				decision.action === 'merge'
 					? decision.targetViewId
 					: `view-${crypto.randomUUID()}`;
+			// Capture this before moving.  After a two-project source moves one
+			// project, its reconciled list has length one but it must remain open.
+			const sourceWillBeEmpty = projectsRef.current.length === 1;
 			let created = false;
 			try {
 				if (decision.action === 'popout') {
@@ -106,11 +81,10 @@ export function useProjectTabTransfer({
 					created = true;
 				}
 				await workspaceSnapshotStore.moveProject({ projectId, targetViewId });
-				await awaitProjectMove(projectId, targetViewId);
 				if (decision.action === 'popout') {
 					await presentWorkspaceView(targetViewId, decision);
 				}
-				if (projectsRef.current.length === 1) {
+				if (sourceWillBeEmpty) {
 					await workspaceSnapshotStore.closeView(workspaceViewId);
 					await closeHostPresentation();
 				}
@@ -125,7 +99,7 @@ export function useProjectTabTransfer({
 				}
 			}
 		},
-		[awaitProjectMove, projectsRef, workspaceSnapshotStore, workspaceViewId],
+		[projectsRef, workspaceSnapshotStore, workspaceViewId],
 	);
 
 	/** A native popout is a second presentation of a server-owned workspace
@@ -139,6 +113,9 @@ export function useProjectTabTransfer({
 			const project = projectsRef.current.find((item) => item.id === projectId);
 			if (project === undefined) return;
 			const targetViewId = `view-${crypto.randomUUID()}`;
+			// This is source ownership before the authoritative move, not the
+			// asynchronously reconciled post-move tab count.
+			const sourceWillBeEmpty = projectsRef.current.length === 1;
 			let created = false;
 			try {
 				await workspaceSnapshotStore.createView({
@@ -147,9 +124,8 @@ export function useProjectTabTransfer({
 				});
 				created = true;
 				await workspaceSnapshotStore.moveProject({ projectId, targetViewId });
-				await awaitProjectMove(projectId, targetViewId);
 				await presentWorkspaceView(targetViewId, { x: 120, y: 120 });
-				if (projectsRef.current.length === 1) {
+				if (sourceWillBeEmpty) {
 					await workspaceSnapshotStore.closeView(workspaceViewId);
 					await closeHostPresentation();
 				}
@@ -164,7 +140,7 @@ export function useProjectTabTransfer({
 				}
 			}
 		},
-		[awaitProjectMove, projectsRef, workspaceSnapshotStore, workspaceViewId],
+		[projectsRef, workspaceSnapshotStore, workspaceViewId],
 	);
 
 	return {
