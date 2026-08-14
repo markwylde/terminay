@@ -75,6 +75,8 @@ export interface PtyProcess {
   readonly getCwd?: (signal?: AbortSignal) => TerminalMaybePromise<string | null>;
   /** Optional host capability for trusted foreground-process observation. */
   readonly onForegroundProcess?: (listener: PtyForegroundProcessListener) => Unsubscribe | undefined;
+  /** Await a current host foreground observation before a destructive decision. */
+  readonly refreshForegroundProcess?: (signal?: AbortSignal) => TerminalMaybePromise<void>;
   /** Optional trusted provider callback. Absence preserves PTY-output fallback. */
   readonly onAgentJournal?: (listener: PtyAgentJournalListener) => Unsubscribe | undefined;
   readonly dispose?: () => TerminalMaybePromise<void>;

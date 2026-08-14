@@ -111,7 +111,7 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         // the foreground projection at the same host boundary so a delayed or
         // starved interval cannot leave destructive-close protection stale.
         // The interval remains necessary for silent foreground processes.
-        foreground.poll();
+        void foreground.poll();
         if (dataListeners.size === 0) {
           pendingData.push(data);
           return;
@@ -157,6 +157,7 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
           ? { getCwd: (signal?: AbortSignal) => factoryOptions.resolveCwd!(child.pid!, signal) }
           : {}),
         onForegroundProcess: foreground.subscribe,
+        refreshForegroundProcess: foreground.poll,
         // TerminalService may authoritatively finish a session before
         // node-pty delivers its exit callback (for example while shutting
         // down a wedged child).  Its generic process disposal hook must also
@@ -204,12 +205,12 @@ function createForegroundObserver(
   shellProcess: string,
   polling: ForegroundPolling,
   resolveProcess: NodePtyFactoryOptions["resolveForegroundProcess"],
-): { readonly subscribe: (listener: NodePtyForegroundListener) => Unsubscribe; readonly poll: () => void; readonly dispose: () => void } {
+): { readonly subscribe: (listener: NodePtyForegroundListener) => Unsubscribe; readonly poll: (signal?: AbortSignal) => Promise<void>; readonly dispose: () => void } {
   const listeners = new Set<NodePtyForegroundListener>();
   let timer: unknown | undefined;
   let lastProcess: string | undefined;
   let disposed = false;
-  let resolving = false;
+  let resolving: Promise<void> | undefined;
 
   const stop = (): void => {
     if (timer === undefined) return;
@@ -223,21 +224,21 @@ function createForegroundObserver(
     const event = Object.freeze({ processName, shellForeground: isConfiguredShellProcess(processName, shellProcess) });
     for (const listener of [...listeners]) listener(event);
   };
-  const poll = (): void => {
-    if (disposed || listeners.size === 0) return;
+  const poll = (signal?: AbortSignal): Promise<void> => {
+    if (disposed || listeners.size === 0) return Promise.resolve();
     if (resolveProcess === undefined || child.pid === undefined) {
       publish(foregroundProcessName(child));
-      return;
+      return Promise.resolve();
     }
-    if (resolving) return;
-    resolving = true;
-    void resolveProcess(child.pid).then(
+    if (resolving !== undefined) return resolving;
+    resolving = resolveProcess(child.pid, signal).then(
       (processName) => publish(processName?.trim() || foregroundProcessName(child)),
       () => publish(foregroundProcessName(child)),
-    ).finally(() => { resolving = false; });
+    ).finally(() => { resolving = undefined; });
+    return resolving;
   };
   const start = (): void => {
-    if (!disposed && timer === undefined) timer = polling.setInterval(poll, polling.intervalMs);
+    if (!disposed && timer === undefined) timer = polling.setInterval(() => { void poll(); }, polling.intervalMs);
   };
 
   return {

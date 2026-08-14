@@ -113,6 +113,27 @@ test("node-pty prefers host foreground process authority over a stale process ti
   process.dispose();
 });
 
+test("node-pty foreground refresh awaits an in-flight host observation fence", async () => {
+  const child = createChild();
+  let resolveProcess;
+  const processResult = new Promise((resolve) => { resolveProcess = resolve; });
+  const factory = createNodePtyFactory(
+    { spawn: () => child },
+    { resolveForegroundProcess: () => processResult },
+  );
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+
+  const fence = process.refreshForegroundProcess();
+  assert.deepEqual(events, []);
+  resolveProcess("sleep");
+  await fence;
+
+  assert.deepEqual(events, [{ processName: "sleep", shellForeground: false }]);
+  process.dispose();
+});
+
 test("node-pty foreground observer tears down on PTY exit and never enters output callbacks", () => {
   const scheduler = createScheduler();
   const child = createChild();

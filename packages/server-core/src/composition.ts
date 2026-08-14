@@ -373,7 +373,16 @@ export function createServerCoreComposition(
   });
   const activityOperations = options.activity === undefined
     ? undefined
-    : createActivityOperationRegistry({ service: options.activity, eventJournal });
+    : createActivityOperationRegistry({
+        service: options.activity,
+        eventJournal,
+        beforeSnapshot: (request) => terminal.refreshForegroundProcesses(
+          typeof request.context.claims === "object" && request.context.claims !== null && !Array.isArray(request.context.claims) && typeof request.context.claims.projectId === "string"
+            ? request.context.claims.projectId
+            : undefined,
+          request.context.signal,
+        ),
+      });
   const agentOperations = options.agents === undefined
     ? undefined
     : createAgentOperationRegistry({ service: options.agents, eventJournal });
