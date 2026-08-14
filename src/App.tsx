@@ -5303,6 +5303,26 @@ function App({
 			// Opening the chooser retries against the current server transport.
 		}
 	}, [applyProjectEnvironmentSnapshot, projectEnvironmentsClient]);
+	const createInitialTerminalForProject = useCallback(
+		async (projectId: string) => {
+			const terminalClient = terminalClientContext?.client;
+			const workspace = terminalClientContext?.workspaceSnapshotStore;
+			if (terminalClient === undefined || workspace === undefined) {
+				throw new Error('The selected server workspace is not ready.');
+			}
+			const { sessionId } = await terminalClient.create({ projectId });
+			const snapshot = await workspace.waitForSnapshot((candidate) =>
+				hasTerminalPresentation(candidate, sessionId),
+			);
+			if (snapshot === null) {
+				throw new Error('The server did not publish the new project terminal.');
+			}
+		},
+		[
+			terminalClientContext?.client,
+			terminalClientContext?.workspaceSnapshotStore,
+		],
+	);
 	useEffect(() => {
 		let active = true;
 		if (projectEnvironmentsClient === null) return;
@@ -5353,6 +5373,10 @@ function App({
 						? {}
 						: { root: environment.defaultRoot }),
 				});
+				if (operation.projectId === undefined) {
+					throw new Error('The selected server did not return the new project identity.');
+				}
+				await createInitialTerminalForProject(operation.projectId);
 				setProjectEnvironmentNotice(
 					operation.message ?? `Project creation ${operation.state}.`,
 				);
@@ -5365,6 +5389,7 @@ function App({
 		},
 		[
 			boundWorkspaceViewId,
+			createInitialTerminalForProject,
 			projectEnvironmentsClient,
 			terminalClientContext?.workspaceSnapshotStore,
 		],
@@ -5382,6 +5407,10 @@ function App({
 				environmentId: 'terminay:this-server',
 				viewId: boundWorkspaceViewId,
 			});
+			if (operation.projectId === undefined) {
+				throw new Error('The selected server did not return the new project identity.');
+			}
+			await createInitialTerminalForProject(operation.projectId);
 			setProjectEnvironmentNotice(operation.message ?? null);
 			await terminalClientContext?.workspaceSnapshotStore?.refresh();
 		} catch (error) {
@@ -5392,6 +5421,7 @@ function App({
 	}, [
 		addProject,
 		boundWorkspaceViewId,
+		createInitialTerminalForProject,
 		projectEnvironmentsClient,
 		terminalClientContext?.workspaceSnapshotStore,
 	]);

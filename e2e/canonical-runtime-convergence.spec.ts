@@ -88,7 +88,9 @@ test('clean canonical development launch is ready without renderer self-healing'
 		.getAttribute('data-terminay-active-project-id');
 
 	await mainWindow.getByLabel('New terminal tab').click();
-	await expect(mainWindow.locator('.terminal-panel')).toHaveCount(2);
+	await expect
+		.poll(async () => new Set((await canonicalIdentity(mainWindow)).sessionIds).size)
+		.toBe(2);
 	const expanded = await canonicalIdentity(mainWindow);
 	expect(expanded.projectIds).toEqual(identity.projectIds);
 	expect(new Set(expanded.sessionIds).size).toBe(2);
