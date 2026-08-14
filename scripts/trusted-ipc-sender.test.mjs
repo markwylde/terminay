@@ -41,7 +41,6 @@ test('legacy privileged compatibility handlers enforce trusted renderer provenan
     'desktop:workspace-transfer-host:get-adopted-project',
     'desktop:workspace-transfer-host:popout-project',
     'desktop:workspace-transfer-host:merge-project',
-    'desktop:window-lifecycle-host:close-current',
     'desktop:project-tab-host:publish-bar-rect',
     'desktop:project-tab-host:start-drag',
     'desktop:project-tab-host:end-drag',

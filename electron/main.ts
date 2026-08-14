@@ -148,7 +148,6 @@ import { createGracefulQuitHandler } from './gracefulQuit';
 import {
 	bindMainWindowCloseConfirmation,
 	createCloseConfirmationDialog,
-	type DestructiveCloseKind,
 } from './mainWindowCloseConfirmation';
 import {
 	getMcpInstallStatus,
@@ -648,20 +647,29 @@ interface AdoptedProjectPayload {
 // Project-host (index.html) windows, as opposed to the auxiliary settings /
 // macros / recordings / edit windows. Multi-window project tabs are peers.
 const appWindows = new Set<BrowserWindow>();
-const runningTerminalSessionsByWindow = new Map<number, Set<string>>();
 const workspaceViewByWebContents = new Map<number, string>();
-const confirmedWindowCloseWebContents = new Set<number>();
 
 function getRunningTerminalCount(): number {
-	const sessions = new Set<string>();
-	for (const windowSessions of runningTerminalSessionsByWindow.values()) {
-		for (const sessionId of windowSessions) sessions.add(sessionId);
-	}
-	return sessions.size;
+	return (
+		serverTerminalAuthority
+			?.list()
+			.filter((session) => session.status === 'running').length ?? 0
+	);
 }
 
 function getRunningTerminalCountForWindow(webContentsId: number): number {
-	return runningTerminalSessionsByWindow.get(webContentsId)?.size ?? 0;
+	return (
+		serverTerminalAuthority
+			?.list()
+			.filter(
+				(session) =>
+					session.status === 'running' &&
+					serverTerminalAuthority?.isRendererAttached(
+						session.id,
+						webContentsId,
+					),
+			).length ?? 0
+	);
 }
 
 function getOpenProjectWindowCount(): number {
@@ -2990,8 +2998,6 @@ function createWindow(options?: {
 		getRunningTerminalCount: () =>
 			getRunningTerminalCountForWindow(windowWebContentsId),
 		isLastWindow: () => getOpenProjectWindowCount() <= 1,
-		consumeConfirmedClose: () =>
-			confirmedWindowCloseWebContents.delete(windowWebContentsId),
 		showConfirmation: (target, dialogOptions) =>
 			dialog.showMessageBox(target as BrowserWindow, dialogOptions),
 		requestQuit: () => {
@@ -3030,8 +3036,6 @@ function createWindow(options?: {
 		);
 		localServerUiSession.release(windowWebContentsId);
 		appWindows.delete(window);
-		runningTerminalSessionsByWindow.delete(windowWebContentsId);
-		confirmedWindowCloseWebContents.delete(windowWebContentsId);
 		tabBarRectsByWebContents.delete(windowWebContentsId);
 		pendingAdoptedProjects.delete(windowWebContentsId);
 		workspaceViewByWebContents.delete(windowWebContentsId);
@@ -4191,105 +4195,6 @@ ipcMain.handle(
 		}
 		BrowserWindow.fromWebContents(target)?.focus();
 		return { ok: true };
-	},
-);
-
-// Closing the native window is a bounded lifecycle operation rather than a
-// broad application renderer capability.
-ipcMain.handle(
-	'desktop:window-lifecycle-host:close-current',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 2 ||
-			(payload as { version?: unknown }).version !== 1
-		) {
-			throw new TypeError('desktop window lifecycle host request is invalid');
-		}
-		const confirmedRunningWork = (payload as { confirmedRunningWork?: unknown })
-			.confirmedRunningWork;
-		if (typeof confirmedRunningWork !== 'boolean') {
-			throw new TypeError('desktop window lifecycle confirmation is invalid');
-		}
-		const target = BrowserWindow.fromWebContents(event.sender);
-		if (!target || target.isDestroyed()) return;
-		if (confirmedRunningWork) {
-			confirmedWindowCloseWebContents.add(event.sender.id);
-		}
-		target.close();
-	},
-);
-
-ipcMain.handle(
-	'desktop:window-lifecycle-host:publish-running-terminals',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 2 ||
-			(payload as { version?: unknown }).version !== 1 ||
-			!Array.isArray((payload as { sessionIds?: unknown }).sessionIds)
-		)
-			throw new TypeError('desktop running terminal publication is invalid');
-		const sessionIds = (payload as { sessionIds: unknown[] }).sessionIds;
-		if (
-			sessionIds.length > 4_096 ||
-			sessionIds.some(
-				(value) =>
-					typeof value !== 'string' ||
-					!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value),
-			)
-		)
-			throw new TypeError('desktop running terminal session ids are invalid');
-		runningTerminalSessionsByWindow.set(
-			event.sender.id,
-			new Set(sessionIds as string[]),
-		);
-	},
-);
-
-ipcMain.handle(
-	'desktop:window-lifecycle-host:confirm-close',
-	async (event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 3 ||
-			(payload as { version?: unknown }).version !== 1
-		)
-			throw new TypeError('desktop close confirmation request is invalid');
-		const { kind, runningTerminalCount } = payload as {
-			kind: unknown;
-			runningTerminalCount: unknown;
-		};
-		if (
-			(kind !== 'terminal' && kind !== 'project') ||
-			typeof runningTerminalCount !== 'number' ||
-			!Number.isSafeInteger(runningTerminalCount) ||
-			runningTerminalCount < 1 ||
-			runningTerminalCount > 4_096
-		)
-			throw new TypeError('desktop close confirmation scope is invalid');
-		const target = BrowserWindow.fromWebContents(event.sender);
-		if (!target || target.isDestroyed()) return false;
-		const result = await dialog.showMessageBox(
-			target,
-			createCloseConfirmationDialog(
-				kind as DestructiveCloseKind,
-				runningTerminalCount,
-			),
-		);
-		return result.response === 0;
 	},
 );
 

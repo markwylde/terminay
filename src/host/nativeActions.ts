@@ -78,3 +78,8 @@ export async function checkForAppUpdate(): Promise<AppUpdateStatus | null> {
 	const response = await request({ type: 'updater.check' });
 	return response.handled ? parseUpdateStatus(response.result) : null;
 }
+
+export async function closeHostPresentation(): Promise<void> {
+	if ((await request({ type: 'route.close' })).handled) return;
+	window.close();
+}

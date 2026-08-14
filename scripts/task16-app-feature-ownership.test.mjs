@@ -291,7 +291,8 @@ test('the project collection hook owns project CRUD and adoption reconciliation'
 	assert.match(projectCollection, /const closeProject = useCallback/);
 	assert.match(projectCollection, /const adoptProject = useCallback/);
 	assert.match(projectCollection, /const updateProject = useCallback/);
-	assert.match(projectCollection, /terminayWindowLifecycleHost\?\.closeCurrent/);
+	assert.match(projectCollection, /closeHostPresentation\(\)/);
+	assert.doesNotMatch(projectCollection, /terminayWindowLifecycleHost/u);
 });
 
 test('the workspace lifecycle hook owns Dockview panel reconciliation', () => {

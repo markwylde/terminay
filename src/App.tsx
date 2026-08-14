@@ -5190,8 +5190,7 @@ function App({
 	}, []);
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
 	const hasNativeWindowControls =
-		hostPresentation?.nativeWindowControls ??
-		typeof window.terminayWindowLifecycleHost !== 'undefined';
+		hostPresentation?.nativeWindowControls ?? false;
 	const currentServerId = terminalClientContext?.serverId ?? 'desktop-local';
 	const currentServerLabel =
 		terminalClientContext?.connectionLabel ??
@@ -5238,21 +5237,6 @@ function App({
 	const workspaceRefs = useRef(
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
-	useEffect(() => {
-		const activityStore = terminalClientContext?.activityClient?.store;
-		const host = window.terminayWindowLifecycleHost;
-		if (activityStore === undefined || host === undefined) return;
-		const publish = () =>
-			void host.publishRunningTerminalSessions(
-				getRunningTerminalSessionIds(activityStore.snapshot),
-			);
-		publish();
-		const unsubscribe = activityStore.subscribe(publish);
-		return () => {
-			unsubscribe();
-			void host.publishRunningTerminalSessions([]);
-		};
-	}, [terminalClientContext?.activityClient]);
 	const confirmProjectClose = useCallback(
 		(projectId: string) => {
 			const running = getRunningTerminalSessionIds(

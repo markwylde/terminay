@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
+import { closeHostPresentation } from '../host/nativeActions';
 import { normalizeSidebarPanelOrder } from '../terminalSettings';
 import type { SidebarSettings } from '../types/settings';
 import { createProjectTab, type ProjectTab } from './projectTabModel';
@@ -262,9 +263,7 @@ export function useProjectCollection<TTerminal>({
 				return;
 			}
 			if (current.length === 1) {
-				void window.terminayWindowLifecycleHost?.closeCurrent(
-					options.skipConfirmation === true,
-				);
+				void closeHostPresentation();
 				return;
 			}
 			if (workspaceSnapshotStore !== undefined) {

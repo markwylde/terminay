@@ -8,8 +8,6 @@ const globals = await readFile(
 );
 
 const APPROVED_NATIVE_HOST_METHODS = Object.freeze({
-	terminayClipboardHost: ['readText', 'subscribeCopyRequest', 'writeText'],
-	terminayExternalHost: ['open'],
 	terminayProjectTabHost: [
 		'endDrag',
 		'publishBarRect',
@@ -23,11 +21,6 @@ const APPROVED_NATIVE_HOST_METHODS = Object.freeze({
 		'subscribeRemoteSizeOverride',
 		'subscribeZoom',
 		'updateMetadata',
-	],
-	terminayWindowLifecycleHost: [
-		'closeCurrent',
-		'confirmClose',
-		'publishRunningTerminalSessions',
 	],
 	terminayWorkspaceTransferHost: [
 		'bindView',
@@ -51,6 +44,25 @@ test('native presentation hosts expose only their reviewed version-one operation
 			.filter((name) => name !== 'readonly' && name !== 'version')
 			.sort();
 		assert.deepEqual([...new Set(methods)], [...approvedMethods].sort(), host);
+	}
+});
+
+test('window close uses the canonical route action without an ambient lifecycle host', async () => {
+	const actions = await readFile(
+		new URL('../src/host/nativeActions.ts', import.meta.url),
+		'utf8',
+	);
+	assert.doesNotMatch(globals, /terminayWindowLifecycleHost/u);
+	assert.match(actions, /request\(\{ type: 'route\.close' \}\)/u);
+});
+
+test('migrated ambient native globals stay absent', () => {
+	for (const name of [
+		'terminayClipboardHost',
+		'terminayExternalHost',
+		'terminayWindowLifecycleHost',
+	]) {
+		assert.doesNotMatch(globals, new RegExp(name, 'u'));
 	}
 });
 
