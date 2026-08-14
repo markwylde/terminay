@@ -359,7 +359,7 @@ test.describe('workspace shell', () => {
 		await expect(editWindow.getByPlaceholder('Enter folder path')).toHaveValue(
 			expectedRoot,
 		);
-		await editWindow.close();
+		await editWindow.getByRole('button', { name: 'Cancel' }).click();
 
 		await openFileExplorer(mainWindow);
 		const gitPane = mainWindow.locator('.sidebar-pane').filter({

@@ -506,8 +506,7 @@ test.describe('terminal behavior', () => {
 		await expectTerminalInputFocused(mainWindow);
 	});
 
-	test('double-clicking a terminal tab opens one edit window for the active project tab', async ({
-		appHarness,
+	test('double-clicking a terminal tab opens one in-page editor for the active project tab', async ({
 		electronApp,
 		mainWindow,
 	}) => {
@@ -533,9 +532,8 @@ test.describe('terminal behavior', () => {
 			({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
 		);
 
-		const editWindow = await appHarness.openChildWindow(async () => {
-			await activeTerminalTab.dblclick();
-		});
+		await activeTerminalTab.dblclick();
+		const editWindow = mainWindow;
 
 		await expect(
 			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
@@ -550,7 +548,7 @@ test.describe('terminal behavior', () => {
 					({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
 				),
 			)
-			.toBe(windowCountBeforeEdit + 1);
+			.toBe(windowCountBeforeEdit);
 
 		await cancelEditWindow(editWindow);
 	});

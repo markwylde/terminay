@@ -789,12 +789,14 @@ function ConnectedBrowserAuxiliaryDialog({
 				data-connected-web-auxiliary-route={route.kind}
 				role="dialog"
 			>
-				<header className="connected-web-auxiliary-dialog__header">
-					<h2>{title}</h2>
-					<button ref={closeButtonRef} type="button" onClick={onClose}>
-						Close
-					</button>
-				</header>
+				{route.kind === 'edit-tab' ? null : (
+					<header className="connected-web-auxiliary-dialog__header">
+						<h2>{title}</h2>
+						<button ref={closeButtonRef} type="button" onClick={onClose}>
+							Close
+						</button>
+					</header>
+				)}
 				<div className="connected-web-auxiliary-dialog__body">{children}</div>
 			</section>
 		</div>
