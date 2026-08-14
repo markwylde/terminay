@@ -118,6 +118,7 @@ import {
 	createAuxiliaryRouteController,
 } from './shared/auxiliaryRoutes';
 import {
+	clearSucceededFeatureFailure,
 	describeFeatureFailure,
 	describeServerFeatureFailure,
 	resolveProjectFeatureAuthority,
@@ -1352,6 +1353,9 @@ const ProjectWorkspace = forwardRef<
 		);
 		const deferredTerminalActivityFlushTimerRef = useRef<number | null>(null);
 		const [errorText, setErrorText] = useState<string | null>(null);
+		const featureFailureRef = useRef<
+			import('./shared/featureQueryAuthority').VisibleFeatureFailure | null
+		>(null);
 		const reportFeatureFailure = useCallback(
 			(feature: 'Explorer' | 'Agents' | 'Git' | 'Settings', error: unknown) => {
 				if (featureAvailability.state === 'unavailable') {
@@ -1364,11 +1368,21 @@ const ProjectWorkspace = forwardRef<
 					featureAvailability.authority.scope,
 				);
 				const message = `${failure.title}. ${failure.detail}`;
+				featureFailureRef.current = { feature, message };
 				setErrorText(message);
 				return message;
 			},
 			[featureAvailability],
 		);
+		const clearFeatureFailure = useCallback((feature: 'Explorer' | 'Git') => {
+			const failure = featureFailureRef.current;
+			if (failure === null) return;
+			setErrorText((current) => {
+				const next = clearSucceededFeatureFailure(failure, feature, current);
+				featureFailureRef.current = next;
+				return next === null ? null : current;
+			});
+		}, []);
 		useEffect(() => {
 			if (settingsError !== null)
 				reportFeatureFailure('Settings', settingsError);
@@ -2253,6 +2267,7 @@ const ProjectWorkspace = forwardRef<
 			onOpenFile: openFile,
 			onOpenTerminalAt: handleOpenTerminalAt,
 			onOperationError: reportFeatureFailure,
+			onOperationSucceeded: clearFeatureFailure,
 			onSetError: setErrorText,
 			onUpdateProject,
 			project,

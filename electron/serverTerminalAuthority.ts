@@ -53,6 +53,7 @@ import {
 import {
 	CanonicalProjectPathResolver,
 	FileCatalog,
+	type FileCatalogOperationFailure,
 	type FileCatalogProjectContext,
 	type FileCatalogStorage,
 	type FileContentProjectContext,
@@ -216,6 +217,9 @@ export interface ServerTerminalAcceptedResize {
 	readonly rows: number;
 }
 
+/** Metadata-only host observation of a failed server-owned file operation. */
+export type ServerFileOperationFailure = FileCatalogOperationFailure;
+
 type ServerTerminalHostObserver<TEvent> = (
 	event: TEvent,
 ) => void | Promise<void>;
@@ -233,6 +237,10 @@ export interface ServerTerminalAuthorityOptions {
 	/** Metadata-only observation of bounded protocol delivery pressure. */
 	readonly onDeliveryDiagnostic?: (
 		diagnostic: ConnectionDeliveryDiagnostic,
+	) => void;
+	/** Metadata-only observer for failed server-owned filesystem operations. */
+	readonly onFileOperationFailure?: (
+		failure: ServerFileOperationFailure,
 	) => void;
 	/** Host-only observer for input that server-core has already accepted. */
 	readonly onAcceptedWrite?: ServerTerminalHostObserver<ServerTerminalAcceptedWrite>;
@@ -379,6 +387,7 @@ export class ServerTerminalAuthority {
 		const fileCatalogAdapter = new ServerFileCatalogAdapter({
 			serverId: options.serverId,
 			projects: this.fileCatalogProjects,
+			onOperationFailure: (failure) => options.onFileOperationFailure?.(failure),
 		});
 		const fileContentAdapter = new ServerFileContentAdapter({
 			serverId: options.serverId,
