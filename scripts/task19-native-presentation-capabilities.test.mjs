@@ -7,22 +7,7 @@ const globals = await readFile(
 	'utf8',
 );
 
-const APPROVED_NATIVE_HOST_METHODS = Object.freeze({
-	terminayProjectTabHost: [
-		'endDrag',
-		'publishBarRect',
-		'startDrag',
-		'subscribeDragHover',
-		'subscribeTornOff',
-	],
-	terminayWorkspaceTransferHost: [
-		'bindView',
-		'getAdoptedProject',
-		'mergeProject',
-		'popoutProject',
-		'subscribeAdoptedProject',
-	],
-});
+const APPROVED_NATIVE_HOST_METHODS = Object.freeze({});
 
 test('native presentation hosts expose only their reviewed version-one operations', () => {
 	for (const [host, approvedMethods] of Object.entries(
@@ -78,3 +63,4 @@ function interfaceBody(source, host) {
 	}
 	throw new Error(`${host} declaration is unterminated`);
 }
+

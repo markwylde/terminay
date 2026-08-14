@@ -140,7 +140,6 @@ import type {
 	TerminalSettings,
 } from './types/settings';
 import type {
-	AdoptedProjectPayload,
 	AiTabMetadataTarget,
 	AppCommand,
 	AppUpdateStatus,
@@ -4987,10 +4986,6 @@ const ProjectWorkspace = forwardRef<
 
 ProjectWorkspace.displayName = 'ProjectWorkspace';
 
-// A window torn off from another (popout) boots with ?adopt=1 so it starts with
-// no default project and pulls its adopted project on mount instead.
-const isAdoptWindow =
-	new URLSearchParams(window.location.search).get('adopt') === '1';
 const requestedWorkspaceViewId =
 	new URLSearchParams(window.location.search).get('view') ??
 	new URLSearchParams(window.location.hash.slice(1)).get('view');
@@ -5161,17 +5156,11 @@ function App({
 		terminalClientContext?.workspaceSnapshotStore?.snapshot;
 	const boundWorkspaceViewId =
 		requestedWorkspaceViewId ?? workspaceSnapshot?.viewOrder[0] ?? null;
-	useEffect(() => {
-		if (boundWorkspaceViewId === null) return;
-		void window.terminayWorkspaceTransferHost?.bindView(boundWorkspaceViewId);
-	}, [boundWorkspaceViewId]);
-
 	const {
 		activeProjectId,
 		activateProject,
 		addProject,
 		adoptedTerminalsByProject,
-		adoptProject: adoptProjectIntoCollection,
 		canAddProject,
 		closeProject,
 		homePath,
@@ -5187,27 +5176,13 @@ function App({
 			workspaceSnapshot?.projects[
 				workspaceSnapshot.views[boundWorkspaceViewId ?? '']?.projectIds[0] ?? ''
 			]?.root ?? '',
-		isAdoptWindow,
+		isAdoptWindow: false,
 		isSettingsLoading: areTerminalSettingsLoading,
 		projectColorScope: currentServerId,
 		sidebarSettings: settings.sidebar,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
 	});
-	const exportProjectForTransfer = useCallback(
-		(projectId: string) =>
-			workspaceRefs.current.get(projectId)?.exportProjectForMove() ?? null,
-		[],
-	);
-	const adoptTransferredProject = useCallback(
-		(payload: AdoptedProjectPayload, insertIndex: number | null) =>
-			adoptProjectIntoCollection(
-				payload.project as unknown as ProjectTab,
-				payload.terminals as unknown as MovedTerminalTab[],
-				insertIndex,
-			),
-		[adoptProjectIntoCollection],
-	);
 	const {
 		draggingProjectId,
 		dropPreview,
@@ -5217,10 +5192,6 @@ function App({
 		isProjectDropTarget,
 		projectTabBarRef,
 	} = useProjectTabTransfer({
-		closeProject,
-		exportProject: exportProjectForTransfer,
-		isAdoptWindow,
-		onAdopt: adoptTransferredProject,
 		projectsRef,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,

@@ -17,3 +17,15 @@ export function subscribeTerminalZoom(
 		}
 	});
 }
+
+export function subscribeWorkspaceDragState(
+	listener: (active: boolean) => void,
+): () => void {
+	const host = window.terminayHost as unknown as NativeEventBridge | undefined;
+	if (host === undefined) return () => undefined;
+	return host.subscribeEvent((message) => {
+		if (message.event.type === 'workspace.drag-state') {
+			listener(message.event.active);
+		}
+	});
+}

@@ -2,33 +2,11 @@ import type { TerminayHostMenuCommand } from '@terminay/protocol';
 
 export type AppCommand = TerminayHostMenuCommand;
 
-// A project tab torn off / merged across windows. `project` is a ProjectTab and
-// `terminals` are MovedTerminalTab entries (kept loose here to avoid coupling
-// this shared type file to App.tsx's local definitions); the renderer casts.
-export interface AdoptedProjectPayload {
-	project: Record<string, unknown>;
-	terminals: Array<{ sessionId: string } & Record<string, unknown>>;
-	activeSessionId?: string | null;
-}
-
-export type ProjectTabDragResult =
-	| { action: 'reorder' }
-	| { action: 'merge'; targetWindowId: number; targetViewId: string }
-	| { action: 'popout'; x: number; y: number };
-
 export type ProjectTabDragPreview = {
 	title: string;
 	emoji: string;
 	color: string;
 	width: number;
-};
-
-// Sent to a window while another window drags a project tab over its bar.
-// `clientX` (viewport-relative) drives the in-bar insertion index.
-export type ProjectTabDragHoverMessage = {
-	active: boolean;
-	clientX?: number;
-	preview?: ProjectTabDragPreview | null;
 };
 
 export type FileViewerTextEncoding =
