@@ -3,6 +3,8 @@ export type AppCommand =
 	| 'new-project'
 	| 'save-active'
 	| 'open-recordings'
+	| 'open-settings'
+	| 'open-macros'
 	| 'open-project-environments'
 	| 'open-extensions'
 	| 'split-horizontal'

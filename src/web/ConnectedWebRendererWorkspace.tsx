@@ -5,6 +5,8 @@ import {
 	TerminayAiClient,
 	TerminayClientFacade,
 } from '@terminay/client-core';
+import type { TerminayHostContext } from '@terminay/protocol';
+import type { AppCommand } from '../types/terminay';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import 'dockview/dist/styles/dockview.css';
@@ -47,6 +49,10 @@ export type ConnectedWebRendererWorkspaceProps = Readonly<{
 	terminalClientContext: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	connectionRoute: Omit<SharedConnectionsRouteBodyProps, 'state'>;
 	onBack: () => void;
+	hostContext?: TerminayHostContext;
+	subscribeAppCommands?: (
+		listener: (command: AppCommand) => Promise<void> | void,
+	) => () => void;
 }>;
 
 type BrowserAuxiliaryRoute = 'settings' | 'macros' | 'recordings';
@@ -72,9 +78,14 @@ const menuLabels: Readonly<Record<BrowserMenuId, string>> = Object.freeze({
  * Native Desktop capabilities are omitted rather than emulated on `window`. */
 export function ConnectedWebRendererWorkspace({
 	connectionRoute,
+	hostContext,
+	subscribeAppCommands,
 	onBack,
 	terminalClientContext,
 }: ConnectedWebRendererWorkspaceProps) {
+	const hasNativeMenus = hostContext?.capabilities.nativeMenus !== undefined;
+	const hasNativeWindowControls =
+		hostContext?.capabilities.nativeWindows !== undefined;
 	const [isConnectionManagerOpen, setIsConnectionManagerOpen] = useState(false);
 	const [auxiliaryRoute, setAuxiliaryRoute] =
 		useState<AuxiliaryRouteRequest | null>(null);
@@ -211,16 +222,23 @@ export function ConnectedWebRendererWorkspace({
 		<div className="connected-web-renderer-workspace">
 			<TerminalSettingsClientProvider client={settingsClient}>
 				<LegacyMacroSettingsProvider capability={macroCapability}>
-					<ConnectedBrowserMenuBar
-						onBack={onBack}
-						onOpenAuxiliaryRoute={requestBrowserAuxiliaryRoute}
-						onOpenConnectionManager={() => setIsConnectionManagerOpen(true)}
-					/>
+					{hasNativeMenus ? null : (
+						<ConnectedBrowserMenuBar
+							onBack={onBack}
+							onOpenAuxiliaryRoute={requestBrowserAuxiliaryRoute}
+							onOpenConnectionManager={() => setIsConnectionManagerOpen(true)}
+						/>
+					)}
 					<ConnectedRendererWorkspace
 						host={Object.freeze({
 							auxiliaryRoutes,
 							onDisconnect: onBack,
 							onOpenConnectionManager: () => setIsConnectionManagerOpen(true),
+							presentation: Object.freeze({
+								nativeMenus: hasNativeMenus,
+								nativeWindowControls: hasNativeWindowControls,
+							}),
+							subscribeAppCommands,
 						})}
 						terminalClientContext={terminalClientContext}
 					/>
