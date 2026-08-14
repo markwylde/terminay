@@ -34,7 +34,6 @@ import {
 	dialog,
 	ipcMain,
 	Menu,
-	MessageChannelMain,
 	nativeImage,
 	Notification,
 	powerMonitor,
