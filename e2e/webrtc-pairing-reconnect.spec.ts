@@ -12,5 +12,9 @@ test('fails a hosted pairing closed when Desktop has no selected server-owned We
 	});
 	await expect(expose).toBeDisabled();
 	await expect(expose).toContainText('Unavailable in this build');
-	await expect(mainWindow.getByText(runtimeError, { exact: true })).toBeVisible();
+	await expect(
+		mainWindow.locator('.remote-access-menu').getByText(runtimeError, {
+			exact: true,
+		}),
+	).toBeVisible();
 });
