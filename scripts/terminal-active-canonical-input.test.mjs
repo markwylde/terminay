@@ -9,7 +9,8 @@ const source = await readFile(
 
 test('active terminal shell proof uses the visible canonical xterm input', () => {
 	assert.match(source, /terminal\.locator\('\.xterm-helper-textarea'\)\.focus\(\)/u);
-	assert.match(source, /keyboard\.type/u);
+	assert.match(source, /keyboard\.insertText/u);
+	assert.doesNotMatch(source, /keyboard\.type/u);
 	assert.match(source, /keyboard\.press\('Enter'\)/u);
 	assert.doesNotMatch(source, /terminayTest|writeServerTerminal/u);
 });
