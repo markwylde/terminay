@@ -729,6 +729,24 @@ const embeddedServerSettings = new ServerSettingsRepository({
 		}
 	},
 });
+
+/**
+ * Remote exposure is a selected-server feature. Its non-secret configuration
+ * therefore comes from the embedded server repository, not the Desktop
+ * device-settings projection. The pairing-PIN verifier remains local and is
+ * deliberately not included in the server settings snapshot.
+ */
+function readEmbeddedRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
+	const serverSettings = embeddedServerSettings.settings as Partial<TerminalSettings>;
+	return {
+		...normalizeTerminalSettings({
+			...defaultTerminalSettings,
+			...serverSettings,
+		}).remoteAccess,
+		pairingPinHash: readRemotePairingPinVerifier(),
+	};
+}
+
 const embeddedShellProfiles = new ShellProfileCatalogueService({
 	settings: embeddedServerSettings,
 	discovery: new ShellProfileDiscoveryService(
@@ -1022,7 +1040,7 @@ const persistEmbeddedReconnectRecords = (
 embeddedLanExposure = new EmbeddedLanExposure({
 	core: authority.composition.core,
 	...(process.env.TERMINAY_TEST === '1' ? { enableTestControl: true } : {}),
-	getSettings: () => readTerminalSettings().remoteAccess,
+	getSettings: readEmbeddedRemoteAccessSettings,
 	onConnectionError: (error) => {
 		void desktopDiagnostics.record(
 			{
@@ -1043,7 +1061,7 @@ embeddedLanExposure = new EmbeddedLanExposure({
 });
 desktopRemoteExposure = new DesktopServerOwnedExposure({
 	serverId: authority.service.serverId,
-	sessionOrigin: readTerminalSettings().remoteAccess.origin,
+	sessionOrigin: readEmbeddedRemoteAccessSettings().origin,
 	pairingMode: () => 'webrtc',
 	initialReconnectRecords: embeddedReconnectRecords,
 	lanListener: embeddedLanExposure,
@@ -1062,7 +1080,7 @@ desktopRemoteExposure = new DesktopServerOwnedExposure({
 				},
 			}),
 	resolveSessionOrigin: () => {
-		const settings = readTerminalSettings().remoteAccess;
+		const settings = readEmbeddedRemoteAccessSettings();
 		if (settings.pairingMode === 'lan') return settings.origin;
 		const configured = settings.webRtcHostedDomain.includes('://')
 			? settings.webRtcHostedDomain
@@ -1127,7 +1145,7 @@ if (desktopWebRtcRuntimeRoot !== undefined) {
 					write: (data) => authority.write(sessionId, data),
 				};
 			},
-			getRemoteAccessSettings: () => readTerminalSettings().remoteAccess,
+			getRemoteAccessSettings: readEmbeddedRemoteAccessSettings,
 			notifyTerminalRemoteSizeOverride: () => undefined,
 			onStatusChanged: () => undefined,
 			publicDir: process.env.VITE_PUBLIC ?? RENDERER_DIST,
@@ -3454,7 +3472,7 @@ if (process.env.TERMINAY_TEST === '1') {
 	ipcMain.handle(
 		'test:get-mcp-control-environment',
 		(event, payload?: { terminalSessionId?: unknown }) => {
-			assertTrustedAppSender(event);
+			assertBoundServerUiEvent(event);
 			const terminalSessionId = payload?.terminalSessionId;
 			if (
 				typeof terminalSessionId !== 'string' ||
