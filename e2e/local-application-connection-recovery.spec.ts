@@ -48,7 +48,10 @@ test('a Local application transport loss recovers without replacing the terminal
 			observer.observe(document.body, { childList: true, subtree: true });
 			inspect();
 		});
-		const failed = await window.terminayTest!.failActiveLocalServerConnection();
+		if (!window.terminayLocalConnectionFaultTest)
+			throw new Error('Local connection fault test seam is unavailable');
+		const failed =
+			await window.terminayLocalConnectionFaultTest.failActiveConnection();
 		return { ...failed, recoveryStatus: await observedRecovery };
 	});
 	expect(failure.connectionId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);

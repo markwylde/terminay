@@ -34,6 +34,9 @@ declare global {
 			subscribe(listener: (frame: Uint8Array | null) => void): () => void;
 		};
 		terminayTest?: TerminayTestApi;
+		terminayLocalConnectionFaultTest?: {
+			failActiveConnection: () => Promise<{ connectionId: string }>;
+		};
 		terminayAgentStatusTest?: {
 			emitJournalRecord: (payload: {
 				provider: 'codex' | 'claude';

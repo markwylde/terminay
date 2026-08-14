@@ -128,6 +128,21 @@ if (
 	(process as NodeJS.Process & { isMainFrame?: boolean }).isMainFrame !== false
 ) {
 	contextBridge.exposeInMainWorld(
+		'terminayLocalConnectionFaultTest',
+		Object.freeze({
+			failActiveConnection: async () => {
+				if (byteListeners.size !== 1) {
+					throw new Error(
+						`Expected one active Local connection generation, found ${byteListeners.size}`,
+					);
+				}
+				const bound = await context();
+				for (const listener of [...byteListeners]) listener(null);
+				return { connectionId: `local:${bound.windowId}` };
+			},
+		}),
+	);
+	contextBridge.exposeInMainWorld(
 		'terminayAiMetadataTest',
 		Object.freeze({
 			setMock: (mock: {
