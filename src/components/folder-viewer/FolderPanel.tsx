@@ -6,6 +6,7 @@ import type {
 	FolderMarkdownTaskSection,
 } from '@terminay/client-core';
 import type { IDockviewPanelProps } from 'dockview';
+import { writeClipboardText } from '../../host/nativeActions';
 import {
 	Copy,
 	FileEdit,
@@ -2106,7 +2107,7 @@ export function FolderPanel(
 								onClick: () =>
 									onCopyPath
 										? onCopyPath(contextMenu.path)
-										: void window.terminayClipboardHost?.writeText(
+										: void writeClipboardText(
 												contextMenu.path,
 											),
 							},
@@ -2116,7 +2117,7 @@ export function FolderPanel(
 								onClick: () =>
 									onCopyRelativePath
 										? onCopyRelativePath(contextMenu.path)
-										: void window.terminayClipboardHost?.writeText(
+										: void writeClipboardText(
 												getPathRelativeToRoot(
 													contextMenu.path,
 													projectRootPath ?? folderPath,
