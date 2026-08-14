@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { lstat, readdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -89,10 +89,13 @@ export async function buildUiBundleManifest({
     hostCompatibility,
     assets,
   };
-  await writeFile(
-    join(root, manifestRelativePath),
-    `${JSON.stringify(manifest, null, 2)}\n`,
+  const manifestPath = join(root, manifestRelativePath);
+  const temporaryManifestPath = join(
+    root,
+    `.manifest-${process.pid}-${Date.now()}.json.tmp`,
   );
+  await writeFile(temporaryManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await rename(temporaryManifestPath, manifestPath);
   return manifest;
 }
 

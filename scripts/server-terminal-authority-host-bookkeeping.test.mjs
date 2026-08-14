@@ -79,6 +79,43 @@ function systemShellProfiles(shellPath = '/bin/zsh', environment = {}) {
   }
 }
 
+test('Desktop production authority projects a real PTY foreground process onto its exact activity session', async () => {
+  const authority = new ServerTerminalAuthority({
+    serverId: 'desktop-real-foreground',
+    shellProfiles: systemShellProfiles('/bin/sh'),
+  })
+  await authority.initializeWorkspace()
+  const session = await authority.service.createSession({
+    projectId: 'default',
+    sessionId: 'real-foreground-session',
+    shellPath: '/bin/sh',
+    cwd: process.cwd(),
+    cols: 80,
+    rows: 24,
+  })
+  try {
+    await authority.service.input(
+      session.identity,
+      'sleep 10\r',
+      { ...session.identity, clientId: 'foreground-test', scope: 'write' },
+    )
+    const deadline = Date.now() + 5_000
+    let snapshot
+    while (Date.now() < deadline) {
+      snapshot = authority.activity.get(session.identity)
+      if (snapshot?.foregroundBusy === true) break
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    assert.equal(snapshot?.sessionId, session.identity.sessionId)
+    assert.equal(snapshot?.projectId, session.identity.projectId)
+    assert.equal(snapshot?.foregroundBusy, true)
+    assert.equal(snapshot?.source, 'structured:foreground')
+  } finally {
+    await authority.service.kill(session.identity, undefined, 'SIGKILL').catch(() => undefined)
+    await authority.shutdown()
+  }
+})
+
 test('Desktop authority resolves every compatibility-created PTY through the canonical profile and cwd boundary', async () => {
   const pty = createPtyFactory()
   process.env.PROFILE_LAYER_TEST = 'host'

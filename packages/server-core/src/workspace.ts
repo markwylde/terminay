@@ -651,13 +651,21 @@ export class WorkspaceStore {
 
 	constructor(
 		initial: WorkspaceState,
-		options: { readonly maxHistory?: number } = {},
+		options: {
+			readonly maxHistory?: number;
+			/** Transaction hook invoked before a reducer result becomes visible.
+			 * Production repositories use this to atomically replace durable state;
+			 * throwing leaves the previous in-memory revision authoritative. */
+			readonly commit?: (state: WorkspaceState) => void;
+		} = {},
 	) {
 		this.current = canonicalizeWorkspaceState(initial) as MutableWorkspaceState;
 		this.maxHistory = options.maxHistory ?? 1024;
+		this.commit = options.commit;
 		if (!Number.isSafeInteger(this.maxHistory) || this.maxHistory <= 0)
 			throw new RangeError('maxHistory must be positive');
 	}
+	private readonly commit: ((state: WorkspaceState) => void) | undefined;
 
 	get state(): WorkspaceState {
 		return clone(this.current);
@@ -738,6 +746,7 @@ export class WorkspaceStore {
 			type: envelope.command.type,
 			changedIds,
 		};
+		this.commit?.(clone(next));
 		this.current = next;
 		this.history.push(event);
 		while (this.history.length > this.maxHistory) this.history.shift();
@@ -778,6 +787,7 @@ export class WorkspaceStore {
 			while (this.history.length > this.maxHistory) this.history.shift();
 		}
 		validateWorkspace(next);
+		if (changedIds.length > 0) this.commit?.(clone(next));
 		this.current = next;
 		return this.state;
 	}

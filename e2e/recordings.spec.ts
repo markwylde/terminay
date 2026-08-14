@@ -218,17 +218,11 @@ test.describe('recordings UI', () => {
   }) => {
     const recordingDir = path.join(tempDir, 'ui-recordings')
     await mkdir(recordingDir, { recursive: true })
-    await mainWindow.evaluate(async (nextRecordingDir) => {
-      const settings = await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()
-      await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings({
-        ...settings,
-        recording: {
-          ...settings.recording,
-          directory: nextRecordingDir,
-          openTimelineAfterSaving: false,
-        },
-      })
-    }, recordingDir)
+    const settings = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'recording-defaults' })
+    await settings.locator('#section-recording-defaults .settings-row').filter({ hasText: 'Recording directory' }).locator('input').fill(recordingDir)
+    await settings.getByLabel('Open timeline after saving').uncheck()
+    await expect(settings.locator('.settings-status')).toContainText('Saved')
+    await settings.close()
 
     const terminalTab = mainWindow.locator('.project-workspace--active .terminal-tab-content').first()
     await terminalTab.click({ button: 'right' })
@@ -246,22 +240,20 @@ test.describe('recordings UI', () => {
     await expect(contextMenuItem(mainWindow, 'Reveal Last Recording')).toBeVisible()
     await mainWindow.keyboard.press('Escape')
 
-    const recordingsWindow = await appHarness.openChildWindow(async () => {
-      await mainWindow.evaluate(async () => {
-        await window.terminayRecordingsHost!.open()
-      })
-    })
+    const recordingsWindow = await appHarness.openRecordingsWindow(mainWindow)
 
     await expect(recordingsWindow.getByRole('heading', { name: 'Recordings' })).toBeVisible()
     expect(
       await recordingsWindow.evaluate(async () => {
         return {
-          boundedRead: typeof window.terminayRecordingServiceHost?.readTerminalRecordingChunk === 'function',
+          canonicalHostPresent: typeof window.terminayHost?.requestAction === 'function',
+          nativeRecordingPreloadPresent: Reflect.has(window, 'terminayRecordingServiceHost'),
           broadPreloadPresent: Reflect.has(window, 'terminay'),
         }
       }),
     ).toEqual({
-      boundedRead: true,
+      canonicalHostPresent: true,
+      nativeRecordingPreloadPresent: false,
       broadPreloadPresent: false,
     })
     await expect(recordingsWindow.getByPlaceholder('Search recordings')).toBeVisible()

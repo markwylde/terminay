@@ -1,6 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { submitTerminalCommand } from './support/terminal';
 
 async function activeSessionId(page: Page): Promise<string> {
 	const sessionId = await page
@@ -15,13 +16,7 @@ async function activeSessionId(page: Page): Promise<string> {
 }
 
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
-	const sessionId = await activeSessionId(page);
-	await page.evaluate(
-		async ({ sessionId: nextSessionId, data: nextData }) => {
-			await window.terminayTest!.writeServerTerminal(nextSessionId, nextData);
-		},
-		{ sessionId, data },
-	);
+	await submitTerminalCommand(page, data);
 }
 
 test('keeps a high-output local terminal interactive through sidebar, root, resize, and settings updates', async ({
@@ -46,13 +41,8 @@ test('keeps a high-output local terminal interactive through sidebar, root, resi
 		`cd ${JSON.stringify(expectedRoot)} && printf ${JSON.stringify(cwdReady)}\\n\r`,
 	);
 	await expect(panel).toContainText(cwdReady);
-	await expect
-		.poll(async () => {
-			return await mainWindow.evaluate(async (sessionId) => {
-				return await window.terminayTest!.getServerTerminalCwd(sessionId);
-			}, originalSessionId);
-		})
-		.toMatchObject({ cwd: expectedRoot, source: 'observed' });
+	await writeToActiveTerminal(mainWindow, 'pwd\r');
+	await expect(panel).toContainText(expectedRoot);
 
 	// This writes 1.1 MiB after the terminal has started. It deliberately exceeds
 	// both the old command-header replay allowance and the usual 1 MiB replay

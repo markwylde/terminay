@@ -25,34 +25,16 @@ test('accepts only known top-level Terminay app renderer senders', () => {
   assert.throws(() => assertTrustedIpcSender(event(), { ...options, isKnownWindow: () => false }), /registered BrowserWindow/u)
 })
 
-test('legacy privileged compatibility handlers enforce trusted renderer provenance first', async () => {
+test('remaining privileged handlers enforce trusted renderer provenance first', async () => {
   const source = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8')
   const guardedChannels = [
     'test:create-server-terminal',
-    'desktop:recording-service-host:start',
-    'fs:list-directory',
-    'fs:delete',
-    'settings:update-terminal',
-    'macros:update',
-    'remote:toggle-server',
-    'remote:revoke-device',
     'secrets:save',
     'secrets:get-decrypted',
-    'desktop:workspace-transfer-host:get-adopted-project',
-    'desktop:workspace-transfer-host:popout-project',
-    'desktop:workspace-transfer-host:merge-project',
-    'desktop:window-lifecycle-host:close-current',
-    'desktop:project-tab-host:publish-bar-rect',
-    'desktop:project-tab-host:start-drag',
-    'desktop:project-tab-host:end-drag',
     'test:get-mcp-control-environment',
     'test:send-app-command',
     'test:set-ai-tab-metadata-mock',
     'test:emit-agent-journal-record',
-    'desktop:terminal-lifecycle-host:wait-for-inactivity',
-    'desktop:mcp-install-host:get-status',
-    'desktop:mcp-install-host:install',
-    'desktop:mcp-install-host:uninstall',
   ]
 
   for (const channel of guardedChannels) {
@@ -69,9 +51,6 @@ test('all direct and modular privileged IPC registrations establish provenance',
   const registrations = [
     ['electron/main.ts', 'assertTrustedAppSender'],
     ['electron/fileViewer/ipc.ts', 'assertTrustedSender'],
-    ['electron/dictation/ipc.ts', 'assertTrustedSender'],
-    ['electron/quickPush/ipc.ts', 'assertTrustedSender'],
-    ['electron/aiTabMetadata/ipc.ts', 'assertTrustedSender'],
   ]
 
   for (const [relativePath, assertion] of registrations) {
@@ -115,9 +94,6 @@ test('all direct and modular privileged IPC registrations establish provenance',
 test('privileged IPC registration modules require the trusted sender before services run', async () => {
   const modules = [
     ['electron/fileViewer/ipc.ts', ['file:get-info', 'file:read-bytes', 'file:read-text', 'file:save', 'file:get-text-metadata', 'file:read-text-lines', 'file:save-sparse', 'file:watch', 'file:unwatch', 'file:get-preview-source', 'file:get-git-repo-info', 'file:get-git-diff']],
-    ['electron/dictation/ipc.ts', ['dictation:get-parakeet-status', 'dictation:install-parakeet', 'dictation:get-openai-key-status', 'dictation:save-openai-key', 'dictation:clear-openai-key', 'dictation:get-microphone-permission-status', 'dictation:request-microphone-permission', 'dictation:transcribe']],
-    ['electron/quickPush/ipc.ts', ['quick-push:generate-plan', 'quick-push:apply']],
-    ['electron/aiTabMetadata/ipc.ts', ['ai-tab-metadata:list-models', 'ai-tab-metadata:generate']],
   ]
   for (const [file, channels] of modules) {
     const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -128,3 +104,4 @@ test('privileged IPC registration modules require the trusted sender before serv
     }
   }
 })
+

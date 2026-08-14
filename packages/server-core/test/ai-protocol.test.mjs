@@ -153,29 +153,43 @@ test("TerminayClient sends dictation audio as a bounded binary body and never re
 });
 
 test("AI cancellation and metadata revision conflicts stay on the original request", async () => {
-	let release;
+	const invocations = [];
+	const invocationWaiters = [];
+	const waitForInvocation = (index) =>
+		invocations[index] === undefined
+			? new Promise((resolve) => {
+				invocationWaiters[index] = resolve;
+			})
+			: Promise.resolve(invocations[index]);
 	const { authority, service } = serviceFor({
 		providers: {
 			codex: {
-				generate: ({ signal }) => new Promise((resolve, reject) => {
-					release = resolve;
-					signal.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")), { once: true });
-				}),
+				generate: ({ signal }) =>
+					new Promise((resolve, reject) => {
+						const invocation = { release: resolve };
+						const index = invocations.push(invocation) - 1;
+						invocationWaiters[index]?.(invocation);
+						signal.addEventListener(
+							"abort",
+							() => reject(new DOMException("cancelled", "AbortError")),
+							{ once: true },
+						);
+					}),
 			},
 		},
 	});
 	const { client, ai, serverTask } = await connectAi(service);
 	const secondConnection = await connectAi(service, "write", "client-b");
 	const pending = ai.generateMetadata({ requestId: "metadata-cancel", target, targetType: "title", provider: "codex", model: "test-model" });
-	await new Promise((resolve) => setImmediate(resolve));
+	await waitForInvocation(0);
 	assert.equal((await secondConnection.ai.cancel("metadata-cancel")).cancelled, true);
-	await assert.rejects(pending, (error) => error.code === "cancelled");
+	await assert.rejects(pending, (error) => error.cause?.code === "cancelled");
 
 	const second = ai.generateMetadata({ requestId: "metadata-stale", target, targetType: "title", provider: "codex", model: "test-model", expectedRevision: 0 });
-	await new Promise((resolve) => setImmediate(resolve));
+	const staleInvocation = await waitForInvocation(1);
 	authority.updateMetadata(target, "title", "Manual", 0);
-	release("stale");
-	await assert.rejects(second, (error) => error.code === "conflict");
+	staleInvocation.release("stale");
+	await assert.rejects(second, (error) => error.cause?.code === "conflict");
 	assert.equal(authority.getTarget(target).title, "Manual");
 	await client.close();
 	await serverTask;

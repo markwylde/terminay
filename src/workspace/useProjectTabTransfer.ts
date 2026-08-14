@@ -5,250 +5,155 @@ import {
 	useRef,
 	useState,
 } from 'react';
-import { computeDropIndex } from '../projectTabDrag';
-import type {
-	AdoptedProjectPayload,
-	ProjectTabDragPreview,
-	ProjectTabDragResult,
-} from '../types/terminay';
-import type { ProjectTab } from './projectTabModel';
+import {
+	beginWorkspaceDrag,
+	closeHostPresentation,
+	endWorkspaceDrag,
+	presentWorkspaceView,
+} from '../host/nativeActions';
 import type { WorkspaceSnapshotStore } from '../shared/WorkspaceSnapshotStore';
-
-type MovedProject = {
-	terminals: unknown[];
-	activeSessionId: string | null;
-};
+import { subscribeWorkspaceDragState } from '../host/nativeEvents';
+import type { ProjectTabDragPreview } from '../types/terminay';
+import type { ProjectTab } from './projectTabModel';
 
 export function useProjectTabTransfer({
-	closeProject,
-	exportProject,
-	isAdoptWindow,
-	onAdopt,
 	projectsRef,
 	workspaceSnapshotStore,
 	workspaceViewId,
 }: {
-	closeProject: (
-		projectId: string,
-		options?: { skipConfirmation?: boolean },
-	) => void;
-	exportProject: (projectId: string) => MovedProject | null;
-	isAdoptWindow: boolean;
-	onAdopt: (payload: AdoptedProjectPayload, insertIndex: number | null) => void;
 	projectsRef: MutableRefObject<ProjectTab[]>;
 	workspaceSnapshotStore?: WorkspaceSnapshotStore;
 	workspaceViewId: string | null;
 }) {
-	const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null);
-	const [isProjectDropTarget, setIsProjectDropTarget] = useState(false);
-	const [isDraggingTabTornOff, setIsDraggingTabTornOff] = useState(false);
-	const projectTabBarRef = useRef<HTMLDivElement | null>(null);
-	const [dropPreview, setDropPreview] = useState<{
-		index: number;
-		preview: ProjectTabDragPreview;
-	} | null>(null);
-	const dropPreviewIndexRef = useRef<number | null>(null);
-	const dropTargetTabCentersRef = useRef<number[] | null>(null);
-
-	const adopt = useCallback(
-		(payload: AdoptedProjectPayload) => {
-			onAdopt(payload, dropPreviewIndexRef.current);
-			dropPreviewIndexRef.current = null;
-			dropTargetTabCentersRef.current = null;
-			setDropPreview(null);
-			setIsProjectDropTarget(false);
-		},
-		[onAdopt],
+	const [draggingProjectId, setDraggingProjectId] = useState<string | null>(
+		null,
 	);
+	const [isDraggingTabTornOff, setDraggingTabTornOff] = useState(false);
+	const projectTabBarRef = useRef<HTMLDivElement | null>(null);
+	useEffect(() => subscribeWorkspaceDragState(setDraggingTabTornOff), []);
 
 	const handleProjectTabDragStart = useCallback(
 		(projectId: string) => {
 			setDraggingProjectId(projectId);
+			if (workspaceViewId === null) return;
 			const project = projectsRef.current.find((item) => item.id === projectId);
 			const tab = projectTabBarRef.current?.querySelector<HTMLElement>(
 				`[data-project-id="${projectId}"]`,
 			);
-			void window.terminayProjectTabHost?.startDrag({
-				title: project?.title ?? 'Project',
-				emoji: project?.emoji ?? '',
-				color: project?.color ?? '#4db5ff',
-				width: tab ? Math.round(tab.getBoundingClientRect().width) : 160,
+			void beginWorkspaceDrag({
+				viewId: workspaceViewId,
+				preview: {
+					title: project?.title ?? 'Project',
+					emoji: project?.emoji ?? '',
+					color: project?.color ?? '#4db5ff',
+					width: tab ? Math.round(tab.getBoundingClientRect().width) : 160,
+				},
 			});
 		},
-		[projectsRef],
+		[projectsRef, workspaceViewId],
 	);
 
 	const handleProjectTabDragEnd = useCallback(
 		async (projectId: string) => {
 			setDraggingProjectId(null);
-			setIsDraggingTabTornOff(false);
-			let decision: ProjectTabDragResult;
-			try {
-				decision = (await window.terminayProjectTabHost?.endDrag()) ?? {
-					action: 'reorder',
-				};
-			} catch {
+			if (workspaceSnapshotStore === undefined || workspaceViewId === null)
 				return;
-			}
-			if (decision.action === 'reorder') return;
 			const project = projectsRef.current.find((item) => item.id === projectId);
-			const moved = exportProject(projectId);
-			if (!project || !moved) return;
-			const payload: AdoptedProjectPayload = {
-				project: project as unknown as AdoptedProjectPayload['project'],
-				terminals:
-					moved.terminals as unknown as AdoptedProjectPayload['terminals'],
-				activeSessionId: moved.activeSessionId,
-			};
-			if (workspaceSnapshotStore !== undefined && workspaceViewId !== null) {
-				const targetViewId =
-					decision.action === 'merge'
-						? decision.targetViewId
-						: `view-${crypto.randomUUID()}`;
-				let createdView = false;
-				let projectMoved = false;
-				try {
-					if (decision.action === 'popout') {
-						await workspaceSnapshotStore.createView({
-							viewId: targetViewId,
-							name: project.title,
-						});
-						createdView = true;
-					}
-					await workspaceSnapshotStore.moveProject({
-						projectId,
-						targetViewId,
+			if (project === undefined) return;
+			const decision = await endWorkspaceDrag().catch(() => ({
+				action: 'reorder' as const,
+			}));
+			if (decision.action === 'reorder') return;
+			const targetViewId =
+				decision.action === 'merge'
+					? decision.targetViewId
+					: `view-${crypto.randomUUID()}`;
+			// Capture this before moving.  After a two-project source moves one
+			// project, its reconciled list has length one but it must remain open.
+			const sourceWillBeEmpty = projectsRef.current.length === 1;
+			let created = false;
+			try {
+				if (decision.action === 'popout') {
+					await workspaceSnapshotStore.createView({
+						viewId: targetViewId,
+						name: project.title,
 					});
-					projectMoved = true;
-					if (decision.action === 'merge') {
-						const result = await window.terminayWorkspaceTransferHost?.mergeProject(
-							payload,
-							decision.targetWindowId,
-						);
-						if (result?.ok !== true) throw new Error('Unable to merge project window');
-					} else {
-						const result = await window.terminayWorkspaceTransferHost?.popoutProject(
-							payload,
-							targetViewId,
-							decision.x,
-							decision.y,
-						);
-						if (result?.ok !== true) throw new Error('Unable to open project window');
-					}
-					return;
-				} catch {
-					if (projectMoved) {
-						await workspaceSnapshotStore
-							.moveProject({ projectId, targetViewId: workspaceViewId })
-							.catch(() => undefined);
-					}
-					if (createdView) {
-						await workspaceSnapshotStore.closeView(targetViewId).catch(() => undefined);
-					}
-					return;
+					created = true;
+				}
+				await workspaceSnapshotStore.moveProject({ projectId, targetViewId });
+				if (decision.action === 'popout') {
+					await presentWorkspaceView(targetViewId, decision);
+				}
+				if (sourceWillBeEmpty) {
+					await workspaceSnapshotStore.closeView(workspaceViewId);
+					await closeHostPresentation();
+				}
+			} catch {
+				await workspaceSnapshotStore
+					.moveProject({ projectId, targetViewId: workspaceViewId })
+					.catch(() => undefined);
+				if (created) {
+					await workspaceSnapshotStore
+						.closeView(targetViewId)
+						.catch(() => undefined);
 				}
 			}
-			if (decision.action === 'merge') {
-				await window.terminayWorkspaceTransferHost?.mergeProject(
-					payload,
-					decision.targetWindowId,
-				);
-			} else {
-				await window.terminayWorkspaceTransferHost?.popoutProject(
-					payload,
-					project.id,
-					decision.x,
-					decision.y,
-				);
-			}
-			closeProject(projectId, { skipConfirmation: true });
 		},
-		[closeProject, exportProject, projectsRef, workspaceSnapshotStore, workspaceViewId],
+		[projectsRef, workspaceSnapshotStore, workspaceViewId],
 	);
 
-	useEffect(() => {
-		const unsubscribe =
-			window.terminayWorkspaceTransferHost?.subscribeAdoptedProject(adopt);
-		if (isAdoptWindow) {
-			void window.terminayWorkspaceTransferHost
-				?.getAdoptedProject()
-				.then((payload) => payload && adopt(payload));
-		}
-		return () => unsubscribe?.();
-	}, [adopt, isAdoptWindow]);
-
-	useEffect(
-		() =>
-			window.terminayProjectTabHost?.subscribeDragHover((message) => {
-				if (!message.active || !message.preview) {
-					setIsProjectDropTarget(false);
-					setDropPreview(null);
-					dropPreviewIndexRef.current = null;
-					dropTargetTabCentersRef.current = null;
-					return;
+	/** A native popout is a second presentation of a server-owned workspace
+	 * view, never a renderer-created Dockview window.  Moving the active
+	 * project preserves its terminal/session ownership while the host presents
+	 * the newly-created logical view. */
+	const popoutProject = useCallback(
+		async (projectId: string) => {
+			if (workspaceSnapshotStore === undefined || workspaceViewId === null)
+				return;
+			const project = projectsRef.current.find((item) => item.id === projectId);
+			if (project === undefined) return;
+			const targetViewId = `view-${crypto.randomUUID()}`;
+			// This is source ownership before the authoritative move, not the
+			// asynchronously reconciled post-move tab count.
+			const sourceWillBeEmpty = projectsRef.current.length === 1;
+			let created = false;
+			try {
+				await workspaceSnapshotStore.createView({
+					viewId: targetViewId,
+					name: project.title,
+				});
+				created = true;
+				await workspaceSnapshotStore.moveProject({ projectId, targetViewId });
+				await presentWorkspaceView(targetViewId, { x: 120, y: 120 });
+				if (sourceWillBeEmpty) {
+					await workspaceSnapshotStore.closeView(workspaceViewId);
+					await closeHostPresentation();
 				}
-				setIsProjectDropTarget(true);
-				if (!dropTargetTabCentersRef.current) {
-					const tabs = projectTabBarRef.current
-						? Array.from(
-								projectTabBarRef.current.querySelectorAll<HTMLElement>(
-									'.project-tab:not(.project-tab--drop-placeholder)',
-								),
-							)
-						: [];
-					dropTargetTabCentersRef.current = tabs.map((tab) => {
-						const rect = tab.getBoundingClientRect();
-						return rect.left + rect.width / 2;
-					});
+			} catch {
+				await workspaceSnapshotStore
+					.moveProject({ projectId, targetViewId: workspaceViewId })
+					.catch(() => undefined);
+				if (created) {
+					await workspaceSnapshotStore
+						.closeView(targetViewId)
+						.catch(() => undefined);
 				}
-				const index = computeDropIndex(
-					dropTargetTabCentersRef.current ?? [],
-					message.clientX ?? 0,
-				);
-				dropPreviewIndexRef.current = index;
-				setDropPreview({ index, preview: message.preview });
-			}),
-		[],
+			}
+		},
+		[projectsRef, workspaceSnapshotStore, workspaceViewId],
 	);
-
-	useEffect(
-		() =>
-			window.terminayProjectTabHost?.subscribeTornOff((message) =>
-				setIsDraggingTabTornOff(message.active),
-			),
-		[],
-	);
-
-	useEffect(() => {
-		const element = projectTabBarRef.current;
-		if (!element) return;
-		const publishRect = () => {
-			const rect = element.getBoundingClientRect();
-			void window.terminayProjectTabHost?.publishBarRect({
-				x: rect.left,
-				y: rect.top,
-				width: rect.width,
-				height: rect.height,
-			});
-		};
-		publishRect();
-		const observer = new ResizeObserver(publishRect);
-		observer.observe(element);
-		window.addEventListener('resize', publishRect);
-		return () => {
-			observer.disconnect();
-			window.removeEventListener('resize', publishRect);
-			void window.terminayProjectTabHost?.publishBarRect(null);
-		};
-	}, []);
 
 	return {
 		draggingProjectId,
-		dropPreview,
+		dropPreview: null as {
+			index: number;
+			preview: ProjectTabDragPreview;
+		} | null,
 		handleProjectTabDragEnd,
 		handleProjectTabDragStart,
 		isDraggingTabTornOff,
-		isProjectDropTarget,
+		isProjectDropTarget: false,
+		popoutProject,
 		projectTabBarRef,
 	};
 }

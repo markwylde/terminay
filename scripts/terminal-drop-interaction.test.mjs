@@ -40,7 +40,7 @@ test('portable path drops stay available to a server-backed panel without Deskto
   assert.equal(escapeTerminalPathForShell('~/project'), "'~/project'")
 })
 
-test('Desktop raw file drops use the privileged host resolver', () => {
+test('raw file drops never recover a host-local filesystem path', () => {
   let resolverCalls = 0
   const dataTransfer = drop({ types: ['Files'], files: [{ name: 'private.txt' }] })
 
@@ -86,8 +86,9 @@ test.after(async () => {
 
 const panel = await readFile('src/components/TerminalPanel.tsx', 'utf8')
 
-test('TerminalPanel selects Desktop resolution or browser upload at the host boundary', () => {
-  assert.match(panel, /const resolveDesktopDroppedFilePath = window\.terminayFileExplorerHost === undefined/u)
+test('TerminalPanel uploads file drops through the selected-server client', () => {
+  assert.match(panel, /const resolveDesktopDroppedFilePath = undefined/u)
+  assert.doesNotMatch(panel, /terminayFileExplorerHost/u)
   assert.doesNotMatch(panel, /window\.terminay\.getPathForFile/u)
   assert.match(panel, /getTerminalDropText\(event\.dataTransfer, resolveDesktopDroppedFilePath\)/u)
   assert.match(panel, /uploadBrowserTerminalDrop/u)

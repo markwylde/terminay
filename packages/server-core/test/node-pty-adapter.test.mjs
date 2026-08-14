@@ -18,15 +18,35 @@ function createScheduler() {
 }
 
 function createChild() {
+  const data = new Set();
   const exits = new Set();
   return {
     pid: 41,
     process: "zsh",
-    write() {}, resize() {}, kill() {}, onData() {},
+    write() {}, resize() {}, kill() {},
+    onData(listener) { data.add(listener); return { dispose: () => data.delete(listener) }; },
     onExit(listener) { exits.add(listener); return { dispose: () => exits.delete(listener) }; },
+    emitData(value) { for (const listener of [...data]) listener(value); },
     exit(event = { exitCode: 0 }) { for (const listener of [...exits]) listener(event); },
   };
 }
+
+test("node-pty retains output and exit emitted before TerminalService attaches", () => {
+  const child = createChild();
+  const process = createNodePtyFactory({ spawn: () => child }).spawn({
+    shellPath: "/bin/sh", shell: "/bin/sh", args: [], cwd: "/tmp", cols: 80, rows: 24,
+  });
+
+  child.emitData("READY\n");
+  child.exit({ exitCode: 7, signal: 9 });
+  const output = [];
+  const exits = [];
+  process.onData((bytes) => output.push(new TextDecoder().decode(bytes)));
+  process.onExit((event) => exits.push(event));
+
+  assert.deepEqual(output, ["READY\n"]);
+  assert.deepEqual(exits, [{ exitCode: 7, signal: 9 }]);
+});
 
 test("node-pty foreground observer deduplicates process changes and identifies the shell", () => {
   const scheduler = createScheduler();
@@ -51,6 +71,100 @@ test("node-pty foreground observer deduplicates process changes and identifies t
   ]);
   unsubscribe();
   assert.equal(scheduler.active.size, 0, "last foreground listener stops polling");
+});
+
+test("node-pty refreshes foreground activity when output advances while timer delivery is starved", () => {
+  const scheduler = createScheduler();
+  const child = createChild();
+  const factory = createNodePtyFactory({ spawn: () => child }, { foregroundPolling: scheduler });
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+
+  child.process = "sleep";
+  child.emitData("foreground-ready\n");
+
+  assert.deepEqual(events, [{ processName: "sleep", shellForeground: false }]);
+  process.dispose();
+});
+
+test("node-pty prefers host foreground process authority over a stale process title", async () => {
+  const scheduler = createScheduler();
+  const child = createChild();
+  child.process = "zsh";
+  const factory = createNodePtyFactory(
+    { spawn: () => child },
+    {
+      foregroundPolling: scheduler,
+      resolveForegroundProcess: async (pid) => {
+        assert.equal(pid, 41);
+        return "sleep";
+      },
+    },
+  );
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+
+  scheduler.tick();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(events, [{ processName: "sleep", shellForeground: false }]);
+  process.dispose();
+});
+
+test("node-pty foreground refresh awaits an in-flight host observation fence", async () => {
+  const child = createChild();
+  let resolveProcess;
+  const processResult = new Promise((resolve) => { resolveProcess = resolve; });
+  const factory = createNodePtyFactory(
+    { spawn: () => child },
+    { resolveForegroundProcess: () => processResult },
+  );
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+
+  const fence = process.refreshForegroundProcess();
+  assert.deepEqual(events, []);
+  resolveProcess("sleep");
+  await fence;
+
+  assert.deepEqual(events, [{ processName: "sleep", shellForeground: false }]);
+  process.dispose();
+});
+
+test("node-pty foreground refresh takes a follow-up sample when output races the close fence", async () => {
+  const child = createChild();
+  let releaseFirst;
+  let calls = 0;
+  const first = new Promise((resolve) => { releaseFirst = resolve; });
+  const factory = createNodePtyFactory(
+    { spawn: () => child },
+    {
+      resolveForegroundProcess: () => {
+        calls += 1;
+        return calls === 1 ? first : Promise.resolve("sleep");
+      },
+    },
+  );
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+
+  const snapshotFence = process.refreshForegroundProcess();
+  // Output may begin a host lookup while the shell is still foreground. The
+  // later close fence must wait for the post-output process-group sample.
+  child.emitData("foreground-marker\n");
+  releaseFirst("zsh");
+  await snapshotFence;
+
+  assert.equal(calls, 2);
+  assert.deepEqual(events, [
+    { processName: "zsh", shellForeground: true },
+    { processName: "sleep", shellForeground: false },
+  ]);
+  process.dispose();
 });
 
 test("node-pty foreground observer tears down on PTY exit and never enters output callbacks", () => {

@@ -5,7 +5,6 @@ import {
 	type ProjectEnvironmentClientProfile,
 	type ProjectEnvironmentProviderDescriptor,
 	ProjectEnvironmentsClient,
-	RecordingsClient as ServerRecordingsClient,
 	SettingsClient,
 	type ShellProfileCatalogueEntry,
 	ShellProfilesClient,
@@ -32,7 +31,6 @@ import {
 	Sidebar,
 	Sparkles,
 	Terminal,
-	Zap,
 } from 'lucide-react';
 import {
 	CSSProperties,
@@ -57,16 +55,19 @@ import {
 	type AgentsSidebarItem,
 } from './components/AgentsSidebar';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
-import type { FilePanelInstanceParams } from './components/file-viewer';
-import { FilePanel, FileTab } from './components/file-viewer';
+import type {
+	FilePanelInstanceParams,
+	FilePanelSaveHandler,
+} from './components/file-viewer';
+import {
+	FilePanel,
+	FilePanelSaveRegistryProvider,
+	FileTab,
+} from './components/file-viewer';
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
 import { McpInstallModal } from './components/McpInstallModal';
-import {
-	type QuickPushClient,
-	QuickPushModal,
-} from './components/QuickPushModal';
 import {
 	SidebarPanelStack,
 	type SidebarPanelStackItem,
@@ -86,17 +87,19 @@ import type {
 	TerminalTabMoveProject,
 } from './components/TerminalTab';
 import { TerminalTab } from './components/TerminalTab';
-import { publishTerminalPresentationMetadata } from './components/terminalPresentationHost';
 import {
 	createServerMacroSettingsClient,
-	useLegacyMacroSettingsCapability,
 	useMacroSettings,
 } from './hooks/useMacroSettings';
 import {
 	createServerTerminalSettingsClient,
 	useTerminalSettings,
-	useTerminalSettingsClient,
 } from './hooks/useTerminalSettings';
+import {
+	checkForAppUpdate,
+	openExternalUrl,
+	writeClipboardText,
+} from './host/nativeActions';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -106,13 +109,19 @@ import { tryRenderMacroTemplate } from './macroSettings';
 import { getPathRelativeToRoot } from './pathUtils';
 import { ProjectEnvironmentSplitButton } from './projectEnvironments/ProjectEnvironmentSplitButton';
 import type { ProjectEnvironmentSummaryDto } from './projectEnvironments/uiModel';
-import { createLegacyAiTabMetadataClient } from './services/ai/legacyAiTabMetadataClient';
-import { useOptionalDisconnectedFileCompatibility } from './services/fileViewer/DisconnectedFileCompatibilityProvider';
-import { createLegacyRecordingsClient } from './services/recordings/legacyRecordingsClient';
+import {
+	createServerMcpInstallClient,
+	createServerRemoteAccessClients,
+} from './services/serverApplicationFeatureClients';
 import {
 	type AuxiliaryRouteController,
 	createAuxiliaryRouteController,
 } from './shared/auxiliaryRoutes';
+import {
+	describeFeatureFailure,
+	describeServerFeatureFailure,
+	resolveProjectFeatureAuthority,
+} from './shared/featureQueryAuthority';
 import { composeProjectTerminalClientContext } from './shared/projectTerminalClientContext';
 import {
 	adaptServerAgentSnapshot,
@@ -142,7 +151,6 @@ import type {
 	TerminalSettings,
 } from './types/settings';
 import type {
-	AdoptedProjectPayload,
 	AiTabMetadataTarget,
 	AppCommand,
 	AppUpdateStatus,
@@ -153,7 +161,7 @@ import type {
 } from './types/terminay';
 import {
 	confirmRunningTerminalClose,
-	getRunningTerminalSessionIds,
+	refreshRunningTerminalSessionIds,
 } from './workspace/closeProtection';
 import { FileExplorerTree } from './workspace/FileExplorerTree';
 import { ProjectTabList } from './workspace/ProjectTabList';
@@ -163,21 +171,16 @@ import {
 	RemoteAccessConnectionMenu,
 } from './workspace/RemoteAccessConnectionMenu';
 import {
-	type ManagedDesktopConnection,
-	RemoteConnectionModal,
-} from './workspace/RemoteConnectionModal';
-import {
 	buildTerminalActivityOverview,
-	type LegacyTerminalActivityOverviewState,
 	TerminalActivityOverview,
 	type TerminalActivityOverviewItem,
+	type TerminalPresentationActivityState,
 } from './workspace/TerminalActivityOverview';
 import {
 	activateTerminalPanel,
 	findTerminalFocusTarget,
 	findTerminalPanel,
 	getActiveTerminalSessionId,
-	popoutActiveDockviewPanel,
 	saveActiveDockviewPanel,
 } from './workspace/terminalDockviewCommands';
 import {
@@ -200,7 +203,6 @@ import { useProjectEditor } from './workspace/useProjectEditor';
 import { useProjectTabTransfer } from './workspace/useProjectTabTransfer';
 import { useProjectTerminalCwd } from './workspace/useProjectTerminalCwd';
 import { useRemoteAccessController } from './workspace/useRemoteAccessController';
-import { useRemoteConnectionForm } from './workspace/useRemoteConnectionForm';
 import { useTerminalActivityController } from './workspace/useTerminalActivityController';
 import { useTerminalAdoptionController } from './workspace/useTerminalAdoptionController';
 import {
@@ -216,6 +218,7 @@ import { useTerminalDockviewWindowController } from './workspace/useTerminalDock
 import { useTerminalRecordingController } from './workspace/useTerminalRecordingController';
 import { useTerminalSwitcherController } from './workspace/useTerminalSwitcherController';
 import './App.css';
+import { recordBootstrapDiagnostic } from './shared/rendererDiagnostics';
 
 type GitPushAgentAction = QuickPushAction;
 type GitPushAgentActionGroup = 'current' | 'new' | 'default';
@@ -286,12 +289,8 @@ function buildGitPushMenuItems(options: {
 		action: GitPushAgentAction,
 		target: GitPushMenuTarget,
 	) => void;
-	onLaunchQuickPush: (
-		action: QuickPushAction,
-		target: GitPushMenuTarget,
-	) => void;
 }): ContextMenuItem[] {
-	const { target, onLaunchAgent, onLaunchQuickPush } = options;
+	const { target, onLaunchAgent } = options;
 	const currentBranch = formatGitPushBranchLabel(target.branch);
 	const defaultBranch = formatGitPushBranchLabel(
 		target.defaultBranch ?? 'main',
@@ -326,14 +325,6 @@ function buildGitPushMenuItems(options: {
 				label: entry.label,
 				icon: getGitPushActionIcon(entry.action),
 				onClick: () => onLaunchAgent(entry.action, target),
-				trailingAction: entry.quickPush
-					? {
-							icon: <Zap size={14} aria-hidden="true" />,
-							label: `${entry.label} (quick mode)`,
-							onClick: () =>
-								onLaunchQuickPush(entry.action as QuickPushAction, target),
-						}
-					: undefined,
 			});
 		}
 	}
@@ -414,6 +405,7 @@ type ProjectWorkspaceHandle = {
 		sessionId: string,
 		title?: string,
 		cwd?: string,
+		terminalSessionStatus?: 'running' | 'exited' | 'interrupted',
 	) => boolean;
 	reconcileServerPanels: (panels: readonly ServerWorkspacePanel[]) => void;
 	activateTerminal: (panelId: string, sessionId: string) => void;
@@ -453,6 +445,7 @@ type ProjectWorkspaceProps = {
 		panelId: string,
 		targetProjectId: string,
 	) => void;
+	onPopoutProject: (projectId: string) => Promise<void>;
 	onTerminalActivityOverviewChange: (
 		projectId: string,
 		items: TerminalActivityOverviewItem[],
@@ -462,7 +455,6 @@ type ProjectWorkspaceProps = {
 	popoutUrl: string;
 	project: ProjectTab;
 	projects: ProjectTab[];
-	quickPushClient?: QuickPushClient;
 	/** Optional connection-scoped client used by migrated terminal panels. */
 	terminalClientContext?: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	/** Terminals to reattach instead of seeding a fresh terminal (adopted project). */
@@ -526,7 +518,7 @@ function areTerminalActivityIndicatorsEnabled(
 function isTerminalActivityIndicatorStateVisible(
 	state: TerminalActivityState | undefined,
 	params: DockPanelTabAppearance | undefined,
-): state is LegacyTerminalActivityOverviewState {
+): state is TerminalPresentationActivityState {
 	if (!areTerminalActivityIndicatorsEnabled(params)) {
 		return false;
 	}
@@ -1171,6 +1163,21 @@ function joinFileExplorerPath(dirPath: string, name: string): string {
 	return `${dirPath}/${name}`;
 }
 
+function FeatureUnavailableState({ reason }: Readonly<{ reason: string }>) {
+	return (
+		<div className="sidebar-feature-unavailable" role="status">
+			<strong>Unavailable</strong>
+			<span>{reason}</span>
+		</div>
+	);
+}
+
+function unavailableFileViewerClient(reason: string): FileViewerClient {
+	return new Proxy({} as FileViewerClient, {
+		get: () => () => Promise.reject(new Error(reason)),
+	});
+}
+
 const ProjectWorkspace = forwardRef<
 	ProjectWorkspaceHandle,
 	ProjectWorkspaceProps
@@ -1186,14 +1193,13 @@ const ProjectWorkspace = forwardRef<
 			onCloseProject,
 			onEditProject,
 			onMoveTerminalToProject,
+			onPopoutProject,
 			onTerminalActivityOverviewChange,
 			onUpdateProject,
 			popoutUrl,
 			project,
 			projects,
-			quickPushClient,
 			terminalClientContext,
-			adoptedTerminals,
 		},
 		ref,
 	) => {
@@ -1201,14 +1207,22 @@ const ProjectWorkspace = forwardRef<
 			path: string;
 			worktreeRoot: string;
 		} | null>(null);
-		const legacySettingsClient = useTerminalSettingsClient();
-		const macroSettingsCapability = useLegacyMacroSettingsCapability();
-		const disconnectedFileCompatibility =
-			useOptionalDisconnectedFileCompatibility();
 		recordBoundedRendererRender(
 			`project-workspace:${project.id}`,
 			`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}:${project.rootFolder}`,
 		);
+		const featureAvailability = useMemo(
+			() => resolveProjectFeatureAuthority(terminalClientContext, project.id),
+			[
+				project.id,
+				terminalClientContext,
+				terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision,
+			],
+		);
+		const featureAuthority =
+			featureAvailability.state === 'available'
+				? featureAvailability.authority
+				: undefined;
 		const terminalPanelClientContext =
 			useMemo<TerminalPanelClientContextValue | null>(
 				() =>
@@ -1222,6 +1236,10 @@ const ProjectWorkspace = forwardRef<
 				[project.id, project.rootFolder, terminalClientContext],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;
+		// Agent status is a selected-server projection, not a project-environment
+		// feature. A newly-created terminal can emit journal records before its
+		// project feature snapshot is hydrated, so bind its presentation scope to
+		// the canonical server client directly.
 		const serverAgentStatusClient = terminalClientContext?.agentStatusClient;
 		const serverMacroClient = useMemo(
 			() =>
@@ -1235,110 +1253,46 @@ const ProjectWorkspace = forwardRef<
 		const getServerTerminalCwd = useProjectTerminalCwd(
 			terminalPanelClientContext,
 		);
-		const serverSettingsClient = useMemo(
-			() =>
-				terminalClientContext?.applicationClient === undefined
-					? undefined
-					: createServerTerminalSettingsClient(
-							new SettingsClient(
-								new TerminayClientFacade(
-									terminalClientContext.applicationClient,
-								),
-							),
-							legacySettingsClient,
-						),
-			[legacySettingsClient, terminalClientContext?.applicationClient],
-		);
-		const { settings, settingsClient } =
-			useTerminalSettings(serverSettingsClient);
-		const serverFileViewerClient = terminalClientContext?.fileViewerClient;
-		const disconnectedFileViewerClient = useMemo(() => {
-			if (terminalClientContext !== undefined) return undefined;
-			if (serverFileViewerClient !== undefined) return undefined;
-			if (disconnectedFileCompatibility === null) {
-				throw new Error(
-					'Disconnected file compatibility is unavailable without a canonical server file client',
-				);
-			}
-			return disconnectedFileCompatibility.filePanel.createClient();
-		}, [
-			disconnectedFileCompatibility,
-			serverFileViewerClient,
-			terminalClientContext,
-		]);
-		const fileViewerClient =
-			serverFileViewerClient ?? disconnectedFileViewerClient;
-		if (fileViewerClient === undefined) {
-			throw new Error(
-				'Connected file viewer client is unavailable for this project.',
+		const serverSettingsClient = useMemo(() => {
+			if (terminalClientContext?.applicationClient === undefined)
+				throw new Error('The selected server settings client is unavailable.');
+			return createServerTerminalSettingsClient(
+				new SettingsClient(
+					new TerminayClientFacade(terminalClientContext.applicationClient),
+				),
 			);
-		}
-		const fileClientPath = useCallback(
-			(path: string) =>
-				serverFileViewerClient === undefined
-					? path
-					: getPathRelativeToRoot(path, project.rootFolder),
-			[project.rootFolder, serverFileViewerClient],
-		);
-		const fileClientProjectId =
-			serverFileViewerClient === undefined ? undefined : project.id;
-		const recordingsClient = useMemo(() => {
-			if (terminalClientContext?.applicationClient !== undefined)
-				return undefined;
-			if (window.terminayRecordingServiceHost === undefined) {
-				throw new Error('Desktop recording service capability is unavailable');
-			}
-			return createLegacyRecordingsClient(window.terminayRecordingServiceHost);
 		}, [terminalClientContext?.applicationClient]);
-		const serverRecordingsClient = useMemo(
+		const mcpInstallClient = useMemo(
 			() =>
 				terminalClientContext?.applicationClient === undefined
 					? undefined
-					: new ServerRecordingsClient({
-							query: async <
-								T extends
-									import('@terminay/protocol').JsonValue = import('@terminay/protocol').JsonValue,
-							>(
-								operation: string,
-								payload?: import('@terminay/protocol').JsonValue,
-								options?: Parameters<
-									typeof terminalClientContext.applicationClient.query
-								>[2],
-							) =>
-								(
-									await terminalClientContext.applicationClient!.query(
-										operation,
-										payload,
-										options,
-									)
-								).result as T,
-							command: async <
-								T extends
-									import('@terminay/protocol').JsonValue = import('@terminay/protocol').JsonValue,
-							>(
-								operation: string,
-								payload?: import('@terminay/protocol').JsonValue,
-								options?: Parameters<
-									typeof terminalClientContext.applicationClient.command
-								>[2],
-							) =>
-								(
-									await terminalClientContext.applicationClient!.command(
-										operation,
-										payload,
-										options,
-									)
-								).result as T,
-						}),
+					: createServerMcpInstallClient(
+							terminalClientContext.applicationClient,
+						),
 			[terminalClientContext?.applicationClient],
 		);
-		const aiTabMetadataClient = useMemo(
+		const {
+			settings,
+			settingsClient,
+			error: settingsError,
+		} = useTerminalSettings(serverSettingsClient);
+		const serverFileViewerClient = featureAuthority?.fileViewerClient;
+		const fileViewerClient = useMemo(
 			() =>
-				terminalClientContext?.applicationClient === undefined
-					? createLegacyAiTabMetadataClient(window.terminayAiMetadataHost)
-					: undefined,
-			[terminalClientContext?.applicationClient],
+				serverFileViewerClient ??
+				unavailableFileViewerClient(
+					featureAvailability.state === 'unavailable'
+						? featureAvailability.reason
+						: 'Explorer is unavailable on the selected server.',
+				),
+			[featureAvailability, serverFileViewerClient],
 		);
+		const fileClientPath = useCallback(
+			(path: string) => getPathRelativeToRoot(path, project.rootFolder),
+			[project.rootFolder],
+		);
+		const fileClientProjectId = project.id;
+		const serverRecordingsClient = featureAuthority?.recordingsClient;
 		const serverAiClient = useMemo(
 			() =>
 				terminalClientContext?.applicationClient === undefined
@@ -1348,23 +1302,11 @@ const ProjectWorkspace = forwardRef<
 						),
 			[terminalClientContext?.applicationClient],
 		);
-		// Latest adopted terminals, read lazily when the workspace seeds so the seed
-		// effect needn't depend on prop identity.
-		const adoptedTerminalsRef = useRef(adoptedTerminals);
-		adoptedTerminalsRef.current = adoptedTerminals;
 		const settingsRef = useRef(settings);
 		useEffect(() => {
 			settingsRef.current = settings;
 		}, [settings]);
 		const dockviewApiRef = useRef<DockviewApi | null>(null);
-		const initialTerminalSeededRef = useRef(false);
-		// Dockview may repeat onReady while React is reconciling its wrapper.
-		// This latch is deliberately independent from the layout's seeded flag,
-		// which Dockview lifecycle resets when a new API instance is published.
-		const initialTerminalSeedStartedRef = useRef(false);
-		const initialTerminalSeedPromiseRef = useRef<Promise<unknown> | null>(null);
-		const [initialTerminalSeedAttempt, setInitialTerminalSeedAttempt] =
-			useState(0);
 		const panelSessionMapRef = useRef<Map<string, string>>(new Map());
 		const terminalContextReadersRef = useRef<
 			Map<string, TerminalContextReader>
@@ -1380,6 +1322,21 @@ const ProjectWorkspace = forwardRef<
 		>(() => {});
 		const focusedSessionIdRef = useRef<string | null>(null);
 		const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
+		const filePanelSaveHandlersRef = useRef<Map<string, FilePanelSaveHandler>>(
+			new Map(),
+		);
+		const filePanelSaveRegistry = useMemo(
+			() => ({
+				register: (panelId: string, handler: FilePanelSaveHandler) => {
+					filePanelSaveHandlersRef.current.set(panelId, handler);
+					return () => {
+						if (filePanelSaveHandlersRef.current.get(panelId) === handler)
+							filePanelSaveHandlersRef.current.delete(panelId);
+					};
+				},
+			}),
+			[],
+		);
 		const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
 		const terminalCounterRef = useRef(0);
 		const filePanelCounterRef = useRef(0);
@@ -1395,6 +1352,27 @@ const ProjectWorkspace = forwardRef<
 		);
 		const deferredTerminalActivityFlushTimerRef = useRef<number | null>(null);
 		const [errorText, setErrorText] = useState<string | null>(null);
+		const reportFeatureFailure = useCallback(
+			(feature: 'Explorer' | 'Agents' | 'Git' | 'Settings', error: unknown) => {
+				if (featureAvailability.state === 'unavailable') {
+					setErrorText(featureAvailability.reason);
+					return featureAvailability.reason;
+				}
+				const failure = describeFeatureFailure(
+					feature,
+					error,
+					featureAvailability.authority.scope,
+				);
+				const message = `${failure.title}. ${failure.detail}`;
+				setErrorText(message);
+				return message;
+			},
+			[featureAvailability],
+		);
+		useEffect(() => {
+			if (settingsError !== null)
+				reportFeatureFailure('Settings', settingsError);
+		}, [reportFeatureFailure, settingsError]);
 		const [focusedSessionId, setFocusedSessionId] = useState<string | null>(
 			null,
 		);
@@ -1591,6 +1569,7 @@ const ProjectWorkspace = forwardRef<
 				};
 			},
 			hasTargetSession: (sessionId) => getPanelForSession(sessionId) !== null,
+			openSettings: auxiliaryRoutes.openSettings,
 			sendTerminalInput: sendTerminalPanelInput,
 			setErrorText,
 		});
@@ -1653,7 +1632,6 @@ const ProjectWorkspace = forwardRef<
 		} = useTerminalRecordingController({
 			applyState: applyTerminalRecordingState,
 			getStartMetadata: getRecordingStartMetadataForSession,
-			legacyClient: recordingsClient,
 			projectId: project.id,
 			serverClient: serverRecordingsClient,
 			setErrorText,
@@ -2010,8 +1988,9 @@ const ProjectWorkspace = forwardRef<
 		} = useMacroRunController({
 			focusActiveTerminal,
 			getActiveSessionId,
-			getDecryptedSecret: (secretId) =>
-				macroSettingsCapability.getDecryptedSecret(secretId),
+			getDecryptedSecret: async () => {
+				throw new Error('Macro secrets are resolved by the selected server.');
+			},
 			sendInput: sendTerminalPanelInput,
 			setErrorText,
 			waitForInactivity: waitForSessionInactivity,
@@ -2267,12 +2246,13 @@ const ProjectWorkspace = forwardRef<
 			toggleDirectory,
 			worktreePanelStatus,
 		} = useFileExplorerController({
-			fileObservationClient: terminalClientContext?.fileObservationClient,
+			fileObservationClient: featureAuthority?.fileObservationClient,
 			fileViewerClient,
-			gitClient: terminalClientContext?.gitClient,
-			isServerFileViewer: serverFileViewerClient !== undefined,
+			gitClient: featureAuthority?.gitClient,
+			isServerFileViewer: true,
 			onOpenFile: openFile,
 			onOpenTerminalAt: handleOpenTerminalAt,
+			onOperationError: reportFeatureFailure,
 			onSetError: setErrorText,
 			onUpdateProject,
 			project,
@@ -2682,32 +2662,6 @@ const ProjectWorkspace = forwardRef<
 				}
 			}
 
-			for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
-				const panel = api?.getPanel(panelId);
-				const inheritsProjectColor =
-					panel?.params?.inheritsProjectColor === true;
-				const nextColor = getEffectiveTerminalTabColor(
-					panel?.params,
-					project.color,
-				);
-
-				if (panel) {
-					panel.api.updateParameters({
-						projectColor: project.color,
-						...(inheritsProjectColor ? { color: project.color } : {}),
-					});
-				}
-
-				publishTerminalPresentationMetadata(sessionId, {
-					color: nextColor,
-					inheritsProjectColor,
-					projectId: project.id,
-					projectTitle: project.title,
-					projectEmoji: project.emoji,
-					projectColor: project.color,
-					title: panel?.title ?? 'Terminal',
-				});
-			}
 			window.requestAnimationFrame(publishTerminalActivityOverview);
 		}, [
 			project.id,
@@ -2808,18 +2762,6 @@ const ProjectWorkspace = forwardRef<
 						projectColor: project.color,
 					});
 
-					if (sessionId) {
-						publishTerminalPresentationMetadata(sessionId, {
-							color: nextColor,
-							emoji: nextEmoji,
-							inheritsProjectColor: result.inheritsProjectColor,
-							title: nextTitle,
-							projectId: project.id,
-							projectTitle: project.title,
-							projectEmoji: project.emoji,
-							projectColor: project.color,
-						});
-					}
 					window.requestAnimationFrame(publishTerminalActivityOverview);
 				} finally {
 					window.requestAnimationFrame(() => {
@@ -2938,8 +2880,6 @@ const ProjectWorkspace = forwardRef<
 					return;
 				}
 
-				const reader = terminalContextReadersRef.current.get(sessionId);
-				const terminalContext = reader?.() ?? { recentOutput: '' };
 				const previousTitle = activePanel.title ?? 'Terminal';
 				aiGenerationInFlightRef.current.add(inFlightKey);
 				setErrorText(null);
@@ -2950,34 +2890,25 @@ const ProjectWorkspace = forwardRef<
 				}
 
 				try {
-					const result =
-						serverAiClient === undefined
-							? await aiTabMetadataClient!.generate({
-									context: {
-										currentTitle: previousTitle,
-										existingNote: activePanel.params?.terminalNote,
-										projectRoot: project.rootFolder,
-										projectTitle: project.title,
-										recentOutput: terminalContext.recentOutput,
-										sessionId,
-									},
-									model,
-									provider,
-									target,
-								})
-							: await serverAiClient.generateMetadata({
-									model,
-									provider:
-										provider === 'claudeCode' ? 'claude-code' : provider,
-									requestId: crypto.randomUUID(),
-									target: {
-										panelId: activePanel.id,
-										projectId: project.id,
-										serverId: terminalClientContext!.serverId,
-										sessionId,
-									},
-									targetType: target === 'title' ? 'title' : 'note',
-								});
+					if (
+						serverAiClient === undefined ||
+						terminalClientContext === undefined
+					)
+						throw new Error(
+							'AI metadata is unavailable on the selected server.',
+						);
+					const result = await serverAiClient.generateMetadata({
+						model,
+						provider: provider === 'claudeCode' ? 'claude-code' : provider,
+						requestId: crypto.randomUUID(),
+						target: {
+							panelId: activePanel.id,
+							projectId: project.id,
+							serverId: terminalClientContext.serverId,
+							sessionId,
+						},
+						targetType: target === 'title' ? 'title' : 'note',
+					});
 					const text =
 						typeof result === 'object' &&
 						result !== null &&
@@ -2993,16 +2924,6 @@ const ProjectWorkspace = forwardRef<
 						activePanel.api.setTitle(text);
 						setTerminalTitleRevision((revision) => revision + 1);
 						activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
-						publishTerminalPresentationMetadata(sessionId, {
-							color: activePanel.params?.color ?? project.color,
-							emoji: activePanel.params?.emoji ?? '',
-							inheritsProjectColor: activePanel.params?.inheritsProjectColor,
-							title: text,
-							projectId: project.id,
-							projectTitle: project.title,
-							projectEmoji: project.emoji,
-							projectColor: project.color,
-						});
 						window.requestAnimationFrame(publishTerminalActivityOverview);
 					} else {
 						activePanel.api.updateParameters({ terminalNote: text });
@@ -3028,7 +2949,6 @@ const ProjectWorkspace = forwardRef<
 				project.id,
 				project.rootFolder,
 				project.title,
-				aiTabMetadataClient,
 				serverAiClient,
 				publishTerminalActivityOverview,
 				settings.aiTabMetadata,
@@ -3062,6 +2982,10 @@ const ProjectWorkspace = forwardRef<
 					: async (request) => {
 							const session =
 								await terminalPanelClientContext.client.create(request);
+							// Admit the immutable server session before the creation command
+							// resolves. Journal records may arrive as soon as the server creates
+							// the PTY, before a focus-driven React effect observes its panel.
+							serverAgentStatusClient?.mergeSessionScope([session.sessionId]);
 							return session;
 						},
 			hydrateRecording: hydrateRecordingStateForSession,
@@ -3130,13 +3054,9 @@ const ProjectWorkspace = forwardRef<
 
 		const {
 			closeGitPushMenu,
-			closeQuickPush,
 			gitPushMenuPosition,
 			handleOpenWorktreePushMenu,
 			launchGitPushAgent,
-			launchQuickPush,
-			quickPushAction,
-			quickPushCwd,
 		} = useGitPushMenuController({
 			defaultBranch: worktreePanelStatus?.defaultBranch,
 			isAgentEnabled: settings.gitPushAgent.provider !== 'disabled',
@@ -3545,8 +3465,8 @@ const ProjectWorkspace = forwardRef<
 				const canonicalPanel = workspaceStore?.snapshot?.panels[panelId];
 				const sessionId = panelSessionMapRef.current.get(panelId);
 				if (sessionId !== undefined) {
-					const running = getRunningTerminalSessionIds(
-						serverActivityClient?.store.snapshot,
+					const running = (
+						await refreshRunningTerminalSessionIds(serverActivityClient)
 					).includes(sessionId);
 					if (
 						!(await confirmRunningTerminalClose('terminal', running ? 1 : 0))
@@ -3620,23 +3540,30 @@ const ProjectWorkspace = forwardRef<
 			await requestClosePanel(panelId);
 		}, [requestClosePanel]);
 
-		const saveActivePanel = useCallback(
-			() =>
-				saveActiveDockviewPanel({
-					api: dockviewApiRef.current,
-					onError: setErrorText,
-					onSaved: () => undefined,
-				}),
-			[],
-		);
+		const saveActivePanel = useCallback(async () => {
+			const activePanel = dockviewApiRef.current?.activePanel;
+			const registeredSave =
+				activePanel === undefined
+					? undefined
+					: filePanelSaveHandlersRef.current.get(activePanel.id);
+			if (registeredSave !== undefined) {
+				try {
+					await registeredSave();
+				} catch (error) {
+					setErrorText(error instanceof Error ? error.message : String(error));
+				}
+				return;
+			}
+			await saveActiveDockviewPanel({
+				api: dockviewApiRef.current,
+				onError: setErrorText,
+				onSaved: () => undefined,
+			});
+		}, []);
 
 		const popoutActivePanel = useCallback(
-			() =>
-				popoutActiveDockviewPanel({
-					api: dockviewApiRef.current,
-					popoutUrl,
-				}),
-			[popoutUrl],
+			() => onPopoutProject(project.id),
+			[onPopoutProject, project.id],
 		);
 
 		const executeAppCommand = useCallback(
@@ -3708,13 +3635,11 @@ const ProjectWorkspace = forwardRef<
 				return;
 			}
 
-			const unsubscribeCopyRequest =
-				window.terminayClipboardHost?.subscribeCopyRequest(
-					copyActiveTerminalSelection,
-				);
+			const onCopyRequest = () => copyActiveTerminalSelection();
+			document.addEventListener('copy', onCopyRequest);
 
 			return () => {
-				unsubscribeCopyRequest?.();
+				document.removeEventListener('copy', onCopyRequest);
 			};
 		}, [copyActiveTerminalSelection, isActive]);
 
@@ -3883,98 +3808,6 @@ const ProjectWorkspace = forwardRef<
 			syncPanelFocusState,
 			terminalActivityTimersRef,
 		});
-
-		useEffect(() => {
-			if (!isDockviewReady) {
-				return;
-			}
-
-			const api = dockviewApiRef.current;
-			if (
-				!api ||
-				initialTerminalSeededRef.current ||
-				initialTerminalSeedStartedRef.current
-			) {
-				return;
-			}
-
-			const hasPanels = api.groups.some((group) => group.panels.length > 0);
-			if (hasPanels) {
-				initialTerminalSeededRef.current = true;
-				return;
-			}
-
-			initialTerminalSeededRef.current = true;
-			initialTerminalSeedStartedRef.current = true;
-			window.terminayBootstrapDiagnostic?.record('app.workspace.seed.begin', 1);
-
-			// Adopted project (popped out / merged): reattach its existing sessions
-			// instead of spawning a brand-new terminal.
-			const adopted = adoptedTerminalsRef.current;
-			if (adopted && adopted.length > 0) {
-				for (const terminal of adopted) {
-					acceptMovedTerminal(terminal);
-				}
-				window.terminayBootstrapDiagnostic?.record('app.workspace.seed.end', 1);
-				return;
-			}
-
-			const serverSnapshot =
-				terminalClientContext?.workspaceSnapshotStore?.snapshot;
-			const serverSessions = Object.values(
-				serverSnapshot?.terminalSessions ?? {},
-			).filter((session) => session.projectId === project.id);
-			if (serverSessions.length > 0) {
-				for (const session of serverSessions) {
-					const serverPanel = Object.values(serverSnapshot?.panels ?? {}).find(
-						(panel) => panel.sessionId === session.id,
-					);
-					if (serverPanel === undefined) continue;
-					acceptServerTerminal(
-						serverPanel.id,
-						session.id,
-						serverPanel.title,
-						serverPanel.cwd,
-					);
-				}
-				window.terminayBootstrapDiagnostic?.record('app.workspace.seed.end', 1);
-				return;
-			}
-
-			window.terminayBootstrapDiagnostic?.record(
-				'app.workspace.seed.before-create',
-			);
-			const seedPromise = new Promise<Awaited<ReturnType<typeof addTerminal>>>(
-				(resolve) => {
-					window.setTimeout(() => resolve(addTerminal({})), 0);
-				},
-			);
-			initialTerminalSeedPromiseRef.current = seedPromise;
-			void seedPromise.then((result) => {
-				if (initialTerminalSeedPromiseRef.current === seedPromise) {
-					initialTerminalSeedPromiseRef.current = null;
-				}
-				if (result === null && initialTerminalSeedAttempt < 1) {
-					// One bounded retry recovers a transient transport failure without
-					// turning repeated Dockview readiness into a create loop.
-					initialTerminalSeedStartedRef.current = false;
-					initialTerminalSeededRef.current = false;
-					setInitialTerminalSeedAttempt((attempt) => attempt + 1);
-				}
-				window.terminayBootstrapDiagnostic?.record(
-					'app.workspace.seed.after-create',
-					result === null ? 0 : 1,
-				);
-			});
-		}, [
-			acceptMovedTerminal,
-			acceptServerTerminal,
-			addTerminal,
-			initialTerminalSeedAttempt,
-			isDockviewReady,
-			project.id,
-			terminalClientContext?.workspaceSnapshotStore,
-		]);
 
 		useEffect(() => {
 			const onOpenFileEvent = (event: Event) => {
@@ -4216,13 +4049,37 @@ const ProjectWorkspace = forwardRef<
 					detail.exitCode === 0 &&
 					detail.signal == null
 				) {
-					getPanelForSession(detail.sessionId)?.api.close();
+					const panel = getPanelForSession(detail.sessionId);
+					if (panel !== null && panel !== undefined) {
+						// The session has already exited, so this is not a destructive user
+						// close and must not wait for the activity/confirmation path.  Persist
+						// the canonical panel removal directly; a Dockview-only close would
+						// immediately be restored by workspace reconciliation.
+						const store = terminalClientContext?.workspaceSnapshotStore;
+						const canonicalPanel = store?.snapshot?.panels[panel.id];
+						if (store !== undefined && canonicalPanel?.projectId === project.id) {
+							void store.closePanel(panel.id).catch((error: unknown) =>
+								setErrorText(
+									error instanceof Error
+										? error.message
+										: 'Unable to close the completed terminal tab.',
+								),
+							);
+						} else {
+							panel.api.close();
+						}
+					}
 				}
 			};
 			window.addEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
 			return () =>
 				window.removeEventListener(TERMINAL_PANEL_EXIT_EVENT, onTerminalExit);
-		}, [cancelMacroRunsForSession, getPanelForSession]);
+		}, [
+			cancelMacroRunsForSession,
+			getPanelForSession,
+			project.id,
+			terminalClientContext?.workspaceSnapshotStore,
+		]);
 
 		useTerminalDockviewWindowController({
 			addTerminal,
@@ -4448,26 +4305,29 @@ const ProjectWorkspace = forwardRef<
 							<RefreshCw size={14} aria-hidden="true" />
 						</button>
 					),
-					children: (
-						<FileExplorerTree
-							directoryChildren={directoryChildren}
-							directoryErrors={directoryErrors}
-							expandedPaths={expandedPaths}
-							gitStatuses={gitStatuses}
-							loadingPaths={loadingPaths}
-							onOpenFile={openFile}
-							onOpenFolder={openFolder}
-							onToggleDirectory={toggleDirectory}
-							onRename={handleRename}
-							onDelete={handleDelete}
-							onNewFile={handleNewFile}
-							onNewFolder={handleNewFolder}
-							onOpenTerminal={handleOpenTerminalAt}
-							onCopyPath={handleCopyPath}
-							onCopyRelativePath={handleCopyRelativePath}
-							rootPath={project.rootFolder}
-						/>
-					),
+					children:
+						featureAvailability.state === 'unavailable' ? (
+							<FeatureUnavailableState reason={featureAvailability.reason} />
+						) : (
+							<FileExplorerTree
+								directoryChildren={directoryChildren}
+								directoryErrors={directoryErrors}
+								expandedPaths={expandedPaths}
+								gitStatuses={gitStatuses}
+								loadingPaths={loadingPaths}
+								onOpenFile={openFile}
+								onOpenFolder={openFolder}
+								onToggleDirectory={toggleDirectory}
+								onRename={handleRename}
+								onDelete={handleDelete}
+								onNewFile={handleNewFile}
+								onNewFolder={handleNewFolder}
+								onOpenTerminal={handleOpenTerminalAt}
+								onCopyPath={handleCopyPath}
+								onCopyRelativePath={handleCopyRelativePath}
+								rootPath={project.rootFolder}
+							/>
+						),
 				},
 				agents: {
 					id: 'agents',
@@ -4480,37 +4340,40 @@ const ProjectWorkspace = forwardRef<
 						});
 					},
 					count: projectAgentItems.length,
-					children: (
-						<AgentsSidebar
-							projectId={project.id}
-							agents={projectAgentItems}
-							expandedEntryIds={project.expandedAgentEntryIds}
-							onToggleEntryExpanded={(entryId) => {
-								const expanded =
-									project.expandedAgentEntryIds.includes(entryId);
-								onUpdateProject(project.id, {
-									expandedAgentEntryIds: expanded
-										? project.expandedAgentEntryIds.filter(
-												(candidate) => candidate !== entryId,
-											)
-										: [...project.expandedAgentEntryIds, entryId],
-								});
-							}}
-							onActivateTerminal={activateAgentTerminal}
-							onAcknowledgeEntry={(entryId) => {
-								const entry = agentStatusSnapshot.entries[entryId];
-								if (entry !== undefined) {
-									void serverAgentStatusClient
-										?.acknowledge({
-											projectId: project.id,
-											sessionId: entry.activationTerminalSessionId,
-											entryId,
-										})
-										.catch(() => undefined);
-								}
-							}}
-						/>
-					),
+					children:
+						featureAvailability.state === 'unavailable' ? (
+							<FeatureUnavailableState reason={featureAvailability.reason} />
+						) : (
+							<AgentsSidebar
+								projectId={project.id}
+								agents={projectAgentItems}
+								expandedEntryIds={project.expandedAgentEntryIds}
+								onToggleEntryExpanded={(entryId) => {
+									const expanded =
+										project.expandedAgentEntryIds.includes(entryId);
+									onUpdateProject(project.id, {
+										expandedAgentEntryIds: expanded
+											? project.expandedAgentEntryIds.filter(
+													(candidate) => candidate !== entryId,
+												)
+											: [...project.expandedAgentEntryIds, entryId],
+									});
+								}}
+								onActivateTerminal={activateAgentTerminal}
+								onAcknowledgeEntry={(entryId) => {
+									const entry = agentStatusSnapshot.entries[entryId];
+									if (entry !== undefined) {
+										void serverAgentStatusClient
+											?.acknowledge({
+												projectId: project.id,
+												sessionId: entry.activationTerminalSessionId,
+												entryId,
+											})
+											.catch((error) => reportFeatureFailure('Agents', error));
+									}
+								}}
+							/>
+						),
 				},
 				git: {
 					id: 'git',
@@ -4530,30 +4393,33 @@ const ProjectWorkspace = forwardRef<
 					accessory: currentGitBranch ? (
 						<span className="sidebar-pane__branch">{currentGitBranch}</span>
 					) : null,
-					children: (
-						<WorktreesPanel
-							activePushMenuWorktreePath={
-								gitPushMenuPosition?.target?.worktreePath ?? null
-							}
-							deletingWorktreePaths={deletingWorktreePaths}
-							status={worktreePanelStatus}
-							viewMode={settings.sidebar.gitPanelViewMode}
-							onDeletePath={handleDelete}
-							onNewFile={handleNewFile}
-							onNewFolder={handleNewFolder}
-							onDeleteWorktree={handleDeleteWorktree}
-							onOpenEntry={handleOpenGitEntry}
-							onOpenFolder={handleOpenGitFolder}
-							onOpenPushMenu={handleOpenWorktreePushMenu}
-							onOpenTerminal={handleOpenTerminalAtWorktree}
-							onOpenTerminalAtPath={handleOpenTerminalAt}
-							onPullFromOrigin={handlePullWorktreeFromOrigin}
-							onRenameWorktree={handleRenameWorktree}
-							onRenamePath={handleRename}
-							onRevealWorktree={handleRevealWorktree}
-							onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
-						/>
-					),
+					children:
+						featureAvailability.state === 'unavailable' ? (
+							<FeatureUnavailableState reason={featureAvailability.reason} />
+						) : (
+							<WorktreesPanel
+								activePushMenuWorktreePath={
+									gitPushMenuPosition?.target?.worktreePath ?? null
+								}
+								deletingWorktreePaths={deletingWorktreePaths}
+								status={worktreePanelStatus}
+								viewMode={settings.sidebar.gitPanelViewMode}
+								onDeletePath={handleDelete}
+								onNewFile={handleNewFile}
+								onNewFolder={handleNewFolder}
+								onDeleteWorktree={handleDeleteWorktree}
+								onOpenEntry={handleOpenGitEntry}
+								onOpenFolder={handleOpenGitFolder}
+								onOpenPushMenu={handleOpenWorktreePushMenu}
+								onOpenTerminal={handleOpenTerminalAtWorktree}
+								onOpenTerminalAtPath={handleOpenTerminalAt}
+								onPullFromOrigin={handlePullWorktreeFromOrigin}
+								onRenameWorktree={handleRenameWorktree}
+								onRenamePath={handleRename}
+								onRevealWorktree={handleRevealWorktree}
+								onSwitchProjectRoot={handleSwitchProjectRootToWorktree}
+							/>
+						),
 				},
 			};
 		const visibleSidebarPanelIds = project.sidebarPanelOrder.filter(
@@ -4566,10 +4432,9 @@ const ProjectWorkspace = forwardRef<
 		return (
 			<section
 				className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
+				data-terminay-project-id={project.id}
 				data-terminay-git-client={
-					terminalClientContext?.gitClient === undefined
-						? 'unavailable'
-						: 'server'
+					featureAuthority?.gitClient === undefined ? 'unavailable' : 'server'
 				}
 				data-terminay-project-root={project.rootFolder}
 				data-new-terminal-shortcut={getCommandShortcut(
@@ -4578,7 +4443,7 @@ const ProjectWorkspace = forwardRef<
 				)}
 			>
 				{errorText ? (
-					<div className="error-banner">Terminal error: {errorText}</div>
+					<div className="error-banner">Operation failed: {errorText}</div>
 				) : null}
 
 				<WorkspaceSplitLayout
@@ -4646,8 +4511,6 @@ const ProjectWorkspace = forwardRef<
 										items={buildGitPushMenuItems({
 											target: gitPushMenuPosition.target,
 											onLaunchAgent: launchGitPushAgent,
-											onLaunchQuickPush: (action, target) =>
-												void launchQuickPush(action, target),
 										})}
 									/>
 								) : null}
@@ -4664,19 +4527,22 @@ const ProjectWorkspace = forwardRef<
 							<TerminalPanelClientContext.Provider
 								value={terminalPanelClientContext}
 							>
-								<DockviewReact
-									components={dockviewComponents}
-									tabComponents={dockviewTabComponents}
-									popoutUrl={popoutUrl}
-									onReady={handleDockviewReady}
-									floatingGroupBounds="boundedWithinViewport"
-								/>
+								<FilePanelSaveRegistryProvider registry={filePanelSaveRegistry}>
+									<DockviewReact
+										components={dockviewComponents}
+										tabComponents={dockviewTabComponents}
+										popoutUrl={popoutUrl}
+										onReady={handleDockviewReady}
+										floatingGroupBounds="boundedWithinViewport"
+									/>
+								</FilePanelSaveRegistryProvider>
 							</TerminalPanelClientContext.Provider>
 						</div>
 					}
 				/>
 
 				<McpInstallModal
+					client={mcpInstallClient}
 					open={isMcpInstallModalOpen}
 					onClose={() => setIsMcpInstallModalOpen(false)}
 				/>
@@ -4753,24 +4619,6 @@ const ProjectWorkspace = forwardRef<
 							</div>
 						</div>
 					</div>
-				) : null}
-				{quickPushClient !== undefined &&
-				quickPushAction &&
-				settings.gitPushAgent.provider !== 'disabled' ? (
-					<QuickPushModal
-						action={quickPushAction}
-						client={quickPushClient}
-						provider={settings.gitPushAgent.provider}
-						model={
-							settings.gitPushAgent.provider === 'claudeCode'
-								? settings.gitPushAgent.claudeCodeModel
-								: settings.gitPushAgent.codexModel
-						}
-						cwd={quickPushCwd ?? project.rootFolder}
-						onClose={() => {
-							closeQuickPush();
-						}}
-					/>
 				) : null}
 				<AnimatePresence>
 					{isMacroLauncherOpen && (
@@ -5119,20 +4967,21 @@ const ProjectWorkspace = forwardRef<
 
 ProjectWorkspace.displayName = 'ProjectWorkspace';
 
-// A window torn off from another (popout) boots with ?adopt=1 so it starts with
-// no default project and pulls its adopted project on mount instead.
-const isAdoptWindow =
-	new URLSearchParams(window.location.search).get('adopt') === '1';
 const requestedWorkspaceViewId =
 	new URLSearchParams(window.location.search).get('view') ??
 	new URLSearchParams(window.location.hash.slice(1)).get('view');
 
 export type AppProps = {
 	auxiliaryRoutes?: AuxiliaryRouteController;
+	hostPresentation?: Readonly<{
+		nativeMenus: boolean;
+		nativeWindowControls: boolean;
+	}>;
+	subscribeAppCommands?: (
+		listener: (command: AppCommand) => Promise<void> | void,
+	) => () => void;
 	/** Connection-scoped shared client supplied by a migrated host shell. */
 	terminalClientContext?: Omit<TerminalPanelClientContextValue, 'projectId'>;
-	/** Narrow Desktop host client injected at the renderer composition root. */
-	quickPushClient?: QuickPushClient;
 	onDisconnect?: () => void;
 	onOpenConnectionManager?: () => void;
 };
@@ -5203,27 +5052,27 @@ function describeConnectionHostError(cause: unknown): string {
 
 function App({
 	auxiliaryRoutes,
+	hostPresentation,
 	onDisconnect,
 	onOpenConnectionManager,
-	quickPushClient,
+	subscribeAppCommands,
 	terminalClientContext,
 }: AppProps) {
 	const auxiliaryRouteController = useMemo(
 		() => auxiliaryRoutes ?? createAuxiliaryRouteController(),
 		[auxiliaryRoutes],
 	);
-	const legacySettingsClient = useTerminalSettingsClient();
 	recordBoundedRendererRender(
 		'app',
 		`${terminalClientContext?.serverId ?? 'none'}:${terminalClientContext?.workspaceSnapshotStore?.snapshot?.revision ?? 'none'}`,
 	);
-	window.terminayBootstrapDiagnostic?.record('app.render');
+	recordBootstrapDiagnostic('app.render');
 	useEffect(() => {
-		window.terminayBootstrapDiagnostic?.record('app.commit');
+		recordBootstrapDiagnostic('app.commit');
 	}, []);
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
 	const hasNativeWindowControls =
-		typeof window.terminayWindowLifecycleHost !== 'undefined';
+		hostPresentation?.nativeWindowControls ?? false;
 	const currentServerId = terminalClientContext?.serverId ?? 'desktop-local';
 	const currentServerLabel =
 		terminalClientContext?.connectionLabel ??
@@ -5236,56 +5085,63 @@ function App({
 		() => new URL('popout.html', window.location.href).toString(),
 		[],
 	);
-	// Keep the remaining macro compatibility path explicit at the renderer
-	// boundary rather than letting the hook retain ambient preload authority.
-	const serverMacroSettingsClient = useMemo(
+	const serverMacroSettingsClient = useMemo(() => {
+		if (terminalClientContext?.applicationClient === undefined)
+			throw new Error('The selected server macro client is unavailable.');
+		return createServerMacroSettingsClient(
+			new MacroClient(
+				new TerminayClientFacade(terminalClientContext.applicationClient),
+			),
+		);
+	}, [terminalClientContext?.applicationClient]);
+	const { macros, error: macroSettingsError } = useMacroSettings(
+		serverMacroSettingsClient,
+	);
+	const serverSettingsClient = useMemo(() => {
+		if (terminalClientContext?.applicationClient === undefined)
+			throw new Error('The selected server settings client is unavailable.');
+		return createServerTerminalSettingsClient(
+			new SettingsClient(
+				new TerminayClientFacade(terminalClientContext.applicationClient),
+			),
+		);
+	}, [terminalClientContext?.applicationClient]);
+	const remoteAccessClients = useMemo(
 		() =>
 			terminalClientContext?.applicationClient === undefined
 				? undefined
-				: createServerMacroSettingsClient(
-						new MacroClient(
-							new TerminayClientFacade(terminalClientContext.applicationClient),
-						),
+				: createServerRemoteAccessClients(
+						terminalClientContext.applicationClient,
 					),
 		[terminalClientContext?.applicationClient],
 	);
-	const { macros } = useMacroSettings(serverMacroSettingsClient);
-	const serverSettingsClient = useMemo(
-		() =>
-			terminalClientContext?.applicationClient === undefined
-				? undefined
-				: createServerTerminalSettingsClient(
-						new SettingsClient(
-							new TerminayClientFacade(terminalClientContext.applicationClient),
-						),
-						legacySettingsClient,
-					),
-		[legacySettingsClient, terminalClientContext?.applicationClient],
-	);
-	const { settings, isLoading: areTerminalSettingsLoading } =
-		useTerminalSettings(serverSettingsClient);
+	const {
+		settings,
+		error: terminalSettingsError,
+		isLoading: areTerminalSettingsLoading,
+	} = useTerminalSettings(serverSettingsClient);
+	const connectionFeatureError = useMemo(() => {
+		const failed =
+			macroSettingsError === null
+				? terminalSettingsError === null
+					? null
+					: (['Settings', terminalSettingsError] as const)
+				: (['Macros', macroSettingsError] as const);
+		if (failed === null) return null;
+		const failure = describeServerFeatureFailure(
+			failed[0],
+			failed[1],
+			currentServerId,
+		);
+		return `${failure.title}. ${failure.detail}`;
+	}, [currentServerId, macroSettingsError, terminalSettingsError]);
 	const workspaceRefs = useRef(
 		new Map<string, ProjectWorkspaceHandle | null>(),
 	);
-	useEffect(() => {
-		const activityStore = terminalClientContext?.activityClient?.store;
-		const host = window.terminayWindowLifecycleHost;
-		if (activityStore === undefined || host === undefined) return;
-		const publish = () =>
-			void host.publishRunningTerminalSessions(
-				getRunningTerminalSessionIds(activityStore.snapshot),
-			);
-		publish();
-		const unsubscribe = activityStore.subscribe(publish);
-		return () => {
-			unsubscribe();
-			void host.publishRunningTerminalSessions([]);
-		};
-	}, [terminalClientContext?.activityClient]);
 	const confirmProjectClose = useCallback(
-		(projectId: string) => {
-			const running = getRunningTerminalSessionIds(
-				terminalClientContext?.activityClient?.store.snapshot,
+		async (projectId: string) => {
+			const running = await refreshRunningTerminalSessionIds(
+				terminalClientContext?.activityClient,
 				projectId,
 			);
 			return confirmRunningTerminalClose('project', running.length);
@@ -5296,17 +5152,11 @@ function App({
 		terminalClientContext?.workspaceSnapshotStore?.snapshot;
 	const boundWorkspaceViewId =
 		requestedWorkspaceViewId ?? workspaceSnapshot?.viewOrder[0] ?? null;
-	useEffect(() => {
-		if (boundWorkspaceViewId === null) return;
-		void window.terminayWorkspaceTransferHost?.bindView(boundWorkspaceViewId);
-	}, [boundWorkspaceViewId]);
-
 	const {
 		activeProjectId,
 		activateProject,
 		addProject,
 		adoptedTerminalsByProject,
-		adoptProject: adoptProjectIntoCollection,
 		canAddProject,
 		closeProject,
 		homePath,
@@ -5322,27 +5172,13 @@ function App({
 			workspaceSnapshot?.projects[
 				workspaceSnapshot.views[boundWorkspaceViewId ?? '']?.projectIds[0] ?? ''
 			]?.root ?? '',
-		isAdoptWindow,
+		isAdoptWindow: false,
 		isSettingsLoading: areTerminalSettingsLoading,
 		projectColorScope: currentServerId,
 		sidebarSettings: settings.sidebar,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
 	});
-	const exportProjectForTransfer = useCallback(
-		(projectId: string) =>
-			workspaceRefs.current.get(projectId)?.exportProjectForMove() ?? null,
-		[],
-	);
-	const adoptTransferredProject = useCallback(
-		(payload: AdoptedProjectPayload, insertIndex: number | null) =>
-			adoptProjectIntoCollection(
-				payload.project as unknown as ProjectTab,
-				payload.terminals as unknown as MovedTerminalTab[],
-				insertIndex,
-			),
-		[adoptProjectIntoCollection],
-	);
 	const {
 		draggingProjectId,
 		dropPreview,
@@ -5350,19 +5186,15 @@ function App({
 		handleProjectTabDragStart,
 		isDraggingTabTornOff,
 		isProjectDropTarget,
+		popoutProject,
 		projectTabBarRef,
 	} = useProjectTabTransfer({
-		closeProject,
-		exportProject: exportProjectForTransfer,
-		isAdoptWindow,
-		onAdopt: adoptTransferredProject,
 		projectsRef,
 		workspaceSnapshotStore: terminalClientContext?.workspaceSnapshotStore,
 		workspaceViewId: boundWorkspaceViewId,
 	});
 	const {
 		addresses: remoteAddresses,
-		closeMenu: closeRemoteMenu,
 		closePinModal: closePairingPinModal,
 		isAdvancedOpen: isRemoteAdvancedOpen,
 		isLinkCopied,
@@ -5393,9 +5225,10 @@ function App({
 		tone: remoteButtonTone,
 		visibleQrCodeDataUrl: visiblePairingQrCodeDataUrl,
 	} = useRemoteAccessController(
-		window.terminayRemotePairingPinHost,
-		window.terminayRemoteAccessStatusHost,
-		legacySettingsClient,
+		remoteAccessClients?.pairingPin,
+		remoteAccessClients?.status,
+		serverSettingsClient,
+		auxiliaryRouteController.openSettings,
 	);
 	const [connectionSwitcherEntries, setConnectionSwitcherEntries] = useState<
 		ConnectionSwitcherEntry[]
@@ -5403,18 +5236,6 @@ function App({
 	const [connectionSwitcherError, setConnectionSwitcherError] = useState<
 		string | null
 	>(null);
-	const [managedDesktopConnections, setManagedDesktopConnections] = useState<
-		ManagedDesktopConnection[]
-	>([]);
-	const refreshManagedDesktopConnections = useCallback(async () => {
-		const host = window.terminayConnectionHost;
-		if (host === undefined) {
-			setManagedDesktopConnections([]);
-			return;
-		}
-		const snapshot = await host.list();
-		setManagedDesktopConnections(snapshot.profiles);
-	}, []);
 	const refreshConnectionSwitcherEntries = useCallback(() => {
 		void (async () => {
 			try {
@@ -5426,14 +5247,6 @@ function App({
 						setConnectionSwitcherEntries(entries);
 						return;
 					}
-				}
-				if (window.terminayConnectionHost !== undefined) {
-					setConnectionSwitcherEntries(
-						normalizeConnectionSwitcherEntries(
-							await window.terminayConnectionHost.list(),
-						),
-					);
-					return;
 				}
 			} catch {
 				// Fall through to the empty web/unsupported state.
@@ -5448,13 +5261,14 @@ function App({
 	const selectConnectionProfile = useCallback(
 		(profileId: string) => {
 			setConnectionSwitcherError(null);
-			const select =
-				window.terminayConnectionHost?.select ??
-				((id: string) =>
-					window.terminayHost?.requestAction({
-						type: 'connection.select',
-						profileId: id,
-					}) ?? Promise.resolve());
+			const select = (id: string) =>
+				window.terminayHost?.requestAction({
+					type: 'connection.select',
+					profileId: id,
+				}) ??
+				Promise.reject(
+					new Error('Connection switching is unavailable in this host.'),
+				);
 			void select(profileId)
 				.then(() => {
 					setIsRemoteMenuOpen(false);
@@ -5470,27 +5284,6 @@ function App({
 		[refreshConnectionSwitcherEntries, setIsRemoteMenuOpen],
 	);
 	const pairingModal = useDraggableModal(isPairingModalOpen);
-	const {
-		close: closeRemoteConnectionModal,
-		error: remoteConnectionError,
-		isOpen: isRemoteConnectionModalOpen,
-		isOpening: isOpeningRemoteConnection,
-		notice: remoteConnectionNotice,
-		open: openRemoteConnectionModal,
-		pairingPin: remoteConnectionPairingPin,
-		setError: setRemoteConnectionError,
-		setNotice: setRemoteConnectionNotice,
-		setPairingPin: setRemoteConnectionPairingPin,
-		setUrl: setRemoteConnectionUrl,
-		submit: submitRemoteConnection,
-		url: remoteConnectionUrl,
-	} = useRemoteConnectionForm(closeRemoteMenu);
-	useEffect(() => {
-		if (!isRemoteConnectionModalOpen) return;
-		void refreshManagedDesktopConnections().catch(() =>
-			setManagedDesktopConnections([]),
-		);
-	}, [isRemoteConnectionModalOpen, refreshManagedDesktopConnections]);
 	const [appUpdateStatus, setAppUpdateStatus] =
 		useState<AppUpdateStatus | null>(null);
 	const activityMenuRef = useRef<HTMLDivElement | null>(null);
@@ -5533,6 +5326,26 @@ function App({
 			// Opening the chooser retries against the current server transport.
 		}
 	}, [applyProjectEnvironmentSnapshot, projectEnvironmentsClient]);
+	const createInitialTerminalForProject = useCallback(
+		async (projectId: string) => {
+			const terminalClient = terminalClientContext?.client;
+			const workspace = terminalClientContext?.workspaceSnapshotStore;
+			if (terminalClient === undefined || workspace === undefined) {
+				throw new Error('The selected server workspace is not ready.');
+			}
+			const { sessionId } = await terminalClient.create({ projectId });
+			const snapshot = await workspace.waitForSnapshot((candidate) =>
+				hasTerminalPresentation(candidate, sessionId),
+			);
+			if (snapshot === null) {
+				throw new Error('The server did not publish the new project terminal.');
+			}
+		},
+		[
+			terminalClientContext?.client,
+			terminalClientContext?.workspaceSnapshotStore,
+		],
+	);
 	useEffect(() => {
 		let active = true;
 		if (projectEnvironmentsClient === null) return;
@@ -5583,6 +5396,12 @@ function App({
 						? {}
 						: { root: environment.defaultRoot }),
 				});
+				if (operation.projectId === undefined) {
+					throw new Error(
+						'The selected server did not return the new project identity.',
+					);
+				}
+				await createInitialTerminalForProject(operation.projectId);
 				setProjectEnvironmentNotice(
 					operation.message ?? `Project creation ${operation.state}.`,
 				);
@@ -5595,13 +5414,14 @@ function App({
 		},
 		[
 			boundWorkspaceViewId,
+			createInitialTerminalForProject,
 			projectEnvironmentsClient,
 			terminalClientContext?.workspaceSnapshotStore,
 		],
 	);
 	const createThisServerProject = useCallback(async () => {
 		if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
-			// Disconnected compatibility workspaces retain their existing local-only
+			// Disconnected workspaces retain their existing local-only
 			// creation path; authenticated server workspaces never bypass validation.
 			addProject();
 			return;
@@ -5612,6 +5432,12 @@ function App({
 				environmentId: 'terminay:this-server',
 				viewId: boundWorkspaceViewId,
 			});
+			if (operation.projectId === undefined) {
+				throw new Error(
+					'The selected server did not return the new project identity.',
+				);
+			}
+			await createInitialTerminalForProject(operation.projectId);
 			setProjectEnvironmentNotice(operation.message ?? null);
 			await terminalClientContext?.workspaceSnapshotStore?.refresh();
 		} catch (error) {
@@ -5622,6 +5448,7 @@ function App({
 	}, [
 		addProject,
 		boundWorkspaceViewId,
+		createInitialTerminalForProject,
 		projectEnvironmentsClient,
 		terminalClientContext?.workspaceSnapshotStore,
 	]);
@@ -5672,15 +5499,13 @@ function App({
 				reconcileRetryRevision = snapshot.revision;
 				reconcileRetryDeadline = performance.now() + 2_000;
 			}
-			window.terminayBootstrapDiagnostic?.record(
+			recordBootstrapDiagnostic(
 				'app.workspace.reconcile',
 				Object.keys(snapshot.terminalSessions).length,
 			);
 			if (reconcileFrame !== null) window.cancelAnimationFrame(reconcileFrame);
 			reconcileFrame = window.requestAnimationFrame(() => {
-				window.terminayBootstrapDiagnostic?.record(
-					'app.workspace.reconcile-frame',
-				);
+				recordBootstrapDiagnostic('app.workspace.reconcile-frame');
 				reconcileFrame = null;
 				if (disposed) return;
 				let pendingPresentations = 0;
@@ -5705,6 +5530,7 @@ function App({
 						session.id,
 						panel.title,
 						panel.cwd,
+						session.status,
 					);
 					if (!accepted) {
 						pendingPresentations += 1;
@@ -5732,7 +5558,7 @@ function App({
 					}, 50);
 				}
 			});
-			window.terminayBootstrapDiagnostic?.record('app.workspace.reconcile.end');
+			recordBootstrapDiagnostic('app.workspace.reconcile.end');
 		};
 		const unsubscribe = store.subscribe(reconcile);
 		return () => {
@@ -5825,6 +5651,12 @@ function App({
 			if (command === 'open-extensions') {
 				return auxiliaryRouteController.openSettings('extensions');
 			}
+			if (command === 'open-settings') {
+				return auxiliaryRouteController.openSettings();
+			}
+			if (command === 'open-macros') {
+				return auxiliaryRouteController.openMacros();
+			}
 			return (
 				workspaceRefs.current.get(activeProjectId)?.executeCommand(command) ??
 				Promise.resolve()
@@ -5878,20 +5710,20 @@ function App({
 	);
 
 	useEffect(() => {
-		const unsubscribeCommand = window.terminayAppCommandHost?.subscribe(
+		const unsubscribeCommand = subscribeAppCommands?.(
 			executeCommandOnActiveProject,
 		);
 
 		return () => {
 			unsubscribeCommand?.();
 		};
-	}, [executeCommandOnActiveProject]);
+	}, [executeCommandOnActiveProject, subscribeAppCommands]);
 
 	useEffect(() => {
 		let isMounted = true;
 
 		const refreshUpdateStatus = async (force = false) => {
-			const status = await window.terminayUpdateHost?.getStatus(force);
+			const status = force ? await checkForAppUpdate() : null;
 			if (!status) {
 				return;
 			}
@@ -6075,9 +5907,7 @@ function App({
 								type="button"
 								className="app-update-button"
 								onClick={() =>
-									void window.terminayExternalHost?.open(
-										appUpdateStatus.releaseUrl as string,
-									)
+									void openExternalUrl(appUpdateStatus.releaseUrl as string)
 								}
 								title={`Open release page for v${appUpdateStatus?.latestVersion}`}
 							>
@@ -6109,9 +5939,16 @@ function App({
 						menuRef={remoteMenuRef}
 						onDisconnect={onDisconnect}
 						onOpenConnection={
-							onOpenConnectionManager ?? openRemoteConnectionModal
+							onOpenConnectionManager ??
+							(() =>
+								setConnectionSwitcherError(
+									'Connection management is unavailable in this host.',
+								))
 						}
 						onOpenPairingQr={() => void openPairingQr()}
+						onOpenSettings={() =>
+							void auxiliaryRouteController.openSettings('remote-access-host')
+						}
 						onSelectConnection={selectConnectionProfile}
 						onToggleExposure={() => void toggleRemoteAccess()}
 						onToggleMenu={() => {
@@ -6160,6 +5997,14 @@ function App({
 						{workspaceSynchronizationError}
 					</div>
 				) : null}
+				{connectionFeatureError !== null ? (
+					<div
+						className="workspace-empty-state workspace-empty-state--error"
+						role="alert"
+					>
+						{connectionFeatureError}
+					</div>
+				) : null}
 				{projects.map((project) => (
 					<ProjectWorkspace
 						key={project.id}
@@ -6175,60 +6020,18 @@ function App({
 						onCloseProject={closeProject}
 						onEditProject={openEditProjectWindow}
 						onMoveTerminalToProject={moveTerminalToProject}
+						onPopoutProject={popoutProject}
 						onTerminalActivityOverviewChange={updateTerminalActivityOverview}
 						onUpdateProject={updateProject}
 						popoutUrl={popoutUrl}
 						project={project}
 						projects={projects}
-						quickPushClient={quickPushClient}
 						terminalClientContext={terminalClientContext}
 						adoptedTerminals={adoptedTerminalsByProject[project.id]}
 					/>
 				))}
 			</div>
 
-			{isRemoteConnectionModalOpen ? (
-				<RemoteConnectionModal
-					error={remoteConnectionError}
-					isOpening={isOpeningRemoteConnection}
-					notice={remoteConnectionNotice}
-					onClose={closeRemoteConnectionModal}
-					onForget={async (profileId) => {
-						await window.terminayConnectionHost.forget(profileId);
-						await refreshManagedDesktopConnections();
-						refreshConnectionSwitcherEntries();
-					}}
-					onPairingPinChange={(value) => {
-						setRemoteConnectionPairingPin(value);
-						setRemoteConnectionError(null);
-						setRemoteConnectionNotice(null);
-					}}
-					onRename={async (profileId, label) => {
-						await window.terminayConnectionHost.rename(profileId, label);
-						await refreshManagedDesktopConnections();
-						refreshConnectionSwitcherEntries();
-					}}
-					onRevoke={async (profileId) => {
-						await window.terminayConnectionHost.revoke(profileId);
-						await refreshManagedDesktopConnections();
-						refreshConnectionSwitcherEntries();
-					}}
-					onSelect={async (profileId) => {
-						await window.terminayConnectionHost.select(profileId);
-						await refreshManagedDesktopConnections();
-						refreshConnectionSwitcherEntries();
-					}}
-					onSubmit={submitRemoteConnection}
-					onUrlChange={(value) => {
-						setRemoteConnectionUrl(value);
-						setRemoteConnectionError(null);
-						setRemoteConnectionNotice(null);
-					}}
-					pairingPin={remoteConnectionPairingPin}
-					profiles={managedDesktopConnections}
-					url={remoteConnectionUrl}
-				/>
-			) : null}
 			{isPairingPinModalOpen ? (
 				<ModalBackdrop onClose={() => closePairingPinModal(false)}>
 					<form
@@ -6347,9 +6150,7 @@ function App({
 													className="remote-pairing-modal__copy-btn"
 													onClick={() => {
 														void (
-															window.terminayClipboardHost?.writeText(
-																selectedPairingUrl,
-															) ??
+															writeClipboardText(selectedPairingUrl) ??
 															navigator.clipboard.writeText(selectedPairingUrl)
 														)
 															.then(() => {

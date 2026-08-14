@@ -21,34 +21,46 @@ test('a completed new-terminal command exposes only its active presentation', as
 });
 
 test('a protocol-created terminal launches the configured shell', async ({
+	appHarness,
 	mainWindow,
 }) => {
-	await mainWindow.evaluate(async () => {
-		const host = window.terminayTerminalSettingsCompatibilityHost;
-		const settings = await host.getTerminalSettings();
-		await host.updateTerminalSettings({
-			...settings,
-			shell: {
-				...settings.shell,
-				program: '/bin/bash',
-				startupMode: 'non-login',
-				extraArgs: '',
-			},
-		});
-	});
+	const settings = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'shell-launch' });
+	await settings.getByRole('button', { name: 'New profile' }).click();
+	const editor = settings.getByRole('dialog', { name: 'Create shell profile' });
+	await editor.getByLabel('Name').fill('E2E Bash');
+	await editor.getByLabel('Executable').fill('/bin/bash');
+	await editor.getByLabel('Startup mode').selectOption('non-login');
+	await editor.getByRole('button', { name: 'Validate and save' }).click();
+	await expect(settings.getByText('E2E Bash saved.')).toBeAttached();
+	await settings.getByLabel('Default shell profile').selectOption({ label: 'E2E Bash' });
+	await settings.close();
 
-	await sendAppCommand(mainWindow, 'new-terminal');
-	const terminal = mainWindow.locator('.terminal-panel:visible');
-	const sessionId = await terminal.getAttribute(
+	const activeTerminal = mainWindow.locator('.terminal-panel:visible');
+	const previousSessionId = await activeTerminal.getAttribute(
 		'data-terminay-terminal-session-id',
 	);
-	expect(sessionId).not.toBeNull();
-
-	await mainWindow.evaluate(async (id) => {
-		await window.terminayTest!.writeServerTerminal(
-			id!,
-			`printf '__TERMINAY_BASH__:%s\\n' "\${BASH_VERSION:-missing}"\r`,
-		);
-	}, sessionId);
-	await expect(terminal).toContainText(/__TERMINAY_BASH__:\d/u);
+	expect(previousSessionId).not.toBeNull();
+	await sendAppCommand(mainWindow, 'new-terminal');
+	await expect
+		.poll(() =>
+			activeTerminal.getAttribute('data-terminay-terminal-session-id'),
+		)
+		.not.toBe(previousSessionId);
+	await expect(activeTerminal).toHaveAttribute(
+		'data-terminay-terminal-session-id',
+		/.+/,
+	);
+	await expect(activeTerminal).toContainText(/[$#]\s*$/u);
+	const terminalInput = activeTerminal.getByRole('textbox', {
+		name: 'Terminal input',
+	});
+	await terminalInput.focus();
+	await terminalInput.pressSequentially('shopt login_shell');
+	await terminalInput.press('Enter');
+	await expect(activeTerminal).toContainText('shopt login_shell');
+	await expect(
+		activeTerminal
+			.locator('.xterm-rows > div')
+			.filter({ hasText: /^login_shell\s+off$/u }),
+	).not.toHaveCount(0);
 });
