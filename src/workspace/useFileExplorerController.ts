@@ -5,6 +5,7 @@ import type {
 	TerminayGitClient,
 } from '@terminay/client-core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { writeClipboardText } from '../host/nativeActions';
 import { getPathRelativeToRoot } from '../pathUtils';
 import { loadServerGitWorkspace } from '../services/git/serverGitWorkspaceAdapter';
 import type { FileViewerMode } from '../types/fileViewer';
@@ -566,11 +567,11 @@ export function useFileExplorerController({
 	);
 
 	const handleCopyPath = useCallback((path: string) => {
-		void window.terminayClipboardHost?.writeText(path);
+		void writeClipboardText(path);
 	}, []);
 	const handleCopyRelativePath = useCallback(
 		(path: string) =>
-			void window.terminayClipboardHost?.writeText(
+			void writeClipboardText(
 				getPathRelativeToRoot(path, project.rootFolder),
 			),
 		[project.rootFolder],

@@ -51,6 +51,7 @@ import {
 	EMPTY_AGENT_STATUS_SNAPSHOT,
 	selectLiveAgentStatusesForTerminal,
 } from './agentStatusStore';
+import { openExternalUrl, writeClipboardText } from './host/nativeActions';
 import {
 	AgentsSidebar,
 	type AgentsSidebarItem,
@@ -6047,7 +6048,7 @@ function App({
 								type="button"
 								className="app-update-button"
 								onClick={() =>
-									void window.terminayExternalHost?.open(
+									void openExternalUrl(
 										appUpdateStatus.releaseUrl as string,
 									)
 								}
@@ -6327,7 +6328,7 @@ function App({
 													className="remote-pairing-modal__copy-btn"
 													onClick={() => {
 														void (
-															window.terminayClipboardHost?.writeText(
+													writeClipboardText(
 																selectedPairingUrl,
 															) ??
 															navigator.clipboard.writeText(selectedPairingUrl)

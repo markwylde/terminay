@@ -19,6 +19,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { ILinkHandler } from '@xterm/xterm'
 import { Terminal } from '@xterm/xterm'
+import { openExternalUrl, writeClipboardText } from '../host/nativeActions'
 import type { IDockviewPanelProps } from 'dockview'
 import type { CSSProperties } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
@@ -448,7 +449,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       // Opening a terminal link is an explicit operating-system action. Keep
       // it on the narrow, versioned host bridge rather than giving the
       // workspace's terminal renderer the broad compatibility preload API.
-      openExternal: (uri) => window.terminayExternalHost?.open(uri),
+      openExternal: openExternalUrl,
       pointerTarget: document.body,
     })
     const openTerminalLink = terminalLinkInteraction.activate
@@ -613,7 +614,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         return false
       }
 
-      void copyTerminalSelection(selectedText, (text) => window.terminayClipboardHost?.writeText(text))
+      void copyTerminalSelection(selectedText, writeClipboardText)
       return true
     }
 
@@ -1678,7 +1679,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
   const copyContextMenuSelection = () => {
     const selectedText = terminalRef.current?.getSelection() ?? ''
-    void copyTerminalSelection(selectedText, (text) => window.terminayClipboardHost?.writeText(text))
+    void copyTerminalSelection(selectedText, writeClipboardText)
   }
 
   const pasteFromContextMenu = () => {
@@ -1701,7 +1702,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
   }
 
   const copyContextMenuLink = (link: string) => {
-    void copyTerminalSelection(link, (text) => window.terminayClipboardHost?.writeText(text))
+    void copyTerminalSelection(link, writeClipboardText)
   }
 
   return (

@@ -165,11 +165,6 @@ declare global {
 				request: import('./types/terminay').DictationTranscribeRequest,
 			): Promise<import('./types/terminay').DictationTranscribeResult>;
 		};
-		/** Narrow OS-link capability for the current Desktop workspace. */
-		terminayExternalHost?: {
-			readonly version: 1;
-			open(url: string): Promise<void>;
-		};
 		/** Read-only native update availability for the current Desktop shell. */
 		terminayUpdateHost?: {
 			readonly version: 1;
