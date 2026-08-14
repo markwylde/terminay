@@ -183,7 +183,7 @@ persisted-data recovery.
 - [x] Preserve server/project/session lifetime independently of a renderer
   document while releasing document-scoped ports, subscriptions, downloads,
   and host bindings exactly once.
-- [ ] Convert bootstrap and teardown failures into bounded diagnostics/recovery
+- [x] Convert bootstrap and teardown failures into bounded diagnostics/recovery
   UI rather than an uncaught Electron main-process dialog or blank window.
 - [ ] Render a typed, visible direct-browser bootstrap failure that identifies
   each missing required capability or failed bootstrap step; no incompatible,

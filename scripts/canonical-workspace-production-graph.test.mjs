@@ -152,7 +152,7 @@ test('renderer-owned workspace seeding is absent from Desktop production code', 
 	const publish = runtime.indexOf('serverTerminalAuthority = authority');
 	assert.ok(initialize >= 0 && initialize < publish);
 	const readiness = main.slice(
-		main.indexOf('app.whenReady().then(async () => {'),
+		main.indexOf('async function completeDesktopStartup'),
 	);
 	const awaitRuntime = readiness.indexOf('await embeddedRuntimeReady');
 	const ready = readiness.indexOf("event: 'local-server.ready'");
