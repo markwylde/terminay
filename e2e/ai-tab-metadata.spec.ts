@@ -1,7 +1,8 @@
-import { expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 import { normalizeTerminalSettings } from '../src/terminalSettings'
 import type { AiTabMetadataProvider } from '../src/types/terminay'
+import { expect, test } from './fixtures'
+import { typeInVisibleTerminal } from './support/terminal-input'
 
 const isRealCodexRun = process.env.TERMINAY_TEST_USE_REAL_CODEX === '1'
 const isRealClaudeCodeRun = process.env.TERMINAY_TEST_USE_REAL_CLAUDE_CODE === '1'
@@ -15,23 +16,8 @@ function aiMetadataSelect(page: Page, label: string) {
   return aiMetadataRows(page).filter({ hasText: label }).locator('select')
 }
 
-async function getActiveTerminalSessionId(page: Page): Promise<string> {
-  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
-  if (!sessionId) {
-    throw new Error('Active terminal session id is unavailable')
-  }
-
-  return sessionId
-}
-
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
-  const sessionId = await getActiveTerminalSessionId(page)
-  await page.evaluate(
-    async ({ nextSessionId, nextData }) => {
-      await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
-    },
-    { nextData: data, nextSessionId: sessionId },
-  )
+  await typeInVisibleTerminal(page, data)
 }
 
 async function firstAiProviderModel(

@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { typeInVisibleTerminal } from './support/terminal-input';
 import {
 	openProjectEditWindow,
 	submitEditWindow,
@@ -192,11 +193,7 @@ test.describe('project tabs', () => {
 				return { checkboxChecked: false, response: 0 };
 			};
 		});
-		await popoutWindow.evaluate(
-			async (nextSessionId) =>
-				window.terminayTest!.writeServerTerminal(nextSessionId, 'sleep 30\n'),
-			sessionId,
-		);
+		await typeInVisibleTerminal(popoutWindow, 'sleep 30\n', sessionId);
 		await expect
 			.poll(() =>
 				popoutWindow.evaluate(

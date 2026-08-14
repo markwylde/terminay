@@ -1,9 +1,10 @@
-import { expect, test } from './fixtures'
-import type { Page } from '@playwright/test'
-import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
-import { gzipSync } from 'node:zlib'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { gzipSync } from 'node:zlib'
+import type { Page } from '@playwright/test'
+import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
+import { expect, test } from './fixtures'
+import { typeInVisibleTerminal } from './support/terminal-input'
 
 function remoteOriginInput(page: Page) {
   return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Remote origin' }).locator('input')
@@ -17,20 +18,8 @@ function customExtensionRows(page: Page) {
   return page.locator('#section-file-viewer-refresh .settings-custom-extensions__item')
 }
 
-async function getActiveTerminalSessionId(page: Page): Promise<string> {
-  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
-  if (!sessionId) {
-    throw new Error('Active terminal session id is unavailable')
-  }
-
-  return sessionId
-}
-
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
-  const sessionId = await getActiveTerminalSessionId(page)
-  await page.evaluate(async ({ nextData, nextSessionId }) => {
-    await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
-  }, { nextData: data, nextSessionId: sessionId })
+  await typeInVisibleTerminal(page, data)
 }
 
 test('opens settings focused to remote access and supports settings search', async ({ appHarness, mainWindow }) => {
