@@ -92,6 +92,9 @@ The normal diagnostic level records:
   rejections, preload failures, failed loads, and failed navigations;
 - user-visible Git operation failures that are caught and rendered as ordinary
   UI state, using a stable operation label and sanitized bounded error text;
+- user-visible embedded Local filesystem-operation failures using only the
+  stable operation name and bounded failure category; diagnostics never record
+  a project id, root, requested path, directory entry, or file content;
 - unexpected renderer exit with Electron's reason and exit code, including
   crash, out-of-memory, killed, launch-failed, integrity-failure, and memory
   eviction outcomes;
@@ -282,6 +285,9 @@ raw authority-bearing ids are not diagnostic correlation keys.
   duration when it recovers.
 - An embedded Local server failure records its bounded semantic lifecycle and
   application error metadata without recording any PTY output.
+- A failed Local Explorer query records its stable operation and failure
+  category without recording a project root or file path, and a later
+  successful query does not leave a stale Explorer failure banner.
 - A Local protocol client that disconnects while an event is being delivered
   produces one bounded connection-failure diagnostic, while Desktop and its
   Electron windows remain running.

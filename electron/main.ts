@@ -1085,6 +1085,21 @@ const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
 			{ channel: 'lifecycle' },
 		);
 	},
+	onFileOperationFailure: (failure) => {
+		void desktopDiagnostics.record(
+			{
+				component: 'local-server',
+				event: 'local-server.file-operation.failed',
+				fields: {
+					operation: failure.operation,
+					code: failure.code,
+				},
+				severity: 'warning',
+				source: 'local-server-files',
+			},
+			{ channel: 'lifecycle' },
+		);
+	},
 	// These callbacks run only after the server has accepted the operation.
 	// Recording and remote bookkeeping must never be driven by renderer intent.
 	onAcceptedWrite: ({ sessionId, data }) => {
