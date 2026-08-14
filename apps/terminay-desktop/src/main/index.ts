@@ -1,6 +1,7 @@
 export const desktopMainBoundary = "desktop-main";
 
 export * from "./connectionHost.js";
+export * from "./documentLifecycle.js";
 export * from "./localServer.js";
 export * from "./embeddedRuntime.js";
 export * from "./connectionProfiles.js";

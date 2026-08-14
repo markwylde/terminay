@@ -24,9 +24,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import {
 	type ByteTransport,
-	createTerminayHostBytePacket,
 	decodeFrame,
-	parseTerminayHostBytePacket,
 	type JsonValue,
 } from '@terminay/protocol';
 import {
@@ -113,7 +111,15 @@ import {
 	warmAiTabMetadataProviderEnv,
 } from './aiTabMetadata/service';
 import { bindAuxiliaryWindowLifecycle } from './auxiliaryWindowLifecycle';
-import { bindServerUiWindow, getServerUiPartitionName } from './serverUiHost';
+import {
+	bindLocalServerUiDocumentEndpoint,
+	bindRemoteServerUiDocumentEndpoint,
+} from './serverUiDocumentEndpoint';
+import {
+	bindServerUiWindow,
+	getServerUiPartitionName,
+	releaseServerUiWindowBinding,
+} from './serverUiHost';
 import {
 	CONTROL_SOCKET_ENV,
 	CONTROL_SOCKET_FILENAME,
@@ -3187,6 +3193,10 @@ function createWindow(options?: {
 	}
 
 	window.on('closed', () => {
+		releaseServerUiWindowBinding(
+			windowWebContentsId,
+			isQuitting ? 'application-quit' : 'window-close',
+		);
 		localServerUiSession.release(windowWebContentsId);
 		appWindows.delete(window);
 		runningTerminalSessionsByWindow.delete(windowWebContentsId);
@@ -3282,6 +3292,16 @@ function createWindow(options?: {
 					hostPartitionKey: launch.partitionKey,
 					initialUrl: entryUrl.toString(),
 					preloadPath,
+					onLifecycleDiagnostic: (event) => {
+						void desktopDiagnostics.record(
+							{
+								component: 'renderer', event: 'diagnostics.cleanup.failed',
+								fields: { reason: event.reason, resource: event.resource, webContentsId: windowWebContentsId },
+								message: event.message, severity: 'warning', source: 'server-ui-lifecycle',
+							},
+							{ channel: 'lifecycle' },
+						);
+					},
 					onHostAction: async (request) => {
 						const action = request.action;
 						switch (action.type) {
@@ -3298,21 +3318,31 @@ function createWindow(options?: {
 						}
 					},
 				});
-				window.webContents.once('did-finish-load', () => {
-					if (window.isDestroyed()) return;
-					if (options?.serverUiTransport !== undefined) {
-						bindCanonicalRemoteByteEndpoint(window.webContents, launch, options.serverUiTransport);
-						return;
-					}
-					if (serverTerminalAuthority === null) return;
-					const channel = new MessageChannelMain();
-					serverTerminalAuthority.acceptRendererPort(channel.port1 as unknown as ServerMessagePort);
-					window.webContents.postMessage('server-ui-host:byte-endpoint', { handle: launch.byteEndpointHandle }, [channel.port2]);
-				});
+				const endpointDiagnostic = (resource: string, message: string) => {
+					void desktopDiagnostics.record(
+						{
+							component: 'renderer', event: 'diagnostics.cleanup.failed',
+							fields: { resource, webContentsId: windowWebContentsId }, message,
+							severity: 'warning', source: 'server-ui-document-endpoint',
+						},
+						{ channel: 'lifecycle' },
+					);
+				};
+				const targetWebContents = window.webContents;
+				if (options?.serverUiTransport !== undefined) {
+					bindRemoteServerUiDocumentEndpoint({ diagnostic: endpointDiagnostic, launch, sender: targetWebContents, transport: options.serverUiTransport });
+				} else if (serverTerminalAuthority !== null) {
+					bindLocalServerUiDocumentEndpoint({
+						acceptPort: (port) => serverTerminalAuthority?.acceptRendererPort(port as unknown as ServerMessagePort),
+						diagnostic: endpointDiagnostic, handle: launch.byteEndpointHandle, sender: targetWebContents,
+					});
+				}
 				return window.loadURL(entryUrl.toString());
 			})
 			.catch((error) => {
 				console.error('[window] embedded server UI verification failed', error);
+				releaseServerUiWindowBinding(windowWebContentsId, 'failed-launch');
+				localServerUiSession.release(windowWebContentsId);
 				if (!window.isDestroyed()) window.close();
 			});
 
@@ -3642,41 +3672,6 @@ async function connectRemoteServer(
 		bootstrap.origin,
 		profile,
 	);
-}
-
-function bindCanonicalRemoteByteEndpoint(
-	sender: Electron.WebContents,
-	launch: DesktopBundleLaunch,
-	remoteTransport: ByteTransport,
-): void {
-	const channel = new MessageChannelMain();
-	let closed = false;
-	const close = async (): Promise<void> => {
-		if (closed) return;
-		closed = true;
-		channel.port1.close();
-		await remoteTransport.close({ code: 'normal' }).catch(() => undefined);
-	};
-	channel.port1.on('message', ({ data }) => {
-		if (closed) return;
-		try {
-			const packet = parseTerminayHostBytePacket(data, launch.context.serverId);
-			void remoteTransport.send(packet.frame).catch(() => close());
-		} catch { void close(); }
-	});
-	channel.port1.on('close', () => { void close(); });
-	channel.port1.start();
-	sender.once('destroyed', () => { void close(); });
-	void remoteTransport.open().then(async () => {
-		if (closed || sender.isDestroyed()) return;
-		sender.postMessage('server-ui-host:byte-endpoint', { handle: launch.byteEndpointHandle }, [channel.port2]);
-		try {
-			for await (const frame of remoteTransport.incoming) {
-				if (closed) return;
-				channel.port1.postMessage(createTerminayHostBytePacket(launch.context.serverId, frame));
-			}
-		} finally { await close(); }
-	}).catch(() => close());
 }
 
 async function openCanonicalRemoteServerWindow(

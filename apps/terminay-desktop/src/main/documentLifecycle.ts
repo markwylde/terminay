@@ -1,0 +1,98 @@
+export type DesktopDocumentReleaseReason =
+	| 'failed-launch'
+	| 'reload'
+	| 'server-switch'
+	| 'superseded'
+	| 'window-close'
+	| 'application-quit';
+
+export interface DesktopDocumentLifecycleDiagnostic {
+	readonly event: 'document-release-failed';
+	readonly reason: DesktopDocumentReleaseReason;
+	readonly resource: string;
+	readonly message: string;
+}
+
+export type DesktopDocumentRelease = () => Promise<void> | void;
+
+const MAX_DIAGNOSTIC_MESSAGE = 320;
+
+/** Owns resources belonging to one renderer document, never its server-side
+ * workspace or terminal authority. Release is deliberately synchronous at the
+ * boundary: asynchronous cleanup is observed and contained without allowing an
+ * Electron lifecycle callback to create an unhandled rejection. */
+export class DesktopDocumentLifecycle {
+	private readonly resources = new Map<string, DesktopDocumentRelease>();
+	private released = false;
+
+	constructor(
+		private readonly diagnostic?: (
+			event: DesktopDocumentLifecycleDiagnostic,
+		) => void,
+	) {}
+
+	add(resource: string, release: DesktopDocumentRelease): void {
+		if (this.released) {
+			this.observe(resource, 'superseded', release);
+			return;
+		}
+		if (this.resources.has(resource))
+			throw new Error(`document resource is already registered: ${resource}`);
+		this.resources.set(resource, release);
+	}
+
+	release(reason: DesktopDocumentReleaseReason): boolean {
+		if (this.released) return false;
+		this.released = true;
+		const resources = [...this.resources];
+		this.resources.clear();
+		for (const [resource, release] of resources.reverse())
+			this.observe(resource, reason, release);
+		return true;
+	}
+
+	get active(): boolean {
+		return !this.released;
+	}
+
+	private observe(
+		resource: string,
+		reason: DesktopDocumentReleaseReason,
+		release: DesktopDocumentRelease,
+	): void {
+		try {
+			const result = release();
+			if (result !== undefined)
+				void Promise.resolve(result).catch((error) =>
+					this.report(resource, reason, error),
+				);
+		} catch (error) {
+			this.report(resource, reason, error);
+		}
+	}
+
+	private report(
+		resource: string,
+		reason: DesktopDocumentReleaseReason,
+		error: unknown,
+	): void {
+		if (this.diagnostic === undefined) return;
+		const category = error instanceof Error ? error.name : typeof error;
+		const message = `Document cleanup failed (${category || 'unknown'}).`.slice(
+			0,
+			MAX_DIAGNOSTIC_MESSAGE,
+		);
+		try {
+			this.diagnostic(
+				Object.freeze({
+					event: 'document-release-failed',
+					reason,
+					resource,
+					message,
+				}),
+			);
+		} catch {
+			/* Diagnostics must never break native teardown. */
+		}
+	}
+}
