@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
+import { typeInVisibleTerminal } from './support/terminal-input';
 
 // The Docker image may download Electron on its first launch. Keep that
 // one-time fixture setup inside the scenario's budget instead of relying on a
@@ -399,19 +400,14 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		const encodedResumeProof = Buffer.from(`${resumeProof}\n`, 'utf8').toString(
 			'base64',
 		);
-		await mainWindow.evaluate(
-			async ({ connectionId, encoded, sessionId }) => {
-				await window.terminayTest.failRemoteProtocolConnection(connectionId);
-				await window.terminayTest.writeServerTerminal(
-					sessionId,
-					`printf '%s' '${encoded}' | base64 -d\n`,
-				);
-			},
-			{
-				connectionId: failedConnectionId,
-				encoded: encodedResumeProof,
-				sessionId: desktopSessionId,
-			},
+		await mainWindow.evaluate((connectionId) =>
+			window.terminayTest.failRemoteProtocolConnection(connectionId),
+			failedConnectionId,
+		);
+		await typeInVisibleTerminal(
+			mainWindow,
+			`printf '%s' '${encodedResumeProof}' | base64 -d\n`,
+			desktopSessionId,
 		);
 		await expect(mainWindow.locator('.project-tabbar')).toBeVisible();
 		await expect(desktopPanel).toContainText(resumeProof);
