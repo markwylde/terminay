@@ -7,37 +7,7 @@ const globals = await readFile(
 	'utf8',
 );
 
-const APPROVED_NATIVE_HOST_METHODS = Object.freeze({
-	terminayAppCommandHost: ['subscribe'],
-	terminayClipboardHost: ['readText', 'subscribeCopyRequest', 'writeText'],
-	terminayExternalHost: ['open'],
-	terminayProjectTabHost: [
-		'endDrag',
-		'publishBarRect',
-		'startDrag',
-		'subscribeDragHover',
-		'subscribeTornOff',
-	],
-	terminayRevealHost: ['reveal'],
-	terminayTerminalPresentationHost: [
-		'getZoom',
-		'subscribeRemoteSizeOverride',
-		'subscribeZoom',
-		'updateMetadata',
-	],
-	terminayWindowLifecycleHost: [
-		'closeCurrent',
-		'confirmClose',
-		'publishRunningTerminalSessions',
-	],
-	terminayWorkspaceTransferHost: [
-		'bindView',
-		'getAdoptedProject',
-		'mergeProject',
-		'popoutProject',
-		'subscribeAdoptedProject',
-	],
-});
+const APPROVED_NATIVE_HOST_METHODS = Object.freeze({});
 
 test('native presentation hosts expose only their reviewed version-one operations', () => {
 	for (const [host, approvedMethods] of Object.entries(
@@ -52,6 +22,27 @@ test('native presentation hosts expose only their reviewed version-one operation
 			.filter((name) => name !== 'readonly' && name !== 'version')
 			.sort();
 		assert.deepEqual([...new Set(methods)], [...approvedMethods].sort(), host);
+	}
+});
+
+test('window close uses the canonical route action without an ambient lifecycle host', async () => {
+	const actions = await readFile(
+		new URL('../src/host/nativeActions.ts', import.meta.url),
+		'utf8',
+	);
+	assert.doesNotMatch(globals, /terminayWindowLifecycleHost/u);
+	assert.match(actions, /request\(\{ type: 'route\.close' \}\)/u);
+});
+
+test('migrated ambient native globals stay absent', () => {
+	for (const name of [
+		'terminayClipboardHost',
+		'terminayExternalHost',
+		'terminayTerminalPresentationHost',
+		'terminayRevealHost',
+		'terminayWindowLifecycleHost',
+	]) {
+		assert.doesNotMatch(globals, new RegExp(name, 'u'));
 	}
 });
 
@@ -72,3 +63,4 @@ function interfaceBody(source, host) {
 	}
 	throw new Error(`${host} declaration is unterminated`);
 }
+

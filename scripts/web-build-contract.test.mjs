@@ -6,7 +6,6 @@ import test from 'node:test';
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const managerEntry = await readFile(path.join(root, 'web.html'), 'utf8');
 const serverEntry = await readFile(path.join(root, 'server.html'), 'utf8');
-const desktopEntry = await readFile(path.join(root, 'index.html'), 'utf8');
 const config = await readFile(path.join(root, 'vite.web.config.ts'), 'utf8');
 const serverConfig = await readFile(
 	path.join(root, 'vite.server-ui.config.ts'),
@@ -21,15 +20,17 @@ const serverOutput = await readFile(
 	'utf8',
 );
 
-test('hosted web build uses the dedicated shared-web manager entry', () => {
+test('hosted web build uses the dedicated shared-web manager entry', async () => {
 	assert.match(managerEntry, /id="web-root"/u);
 	assert.match(managerEntry, /src="\/src\/web\/manager\.tsx"/u);
 	assert.match(managerEntry, /<title>Terminay Connections<\/title>/u);
 	assert.match(serverEntry, /src="\/src\/web\/main\.tsx"/u);
 	assert.match(serverEntry, /<title>Terminay<\/title>/u);
-	assert.match(desktopEntry, /id="root"/u);
-	assert.match(desktopEntry, /src="\/src\/main\.tsx"/u);
-	assert.doesNotMatch(desktopEntry, /src="\/src\/web\/main\.tsx"/u);
+	await assert.rejects(
+		access(path.join(root, 'index.html')),
+		(error) => error?.code === 'ENOENT',
+		'the deleted Desktop renderer entry must not return',
+	);
 });
 
 test('hosted web build is standalone and excludes the retired terminal-only remote document', async () => {

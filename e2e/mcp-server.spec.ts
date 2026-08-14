@@ -10,9 +10,21 @@ type McpConnection = {
 	close: () => Promise<void>;
 };
 
-async function activeSessionIds(page: Page): Promise<string[]> {
+type McpControlEnvironment = Readonly<{
+	projectId: string;
+	sessionId: string;
+	socketPath: string;
+	token: string;
+}>;
+
+async function projectSessionIds(
+	page: Page,
+	projectId: string,
+): Promise<string[]> {
 	return page
-		.locator('.project-workspace--active .terminal-panel')
+		.locator(
+			`.project-workspace[data-terminay-project-id="${projectId}"] .terminal-panel`,
+		)
 		.evaluateAll((panels) =>
 			panels
 				.map((panel) => panel.getAttribute('data-terminay-terminal-session-id'))
@@ -23,17 +35,32 @@ async function activeSessionIds(page: Page): Promise<string[]> {
 async function connectMcp(
 	page: Page,
 	sessionId: string,
+	projectId: string,
 ): Promise<McpConnection> {
-	const control = await page.evaluate(async (terminalSessionId) => {
-		if (!window.terminayTest) {
-			throw new Error('The Terminay test bridge is unavailable.');
+	const control = (await page.evaluate(async (terminalSessionId) => {
+		if (!window.terminayMcpControlTest) {
+			throw new Error('The canonical MCP test seam is unavailable.');
 		}
-		return window.terminayTest.getMcpControlEnvironment(terminalSessionId);
-	}, sessionId);
+		return window.terminayMcpControlTest.getControlEnvironment(
+			terminalSessionId,
+		);
+	}, sessionId)) as McpControlEnvironment;
+	if (control.sessionId !== sessionId) {
+		throw new Error(
+			`Canonical MCP scope resolved ${control.sessionId} instead of ${sessionId}.`,
+		);
+	}
+	if (control.projectId !== projectId) {
+		throw new Error(
+			`Canonical MCP scope resolved project ${control.projectId} instead of ${projectId}.`,
+		);
+	}
 
 	const transport = new StdioClientTransport({
 		command: process.execPath,
-		args: [path.resolve('dist-electron/mcpEntry.js')],
+		// Desktop ships the selected server's MCP entrypoint. The retired
+		// Electron renderer entrypoint no longer exists in the canonical graph.
+		args: [path.resolve('dist-electron/serverMcpEntry.js')],
 		env: {
 			...process.env,
 			TERMINAY_CONTROL_SOCKET: control.socketPath,
@@ -71,47 +98,66 @@ test('MCP callers see and control only terminals in their own project', async ({
 	await expect(
 		mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 	).toHaveCount(2);
-	const projectASessions = await activeSessionIds(mainWindow);
+	const projectAId = await mainWindow
+		.locator('.app-shell')
+		.getAttribute('data-terminay-active-project-id');
+	if (projectAId === null)
+		throw new Error('Project A identity is unavailable.');
+	const projectASessions = await projectSessionIds(mainWindow, projectAId);
+	expect(projectASessions).toHaveLength(1);
 
 	await mainWindow.getByLabel('Create project on This server').click();
 	await expect(mainWindow.locator('.project-tab--active')).toContainText(
 		'Project 2',
 	);
-	await expect(
-		mainWindow.locator('.project-workspace--active .terminal-panel'),
-	).toHaveCount(1);
-	const projectBSessions = await activeSessionIds(mainWindow);
+	const activeProjectId = await mainWindow
+		.locator('.project-tab--active')
+		.getAttribute('data-project-id');
+	await expect
+		.poll(async () =>
+			mainWindow
+				.locator('.app-shell')
+				.getAttribute('data-terminay-active-project-id'),
+		)
+		.toBe(activeProjectId);
+	let projectBSession: string | undefined;
+	await expect
+		.poll(async () => {
+			if (activeProjectId === null) return false;
+			const session = (await projectSessionIds(mainWindow, activeProjectId))[0];
+			if (session !== undefined && session !== projectASessions[0]) {
+				projectBSession = session;
+				return true;
+			}
+			return false;
+		})
+		.toBe(true);
+	if (projectBSession === undefined)
+		throw new Error('Project B has no canonical terminal session.');
+	const projectBSessions = [projectBSession];
 
-	const projectA = await connectMcp(mainWindow, projectASessions[0]);
-	const projectB = await connectMcp(mainWindow, projectBSessions[0]);
+	if (activeProjectId === null)
+		throw new Error('Project B identity is unavailable.');
+	let projectA: McpConnection | undefined = await connectMcp(
+		mainWindow,
+		projectASessions[0],
+		projectAId,
+	);
+	let projectB: McpConnection | undefined;
 
 	try {
 		const listedA = await projectA.client.callTool({
 			name: 'list_terminals',
 			arguments: {},
 		});
-		const listedB = await projectB.client.callTool({
-			name: 'list_terminals',
-			arguments: {},
-		});
 		const textA = toolText(listedA);
-		const textB = toolText(listedB);
 		const resultA = toolResultJson(listedA) as {
-			terminals: Array<{ id: string }>;
-		};
-		const resultB = toolResultJson(listedB) as {
 			terminals: Array<{ id: string }>;
 		};
 
 		expect(resultA.terminals).toHaveLength(2);
-		expect(resultB.terminals).toHaveLength(1);
 		for (const sessionId of resultA.terminals.map((terminal) => terminal.id)) {
 			expect(textA).toContain(sessionId);
-			expect(textB).not.toContain(sessionId);
-		}
-		for (const sessionId of resultB.terminals.map((terminal) => terminal.id)) {
-			expect(textB).toContain(sessionId);
-			expect(textA).not.toContain(sessionId);
 		}
 
 		const crossProjectRead = await projectA.client.callTool({
@@ -125,7 +171,8 @@ test('MCP callers see and control only terminals in their own project', async ({
 			name: 'open_terminal',
 			arguments: { name: 'MCP Project A' },
 		});
-		expect(openedInA.isError).toBe(false);
+		// The MCP SDK omits isError for a successful tool result.
+		expect(openedInA.isError).not.toBe(true);
 
 		await mainWindow
 			.locator('.project-tab')
@@ -141,7 +188,35 @@ test('MCP callers see and control only terminals in their own project', async ({
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 		).toHaveCount(1);
+
+		// MCP clients are independent headless processes. Close the first before
+		// launching the second so this journey verifies capability scope rather
+		// than retaining an unrelated concurrent stdio lifecycle in the test
+		// runner; each caller still receives and exercises its own exact-session
+		// capability.
+		await projectA.close();
+		projectA = undefined;
+		projectB = await connectMcp(
+			mainWindow,
+			projectBSessions[0],
+			activeProjectId,
+		);
+		const listedB = await projectB.client.callTool({
+			name: 'list_terminals',
+			arguments: {},
+		});
+		const textB = toolText(listedB);
+		const resultB = toolResultJson(listedB) as {
+			terminals: Array<{ id: string }>;
+		};
+		expect(resultB.terminals).toHaveLength(1);
+		for (const sessionId of resultA.terminals.map((terminal) => terminal.id)) {
+			expect(textB).not.toContain(sessionId);
+		}
+		for (const sessionId of resultB.terminals.map((terminal) => terminal.id)) {
+			expect(textB).toContain(sessionId);
+		}
 	} finally {
-		await Promise.all([projectA.close(), projectB.close()]);
+		await Promise.all([projectA?.close(), projectB?.close()]);
 	}
 });

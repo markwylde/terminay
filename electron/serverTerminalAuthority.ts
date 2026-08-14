@@ -98,6 +98,8 @@ import {
 	createInitialWorkspace,
 	WorkspaceStore,
 } from '../packages/server-core/src/workspace';
+import { resolveWorkspaceHydration } from '../packages/server-core/src/workspaceHydration';
+import type { WorkspaceRepository } from '../packages/server-core/src/workspaceRepository';
 import {
 	type ServerMessagePort,
 	ServerPortTransport,
@@ -107,12 +109,19 @@ import type {
 	AiTabMetadataGenerateRequest,
 	AiTabMetadataGenerateResult,
 	FileViewerSparseFileSaveRequest,
+	McpAgentId,
+	McpInstallActionResult,
+	McpInstallStatus,
+	RemoteAccessStatus,
 } from '../src/types/terminay';
 import {
 	type AgentStatusIpcAuthority,
 	createServerAgentStatusIpcAdapter,
 } from './agentStatus/serverAdapter';
-import { resolveTerminalProcessCwd } from './processCwd';
+import {
+	resolveTerminalForegroundProcess,
+	resolveTerminalProcessCwd,
+} from './processCwd';
 
 const require = createRequire(import.meta.url);
 type MainServerPortDiagnostics = {
@@ -241,6 +250,9 @@ export interface ServerTerminalAuthorityOptions {
 	readonly shellProfiles?: ShellProfileCatalogueService;
 	readonly defaultProjectRoot?: () => string;
 	readonly projectEnvironmentRepository?: ProjectEnvironmentRepository;
+	/** Already-loaded canonical repository. Production hosts must inject this;
+	 * the in-memory default remains available only to focused authority tests. */
+	readonly workspaceRepository?: WorkspaceRepository;
 	/** Existing server-owned, project-implicit MCP dispatcher. Remote helper
 	 * frames receive no separate operation table or renderer authority. */
 	readonly remoteMcpDispatch?: (
@@ -266,6 +278,20 @@ export interface ServerTerminalAuthorityOptions {
 	readonly saveSparseFile?: (
 		request: FileViewerSparseFileSaveRequest,
 	) => Promise<unknown>;
+	readonly applicationFeatures?: {
+		readonly remoteAccess?: {
+			getStatus(): RemoteAccessStatus | Promise<RemoteAccessStatus>;
+			command(
+				operation: string,
+				value?: string,
+			): Promise<RemoteAccessStatus | boolean | unknown>;
+		};
+		readonly mcpInstall?: {
+			getStatus(): McpInstallStatus | Promise<McpInstallStatus>;
+			install(agent: McpAgentId): Promise<McpInstallActionResult>;
+			uninstall(agent: McpAgentId): Promise<McpInstallActionResult>;
+		};
+	};
 }
 
 interface AuthoritySession {
@@ -315,6 +341,7 @@ export class ServerTerminalAuthority {
 	private serviceEventsUnsubscribe: Unsubscribe | undefined;
 	private shuttingDown = false;
 	private shutdownPromise: Promise<void> | undefined;
+	private readonly workspaceRepository: WorkspaceRepository | undefined;
 
 	constructor(options: ServerTerminalAuthorityOptions) {
 		if (
@@ -325,9 +352,10 @@ export class ServerTerminalAuthority {
 			throw new TypeError('serverId is required');
 		}
 		this.options = options;
-		this.workspace = new WorkspaceStore(
-			createInitialWorkspace(options.serverId),
-		);
+		this.workspaceRepository = options.workspaceRepository;
+		this.workspace =
+			options.workspaceRepository?.workspace ??
+			new WorkspaceStore(createInitialWorkspace(options.serverId));
 		this.activity = new TerminalActivityService({ serverId: options.serverId });
 		this.agents = new AgentStatusService({ activity: this.activity });
 		this.git = new GitService({
@@ -361,6 +389,31 @@ export class ServerTerminalAuthority {
 			projects: this.fileSessionProjects,
 		});
 		const eventJournal = new OrderedEventJournal();
+		const remoteAccess = options.applicationFeatures?.remoteAccess;
+		const mcpInstall = options.applicationFeatures?.mcpInstall;
+		const payloadText = (
+			request: QueryRequest | CommandRequest,
+			key: string,
+		) => {
+			const value = (request.envelope.payload as Record<string, unknown>)[key];
+			if (typeof value !== 'string' || value.length === 0 || value.length > 512)
+				throw new TypeError(`${key} is invalid`);
+			return value;
+		};
+		const remoteCommand = async (
+			request: CommandRequest,
+			operation: string,
+			key?: string,
+		) => {
+			if (remoteAccess === undefined)
+				throw new Error('Remote access is unavailable on this server.');
+			const result = await remoteAccess.command(
+				operation,
+				key === undefined ? undefined : payloadText(request, key),
+			);
+			eventJournal.append('remote-access.changed', { changed: true });
+			return result as unknown as JsonValue;
+		};
 		const projectEnvironments =
 			options.projectEnvironmentRepository ??
 			new ProjectEnvironmentRepository(
@@ -681,6 +734,22 @@ export class ServerTerminalAuthority {
 					}),
 			operations: {
 				queries: {
+					...(remoteAccess === undefined
+						? {}
+						: {
+								'remote-access.status': async () =>
+									(await remoteAccess.getStatus()) as unknown as JsonValue,
+								'remote-access.pairing-pin-status': async () =>
+									(await remoteAccess.command(
+										'pairing-pin-status',
+									)) as JsonValue,
+							}),
+					...(mcpInstall === undefined
+						? {}
+						: {
+								'mcp-install.status': async () =>
+									(await mcpInstall.getStatus()) as unknown as JsonValue,
+							}),
 					...dictationOperations?.queries,
 					...(options.aiMetadata === undefined
 						? {}
@@ -697,6 +766,36 @@ export class ServerTerminalAuthority {
 						this.getFileMutationRevision(request),
 				},
 				commands: {
+					...(remoteAccess === undefined
+						? {}
+						: {
+								'remote-access.toggle-server': (request: CommandRequest) =>
+									remoteCommand(request, 'toggle-server'),
+								'remote-access.toggle-direct-listener': (
+									request: CommandRequest,
+								) => remoteCommand(request, 'toggle-direct-listener'),
+								'remote-access.revoke-device': (request: CommandRequest) =>
+									remoteCommand(request, 'revoke-device', 'deviceId'),
+								'remote-access.close-connection': (request: CommandRequest) =>
+									remoteCommand(request, 'close-connection', 'connectionId'),
+								'remote-access.set-pairing-address': (
+									request: CommandRequest,
+								) => remoteCommand(request, 'set-pairing-address', 'address'),
+								'remote-access.set-pairing-pin': (request: CommandRequest) =>
+									remoteCommand(request, 'set-pairing-pin', 'pin'),
+							}),
+					...(mcpInstall === undefined
+						? {}
+						: {
+								'mcp-install.install': (request: CommandRequest) =>
+									mcpInstall.install(
+										payloadText(request, 'agent') as McpAgentId,
+									) as unknown as Promise<JsonValue>,
+								'mcp-install.uninstall': (request: CommandRequest) =>
+									mcpInstall.uninstall(
+										payloadText(request, 'agent') as McpAgentId,
+									) as unknown as Promise<JsonValue>,
+							}),
 					...dictationOperations?.commands,
 					...fileSessionOperations.commands,
 					...fileCatalogOperations.commands,
@@ -722,7 +821,10 @@ export class ServerTerminalAuthority {
 						// native dependency from becoming part of host-only compositions.
 						ptyFactory: createNodePtyFactory(
 							require('node-pty') as NodePtyModule,
-							{ resolveCwd: resolveTerminalProcessCwd },
+							{
+								resolveCwd: resolveTerminalProcessCwd,
+								resolveForegroundProcess: resolveTerminalForegroundProcess,
+							},
 						),
 						terminalOptions: {
 							maxReplayBytes: this.maxReplayBytes,
@@ -759,6 +861,63 @@ export class ServerTerminalAuthority {
 			this.handleEvent(event),
 		);
 		this.consumers = new DetachableTerminalConsumerRegistry(this.service);
+	}
+
+	/** Complete canonical workspace hydration before the host publishes readiness. */
+	async initializeWorkspace(): Promise<void> {
+		await this.composition.start();
+		// File/Git/query authorities are process-local. Rebuild their bindings for
+		// every persisted project before publishing the restored workspace; PTY
+		// creation is not the only operation that requires a canonical root.
+		for (const project of Object.values(this.workspace.state.projects)) {
+			await this.registerProjectRoot(project.id, project.root);
+		}
+		if (this.workspaceRepository?.wasCreated !== true) {
+			// Local Desktop owns these PTYs. They cannot survive this authority
+			// generation, so reopening their persisted panels would manufacture a
+			// row of unusable interrupted tabs. Keep projects and non-terminal
+			// panels, then start one fresh terminal for every retained project.
+			if (this.sessions.size > 0) return;
+			for (const panel of Object.values(this.workspace.state.panels)) {
+				if (panel.type !== 'terminal') continue;
+				const closed = this.composition.workspaceOperations?.applyHostCommand(
+					`authority:restart-close:${panel.id}`.slice(0, 128),
+					{ type: 'panel.close', panelId: panel.id },
+					this.workspace.state.revision,
+				);
+				if (closed === undefined || !closed.ok)
+					throw new Error('could not clear stale local terminal panels');
+			}
+			for (const project of Object.values(this.workspace.state.projects)) {
+				await this.create({
+					projectId: project.id,
+					cwd: project.root,
+					cols: 100,
+					rows: 30,
+				});
+			}
+			return;
+		}
+		const hydration = resolveWorkspaceHydration(this.workspace.state);
+		if (hydration.state !== 'ready')
+			throw new Error('fresh canonical workspace has no active terminal');
+		if (this.service.getSession(hydration.sessionId) !== undefined) return;
+		const project = this.workspace.state.projects[hydration.projectId];
+		if (project === undefined)
+			throw new Error('fresh canonical workspace project is unavailable');
+		try {
+			await this.create({
+				projectId: hydration.projectId,
+				sessionId: hydration.sessionId,
+				cwd: project.root,
+				projectRootOrigin: 'server-default',
+				cols: 100,
+				rows: 30,
+			});
+		} catch (error) {
+			this.workspace.markInterruptedSessions();
+			throw error;
+		}
 	}
 
 	private async getFileDiff(
@@ -1089,10 +1248,17 @@ export class ServerTerminalAuthority {
 			resolver === undefined
 				? await this.service.createSession(options)
 				: await (async () => {
-						const identity = this.service.allocateIdentity(
+						let identity = this.service.allocateIdentity(
 							options.projectId,
 							options.sessionId,
 						);
+						while (
+							options.sessionId === undefined &&
+							this.workspace.state.terminalSessions[identity.sessionId] !==
+								undefined
+						) {
+							identity = this.service.allocateIdentity(options.projectId);
+						}
 						const resolved = await resolver.resolve({
 							identity,
 							...(options.profileId === undefined

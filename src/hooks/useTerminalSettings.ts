@@ -1,10 +1,12 @@
 import type { SettingsClient } from '@terminay/client-core';
-import type { JsonValue } from '@terminay/protocol';
+import { type JsonValue } from '@terminay/protocol';
 import { createContext, createElement, type ReactNode, useContext, useEffect, useState } from 'react';
-import { settleSettingsAuthorities } from '../settingsAuthoritySettlement';
+import { updateDeviceTerminalSettings } from '../host/nativeActions';
+import { subscribeDeviceTerminalSettings } from '../host/nativeEvents';
 import {
 	defaultTerminalSettings,
 	normalizeTerminalSettings,
+	selectDeviceTerminalSettings,
 } from '../terminalSettings';
 import type { TerminalSettings } from '../types/settings';
 
@@ -34,58 +36,125 @@ export function useTerminalSettingsClient(): TerminalSettingsClient {
 
 export function createServerTerminalSettingsClient(
 	client: SettingsClient,
-	legacy: TerminalSettingsClient,
 ): TerminalSettingsClient {
-	let serverSnapshot: JsonValue | undefined;
+	let connectionHostSettings = readConnectionHostSettings();
+	let lastServerState: JsonValue | null = null;
+	const effectiveSettings = (server: JsonValue) =>
+		normalizeTerminalSettings(
+			mergeSettings(
+				mergeSettings(defaultTerminalSettings, serverSettings(server)),
+				connectionHostSettings,
+			),
+		);
 	return {
 		async get<T>() {
-			const [device, state] = await Promise.all([
-				legacy.get<TerminalSettings>(),
-				client.get<JsonValue>(),
-			]);
-			const server = serverSettings(state);
-			serverSnapshot = server;
-			return mergeSettings(device, server) as T;
+			lastServerState = await client.get<JsonValue>();
+			return effectiveSettings(lastServerState) as T;
 		},
 		async update<T>(settings: JsonValue) {
-			const current =
-				serverSnapshot ?? serverSettings(await client.get<JsonValue>());
+			const current = serverSettings(await client.get<JsonValue>());
 			const serverUpdate = selectServerSettings(settings, current);
-			const device = await settleSettingsAuthorities(
-				'update',
-				client.update<JsonValue>(serverUpdate).then((state) => {
-					serverSnapshot = serverSettings(state);
-				}),
-				legacy.update<TerminalSettings>(settings),
-			);
-			if (serverSnapshot === undefined) {
-				throw new Error('The server settings update did not return a snapshot.');
-			}
-			return mergeSettings(device, serverSnapshot) as T;
+			const selectedDeviceSettings = selectConnectionHostSettings(settings);
+			connectionHostSettings =
+				(await updateDeviceTerminalSettings(selectedDeviceSettings)) ??
+				selectedDeviceSettings;
+			if (!hasNativeSettingsHost())
+				writeConnectionHostSettings(connectionHostSettings);
+			lastServerState = await client.update<JsonValue>(serverUpdate);
+			const state = serverSettings(lastServerState);
+			return normalizeTerminalSettings(
+				mergeSettings(mergeSettings(defaultTerminalSettings, state), connectionHostSettings),
+			) as T;
 		},
 		async reset<T>() {
-			const device = await settleSettingsAuthorities(
-				'reset',
-				client.reset<JsonValue>().then((state) => {
-					serverSnapshot = serverSettings(state);
-				}),
-				legacy.reset<TerminalSettings>(),
+			const defaultDeviceSettings = selectConnectionHostSettings(
+				defaultTerminalSettings as unknown as JsonValue,
 			);
-			if (serverSnapshot === undefined) {
-				throw new Error('The server settings reset did not return a snapshot.');
-			}
-			return mergeSettings(device, serverSnapshot) as T;
+			connectionHostSettings =
+				(await updateDeviceTerminalSettings(defaultDeviceSettings)) ?? {};
+			if (!hasNativeSettingsHost())
+				writeConnectionHostSettings(connectionHostSettings);
+			lastServerState = await client.reset<JsonValue>();
+			const state = serverSettings(lastServerState);
+			return normalizeTerminalSettings(mergeSettings(defaultTerminalSettings, state)) as T;
 		},
-		onChanged(listener) {
-			// Desktop's complete settings projection includes device/host fields.
-			// Every shared-editor mutation is committed to both authorities above,
-			// and the legacy host event is emitted only after its native side effects
-			// (menu, agent integration, remote controls) have settled. Listening to
-			// the server event as well can race that authoritative host acknowledgement
-			// and temporarily restore stale device values.
-			return legacy.onChanged(listener);
+		onChanged: (listener) => {
+			const stopServer = client.onChanged((state) => {
+				lastServerState = state;
+				listener(effectiveSettings(state) as unknown as JsonValue);
+			});
+			const emitDeviceSettings = (settings: JsonValue) => {
+				connectionHostSettings = settings;
+				const emit = async () => {
+					if (lastServerState === null) lastServerState = await client.get<JsonValue>();
+					listener(effectiveSettings(lastServerState) as unknown as JsonValue);
+				};
+				void emit().catch(() => {
+					// The selected-server subscription owns availability reporting.
+				});
+			};
+			const stopDevice = subscribeDeviceTerminalSettings(emitDeviceSettings);
+			const onStorage = (event: StorageEvent) => {
+				if (event.key !== CONNECTION_HOST_SETTINGS_KEY) return;
+				emitDeviceSettings(parseConnectionHostSettings(event.newValue));
+			};
+			if (typeof window !== 'undefined' && !hasNativeSettingsHost())
+				window.addEventListener('storage', onStorage);
+			return () => {
+				stopServer();
+				stopDevice();
+				if (typeof window !== 'undefined' && !hasNativeSettingsHost())
+					window.removeEventListener('storage', onStorage);
+			};
 		},
 	};
+}
+
+const CONNECTION_HOST_SETTINGS_KEY = 'terminay.connection-host-settings.v1';
+
+function selectConnectionHostSettings(value: JsonValue): JsonValue {
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		throw new TypeError('Settings must be objects.');
+	return selectDeviceTerminalSettings(
+		normalizeTerminalSettings(value),
+	) as JsonValue;
+}
+
+function readConnectionHostSettings(): JsonValue {
+	if (typeof window === 'undefined') return {};
+	try {
+		return parseConnectionHostSettings(window.localStorage.getItem(CONNECTION_HOST_SETTINGS_KEY));
+	} catch {
+		return {};
+	}
+}
+
+function parseConnectionHostSettings(value: string | null): JsonValue {
+	if (value === null) return {};
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+			? (parsed as JsonValue)
+			: {};
+	} catch {
+		return {};
+	}
+}
+
+function writeConnectionHostSettings(settings: JsonValue): void {
+	if (typeof window === 'undefined') return;
+	try {
+		window.localStorage.setItem(
+			CONNECTION_HOST_SETTINGS_KEY,
+			JSON.stringify(settings),
+		);
+	} catch {
+		// An unavailable host store must not prevent selected-server settings writes.
+	}
+}
+
+function hasNativeSettingsHost(): boolean {
+	return typeof window !== 'undefined' && window.terminayHost !== undefined;
 }
 
 function selectServerSettings(value: JsonValue, shape: JsonValue): JsonValue {
@@ -165,6 +234,7 @@ export function useTerminalSettings(override?: TerminalSettingsClient) {
 		defaultTerminalSettings,
 	);
 	const [isLoading, setIsLoading] = useState(true);
+	const [error, setError] = useState<Error | null>(null);
 
 	useEffect(() => {
 		let isMounted = true;
@@ -175,11 +245,17 @@ export function useTerminalSettings(override?: TerminalSettingsClient) {
 			}
 
 			setSettings(nextSettings);
+			setError(null);
+			setIsLoading(false);
+		}).catch((cause: unknown) => {
+			if (!isMounted) return;
+			setError(cause instanceof Error ? cause : new Error(String(cause)));
 			setIsLoading(false);
 		});
 
 		const unsubscribe = settingsClient.onChanged((nextSettings) => {
 			setSettings(nextSettings as unknown as TerminalSettings);
+			setError(null);
 			setIsLoading(false);
 		});
 
@@ -189,5 +265,5 @@ export function useTerminalSettings(override?: TerminalSettingsClient) {
 		};
 	}, [settingsClient]);
 
-	return { settings, isLoading, setSettings, settingsClient };
+	return { settings, error, isLoading, setSettings, settingsClient };
 }

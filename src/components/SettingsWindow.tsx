@@ -30,11 +30,9 @@ import {
 	PAIRING_PIN_PATTERN,
 	saveRemoteAccessPairingPin,
 } from '../remotePairingPin';
-import {
-	type AiTabMetadataClient,
-	createLegacyAiTabMetadataClient,
-} from '../services/ai/legacyAiTabMetadataClient';
+import { type AiTabMetadataClient } from '../services/ai/aiTabMetadataClient';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
+import { writeClipboardText } from '../host/nativeActions';
 import { SettingsMutationCoordinator } from '../settingsMutationCoordinator';
 import { SharedSettingsRouteBody } from '../shared/SharedSettingsRouteBody';
 import type { SettingsFieldDefinition } from '../terminalSettings';
@@ -557,6 +555,7 @@ export function SettingsWindow({
 	aiTabMetadataClient: aiTabMetadataClientOverride,
 	initialSectionId,
 	remoteAccessStatusClient,
+	remotePairingPinClient,
 	settingsClient: settingsClientOverride,
 	shellProfilesClient,
 	serverIdentity = 'Connected server',
@@ -565,6 +564,7 @@ export function SettingsWindow({
 	aiTabMetadataClient?: AiTabMetadataClient;
 	initialSectionId?: string;
 	remoteAccessStatusClient: RemoteAccessStatusClient;
+	remotePairingPinClient: import('../remotePairingPin').RemotePairingPinClient;
 	settingsClient?: TerminalSettingsClient;
 	shellProfilesClient?: ShellProfilesClient;
 	serverIdentity?: string;
@@ -580,18 +580,21 @@ export function SettingsWindow({
 		if (aiTabMetadataClientOverride !== undefined) {
 			return aiTabMetadataClientOverride;
 		}
-		if (window.terminayAiMetadataHost !== undefined) {
-			return createLegacyAiTabMetadataClient(window.terminayAiMetadataHost);
+		if (serverAiClient !== undefined) {
+			return Object.freeze({
+				listModels(provider: 'claudeCode' | 'codex') {
+					return serverAiClient.listModels(
+						provider === 'claudeCode' ? 'claude-code' : provider,
+					);
+				},
+			}) satisfies AiTabMetadataClient;
 		}
 		return Object.freeze({
-			async generate() {
-				throw new Error('AI tab metadata is unavailable in this host.');
-			},
 			async listModels() {
 				return [];
 			},
 		}) satisfies AiTabMetadataClient;
-	}, [aiTabMetadataClientOverride]);
+	}, [aiTabMetadataClientOverride, serverAiClient]);
 	const searchParams = new URLSearchParams(window.location.search);
 	const initialSectionFromUrl = initialSectionId ?? searchParams.get('section');
 	const initialCategoryFromUrl: CategoryId =
@@ -633,6 +636,9 @@ export function SettingsWindow({
 	const [remoteActionError, setRemoteActionError] = useState<string | null>(
 		null,
 	);
+	const [directListenerActionError, setDirectListenerActionError] = useState<
+		string | null
+	>(null);
 	const [, setSelectedRemotePairingMode] = useState<'lan' | 'webrtc'>('webrtc');
 	const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
 	const [isPairingPinModalOpen, setIsPairingPinModalOpen] = useState(false);
@@ -715,22 +721,10 @@ export function SettingsWindow({
 			setDictationMicrophoneError(null);
 
 			try {
-				const dictationHost = window.terminayDictationHost;
-				if (dictationHost === undefined)
-					throw new Error('Desktop dictation is unavailable.');
-				let permissionStatus =
-					await dictationHost.getMicrophonePermissionStatus();
+				let permissionStatus: DictationMicrophonePermissionStatus = 'unknown';
 				let permissionProbeError: string | null = null;
 
-				if (requestPermission && permissionStatus !== 'granted') {
-					permissionStatus = await dictationHost.requestMicrophonePermission();
-				}
-
-				if (
-					permissionStatus !== 'denied' &&
-					permissionStatus !== 'restricted' &&
-					navigator.mediaDevices?.getUserMedia
-				) {
+				if (requestPermission && navigator.mediaDevices?.getUserMedia) {
 					let permissionProbeStream: MediaStream | null = null;
 					try {
 						permissionProbeStream = await navigator.mediaDevices.getUserMedia({
@@ -740,8 +734,7 @@ export function SettingsWindow({
 					} catch (error) {
 						permissionProbeError =
 							error instanceof Error ? error.message : String(error);
-						permissionStatus =
-							await dictationHost.getMicrophonePermissionStatus();
+						permissionStatus = 'denied';
 					} finally {
 						permissionProbeStream?.getTracks().forEach((track) => {
 							track.stop();
@@ -779,9 +772,7 @@ export function SettingsWindow({
 				} else if (permissionStatus !== 'granted') {
 					setDictationMicrophoneError(
 						permissionProbeError ??
-							(permissionStatus === 'not-determined'
-								? 'Microphone access has not been requested yet.'
-								: `Microphone access is ${permissionStatus}.`),
+							'Microphone access has not been granted yet.',
 					);
 				} else {
 					setDictationMicrophoneError('No microphone devices were found.');
@@ -814,9 +805,7 @@ export function SettingsWindow({
 	useEffect(() => {
 		let isMounted = true;
 
-		const credentialStatus =
-			serverAiClient?.dictationCredentialStatus() ??
-			window.terminayDictationHost?.getKeyStatus();
+		const credentialStatus = serverAiClient?.dictationCredentialStatus();
 		void credentialStatus
 			?.then((status) => {
 				if (isMounted) {
@@ -831,10 +820,8 @@ export function SettingsWindow({
 				}
 			});
 
-		void (
-			serverAiClient?.dictationRuntimeStatus() ??
-			window.terminayDictationHost?.getParakeetStatus()
-		)
+		void serverAiClient
+			?.dictationRuntimeStatus()
 			?.then((status) => {
 				if (isMounted) setParakeetStatus(toParakeetRuntimeStatus(status));
 			})
@@ -954,37 +941,6 @@ export function SettingsWindow({
 	}, [activeCategoryId, activeSectionId, filteredSections, normalizedQuery]);
 
 	useEffect(() => {
-		const unsubscribe =
-			window.terminaySettingsWindowHost?.subscribeFocusSection(
-				({ sectionId }) => {
-					if (sectionId === 'extensions') {
-						setActiveCategoryId('extensions');
-						setActiveSectionId('extensions');
-						setQuery('');
-						return;
-					}
-					const section = terminalSettingsSections.find(
-						(candidate) => candidate.id === sectionId,
-					);
-					if (!section) {
-						return;
-					}
-
-					setActiveCategoryId(section.categoryId);
-					setActiveSectionId(section.id);
-					window.requestAnimationFrame(() => {
-						const element = document.getElementById(`section-${section.id}`);
-						element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-					});
-				},
-			);
-
-		return () => {
-			unsubscribe?.();
-		};
-	}, [remoteAccessStatusClient]);
-
-	useEffect(() => {
 		const root = contentRef.current;
 		if (!root) {
 			return;
@@ -1087,13 +1043,13 @@ export function SettingsWindow({
 	);
 
 	const saveDraft = useCallback(
-		(nextDraft: TerminalSettings) =>
+		(nextDraft: TerminalSettings, optimistic = true) =>
 			runSettingsMutation(
 				() =>
 					settingsClient.update<TerminalSettings>(
 						nextDraft as unknown as import('@terminay/protocol').JsonValue,
 					),
-				nextDraft,
+				optimistic ? nextDraft : undefined,
 			),
 		[runSettingsMutation, settingsClient],
 	);
@@ -1120,7 +1076,11 @@ export function SettingsWindow({
 			const normalizedValue =
 				value.trim().length === 0 ? '' : normalizeAccelerator(value);
 			const nextDraft = setValueAtPath(draftRef.current, key, normalizedValue);
-			await saveDraft(nextDraft);
+			// A captured accelerator is presented as changed only after both the
+			// selected-server mutation and the device-host projection commit. This
+			// prevents closing an isolated Settings window from abandoning a save
+			// that merely looked complete because its draft was optimistic.
+			await saveDraft(nextDraft, false);
 		},
 		[saveDraft],
 	);
@@ -1216,12 +1176,13 @@ export function SettingsWindow({
 		setDictationOpenAiKeyError(null);
 		setIsSavingDictationOpenAiKey(true);
 		try {
-			const dictationHost = window.terminayDictationHost;
-			if (dictationHost === undefined && serverAiClient === undefined)
-				throw new Error('Desktop dictation is unavailable.');
-			const status = await (serverAiClient?.setDictationCredential(
+			if (serverAiClient === undefined)
+				throw new Error(
+					'The selected server does not support dictation credentials.',
+				);
+			const status = await serverAiClient.setDictationCredential(
 				dictationOpenAiKeyDraft,
-			) ?? dictationHost!.saveKey(dictationOpenAiKeyDraft));
+			);
 			setDictationOpenAiKeyConfigured(status.configured);
 			setDictationOpenAiKeyDraft('');
 		} catch (error) {
@@ -1237,11 +1198,11 @@ export function SettingsWindow({
 		setDictationOpenAiKeyError(null);
 		setIsSavingDictationOpenAiKey(true);
 		try {
-			const dictationHost = window.terminayDictationHost;
-			if (dictationHost === undefined && serverAiClient === undefined)
-				throw new Error('Desktop dictation is unavailable.');
-			const status = await (serverAiClient?.clearDictationCredential() ??
-				dictationHost!.clearKey());
+			if (serverAiClient === undefined)
+				throw new Error(
+					'The selected server does not support dictation credentials.',
+				);
+			const status = await serverAiClient.clearDictationCredential();
 			setDictationOpenAiKeyConfigured(status.configured);
 			setDictationOpenAiKeyDraft('');
 		} catch (error) {
@@ -1263,23 +1224,18 @@ export function SettingsWindow({
 		});
 		let statusPoll: ReturnType<typeof setInterval> | undefined;
 		try {
-			const host = window.terminayDictationHost;
-			if (!host && serverAiClient === undefined)
+			if (serverAiClient === undefined)
 				throw new Error('Dictation runtime management is unavailable.');
 			statusPoll = setInterval(() => {
-				void (
-					serverAiClient?.dictationRuntimeStatus() ?? host!.getParakeetStatus()
-				)
+				void serverAiClient
+					.dictationRuntimeStatus()
 					.then((status) => setParakeetStatus(toParakeetRuntimeStatus(status)))
 					.catch(() => {
 						// The install request owns final error reporting.
 					});
 			}, 500);
 			setParakeetStatus(
-				toParakeetRuntimeStatus(
-					await (serverAiClient?.installDictationRuntime() ??
-						host!.installParakeet()),
-				),
+				toParakeetRuntimeStatus(await serverAiClient.installDictationRuntime()),
 			);
 		} catch (error) {
 			setParakeetStatus({
@@ -1933,6 +1889,7 @@ export function SettingsWindow({
 				return (
 					<select
 						className="settings-select"
+						aria-label={field.label}
 						value={String(value)}
 						onChange={(e) => void updateField(field, e.target.value)}
 					>
@@ -2149,7 +2106,7 @@ export function SettingsWindow({
 		async (mode: 'lan' | 'webrtc') => {
 			if (
 				await isRemoteAccessPairingPinConfigured(
-					window.terminayRemotePairingPinHost,
+					remotePairingPinClient,
 					mode,
 				)
 			) {
@@ -2182,7 +2139,7 @@ export function SettingsWindow({
 
 			try {
 				await saveRemoteAccessPairingPin(
-					window.terminayRemotePairingPinHost,
+					remotePairingPinClient,
 					pin,
 				);
 				closePairingPinModal(true);
@@ -2243,16 +2200,26 @@ export function SettingsWindow({
 
 	const toggleDirectNetworkListener = async () => {
 		setIsTogglingRemoteAccess(true);
-		setRemoteActionError(null);
+		setDirectListenerActionError(null);
 		try {
 			if (
 				!remoteStatus?.directListenerRunning &&
 				!(await ensureRemoteAccessPairingPin('lan'))
 			)
 				return;
-			setRemoteStatus(await remoteAccessStatusClient.toggleDirectListener());
+			const wasRunning = remoteStatus?.directListenerRunning === true;
+			const nextStatus =
+				await remoteAccessStatusClient.toggleDirectListener();
+			if (nextStatus.directListenerRunning === wasRunning) {
+				throw new Error(
+					`This server did not confirm that the direct network listener ${
+						wasRunning ? 'stopped' : 'started'
+					}.`,
+				);
+			}
+			setRemoteStatus(nextStatus);
 		} catch (error) {
-			setRemoteActionError(
+			setDirectListenerActionError(
 				error instanceof Error
 					? error.message
 					: 'Unable to change the direct network listener.',
@@ -2526,7 +2493,9 @@ export function SettingsWindow({
 											: 'Advanced direct HTTPS connection on your configured interface. It runs independently and is never started as a WebRTC fallback.'}
 									</p>
 								</div>
-								{remoteStatus?.isRunning && (
+								{((selectedRemoteTab === 'webrtc' && remoteStatus?.isRunning) ||
+									(selectedRemoteTab === 'lan' &&
+										remoteStatus?.directListenerRunning)) && (
 									<button
 										type="button"
 										className="settings-primary-button"
@@ -2552,12 +2521,34 @@ export function SettingsWindow({
 										onClick={() => void toggleDirectNetworkListener()}
 										disabled={isTogglingRemoteAccess}
 									>
-										{remoteStatus?.directListenerRunning
-											? 'Stop direct listener'
-											: 'Start direct listener'}
+										{isTogglingRemoteAccess
+											? remoteStatus?.directListenerRunning
+												? 'Stopping direct listener…'
+												: 'Starting direct listener…'
+											: remoteStatus?.directListenerRunning
+												? 'Stop direct listener'
+												: 'Start direct listener'}
 									</button>
 								)}
 							</div>
+							{selectedRemoteTab === 'lan' && directListenerActionError ? (
+								<div
+									role="alert"
+									data-testid="direct-listener-operation-error"
+									style={{
+										marginBottom: '20px',
+										padding: '12px 14px',
+										border: '1px solid var(--settings-danger)',
+										borderRadius: '8px',
+										color: 'var(--settings-danger)',
+										fontSize: '13px',
+										lineHeight: 1.5,
+									}}
+								>
+									<strong>Direct network listener could not be changed.</strong>{' '}
+									{directListenerActionError}
+								</div>
+							) : null}
 
 							<div
 								className="settings-row"
@@ -3068,12 +3059,19 @@ export function SettingsWindow({
 											: 'soon'}
 									</p>
 									{selectedPairingUrl ? (
-										<button
+										<>
+											<p
+												className="settings-remote-meta"
+												data-testid="remote-pairing-link"
+											>
+												{selectedPairingUrl}
+											</p>
+											<button
 											type="button"
 											className="settings-remote-copy-button"
 											onClick={() => {
 												void (
-													window.terminayClipboardHost?.writeText(
+											writeClipboardText(
 														selectedPairingUrl,
 													) ?? navigator.clipboard.writeText(selectedPairingUrl)
 												)
@@ -3085,7 +3083,8 @@ export function SettingsWindow({
 											}}
 										>
 											{isLinkCopied ? 'Copied' : 'Copy Link'}
-										</button>
+											</button>
+										</>
 									) : null}
 									{activePairingMode === 'webrtc' &&
 									remoteStatus?.webRtcStatusMessage ? (

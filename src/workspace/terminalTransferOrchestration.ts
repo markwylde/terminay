@@ -20,6 +20,7 @@ export type MovedTerminalTab = {
 	cwd?: string;
 	panelId?: string;
 	sessionId: string;
+	terminalSessionStatus?: 'running' | 'exited' | 'interrupted';
 	/**
 	 * The immutable server project identity that owns the retained PTY. Moving
 	 * its presentation must never recreate or silently re-home the process.

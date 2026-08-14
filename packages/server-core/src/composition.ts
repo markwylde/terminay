@@ -373,7 +373,16 @@ export function createServerCoreComposition(
   });
   const activityOperations = options.activity === undefined
     ? undefined
-    : createActivityOperationRegistry({ service: options.activity, eventJournal });
+    : createActivityOperationRegistry({
+        service: options.activity,
+        eventJournal,
+        beforeSnapshot: (request) => terminal.refreshForegroundProcesses(
+          typeof request.context.claims === "object" && request.context.claims !== null && !Array.isArray(request.context.claims) && typeof request.context.claims.projectId === "string"
+            ? request.context.claims.projectId
+            : undefined,
+          request.context.signal,
+        ),
+      });
   const agentOperations = options.agents === undefined
     ? undefined
     : createAgentOperationRegistry({ service: options.agents, eventJournal });
@@ -402,6 +411,15 @@ export function createServerCoreComposition(
   const projectEnvironmentOperations = options.projectEnvironments === undefined || options.workspace === undefined ? undefined : createProjectEnvironmentOperationHandlers({
     ...options.projectEnvironments,
     workspace: options.workspace,
+	...(options.workspaceOperations?.prepareProjectRootUpdate === undefined
+		? {}
+		: {
+				// Project-environment creation prepares the built-in This-server
+				// root before its workspace object exists; routing by project id at
+				// that point would reject the legitimate new identity.
+				prepareProjectRootUpdate:
+					options.workspaceOperations.prepareProjectRootUpdate,
+			}),
     ...(options.projectEnvironments.providerDefinitions !== undefined || options.extensions?.hosts === undefined ? {} : { providerDefinitions: () => options.extensions!.hosts!.statuses().flatMap((status) => status.providers ?? []) }),
     ...(options.projectEnvironments.providerRuntime !== undefined || options.extensions?.hosts === undefined ? {} : { providerRuntime: options.extensions.hosts }),
     onChanged: (payload) => { eventJournal.append('project-environments.changed', payload); },

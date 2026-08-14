@@ -29,18 +29,14 @@ const nodeBuiltins = [
 ]
 
 const appInput = {
-  main: path.join(__dirname, 'index.html'),
   remote: path.join(__dirname, 'remote.html'),
 }
 
 const electronInput = {
   main: path.join(__dirname, 'electron/main.ts'),
   extensionHostEntry: path.join(__dirname, 'packages/server-core/src/extensions/child.ts'),
-  // Keep the packaged desktop MCP process on the server-owned adapter. The
-  // legacy Electron entry remains available for compatibility tests, but the
-  // installed provider command points at this renderer-free bundle.
-  serverMcpEntry: path.join(__dirname, 'apps/terminay-server/src/mcpEntry.ts'),
-  mcpEntry: path.join(__dirname, 'electron/mcpEntry.ts'),
+  // Desktop launches the server-owned, renderer-free MCP process.
+  serverMcpEntry: path.join(__dirname, 'apps/terminay-server/src/desktopMcpEntry.ts'),
 }
 
 export default defineConfig({
@@ -78,9 +74,6 @@ export default defineConfig({
             },
           },
         },
-      },
-      preload: {
-        input: path.join(__dirname, 'electron/preload.ts'),
       },
       renderer: process.env.NODE_ENV === 'test' ? undefined : {},
     }),

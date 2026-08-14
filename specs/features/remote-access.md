@@ -267,6 +267,11 @@ the “Connect to Remote Server” enrollment dialog. That dialog returns only
 after explicit disconnect/forget, a credential failure that requires fresh
 pairing, or initial launch with no restorable connection.
 
+Recovery that completes before an intermediate renderer paint does not hold or
+manufacture transient status copy. Its durable proof is the restored connected
+lifecycle, retained workspace and terminal-session identity, and a successful
+command through the replacement transport generation.
+
 The mounted workspace treats recovery as one explicit lifecycle:
 `connected → reconnecting → authenticating → resubscribing → hydrating → connected`.
 Its old application client and terminal attachments become unusable as soon as

@@ -457,6 +457,20 @@ export class LocalUiServer {
 					sendText(response, 400, 'credentials must not be placed in a URL');
 					return;
 				}
+				if (url.pathname === '/host-bootstrap.json') {
+					sendJson(
+						response,
+						200,
+						{
+							schemaVersion: 1,
+							serverId: this.options.serverId,
+							manifestPath: '/manifest.json',
+							streamPath: REMOTE_STREAM_PATH,
+						},
+						method === 'HEAD',
+					);
+					return;
+				}
 			if (
 				url.pathname === '/api/pairing/start' ||
 				url.pathname === '/api/pairing/complete'
@@ -600,6 +614,13 @@ export class LocalUiServer {
 		host: string | undefined,
 	): string | undefined {
 		if (origin === undefined || !isProtocolPath(pathname)) return undefined;
+		// Canonical Desktop documents are loaded from a private `file:` bundle and
+		// Chromium serializes that opaque origin as `null`.  Protocol endpoints
+		// still require their bearer/subprotocol capability below; allowing this
+		// exact opaque origin is what lets a user paste an authenticated pairing
+		// URL into Desktop without weakening the token boundary or falling back to
+		// a renderer-local server implementation.
+		if (origin === 'null' || origin === 'file://') return origin;
 		const normalizedOrigin = normalizeRequestOrigin(origin);
 		if (normalizedOrigin === null) return undefined;
 		if (sameOriginHost(normalizedOrigin, host)) return origin;

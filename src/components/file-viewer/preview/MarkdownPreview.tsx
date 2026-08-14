@@ -5,6 +5,7 @@ import type { RenderRule } from 'markdown-it/lib/renderer.mjs'
 import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 import type Token from 'markdown-it/lib/token.mjs'
 import { type MouseEvent, useMemo } from 'react'
+import { openExternalUrl } from '../../../host/nativeActions'
 
 function taskListPlugin(md: MarkdownIt) {
   md.core.ruler.after('inline', 'task_list_items', (state: StateCore) => {
@@ -114,7 +115,7 @@ function handlePreviewClick(event: MouseEvent<HTMLElement>) {
 
 	if (/^https:/i.test(href)) {
 		event.preventDefault()
-		void window.terminayExternalHost?.open(href)
+		void openExternalUrl(href)
     return
   }
 

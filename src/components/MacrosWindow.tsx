@@ -8,8 +8,7 @@ import {
   mergeFieldsWithSteps,
   normalizeMacros,
 } from '../macroSettings'
-import { useMacroSettings } from '../hooks/useMacroSettings'
-import { useLegacyMacroSettingsCapability } from '../hooks/useMacroSettings'
+import { useMacroSettings, type MacroSettingsClient } from '../hooks/useMacroSettings'
 import { SharedMacroLibraryPane } from '../shared/SharedMacroLibraryPane'
 import { SharedMacroRouteBody } from '../shared/SharedMacroRouteBody'
 import type { MacroDefinition, MacroFieldDefinition, MacroFieldValue, MacroStep, SecretDefinition } from '../types/macros'
@@ -564,8 +563,7 @@ function FieldItem({
   )
 }
 
-function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], onRefresh: () => void }) {
-  const macroCapability = useLegacyMacroSettingsCapability()
+function SecretsManager({ client, secrets, onRefresh }: { client: MacroSettingsClient, secrets: SecretDefinition[], onRefresh: () => void }) {
   const [newSecretName, setNewSecretName] = useState('')
   const [newSecretValue, setNewSecretValue] = useState('')
   const [isSaving, setIsSaving] = useState(false)
@@ -574,7 +572,7 @@ function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], o
     if (!newSecretName || !newSecretValue) return
     setIsSaving(true)
     try {
-      await macroCapability.saveSecret(newSecretName, newSecretValue)
+      await client.saveSecret(newSecretName, newSecretValue)
       setNewSecretName('')
       setNewSecretValue('')
       onRefresh()
@@ -585,7 +583,7 @@ function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], o
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this secret? This cannot be undone.')) return
-    await macroCapability.deleteSecret(id)
+    await client.deleteSecret(id)
     onRefresh()
   }
 
@@ -650,12 +648,8 @@ function SecretsManager({ secrets, onRefresh }: { secrets: SecretDefinition[], o
 
 export function MacrosWindow({
   macroSettingsClient,
-}: Readonly<{ macroSettingsClient?: import('../hooks/useMacroSettings').MacroSettingsClient }>) {
-  // This is an explicit legacy host hand-off. The hook must not acquire the
-  // ambient preload object on its own.
+}: Readonly<{ macroSettingsClient: MacroSettingsClient }>) {
   const { macros: persistedMacros, isLoading } = useMacroSettings(macroSettingsClient)
-  const macroCapability = useLegacyMacroSettingsCapability()
-  const definitionsCapability = macroSettingsClient ?? macroCapability
   const [draftMacros, setDraftMacros] = useState<MacroDefinition[]>(defaultMacros)
   const [selectedMacroId, setSelectedMacroId] = useState<string | null>(null)
   const [secrets, setSecrets] = useState<SecretDefinition[]>([])
@@ -664,9 +658,9 @@ export function MacrosWindow({
   const [activeTab, setActiveTab] = useState<'macros' | 'secrets'>('macros')
 
   const refreshSecrets = useCallback(async () => {
-    const list = await macroCapability.getSecrets()
+    const list = await macroSettingsClient.getSecrets()
     setSecrets(list)
-  }, [macroCapability])
+  }, [macroSettingsClient])
 
   useEffect(() => {
     refreshSecrets()
@@ -799,7 +793,7 @@ export function MacrosWindow({
     setErrorText(null)
 
     try {
-      const saved = await definitionsCapability.updateMacros(normalizeMacros(prepareMacrosForSave(draftMacros)))
+      const saved = await macroSettingsClient.updateMacros(normalizeMacros(prepareMacrosForSave(draftMacros)))
       setDraftMacros(saved)
       setSelectedMacroId((current) => (current && saved.some((macro) => macro.id === current) ? current : saved[0]?.id ?? null))
     } catch (error) {
@@ -818,7 +812,7 @@ export function MacrosWindow({
     setErrorText(null)
 
     try {
-      const saved = await definitionsCapability.resetMacros()
+      const saved = await macroSettingsClient.resetMacros()
       setDraftMacros(saved)
       setSelectedMacroId(saved[0]?.id ?? null)
     } catch (error) {
@@ -873,7 +867,7 @@ export function MacrosWindow({
           {errorText ? <div className="settings-error-banner">{errorText}</div> : null}
 
           {activeTab === 'secrets' ? (
-            <SecretsManager secrets={secrets} onRefresh={refreshSecrets} />
+            <SecretsManager client={macroSettingsClient} secrets={secrets} onRefresh={refreshSecrets} />
           ) : !selectedMacro ? (
             <div className="settings-empty-hero">
               <h2>Select a macro to edit</h2>

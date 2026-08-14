@@ -16,13 +16,9 @@ import {
 	type ControlResponse,
 	encodeControlMessage,
 } from './controlEndpoint.js';
-import { SERVER_MCP_ENTRY } from './compatibility.js';
+import { SERVER_MCP_ENTRY } from './ownership.js';
 
-export {
-	MCP_COMPATIBILITY_METADATA,
-	MCP_COMPATIBILITY_SCHEMA_VERSION,
-	SERVER_MCP_ENTRY,
-} from './compatibility.js';
+export { SERVER_MCP_ENTRY } from './ownership.js';
 
 const MAX_TEXT_BYTES = 64 * 1024;
 const MAX_TERMINAL_REF_CHARS = 256;

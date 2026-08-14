@@ -170,6 +170,115 @@ async function runSharedAppProductionParityScenario({
 		}
 }
 
+test('host capabilities preserve browser and Desktop menu command parity', async ({
+	browser,
+	createWorkspace,
+	electronApp,
+	mainWindow,
+	tempDir,
+}) => {
+	const workspace = await createWorkspace({ name: 'host-menu-parity' });
+	const web = await startStaticServer(path.resolve('dist-web'));
+	const server = startServer(
+		workspace.rootDir,
+		path.join(tempDir, 'browser-menu-server'),
+		web.origin,
+	);
+	const browserContext = await browser.newContext({ viewport: VIEWPORT });
+	const browserPage = await browserContext.newPage();
+	try {
+		const ready = await readReadiness(server);
+		await browserPage.goto(`${web.origin}/web.html`);
+		await browserPage.getByRole('button', { name: /Add connection/u }).click();
+		await browserPage.getByLabel('Pairing URL').fill(ready.pairing.pairingUrl);
+		await browserPage
+			.getByRole('button', { name: 'Continue pairing' })
+			.click();
+		await expect(
+			browserPage.locator('[data-terminay-app-component]'),
+		).toBeVisible();
+		await assertHostMenuParity(electronApp, mainWindow, browserPage);
+	} finally {
+		await Promise.allSettled([
+			browserContext.close(),
+			web.close(),
+			stopServer(server),
+		]);
+	}
+});
+
+async function assertHostMenuParity(
+	electronApp: import('@playwright/test').ElectronApplication,
+	desktop: Page,
+	browser: Page,
+) {
+	const desktopHost = await desktop.evaluate(() =>
+		window.terminayHost?.getContext(),
+	);
+	expect(desktopHost?.hostKind).toBe('desktop');
+	expect(desktopHost?.capabilities.nativeMenus).toBe(1);
+	await expect(
+		desktop.getByRole('navigation', { name: 'Application menu' }),
+	).toHaveCount(0);
+
+	const browserHost = await browser.evaluate(() =>
+		window.terminayHost?.getContext(),
+	);
+	expect(browserHost).toBeUndefined();
+	const browserMenu = browser.getByRole('navigation', {
+		name: 'Application menu',
+	});
+	await expect(browserMenu).toBeVisible();
+
+	const desktopTabs = desktop.locator('.terminal-panel');
+	const browserTabs = browser.locator('.terminal-panel');
+	const initialDesktopTabs = await desktopTabs.count();
+	const initialBrowserTabs = await browserTabs.count();
+
+	await electronApp.evaluate(({ Menu }) => {
+		const find = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
+			for (const item of items) {
+				if (item.label === 'Create a new terminal tab') return item;
+				const nested = item.submenu == null ? undefined : find(item.submenu.items);
+				if (nested !== undefined) return nested;
+			}
+			return undefined;
+		};
+		const command = find(Menu.getApplicationMenu()?.items ?? []);
+		if (command === undefined)
+			throw new Error('native new-terminal command is absent');
+		command.click();
+	});
+	await expect(desktopTabs).toHaveCount(initialDesktopTabs + 1);
+
+	await browserMenu.getByRole('menuitem', { name: 'File' }).click();
+	await browser.getByRole('menuitem', { name: 'New Terminal' }).click();
+	await expect(browserTabs).toHaveCount(initialBrowserTabs + 1);
+
+	await desktop.evaluate(() =>
+		window.dispatchEvent(
+			new KeyboardEvent('keydown', {
+				bubbles: true,
+				cancelable: true,
+				ctrlKey: true,
+				key: 't',
+			}),
+		),
+	);
+	await expect(desktopTabs).toHaveCount(initialDesktopTabs + 2);
+	await browser.evaluate(() =>
+		window.dispatchEvent(
+			new KeyboardEvent('keydown', {
+				bubbles: true,
+				cancelable: true,
+				ctrlKey: true,
+				key: 't',
+			}),
+		),
+	);
+	await expect(browserTabs).toHaveCount(initialBrowserTabs + 2);
+}
+
 async function connectElectron(page: Page, pairingUrl: string) {
 	await openRemoteMenu(page);
 	await page.getByRole('button', { name: /Manage connections/u }).click();
@@ -256,6 +365,8 @@ function startServer(
 			dataRoot,
 			'--project-root',
 			projectRoot,
+			'--ui-bundle',
+			path.resolve('dist'),
 			'--web-origin',
 			webOrigin,
 			'--http-host',
@@ -268,7 +379,7 @@ function startServer(
 			env: {
 				...process.env,
 				TERMINAY_AGENT_INTEGRATION: 'disabled',
-				TERMINAY_SERVER_VERSION: '1.0.0',
+				TERMINAY_SERVER_VERSION: '0.0.0',
 			},
 			stdio: ['ignore', 'pipe', 'pipe'],
 		},

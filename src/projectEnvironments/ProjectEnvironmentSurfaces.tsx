@@ -98,10 +98,6 @@ export function ProjectEnvironmentsWindow({
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
-	useEffect(
-		() => window.terminayProjectEnvironmentsHost?.subscribeIntent(setPendingIntent),
-		[],
-	);
 	useEffect(() => {
 		if (pendingIntent === undefined) return;
 		const provider = providers.find(

@@ -23,7 +23,7 @@ test('real Desktop renderer presents every production-mapped shared route withou
 	mainWindow,
 }, testInfo) => {
 	test.setTimeout(60_000);
-	const rendererOrigin = new URL(mainWindow.url()).origin;
+	const rendererUrl = new URL(mainWindow.url());
 
 	for (const viewport of VIEWPORTS) {
 		await mainWindow.setViewportSize({
@@ -31,7 +31,7 @@ test('real Desktop renderer presents every production-mapped shared route withou
 			height: viewport.height,
 		});
 		for (const route of ROUTES) {
-			const target = new URL(rendererOrigin);
+			const target = new URL(rendererUrl);
 			if (route.view !== null) target.searchParams.set('view', route.view);
 			if (route.view === 'edit-tab')
 				target.searchParams.set('kind', 'terminal');

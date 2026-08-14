@@ -11,7 +11,6 @@ import {
 } from '@terminay/client-core';
 import type { ServerHello } from '@terminay/protocol';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
-import type { LegacyServerFrameCapability } from './legacyServerFrameCapability';
 import {
 	type ServerMessagePort,
 	ServerPortTransport,
@@ -31,7 +30,6 @@ type RendererBootstrapPhaseState = 'pending' | 'complete' | 'failed';
 type RendererBootstrapOptions = {
 	readonly connectionTimeoutMs?: number;
 	readonly onTransportClosed?: () => void;
-	readonly preloadFrameCapability?: LegacyServerFrameCapability;
 	readonly signal?: AbortSignal;
 	readonly setupTimeoutMs?: number;
 	readonly onPhaseChange?: (
@@ -52,18 +50,8 @@ export type RendererApplicationClientContext = Readonly<{
 
 function createRendererServerTransport(
 	serverId: string,
-	connectionId: string,
-	port?: MessagePort,
-	preloadFrameCapability?: LegacyServerFrameCapability,
+	port: MessagePort,
 ): ServerPortTransport {
-	if (port === undefined) {
-		if (preloadFrameCapability === undefined) {
-			throw new Error('Desktop server-frame capability is unavailable');
-		}
-		return new ServerPortTransport(
-			new PreloadServerMessagePort(serverId, connectionId, preloadFrameCapability),
-		);
-	}
 	return new ServerPortTransport(
 		new ServerScopedMessagePort(port as unknown as ServerMessagePort, serverId),
 	);
@@ -81,8 +69,7 @@ function createRendererClient(transport: ServerPortTransport) {
 
 export async function connectRendererApplicationClient(
 	serverId: string,
-	connectionId: string,
-	port?: MessagePort,
+	port: MessagePort,
 	options: RendererBootstrapOptions = {},
 ): Promise<RendererApplicationClientContext> {
 	const connectionTimeoutMs = boundedTimeout(
@@ -90,12 +77,7 @@ export async function connectRendererApplicationClient(
 		DEFAULT_CONNECTION_TIMEOUT_MS,
 		'connection timeout',
 	);
-	const transport = createRendererServerTransport(
-		serverId,
-		connectionId,
-		port,
-		options.preloadFrameCapability,
-	);
+	const transport = createRendererServerTransport(serverId, port);
 	const client = createRendererClient(transport);
 	const controller = new AbortController();
 	const abortFromCaller = () =>
@@ -137,13 +119,11 @@ export async function connectRendererApplicationClient(
 /** Connect the renderer to the one server-scoped port supplied by Desktop. */
 export async function connectRendererServerClient(
 	serverId: string,
-	connectionId: string,
-	port?: MessagePort,
+	port: MessagePort,
 	options: RendererBootstrapOptions = {},
 ): Promise<Omit<TerminalPanelClientContextValue, 'projectId'>> {
 	const context = await connectRendererApplicationClient(
 		serverId,
-		connectionId,
 		port,
 		options,
 	);
@@ -279,6 +259,7 @@ export async function createConnectedServerClientContext(
 		);
 		if (failedSetup !== undefined) throw failedSetup.reason;
 		let disposePromise: Promise<void> | undefined;
+		let unexpectedCloseNotified = false;
 		const dispose = (): Promise<void> => {
 			if (disposePromise !== undefined) return disposePromise;
 			disposePromise = (async () => {
@@ -290,23 +271,29 @@ export async function createConnectedServerClientContext(
 			})();
 			return disposePromise;
 		};
-		const removeStateListener = client.onStateChange((change) => {
+		const publishClientState = (current: typeof client.snapshot): void => {
 			(
 				window as Window & { __terminayServerClientState?: string }
 			).__terminayServerClientState =
-				change.current.error === undefined
-					? change.current.state
-					: `${change.current.state}: ${change.current.error.message}`;
+				current.error === undefined
+					? current.state
+					: `${current.state}: ${current.error.message}`;
+		};
+		publishClientState(client.snapshot);
+		const removeStateListener = client.onStateChange((change) => {
+			publishClientState(change.current);
 			if (
 				change.current.state === 'stale' ||
 				change.current.state === 'closed' ||
 				change.current.state === 'failed'
 			) {
-				const unexpectedlyClosed = disposePromise === undefined;
-				const settledDisposal = dispose();
+				const unexpectedlyClosed =
+					disposePromise === undefined && !unexpectedCloseNotified;
 				if (unexpectedlyClosed) {
-					void settledDisposal.then(() => options.onTransportClosed?.());
+					unexpectedCloseNotified = true;
+					options.onTransportClosed?.();
 				}
+				void dispose();
 			}
 		});
 		return {
@@ -388,88 +375,4 @@ async function withTimeout<T>(
 		if (timeout !== undefined) globalThis.clearTimeout(timeout);
 		if (abort !== undefined) signal?.removeEventListener('abort', abort);
 	}
-}
-
-/** The actual Electron MessagePort stays in preload. Context isolation turns
- * transferred DOM ports into inert objects, so the renderer gets only this
- * fixed-server frame adapter. */
-export class PreloadServerMessagePort implements ServerMessagePort {
-	onmessage: ((event: { readonly data: unknown }) => void) | null = null;
-	onmessageerror: (() => void) | null = null;
-	private unsubscribe: (() => void) | undefined;
-
-	constructor(
-		private readonly serverId: string,
-		private readonly connectionId: string,
-		private readonly frameCapability: LegacyServerFrameCapability,
-	) {}
-
-	postMessage(message: unknown): void {
-		if (!(message instanceof Uint8Array))
-			throw new TypeError('server frame must be bytes');
-		const diagnostic = rendererTransportDiagnostic(this.serverId);
-		diagnostic.sentFrames += 1;
-		diagnostic.lastSentBytes = message.byteLength;
-		try {
-			this.frameCapability.sendServerFrame(this.connectionId, message);
-		} catch (error) {
-			diagnostic.lastError =
-				error instanceof Error ? error.message : String(error);
-			throw error;
-		}
-	}
-
-	start(): void {
-		if (this.unsubscribe !== undefined) return;
-		const diagnostic = rendererTransportDiagnostic(this.serverId);
-		diagnostic.started = true;
-		this.unsubscribe = this.frameCapability.onServerFrame(
-			this.connectionId,
-			(frame) => {
-				if (frame === null) {
-					diagnostic.lastError = 'preload server frame failed validation';
-					this.onmessageerror?.();
-				} else {
-					diagnostic.receivedFrames += 1;
-					diagnostic.lastReceivedBytes = frame.byteLength;
-					this.onmessage?.({ data: frame });
-				}
-			},
-		);
-	}
-
-	close(): void {
-		this.unsubscribe?.();
-		this.unsubscribe = undefined;
-		this.frameCapability.closeServerConnection(this.connectionId);
-	}
-}
-
-type RendererTransportDiagnostic = {
-	serverId: string;
-	started: boolean;
-	sentFrames: number;
-	receivedFrames: number;
-	lastSentBytes?: number;
-	lastReceivedBytes?: number;
-	lastError?: string;
-};
-
-function rendererTransportDiagnostic(
-	serverId: string,
-): RendererTransportDiagnostic {
-	const target = window as Window & {
-		__terminayServerTransportDiagnostics?: RendererTransportDiagnostic;
-	};
-	if (target.__terminayServerTransportDiagnostics?.serverId === serverId) {
-		return target.__terminayServerTransportDiagnostics;
-	}
-	const diagnostic = {
-		serverId,
-		started: false,
-		sentFrames: 0,
-		receivedFrames: 0,
-	};
-	target.__terminayServerTransportDiagnostics = diagnostic;
-	return diagnostic;
 }

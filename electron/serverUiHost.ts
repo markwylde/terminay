@@ -13,10 +13,19 @@ import {
 	type BrowserWindowConstructorOptions,
 	type DownloadItem,
 	type Event,
+	type IpcMainEvent,
 	type IpcMainInvokeEvent,
 	ipcMain,
 	type WebContents,
+	type WebContentsWillFrameNavigateEventParams,
+	type WebContentsWillNavigateEventParams,
+	type WebContentsWillRedirectEventParams,
 } from 'electron';
+import {
+	DesktopDocumentLifecycle,
+	type DesktopDocumentLifecycleDiagnostic,
+	type DesktopDocumentReleaseReason,
+} from '../apps/terminay-desktop/src/main/documentLifecycle';
 
 const SERVER_UI_GET_CONTEXT_CHANNEL = 'server-ui-host:get-context';
 const SERVER_UI_REQUEST_ACTION_CHANNEL = 'server-ui-host:request-action';
@@ -29,8 +38,9 @@ type ServerUiBinding = {
 	onHostAction?: (
 		action: TerminayHostActionRequest,
 		context: TerminayHostContext,
-	) => Promise<void> | void;
+	) => Promise<unknown> | unknown;
 	window: BrowserWindow;
+	lifecycle: DesktopDocumentLifecycle;
 };
 
 export type CreateServerUiWindowOptions = {
@@ -40,13 +50,16 @@ export type CreateServerUiWindowOptions = {
 	initialUrl: string;
 	context: TerminayHostContext;
 	onHostAction?: ServerUiBinding['onHostAction'];
+	onLifecycleDiagnostic?: (event: DesktopDocumentLifecycleDiagnostic) => void;
 	preloadPath: string;
 	show?: boolean;
 	title?: string;
 	width?: number;
 };
 
-export type BindServerUiWindowOptions = CreateServerUiWindowOptions & { window: BrowserWindow };
+export type BindServerUiWindowOptions = CreateServerUiWindowOptions & {
+	window: BrowserWindow;
+};
 
 const bindings = new Map<number, ServerUiBinding>();
 let ipcInstalled = false;
@@ -75,7 +88,9 @@ function parseOrigin(value: string, name: string): string {
 	return url.origin;
 }
 
-function bindingForEvent(event: IpcMainInvokeEvent): ServerUiBinding {
+function bindingForEvent(
+	event: IpcMainEvent | IpcMainInvokeEvent,
+): ServerUiBinding {
 	const binding = bindings.get(event.sender.id);
 	if (!binding || binding.window.isDestroyed()) {
 		throw new Error('This server UI is not bound to a desktop profile.');
@@ -96,6 +111,15 @@ function bindingForEvent(event: IpcMainInvokeEvent): ServerUiBinding {
 	return binding;
 }
 
+/** Validate host IPC against the same closed document binding used by host
+ * action invocations. Server UI documents deliberately have a different
+ * origin from the application shell. */
+export function assertBoundServerUiEvent(
+	event: IpcMainEvent | IpcMainInvokeEvent,
+): void {
+	bindingForEvent(event);
+}
+
 function installIpcHandlers(): void {
 	if (ipcInstalled) {
 		return;
@@ -111,20 +135,33 @@ function installIpcHandlers(): void {
 			const binding = bindingForEvent(event);
 			const action = parseTerminayHostActionRequest(value, binding.context);
 			const capability = requiredTerminayHostCapability(action.action);
-			if (capability !== undefined && binding.context.capabilities[capability] === undefined) throw new Error(`Host capability is unavailable: ${capability}`);
-			await binding.onHostAction?.(action, binding.context);
+			if (
+				capability !== undefined &&
+				binding.context.capabilities[capability] === undefined
+			)
+				throw new Error(`Host capability is unavailable: ${capability}`);
+			return binding.onHostAction?.(action, binding.context);
 		},
 	);
 }
 
-function isAllowedNavigation(target: string, expectedOrigin: string, allowedFileRoot?: string): boolean {
+function isAllowedNavigation(
+	target: string,
+	expectedOrigin: string,
+	allowedFileRoot?: string,
+): boolean {
 	try {
 		const url = new URL(target);
 		if (allowedFileRoot !== undefined) {
 			if (url.protocol !== 'file:') return false;
 			const candidate = path.resolve(fileURLToPath(url));
 			const relative = path.relative(allowedFileRoot, candidate);
-			return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+			return (
+				relative === '' ||
+				(!relative.startsWith(`..${path.sep}`) &&
+					relative !== '..' &&
+					!path.isAbsolute(relative))
+			);
 		}
 		return url.origin === expectedOrigin;
 	} catch {
@@ -201,42 +238,81 @@ export function createServerUiWindow(
 /** Bind an already-created native shell to the same canonical server-UI
  * policy. This lets normal Desktop startup retain native lifecycle ownership
  * while using the exact verified bundle and narrow preload. */
-export function bindServerUiWindow(options: BindServerUiWindowOptions): BrowserWindow {
+export function bindServerUiWindow(
+	options: BindServerUiWindowOptions,
+): BrowserWindow {
 	installIpcHandlers();
 	const window = options.window;
-	const expectedOrigin = parseOrigin(options.expectedOrigin, 'The expected server origin');
+	const expectedOrigin = parseOrigin(
+		options.expectedOrigin,
+		'The expected server origin',
+	);
 	const initialUrl = new URL(options.initialUrl);
-	if (initialUrl.origin !== expectedOrigin) throw new Error('The initial server UI URL must use the expected origin.');
+	if (initialUrl.origin !== expectedOrigin)
+		throw new Error('The initial server UI URL must use the expected origin.');
 	const context = parseTerminayHostContext(options.context);
 	const targetWebContents = window.webContents;
-	const allowedFileRoot = initialUrl.protocol === 'file:' ? path.dirname(path.resolve(fileURLToPath(initialUrl))) : undefined;
+	const webContentsId = targetWebContents.id;
+	const targetSession = targetWebContents.session;
+	releaseServerUiWindowBinding(webContentsId, 'server-switch');
+	const lifecycle = new DesktopDocumentLifecycle(options.onLifecycleDiagnostic);
+	const allowedFileRoot =
+		initialUrl.protocol === 'file:'
+			? path.dirname(path.resolve(fileURLToPath(initialUrl)))
+			: undefined;
 	const binding: ServerUiBinding = {
 		context,
 		expectedOrigin,
 		...(allowedFileRoot === undefined ? {} : { allowedFileRoot }),
 		onHostAction: options.onHostAction,
 		window,
+		lifecycle,
 	};
-	bindings.set(targetWebContents.id, binding);
+	bindings.set(webContentsId, binding);
+	lifecycle.add('host-binding', () => {
+		if (bindings.get(webContentsId) === binding) bindings.delete(webContentsId);
+	});
 
 	targetWebContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-	targetWebContents.on('will-attach-webview', (event) => {
+	const denyWebviewAttachment = (event: Event) => {
 		event.preventDefault();
-	});
-	targetWebContents.on('will-frame-navigate', (event) => {
+	};
+	const restrictFrameNavigation = (
+		event: Event<WebContentsWillFrameNavigateEventParams>,
+	) => {
 		if (!isAllowedNavigation(event.url, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
-	});
-	targetWebContents.on('will-navigate', (event, target) => {
+	};
+	const restrictNavigation = (
+		event: Event<WebContentsWillNavigateEventParams>,
+		target: string,
+	) => {
 		if (!isAllowedNavigation(target, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
-	});
-	targetWebContents.on('will-redirect', (event, target) => {
+	};
+	const restrictRedirect = (
+		event: Event<WebContentsWillRedirectEventParams>,
+		target: string,
+	) => {
 		if (!isAllowedNavigation(target, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
+	};
+	targetWebContents.on('will-attach-webview', denyWebviewAttachment);
+	targetWebContents.on('will-frame-navigate', restrictFrameNavigation);
+	targetWebContents.on('will-navigate', restrictNavigation);
+	targetWebContents.on('will-redirect', restrictRedirect);
+	// A BrowserWindow can switch only after its old server-UI policy is fully
+	// retired. Leaving these listeners attached made the former file-root deny
+	// a verified bundle from the newly selected server, leaving the old
+	// Connections dialog visible indefinitely.
+	lifecycle.add('navigation-policy', () => {
+		targetWebContents.off('will-attach-webview', denyWebviewAttachment);
+		targetWebContents.off('will-frame-navigate', restrictFrameNavigation);
+		targetWebContents.off('will-navigate', restrictNavigation);
+		targetWebContents.off('will-redirect', restrictRedirect);
 	});
 
 	const denyDownload = (
@@ -244,16 +320,33 @@ export function bindServerUiWindow(options: BindServerUiWindowOptions): BrowserW
 		item: DownloadItem,
 		sourceWebContents: WebContents,
 	) => denyDownloadForWindow(targetWebContents, event, item, sourceWebContents);
-	targetWebContents.session.on('will-download', denyDownload);
-	targetWebContents.session.setPermissionCheckHandler(() => false);
-	targetWebContents.session.setPermissionRequestHandler(
+	targetSession.on('will-download', denyDownload);
+	lifecycle.add('download-listener', () => {
+		targetSession.off('will-download', denyDownload);
+	});
+	targetSession.setPermissionCheckHandler(() => false);
+	targetSession.setPermissionRequestHandler(
 		(_webContents, _permission, callback) => callback(false),
 	);
-
-	targetWebContents.once('destroyed', () => {
-		bindings.delete(targetWebContents.id);
-		targetWebContents.session.off('will-download', denyDownload);
+	lifecycle.add('permission-handlers', () => {
+		targetSession.setPermissionCheckHandler(null);
+		targetSession.setPermissionRequestHandler(null);
 	});
 
+	// Capture every Electron-owned object above. A destroyed callback must never
+	// reach back through WebContents to obtain its id or Session.
+	targetWebContents.once('destroyed', () => lifecycle.release('window-close'));
+	window.once('closed', () => lifecycle.release('window-close'));
+
 	return window;
+}
+
+/** Explicit cleanup for failed launch, profile switch, reload, and quit paths.
+ * Repeated native events are harmless and cannot release another binding that
+ * subsequently reused the same WebContents id. */
+export function releaseServerUiWindowBinding(
+	webContentsId: number,
+	reason: DesktopDocumentReleaseReason,
+): boolean {
+	return bindings.get(webContentsId)?.lifecycle.release(reason) ?? false;
 }

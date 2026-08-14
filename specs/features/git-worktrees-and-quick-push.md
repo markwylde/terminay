@@ -67,6 +67,8 @@ callbacks run in the server environment, receive a linked cancellation signal,
 and are bounded by server-side deadlines. Provider output returned to the
 proposal or action result is bounded and redacted, so credentials never enter
 the proposal or protocol response.
+There is no Electron Quick Push service or renderer host client. Proposal and
+approval always use the selected server's canonical Git application client.
 
 ## Safety and boundaries
 

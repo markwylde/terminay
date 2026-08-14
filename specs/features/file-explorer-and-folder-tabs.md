@@ -14,8 +14,11 @@ in a persistent, reorderable vertical stack.
   and its Git decorations; external edits do not wait for the slower Git status
   reconciliation poll.
 - Users can open files/folders, drag them to the tab area, create, rename, and
-  delete entries, copy paths, reveal items in the OS, and set a root from a
-  terminal working directory.
+  delete entries, copy paths, and set a root from a terminal working directory.
+  **Reveal in OS** is shown only when the selected server issues an opaque
+  reveal token and the client host advertises the matching native capability;
+  a canonical or absolute server path is never sent to the client host as a
+  reveal request.
 - Filesystem operations execute in Terminay Server and validate the requested
   path against the intended project/root scope. Watch updates cope with atomic
   saves, rename/delete events, and temporary unavailable paths.
@@ -86,5 +89,7 @@ applying later events.
 - Git decorations reflect external file changes from the same watch delivery.
 - Navigation remains scoped to the selected project root and does not grant the
   renderer arbitrary filesystem access.
+- File, folder, and task-row menus omit **Reveal in OS** while no opaque reveal
+  token is available; they never fall back to a raw-path host bridge.
 - Folder task aggregation stays responsive by applying ignored-directory and
   large-content safeguards.

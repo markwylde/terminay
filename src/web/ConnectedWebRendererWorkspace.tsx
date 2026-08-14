@@ -4,7 +4,10 @@ import {
 	ShellProfilesClient,
 	TerminayAiClient,
 	TerminayClientFacade,
+	TerminayTerminalPanelClient,
 } from '@terminay/client-core';
+import type { TerminayHostContext } from '@terminay/protocol';
+import type { AppCommand } from '../types/terminay';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import 'dockview/dist/styles/dockview.css';
@@ -14,19 +17,24 @@ import { MacrosWindow } from '../components/MacrosWindow';
 import { RecordingsWindow } from '../components/RecordingsWindow';
 import { SettingsWindow } from '../components/SettingsWindow';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
-import { LegacyMacroSettingsProvider } from '../hooks/useMacroSettings';
 import {
 	createServerTerminalSettingsClient,
 	TerminalSettingsClientProvider,
 } from '../hooks/useTerminalSettings';
 import { ProjectEnvironmentsWindow } from '../projectEnvironments/ProjectEnvironmentSurfaces';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
+import { createServerRemoteAccessClients } from '../services/serverApplicationFeatureClients';
 import {
 	type AuxiliaryRouteRequest,
 	type AuxiliaryRouteRequestHandler,
 	createAuxiliaryRouteController,
 } from '../shared/auxiliaryRoutes';
 import { ConnectedRendererWorkspace } from '../shared/ConnectedRendererWorkspace';
+import {
+	ResponsiveWorkspaceEntry,
+	sharedRouteForView,
+} from '../shared/ResponsiveWorkspaceEntry';
+import { SharedAgentRouteBody } from '../shared/SharedAgentRouteBody';
 import {
 	SharedConnectionsRouteBody,
 	type SharedConnectionsRouteBodyProps,
@@ -35,21 +43,90 @@ import {
 	type SharedEditTabResult,
 	SharedEditTabRouteBody,
 } from '../shared/SharedEditTabRouteBody';
+import { SharedFolderRouteBody } from '../shared/SharedFolderRouteBody';
+import { SharedGitRouteBody } from '../shared/SharedGitRouteBody';
+import { SharedTerminalRouteBody } from '../shared/SharedTerminalRouteBody';
 import { defaultTerminalSettings } from '../terminalSettings';
 import type { RemoteAccessStatus } from '../types/terminay';
-import {
-	createBrowserMacroSettingsCapability,
-	createBrowserTerminalSettingsClient,
-} from './browserRendererHostAdapters';
+import { createBrowserMacroSettingsClient } from './browserRendererHostAdapters';
 import './connectedRendererWorkspace.css';
+import { isProjectEditCommitted } from './projectEditSettlement';
 
 export type ConnectedWebRendererWorkspaceProps = Readonly<{
 	terminalClientContext: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	connectionRoute: Omit<SharedConnectionsRouteBodyProps, 'state'>;
 	onBack: () => void;
+	hostContext?: TerminayHostContext;
+	subscribeAppCommands?: (
+		listener: (command: AppCommand) => Promise<void> | void,
+	) => () => void;
 }>;
 
 type BrowserAuxiliaryRoute = 'settings' | 'macros' | 'recordings';
+
+function initialAuxiliaryRoute(): AuxiliaryRouteRequest | null {
+	const params = new URLSearchParams(window.location.search);
+	switch (params.get('auxiliary')) {
+		case 'settings': {
+			const sectionId = params.get('section');
+			return {
+				kind: 'settings',
+				...(sectionId === null ? {} : { sectionId }),
+			};
+		}
+		case 'macros':
+			return { kind: 'macros' };
+		case 'recordings':
+			return { kind: 'recordings' };
+		case 'project-environments': {
+			const providerId = params.get('provider');
+			const mode = params.get('mode');
+			const profileId = params.get('profile');
+			return {
+				kind: 'project-environments',
+				...(providerId !== null &&
+				(mode === 'profile' || mode === 'environment')
+					? {
+							intent: {
+								providerId,
+								mode,
+								...(profileId === null ? {} : { profileId }),
+							},
+						}
+					: {}),
+			};
+		}
+		default:
+			return null;
+	}
+}
+
+function nativeAuxiliaryRoute(request: AuxiliaryRouteRequest): string | null {
+	const params = new URLSearchParams();
+	switch (request.kind) {
+		case 'settings':
+			params.set('auxiliary', 'settings');
+			if (request.sectionId !== undefined)
+				params.set('section', request.sectionId);
+			break;
+		case 'macros':
+		case 'recordings':
+			params.set('auxiliary', request.kind);
+			break;
+		case 'project-environments':
+			params.set('auxiliary', 'project-environments');
+			if (request.intent !== undefined) {
+				params.set('provider', request.intent.providerId);
+				params.set('mode', request.intent.mode);
+				if (request.intent.profileId !== undefined)
+					params.set('profile', request.intent.profileId);
+			}
+			break;
+		case 'edit-tab':
+			return null;
+	}
+	return `/?${params.toString()}`;
+}
 
 type BrowserMenuId = 'file' | 'edit' | 'view' | 'help';
 
@@ -72,25 +149,56 @@ const menuLabels: Readonly<Record<BrowserMenuId, string>> = Object.freeze({
  * Native Desktop capabilities are omitted rather than emulated on `window`. */
 export function ConnectedWebRendererWorkspace({
 	connectionRoute,
+	hostContext,
+	subscribeAppCommands,
 	onBack,
 	terminalClientContext,
 }: ConnectedWebRendererWorkspaceProps) {
+	const hasNativeMenus = hostContext?.capabilities.nativeMenus !== undefined;
+	const hasNativeWindowControls =
+		hostContext?.capabilities.nativeWindows !== undefined;
 	const [isConnectionManagerOpen, setIsConnectionManagerOpen] = useState(false);
+	const nativeAuxiliaryDocument = useMemo(initialAuxiliaryRoute, []);
+	const requestedView = useMemo(() => {
+		// Canonical route presentations use the query form.  Retain fragment
+		// compatibility for documents opened by older Desktop versions rather
+		// than rendering those child windows as the unscoped default workspace.
+		const query = new URLSearchParams(window.location.search);
+		return (
+			query.get('view') ??
+			new URLSearchParams(window.location.hash.slice(1)).get('view')
+		);
+	}, []);
+	const sharedRoute = useMemo(
+		() => sharedRouteForView(requestedView),
+		[requestedView],
+	);
+	const responsiveCapabilities = useMemo(() => {
+		if (hostContext === undefined) return undefined;
+		return Object.freeze({
+			clipboard: hostContext.capabilities.clipboardWrite !== undefined,
+			filePicker: hostContext.capabilities.filePicker !== undefined,
+			nativeWindows: hostContext.capabilities.nativeWindows !== undefined,
+			notifications: hostContext.capabilities.notifications !== undefined,
+			osIntegration: hostContext.capabilities.osIntegration !== undefined,
+			updater: hostContext.capabilities.updater !== undefined,
+		});
+	}, [hostContext]);
 	const [auxiliaryRoute, setAuxiliaryRoute] =
-		useState<AuxiliaryRouteRequest | null>(null);
-	const pendingEditResolveRef = useRef<
-		((result: SharedEditTabResult | null) => void) | null
-	>(null);
+		useState<AuxiliaryRouteRequest | null>(nativeAuxiliaryDocument);
+	const pendingEditRef = useRef<{
+		request: Extract<AuxiliaryRouteRequest, { kind: 'edit-tab' }>;
+		resolve: (result: SharedEditTabResult | null) => void;
+	} | null>(null);
 	const auxiliaryFocusReturnRef = useRef<HTMLElement | null>(null);
-	const settingsClient = useMemo(createBrowserTerminalSettingsClient, []);
 	const applicationClient = terminalClientContext.applicationClient;
-	const macroCapability = useMemo(() => {
+	const macroSettingsClient = useMemo(() => {
 		if (applicationClient === undefined) {
 			throw new Error(
 				'Connected browser workspace requires its canonical application client',
 			);
 		}
-		return createBrowserMacroSettingsCapability(applicationClient);
+		return createBrowserMacroSettingsClient(applicationClient);
 	}, [applicationClient]);
 	const recordingsClient = useMemo(() => {
 		if (applicationClient === undefined) {
@@ -110,11 +218,6 @@ export function ConnectedWebRendererWorkspace({
 			new TerminayClientFacade(applicationClient),
 		);
 		return Object.freeze({
-			async generate() {
-				throw new Error(
-					'AI metadata generation requires an exact terminal target.',
-				);
-			},
 			async listModels(provider: 'codex' | 'claudeCode') {
 				return client.listModels(
 					provider === 'claudeCode' ? 'claude-code' : provider,
@@ -130,9 +233,12 @@ export function ConnectedWebRendererWorkspace({
 		}
 		return createServerTerminalSettingsClient(
 			new SettingsClient(new TerminayClientFacade(applicationClient)),
-			settingsClient,
 		);
-	}, [applicationClient, settingsClient]);
+	}, [applicationClient]);
+	const sharedTerminalPanelClient = useMemo(
+		() => new TerminayTerminalPanelClient(terminalClientContext.client),
+		[terminalClientContext.client],
+	);
 	const shellProfilesClient = useMemo(() => {
 		if (applicationClient === undefined)
 			throw new Error(
@@ -140,14 +246,19 @@ export function ConnectedWebRendererWorkspace({
 			);
 		return new ShellProfilesClient(new TerminayClientFacade(applicationClient));
 	}, [applicationClient]);
-	const remoteAccessStatusClient = useMemo(
-		createUnavailableRemoteAccessClient,
-		[],
+	const remoteAccessClients = useMemo(
+		() =>
+			applicationClient === undefined
+				? undefined
+				: createServerRemoteAccessClients(applicationClient),
+		[applicationClient],
 	);
+	const remoteAccessStatusClient =
+		remoteAccessClients?.status ?? createUnavailableRemoteAccessClient();
 	const handleAuxiliaryRouteRequest = useCallback<AuxiliaryRouteRequestHandler>(
 		async (request) => {
-			pendingEditResolveRef.current?.(null);
-			pendingEditResolveRef.current = null;
+			pendingEditRef.current?.resolve(null);
+			pendingEditRef.current = null;
 			auxiliaryFocusReturnRef.current =
 				document.activeElement instanceof HTMLElement
 					? document.activeElement
@@ -155,7 +266,7 @@ export function ConnectedWebRendererWorkspace({
 			setAuxiliaryRoute(request);
 			if (request.kind !== 'edit-tab') return undefined;
 			return new Promise((resolve) => {
-				pendingEditResolveRef.current = resolve;
+				pendingEditRef.current = { request, resolve };
 			});
 		},
 		[],
@@ -163,10 +274,35 @@ export function ConnectedWebRendererWorkspace({
 	const auxiliaryRoutes = useMemo(
 		() =>
 			createAuxiliaryRouteController({
-				getWindow: () => undefined,
-				onRequest: handleAuxiliaryRouteRequest,
+				onRequest: async (request) => {
+					const route = nativeAuxiliaryRoute(request);
+					if (
+						hasNativeWindowControls &&
+						route !== null &&
+						hostContext !== undefined &&
+						window.terminayHost !== undefined
+					) {
+						await window.terminayHost.requestAction({
+							bridgeVersion: hostContext.hostBridgeVersion,
+							profileId: hostContext.profileId,
+							schemaVersion: hostContext.schemaVersion,
+							serverId: hostContext.serverId,
+							sourceId: hostContext.sourceId,
+							userGesture: true,
+							windowId: hostContext.windowId,
+							action: {
+								disposition: 'native-window',
+								logicalViewId: request.kind,
+								route,
+								type: 'route.present',
+							},
+						});
+						return undefined;
+					}
+					return handleAuxiliaryRouteRequest(request);
+				},
 			}),
-		[handleAuxiliaryRouteRequest],
+		[handleAuxiliaryRouteRequest, hasNativeWindowControls, hostContext],
 	);
 	const restoreAuxiliaryFocus = useCallback(() => {
 		const target = auxiliaryFocusReturnRef.current;
@@ -192,84 +328,185 @@ export function ConnectedWebRendererWorkspace({
 		[auxiliaryRoutes],
 	);
 	const cancelAuxiliaryRoute = useCallback(() => {
-		pendingEditResolveRef.current?.(null);
-		pendingEditResolveRef.current = null;
+		pendingEditRef.current?.resolve(null);
+		pendingEditRef.current = null;
 		setAuxiliaryRoute(null);
 		restoreAuxiliaryFocus();
 	}, [restoreAuxiliaryFocus]);
 	const submitEditTabRoute = useCallback(
 		async (result: SharedEditTabResult) => {
-			pendingEditResolveRef.current?.(result);
-			pendingEditResolveRef.current = null;
+			const pending = pendingEditRef.current;
+			if (pending === null) return;
+			pendingEditRef.current = null;
+			pending.resolve(result);
+			const editState = pending.request.state;
+			if (editState.kind === 'project' && 'defaultShellProfileId' in result) {
+				await terminalClientContext.workspaceSnapshotStore?.waitForSnapshot(
+					(snapshot) =>
+						isProjectEditCommitted(
+							snapshot.projects[editState.projectId],
+							result,
+						),
+					{ timeoutMs: 5_000 },
+				);
+			}
 			setAuxiliaryRoute(null);
 			restoreAuxiliaryFocus();
 		},
-		[restoreAuxiliaryFocus],
+		[restoreAuxiliaryFocus, terminalClientContext.workspaceSnapshotStore],
 	);
-
-	return (
-		<div className="connected-web-renderer-workspace">
-			<TerminalSettingsClientProvider client={settingsClient}>
-				<LegacyMacroSettingsProvider capability={macroCapability}>
-					<ConnectedBrowserMenuBar
-						onBack={onBack}
-						onOpenAuxiliaryRoute={requestBrowserAuxiliaryRoute}
-						onOpenConnectionManager={() => setIsConnectionManagerOpen(true)}
+	const auxiliaryContent = (route: AuxiliaryRouteRequest) =>
+		route.kind === 'edit-tab' ? (
+			<SharedEditTabRouteBody
+				state={route.state}
+				onCancel={cancelAuxiliaryRoute}
+				onSubmit={submitEditTabRoute}
+			/>
+		) : route.kind === 'project-environments' ? (
+			<ProjectEnvironmentsWindow
+				applicationClient={terminalClientContext.applicationClient}
+				initialIntent={route.intent}
+				serverName={
+					terminalClientContext.connectionLabel ??
+					terminalClientContext.serverId
+				}
+			/>
+		) : (
+			<TerminalSettingsClientProvider client={serverSettingsClient}>
+				{route.kind === 'settings' ? (
+					<SettingsWindow
+						applicationClient={applicationClient}
+						aiTabMetadataClient={aiMetadataClient}
+						initialSectionId={route.sectionId}
+						remoteAccessStatusClient={remoteAccessStatusClient}
+						remotePairingPinClient={remoteAccessClients!.pairingPin}
+						settingsClient={serverSettingsClient}
+						shellProfilesClient={shellProfilesClient}
+						serverIdentity={
+							terminalClientContext.connectionLabel ??
+							terminalClientContext.serverId
+						}
 					/>
+				) : route.kind === 'macros' ? (
+					<MacrosWindow macroSettingsClient={macroSettingsClient} />
+				) : (
+					<RecordingsWindow client={recordingsClient} />
+				)}
+			</TerminalSettingsClientProvider>
+		);
+	const sharedProjectId = useMemo(() => {
+		const snapshot = terminalClientContext.workspaceSnapshotStore?.snapshot;
+		if (snapshot === null || snapshot === undefined) return undefined;
+		const viewId = snapshot.viewOrder[0];
+		const view = viewId === undefined ? undefined : snapshot.views[viewId];
+		return view?.activeProjectId ?? view?.projectIds[0];
+	}, [terminalClientContext.workspaceSnapshotStore?.snapshot]);
+	const sharedRouteContent = (() => {
+		switch (requestedView) {
+			case 'connections':
+				return (
+					<SharedConnectionsRouteBody state="ready" {...connectionRoute} />
+				);
+			case 'git':
+				return (
+					<SharedGitRouteBody
+						capabilityAvailable={
+							terminalClientContext.serverCapabilities?.includes('git') === true
+						}
+						gitClient={terminalClientContext.gitClient}
+						projectId={sharedProjectId}
+					/>
+				);
+			case 'agents':
+				return (
+					<SharedAgentRouteBody
+						client={terminalClientContext.agentStatusClient}
+					/>
+				);
+			case 'folder':
+				return (
+					<SharedFolderRouteBody
+						client={terminalClientContext.fileViewerClient}
+						projectId={sharedProjectId}
+					/>
+				);
+			case 'terminal':
+				return (
+					<SharedTerminalRouteBody
+						clientId={terminalClientContext.clientId}
+						panelClient={sharedTerminalPanelClient}
+						projectId={sharedProjectId}
+						serverId={terminalClientContext.serverId}
+						terminalClient={terminalClientContext.client}
+					/>
+				);
+			case 'settings':
+				return auxiliaryContent({ kind: 'settings' });
+			case 'macros':
+				return auxiliaryContent({ kind: 'macros' });
+			case 'recordings':
+				return auxiliaryContent({ kind: 'recordings' });
+			case 'edit-tab':
+				return <main role="status">Select a terminal tab to edit.</main>;
+			default:
+				return (
 					<ConnectedRendererWorkspace
 						host={Object.freeze({
 							auxiliaryRoutes,
 							onDisconnect: onBack,
 							onOpenConnectionManager: () => setIsConnectionManagerOpen(true),
+							presentation: Object.freeze({
+								nativeMenus: hasNativeMenus,
+								nativeWindowControls: hasNativeWindowControls,
+							}),
+							subscribeAppCommands,
 						})}
 						terminalClientContext={terminalClientContext}
 					/>
-				</LegacyMacroSettingsProvider>
+				);
+		}
+	})();
+
+	if (nativeAuxiliaryDocument !== null) {
+		return (
+			<main
+				className="connected-web-native-auxiliary"
+				data-connected-native-auxiliary-route={nativeAuxiliaryDocument.kind}
+			>
+				{auxiliaryContent(nativeAuxiliaryDocument)}
+			</main>
+		);
+	}
+
+	const workspaceContent = (
+		<ResponsiveWorkspaceEntry
+			route={sharedRoute}
+			capabilities={responsiveCapabilities}
+		>
+			{sharedRouteContent}
+		</ResponsiveWorkspaceEntry>
+	);
+
+	return (
+		<div className="connected-web-renderer-workspace">
+			<TerminalSettingsClientProvider client={serverSettingsClient}>
+				<>
+					{hasNativeMenus ? null : (
+						<ConnectedBrowserMenuBar
+							onBack={onBack}
+							onOpenAuxiliaryRoute={requestBrowserAuxiliaryRoute}
+							onOpenConnectionManager={() => setIsConnectionManagerOpen(true)}
+						/>
+					)}
+					{workspaceContent}
+				</>
 			</TerminalSettingsClientProvider>
 			{auxiliaryRoute === null ? null : (
 				<ConnectedBrowserAuxiliaryDialog
 					route={auxiliaryRoute}
 					onClose={cancelAuxiliaryRoute}
 				>
-					{auxiliaryRoute.kind === 'edit-tab' ? (
-						<SharedEditTabRouteBody
-							state={auxiliaryRoute.state}
-							onCancel={cancelAuxiliaryRoute}
-							onSubmit={submitEditTabRoute}
-						/>
-					) : auxiliaryRoute.kind === 'project-environments' ? (
-						<ProjectEnvironmentsWindow
-							applicationClient={terminalClientContext.applicationClient}
-							initialIntent={auxiliaryRoute.intent}
-							serverName={
-								terminalClientContext.connectionLabel ??
-								terminalClientContext.serverId
-							}
-						/>
-					) : (
-						<TerminalSettingsClientProvider client={settingsClient}>
-							<LegacyMacroSettingsProvider capability={macroCapability}>
-								{auxiliaryRoute.kind === 'settings' ? (
-									<SettingsWindow
-										applicationClient={applicationClient}
-										aiTabMetadataClient={aiMetadataClient}
-										initialSectionId={auxiliaryRoute.sectionId}
-										remoteAccessStatusClient={remoteAccessStatusClient}
-										settingsClient={serverSettingsClient}
-										shellProfilesClient={shellProfilesClient}
-										serverIdentity={
-											terminalClientContext.connectionLabel ??
-											terminalClientContext.serverId
-										}
-									/>
-								) : auxiliaryRoute.kind === 'macros' ? (
-									<MacrosWindow macroSettingsClient={macroCapability} />
-								) : (
-									<RecordingsWindow client={recordingsClient} />
-								)}
-							</LegacyMacroSettingsProvider>
-						</TerminalSettingsClientProvider>
-					)}
+					{auxiliaryContent(auxiliaryRoute)}
 				</ConnectedBrowserAuxiliaryDialog>
 			)}
 			{isConnectionManagerOpen ? (
@@ -677,12 +914,14 @@ function ConnectedBrowserAuxiliaryDialog({
 				data-connected-web-auxiliary-route={route.kind}
 				role="dialog"
 			>
-				<header className="connected-web-auxiliary-dialog__header">
-					<h2>{title}</h2>
-					<button ref={closeButtonRef} type="button" onClick={onClose}>
-						Close
-					</button>
-				</header>
+				{route.kind === 'edit-tab' ? null : (
+					<header className="connected-web-auxiliary-dialog__header">
+						<h2>{title}</h2>
+						<button ref={closeButtonRef} type="button" onClick={onClose}>
+							Close
+						</button>
+					</header>
+				)}
 				<div className="connected-web-auxiliary-dialog__body">{children}</div>
 			</section>
 		</div>

@@ -1,5 +1,6 @@
-import { Copy, FolderOpen, Terminal } from 'lucide-react';
+import { Copy, Terminal } from 'lucide-react';
 import { type MouseEvent, useMemo, useState } from 'react';
+import { writeClipboardText } from '../../host/nativeActions';
 import type { FileViewerMode } from '../../types/fileViewer';
 import { getParentPath, getPathRelativeToRoot } from '../../pathUtils';
 import { ContextMenu, type ContextMenuItem } from '../ContextMenu';
@@ -580,13 +581,13 @@ function buildTaskPathContextMenuItems(options: {
 		{
 			label: 'Copy path',
 			icon: <Copy size={14} />,
-			onClick: () => void window.terminayClipboardHost?.writeText(document.path),
+			onClick: () => void writeClipboardText(document.path),
 		},
 		{
 			label: 'Copy relative path',
 			icon: <Copy size={14} />,
 			onClick: () =>
-				void window.terminayClipboardHost?.writeText(
+				void writeClipboardText(
 					getPathRelativeToRoot(document.path, projectRootPath),
 				),
 		},
@@ -596,11 +597,6 @@ function buildTaskPathContextMenuItems(options: {
 			icon: <Terminal size={14} />,
 			disabled: !onOpenTerminal,
 			onClick: () => onOpenTerminal?.(directoryPath),
-		},
-		{
-			label: 'Reveal in OS',
-			icon: <FolderOpen size={14} />,
-			onClick: () => void window.terminayRevealHost?.reveal(document.path),
 		},
 	];
 }

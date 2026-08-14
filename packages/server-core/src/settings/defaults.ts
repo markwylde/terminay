@@ -49,7 +49,7 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 	ignoreBracketedPasteMode: false,
 	macros: {
 		maxSteps: 256,
-		maxFields: 64,
+		maxFields: 128,
 		maxOutputBytes: 131072,
 		maxDelayMs: 300000,
 		maxConcurrentRuns: 4,

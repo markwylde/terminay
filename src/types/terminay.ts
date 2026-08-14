@@ -1,47 +1,12 @@
-export type AppCommand =
-	| 'new-terminal'
-	| 'new-project'
-	| 'save-active'
-	| 'open-recordings'
-	| 'open-project-environments'
-	| 'open-extensions'
-	| 'split-horizontal'
-	| 'split-vertical'
-	| 'popout-active'
-	| 'close-active'
-	| 'open-command-bar'
-	| 'start-dictation'
-	| 'clear-terminal'
-	| 'toggle-file-explorer-sidebar'
-	| 'set-project-root-folder-to-working-directory';
+import type { TerminayHostMenuCommand } from '@terminay/protocol';
 
-// A project tab torn off / merged across windows. `project` is a ProjectTab and
-// `terminals` are MovedTerminalTab entries (kept loose here to avoid coupling
-// this shared type file to App.tsx's local definitions); the renderer casts.
-export interface AdoptedProjectPayload {
-	project: Record<string, unknown>;
-	terminals: Array<{ sessionId: string } & Record<string, unknown>>;
-	activeSessionId?: string | null;
-}
-
-export type ProjectTabDragResult =
-	| { action: 'reorder' }
-	| { action: 'merge'; targetWindowId: number; targetViewId: string }
-	| { action: 'popout'; x: number; y: number };
+export type AppCommand = TerminayHostMenuCommand;
 
 export type ProjectTabDragPreview = {
 	title: string;
 	emoji: string;
 	color: string;
 	width: number;
-};
-
-// Sent to a window while another window drags a project tab over its bar.
-// `clientX` (viewport-relative) drives the in-bar insertion index.
-export type ProjectTabDragHoverMessage = {
-	active: boolean;
-	clientX?: number;
-	preview?: ProjectTabDragPreview | null;
 };
 
 export type FileViewerTextEncoding =
@@ -199,10 +164,6 @@ export type TerminalDataMessage = {
 	data: string;
 };
 
-export type DictationKeyStatus = {
-	configured: boolean;
-};
-
 export type ParakeetRuntimeState =
 	| 'unsupported'
 	| 'not-installed'
@@ -223,21 +184,6 @@ export type DictationMicrophonePermissionStatus =
 	| 'denied'
 	| 'restricted'
 	| 'unknown';
-
-export type DictationTranscribeRequest = {
-	audioBase64: string;
-	fileName: string;
-	language?: string;
-	mimeType: string;
-	model?: import('./settings').DictationTranscriptionModel;
-	provider?: import('./settings').DictationProvider;
-	prompt?: string;
-};
-
-export type DictationTranscribeResult = {
-	model: string;
-	text: string;
-};
 
 export type {
 	TerminalActivityMessage,
@@ -420,22 +366,6 @@ export type WorktreePanelStatus = {
 	defaultBranch: string | null;
 	worktrees: GitWorktreeStatus[];
 };
-
-export type TerminalZoomMessage = {
-	zoomLevel: number;
-};
-
-export type TerminalRemoteSizeOverrideMessage =
-	| {
-			active: false;
-			id: string;
-	  }
-	| {
-			active: true;
-			cols: number;
-			id: string;
-			rows: number;
-	  };
 
 export type TerminalRecordingState = {
 	bytesWritten: number;
