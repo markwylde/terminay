@@ -1882,6 +1882,7 @@ export function SettingsWindow({
 				return (
 					<select
 						className="settings-select"
+						aria-label={field.label}
 						value={String(value)}
 						onChange={(e) => void updateField(field, e.target.value)}
 					>
