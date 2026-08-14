@@ -1,5 +1,4 @@
 import type { ConnectionProfile } from '@terminay/client-core';
-import type { ByteTransport } from '@terminay/protocol';
 import {
 	ConnectionProfileStore,
 	ServerHealthClient,
@@ -7,6 +6,7 @@ import {
 	TerminayClientFacade,
 	WebSocketByteTransport,
 } from '@terminay/client-core';
+import type { ByteTransport } from '@terminay/protocol';
 import {
 	commitPairedWebConnection,
 	consumeLegacyManagerMigration,
@@ -20,8 +20,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
 import {
-	RendererConnectionController,
 	type RendererConnectionAttempt,
+	RendererConnectionController,
 	type RendererConnectionState,
 } from '../shared/rendererConnectionController';
 import { createConnectedServerClientContext } from '../shared/rendererServerClient';
@@ -38,16 +38,23 @@ import {
 } from '../remote/services/deviceKeys';
 import { establishDevicePairing } from '../remote/services/devicePairingFlow';
 import { parsePairingBootstrap } from '../remote/services/pairing';
-import { acquireHostedApplicationTransport, getSessionTransportHost } from './sessionTransportHost';
 import { ConnectedWebRendererWorkspace } from './ConnectedWebRendererWorkspace';
+import {
+	acquireDesktopServerBootstrap,
+	type DesktopHostBridge,
+} from './desktopByteTransport';
 import { enrollBrowserDevice } from './deviceEnrollment';
 import { PairingIntentController, type PairingIntent } from './pairingIntent';
+import { runBoundedBrowserRecoveryStep } from './reconnectAttempt';
 import {
 	isAutoRestorableProfile,
 	isBrowserReconnectOrigin,
 	reconnectNeedsFreshPairing,
 } from './reconnectPolicy';
-import { runBoundedBrowserRecoveryStep } from './reconnectAttempt';
+import {
+	acquireHostedApplicationTransport,
+	getSessionTransportHost,
+} from './sessionTransportHost';
 import { createWebClientId } from './webClientIdentity';
 import { classifyWebConnectionFailure } from './webConnectionFailure';
 import './index.css';
@@ -311,6 +318,8 @@ function throwIfRecoveryAborted(signal: AbortSignal): void {
 }
 
 export default function WebManagerApp() {
+	const hasDesktopServerBootstrap =
+		window.terminayHost !== undefined || window.terminayBytes !== undefined;
 	const [host, setHost] = useState(createHost);
 	const connectModalRef = useRef<HTMLElement | null>(null);
 	const initialPairingUrlRef = useRef<string | null>(null);
@@ -410,8 +419,83 @@ export default function WebManagerApp() {
 	}, []);
 
 	useEffect(() => {
+		if (!hasDesktopServerBootstrap) return;
+		let cancelled = false;
+		let client: TerminayClient | undefined;
+		setIsConnecting(true);
+		void acquireDesktopServerBootstrap(
+			window.terminayHost as DesktopHostBridge | undefined,
+			window.terminayBytes,
+		)
+			.then(async (bootstrap) => {
+				if (bootstrap === undefined) return;
+				const clientId = createWebClientId();
+				client = new TerminayClient({
+					transport: bootstrap.transport,
+					clientId,
+					clientVersion: '0.0.0',
+					capabilities: [
+						'server.health',
+						'terminal',
+						'workspace',
+						'files',
+						'agents',
+					],
+				});
+				const hello = await client.connect();
+				if (hello.serverId !== bootstrap.context.serverId)
+					throw new Error('Desktop connected to the wrong Terminay Server.');
+				const connectedContext = await createConnectedServerClientContext(client, hello, {
+					onTransportClosed: () => {
+						if (!cancelled) setError('The Desktop server connection closed.');
+					},
+				});
+				if (cancelled) {
+					await connectedContext.dispose?.();
+					await client.close().catch(() => undefined);
+					return;
+				}
+				const label =
+					bootstrap.context.profileId === 'local:embedded'
+						? 'Local'
+						: bootstrap.context.profileId;
+				const labelledContext = Object.freeze({
+					...connectedContext,
+					connectionLabel: label,
+				});
+				setActiveConnection({
+					profileId: bootstrap.context.profileId,
+					label,
+					origin: window.location.origin,
+					client,
+					serverId: hello.serverId,
+					clientId,
+					context: labelledContext,
+					dispose: () => labelledContext.dispose?.(),
+				});
+				setError(null);
+			})
+			.catch((cause) => {
+				if (!cancelled)
+					setError(
+						cause instanceof Error
+							? cause.message
+							: 'Unable to connect to the Desktop server.',
+					);
+			})
+			.finally(() => {
+				if (!cancelled) setIsConnecting(false);
+			});
+		return () => {
+			cancelled = true;
+			void client?.close().catch(() => undefined);
+		};
+	}, [hasDesktopServerBootstrap]);
+
+	useEffect(() => {
 		const url = new URL(window.location.href);
 		if (
+			hasDesktopServerBootstrap ||
 			initialPairingUrlRef.current !== null ||
 			getSessionTransportHost() === undefined ||
 			new URLSearchParams(url.hash.slice(1)).has('pairingToken')
@@ -428,9 +512,10 @@ export default function WebManagerApp() {
 				),
 			)
 			.finally(() => setIsConnecting(false));
-	}, []);
+	}, [hasDesktopServerBootstrap]);
 
 	useEffect(() => {
+		if (hasDesktopServerBootstrap) return;
 		if (getSessionTransportHost() !== undefined) return;
 		if (activeConnection !== null || isConnecting) return;
 		if (new URLSearchParams(window.location.hash.slice(1)).has('pairingToken'))
@@ -477,6 +562,7 @@ export default function WebManagerApp() {
 		};
 	}, [
 		activeConnection,
+		hasDesktopServerBootstrap,
 		isConnecting,
 		snapshot.current?.id,
 		snapshot.current?.status,

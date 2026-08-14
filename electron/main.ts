@@ -3116,7 +3116,10 @@ function createWindow(options?: {
 	}
 
 	const isCanonicalServerUi = !VITE_DEV_SERVER_URL;
-	const preloadPath = path.join(__dirname, isCanonicalServerUi ? 'serverUiPreload.js' : 'preload.mjs');
+	const preloadPath = path.join(
+		__dirname,
+		isCanonicalServerUi ? 'serverUiPreload.cjs' : 'preload.mjs',
+	);
 	const isMac = process.platform === 'darwin';
 	const usesOverlayTitlebar = process.platform === 'win32';
 	const windowIconPath = getWindowIconPath();
