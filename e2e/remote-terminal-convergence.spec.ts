@@ -1,24 +1,51 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
+import { openRemoteMenu } from './support/ui';
 
 // The Docker image may download Electron on its first launch. Keep that
 // one-time fixture setup inside the scenario's budget instead of relying on a
 // retry to warm the container cache.
 test.describe.configure({ timeout: 180_000 });
 
-async function exposeDesktopOnLan(mainWindow: Page): Promise<string> {
-	return mainWindow.evaluate(async () => {
-		await window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
-			'123456',
-		);
-		const status =
-			await window.terminayRemoteAccessStatusHost.toggleDirectListener();
-		if (!status.lanPairingUrl) {
-			throw new Error('Direct exposure did not publish a pairing URL.');
-		}
-		return status.lanPairingUrl;
+async function exposeDesktopOnLan(
+	appHarness: {
+		openSettingsWindow: (options: { page: Page; sectionId: string }) => Promise<Page>;
+	},
+	mainWindow: Page,
+): Promise<string> {
+	const settings = await appHarness.openSettingsWindow({
+		page: mainWindow,
+		sectionId: 'remote-access-host',
 	});
+	await settings.getByLabel('Exposure route').selectOption('lan');
+	await expect(settings.locator('.settings-status')).toContainText('Saved');
+	await settings.close();
+
+	await openRemoteMenu(mainWindow);
+	await mainWindow.getByRole('button', { name: 'Expose this server…' }).click();
+	const pinDialog = mainWindow.getByRole('dialog', { name: 'Remote Pairing PIN' });
+	await expect(pinDialog).toBeVisible();
+	await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456');
+	await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
+	await expect(pinDialog).toHaveCount(0);
+
+	await openRemoteMenu(mainWindow);
+	const showPairing = mainWindow.getByRole('button', {
+		name: 'Show pairing link and QR',
+	});
+	await expect(showPairing).toBeVisible();
+	await showPairing.click();
+	const pairingDialog = mainWindow.getByRole('dialog', { name: 'Pair device' });
+	await expect(pairingDialog).toBeVisible();
+	const pairingLink = pairingDialog
+		.locator('.remote-pairing-modal__address-text')
+		.filter({ hasText: /^https?:\/\//u })
+		.last();
+	await expect(pairingLink).toBeVisible();
+	const pairingUrl = await pairingLink.innerText();
+	await pairingDialog.getByRole('button', { name: 'Close Pair Device' }).click();
+	return pairingUrl;
 }
 
 async function connectBrowser(page: Page, pairingUrl: string): Promise<void> {
@@ -78,12 +105,11 @@ async function expectMatchingLogicalGrid(first: Locator, second: Locator, expect
 }
 
 async function stopExposure(mainWindow: Page): Promise<void> {
-	await mainWindow.evaluate(async () => {
-		const status = await window.terminayRemoteAccessStatusHost.getStatus();
-		if (status.directListenerRunning) {
-			await window.terminayRemoteAccessStatusHost.toggleDirectListener();
-		}
+	await openRemoteMenu(mainWindow);
+	const stop = mainWindow.getByRole('button', {
+		name: /^Stop exposing this server/,
 	});
+	if (await stop.isVisible().catch(() => false)) await stop.click();
 }
 
 function terminalTabs(page: Page) {
@@ -154,8 +180,8 @@ async function dragTerminalScrollbackWithTouch(page: Page, panel: Locator): Prom
 	});
 }
 
-test('Mobile touch drag scrolls remote terminal scrollback', async ({ mainWindow, page }) => {
-	const pairingUrl = await exposeDesktopOnLan(mainWindow);
+test('Mobile touch drag scrolls remote terminal scrollback', async ({ appHarness, mainWindow, page }) => {
+	const pairingUrl = await exposeDesktopOnLan(appHarness, mainWindow);
 	try {
 		await connectBrowser(page, pairingUrl);
 		const sessionId = await mainWindow.locator('.terminal-panel:visible').getAttribute('data-terminay-terminal-session-id');
@@ -179,10 +205,11 @@ test('Mobile touch drag scrolls remote terminal scrollback', async ({ mainWindow
 });
 
 test('Desktop and browser converge on terminal tabs and one shared PTY output stream', async ({
+	appHarness,
 	mainWindow,
 	page,
 }) => {
-	const pairingUrl = await exposeDesktopOnLan(mainWindow);
+	const pairingUrl = await exposeDesktopOnLan(appHarness, mainWindow);
 
 	try {
 		await connectBrowser(page, pairingUrl);
