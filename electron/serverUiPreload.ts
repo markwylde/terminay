@@ -128,6 +128,17 @@ if (
 	(process as NodeJS.Process & { isMainFrame?: boolean }).isMainFrame !== false
 ) {
 	contextBridge.exposeInMainWorld(
+		'terminayAiMetadataTest',
+		Object.freeze({
+			setMock: (mock: {
+				error?: string | null;
+				models?: readonly Readonly<{ id: string; label: string }>[];
+				noteResult?: string;
+				titleResult?: string;
+			}) => ipcRenderer.invoke('test:set-ai-tab-metadata-mock', mock) as Promise<void>,
+		}),
+	);
+	contextBridge.exposeInMainWorld(
 		'terminayAgentStatusTest',
 		Object.freeze({
 			emitJournalRecord: (payload: {
