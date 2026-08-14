@@ -18,6 +18,46 @@ const context = () =>
 		.invoke(GET_CONTEXT)
 		.then(parseTerminayHostContext));
 
+// The workspace has several independent native-event consumers (menu commands,
+// zoom, settings, drag state, and so on). Keep exactly one Electron listener
+// for the document and fan its validated events out to those consumers. Adding
+// one ipcRenderer listener per React hook triggers Electron's listener warning
+// during ordinary use and makes remount behaviour needlessly noisy.
+const eventListeners = new Set<
+	(listener: ReturnType<typeof parseTerminayHostEvent>) => Promise<void> | void
+>();
+let hostEventsSubscribed = false;
+const hostEventWrapper = (
+	_event: Electron.IpcRendererEvent,
+	event: unknown,
+) => {
+	void context()
+		.then((bound) =>
+			parseTerminayHostEvent(
+				{
+					bridgeVersion: 1,
+					event,
+					profileId: bound.profileId,
+					schemaVersion: 1,
+					serverId: bound.serverId,
+					sourceId: bound.sourceId,
+					windowId: bound.windowId,
+				},
+				bound,
+			),
+		)
+		.then((parsed) => {
+			for (const listener of [...eventListeners]) {
+				try {
+					void Promise.resolve(listener(parsed)).catch(() => undefined);
+				} catch {
+					// A renderer subscriber must not destabilize the shared host bridge.
+				}
+			}
+		})
+		.catch(() => undefined);
+};
+
 const bridge: ServerUiHostBridge = Object.freeze({
 	getContext: context,
 	requestAction: async (request: TerminayHostActionRequest) => {
@@ -30,30 +70,18 @@ const bridge: ServerUiHostBridge = Object.freeze({
 	subscribeEvent: (listener) => {
 		if (typeof listener !== 'function')
 			throw new TypeError('app command listener is invalid');
-		const wrapper = (
-			_event: Electron.IpcRendererEvent,
-			event: unknown,
-		) => {
-			void context().then((bound) =>
-				listener(
-					parseTerminayHostEvent(
-						{
-							bridgeVersion: 1,
-							event,
-							profileId: bound.profileId,
-							schemaVersion: 1,
-							serverId: bound.serverId,
-							sourceId: bound.sourceId,
-							windowId: bound.windowId,
-						},
-						bound,
-					),
-				),
-			);
+		eventListeners.add(listener);
+		if (!hostEventsSubscribed) {
+			hostEventsSubscribed = true;
+			ipcRenderer.on('server-ui-host:event', hostEventWrapper);
+			ipcRenderer.send('server-ui-host:subscribe-events');
+		}
+		return () => {
+			eventListeners.delete(listener);
+			if (eventListeners.size !== 0 || !hostEventsSubscribed) return;
+			hostEventsSubscribed = false;
+			ipcRenderer.off('server-ui-host:event', hostEventWrapper);
 		};
-		ipcRenderer.on('server-ui-host:event', wrapper);
-		ipcRenderer.send('server-ui-host:subscribe-events');
-		return () => ipcRenderer.off('server-ui-host:event', wrapper);
 	},
 });
 if (
