@@ -20,10 +20,6 @@ export async function confirmRunningTerminalClose(
 	runningTerminalCount: number,
 ): Promise<boolean> {
 	if (runningTerminalCount === 0) return true;
-	const host = window.terminayWindowLifecycleHost;
-	if (host !== undefined) {
-		return host.confirmClose(kind, runningTerminalCount);
-	}
 	const noun = kind === 'terminal' ? 'this terminal' : 'this project';
 	return window.confirm(`A process is still running in ${noun}. Close anyway?`);
 }

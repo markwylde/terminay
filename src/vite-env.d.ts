@@ -138,18 +138,6 @@ declare global {
 			readonly version: 1;
 			open(): Promise<void>;
 		};
-		/** Bounded native window lifecycle capability for the current Desktop shell. */
-		terminayWindowLifecycleHost?: {
-			readonly version: 1;
-			closeCurrent(confirmedRunningWork?: boolean): Promise<void>;
-			confirmClose(
-				kind: 'terminal' | 'project',
-				runningTerminalCount: number,
-			): Promise<boolean>;
-			publishRunningTerminalSessions(
-				sessionIds: readonly string[],
-			): Promise<void>;
-		};
 		/** Bounded native settings-window capability for the current Desktop shell. */
 		/** Bounded native tab-bar presentation for the current Desktop window. */
 		terminayProjectTabHost?: {
