@@ -362,6 +362,11 @@ export default function WebManagerApp() {
 	const recoveryWatermarks = useRef(
 		new Map<string, Readonly<{ revision: number; cursor: string }>>(),
 	);
+	// A protocol reconnect is the same browser device, not a new presentation.
+	// Keeping this identity stable lets the server restore that device's terminal
+	// controller lease after a transient transport loss instead of demoting it to
+	// read-only behind the prior connection's lease.
+	const clientIdsByProfile = useRef(new Map<string, string>());
 	const autoRestoreAttemptedProfileId = useRef<string | null>(null);
 	const [reconnectVault] = useState<WebReconnectVault>(
 		() => new IndexedDbWebReconnectVault(),
@@ -777,7 +782,10 @@ export default function WebManagerApp() {
 			return;
 		}
 
-		const clientId = createWebClientId();
+		const clientId =
+			clientIdsByProfile.current.get(pendingProfile.id) ??
+			createWebClientId();
+		clientIdsByProfile.current.set(pendingProfile.id, clientId);
 		const client = new TerminayClient({
 			transport: new WebSocketByteTransport({
 				origin: parsed.transportOrigin,
@@ -1181,7 +1189,9 @@ export default function WebManagerApp() {
 			},
 		});
 		}
-		const clientId = createWebClientId();
+		const clientId =
+			clientIdsByProfile.current.get(profile.id) ?? createWebClientId();
+		clientIdsByProfile.current.set(profile.id, clientId);
 		const initialWatermark = recoveryWatermarks.current.get(profile.id);
 		const client = new TerminayClient({
 			transport,
@@ -1483,6 +1493,7 @@ export default function WebManagerApp() {
 
 	async function forgetConnection(profileId: string): Promise<void> {
 		const origin = host.profiles.get(profileId)?.origin;
+		clientIdsByProfile.current.delete(profileId);
 		invalidateConnectionAttempt(profileId);
 		void connectionController.current?.stop(profileId, 'forgotten');
 		if (activeConnection?.profileId === profileId) {
