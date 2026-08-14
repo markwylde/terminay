@@ -18,8 +18,29 @@ export async function resolveTerminalForegroundProcess(rootPid: number, signal?:
 	try {
 		const { stdout: groupOutput } = await execFileAsync('ps', ['-o', 'tpgid=', '-p', String(rootPid)], { signal })
 		const groupPid = Number.parseInt(groupOutput.trim(), 10)
-		if (!Number.isSafeInteger(groupPid) || groupPid <= 0) return null
-		const { stdout } = await execFileAsync('ps', ['-o', 'comm=', '-p', String(groupPid)], { signal })
+		if (Number.isSafeInteger(groupPid) && groupPid > 0 && groupPid !== rootPid) {
+			const command = await resolveProcessCommand(groupPid, signal)
+			if (command !== null) return command
+		}
+
+		// Some PTY hosts keep the shell and its foreground job in one process
+		// group. In that case TPGID points back to the shell and cannot identify
+		// the destructive foreground child. Follow the single-child shell chain
+		// before falling back to the shell title reported by node-pty.
+		const deepestPid = await resolveDeepestProcessPid(rootPid, signal)
+		if (deepestPid !== rootPid) {
+			const command = await resolveProcessCommand(deepestPid, signal)
+			if (command !== null) return command
+		}
+		return groupPid === rootPid ? await resolveProcessCommand(rootPid, signal) : null
+	} catch {
+		return null
+	}
+}
+
+async function resolveProcessCommand(pid: number, signal?: AbortSignal): Promise<string | null> {
+	try {
+		const { stdout } = await execFileAsync('ps', ['-o', 'comm=', '-p', String(pid)], { signal })
 		const command = stdout.trim().split(/[\\/]/u).pop()?.trim()
 		return command || null
 	} catch {
