@@ -1,7 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
-import { openRemoteMenu } from './support/ui';
 
 // The Docker image may download Electron on its first launch. Keep that
 // one-time fixture setup inside the scenario's budget instead of relying on a
@@ -20,31 +19,29 @@ async function exposeDesktopOnLan(
 	});
 	await settings.getByLabel('Exposure route').selectOption('lan');
 	await expect(settings.locator('.settings-status')).toContainText('Saved');
-	await settings.close();
-
-	await openRemoteMenu(mainWindow);
-	await mainWindow.getByRole('button', { name: 'Expose this server…' }).click();
-	const pinDialog = mainWindow.getByRole('dialog', { name: 'Remote Pairing PIN' });
+	await settings.getByRole('button', { name: 'Direct network listener' }).click();
+	await settings.getByRole('button', { name: 'Start direct listener' }).click();
+	const pinDialog = settings.getByRole('dialog', { name: 'Remote Pairing PIN' });
 	await expect(pinDialog).toBeVisible();
 	await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456');
 	await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
 	await expect(pinDialog).toHaveCount(0);
-
-	await openRemoteMenu(mainWindow);
-	const showPairing = mainWindow.getByRole('button', {
-		name: 'Show pairing link and QR',
-	});
+	await expect(
+		settings.getByRole('button', { name: 'Stop direct listener' }),
+	).toBeVisible();
+	const showPairing = settings.getByRole('button', { name: 'Show QR Code' });
 	await expect(showPairing).toBeVisible();
+	await expect(showPairing).toBeEnabled();
 	await showPairing.click();
-	const pairingDialog = mainWindow.getByRole('dialog', { name: 'Pair device' });
+	const pairingDialog = settings.getByRole('dialog', {
+		name: 'Direct network pairing QR',
+	});
 	await expect(pairingDialog).toBeVisible();
-	const pairingLink = pairingDialog
-		.locator('.remote-pairing-modal__address-text')
-		.filter({ hasText: /^https?:\/\//u })
-		.last();
+	const pairingLink = pairingDialog.getByTestId('remote-pairing-link');
 	await expect(pairingLink).toBeVisible();
 	const pairingUrl = await pairingLink.innerText();
-	await pairingDialog.getByRole('button', { name: 'Close Pair Device' }).click();
+	await settings.getByRole('button', { name: 'Close Remote Pairing QR' }).click();
+	await settings.close();
 	return pairingUrl;
 }
 
@@ -104,12 +101,20 @@ async function expectMatchingLogicalGrid(first: Locator, second: Locator, expect
 	])).toEqual([expectedColumns, expectedColumns]);
 }
 
-async function stopExposure(mainWindow: Page): Promise<void> {
-	await openRemoteMenu(mainWindow);
-	const stop = mainWindow.getByRole('button', {
-		name: /^Stop exposing this server/,
+async function stopExposure(
+	appHarness: {
+		openSettingsWindow: (options: { page: Page; sectionId: string }) => Promise<Page>;
+	},
+	mainWindow: Page,
+): Promise<void> {
+	const settings = await appHarness.openSettingsWindow({
+		page: mainWindow,
+		sectionId: 'remote-access-host',
 	});
+	await settings.getByRole('button', { name: 'Direct network listener' }).click();
+	const stop = settings.getByRole('button', { name: 'Stop direct listener' });
 	if (await stop.isVisible().catch(() => false)) await stop.click();
+	await settings.close();
 }
 
 function terminalTabs(page: Page) {
@@ -200,7 +205,7 @@ test('Mobile touch drag scrolls remote terminal scrollback', async ({ appHarness
 		await dragTerminalScrollbackWithTouch(page, browserPanel);
 		await expect.poll(() => renderedRows.innerText()).not.toBe(before);
 	} finally {
-		await stopExposure(mainWindow);
+		await stopExposure(appHarness, mainWindow);
 	}
 });
 
@@ -454,6 +459,6 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expect(terminalPanel(page, browserSessionId)).toHaveCount(0);
 		await expect(terminalPanel(mainWindow, browserSessionId)).toHaveCount(0);
 	} finally {
-		await stopExposure(mainWindow);
+		await stopExposure(appHarness, mainWindow);
 	}
 });
