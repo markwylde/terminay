@@ -345,6 +345,30 @@ test('native menu accelerator updates are bounded and immutable', () => {
 	);
 });
 
+test('device settings use a closed host action and bound event snapshot', () => {
+	const settings = { keyboardShortcuts: { 'new-terminal': 'CmdOrCtrl+Y' } };
+	assert.deepEqual(parseTerminayHostAction({
+		type: 'device.settings.update',
+		settings,
+	}), { type: 'device.settings.update', settings });
+	assert.throws(
+		() => parseTerminayHostAction({ type: 'device.settings.update', settings: [] }),
+		/device settings/u,
+	);
+	const context = parseTerminayHostContext({
+		schemaVersion: 1, bootstrapVersion: 1, sourceId: 'source-a',
+		windowId: 'window-a', serverId: 'server-a', profileId: 'profile-a',
+		bundleId: 'bundle_12345678', applicationProtocolVersion: '1',
+		hostKind: 'desktop', hostBridgeVersion: 1, byteEndpointVersion: 1,
+		capabilities: { nativeMenus: 1 },
+	});
+	assert.deepEqual(parseTerminayHostEvent({
+		schemaVersion: 1, bridgeVersion: 1, sourceId: 'source-a',
+		windowId: 'window-a', serverId: 'server-a', profileId: 'profile-a',
+		event: { type: 'device.settings.changed', settings },
+	}, context).event, { type: 'device.settings.changed', settings });
+});
+
 test('host compatibility rejects ambiguous and unknown capability requirements', () => {
 	assert.throws(
 		() =>

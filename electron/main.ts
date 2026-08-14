@@ -1499,6 +1499,20 @@ function writeTerminalSettings(settings: TerminalSettings): TerminalSettings {
 	return normalized;
 }
 
+function sendDeviceTerminalSettings(webContents: Electron.WebContents): void {
+	if (webContents.isDestroyed()) return;
+	webContents.send('server-ui-host:event', {
+		type: 'device.settings.changed',
+		settings: selectDeviceTerminalSettings(readTerminalSettings()),
+	});
+}
+
+function broadcastDeviceTerminalSettings(): void {
+	for (const window of BrowserWindow.getAllWindows()) {
+		sendDeviceTerminalSettings(window.webContents);
+	}
+}
+
 function readMacros(): MacroDefinition[] {
 	const macrosPath = getMacrosPath();
 
@@ -2753,6 +2767,22 @@ function createWindow(options?: {
 								createAppMenu(settings);
 								return;
 							}
+							case 'device.settings.update': {
+								if (
+									typeof action.settings !== 'object' ||
+									action.settings === null ||
+									Array.isArray(action.settings)
+								)
+									throw new TypeError('Device settings must be an object.');
+								const current = readTerminalSettings();
+								const settings = writeTerminalSettings({
+									...current,
+									...action.settings,
+								});
+								createAppMenu(settings);
+								broadcastDeviceTerminalSettings();
+								return selectDeviceTerminalSettings(settings);
+							}
 							case 'route.present': await presentCanonicalAuxiliaryRoute(window, request, launch.context); return;
 							case 'os.reveal': throw new Error('OS reveal requires a host-issued path token.');
 							case 'workspace.drag.start':
@@ -2925,6 +2955,7 @@ ipcMain.on('server-ui-host:subscribe-events', (event) => {
 		type: 'terminal.zoom',
 		zoomLevel: terminalZoomLevel,
 	});
+	sendDeviceTerminalSettings(event.sender);
 });
 
 // Cross-window drag tracking with Chrome-style tear-off. While a project tab is

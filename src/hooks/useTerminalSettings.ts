@@ -1,7 +1,8 @@
 import type { SettingsClient } from '@terminay/client-core';
-import { type JsonValue, TERMINAY_HOST_MENU_COMMANDS } from '@terminay/protocol';
+import { type JsonValue } from '@terminay/protocol';
 import { createContext, createElement, type ReactNode, useContext, useEffect, useState } from 'react';
-import { updateNativeMenuAccelerators } from '../host/nativeActions';
+import { updateDeviceTerminalSettings } from '../host/nativeActions';
+import { subscribeDeviceTerminalSettings } from '../host/nativeEvents';
 import {
 	defaultTerminalSettings,
 	normalizeTerminalSettings,
@@ -53,9 +54,12 @@ export function createServerTerminalSettingsClient(
 		async update<T>(settings: JsonValue) {
 			const current = serverSettings(await client.get<JsonValue>());
 			const serverUpdate = selectServerSettings(settings, current);
-			connectionHostSettings = selectConnectionHostSettings(settings);
-			writeConnectionHostSettings(connectionHostSettings);
-			await publishNativeAccelerators(settings);
+			const selectedDeviceSettings = selectConnectionHostSettings(settings);
+			connectionHostSettings =
+				(await updateDeviceTerminalSettings(selectedDeviceSettings)) ??
+				selectedDeviceSettings;
+			if (!hasNativeSettingsHost())
+				writeConnectionHostSettings(connectionHostSettings);
 			lastServerState = await client.update<JsonValue>(serverUpdate);
 			const state = serverSettings(lastServerState);
 			return normalizeTerminalSettings(
@@ -63,9 +67,13 @@ export function createServerTerminalSettingsClient(
 			) as T;
 		},
 		async reset<T>() {
-			connectionHostSettings = {};
-			writeConnectionHostSettings(connectionHostSettings);
-			await publishNativeAccelerators(defaultTerminalSettings as unknown as JsonValue);
+			const defaultDeviceSettings = selectConnectionHostSettings(
+				defaultTerminalSettings as unknown as JsonValue,
+			);
+			connectionHostSettings =
+				(await updateDeviceTerminalSettings(defaultDeviceSettings)) ?? {};
+			if (!hasNativeSettingsHost())
+				writeConnectionHostSettings(connectionHostSettings);
 			lastServerState = await client.reset<JsonValue>();
 			const state = serverSettings(lastServerState);
 			return normalizeTerminalSettings(mergeSettings(defaultTerminalSettings, state)) as T;
@@ -75,9 +83,8 @@ export function createServerTerminalSettingsClient(
 				lastServerState = state;
 				listener(effectiveSettings(state) as unknown as JsonValue);
 			});
-			const onStorage = (event: StorageEvent) => {
-				if (event.key !== CONNECTION_HOST_SETTINGS_KEY) return;
-				connectionHostSettings = parseConnectionHostSettings(event.newValue);
+			const emitDeviceSettings = (settings: JsonValue) => {
+				connectionHostSettings = settings;
 				const emit = async () => {
 					if (lastServerState === null) lastServerState = await client.get<JsonValue>();
 					listener(effectiveSettings(lastServerState) as unknown as JsonValue);
@@ -86,10 +93,18 @@ export function createServerTerminalSettingsClient(
 					// The selected-server subscription owns availability reporting.
 				});
 			};
-			if (typeof window !== 'undefined') window.addEventListener('storage', onStorage);
+			const stopDevice = subscribeDeviceTerminalSettings(emitDeviceSettings);
+			const onStorage = (event: StorageEvent) => {
+				if (event.key !== CONNECTION_HOST_SETTINGS_KEY) return;
+				emitDeviceSettings(parseConnectionHostSettings(event.newValue));
+			};
+			if (typeof window !== 'undefined' && !hasNativeSettingsHost())
+				window.addEventListener('storage', onStorage);
 			return () => {
 				stopServer();
-				if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
+				stopDevice();
+				if (typeof window !== 'undefined' && !hasNativeSettingsHost())
+					window.removeEventListener('storage', onStorage);
 			};
 		},
 	};
@@ -138,14 +153,8 @@ function writeConnectionHostSettings(settings: JsonValue): void {
 	}
 }
 
-async function publishNativeAccelerators(settings: JsonValue): Promise<void> {
-	if (typeof window === 'undefined' || typeof settings !== 'object' || settings === null || Array.isArray(settings)) return;
-	const shortcuts = settings.keyboardShortcuts;
-	if (typeof shortcuts !== 'object' || shortcuts === null || Array.isArray(shortcuts)) return;
-	await updateNativeMenuAccelerators(TERMINAY_HOST_MENU_COMMANDS.map((command) => ({
-		command,
-		accelerator: typeof shortcuts[command] === 'string' ? shortcuts[command] : '',
-	})));
+function hasNativeSettingsHost(): boolean {
+	return typeof window !== 'undefined' && window.terminayHost !== undefined;
 }
 
 function selectServerSettings(value: JsonValue, shape: JsonValue): JsonValue {

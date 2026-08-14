@@ -29,3 +29,16 @@ export function subscribeWorkspaceDragState(
 		}
 	});
 }
+
+export function subscribeDeviceTerminalSettings(
+	listener: (settings: import('@terminay/protocol').JsonValue) => void,
+): () => void {
+	if (typeof window === 'undefined') return () => undefined;
+	const host = window.terminayHost as unknown as NativeEventBridge | undefined;
+	if (host === undefined) return () => undefined;
+	return host.subscribeEvent((message) => {
+		if (message.event.type === 'device.settings.changed') {
+			listener(message.event.settings);
+		}
+	});
+}

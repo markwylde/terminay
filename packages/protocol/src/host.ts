@@ -1,3 +1,6 @@
+import type { JsonValue } from './errors.js';
+import { assertJsonValue } from './json.js';
+
 export const TERMINAY_HOST_CONTEXT_SCHEMA_VERSION = 1 as const;
 export const TERMINAY_HOST_BOOTSTRAP_VERSION = 1 as const;
 export const TERMINAY_HOST_BRIDGE_VERSION = 1 as const;
@@ -162,6 +165,10 @@ export type TerminayHostEvent = Readonly<{
 		| Readonly<{
 				type: 'workspace.drag-state';
 				active: boolean;
+		  }>
+		| Readonly<{
+				type: 'device.settings.changed';
+				settings: JsonValue;
 		  }>;
 }>;
 
@@ -179,6 +186,7 @@ export type TerminayHostAction =
 			type: 'menu.accelerators.update';
 			accelerators: readonly TerminayHostMenuAccelerator[];
 	  }>
+	| Readonly<{ type: 'device.settings.update'; settings: JsonValue }>
 	| Readonly<{
 			type: 'file.choose';
 			multiple?: boolean;
@@ -288,6 +296,13 @@ export function parseTerminayHostEvent(
 		parsedEvent = Object.freeze({
 			type: 'workspace.drag-state',
 			active: event.active,
+		});
+	} else if (event.type === 'device.settings.changed') {
+		exactKeys(event, ['type', 'settings'], 'host device settings event');
+		assertJsonValue(event.settings);
+		parsedEvent = Object.freeze({
+			type: 'device.settings.changed',
+			settings: event.settings,
 		});
 	} else {
 		throw new TypeError('host event type is invalid');
@@ -692,6 +707,14 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				accelerators: Object.freeze(accelerators),
 			});
 		}
+		case 'device.settings.update':
+			exactKeys(action, ['type', 'settings'], 'device settings action');
+			record(action.settings, 'device settings');
+			assertJsonValue(action.settings);
+			return Object.freeze({
+				type: 'device.settings.update',
+				settings: action.settings,
+			});
 		case 'file.choose': {
 			exactOptionalKeys(
 				action,
@@ -849,6 +872,7 @@ export function requiredTerminayHostCapability(
 			return 'nativeWindows';
 		case 'menu.invoke':
 		case 'menu.accelerators.update':
+		case 'device.settings.update':
 			return 'nativeMenus';
 		case 'file.choose':
 			return 'filePicker';
