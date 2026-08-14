@@ -22,7 +22,7 @@ const bridge: ServerUiHostBridge = Object.freeze({
 	getContext: context,
 	requestAction: async (request: TerminayHostActionRequest) => {
 		const bound = await context();
-		await ipcRenderer.invoke(
+		return ipcRenderer.invoke(
 			REQUEST_ACTION,
 			parseTerminayHostActionRequest(request, bound),
 		);
