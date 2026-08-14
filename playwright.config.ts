@@ -10,7 +10,10 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
   retries: 0,
-  maxFailures: process.env.CI ? 1 : 0,
+	// CI shards must finish their full assigned test set. Stopping at the first
+	// failure hides independent regressions and turns each repair loop into a
+	// one-failure-at-a-time process.
+  maxFailures: 0,
   workers: process.env.CI ? Number(process.env.PLAYWRIGHT_WORKERS ?? '1') : 1,
   use: {
     actionTimeout: 5_000,
