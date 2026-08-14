@@ -12,7 +12,7 @@ class MemoryCache { constructor() { this.records = new Map(); } async match(requ
 class MemoryCacheStorage { constructor() { this.caches = new Map(); } async open(name) { if (!this.caches.has(name)) this.caches.set(name, new MemoryCache()); return this.caches.get(name); } async delete(name) { return this.caches.delete(name); } }
 const endpoint = { async send() {}, subscribe() { return () => {}; } };
 
-const compatibility = { bootstrap: { minimum: 1, maximum: 1 }, bundleFormat: { minimum: 1, maximum: 1 }, hostBridge: { minimum: 1, maximum: 1 }, byteEndpoint: { minimum: 1, maximum: 1 }, executionRuntime: { minimum: 1, maximum: 2 }, requiredCapabilities: {}, optionalCapabilities: { notifications: { minimum: 1, maximum: 1 } } };
+const compatibility = { bootstrap: { minimum: 1, maximum: 1 }, bundleFormat: { minimum: 1, maximum: 1 }, hostBridge: { minimum: 1, maximum: 1 }, byteEndpoint: { minimum: 1, maximum: 1 }, requiredCapabilities: {}, optionalCapabilities: { notifications: { minimum: 1, maximum: 1 } } };
 function fixture(text = "<!doctype html><title>server bundle</title>") {
   const bytes = Buffer.from(text); const provisional = [{ path: "/remote-app/provisional/index.html", contentType: "text/html; charset=utf-8", hash: createHash("sha256").update(bytes).digest("base64url"), size: bytes.length }];
   const bundleId = deriveUiBundleId(provisional, "provisional", { bundleFormatVersion: 1, protocolVersion: "1", serverVersion: "1.0.0", hostCompatibility: compatibility });
@@ -23,7 +23,7 @@ function fixture(text = "<!doctype html><title>server bundle</title>") {
 test("Local and remote use one verified preparation boundary with server-isolated cache", async () => {
   const root = await mkdtemp(join(tmpdir(), "terminay-desktop-bundle-host-"));
   try {
-    const host = new DesktopServerBundleHost({ cacheRoot: join(root, "cache"), executionRuntimeVersion: 1, capabilities: {} }); const one = fixture();
+    const host = new DesktopServerBundleHost({ cacheRoot: join(root, "cache"), capabilities: {} }); const one = fixture();
     const localRoot = join(root, "local"); await mkdir(localRoot); await writeFile(join(localRoot, "manifest.json"), JSON.stringify(one.manifest)); await writeFile(join(localRoot, "index.html"), one.bytes);
     const local = await host.prepareLocal({ profileId: "local:one", serverId: "server-one", origin: "http://127.0.0.1:1234", windowId: "window-one", artifact: { rootDirectory: localRoot } });
     assert.equal(local.source, "embedded"); assert.equal(local.context.serverId, "server-one"); assert.equal(local.compatibility.unavailableOptionalCapabilities[0], "notifications");
@@ -39,7 +39,7 @@ test("Local UI session verifies once per window and never owns a listener or cre
   const root = await mkdtemp(join(tmpdir(), "terminay-local-ui-session-"));
   try {
     const selected = fixture(); const localRoot = join(root, "local"); await mkdir(localRoot); await writeFile(join(localRoot, "manifest.json"), JSON.stringify(selected.manifest)); await writeFile(join(localRoot, "index.html"), selected.bytes);
-    const session = new LocalServerUiSession({ bundleRoot: localRoot, cacheRoot: join(root, "cache"), executionRuntimeVersion: 1, serverId: "desktop-local" });
+    const session = new LocalServerUiSession({ bundleRoot: localRoot, cacheRoot: join(root, "cache"), serverId: "desktop-local" });
     const first = await session.prepare(41); const repeated = await session.prepare(41);
     assert.equal(first, repeated); assert.equal(first.source, "embedded"); assert.equal(first.context.profileId, "local:embedded"); assert.equal(session.launchFor(41), first);
     assert.equal("authToken" in session, false); assert.equal("listener" in session, false);
@@ -88,7 +88,7 @@ test("actual Local Desktop, remote Desktop, direct browser, and manager composit
   try {
     const selected = fixture(); const serverId = "server-shared"; const profileId = "profile-shared";
     const localRoot = join(root, "local"); await mkdir(localRoot); await writeFile(join(localRoot, "manifest.json"), JSON.stringify(selected.manifest)); await writeFile(join(localRoot, "index.html"), selected.bytes);
-    const desktop = new DesktopServerBundleHost({ cacheRoot: join(root, "cache"), executionRuntimeVersion: 1, capabilities: {} });
+    const desktop = new DesktopServerBundleHost({ cacheRoot: join(root, "cache"), capabilities: {} });
     const local = await desktop.prepareLocal({ profileId, serverId, origin: "http://localhost:4317", windowId: "local-window", artifact: { rootDirectory: localRoot } });
     const remote = await desktop.prepareRemote({ profileId, serverId, origin: "https://shared.example", windowId: "remote-window", lane: { manifest: async () => selected.manifest, read: async () => selected.bytes } });
     const browserContext = (sourceId) => ({ schemaVersion: 1, bootstrapVersion: 1, sourceId, windowId: `${sourceId}-window`, serverId, profileId, bundleId: selected.manifest.bundleId, applicationProtocolVersion: selected.manifest.protocolVersion, hostKind: "browser", hostBridgeVersion: 1, byteEndpointVersion: 1, capabilities: { notifications: 1, clipboardWrite: 1 } });

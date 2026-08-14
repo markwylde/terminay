@@ -30,19 +30,64 @@ export async function showCanonicalLaunchRecovery(
 	}>,
 ): Promise<void> {
 	if (options.window.isDestroyed()) return;
+	// Retain the Electron handle while the window is live. A later asynchronous
+	// failure can race native destruction, where reading `window.webContents`
+	// again is itself an Electron exception.
+	const targetWebContents = options.window.webContents;
 	const message = boundedLaunchError(options.error);
-	await options.onDiagnostic(message);
+	// Diagnostics are evidence, never a prerequisite for a usable recovery
+	// document. In particular, a full or unavailable diagnostics volume must not
+	// turn a caught bootstrap failure back into an unhandled main-process
+	// rejection.
+	try {
+		await options.onDiagnostic(message);
+	} catch {
+		// The caller's normal stderr/fatal diagnostics path remains available.
+	}
+
+	let recoveryActive = false;
+	const setRecoveryState = (active: boolean) => {
+		if (recoveryActive === active) return;
+		recoveryActive = active;
+		try {
+			options.onRecoveryState(active);
+		} catch {
+			// State observation cannot be allowed to prevent recovery rendering.
+		}
+	};
 	const retryNavigation = (event: Event, target: string) => {
 		if (target !== 'https://terminay.invalid/retry') return;
 		event.preventDefault();
-		options.onRecoveryState(false);
-		options.window.webContents.off('will-navigate', retryNavigation);
+		setRecoveryState(false);
+		try {
+			targetWebContents.off('will-navigate', retryNavigation);
+		} catch {
+			// Native teardown has already retired the document.
+		}
 		// Let Electron finish cancelling the synthetic navigation before retrying.
 		// Loading the recovery document again from inside `will-navigate` leaves the
 		// webContents in a permanently pending navigation state on macOS/Linux CI.
-		setImmediate(() => void options.retry());
+		setImmediate(() => {
+			void Promise.resolve()
+				.then(options.retry)
+				.catch((error) =>
+					showCanonicalLaunchRecovery({ ...options, error }),
+				);
+		});
 	};
-	options.window.webContents.on('will-navigate', retryNavigation);
-	options.onRecoveryState(true);
-	await options.window.loadURL(launchRecoveryDocument(message));
+	try {
+		targetWebContents.on('will-navigate', retryNavigation);
+		setRecoveryState(true);
+		await options.window.loadURL(launchRecoveryDocument(message));
+	} catch {
+		// A WebContents can be destroyed while this asynchronous recovery document
+		// is loading. Remove the listener and contain that race: Electron must not
+		// surface an uncaught rejection or a second native error dialog.
+		try {
+			targetWebContents.off('will-navigate', retryNavigation);
+		} catch {
+			// Native teardown has already retired the document.
+		}
+		setRecoveryState(false);
+	}
 }

@@ -38,13 +38,20 @@ export {
 	type SimulatedBrowserSuspendEvent,
 } from './simulatedLifecycle.js';
 export {
+	BROWSER_BOOTSTRAP_STEPS,
+	describeBrowserBootstrapFailure,
+	type BrowserBootstrapFailure,
+	type BrowserBootstrapStep,
+} from './browserBootstrapFailure.js';
+export {
 	BrowserHostUpgradeRequiredError,
 	BrowserSessionBundleHost,
 	CacheStorageBrowserBundleStore,
 	createBrowserManagerBundleHost,
 	createDirectBrowserBundleHost,
-	currentBrowserExecutionRuntime,
+	negotiateBrowserHostCapabilities,
 	MemoryBrowserBundleStore,
+	type BrowserCapabilityPlatform,
 	parseBrowserBundleManifest,
 	type BrowserBundleLaunch,
 	type BrowserBundleStore,

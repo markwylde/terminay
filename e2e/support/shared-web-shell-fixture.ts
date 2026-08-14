@@ -11,7 +11,7 @@ export type SharedWebShellFixture = {
 /**
  * Install the browser host boundary that owns a remote application's transport.
  *
- * `remote.html` is a server application entry, not a standalone connection
+ * `server.html` is a server application entry, not a standalone connection
  * manager. Production injects this contract before the application module is
  * evaluated. Browser tests must do the same instead of relying on the legacy
  * ambient transport globals that the single-owner transport work removed.

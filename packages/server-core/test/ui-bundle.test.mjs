@@ -36,7 +36,6 @@ function makeCurrentManifest() {
     bundleFormat: { minimum: 1, maximum: 1 },
     hostBridge: { minimum: 1, maximum: 1 },
     byteEndpoint: { minimum: 1, maximum: 1 },
-    executionRuntime: { minimum: 120, maximum: 140 },
     requiredCapabilities: { clipboardWrite: { minimum: 1, maximum: 1 } },
     optionalCapabilities: { nativeWindows: { minimum: 1, maximum: 1 } },
   };
@@ -184,7 +183,6 @@ test("bundle compatibility validates the manifest and exact bootstrap before lau
     bundleFormatVersion: 1,
     hostBridgeVersion: 1,
     byteEndpointVersion: 1,
-    executionRuntimeVersion: 125,
     capabilities: { clipboardWrite: 1 },
   };
   assert.deepEqual(evaluateUiBundleHostCompatibility(manifest, bootstrap, support), {

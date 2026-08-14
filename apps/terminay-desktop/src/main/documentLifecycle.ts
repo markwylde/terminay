@@ -15,6 +15,13 @@ export interface DesktopDocumentLifecycleDiagnostic {
 
 export type DesktopDocumentRelease = () => Promise<void> | void;
 
+/** The only capability a document lifecycle needs from an application
+ * transport. Keeping this structural prevents the native document boundary
+ * from acquiring protocol ownership. */
+export interface DesktopDocumentTransport {
+	close(options: { readonly code: 'normal' }): Promise<void> | void;
+}
+
 const MAX_DIAGNOSTIC_MESSAGE = 320;
 
 /** Owns resources belonging to one renderer document, never its server-side
@@ -95,6 +102,38 @@ export class DesktopDocumentLifecycle {
 			/* Diagnostics must never break native teardown. */
 		}
 	}
+}
+
+/**
+ * Close a document-scoped application lane without allowing either a
+ * synchronous implementation failure or an asynchronously rejected close to
+ * escape an Electron destruction callback. Transport implementations are not
+ * required to make close idempotent, so callers still own their one-shot
+ * boundary; this helper makes each attempted close exception-free.
+ */
+export async function closeDesktopDocumentTransport(
+	transport: DesktopDocumentTransport,
+	onFailure?: (message: string) => void,
+): Promise<boolean> {
+	try {
+		await transport.close({ code: 'normal' });
+		return true;
+	} catch (error) {
+		try {
+			onFailure?.(boundedTransportDiagnostic(error));
+		} catch {
+			// A diagnostic sink is not allowed to turn native teardown into a crash.
+		}
+		return false;
+	}
+}
+
+function boundedTransportDiagnostic(error: unknown): string {
+	const category = error instanceof Error ? error.name : typeof error;
+	return `Document transport close failed (${category || 'unknown'}).`.slice(
+		0,
+		MAX_DIAGNOSTIC_MESSAGE,
+	);
 }
 
 /** Complete a renderer document handoff without allowing a destruction race to

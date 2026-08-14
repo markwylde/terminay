@@ -299,14 +299,14 @@ credentials/query state, new windows, downloads, permission prompts, and custom
 protocol handlers are denied by default. A privileged host may explicitly allow
 one guarded request through the native policy boundary.
 
-The bundle manifest declares a compatible host-bridge range, minimum execution
-runtime, and required/optional host capabilities. Missing optional capabilities
+The bundle manifest declares compatible bootstrap, bundle-format, and
+host-bridge revisions plus required/optional host capabilities. Missing optional capabilities
 use browser-equivalent in-page behavior or a clear unavailable action. Missing
 required compatibility blocks launch before committing connection state and
 identifies whether the host or server must be upgraded.
 
 Desktop commits a native window only after the bundle inventory has been
-verified, its host/runtime requirements accepted, and an exact
+verified, its host compatibility requirements accepted, and an exact
 profile/server/bundle binding reserved. Local reads the pinned bundle directly
 from the embedded artifact and does not download it through a public listener.
 Remote reads through its authenticated asset lane into an atomic,

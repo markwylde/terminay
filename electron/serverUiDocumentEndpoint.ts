@@ -4,12 +4,13 @@ import {
 	parseTerminayHostBytePacket,
 } from '@terminay/protocol';
 import {
+	ipcMain,
 	MessageChannelMain,
 	type MessagePortMain,
-	ipcMain,
 	type WebContents,
 } from 'electron';
 import {
+	closeDesktopDocumentTransport,
 	DesktopDocumentLifecycle,
 	handoffDocumentResource,
 } from '../apps/terminay-desktop/src/main/documentLifecycle';
@@ -20,6 +21,19 @@ type Diagnostic = (resource: string, message: string) => void;
 const activeRemoteEndpoints = new Map<number, () => void>();
 const REPLACE_BYTE_ENDPOINT = 'server-ui-host:replace-byte-endpoint';
 const DOCUMENT_READY = 'server-ui-host:document-ready';
+
+function reportDiagnostic(
+	diagnostic: Diagnostic | undefined,
+	resource: string,
+	message: string,
+): void {
+	try {
+		diagnostic?.(resource, message);
+	} catch {
+		// Diagnostics are optional observability. They must never escape a native
+		// navigation, destruction, or transport callback.
+	}
+}
 
 /** Attach a fresh Local document port after every successful load. Navigation
  * releases only the old document port; the embedded server and its PTYs remain
@@ -34,7 +48,7 @@ export function bindLocalServerUiDocumentEndpoint(options: {
 	const lifecycle = navigationLifecycle(sender, options.diagnostic);
 	let attachedForDocument = false;
 	const attach = (replace = false) => {
-		if (sender.isDestroyed()) return;
+		if (lifecycle.destroyed()) return;
 		if (attachedForDocument && !replace) return;
 		attachedForDocument = true;
 		const document = lifecycle.replace();
@@ -79,7 +93,7 @@ export function bindLocalServerUiDocumentEndpoint(options: {
 	return () => {
 		ipcMain.off(REPLACE_BYTE_ENDPOINT, onReplace);
 		ipcMain.off(DOCUMENT_READY, onDocumentReady);
-		if (!sender.isDestroyed())
+		if (!lifecycle.destroyed())
 			sender.off('did-start-navigation', onDocumentNavigation);
 		unbind();
 	};
@@ -102,7 +116,13 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 }): () => void {
 	const sender = options.sender;
 	const senderId = sender.id;
-	activeRemoteEndpoints.get(senderId)?.();
+	try {
+		activeRemoteEndpoints.get(senderId)?.();
+	} catch {
+		// A superseded endpoint must not make a freshly selected server unable to
+		// mount. Its own cleanup diagnostic has already been recorded where it
+		// originated.
+	}
 	const lifecycle = navigationLifecycle(sender, options.diagnostic);
 	let documentPort: MessagePortMain | undefined;
 	let connectionClosed = false;
@@ -119,18 +139,16 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 		lifecycle.close();
 		if (activeRemoteEndpoints.get(senderId) === closeConnection)
 			activeRemoteEndpoints.delete(senderId);
-		void transport
-			.close({ code: 'normal' })
-			.catch((error) =>
-				options.diagnostic?.('remote-transport', boundedMessage(error)),
-			);
+		void closeDesktopDocumentTransport(transport, (message) =>
+			reportDiagnostic(options.diagnostic, 'remote-transport', message),
+		);
 	};
 	activeRemoteEndpoints.set(senderId, closeConnection);
 
 	const attach = (replace = false) => {
 		if (
 			connectionClosed ||
-			sender.isDestroyed() ||
+			lifecycle.destroyed() ||
 			!documentReady ||
 			!transportReady
 		)
@@ -170,7 +188,8 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 				document.release('failed-launch');
 				channel.port2.close();
 			},
-			onFailure: (message) => options.diagnostic?.('message-port', message),
+			onFailure: (message) =>
+				reportDiagnostic(options.diagnostic, 'message-port', message),
 		});
 	};
 	const onReplace = (event: Electron.IpcMainEvent) => {
@@ -211,10 +230,10 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	const startTransport = () => {
 		const activeTransport = transport;
 		transportReady = false;
-		void activeTransport
-			.open()
+		void Promise.resolve()
+			.then(() => activeTransport.open())
 			.then(async () => {
-				if (connectionClosed || sender.isDestroyed()) return;
+				if (connectionClosed || lifecycle.destroyed()) return;
 				if (transport !== activeTransport) return;
 				transportReady = true;
 				attach();
@@ -230,7 +249,11 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 				if (transport === activeTransport) recoverConnection();
 			})
 			.catch((error) => {
-				options.diagnostic?.('remote-transport', boundedMessage(error));
+				reportDiagnostic(
+					options.diagnostic,
+					'remote-transport',
+					boundedMessage(error),
+				);
 				if (transport === activeTransport) recoverConnection();
 			});
 	};
@@ -247,16 +270,20 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 				// lane; document navigation already discarded that client and port.
 				if (notifyDocument) documentPort?.postMessage(null);
 				transportReady = false;
-				await transport.close({ code: 'normal' }).catch(() => undefined);
+				await closeDesktopDocumentTransport(transport);
 				if (connectionClosed) return;
 				transport = await options.reconnect!();
 				if (connectionClosed) {
-					await transport.close({ code: 'normal' }).catch(() => undefined);
+					await closeDesktopDocumentTransport(transport);
 					return;
 				}
 				startTransport();
 			} catch (error) {
-				options.diagnostic?.('remote-reconnect', boundedMessage(error));
+				reportDiagnostic(
+					options.diagnostic,
+					'remote-reconnect',
+					boundedMessage(error),
+				);
 				// A server may be briefly unavailable while it restarts. Keep this
 				// Desktop-owned endpoint dormant so the next real document boundary
 				// can make one fresh, credential-protected reconnect attempt. Retrying
@@ -272,7 +299,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	return () => {
 		ipcMain.off(REPLACE_BYTE_ENDPOINT, onReplace);
 		ipcMain.off(DOCUMENT_READY, onDocumentReady);
-		if (!sender.isDestroyed())
+		if (!lifecycle.destroyed())
 			sender.off('did-start-loading', onDocumentLoadStart);
 		unbind();
 		closeConnection();
@@ -285,6 +312,8 @@ function navigationLifecycle(sender: WebContents, diagnostic?: Diagnostic) {
 	);
 	let closed = false;
 	let attachListener: (() => void) | undefined;
+	let destroyedListener: (() => void) | undefined;
+	let senderDestroyed = false;
 	let attachesOnDidFinishLoad = true;
 	let releasesOnDidStartNavigation = true;
 	const onNavigation = (
@@ -320,21 +349,34 @@ function navigationLifecycle(sender: WebContents, diagnostic?: Diagnostic) {
 				sender.on('did-start-navigation', onNavigation);
 			sender.on('render-process-gone', onGone);
 			if (attachOnDidFinishLoad) sender.on('did-finish-load', attach);
-			sender.once('destroyed', onDestroyed ?? (() => owner.close()));
+			// Capture the callback before subscribing. Once Electron emits
+			// `destroyed`, the WebContents object is no longer safe to query or
+			// mutate, so teardown relies only on this retained listener state.
+			destroyedListener = () => {
+				senderDestroyed = true;
+				(onDestroyed ?? (() => owner.close()))();
+			};
+			sender.once('destroyed', destroyedListener);
 			return () => owner.close();
+		},
+		destroyed() {
+			return senderDestroyed;
 		},
 		close() {
 			if (closed) return;
 			closed = true;
 			current.release('window-close');
-			if (!sender.isDestroyed()) {
+			if (!senderDestroyed) {
 				if (releasesOnDidStartNavigation)
 					sender.off('did-start-navigation', onNavigation);
 				sender.off('render-process-gone', onGone);
 				if (attachesOnDidFinishLoad && attachListener !== undefined)
 					sender.off('did-finish-load', attachListener);
+				if (destroyedListener !== undefined)
+					sender.off('destroyed', destroyedListener);
 			}
 			attachListener = undefined;
+			destroyedListener = undefined;
 		},
 	};
 	return owner;
