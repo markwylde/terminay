@@ -1,6 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { submitTerminalCommand } from './support/terminal';
 
 async function activeSessionId(page: Page): Promise<string> {
 	const sessionId = await page
@@ -15,13 +16,7 @@ async function activeSessionId(page: Page): Promise<string> {
 }
 
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
-	const sessionId = await activeSessionId(page);
-	await page.evaluate(
-		async ({ sessionId: nextSessionId, data: nextData }) => {
-			await window.terminayTest!.writeServerTerminal(nextSessionId, nextData);
-		},
-		{ sessionId, data },
-	);
+	await submitTerminalCommand(page, data);
 }
 
 test('keeps a high-output local terminal interactive through sidebar, root, resize, and settings updates', async ({
