@@ -3,7 +3,7 @@ import { expect, test } from './fixtures'
 
 test('Desktop shared routes remain responsive while background streams run', async ({ mainWindow }) => {
   await mainWindow.setViewportSize({ width: 1280, height: 820 })
-  await expect(mainWindow.locator('[data-shared-ui="responsive-workspace"]')).toBeVisible()
+  await expect(mainWindow.locator('[data-terminay-app-component]')).toBeVisible()
   await startDesktopBackgroundPressure(mainWindow)
 
   const latencies: number[] = []
