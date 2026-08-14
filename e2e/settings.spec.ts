@@ -71,7 +71,7 @@ test('shows selected-server extensions and saves a secret-backed connection prof
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-e2e-uploaded-extension' })).toContainText('1.0.0', { timeout: 30_000 })
   await expect(settingsWindow.getByRole('heading', { name: /Review terminay-e2e-uploaded-extension/u })).toHaveCount(0)
   await expect(settingsWindow.getByRole('status').filter({ hasText: /was installed/u })).toBeVisible()
-  const environmentsWindow = await appHarness.openChildWindow(async () => { await mainWindow.evaluate(async () => { await window.terminayProjectEnvironmentsHost?.open() }) })
+  const environmentsWindow = await appHarness.openProjectEnvironmentsWindow(mainWindow)
   await environmentsWindow.getByText('Add connection', { exact: true }).click()
   await environmentsWindow.getByRole('button', { name: 'New E2E uploaded' }).click()
   await expect(environmentsWindow.getByRole('heading', { name: 'Fixture connection' })).toBeVisible()
@@ -119,11 +119,7 @@ function npmPackArchive(files: Readonly<Record<string, string>>): Buffer {
 function writeOctal(target: Buffer, offset: number, length: number, value: number): void { const text = value.toString(8).padStart(length - 2, '0'); target.write(`${text}\0 `, offset, length, 'ascii') }
 
 test('opens Project Environments as a full auxiliary window', async ({ appHarness, mainWindow }) => {
-  const environmentsWindow = await appHarness.openChildWindow(async () => {
-    await mainWindow.evaluate(async () => {
-      await window.terminayProjectEnvironmentsHost?.open()
-    })
-  })
+  const environmentsWindow = await appHarness.openProjectEnvironmentsWindow(mainWindow)
 
 	await expect(
 		environmentsWindow.getByRole('heading', {

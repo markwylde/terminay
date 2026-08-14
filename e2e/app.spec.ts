@@ -1,18 +1,9 @@
 import type { ElectronApplication, Page } from '@playwright/test'
 import { expect, test } from './fixtures'
+import { presentNativeRoute, sendAppCommand as sendCanonicalAppCommand } from './support/app'
 
 async function sendAppCommand(page: Page, command: string): Promise<void> {
-  await page.evaluate(async (nextCommand) => {
-    const bridge = (window as Window & {
-      terminayTest?: { sendAppCommand: (command: string) => Promise<void> }
-    }).terminayTest
-
-    if (!bridge) {
-      throw new Error('terminayTest bridge is unavailable')
-    }
-
-    await bridge.sendAppCommand(nextCommand)
-  }, command)
+  await sendCanonicalAppCommand(page, command as import('../src/types/terminay').AppCommand)
 }
 
 async function openMacroLauncher(page: Page): Promise<void> {
@@ -117,9 +108,7 @@ test('opens and closes the file explorer sidebar', async ({ mainWindow }) => {
 
 test('opens the settings window', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
-    await mainWindow.evaluate(async () => {
-      await window.terminaySettingsWindowHost?.open()
-    })
+    await presentNativeRoute(mainWindow, '/settings', 'settings')
   })
 
   await expect(settingsWindow.getByRole('heading', { name: 'Settings' })).toBeVisible()
@@ -128,9 +117,7 @@ test('opens the settings window', async ({ electronApp, mainWindow }) => {
 
 test('captures and resets command shortcuts in settings', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
-    await mainWindow.evaluate(async () => {
-      await window.terminaySettingsWindowHost?.open()
-    })
+    await presentNativeRoute(mainWindow, '/settings', 'settings')
   })
 
   await settingsWindow.getByRole('button', { name: /Shortcuts/ }).click()
@@ -167,9 +154,7 @@ test('captures and resets command shortcuts in settings', async ({ electronApp, 
 
 test('updates menu accelerators when command shortcuts are cleared and reset', async ({ electronApp, mainWindow }) => {
   const settingsWindow = await openChildWindow(electronApp, async () => {
-    await mainWindow.evaluate(async () => {
-      await window.terminaySettingsWindowHost?.open()
-    })
+    await presentNativeRoute(mainWindow, '/settings', 'settings')
   })
 
   await settingsWindow.getByRole('button', { name: /Shortcuts/ }).click()
@@ -200,28 +185,20 @@ test('exposes a Window menu for multi-window management', async ({ electronApp }
   expect(hasWindowMenu).toBe(true)
 })
 
-test('runs customized app shortcuts from the keyboard', async ({ mainWindow }) => {
+test('runs customized app shortcuts from the keyboard', async ({ appHarness, mainWindow }) => {
   // Match the renderer's platform branch exactly. Chromium may report a
   // reduced navigator.platform while Electron's user agent still identifies
   // macOS, which otherwise makes this test send Control instead of Command.
   const isMac = await mainWindow.evaluate(() => navigator.userAgent.includes('Mac'))
 
-  await mainWindow.evaluate(async () => {
-    const changed = new Promise<void>((resolve) => {
-      const unsubscribe =
-        window.terminayTerminalSettingsCompatibilityHost.onTerminalSettingsChanged((message) => {
-          if (message.settings.keyboardShortcuts?.['new-terminal'] !== 'CmdOrCtrl+Y') return
-          unsubscribe()
-          resolve()
-        })
-    })
-    const settings = await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()
-    await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings({
-      ...settings,
-      keyboardShortcuts: { ...settings.keyboardShortcuts, 'new-terminal': 'CmdOrCtrl+Y' },
-    })
-    await changed
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'keyboard-shortcuts' })
+  const terminalShortcutRow = settingsWindow.locator('.settings-row').filter({
+    hasText: 'Create a new terminal tab',
   })
+  await terminalShortcutRow.getByRole('button', { name: 'Listen' }).click()
+  await settingsWindow.keyboard.press(isMac ? 'Meta+Y' : 'Control+Y')
+  await expect(terminalShortcutRow.locator('input')).toHaveValue('CmdOrCtrl+Y')
+  await settingsWindow.close()
 
   await expect(mainWindow.locator('.project-workspace--active')).toHaveAttribute(
     'data-new-terminal-shortcut',

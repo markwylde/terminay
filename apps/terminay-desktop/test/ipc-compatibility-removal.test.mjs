@@ -75,7 +75,8 @@ test("Folder panels do not require Desktop disconnected file compatibility in co
   assert.doesNotMatch(folder, /useDisconnectedFolderCompatibility/u);
   assert.doesNotMatch(folder, /useDisconnectedFileCompatibility\(/u);
   assert.equal(throwLines.some((line) => /disconnected file compatibility|Disconnected folder compatibility/u.test(line)), false);
-  assert.match(folder, /useOptionalDisconnectedFileCompatibility/u);
+  assert.doesNotMatch(folder, /useOptionalDisconnectedFileCompatibility/u);
+  assert.match(folder, /TerminalPanelClientContext|FileAuthorityUnavailableState/u);
 });
 
 test("Desktop does not expose legacy terminal creation through production IPC", async () => {
