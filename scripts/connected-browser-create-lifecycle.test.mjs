@@ -292,6 +292,42 @@ test('connected browser reconnect preserves server projects, panels, active pane
   assert.deepEqual(snapshots, ['workspace.snapshot', 'workspace.snapshot'])
 })
 
+test('an explicit empty server repository stays empty until an explicit user command', async () => {
+  const commands = []
+  const state = {
+    schemaVersion: 1,
+    serverId: 'browser-server',
+    revision: 0,
+    cursor: '0',
+    viewOrder: [],
+    views: {},
+    projects: {},
+    panels: {},
+    terminalSessions: {},
+  }
+  const transport = {
+    async command(operation, payload) {
+      commands.push([operation, payload])
+      throw new Error(`unexpected command ${operation}`)
+    },
+    async query() {
+      return { result: state }
+    },
+    async subscribe() {
+      return {
+        onEvent: () => () => {},
+        onResync: () => () => {},
+        unsubscribe: async () => {},
+      }
+    },
+  }
+
+  const workspace = new WorkspaceClient(transport)
+  assert.deepEqual(await workspace.snapshot(), state)
+  assert.deepEqual(await workspace.snapshot(), state)
+  assert.deepEqual(commands, [])
+})
+
 test('connected App plus paths do not synthesize project or terminal presentation', async () => {
   const [collection, creation, app] = await Promise.all([
     readFile('src/workspace/useProjectCollection.ts', 'utf8'),
@@ -314,10 +350,9 @@ test('connected App plus paths do not synthesize project or terminal presentatio
   assert.match(openTerminalAt, /workspaceSnapshotStore\?\.waitForSnapshot\(/u)
   assert.match(openTerminalAt, /getPanelForSession\(sessionId\)/u)
   assert.doesNotMatch(openTerminalAt, /api\.addPanel<TerminalPanelParams>/u)
-  assert.match(app, /initialTerminalSeededRef\.current/u)
-  assert.match(app, /serverSessions\.length > 0/u)
-  assert.match(app, /if \(serverPanel === undefined\) continue/u)
-  assert.match(app, /acceptServerTerminal\(\s*serverPanel\.id,\s*session\.id,\s*serverPanel\.title,\s*serverPanel\.cwd,\s*\)/u)
+  assert.doesNotMatch(app, /initialTerminalSeed(?:ed|Started|Promise|Attempt)/u)
+  assert.doesNotMatch(app, /app\.workspace\.seed\./u)
+  assert.doesNotMatch(app, /setTimeout\(\(\) => resolve\(addTerminal\(\{\}\)\)/u)
+  assert.match(app, /for \(const session of Object\.values\(snapshot\.terminalSessions\)\)/u)
   assert.match(app, /workspace\.acceptServerTerminal\(\s*panel\.id,\s*session\.id,\s*panel\.title,\s*panel\.cwd,\s*\)/u)
-  assert.match(app, /initialTerminalSeedPromiseRef\.current = seedPromise/u)
 })

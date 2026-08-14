@@ -17,3 +17,11 @@ test('canonical journey suite owns clean, populated, multi-window, and remote co
 	assert.match(remote, /authenticated remote Desktop renders the project-scoped shared shell locally/u);
 	assert.match(remote, /remote-desktop-rendered-proof/u);
 });
+
+test('the renderer never repairs an empty canonical workspace', async () => {
+	const app = await read('src/App.tsx');
+	assert.doesNotMatch(app, /initialTerminalSeed(?:ed|Started|Promise|Attempt)/u);
+	assert.doesNotMatch(app, /app\.workspace\.seed\./u);
+	assert.doesNotMatch(app, /setTimeout\(\(\) => resolve\(addTerminal\(\{\}\)\)/u);
+	assert.match(app, /for \(const session of Object\.values\(snapshot\.terminalSessions\)\)/u);
+});
