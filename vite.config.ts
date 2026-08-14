@@ -29,7 +29,6 @@ const nodeBuiltins = [
 ]
 
 const appInput = {
-  main: path.join(__dirname, 'index.html'),
   remote: path.join(__dirname, 'remote.html'),
 }
 
