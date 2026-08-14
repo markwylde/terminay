@@ -2476,7 +2476,9 @@ export function SettingsWindow({
 											: 'Advanced direct HTTPS connection on your configured interface. It runs independently and is never started as a WebRTC fallback.'}
 									</p>
 								</div>
-								{remoteStatus?.isRunning && (
+								{((selectedRemoteTab === 'webrtc' && remoteStatus?.isRunning) ||
+									(selectedRemoteTab === 'lan' &&
+										remoteStatus?.directListenerRunning)) && (
 									<button
 										type="button"
 										className="settings-primary-button"
@@ -3018,7 +3020,14 @@ export function SettingsWindow({
 											: 'soon'}
 									</p>
 									{selectedPairingUrl ? (
-										<button
+										<>
+											<p
+												className="settings-remote-meta"
+												data-testid="remote-pairing-link"
+											>
+												{selectedPairingUrl}
+											</p>
+											<button
 											type="button"
 											className="settings-remote-copy-button"
 											onClick={() => {
@@ -3035,7 +3044,8 @@ export function SettingsWindow({
 											}}
 										>
 											{isLinkCopied ? 'Copied' : 'Copy Link'}
-										</button>
+											</button>
+										</>
 									) : null}
 									{activePairingMode === 'webrtc' &&
 									remoteStatus?.webRtcStatusMessage ? (
