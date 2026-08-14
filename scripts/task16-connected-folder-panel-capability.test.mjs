@@ -7,34 +7,17 @@ const folderPanel = await readFile(
 	'utf8',
 );
 
-test('connected FolderPanel does not require disconnected compatibility', () => {
-	assert.doesNotMatch(folderPanel, /useDisconnectedFolderCompatibility\(\)/);
-	assert.match(
-		folderPanel,
-		/const disconnectedFileCompatibility =\s*useOptionalDisconnectedFileCompatibility\(\)/,
-	);
-	assert.match(
-		folderPanel,
-		/if \(terminalClientContext\?\.fileViewerClient !== undefined\)\s*return undefined;/,
-	);
-	assert.match(
-		folderPanel,
-		/terminalClientContext\?\.fileViewerClient \?\? desktopFileViewerClient/,
-	);
+test('FolderPanel fails closed until canonical selected-server clients are available', () => {
+	assert.match(folderPanel, /terminalClientContext\?\.fileViewerClient === undefined/);
+	assert.match(folderPanel, /terminalClientContext\.fileObservationClient === undefined/);
+	assert.match(folderPanel, /terminalClientContext\.projectRoot === undefined/);
+	assert.match(folderPanel, /FileAuthorityUnavailableState feature="Folder viewer"/);
+	assert.doesNotMatch(folderPanel, /DisconnectedFileCompatibility|desktopFileViewerClient|disconnectedFolderCompatibility/);
 });
 
-test('disconnected FolderPanel still fails closed without its provider', () => {
-	assert.match(
-		folderPanel,
-		/return disconnectedFileCompatibility\?\.folderPanel\.createClient\(\)/,
-	);
-	assert.match(
-		folderPanel,
-		/throw new Error\('The file viewer client is unavailable\.'\)/,
-	);
-	assert.doesNotMatch(folderPanel, /requireDisconnectedFolderCompatibility/);
-	assert.doesNotMatch(
-		folderPanel,
-		/Disconnected folder compatibility is unavailable/,
-	);
+test('FolderPanel operations preserve hydrated project identity', () => {
+	assert.match(folderPanel, /const projectId = terminalClientContext\.projectId/);
+	assert.match(folderPanel, /const projectRootPath = terminalClientContext\.projectRoot/);
+	assert.match(folderPanel, /fileViewerClient\.listFolder/);
+	assert.match(folderPanel, /fileObservationClient\.startWatch/);
 });

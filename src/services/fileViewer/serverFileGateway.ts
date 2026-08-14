@@ -14,18 +14,14 @@ const RANGE_BYTES = 1024 * 1024
 const FOLDER_TASK_QUERY_DEADLINE_MS = 8000
 
 /**
- * Read-only server-backed projection for the existing FilePanel. It keeps the
- * panel's Desktop path as presentation data but converts it to the canonical
- * project-relative protocol path before every server read. Writes, watches,
- * and Git discovery deliberately remain on the supplied compatibility gateway
- * until their server operations are composed into the Desktop host.
+ * Selected-server projection for FilePanel. Presentation paths are converted
+ * to canonical project-relative protocol paths before every operation.
  */
 export function createServerFileGateway(options: Readonly<{
   client: FileViewerClient
   observationClient?: FileObservationClient
   projectId: string
   projectRoot: string
-  compatibilityGateway?: FileViewerGateway
 }>): FileViewerGateway {
   const relative = (path: string) => toProjectRelativePath(options.projectRoot, path)
   const watchListeners = new Set<Parameters<FileViewerGateway['onFileWatchEvent']>[0]>()
@@ -90,7 +86,7 @@ export function createServerFileGateway(options: Readonly<{
       const revision = await options.client.getMutationRevision(relative(path), options.projectId)
       return { ino: revision.ino, mtimeMs: revision.mtimeMs, size: revision.size }
     },
-    getPreviewSource: options.compatibilityGateway?.getPreviewSource ?? unsupportedPreviewSource,
+    getPreviewSource: unsupportedPreviewSource,
     onFileWatchEvent(listener) {
       watchListeners.add(listener)
       return () => watchListeners.delete(listener)

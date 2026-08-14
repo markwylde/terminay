@@ -34,8 +34,8 @@ test("FolderPanel lists and expands directories through the connected server cat
   assert.match(listSource, /fileViewerClient\.listFolder\(/);
   assert.match(listSource, /toRelativePath\(rootPath, targetPath\)/);
   assert.match(source, /TerminalPanelClientContext/);
-  assert.match(source, /terminalClientContext\?\.fileViewerClient/);
-  assert.match(source, /useOptionalDisconnectedFileCompatibility/);
+	assert.match(source, /const fileViewerClient = terminalClientContext\.fileViewerClient/);
+	assert.doesNotMatch(source, /useOptionalDisconnectedFileCompatibility|disconnectedFolderCompatibility/);
   assert.match(
     source,
     /listDirectoryNodes\(\s*projectRootPath \?\? folderPath,\s*directoryPath,\s*fileViewerClient,\s*projectId,\s*\)/,
@@ -48,12 +48,10 @@ test("FolderPanel lists and expands directories through the connected server cat
   assert.doesNotMatch(source, /registerServerProjectRoot|server:register-project-root/u);
 });
 
-test("file viewer gateways bound folder task protocol queries", async () => {
+test("canonical file viewer gateway bounds folder task protocol queries", async () => {
   const serverGatewaySource = await readFile(new URL("../src/services/fileViewer/serverFileGateway.ts", import.meta.url), "utf8");
-  const terminayGatewaySource = await readFile(new URL("../src/services/fileViewer/terminayFileGateway.ts", import.meta.url), "utf8");
 
   assert.match(serverGatewaySource, /const FOLDER_TASK_QUERY_DEADLINE_MS = 8000/u);
   assert.match(serverGatewaySource, /getFolderMarkdownTasks\(relative\(path\), options\.projectId, taskOptions, \{ deadlineMs: FOLDER_TASK_QUERY_DEADLINE_MS \}\)/u);
-  assert.match(terminayGatewaySource, /const FOLDER_TASK_QUERY_DEADLINE_MS = 8000/u);
-  assert.match(terminayGatewaySource, /getFolderMarkdownTasks\(toProjectRelativePath\(projectRootPath, path\), undefined, options, \{ deadlineMs: FOLDER_TASK_QUERY_DEADLINE_MS \}\)/u);
+	assert.doesNotMatch(serverGatewaySource, /compatibilityGateway|terminayFileGateway/u);
 });
