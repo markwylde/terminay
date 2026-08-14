@@ -16,7 +16,14 @@ import {
 import { createDirectBrowserBundleHost } from '@terminay/web';
 import { renderDirectBrowserBootstrapFailure } from './bootstrapFailure';
 
-async function launchDirectBrowserWorkspace(): Promise<void> {
+/**
+ * Installs the session-origin browser host before mounting the canonical
+ * workspace. `remote.html` calls this directly for legacy routes; `server.html`
+ * calls it through web/main once the hosted bootstrap authority is present.
+ */
+export async function launchDirectBrowserWorkspace(
+	mountRoot?: HTMLElement,
+): Promise<void> {
 	let step:
 		| 'host-runtime'
 		| 'session-host'
@@ -119,7 +126,7 @@ async function launchDirectBrowserWorkspace(): Promise<void> {
 		});
 
 		step = 'application-mount';
-		const root = document.getElementById('remote-root');
+		const root = mountRoot ?? document.getElementById('remote-root');
 		if (root === null) throw new Error('Direct browser root is missing.');
 		mountWebManagerApp(root);
 	} catch (error) {
@@ -127,4 +134,6 @@ async function launchDirectBrowserWorkspace(): Promise<void> {
 	}
 }
 
-void launchDirectBrowserWorkspace();
+if (document.getElementById('remote-root') !== null) {
+	void launchDirectBrowserWorkspace();
+}
