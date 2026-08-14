@@ -5,6 +5,7 @@ import type { OperationRegistries, RequestContext } from '../types.js';
 import { THIS_SERVER_ENVIRONMENT_ID, type WorkspaceStore } from '../workspace.js';
 import type { ProjectEnvironmentRepository } from './repository.js';
 import type { EnvironmentProfile, ProjectEnvironmentRecord, ProjectEnvironmentState } from './types.js';
+import type { PreparedProjectRootUpdate } from '../workspaceProtocol.js';
 
 export const PROJECT_ENVIRONMENT_OPERATIONS = Object.freeze({
 	snapshot: 'project-environments.snapshot', createProject: 'project-environments.create-project',
@@ -31,6 +32,13 @@ export interface ProjectEnvironmentOperationOptions {
 	readonly providerDefinitions?: () => readonly ProviderDefinition[];
 	readonly providerRuntime?: { invokeProvider(invocation: ExtensionProviderInvocation): Promise<unknown> };
 	readonly thisServerRoot: () => string | Promise<string>;
+	/** Prepare the project filesystem binding before a newly-created project is
+	 * published. This keeps environment-created projects on the same canonical
+	 * file authority path as workspace.command project.create. */
+	readonly prepareProjectRootUpdate?: (
+		projectId: string,
+		root: string,
+	) => Promise<PreparedProjectRootUpdate>;
 	readonly onChanged?: (payload: JsonValue) => void;
 }
 
@@ -57,8 +65,18 @@ export function createProjectEnvironmentOperationHandlers(options: ProjectEnviro
 				: await requiredProvider(options).validateRoot?.(environment, payload.root === undefined ? undefined : text(payload, 'root', 4096), providerContext(request.context))
 					?? (() => { throw failure('unavailable', 'project environment root validation is unavailable', true); })();
 			const projectId = uniqueId(`project:${request.envelope.commandId}`, options.workspace.state.projects);
-			const result = options.workspace.apply({ commandId: `env:${request.envelope.commandId}`.slice(0, 128), expectedRevision: request.context.expectedRevision, command: { type: 'project.create', projectId, viewId: text(payload, 'viewId', 256), root: boundedRoot(root), rootOrigin: payload.root === undefined ? 'environment-default' : 'explicit', name: `Project ${Object.keys(options.workspace.state.projects).length + 1}`, projectEnvironmentId: environment.id, environmentRevision: environment.pinnedRevision } });
+			let prepared: PreparedProjectRootUpdate | undefined;
+			if (options.prepareProjectRootUpdate !== undefined) {
+				try {
+					prepared = await options.prepareProjectRootUpdate(projectId, root);
+				} catch {
+					throw failure('validation', 'project root is not an accessible directory', true);
+				}
+			}
+			const canonicalRoot = prepared?.canonicalRoot ?? boundedRoot(root);
+			const result = options.workspace.apply({ commandId: `env:${request.envelope.commandId}`.slice(0, 128), expectedRevision: request.context.expectedRevision, command: { type: 'project.create', projectId, viewId: text(payload, 'viewId', 256), root: canonicalRoot, rootOrigin: payload.root === undefined ? 'environment-default' : 'explicit', name: `Project ${Object.keys(options.workspace.state.projects).length + 1}`, projectEnvironmentId: environment.id, environmentRevision: environment.pinnedRevision } });
 			if (!result.ok) throw failure('conflict', result.conflict.message);
+			await prepared?.commit();
 			changed(options, state.revision);
 			return { result: operation(request.envelope.commandId, { environmentId: environment.id, projectId }), revision: result.revision };
 		},
