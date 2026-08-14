@@ -34,9 +34,9 @@ test(
 			evidence.push(restored);
 
 			assert.deepEqual(
-				stableIdentity(restored.identity),
-				stableIdentity(fresh.identity),
-				'restarting the packaged artifact must restore exact canonical identities without duplicate seed state',
+				restartedWorkspaceIdentity(restored.identity),
+				restartedWorkspaceIdentity(fresh.identity),
+				'restarting the packaged artifact must restore the canonical workspace without duplicate seed state',
 			);
 			assert.ok(
 				restored.identity.revision >= fresh.identity.revision,
@@ -129,7 +129,10 @@ async function exerciseLaunch({ expected, mode, userData }) {
 
 		const identity = await requireCanonicalReadiness(window);
 		if (expected !== undefined)
-			assert.deepEqual(stableIdentity(identity), stableIdentity(expected));
+			assert.deepEqual(
+				restartedWorkspaceIdentity(identity),
+				restartedWorkspaceIdentity(expected),
+			);
 		await requireNativeMenu(electronApp, window);
 		await requireSidebarQuery(window);
 		await requireTerminalInputOutput(window, mode);
@@ -160,8 +163,16 @@ async function exerciseLaunch({ expected, mode, userData }) {
 	}
 }
 
-function stableIdentity(identity) {
-	const { revision: _revision, ...stable } = identity;
+function restartedWorkspaceIdentity(identity) {
+	// A new local launch deliberately creates a new view and terminal after its
+	// predecessor exits. Their transient IDs must not be compared across restart.
+	const {
+		panelId: _panelId,
+		revision: _revision,
+		sessionId: _sessionId,
+		viewId: _viewId,
+		...stable
+	} = identity;
 	return stable;
 }
 
