@@ -457,6 +457,20 @@ export class LocalUiServer {
 					sendText(response, 400, 'credentials must not be placed in a URL');
 					return;
 				}
+				if (url.pathname === '/host-bootstrap.json') {
+					sendJson(
+						response,
+						200,
+						{
+							schemaVersion: 1,
+							serverId: this.options.serverId,
+							manifestPath: '/manifest.json',
+							streamPath: REMOTE_STREAM_PATH,
+						},
+						method === 'HEAD',
+					);
+					return;
+				}
 			if (
 				url.pathname === '/api/pairing/start' ||
 				url.pathname === '/api/pairing/complete'

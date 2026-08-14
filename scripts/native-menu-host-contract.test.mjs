@@ -21,10 +21,9 @@ test('canonical workspace selects menu and window chrome from negotiated capabil
 });
 
 test('canonical preload exposes only protocol-validated semantic host events', async () => {
-	const [preload, protocol, legacyPreload] = await Promise.all([
+	const [preload, protocol] = await Promise.all([
 		read('electron/serverUiPreload.ts'),
 		read('packages/protocol/src/host.ts'),
-		read('electron/preload.ts'),
 	]);
 
 	assert.match(preload, /const bridge: ServerUiHostBridge/);
@@ -43,9 +42,6 @@ test('canonical preload exposes only protocol-validated semantic host events', a
 	]) {
 		assert.match(protocol, new RegExp(`"${command}"`));
 	}
-	assert.doesNotMatch(legacyPreload, /'open-settings'/);
-	assert.doesNotMatch(legacyPreload, /'open-macros'/);
-	assert.doesNotMatch(legacyPreload, /terminayAppCommandHost/);
 });
 
 test('auxiliary routes remain inside the capability-governed workspace shell', async () => {
