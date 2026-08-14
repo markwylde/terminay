@@ -31,12 +31,6 @@ test('remaining privileged handlers enforce trusted renderer provenance first', 
     'test:create-server-terminal',
     'secrets:save',
     'secrets:get-decrypted',
-    'desktop:workspace-transfer-host:get-adopted-project',
-    'desktop:workspace-transfer-host:popout-project',
-    'desktop:workspace-transfer-host:merge-project',
-    'desktop:project-tab-host:publish-bar-rect',
-    'desktop:project-tab-host:start-drag',
-    'desktop:project-tab-host:end-drag',
     'test:get-mcp-control-environment',
     'test:send-app-command',
     'test:set-ai-tab-metadata-mock',
@@ -110,3 +104,4 @@ test('privileged IPC registration modules require the trusted sender before serv
     }
   }
 })
+
