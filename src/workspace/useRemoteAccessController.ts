@@ -17,6 +17,7 @@ export function useRemoteAccessController(
 	pairingPinClient: RemotePairingPinClient | undefined,
 	statusClient: RemoteAccessStatusClient | undefined,
 	settingsClient: TerminalSettingsClient,
+	openSettings: (sectionId: string) => Promise<void>,
 ) {
 	const [status, setStatus] = useState<RemoteAccessStatus | null>(null);
 	const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
@@ -184,7 +185,7 @@ export function useRemoteAccessController(
 				);
 			}
 			if (status?.configurationIssue) {
-				await window.terminaySettingsWindowHost?.open('remote-access-host');
+				await openSettings('remote-access-host');
 				return;
 			}
 			if (!status?.isRunning && !(await selectMode('webrtc'))) return;
@@ -204,6 +205,7 @@ export function useRemoteAccessController(
 		status?.configurationIssue,
 		status?.isRunning,
 		statusClient,
+		openSettings,
 	]);
 
 	const openPairingQr = useCallback(
@@ -227,7 +229,7 @@ export function useRemoteAccessController(
 					);
 				}
 				if (status?.configurationIssue) {
-					await window.terminaySettingsWindowHost?.open('remote-access-host');
+					await openSettings('remote-access-host');
 					return;
 				}
 				if (!(await selectMode(mode))) return;
@@ -256,7 +258,15 @@ export function useRemoteAccessController(
 				recordFailure(error);
 			}
 		},
-		[ensurePin, recordFailure, selectMode, selectedMode, status, statusClient],
+		[
+			ensurePin,
+			openSettings,
+			recordFailure,
+			selectMode,
+			selectedMode,
+			status,
+			statusClient,
+		],
 	);
 
 	const addresses = status?.availableAddresses ?? [];

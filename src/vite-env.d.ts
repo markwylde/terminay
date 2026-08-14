@@ -215,33 +215,6 @@ declare global {
 			): Promise<void>;
 		};
 		/** Bounded native settings-window capability for the current Desktop shell. */
-		terminaySettingsWindowHost?: {
-			readonly version: 1;
-			subscribeFocusSection(
-				listener: (message: { sectionId: string }) => void,
-			): () => void;
-			open(sectionId?: string): Promise<void>;
-		};
-		/** Bounded native project-environments window capability. */
-		terminayProjectEnvironmentsHost?: {
-			readonly version: 1;
-			open(
-				intent?: Readonly<{
-					providerId: string;
-					mode: 'profile' | 'environment';
-					profileId?: string;
-				}>,
-			): Promise<void>;
-			subscribeIntent(
-				listener: (
-					intent: Readonly<{
-						providerId: string;
-						mode: 'profile' | 'environment';
-						profileId?: string;
-					}>,
-				) => void,
-			): () => void;
-		};
 		/** Bounded native tab-bar presentation for the current Desktop window. */
 		terminayProjectTabHost?: {
 			readonly version: 1;

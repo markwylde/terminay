@@ -936,37 +936,6 @@ export function SettingsWindow({
 	}, [activeCategoryId, activeSectionId, filteredSections, normalizedQuery]);
 
 	useEffect(() => {
-		const unsubscribe =
-			window.terminaySettingsWindowHost?.subscribeFocusSection(
-				({ sectionId }) => {
-					if (sectionId === 'extensions') {
-						setActiveCategoryId('extensions');
-						setActiveSectionId('extensions');
-						setQuery('');
-						return;
-					}
-					const section = terminalSettingsSections.find(
-						(candidate) => candidate.id === sectionId,
-					);
-					if (!section) {
-						return;
-					}
-
-					setActiveCategoryId(section.categoryId);
-					setActiveSectionId(section.id);
-					window.requestAnimationFrame(() => {
-						const element = document.getElementById(`section-${section.id}`);
-						element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-					});
-				},
-			);
-
-		return () => {
-			unsubscribe?.();
-		};
-	}, [remoteAccessStatusClient]);
-
-	useEffect(() => {
 		const root = contentRef.current;
 		if (!root) {
 			return;

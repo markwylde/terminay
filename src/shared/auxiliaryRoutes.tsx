@@ -68,19 +68,9 @@ export function createAuxiliaryRouteController({
 
 	return Object.freeze({
 		async openSettings(sectionId) {
-			const host = getWindow()?.terminaySettingsWindowHost;
-			if (host !== undefined) {
-				await host.open(sectionId);
-				return;
-			}
 			await requestInPage({ kind: 'settings', sectionId });
 		},
 		async openProjectEnvironments(intent) {
-			const host = getWindow()?.terminayProjectEnvironmentsHost;
-			if (host !== undefined) {
-				await host.open(intent);
-				return;
-			}
 			await requestInPage({
 				kind: 'project-environments',
 				...(intent === undefined ? {} : { intent }),

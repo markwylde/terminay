@@ -21,6 +21,7 @@ export function RemoteAccessConnectionMenu(props: {
 	onOpenConnection: () => void;
 	onDisconnect?: () => void;
 	onOpenPairingQr: () => void;
+	onOpenSettings: () => void;
 	onSelectConnection?: (profileId: string) => void;
 	onToggleExposure: () => void;
 	onToggleMenu: () => void;
@@ -190,9 +191,7 @@ export function RemoteAccessConnectionMenu(props: {
 					<button
 						type="button"
 						className="remote-access-menu__item"
-						onClick={() =>
-							void window.terminaySettingsWindowHost?.open('remote-access-host')
-						}
+						onClick={props.onOpenSettings}
 					>
 						<span>Remote Access Settings</span>
 						<span className="remote-access-menu__meta">Open</span>
