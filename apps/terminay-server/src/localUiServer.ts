@@ -614,6 +614,13 @@ export class LocalUiServer {
 		host: string | undefined,
 	): string | undefined {
 		if (origin === undefined || !isProtocolPath(pathname)) return undefined;
+		// Canonical Desktop documents are loaded from a private `file:` bundle and
+		// Chromium serializes that opaque origin as `null`.  Protocol endpoints
+		// still require their bearer/subprotocol capability below; allowing this
+		// exact opaque origin is what lets a user paste an authenticated pairing
+		// URL into Desktop without weakening the token boundary or falling back to
+		// a renderer-local server implementation.
+		if (origin === 'null') return origin;
 		const normalizedOrigin = normalizeRequestOrigin(origin);
 		if (normalizedOrigin === null) return undefined;
 		if (sameOriginHost(normalizedOrigin, host)) return origin;
