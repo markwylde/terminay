@@ -19,10 +19,11 @@ summary. That summary is the handoff into the deployment lock below; the
 resulting manifest digest must still be recorded and validated before any CDN
 origin is changed.
 
-The image workflows publish Linux `amd64` and `arm64` manifests, attach an
-SBOM and BuildKit provenance attestation, and label images with the source,
-revision, and version. A pull request builds the server image for smoke tests
-but must not publish either image.
+The server image publishes Linux `amd64` and `arm64` manifests. The static web
+image publishes Linux `amd64` only. Both attach an SBOM and BuildKit provenance
+attestation and are labelled with the source, revision, and version. A pull
+request builds the server image for smoke tests but must not publish either
+image.
 
 ## Selecting an image
 
