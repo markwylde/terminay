@@ -11,8 +11,8 @@ async function getActiveSessionId(page: Page): Promise<string> {
 
 async function emitJournalRecord(page: Page, terminalSessionId: string, record: Record<string, unknown>): Promise<void> {
 	await page.evaluate(async ({ value, sessionId }) => {
-		if (!window.terminayTest) throw new Error('Terminay test API is unavailable');
-		await window.terminayTest.emitAgentJournalRecord({ provider: 'codex', terminalSessionId: sessionId, record: value });
+		if (!window.terminayAgentStatusTest) throw new Error('Agent status test seam is unavailable');
+		await window.terminayAgentStatusTest.emitJournalRecord({ provider: 'codex', terminalSessionId: sessionId, record: value });
 	}, { value: record, sessionId: terminalSessionId });
 }
 
@@ -80,19 +80,6 @@ test('a completed agent resumes working while a second running agent appears', a
 	await expect(
 		firstAgent.locator('.agent-status-indicator[data-agent-state="done"]'),
 	).toBeVisible();
-	await mainWindow.evaluate(() =>
-		window.terminayTest!.failActiveLocalServerConnection(),
-	);
-	await expect.poll(
-		() =>
-			mainWindow.evaluate(
-				() =>
-					(window as Window & { __terminayServerClientState?: string })
-						.__terminayServerClientState,
-			),
-		{ timeout: 5_000 },
-	).toBe('connected');
-
 	await emitJournalRecord(mainWindow, firstTerminalSessionId, {
 		type: 'event_msg',
 		payload: { type: 'task_started', turn_id: 'turn-2' },

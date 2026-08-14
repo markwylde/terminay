@@ -118,3 +118,27 @@ if (
 	(process as NodeJS.Process & { isMainFrame?: boolean }).isMainFrame !== false
 )
 	contextBridge.exposeInMainWorld('terminayBytes', bytes);
+
+// Agent journal records are privileged server lifecycle input, so production
+// renderer code has no operation that can manufacture them. The E2E harness
+// gets one deliberately narrow, production-inert seam to exercise the real
+// server-owned journal reducer and its canonical client projection.
+if (
+	process.env.TERMINAY_TEST === '1' &&
+	(process as NodeJS.Process & { isMainFrame?: boolean }).isMainFrame !== false
+) {
+	contextBridge.exposeInMainWorld(
+		'terminayAgentStatusTest',
+		Object.freeze({
+			emitJournalRecord: (payload: {
+				provider: 'codex' | 'claude';
+				terminalSessionId: string;
+				record: Record<string, unknown>;
+			}) =>
+				ipcRenderer.invoke(
+					'test:emit-agent-journal-record',
+					payload,
+				) as Promise<boolean>,
+		}),
+	);
+}

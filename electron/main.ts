@@ -3518,7 +3518,7 @@ if (process.env.TERMINAY_TEST === '1') {
 				record?: unknown;
 			},
 		) => {
-			assertTrustedAppSender(event);
+			assertBoundServerUiEvent(event);
 			if (!isAgentProvider(payload?.provider)) {
 				throw new Error('A supported agent provider is required.');
 			}

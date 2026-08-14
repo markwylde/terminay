@@ -34,8 +34,14 @@ declare global {
 			subscribe(listener: (frame: Uint8Array | null) => void): () => void;
 		};
 		terminayTest?: TerminayTestApi;
+		terminayAgentStatusTest?: {
+			emitJournalRecord: (payload: {
+				provider: 'codex' | 'claude';
+				terminalSessionId: string;
+				record: Record<string, unknown>;
+			}) => Promise<boolean>;
+		};
 	}
 }
 
 export {};
-
