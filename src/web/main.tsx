@@ -357,6 +357,8 @@ export default function WebManagerApp() {
 		useState<ActiveTerminalConnection | null>(null);
 	const [desktopHostContext, setDesktopHostContext] =
 		useState<TerminayHostContext | undefined>();
+	const [desktopConnectionGeneration, setDesktopConnectionGeneration] =
+		useState(0);
 	const recoveryWatermarks = useRef(
 		new Map<string, Readonly<{ revision: number; cursor: string }>>(),
 	);
@@ -451,7 +453,10 @@ export default function WebManagerApp() {
 					throw new Error('Desktop connected to the wrong Terminay Server.');
 				const connectedContext = await createConnectedServerClientContext(client, hello, {
 					onTransportClosed: () => {
-						if (!cancelled) setError('The Desktop server connection closed.');
+						if (!cancelled) {
+							setError('Connection lost. Reconnecting…');
+							setDesktopConnectionGeneration((generation) => generation + 1);
+						}
 					},
 				});
 				if (cancelled) {
@@ -495,7 +500,7 @@ export default function WebManagerApp() {
 			setDesktopHostContext(undefined);
 			void client?.close().catch(() => undefined);
 		};
-	}, [hasDesktopServerBootstrap]);
+	}, [hasDesktopServerBootstrap, desktopConnectionGeneration]);
 
 	useEffect(() => {
 		const url = new URL(window.location.href);
