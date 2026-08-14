@@ -101,6 +101,11 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
       const pendingData: string[] = [];
       let pendingExit: { readonly exitCode: number; readonly signal?: number } | undefined;
       const childData = child.onData((data) => {
+        // Output is an authoritative indication that the PTY advanced. Refresh
+        // the foreground projection at the same host boundary so a delayed or
+        // starved interval cannot leave destructive-close protection stale.
+        // The interval remains necessary for silent foreground processes.
+        foreground.poll();
         if (dataListeners.size === 0) {
           pendingData.push(data);
           return;
@@ -192,7 +197,7 @@ function createForegroundObserver(
   child: NodePtyProcessLike,
   shellProcess: string,
   polling: ForegroundPolling,
-): { readonly subscribe: (listener: NodePtyForegroundListener) => Unsubscribe; readonly dispose: () => void } {
+): { readonly subscribe: (listener: NodePtyForegroundListener) => Unsubscribe; readonly poll: () => void; readonly dispose: () => void } {
   const listeners = new Set<NodePtyForegroundListener>();
   let timer: unknown | undefined;
   let lastProcess: string | undefined;
@@ -216,6 +221,7 @@ function createForegroundObserver(
   };
 
   return {
+    poll,
     subscribe(listener: NodePtyForegroundListener): Unsubscribe {
       if (typeof listener !== "function") throw new TypeError("foreground listener must be a function");
       if (disposed) return () => {};
