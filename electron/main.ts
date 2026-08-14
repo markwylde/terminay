@@ -474,7 +474,7 @@ function applyAgentIntegrationSetting(
 // The token both authorizes the local control socket and anchors scope (the
 // session, hence the project, the calling agent lives in).
 interface ControlTokenRecord {
-	projectId: string;
+	projectId?: string;
 	token: string;
 	sessionId: string;
 	webContentsId: number;
@@ -1218,7 +1218,10 @@ async function createServerOwnedTerminalSession(
 	const settings = readTerminalSettings();
 	let controlEnv: { socketPath: string; token: string } | undefined;
 	if (settings.terminayMcp.enabled) {
-		const token = registerControlToken(id, webContentsId);
+		// The capability must exist before spawning the shell, while the
+		// authority session is only published by create() below. Bind the known
+		// requested project explicitly so resolution still fails closed later.
+		const token = registerControlToken(id, webContentsId, projectId);
 		controlEnv = { socketPath: getControlSocketPath(), token };
 	}
 	try {
@@ -1669,17 +1672,16 @@ function getMcpServerCommand(): McpServerCommand {
 function registerControlToken(
 	sessionId: string,
 	webContentsId: number,
+	projectId?: string,
 ): string {
-	const session = serverTerminalAuthority?.get(sessionId);
-	if (session === undefined) {
-		throw new Error('Cannot create a control capability for an unknown terminal.');
-	}
 	removeControlToken(sessionId);
 	const token = randomUUID();
+	const resolvedProjectId =
+		projectId ?? serverTerminalAuthority?.get(sessionId)?.projectId;
 	controlTokensByToken.set(token, {
 		token,
 		sessionId,
-		projectId: session.projectId,
+		...(resolvedProjectId === undefined ? {} : { projectId: resolvedProjectId }),
 		webContentsId,
 	});
 	controlTokensBySession.set(sessionId, token);
@@ -1700,7 +1702,10 @@ function resolveControlScope(token: string): ControlServerScope | null {
 		return null;
 	}
 	const session = serverTerminalAuthority?.get(record.sessionId);
-	if (session?.status !== 'running' || session.projectId !== record.projectId) {
+	if (
+		session?.status !== 'running' ||
+		(record.projectId !== undefined && session.projectId !== record.projectId)
+	) {
 		return null;
 	}
 	return { sessionId: record.sessionId, webContentsId: record.webContentsId };

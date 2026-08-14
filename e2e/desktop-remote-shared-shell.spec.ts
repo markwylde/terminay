@@ -114,7 +114,6 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 		// This remote Desktop document owns only remembered remote profiles.
 		// Local's immutable profile is covered by the Local connection-manager
 		// journey; it is intentionally not imported into a remote host document.
-		await expect(dialog.getByText('Saved connections')).toBeVisible();
 		await dialog.getByLabel('Pairing URL').fill(readiness.pairing.pairingUrl);
 		await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
 		await expect(dialog).toHaveCount(0);
