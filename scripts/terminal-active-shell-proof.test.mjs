@@ -11,6 +11,8 @@ test('configured-shell proof waits for the new canonical session and prompt', ()
 	assert.match(source, /previousSessionId/u);
 	assert.match(source, /\.not\.toBe\(previousSessionId\)/u);
 	assert.match(source, /toContainText\(\/\[\$#\]/u);
-	assert.match(source, /keyboard\.insertText\('printenv BASH_VERSION'\)/u);
+	assert.match(source, /keyboard\.insertText\('shopt login_shell'\)/u);
+	assert.match(source, /toContainText\('shopt login_shell'\)/u);
+	assert.match(source, /login_shell\\s\+off/u);
 	assert.doesNotMatch(source, /terminayTest|writeServerTerminal|keyboard\.type/u);
 });
