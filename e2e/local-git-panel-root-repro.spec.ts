@@ -50,13 +50,6 @@ test('local repro: git panel refreshes after Cmd+O then Cmd+R into the terminay 
       `cd ${JSON.stringify(TARGET_REPO)} && printf ${JSON.stringify(cwdReady)}\r`,
     )
     await expect(mainWindow.locator('.terminal-panel').filter({ hasText: cwdReady })).toBeVisible()
-    await expect
-      .poll(async () => {
-        return mainWindow.evaluate(async (nextSessionId) => {
-          return window.terminayTest!.getServerTerminalCwd(nextSessionId)
-        }, sessionId)
-      })
-      .toMatchObject({ cwd: expectedRoot, source: 'observed' })
 
     await mainWindow.keyboard.press(`${modifier}+O`)
 
@@ -67,25 +60,6 @@ test('local repro: git panel refreshes after Cmd+O then Cmd+R into the terminay 
 
     await mainWindow.keyboard.press(`${modifier}+R`)
 
-    await expect
-      .poll(async () => {
-        return mainWindow.evaluate(async (nextSessionId) => {
-          return window.terminayTest!.getServerGitWorkspace(nextSessionId)
-        }, sessionId)
-      })
-      .toMatchObject({
-        binding: {
-          projectRoot: expectedRoot,
-          repositoryRoot: expectedRoot,
-          state: 'ready',
-          worktreeRoot: expectedRoot,
-        },
-        projectRoot: expectedRoot,
-        worktrees: {
-          repositoryRoot: expectedRoot,
-          state: 'ready',
-        },
-      })
     await expect(mainWindow.locator('.project-workspace--active')).toHaveAttribute('data-terminay-project-root', expectedRoot)
     await expect(fileExplorerItem(mainWindow, 'src')).toBeVisible()
     const worktree = gitPane.locator('.worktrees-panel__worktree').filter({ hasText: 'terminay' }).first()

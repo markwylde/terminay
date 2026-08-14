@@ -76,6 +76,8 @@ test('Desktop selects a standalone server and its canonical session survives ren
 		await mainWindow.getByLabel('Open connection menu').click();
 		await mainWindow.getByRole('button', { name: /Add connection/u }).click();
 		const dialog = mainWindow.getByRole('dialog', { name: 'Connections' });
+		await expect(dialog).toBeVisible();
+		await dialog.getByRole('button', { name: 'Add connection…' }).click();
 		await dialog.getByLabel('Pairing URL').fill(readiness.pairing.pairingUrl);
 		await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
 		await expect(mainWindow.getByLabel('Open connection menu')).toContainText('127.0.0.1');
