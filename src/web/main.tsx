@@ -1039,7 +1039,18 @@ export default function WebManagerApp() {
 		const displayOrigin = origin.split('#', 1)[0] ?? origin;
 		const parsed = new URL(displayOrigin);
 		const stableProfileId = createProfileId(parsed.hostname);
-		const clientId = createWebClientId('web-webrtc');
+		// A session-host connection has no HTTP reconnect handshake to recover its
+		// renderer identity for us. Keep the same identity for the profile across
+		// initial pairing and a replacement lane so the server replaces this
+		// browser's terminal attachment instead of leaving it as a stale observer.
+		const existingProfile = host.profiles
+			.snapshot()
+			.profiles.find((profile) => profile.origin === parsed.origin);
+		const profileId = existingProfile?.id ?? stableProfileId;
+		const clientId =
+			clientIdsByProfile.current.get(profileId) ??
+			createWebClientId('web-webrtc');
+		clientIdsByProfile.current.set(profileId, clientId);
 		const client = new TerminayClient({
 			transport,
 			clientId,
@@ -1054,11 +1065,8 @@ export default function WebManagerApp() {
 		});
 		try {
 			const hello = await client.connect();
-			const existing = host.profiles
-				.snapshot()
-				.profiles.find((profile) => profile.origin === parsed.origin);
 			const profile =
-				existing ??
+				existingProfile ??
 					host.addConnection({
 					id: stableProfileId,
 					serverId: hello.serverId,

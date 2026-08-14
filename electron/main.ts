@@ -318,28 +318,17 @@ function allowPrimaryWindowPermission(
 	);
 }
 
-/** Apply one explicit deny-by-default policy to every privileged renderer.
- * The app's own origin is the only allowed navigation target; external links
- * go through the validated host action instead of becoming renderer windows. */
+/** Apply the process-wide, renderer-agnostic hardening shared by every native
+ * shell. The exact navigation allowlist belongs to the current server-UI
+ * document binding in `bindServerUiWindow`: a Desktop window can legitimately
+ * switch from the embedded bundle to a verified remote bundle, whose file root
+ * is not this application's static `dist` directory. Keeping the old
+ * application-root allowlist here silently prevented that committed switch and
+ * left the Connections dialog mounted. */
 function securePrimaryWindow(window: BrowserWindow): void {
 	const contents = window.webContents;
 	contents.setWindowOpenHandler(() => ({ action: 'deny' }));
 	contents.on('will-attach-webview', (event) => event.preventDefault());
-	const frameNavigations = contents as unknown as {
-		on(
-			event: 'will-frame-navigate',
-			listener: (event: Electron.Event, url: string) => void,
-		): void;
-	};
-	frameNavigations.on('will-frame-navigate', (event, url) => {
-		if (!isAppNavigation(url)) event.preventDefault();
-	});
-	contents.on('will-navigate', (event, url) => {
-		if (!isAppNavigation(url)) event.preventDefault();
-	});
-	contents.on('will-redirect', (event, url) => {
-		if (!isAppNavigation(url)) event.preventDefault();
-	});
 	secureSession(contents.session, allowPrimaryWindowPermission);
 }
 
@@ -2840,18 +2829,6 @@ function createWindow(options?: {
 
 	window.webContents.on('did-create-window', (childWindow) => {
 		securePrimaryWindow(childWindow);
-	});
-
-	window.webContents.on('will-navigate', (event) => {
-		if (
-			launchRecoveryWebContents.has(windowWebContentsId) &&
-			event.url.startsWith('data:text/html;charset=UTF-8,')
-		) return;
-		if (isAppNavigation(event.url)) {
-			return;
-		}
-
-		event.preventDefault();
 	});
 
 	// Startup resolves and verifies the selected server's exact UI artifact
