@@ -3,7 +3,7 @@ import { type CreateServerUiWindowOptions, createServerUiWindow } from './server
 
 export type CreateDesktopServerUiWindowOptions = Omit<CreateServerUiWindowOptions, 'onHostAction'> & {
 	readonly context: TerminayHostContext;
-	readonly onHostAction?: (request: TerminayHostActionRequest, context: TerminayHostContext) => Promise<void> | void;
+	readonly onHostAction?: (request: TerminayHostActionRequest, context: TerminayHostContext) => Promise<unknown> | unknown;
 };
 
 /** The sole production window composition for verified Local and remote
