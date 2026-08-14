@@ -77,6 +77,10 @@ the host bridge never answers or translates server settings operations. Shared
 components do not subscribe to preload events directly.
 File-panel diff-layout changes use the same settings command facade and remain
 server-authoritative across the shared UI hosts.
+Macro definitions and secret actions likewise require an explicitly supplied
+selected-server client. There is no ambient macro compatibility context or
+preload-shaped fallback; a host without secret capability returns a typed
+unavailable error while macro definitions remain server-authoritative.
 
 API keys and other secrets use the appropriate server or client vault and are
 never returned as plaintext after being saved. Settings that enable

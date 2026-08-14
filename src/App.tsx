@@ -1617,7 +1617,6 @@ const ProjectWorkspace = forwardRef<
 		} = useTerminalRecordingController({
 			applyState: applyTerminalRecordingState,
 			getStartMetadata: getRecordingStartMetadataForSession,
-			legacyClient: undefined,
 			projectId: project.id,
 			serverClient: serverRecordingsClient,
 			setErrorText,

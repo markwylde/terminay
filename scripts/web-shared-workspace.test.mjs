@@ -46,7 +46,7 @@ test('web production mounts the canonical connected renderer and App tree', () =
 
 test('connected web host injects browser adapters and preserves the disconnected manager', () => {
 	assert.match(webMount, /createBrowserTerminalSettingsClient/u);
-	assert.match(webMount, /createBrowserMacroSettingsCapability/u);
+	assert.match(webMount, /createBrowserMacroSettingsClient/u);
 	assert.match(webMount, /SharedConnectionsRouteBody/u);
 	assert.match(webMount, /onOpenConnectionManager/u);
 	assert.doesNotMatch(webMount, /window\.terminay|new Terminal\(/u);

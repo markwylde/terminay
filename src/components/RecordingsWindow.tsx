@@ -22,10 +22,9 @@ import {
   type ReplayCursor,
   type ReplayIndex,
 } from '../recordingReplay'
-import { createLegacyRecordingsClient, toLegacyRecordingMetadata } from '../services/recordings/legacyRecordingsClient'
 import { SharedRecordingsLibraryPane } from '../shared/SharedRecordingsLibraryPane'
 import { SharedRecordingsRouteBody } from '../shared/SharedRecordingsRouteBody'
-import type { RecordingsClient } from '@terminay/client-core'
+import type { RecordingListItem, RecordingsClient } from '@terminay/client-core'
 import '../settings.css'
 import '../recordings.css'
 
@@ -410,23 +409,46 @@ function measureReplayTerminal(root: HTMLElement): ElementSize {
   }
 }
 
-function missingRecordingsClient(): never {
-  throw new Error('Recording service capability is unavailable')
+/** Project the selected server's validated recording DTO into the existing
+ * timeline presentation model. Host paths and host-only presentation metadata
+ * are deliberately absent from the canonical protocol. */
+function toRecordingMetadata(item: RecordingListItem): TerminalRecordingListItem {
+  return {
+    version: 2,
+    bytesWritten: item.bytesWritten,
+    castAvailable: item.castAvailable,
+    capturedInput: item.capturedInput,
+    color: item.color,
+    cols: 80,
+    cwdLabel: item.cwdLabel,
+    durationMs: item.durationMs,
+    endedAt: item.endedAt,
+    errorMessage: item.errorMessage,
+    eventCount: item.eventCount,
+    exitCode: item.exitCode,
+    inputPolicy: item.inputPolicy,
+    projectColor: null,
+    projectEmoji: item.emoji,
+    projectId: item.projectId,
+    projectTitle: item.projectName,
+    recordingId: item.recordingId,
+    recordingState: item.recordingState,
+    rows: 24,
+    sensitiveInputPolicy: item.sensitiveInputPolicy,
+    sessionId: item.sessionId,
+    shellName: item.shellName,
+    signal: item.signal,
+    startedAt: item.startedAt,
+    theme: null,
+    title: item.title,
+  }
 }
 
-export function RecordingsWindow({ client }: { readonly client?: RecordingsClient } = {}) {
+export function RecordingsWindow({ client }: { readonly client: RecordingsClient }) {
   const { settings } = useTerminalSettings()
-  const legacyRecordingsClient = useMemo(() => {
-    if (client !== undefined) return undefined
-    if (window.terminayRecordingServiceHost === undefined) {
-      throw new Error('Desktop recording service capability is unavailable')
-    }
-    return createLegacyRecordingsClient(window.terminayRecordingServiceHost)
-  }, [client])
-  const recordingsClient: RecordingsClient = client ?? legacyRecordingsClient ?? missingRecordingsClient()
   const readRecordingChunk = useCallback(
-    (request: { recordingId: string; start?: number; maxBytes?: number }) => recordingsClient.replay(request.recordingId, request),
-    [recordingsClient],
+    (request: { recordingId: string; start?: number; maxBytes?: number }) => client.replay(request.recordingId, request),
+    [client],
   )
   const terminalViewportRef = useRef<HTMLDivElement | null>(null)
   const terminalRootRef = useRef<HTMLDivElement | null>(null)
@@ -573,7 +595,7 @@ export function RecordingsWindow({ client }: { readonly client?: RecordingsClien
     setIsLoading(true)
     setErrorText(null)
     try {
-      const nextRecordings = (await recordingsClient.list()).items.map(toLegacyRecordingMetadata)
+      const nextRecordings = (await client.list()).items.map(toRecordingMetadata)
       setRecordings(nextRecordings)
       setSelectedRecordingId((current) =>
         current && nextRecordings.some((recording) => recording.recordingId === current)
@@ -584,7 +606,7 @@ export function RecordingsWindow({ client }: { readonly client?: RecordingsClien
     } finally {
       setIsLoading(false)
     }
-  }, [recordingsClient])
+  }, [client])
 
   useEffect(() => {
     void loadRecordings()
@@ -944,7 +966,7 @@ export function RecordingsWindow({ client }: { readonly client?: RecordingsClien
     if (!selectedRecording) {
       return
     }
-    await recordingsClient.delete(selectedRecording.recordingId)
+    await client.delete(selectedRecording.recordingId)
     setSelectedRecordingId(null)
     setReplayIndex(null)
     replayIndexRef.current = null
@@ -985,7 +1007,7 @@ export function RecordingsWindow({ client }: { readonly client?: RecordingsClien
               <button
                 type="button"
                 className="recordings-secondary-button"
-                onClick={() => void recordingsClient.reveal(selectedRecording.recordingId)}
+                onClick={() => void client.reveal(selectedRecording.recordingId)}
               >
                 <ExternalLink size={15} />
                 Reveal

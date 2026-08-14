@@ -176,7 +176,7 @@ test('the recording controller owns terminal recording lifecycle', () => {
 	assert.match(terminalRecordingController, /const startRecordingForSession = useCallback/);
 	assert.match(terminalRecordingController, /const stopRecordingForSession = useCallback/);
 	assert.match(terminalRecordingController, /const hydrateRecordingStateForSession = useCallback/);
-	assert.match(terminalRecordingController, /legacyClient\.onStateChanged\(applyState\)/);
+	assert.doesNotMatch(terminalRecordingController, /legacyClient|onStateChanged/);
 });
 
 test('the activity controller owns evaluation and timer lifecycle', () => {

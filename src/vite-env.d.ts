@@ -86,9 +86,6 @@ declare global {
 		terminayTerminalSettingsCompatibilityHost: import('./services/settings/legacySettingsCapability').LegacySettingsApi & {
 			readonly version: 1;
 		};
-		terminayMacroSettingsCompatibilityHost: import('./services/macros/legacyMacroSettingsCapability').LegacyMacroSettingsApi & {
-			readonly version: 1;
-		};
 		terminayAiMetadataHost: import('./services/ai/legacyAiTabMetadataClient').LegacyAiTabMetadataApi & {
 			readonly version: 1;
 		};
@@ -248,33 +245,6 @@ declare global {
 		terminayRecordingsHost?: {
 			readonly version: 1;
 			open(): Promise<void>;
-		};
-		/** Bounded Desktop recordings lifecycle/data capability. */
-		terminayRecordingServiceHost?: {
-			readonly version: 1;
-			getTerminalRecordingState(
-				sessionId: string,
-			): Promise<import('./types/terminay').TerminalRecordingState>;
-			startTerminalRecording(
-				sessionId: string,
-				metadata?: import('./types/terminay').TerminalRecordingStartMetadata,
-			): Promise<import('./types/terminay').TerminalRecordingState>;
-			stopTerminalRecording(
-				sessionId: string,
-			): Promise<import('./types/terminay').TerminalRecordingState>;
-			listTerminalRecordings(): Promise<
-				import('./types/terminay').TerminalRecordingListItem[]
-			>;
-			readTerminalRecordingChunk(
-				request: import('./types/terminay').TerminalRecordingChunkRequest,
-			): Promise<import('./types/terminay').TerminalRecordingChunk>;
-			deleteTerminalRecordingById(recordingId: string): Promise<void>;
-			revealTerminalRecordingById(recordingId: string): Promise<void>;
-			onTerminalRecordingChanged(
-				listener: (
-					message: import('./types/terminay').TerminalRecordingChangeMessage,
-				) => void,
-			): () => void;
 		};
 		/** Bounded native window lifecycle capability for the current Desktop shell. */
 		terminayWindowLifecycleHost?: {

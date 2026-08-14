@@ -1,28 +1,28 @@
-import { createContext, createElement, type ReactNode, useContext, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { MacroClient } from '@terminay/client-core'
-import type { LegacyMacroSettingsCapability } from '../services/macros/legacyMacroSettingsCapability'
-import type { MacroDefinition } from '../types/macros'
+import type { MacroDefinition, SecretDefinition } from '../types/macros'
 
-export type MacroSettingsClient = {
+export type MacroDefinitionsClient = {
   getMacros(): Promise<MacroDefinition[]>
   updateMacros(macros: MacroDefinition[]): Promise<MacroDefinition[]>
   resetMacros(): Promise<MacroDefinition[]>
   onMacrosChanged(listener: (message: { macros: MacroDefinition[] }) => void): () => void
 }
 
-const LegacyMacroSettingsContext = createContext<LegacyMacroSettingsCapability | undefined>(undefined)
-
-export function LegacyMacroSettingsProvider({
-  capability,
-  children,
-}: Readonly<{ capability: LegacyMacroSettingsCapability; children: ReactNode }>) {
-  return createElement(LegacyMacroSettingsContext.Provider, { value: capability }, children)
+export type MacroSettingsClient = MacroDefinitionsClient & {
+  getSecrets(): Promise<SecretDefinition[]>
+  getDecryptedSecret(id: string): Promise<string>
+  saveSecret(name: string, value: string): Promise<SecretDefinition>
+  deleteSecret(id: string): Promise<void>
 }
 
-export function useLegacyMacroSettingsCapability(): LegacyMacroSettingsCapability {
-  const capability = useContext(LegacyMacroSettingsContext)
-  if (capability === undefined) throw new Error('Legacy macro settings capability is unavailable')
-  return capability
+export class MacroSettingsUnavailableError extends Error {
+  readonly code = 'unavailable'
+
+  constructor(message = 'The selected server macro settings client is unavailable.') {
+    super(message)
+    this.name = 'MacroSettingsUnavailableError'
+  }
 }
 
 /**
@@ -30,7 +30,7 @@ export function useLegacyMacroSettingsCapability(): LegacyMacroSettingsCapabilit
  */
 export function createServerMacroSettingsClient(
   client: MacroClient,
-): MacroSettingsClient {
+): MacroDefinitionsClient {
   return {
     async getMacros() {
       return [...(await client.get()).macros] as MacroDefinition[]
@@ -51,17 +51,15 @@ export function createServerMacroSettingsClient(
  * Subscribe to the selected authority. A failed initial query remains visible
  * to the caller; it must never be disguised as a successful default payload.
  */
-export function useMacroSettings(override?: MacroSettingsClient) {
-  const injectedCapability = useContext(LegacyMacroSettingsContext)
-  const capability = override ?? injectedCapability
-  if (capability === undefined) throw new Error('Macro settings client is unavailable')
+export function useMacroSettings(client?: MacroDefinitionsClient) {
+  if (client === undefined) throw new MacroSettingsUnavailableError()
   const [macros, setMacros] = useState<MacroDefinition[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
 
   useEffect(() => {
     let mounted = true
-    void capability.getMacros().then((nextMacros) => {
+    void client.getMacros().then((nextMacros) => {
       if (!mounted) {
         return
       }
@@ -77,7 +75,7 @@ export function useMacroSettings(override?: MacroSettingsClient) {
       setIsLoading(false)
     })
 
-    const unsubscribe = capability.onMacrosChanged((message) => {
+    const unsubscribe = client.onMacrosChanged((message) => {
       setMacros(message.macros)
       setError(null)
       setIsLoading(false)
@@ -87,7 +85,7 @@ export function useMacroSettings(override?: MacroSettingsClient) {
       mounted = false
       unsubscribe()
     }
-  }, [capability])
+  }, [client])
 
   return { macros, error, isLoading, setMacros }
 }

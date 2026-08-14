@@ -1,14 +1,10 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 import type {
 	TerminalRecordingStartMetadata,
 	TerminalRecordingState,
 } from '../types/terminay';
 
 type RecordingClient = {
-	getState: (sessionId: string) => Promise<TerminalRecordingState>;
-	onStateChanged: (
-		listener: (state: TerminalRecordingState) => void,
-	) => () => void;
 	reveal: (recordingId: string) => Promise<unknown>;
 	start: (
 		sessionId: string,
@@ -23,16 +19,30 @@ type RecordingClient = {
 type TerminalRecordingControllerOptions = {
 	applyState: (state: TerminalRecordingState) => void;
 	getStartMetadata: (sessionId: string) => TerminalRecordingStartMetadata;
-	legacyClient?: RecordingClient;
 	projectId: string;
-	serverClient?: Pick<RecordingClient, 'start' | 'stop'>;
+	serverClient?: RecordingClient;
 	setErrorText: (message: string | null) => void;
 };
+
+export class RecordingCapabilityUnavailableError extends Error {
+	readonly code = 'unavailable';
+
+	constructor() {
+		super('The selected server recording capability is unavailable');
+		this.name = 'RecordingCapabilityUnavailableError';
+	}
+}
+
+export function requireRecordingClient(
+	client: RecordingClient | undefined,
+): RecordingClient {
+	if (client === undefined) throw new RecordingCapabilityUnavailableError();
+	return client;
+}
 
 export function useTerminalRecordingController({
 	applyState,
 	getStartMetadata,
-	legacyClient,
 	projectId,
 	serverClient,
 	setErrorText,
@@ -40,9 +50,7 @@ export function useTerminalRecordingController({
 	const startRecordingForSession = useCallback(
 		async (sessionId: string) => {
 			try {
-				const client = serverClient ?? legacyClient;
-				if (client === undefined)
-					throw new Error('Recording capability is unavailable');
+				const client = requireRecordingClient(serverClient);
 				applyState(await client.start(sessionId, getStartMetadata(sessionId)));
 			} catch (error) {
 				setErrorText(
@@ -50,19 +58,17 @@ export function useTerminalRecordingController({
 				);
 			}
 		},
-		[applyState, getStartMetadata, legacyClient, serverClient, setErrorText],
+		[applyState, getStartMetadata, serverClient, setErrorText],
 	);
 
 	const stopRecordingForSession = useCallback(
 		async (sessionId: string) => {
 			try {
-				const client = serverClient ?? legacyClient;
-				if (client === undefined)
-					throw new Error('Recording capability is unavailable');
+				const client = requireRecordingClient(serverClient);
 				applyState(
 					await client.stop(
 						sessionId,
-						serverClient === undefined ? undefined : { projectId },
+						{ projectId },
 					),
 				);
 			} catch (error) {
@@ -71,38 +77,26 @@ export function useTerminalRecordingController({
 				);
 			}
 		},
-		[applyState, legacyClient, projectId, serverClient, setErrorText],
+		[applyState, projectId, serverClient, setErrorText],
 	);
 
 	const revealRecording = useCallback(
 		async (recordingId: string) => {
 			try {
-				if (legacyClient === undefined) {
-					throw new Error('Recording reveal is unavailable in this host');
-				}
-				await legacyClient.reveal(recordingId);
+				await requireRecordingClient(serverClient).reveal(recordingId);
 			} catch (error) {
 				setErrorText(
 					`Unable to reveal recording: ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
 		},
-		[legacyClient, setErrorText],
+		[serverClient, setErrorText],
 	);
 
-	const hydrateRecordingStateForSession = useCallback(
-		(sessionId: string) => {
-			if (legacyClient !== undefined) {
-				void legacyClient.getState(sessionId).then(applyState, () => {});
-			}
-		},
-		[applyState, legacyClient],
-	);
-
-	useEffect(() => {
-		if (legacyClient === undefined) return;
-		return legacyClient.onStateChanged(applyState);
-	}, [applyState, legacyClient]);
+	// Recording state is part of the selected server's canonical workspace
+	// projection. Hydration is therefore driven by workspace reconciliation,
+	// never by a second host-local subscription.
+	const hydrateRecordingStateForSession = useCallback((_sessionId: string) => {}, []);
 
 	return {
 		hydrateRecordingStateForSession,
