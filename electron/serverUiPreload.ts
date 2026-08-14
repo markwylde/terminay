@@ -6,7 +6,6 @@ import {
 	parseTerminayHostEvent,
 	type TerminayHostActionRequest,
 	type TerminayHostContext,
-	type TerminayHostMenuCommand,
 } from '@terminay/protocol';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ServerUiHostBridge } from './serverUiHostContract';
@@ -33,14 +32,14 @@ const bridge: ServerUiHostBridge = Object.freeze({
 			throw new TypeError('app command listener is invalid');
 		const wrapper = (
 			_event: Electron.IpcRendererEvent,
-			command: TerminayHostMenuCommand,
+			event: unknown,
 		) => {
 			void context().then((bound) =>
 				listener(
 					parseTerminayHostEvent(
 						{
 							bridgeVersion: 1,
-							event: { command, type: 'menu.command' },
+							event,
 							profileId: bound.profileId,
 							schemaVersion: 1,
 							serverId: bound.serverId,
@@ -52,8 +51,9 @@ const bridge: ServerUiHostBridge = Object.freeze({
 				),
 			);
 		};
-		ipcRenderer.on('app:command', wrapper);
-		return () => ipcRenderer.off('app:command', wrapper);
+		ipcRenderer.on('server-ui-host:event', wrapper);
+		ipcRenderer.send('server-ui-host:subscribe-events');
+		return () => ipcRenderer.off('server-ui-host:event', wrapper);
 	},
 });
 if (

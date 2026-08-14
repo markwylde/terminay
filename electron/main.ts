@@ -3040,6 +3040,13 @@ if (process.env.TERMINAY_TEST === '1') {
 }
 
 // Orphaned renderer feature IPC was removed; canonical server authority owns these operations.
+ipcMain.on('server-ui-host:subscribe-events', (event) => {
+	assertTrustedAppSender(event);
+	event.sender.send('server-ui-host:event', {
+		type: 'terminal.zoom',
+		zoomLevel: terminalZoomLevel,
+	});
+});
 
 // --- Multi-window project tabs (tear-off, re-merge) -----------------------
 
@@ -4792,3 +4799,4 @@ app.whenReady().then(async () => {
 	createWindow();
 	applyControlServerSetting();
 });
+

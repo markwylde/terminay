@@ -145,10 +145,15 @@ export type TerminayHostEvent = Readonly<{
   windowId: string;
   profileId: string;
   serverId: string;
-  event: Readonly<{
-    type: "menu.command";
-    command: TerminayHostMenuCommand;
-  }>;
+  event:
+    | Readonly<{
+        type: "menu.command";
+        command: TerminayHostMenuCommand;
+      }>
+    | Readonly<{
+        type: "terminal.zoom";
+        zoomLevel: number;
+      }>;
 }>;
 
 export type TerminayHostAction =
@@ -224,9 +229,29 @@ export function parseTerminayHostEvent(
       throw new TypeError(`host event ${field} is outside its binding`);
   }
   const event = record(input.event, "host event payload");
-  exactKeys(event, ["type", "command"], "host menu event");
-  if (event.type !== "menu.command")
+  let parsedEvent: TerminayHostEvent["event"];
+  if (event.type === "menu.command") {
+    exactKeys(event, ["type", "command"], "host menu event");
+    parsedEvent = Object.freeze({
+      type: "menu.command",
+      command: parseTerminayHostMenuCommand(event.command),
+    });
+  } else if (event.type === "terminal.zoom") {
+    exactKeys(event, ["type", "zoomLevel"], "host terminal zoom event");
+    if (
+      typeof event.zoomLevel !== "number" ||
+      !Number.isSafeInteger(event.zoomLevel) ||
+      event.zoomLevel < -5 ||
+      event.zoomLevel > 10
+    )
+      throw new TypeError("host terminal zoom level is invalid");
+    parsedEvent = Object.freeze({
+      type: "terminal.zoom",
+      zoomLevel: event.zoomLevel,
+    });
+  } else {
     throw new TypeError("host event type is invalid");
+  }
   return Object.freeze({
     schemaVersion: TERMINAY_HOST_CONTEXT_SCHEMA_VERSION,
     bridgeVersion: TERMINAY_HOST_BRIDGE_VERSION,
@@ -234,10 +259,7 @@ export function parseTerminayHostEvent(
     windowId: context.windowId,
     profileId: context.profileId,
     serverId: context.serverId,
-    event: Object.freeze({
-      type: "menu.command",
-      command: parseTerminayHostMenuCommand(event.command),
-    }),
+    event: parsedEvent,
   });
 }
 
