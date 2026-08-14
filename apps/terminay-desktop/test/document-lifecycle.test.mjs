@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { DesktopDocumentLifecycle } from '../dist/index.js';
+import {
+	DesktopDocumentLifecycle,
+	handoffDocumentResource,
+} from '../dist/index.js';
 
 test('document resources release exactly once without releasing server authority', async () => {
 	const released = [];
@@ -69,6 +72,35 @@ test('every native teardown reason is idempotent', () => {
 	}
 });
 
+test('destroyed renderer handoff races release ports and stay bounded', () => {
+	for (const failurePoint of ['authority', 'renderer']) {
+		let releases = 0;
+		const diagnostics = [];
+		const accepted = [];
+		assert.equal(
+			handoffDocumentResource({
+				acceptAuthority: () => {
+					if (failurePoint === 'authority') throw new Error('destroyed secret');
+					accepted.push('authority');
+				},
+				sendRenderer: () => {
+					if (failurePoint === 'renderer') throw new Error('destroyed secret');
+					accepted.push('renderer');
+				},
+				release: () => {
+					releases += 1;
+				},
+				onFailure: (message) => diagnostics.push(message),
+			}),
+			false,
+		);
+		assert.equal(releases, 1);
+		assert.equal(diagnostics.length, 1);
+		assert.equal(diagnostics[0].includes('secret'), false);
+		assert.ok(diagnostics[0].length <= 320);
+	}
+});
+
 test('Electron destruction callbacks use captured ids and sessions', async () => {
 	const [host, endpoint, main] = await Promise.all([
 		readFile(
@@ -83,6 +115,8 @@ test('Electron destruction callbacks use captured ids and sessions', async () =>
 	]);
 	assert.match(host, /const webContentsId = targetWebContents\.id/u);
 	assert.match(host, /const targetSession = targetWebContents\.session/u);
+	assert.match(host, /setPermissionCheckHandler\(null\)/u);
+	assert.match(host, /setPermissionRequestHandler\(null\)/u);
 	assert.doesNotMatch(
 		host,
 		/once\('destroyed',[\s\S]{0,180}targetWebContents\.(?:id|session)/u,
@@ -90,6 +124,10 @@ test('Electron destruction callbacks use captured ids and sessions', async () =>
 	assert.match(endpoint, /current\.release\('reload'\)/u);
 	assert.match(endpoint, /activeRemoteEndpoints\.get\(senderId\)\?\.\(\)/u);
 	assert.match(endpoint, /documentPort\?\.postMessage/u);
+	assert.equal(
+		(endpoint.match(/handoffDocumentResource\(\{/gu) ?? []).length,
+		2,
+	);
 	assert.match(
 		main,
 		/releaseServerUiWindowBinding\([\s\S]{0,100}application-quit/u,
