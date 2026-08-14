@@ -20,7 +20,7 @@ COPY packages/ui-bundle/package.json ./packages/ui-bundle/package.json
 RUN --mount=type=cache,id=terminay-npm-cache-node24,target=/root/.npm,sharing=locked \
   npm ci --ignore-scripts
 
-COPY tsconfig.base.json tsconfig.json tsconfig.node.json tsconfig.web.json vite.web.config.ts web.html remote.html legacy.html ./
+COPY tsconfig.base.json tsconfig.json tsconfig.node.json tsconfig.web.json vite.web.config.ts vite.server-ui.config.ts web.html server.html remote.html legacy.html ./
 COPY scripts/build-ui-bundle-manifest.mjs ./scripts/build-ui-bundle-manifest.mjs
 COPY scripts/write-web-release-marker.mjs ./scripts/write-web-release-marker.mjs
 COPY public ./public
