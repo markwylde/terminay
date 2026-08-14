@@ -13,7 +13,6 @@ const DISCONNECTED_ALLOWLIST = [
 
 // Native presentation surfaces do not own application state and are allowed.
 const PRESENTATION_HOSTS = new Set([
-  'terminayAppCommandHost',
   'terminayClipboardHost',
   'terminayExternalHost',
   'terminayProjectEditHost',
