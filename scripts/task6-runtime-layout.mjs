@@ -11,7 +11,7 @@ export const RUNTIME_LAYOUTS = Object.freeze({
 		cli: 'apps/terminay-server/dist/cli.js',
 		server: 'apps/terminay-server/dist/index.js',
 		mcp: 'apps/terminay-server/dist/mcpEntry.js',
-		ui: 'dist/index.html',
+		ui: 'dist-web/server.html',
 		desktopMcp: 'dist-electron/serverMcpEntry.js',
 	}),
 	standalone: Object.freeze({
@@ -20,7 +20,7 @@ export const RUNTIME_LAYOUTS = Object.freeze({
 		mcp: 'dist/mcpEntry.js',
 	}),
 	desktop: Object.freeze({
-		ui: 'resources/app.asar/dist/index.html',
+		ui: 'resources/app.asar/dist-web/server.html',
 		desktopMcp: 'resources/app.asar.unpacked/dist-electron/serverMcpEntry.js',
 	}),
 });
@@ -122,7 +122,11 @@ export async function inspectRuntimeLayoutMetadata(root) {
 			'standalone server package bin entries do not match the runtime layout',
 		);
 	}
-	if (!/"files"\s*:\s*\[\s*"dist"\s*,\s*"dist-electron"\s*\]/u.test(builder)) {
+	if (
+		!/"files"\s*:\s*\[\s*"dist"\s*,\s*"dist-web"\s*,\s*"dist-electron"\s*\]/u.test(
+			builder,
+		)
+	) {
 		throw new Error(
 			'Desktop packaging must include the renderer and electron runtime directories',
 		);
@@ -165,8 +169,8 @@ export async function inspectRuntimeDependencyResolution(root) {
 		join(rootDirectory, 'apps/terminay-server/src/cli.ts'),
 		'utf8',
 	);
-	const serverMcpCompatibility = await readFile(
-		join(rootDirectory, 'apps/terminay-server/src/mcp/compatibility.ts'),
+	const serverMcpOwnership = await readFile(
+		join(rootDirectory, 'apps/terminay-server/src/mcp/ownership.ts'),
 		'utf8',
 	);
 	const providerCli = await readFile(
@@ -197,16 +201,12 @@ export async function inspectRuntimeDependencyResolution(root) {
 		);
 	}
 	if (
-		!/artifact:\s*["']dist\/mcpEntry\.js["']/u.test(
-			serverMcpCompatibility,
-		) ||
-		!/command:\s*["']terminay-mcp["']/u.test(serverMcpCompatibility) ||
-		!/electronDependency:\s*false/u.test(serverMcpCompatibility) ||
-		!/TERMINAY_CONTROL_SOCKET/u.test(serverMcpCompatibility) ||
-		!/TERMINAY_CONTROL_TOKEN/u.test(serverMcpCompatibility)
+		!/command:\s*["']terminay-mcp["']/u.test(serverMcpOwnership) ||
+		!/TERMINAY_CONTROL_SOCKET/u.test(serverMcpOwnership) ||
+		!/TERMINAY_CONTROL_TOKEN/u.test(serverMcpOwnership)
 	) {
 		throw new Error(
-			'server MCP metadata must name the standalone entry, command, and inherited control environment',
+			'server MCP ownership must name the command and inherited control environment',
 		);
 	}
 	if (
