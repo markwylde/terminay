@@ -414,7 +414,10 @@ function resetZoom(): void {
 	broadcastZoomChange();
 }
 
-let serverTerminalAuthority: ServerTerminalAuthority;
+// Shell-profile discovery is constructed before the embedded authority. Keep
+// that lifecycle state explicit so its reference callback cannot mistake an
+// uninitialised binding for a published workspace authority.
+let serverTerminalAuthority: ServerTerminalAuthority | null = null;
 let privilegedWebRtcExposure: PrivilegedWebRtcExposure | null = null;
 let embeddedLanExposure: EmbeddedLanExposure;
 let desktopRemoteExposure: DesktopServerOwnedExposure;

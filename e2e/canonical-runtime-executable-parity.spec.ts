@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -24,6 +24,17 @@ type RuntimeEvidence = Readonly<{
 	sessions: readonly string[];
 	sidebarProjectId: string;
 }>;
+
+function captureProcessDiagnostics(app: ElectronApplication): () => string {
+	let output = '';
+	for (const stream of [app.process().stdout, app.process().stderr]) {
+		stream?.setEncoding('utf8');
+		stream?.on('data', (chunk) => {
+			output += String(chunk);
+		});
+	}
+	return () => output;
+}
 
 async function buildExtractedPackagedExecutable(outputDirectory: string): Promise<string> {
 	const architecture = process.arch === 'arm64' ? 'arm64' : 'x64';
@@ -62,8 +73,13 @@ async function launchDevelopmentComposition(userDataDir: string): Promise<Electr
 		env: {
 			...process.env,
 			CI: '1',
+			ELECTRON_ENABLE_LOGGING: '1',
+			TEMP: path.dirname(userDataDir),
+			TERMINAY_E2E_TEMP_DIR: path.dirname(userDataDir),
 			TERMINAY_TEST: '1',
 			TERMINAY_USER_DATA_DIR: userDataDir,
+			TMP: path.dirname(userDataDir),
+			TMPDIR: path.dirname(userDataDir),
 		},
 	});
 }
@@ -80,8 +96,13 @@ async function launchExtractedPackagedComposition(
 		env: {
 			...process.env,
 			CI: '1',
+			ELECTRON_ENABLE_LOGGING: '1',
+			TEMP: path.dirname(userDataDir),
+			TERMINAY_E2E_TEMP_DIR: path.dirname(userDataDir),
 			TERMINAY_TEST: '1',
 			TERMINAY_USER_DATA_DIR: userDataDir,
+			TMP: path.dirname(userDataDir),
+			TMPDIR: path.dirname(userDataDir),
 		},
 	});
 }
@@ -131,36 +152,87 @@ async function closeCleanly(app: ElectronApplication): Promise<void> {
 	expect(app.process().signalCode).toBeNull();
 }
 
+async function terminateFailedComposition(app: ElectronApplication): Promise<void> {
+	const process = app.process();
+	if (process.exitCode !== null || process.signalCode !== null) return;
+	const exited = new Promise<void>((resolve) => process.once('exit', () => resolve()));
+	process.kill('SIGKILL');
+	await Promise.race([
+		exited,
+		new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+	]);
+}
+
 test('development orchestration and extracted packaged app expose identical canonical runtime state', async () => {
 	test.setTimeout(240_000);
 	const root = await mkdtemp(path.join(os.tmpdir(), 'terminay-runtime-parity-'));
 	let development: ElectronApplication | undefined;
 	let packaged: ElectronApplication | undefined;
+	let developmentDiagnostics = () => '';
+	let packagedDiagnostics = () => '';
 	try {
-		const packagedExecutable = await buildExtractedPackagedExecutable(
-			path.join(root, 'electron-builder-output'),
+		const packagedExecutable = await test.step(
+			'build fresh extracted packaged application',
+			() =>
+				buildExtractedPackagedExecutable(
+					path.join(root, 'electron-builder-output'),
+				),
 		);
+		const developmentUserData = path.join(root, 'development');
+		const packagedUserData = path.join(root, 'packaged');
+		await Promise.all([
+			mkdir(developmentUserData, { recursive: true }),
+			mkdir(packagedUserData, { recursive: true }),
+		]);
 
-		development = await launchDevelopmentComposition(path.join(root, 'development'));
-		expect(await development.evaluate(({ app }) => app.isPackaged)).toBe(false);
-		const developmentEvidence = await observeRuntime(development);
-		await closeCleanly(development);
+		development = await test.step('launch and observe development composition', async () => {
+			const app = await launchDevelopmentComposition(developmentUserData);
+			developmentDiagnostics = captureProcessDiagnostics(app);
+			expect(await app.evaluate(({ app: electronApp }) => electronApp.isPackaged)).toBe(false);
+			return app;
+		});
+		const developmentEvidence = await test.step('observe development contract', async () => {
+			try {
+				return await observeRuntime(development!);
+			} catch (error) {
+				throw new Error(
+					`development contract observation failed: ${error instanceof Error ? error.message : String(error)}\n` +
+						`Development process diagnostics:\n${developmentDiagnostics() || '(none)'}`,
+					{ cause: error },
+				);
+			}
+		});
+		await test.step('close development composition cleanly', () => closeCleanly(development!));
 		development = undefined;
 
-		packaged = await launchExtractedPackagedComposition(
-			packagedExecutable,
-			path.join(root, 'packaged'),
-		);
-		expect(await packaged.evaluate(({ app }) => app.isPackaged)).toBe(true);
-		const packagedEvidence = await observeRuntime(packaged);
+		packaged = await test.step('launch extracted packaged composition', async () => {
+			const app = await launchExtractedPackagedComposition(
+				packagedExecutable,
+				packagedUserData,
+			);
+			packagedDiagnostics = captureProcessDiagnostics(app);
+			expect(await app.evaluate(({ app: electronApp }) => electronApp.isPackaged)).toBe(true);
+			return app;
+		});
+		const packagedEvidence = await test.step('observe packaged contract', async () => {
+			try {
+				return await observeRuntime(packaged!);
+			} catch (error) {
+				throw new Error(
+					`packaged contract observation failed: ${error instanceof Error ? error.message : String(error)}\n` +
+						`Packaged process diagnostics:\n${packagedDiagnostics() || '(none)'}`,
+					{ cause: error },
+				);
+			}
+		});
 		expect(packagedEvidence).toEqual(developmentEvidence);
-		await closeCleanly(packaged);
+		await test.step('close packaged composition cleanly', () => closeCleanly(packaged!));
 		packaged = undefined;
 	} finally {
 		if (development !== undefined && development.process().exitCode === null)
-			await development.close().catch(() => development?.process().kill('SIGKILL'));
+			await terminateFailedComposition(development);
 		if (packaged !== undefined && packaged.process().exitCode === null)
-			await packaged.close().catch(() => packaged?.process().kill('SIGKILL'));
+			await terminateFailedComposition(packaged);
 		await rm(root, { recursive: true, force: true });
 	}
 });
