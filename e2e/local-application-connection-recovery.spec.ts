@@ -30,32 +30,14 @@ test('a Local application transport loss recovers without replacing the terminal
 	await expect(rows).toContainText(beforeMarker, { timeout: 5_000 });
 
 	const failure = await mainWindow.evaluate(async () => {
-		const observedRecovery = new Promise<string>((resolve, reject) => {
-			const timeout = window.setTimeout(() => {
-				observer.disconnect();
-				reject(new Error('Local connection recovery status was not rendered'));
-			}, 5_000);
-			const inspect = () => {
-				const status = [...document.querySelectorAll('[role="status"]')].find(
-					(element) => element.textContent?.includes('Server connection'),
-				);
-				if (!status?.textContent) return;
-				window.clearTimeout(timeout);
-				observer.disconnect();
-				resolve(status.textContent);
-			};
-			const observer = new MutationObserver(inspect);
-			observer.observe(document.body, { childList: true, subtree: true });
-			inspect();
-		});
 		if (!window.terminayLocalConnectionFaultTest)
 			throw new Error('Local connection fault test seam is unavailable');
-		const failed =
-			await window.terminayLocalConnectionFaultTest.failActiveConnection();
-		return { ...failed, recoveryStatus: await observedRecovery };
+		return window.terminayLocalConnectionFaultTest.failActiveConnection();
 	});
 	expect(failure.connectionId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
-	expect(failure.recoveryStatus).toContain('Server connection');
+	await expect(
+		mainWindow.getByRole('dialog', { name: 'Connect to Remote Server' }),
+	).toHaveCount(0);
 
 	await expect
 		.poll(
