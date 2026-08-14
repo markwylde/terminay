@@ -167,7 +167,7 @@ import {
 } from './workspace/RemoteAccessConnectionMenu';
 import {
 	buildTerminalActivityOverview,
-	type LegacyTerminalActivityOverviewState,
+	type TerminalPresentationActivityState,
 	TerminalActivityOverview,
 	type TerminalActivityOverviewItem,
 } from './workspace/TerminalActivityOverview';
@@ -526,7 +526,7 @@ function areTerminalActivityIndicatorsEnabled(
 function isTerminalActivityIndicatorStateVisible(
 	state: TerminalActivityState | undefined,
 	params: DockPanelTabAppearance | undefined,
-): state is LegacyTerminalActivityOverviewState {
+): state is TerminalPresentationActivityState {
 	if (!areTerminalActivityIndicatorsEnabled(params)) {
 		return false;
 	}
@@ -5469,7 +5469,7 @@ function App({
 	);
 	const createThisServerProject = useCallback(async () => {
 		if (projectEnvironmentsClient === null || boundWorkspaceViewId === null) {
-			// Disconnected compatibility workspaces retain their existing local-only
+			// Disconnected workspaces retain their existing local-only
 			// creation path; authenticated server workspaces never bypass validation.
 			addProject();
 			return;

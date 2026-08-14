@@ -1,6 +1,6 @@
-/** Test-only protocol retained for the isolated, unreferenced legacy
- * RemoteAccessService harness. Production browser enrollment no longer imports
- * or speaks these terminal-session messages. */
+/** Deployed v1 terminal-session messages accepted by RemoteAccessService.
+ * Canonical application transport is preferred, but this wire contract is a
+ * remote-protocol compatibility boundary rather than a UI authority path. */
 export type RemoteSessionSummary = {
 	color: string; cols: number; emoji: string; exitCode: number | null; id: string;
 	rows: number; title: string; viewportHeight?: number; viewportWidth?: number;
