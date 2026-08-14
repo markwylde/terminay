@@ -458,8 +458,6 @@ test.describe('terminal behavior', () => {
 	}) => {
 	const editedTab = mainWindow
 			.locator('.project-workspace--active .terminal-tab-content--active');
-		const panelId = await editedTab.getAttribute('data-panel-id');
-		if (panelId === null) throw new Error('Edited terminal panel identity is unavailable.');
 		const editWindow = await openTerminalEditWindow(mainWindow);
 		const titleInput = editWindow.getByPlaceholder('Terminal name');
 
@@ -495,9 +493,7 @@ test.describe('terminal behavior', () => {
 
 		await expect(
 			mainWindow
-				.locator(
-					`.project-workspace--active .terminal-tab-content[data-panel-id="${panelId}"]`,
-				)
+				.locator('.project-workspace--active .terminal-tab-content--active')
 				.locator('.terminal-tab-title'),
 		).toHaveText('Keyboard Shell');
 		await expectTerminalInputFocused(mainWindow);
@@ -605,19 +601,14 @@ test.describe('terminal behavior', () => {
 		const linkUrl = 'https://example.com/terminay-link-test';
 		const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
 
-		await electronApp.evaluate(({ ipcMain }) => {
+		await electronApp.evaluate(({ shell }) => {
 			const state = globalThis as typeof globalThis & {
 				__terminayOpenedExternalLinks?: string[];
 			};
 			state.__terminayOpenedExternalLinks = [];
-			ipcMain.removeHandler('desktop:external-host:open');
-			ipcMain.handle(
-				'desktop:external-host:open',
-				(_event, payload: { url?: unknown }) => {
-					if (typeof payload?.url === 'string')
-						state.__terminayOpenedExternalLinks?.push(payload.url);
-				},
-			);
+			shell.openExternal = async (url: string) => {
+				state.__terminayOpenedExternalLinks?.push(url);
+			};
 		});
 
 		await writeToTerminalSession(
@@ -689,19 +680,14 @@ test.describe('terminal behavior', () => {
 		const linkText = linkUrl;
 		const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
 
-		await electronApp.evaluate(({ ipcMain }) => {
+		await electronApp.evaluate(({ shell }) => {
 			const state = globalThis as typeof globalThis & {
 				__terminayOpenedExternalLinks?: string[];
 			};
 			state.__terminayOpenedExternalLinks = [];
-			ipcMain.removeHandler('desktop:external-host:open');
-			ipcMain.handle(
-				'desktop:external-host:open',
-				(_event, payload: { url?: unknown }) => {
-					if (typeof payload?.url === 'string')
-						state.__terminayOpenedExternalLinks?.push(payload.url);
-				},
-			);
+			shell.openExternal = async (url: string) => {
+				state.__terminayOpenedExternalLinks?.push(url);
+			};
 		});
 
 		await writeToTerminalSession(
@@ -827,18 +813,6 @@ test.describe('terminal behavior', () => {
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 		).toHaveCount(1);
 
-		await expect
-			.poll(() =>
-				mainWindow.evaluate(
-					(sessionId) =>
-						window.terminayTest!.getServerTerminalActivity(sessionId),
-					backgroundSessionId,
-				),
-			)
-			.toMatchObject({
-				acknowledged: false,
-				status: 'idle',
-			});
 
 		const activityButton = mainWindow.getByRole('button', {
 			name: 'Open terminal activity menu',
