@@ -45,6 +45,19 @@ test('canonical preload exposes only protocol-validated semantic host events', a
 	}
 	assert.doesNotMatch(legacyPreload, /'open-settings'/);
 	assert.doesNotMatch(legacyPreload, /'open-macros'/);
+	assert.doesNotMatch(legacyPreload, /terminayAppCommandHost/);
+});
+
+test('auxiliary routes remain inside the capability-governed workspace shell', async () => {
+	const workspace = await read('src/web/ConnectedWebRendererWorkspace.tsx');
+	const shellStart = workspace.indexOf('<div className="connected-web-renderer-workspace">');
+	const shell = workspace.slice(shellStart, workspace.indexOf('\n\t);', shellStart));
+
+	assert.ok(shellStart >= 0);
+	assert.match(shell, /hasNativeMenus \? null : \(/);
+	assert.match(shell, /ConnectedBrowserAuxiliaryDialog/);
+	assert.match(shell, /connected-web-connection-backdrop/);
+	assert.doesNotMatch(shell, /browser-host-titlebar/);
 });
 
 test('browser menu omits Desktop-only update, window, and DevTools commands', async () => {

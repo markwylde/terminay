@@ -8,7 +8,6 @@ const globals = await readFile(
 );
 
 const APPROVED_NATIVE_HOST_METHODS = Object.freeze({
-	terminayAppCommandHost: ['subscribe'],
 	terminayClipboardHost: ['readText', 'subscribeCopyRequest', 'writeText'],
 	terminayExternalHost: ['open'],
 	terminayProjectTabHost: [
