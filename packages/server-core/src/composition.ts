@@ -411,6 +411,19 @@ export function createServerCoreComposition(
   const projectEnvironmentOperations = options.projectEnvironments === undefined || options.workspace === undefined ? undefined : createProjectEnvironmentOperationHandlers({
     ...options.projectEnvironments,
     workspace: options.workspace,
+	...(options.workspaceOperations?.prepareProjectRootUpdate === undefined
+		? {}
+		: {
+				prepareProjectRootUpdate: (projectId: string, root: string) =>
+					options.projectEnvironmentRouter === undefined
+						? options.workspaceOperations!.prepareProjectRootUpdate!(projectId, root)
+						: prepareRoutedProjectRoot(
+								options.projectEnvironmentRouter,
+								options.workspaceOperations!.prepareProjectRootUpdate!,
+								projectId,
+								root,
+							),
+			}),
     ...(options.projectEnvironments.providerDefinitions !== undefined || options.extensions?.hosts === undefined ? {} : { providerDefinitions: () => options.extensions!.hosts!.statuses().flatMap((status) => status.providers ?? []) }),
     ...(options.projectEnvironments.providerRuntime !== undefined || options.extensions?.hosts === undefined ? {} : { providerRuntime: options.extensions.hosts }),
     onChanged: (payload) => { eventJournal.append('project-environments.changed', payload); },
