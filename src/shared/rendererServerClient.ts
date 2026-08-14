@@ -259,6 +259,7 @@ export async function createConnectedServerClientContext(
 		);
 		if (failedSetup !== undefined) throw failedSetup.reason;
 		let disposePromise: Promise<void> | undefined;
+		let unexpectedCloseNotified = false;
 		const dispose = (): Promise<void> => {
 			if (disposePromise !== undefined) return disposePromise;
 			disposePromise = (async () => {
@@ -286,11 +287,13 @@ export async function createConnectedServerClientContext(
 				change.current.state === 'closed' ||
 				change.current.state === 'failed'
 			) {
-				const unexpectedlyClosed = disposePromise === undefined;
-				const settledDisposal = dispose();
+				const unexpectedlyClosed =
+					disposePromise === undefined && !unexpectedCloseNotified;
 				if (unexpectedlyClosed) {
-					void settledDisposal.then(() => options.onTransportClosed?.());
+					unexpectedCloseNotified = true;
+					options.onTransportClosed?.();
 				}
+				void dispose();
 			}
 		});
 		return {

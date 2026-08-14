@@ -290,6 +290,7 @@ test('canonical renderer setup closes a client whose subscription never settles'
 
 function successfulRendererClient(overrides = {}) {
   return {
+		snapshot: { state: 'connected', revision: 1, cursor: '1' },
     close: async () => {},
     onStateChange: () => () => {},
     subscribe: async () => ({
@@ -314,7 +315,7 @@ function successfulRendererClient(overrides = {}) {
       if (operation === 'workspace.snapshot') {
         return {
           result: {
-            schemaVersion: 2,
+            schemaVersion: 3,
             serverId: 'desktop-local',
             revision: 0,
             cursor: '0',
@@ -358,7 +359,7 @@ test('connected renderer disposal is promise-idempotent', async () => {
   assert.equal(closeCalls, 1)
 })
 
-test('unexpected transport closure requests recovery only after disposal settles', async () => {
+test('unexpected transport closure requests recovery before disposal settles', async () => {
   let stateListener
   let releaseClose
   let holdClose = false
@@ -381,22 +382,26 @@ test('unexpected transport closure requests recovery only after disposal settles
   )
   holdClose = true
 
-  stateListener({
+	stateListener({
     previous: { state: 'connected' },
     current: { state: 'stale', error: new Error('reader ended') },
-  })
-  const concurrentDispose = context.dispose()
-  assert.deepEqual(events, ['listener-removed', 'dispose-started'])
+	})
+	const concurrentDispose = context.dispose()
+	assert.deepEqual(events, [
+		'recovery-requested',
+		'listener-removed',
+		'dispose-started',
+	])
 
   releaseClose()
   await concurrentDispose
   await Promise.resolve()
-  assert.deepEqual(events, [
-    'listener-removed',
-    'dispose-started',
-    'dispose-settled',
-    'recovery-requested',
-  ])
+	assert.deepEqual(events, [
+		'recovery-requested',
+		'listener-removed',
+		'dispose-started',
+		'dispose-settled',
+	])
 })
 
 test('application handshake context is promoted without reconnecting its live transport', async () => {
