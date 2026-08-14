@@ -245,6 +245,13 @@ remembered server.
 
 ## Server-bundled workspace UI
 
+`server.html` is the one workspace entry for Local Desktop, direct browser,
+and hosted WebRTC. On an isolated hosted session origin it must first consume
+the installed narrow session authority and register the pairing/application
+transport delegate before mounting enrollment UI; on other origins it mounts
+the ordinary host-specific workspace. A browser must never show an enrollment
+form whose session-host delegate is unavailable.
+
 The complete responsive workspace UI is part of the Terminay Server
 distribution.
 

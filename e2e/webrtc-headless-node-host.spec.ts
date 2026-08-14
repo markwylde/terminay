@@ -470,7 +470,10 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     notifyTerminalRemoteSizeOverride: () => {},
     onStatusChanged: (status) => statuses.push(status),
     publicDir: path.resolve('public'),
-    rendererDistDir: path.resolve('dist'),
+    // This proof must install the same server-owned bundle that Local Desktop
+    // and production WebRTC exposure serve. `dist` is the retired remote
+    // renderer build and does not contain the canonical server.html entry.
+    rendererDistDir: path.resolve('dist-web'),
     saveGeneratedTlsPaths: () => {},
   }
   if (runtimeName === 'werift' && selectedWeriftRuntimeRoot) {
