@@ -18,10 +18,10 @@ export async function resolveTerminalForegroundProcess(rootPid: number, signal?:
 	try {
 		const { stdout: groupOutput } = await execFileAsync('ps', ['-o', 'tpgid=', '-p', String(rootPid)], { signal })
 		const groupPid = Number.parseInt(groupOutput.trim(), 10)
-		if (Number.isSafeInteger(groupPid) && groupPid > 0 && groupPid !== rootPid) {
-			const command = await resolveProcessCommand(groupPid, signal)
-			if (command !== null) return command
-		}
+		const groupCommand = Number.isSafeInteger(groupPid) && groupPid > 0
+			? await resolveProcessCommand(groupPid, signal)
+			: null
+		const rootCommand = await resolveProcessCommand(rootPid, signal)
 
 		// Some PTY hosts keep the shell and its foreground job in one process
 		// group. In that case TPGID points back to the shell and cannot identify
@@ -29,10 +29,15 @@ export async function resolveTerminalForegroundProcess(rootPid: number, signal?:
 		// before falling back to the shell title reported by node-pty.
 		const deepestPid = await resolveDeepestProcessPid(rootPid, signal)
 		if (deepestPid !== rootPid) {
-			const command = await resolveProcessCommand(deepestPid, signal)
-			if (command !== null) return command
+			const deepestCommand = await resolveProcessCommand(deepestPid, signal)
+			if (
+				deepestCommand !== null &&
+				(groupCommand === null || groupCommand === rootCommand)
+			) {
+				return deepestCommand
+			}
 		}
-		return groupPid === rootPid ? await resolveProcessCommand(rootPid, signal) : null
+		return groupCommand ?? rootCommand
 	} catch {
 		return null
 	}
