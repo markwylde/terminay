@@ -30,7 +30,10 @@ import type {
 	FileViewerMode,
 	GitFileDiff,
 } from '../../types/fileViewer';
-import type { FileViewerDefaultMode, TerminalSettings } from '../../types/settings';
+import type {
+	FileViewerDefaultMode,
+	TerminalSettings,
+} from '../../types/settings';
 import type {
 	FileViewerGitRepoInfo,
 	FileViewerSparseFileEdit,
@@ -39,12 +42,12 @@ import {
 	TerminalPanelClientContext,
 	type TerminalPanelClientContextValue,
 } from '../TerminalPanel';
-import { FileConflictBanner } from './FileConflictBanner';
 import { FileAuthorityUnavailableState } from './FileAuthorityUnavailableState';
+import { FileConflictBanner } from './FileConflictBanner';
 import { FileLargeFileChooser } from './FileLargeFileChooser';
 import { FileModeSwitcher } from './FileModeSwitcher';
-import { FileStatusBar } from './FileStatusBar';
 import { useFilePanelSaveRegistration } from './FilePanelSaveRegistry';
+import { FileStatusBar } from './FileStatusBar';
 import { DiffViewer } from './modes/DiffViewer';
 import { HexViewer } from './modes/HexViewer';
 import { PerformantTextViewer } from './modes/PerformantTextViewer';
@@ -127,8 +130,12 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 function CanonicalFilePanel(
 	props: IDockviewPanelProps<FilePanelInstanceParams> & {
 		terminalClientContext: TerminalPanelClientContextValue & {
-			fileObservationClient: NonNullable<TerminalPanelClientContextValue['fileObservationClient']>;
-			fileViewerClient: NonNullable<TerminalPanelClientContextValue['fileViewerClient']>;
+			fileObservationClient: NonNullable<
+				TerminalPanelClientContextValue['fileObservationClient']
+			>;
+			fileViewerClient: NonNullable<
+				TerminalPanelClientContextValue['fileViewerClient']
+			>;
 		};
 	},
 ) {
@@ -142,11 +149,7 @@ function CanonicalFilePanel(
 	const baseParamsRef = useRef(props.params);
 	const panelApiRef = useRef(props.api);
 	const containerApiRef = useRef(props.containerApi);
-	const {
-		settings,
-		setSettings,
-		settingsClient,
-	} = useTerminalSettings();
+	const { settings, setSettings, settingsClient } = useTerminalSettings();
 	const fileViewerClient = terminalClientContext.fileViewerClient;
 	const contentFileViewerClient = fileViewerClient;
 	const fileGateway = useMemo(
@@ -398,40 +401,13 @@ function CanonicalFilePanel(
 				(sparseLineDeltasRef.current.get(owner) ?? 0) + newlineDelta,
 			);
 		},
-		[fileViewerClient, handleSparseEditChange, projectRoot, terminalClientContext.projectId],
+		[
+			fileViewerClient,
+			handleSparseEditChange,
+			projectRoot,
+			terminalClientContext.projectId,
+		],
 	);
-
-	const saveCurrentFile = useCallback(async (): Promise<boolean> => {
-		const currentFileInfo = fileInfoRef.current;
-		if (!currentFileInfo) return false;
-		if (conflictRef.current) throw new Error('Choose Reload from disk or Keep local edits before saving.');
-		if (sparseEditsRef.current.size > 0) { await saveSparseDraft(); return true; }
-		if (modeRef.current === 'hex' && !isHexValidRef.current) throw new Error('Fix invalid HEX byte values before saving.');
-		if (modeRef.current === 'text') {
-			const currentText = currentTextGetterRef.current?.();
-			if (currentText !== undefined) { setDraftText(currentText); draftBufferRef.current.setText(currentText); }
-		}
-		const payload = draftBufferRef.current.getPayload();
-		const nextInfo = await fileGateway.saveFile(currentFileInfo.path, payload);
-		if (payload.kind === 'text') {
-			if (await fileGateway.readFileText(nextInfo.path) !== payload.text) throw new Error('Save failed: disk contents did not match the editor contents.');
-		} else if ((await fileGateway.readFileBytes(nextInfo.path, { length: nextInfo.size, offset: 0 })).base64 !== payload.base64) {
-			throw new Error('Save failed: disk bytes did not match the editor contents.');
-		}
-		if (payload.kind === 'text') draftBufferRef.current.replaceText(payload.text);
-		else draftBufferRef.current.replaceBytes(payload.base64);
-		acknowledgedWatchRevisionRef.current = { mtimeMs: nextInfo.mtimeMs, path: nextInfo.path, size: nextInfo.size };
-		setFileInfo(nextInfo);
-		setIsDirty(false);
-		sessionStoreRef.current?.setDirty(false);
-		conflictRef.current = false;
-		setConflict(false);
-		sessionStoreRef.current?.setConflict({ kind: 'none' });
-		if (modeRef.current === 'diff' || modeRef.current === 'tasks') void refreshDiff(nextInfo.path);
-		return true;
-	}, [fileGateway, refreshDiff, saveSparseDraft]);
-
-	useFilePanelSaveRegistration(props.api.id, saveCurrentFile);
 
 	useEffect(() => {
 		isMountedRef.current = true;
@@ -575,6 +551,66 @@ function CanonicalFilePanel(
 		}
 	}, [fileGateway, fileViewerClient, projectRoot, refreshDiff]);
 
+	const saveCurrentFile = useCallback(async (): Promise<boolean> => {
+		const currentFileInfo = fileInfoRef.current;
+		if (!currentFileInfo) return false;
+		if (conflictRef.current)
+			throw new Error(
+				'Choose Reload from disk or Keep local edits before saving.',
+			);
+		if (sparseEditsRef.current.size > 0) {
+			await saveSparseDraft();
+			return true;
+		}
+		if (modeRef.current === 'hex' && !isHexValidRef.current)
+			throw new Error('Fix invalid HEX byte values before saving.');
+		if (modeRef.current === 'text') {
+			const currentText = currentTextGetterRef.current?.();
+			if (currentText !== undefined) {
+				setDraftText(currentText);
+				draftBufferRef.current.setText(currentText);
+			}
+		}
+		const payload = draftBufferRef.current.getPayload();
+		const nextInfo = await fileGateway.saveFile(currentFileInfo.path, payload);
+		if (payload.kind === 'text') {
+			if ((await fileGateway.readFileText(nextInfo.path)) !== payload.text)
+				throw new Error(
+					'Save failed: disk contents did not match the editor contents.',
+				);
+		} else if (
+			(
+				await fileGateway.readFileBytes(nextInfo.path, {
+					length: nextInfo.size,
+					offset: 0,
+				})
+			).base64 !== payload.base64
+		) {
+			throw new Error(
+				'Save failed: disk bytes did not match the editor contents.',
+			);
+		}
+		if (payload.kind === 'text')
+			draftBufferRef.current.replaceText(payload.text);
+		else draftBufferRef.current.replaceBytes(payload.base64);
+		acknowledgedWatchRevisionRef.current = {
+			mtimeMs: nextInfo.mtimeMs,
+			path: nextInfo.path,
+			size: nextInfo.size,
+		};
+		setFileInfo(nextInfo);
+		setIsDirty(false);
+		sessionStoreRef.current?.setDirty(false);
+		conflictRef.current = false;
+		setConflict(false);
+		sessionStoreRef.current?.setConflict({ kind: 'none' });
+		if (modeRef.current === 'diff' || modeRef.current === 'tasks')
+			void refreshDiff(nextInfo.path);
+		return true;
+	}, [fileGateway, refreshDiff, saveSparseDraft]);
+
+	useFilePanelSaveRegistration(props.api.id, saveCurrentFile);
+
 	const handleSwitchToMonaco = useCallback(async () => {
 		const currentInfo = fileInfoRef.current;
 		if (!currentInfo) {
@@ -599,7 +635,8 @@ function CanonicalFilePanel(
 			controller.signal,
 		);
 		const originalText = canonicalDraft.originalText;
-		let projectedDraft: ReturnType<typeof materializePerformantDraft> = canonicalDraft;
+		let projectedDraft: ReturnType<typeof materializePerformantDraft> =
+			canonicalDraft;
 		if (controller.signal.aborted || !isMountedRef.current) {
 			return;
 		}
