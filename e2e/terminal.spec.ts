@@ -11,8 +11,7 @@ import {
 
 async function getActiveSessionId(page: Page): Promise<string> {
 	const sessionId = await page
-		.locator('.terminal-panel')
-		.first()
+		.locator('.project-workspace--active .terminal-panel:visible')
 		.getAttribute('data-terminay-terminal-session-id');
 
 	if (!sessionId) {

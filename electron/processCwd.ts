@@ -27,12 +27,21 @@ export async function resolveTerminalForegroundProcess(rootPid: number, signal?:
 		// group. In that case TPGID points back to the shell and cannot identify
 		// the destructive foreground child. Follow the single-child shell chain
 		// before falling back to the shell title reported by node-pty.
-		const descendantCommands = await resolveTerminalLeafCommands(rootPid, signal)
-		const nonShellDescendants = descendantCommands.filter(
-			(command) => command !== rootCommand && command !== groupCommand,
+		const descendants = await resolveTerminalLeafProcesses(rootPid, signal)
+		// A '+' in ps STAT is the kernel's foreground process-group marker. It
+		// remains reliable when a non-job-control shell shares its process group
+		// with the current command, where TPGID alone points back to the shell.
+		const foregroundDescendants = descendants.filter(
+			(entry) => entry.foreground && entry.command !== rootCommand && entry.command !== groupCommand,
+		)
+		if (foregroundDescendants.length === 1) {
+			return foregroundDescendants[0].command
+		}
+		const nonShellDescendants = descendants.filter(
+			(entry) => entry.command !== rootCommand && entry.command !== groupCommand,
 		);
 		if (nonShellDescendants.length === 1) {
-			return nonShellDescendants[0]
+			return nonShellDescendants[0].command
 		}
 		return groupCommand ?? rootCommand
 	} catch {
@@ -40,10 +49,10 @@ export async function resolveTerminalForegroundProcess(rootPid: number, signal?:
 	}
 }
 
-async function resolveTerminalLeafCommands(
+async function resolveTerminalLeafProcesses(
 	rootPid: number,
 	signal?: AbortSignal,
-): Promise<string[]> {
+): Promise<ReadonlyArray<{ command: string; foreground: boolean }>> {
 	const pending = [rootPid]
 	const visited = new Set<number>([rootPid])
 	const leaves: number[] = []
@@ -62,8 +71,24 @@ async function resolveTerminalLeafCommands(
 		}
 	}
 	return (
-		await Promise.all(leaves.map((pid) => resolveProcessCommand(pid, signal)))
-	).filter((command): command is string => command !== null)
+		await Promise.all(leaves.map((pid) => resolveProcessObservation(pid, signal)))
+	).filter((entry): entry is { command: string; foreground: boolean } => entry !== null)
+}
+
+async function resolveProcessObservation(
+	pid: number,
+	signal?: AbortSignal,
+): Promise<{ command: string; foreground: boolean } | null> {
+	try {
+		const { stdout } = await execFileAsync('ps', ['-o', 'stat=,comm=', '-p', String(pid)], { signal })
+		const line = stdout.trim()
+		const match = /^(\S+)\s+(.+)$/u.exec(line)
+		if (match === null) return null
+		const command = match[2].trim().split(/[\\/]/u).pop()?.trim()
+		return command ? { command, foreground: match[1].includes('+') } : null
+	} catch {
+		return null
+	}
 }
 
 async function resolveProcessCommand(pid: number, signal?: AbortSignal): Promise<string | null> {
@@ -89,12 +114,25 @@ async function resolveDeepestProcessPid(rootPid: number, signal?: AbortSignal): 
 async function childProcessIds(pid: number, signal?: AbortSignal): Promise<number[]> {
 	try {
 		const command = process.platform === 'linux'
-			? ['ps', ['-o', 'pid=', '--ppid', String(pid)]] as const
+			? ['ps', ['-eo', 'pid=,ppid=']] as const
 			: process.platform === 'darwin'
 				? ['pgrep', ['-P', String(pid)]] as const
 				: null
 		if (command === null) return []
 		const { stdout } = await execFileAsync(command[0], command[1], { signal })
+		if (process.platform === 'linux') {
+			return stdout
+				.split('\n')
+				.flatMap((value) => {
+					const match = /^(\d+)\s+(\d+)$/u.exec(value.trim())
+					if (match === null) return []
+					const childPid = Number.parseInt(match[1], 10)
+					const parentPid = Number.parseInt(match[2], 10)
+					return Number.isSafeInteger(childPid) && parentPid === pid
+						? [childPid]
+						: []
+				})
+		}
 		return stdout.split('\n').map((value) => Number.parseInt(value.trim(), 10))
 			.filter((value) => Number.isSafeInteger(value) && value > 0)
 	} catch {

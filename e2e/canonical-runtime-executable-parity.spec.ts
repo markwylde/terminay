@@ -147,9 +147,13 @@ async function observeRuntime(app: ElectronApplication): Promise<RuntimeEvidence
 }
 
 async function closeCleanly(app: ElectronApplication): Promise<void> {
+	// Playwright disposes ElectronApplication.process() as part of close(). Keep
+	// the process handle before closing so the exit assertion observes the real
+	// process rather than a disposed Playwright wrapper.
+	const process = app.process();
 	await app.close();
-	expect(app.process().exitCode).not.toBeNull();
-	expect(app.process().signalCode).toBeNull();
+	expect(process.exitCode).not.toBeNull();
+	expect(process.signalCode).toBeNull();
 }
 
 async function terminateFailedComposition(app: ElectronApplication): Promise<void> {
