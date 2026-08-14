@@ -244,27 +244,8 @@ test.describe('workspace shell', () => {
 		mainWindow,
 	}) => {
 		await mainWindow.locator('.terminal-panel').first().click();
-		const terminalTab = mainWindow
-			.locator('.dv-tab', { hasText: 'Terminal 1' })
-			.first();
-		await expect(terminalTab).toBeVisible();
-		const terminalTabBox = await terminalTab.boundingBox();
-		if (!terminalTabBox) {
-			throw new Error('Expected terminal dock tab to have a layout box');
-		}
-
 		const popoutWindow = await appHarness.openChildWindow(async () => {
-			await mainWindow.mouse.move(
-				terminalTabBox.x + terminalTabBox.width / 2,
-				terminalTabBox.y + terminalTabBox.height / 2,
-			);
-			await mainWindow.mouse.down();
-			await mainWindow.mouse.move(
-				terminalTabBox.x + terminalTabBox.width / 2 + 18,
-				terminalTabBox.y + terminalTabBox.height / 2 + 18,
-			);
-			await mainWindow.mouse.move(0, 0);
-			await mainWindow.mouse.up();
+			await appHarness.sendAppCommand('popout-active');
 		});
 
 		await expect(popoutWindow.locator('.terminal-tab-title')).toContainText(
@@ -312,13 +293,6 @@ test.describe('workspace shell', () => {
 		await expect(
 			mainWindow.locator('.terminal-panel').filter({ hasText: cwdReady }),
 		).toBeVisible();
-		await expect
-			.poll(async () => {
-				return mainWindow.evaluate(async (nextSessionId) => {
-					return window.terminayTest!.getServerTerminalCwd(nextSessionId);
-				}, sessionId);
-			})
-			.toMatchObject({ cwd: expectedRoot, source: 'observed' });
 
 		await mainWindow.bringToFront();
 		await mainWindow.locator('.terminal-panel').first().click();

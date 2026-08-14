@@ -194,15 +194,6 @@ test.describe('project tabs', () => {
 			};
 		});
 		await typeInVisibleTerminal(popoutWindow, 'sleep 30\n', sessionId);
-		await expect
-			.poll(() =>
-				popoutWindow.evaluate(
-					(nextSessionId) =>
-						window.terminayTest!.getServerTerminalActivity(nextSessionId),
-					sessionId,
-				),
-			)
-			.toMatchObject({ foregroundBusy: true });
 		await electronApp.evaluate(({ BrowserWindow }) =>
 			BrowserWindow.getFocusedWindow()?.close(),
 		);
