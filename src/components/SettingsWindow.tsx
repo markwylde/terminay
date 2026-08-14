@@ -555,6 +555,7 @@ export function SettingsWindow({
 	aiTabMetadataClient: aiTabMetadataClientOverride,
 	initialSectionId,
 	remoteAccessStatusClient,
+	remotePairingPinClient,
 	settingsClient: settingsClientOverride,
 	shellProfilesClient,
 	serverIdentity = 'Connected server',
@@ -563,6 +564,7 @@ export function SettingsWindow({
 	aiTabMetadataClient?: AiTabMetadataClient;
 	initialSectionId?: string;
 	remoteAccessStatusClient: RemoteAccessStatusClient;
+	remotePairingPinClient: import('../remotePairingPin').RemotePairingPinClient;
 	settingsClient?: TerminalSettingsClient;
 	shellProfilesClient?: ShellProfilesClient;
 	serverIdentity?: string;
@@ -2096,7 +2098,7 @@ export function SettingsWindow({
 		async (mode: 'lan' | 'webrtc') => {
 			if (
 				await isRemoteAccessPairingPinConfigured(
-					window.terminayRemotePairingPinHost,
+					remotePairingPinClient,
 					mode,
 				)
 			) {
@@ -2129,7 +2131,7 @@ export function SettingsWindow({
 
 			try {
 				await saveRemoteAccessPairingPin(
-					window.terminayRemotePairingPinHost,
+					remotePairingPinClient,
 					pin,
 				);
 				closePairingPinModal(true);

@@ -22,6 +22,7 @@ import {
 } from '../hooks/useTerminalSettings';
 import { ProjectEnvironmentsWindow } from '../projectEnvironments/ProjectEnvironmentSurfaces';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
+import { createServerRemoteAccessClients } from '../services/serverApplicationFeatureClients';
 import {
 	type AuxiliaryRouteRequest,
 	type AuxiliaryRouteRequestHandler,
@@ -209,10 +210,8 @@ export function ConnectedWebRendererWorkspace({
 			);
 		return new ShellProfilesClient(new TerminayClientFacade(applicationClient));
 	}, [applicationClient]);
-	const remoteAccessStatusClient = useMemo(
-		createUnavailableRemoteAccessClient,
-		[],
-	);
+	const remoteAccessClients = useMemo(() => applicationClient === undefined ? undefined : createServerRemoteAccessClients(applicationClient), [applicationClient]);
+	const remoteAccessStatusClient = remoteAccessClients?.status ?? createUnavailableRemoteAccessClient();
 	const handleAuxiliaryRouteRequest = useCallback<AuxiliaryRouteRequestHandler>(
 		async (request) => {
 			pendingEditResolveRef.current?.(null);
@@ -326,6 +325,7 @@ export function ConnectedWebRendererWorkspace({
 							aiTabMetadataClient={aiMetadataClient}
 							initialSectionId={route.sectionId}
 							remoteAccessStatusClient={remoteAccessStatusClient}
+							remotePairingPinClient={remoteAccessClients!.pairingPin}
 							settingsClient={serverSettingsClient}
 							shellProfilesClient={shellProfilesClient}
 							serverIdentity={

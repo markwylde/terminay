@@ -5,58 +5,10 @@ import type { TerminayTestApi } from './types/terminay';
 
 declare global {
 	interface Window {
-		/** Narrow native capability for selecting a Terminay server.  This is
-		 * intentionally separate from the legacy broad preload compatibility
-		 * surface while the rest of the Desktop migration is in progress. */
-		terminayConnectionHost: {
-			readonly version: 1;
-			list(): Promise<{
-				profiles: Array<{
-					id: string;
-					isLocal?: boolean;
-					label: string;
-					origin: string;
-					serverId: string;
-					selected: boolean;
-					status: string;
-				}>;
-			}>;
-			open(url: string, pairingPin?: string): Promise<void>;
-			select(profileId: string): Promise<void>;
-			rename(profileId: string, label: string): Promise<void>;
-			forget(profileId: string): Promise<void>;
-			revoke(profileId: string): Promise<void>;
-		};
-		/** Bounded Desktop remote-access service control and status boundary. */
-		terminayRemoteAccessStatusHost: {
-			readonly version: 1;
-			getStatus(): Promise<import('./types/terminay').RemoteAccessStatus>;
-			toggleServer(): Promise<import('./types/terminay').RemoteAccessStatus>;
-			toggleDirectListener(): Promise<
-				import('./types/terminay').RemoteAccessStatus
-			>;
-			revokeDevice(
-				deviceId: string,
-			): Promise<import('./types/terminay').RemoteAccessStatus>;
-			closeConnection(
-				connectionId: string,
-			): Promise<import('./types/terminay').RemoteAccessStatus>;
-			setPairingAddress(
-				address: string,
-			): Promise<import('./types/terminay').RemoteAccessStatus>;
-			subscribe(
-				listener: (
-					status: import('./types/terminay').RemoteAccessStatus,
-				) => void,
-			): () => void;
-		};
 		terminayEditWindowHost: import('./components/EditTabWindow').EditWindowClient & {
 			readonly version: 1;
 		};
 		terminayQuickPushHost: import('./components/QuickPushModal').QuickPushClient & {
-			readonly version: 1;
-		};
-		terminayRemotePairingPinHost: import('./remotePairingPin').RemotePairingPinClient & {
 			readonly version: 1;
 		};
 		/** Bounded native project-editor capability for the current Desktop shell. */
@@ -123,16 +75,6 @@ declare global {
 			reveal(filePath: string): Promise<void>;
 		};
 		/** Bounded Desktop-only MCP configuration capability. */
-		terminayMcpInstallHost?: {
-			readonly version: 1;
-			getStatus(): Promise<import('./types/terminay').McpInstallStatus>;
-			install(
-				agent: import('./types/terminay').McpAgentId,
-			): Promise<import('./types/terminay').McpInstallActionResult>;
-			uninstall(
-				agent: import('./types/terminay').McpAgentId,
-			): Promise<import('./types/terminay').McpInstallActionResult>;
-		};
 		/** Bounded native recordings-window capability for the current Desktop shell. */
 		terminayRecordingsHost?: {
 			readonly version: 1;
