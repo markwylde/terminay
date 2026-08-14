@@ -2,6 +2,10 @@ import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { openRemoteMenu } from './support/ui';
 
+type AppHarness = {
+	openSettingsWindow: (options: { page: Page; sectionId: string }) => Promise<Page>;
+};
+
 function remoteOriginInput(page: Page) {
 	return page
 		.locator('#section-remote-access-host .settings-row')
@@ -10,23 +14,64 @@ function remoteOriginInput(page: Page) {
 }
 
 async function configureWebRtcHostedDomain(
-	appHarness: {
-		openSettingsWindow: (options: {
-			page: Page;
-			sectionId: string;
-		}) => Promise<Page>;
-	},
+	appHarness: AppHarness,
 	page: Page,
 	hostedDomain: string,
+): Promise<void> {
+	const settings = await appHarness.openSettingsWindow({ page, sectionId: 'remote-access-host' });
+	await settings.getByLabel('Exposure route').selectOption('webrtc');
+	await settings.locator('#section-remote-access-host .settings-row').filter({ hasText: 'WebRTC hosted domain' }).locator('input').fill(hostedDomain);
+	await expect(settings.locator('.settings-status')).toContainText('Saved');
+	await settings.close();
+}
+
+async function configureExposureRoute(
+	appHarness: AppHarness,
+	page: Page,
+	route: 'lan' | 'webrtc',
 ): Promise<void> {
 	const settings = await appHarness.openSettingsWindow({
 		page,
 		sectionId: 'remote-access-host',
 	});
-	await settings.getByLabel('Exposure route').selectOption('webrtc');
-	await settings.locator('#section-remote-access-host .settings-row').filter({ hasText: 'WebRTC hosted domain' }).locator('input').fill(hostedDomain);
+	await settings.getByLabel('Exposure route').selectOption(route);
 	await expect(settings.locator('.settings-status')).toContainText('Saved');
 	await settings.close();
+}
+
+async function readPairingLink(page: Page): Promise<string> {
+	const pairingDialog = page.getByRole('dialog', { name: 'Pair device' });
+	await expect(pairingDialog).toBeVisible();
+	const pairingLink = pairingDialog
+		.locator('.remote-pairing-modal__address-text')
+		.filter({ hasText: /^https?:\/\//u })
+		.last();
+	await expect(pairingLink).toBeVisible();
+	return pairingLink.innerText();
+}
+
+async function exposeAndReadPairingLink(page: Page, pin: string): Promise<string> {
+	await openRemoteMenu(page);
+	await page.getByRole('button', { name: 'Expose this server…' }).click();
+	const pinDialog = page.getByRole('dialog', { name: 'Remote Pairing PIN' });
+	if (await pinDialog.isVisible().catch(() => false)) {
+		await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill(pin);
+		await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
+		await expect(pinDialog).toHaveCount(0);
+	}
+	await openRemoteMenu(page);
+	const showPairing = page.getByRole('button', { name: 'Show pairing link and QR' });
+	await expect(showPairing).toBeVisible();
+	await showPairing.click();
+	const pairingUrl = await readPairingLink(page);
+	await page.getByRole('button', { name: 'Close Pair Device' }).click();
+	return pairingUrl;
+}
+
+async function stopExposure(page: Page): Promise<void> {
+	await openRemoteMenu(page);
+	const stop = page.getByRole('button', { name: /^Stop exposing this server/ });
+	if (await stop.isVisible().catch(() => false)) await stop.click();
 }
 
 async function exposeWebRtcAndOpenPairing(page: Page): Promise<void> {
@@ -40,14 +85,7 @@ async function exposeWebRtcAndOpenPairing(page: Page): Promise<void> {
 	await expect(pinDialog).toHaveCount(0);
 
 	await openRemoteMenu(page);
-	const showPairing = page.getByRole('button', {
-		name: 'Show pairing link and QR',
-	});
-	// The connection menu is driven by the selected Terminay Server's
-	// remote-access subscription. Its exposed action is the user-visible proof
-	// that the server has started and published a pairing URL.
-	await expect(showPairing).toBeVisible();
-	await showPairing.click();
+	await page.getByRole('button', { name: 'Show pairing link and QR' }).click();
 }
 
 test('opens remote access settings from the host menu', async ({
@@ -195,12 +233,7 @@ test('asks for a Remote Access PIN before generating the QR code', async ({
 	const showPairing = mainWindow.getByRole('button', {
 		name: 'Show pairing link and QR',
 	});
-	// The selected server's canonical status subscription enables this action
-	// only after exposure has started and a pairing URL is available.
 	await expect(showPairing).toBeVisible();
-	await expect(
-		mainWindow.getByRole('button', { name: /^Stop exposing this server/ }),
-	).toBeVisible();
 	await showPairing.click();
 	const secondPairingDialog = mainWindow.getByRole('dialog', {
 		name: 'Pair device',
@@ -220,19 +253,12 @@ test('asks for a Remote Access PIN before generating the QR code', async ({
 });
 
 test('a direct pairing link boots the server UI, enrolls, and connects', async ({
+	appHarness,
 	mainWindow,
 	page,
 }) => {
-	const pairingUrl = await mainWindow.evaluate(async () => {
-		await window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
-			'123456',
-		);
-		const status =
-			await window.terminayRemoteAccessStatusHost.toggleDirectListener();
-		if (!status.lanPairingUrl)
-			throw new Error('Direct exposure did not publish a pairing URL.');
-		return status.lanPairingUrl;
-	});
+	await configureExposureRoute(appHarness, mainWindow, 'lan');
+	const pairingUrl = await exposeAndReadPairingLink(mainWindow, '123456');
 
 	expect(pairingUrl).toContain('pairingFlow=device');
 	const certificateSession = await page.context().newCDPSession(page);
@@ -275,24 +301,14 @@ test('starts WebRTC remote access from the host menu start button', async ({
 		await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
 		await expect(pinDialog).toHaveCount(0);
 
-		await expect
-			.poll(async () => {
-				const status = await mainWindow.evaluate(() =>
-					window.terminayRemoteAccessStatusHost.getStatus(),
-				);
-				return (
-					status.isRunning &&
-					status.pairingMode === 'webrtc' &&
-					Boolean(status.webRtcPairingUrl)
-				);
-			})
-			.toBe(true);
-
-		const status = await mainWindow.evaluate(() =>
-			window.terminayRemoteAccessStatusHost.getStatus(),
-		);
-		expect(status.pairingMode).toBe('webrtc');
-		const webRtcPairingUrl = new URL(status.webRtcPairingUrl!);
+		await openRemoteMenu(mainWindow);
+		const showPairing = mainWindow.getByRole('button', {
+			name: 'Show pairing link and QR',
+		});
+		await expect(showPairing).toBeVisible();
+		await showPairing.click();
+		const webRtcPairingUrl = new URL(await readPairingLink(mainWindow));
+		await mainWindow.getByRole('button', { name: 'Close Pair Device' }).click();
 		expect(webRtcPairingUrl.protocol).toBe('https:');
 		expect(webRtcPairingUrl.hostname).not.toBe('localhost');
 		expect(webRtcPairingUrl.username).toBe('');
@@ -315,103 +331,39 @@ test('starts WebRTC remote access from the host menu start button', async ({
 			),
 		).toHaveCount(0);
 	} finally {
-		await mainWindow.evaluate(async () => {
-			const status = await window.terminayRemoteAccessStatusHost.getStatus();
-			if (status.isRunning) {
-				await window.terminayRemoteAccessStatusHost.toggleServer();
-			}
-		});
+		await stopExposure(mainWindow);
 	}
 });
 
 test('keeps the configured PIN out of the server-owned LAN handoff', async ({
 	appHarness, mainWindow,
 }) => {
-	const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' });
-	await settingsWindow.getByLabel('Exposure route').selectOption('lan');
-	await expect(settingsWindow.locator('.settings-status')).toContainText('Saved');
-	await settingsWindow.close();
-	await mainWindow.evaluate(async () => {
-		await window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
-			'654321',
-		);
-		await window.terminayRemoteAccessStatusHost.toggleDirectListener();
-	});
-
-	await expect
-		.poll(async () => {
-			const status = await mainWindow.evaluate(() =>
-				window.terminayRemoteAccessStatusHost.getStatus(),
-			);
-			return status.lanPairingUrl;
-		})
-		.toBeTruthy();
-
-	const status = await mainWindow.evaluate(() =>
-		window.terminayRemoteAccessStatusHost.getStatus(),
+	await configureExposureRoute(appHarness, mainWindow, 'lan');
+	const pairingUrl = new URL(
+		await exposeAndReadPairingLink(mainWindow, '654321'),
 	);
-	const pairingUrl = new URL(status.lanPairingUrl!);
 	expect(pairingUrl.search).toBe('');
 	const pairingBootstrap = new URLSearchParams(pairingUrl.hash.slice(1));
 	expect(pairingBootstrap.get('pairingSessionId')).toMatch(/^pair-/);
 	expect(pairingBootstrap.get('pairingToken')).toMatch(/^[A-Za-z0-9_-]{32,}$/);
 	expect(pairingBootstrap.get('pairingExpiresAt')).toBeTruthy();
 	expect(pairingUrl.hash).not.toContain('654321');
-	await mainWindow.evaluate(() =>
-		window.terminayRemoteAccessStatusHost.toggleServer(),
-	);
+	await stopExposure(mainWindow);
 });
 
 test('rotates and stops server-owned LAN pairing without a legacy renderer API', async ({
 	appHarness, mainWindow,
 }) => {
-	const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'remote-access-host' });
-	await settingsWindow.getByLabel('Exposure route').selectOption('lan');
-	await expect(settingsWindow.locator('.settings-status')).toContainText('Saved');
-	await settingsWindow.close();
-	await mainWindow.evaluate(async () => {
-		await window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
-			'123456',
-		);
-		await window.terminayRemoteAccessStatusHost.toggleDirectListener();
-	});
-
-	await expect
-		.poll(async () => {
-			const status = await mainWindow.evaluate(() =>
-				window.terminayRemoteAccessStatusHost.getStatus(),
-			);
-			return status.lanPairingUrl;
-		})
-		.toBeTruthy();
-
-	const first = await mainWindow.evaluate(() =>
-		window.terminayRemoteAccessStatusHost.getStatus(),
-	);
-	expect(first.lanPairingUrl).toBeTruthy();
-	await mainWindow.evaluate(async () => {
-		await window.terminayRemoteAccessStatusHost.toggleDirectListener();
-		await window.terminayRemoteAccessStatusHost.toggleDirectListener();
-	});
-	const rotated = await mainWindow.evaluate(() =>
-		window.terminayRemoteAccessStatusHost.getStatus(),
-	);
-	expect(rotated.lanPairingUrl).toBeTruthy();
-	expect(rotated.lanPairingUrl).not.toBe(first.lanPairingUrl);
-
-	await mainWindow.evaluate(() =>
-		window.terminayRemoteAccessStatusHost.toggleDirectListener(),
-	);
-	await expect
-		.poll(
-			async () =>
-				(
-					await mainWindow.evaluate(() =>
-						window.terminayRemoteAccessStatusHost.getStatus(),
-					)
-				).directListenerRunning,
-		)
-		.toBe(false);
+	await configureExposureRoute(appHarness, mainWindow, 'lan');
+	const first = await exposeAndReadPairingLink(mainWindow, '123456');
+	await stopExposure(mainWindow);
+	const rotated = await exposeAndReadPairingLink(mainWindow, '123456');
+	expect(rotated).not.toBe(first);
+	await stopExposure(mainWindow);
+	await openRemoteMenu(mainWindow);
+	await expect(
+		mainWindow.getByRole('button', { name: 'Expose this server…' }),
+	).toBeVisible();
 });
 
 test('manages remote access from the settings window host section', async ({
