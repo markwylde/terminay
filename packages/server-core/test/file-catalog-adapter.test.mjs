@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   CanonicalProjectPathResolver,
+  createOperationDispatcher,
   FILE_CATALOG_OPERATIONS,
   FileCatalog,
   FileServiceError,
@@ -164,6 +165,59 @@ test("catalog adapter operation handlers keep project authorization in authentic
     }),
     (error) => error instanceof FileServiceError && error.code === "path_escape",
   );
+});
+
+test("files.list reports typed failures, records bounded diagnostics, and recovers on the next refresh", async () => {
+  const projectA = project();
+  const originalReadDirectory = projectA.storage.readDirectory.bind(projectA.storage);
+  let failRead = true;
+  projectA.storage.readDirectory = (path) => {
+    if (failRead) throw Object.assign(new Error("EACCES /private/project"), { code: "EACCES" });
+    return originalReadDirectory(path);
+  };
+  const diagnostics = [];
+  const adapter = new ServerFileCatalogAdapter({
+    serverId: "server-a",
+    projects: { "project-a": projectA.context },
+    onOperationFailure: (failure) => diagnostics.push(failure),
+  });
+  const dispatcher = createOperationDispatcher(adapter.operations());
+  const request = (queryId) => ({
+    envelope: { type: "query", queryId, operation: FILE_CATALOG_OPERATIONS.list, payload: { projectId: "project-a", path: "." } },
+    body: new Uint8Array(),
+    context: { connectionId: "connection-a", clientId: "client-a", authScope: "admin", signal: new AbortController().signal },
+  });
+
+  const failed = await dispatcher.query(request("list-fails"));
+  assert.equal(failed.envelope.ok, false);
+  assert.deepEqual(failed.envelope.error, {
+    code: "internal",
+    message: "file operation could not be completed",
+    retryable: false,
+  });
+  assert.deepEqual(diagnostics, [{ operation: "files.list", code: "read_failed" }]);
+  assert.equal(JSON.stringify(diagnostics).includes("/private/project"), false);
+
+  failRead = false;
+  const recovered = await dispatcher.query(request("list-recovers"));
+  assert.equal(recovered.envelope.ok, true);
+  assert.deepEqual(recovered.envelope.result.entries.map((entry) => entry.relativePath), ["src", "README.md"]);
+});
+
+test("files.list project-scope rejection is actionable instead of a generic query failure", async () => {
+  const adapter = new ServerFileCatalogAdapter({ serverId: "server-a", projects: {} });
+  const dispatcher = createOperationDispatcher(adapter.operations());
+  const result = await dispatcher.query({
+    envelope: { type: "query", queryId: "list-unbound-project", operation: FILE_CATALOG_OPERATIONS.list, payload: { projectId: "missing-project", path: "." } },
+    body: new Uint8Array(),
+    context: { connectionId: "connection-a", clientId: "client-a", authScope: "admin", signal: new AbortController().signal },
+  });
+  assert.equal(result.envelope.ok, false);
+  assert.deepEqual(result.envelope.error, {
+    code: "forbidden",
+    message: "file path is outside the authorized project",
+    retryable: false,
+  });
 });
 
 test("catalog adapter commands require write scope and retain bounded body bytes", async () => {

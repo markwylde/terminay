@@ -257,10 +257,12 @@ export class FileCatalog {
 			this.maxEntries,
 			'limit',
 		);
-		const rawEntries = await this.storage.readDirectory(
-			canonical,
-			options.signal,
-		);
+		let rawEntries: readonly FileDirectoryEntry[];
+		try {
+			rawEntries = await this.storage.readDirectory(canonical, options.signal);
+		} catch (error) {
+			throw directoryReadFailure(error);
+		}
 		const entries: FileCatalogEntry[] = [];
 		for (const raw of rawEntries) {
 			throwIfAborted(options.signal);
@@ -762,7 +764,7 @@ export class FileCatalog {
 				});
 			if (error instanceof FileServiceError && error.code === 'path_missing')
 				return undefined;
-			throw error;
+			throw directoryReadFailure(error);
 		}
 	}
 
@@ -1085,6 +1087,25 @@ function validEntryName(name: string): string {
 			'directory entry name is invalid',
 		);
 	return name;
+}
+
+/** Never let a platform-specific read error escape the file-service boundary.
+ * The error still distinguishes a vanished directory from an inaccessible or
+ * otherwise failed read, without carrying an absolute path into the protocol. */
+function directoryReadFailure(error: unknown): FileServiceError {
+	if (error instanceof FileServiceError) return error;
+	if (isMissingPathError(error))
+		return new FileServiceError('path_missing', 'folder is no longer available');
+	return new FileServiceError('read_failed', 'folder could not be read');
+}
+
+function isMissingPathError(error: unknown): boolean {
+	return (
+		typeof error === 'object' &&
+		error !== null &&
+		((error as { readonly code?: unknown }).code === 'ENOENT' ||
+			(error as { readonly code?: unknown }).code === 'ENOTDIR')
+	);
 }
 
 function validPattern(pattern: string): string {

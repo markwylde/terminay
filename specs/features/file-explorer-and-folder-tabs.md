@@ -22,6 +22,10 @@ in a persistent, reorderable vertical stack.
 - Filesystem operations execute in Terminay Server and validate the requested
   path against the intended project/root scope. Watch updates cope with atomic
   saves, rename/delete events, and temporary unavailable paths.
+- When a filesystem query fails, the server returns a bounded typed protocol
+  error rather than a generic dispatcher failure. The Explorer keeps its last
+  successful tree while a refresh fails, and clears its own visible failure once
+  a later refresh succeeds; an unrelated feature failure remains visible.
 
 ## Folder tabs and Markdown tasks
 
@@ -93,3 +97,8 @@ applying later events.
   token is available; they never fall back to a raw-path host bridge.
 - Folder task aggregation stays responsive by applying ignored-directory and
   large-content safeguards.
+- A missing project binding, vanished folder, rejected path, and unexpected
+  directory-read failure produce distinguishable bounded Explorer failures;
+  none render only `query failed`.
+- A failed Explorer refresh followed by a successful refresh retains the tree
+  during the failure and removes only the stale Explorer failure notice.

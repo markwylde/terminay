@@ -73,6 +73,7 @@ test('Local server diagnostics are semantic and PTY data paths never call the si
 		'local-server.ready',
 		'local-server.failed',
 		'local-server.connection.failed',
+		'local-server.file-operation.failed',
 		'local-server.stopping',
 		'local-server.stopped',
 		'local-server.terminal-congestion',
@@ -93,6 +94,13 @@ test('Local server diagnostics are semantic and PTY data paths never call the si
 		/desktopDiagnostics/u,
 	);
 	assert.doesNotMatch(authority, /desktopDiagnostics/u);
+	const fileFailureStart = main.indexOf('onFileOperationFailure:');
+	const fileFailureEnd = main.indexOf('// These callbacks run', fileFailureStart);
+	assert.ok(fileFailureStart > 0 && fileFailureEnd > fileFailureStart);
+	const fileFailure = main.slice(fileFailureStart, fileFailureEnd);
+	assert.match(fileFailure, /operation: failure\.operation/u);
+	assert.match(fileFailure, /code: failure\.code/u);
+	assert.doesNotMatch(fileFailure, /projectId|projectRoot|path:/u);
 });
 
 test('application logs do not persist microphone identity', () => {

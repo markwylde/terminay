@@ -67,6 +67,24 @@ export type FeatureFailure = Readonly<{
 	operation?: string;
 }>;
 
+export type VisibleFeatureFailure = Readonly<{
+	feature: 'Explorer' | 'Agents' | 'Git' | 'Settings';
+	message: string;
+}>;
+
+/** Clear only the feature notice which a successful follow-up operation has
+ * repaired. A success in Explorer must never erase a newer terminal, Git, or
+ * other feature failure sharing the global banner. */
+export function clearSucceededFeatureFailure(
+	failure: VisibleFeatureFailure | null,
+	feature: 'Explorer' | 'Git',
+	visibleMessage: string | null,
+): VisibleFeatureFailure | null {
+	if (failure?.feature !== feature || visibleMessage !== failure.message)
+		return failure;
+	return null;
+}
+
 /** Bounded, actionable copy for a failed server feature operation. */
 export function describeFeatureFailure(
 	feature: string,

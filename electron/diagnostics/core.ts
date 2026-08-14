@@ -73,6 +73,7 @@ export const DIAGNOSTIC_EVENT_NAMES = [
 	'local-server.ready',
 	'local-server.failed',
 	'local-server.connection.failed',
+	'local-server.file-operation.failed',
 	'local-server.terminal-congestion',
 	'local-server.stopping',
 	'local-server.stopped',

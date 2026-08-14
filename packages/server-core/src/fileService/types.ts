@@ -130,7 +130,9 @@ export type FileServiceErrorCode =
   | "not_dirty"
   | "confirmation_required"
   | "session_closed"
-  | "write_failed";
+  | "write_failed"
+  /** A directory entry could not be read after the project scope was authorized. */
+  | "read_failed";
 
 export interface FileServiceErrorDetails {
   readonly expected?: number;
