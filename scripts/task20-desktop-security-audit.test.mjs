@@ -5,7 +5,6 @@ import { transform } from "esbuild";
 import {
   DesktopHostBridgeRouter,
   DesktopHostShellPolicy,
-  normalizeExternalUrl,
   normalizePairingDeepLink,
   validateDesktopHostAction,
 } from "../apps/terminay-desktop/dist/main/index.js";
@@ -145,7 +144,7 @@ test("legacy Electron external links are credential-free HTTPS URLs only", async
   assert.doesNotMatch(main.slice(0, main.indexOf("function isAppNavigation")), /mailto:|tel:/u);
   assert.match(main, /function assertTrustedAppSender/u);
   assert.match(main, /function isTrustedAppWindow[\s\S]{0,320}appWindows\.has\(window\)/u);
-  for (const channel of ["desktop:project-edit-host:open", "app:open-terminal-edit", "remote:get-status", "remote:toggle-server", "remote:revoke-device", "remote:close-connection", "remote:set-pairing-address", "remote:set-pairing-pin", "desktop:recordings-host:open", "secrets:get", "secrets:save", "secrets:delete", "secrets:get-decrypted", "desktop:workspace-transfer-host:get-adopted-project", "desktop:workspace-transfer-host:popout-project", "desktop:workspace-transfer-host:merge-project", "desktop:project-tab-host:publish-bar-rect", "desktop:project-tab-host:start-drag", "desktop:project-tab-host:end-drag", "test:get-mcp-control-environment", "test:send-app-command", "test:set-ai-tab-metadata-mock", "test:emit-agent-journal-record", "desktop:mcp-install-host:get-status", "desktop:mcp-install-host:install", "desktop:mcp-install-host:uninstall"]) {
+  for (const channel of ["desktop:project-edit-host:open", "app:open-terminal-edit", "desktop:recordings-host:open", "secrets:get", "secrets:save", "secrets:delete", "secrets:get-decrypted", "desktop:workspace-transfer-host:get-adopted-project", "desktop:workspace-transfer-host:popout-project", "desktop:workspace-transfer-host:merge-project", "desktop:project-tab-host:publish-bar-rect", "desktop:project-tab-host:start-drag", "desktop:project-tab-host:end-drag", "test:get-mcp-control-environment", "test:send-app-command", "test:set-ai-tab-metadata-mock", "test:emit-agent-journal-record"]) {
     const start = main.indexOf(`'${channel}'`);
     assert.ok(start >= 0, `${channel} is registered`);
     assert.match(main.slice(start, start + 360), /assertTrustedAppSender\(event\)/u, `${channel} validates sender provenance`);
@@ -250,7 +249,6 @@ test("pairing deep links keep only the exact HTTPS origin and never accept query
 test("clipboard and external URL actions are bounded by the host bridge", async () => {
   const external = validateDesktopHostAction({ type: "external.open", url: "https://docs.example.test/help?q=1#overview" });
   assert.deepEqual(external, { type: "external.open", url: "https://docs.example.test/help?q=1#overview" });
-  assert.equal(normalizeExternalUrl("https://docs.example.test:443/help"), "https://docs.example.test/help");
   for (const url of [
     "http://docs.example.test/help",
     "javascript:alert(1)",

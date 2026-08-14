@@ -38,7 +38,6 @@ import {
 	shell,
 	webContents,
 } from 'electron';
-import WebSocket from 'ws';
 import { LocalServerUiSession } from '../apps/terminay-desktop/src/main/localServerUiSession';
 import {
 	type DesktopAuthenticatedAssetLane,
@@ -72,7 +71,6 @@ import {
 } from '../src/keyboardShortcuts';
 import { defaultMacros, normalizeMacros } from '../src/macroSettings';
 import { distanceToRect, pointInRect } from '../src/projectTabDrag';
-import { createRemoteStreamTransport } from '../src/shared/remoteStreamTransport';
 import {
 	type ServerMessagePort,
 } from '../src/shared/serverPortTransport';
@@ -145,14 +143,7 @@ import {
 import { registerQuickPushIpcHandlers } from './quickPush/ipc';
 import { QuickPushService } from './quickPush/service';
 import { TerminalRecordingService } from './recording/service';
-import {
-	isRemoteAccessPairingUrl,
-	normalizeRemoteConnectionUrl,
-} from './remote/connectionUrl';
-import { resolveDesktopConnectionIntent } from './remote/desktopConnectionIntent';
-import { establishDesktopDevicePairing } from './remote/desktopPairing';
 import { createDesktopReconnectTransport } from './remote/desktopReconnect';
-import { enrollDesktopReconnectCredential } from './remote/desktopReconnectEnrollment';
 import { createDesktopBootstrappedWebRtcConnection } from './remote/desktopWebRtcBootstrap';
 import { resolveDesktopWebRtcRuntimeRoot } from './remote/desktopWebRtcRuntimeRoot';
 import {
@@ -498,10 +489,6 @@ let controlServer: ControlServer | null = null;
 // MessagePort. Keep the selected authority separately so a reload reconnects
 // the same profile instead of allowing the Local load hook to take over.
 const remoteProfileBindingsByWebContents = new Map<number, string>();
-const pendingRemoteConnectionWindowsByProfile = new Map<
-	string,
-	BrowserWindow
->();
 const auxiliaryWindowsByPresentation = new Map<string, BrowserWindow>();
 const launchRecoveryWebContents = new Set<number>();
 const deferredCanonicalLaunches = new Map<number, () => Promise<void>>();
@@ -571,37 +558,6 @@ function loadRememberedRemoteConnections(): void {
 		// A missing or malformed metadata file is an empty profile list. It
 		// contains no credentials and must never prevent Local from starting.
 	}
-}
-
-function saveRememberedRemoteConnections(): void {
-	mkdirSync(path.dirname(rememberedRemoteConnectionsPath()), {
-		recursive: true,
-	});
-	writeFileSync(
-		rememberedRemoteConnectionsPath(),
-		`${JSON.stringify([...rememberedRemoteConnections.values()], null, 2)}\n`,
-		{ mode: 0o600 },
-	);
-}
-
-function rememberRemoteConnection(
-	origin: string,
-	label: string,
-	kind: RememberedRemoteConnection['kind'],
-): RememberedRemoteConnection {
-	loadRememberedRemoteConnections();
-	const existing = [...rememberedRemoteConnections.values()].find(
-		(profile) => profile.origin === origin,
-	);
-	const profile = {
-		id: existing?.id ?? `remote-profile-${randomUUID()}`,
-		kind,
-		label: existing?.label ?? label,
-		origin,
-	} satisfies RememberedRemoteConnection;
-	rememberedRemoteConnections.set(profile.id, profile);
-	saveRememberedRemoteConnections();
-	return profile;
 }
 
 function createDesktopDeviceCredentialStore(): DesktopDeviceCredentialStore {
@@ -1192,7 +1148,7 @@ if (desktopWebRtcRuntimeRoot !== undefined) {
 			},
 			getRemoteAccessSettings: () => readTerminalSettings().remoteAccess,
 			notifyTerminalRemoteSizeOverride: () => undefined,
-			onStatusChanged: () => broadcastRemoteAccessStatus(),
+			onStatusChanged: () => undefined,
 			publicDir: process.env.VITE_PUBLIC ?? RENDERER_DIST,
 			rendererDistDir: RENDERER_DIST,
 			saveGeneratedTlsPaths: () => undefined,
@@ -2420,6 +2376,7 @@ async function presentCanonicalAuxiliaryRoute(
 			auxiliary: { ...auxiliary, presentationId },
 		});
 	} else {
+		loadRememberedRemoteConnections();
 		const profile = rememberedRemoteConnections.get(context.profileId);
 		if (profile === undefined)
 			throw new Error('The selected remote profile is no longer available.');
@@ -2647,14 +2604,6 @@ function createWindow(options?: {
 			if (auxiliaryWindowsByPresentation.get(key) === window)
 				auxiliaryWindowsByPresentation.delete(key);
 		}
-		for (const [
-			profileId,
-			pendingWindow,
-		] of pendingRemoteConnectionWindowsByProfile) {
-			if (pendingWindow === window) {
-				pendingRemoteConnectionWindowsByProfile.delete(profileId);
-			}
-		}
 		remoteProfileBindingsByWebContents.delete(windowWebContentsId);
 		launchRecoveryWebContents.delete(windowWebContentsId);
 		deferredCanonicalLaunches.delete(windowWebContentsId);
@@ -2840,125 +2789,6 @@ async function launchDeferredCanonicalWindow(window: BrowserWindow): Promise<voi
 	await launch();
 }
 
-async function connectRemoteServer(
-	event: Electron.IpcMainInvokeEvent,
-	rawUrl: unknown,
-	pairingPin?: string,
-): Promise<void> {
-	const pairingUrl = normalizeRemoteConnectionUrl(rawUrl);
-	if (isRemoteAccessPairingUrl(pairingUrl) && pairingPin === undefined) {
-		throw new Error(
-			'Enter the six-digit Remote Access pairing PIN for this device link.',
-		);
-	}
-	// A server URL copied from the standalone server's readiness log is the
-	// application-protocol handoff and must continue to connect with no extra
-	// field.  Device pairing is an explicit PIN-bearing flow: its URL has the
-	// same fragment shape, so fragment inspection alone cannot select it.
-	const intent = resolveDesktopConnectionIntent(pairingPin);
-	if (intent.kind === 'device-pairing') {
-		const credentialStore = createDesktopDeviceCredentialStore();
-		const paired = await establishDesktopDevicePairing({
-			deviceName: `${app.getName()} Desktop`,
-			pairingPin: intent.pairingPin,
-			pairingUrl,
-			store: credentialStore,
-		});
-		const connected = await createDesktopReconnectTransport({
-			origin: paired.origin,
-			store: credentialStore,
-		});
-		const profile = rememberRemoteConnection(
-			paired.origin,
-			new URL(paired.origin).host,
-			'device',
-		);
-		if (connected.signalingBootstrap !== undefined) {
-			try {
-				const webRtcConnection = await createDesktopBootstrappedWebRtcConnection({
-					bootstrap: connected.signalingBootstrap,
-					expectedOrigin: paired.origin,
-				});
-				await connected.transport.close({ code: 'normal' });
-				const current = BrowserWindow.fromWebContents(event.sender);
-				if (current === null) throw new Error('The target window is unavailable.');
-				await openCanonicalRemoteServerWindow(
-					current,
-					profile,
-					paired.origin,
-					webRtcConnection,
-				);
-				return;
-			} catch (error) {
-				await connected.transport.close({ code: 'normal' });
-				throw error;
-			}
-		}
-		const current = BrowserWindow.fromWebContents(event.sender);
-		if (current === null) throw new Error('The target window is unavailable.');
-		await openCanonicalHttpRemoteServerWindow(
-			current,
-			profile,
-			paired.origin,
-			connected.transport,
-		);
-		return;
-	}
-	// A standalone server hands out a structured fragment credential too. Do
-	// not reject it based on fragment shape: the framed stream transport is
-	// authoritative and accepts the token without ever retaining the URL.
-	const { bootstrap, transport: remoteTransport } = createRemoteStreamTransport(
-		pairingUrl,
-		{
-			WebSocket:
-				WebSocket as unknown as import('@terminay/client-core').WebSocketConstructorLike,
-		},
-	);
-	const profileClientId = `desktop-profile-${randomUUID()}`;
-	await enrollDesktopReconnectCredential({
-		authToken: bootstrap.authToken,
-		clientId: profileClientId,
-		deviceName: `${app.getName()} Desktop`,
-		origin: bootstrap.origin,
-		store: createDesktopDeviceCredentialStore(),
-	});
-	const profile = rememberRemoteConnection(
-		bootstrap.origin,
-		new URL(bootstrap.origin).host,
-		'device',
-	);
-	const current = BrowserWindow.fromWebContents(event.sender);
-	if (current === null) throw new Error('The target window is unavailable.');
-	await openCanonicalHttpRemoteServerWindow(
-		current,
-		profile,
-		bootstrap.origin,
-		remoteTransport,
-	);
-}
-
-async function openCanonicalRemoteServerWindow(
-	current: BrowserWindow,
-	profile: RememberedRemoteConnection,
-	origin: string,
-	connection: Awaited<ReturnType<typeof createDesktopBootstrappedWebRtcConnection>>,
-): Promise<void> {
-	const launch = await remoteServerUiBundleHost.prepareRemote({
-		lane: connection.assets,
-		origin,
-		profileId: profile.id,
-		serverId: connection.serverId,
-		windowId: `window-${randomUUID()}`,
-	});
-	const replacement = createWindow({
-		serverUiLaunch: launch,
-		serverUiTransport: connection.transport,
-	});
-	if (replacement === null) throw new Error('Desktop is closing.');
-	remoteProfileBindingsByWebContents.set(replacement.webContents.id, profile.id);
-	current.close();
-}
-
 const REMOTE_SERVER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 async function prepareCanonicalHttpRemoteLaunch(
@@ -3006,61 +2836,6 @@ async function prepareCanonicalHttpRemoteLaunch(
 		serverId,
 		windowId: `window-${randomUUID()}`,
 	});
-}
-
-async function openCanonicalHttpRemoteServerWindow(
-	current: BrowserWindow,
-	profile: RememberedRemoteConnection,
-	origin: string,
-	transport: ByteTransport,
-): Promise<void> {
-	const launch = await prepareCanonicalHttpRemoteLaunch(origin, profile);
-	const replacement = createWindow({
-		serverUiLaunch: launch,
-		serverUiTransport: transport,
-	});
-	if (replacement === null) throw new Error('Desktop is closing.');
-	remoteProfileBindingsByWebContents.set(replacement.webContents.id, profile.id);
-	current.close();
-}
-
-async function reconnectRememberedRemoteProfile(
-	sender: Electron.WebContents,
-	profile: RememberedRemoteConnection,
-): Promise<void> {
-	const connected = await createDesktopReconnectTransport({
-		origin: profile.origin,
-		store: createDesktopDeviceCredentialStore(),
-	});
-	if (connected.signalingBootstrap === undefined) {
-		const current = BrowserWindow.fromWebContents(sender);
-		if (current === null) throw new Error('The target window is unavailable.');
-		await openCanonicalHttpRemoteServerWindow(
-			current,
-			profile,
-			profile.origin,
-			connected.transport,
-		);
-		return;
-	}
-	try {
-		const webRtcConnection = await createDesktopBootstrappedWebRtcConnection({
-			bootstrap: connected.signalingBootstrap,
-			expectedOrigin: profile.origin,
-		});
-		await connected.transport.close({ code: 'normal' });
-		const current = BrowserWindow.fromWebContents(sender);
-		if (current === null) throw new Error('The target window is unavailable.');
-		await openCanonicalRemoteServerWindow(
-			current,
-			profile,
-			profile.origin,
-			webRtcConnection,
-		);
-	} catch (error) {
-		await connected.transport.close({ code: 'normal' });
-		throw error;
-	}
 }
 
 function setDockIcon(): void {
@@ -3432,64 +3207,6 @@ function getAppWindowByWebContentsId(
 	return null;
 }
 
-function getActiveRemoteProfileId(sender: Electron.WebContents): string | null {
-	return remoteProfileBindingsByWebContents.get(sender.id) ?? null;
-}
-
-function getRemoteConnectionWindow(profileId: string): BrowserWindow | null {
-	const pendingWindow = pendingRemoteConnectionWindowsByProfile.get(profileId);
-	if (
-		pendingWindow !== undefined &&
-		!pendingWindow.isDestroyed() &&
-		appWindows.has(pendingWindow)
-	) {
-		return pendingWindow;
-	}
-	if (pendingWindow !== undefined) {
-		pendingRemoteConnectionWindowsByProfile.delete(profileId);
-	}
-	for (const [webContentsId, boundProfileId] of remoteProfileBindingsByWebContents) {
-		if (boundProfileId !== profileId) continue;
-		const window = getAppWindowByWebContentsId(webContentsId);
-		if (window !== null) return window;
-	}
-	return null;
-}
-
-function isPendingRemoteConnectionWindow(window: BrowserWindow): boolean {
-	for (const pendingWindow of pendingRemoteConnectionWindowsByProfile.values()) {
-		if (pendingWindow === window) return true;
-	}
-	return false;
-}
-
-function getLocalConnectionWindow(): BrowserWindow | null {
-	for (const window of appWindows) {
-		if (
-			!window.isDestroyed() &&
-			!isPendingRemoteConnectionWindow(window) &&
-			!remoteProfileBindingsByWebContents.has(window.webContents.id)
-		) {
-			return window;
-		}
-	}
-	return null;
-}
-
-async function closeRemoteConnectionsForProfile(
-	profileId: string,
-): Promise<void> {
-	const pendingWindow = pendingRemoteConnectionWindowsByProfile.get(profileId);
-	pendingRemoteConnectionWindowsByProfile.delete(profileId);
-	if (pendingWindow !== undefined && !pendingWindow.isDestroyed()) {
-		pendingWindow.close();
-	}
-	for (const [webContentsId, boundProfileId] of remoteProfileBindingsByWebContents) {
-		if (boundProfileId !== profileId) continue;
-		getAppWindowByWebContentsId(webContentsId)?.close();
-	}
-}
-
 function findAppWindowTabBarAtPoint(point: {
 	x: number;
 	y: number;
@@ -3826,261 +3543,6 @@ ipcMain.handle(
 	},
 );
 
-/**
- * Versioned, least-authority bridge for the current-server picker.  The
- * current Desktop renderer reaches this separately exposed native-host
- * capability rather than the broad preload object.
- */
-ipcMain.handle(
-	'desktop:connection-host:open',
-	async (event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload)
-		) {
-			throw new TypeError('desktop connection host request is invalid');
-		}
-		const request = payload as Record<string, unknown>;
-		if (
-			(Object.keys(request).length !== 2 &&
-				Object.keys(request).length !== 3) ||
-			request.version !== 1 ||
-			typeof request.url !== 'string' ||
-			request.url.length === 0 ||
-			request.url.length > 16_384
-		) {
-			throw new TypeError('desktop connection host request is invalid');
-		}
-		if (
-			request.pairingPin !== undefined &&
-			(typeof request.pairingPin !== 'string' || request.pairingPin.length > 32)
-		) {
-			throw new TypeError('desktop connection host request is invalid');
-		}
-		return connectRemoteServer(
-			event,
-			request.url,
-			request.pairingPin as string | undefined,
-		);
-	},
-);
-
-ipcMain.handle('desktop:connection-host:list', (event, payload: unknown) => {
-	assertTrustedAppSender(event);
-	if (
-		typeof payload !== 'object' ||
-		payload === null ||
-		Array.isArray(payload) ||
-		Object.keys(payload).length !== 1 ||
-		(payload as { version?: unknown }).version !== 1
-	) {
-		throw new TypeError('desktop connection host request is invalid');
-	}
-	const localServerId = serverTerminalAuthority?.service.serverId;
-	const activeRemoteProfileId = getActiveRemoteProfileId(event.sender);
-	loadRememberedRemoteConnections();
-	const profiles: Array<{
-		id: string;
-		isLocal?: boolean;
-		label: string;
-		origin: string;
-		serverId: string;
-		selected: boolean;
-		status: string;
-	}> = [];
-	if (localServerId !== undefined) {
-		profiles.push({
-			id: localServerId,
-			isLocal: true,
-			label: 'Local',
-			origin: 'http://127.0.0.1',
-			serverId: localServerId,
-			selected: activeRemoteProfileId === null,
-			status: 'connected',
-		});
-	}
-	for (const profile of rememberedRemoteConnections.values()) {
-		const active = activeRemoteProfileId === profile.id;
-		profiles.push({
-			id: profile.id,
-			label: profile.label,
-			origin: profile.origin,
-			serverId: profile.id,
-			selected: active,
-			status:
-				profile.kind === 'standalone'
-					? 'needs setup'
-					: active
-						? 'connected'
-						: 'offline',
-		});
-	}
-	return Object.freeze({ profiles: Object.freeze(profiles) });
-});
-
-ipcMain.handle(
-	'desktop:connection-host:select',
-	async (event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload)
-		) {
-			throw new TypeError('desktop connection host request is invalid');
-		}
-		const request = payload as Record<string, unknown>;
-		if (
-			Object.keys(request).length !== 2 ||
-			request.version !== 1 ||
-			typeof request.profileId !== 'string' ||
-			request.profileId.length === 0 ||
-			request.profileId.length > 512
-		) {
-			throw new TypeError('desktop connection host request is invalid');
-		}
-		const localServerId = serverTerminalAuthority?.service.serverId;
-		if (request.profileId === localServerId) {
-			const localWindow = getLocalConnectionWindow() ?? createWindow();
-			if (localWindow !== null) {
-				localWindow.focus();
-			}
-			return;
-		}
-		const existingWindow = getRemoteConnectionWindow(request.profileId);
-		if (existingWindow !== null) {
-			existingWindow.focus();
-			return;
-		}
-		loadRememberedRemoteConnections();
-		const profile = rememberedRemoteConnections.get(request.profileId);
-		if (profile === undefined) {
-			throw new Error('The requested connection profile is unavailable.');
-		}
-		if (profile.kind !== 'device') {
-			throw new Error(
-				'This saved connection was created without reconnect credentials. Add it again with a fresh server URL to make it switchable.',
-			);
-		}
-		const targetWindow = createWindow({ initialServerConnection: 'deferred' });
-		if (targetWindow === null) {
-			throw new Error('Unable to open a window for the requested connection.');
-		}
-		pendingRemoteConnectionWindowsByProfile.set(profile.id, targetWindow);
-		targetWindow.focus();
-		try {
-			await reconnectRememberedRemoteProfile(targetWindow.webContents, profile);
-		} catch (error) {
-			if (
-				!targetWindow.isDestroyed() &&
-				getActiveRemoteProfileId(targetWindow.webContents) === null
-			) {
-				targetWindow.close();
-			}
-			throw error;
-		} finally {
-			if (
-				pendingRemoteConnectionWindowsByProfile.get(profile.id) === targetWindow
-			) {
-				pendingRemoteConnectionWindowsByProfile.delete(profile.id);
-			}
-		}
-	},
-);
-
-function requireMutableDesktopConnectionProfile(payload: unknown): {
-	profileId: string;
-} {
-	if (
-		typeof payload !== 'object' ||
-		payload === null ||
-		Array.isArray(payload)
-	) {
-		throw new TypeError('desktop connection host request is invalid');
-	}
-	const request = payload as Record<string, unknown>;
-	if (
-		request.version !== 1 ||
-		typeof request.profileId !== 'string' ||
-		request.profileId.length === 0 ||
-		request.profileId.length > 512
-	) {
-		throw new TypeError('desktop connection host request is invalid');
-	}
-	const localServerId = serverTerminalAuthority?.service.serverId;
-	if (request.profileId === localServerId) {
-		throw new Error('Local profile is immutable');
-	}
-	loadRememberedRemoteConnections();
-	if (!rememberedRemoteConnections.has(request.profileId)) {
-		throw new Error('The requested connection profile is unavailable.');
-	}
-	return { profileId: request.profileId };
-}
-
-ipcMain.handle('desktop:connection-host:rename', (event, payload: unknown) => {
-	assertTrustedAppSender(event);
-	const request = requireMutableDesktopConnectionProfile(payload);
-	const value = payload as Record<string, unknown>;
-	if (
-		Object.keys(value).length !== 3 ||
-		typeof value.label !== 'string' ||
-		value.label.trim().length === 0 ||
-		value.label.length > 128
-	) {
-		throw new TypeError('desktop connection host request is invalid');
-	}
-	const profile = rememberedRemoteConnections.get(request.profileId);
-	if (profile === undefined)
-		throw new Error('The requested connection profile is unavailable.');
-	profile.label = value.label.trim();
-	saveRememberedRemoteConnections();
-});
-
-ipcMain.handle(
-	'desktop:connection-host:forget',
-	async (event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		requireMutableDesktopConnectionProfile(payload);
-		if (Object.keys(payload as Record<string, unknown>).length !== 2) {
-			throw new TypeError('desktop connection host request is invalid');
-		}
-		const request = payload as { profileId: string };
-		await closeRemoteConnectionsForProfile(request.profileId);
-		rememberedRemoteConnections.delete(request.profileId);
-		saveRememberedRemoteConnections();
-	},
-);
-
-ipcMain.handle(
-	'desktop:connection-host:revoke',
-	async (event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		requireMutableDesktopConnectionProfile(payload);
-		if (Object.keys(payload as Record<string, unknown>).length !== 2) {
-			throw new TypeError('desktop connection host request is invalid');
-		}
-		const request = payload as { profileId: string };
-		const profile = rememberedRemoteConnections.get(request.profileId);
-		if (profile !== undefined) {
-			const credentialStore = createDesktopDeviceCredentialStore();
-			await Promise.all([
-				closeRemoteConnectionsForProfile(request.profileId),
-				credentialStore.remove(profile.origin),
-			]);
-			rememberedRemoteConnections.delete(profile.id);
-			saveRememberedRemoteConnections();
-		}
-	},
-);
-
-ipcMain.handle('remote:get-status', async (event) => {
-	assertTrustedAppSender(event);
-	return currentRemoteAccessStatus();
-});
-
 function usesPrivilegedWebRtcExposure(): boolean {
 	return privilegedWebRtcExposure !== null;
 }
@@ -4101,14 +3563,6 @@ function currentRemoteAccessStatus(): RemoteAccessStatus {
 	};
 }
 
-function broadcastRemoteAccessStatus(): void {
-	const status = currentRemoteAccessStatus();
-	for (const window of BrowserWindow.getAllWindows()) {
-		if (!window.isDestroyed() && !window.webContents.isDestroyed())
-			window.webContents.send('remote:status-changed', status);
-	}
-}
-
 async function toggleRemoteServer(): Promise<RemoteAccessStatus> {
 	let status: RemoteAccessStatus;
 	if (usesPrivilegedWebRtcExposure()) {
@@ -4118,120 +3572,62 @@ async function toggleRemoteServer(): Promise<RemoteAccessStatus> {
 				privilegedWebRtcExposure!.service.ensureSession(session.id);
 			}
 			const dimensions = serverTerminalAuthority?.service.getSession(session.id)?.dimensions;
-			if (dimensions !== undefined) privilegedWebRtcExposure!.service.updateSessionSize(session.id, dimensions.cols, dimensions.rows);
-		}
-		status = await privilegedWebRtcExposure!.toggle();
-	}
-	else status = await desktopRemoteExposure.toggle();
-	broadcastRemoteAccessStatus();
-	return status;
-}
-async function toggleDirectRemoteListener(): Promise<RemoteAccessStatus> { await desktopDirectNetworkExposure.toggle(); broadcastRemoteAccessStatus(); return currentRemoteAccessStatus(); }
-async function revokeRemoteDevice(deviceId: string): Promise<RemoteAccessStatus> { const value = usesPrivilegedWebRtcExposure() ? await privilegedWebRtcExposure!.service.revokeDevice(deviceId) : await desktopRemoteExposure.revokeDevice(deviceId); broadcastRemoteAccessStatus(); return value; }
-async function closeRemoteConnection(connectionId: string): Promise<RemoteAccessStatus> { const value = usesPrivilegedWebRtcExposure() ? await privilegedWebRtcExposure!.service.closeConnection(connectionId) : desktopRemoteExposure.closeConnection(connectionId); broadcastRemoteAccessStatus(); return value; }
-async function setRemotePairingAddress(address: string): Promise<RemoteAccessStatus> { if (!desktopDirectNetworkExposure.getStatus().isRunning) desktopDirectNetworkExposure.setPairingAddress(address); if (usesPrivilegedWebRtcExposure()) await privilegedWebRtcExposure!.service.setPairingAddress(address); else desktopRemoteExposure.setPairingAddress(address); broadcastRemoteAccessStatus(); return currentRemoteAccessStatus(); }
-function setRemotePairingPin(pin: string): TerminalSettings { const currentSettings = readTerminalSettings(); const pairingPinHash = createPairingPinHash(pin); writeRemotePairingPinVerifier(pairingPinHash); const settings = writeTerminalSettings({ ...currentSettings, remoteAccess: { ...currentSettings.remoteAccess, pairingPinHash } }); privilegedWebRtcExposure?.service.notifyStatusChanged(); createAppMenu(settings); return settings; }
-
-ipcMain.handle('remote:toggle-server', async (event) => {
-	assertTrustedAppSender(event);
-	let status: RemoteAccessStatus;
-	if (usesPrivilegedWebRtcExposure()) {
-		for (const session of serverTerminalAuthority?.list() ?? []) {
-			if (!privilegedWebRtcSessions.has(session.id)) {
-				privilegedWebRtcSessions.add(session.id);
-				privilegedWebRtcExposure!.service.ensureSession(session.id);
-			}
-			const dimensions = serverTerminalAuthority?.service.getSession(
-				session.id,
-			)?.dimensions;
-			if (dimensions !== undefined)
+			if (dimensions !== undefined) {
 				privilegedWebRtcExposure!.service.updateSessionSize(
 					session.id,
 					dimensions.cols,
 					dimensions.rows,
 				);
+			}
 		}
 		status = await privilegedWebRtcExposure!.toggle();
 	} else {
 		status = await desktopRemoteExposure.toggle();
 	}
-	broadcastRemoteAccessStatus();
 	return status;
-});
+}
 
-ipcMain.handle('remote:toggle-direct-listener', async (event) => {
-	assertTrustedAppSender(event);
+async function toggleDirectRemoteListener(): Promise<RemoteAccessStatus> {
 	await desktopDirectNetworkExposure.toggle();
-	const status = currentRemoteAccessStatus();
-	broadcastRemoteAccessStatus();
-	return status;
-});
+	return currentRemoteAccessStatus();
+}
 
-ipcMain.handle(
-	'remote:revoke-device',
-	async (event, payload: { deviceId: string }) => {
-		assertTrustedAppSender(event);
-		const status = usesPrivilegedWebRtcExposure()
-			? await privilegedWebRtcExposure!.service.revokeDevice(payload.deviceId)
-			: await desktopRemoteExposure.revokeDevice(payload.deviceId);
-		broadcastRemoteAccessStatus();
-		return status;
-	},
-);
+async function revokeRemoteDevice(deviceId: string): Promise<RemoteAccessStatus> {
+	return usesPrivilegedWebRtcExposure()
+		? privilegedWebRtcExposure!.service.revokeDevice(deviceId)
+		: desktopRemoteExposure.revokeDevice(deviceId);
+}
 
-ipcMain.handle(
-	'remote:close-connection',
-	async (event, payload: { connectionId: string }) => {
-		assertTrustedAppSender(event);
-		const status = usesPrivilegedWebRtcExposure()
-			? await privilegedWebRtcExposure!.service.closeConnection(
-					payload.connectionId,
-				)
-			: desktopRemoteExposure.closeConnection(payload.connectionId);
-		broadcastRemoteAccessStatus();
-		return status;
-	},
-);
+async function closeRemoteConnection(connectionId: string): Promise<RemoteAccessStatus> {
+	return usesPrivilegedWebRtcExposure()
+		? privilegedWebRtcExposure!.service.closeConnection(connectionId)
+		: desktopRemoteExposure.closeConnection(connectionId);
+}
 
-ipcMain.handle(
-	'remote:set-pairing-address',
-	async (event, payload: { address: string }) => {
-		assertTrustedAppSender(event);
-		if (!desktopDirectNetworkExposure.getStatus().isRunning) {
-			desktopDirectNetworkExposure.setPairingAddress(payload.address);
-		}
-		usesPrivilegedWebRtcExposure()
-			? await privilegedWebRtcExposure!.service.setPairingAddress(
-					payload.address,
-				)
-			: desktopRemoteExposure.setPairingAddress(payload.address);
-		const status = currentRemoteAccessStatus();
-		broadcastRemoteAccessStatus();
-		return status;
-	},
-);
+async function setRemotePairingAddress(address: string): Promise<RemoteAccessStatus> {
+	if (!desktopDirectNetworkExposure.getStatus().isRunning) {
+		desktopDirectNetworkExposure.setPairingAddress(address);
+	}
+	if (usesPrivilegedWebRtcExposure()) {
+		await privilegedWebRtcExposure!.service.setPairingAddress(address);
+	} else {
+		desktopRemoteExposure.setPairingAddress(address);
+	}
+	return currentRemoteAccessStatus();
+}
 
-ipcMain.handle('remote:set-pairing-pin', (event, payload: { pin: string }) => {
-	assertTrustedAppSender(event);
+function setRemotePairingPin(pin: string): TerminalSettings {
 	const currentSettings = readTerminalSettings();
-	const pairingPinHash = createPairingPinHash(payload.pin);
+	const pairingPinHash = createPairingPinHash(pin);
 	writeRemotePairingPinVerifier(pairingPinHash);
 	const settings = writeTerminalSettings({
 		...currentSettings,
-		remoteAccess: {
-			...currentSettings.remoteAccess,
-			pairingPinHash,
-		},
+		remoteAccess: { ...currentSettings.remoteAccess, pairingPinHash },
 	});
 	privilegedWebRtcExposure?.service.notifyStatusChanged();
 	createAppMenu(settings);
 	return settings;
-});
-
-ipcMain.handle('remote:get-pairing-pin-status', (event) => {
-	assertTrustedAppSender(event);
-	return readTerminalSettings().remoteAccess.pairingPinHash.trim().length > 0;
-});
+}
 
 if (process.env.TERMINAY_TEST === '1') {
 	ipcMain.handle('test:list-remote-protocol-connections', (event) => {
@@ -4607,63 +4003,6 @@ ipcMain.handle('secrets:get-decrypted', (event, id) => {
 		Buffer.from(secret.encryptedValue, 'base64'),
 	);
 });
-
-ipcMain.handle(
-	'desktop:mcp-install-host:get-status',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.keys(payload).length !== 1 ||
-			(payload as { version?: unknown }).version !== 1
-		) {
-			throw new TypeError('MCP install host request is invalid');
-		}
-		return getMcpInstallStatus();
-	},
-);
-
-ipcMain.handle(
-	'desktop:mcp-install-host:install',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.keys(payload).length !== 2 ||
-			(payload as { version?: unknown }).version !== 1
-		) {
-			throw new TypeError('MCP install host request is invalid');
-		}
-		const agent = (payload as { agent?: unknown }).agent;
-		if (agent !== 'claudeCode' && agent !== 'codex')
-			throw new TypeError('MCP install agent is invalid');
-		return installMcpAgent(agent, getMcpServerCommand());
-	},
-);
-
-ipcMain.handle(
-	'desktop:mcp-install-host:uninstall',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.keys(payload).length !== 2 ||
-			(payload as { version?: unknown }).version !== 1
-		) {
-			throw new TypeError('MCP install host request is invalid');
-		}
-		const agent = (payload as { agent?: unknown }).agent;
-		if (agent !== 'claudeCode' && agent !== 'codex')
-			throw new TypeError('MCP install agent is invalid');
-		return uninstallMcpAgent(agent);
-	},
-);
 
 app.on('browser-window-created', (_event, window) => {
 	void desktopDiagnostics.record(
