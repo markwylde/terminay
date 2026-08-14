@@ -9,6 +9,7 @@ export * from "./runtime.js";
 export * from "./composition.js";
 export * from "./platform.js";
 export * from "./workspaceRepository.js";
+export * from "./workspaceHydration.js";
 export * from "./workspaceProtocol.js";
 export * from "./projectEnvironment/index.js";
 export * from "./activity/index.js";
