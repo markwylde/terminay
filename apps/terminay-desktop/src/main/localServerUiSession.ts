@@ -2,10 +2,9 @@ import type { DesktopBundleLaunch } from "./serverBundleHost.js";
 import { DesktopServerBundleHost } from "./serverBundleHost.js";
 
 export interface LocalServerUiSessionOptions {
-  readonly bundleRoot: string;
-  readonly cacheRoot: string;
-  readonly executionRuntimeVersion: number;
-  readonly serverId: string;
+	readonly bundleRoot: string;
+	readonly cacheRoot: string;
+	readonly serverId: string;
 }
 
 /** Privileged owner for the embedded server's verified UI selection.
@@ -18,7 +17,7 @@ export class LocalServerUiSession {
   private readonly launches = new Map<number, DesktopBundleLaunch>();
 
   constructor(private readonly options: LocalServerUiSessionOptions) {
-    this.bundleHost = new DesktopServerBundleHost({ cacheRoot: options.cacheRoot, executionRuntimeVersion: options.executionRuntimeVersion, capabilities: {
+    this.bundleHost = new DesktopServerBundleHost({ cacheRoot: options.cacheRoot, capabilities: {
       clipboardWrite: 1,
       filePicker: 1,
       nativeMenus: 1,

@@ -26,7 +26,7 @@ export interface DesktopBundleLaunch {
   readonly partitionKey: string;
   readonly byteEndpointHandle: string;
 }
-export interface DesktopServerBundleHostOptions { readonly cacheRoot: string; readonly executionRuntimeVersion: number; readonly capabilities: TerminayHostCapabilityVersions; }
+export interface DesktopServerBundleHostOptions { readonly cacheRoot: string; readonly capabilities: TerminayHostCapabilityVersions; }
 
 /** Privileged preparation shared by Local and remote. It yields inert launch
  * metadata only after complete verification and compatibility evaluation. */
@@ -36,7 +36,7 @@ export class DesktopServerBundleHost {
   constructor(options: DesktopServerBundleHostOptions) {
     if (!isAbsolute(options.cacheRoot)) throw new TypeError("Desktop bundle cache root must be absolute");
     this.cacheRoot = resolve(options.cacheRoot);
-    this.support = Object.freeze({ bootstrapVersion: TERMINAY_HOST_BOOTSTRAP_VERSION, bundleFormatVersion: TERMINAY_UI_BUNDLE_FORMAT_VERSION, hostBridgeVersion: TERMINAY_HOST_BRIDGE_VERSION, byteEndpointVersion: TERMINAY_HOST_BYTE_ENDPOINT_VERSION, executionRuntimeVersion: options.executionRuntimeVersion, capabilities: Object.freeze({ ...options.capabilities }) });
+    this.support = Object.freeze({ bootstrapVersion: TERMINAY_HOST_BOOTSTRAP_VERSION, bundleFormatVersion: TERMINAY_UI_BUNDLE_FORMAT_VERSION, hostBridgeVersion: TERMINAY_HOST_BRIDGE_VERSION, byteEndpointVersion: TERMINAY_HOST_BYTE_ENDPOINT_VERSION, capabilities: Object.freeze({ ...options.capabilities }) });
   }
 
   async prepareLocal(input: DesktopBundleIdentity & { readonly artifact: DesktopLocalBundleArtifact; readonly windowId: string }): Promise<DesktopBundleLaunch> {

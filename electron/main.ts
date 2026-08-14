@@ -1114,12 +1114,10 @@ serverTerminalAuthority = authority;
 localServerUiSession = new LocalServerUiSession({
 	bundleRoot: SERVER_UI_DIST,
 	cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
-	executionRuntimeVersion: Number.parseInt(process.versions.chrome, 10),
 	serverId: authority.service.serverId,
 });
 remoteServerUiBundleHost = new DesktopServerBundleHost({
 	cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
-	executionRuntimeVersion: Number.parseInt(process.versions.chrome, 10),
 	capabilities: { clipboardWrite: 1, filePicker: 1, nativeMenus: 1, nativeWindows: 1, notifications: 1, osIntegration: 1, updater: 1 },
 });
 const embeddedReconnectRecordsPath = path.join(
