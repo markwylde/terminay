@@ -124,6 +124,16 @@ different or exited terminal.
 - The Parakeet provider runs through a server-owned MLX worker and keeps the
   loaded model warm between bounded requests. It never sends dictation audio
   to OpenAI, Hugging Face, or another inference service.
+- Every captured format accepted for Parakeet is converted in a private,
+  request-scoped directory to signed 16-bit mono PCM WAV at 16 kHz before it
+  reaches the worker. The converted file is removed after success or failure;
+  unavailable conversion support is reported separately from model/runtime
+  readiness.
+- The engine is pinned to `parakeet-mlx==0.5.2` (Apache-2.0) and the model to
+  `mlx-community/parakeet-tdt-0.6b-v3` revision
+  `ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15` (CC-BY-4.0). Safe runtime status
+  exposes these identifiers, licenses, and audio format, but never cache/local
+  paths, environment values, audio, or transcripts.
 - The Parakeet runtime package and model weights may be downloaded on explicit
   user request or first setup. Settings disclose download size/status and the
   network requirement. After installation, transcription works offline.

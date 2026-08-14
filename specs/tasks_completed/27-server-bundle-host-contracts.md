@@ -30,29 +30,29 @@ unknown application operations unchanged.
 
 ### Host bootstrap and capability contract
 
-- [ ] Define one runtime-validated host bootstrap containing exact
+- [x] Define one runtime-validated host bootstrap containing exact
   server/profile identity, verified bundle identity, opaque byte-endpoint
   version, host-bridge version, host kind, and individual capabilities.
-- [ ] Define a closed capability registry with versioned semantic actions for
+- [x] Define a closed capability registry with versioned semantic actions for
   route/window presentation, native menus, approved file selection, clipboard
   write, notifications, updater, and guarded OS integration.
-- [ ] Prohibit renderer-selected host modes. Reject `mode=electron`, URL/query
+- [x] Prohibit renderer-selected host modes. Reject `mode=electron`, URL/query
   privilege flags, server-supplied capabilities, unknown fields, raw
   `BrowserWindow`, arbitrary paths, generic IPC, and server commands.
-- [ ] Require exact source/window/profile/server binding and a user gesture for
+- [x] Require exact source/window/profile/server binding and a user gesture for
   each native action that reads or changes host state.
 
 ### Bundle compatibility metadata
 
-- [ ] Extend the bundle manifest with validated bundle-format,
+- [x] Extend the bundle manifest with validated bundle-format,
   application-protocol, minimum execution-runtime, supported host-bridge range,
   and required/optional capability declarations.
-- [ ] Bind compatibility fields into the manifest fingerprint/signature and
+- [x] Bind compatibility fields into the manifest fingerprint/signature and
   reject missing, contradictory, unknown, or unbounded requirements before
   executing any asset.
-- [ ] Add one shared evaluator with typed bootstrap, byte-transport, manifest,
+- [x] Add one shared evaluator with typed bootstrap, byte-transport, manifest,
   execution-runtime, bridge, and required-capability incompatibility results.
-- [ ] Treat missing optional capabilities as presentation negotiation, not a
+- [x] Treat missing optional capabilities as presentation negotiation, not a
   connection failure; the shared route contract selects an in-page fallback or
   a clear unavailable action.
 
@@ -64,10 +64,10 @@ transport-generation replacement. This task consumes that endpoint and owns
 only its bundle/bootstrap compatibility declaration and application-protocol
 blindness. It must not introduce another channel bridge or reconnect owner.
 
-- [ ] Remove host-side decoding/translation of feature operation names,
+- [x] Remove host-side decoding/translation of feature operation names,
   results, workspace snapshots, and application events. Stable envelope and
   size validation remains application-version agnostic.
-- [ ] Keep `TerminayClient` and feature facades in the generated server bundle's
+- [x] Keep `TerminayClient` and feature facades in the generated server bundle's
   module graph. Host packages depend only on bootstrap, bundle, transport,
   profile, and host-bridge contracts.
 

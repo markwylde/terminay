@@ -26,8 +26,9 @@ test('Task 19 pairing-PIN helper requires an explicitly injected client', async 
 		const calls = [];
 		const client = {
 			getTerminalSettings: async () => ({
-				remoteAccess: { pairingPinHash: ' hash ' },
+				remoteAccess: { pairingPinHash: '' },
 			}),
+			isRemoteAccessPairingPinConfigured: async () => true,
 			setRemoteAccessPairingPin: async (pin) => {
 				calls.push(pin);
 				return {};
@@ -61,9 +62,15 @@ test('Task 19 removes the pairing-PIN renderer-global compatibility hand-off', a
 		controller,
 		/useRemoteAccessController\(\s*pairingPinClient:\s*RemotePairingPinClient \| undefined,\s*statusClient:\s*RemoteAccessStatusClient \| undefined,\s*settingsClient:\s*TerminalSettingsClient/u,
 	);
-	assert.match(app, /useRemoteAccessController\(\s*window\.terminayRemotePairingPinHost,\s*window\.terminayRemoteAccessStatusHost,\s*legacySettingsClient,?\s*\)/u);
+	assert.match(
+		app,
+		/useRemoteAccessController\(\s*window\.terminayRemotePairingPinHost,\s*window\.terminayRemoteAccessStatusHost,\s*legacySettingsClient,?\s*\)/u,
+	);
 	assert.match(settings, /window\.terminayRemotePairingPinHost/u);
-	assert.match(preload, /exposeInMainWorld\(\s*'terminayRemotePairingPinHost'/u);
+	assert.match(
+		preload,
+		/exposeInMainWorld\(\s*'terminayRemotePairingPinHost'/u,
+	);
 	assert.match(declarations, /terminayRemotePairingPinHost:/u);
 	for (const source of [preload, declarations]) {
 		assert.doesNotMatch(source, /terminayRemotePairingPinCompatibilityHost/u);

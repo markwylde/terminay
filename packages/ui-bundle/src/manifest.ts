@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import { parseTerminayHostCompatibilityRequirements } from "@terminay/protocol";
+import {
+  evaluateTerminayBundleCompatibility,
+  parseTerminayHostCompatibilityRequirements,
+} from "@terminay/protocol";
+import type { TerminayHostRuntimeSupport } from "@terminay/protocol";
 import type {
   UiBundleAsset,
   UiBundleAssetReader,
@@ -8,6 +12,7 @@ import type {
   UiBundleLimits,
   UiBundleManifest,
   VerifiedUiBundle,
+  UiBundleHostCompatibilityResult,
 } from "./types.js";
 
 type ResolvedUiBundleLimits = Required<
@@ -64,6 +69,13 @@ export function validateUiBundleManifest(
       "validation",
       "unsupported UI bundle manifest schema",
     );
+  const allowedFields = new Set([
+    "schemaVersion", "bundleId", "entryPath", "protocolVersion",
+    "serverVersion", "contentSecurityPolicy", "bundleFormatVersion",
+    "hostCompatibility", "assets",
+  ]);
+  if (Object.keys(value).some((field) => !allowedFields.has(field)))
+    throw new UiBundleError("validation", "UI bundle manifest fields are invalid");
   const bundleId = stringField(value.bundleId, "bundleId", BUNDLE_ID);
   const protocolVersion = stringField(
     value.protocolVersion,
@@ -255,6 +267,32 @@ export function uiBundleIdentity(
     serverVersion: manifest.serverVersion,
     hostCompatibility: manifest.hostCompatibility,
   });
+}
+
+/**
+ * Decide every bundle/host compatibility boundary before executable assets
+ * launch. Manifest validation is deliberately part of this operation so a
+ * caller cannot accidentally evaluate requirements from an unverified shape.
+ */
+export function evaluateUiBundleHostCompatibility(
+  manifestValue: unknown,
+  bootstrapValue: unknown,
+  support: TerminayHostRuntimeSupport,
+): UiBundleHostCompatibilityResult {
+  let manifest: UiBundleManifest;
+  try {
+    manifest = validateUiBundleManifest(manifestValue, {
+      requireHostCompatibility: true,
+    });
+  } catch (error) {
+    return Object.freeze({
+      compatible: false,
+      component: "bundle-manifest",
+      code: "invalid-manifest",
+      message: error instanceof Error ? error.message : "UI bundle manifest is invalid",
+    });
+  }
+  return evaluateTerminayBundleCompatibility(manifest, bootstrapValue, support);
 }
 
 /**

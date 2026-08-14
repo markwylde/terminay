@@ -1,15 +1,15 @@
-import { useEffect, type ReactNode } from 'react'
 import {
 	createHostCapabilityProvider,
 	type HostCapabilityProvider,
 	type HostCapabilitySet,
-} from '@terminay/client-core'
+} from '@terminay/client-core';
 import {
 	createSharedWorkspaceRouteEntries,
 	type SharedWorkspaceRoute,
 	type SharedWorkspaceRouteEntry,
-} from '@terminay/responsive-ui'
-import './ResponsiveWorkspaceEntry.css'
+} from '@terminay/responsive-ui';
+import { type ReactNode, useEffect } from 'react';
+import './ResponsiveWorkspaceEntry.css';
 
 /**
  * Map the legacy window views onto the shared route vocabulary. The mapping is
@@ -17,63 +17,69 @@ import './ResponsiveWorkspaceEntry.css'
  * route names and presentation policy, while legacy feature windows remain
  * valid fallbacks until their shared components are migrated.
  */
-export function sharedRouteForView(view: string | null): SharedWorkspaceRoute | undefined {
+export function sharedRouteForView(
+	view: string | null,
+): SharedWorkspaceRoute | undefined {
 	switch (view) {
 		case null:
 		case 'workspace':
-			return 'workspace'
+			return 'workspace';
 		case 'settings':
-			return 'settings'
+			return 'settings';
 		case 'macros':
-			return 'macros'
+			return 'macros';
 		case 'recordings':
-			return 'recordings'
+			return 'recordings';
 		case 'edit-tab':
-			return 'file'
+			return 'file';
 		case 'connections':
-			return 'connections'
+			return 'connections';
 		case 'git':
-			return 'git'
+			return 'git';
 		case 'agents':
-			return 'workspace'
+			return 'workspace';
 		case 'folder':
-			return 'file'
+			return 'file';
 		case 'terminal':
-			return 'workspace'
+			return 'workspace';
 		default:
-			return undefined
+			return undefined;
 	}
 }
 
 export interface ResponsiveWorkspaceEntryProps {
-	readonly route?: SharedWorkspaceRoute
-	readonly capabilities?: HostCapabilitySet | HostCapabilityProvider
-	readonly presentation?: SharedWorkspaceRouteEntry['presentation']
-	readonly legacyFallback: ReactNode
+	readonly route?: SharedWorkspaceRoute;
+	readonly capabilities?: HostCapabilitySet | HostCapabilityProvider;
+	readonly presentation?: SharedWorkspaceRouteEntry['presentation'];
+	readonly children: ReactNode;
 }
 
 /**
  * The production renderer boundary for the shared workspace.
  *
- * The current feature body is still supplied by `legacyFallback`, but route
- * identity and host presentation now come from the shared responsive package.
- * This makes the shared path active for every migrated route without making
- * unsupported auxiliary views disappear during the incremental migration.
+ * Route identity and host presentation come from the shared responsive
+ * package, while the route body is composed as ordinary React children. This
+ * boundary deliberately contains no compatibility fallback or duplicate route
+ * marker: the production route component is the visible route.
  */
 export function ResponsiveWorkspaceEntry({
 	route = 'workspace',
 	capabilities,
 	presentation,
-	legacyFallback,
+	children,
 }: ResponsiveWorkspaceEntryProps) {
-	const routes = createSharedWorkspaceRouteEntries(createHostCapabilityProvider(capabilities))
-	const routeEntry: SharedWorkspaceRouteEntry | undefined = routes.find((entry) => entry.route === route)
-	window.terminayBootstrapDiagnostic?.record('responsive.render')
+	const routes = createSharedWorkspaceRouteEntries(
+		createHostCapabilityProvider(capabilities),
+	);
+	const routeEntry: SharedWorkspaceRouteEntry | undefined = routes.find(
+		(entry) => entry.route === route,
+	);
+	window.terminayBootstrapDiagnostic?.record('responsive.render');
 	useEffect(() => {
-		window.terminayBootstrapDiagnostic?.record('responsive.commit')
-	})
+		window.terminayBootstrapDiagnostic?.record('responsive.commit');
+	});
 
-	if (routeEntry === undefined) return <>{legacyFallback}</>
+	if (routeEntry === undefined) return <>{children}</>;
 
 	return (
 		<section
@@ -84,16 +90,7 @@ export function ResponsiveWorkspaceEntry({
 			data-shared-route-count={String(routes.length)}
 			aria-label={`Shared workspace — ${routeEntry.label}`}
 		>
-			<nav
-				className="responsive-workspace-entry__route-marker"
-				aria-label="Shared workspace route"
-				aria-live="polite"
-				aria-atomic="true"
-				data-shared-route-registry={routes.map((entry) => entry.route).join(',')}
-			>
-				<span aria-current="page">{routeEntry.label}</span>
-			</nav>
-			{legacyFallback}
+			{children}
 		</section>
-	)
+	);
 }

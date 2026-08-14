@@ -14,6 +14,7 @@ COPY packages/protocol/package.json ./packages/protocol/package.json
 COPY packages/protocol-conformance/package.json ./packages/protocol-conformance/package.json
 COPY packages/responsive-ui/package.json ./packages/responsive-ui/package.json
 COPY packages/server-core/package.json ./packages/server-core/package.json
+COPY packages/ui-bundle/package.json ./packages/ui-bundle/package.json
 COPY scripts/ensure-node-pty-helper-mode.mjs ./scripts/ensure-node-pty-helper-mode.mjs
 
 RUN --mount=type=cache,id=terminay-apt-cache-bookworm,target=/var/cache/apt,sharing=locked \
@@ -57,6 +58,8 @@ COPY --from=build --chown=10001:10001 /workspace/packages/protocol/package.json 
 COPY --from=build --chown=10001:10001 /workspace/packages/protocol/dist ./packages/protocol/dist
 COPY --from=build --chown=10001:10001 /workspace/packages/server-core/package.json ./packages/server-core/package.json
 COPY --from=build --chown=10001:10001 /workspace/packages/server-core/dist ./packages/server-core/dist
+COPY --from=build --chown=10001:10001 /workspace/packages/ui-bundle/package.json ./packages/ui-bundle/package.json
+COPY --from=build --chown=10001:10001 /workspace/packages/ui-bundle/dist ./packages/ui-bundle/dist
 COPY --chown=10001:10001 apps/terminay-server/entrypoint.sh /usr/local/bin/terminay-server-entrypoint
 RUN printf '%s\n' '#!/bin/sh' 'exec node /opt/terminay/apps/terminay-server/dist/mcpEntry.js "$@"' > /usr/local/bin/terminay-mcp \
   && chmod 0755 /usr/local/bin/terminay-server-entrypoint /usr/local/bin/terminay-mcp \

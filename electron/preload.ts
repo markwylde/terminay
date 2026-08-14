@@ -232,9 +232,14 @@ function isRendererRootDiagnosticPayload(
 	if (
 		keys.some(
 			(key) =>
-				!['componentStack', 'message', 'name', 'phase', 'stack', 'version'].includes(
-					key,
-				),
+				![
+					'componentStack',
+					'message',
+					'name',
+					'phase',
+					'stack',
+					'version',
+				].includes(key),
 		)
 	)
 		return false;
@@ -262,15 +267,45 @@ function isRendererRootDiagnosticPayload(
 function isTerminalRecoveryDiagnosticPayload(
 	value: unknown,
 ): value is TerminalRecoveryDiagnosticPayload {
-	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return false;
 	const payload = value as Record<string, unknown>;
-	if (Object.keys(payload).some((key) => !['attempt', 'durationMs', 'fromPosition', 'outputPosition', 'phase', 'reason', 'replayFrom', 'version'].includes(key))) return false;
-	const optionalPosition = (candidate: unknown) => candidate === undefined || (Number.isSafeInteger(candidate) && (candidate as number) >= 0);
-	return payload.version === DESKTOP_DIAGNOSTICS_HOST_BRIDGE_VERSION &&
-		['started', 'retrying', 'recovered', 'failed'].includes(String(payload.phase)) &&
-		Number.isSafeInteger(payload.attempt) && (payload.attempt as number) > 0 && (payload.attempt as number) <= 1_000_000 &&
-		optionalPosition(payload.durationMs) && optionalPosition(payload.fromPosition) && optionalPosition(payload.replayFrom) && optionalPosition(payload.outputPosition) &&
-		(payload.reason === undefined || ['congestion', 'attach-error', 'deadline'].includes(String(payload.reason)));
+	if (
+		Object.keys(payload).some(
+			(key) =>
+				![
+					'attempt',
+					'durationMs',
+					'fromPosition',
+					'outputPosition',
+					'phase',
+					'reason',
+					'replayFrom',
+					'version',
+				].includes(key),
+		)
+	)
+		return false;
+	const optionalPosition = (candidate: unknown) =>
+		candidate === undefined ||
+		(Number.isSafeInteger(candidate) && (candidate as number) >= 0);
+	return (
+		payload.version === DESKTOP_DIAGNOSTICS_HOST_BRIDGE_VERSION &&
+		['started', 'retrying', 'recovered', 'failed'].includes(
+			String(payload.phase),
+		) &&
+		Number.isSafeInteger(payload.attempt) &&
+		(payload.attempt as number) > 0 &&
+		(payload.attempt as number) <= 1_000_000 &&
+		optionalPosition(payload.durationMs) &&
+		optionalPosition(payload.fromPosition) &&
+		optionalPosition(payload.replayFrom) &&
+		optionalPosition(payload.outputPosition) &&
+		(payload.reason === undefined ||
+			['congestion', 'attach-error', 'deadline'].includes(
+				String(payload.reason),
+			))
+	);
 }
 
 // Install this listener during preload evaluation so a fast did-finish-load
@@ -569,6 +604,8 @@ const terminayApi = {
 		ipcRenderer.invoke('remote:set-pairing-pin', {
 			pin,
 		}) as Promise<TerminalSettings>,
+	isRemoteAccessPairingPinConfigured: () =>
+		ipcRenderer.invoke('remote:get-pairing-pin-status') as Promise<boolean>,
 };
 const {
 	applyQuickPush,
@@ -591,6 +628,7 @@ const {
 	getMacros,
 	getPathForFile: _unusedBroadGetPathForFile,
 	getRemoteAccessStatus: _unusedBroadGetRemoteAccessStatus,
+	isRemoteAccessPairingPinConfigured,
 	getSecrets,
 	getTerminalSettings: getCompatibilityTerminalSettings,
 	listAiTabMetadataModels: _unusedBroadListAiTabMetadataModels,
@@ -849,6 +887,7 @@ contextBridge.exposeInMainWorld(
 	Object.freeze({
 		version: DESKTOP_REMOTE_PAIRING_PIN_COMPATIBILITY_HOST_BRIDGE_VERSION,
 		getTerminalSettings: getCompatibilityTerminalSettings,
+		isRemoteAccessPairingPinConfigured,
 		setRemoteAccessPairingPin: (pin: unknown) => {
 			if (typeof pin !== 'string' || !/^\d{6}$/.test(pin)) {
 				throw new TypeError('remote pairing PIN is invalid');
@@ -866,6 +905,10 @@ contextBridge.exposeInMainWorld(
 			ipcRenderer.invoke('remote:get-status') as Promise<RemoteAccessStatus>,
 		toggleServer: () =>
 			ipcRenderer.invoke('remote:toggle-server') as Promise<RemoteAccessStatus>,
+		toggleDirectListener: () =>
+			ipcRenderer.invoke(
+				'remote:toggle-direct-listener',
+			) as Promise<RemoteAccessStatus>,
 		revokeDevice: (deviceId: unknown) => {
 			if (
 				typeof deviceId !== 'string' ||
@@ -1220,14 +1263,19 @@ contextBridge.exposeInMainWorld(
 			if (
 				typeof candidate.color !== 'string' ||
 				candidate.color.length > 128 ||
-				(candidate.defaultShellProfileId !== null && (typeof candidate.defaultShellProfileId !== 'string' || candidate.defaultShellProfileId.length === 0 || candidate.defaultShellProfileId.length > 128)) ||
+				(candidate.defaultShellProfileId !== null &&
+					(typeof candidate.defaultShellProfileId !== 'string' ||
+						candidate.defaultShellProfileId.length === 0 ||
+						candidate.defaultShellProfileId.length > 128)) ||
 				typeof candidate.environmentLabel !== 'string' ||
 				candidate.environmentLabel.length === 0 ||
 				candidate.environmentLabel.length > 512 ||
 				typeof candidate.environmentStatus !== 'string' ||
 				candidate.environmentStatus.length === 0 ||
 				candidate.environmentStatus.length > 128 ||
-				(candidate.environmentDefaultRoot !== null && (typeof candidate.environmentDefaultRoot !== 'string' || candidate.environmentDefaultRoot.length > 32_768)) ||
+				(candidate.environmentDefaultRoot !== null &&
+					(typeof candidate.environmentDefaultRoot !== 'string' ||
+						candidate.environmentDefaultRoot.length > 32_768)) ||
 				typeof candidate.projectEnvironmentId !== 'string' ||
 				candidate.projectEnvironmentId.length === 0 ||
 				candidate.projectEnvironmentId.length > 128 ||
@@ -1239,8 +1287,25 @@ contextBridge.exposeInMainWorld(
 				candidate.rootFolder.length > 32_768 ||
 				!Array.isArray(candidate.shellProfileOptions) ||
 				candidate.shellProfileOptions.length > 65 ||
-				candidate.shellProfileOptions.some((option) => typeof option !== 'object' || option === null || Array.isArray(option) || Object.keys(option).length !== 3 || typeof (option as Record<string, unknown>).id !== 'string' || ((option as Record<string, unknown>).id as string).length === 0 || ((option as Record<string, unknown>).id as string).length > 128 || typeof (option as Record<string, unknown>).name !== 'string' || ((option as Record<string, unknown>).name as string).length === 0 || ((option as Record<string, unknown>).name as string).length > 128 || typeof (option as Record<string, unknown>).available !== 'boolean') ||
-				new Set(candidate.shellProfileOptions.map((option) => (option as Record<string, unknown>).id)).size !== candidate.shellProfileOptions.length ||
+				candidate.shellProfileOptions.some(
+					(option) =>
+						typeof option !== 'object' ||
+						option === null ||
+						Array.isArray(option) ||
+						Object.keys(option).length !== 3 ||
+						typeof (option as Record<string, unknown>).id !== 'string' ||
+						((option as Record<string, unknown>).id as string).length === 0 ||
+						((option as Record<string, unknown>).id as string).length > 128 ||
+						typeof (option as Record<string, unknown>).name !== 'string' ||
+						((option as Record<string, unknown>).name as string).length === 0 ||
+						((option as Record<string, unknown>).name as string).length > 128 ||
+						typeof (option as Record<string, unknown>).available !== 'boolean',
+				) ||
+				new Set(
+					candidate.shellProfileOptions.map(
+						(option) => (option as Record<string, unknown>).id,
+					),
+				).size !== candidate.shellProfileOptions.length ||
 				typeof candidate.title !== 'string' ||
 				candidate.title.length > 512
 			) {
@@ -1325,9 +1390,13 @@ contextBridge.exposeInMainWorld(
 	Object.freeze({
 		version: DESKTOP_DICTATION_HOST_BRIDGE_VERSION,
 		getParakeetStatus: () =>
-			ipcRenderer.invoke('dictation:get-parakeet-status') as Promise<ParakeetRuntimeStatus>,
+			ipcRenderer.invoke(
+				'dictation:get-parakeet-status',
+			) as Promise<ParakeetRuntimeStatus>,
 		installParakeet: () =>
-			ipcRenderer.invoke('dictation:install-parakeet') as Promise<ParakeetRuntimeStatus>,
+			ipcRenderer.invoke(
+				'dictation:install-parakeet',
+			) as Promise<ParakeetRuntimeStatus>,
 		getKeyStatus: () =>
 			ipcRenderer.invoke(
 				'dictation:get-openai-key-status',
@@ -1989,20 +2058,40 @@ contextBridge.exposeInMainWorld(
 	'terminayProjectEnvironmentsHost',
 	Object.freeze({
 		version: DESKTOP_PROJECT_ENVIRONMENTS_HOST_BRIDGE_VERSION,
-		open: (intent?: Readonly<{ providerId: string; mode: 'profile' | 'environment'; profileId?: string }>) =>
+		open: (
+			intent?: Readonly<{
+				providerId: string;
+				mode: 'profile' | 'environment';
+				profileId?: string;
+			}>,
+		) =>
 			ipcRenderer.invoke('desktop:project-environments-host:open', {
 				version: DESKTOP_PROJECT_ENVIRONMENTS_HOST_BRIDGE_VERSION,
 				...(intent === undefined ? {} : { intent }),
 			}) as Promise<void>,
 		subscribeIntent: (
-			listener: (intent: Readonly<{ providerId: string; mode: 'profile' | 'environment'; profileId?: string }>) => void,
+			listener: (
+				intent: Readonly<{
+					providerId: string;
+					mode: 'profile' | 'environment';
+					profileId?: string;
+				}>,
+			) => void,
 		) => {
 			const handler = (
 				_event: Electron.IpcRendererEvent,
-				intent: Readonly<{ providerId: string; mode: 'profile' | 'environment'; profileId?: string }>,
+				intent: Readonly<{
+					providerId: string;
+					mode: 'profile' | 'environment';
+					profileId?: string;
+				}>,
 			) => listener(intent);
 			ipcRenderer.on('desktop:project-environments-host:intent', handler);
-			return () => ipcRenderer.removeListener('desktop:project-environments-host:intent', handler);
+			return () =>
+				ipcRenderer.removeListener(
+					'desktop:project-environments-host:intent',
+					handler,
+				);
 		},
 	}),
 );
@@ -2144,7 +2233,10 @@ contextBridge.exposeInMainWorld(
 	Object.freeze({
 		version: DESKTOP_WORKSPACE_TRANSFER_HOST_BRIDGE_VERSION,
 		bindView: (viewId: unknown) => {
-			if (typeof viewId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(viewId)) {
+			if (
+				typeof viewId !== 'string' ||
+				!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(viewId)
+			) {
 				throw new TypeError('workspace view binding is invalid');
 			}
 			return ipcRenderer.invoke('desktop:workspace-transfer-host:bind-view', {
@@ -2173,7 +2265,12 @@ contextBridge.exposeInMainWorld(
 					version: DESKTOP_WORKSPACE_TRANSFER_HOST_BRIDGE_VERSION,
 				},
 			) as Promise<AdoptedProjectPayload | null>,
-		popoutProject: (project: unknown, targetViewId: unknown, x: unknown, y: unknown) => {
+		popoutProject: (
+			project: unknown,
+			targetViewId: unknown,
+			x: unknown,
+			y: unknown,
+		) => {
 			if (
 				!isWorkspaceTransferPayload(project) ||
 				typeof targetViewId !== 'string' ||
@@ -2270,14 +2367,15 @@ contextBridge.exposeInMainWorld(
 			if (!isRendererRootDiagnosticPayload(payload)) {
 				throw new TypeError('renderer root diagnostic payload is invalid');
 			}
-			ipcRenderer.send(
-				'desktop:diagnostics-host:report-root-error',
-				payload,
-			);
+			ipcRenderer.send('desktop:diagnostics-host:report-root-error', payload);
 		},
 		reportTerminalRecovery: (payload: unknown) => {
-			if (!isTerminalRecoveryDiagnosticPayload(payload)) throw new TypeError('terminal recovery diagnostic payload is invalid');
-			ipcRenderer.send('desktop:diagnostics-host:report-terminal-recovery', payload);
+			if (!isTerminalRecoveryDiagnosticPayload(payload))
+				throw new TypeError('terminal recovery diagnostic payload is invalid');
+			ipcRenderer.send(
+				'desktop:diagnostics-host:report-terminal-recovery',
+				payload,
+			);
 		},
 	}),
 );
@@ -2343,7 +2441,10 @@ if (process.env.TERMINAY_TEST === '1') {
 				sessionId,
 			}) as ReturnType<TerminayTestApi['getServerTerminalActivity']>,
 		emitAgentJournalRecord: (payload) =>
-			ipcRenderer.invoke('test:emit-agent-journal-record', payload) as Promise<boolean>,
+			ipcRenderer.invoke(
+				'test:emit-agent-journal-record',
+				payload,
+			) as Promise<boolean>,
 		getMcpControlEnvironment: (terminalSessionId) =>
 			ipcRenderer.invoke('test:get-mcp-control-environment', {
 				terminalSessionId,

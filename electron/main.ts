@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
 	chmodSync,
 	type Dirent,
@@ -20,9 +20,15 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { type ByteTransport, decodeFrame, type JsonValue } from '@terminay/protocol';
+import {
+	type ByteTransport,
+	createTerminayHostBytePacket,
+	decodeFrame,
+	parseTerminayHostBytePacket,
+	type JsonValue,
+} from '@terminay/protocol';
 import {
 	app,
 	BrowserWindow,
@@ -33,6 +39,7 @@ import {
 	Menu,
 	MessageChannelMain,
 	nativeImage,
+	Notification,
 	powerMonitor,
 	safeStorage,
 	screen,
@@ -41,8 +48,13 @@ import {
 	webContents,
 } from 'electron';
 import WebSocket from 'ws';
+import { LocalServerUiSession } from '../apps/terminay-desktop/src/main/localServerUiSession';
+import { DesktopServerBundleHost, type DesktopBundleLaunch } from '../apps/terminay-desktop/src/main/serverBundleHost';
 import { MacroRepository } from '../packages/server-core/src/macroService/repository';
-import { FileProjectEnvironmentStateBackend, ProjectEnvironmentRepository } from '../packages/server-core/src/projectEnvironment/index';
+import {
+	FileProjectEnvironmentStateBackend,
+	ProjectEnvironmentRepository,
+} from '../packages/server-core/src/projectEnvironment/index';
 import {
 	RecordingService,
 	ServerRecordingAdapter,
@@ -56,10 +68,6 @@ import {
 	ShellProfileDiscoveryService,
 } from '../packages/server-core/src/shellProfiles/index';
 import type { TerminalEvent } from '../packages/server-core/src/terminalService/index';
-import {
-	ElectronSafeStorageVaultAdapter,
-	FileSafeStorageVaultRepository,
-} from './vault/safeStorageVault';
 import {
 	findCommandForKeyboardEvent,
 	getCommandShortcut,
@@ -76,6 +84,7 @@ import {
 import {
 	defaultTerminalSettings,
 	normalizeTerminalSettings,
+	selectDeviceTerminalSettings,
 } from '../src/terminalSettings';
 import { isAgentProvider } from '../src/types/agentStatus';
 import type { MacroDefinition } from '../src/types/macros';
@@ -104,6 +113,7 @@ import {
 	warmAiTabMetadataProviderEnv,
 } from './aiTabMetadata/service';
 import { bindAuxiliaryWindowLifecycle } from './auxiliaryWindowLifecycle';
+import { bindServerUiWindow, getServerUiPartitionName } from './serverUiHost';
 import {
 	CONTROL_SOCKET_ENV,
 	CONTROL_SOCKET_FILENAME,
@@ -116,9 +126,6 @@ import {
 	type ControlServerScope,
 	createControlServer,
 } from './control/server';
-import { registerDictationIpcHandlers } from './dictation/ipc';
-import { DictationService } from './dictation/service';
-import { ParakeetRuntime } from './dictation/parakeetRuntime';
 import {
 	bindAppChildDiagnostics,
 	bindWebContentsDiagnostics,
@@ -128,6 +135,9 @@ import {
 	bindFatalProcessDiagnostics,
 	initializeDesktopDiagnostics,
 } from './diagnostics/service';
+import { registerDictationIpcHandlers } from './dictation/ipc';
+import { ParakeetRuntime } from './dictation/parakeetRuntime';
+import { DictationService } from './dictation/service';
 import { normalizeExternalHttpsUrl } from './externalUrl';
 import { FileExplorerWatchService } from './fileExplorerWatchService';
 import { FileBufferService } from './fileViewer/fileBufferService';
@@ -157,9 +167,12 @@ import { resolveDesktopConnectionIntent } from './remote/desktopConnectionIntent
 import { establishDesktopDevicePairing } from './remote/desktopPairing';
 import { createDesktopReconnectTransport } from './remote/desktopReconnect';
 import { enrollDesktopReconnectCredential } from './remote/desktopReconnectEnrollment';
-import { createDesktopBootstrappedWebRtcTransport } from './remote/desktopWebRtcBootstrap';
+import { createDesktopBootstrappedWebRtcConnection } from './remote/desktopWebRtcBootstrap';
 import { resolveDesktopWebRtcRuntimeRoot } from './remote/desktopWebRtcRuntimeRoot';
-import { createEphemeralTestProtectedValueCodec, DesktopDeviceCredentialStore } from './remote/deviceCredentialStore';
+import {
+	createEphemeralTestProtectedValueCodec,
+	DesktopDeviceCredentialStore,
+} from './remote/deviceCredentialStore';
 import { EmbeddedLanExposure } from './remote/embeddedLanExposure';
 import { createHostedSignalingRoomRegistrar } from './remote/hostedSignalingRegistration';
 import { createPairingPinHash } from './remote/pin';
@@ -175,6 +188,10 @@ import {
 	bindSingletonWindowLifecycle,
 } from './singletonWindowLifecycle';
 import { assertTrustedIpcSender } from './trustedIpcSender';
+import {
+	ElectronSafeStorageVaultAdapter,
+	FileSafeStorageVaultRepository,
+} from './vault/safeStorageVault';
 
 function hasOwn(value: object, key: PropertyKey): boolean {
 	// Calling the prototype method explicitly remains safe for arbitrary objects.
@@ -189,9 +206,10 @@ const RELEASES_LATEST_URL =
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const DICTATION_OPENAI_SECRET_ID = 'dictation-openai-api-key';
 const DICTATION_OPENAI_SECRET_NAME = 'OpenAI API key';
-const desktopTestCredentialCodec = process.env.TERMINAY_TEST === '1'
-	? createEphemeralTestProtectedValueCodec()
-	: undefined;
+const desktopTestCredentialCodec =
+	process.env.TERMINAY_TEST === '1'
+		? createEphemeralTestProtectedValueCodec()
+		: undefined;
 
 process.env.APP_ROOT = path.join(__dirname, '..');
 app.setName('Terminay');
@@ -208,7 +226,9 @@ try {
 		app.setAppLogsPath();
 	}
 } catch {
-	process.stderr.write('[Terminay diagnostics] application log path setup failed\n');
+	process.stderr.write(
+		'[Terminay diagnostics] application log path setup failed\n',
+	);
 }
 app.commandLine.appendSwitch(
 	'enable-features',
@@ -229,6 +249,12 @@ export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
 export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron');
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist');
 export const SERVER_UI_DIST = path.join(process.env.APP_ROOT, 'dist-web');
+
+let localServerUiSession: LocalServerUiSession;
+let remoteServerUiBundleHost: DesktopServerBundleHost;
+const localServerUiPartitionKey = createHash('sha256')
+	.update('desktop-local\0local:embedded')
+	.digest('base64url');
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 	? path.join(process.env.APP_ROOT, 'public')
@@ -462,7 +488,8 @@ function applyAgentIntegrationSetting(
 						const identity = serverTerminalAuthority.agentIdentity(session.id);
 						if (identity !== undefined) {
 							serverAgents.register(identity);
-							if (session.pid !== undefined) serverAgents.terminalStarted(identity, session.pid);
+							if (session.pid !== undefined)
+								serverAgents.terminalStarted(identity, session.pid);
 						}
 					}
 				}
@@ -887,7 +914,9 @@ await desktopDiagnostics.record(
 	{ channel: 'lifecycle' },
 );
 const embeddedProjectEnvironments = new ProjectEnvironmentRepository(
-	new FileProjectEnvironmentStateBackend(path.join(app.getPath('userData'), 'project-environments.v1.json')),
+	new FileProjectEnvironmentStateBackend(
+		path.join(app.getPath('userData'), 'project-environments.v1.json'),
+	),
 	'desktop-local',
 );
 await embeddedProjectEnvironments.load();
@@ -895,19 +924,22 @@ const embeddedVaultAdapter = await ElectronSafeStorageVaultAdapter.open({
 	repository: new FileSafeStorageVaultRepository(
 		path.join(app.getPath('userData'), 'vault', 'safe-storage.v1.json'),
 	),
-	codec: desktopTestCredentialCodec === undefined
-		? {
-				backend: selectedSafeStorageBackend,
-				decrypt: (encrypted) => safeStorage.decryptString(encrypted),
-				encrypt: (plainText) => safeStorage.encryptString(plainText),
-				isAvailable: () => safeStorage.isEncryptionAvailable(),
-			}
-		: {
-				backend: desktopTestCredentialCodec.backend ?? (() => 'terminay_test_ephemeral'),
-				decrypt: desktopTestCredentialCodec.decrypt,
-				encrypt: desktopTestCredentialCodec.encrypt,
-				isAvailable: desktopTestCredentialCodec.isAvailable,
-			},
+	codec:
+		desktopTestCredentialCodec === undefined
+			? {
+					backend: selectedSafeStorageBackend,
+					decrypt: (encrypted) => safeStorage.decryptString(encrypted),
+					encrypt: (plainText) => safeStorage.encryptString(plainText),
+					isAvailable: () => safeStorage.isEncryptionAvailable(),
+				}
+			: {
+					backend:
+						desktopTestCredentialCodec.backend ??
+						(() => 'terminay_test_ephemeral'),
+					decrypt: desktopTestCredentialCodec.decrypt,
+					encrypt: desktopTestCredentialCodec.encrypt,
+					isAvailable: desktopTestCredentialCodec.isAvailable,
+				},
 });
 const embeddedVault = createServerVaultComposition(embeddedVaultAdapter);
 serverTerminalAuthority = new ServerTerminalAuthority({
@@ -915,6 +947,7 @@ serverTerminalAuthority = new ServerTerminalAuthority({
 	dataRoot: app.getPath('userData'),
 	extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
 	vault: embeddedVault,
+	parakeetRuntime,
 	defaultProjectRoot: () => app.getPath('home'),
 	projectEnvironmentRepository: embeddedProjectEnvironments,
 	shellProfiles: embeddedShellProfiles,
@@ -923,12 +956,16 @@ serverTerminalAuthority = new ServerTerminalAuthority({
 	recordings: serverRecordingAdapter,
 	settings: embeddedServerSettings,
 	remoteMcpDispatch: async (sessionId, op, params, signal) =>
-		JSON.parse(JSON.stringify(await dispatchServerControlRequest(
-			sessionId,
-			op as ControlOp,
-			params,
-			signal,
-		))) as JsonValue,
+		JSON.parse(
+			JSON.stringify(
+				await dispatchServerControlRequest(
+					sessionId,
+					op as ControlOp,
+					params,
+					signal,
+				),
+			),
+		) as JsonValue,
 	macros: {
 		repository: embeddedMacros,
 		environmentFor: (request, target) => {
@@ -981,19 +1018,22 @@ serverTerminalAuthority = new ServerTerminalAuthority({
 	onEvent: handleServerTerminalEvent,
 	onDeliveryDiagnostic: (diagnostic) => {
 		if (diagnostic.phase !== 'terminal_congestion') return;
-		void desktopDiagnostics.record({
-			component: 'local-server',
-			event: 'local-server.terminal-congestion',
-			fields: {
-				code: diagnostic.code,
-				queuedBytes: diagnostic.queuedBytes,
-				queuedFrames: diagnostic.queuedFrames,
-				confirmedPosition: diagnostic.confirmedPosition,
-				headPosition: diagnostic.headPosition,
+		void desktopDiagnostics.record(
+			{
+				component: 'local-server',
+				event: 'local-server.terminal-congestion',
+				fields: {
+					code: diagnostic.code,
+					queuedBytes: diagnostic.queuedBytes,
+					queuedFrames: diagnostic.queuedFrames,
+					confirmedPosition: diagnostic.confirmedPosition,
+					headPosition: diagnostic.headPosition,
+				},
+				severity: 'warning',
+				source: 'local-server-protocol',
 			},
-			severity: 'warning',
-			source: 'local-server-protocol',
-		}, { channel: 'lifecycle' });
+			{ channel: 'lifecycle' },
+		);
 	},
 	// These callbacks run only after the server has accepted the operation.
 	// Recording and remote bookkeeping must never be driven by renderer intent.
@@ -1015,6 +1055,17 @@ serverTerminalAuthority = new ServerTerminalAuthority({
 			// Recording remains optional and cannot affect a committed PTY resize.
 		}
 	},
+});
+localServerUiSession = new LocalServerUiSession({
+	bundleRoot: SERVER_UI_DIST,
+	cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
+	executionRuntimeVersion: Number.parseInt(process.versions.chrome, 10),
+	serverId: serverTerminalAuthority.service.serverId,
+});
+remoteServerUiBundleHost = new DesktopServerBundleHost({
+	cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
+	executionRuntimeVersion: Number.parseInt(process.versions.chrome, 10),
+	capabilities: { clipboardWrite: 1, filePicker: 1, nativeMenus: 1, nativeWindows: 1, notifications: 1, osIntegration: 1, updater: 1 },
 });
 const embeddedReconnectRecordsPath = path.join(
 	app.getPath('userData'),
@@ -1073,7 +1124,7 @@ const embeddedLanExposure = new EmbeddedLanExposure({
 const desktopRemoteExposure = new DesktopServerOwnedExposure({
 	serverId: serverTerminalAuthority.service.serverId,
 	sessionOrigin: readTerminalSettings().remoteAccess.origin,
-	pairingMode: () => readTerminalSettings().remoteAccess.pairingMode,
+	pairingMode: () => 'webrtc',
 	initialReconnectRecords: embeddedReconnectRecords,
 	lanListener: embeddedLanExposure,
 	onReconnectRecordsChanged: persistEmbeddedReconnectRecords,
@@ -1113,6 +1164,14 @@ const desktopRemoteExposure = new DesktopServerOwnedExposure({
 		return hosted.toString();
 	},
 });
+const desktopDirectNetworkExposure = new DesktopServerOwnedExposure({
+	serverId: serverTerminalAuthority.service.serverId,
+	sessionOrigin: readTerminalSettings().remoteAccess.origin,
+	pairingMode: () => 'lan',
+	initialReconnectRecords: embeddedReconnectRecords,
+	lanListener: embeddedLanExposure,
+	onReconnectRecordsChanged: persistEmbeddedReconnectRecords,
+});
 
 const desktopWebRtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
 	isPackaged: app.isPackaged,
@@ -1123,6 +1182,8 @@ if (desktopWebRtcRuntimeRoot !== undefined) {
 	privilegedWebRtcExposure = new PrivilegedWebRtcExposure(
 		desktopWebRtcRuntimeRoot,
 		{
+			serverId: serverTerminalAuthority.service.serverId,
+			serverVersion: app.getVersion(),
 			acceptApplicationTransport: (transport, authenticatedClient) => {
 				if (serverTerminalAuthority === null) {
 					throw new Error('The embedded server is unavailable.');
@@ -1134,7 +1195,11 @@ if (desktopWebRtcRuntimeRoot !== undefined) {
 			getControllableSession: (sessionId) => {
 				const authority = serverTerminalAuthority;
 				const session = authority?.get(sessionId);
-				if (authority === null || authority === undefined || session === undefined)
+				if (
+					authority === null ||
+					authority === undefined ||
+					session === undefined
+				)
 					return null;
 				return {
 					close: () => authority.kill(sessionId),
@@ -1424,6 +1489,62 @@ function getTerminalSettingsPath(): string {
 	return path.join(app.getPath('userData'), 'terminal-settings.json');
 }
 
+function getRemotePairingPinVerifierPath(): string {
+	return path.join(app.getPath('userData'), 'remote-pairing-pin-verifier');
+}
+
+function getRemoteAccessSettingsPath(): string {
+	return path.join(app.getPath('userData'), 'remote-access-settings.json');
+}
+
+function readRemotePairingPinVerifier(): string {
+	try {
+		const verifier = readFileSync(getRemotePairingPinVerifierPath(), 'utf8').trim();
+		return /^scrypt-v1:[A-Za-z0-9_-]{8,}:[A-Za-z0-9_-]{32,}$/u.test(verifier)
+			? verifier
+			: '';
+	} catch {
+		return '';
+	}
+}
+
+function writeRemotePairingPinVerifier(verifier: string): void {
+	const verifierPath = getRemotePairingPinVerifierPath();
+	mkdirSync(path.dirname(verifierPath), { recursive: true });
+	writeFileSync(verifierPath, `${verifier}\n`, { mode: 0o600 });
+}
+
+function readRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
+	let candidate: unknown;
+	try {
+		candidate = JSON.parse(readFileSync(getRemoteAccessSettingsPath(), 'utf8'));
+	} catch {
+		try {
+			const legacy = JSON.parse(readFileSync(getTerminalSettingsPath(), 'utf8')) as {
+				remoteAccess?: unknown;
+			};
+			candidate = legacy.remoteAccess;
+		} catch {
+			candidate = undefined;
+		}
+	}
+	return normalizeTerminalSettings({
+		...defaultTerminalSettings,
+		remoteAccess: candidate,
+	}).remoteAccess;
+}
+
+function writeRemoteAccessSettings(
+	settings: TerminalSettings['remoteAccess'],
+): void {
+	const settingsPath = getRemoteAccessSettingsPath();
+	const { pairingPinHash: _pairingPinHash, ...nonSecretSettings } = settings;
+	mkdirSync(path.dirname(settingsPath), { recursive: true });
+	writeFileSync(settingsPath, JSON.stringify(nonSecretSettings, null, 2), {
+		mode: 0o600,
+	});
+}
+
 function getMacrosPath(): string {
 	return path.join(app.getPath('userData'), 'macros.json');
 }
@@ -1434,25 +1555,43 @@ function getSecretsPath(): string {
 
 function readTerminalSettings(): TerminalSettings {
 	const settingsPath = getTerminalSettingsPath();
+	const remoteAccess = {
+		...readRemoteAccessSettings(),
+		pairingPinHash: readRemotePairingPinVerifier(),
+	};
 
 	try {
 		if (!existsSync(settingsPath)) {
-			return defaultTerminalSettings;
+			return {
+				...defaultTerminalSettings,
+				remoteAccess,
+			};
 		}
 
 		const fileContents = readFileSync(settingsPath, 'utf8');
-		return normalizeTerminalSettings(JSON.parse(fileContents));
+		const settings = normalizeTerminalSettings(JSON.parse(fileContents));
+		return {
+			...settings,
+			remoteAccess,
+		};
 	} catch {
-		return defaultTerminalSettings;
+		return {
+			...defaultTerminalSettings,
+			remoteAccess,
+		};
 	}
 }
 
 function writeTerminalSettings(settings: TerminalSettings): TerminalSettings {
 	const normalized = normalizeTerminalSettings(settings);
 	const settingsPath = getTerminalSettingsPath();
+	writeRemoteAccessSettings(normalized.remoteAccess);
 
 	mkdirSync(path.dirname(settingsPath), { recursive: true });
-	writeFileSync(settingsPath, JSON.stringify(normalized, null, 2));
+	writeFileSync(
+		settingsPath,
+		JSON.stringify(selectDeviceTerminalSettings(normalized), null, 2),
+	);
 	return normalized;
 }
 
@@ -2941,8 +3080,7 @@ function createAppMenu(
 			label: 'Help',
 			submenu: createDiagnosticsHelpMenuItems({
 				directory: desktopDiagnostics.directory,
-				clearManagedArtifacts: () =>
-					desktopDiagnostics.clearManagedArtifacts(),
+				clearManagedArtifacts: () => desktopDiagnostics.clearManagedArtifacts(),
 				recordCleared: () => desktopDiagnostics.recordCleared(),
 				reportFailure: (operation, error) => {
 					void desktopDiagnostics.record(
@@ -2970,12 +3108,15 @@ function createWindow(options?: {
 	bounds?: { x: number; y: number };
 	initialServerConnection?: 'local' | 'deferred';
 	workspaceViewId?: string;
+	serverUiLaunch?: DesktopBundleLaunch;
+	serverUiTransport?: ByteTransport;
 }): BrowserWindow | null {
 	if (isQuitting) {
 		return null;
 	}
 
-	const preloadPath = path.join(__dirname, 'preload.mjs');
+	const isCanonicalServerUi = !VITE_DEV_SERVER_URL;
+	const preloadPath = path.join(__dirname, isCanonicalServerUi ? 'serverUiPreload.js' : 'preload.mjs');
 	const isMac = process.platform === 'darwin';
 	const usesOverlayTitlebar = process.platform === 'win32';
 	const windowIconPath = getWindowIconPath();
@@ -3011,6 +3152,7 @@ function createWindow(options?: {
 			preload: preloadPath,
 			contextIsolation: true,
 			nodeIntegration: false,
+			...(isCanonicalServerUi ? { partition: getServerUiPartitionName(options?.serverUiLaunch?.partitionKey ?? localServerUiPartitionKey) } : {}),
 			sandbox: true,
 			webSecurity: true,
 			webviewTag: false,
@@ -3045,7 +3187,10 @@ function createWindow(options?: {
 		pendingAdoptedProjects.set(windowWebContentsId, options.adoptedProject);
 	}
 	if (options?.workspaceViewId) {
-		workspaceViewByWebContents.set(windowWebContentsId, options.workspaceViewId);
+		workspaceViewByWebContents.set(
+			windowWebContentsId,
+			options.workspaceViewId,
+		);
 		// A project tear-off is an explicit request to work in the destination.
 		// Creating the BrowserWindow from a drag-end callback does not reliably
 		// activate it on macOS, where the first click would otherwise be consumed
@@ -3058,6 +3203,7 @@ function createWindow(options?: {
 	}
 
 	window.on('closed', () => {
+		localServerUiSession.release(windowWebContentsId);
 		appWindows.delete(window);
 		runningTerminalSessionsByWindow.delete(windowWebContentsId);
 		confirmedWindowCloseWebContents.delete(windowWebContentsId);
@@ -3146,6 +3292,7 @@ function createWindow(options?: {
 		}
 	});
 	const sendServerConnection = () => {
+		if (isCanonicalServerUi) return;
 		if (window.isDestroyed() || !serverTerminalAuthority) return;
 		if (serverConnectionSentForLoad) return;
 		serverConnectionSentForLoad = true;
@@ -3205,24 +3352,69 @@ function createWindow(options?: {
 
 	// A torn-off window boots in "adopt" mode so the renderer starts with no
 	// default project and instead pulls its adopted project on mount.
-	const isAdoptWindow = Boolean(options?.adoptedProject) && !options?.workspaceViewId;
+	const isAdoptWindow =
+		Boolean(options?.adoptedProject) && !options?.workspaceViewId;
 	if (VITE_DEV_SERVER_URL) {
 		const target = new URL(VITE_DEV_SERVER_URL);
 		if (isAdoptWindow) {
 			target.searchParams.set('adopt', '1');
 		}
-		if (options?.workspaceViewId) target.searchParams.set('view', options.workspaceViewId);
-		if (options?.workspaceViewId) target.hash = `view=${encodeURIComponent(options.workspaceViewId)}`;
+		if (options?.workspaceViewId)
+			target.searchParams.set('view', options.workspaceViewId);
+		if (options?.workspaceViewId)
+			target.hash = `view=${encodeURIComponent(options.workspaceViewId)}`;
 		window.loadURL(target.toString());
 	} else {
-		window.loadFile(
-			path.join(RENDERER_DIST, 'index.html'),
-			isAdoptWindow
-				? { query: { adopt: '1' } }
-				: options?.workspaceViewId
-					? { hash: `view=${encodeURIComponent(options.workspaceViewId)}`, query: { view: options.workspaceViewId } }
-					: undefined,
-		);
+		// Production startup resolves and verifies the selected server's exact UI
+		// artifact before any workspace renderer executes. Local and remote launches
+		// both enter through this canonical host/preload boundary.
+		void (options?.serverUiLaunch === undefined
+			? localServerUiSession.prepare(windowWebContentsId)
+			: Promise.resolve(options.serverUiLaunch))
+			.then((launch) => {
+				if (window.isDestroyed()) return;
+				const entryUrl = pathToFileURL(path.join(launch.assetRoot, launch.entryPath));
+				if (options?.workspaceViewId) entryUrl.hash = `view=${encodeURIComponent(options.workspaceViewId)}`;
+				bindServerUiWindow({
+					window,
+					context: launch.context,
+					expectedOrigin: entryUrl.toString(),
+					hostPartitionKey: launch.partitionKey,
+					initialUrl: entryUrl.toString(),
+					preloadPath,
+					onHostAction: async (request) => {
+						const action = request.action;
+						switch (action.type) {
+							case 'clipboard.write': clipboard.writeText(action.text); return;
+							case 'file.choose': await dialog.showOpenDialog(window, { properties: action.multiple ? ['openFile', 'multiSelections'] : ['openFile'] }); return;
+							case 'notification.show': new Notification({ title: action.title, ...(action.body === undefined ? {} : { body: action.body }) }).show(); return;
+							case 'updater.check': await getAppUpdateStatus({ force: true }); return;
+							case 'os.open-external': await openInBrowser(action.url); return;
+							case 'route.close': window.close(); return;
+							case 'route.focus': window.focus(); return;
+							case 'menu.invoke': sendCommandToFocusedWindow(action.command as AppCommand); return;
+							case 'route.present': throw new Error('Route presentation is unavailable during Desktop bootstrap.');
+							case 'os.reveal': throw new Error('OS reveal requires a host-issued path token.');
+						}
+					},
+				});
+				window.webContents.once('did-finish-load', () => {
+					if (window.isDestroyed()) return;
+					if (options?.serverUiTransport !== undefined) {
+						bindCanonicalRemoteByteEndpoint(window.webContents, launch, options.serverUiTransport);
+						return;
+					}
+					if (serverTerminalAuthority === null) return;
+					const channel = new MessageChannelMain();
+					serverTerminalAuthority.acceptRendererPort(channel.port1 as unknown as ServerMessagePort);
+					window.webContents.postMessage('server-ui-host:byte-endpoint', { handle: launch.byteEndpointHandle }, [channel.port2]);
+				});
+				return window.loadURL(entryUrl.toString());
+			})
+			.catch((error) => {
+				console.error('[window] embedded server UI verification failed', error);
+				if (!window.isDestroyed()) window.close();
+			});
 	}
 
 	void getAppUpdateStatus();
@@ -3230,14 +3422,22 @@ function createWindow(options?: {
 	return window;
 }
 
-function selectedProfileIdForRequester(requester?: Electron.WebContents): string | undefined {
+function selectedProfileIdForRequester(
+	requester?: Electron.WebContents,
+): string | undefined {
 	const source = requester ?? BrowserWindow.getFocusedWindow()?.webContents;
-	return source === undefined ? undefined : remoteProfileBindingsByWebContents.get(source.id);
+	return source === undefined
+		? undefined
+		: remoteProfileBindingsByWebContents.get(source.id);
 }
 
-function bindAuxiliaryServerAuthority(window: BrowserWindow, requester?: Electron.WebContents): void {
+function bindAuxiliaryServerAuthority(
+	window: BrowserWindow,
+	requester?: Electron.WebContents,
+): void {
 	const profileId = selectedProfileIdForRequester(requester);
-	if (profileId === undefined) remoteProfileBindingsByWebContents.delete(window.webContents.id);
+	if (profileId === undefined)
+		remoteProfileBindingsByWebContents.delete(window.webContents.id);
 	else remoteProfileBindingsByWebContents.set(window.webContents.id, profileId);
 }
 
@@ -3249,12 +3449,14 @@ async function postSelectedServerConnection(
 	if (remoteProfileId !== undefined) {
 		loadRememberedRemoteConnections();
 		const profile = rememberedRemoteConnections.get(remoteProfileId);
-		if (profile === undefined || profile.kind !== 'device') throw new Error('The selected remote Terminay Server is unavailable.');
+		if (profile === undefined || profile.kind !== 'device')
+			throw new Error('The selected remote Terminay Server is unavailable.');
 		await reconnectRememberedRemoteProfile(sender, profile);
 		return;
 	}
 	const authority = serverTerminalAuthority;
-	if (authority === null) throw new Error('The local server connection is unavailable.');
+	if (authority === null)
+		throw new Error('The local server connection is unavailable.');
 	const channel = new MessageChannelMain();
 	authority.acceptRendererPort(channel.port1 as unknown as ServerMessagePort);
 	sender.postMessage(
@@ -3269,11 +3471,20 @@ async function postSelectedServerConnection(
 	);
 }
 
-async function rebindAuxiliaryServerConnection(window: BrowserWindow, requester?: Electron.WebContents): Promise<void> {
+async function rebindAuxiliaryServerConnection(
+	window: BrowserWindow,
+	requester?: Electron.WebContents,
+): Promise<void> {
 	const nextProfileId = selectedProfileIdForRequester(requester);
-	if (nextProfileId === remoteProfileBindingsByWebContents.get(window.webContents.id)) return;
+	if (
+		nextProfileId ===
+		remoteProfileBindingsByWebContents.get(window.webContents.id)
+	)
+		return;
 	bindAuxiliaryServerAuthority(window, requester);
-	const active = activeRemoteByteConnectionsByWebContents.get(window.webContents.id);
+	const active = activeRemoteByteConnectionsByWebContents.get(
+		window.webContents.id,
+	);
 	activeRemoteByteConnectionsByWebContents.delete(window.webContents.id);
 	await active?.close();
 	if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
@@ -3281,7 +3492,10 @@ async function rebindAuxiliaryServerConnection(window: BrowserWindow, requester?
 	}
 }
 
-function attachAuxiliaryServerConnection(window: BrowserWindow, requester?: Electron.WebContents): void {
+function attachAuxiliaryServerConnection(
+	window: BrowserWindow,
+	requester?: Electron.WebContents,
+): void {
 	bindAuxiliaryServerAuthority(window, requester);
 	const webContentsId = window.webContents.id;
 	let sentForLoad = false;
@@ -3300,7 +3514,9 @@ function attachAuxiliaryServerConnection(window: BrowserWindow, requester?: Elec
 		)
 			return;
 		sentForLoad = true;
-		void postSelectedServerConnection(window.webContents).catch((error) => console.error('[connection] failed to attach auxiliary window', error));
+		void postSelectedServerConnection(window.webContents).catch((error) =>
+			console.error('[connection] failed to attach auxiliary window', error),
+		);
 	});
 	window.on('closed', () => {
 		const active = activeRemoteByteConnectionsByWebContents.get(webContentsId);
@@ -3336,7 +3552,10 @@ function postLocalServerConnection(
 	);
 }
 
-async function openSettingsWindow(sectionId?: string, requester?: Electron.WebContents): Promise<void> {
+async function openSettingsWindow(
+	sectionId?: string,
+	requester?: Electron.WebContents,
+): Promise<void> {
 	// Page.close can resolve before the native BrowserWindow has emitted
 	// `closed`. Serialize replacement creation behind that native boundary.
 	await settingsWindowCloseBarrier;
@@ -3461,14 +3680,20 @@ async function connectRemoteServer(
 		);
 		if (connected.signalingBootstrap !== undefined) {
 			try {
-				const webRtcTransport = await createDesktopBootstrappedWebRtcTransport({
+				const webRtcConnection = await createDesktopBootstrappedWebRtcConnection({
 					bootstrap: connected.signalingBootstrap,
 					expectedOrigin: paired.origin,
 				});
 				await connected.transport.close({ code: 'normal' });
+				if (!VITE_DEV_SERVER_URL) {
+					const current = BrowserWindow.fromWebContents(event.sender);
+					if (current === null) throw new Error('The target window is unavailable.');
+					await openCanonicalRemoteServerWindow(current, profile, paired.origin, webRtcConnection);
+					return;
+				}
 				await connectRemoteByteTransport(
 					event.sender,
-					webRtcTransport,
+					webRtcConnection.transport,
 					new URL(paired.origin).host,
 					paired.origin,
 					profile,
@@ -3518,6 +3743,63 @@ async function connectRemoteServer(
 		bootstrap.origin,
 		profile,
 	);
+}
+
+function bindCanonicalRemoteByteEndpoint(
+	sender: Electron.WebContents,
+	launch: DesktopBundleLaunch,
+	remoteTransport: ByteTransport,
+): void {
+	const channel = new MessageChannelMain();
+	let closed = false;
+	const close = async (): Promise<void> => {
+		if (closed) return;
+		closed = true;
+		channel.port1.close();
+		await remoteTransport.close({ code: 'normal' }).catch(() => undefined);
+	};
+	channel.port1.on('message', ({ data }) => {
+		if (closed) return;
+		try {
+			const packet = parseTerminayHostBytePacket(data, launch.context.serverId);
+			void remoteTransport.send(packet.frame).catch(() => close());
+		} catch { void close(); }
+	});
+	channel.port1.on('close', () => { void close(); });
+	channel.port1.start();
+	sender.once('destroyed', () => { void close(); });
+	void remoteTransport.open().then(async () => {
+		if (closed || sender.isDestroyed()) return;
+		sender.postMessage('server-ui-host:byte-endpoint', { handle: launch.byteEndpointHandle }, [channel.port2]);
+		try {
+			for await (const frame of remoteTransport.incoming) {
+				if (closed) return;
+				channel.port1.postMessage(createTerminayHostBytePacket(launch.context.serverId, frame));
+			}
+		} finally { await close(); }
+	}).catch(() => close());
+}
+
+async function openCanonicalRemoteServerWindow(
+	current: BrowserWindow,
+	profile: RememberedRemoteConnection,
+	origin: string,
+	connection: Awaited<ReturnType<typeof createDesktopBootstrappedWebRtcConnection>>,
+): Promise<void> {
+	const launch = await remoteServerUiBundleHost.prepareRemote({
+		lane: connection.assets,
+		origin,
+		profileId: profile.id,
+		serverId: connection.serverId,
+		windowId: `window-${randomUUID()}`,
+	});
+	const replacement = createWindow({
+		serverUiLaunch: launch,
+		serverUiTransport: connection.transport,
+	});
+	if (replacement === null) throw new Error('Desktop is closing.');
+	remoteProfileBindingsByWebContents.set(replacement.webContents.id, profile.id);
+	current.close();
 }
 
 async function connectRemoteByteTransport(
@@ -3716,14 +3998,20 @@ async function reconnectRememberedRemoteProfile(
 		return;
 	}
 	try {
-		const webRtcTransport = await createDesktopBootstrappedWebRtcTransport({
+		const webRtcConnection = await createDesktopBootstrappedWebRtcConnection({
 			bootstrap: connected.signalingBootstrap,
 			expectedOrigin: profile.origin,
 		});
 		await connected.transport.close({ code: 'normal' });
+		if (!VITE_DEV_SERVER_URL) {
+			const current = BrowserWindow.fromWebContents(sender);
+			if (current === null) throw new Error('The target window is unavailable.');
+			await openCanonicalRemoteServerWindow(current, profile, profile.origin, webRtcConnection);
+			return;
+		}
 		await connectRemoteByteTransport(
 			sender,
-			webRtcTransport,
+			webRtcConnection.transport,
 			profile.label,
 			profile.origin,
 			profile,
@@ -3734,7 +4022,9 @@ async function reconnectRememberedRemoteProfile(
 	}
 }
 
-async function openMacrosWindow(requester?: Electron.WebContents): Promise<void> {
+async function openMacrosWindow(
+	requester?: Electron.WebContents,
+): Promise<void> {
 	const preloadPath = path.join(__dirname, 'preload.mjs');
 	const windowIconPath = getWindowIconPath();
 
@@ -3795,7 +4085,9 @@ async function openMacrosWindow(requester?: Electron.WebContents): Promise<void>
 	}
 }
 
-async function openRecordingsWindow(requester?: Electron.WebContents): Promise<void> {
+async function openRecordingsWindow(
+	requester?: Electron.WebContents,
+): Promise<void> {
 	const preloadPath = path.join(__dirname, 'preload.mjs');
 	const windowIconPath = getWindowIconPath();
 
@@ -3865,7 +4157,11 @@ async function openProjectEnvironmentsWindow(
 	requester?: Electron.WebContents,
 	intent?: ProjectEnvironmentWindowIntent,
 ): Promise<void> {
-	if (projectEnvironmentsWindow && !projectEnvironmentsWindow.isDestroyed() && !projectEnvironmentsWindow.webContents.isDestroyed()) {
+	if (
+		projectEnvironmentsWindow &&
+		!projectEnvironmentsWindow.isDestroyed() &&
+		!projectEnvironmentsWindow.webContents.isDestroyed()
+	) {
 		await rebindAuxiliaryServerConnection(projectEnvironmentsWindow, requester);
 		if (intent !== undefined) {
 			projectEnvironmentsWindow.webContents.send(
@@ -3880,18 +4176,35 @@ async function openProjectEnvironmentsWindow(
 	const isMac = process.platform === 'darwin';
 	const usesOverlayTitlebar = process.platform === 'win32';
 	const createdWindow = new BrowserWindow({
-		icon: getWindowIconPath(), width: 1180, height: 780, minWidth: 900, minHeight: 640,
+		icon: getWindowIconPath(),
+		width: 1180,
+		height: 780,
+		minWidth: 900,
+		minHeight: 640,
 		title: 'Terminay Project Environments',
 		titleBarStyle: isMac || usesOverlayTitlebar ? 'hidden' : 'default',
-		titleBarOverlay: usesOverlayTitlebar ? { color: '#0d1117', symbolColor: '#9bb0c8', height: 38 } : false,
+		titleBarOverlay: usesOverlayTitlebar
+			? { color: '#0d1117', symbolColor: '#9bb0c8', height: 38 }
+			: false,
 		trafficLightPosition: isMac ? { x: 14, y: 12 } : undefined,
-		autoHideMenuBar: shouldAutoHideMenuBar(), backgroundColor: '#0d1117',
-		webPreferences: { preload: path.join(__dirname, 'preload.mjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, webviewTag: false },
+		autoHideMenuBar: shouldAutoHideMenuBar(),
+		backgroundColor: '#0d1117',
+		webPreferences: {
+			preload: path.join(__dirname, 'preload.mjs'),
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+			webSecurity: true,
+			webviewTag: false,
+		},
 	});
 	projectEnvironmentsWindow = createdWindow;
 	securePrimaryWindow(createdWindow);
 	attachAuxiliaryServerConnection(createdWindow, requester);
-	createdWindow.on('closed', () => { if (projectEnvironmentsWindow === createdWindow) projectEnvironmentsWindow = null; });
+	createdWindow.on('closed', () => {
+		if (projectEnvironmentsWindow === createdWindow)
+			projectEnvironmentsWindow = null;
+	});
 	if (VITE_DEV_SERVER_URL) {
 		const target = new URL(VITE_DEV_SERVER_URL);
 		target.searchParams.set('view', 'project-environments');
@@ -4679,7 +4992,8 @@ ipcMain.handle(
 			!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(
 				(payload as { viewId: string }).viewId,
 			)
-		) throw new TypeError('desktop workspace view binding is invalid');
+		)
+			throw new TypeError('desktop workspace view binding is invalid');
 		workspaceViewByWebContents.set(
 			event.sender.id,
 			(payload as { viewId: string }).viewId,
@@ -4851,7 +5165,8 @@ ipcMain.handle(
 			Object.keys(payload).length !== 2 ||
 			(payload as { version?: unknown }).version !== 1 ||
 			!Array.isArray((payload as { sessionIds?: unknown }).sessionIds)
-		) throw new TypeError('desktop running terminal publication is invalid');
+		)
+			throw new TypeError('desktop running terminal publication is invalid');
 		const sessionIds = (payload as { sessionIds: unknown[] }).sessionIds;
 		if (
 			sessionIds.length > 4_096 ||
@@ -4860,8 +5175,12 @@ ipcMain.handle(
 					typeof value !== 'string' ||
 					!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value),
 			)
-		) throw new TypeError('desktop running terminal session ids are invalid');
-		runningTerminalSessionsByWindow.set(event.sender.id, new Set(sessionIds as string[]));
+		)
+			throw new TypeError('desktop running terminal session ids are invalid');
+		runningTerminalSessionsByWindow.set(
+			event.sender.id,
+			new Set(sessionIds as string[]),
+		);
 	},
 );
 
@@ -4876,7 +5195,8 @@ ipcMain.handle(
 			Object.getPrototypeOf(payload) !== Object.prototype ||
 			Object.keys(payload).length !== 3 ||
 			(payload as { version?: unknown }).version !== 1
-		) throw new TypeError('desktop close confirmation request is invalid');
+		)
+			throw new TypeError('desktop close confirmation request is invalid');
 		const { kind, runningTerminalCount } = payload as {
 			kind: unknown;
 			runningTerminalCount: unknown;
@@ -4887,7 +5207,8 @@ ipcMain.handle(
 			!Number.isSafeInteger(runningTerminalCount) ||
 			runningTerminalCount < 1 ||
 			runningTerminalCount > 4_096
-		) throw new TypeError('desktop close confirmation scope is invalid');
+		)
+			throw new TypeError('desktop close confirmation scope is invalid');
 		const target = BrowserWindow.fromWebContents(event.sender);
 		if (!target || target.isDestroyed()) return false;
 		const result = await dialog.showMessageBox(
@@ -5834,14 +6155,19 @@ ipcMain.handle(
 			Object.keys(draft).length !== 10 ||
 			typeof draft.color !== 'string' ||
 			draft.color.length > 128 ||
-			(draft.defaultShellProfileId !== null && (typeof draft.defaultShellProfileId !== 'string' || draft.defaultShellProfileId.length === 0 || draft.defaultShellProfileId.length > 128)) ||
+			(draft.defaultShellProfileId !== null &&
+				(typeof draft.defaultShellProfileId !== 'string' ||
+					draft.defaultShellProfileId.length === 0 ||
+					draft.defaultShellProfileId.length > 128)) ||
 			typeof draft.environmentLabel !== 'string' ||
 			draft.environmentLabel.length === 0 ||
 			draft.environmentLabel.length > 512 ||
 			typeof draft.environmentStatus !== 'string' ||
 			draft.environmentStatus.length === 0 ||
 			draft.environmentStatus.length > 128 ||
-			(draft.environmentDefaultRoot !== null && (typeof draft.environmentDefaultRoot !== 'string' || draft.environmentDefaultRoot.length > 32_768)) ||
+			(draft.environmentDefaultRoot !== null &&
+				(typeof draft.environmentDefaultRoot !== 'string' ||
+					draft.environmentDefaultRoot.length > 32_768)) ||
 			typeof draft.projectEnvironmentId !== 'string' ||
 			draft.projectEnvironmentId.length === 0 ||
 			draft.projectEnvironmentId.length > 128 ||
@@ -5851,8 +6177,25 @@ ipcMain.handle(
 			draft.rootFolder.length > 32_768 ||
 			!Array.isArray(draft.shellProfileOptions) ||
 			draft.shellProfileOptions.length > 65 ||
-			draft.shellProfileOptions.some((option) => typeof option !== 'object' || option === null || Array.isArray(option) || Object.keys(option).length !== 3 || typeof (option as Record<string, unknown>).id !== 'string' || ((option as Record<string, unknown>).id as string).length === 0 || ((option as Record<string, unknown>).id as string).length > 128 || typeof (option as Record<string, unknown>).name !== 'string' || ((option as Record<string, unknown>).name as string).length === 0 || ((option as Record<string, unknown>).name as string).length > 128 || typeof (option as Record<string, unknown>).available !== 'boolean') ||
-			new Set(draft.shellProfileOptions.map((option) => (option as Record<string, unknown>).id)).size !== draft.shellProfileOptions.length ||
+			draft.shellProfileOptions.some(
+				(option) =>
+					typeof option !== 'object' ||
+					option === null ||
+					Array.isArray(option) ||
+					Object.keys(option).length !== 3 ||
+					typeof (option as Record<string, unknown>).id !== 'string' ||
+					((option as Record<string, unknown>).id as string).length === 0 ||
+					((option as Record<string, unknown>).id as string).length > 128 ||
+					typeof (option as Record<string, unknown>).name !== 'string' ||
+					((option as Record<string, unknown>).name as string).length === 0 ||
+					((option as Record<string, unknown>).name as string).length > 128 ||
+					typeof (option as Record<string, unknown>).available !== 'boolean',
+			) ||
+			new Set(
+				draft.shellProfileOptions.map(
+					(option) => (option as Record<string, unknown>).id,
+				),
+			).size !== draft.shellProfileOptions.length ||
 			typeof draft.title !== 'string' ||
 			draft.title.length > 512
 		) {
@@ -5919,12 +6262,46 @@ ipcMain.handle(
 		}
 		if (result.kind === 'project') {
 			const candidate = result.result as unknown;
-			if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) throw new TypeError('project edit result is invalid');
+			if (
+				typeof candidate !== 'object' ||
+				candidate === null ||
+				Array.isArray(candidate)
+			)
+				throw new TypeError('project edit result is invalid');
 			const value = candidate as Record<string, unknown>;
-			if (Object.keys(value).length !== 5 || typeof value.color !== 'string' || value.color.length > 128 || (value.defaultShellProfileId !== null && (typeof value.defaultShellProfileId !== 'string' || value.defaultShellProfileId.length === 0 || value.defaultShellProfileId.length > 128)) || typeof value.emoji !== 'string' || value.emoji.length > 64 || typeof value.rootFolder !== 'string' || value.rootFolder.length > 32_768 || typeof value.title !== 'string' || value.title.length > 512) throw new TypeError('project edit result is invalid');
-			const shellProfileOptions = pending.state.kind === 'project' ? pending.state.draft.shellProfileOptions : [];
-			const originalProfileId = pending.state.kind === 'project' ? pending.state.draft.defaultShellProfileId : null;
-			if (value.defaultShellProfileId !== null && !shellProfileOptions.some((profile) => profile.id === value.defaultShellProfileId && (profile.available || profile.id === originalProfileId))) throw new TypeError('project shell profile selection is invalid');
+			if (
+				Object.keys(value).length !== 5 ||
+				typeof value.color !== 'string' ||
+				value.color.length > 128 ||
+				(value.defaultShellProfileId !== null &&
+					(typeof value.defaultShellProfileId !== 'string' ||
+						value.defaultShellProfileId.length === 0 ||
+						value.defaultShellProfileId.length > 128)) ||
+				typeof value.emoji !== 'string' ||
+				value.emoji.length > 64 ||
+				typeof value.rootFolder !== 'string' ||
+				value.rootFolder.length > 32_768 ||
+				typeof value.title !== 'string' ||
+				value.title.length > 512
+			)
+				throw new TypeError('project edit result is invalid');
+			const shellProfileOptions =
+				pending.state.kind === 'project'
+					? pending.state.draft.shellProfileOptions
+					: [];
+			const originalProfileId =
+				pending.state.kind === 'project'
+					? pending.state.draft.defaultShellProfileId
+					: null;
+			if (
+				value.defaultShellProfileId !== null &&
+				!shellProfileOptions.some(
+					(profile) =>
+						profile.id === value.defaultShellProfileId &&
+						(profile.available || profile.id === originalProfileId),
+				)
+			)
+				throw new TypeError('project shell profile selection is invalid');
 		}
 
 		pending.resolve(result.result);
@@ -5940,16 +6317,23 @@ ipcMain.handle('remote:get-status', async (event) => {
 });
 
 function usesPrivilegedWebRtcExposure(): boolean {
-	return (
-		readTerminalSettings().remoteAccess.pairingMode === 'webrtc' &&
-		privilegedWebRtcExposure !== null
-	);
+	return privilegedWebRtcExposure !== null;
 }
 
 function currentRemoteAccessStatus(): RemoteAccessStatus {
-	return usesPrivilegedWebRtcExposure()
+	const webRtc = usesPrivilegedWebRtcExposure()
 		? privilegedWebRtcExposure!.service.getStatus()
 		: desktopRemoteExposure.getStatus();
+	const direct = desktopDirectNetworkExposure.getStatus();
+	return {
+		...webRtc,
+		directListenerRunning: direct.isRunning,
+		lanPairingExpiresAt: direct.lanPairingExpiresAt,
+		lanPairingQrCodeDataUrl: direct.lanPairingQrCodeDataUrl,
+		lanPairingQrCodePath: direct.lanPairingQrCodePath,
+		lanPairingUrl: direct.lanPairingUrl,
+		availableAddresses: direct.availableAddresses,
+	};
 }
 
 function broadcastRemoteAccessStatus(): void {
@@ -5969,7 +6353,9 @@ ipcMain.handle('remote:toggle-server', async (event) => {
 				privilegedWebRtcSessions.add(session.id);
 				privilegedWebRtcExposure!.service.ensureSession(session.id);
 			}
-			const dimensions = serverTerminalAuthority?.service.getSession(session.id)?.dimensions;
+			const dimensions = serverTerminalAuthority?.service.getSession(
+				session.id,
+			)?.dimensions;
 			if (dimensions !== undefined)
 				privilegedWebRtcExposure!.service.updateSessionSize(
 					session.id,
@@ -5981,6 +6367,14 @@ ipcMain.handle('remote:toggle-server', async (event) => {
 	} else {
 		status = await desktopRemoteExposure.toggle();
 	}
+	broadcastRemoteAccessStatus();
+	return status;
+});
+
+ipcMain.handle('remote:toggle-direct-listener', async (event) => {
+	assertTrustedAppSender(event);
+	await desktopDirectNetworkExposure.toggle();
+	const status = currentRemoteAccessStatus();
 	broadcastRemoteAccessStatus();
 	return status;
 });
@@ -6002,7 +6396,9 @@ ipcMain.handle(
 	async (event, payload: { connectionId: string }) => {
 		assertTrustedAppSender(event);
 		const status = usesPrivilegedWebRtcExposure()
-			? await privilegedWebRtcExposure!.service.closeConnection(payload.connectionId)
+			? await privilegedWebRtcExposure!.service.closeConnection(
+					payload.connectionId,
+				)
 			: desktopRemoteExposure.closeConnection(payload.connectionId);
 		broadcastRemoteAccessStatus();
 		return status;
@@ -6013,9 +6409,15 @@ ipcMain.handle(
 	'remote:set-pairing-address',
 	async (event, payload: { address: string }) => {
 		assertTrustedAppSender(event);
-		const status = usesPrivilegedWebRtcExposure()
-			? await privilegedWebRtcExposure!.service.setPairingAddress(payload.address)
+		if (!desktopDirectNetworkExposure.getStatus().isRunning) {
+			desktopDirectNetworkExposure.setPairingAddress(payload.address);
+		}
+		usesPrivilegedWebRtcExposure()
+			? await privilegedWebRtcExposure!.service.setPairingAddress(
+					payload.address,
+				)
 			: desktopRemoteExposure.setPairingAddress(payload.address);
+		const status = currentRemoteAccessStatus();
 		broadcastRemoteAccessStatus();
 		return status;
 	},
@@ -6024,17 +6426,24 @@ ipcMain.handle(
 ipcMain.handle('remote:set-pairing-pin', (event, payload: { pin: string }) => {
 	assertTrustedAppSender(event);
 	const currentSettings = readTerminalSettings();
+	const pairingPinHash = createPairingPinHash(payload.pin);
+	writeRemotePairingPinVerifier(pairingPinHash);
 	const settings = writeTerminalSettings({
 		...currentSettings,
 		remoteAccess: {
 			...currentSettings.remoteAccess,
-			pairingPinHash: createPairingPinHash(payload.pin),
+			pairingPinHash,
 		},
 	});
 	broadcastTerminalSettings(settings);
 	privilegedWebRtcExposure?.service.notifyStatusChanged();
 	createAppMenu(settings);
 	return settings;
+});
+
+ipcMain.handle('remote:get-pairing-pin-status', (event) => {
+	assertTrustedAppSender(event);
+	return readTerminalSettings().remoteAccess.pairingPinHash.trim().length > 0;
 });
 
 ipcMain.handle(
@@ -6065,37 +6474,60 @@ ipcMain.handle(
 	},
 );
 
-ipcMain.handle('desktop:project-environments-host:open', async (event, payload: unknown) => {
-	assertTrustedAppSender(event);
-	if (typeof payload !== 'object' || payload === null || Array.isArray(payload) || Object.getPrototypeOf(payload) !== Object.prototype) throw new TypeError('desktop project environments host request is invalid');
-	const request = payload as Record<string, unknown>;
-	if (
-		(Object.keys(request).length !== 1 && Object.keys(request).length !== 2) ||
-		request.version !== 1
-	) throw new TypeError('desktop project environments host request is invalid');
-	let intent: ProjectEnvironmentWindowIntent | undefined;
-	if (request.intent !== undefined) {
+ipcMain.handle(
+	'desktop:project-environments-host:open',
+	async (event, payload: unknown) => {
+		assertTrustedAppSender(event);
 		if (
-			typeof request.intent !== 'object' ||
-			request.intent === null ||
-			Array.isArray(request.intent)
-		) throw new TypeError('desktop project environments host request is invalid');
-		const value = request.intent as Record<string, unknown>;
+			typeof payload !== 'object' ||
+			payload === null ||
+			Array.isArray(payload) ||
+			Object.getPrototypeOf(payload) !== Object.prototype
+		)
+			throw new TypeError(
+				'desktop project environments host request is invalid',
+			);
+		const request = payload as Record<string, unknown>;
 		if (
-			!['profile', 'environment'].includes(String(value.mode)) ||
-			typeof value.providerId !== 'string' ||
-			value.providerId.length > 256 ||
-			(value.profileId !== undefined &&
-				(typeof value.profileId !== 'string' || value.profileId.length > 256))
-		) throw new TypeError('desktop project environments host request is invalid');
-		intent = {
-			providerId: value.providerId,
-			mode: value.mode as 'profile' | 'environment',
-			...(value.profileId === undefined ? {} : { profileId: value.profileId as string }),
-		};
-	}
-	await openProjectEnvironmentsWindow(event.sender, intent);
-});
+			(Object.keys(request).length !== 1 &&
+				Object.keys(request).length !== 2) ||
+			request.version !== 1
+		)
+			throw new TypeError(
+				'desktop project environments host request is invalid',
+			);
+		let intent: ProjectEnvironmentWindowIntent | undefined;
+		if (request.intent !== undefined) {
+			if (
+				typeof request.intent !== 'object' ||
+				request.intent === null ||
+				Array.isArray(request.intent)
+			)
+				throw new TypeError(
+					'desktop project environments host request is invalid',
+				);
+			const value = request.intent as Record<string, unknown>;
+			if (
+				!['profile', 'environment'].includes(String(value.mode)) ||
+				typeof value.providerId !== 'string' ||
+				value.providerId.length > 256 ||
+				(value.profileId !== undefined &&
+					(typeof value.profileId !== 'string' || value.profileId.length > 256))
+			)
+				throw new TypeError(
+					'desktop project environments host request is invalid',
+				);
+			intent = {
+				providerId: value.providerId,
+				mode: value.mode as 'profile' | 'environment',
+				...(value.profileId === undefined
+					? {}
+					: { profileId: value.profileId as string }),
+			};
+		}
+		await openProjectEnvironmentsWindow(event.sender, intent);
+	},
+);
 
 ipcMain.handle('desktop:recordings-host:open', (event, payload: unknown) => {
 	assertTrustedAppSender(event);
@@ -6329,13 +6761,18 @@ if (process.env.TERMINAY_TEST === '1') {
 			appCommandStagesBySender.set(requestSenderId, `dispatched:${command}`);
 			await new Promise<void>((resolve, reject) => {
 				const timeout = setTimeout(() => {
-					const stage = appCommandStagesBySender.get(requestSenderId) ?? 'unknown';
+					const stage =
+						appCommandStagesBySender.get(requestSenderId) ?? 'unknown';
 					cleanup();
-					reject(new Error(`renderer app command completion timed out (last stage: ${stage})`));
-				// App commands acknowledge their real asynchronous completion. Large
-				// sparse saves and other bounded host operations can legitimately exceed
-				// Playwright's per-action timeout on a loaded CI runner, so this test-only
-				// transport deadline follows the enclosing 30-second scenario budget.
+					reject(
+						new Error(
+							`renderer app command completion timed out (last stage: ${stage})`,
+						),
+					);
+					// App commands acknowledge their real asynchronous completion. Large
+					// sparse saves and other bounded host operations can legitimately exceed
+					// Playwright's per-action timeout on a loaded CI runner, so this test-only
+					// transport deadline follows the enclosing 30-second scenario budget.
 				}, 20_000);
 				const onComplete = (
 					event: Electron.IpcMainEvent,
@@ -6543,14 +6980,46 @@ ipcMain.handle(
 const rendererRootDiagnosticKeys = new Map<number, Set<string>>();
 
 function readTerminalRecoveryDiagnosticPayload(value: unknown) {
-	if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		return undefined;
 	const payload = value as Record<string, unknown>;
-	if (Object.keys(payload).some((key) => !['attempt', 'durationMs', 'fromPosition', 'outputPosition', 'phase', 'reason', 'replayFrom', 'version'].includes(key))) return undefined;
-	const optionalPosition = (candidate: unknown) => candidate === undefined || (Number.isSafeInteger(candidate) && (candidate as number) >= 0);
-	if (payload.version !== 1 || !['started', 'retrying', 'recovered', 'failed'].includes(String(payload.phase)) ||
-		!Number.isSafeInteger(payload.attempt) || (payload.attempt as number) <= 0 || (payload.attempt as number) > 1_000_000 ||
-		!optionalPosition(payload.durationMs) || !optionalPosition(payload.fromPosition) || !optionalPosition(payload.replayFrom) || !optionalPosition(payload.outputPosition) ||
-		(payload.reason !== undefined && !['congestion', 'attach-error', 'deadline'].includes(String(payload.reason)))) return undefined;
+	if (
+		Object.keys(payload).some(
+			(key) =>
+				![
+					'attempt',
+					'durationMs',
+					'fromPosition',
+					'outputPosition',
+					'phase',
+					'reason',
+					'replayFrom',
+					'version',
+				].includes(key),
+		)
+	)
+		return undefined;
+	const optionalPosition = (candidate: unknown) =>
+		candidate === undefined ||
+		(Number.isSafeInteger(candidate) && (candidate as number) >= 0);
+	if (
+		payload.version !== 1 ||
+		!['started', 'retrying', 'recovered', 'failed'].includes(
+			String(payload.phase),
+		) ||
+		!Number.isSafeInteger(payload.attempt) ||
+		(payload.attempt as number) <= 0 ||
+		(payload.attempt as number) > 1_000_000 ||
+		!optionalPosition(payload.durationMs) ||
+		!optionalPosition(payload.fromPosition) ||
+		!optionalPosition(payload.replayFrom) ||
+		!optionalPosition(payload.outputPosition) ||
+		(payload.reason !== undefined &&
+			!['congestion', 'attach-error', 'deadline'].includes(
+				String(payload.reason),
+			))
+	)
+		return undefined;
 	return payload;
 }
 
@@ -6561,9 +7030,7 @@ const terminalRecoveryEventNames = {
 	failed: 'terminal.recovery.failed',
 } as const;
 
-function readRendererRootDiagnosticPayload(
-	value: unknown,
-):
+function readRendererRootDiagnosticPayload(value: unknown):
 	| {
 			readonly phase: 'bootstrap-import' | 'react-root';
 			readonly name: string;
@@ -6578,9 +7045,14 @@ function readRendererRootDiagnosticPayload(
 	if (
 		Object.keys(payload).some(
 			(key) =>
-				!['componentStack', 'message', 'name', 'phase', 'stack', 'version'].includes(
-					key,
-				),
+				![
+					'componentStack',
+					'message',
+					'name',
+					'phase',
+					'stack',
+					'version',
+				].includes(key),
 		)
 	)
 		return undefined;
@@ -6643,20 +7115,31 @@ ipcMain.on(
 	},
 );
 
-ipcMain.on('desktop:diagnostics-host:report-terminal-recovery', (event, value: unknown) => {
-	assertTrustedAppSender(event);
-	const payload = readTerminalRecoveryDiagnosticPayload(value);
-	if (payload === undefined) return;
-	const phase = payload.phase as keyof typeof terminalRecoveryEventNames;
-	const { version: _version, ...fields } = payload;
-	void desktopDiagnostics.record({
-		component: 'renderer',
-		event: terminalRecoveryEventNames[phase],
-		fields,
-		severity: phase === 'failed' ? 'error' : phase === 'recovered' ? 'info' : 'warning',
-		source: `renderer-${event.sender.id}`,
-	}, { channel: 'lifecycle' });
-});
+ipcMain.on(
+	'desktop:diagnostics-host:report-terminal-recovery',
+	(event, value: unknown) => {
+		assertTrustedAppSender(event);
+		const payload = readTerminalRecoveryDiagnosticPayload(value);
+		if (payload === undefined) return;
+		const phase = payload.phase as keyof typeof terminalRecoveryEventNames;
+		const { version: _version, ...fields } = payload;
+		void desktopDiagnostics.record(
+			{
+				component: 'renderer',
+				event: terminalRecoveryEventNames[phase],
+				fields,
+				severity:
+					phase === 'failed'
+						? 'error'
+						: phase === 'recovered'
+							? 'info'
+							: 'warning',
+				source: `renderer-${event.sender.id}`,
+			},
+			{ channel: 'lifecycle' },
+		);
+	},
+);
 
 app.on('browser-window-created', (_event, window) => {
 	void desktopDiagnostics.record(
@@ -6771,9 +7254,7 @@ app.on('before-quit', (event) => {
 				isQuitting = true;
 				app.quit();
 			})
-			.catch((error) =>
-				console.error('[app] quit confirmation failed', error),
-			)
+			.catch((error) => console.error('[app] quit confirmation failed', error))
 			.finally(() => {
 				quitConfirmationPending = false;
 			});

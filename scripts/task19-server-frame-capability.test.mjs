@@ -16,6 +16,7 @@ test('Task 19 server-frame adapter snapshots direct capability injection', async
     const capabilityModule = require(outfile)
     const calls = []
     const api = {
+      closeServerConnection: (serverId) => calls.push(['close', serverId]),
       sendServerFrame: (serverId, frame) => calls.push(['send', serverId, [...frame]]),
       onServerFrame: (serverId, listener) => {
         calls.push(['listen', serverId])
@@ -27,10 +28,12 @@ test('Task 19 server-frame adapter snapshots direct capability injection', async
     api.sendServerFrame = () => { throw new Error('replaced broad host method must not be used') }
     api.onServerFrame = () => { throw new Error('replaced broad host method must not be used') }
     assert.equal(Object.isFrozen(capability), true)
+    capability.closeServerConnection('server-a')
     capability.sendServerFrame('server-a', new Uint8Array([1, 2]))
     const unsubscribe = capability.onServerFrame('server-a', (frame) => calls.push(['frame', [...frame]]))
     unsubscribe()
     assert.deepEqual(calls, [
+      ['close', 'server-a'],
       ['send', 'server-a', [1, 2]],
       ['listen', 'server-a'],
       ['frame', [7]],

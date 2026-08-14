@@ -32,30 +32,6 @@ async function openMacroLauncher(page: Page): Promise<void> {
   }
 }
 
-async function seedScrollTestMacros(page: Page, count = 20): Promise<void> {
-  await page.evaluate(async (macroCount) => {
-    const macros = await window.terminayMacroSettingsCompatibilityHost.getMacros()
-    const extraMacros = Array.from({ length: macroCount }, (_, index) => ({
-      id: `scroll-test-macro-${index + 1}`,
-      title: `Scroll test macro ${index + 1}`,
-      description: 'Used to verify command bar scrolling during keyboard navigation.',
-      template: `echo scroll test macro ${index + 1}`,
-      submitMode: 'type-only' as const,
-      steps: [
-        {
-          id: `scroll-test-step-${index + 1}`,
-          type: 'type' as const,
-          content: `echo scroll test macro ${index + 1}`,
-        },
-      ],
-      fields: [],
-    }))
-
-    await window.terminayMacroSettingsCompatibilityHost.updateMacros([...macros, ...extraMacros])
-  }, count)
-}
-
-
 async function navigateToCommand(page: Page, direction: 'ArrowDown' | 'ArrowUp', title: string, maxSteps = 80): Promise<void> {
 	const activeCommand = page.locator('.macro-launcher-item--active')
 
@@ -330,49 +306,12 @@ test('prioritizes direct title matches in command bar search', async ({ mainWind
 })
 
 test('preserves macro library order in command bar search', async ({ mainWindow }) => {
-  await mainWindow.evaluate(async () => {
-    const macros = await window.terminayMacroSettingsCompatibilityHost.getMacros()
-    const otherMacros = macros.filter((macro) => !['pull-from-main', 'create-pull-request'].includes(macro.id))
-    const pullFromMain = {
-      id: 'pull-from-main',
-      title: 'Pull in from main',
-      description: 'git stash && git checkout main && git pull origin main && git stash apply',
-      template: 'git stash && git checkout main && git pull origin main && git stash apply',
-      submitMode: 'type-only' as const,
-      steps: [
-        {
-          id: 'pull-from-main-step-1',
-          type: 'type' as const,
-          content: 'git stash && git checkout main && git pull origin main && git stash apply',
-        },
-      ],
-      fields: [],
-    }
-    const createPullRequest = {
-      id: 'create-pull-request',
-      title: 'Create a pull request',
-      description: 'Ask the agent to branch, commit, push, and open a pull request with gh.',
-      template: 'Create a branch and commit all the unstaged changes into that branch, then push up and create a pull request using the gh cli tool.',
-      submitMode: 'type-only' as const,
-      steps: [
-        {
-          id: 'create-pull-request-step-1',
-          type: 'type' as const,
-          content: 'Create a branch and commit all the unstaged changes into that branch, then push up and create a pull request using the gh cli tool.',
-        },
-      ],
-      fields: [],
-    }
-
-    await window.terminayMacroSettingsCompatibilityHost.updateMacros([pullFromMain, createPullRequest, ...otherMacros])
-  })
-
   await openMacroLauncher(mainWindow)
-  await mainWindow.getByPlaceholder('Search commands...').fill('pull')
+  await mainWindow.getByPlaceholder('Search commands...').fill('example')
 
   const macroButtons = mainWindow.locator('.macro-launcher-group', { hasText: 'Macros' }).locator('.macro-launcher-item')
-  await expect(macroButtons.first()).toContainText('Pull in from main')
-  await expect(macroButtons.nth(1)).toContainText('Create a pull request')
+  await expect(macroButtons.first()).toContainText('Update OS')
+  await expect(macroButtons.nth(1)).toContainText('Say hello to person')
 })
 
 test('shows current key bindings in the command bar', async ({ mainWindow }) => {
@@ -387,34 +326,30 @@ test('shows current key bindings in the command bar', async ({ mainWindow }) => 
 })
 
 test('scrolls the active command into view during keyboard navigation', async ({ mainWindow }) => {
-  await seedScrollTestMacros(mainWindow)
-
   await openMacroLauncher(mainWindow)
-	await mainWindow.getByPlaceholder('Search commands...').fill('Scroll test macro')
 
   const commandList = mainWindow.locator('.macro-launcher-list')
+	await commandList.evaluate((element) => { element.style.maxHeight = '120px' })
 
   expect(await commandList.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true)
 
-  await navigateToCommand(mainWindow, 'ArrowDown', 'Scroll test macro 20')
+  await navigateToCommand(mainWindow, 'ArrowDown', 'Say hello to person')
 
-  await expect(commandList.locator('.macro-launcher-item--active')).toContainText('Scroll test macro 20')
+  await expect(commandList.locator('.macro-launcher-item--active')).toContainText('Say hello to person')
   await expect.poll(async () => commandList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
 })
 
 test('scrolls the active command into view when navigating upward', async ({ mainWindow }) => {
-  await seedScrollTestMacros(mainWindow)
-
   await openMacroLauncher(mainWindow)
-	await mainWindow.getByPlaceholder('Search commands...').fill('Scroll test macro')
 
   const commandList = mainWindow.locator('.macro-launcher-list')
+	await commandList.evaluate((element) => { element.style.maxHeight = '120px' })
 
-  await navigateToCommand(mainWindow, 'ArrowDown', 'Scroll test macro 20')
+  await navigateToCommand(mainWindow, 'ArrowDown', 'Say hello to person')
+	const downwardScrollTop = await commandList.evaluate((element) => element.scrollTop)
 
+  await navigateToCommand(mainWindow, 'ArrowUp', 'Update OS')
 
-  await navigateToCommand(mainWindow, 'ArrowUp', 'Scroll test macro 12')
-
-  await expect(commandList.locator('.macro-launcher-item--active')).toContainText('Scroll test macro 12')
-  await expect.poll(async () => commandList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+  await expect(commandList.locator('.macro-launcher-item--active')).toContainText('Update OS')
+  await expect.poll(async () => commandList.evaluate((element) => element.scrollTop)).toBeLessThan(downwardScrollTop)
 })

@@ -137,6 +137,7 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
   });
   try {
     const expectedQueries = [
+      "ai.dictation.credential.status", "ai.dictation.runtime.status",
       "ai.models.list", "ai.request.status",
       ...Object.keys(gitOperations.queries),
       ...Object.keys(recordingOperations.queries),
@@ -144,7 +145,9 @@ test("composition enumerates every server-ready AI, Git, recording, and settings
       "terminal.cwd", "terminal.list", "terminal.presentation-checkpoint", "terminal.wait-inactivity",
     ];
     const expectedCommands = [
-      "ai.metadata.generate", "ai.dictation.transcribe", "ai.request.cancel",
+      "ai.dictation.credential.clear", "ai.dictation.credential.set",
+      "ai.dictation.runtime.install", "ai.dictation.transcribe",
+      "ai.metadata.generate", "ai.request.cancel",
       ...Object.keys(gitOperations.commands),
       ...Object.keys(recordingOperations.commands),
       "settings.update", "settings.reset",

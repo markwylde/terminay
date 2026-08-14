@@ -19,8 +19,8 @@ only after its bounded, metadata-only migration path is working and verified.
 - [Connections and client hosts](../features/connections-and-client-hosts.md)
 - [Remote access](../features/remote-access.md)
 - [Server runtime and application protocol](../features/server-runtime-and-protocol.md)
-- [Browser host and cross-version convergence](../tasks/29-browser-host-and-cross-version-convergence.md)
-- [WebRTC transport recovery acceptance](../tasks/43-webrtc-transport-recovery-acceptance.md)
+- [Browser host and cross-version convergence](./29-browser-host-and-cross-version-convergence.md)
+- [WebRTC transport recovery acceptance](./43-webrtc-transport-recovery-acceptance.md)
 - [Web connection host deployment](../operations/web-host-deployment.md)
 
 ## Current gap

@@ -34,7 +34,7 @@ async function productionSourceFiles(root) {
   return files.flat();
 }
 
-test("workspace commands are implemented by the main host without compatibility imports", async () => {
+test("workspace commands and feature clients stay out of the protocol-blind Desktop host", async () => {
   const sourceRoot = resolve(new URL("../src/", import.meta.url).pathname);
   const sourceFiles = await productionSourceFiles(sourceRoot);
 
@@ -44,7 +44,8 @@ test("workspace commands are implemented by the main host without compatibility 
   }
 
   const host = await readFile(new URL("../src/main/connectionHost.ts", import.meta.url), "utf8");
-  assert.match(host, /new WorkspaceClient\(connection\.client\)\.closeView/u);
+  assert.doesNotMatch(host, /@terminay\/client-core|WorkspaceClient|TerminayClient|moveProject|createView|closeView/u);
+  assert.match(host, /DesktopConnectionEndpoint/u);
 });
 
 test("Desktop no longer ships the legacy agent-status application IPC bridge", async () => {

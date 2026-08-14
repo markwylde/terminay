@@ -10,9 +10,22 @@ import { authenticateDevice } from './services/auth';
 import { parsePairingBootstrap } from './services/pairing';
 import { createRemoteTransportRuntime } from './services/transport';
 import { acquireHostedApplicationTransport, getSessionTransportHost } from '../web/sessionTransportHost';
+import { createDirectBrowserBundleHost, currentBrowserExecutionRuntime } from '@terminay/web';
+
+// Standalone session-origin composition uses its own isolated cache namespace.
+export const directBrowserBundleHost = createDirectBrowserBundleHost(caches, currentBrowserExecutionRuntime(navigator.userAgent));
 
 const sessionHost = getSessionTransportHost();
 if (sessionHost === undefined) throw new Error('Terminay session transport host is unavailable.');
+const workspacePreparation = await sessionHost.prepareWorkspace();
+const preparedWorkspace = await directBrowserBundleHost.installAndPrepare({
+	...workspacePreparation,
+	sessionOrigin: sessionHost.origin,
+});
+if (window.location.pathname !== new URL(preparedWorkspace.entryUrl).pathname) {
+	window.location.replace(preparedWorkspace.entryUrl);
+	throw new Error('Launching the verified server workspace.');
+}
 sessionHost.registerApplication({
 	async connect(options) {
 		const runtime = createRemoteTransportRuntime();
