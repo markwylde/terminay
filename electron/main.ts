@@ -99,6 +99,7 @@ import {
 import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
 import { createEmbeddedWorkspaceStateBackend, embeddedWorkspacePersistenceFault } from './workspacePersistence';
 import {
+	assertBoundServerUiEvent,
 	bindServerUiWindow,
 	getServerUiPartitionName,
 	releaseServerUiWindowBinding,
@@ -2901,7 +2902,7 @@ if (process.env.TERMINAY_TEST === '1') {
 
 // Orphaned renderer feature IPC was removed; canonical server authority owns these operations.
 ipcMain.on('server-ui-host:subscribe-events', (event) => {
-	assertTrustedAppSender(event);
+	assertBoundServerUiEvent(event);
 	event.sender.send('server-ui-host:event', {
 		type: 'terminal.zoom',
 		zoomLevel: terminalZoomLevel,
