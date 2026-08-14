@@ -51,7 +51,17 @@ jobs:
 
       - name: Boot packaged application and require workspace readiness
         if: ${{ github.server_url == 'https://github.com' }}
+        env:
+          TERMINAY_RELEASE_DIAGNOSTICS_DIR: ${{ runner.temp }}/terminay-packaged-smoke
         run: npm run test:packaged-startup-macos
+
+      - name: Preserve packaged startup diagnostics
+        if: ${{ always() && github.server_url == 'https://github.com' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-startup-diagnostics
+          path: ${{ runner.temp }}/terminay-packaged-smoke
+          if-no-files-found: ignore
 
   build-and-test:
     name: Build, lint, and unit tests

@@ -27,7 +27,7 @@ import {
 	CanonicalProjectPathResolver,
 	composeRemoteMcpTerminalLifecycle,
 	createEnvironmentRoutedProjectServices,
-	createInitialWorkspace,
+	FileWorkspaceStateBackend,
 	createNodePtyFactory,
 	createNodeShellDiscoveryHost,
 	createPuzedSshProductionExtensionManagement,
@@ -43,6 +43,7 @@ import {
 	type NodePtyModuleLike,
 	OpenAiDictationProvider,
 	OrderedEventJournal,
+	openCanonicalWorkspace,
 	ParakeetRuntime,
 	ProjectEnvironmentRegistry,
 	ProjectEnvironmentRepository,
@@ -66,7 +67,7 @@ import {
 	TerminalActivityService,
 	TerminalReplayRegistry,
 	VaultProviderCredentialResolver,
-	WorkspaceStore,
+	type WorkspaceStore,
 } from '@terminay/server-core';
 import * as nodePty from 'node-pty';
 import {
@@ -197,7 +198,8 @@ else if (options.command === 'mcp') {
 				// Start journal observation before creating the default session.
 				await composition.start();
 				const health = await runtime!.start();
-				await ensureDefaultTerminalSession(composition);
+				if (serverComposition.workspaceWasCreated)
+					await ensureDefaultTerminalSession(composition);
 				await waitForProtocolEndpoint(uiServer);
 				protocolReady = true;
 				process.stdout.write(
@@ -297,6 +299,7 @@ async function createServerComposition(
 ): Promise<
 	Readonly<{
 		core: ServerCoreComposition;
+		workspaceWasCreated: boolean;
 		vault: Awaited<ReturnType<typeof createStandaloneVaultComposition>>;
 		extensions: ReturnType<typeof createPuzedSshProductionExtensionManagement>;
 	}>
@@ -307,10 +310,12 @@ async function createServerComposition(
 		activity,
 		enabled: options.agentIntegrationEnabled,
 	});
-	const workspace = createDefaultWorkspace(
-		options.serverId,
-		options.projectRoot,
-	);
+	const workspaceRepository = await openCanonicalWorkspace({
+		backend: new FileWorkspaceStateBackend(join(options.dataRoot, 'workspace.v3.json')),
+		serverId: options.serverId,
+		defaultProjectRoot: options.projectRoot,
+	});
+	const workspace = workspaceRepository.workspace;
 	const projectEnvironments = new ProjectEnvironmentRepository(
 		new FileProjectEnvironmentStateBackend(
 			join(options.dataRoot, 'project-environments.v1.json'),
@@ -615,7 +620,7 @@ async function createServerComposition(
 			await baseShutdown();
 		},
 	});
-	return Object.freeze({ core: composition, vault, extensions });
+	return Object.freeze({ core: composition, vault, extensions, workspaceWasCreated: workspaceRepository.wasCreated });
 }
 
 function requireTerminalLaunchResolver(composition: ServerCoreComposition) {
@@ -1090,55 +1095,6 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 		throw signal.reason instanceof Error
 			? signal.reason
 			: new DOMException('The operation was aborted', 'AbortError');
-}
-
-/**
- * The standalone server must publish the same canonical workspace that owns
- * its default terminal.  This is deliberately seeded before protocol
- * readiness: browser clients receive a real `workspace.snapshot`, never a
- * local UI fallback invented by a client host.
- */
-function createDefaultWorkspace(
-	serverId: string,
-	projectRoot: string,
-): WorkspaceStore {
-	const workspace = new WorkspaceStore(createInitialWorkspace(serverId));
-	const viewId = workspace.state.viewOrder[0]!;
-	const apply = (
-		commandId: string,
-		command: Parameters<WorkspaceStore['apply']>[0]['command'],
-	): void => {
-		const result = workspace.apply({ commandId, command });
-		if (!result.ok)
-			throw new Error(
-				`Unable to seed standalone workspace: ${result.conflict.message}`,
-			);
-	};
-	apply('system:default-project', {
-		type: 'project.create',
-		projectId: 'default',
-		viewId,
-		root: projectRoot,
-		name: 'Project',
-	});
-	apply('system:default-terminal', {
-		type: 'terminal.create',
-		sessionId: 'default',
-		projectId: 'default',
-	});
-	apply('system:default-terminal-panel', {
-		type: 'panel.create',
-		panel: {
-			id: 'default:terminal',
-			projectId: 'default',
-			type: 'terminal',
-			sessionId: 'default',
-			title: 'Terminal 1',
-			cwd: projectRoot,
-			createdAt: Date.now(),
-		},
-	});
-	return workspace;
 }
 
 function createProtocolServer(

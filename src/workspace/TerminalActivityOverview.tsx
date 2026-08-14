@@ -4,13 +4,13 @@ import { AgentStatusIndicator } from '../components/AgentStatusIndicator';
 import type { TerminalActivityState } from '../components/TerminalTab';
 import type { AgentState } from '../types/agentStatus';
 
-export type LegacyTerminalActivityOverviewState = Extract<
+export type TerminalPresentationActivityState = Extract<
 	TerminalActivityState,
 	'recent' | 'unviewed' | 'attention'
 >;
 
 export type TerminalActivityOverviewState =
-	| LegacyTerminalActivityOverviewState
+	| TerminalPresentationActivityState
 	| Exclude<AgentState, 'idle'>;
 
 export type TerminalActivityOverviewItem = {

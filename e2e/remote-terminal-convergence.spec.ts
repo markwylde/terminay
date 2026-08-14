@@ -1,24 +1,64 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
+import { typeInVisibleTerminal } from './support/terminal-input';
 
 // The Docker image may download Electron on its first launch. Keep that
 // one-time fixture setup inside the scenario's budget instead of relying on a
 // retry to warm the container cache.
 test.describe.configure({ timeout: 180_000 });
 
-async function exposeDesktopOnLan(mainWindow: Page): Promise<string> {
-	return mainWindow.evaluate(async () => {
-		await window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
-			'123456',
-		);
-		const status =
-			await window.terminayRemoteAccessStatusHost.toggleDirectListener();
-		if (!status.lanPairingUrl) {
-			throw new Error('Direct exposure did not publish a pairing URL.');
-		}
-		return status.lanPairingUrl;
+async function exposeDesktopOnLan(
+	appHarness: {
+		openSettingsWindow: (options: { page: Page; sectionId: string }) => Promise<Page>;
+	},
+	mainWindow: Page,
+): Promise<string> {
+	const settings = await appHarness.openSettingsWindow({
+		page: mainWindow,
+		sectionId: 'remote-access-host',
 	});
+	await settings.getByLabel('Exposure route').selectOption('lan');
+	await expect(settings.locator('.settings-status')).toContainText('Saved');
+	await settings.getByRole('button', { name: 'Direct network listener' }).click();
+	await settings.getByRole('button', { name: 'Start direct listener' }).click();
+	const pinDialog = settings.getByRole('dialog', { name: 'Remote Pairing PIN' });
+	const stopListener = settings.getByRole('button', {
+		name: 'Stop direct listener',
+	});
+	const operationError = settings.getByRole('alert');
+	await expect.poll(async () =>
+		Promise.all([
+			pinDialog.isVisible(),
+			stopListener.isVisible(),
+			operationError.isVisible(),
+		]),
+	).toContain(true);
+	if (await pinDialog.isVisible()) {
+		await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456');
+		await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
+		await expect(pinDialog).toHaveCount(0);
+	}
+	if (await operationError.isVisible()) {
+		throw new Error(`Direct listener failed: ${await operationError.innerText()}`);
+	}
+	await expect(
+		stopListener,
+	).toBeVisible({ timeout: 20_000 });
+	const showPairing = settings.getByRole('button', { name: 'Show QR Code' });
+	await expect(showPairing).toBeVisible();
+	await expect(showPairing).toBeEnabled();
+	await showPairing.click();
+	const pairingDialog = settings.getByRole('dialog', {
+		name: 'Direct network pairing QR',
+	});
+	await expect(pairingDialog).toBeVisible();
+	const pairingLink = pairingDialog.getByTestId('remote-pairing-link');
+	await expect(pairingLink).toBeVisible();
+	const pairingUrl = await pairingLink.innerText();
+	await settings.getByRole('button', { name: 'Close Remote Pairing QR' }).click();
+	await settings.close();
+	return pairingUrl;
 }
 
 async function connectBrowser(page: Page, pairingUrl: string): Promise<void> {
@@ -77,13 +117,20 @@ async function expectMatchingLogicalGrid(first: Locator, second: Locator, expect
 	])).toEqual([expectedColumns, expectedColumns]);
 }
 
-async function stopExposure(mainWindow: Page): Promise<void> {
-	await mainWindow.evaluate(async () => {
-		const status = await window.terminayRemoteAccessStatusHost.getStatus();
-		if (status.directListenerRunning) {
-			await window.terminayRemoteAccessStatusHost.toggleDirectListener();
-		}
+async function stopExposure(
+	appHarness: {
+		openSettingsWindow: (options: { page: Page; sectionId: string }) => Promise<Page>;
+	},
+	mainWindow: Page,
+): Promise<void> {
+	const settings = await appHarness.openSettingsWindow({
+		page: mainWindow,
+		sectionId: 'remote-access-host',
 	});
+	await settings.getByRole('button', { name: 'Direct network listener' }).click();
+	const stop = settings.getByRole('button', { name: 'Stop direct listener' });
+	if (await stop.isVisible().catch(() => false)) await stop.click();
+	await settings.close();
 }
 
 function terminalTabs(page: Page) {
@@ -154,8 +201,8 @@ async function dragTerminalScrollbackWithTouch(page: Page, panel: Locator): Prom
 	});
 }
 
-test('Mobile touch drag scrolls remote terminal scrollback', async ({ mainWindow, page }) => {
-	const pairingUrl = await exposeDesktopOnLan(mainWindow);
+test('Mobile touch drag scrolls remote terminal scrollback', async ({ appHarness, mainWindow, page }) => {
+	const pairingUrl = await exposeDesktopOnLan(appHarness, mainWindow);
 	try {
 		await connectBrowser(page, pairingUrl);
 		const sessionId = await mainWindow.locator('.terminal-panel:visible').getAttribute('data-terminay-terminal-session-id');
@@ -174,15 +221,16 @@ test('Mobile touch drag scrolls remote terminal scrollback', async ({ mainWindow
 		await dragTerminalScrollbackWithTouch(page, browserPanel);
 		await expect.poll(() => renderedRows.innerText()).not.toBe(before);
 	} finally {
-		await stopExposure(mainWindow);
+		await stopExposure(appHarness, mainWindow);
 	}
 });
 
 test('Desktop and browser converge on terminal tabs and one shared PTY output stream', async ({
+	appHarness,
 	mainWindow,
 	page,
 }) => {
-	const pairingUrl = await exposeDesktopOnLan(mainWindow);
+	const pairingUrl = await exposeDesktopOnLan(appHarness, mainWindow);
 
 	try {
 		await connectBrowser(page, pairingUrl);
@@ -359,34 +407,34 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expectMatchingLogicalGrid(desktopPanel, browserPanel, desktopColumnsAfterTakeback);
 
 		const remoteConnections = await mainWindow.evaluate(() =>
-			window.terminayTest.listRemoteProtocolConnections(),
+			window.terminayRemoteProtocolFaultTest?.listConnections(),
 		);
+		if (remoteConnections === undefined) {
+			throw new Error('The canonical remote protocol test seam is unavailable.');
+		}
 		expect(remoteConnections).toHaveLength(1);
 		const failedConnectionId = remoteConnections[0];
 		const resumeProof = '__TERMINAY_RESUMED_WITHOUT_DUPLICATION__';
 		const encodedResumeProof = Buffer.from(`${resumeProof}\n`, 'utf8').toString(
 			'base64',
 		);
-		await mainWindow.evaluate(
-			async ({ connectionId, encoded, sessionId }) => {
-				await window.terminayTest.failRemoteProtocolConnection(connectionId);
-				await window.terminayTest.writeServerTerminal(
-					sessionId,
-					`printf '%s' '${encoded}' | base64 -d\n`,
-				);
-			},
-			{
-				connectionId: failedConnectionId,
-				encoded: encodedResumeProof,
-				sessionId: desktopSessionId,
-			},
+		await mainWindow.evaluate(async (connectionId) => {
+			if (!window.terminayRemoteProtocolFaultTest) {
+				throw new Error('The canonical remote protocol test seam is unavailable.');
+			}
+			await window.terminayRemoteProtocolFaultTest.failConnection(connectionId);
+		}, failedConnectionId);
+		await typeInVisibleTerminal(
+			mainWindow,
+			`printf '%s' '${encodedResumeProof}' | base64 -d\n`,
+			desktopSessionId,
 		);
 		await expect(mainWindow.locator('.project-tabbar')).toBeVisible();
 		await expect(desktopPanel).toContainText(resumeProof);
 		await expect
 			.poll(() =>
 				mainWindow.evaluate(() =>
-					window.terminayTest.listRemoteProtocolConnections(),
+					window.terminayRemoteProtocolFaultTest?.listConnections(),
 				),
 			)
 			.toEqual([expect.not.stringMatching(failedConnectionId)]);
@@ -427,6 +475,6 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expect(terminalPanel(page, browserSessionId)).toHaveCount(0);
 		await expect(terminalPanel(mainWindow, browserSessionId)).toHaveCount(0);
 	} finally {
-		await stopExposure(mainWindow);
+		await stopExposure(appHarness, mainWindow);
 	}
 });

@@ -1,5 +1,6 @@
 import type { Direction, DockviewApi, DockviewGroupPanel } from 'dockview';
 import { type MutableRefObject, useCallback } from 'react';
+import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';
 
 type SplitDirection = Extract<Direction, 'below' | 'right'>;
 
@@ -139,7 +140,7 @@ export function useTerminalCreationController({
 					...(options?.profileId === undefined ? {} : { profileId: options.profileId }),
 				});
 				suppressInitialActivity(sessionId);
-				window.terminayBootstrapDiagnostic?.record(
+				recordBootstrapDiagnostic(
 					'app.workspace.create.await-delta',
 				);
 				if (options?.initialInput) {

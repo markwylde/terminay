@@ -1,28 +1,26 @@
 import { expect, test } from './fixtures';
 
-test('Electron exposes the connection manager with immutable Local', async ({
+test('Electron exposes the connection manager for canonical remote profiles', async ({
 	mainWindow,
 }) => {
 	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
 	await mainWindow.getByLabel('Open connection menu').click();
-	await mainWindow
-		.getByRole('button', { name: 'Add connection…' })
-		.click();
+	await mainWindow.getByRole('button', { name: 'Add connection…' }).click();
 
-	const manager = mainWindow.getByRole('dialog', { name: 'Connections' });
+	const manager = mainWindow.getByRole('dialog', {
+		name: 'Browser connections',
+	});
 	await expect(manager).toBeVisible();
-	await expect(manager.getByText('Saved connections')).toBeVisible();
+	await expect(
+		manager.getByRole('listbox', { name: 'Saved Terminay servers' }),
+	).toHaveCount(1);
 
-	const local = manager.getByRole('option', { name: /Local connected/u });
-	await expect(local).toHaveAttribute('aria-selected', 'true');
-	await expect(local).toContainText('Always available');
-	await expect(local.getByRole('button', { name: 'Current server' })).toBeDisabled();
-	await expect(local.getByRole('button', { name: 'Rename' })).toHaveCount(0);
-	await expect(local.getByRole('button', { name: 'Forget' })).toHaveCount(0);
-	await expect(local.getByRole('button', { name: 'Revoke access' })).toHaveCount(
-		0,
-	);
-
-	await expect(manager.getByText('Add a remote server', { exact: true })).toBeVisible();
+	await manager.getByRole('button', { name: 'Add connection…' }).click();
+	await expect(
+		manager.locator('form[aria-label="Add connection"]'),
+	).toBeVisible();
 	await expect(manager.getByLabel('Pairing URL')).toBeVisible();
+	await expect(
+		manager.getByRole('button', { name: 'Continue pairing', exact: true }),
+	).toBeVisible();
 });

@@ -1,41 +1,28 @@
 import type { Page } from '@playwright/test'
 import { expect } from '../fixtures'
-import { prepareWindow } from './app'
-
-async function openChildWindowFromAction(page: Page, action: () => Promise<void>): Promise<Page> {
-  const nextPagePromise = page.context().waitForEvent('page')
-  await action()
-  const nextPage = await nextPagePromise
-  return prepareWindow(nextPage)
-}
 
 async function closeEditWindowWithButton(editWindow: Page, label: 'Save' | 'Cancel'): Promise<void> {
-  const closePromise = editWindow.waitForEvent('close')
-  try {
-    await editWindow.getByRole('button', { name: label }).dispatchEvent('click')
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (!message.includes('Target page, context or browser has been closed')) {
-      throw error
-    }
-  }
-  await closePromise
+  const editor = editWindow.getByRole('dialog').filter({
+    has: editWindow.getByRole('heading', { name: /Edit (Project|Terminal) Tab/ }),
+  })
+  await editor.getByRole('button', { name: label }).click()
+  await expect(editor).toHaveCount(0)
 }
 
 export async function openProjectEditWindow(page: Page): Promise<Page> {
-  return openChildWindowFromAction(page, async () => {
-    await page.locator('.project-tab--active').evaluate((element) => {
-      element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }))
-    })
+  await page.locator('.project-tab--active').evaluate((element) => {
+    element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }))
   })
+  await expect(page.getByRole('heading', { name: 'Edit Project Tab' })).toBeVisible()
+  return page
 }
 
 export async function openTerminalEditWindow(page: Page): Promise<Page> {
-  return openChildWindowFromAction(page, async () => {
-    await page.locator('.project-workspace--active .terminal-tab-content').first().evaluate((element) => {
-      element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }))
-    })
+  await page.locator('.project-workspace--active .terminal-tab-content--active').evaluate((element) => {
+    element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window }))
   })
+  await expect(page.getByRole('heading', { name: 'Edit Terminal Tab' })).toBeVisible()
+  return page
 }
 
 export async function setProjectRoot(page: Page, rootPath: string): Promise<void> {
@@ -114,7 +101,9 @@ export async function setMonacoValue(page: Page, value: string): Promise<void> {
 }
 
 export async function openRemoteMenu(page: Page): Promise<void> {
-  const menu = page.getByRole('menu', { name: 'Connection menu' })
+  // Responsive shells may retain an inactive copy of the workspace. Operate
+  // only on the menu belonging to the currently visible shell.
+  const menu = page.locator('[role="menu"][aria-label="Connection menu"]:visible').first()
   if (await menu.isVisible().catch(() => false)) {
     return
   }

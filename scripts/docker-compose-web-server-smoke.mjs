@@ -546,13 +546,12 @@ async function launchComposeBrowser({ webOrigin, pairingUrl }) {
 			projectWorkspaceRenders: 0,
 			longTasks: [],
 		};
-		window.terminayBootstrapDiagnostic = {
-			record(name) {
-				if (name === 'app.render')
+		window.__terminayRendererDiagnostic = (diagnostic) => {
+				if (diagnostic.kind !== 'bootstrap') return;
+				if (diagnostic.phase === 'app.render')
 					window.__terminayComposeSmokeMetrics.appRenders++;
-				if (name.startsWith('project-workspace:'))
+				if (diagnostic.phase.startsWith('project-workspace:'))
 					window.__terminayComposeSmokeMetrics.projectWorkspaceRenders++;
-			},
 		};
 		if (typeof PerformanceObserver !== 'function') return;
 		const observer = new PerformanceObserver((list) => {

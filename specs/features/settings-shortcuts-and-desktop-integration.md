@@ -10,9 +10,9 @@ configurable keyboard accelerators.
 
 ## Behaviour
 
-- Settings search, edit, preview where appropriate, normalize invalid legacy
-  values, persist in their declared scope, and can reset to documented
-  defaults.
+- Settings search, edit, preview where appropriate, reject or normalize invalid
+  persisted values, persist in their declared scope, and can reset to
+  documented defaults.
 - Server values remain authoritative for shared state. An explicitly
   classified device override (currently the dictation microphone device) wins
   only in that device's effective read; host, transient, and unknown values
@@ -36,6 +36,11 @@ configurable keyboard accelerators.
   application lifecycle are coordinated by Electron. Browser hosts provide a
   visible in-page menu bar for File, Edit, View, and Help so shared commands
   remain discoverable without native application menus.
+- Host capability negotiation selects exactly one application-menu
+  presentation. Desktop uses its native menu and the shared renderer does not
+  render the browser menu bar. Browser hosts render the in-page menu. On macOS,
+  project controls respect the native title-bar/traffic-light inset and never
+  overlap either native chrome or an in-page menu.
 - File and the Command Bar expose **New Project with Environment…**, **Project
   Environments…**, and **Extensions…** through the same semantic route/command
   model. **Project Environments…** opens or focuses its dedicated management
@@ -70,8 +75,18 @@ The shared terminal-settings hook reads and observes server settings through
 the transport-neutral `SettingsClient` bundled with the selected server UI;
 the host bridge never answers or translates server settings operations. Shared
 components do not subscribe to preload events directly.
+No legacy terminal-settings preload global or snapshot adapter exists; missing
+selected-server settings authority is reported as unavailable rather than
+falling back to device-local settings.
 File-panel diff-layout changes use the same settings command facade and remain
 server-authoritative across the shared UI hosts.
+File-extension defaults saved in Settings are observed by already-mounted
+Desktop and browser workspaces through that same selected-server client; the
+file panel must not consult a separate browser-local settings snapshot.
+Macro definitions and secret actions likewise require an explicitly supplied
+selected-server client. There is no ambient macro compatibility context or
+preload-shaped fallback; a host without secret capability returns a typed
+unavailable error while macro definitions remain server-authoritative.
 
 API keys and other secrets use the appropriate server or client vault and are
 never returned as plaintext after being saved. Settings that enable
@@ -106,8 +121,15 @@ forwarding paths, provider messages, or plaintext.
   as bounded, user-facing provider errors. The bridge does not expose raw
   provider stdout or stderr and does not collapse actionable errors into an
   opaque command-dispatch failure.
+- AI model discovery, dictation credentials, Parakeet runtime management, and
+  transcription belong to the selected Terminay Server. The renderer may use
+  the browser media API to capture microphone audio, but Desktop exposes no
+  feature-aware AI or dictation preload global and owns no provider fallback.
 - Web menu actions and tab/project double-click editing open the in-page
   settings, macros, recordings, or edit-tab route instead of no-oping when
   native windows are unavailable.
+- A Desktop workspace has one native application menu and no in-page
+  File/Edit/View/Help bar. The equivalent browser workspace has the in-page
+  menu and no native-only commands.
 - Server setting changes are revisioned and reach every authorized connected
   client without exposing secret values.

@@ -19,7 +19,6 @@ import {
 	resolveFileViewerEngine,
 	resolveFileViewerMode,
 } from '../../services/fileViewer';
-import { useOptionalDisconnectedFileCompatibility } from '../../services/fileViewer/DisconnectedFileCompatibilityProvider';
 import { toProjectRelativePath } from '../../services/fileViewer/serverFileGateway';
 import {
 	decodeSparseEdit,
@@ -31,15 +30,23 @@ import type {
 	FileViewerMode,
 	GitFileDiff,
 } from '../../types/fileViewer';
-import type { FileViewerDefaultMode, TerminalSettings } from '../../types/settings';
+import type {
+	FileViewerDefaultMode,
+	TerminalSettings,
+} from '../../types/settings';
 import type {
 	FileViewerGitRepoInfo,
 	FileViewerSparseFileEdit,
 } from '../../types/terminay';
-import { TerminalPanelClientContext } from '../TerminalPanel';
+import {
+	TerminalPanelClientContext,
+	type TerminalPanelClientContextValue,
+} from '../TerminalPanel';
+import { FileAuthorityUnavailableState } from './FileAuthorityUnavailableState';
 import { FileConflictBanner } from './FileConflictBanner';
 import { FileLargeFileChooser } from './FileLargeFileChooser';
 import { FileModeSwitcher } from './FileModeSwitcher';
+import { useFilePanelSaveRegistration } from './FilePanelSaveRegistry';
 import { FileStatusBar } from './FileStatusBar';
 import { DiffViewer } from './modes/DiffViewer';
 import { HexViewer } from './modes/HexViewer';
@@ -100,10 +107,39 @@ function getCustomDefaultMode(
 }
 
 export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
-	const disconnectedFileCompatibility =
-		useOptionalDisconnectedFileCompatibility();
-	const disconnectedFilePanelCompatibility =
-		disconnectedFileCompatibility?.filePanel ?? null;
+	const terminalClientContext = useContext(TerminalPanelClientContext);
+	if (
+		terminalClientContext?.fileViewerClient === undefined ||
+		terminalClientContext.fileObservationClient === undefined ||
+		terminalClientContext.projectId.length === 0
+	) {
+		return <FileAuthorityUnavailableState feature="File viewer" />;
+	}
+	return (
+		<CanonicalFilePanel
+			{...props}
+			terminalClientContext={{
+				...terminalClientContext,
+				fileObservationClient: terminalClientContext.fileObservationClient,
+				fileViewerClient: terminalClientContext.fileViewerClient,
+			}}
+		/>
+	);
+}
+
+function CanonicalFilePanel(
+	props: IDockviewPanelProps<FilePanelInstanceParams> & {
+		terminalClientContext: TerminalPanelClientContextValue & {
+			fileObservationClient: NonNullable<
+				TerminalPanelClientContextValue['fileObservationClient']
+			>;
+			fileViewerClient: NonNullable<
+				TerminalPanelClientContextValue['fileViewerClient']
+			>;
+		};
+	},
+) {
+	const { terminalClientContext } = props;
 	const {
 		filePath,
 		initialMode,
@@ -113,51 +149,22 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 	const baseParamsRef = useRef(props.params);
 	const panelApiRef = useRef(props.api);
 	const containerApiRef = useRef(props.containerApi);
-	const {
-		settings,
-		setSettings,
-		settingsClient,
-	} = useTerminalSettings();
-	const terminalClientContext = useContext(TerminalPanelClientContext);
-	const activeDisconnectedFilePanelCompatibility =
-		terminalClientContext === null ? disconnectedFilePanelCompatibility : null;
-	// Disconnected Desktop keeps the legacy preload-backed file client. Connected
-	// workspaces must use the authenticated server client only; missing server
-	// capabilities fail closed instead of falling back to preload data authority.
-	const disconnectedFileViewerClient = useMemo(
-		() => activeDisconnectedFilePanelCompatibility?.createClient() ?? null,
-		[activeDisconnectedFilePanelCompatibility],
-	);
-	const fileViewerClient =
-		terminalClientContext?.fileViewerClient ?? disconnectedFileViewerClient;
-	if (fileViewerClient === null) {
-		throw new Error(
-			'File viewer capability is unavailable for this project.',
-		);
-	}
-	const contentFileViewerClient =
-		terminalClientContext?.fileViewerClient ?? fileViewerClient;
+	const { settings, setSettings, settingsClient } = useTerminalSettings();
+	const fileViewerClient = terminalClientContext.fileViewerClient;
+	const contentFileViewerClient = fileViewerClient;
 	const fileGateway = useMemo(
 		() =>
-			terminalClientContext?.fileViewerClient && terminalClientContext.projectId
-				? createServerFileGateway({
-						client: terminalClientContext.fileViewerClient,
-						observationClient: terminalClientContext.fileObservationClient,
-						projectId: terminalClientContext.projectId,
-						projectRoot,
-					})
-				: activeDisconnectedFilePanelCompatibility?.gateway ??
-					(() => {
-						throw new Error(
-							'Disconnected file compatibility is unavailable.',
-						);
-					})(),
+			createServerFileGateway({
+				client: terminalClientContext.fileViewerClient,
+				observationClient: terminalClientContext.fileObservationClient,
+				projectId: terminalClientContext.projectId,
+				projectRoot,
+			}),
 		[
 			projectRoot,
-			terminalClientContext?.fileObservationClient,
-			terminalClientContext?.fileViewerClient,
-			terminalClientContext?.projectId,
-			activeDisconnectedFilePanelCompatibility,
+			terminalClientContext.fileObservationClient,
+			terminalClientContext.fileViewerClient,
+			terminalClientContext.projectId,
 		],
 	);
 	const [fileInfo, setFileInfo] = useState<FileInfo | null>(
@@ -219,6 +226,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 	const fileInfoRef = useRef<FileInfo | null>(fileInfo);
 	const engineRef = useRef<FileViewerEngine>(engine);
 	const isDirtyRef = useRef(isDirty);
+	const conflictRef = useRef(conflict);
 	const isHexValidRef = useRef(isHexValid);
 	const modeRef = useRef(mode);
 	const sessionStoreRef = useRef(sessionStore);
@@ -226,6 +234,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 	fileInfoRef.current = fileInfo;
 	engineRef.current = engine;
 	isDirtyRef.current = isDirty;
+	conflictRef.current = conflict;
 	isHexValidRef.current = isHexValid;
 	modeRef.current = mode;
 	sessionStoreRef.current = sessionStore;
@@ -309,9 +318,9 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 				let page: number | null = null;
 				if (newlineDelta !== 0) {
 					try {
-						let metadata = await fileViewerClient.getTextMetadata(
-							currentInfo.path,
-							projectRoot,
+						let metadata = await fileViewerClient.getServerTextMetadata(
+							toProjectRelativePath(projectRoot, currentInfo.path),
+							terminalClientContext.projectId,
 						);
 						while (page === null) {
 							let low = 0;
@@ -319,11 +328,11 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 							while (low <= high) {
 								const middle = Math.floor((low + high) / 2);
 								const line = (
-									await fileViewerClient.readTextLines(
-										currentInfo.path,
-										projectRoot,
+									await fileViewerClient.readServerTextLines(
+										toProjectRelativePath(projectRoot, currentInfo.path),
 										middle,
 										1,
+										terminalClientContext.projectId,
 									)
 								).lines[0];
 								if (!line) {
@@ -347,9 +356,9 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 							// beyond the currently indexed prefix. Completing a very large
 							// file before mapping an early byte creates avoidable renderer
 							// pressure during HEX/Text transitions.
-							metadata = await fileViewerClient.getTextMetadata(
-								currentInfo.path,
-								projectRoot,
+							metadata = await fileViewerClient.getServerTextMetadata(
+								toProjectRelativePath(projectRoot, currentInfo.path),
+								terminalClientContext.projectId,
 							);
 						}
 					} catch {
@@ -392,7 +401,12 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 				(sparseLineDeltasRef.current.get(owner) ?? 0) + newlineDelta,
 			);
 		},
-		[fileViewerClient, handleSparseEditChange, projectRoot],
+		[
+			fileViewerClient,
+			handleSparseEditChange,
+			projectRoot,
+			terminalClientContext.projectId,
+		],
 	);
 
 	useEffect(() => {
@@ -516,6 +530,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 			setFileInfo(nextInfo);
 			setIsDirty(false);
 			sessionStoreRef.current?.setDirty(false);
+			conflictRef.current = false;
 			setConflict(false);
 			sessionStoreRef.current?.setConflict({ kind: 'none' });
 			// A sparse save must remain sparse. Building an eager Git diff for a
@@ -526,6 +541,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 			}
 			return nextInfo;
 		} catch (error) {
+			conflictRef.current = true;
 			setConflict(true);
 			sessionStoreRef.current?.setConflict({
 				diskMtimeMs: expectedMtimeMs,
@@ -534,6 +550,66 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 			throw error;
 		}
 	}, [fileGateway, fileViewerClient, projectRoot, refreshDiff]);
+
+	const saveCurrentFile = useCallback(async (): Promise<boolean> => {
+		const currentFileInfo = fileInfoRef.current;
+		if (!currentFileInfo) return false;
+		if (conflictRef.current)
+			throw new Error(
+				'Choose Reload from disk or Keep local edits before saving.',
+			);
+		if (sparseEditsRef.current.size > 0) {
+			await saveSparseDraft();
+			return true;
+		}
+		if (modeRef.current === 'hex' && !isHexValidRef.current)
+			throw new Error('Fix invalid HEX byte values before saving.');
+		if (modeRef.current === 'text') {
+			const currentText = currentTextGetterRef.current?.();
+			if (currentText !== undefined) {
+				setDraftText(currentText);
+				draftBufferRef.current.setText(currentText);
+			}
+		}
+		const payload = draftBufferRef.current.getPayload();
+		const nextInfo = await fileGateway.saveFile(currentFileInfo.path, payload);
+		if (payload.kind === 'text') {
+			if ((await fileGateway.readFileText(nextInfo.path)) !== payload.text)
+				throw new Error(
+					'Save failed: disk contents did not match the editor contents.',
+				);
+		} else if (
+			(
+				await fileGateway.readFileBytes(nextInfo.path, {
+					length: nextInfo.size,
+					offset: 0,
+				})
+			).base64 !== payload.base64
+		) {
+			throw new Error(
+				'Save failed: disk bytes did not match the editor contents.',
+			);
+		}
+		if (payload.kind === 'text')
+			draftBufferRef.current.replaceText(payload.text);
+		else draftBufferRef.current.replaceBytes(payload.base64);
+		acknowledgedWatchRevisionRef.current = {
+			mtimeMs: nextInfo.mtimeMs,
+			path: nextInfo.path,
+			size: nextInfo.size,
+		};
+		setFileInfo(nextInfo);
+		setIsDirty(false);
+		sessionStoreRef.current?.setDirty(false);
+		conflictRef.current = false;
+		setConflict(false);
+		sessionStoreRef.current?.setConflict({ kind: 'none' });
+		if (modeRef.current === 'diff' || modeRef.current === 'tasks')
+			void refreshDiff(nextInfo.path);
+		return true;
+	}, [fileGateway, refreshDiff, saveSparseDraft]);
+
+	useFilePanelSaveRegistration(props.api.id, saveCurrentFile);
 
 	const handleSwitchToMonaco = useCallback(async () => {
 		const currentInfo = fileInfoRef.current;
@@ -550,24 +626,17 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 		monacoTransitionAbortRef.current?.abort();
 		const controller = new AbortController();
 		monacoTransitionAbortRef.current = controller;
-		const canonicalProjectId = terminalClientContext?.projectId;
-		let originalText: string;
-		let projectedDraft: ReturnType<typeof materializePerformantDraft>;
-		if (canonicalProjectId === undefined) {
-			originalText = await fileGateway.readFileText(currentInfo.path);
-			projectedDraft = materializePerformantDraft(originalText, edits);
-		} else {
-			const canonicalDraft = await materializeCanonicalPerformantDraft(
-				contentFileViewerClient,
-				toProjectRelativePath(projectRoot, currentInfo.path),
-				canonicalProjectId,
-				currentInfo.size,
-				edits,
-				controller.signal,
-			);
-			originalText = canonicalDraft.originalText;
-			projectedDraft = canonicalDraft;
-		}
+		const canonicalDraft = await materializeCanonicalPerformantDraft(
+			contentFileViewerClient,
+			toProjectRelativePath(projectRoot, currentInfo.path),
+			terminalClientContext.projectId,
+			currentInfo.size,
+			edits,
+			controller.signal,
+		);
+		const originalText = canonicalDraft.originalText;
+		let projectedDraft: ReturnType<typeof materializePerformantDraft> =
+			canonicalDraft;
 		if (controller.signal.aborted || !isMountedRef.current) {
 			return;
 		}
@@ -594,7 +663,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 		contentFileViewerClient,
 		fileGateway,
 		projectRoot,
-		terminalClientContext?.projectId,
+		terminalClientContext.projectId,
 	]);
 
 	useEffect(() => {
@@ -851,6 +920,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 			}
 
 			if (isDirtyRef.current) {
+				conflictRef.current = true;
 				setConflict(true);
 				sessionStoreRef.current?.setConflict({
 					diskMtimeMs: event.mtimeMs ?? 0,
@@ -889,68 +959,10 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 			fileInfo: fileInfo ?? undefined,
 			isDirty,
 			isFocused: containerApi.activePanel?.id === panelApi.id,
-			onSave: async () => {
-				const currentFileInfo = fileInfoRef.current;
-				if (!currentFileInfo) {
-					return false;
-				}
-
-				if (sparseEditsRef.current.size > 0) {
-					await saveSparseDraft();
-					return true;
-				}
-
-				if (modeRef.current === 'hex' && !isHexValidRef.current) {
-					throw new Error('Fix invalid HEX byte values before saving.');
-				}
-
-				if (modeRef.current === 'text') {
-					const currentText = currentTextGetterRef.current?.();
-					if (currentText !== undefined) {
-						setDraftText(currentText);
-						draftBufferRef.current.setText(currentText);
-					}
-				}
-
-				const payload = draftBufferRef.current.getPayload();
-				const nextInfo = await fileGateway.saveFile(
-					currentFileInfo.path,
-					payload,
-				);
-				if (payload.kind === 'text') {
-					const savedText = await fileGateway.readFileText(nextInfo.path);
-					if (savedText !== payload.text) {
-						throw new Error(
-							'Save failed: disk contents did not match the editor contents.',
-						);
-					}
-				} else {
-					const savedBytes = await fileGateway.readFileBytes(nextInfo.path, {
-						length: nextInfo.size,
-						offset: 0,
-					});
-					if (savedBytes.base64 !== payload.base64) {
-						throw new Error(
-							'Save failed: disk bytes did not match the editor contents.',
-						);
-					}
-				}
-				if (payload.kind === 'text') {
-					draftBufferRef.current.replaceText(payload.text);
-				} else {
-					draftBufferRef.current.replaceBytes(payload.base64);
-				}
-				setFileInfo(nextInfo);
-				setIsDirty(false);
-				sessionStoreRef.current?.setDirty(false);
-				setConflict(false);
-				sessionStoreRef.current?.setConflict({ kind: 'none' });
-				await refreshDiff(nextInfo.path);
-				return true;
-			},
+			onSave: saveCurrentFile,
 			preferredEngine: engine,
 		});
-	}, [engine, fileGateway, fileInfo, isDirty, refreshDiff, saveSparseDraft]);
+	}, [engine, fileInfo, isDirty, saveCurrentFile]);
 
 	const handleModeChange = useCallback(async (nextMode: FileViewerMode) => {
 		const nextInfo = fileInfoRef.current;
@@ -1023,6 +1035,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 			{conflict ? (
 				<FileConflictBanner
 					onKeepLocal={() => {
+						conflictRef.current = false;
 						setConflict(false);
 						sessionStore?.setConflict({ kind: 'none' });
 					}}
@@ -1038,6 +1051,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 							setDraftText(await fileGateway.readFileText(nextInfo.path));
 						}
 						setIsDirty(false);
+						conflictRef.current = false;
 						setConflict(false);
 						sessionStore?.setDirty(false);
 						sessionStore?.setConflict({ kind: 'none' });
@@ -1093,7 +1107,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 							canSwitchToMonaco={capabilities.canUseMonaco}
 							fileViewerClient={contentFileViewerClient}
 							filePath={fileInfo.path}
-							projectId={terminalClientContext?.projectId}
+							projectId={terminalClientContext.projectId}
 							projectRoot={projectRoot}
 							onSparseEditChange={handleSparseEditChange}
 							onSwitchToMonaco={handleSwitchToMonaco}

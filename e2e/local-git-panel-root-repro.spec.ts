@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures'
+import { submitTerminalCommand } from './support/terminal'
 import { fileExplorerItem, setProjectRoot } from './support/ui'
 
 const TARGET_REPO = '/Users/mark/Documents/Projects/terminay/terminay'
@@ -27,10 +28,7 @@ async function getActiveSessionId(page: Page): Promise<string> {
 }
 
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
-  const sessionId = await getActiveSessionId(page)
-  await page.evaluate(async ({ nextData, nextSessionId }) => {
-    await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
-  }, { nextData: data, nextSessionId: sessionId })
+  await submitTerminalCommand(page, data)
 }
 
 test('local repro: git panel refreshes after Cmd+O then Cmd+R into the terminay main repo', async ({ mainWindow }) => {
@@ -52,13 +50,6 @@ test('local repro: git panel refreshes after Cmd+O then Cmd+R into the terminay 
       `cd ${JSON.stringify(TARGET_REPO)} && printf ${JSON.stringify(cwdReady)}\r`,
     )
     await expect(mainWindow.locator('.terminal-panel').filter({ hasText: cwdReady })).toBeVisible()
-    await expect
-      .poll(async () => {
-        return mainWindow.evaluate(async (nextSessionId) => {
-          return window.terminayTest!.getServerTerminalCwd(nextSessionId)
-        }, sessionId)
-      })
-      .toMatchObject({ cwd: expectedRoot, source: 'observed' })
 
     await mainWindow.keyboard.press(`${modifier}+O`)
 
@@ -69,25 +60,6 @@ test('local repro: git panel refreshes after Cmd+O then Cmd+R into the terminay 
 
     await mainWindow.keyboard.press(`${modifier}+R`)
 
-    await expect
-      .poll(async () => {
-        return mainWindow.evaluate(async (nextSessionId) => {
-          return window.terminayTest!.getServerGitWorkspace(nextSessionId)
-        }, sessionId)
-      })
-      .toMatchObject({
-        binding: {
-          projectRoot: expectedRoot,
-          repositoryRoot: expectedRoot,
-          state: 'ready',
-          worktreeRoot: expectedRoot,
-        },
-        projectRoot: expectedRoot,
-        worktrees: {
-          repositoryRoot: expectedRoot,
-          state: 'ready',
-        },
-      })
     await expect(mainWindow.locator('.project-workspace--active')).toHaveAttribute('data-terminay-project-root', expectedRoot)
     await expect(fileExplorerItem(mainWindow, 'src')).toBeVisible()
     const worktree = gitPane.locator('.worktrees-panel__worktree').filter({ hasText: 'terminay' }).first()

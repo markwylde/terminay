@@ -1,7 +1,8 @@
-import { expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 import { normalizeTerminalSettings } from '../src/terminalSettings'
 import type { AiTabMetadataProvider } from '../src/types/terminay'
+import { expect, test } from './fixtures'
+import { typeInVisibleTerminal } from './support/terminal-input'
 
 const isRealCodexRun = process.env.TERMINAY_TEST_USE_REAL_CODEX === '1'
 const isRealClaudeCodeRun = process.env.TERMINAY_TEST_USE_REAL_CLAUDE_CODE === '1'
@@ -15,72 +16,56 @@ function aiMetadataSelect(page: Page, label: string) {
   return aiMetadataRows(page).filter({ hasText: label }).locator('select')
 }
 
-async function getActiveTerminalSessionId(page: Page): Promise<string> {
-  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
-  if (!sessionId) {
-    throw new Error('Active terminal session id is unavailable')
-  }
-
-  return sessionId
-}
-
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
-  const sessionId = await getActiveTerminalSessionId(page)
-  await page.evaluate(
-    async ({ nextSessionId, nextData }) => {
-      await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
-    },
-    { nextData: data, nextSessionId: sessionId },
-  )
+  await typeInVisibleTerminal(page, data)
 }
 
-async function firstAiProviderModel(page: Page, provider: AiTabMetadataProvider): Promise<string> {
-  return page.evaluate(async (nextProvider) => {
-    const models = await window.terminayAiMetadataHost.listAiTabMetadataModels(nextProvider)
-    const model = models[0]?.id
-    if (!model) {
-      throw new Error(`No ${nextProvider} model is available for AI tab metadata tests.`)
-    }
-
-    return model
-  }, provider)
+async function firstAiProviderModel(
+  appHarness: { openSettingsWindow: (options: { page: Page; sectionId: string }) => Promise<Page> },
+  page: Page,
+  provider: AiTabMetadataProvider,
+): Promise<string> {
+  const settingsWindow = await appHarness.openSettingsWindow({ page, sectionId: 'ai-tab-metadata' })
+  await aiMetadataSelect(settingsWindow, 'Set title with AI').selectOption(provider)
+  const model = await aiMetadataSelect(settingsWindow, 'Title model').inputValue()
+  if (!model) {
+    throw new Error(`No ${provider} model is available for AI tab metadata tests.`)
+  }
+  await settingsWindow.close()
+  return model
 }
 
-async function configureAiTabMetadata(page: Page, provider: 'claudeCode' | 'codex' = 'codex', model = 'codex-test-model') {
-  await page.evaluate(async ({ nextModel, nextProvider }) => {
-    const settings = await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()
-    await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings({
-      ...settings,
-      aiTabMetadata: {
-        title: {
-          claudeCodeModel: nextProvider === 'claudeCode' ? nextModel : settings.aiTabMetadata.title.claudeCodeModel,
-          provider: nextProvider,
-          codexModel: nextProvider === 'codex' ? nextModel : settings.aiTabMetadata.title.codexModel,
-        },
-        note: {
-          claudeCodeModel: nextProvider === 'claudeCode' ? nextModel : settings.aiTabMetadata.note.claudeCodeModel,
-          provider: nextProvider,
-          codexModel: nextProvider === 'codex' ? nextModel : settings.aiTabMetadata.note.codexModel,
-        },
-      },
-    })
-  }, { nextModel: model, nextProvider: provider })
-  await page.waitForTimeout(100)
+async function configureAiTabMetadata(
+  appHarness: { openSettingsWindow: (options: { page: Page; sectionId: string }) => Promise<Page> },
+  page: Page,
+  provider: 'claudeCode' | 'codex' = 'codex',
+  model = 'codex-test-model',
+) {
+  const settings = await appHarness.openSettingsWindow({ page, sectionId: 'ai-tab-metadata' })
+  await aiMetadataSelect(settings, 'Set title with AI').selectOption(provider)
+  await aiMetadataSelect(settings, 'Title model').selectOption(model)
+  await aiMetadataSelect(settings, 'Set note with AI').selectOption(provider)
+  await aiMetadataSelect(settings, 'Note model').selectOption(model)
+  await expect(settings.locator('.settings-status')).toContainText('Saved')
+  await settings.close()
 }
 
-async function setAiMock(page: Page, options?: { error?: string | null }) {
+async function setAiMock(page: Page, options?: {
+	error?: string | null
+	models?: readonly Readonly<{ id: string; label: string }>[]
+}) {
   if (isRealProviderRun) {
     return
   }
 
   await page.evaluate(async (nextOptions) => {
-    if (!window.terminayTest) {
-      throw new Error('terminayTest bridge is unavailable')
-    }
+		if (!window.terminayAiMetadataTest) {
+			throw new Error('AI metadata test seam is unavailable')
+		}
 
-    await window.terminayTest.setAiTabMetadataMock({
-      error: nextOptions?.error ?? null,
-      models: [
+		await window.terminayAiMetadataTest.setMock({
+			error: nextOptions?.error ?? null,
+			models: nextOptions?.models ?? [
         { id: 'codex-test-model', label: 'Codex Test Model' },
         { id: 'codex-alt-model', label: 'Codex Alt Model' },
         { id: 'claude-test-model', label: 'Claude Test Model' },
@@ -145,17 +130,8 @@ test.describe('AI tab metadata settings', () => {
     await expect(aiMetadataSelect(settingsWindow, 'Note model')).toHaveValue('codex-test-model')
   })
 
-  test('keeps provider selected when model loading fails', async ({ appHarness, mainWindow }) => {
-    await mainWindow.evaluate(async () => {
-      if (!window.terminayTest) {
-        throw new Error('terminayTest bridge is unavailable')
-      }
-
-      await window.terminayTest.setAiTabMetadataMock({
-        error: null,
-        models: [],
-      })
-    })
+	test('keeps provider selected when model loading fails', async ({ appHarness, mainWindow }) => {
+		await setAiMock(mainWindow, { models: [] })
     const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'ai-tab-metadata' })
 
     await aiMetadataSelect(settingsWindow, 'Set note with AI').selectOption('codex')
@@ -169,7 +145,7 @@ test.describe('AI tab metadata command bar actions', () => {
 
   test('generates a terminal title and note from the Command bar', async ({ appHarness, mainWindow }) => {
     await setAiMock(mainWindow)
-    await configureAiTabMetadata(mainWindow)
+    await configureAiTabMetadata(appHarness, mainWindow)
 
     await appHarness.openMacroLauncher(mainWindow)
     await runCommandBarItem(mainWindow, 'Set tab title with AI')
@@ -191,7 +167,7 @@ test.describe('AI tab metadata command bar actions', () => {
     await expect(mainWindow.locator('.error-banner')).toContainText('Enable an AI provider')
     await expect(title).toHaveText('Terminal 1')
 
-    await configureAiTabMetadata(mainWindow)
+    await configureAiTabMetadata(appHarness, mainWindow)
     await setAiMock(mainWindow, { error: 'Codex test failure' })
     await appHarness.openMacroLauncher(mainWindow)
     await runCommandBarItem(mainWindow, 'Set tab title with AI')
@@ -204,8 +180,8 @@ test.describe('AI tab metadata real Codex integration', () => {
   test.skip(!isRealCodexRun, 'Real Codex integration is opt-in for CI and local provider smoke tests.')
 
   test('generates a terminal title and note with Codex @real-codex', async ({ appHarness, mainWindow }) => {
-    const model = await firstAiProviderModel(mainWindow, 'codex')
-    await configureAiTabMetadata(mainWindow, 'codex', model)
+    const model = await firstAiProviderModel(appHarness, mainWindow, 'codex')
+    await configureAiTabMetadata(appHarness, mainWindow, 'codex', model)
     await runRealProviderGenerationAssertions(appHarness, mainWindow)
   })
 })
@@ -214,8 +190,8 @@ test.describe('AI tab metadata real Claude Code integration', () => {
   test.skip(!isRealClaudeCodeRun, 'Real Claude Code integration is opt-in for CI and local provider smoke tests.')
 
   test('generates a terminal title and note with Claude Code @real-claude-code', async ({ appHarness, mainWindow }) => {
-    const model = await firstAiProviderModel(mainWindow, 'claudeCode')
-    await configureAiTabMetadata(mainWindow, 'claudeCode', model)
+    const model = await firstAiProviderModel(appHarness, mainWindow, 'claudeCode')
+    await configureAiTabMetadata(appHarness, mainWindow, 'claudeCode', model)
     await runRealProviderGenerationAssertions(appHarness, mainWindow)
   })
 })

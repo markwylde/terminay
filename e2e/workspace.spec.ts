@@ -3,7 +3,12 @@ import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { fileExplorerItem, openFileExplorer, openProjectEditWindow, setProjectRoot } from './support/ui';
+import {
+	fileExplorerItem,
+	openFileExplorer,
+	openProjectEditWindow,
+	setProjectRoot,
+} from './support/ui';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,14 +26,18 @@ async function getActiveSessionId(page: Page): Promise<string> {
 	return sessionId;
 }
 
-async function writeToActiveTerminal(page: Page, data: string): Promise<string> {
+async function writeToActiveTerminal(
+	page: Page,
+	data: string,
+): Promise<string> {
 	const sessionId = await getActiveSessionId(page);
-	await page.evaluate(
-		async ({ nextData, nextSessionId }) => {
-			await window.terminayTest!.writeServerTerminal(nextSessionId, nextData);
-		},
-		{ nextData: data, nextSessionId: sessionId },
+	const input = page.locator(
+		'.project-workspace--active .terminal-panel:has(.xterm-helper-textarea:focus) .xterm-helper-textarea',
 	);
+	await input.focus();
+	const command = data.replace(/[\r\n]+$/u, '');
+	if (command.length > 0) await page.keyboard.insertText(command);
+	if (command.length !== data.length) await page.keyboard.press('Enter');
 	return sessionId;
 }
 
@@ -106,72 +115,62 @@ test.describe('workspace shell', () => {
 		await fileExplorerItem(mainWindow, 'README.md').dblclick();
 		await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1);
 
-		for (const [index, title] of ['Terminal 1', 'Terminal 2', 'Terminal 3', 'Terminal 4'].entries()) {
-			await mainWindow.locator('.dv-tab:visible').filter({ hasText: title }).first().click();
+		for (const [index, title] of [
+			'Terminal 1',
+			'Terminal 2',
+			'Terminal 3',
+			'Terminal 4',
+		].entries()) {
+			await mainWindow
+				.locator('.dv-tab:visible')
+				.filter({ hasText: title })
+				.first()
+				.click();
 			await appHarness.sendAppCommand('close-active');
-			await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(3 - index);
+			await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(
+				3 - index,
+			);
 		}
 
 		await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1);
 		await expect(
-			mainWindow.getByRole('alert').filter({ hasText: 'Workspace synchronization failed' }),
+			mainWindow
+				.getByRole('alert')
+				.filter({ hasText: 'Workspace synchronization failed' }),
 		).toHaveCount(0);
 	});
 
 	test('warns only when closing a terminal with a foreground process', async ({
 		appHarness,
-		electronApp,
 		mainWindow,
 	}) => {
+		const dialogs = await appHarness.dialogs(mainWindow);
+		await dialogs.reset();
 		await appHarness.sendAppCommand('new-terminal');
 		const closeButtons = mainWindow.getByLabel('Close terminal');
 		await expect(closeButtons).toHaveCount(2);
 		await mainWindow.locator('.terminal-panel').last().click();
-		await electronApp.evaluate(({ dialog }) => {
-			const state = globalThis as typeof globalThis & {
-				closeDialog?: Electron.MessageBoxOptions;
-				closeDialogResponse?: number;
-			};
-			state.closeDialogResponse = 1;
-			dialog.showMessageBox = async (...args) => {
-				state.closeDialog = args.at(-1) as Electron.MessageBoxOptions;
-				return {
-					checkboxChecked: false,
-					response: state.closeDialogResponse ?? 1,
-				};
-			};
-		});
 
-		const sessionId = await writeToActiveTerminal(mainWindow, 'sleep 30\n');
-		await expect
-			.poll(() =>
-				mainWindow.evaluate(
-					(nextSessionId) =>
-						window.terminayTest!.getServerTerminalActivity(nextSessionId),
-					sessionId,
-				),
-			)
-			.toMatchObject({ foregroundBusy: true });
+		const foregroundStarted = `foreground-started-${Date.now()}`;
+		await writeToActiveTerminal(
+			mainWindow,
+			`sleep 2.1; printf '${foregroundStarted}\\n'; sleep 30\n`,
+		);
+		await expect(
+			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
+		).toContainText(foregroundStarted);
+		await dialogs.queueConfirm(false);
 		await closeButtons.last().click();
 		await expect
-			.poll(() =>
-				electronApp.evaluate(
-					() =>
-						(
-							globalThis as typeof globalThis & {
-								closeDialog?: Electron.MessageBoxOptions;
-							}
-						).closeDialog?.buttons?.[0] ?? null,
-				),
-			)
-			.toBe('Close Terminal');
+			.poll(async () => (await dialogs.getCalls()).at(-1))
+			.toMatchObject({
+				kind: 'confirm',
+				message: expect.stringContaining('A process is still running'),
+				response: false,
+			});
 		await expect(closeButtons).toHaveCount(2);
 
-		await electronApp.evaluate(() => {
-			(
-				globalThis as typeof globalThis & { closeDialogResponse?: number }
-			).closeDialogResponse = 0;
-		});
+		await dialogs.queueConfirm(true);
 		await closeButtons.last().click();
 		await expect(closeButtons).toHaveCount(1);
 		await expect(
@@ -267,27 +266,8 @@ test.describe('workspace shell', () => {
 		mainWindow,
 	}) => {
 		await mainWindow.locator('.terminal-panel').first().click();
-		const terminalTab = mainWindow
-			.locator('.dv-tab', { hasText: 'Terminal 1' })
-			.first();
-		await expect(terminalTab).toBeVisible();
-		const terminalTabBox = await terminalTab.boundingBox();
-		if (!terminalTabBox) {
-			throw new Error('Expected terminal dock tab to have a layout box');
-		}
-
 		const popoutWindow = await appHarness.openChildWindow(async () => {
-			await mainWindow.mouse.move(
-				terminalTabBox.x + terminalTabBox.width / 2,
-				terminalTabBox.y + terminalTabBox.height / 2,
-			);
-			await mainWindow.mouse.down();
-			await mainWindow.mouse.move(
-				terminalTabBox.x + terminalTabBox.width / 2 + 18,
-				terminalTabBox.y + terminalTabBox.height / 2 + 18,
-			);
-			await mainWindow.mouse.move(0, 0);
-			await mainWindow.mouse.up();
+			await appHarness.sendAppCommand('popout-active');
 		});
 
 		await expect(popoutWindow.locator('.terminal-tab-title')).toContainText(
@@ -335,13 +315,6 @@ test.describe('workspace shell', () => {
 		await expect(
 			mainWindow.locator('.terminal-panel').filter({ hasText: cwdReady }),
 		).toBeVisible();
-		await expect
-			.poll(async () => {
-				return mainWindow.evaluate(async (nextSessionId) => {
-					return window.terminayTest!.getServerTerminalCwd(nextSessionId);
-				}, sessionId);
-			})
-			.toMatchObject({ cwd: expectedRoot, source: 'observed' });
 
 		await mainWindow.bringToFront();
 		await mainWindow.locator('.terminal-panel').first().click();
@@ -359,7 +332,7 @@ test.describe('workspace shell', () => {
 		await expect(editWindow.getByPlaceholder('Enter folder path')).toHaveValue(
 			expectedRoot,
 		);
-		await editWindow.close();
+		await editWindow.getByRole('button', { name: 'Cancel' }).click();
 
 		await openFileExplorer(mainWindow);
 		const gitPane = mainWindow.locator('.sidebar-pane').filter({

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { build } from 'esbuild'
 
-const runtimeModule = await importTransformed('../electron/dictation/parakeetRuntime.ts')
+const runtimeModule = await importTransformed('../packages/server-core/src/aiService/parakeetRuntime.ts')
 const settingsModule = await importTransformed('../src/terminalSettings.ts')
 
 test('Parakeet is exposed only on Apple Silicon macOS', async () => {
