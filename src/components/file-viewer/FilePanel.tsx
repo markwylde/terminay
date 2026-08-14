@@ -19,7 +19,6 @@ import {
 	resolveFileViewerEngine,
 	resolveFileViewerMode,
 } from '../../services/fileViewer';
-import { useOptionalDisconnectedFileCompatibility } from '../../services/fileViewer/DisconnectedFileCompatibilityProvider';
 import { toProjectRelativePath } from '../../services/fileViewer/serverFileGateway';
 import {
 	decodeSparseEdit,
@@ -36,8 +35,12 @@ import type {
 	FileViewerGitRepoInfo,
 	FileViewerSparseFileEdit,
 } from '../../types/terminay';
-import { TerminalPanelClientContext } from '../TerminalPanel';
+import {
+	TerminalPanelClientContext,
+	type TerminalPanelClientContextValue,
+} from '../TerminalPanel';
 import { FileConflictBanner } from './FileConflictBanner';
+import { FileAuthorityUnavailableState } from './FileAuthorityUnavailableState';
 import { FileLargeFileChooser } from './FileLargeFileChooser';
 import { FileModeSwitcher } from './FileModeSwitcher';
 import { FileStatusBar } from './FileStatusBar';
@@ -100,10 +103,35 @@ function getCustomDefaultMode(
 }
 
 export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
-	const disconnectedFileCompatibility =
-		useOptionalDisconnectedFileCompatibility();
-	const disconnectedFilePanelCompatibility =
-		disconnectedFileCompatibility?.filePanel ?? null;
+	const terminalClientContext = useContext(TerminalPanelClientContext);
+	if (
+		terminalClientContext?.fileViewerClient === undefined ||
+		terminalClientContext.fileObservationClient === undefined ||
+		terminalClientContext.projectId.length === 0
+	) {
+		return <FileAuthorityUnavailableState feature="File viewer" />;
+	}
+	return (
+		<CanonicalFilePanel
+			{...props}
+			terminalClientContext={{
+				...terminalClientContext,
+				fileObservationClient: terminalClientContext.fileObservationClient,
+				fileViewerClient: terminalClientContext.fileViewerClient,
+			}}
+		/>
+	);
+}
+
+function CanonicalFilePanel(
+	props: IDockviewPanelProps<FilePanelInstanceParams> & {
+		terminalClientContext: TerminalPanelClientContextValue & {
+			fileObservationClient: NonNullable<TerminalPanelClientContextValue['fileObservationClient']>;
+			fileViewerClient: NonNullable<TerminalPanelClientContextValue['fileViewerClient']>;
+		};
+	},
+) {
+	const { terminalClientContext } = props;
 	const {
 		filePath,
 		initialMode,
@@ -118,46 +146,21 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 		setSettings,
 		settingsClient,
 	} = useTerminalSettings();
-	const terminalClientContext = useContext(TerminalPanelClientContext);
-	const activeDisconnectedFilePanelCompatibility =
-		terminalClientContext === null ? disconnectedFilePanelCompatibility : null;
-	// Disconnected Desktop keeps the legacy preload-backed file client. Connected
-	// workspaces must use the authenticated server client only; missing server
-	// capabilities fail closed instead of falling back to preload data authority.
-	const disconnectedFileViewerClient = useMemo(
-		() => activeDisconnectedFilePanelCompatibility?.createClient() ?? null,
-		[activeDisconnectedFilePanelCompatibility],
-	);
-	const fileViewerClient =
-		terminalClientContext?.fileViewerClient ?? disconnectedFileViewerClient;
-	if (fileViewerClient === null) {
-		throw new Error(
-			'File viewer capability is unavailable for this project.',
-		);
-	}
-	const contentFileViewerClient =
-		terminalClientContext?.fileViewerClient ?? fileViewerClient;
+	const fileViewerClient = terminalClientContext.fileViewerClient;
+	const contentFileViewerClient = fileViewerClient;
 	const fileGateway = useMemo(
 		() =>
-			terminalClientContext?.fileViewerClient && terminalClientContext.projectId
-				? createServerFileGateway({
-						client: terminalClientContext.fileViewerClient,
-						observationClient: terminalClientContext.fileObservationClient,
-						projectId: terminalClientContext.projectId,
-						projectRoot,
-					})
-				: activeDisconnectedFilePanelCompatibility?.gateway ??
-					(() => {
-						throw new Error(
-							'Disconnected file compatibility is unavailable.',
-						);
-					})(),
+			createServerFileGateway({
+				client: terminalClientContext.fileViewerClient,
+				observationClient: terminalClientContext.fileObservationClient,
+				projectId: terminalClientContext.projectId,
+				projectRoot,
+			}),
 		[
 			projectRoot,
-			terminalClientContext?.fileObservationClient,
-			terminalClientContext?.fileViewerClient,
-			terminalClientContext?.projectId,
-			activeDisconnectedFilePanelCompatibility,
+			terminalClientContext.fileObservationClient,
+			terminalClientContext.fileViewerClient,
+			terminalClientContext.projectId,
 		],
 	);
 	const [fileInfo, setFileInfo] = useState<FileInfo | null>(
@@ -309,9 +312,9 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 				let page: number | null = null;
 				if (newlineDelta !== 0) {
 					try {
-						let metadata = await fileViewerClient.getTextMetadata(
-							currentInfo.path,
-							projectRoot,
+						let metadata = await fileViewerClient.getServerTextMetadata(
+							toProjectRelativePath(projectRoot, currentInfo.path),
+							terminalClientContext.projectId,
 						);
 						while (page === null) {
 							let low = 0;
@@ -319,11 +322,11 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 							while (low <= high) {
 								const middle = Math.floor((low + high) / 2);
 								const line = (
-									await fileViewerClient.readTextLines(
-										currentInfo.path,
-										projectRoot,
+									await fileViewerClient.readServerTextLines(
+										toProjectRelativePath(projectRoot, currentInfo.path),
 										middle,
 										1,
+										terminalClientContext.projectId,
 									)
 								).lines[0];
 								if (!line) {
@@ -347,9 +350,9 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 							// beyond the currently indexed prefix. Completing a very large
 							// file before mapping an early byte creates avoidable renderer
 							// pressure during HEX/Text transitions.
-							metadata = await fileViewerClient.getTextMetadata(
-								currentInfo.path,
-								projectRoot,
+							metadata = await fileViewerClient.getServerTextMetadata(
+								toProjectRelativePath(projectRoot, currentInfo.path),
+								terminalClientContext.projectId,
 							);
 						}
 					} catch {
@@ -392,7 +395,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 				(sparseLineDeltasRef.current.get(owner) ?? 0) + newlineDelta,
 			);
 		},
-		[fileViewerClient, handleSparseEditChange, projectRoot],
+		[fileViewerClient, handleSparseEditChange, projectRoot, terminalClientContext.projectId],
 	);
 
 	useEffect(() => {
@@ -550,24 +553,16 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 		monacoTransitionAbortRef.current?.abort();
 		const controller = new AbortController();
 		monacoTransitionAbortRef.current = controller;
-		const canonicalProjectId = terminalClientContext?.projectId;
-		let originalText: string;
-		let projectedDraft: ReturnType<typeof materializePerformantDraft>;
-		if (canonicalProjectId === undefined) {
-			originalText = await fileGateway.readFileText(currentInfo.path);
-			projectedDraft = materializePerformantDraft(originalText, edits);
-		} else {
-			const canonicalDraft = await materializeCanonicalPerformantDraft(
-				contentFileViewerClient,
-				toProjectRelativePath(projectRoot, currentInfo.path),
-				canonicalProjectId,
-				currentInfo.size,
-				edits,
-				controller.signal,
-			);
-			originalText = canonicalDraft.originalText;
-			projectedDraft = canonicalDraft;
-		}
+		const canonicalDraft = await materializeCanonicalPerformantDraft(
+			contentFileViewerClient,
+			toProjectRelativePath(projectRoot, currentInfo.path),
+			terminalClientContext.projectId,
+			currentInfo.size,
+			edits,
+			controller.signal,
+		);
+		const originalText = canonicalDraft.originalText;
+		let projectedDraft: ReturnType<typeof materializePerformantDraft> = canonicalDraft;
 		if (controller.signal.aborted || !isMountedRef.current) {
 			return;
 		}
@@ -594,7 +589,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 		contentFileViewerClient,
 		fileGateway,
 		projectRoot,
-		terminalClientContext?.projectId,
+		terminalClientContext.projectId,
 	]);
 
 	useEffect(() => {
@@ -1093,7 +1088,7 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 							canSwitchToMonaco={capabilities.canUseMonaco}
 							fileViewerClient={contentFileViewerClient}
 							filePath={fileInfo.path}
-							projectId={terminalClientContext?.projectId}
+							projectId={terminalClientContext.projectId}
 							projectRoot={projectRoot}
 							onSparseEditChange={handleSparseEditChange}
 							onSwitchToMonaco={handleSwitchToMonaco}

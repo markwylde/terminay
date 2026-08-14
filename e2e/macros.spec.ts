@@ -1,6 +1,5 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import path from 'node:path'
 import { expect, test } from './fixtures'
+import { setProjectRoot } from './support/ui'
 
 test('creates and saves a new macro with synced fields', async ({ appHarness, mainWindow }) => {
   const macrosWindow = await appHarness.openMacrosWindow(mainWindow)
@@ -106,7 +105,7 @@ test('clears finished macro runs from the queue', async ({ appHarness, mainWindo
   await expect(mainWindow.getByLabel(/Show macro queue \(\d+\)/)).toHaveCount(0)
 })
 
-test('searches macro file fields relative to the project root', async ({ createWorkspace, mainWindow, tempDir }) => {
+test('does not expose a host-local file search authority', async ({ createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'macro-files',
     seed: {
@@ -118,31 +117,6 @@ test('searches macro file fields relative to the project root', async ({ createW
       },
     },
   })
-  const siblingRoot = path.join(tempDir, 'sibling-root')
-  await mkdir(siblingRoot, { recursive: true })
-  await writeFile(path.join(siblingRoot, 'dist-file.md'), 'outside project root', 'utf8')
-
-  const search = async (query: string) => {
-    return mainWindow.evaluate(
-      async ({ query: nextQuery, rootDir }) => {
-        return window.terminayFileExplorerHost!.searchFiles({ rootPath: rootDir, query: nextQuery, limit: 20 })
-      },
-      { query, rootDir: workspace.rootDir },
-    )
-  }
-
-  await expect.poll(async () => (await search('d')).map((result) => result.relativePath)).toEqual(
-    expect.arrayContaining(['d1/', 'd2/']),
-  )
-  expect((await search('dist')).map((result) => result.relativePath)).not.toContain('dist-file.md')
-
-  expect((await search('nested/i')).map((result) => result.relativePath)).toContain('nested/inner.md')
-  expect((await search('../sibling-root/dist')).map((result) => result.relativePath)).toContain(
-    '../sibling-root/dist-file.md',
-  )
-
-  const absoluteQuery = `${siblingRoot.replace(/\\/g, '/')}/dist`
-  expect((await search(absoluteQuery)).map((result) => result.relativePath)).toContain(
-    `${siblingRoot.replace(/\\/g, '/')}/dist-file.md`,
-  )
+	await setProjectRoot(mainWindow, workspace.rootDir)
+	await expect.poll(() => mainWindow.evaluate(() => 'terminayFileExplorerHost' in window)).toBe(false)
 })
