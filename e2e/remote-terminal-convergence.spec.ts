@@ -23,12 +23,27 @@ async function exposeDesktopOnLan(
 	await settings.getByRole('button', { name: 'Direct network listener' }).click();
 	await settings.getByRole('button', { name: 'Start direct listener' }).click();
 	const pinDialog = settings.getByRole('dialog', { name: 'Remote Pairing PIN' });
-	await expect(pinDialog).toBeVisible();
-	await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456');
-	await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
-	await expect(pinDialog).toHaveCount(0);
+	const stopListener = settings.getByRole('button', {
+		name: 'Stop direct listener',
+	});
+	const operationError = settings.getByRole('alert');
+	await expect.poll(async () =>
+		Promise.all([
+			pinDialog.isVisible(),
+			stopListener.isVisible(),
+			operationError.isVisible(),
+		]),
+	).toContain(true);
+	if (await pinDialog.isVisible()) {
+		await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill('123456');
+		await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
+		await expect(pinDialog).toHaveCount(0);
+	}
+	if (await operationError.isVisible()) {
+		throw new Error(`Direct listener failed: ${await operationError.innerText()}`);
+	}
 	await expect(
-		settings.getByRole('button', { name: 'Stop direct listener' }),
+		stopListener,
 	).toBeVisible({ timeout: 20_000 });
 	const showPairing = settings.getByRole('button', { name: 'Show QR Code' });
 	await expect(showPairing).toBeVisible();
@@ -392,18 +407,23 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expectMatchingLogicalGrid(desktopPanel, browserPanel, desktopColumnsAfterTakeback);
 
 		const remoteConnections = await mainWindow.evaluate(() =>
-			window.terminayTest.listRemoteProtocolConnections(),
+			window.terminayRemoteProtocolFaultTest?.listConnections(),
 		);
+		if (remoteConnections === undefined) {
+			throw new Error('The canonical remote protocol test seam is unavailable.');
+		}
 		expect(remoteConnections).toHaveLength(1);
 		const failedConnectionId = remoteConnections[0];
 		const resumeProof = '__TERMINAY_RESUMED_WITHOUT_DUPLICATION__';
 		const encodedResumeProof = Buffer.from(`${resumeProof}\n`, 'utf8').toString(
 			'base64',
 		);
-		await mainWindow.evaluate((connectionId) =>
-			window.terminayTest.failRemoteProtocolConnection(connectionId),
-			failedConnectionId,
-		);
+		await mainWindow.evaluate(async (connectionId) => {
+			if (!window.terminayRemoteProtocolFaultTest) {
+				throw new Error('The canonical remote protocol test seam is unavailable.');
+			}
+			await window.terminayRemoteProtocolFaultTest.failConnection(connectionId);
+		}, failedConnectionId);
 		await typeInVisibleTerminal(
 			mainWindow,
 			`printf '%s' '${encodedResumeProof}' | base64 -d\n`,
@@ -414,7 +434,7 @@ test('Desktop and browser converge on terminal tabs and one shared PTY output st
 		await expect
 			.poll(() =>
 				mainWindow.evaluate(() =>
-					window.terminayTest.listRemoteProtocolConnections(),
+					window.terminayRemoteProtocolFaultTest?.listConnections(),
 				),
 			)
 			.toEqual([expect.not.stringMatching(failedConnectionId)]);
