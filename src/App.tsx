@@ -1560,6 +1560,7 @@ const ProjectWorkspace = forwardRef<
 				};
 			},
 			hasTargetSession: (sessionId) => getPanelForSession(sessionId) !== null,
+			openSettings: auxiliaryRoutes.openSettings,
 			sendTerminalInput: sendTerminalPanelInput,
 			setErrorText,
 		});

@@ -49,6 +49,7 @@ type DictationControllerOptions = {
 		sessionId: string;
 	};
 	hasTargetSession: (sessionId: string) => boolean;
+	openSettings: (sectionId?: string) => void | Promise<void>;
 	sendTerminalInput: (sessionId: string, input: string) => void;
 	setErrorText: (message: string | null) => void;
 };
@@ -64,6 +65,7 @@ export function useDictationController({
 	getDisclosure,
 	getTargetIdentity,
 	hasTargetSession,
+	openSettings,
 	sendTerminalInput,
 	setErrorText,
 }: DictationControllerOptions) {
@@ -156,7 +158,7 @@ export function useDictationController({
 
 		if (!getSettings().enabled) {
 			setErrorText('Enable dictation in Settings before recording.');
-			void window.terminaySettingsWindowHost?.open('dictation');
+			void openSettings('dictation');
 			return;
 		}
 
