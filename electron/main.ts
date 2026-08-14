@@ -1973,7 +1973,10 @@ function sendCommandToFocusedWindow(command: AppCommand): void {
 		return;
 	}
 
-	targetWindow.webContents.send('app:command', command);
+	targetWindow.webContents.send('server-ui-host:event', {
+		type: 'menu.command',
+		command,
+	});
 }
 
 function isMacQuitInput(input: Electron.Input): boolean {
@@ -2016,7 +2019,10 @@ function bindAppShortcuts(webContents: Electron.WebContents): void {
 		}
 
 		event.preventDefault();
-		webContents.send('app:command', command);
+		webContents.send('server-ui-host:event', {
+			type: 'menu.command',
+			command,
+		});
 	});
 }
 
