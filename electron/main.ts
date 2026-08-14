@@ -474,6 +474,7 @@ function applyAgentIntegrationSetting(
 // The token both authorizes the local control socket and anchors scope (the
 // session, hence the project, the calling agent lives in).
 interface ControlTokenRecord {
+	projectId: string;
 	token: string;
 	sessionId: string;
 	webContentsId: number;
@@ -1669,8 +1670,18 @@ function registerControlToken(
 	sessionId: string,
 	webContentsId: number,
 ): string {
+	const session = serverTerminalAuthority?.get(sessionId);
+	if (session === undefined) {
+		throw new Error('Cannot create a control capability for an unknown terminal.');
+	}
+	removeControlToken(sessionId);
 	const token = randomUUID();
-	controlTokensByToken.set(token, { token, sessionId, webContentsId });
+	controlTokensByToken.set(token, {
+		token,
+		sessionId,
+		projectId: session.projectId,
+		webContentsId,
+	});
 	controlTokensBySession.set(sessionId, token);
 	return token;
 }
@@ -1689,7 +1700,7 @@ function resolveControlScope(token: string): ControlServerScope | null {
 		return null;
 	}
 	const session = serverTerminalAuthority?.get(record.sessionId);
-	if (session?.status !== 'running') {
+	if (session?.status !== 'running' || session.projectId !== record.projectId) {
 		return null;
 	}
 	return { sessionId: record.sessionId, webContentsId: record.webContentsId };
@@ -3493,9 +3504,11 @@ if (process.env.TERMINAY_TEST === '1') {
 			// This test-only bridge may mint the same exact-session capability on
 			// demand; normal MCP discovery remains controlled by server-owned spawn
 			// configuration and the token cannot address another project/session.
-			const token =
-				controlTokensBySession.get(terminalSessionId) ??
-				registerControlToken(terminalSessionId, event.sender.id);
+			// Mint a fresh document-bound capability for this explicit request.
+			// Restored sessions can retain a shell-era token; reusing it would make
+			// a later renderer/document scope ambiguous. Replacing it atomically
+			// also revokes that old capability.
+			const token = registerControlToken(terminalSessionId, event.sender.id);
 			return {
 				projectId: serverSession.projectId,
 				sessionId: serverSession.id,
