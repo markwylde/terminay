@@ -5365,6 +5365,7 @@ function App({
 		window.terminayRemotePairingPinHost,
 		window.terminayRemoteAccessStatusHost,
 		serverSettingsClient,
+		auxiliaryRouteController.openSettings,
 	);
 	const [connectionSwitcherEntries, setConnectionSwitcherEntries] = useState<
 		ConnectionSwitcherEntry[]
@@ -6087,6 +6088,9 @@ function App({
 							onOpenConnectionManager ?? openRemoteConnectionModal
 						}
 						onOpenPairingQr={() => void openPairingQr()}
+						onOpenSettings={() =>
+							void auxiliaryRouteController.openSettings('remote-access-host')
+						}
 						onSelectConnection={selectConnectionProfile}
 						onToggleExposure={() => void toggleRemoteAccess()}
 						onToggleMenu={() => {
