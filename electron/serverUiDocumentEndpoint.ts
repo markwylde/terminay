@@ -8,7 +8,10 @@ import {
 	type MessagePortMain,
 	type WebContents,
 } from 'electron';
-import { DesktopDocumentLifecycle } from '../apps/terminay-desktop/src/main/documentLifecycle';
+import {
+	DesktopDocumentLifecycle,
+	handoffDocumentResource,
+} from '../apps/terminay-desktop/src/main/documentLifecycle';
 import type { DesktopBundleLaunch } from '../apps/terminay-desktop/src/main/serverBundleHost';
 
 type Diagnostic = (resource: string, message: string) => void;
@@ -31,12 +34,20 @@ export function bindLocalServerUiDocumentEndpoint(options: {
 		const document = lifecycle.replace();
 		const channel = new MessageChannelMain();
 		document.add('message-port', () => channel.port1.close());
-		options.acceptPort(channel.port1);
-		sender.postMessage(
-			'server-ui-host:byte-endpoint',
-			{ handle: options.handle },
-			[channel.port2],
-		);
+		handoffDocumentResource({
+			acceptAuthority: () => options.acceptPort(channel.port1),
+			sendRenderer: () =>
+				sender.postMessage(
+					'server-ui-host:byte-endpoint',
+					{ handle: options.handle },
+					[channel.port2],
+				),
+			release: () => {
+				document.release('failed-launch');
+				channel.port2.close();
+			},
+			onFailure: (message) => options.diagnostic?.('message-port', message),
+		});
 	};
 	return lifecycle.bind(attach);
 }
@@ -93,11 +104,20 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 			}
 		});
 		channel.port1.start();
-		sender.postMessage(
-			'server-ui-host:byte-endpoint',
-			{ handle: options.launch.byteEndpointHandle },
-			[channel.port2],
-		);
+		handoffDocumentResource({
+			acceptAuthority: () => undefined,
+			sendRenderer: () =>
+				sender.postMessage(
+					'server-ui-host:byte-endpoint',
+					{ handle: options.launch.byteEndpointHandle },
+					[channel.port2],
+				),
+			release: () => {
+				document.release('failed-launch');
+				channel.port2.close();
+			},
+			onFailure: (message) => options.diagnostic?.('message-port', message),
+		});
 	};
 	const unbind = lifecycle.bind(attach, closeConnection);
 

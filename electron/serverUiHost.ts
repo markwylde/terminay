@@ -291,6 +291,10 @@ export function bindServerUiWindow(
 	targetSession.setPermissionRequestHandler(
 		(_webContents, _permission, callback) => callback(false),
 	);
+	lifecycle.add('permission-handlers', () => {
+		targetSession.setPermissionCheckHandler(null);
+		targetSession.setPermissionRequestHandler(null);
+	});
 
 	// Capture every Electron-owned object above. A destroyed callback must never
 	// reach back through WebContents to obtain its id or Session.
