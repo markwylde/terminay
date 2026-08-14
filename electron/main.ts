@@ -2424,6 +2424,11 @@ async function presentCanonicalAuxiliaryRoute(
 		}
 		if (workspaceWindow === null) throw new Error('Desktop is closing.');
 		auxiliaryWindowsByPresentation.set(presentationId, workspaceWindow);
+		// Do not let the source renderer tear down its only presentation while the
+		// destination is still only a BrowserWindow shell.  A workspace move is
+		// authoritative before this call, but the destination must have loaded its
+		// canonical document before the source may close its view.
+		await waitForCanonicalWorkspaceDocument(workspaceWindow);
 		workspaceWindow.once('ready-to-show', () => {
 			if (!workspaceWindow.isDestroyed()) {
 				workspaceWindow.show();
@@ -2511,6 +2516,47 @@ async function presentCanonicalAuxiliaryRoute(
 		if (auxiliaryWindow.isDestroyed()) return;
 		auxiliaryWindow.show();
 		auxiliaryWindow.focus();
+	});
+}
+
+function waitForCanonicalWorkspaceDocument(window: BrowserWindow): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timeout = setTimeout(() => {
+			cleanup();
+			reject(new Error('Timed out loading the canonical workspace window.'));
+		}, 15_000);
+		const cleanup = () => {
+			clearTimeout(timeout);
+			window.webContents.off('did-finish-load', onLoaded);
+			window.webContents.off('did-fail-load', onFailed);
+			window.off('closed', onClosed);
+		};
+		const onLoaded = () => {
+			cleanup();
+			resolve();
+		};
+		const onFailed = (
+			_event: Electron.Event,
+			errorCode: number,
+			errorDescription: string,
+			_validatedURL: string,
+			isMainFrame: boolean,
+		) => {
+			if (!isMainFrame || errorCode === -3) return;
+			cleanup();
+			reject(
+				new Error(
+					`Unable to load the canonical workspace window: ${errorDescription}.`,
+				),
+			);
+		};
+		const onClosed = () => {
+			cleanup();
+			reject(new Error('The canonical workspace window closed before loading.'));
+		};
+		window.webContents.once('did-finish-load', onLoaded);
+		window.webContents.on('did-fail-load', onFailed);
+		window.once('closed', onClosed);
 	});
 }
 

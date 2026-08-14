@@ -49,12 +49,15 @@ async function waitForWorkspacePopout(
 				);
 			return popout === undefined
 				? false
-				: (await popout.locator('.app-shell').count()) > 0;
-		})
+				: (await popout.locator('[data-terminay-app-component]').count()) >
+						0;
+		}, { timeout: 20_000 })
 		.toBe(true);
 	if (popout === undefined)
 		throw new Error('Expected the project popout window');
-	await expect(popout.locator('.app-shell')).toBeVisible();
+	await expect(popout.locator('[data-terminay-app-component]')).toBeVisible({
+		timeout: 20_000,
+	});
 	return popout;
 }
 

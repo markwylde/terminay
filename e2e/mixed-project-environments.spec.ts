@@ -129,6 +129,7 @@ test('Desktop selects a standalone server and its canonical session survives ren
 			.click();
 		await expect(mainWindow.getByLabel('Open connection menu')).toContainText(
 			'127.0.0.1',
+			{ timeout: 20_000 },
 		);
 		const before = await mainWindow
 			.locator('.terminal-panel:visible')
