@@ -3119,6 +3119,32 @@ async function prepareCanonicalHttpRemoteLaunch(
 	}
 	const manifestPath = bootstrap.manifestPath;
 	const serverId = bootstrap.serverId;
+	const manifestUrl = new URL(manifestPath, origin);
+	const manifestResponse = await fetch(manifestUrl, { redirect: 'error' });
+	// A standalone protocol server is allowed to expose no renderer artifact.
+	// Desktop still has a verified, host-compatible application bundle, so bind
+	// that trusted local artifact to the authenticated remote server instead of
+	// abandoning the pairing after credentials have been enrolled.  Do this
+	// only for a missing manifest: an advertised but malformed or unverifiable
+	// remote bundle remains a hard failure.
+	if (manifestResponse.status === 404 || manifestResponse.status === 503) {
+		return remoteServerUiBundleHost.prepareLocal({
+			artifact: { rootDirectory: SERVER_UI_DIST },
+			origin,
+			profileId: profile.id,
+			serverId,
+			windowId: `window-${randomUUID()}`,
+		});
+	}
+	if (!manifestResponse.ok)
+		throw new Error(
+			`The remote UI manifest is unavailable (${manifestResponse.status}).`,
+		);
+	const manifest = JSON.parse(
+		new TextDecoder().decode(
+			new Uint8Array(await manifestResponse.arrayBuffer()),
+		),
+	) as unknown;
 	const fetchBytes = async (pathname: string): Promise<Uint8Array> => {
 		const url = new URL(pathname, origin);
 		if (url.origin !== new URL(origin).origin)
@@ -3129,10 +3155,7 @@ async function prepareCanonicalHttpRemoteLaunch(
 		return new Uint8Array(await assetResponse.arrayBuffer());
 	};
 	const lane: DesktopAuthenticatedAssetLane = {
-		manifest: async () =>
-			JSON.parse(
-				new TextDecoder().decode(await fetchBytes(manifestPath)),
-			) as unknown,
+		manifest: async () => manifest,
 		read: fetchBytes,
 	};
 	return remoteServerUiBundleHost.prepareRemote({
