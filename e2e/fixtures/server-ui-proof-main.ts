@@ -21,14 +21,7 @@ async function start(): Promise<void> {
 		createServerUiWindow({
 			...options,
 			onHostAction: (action) => {
-				actionProofs.push(
-					action.type === 'connection.pair'
-						? {
-								type: action.type,
-								pairingHost: new URL(action.pairingUrl).host,
-							}
-						: action,
-				);
+				actionProofs.push(action);
 			},
 			preloadPath,
 		});

@@ -60,6 +60,7 @@ export class UiBundleStore {
 			...(options.maxTotalBytes === undefined ? {} : { maxTotalBytes: options.maxTotalBytes }),
 			...(options.maxPathBytes === undefined ? {} : { maxPathBytes: options.maxPathBytes }),
 			...(options.maxContentTypeBytes === undefined ? {} : { maxContentTypeBytes: options.maxContentTypeBytes }),
+			...(options.requireHostCompatibility === undefined ? {} : { requireHostCompatibility: options.requireHostCompatibility }),
 		};
 	}
 

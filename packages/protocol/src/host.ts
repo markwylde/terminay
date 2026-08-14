@@ -51,11 +51,13 @@ export interface TerminayHostRuntimeSupport {
 
 export interface TerminayHostContext {
   readonly schemaVersion: typeof TERMINAY_HOST_CONTEXT_SCHEMA_VERSION;
+  readonly bootstrapVersion: typeof TERMINAY_HOST_BOOTSTRAP_VERSION;
   readonly sourceId: string;
   readonly windowId: string;
   readonly serverId: string;
   readonly profileId: string;
   readonly bundleId: string;
+  readonly applicationProtocolVersion: string;
   readonly hostKind: TerminayHostKind;
   readonly hostBridgeVersion: number;
   readonly byteEndpointVersion: number;
@@ -83,6 +85,23 @@ export type TerminayHostCompatibilityResult =
       unavailableOptionalCapabilities: readonly TerminayHostCapability[];
     }>
   | TerminayHostCompatibilityFailure;
+
+export interface TerminayUiBundleCompatibilityManifest {
+  readonly schemaVersion: 1;
+  readonly bundleId: string;
+  readonly protocolVersion: string;
+  readonly bundleFormatVersion: typeof TERMINAY_UI_BUNDLE_FORMAT_VERSION;
+  readonly hostCompatibility: TerminayHostCompatibilityRequirements;
+}
+
+export type TerminayBundleCompatibilityResult =
+  | TerminayHostCompatibilityResult
+  | Readonly<{
+      compatible: false;
+      component: "bundle-manifest" | "bundle-binding" | "application-protocol";
+      code: "invalid-manifest" | "identity-mismatch" | "version-mismatch";
+      message: string;
+    }>;
 
 export interface TerminayHostBytePacket {
   readonly type: "terminay.host-byte";
@@ -140,11 +159,13 @@ export function parseTerminayHostContext(value: unknown): TerminayHostContext {
     input,
     [
       "schemaVersion",
+      "bootstrapVersion",
       "sourceId",
       "windowId",
       "serverId",
       "profileId",
       "bundleId",
+      "applicationProtocolVersion",
       "hostKind",
       "hostBridgeVersion",
       "byteEndpointVersion",
@@ -154,11 +175,18 @@ export function parseTerminayHostContext(value: unknown): TerminayHostContext {
   );
   if (input.schemaVersion !== TERMINAY_HOST_CONTEXT_SCHEMA_VERSION)
     throw new TypeError("host context schema is unsupported");
+  if (input.bootstrapVersion !== TERMINAY_HOST_BOOTSTRAP_VERSION)
+    throw new TypeError("host bootstrap version is unsupported");
   const sourceId = identifier(input.sourceId, "source id", ID);
   const windowId = identifier(input.windowId, "window id", ID);
   const serverId = identifier(input.serverId, "server id", ID);
   const profileId = identifier(input.profileId, "profile id", ID);
   const bundleId = identifier(input.bundleId, "bundle id", BUNDLE_ID);
+  const applicationProtocolVersion = identifier(
+    input.applicationProtocolVersion,
+    "application protocol version",
+    ID,
+  );
   if (input.hostKind !== "browser" && input.hostKind !== "desktop")
     throw new TypeError("host kind is invalid");
   const hostBridgeVersion = version(
@@ -175,11 +203,13 @@ export function parseTerminayHostContext(value: unknown): TerminayHostContext {
   );
   return Object.freeze({
     schemaVersion: TERMINAY_HOST_CONTEXT_SCHEMA_VERSION,
+    bootstrapVersion: TERMINAY_HOST_BOOTSTRAP_VERSION,
     sourceId,
     windowId,
     serverId,
     profileId,
     bundleId,
+    applicationProtocolVersion,
     hostKind: input.hostKind,
     hostBridgeVersion,
     byteEndpointVersion,
@@ -303,6 +333,58 @@ export function evaluateTerminayHostCompatibility(
       unavailableOptionalCapabilities,
     ),
   });
+}
+
+/** Browser-safe parser for the compatibility-bearing portion of the canonical
+ * server-core UI manifest. Asset hashes remain the installer/verifier's job. */
+export function parseTerminayUiBundleCompatibilityManifest(
+  value: unknown,
+): TerminayUiBundleCompatibilityManifest {
+  const input = record(value, "UI bundle manifest");
+  exactKeys(
+    input,
+    [
+      "schemaVersion", "bundleId", "entryPath", "protocolVersion",
+      "serverVersion", "contentSecurityPolicy", "bundleFormatVersion",
+      "hostCompatibility", "assets",
+    ],
+    "UI bundle manifest",
+  );
+  if (input.schemaVersion !== 1 || input.bundleFormatVersion !== TERMINAY_UI_BUNDLE_FORMAT_VERSION)
+    throw new TypeError("UI bundle manifest version is unsupported");
+  if (!Array.isArray(input.assets) || input.assets.length === 0)
+    throw new TypeError("UI bundle manifest assets are invalid");
+  return Object.freeze({
+    schemaVersion: 1,
+    bundleId: identifier(input.bundleId, "bundle id", BUNDLE_ID),
+    protocolVersion: identifier(input.protocolVersion, "application protocol version", ID),
+    bundleFormatVersion: TERMINAY_UI_BUNDLE_FORMAT_VERSION,
+    hostCompatibility: parseTerminayHostCompatibilityRequirements(input.hostCompatibility),
+  });
+}
+
+export function evaluateTerminayBundleCompatibility(
+  manifestValue: unknown,
+  bootstrapValue: unknown,
+  supportValue: TerminayHostRuntimeSupport,
+): TerminayBundleCompatibilityResult {
+  let manifest: TerminayUiBundleCompatibilityManifest;
+  try {
+    manifest = parseTerminayUiBundleCompatibilityManifest(manifestValue);
+  } catch (error) {
+    return Object.freeze({ compatible: false, component: "bundle-manifest", code: "invalid-manifest", message: error instanceof Error ? error.message : "UI bundle manifest is invalid" });
+  }
+  let bootstrap: TerminayHostContext;
+  try {
+    bootstrap = parseTerminayHostContext(bootstrapValue);
+  } catch (error) {
+    return Object.freeze({ compatible: false, component: "bundle-binding", code: "identity-mismatch", message: error instanceof Error ? error.message : "host bootstrap is invalid" });
+  }
+  if (bootstrap.bundleId !== manifest.bundleId)
+    return Object.freeze({ compatible: false, component: "bundle-binding", code: "identity-mismatch", message: "host bootstrap belongs to another UI bundle" });
+  if (bootstrap.applicationProtocolVersion !== manifest.protocolVersion)
+    return Object.freeze({ compatible: false, component: "application-protocol", code: "version-mismatch", message: "host bootstrap application protocol does not match the UI bundle" });
+  return evaluateTerminayHostCompatibility(manifest.hostCompatibility, supportValue);
 }
 
 export function createTerminayHostBytePacket(
@@ -524,6 +606,23 @@ export function requiredTerminayHostCapability(
     case "os.reveal":
       return "osIntegration";
   }
+}
+
+/**
+ * Validate a semantic action, its immutable source binding, gesture proof, and
+ * the capability injected by the trusted host. The renderer can request an
+ * action but cannot manufacture the authority needed to perform it.
+ */
+export function authorizeTerminayHostActionRequest(
+  value: unknown,
+  contextValue: unknown,
+): TerminayHostActionRequest {
+  const context = parseTerminayHostContext(contextValue);
+  const request = parseTerminayHostActionRequest(value, context);
+  const capability = requiredTerminayHostCapability(request.action);
+  if (capability !== undefined && context.capabilities[capability] === undefined)
+    throw new TypeError(`host capability is unavailable: ${capability}`);
+  return request;
 }
 
 export function parseTerminayHostBytePacket(

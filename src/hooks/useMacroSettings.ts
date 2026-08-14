@@ -34,29 +34,20 @@ export function useLegacyMacroSettingsCapability(): LegacyMacroSettingsCapabilit
  */
 export function createServerMacroSettingsClient(
   client: MacroClient,
-  legacy: LegacyMacroSettingsCapability,
 ): MacroSettingsClient {
   return {
     async getMacros() {
-      const macros = await legacy.getMacros()
-      await client.replace(macros)
-      return macros
+      return [...(await client.get()).macros] as MacroDefinition[]
     },
     async updateMacros(macros) {
-      // Queue the compatibility commit first. Existing Desktop callers that
-      // read macros.json immediately after the click then observe the complete
-      // presentation definition (including select options) while this method
-      // still acknowledges only after the server mirror also commits.
-      const saved = await legacy.updateMacros(macros)
-      await client.replace(saved)
-      return saved
+      return [...(await client.replace(macros)).macros] as MacroDefinition[]
     },
     async resetMacros() {
-      const macros = await legacy.resetMacros()
-      await client.replace(macros)
-      return macros
+      return [...(await client.reset()).macros] as MacroDefinition[]
     },
-    onMacrosChanged: (listener) => legacy.onMacrosChanged(listener),
+    onMacrosChanged: (listener) => client.onChanged((state) => {
+      listener({ macros: [...state.macros] as MacroDefinition[] })
+    }),
   }
 }
 

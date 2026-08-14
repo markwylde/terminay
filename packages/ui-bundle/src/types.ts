@@ -1,4 +1,7 @@
-import type { TerminayHostCompatibilityRequirements } from "@terminay/protocol";
+import type {
+  TerminayBundleCompatibilityResult,
+  TerminayHostCompatibilityRequirements,
+} from "@terminay/protocol";
 
 export interface UiBundleAsset {
   readonly contentType: string;
@@ -52,6 +55,8 @@ export interface VerifiedUiBundle {
   readonly manifest: UiBundleManifest;
   read(path: string): Uint8Array;
 }
+
+export type UiBundleHostCompatibilityResult = TerminayBundleCompatibilityResult;
 
 export type UiBundleErrorCode =
   | "validation"

@@ -12,7 +12,7 @@ test('Task 19 Quick Push removes the renderer-global compatibility hand-off', as
 	assert.match(modal, /client\s*\.\s*generateQuickPushPlan/u);
 	assert.match(modal, /client\s*\.\s*applyQuickPush/u);
 	assert.doesNotMatch(entry, /QuickPush/u);
-	assert.match(runtime, /quickPushClient=\{window\.terminayQuickPushHost\}/u);
+	assert.match(runtime, /quickPushClient:\s*window\.terminayQuickPushHost/u);
 });
 
 test('Task 19 Quick Push retains only its named two-operation preload host', async () => {

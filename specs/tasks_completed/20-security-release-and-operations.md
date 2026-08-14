@@ -24,7 +24,7 @@ The current evidence boundary is recorded in
 
 ## Dependencies
 
-- [Migration and compatibility cleanup](../tasks/19-migration-and-compatibility-cleanup.md)
+- [Migration and compatibility cleanup](./19-migration-and-compatibility-cleanup.md)
 
 ## Work slices
 

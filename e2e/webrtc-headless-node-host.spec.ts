@@ -32,11 +32,13 @@ test.skip(
   runtimeName !== 'node-datachannel' && runtimeName !== 'werift',
   'requires a supported headless WebRTC proof runtime',
 )
-if (hostedProofScope !== 'bootstrap' && hostedProofScope !== 'full') {
-  throw new Error('TERMINAY_HOSTED_PROOF_SCOPE must be bootstrap or full.')
+if (hostedProofScope !== 'bootstrap' && hostedProofScope !== 'bundle' && hostedProofScope !== 'full') {
+  throw new Error('TERMINAY_HOSTED_PROOF_SCOPE must be bootstrap, bundle, or full.')
 }
 const hostedProofDescription = hostedProofScope === 'bootstrap'
   ? 'installs the server UI through authenticated hosted signaling'
+  : hostedProofScope === 'bundle'
+    ? 'installs the verified server bundle and exchanges application bytes'
   : 'pairs, reconnects, and revokes'
 
 const requireFromSpike = dependencyRoot
@@ -478,6 +480,12 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       enroll(options: unknown): Promise<unknown>
     }
     type SessionHost = Record<string, unknown> & {
+      prepareWorkspace?(): Promise<Record<string, unknown> & {
+        endpoint: {
+          send(frame: Uint8Array): Promise<void>
+          subscribe(listener: (frame: Uint8Array) => void): () => void
+        }
+      }>
       registerApplication(delegate: ApplicationDelegate): void
     }
     let sessionHost: unknown
@@ -488,6 +496,40 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         const host = value as SessionHost
         sessionHost = Object.freeze({
           ...host,
+          async prepareWorkspace() {
+            if (typeof host.prepareWorkspace !== 'function') {
+              throw new Error('The hosted workspace preparation contract is unavailable.')
+            }
+            const prepared = await host.prepareWorkspace()
+            const endpoint = prepared.endpoint
+            let activeListener: ((frame: Uint8Array) => void) | undefined
+            Object.defineProperty(window, '__terminayProtocolOnlyFault', {
+              configurable: true,
+              value: {
+                fail() {
+                  // Deliver an invalid protocol frame without closing WebRTC.
+                  // This reproduces protocol-reader failure independently of
+                  // the healthy application lane.
+                  activeListener?.(new Uint8Array())
+                },
+                state: () => 'open',
+              },
+            })
+            return Object.freeze({
+              ...prepared,
+              endpoint: Object.freeze({
+                send: (frame: Uint8Array) => endpoint.send(frame),
+                subscribe(listener: (frame: Uint8Array) => void) {
+                  activeListener = listener
+                  const unsubscribe = endpoint.subscribe(listener)
+                  return () => {
+                    if (activeListener === listener) activeListener = undefined
+                    unsubscribe()
+                  }
+                },
+              }),
+            })
+          },
           registerApplication(delegate: ApplicationDelegate) {
             host.registerApplication({
               ...delegate,
@@ -620,6 +662,11 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     const sessionId = new URL(pairingUrl).hostname.replace(/\.localhost$/, '')
 
     const page = await context.newPage()
+    const browserRuntimeErrors: string[] = []
+    page.on('pageerror', (error) => browserRuntimeErrors.push(error.message))
+    page.on('console', (message) => {
+      if (message.type() === 'error') browserRuntimeErrors.push(message.text())
+    })
     await page.goto(pairingUrl, { waitUntil: 'domcontentloaded' })
     // This must be the browser's native WebRTC implementation.  A stubbed
     // constructor would make the headless runtime proof look interoperable
@@ -693,6 +740,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
           __terminayHeadlessSignalLog?: unknown
         }).__terminayHeadlessSignalLog,
         status: document.querySelector('#status')?.textContent ?? '',
+        body: document.body.innerText,
       }))
       const hostEvidence = hostWindows.map((host) => ({
         clientSignals: host.evidence.clientSignals.map((message) => message.type),
@@ -701,7 +749,9 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       }))
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}\n` +
-        `browser=${JSON.stringify(browserEvidence)}\nhost=${JSON.stringify(hostEvidence)}`,
+        `browser=${JSON.stringify(browserEvidence)}\n` +
+        `runtimeErrors=${JSON.stringify(browserRuntimeErrors)}\n` +
+        `host=${JSON.stringify(hostEvidence)}`,
       )
     }
     await page.getByLabel('Pairing PIN').fill('123456')
@@ -777,6 +827,12 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
     await expect(page.getByText('client is not connected', { exact: true })).toHaveCount(0)
 
+    // The bundle scope is the canonical four-lane interoperability gate: a
+    // real Chromium answerer has fetched and verified the server-owned assets,
+    // mounted them, authenticated, and exchanged application bytes with the
+    // plain-Node Werift offerer. Recovery/revocation remain the broader suite.
+    if (hostedProofScope === 'bundle') return
+
     // Reproduce the deployed failure shape: the mounted application's protocol
     // reader ends while its WebRTC peer and application data channel remain
     // healthy. Lane-close tests do not exercise this split-brain state.
@@ -797,6 +853,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       ((window as Window & {
         __terminayReconnectDiagnostics?: Array<{ phase: string }>
       }).__terminayReconnectDiagnostics ?? []).filter((entry) => entry.phase === 'started').length)
+    const hostCountBeforeProtocolFailure = hostWindows.length
     await page.evaluate(() => {
       const fault = (window as Window & {
         __terminayProtocolOnlyFault?: { fail(): void }
@@ -823,6 +880,23 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       message: 'protocol EOF recovery must converge to one application connection',
       timeout: 60_000,
     }).toBe(1)
+    if (protocolRuntime) {
+      const protocolReplacement = await waitFor(
+        () => hostWindows.slice(hostCountBeforeProtocolFailure).find((host) =>
+          host.evidence.hostSignals.some((message) => message.type === 'reconnect-offer') &&
+          requiredLaneLabels.every((label) => host.laneState(label) === 'open')),
+        60_000,
+        'one fresh host generation after application protocol EOF',
+      )
+      expect(hostWindows).toHaveLength(hostCountBeforeProtocolFailure + 1)
+      expect(protocolReplacement).not.toBe(protocolRuntime)
+      await expect.poll(() => protocolRuntime.peerState(), {
+        message: 'protocol EOF must retire the stale peer generation',
+      }).toBe('closed')
+      for (const retiredLane of [...bootstrapLaneLabels, ...requiredLaneLabels]) {
+        await expect.poll(() => protocolRuntime.laneState(retiredLane)).toBe('closed')
+      }
+    }
     await expect(renewalFailure).toHaveCount(0)
     await page.getByRole('textbox', { name: 'Terminal input' }).focus()
     const protocolRecoveryInput = `${runtimeName}-protocol-recovery-ok`

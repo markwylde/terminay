@@ -19,19 +19,18 @@ const commands = [
 
 function context(overrides = {}) {
   return {
-    version: DESKTOP_HOST_BRIDGE_VERSION,
+    schemaVersion: 1,
+    bootstrapVersion: 1,
+    sourceId: "source-presentation",
     windowId: "window-presentation",
-    connectionId: "remote:one",
-    profileLabel: "Remote",
-    capabilities: { nativeWindows: true, updater: true, osIntegration: true },
-    presentation: createDesktopPresentationMetadata({
-      accelerators: [
-        { command: "new-terminal", title: "New terminal", accelerator: "CmdOrCtrl+T" },
-      ],
-      geometry: { x: 20, y: 30, width: 1200, height: 800, maximized: false },
-      updater: { state: "idle", currentVersion: "1.2.3" },
-      osIntegration: { externalOpen: true, reveal: true, notifications: false, nativeMenu: true, dockIcon: true },
-    }),
+    serverId: "server-presentation",
+    profileId: "remote:one",
+    bundleId: "bundle_12345678",
+    applicationProtocolVersion: "1",
+    hostKind: "desktop",
+    hostBridgeVersion: DESKTOP_HOST_BRIDGE_VERSION,
+    byteEndpointVersion: 1,
+    capabilities: { updater: 1, osIntegration: 1 },
     ...overrides,
   };
 }
@@ -128,22 +127,22 @@ test("OS integration actions are capability-gated and remain presentation-only",
     sourceId: "source-presentation",
     context: context(),
     handlers: {
-      externalOpen: (request) => calls.push(["open", request.url]),
-      reveal: (request) => calls.push(["reveal", request.fileId]),
-      updateStatus: (request) => calls.push(["update", request.state]),
+      "os.open-external": (request) => calls.push(["open", request.url]),
+      "os.reveal": (request) => calls.push(["reveal", request.token]),
+      "updater.check": () => calls.push(["update", "check"]),
     },
   });
-  const requestBase = { version: DESKTOP_HOST_BRIDGE_VERSION, sourceId: "source-presentation", windowId: "window-presentation", connectionId: "remote:one", userGesture: true };
-  await router.request({ ...requestBase, action: { type: "external.open", url: "https://docs.example/help" } });
-  await router.request({ ...requestBase, action: { type: "reveal", fileId: "file-token" } });
-  await router.request({ ...requestBase, action: { type: "update.status", channel: "stable", state: "available" } });
-  assert.deepEqual(calls, [["open", "https://docs.example/help"], ["reveal", "file-token"], ["update", "available"]]);
+  const requestBase = { schemaVersion: 1, bridgeVersion: 1, sourceId: "source-presentation", windowId: "window-presentation", profileId: "remote:one", serverId: "server-presentation", userGesture: true };
+  await router.request({ ...requestBase, action: { type: "os.open-external", url: "https://docs.example/help" } });
+  await router.request({ ...requestBase, action: { type: "os.reveal", token: "file-token" } });
+  await router.request({ ...requestBase, action: { type: "updater.check" } });
+  assert.deepEqual(calls, [["open", "https://docs.example/help"], ["reveal", "file-token"], ["update", "check"]]);
 
   const noOs = new DesktopHostBridgeRouter();
-  noOs.register({ sourceId: "source-no-os", context: context({ capabilities: { nativeWindows: true, updater: true } }), handlers: {} });
-  await assert.rejects(noOs.request({ ...requestBase, sourceId: "source-no-os", action: { type: "external.open", url: "https://docs.example/help" } }), /osIntegration/);
+  noOs.register({ sourceId: "source-no-os", context: context({ sourceId: "source-no-os", capabilities: { updater: 1 } }), handlers: {} });
+  await assert.rejects(noOs.request({ ...requestBase, sourceId: "source-no-os", action: { type: "os.open-external", url: "https://docs.example/help" } }), /osIntegration/);
 
   const noUpdater = new DesktopHostBridgeRouter();
-  noUpdater.register({ sourceId: "source-no-updater", context: context({ capabilities: { nativeWindows: true, osIntegration: true } }), handlers: {} });
-  await assert.rejects(noUpdater.request({ ...requestBase, sourceId: "source-no-updater", action: { type: "update.status", channel: "stable", state: "available" } }), /updater/);
+  noUpdater.register({ sourceId: "source-no-updater", context: context({ sourceId: "source-no-updater", capabilities: { osIntegration: 1 } }), handlers: {} });
+  await assert.rejects(noUpdater.request({ ...requestBase, sourceId: "source-no-updater", action: { type: "updater.check" } }), /updater/);
 });

@@ -212,7 +212,7 @@ test('unknown extensions keep the default mode but allow preview text and hex ta
   await expect(mainWindow.locator('.file-hex-viewer')).toBeVisible()
 })
 
-test('custom extension defaults choose the first file viewer tab', async ({ createWorkspace, mainWindow }) => {
+test('custom extension defaults choose the first file viewer tab', async ({ appHarness, createWorkspace, mainWindow }) => {
   const workspace = await createWorkspace({
     name: 'file-viewer-custom-extension-default',
     seed: {
@@ -222,16 +222,13 @@ test('custom extension defaults choose the first file viewer tab', async ({ crea
     },
   })
 
-  await mainWindow.evaluate(async () => {
-    const settings = await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()
-    await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings({
-      ...settings,
-      fileViewer: {
-        ...settings.fileViewer,
-        customFileExtensions: [{ defaultMode: 'text', extension: '.e2etext' }],
-      },
-    })
-  })
+  const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'file-viewer-refresh' })
+  await settingsWindow.getByRole('button', { name: 'Add Extension' }).click()
+  const row = settingsWindow.locator('.settings-custom-extensions__item').last()
+  await row.getByLabel('File extension').fill('.e2etext')
+  await row.getByLabel('File extension').press('Enter')
+  await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
+  await settingsWindow.close()
 
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)

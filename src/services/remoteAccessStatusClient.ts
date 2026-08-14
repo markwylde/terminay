@@ -7,4 +7,5 @@ export type RemoteAccessStatusClient = Pick<
 	| 'setPairingAddress'
 	| 'subscribe'
 	| 'toggleServer'
+	| 'toggleDirectListener'
 >;

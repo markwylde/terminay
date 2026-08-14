@@ -10,7 +10,7 @@ const directory = await mkdtemp(join(tmpdir(), 'terminay-desktop-webrtc-'))
 const output = join(directory, 'desktopWebRtcTransport.mjs')
 await build({
   alias: {
-    '@terminay/server-core': join(process.cwd(), 'packages/server-core/src/index.ts'),
+    '@terminay/server-core/remote': join(process.cwd(), 'packages/server-core/src/remote/index.ts'),
   },
   bundle: true,
   entryPoints: ['electron/remote/desktopWebRtcTransport.ts'],
@@ -20,7 +20,7 @@ await build({
   platform: 'node',
   target: 'node20',
 })
-const { createDesktopWebRtcTransport } = await import(pathToFileURL(output).href)
+const { createDesktopWebRtcConnection, createDesktopWebRtcTransport } = await import(pathToFileURL(output).href)
 test.after(async () => rm(directory, { force: true, recursive: true }))
 const identity = {
   deviceId: 'desktop-device',
@@ -90,6 +90,34 @@ test('Desktop native offerer establishes four isolated lanes and exposes the fra
   assert.deepEqual([...(await transport.incoming[Symbol.asyncIterator]().next()).value], [4, 5])
   await transport.close()
   assert.ok([...Peer.instance.channels.values()].every(channel => channel.closed))
+})
+
+test('Desktop authenticated assets lane fetches manifest and reassembles bounded acknowledged chunks', async () => {
+  let signalListener = () => {}
+  const signaling = {
+    onMessage(listener) { signalListener = listener; return () => { signalListener = () => {} } },
+    send(message) { if (message.type === 'offer') queueMicrotask(() => signalListener({ type: 'answer', sdp: 'answer-sdp' })) },
+    sign(message) { return message }, verify(message) { return message },
+  }
+  const connection = await createDesktopWebRtcConnection({ peerId: 'desktop-assets', ...identity, signaling, loadModule: async () => ({ PeerConnection: Peer }) })
+  const assets = Peer.instance.channels.get('assets')
+  const decode = (frame) => JSON.parse(new TextDecoder().decode(frame))
+  const encode = (value) => new TextEncoder().encode(JSON.stringify(value))
+
+  const manifestPromise = connection.assets.manifest()
+  const manifestRequest = decode(assets.sent.at(-1))
+  assets.emit(encode({ id: manifestRequest.id, bundleId: 'bundle', assets: [] }))
+  assert.deepEqual(await manifestPromise, { bundleId: 'bundle', assets: [] })
+
+  const readPromise = connection.assets.read('/remote-app/bundle/app.js')
+  const readRequest = decode(assets.sent.at(-1))
+  assets.emit(encode({ id: readRequest.id, type: 'asset:chunk', index: 0, total: 2, path: readRequest.path, bodyBase64Chunk: 'AQID' }))
+  assets.emit(encode({ id: readRequest.id, type: 'asset:chunk', index: 1, total: 2, path: readRequest.path, bodyBase64Chunk: '' }))
+  assert.deepEqual([...(await readPromise)], [1, 2, 3])
+  assert.deepEqual(assets.sent.slice(-2).map(decode).map(({ type, index }) => ({ type, index })), [
+    { type: 'asset:ack', index: 0 }, { type: 'asset:ack', index: 1 },
+  ])
+  await connection.transport.close()
 })
 
 test('Desktop close discards application frames queued behind a stalled consumer', async () => {
