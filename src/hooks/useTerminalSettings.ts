@@ -1,6 +1,7 @@
 import type { SettingsClient } from '@terminay/client-core';
-import type { JsonValue } from '@terminay/protocol';
+import { type JsonValue, TERMINAY_HOST_MENU_COMMANDS } from '@terminay/protocol';
 import { createContext, createElement, type ReactNode, useContext, useEffect, useState } from 'react';
+import { updateNativeMenuAccelerators } from '../host/nativeActions';
 import {
 	defaultTerminalSettings,
 	normalizeTerminalSettings,
@@ -52,6 +53,7 @@ export function createServerTerminalSettingsClient(
 			const serverUpdate = selectServerSettings(settings, current);
 			connectionHostSettings = selectConnectionHostSettings(settings);
 			writeConnectionHostSettings(connectionHostSettings);
+			await publishNativeAccelerators(settings);
 			const state = serverSettings(await client.update<JsonValue>(serverUpdate));
 			return normalizeTerminalSettings(
 				mergeSettings(mergeSettings(defaultTerminalSettings, state), connectionHostSettings),
@@ -60,6 +62,7 @@ export function createServerTerminalSettingsClient(
 		async reset<T>() {
 			connectionHostSettings = {};
 			writeConnectionHostSettings(connectionHostSettings);
+			await publishNativeAccelerators(defaultTerminalSettings as unknown as JsonValue);
 			const state = serverSettings(await client.reset<JsonValue>());
 			return normalizeTerminalSettings(mergeSettings(defaultTerminalSettings, state)) as T;
 		},
@@ -103,6 +106,16 @@ function writeConnectionHostSettings(settings: JsonValue): void {
 	} catch {
 		// An unavailable host store must not prevent selected-server settings writes.
 	}
+}
+
+async function publishNativeAccelerators(settings: JsonValue): Promise<void> {
+	if (typeof window === 'undefined' || typeof settings !== 'object' || settings === null || Array.isArray(settings)) return;
+	const shortcuts = settings.keyboardShortcuts;
+	if (typeof shortcuts !== 'object' || shortcuts === null || Array.isArray(shortcuts)) return;
+	await updateNativeMenuAccelerators(TERMINAY_HOST_MENU_COMMANDS.map((command) => ({
+		command,
+		accelerator: typeof shortcuts[command] === 'string' ? shortcuts[command] : '',
+	})));
 }
 
 function selectServerSettings(value: JsonValue, shape: JsonValue): JsonValue {
