@@ -18,7 +18,8 @@
 	gap: 12px;
 	min-height: 64px;
 	padding: 10px 12px;
-	border: 1px solid color-mix(in srgb, var(--dictation-accent) 34%, rgba(255, 255, 255, 0.1));
+	border: 1px solid
+		color-mix(in srgb, var(--dictation-accent) 34%, rgba(255, 255, 255, 0.1));
 	border-radius: 8px;
 	background:
 		linear-gradient(180deg, rgba(17, 22, 29, 0.96), rgba(8, 10, 14, 0.96)),
@@ -32,7 +33,7 @@
 }
 
 .dictation-overlay__shell::before {
-	content: '';
+	content: "";
 	position: absolute;
 	inset: 0;
 	border-radius: inherit;
@@ -54,11 +55,17 @@
 	flex: 0 0 auto;
 	width: 36px;
 	height: 36px;
-	border: 1px solid color-mix(in srgb, var(--dictation-accent) 45%, rgba(255, 255, 255, 0.1));
+	border: 1px solid
+		color-mix(in srgb, var(--dictation-accent) 45%, rgba(255, 255, 255, 0.1));
 	border-radius: 50%;
-	background: color-mix(in srgb, var(--dictation-accent) 14%, rgba(255, 255, 255, 0.04));
+	background: color-mix(
+		in srgb,
+		var(--dictation-accent) 14%,
+		rgba(255, 255, 255, 0.04)
+	);
 	color: var(--dictation-accent);
-	box-shadow: 0 0 20px color-mix(in srgb, var(--dictation-accent) 26%, transparent);
+	box-shadow: 0 0 20px
+		color-mix(in srgb, var(--dictation-accent) 26%, transparent);
 }
 
 .dictation-overlay--recording .dictation-overlay__indicator {
@@ -80,6 +87,12 @@
 	flex-direction: column;
 	gap: 8px;
 	min-width: 0;
+}
+
+.dictation-overlay__disclosure {
+	color: rgba(220, 226, 240, 0.62);
+	font-size: 11px;
+	line-height: 1.25;
 }
 
 .dictation-overlay__meta {
@@ -214,8 +227,16 @@
 }
 
 .dictation-overlay__button--secondary {
-	background: color-mix(in srgb, var(--dictation-accent) 16%, rgba(255, 255, 255, 0.04));
-	border-color: color-mix(in srgb, var(--dictation-accent) 38%, rgba(255, 255, 255, 0.08));
+	background: color-mix(
+		in srgb,
+		var(--dictation-accent) 16%,
+		rgba(255, 255, 255, 0.04)
+	);
+	border-color: color-mix(
+		in srgb,
+		var(--dictation-accent) 38%,
+		rgba(255, 255, 255, 0.08)
+	);
 	color: #f0f6fc;
 }
 
@@ -240,11 +261,13 @@
 @keyframes dictation-pulse {
 	0%,
 	100% {
-		box-shadow: 0 0 18px color-mix(in srgb, var(--dictation-accent) 22%, transparent);
+		box-shadow: 0 0 18px
+			color-mix(in srgb, var(--dictation-accent) 22%, transparent);
 	}
 
 	50% {
-		box-shadow: 0 0 28px color-mix(in srgb, var(--dictation-accent) 42%, transparent);
+		box-shadow: 0 0 28px
+			color-mix(in srgb, var(--dictation-accent) 42%, transparent);
 	}
 }
 

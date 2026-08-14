@@ -10,6 +10,7 @@ const target = {
 };
 
 const disclosure = {
+	audioDestination: 'openai',
 	serverLabel: 'Staging server',
 	provider: 'openai',
 	credentialStatus: 'configured',
@@ -47,6 +48,7 @@ test('dictation binds an immutable target and disclosure to one bounded request'
 	assert.deepEqual([...request.audio], [1, 2, 3, 4]);
 	assert.equal(request.durationMs, 1250);
 	assert.deepEqual(request.disclosure, {
+		audioDestination: 'openai',
 		serverLabel: 'Staging server',
 		provider: 'openai',
 		credentialStatus: 'configured',
@@ -108,9 +110,22 @@ test('dictation enforces MIME, byte, duration, and cancellation boundaries', () 
 test('dictation disclosure rejects credential-shaped fields', () => {
 	const client = new DictationCaptureClient({
 		createRequestId: () => 'request-c',
+		now: () => 1,
 	});
 	assert.throws(
 		() => client.begin(target, { ...disclosure, apiKey: 'never-send-this' }),
 		/credentials/,
 	);
+	assert.throws(
+		() => client.begin(target, { ...disclosure, provider: 'parakeet' }),
+		/disclosure/,
+	);
+	const local = client.begin(target, {
+		...disclosure,
+		audioDestination: 'selected-server',
+		provider: 'parakeet',
+	}, { mimeType: 'audio/wav' });
+	assert.equal(local.status, 'recording');
+	client.append(new Uint8Array([1]));
+	assert.equal(client.finish({ durationMs: 1 }).disclosure.audioDestination, 'selected-server');
 });

@@ -1,5 +1,5 @@
-import { appendFileSync, watch as watchFileSystem } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
+import { appendFileSync, watch as watchFileSystem } from 'node:fs';
 import {
 	lstat,
 	mkdir,
@@ -12,58 +12,70 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import {
+	basename,
+	dirname,
+	isAbsolute,
+	relative,
+	resolve,
+	sep,
+} from 'node:path';
+import type { JsonValue } from '@terminay/protocol';
+import { decodeFrame } from '@terminay/protocol';
 import { AgentStatusService } from '../packages/server-core/src/activity/agentService';
 import type { ActivitySessionIdentity } from '../packages/server-core/src/activity/service';
 import { TerminalActivityService } from '../packages/server-core/src/activity/service';
+import {
+	AI_SERVER_OPERATIONS,
+	AiService,
+	createAiOperationHandlers,
+	OpenAiDictationProvider,
+	ServerParakeetDictationProvider,
+	type ServerParakeetRuntime,
+	VaultProviderCredentialResolver,
+} from '../packages/server-core/src/aiService/index';
 import type { ServerCoreCompositionOptions } from '../packages/server-core/src/composition';
 import {
 	createServerCoreComposition,
 	type ServerCoreComposition,
 } from '../packages/server-core/src/composition';
 import {
+	composeRemoteMcpTerminalLifecycle,
+	RemoteMcpBridgeAuthority,
+	RemoteMcpEnvironmentCoordinator,
+} from '../packages/server-core/src/control/index';
+import { OrderedEventJournal } from '../packages/server-core/src/events';
+import {
 	createDefaultExtensionManagement,
 	createPuzedSshProductionExtensionManagement,
 	ExtensionProjectEnvironmentRuntime,
 } from '../packages/server-core/src/extensions/index';
-import { OrderedEventJournal } from '../packages/server-core/src/events';
-import {
-	RemoteMcpBridgeAuthority,
-	RemoteMcpEnvironmentCoordinator,
-	composeRemoteMcpTerminalLifecycle,
-} from '../packages/server-core/src/control/index';
 import {
 	CanonicalProjectPathResolver,
 	FileCatalog,
 	type FileCatalogProjectContext,
 	type FileCatalogStorage,
 	type FileContentProjectContext,
+	FileContentStreamService,
 	type FileProjectContext,
 	type FileSessionStorage,
-	FileContentStreamService,
 	ServerFileAdapter,
 	ServerFileCatalogAdapter,
 	ServerFileContentAdapter,
 } from '../packages/server-core/src/fileService/index';
+import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
 import { GitService } from '../packages/server-core/src/gitService/service';
 import {
+	createEnvironmentRoutedProjectServices,
+	createInitialProjectEnvironmentState,
 	ProjectEnvironmentRegistry,
 	ProjectEnvironmentRepository,
-	createInitialProjectEnvironmentState,
 	ProjectEnvironmentRouter,
-	createEnvironmentRoutedProjectServices,
 } from '../packages/server-core/src/projectEnvironment/index';
-import { ServerFileObservationAdapter } from '../packages/server-core/src/fileService/observationAdapter';
 import type { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
 import type { ServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import type { ShellProfileCatalogueService } from '../packages/server-core/src/shellProfiles/catalogue';
-import type {
-	BinaryQueryHandlerResult,
-	CommandRequest,
-	ConnectionDeliveryDiagnostic,
-	QueryRequest,
-} from '../packages/server-core/src/types';
 import {
 	createNodePtyFactory,
 	DetachableTerminalConsumerRegistry,
@@ -76,6 +88,12 @@ import {
 	type TerminalSubscription,
 	type Unsubscribe,
 } from '../packages/server-core/src/terminalService/index';
+import type {
+	BinaryQueryHandlerResult,
+	CommandRequest,
+	ConnectionDeliveryDiagnostic,
+	QueryRequest,
+} from '../packages/server-core/src/types';
 import {
 	createInitialWorkspace,
 	WorkspaceStore,
@@ -85,17 +103,15 @@ import {
 	ServerPortTransport,
 	ServerScopedMessagePort,
 } from '../src/shared/serverPortTransport';
-import {
-	type AgentStatusIpcAuthority,
-	createServerAgentStatusIpcAdapter,
-} from './agentStatus/serverAdapter';
-import { decodeFrame } from '@terminay/protocol';
-import type { JsonValue } from '@terminay/protocol';
 import type {
 	AiTabMetadataGenerateRequest,
 	AiTabMetadataGenerateResult,
 	FileViewerSparseFileSaveRequest,
 } from '../src/types/terminay';
+import {
+	type AgentStatusIpcAuthority,
+	createServerAgentStatusIpcAdapter,
+} from './agentStatus/serverAdapter';
 import { resolveTerminalProcessCwd } from './processCwd';
 
 const require = createRequire(import.meta.url);
@@ -117,12 +133,16 @@ const mainServerPortDiagnostics: MainServerPortDiagnostics = {
 	receivedFrames: 0,
 	sentFrames: 0,
 };
-(globalThis as typeof globalThis & {
-	__terminayMainServerPortDiagnostics?: MainServerPortDiagnostics;
-}).__terminayMainServerPortDiagnostics = mainServerPortDiagnostics;
+(
+	globalThis as typeof globalThis & {
+		__terminayMainServerPortDiagnostics?: MainServerPortDiagnostics;
+	}
+).__terminayMainServerPortDiagnostics = mainServerPortDiagnostics;
 writePortDiagnostic({ phase: 'authority-module-initialized' });
 
-export function writePortDiagnostic(value: Readonly<Record<string, unknown>>): void {
+export function writePortDiagnostic(
+	value: Readonly<Record<string, unknown>>,
+): void {
 	if (process.env.TERMINAY_TEST !== '1') return;
 	const file = process.env.TERMINAY_PORT_DIAGNOSTIC_FILE?.trim();
 	if (!file) return;
@@ -202,7 +222,9 @@ export interface ServerTerminalAuthorityOptions {
 	readonly maxReplayBytes?: number;
 	readonly onEvent?: (event: TerminalEvent) => void;
 	/** Metadata-only observation of bounded protocol delivery pressure. */
-	readonly onDeliveryDiagnostic?: (diagnostic: ConnectionDeliveryDiagnostic) => void;
+	readonly onDeliveryDiagnostic?: (
+		diagnostic: ConnectionDeliveryDiagnostic,
+	) => void;
 	/** Host-only observer for input that server-core has already accepted. */
 	readonly onAcceptedWrite?: ServerTerminalHostObserver<ServerTerminalAcceptedWrite>;
 	/** Host-only observer for resize that server-core has already accepted. */
@@ -230,10 +252,15 @@ export interface ServerTerminalAuthorityOptions {
 	/** Desktop provider adapter retained behind the server protocol while the
 	 * canonical AI target registry is wired to workspace presentation state. */
 	readonly aiMetadata?: {
+		readonly listModels: (
+			provider: 'claudeCode' | 'codex',
+		) => Promise<readonly { readonly id: string; readonly label: string }[]>;
 		readonly generate: (
 			request: AiTabMetadataGenerateRequest,
 		) => Promise<AiTabMetadataGenerateResult>;
 	};
+	/** Selected-server runtime; executable, environment, and paths stay in the server process. */
+	readonly parakeetRuntime?: ServerParakeetRuntime;
 	/** Privileged sparse writer. The authority verifies its project binding
 	 * before delegating the bounded atomic replacement implementation. */
 	readonly saveSparseFile?: (
@@ -334,7 +361,18 @@ export class ServerTerminalAuthority {
 			projects: this.fileSessionProjects,
 		});
 		const eventJournal = new OrderedEventJournal();
-		const projectEnvironments = options.projectEnvironmentRepository ?? new ProjectEnvironmentRepository({ async load() { return undefined; }, async commit() {} }, options.serverId, createInitialProjectEnvironmentState(options.serverId));
+		const projectEnvironments =
+			options.projectEnvironmentRepository ??
+			new ProjectEnvironmentRepository(
+				{
+					async load() {
+						return undefined;
+					},
+					async commit() {},
+				},
+				options.serverId,
+				createInitialProjectEnvironmentState(options.serverId),
+			);
 		const projectEnvironmentRegistry = new ProjectEnvironmentRegistry();
 		const projectEnvironmentRouter = new ProjectEnvironmentRouter({
 			serverId: options.serverId,
@@ -439,32 +477,142 @@ export class ServerTerminalAuthority {
 					? createDefaultExtensionManagement({
 							dataRoot: options.dataRoot,
 							authorityLabel: 'This server',
-							...(options.extensionHostChildEntrypoint === undefined ? {} : { childEntrypoint: options.extensionHostChildEntrypoint }),
+							...(options.extensionHostChildEntrypoint === undefined
+								? {}
+								: { childEntrypoint: options.extensionHostChildEntrypoint }),
 						})
 					: createPuzedSshProductionExtensionManagement({
 							dataRoot: options.dataRoot,
 							authorityLabel: 'This server',
-							...(options.extensionHostChildEntrypoint === undefined ? {} : { childEntrypoint: options.extensionHostChildEntrypoint }),
+							...(options.extensionHostChildEntrypoint === undefined
+								? {}
+								: { childEntrypoint: options.extensionHostChildEntrypoint }),
 							vault: options.vault,
 							projectEnvironments,
 							workspace: this.workspace,
 						});
-		if (extensionManagement !== undefined && options.vault !== undefined) projectEnvironmentRegistry.register(new ExtensionProjectEnvironmentRuntime('com.terminay.ssh/connection', ['terminal', 'filesystem', 'mcp-bridge'], extensionManagement.hosts, () => projectEnvironments.state));
-		const extensionProfiles = options.vault === undefined || extensionManagement === undefined
-			? undefined
-			: (extensionManagement as ReturnType<typeof createPuzedSshProductionExtensionManagement>).profiles;
+		if (extensionManagement !== undefined && options.vault !== undefined)
+			projectEnvironmentRegistry.register(
+				new ExtensionProjectEnvironmentRuntime(
+					'com.terminay.ssh/connection',
+					['terminal', 'filesystem', 'mcp-bridge'],
+					extensionManagement.hosts,
+					() => projectEnvironments.state,
+				),
+			);
+		const extensionProfiles =
+			options.vault === undefined || extensionManagement === undefined
+				? undefined
+				: (
+						extensionManagement as ReturnType<
+							typeof createPuzedSshProductionExtensionManagement
+						>
+					).profiles;
+		const parakeetProvider =
+			options.parakeetRuntime === undefined
+				? undefined
+				: new ServerParakeetDictationProvider(
+						options.parakeetRuntime,
+						resolve(
+							options.dataRoot ?? process.cwd(),
+							'dictation',
+							'temporary',
+						),
+					);
+		const openAiProvider = new OpenAiDictationProvider();
+		const dictationProvider = {
+			transcribe: (request: Parameters<typeof openAiProvider.transcribe>[0]) =>
+				request.model === 'mlx-community/parakeet-tdt-0.6b-v3'
+					? parakeetProvider === undefined
+						? Promise.reject(
+								new Error('Parakeet is unavailable on this server'),
+							)
+						: parakeetProvider.transcribe(request)
+					: openAiProvider.transcribe(request),
+		};
+		const openAiSecretId = 'dictation-openai-api-key';
+		const dictationAi =
+			options.vault === undefined
+				? undefined
+				: new AiService({
+						serverId: options.serverId,
+						authority: {
+							getTarget: (target) => this.aiTargetState(target),
+							authorize: (_clientId, target) =>
+								this.aiTargetState(target)?.live === true,
+							writeInput: (target, input) =>
+								this.service.input(target.sessionId, input),
+						},
+						replay: { read: (target) => this.aiReplay(target.sessionId) },
+						dictationProvider,
+						...(parakeetProvider === undefined
+							? {}
+							: { dictationRuntime: parakeetProvider }),
+						credentialResolver: new VaultProviderCredentialResolver({
+							vault: options.vault.vault,
+							bindings: [{ provider: 'openai', secretId: openAiSecretId }],
+						}),
+						dictationCredential: {
+							status: () => ({
+								configured: options
+									.vault!.status()
+									.entries.some((entry) => entry.id === openAiSecretId),
+							}),
+							set: async (value) => {
+								const exists = options
+									.vault!.status()
+									.entries.some((entry) => entry.id === openAiSecretId);
+								await (exists
+									? options.vault!.vault.replace({
+											id: openAiSecretId,
+											label: 'OpenAI API key',
+											value,
+										})
+									: options.vault!.vault.put({
+											id: openAiSecretId,
+											label: 'OpenAI API key',
+											value,
+										}));
+								return { configured: true };
+							},
+							clear: async () => ({
+								configured: !(await options.vault!.vault.remove(openAiSecretId))
+									.deleted,
+							}),
+						},
+						dictationSettings: () =>
+							embeddedDictationSettings(options.settings?.settings),
+					});
+		const dictationOperations =
+			dictationAi === undefined
+				? undefined
+				: dictationOnlyOperations(createAiOperationHandlers(dictationAi));
 		let remoteMcp: RemoteMcpEnvironmentCoordinator | undefined;
 		this.composition = createServerCoreComposition({
 			serverId: options.serverId,
 			serverVersion: 'desktop-local',
-			...(options.terminalService !== undefined && options.shellProfiles === undefined
+			...(options.terminalService !== undefined &&
+			options.shellProfiles === undefined
 				? { allowUnresolvedTestSessions: true }
 				: {}),
-			capabilities: ['terminal', 'workspace', 'files', 'agents', 'git'],
+			capabilities: [
+				'terminal',
+				'workspace',
+				'files',
+				'agents',
+				'git',
+				...(dictationAi === undefined ? [] : ['ai.dictation']),
+			],
 			authenticate: ({ hello }) => ({
 				clientId: hello.clientId,
 				authScope: 'admin',
-				permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
+				permissions: [
+					'environments:read',
+					'environments:manage',
+					'workspace:write',
+					'extensions:read',
+					'extensions:manage',
+				],
 			}),
 			workspace: this.workspace,
 			workspaceOperations: {
@@ -476,16 +624,27 @@ export class ServerTerminalAuthority {
 			git: gitAdapter,
 			eventJournal,
 			projectEnvironmentRouter,
-			projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.defaultProjectRoot?.() ?? process.cwd(), ...(extensionProfiles === undefined ? {} : { providers: extensionProfiles }) },
+			projectEnvironments: {
+				repository: projectEnvironments,
+				thisServerRoot: () => options.defaultProjectRoot?.() ?? process.cwd(),
+				...(extensionProfiles === undefined
+					? {}
+					: { providers: extensionProfiles }),
+			},
 			terminalOptions: {
 				sessionLifecycle: composeRemoteMcpTerminalLifecycle(() => remoteMcp),
 			},
-			...(extensionManagement === undefined ? {} : { extensions: extensionManagement }),
-			...(extensionManagement === undefined && options.vault === undefined
+			...(extensionManagement === undefined
+				? {}
+				: { extensions: extensionManagement }),
+			...(extensionManagement === undefined &&
+			options.vault === undefined &&
+			parakeetProvider === undefined
 				? {}
 				: {
 						serviceLifecycle: {
 							stop: async () => {
+								parakeetProvider?.stop();
 								const results = await Promise.allSettled([
 									extensionManagement?.hosts.shutdown(),
 									options.vault?.lock(),
@@ -522,6 +681,13 @@ export class ServerTerminalAuthority {
 					}),
 			operations: {
 				queries: {
+					...dictationOperations?.queries,
+					...(options.aiMetadata === undefined
+						? {}
+						: {
+								'ai.models.list': (request: QueryRequest) =>
+									this.listAiMetadataModels(request),
+							}),
 					...fileSessionOperations.queries,
 					...fileCatalogOperations.queries,
 					...fileContentOperations.queries,
@@ -531,6 +697,7 @@ export class ServerTerminalAuthority {
 						this.getFileMutationRevision(request),
 				},
 				commands: {
+					...dictationOperations?.commands,
 					...fileSessionOperations.commands,
 					...fileCatalogOperations.commands,
 					...fileContentOperations.commands,
@@ -570,10 +737,16 @@ export class ServerTerminalAuthority {
 		if (options.remoteMcpDispatch !== undefined) {
 			const authority = new RemoteMcpBridgeAuthority({
 				dispatch: (scope, op, params, { signal }) =>
-					options.remoteMcpDispatch!(scope.terminalSessionId, op, params, signal),
+					options.remoteMcpDispatch!(
+						scope.terminalSessionId,
+						op,
+						params,
+						signal,
+					),
 			});
 			remoteMcp = new RemoteMcpEnvironmentCoordinator(
-				createEnvironmentRoutedProjectServices(projectEnvironmentRouter).mcpBridge,
+				createEnvironmentRoutedProjectServices(projectEnvironmentRouter)
+					.mcpBridge,
 				authority,
 			);
 			this.remoteMcp = remoteMcp;
@@ -625,8 +798,7 @@ export class ServerTerminalAuthority {
 			// A bounded diff is still evidence that Git discovered and tracked the
 			// target. Keep Diff available so the client can render its explicit
 			// too-large state instead of presenting the file as untracked.
-			isTracked:
-				result.state === 'ready' || result.state === 'command-error',
+			isTracked: result.state === 'ready' || result.state === 'command-error',
 			path: canonicalPath,
 			relativePath,
 			repoRoot: project.root,
@@ -720,9 +892,28 @@ export class ServerTerminalAuthority {
 		return { text: result.text };
 	}
 
+	private async listAiMetadataModels(
+		request: QueryRequest,
+	): Promise<JsonValue> {
+		const service = this.options.aiMetadata;
+		if (service === undefined)
+			throw new Error('AI metadata provider is unavailable');
+		const payload = protocolPayload(request.envelope.payload);
+		const provider = protocolString(payload.provider, 'AI provider');
+		if (provider !== 'codex' && provider !== 'claude-code')
+			throw new TypeError('AI metadata provider is invalid');
+		const models = await service.listModels(
+			provider === 'claude-code' ? 'claudeCode' : 'codex',
+		);
+		return {
+			models: models.map((model) => ({ id: model.id, label: model.label })),
+		};
+	}
+
 	private async saveSparseFile(request: CommandRequest): Promise<JsonValue> {
 		const save = this.options.saveSparseFile;
-		if (save === undefined) throw new Error('sparse file saving is unavailable');
+		if (save === undefined)
+			throw new Error('sparse file saving is unavailable');
 		const payload = protocolPayload(request.envelope.payload);
 		const path = protocolString(payload.path, 'file path');
 		const projectRoot = protocolString(payload.projectRoot, 'project root');
@@ -841,10 +1032,16 @@ export class ServerTerminalAuthority {
 		);
 		const transport = new ServerPortTransport(scopedPort);
 		const connection = this.composition.core.accept(transport, {
-			 authenticatedClient: {
+			authenticatedClient: {
 				clientId: `embedded-renderer-${randomBytes(16).toString('hex')}`,
 				authScope: 'admin',
-				permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
+				permissions: [
+					'environments:read',
+					'environments:manage',
+					'workspace:write',
+					'extensions:read',
+					'extensions:manage',
+				],
 			},
 			onDeliveryDiagnostic: this.options.onDeliveryDiagnostic,
 		});
@@ -888,33 +1085,36 @@ export class ServerTerminalAuthority {
 		let resolvedShellPath: string | null = null;
 		// Only an explicitly injected low-level test service may use the legacy
 		// unresolved creator. Production Desktop always supplies shellProfiles.
-		const handle = resolver === undefined
-			? await this.service.createSession(options)
-			: await (async () => {
-					const identity = this.service.allocateIdentity(
-						options.projectId,
-						options.sessionId,
-					);
-					const resolved = await resolver.resolve({
-						identity,
-						...(options.profileId === undefined
-							? {}
-							: { explicitProfileId: options.profileId }),
-						...(options.cwd === undefined ? {} : { explicitCwd: options.cwd }),
-						...(options.activePanelId === undefined
-							? {}
-							: { activePanelId: options.activePanelId }),
-						cols: options.cols,
-						rows: options.rows,
-					});
-					resolvedShellPath = resolved.shellPath;
-					return this.service.createResolvedSession({
-						...resolved,
-						...(options.env === undefined
-							? {}
-							: { env: Object.freeze({ ...resolved.env, ...options.env }) }),
-					});
-				})();
+		const handle =
+			resolver === undefined
+				? await this.service.createSession(options)
+				: await (async () => {
+						const identity = this.service.allocateIdentity(
+							options.projectId,
+							options.sessionId,
+						);
+						const resolved = await resolver.resolve({
+							identity,
+							...(options.profileId === undefined
+								? {}
+								: { explicitProfileId: options.profileId }),
+							...(options.cwd === undefined
+								? {}
+								: { explicitCwd: options.cwd }),
+							...(options.activePanelId === undefined
+								? {}
+								: { activePanelId: options.activePanelId }),
+							cols: options.cols,
+							rows: options.rows,
+						});
+						resolvedShellPath = resolved.shellPath;
+						return this.service.createResolvedSession({
+							...resolved,
+							...(options.env === undefined
+								? {}
+								: { env: Object.freeze({ ...resolved.env, ...options.env }) }),
+						});
+					})();
 		const session: AuthoritySession = {
 			id: handle.sessionId,
 			projectId: handle.projectId,
@@ -953,7 +1153,7 @@ export class ServerTerminalAuthority {
 		if (snapshot === undefined)
 			throw new Error(
 				`Terminal session disappeared during creation: ${handle.sessionId}`,
-		);
+			);
 		return snapshot;
 	}
 
@@ -1003,6 +1203,40 @@ export class ServerTerminalAuthority {
 	getBuffer(id: string): string | null {
 		const bytes = this.buffers.get(id);
 		return bytes === undefined ? null : new TextDecoder().decode(bytes);
+	}
+
+	private aiTargetState(target: {
+		readonly serverId: string;
+		readonly projectId: string;
+		readonly panelId: string;
+		readonly sessionId: string;
+	}) {
+		if (target.serverId !== this.options.serverId) return undefined;
+		const panel = this.workspace.state.panels[target.panelId];
+		const session = this.service.getSession(target.sessionId);
+		if (
+			panel?.type !== 'terminal' ||
+			panel.projectId !== target.projectId ||
+			panel.sessionId !== target.sessionId ||
+			session?.projectId !== target.projectId
+		)
+			return undefined;
+		return {
+			...target,
+			live: session.status === 'running',
+			metadataRevision: 0,
+			title: panel.title ?? 'Terminal',
+			note: '',
+		};
+	}
+
+	private aiReplay(sessionId: string) {
+		const bytes = this.buffers.get(sessionId) ?? new Uint8Array();
+		return {
+			text: new TextDecoder().decode(bytes),
+			bytes: bytes.byteLength,
+			truncated: false,
+		};
 	}
 
 	getCwd(id: string): string | null {
@@ -1356,9 +1590,8 @@ function adaptElectronMessagePort(port: ServerMessagePort): ServerMessagePort {
 			});
 		}
 		const hash = diagnosticFrameHash(event.data);
-		identicalFrames = hash !== undefined && hash === lastFrameHash
-			? identicalFrames + 1
-			: 1;
+		identicalFrames =
+			hash !== undefined && hash === lastFrameHash ? identicalFrames + 1 : 1;
 		lastFrameHash = hash;
 		if (
 			receivedThisTurn > MAIN_PORT_PER_TURN_LIMIT ||
@@ -1443,7 +1676,10 @@ function recordDiagnosticEnvelope(
 			typeof envelope.operation === 'string'
 				? envelope.operation
 				: undefined;
-		if (process.env.TERMINAY_TEST === '1' && count <= MAIN_PORT_DIAGNOSTIC_LOG_LIMIT) {
+		if (
+			process.env.TERMINAY_TEST === '1' &&
+			count <= MAIN_PORT_DIAGNOSTIC_LOG_LIMIT
+		) {
 			console.error(
 				`[terminay-port-diagnostic] ${JSON.stringify({
 					direction,
@@ -1593,4 +1829,67 @@ function legacyConsumerId(rendererId: number): string {
 	if (!Number.isSafeInteger(rendererId) || rendererId < 0)
 		throw new TypeError('renderer id is invalid');
 	return `legacy-renderer:${rendererId}`;
+}
+
+function embeddedDictationSettings(
+	settings: Readonly<Record<string, JsonValue>> | undefined,
+) {
+	const value = settings?.dictation;
+	const dictation =
+		typeof value === 'object' && value !== null && !Array.isArray(value)
+			? (value as Record<string, JsonValue>)
+			: {};
+	return {
+		enabled: dictation.enabled !== false,
+		provider: dictation.provider === 'parakeet' ? 'parakeet' : 'disabled',
+		model:
+			typeof dictation.model === 'string' && dictation.model.length > 0
+				? dictation.model
+				: 'mlx-community/parakeet-tdt-0.6b-v3',
+		language: typeof dictation.language === 'string' ? dictation.language : '',
+		prompt: typeof dictation.prompt === 'string' ? dictation.prompt : '',
+	};
+}
+
+function dictationOnlyOperations(
+	operations: ReturnType<typeof createAiOperationHandlers>,
+) {
+	const queryNames = new Set<string>([
+		AI_SERVER_OPERATIONS.status,
+		AI_SERVER_OPERATIONS.runtimeStatus,
+		AI_SERVER_OPERATIONS.credentialStatus,
+	]);
+	const commandNames = new Set<string>([
+		AI_SERVER_OPERATIONS.transcribe,
+		AI_SERVER_OPERATIONS.cancel,
+		AI_SERVER_OPERATIONS.installRuntime,
+		AI_SERVER_OPERATIONS.setCredential,
+		AI_SERVER_OPERATIONS.clearCredential,
+	]);
+	return {
+		queries: Object.fromEntries(
+			operationEntries(operations.queries).filter(([name]) =>
+				queryNames.has(name),
+			),
+		),
+		commands: Object.fromEntries(
+			operationEntries(operations.commands).filter(([name]) =>
+				commandNames.has(name),
+			),
+		),
+		policies: Object.fromEntries(
+			Object.entries(operations.policies ?? {}).filter(
+				([name]) => queryNames.has(name) || commandNames.has(name),
+			),
+		),
+	};
+}
+
+function operationEntries<T>(
+	operations: ReadonlyMap<string, T> | Record<string, T> | undefined,
+): [string, T][] {
+	if (operations === undefined) return [];
+	return operations instanceof Map
+		? [...operations.entries()]
+		: Object.entries(operations);
 }

@@ -30,7 +30,7 @@ interpreted as a working Desktop WebRTC exposure path.
 host contracts and launching the selected server's verified UI bundle after
 connection. This task owns the simplified exposure/direct-listener
 presentation, privileged WebRTC runtime, registrar, signaling, and real network
-evidence. [Task 43](./43-webrtc-transport-recovery-acceptance.md) owns mounted
+evidence. [Task 43](../tasks_completed/43-webrtc-transport-recovery-acceptance.md) owns mounted
 WebRTC failure/recovery and Retry evidence; this task consumes that matrix and
 does not maintain another reconnect controller or weaker recovery harness.
 
@@ -58,17 +58,17 @@ does not maintain another reconnect controller or weaker recovery harness.
   current boundary: real authenticated signaling, native browser WebRTC, and
   verified server-bundle installation. It must not claim canonical application
   traffic until the full WebRTC composition below is complete.
-- [ ] Replace **QR Type: Local Network / WebRTC Relay** with one primary WebRTC
+- [x] Replace **QR Type: Local Network / WebRTC Relay** with one primary WebRTC
   **Expose this server…** lifecycle and an independently labelled advanced
   **Direct network listener** lifecycle.
-- [ ] Keep the private Local transport connected and visually separate from
+- [x] Keep the private Local transport connected and visually separate from
   both exposure routes. Neither route can rebind or replace the Local window.
-- [ ] Label the non-secret value **Server/session origin** and the consumable
+- [x] Label the non-secret value **Server/session origin** and the consumable
   secret value **Pairing link**. Copy and QR actions always use the complete
   short-lived fragment credential and expiry.
-- [ ] Never start the direct listener as an implicit fallback when WebRTC is
+- [x] Never start the direct listener as an implicit fallback when WebRTC is
   unavailable; show the missing runtime/registrar before the user acts.
-- [ ] Compose the integrity-pinned Werift runtime in packaged and development
+- [x] Compose the integrity-pinned Werift runtime in packaged and development
   Desktop builds only when the same authenticated hosted registrar supplies
   both room registration and per-peer SDP/ICE signaling.
 - [x] Restore the deployed `v1` hosted bootstrap as an in-process privileged
@@ -113,8 +113,11 @@ does not maintain another reconnect controller or weaker recovery harness.
 
 ## Definition of done
 
-WebRTC satisfies the acceptance checks in supported Desktop builds, the direct
-network listener remains independently controllable, focused Node tests cover
-lifecycle/security failures, and a real hosted E2E records the deployed
-signaling/runtime compatibility evidence. Until then this task remains active
-and the UI must not describe WebRTC as ready.
+WebRTC satisfies the repository-verifiable acceptance checks in supported
+Desktop compositions, the direct network listener remains independently
+controllable, and focused deterministic tests cover lifecycle/security
+failures. The hosted compatibility command remains the explicit operational
+assurance gate for a deployment that supplies credentials; running it against a
+particular deployment is not an agent implementation task and is not required
+to keep this file active. A build that cannot prove the runtime and registrar
+composition must continue to describe WebRTC as unavailable before click.

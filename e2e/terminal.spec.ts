@@ -1039,18 +1039,16 @@ test.describe('terminal behavior', () => {
 	});
 
 	test('auto-closes a terminal tab on successful exit when enabled', async ({
+		appHarness,
 		mainWindow,
 	}) => {
-		await mainWindow.evaluate(async () => {
-			const settings =
-				await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings();
-			await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings(
-				{
-					...settings,
-					autoCloseTerminalOnExitZero: true,
-				},
-			);
+		const settingsWindow = await appHarness.openSettingsWindow({
+			page: mainWindow,
+			sectionId: 'shell-lifecycle',
 		});
+		await settingsWindow.getByLabel('Close tabs on successful exit').check();
+		await expect(settingsWindow.locator('.settings-status')).toContainText('Saved');
+		await settingsWindow.close();
 
 		await sendAppCommand(mainWindow, 'new-terminal');
 		await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2);

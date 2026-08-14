@@ -21,7 +21,7 @@ test('Desktop pairing immediately exchanges the protected reconnect grant for th
 test('Desktop never downgrades a supplied WebRTC bootstrap to HTTP', async () => {
   const main = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8')
   const branch = main.indexOf('if (connected.signalingBootstrap !== undefined)')
-  const webrtc = main.indexOf('createDesktopBootstrappedWebRtcTransport', branch)
+  const webrtc = main.indexOf('createDesktopBootstrappedWebRtcConnection', branch)
   const closeHttp = main.indexOf("connected.transport.close({ code: 'normal' })", webrtc)
   const branchReturn = main.indexOf('return;', closeHttp)
   const httpAttach = main.indexOf('connected.transport,', branchReturn)

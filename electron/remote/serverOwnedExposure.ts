@@ -387,6 +387,8 @@ function projectStatus(
 		configurationPath: 'Terminay Server',
 		errorMessage: null,
 		isRunning: status?.exposure.state === 'exposed',
+		directListenerRunning:
+			pairingMode === 'lan' && status?.exposure.state === 'exposed',
 		lanPairingExpiresAt:
 			pairingMode === 'lan' && pairing !== undefined
 				? new Date(pairing.expiresAt).toISOString()

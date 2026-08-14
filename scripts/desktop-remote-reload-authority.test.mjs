@@ -45,7 +45,8 @@ test('reload reconnect uses the remembered OS-protected credential path', () => 
 	);
 	assert.match(reconnect, /createDesktopReconnectTransport/u);
 	assert.match(reconnect, /createDesktopDeviceCredentialStore\(\)/u);
-	assert.match(reconnect, /createDesktopBootstrappedWebRtcTransport/u);
+	assert.match(reconnect, /createDesktopBootstrappedWebRtcConnection/u);
+	assert.match(reconnect, /openCanonicalRemoteServerWindow/u);
 	assert.match(reconnect, /connectRemoteByteTransport/u);
 	assert.doesNotMatch(reconnect, /postLocalServerConnection|ensureLocalWorkspaceSeed/u);
 });

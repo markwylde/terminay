@@ -58,7 +58,10 @@ export function createServerTerminalSettingsClient(
 				}),
 				legacy.update<TerminalSettings>(settings),
 			);
-			return device as T;
+			if (serverSnapshot === undefined) {
+				throw new Error('The server settings update did not return a snapshot.');
+			}
+			return mergeSettings(device, serverSnapshot) as T;
 		},
 		async reset<T>() {
 			const device = await settleSettingsAuthorities(
@@ -68,7 +71,10 @@ export function createServerTerminalSettingsClient(
 				}),
 				legacy.reset<TerminalSettings>(),
 			);
-			return device as T;
+			if (serverSnapshot === undefined) {
+				throw new Error('The server settings reset did not return a snapshot.');
+			}
+			return mergeSettings(device, serverSnapshot) as T;
 		},
 		onChanged(listener) {
 			// Desktop's complete settings projection includes device/host fields.

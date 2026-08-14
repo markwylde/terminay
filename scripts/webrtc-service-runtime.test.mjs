@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createServer, connect } from 'node:net'
@@ -925,15 +925,42 @@ test('RemoteAccessService updates remote resize ownership only after accepted re
   assert.equal(service.sessions.get('terminal-1').cols, 80)
 })
 
+test('RemoteAccessService binds canonical browser host context to its exact manifest and server', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'terminay-host-context-test-'))
+  await writeFile(join(tempDir, 'remote.html'), '<!doctype html><title>Terminay</title>')
+  const service = createTestService({
+    tempDir,
+    serverId: 'server-context-proof',
+    serverVersion: '3.2.1',
+  })
+  const manifest = await service.getWebRtcAssetManifest()
+  const context = await service.handleWebRtcApiRequest(
+    '/api/host-context',
+    {},
+    'https://session-proof.remote.example.com',
+  )
+  assert.equal(context.serverId, 'server-context-proof')
+  assert.equal(context.profileId, 'server-context-proof')
+  assert.equal(context.bundleId, manifest.bundleId)
+  assert.equal(context.applicationProtocolVersion, manifest.protocolVersion)
+  assert.equal(context.hostKind, 'browser')
+  assert.equal(context.bootstrapVersion, 1)
+  assert.equal(manifest.serverVersion, '3.2.1')
+})
+
 function createTestService({
   getControllableSession = () => null,
   hostWindows,
   pairingPinHash,
   pinFailureLimit = 3,
   tempDir,
+	serverId,
+	serverVersion,
 }) {
   return new RemoteAccessService({
     userDataPath: tempDir,
+	serverId,
+	serverVersion,
     createWebRtcHostWindow: () => {
       const hostWindow = {
         closed: false,

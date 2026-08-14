@@ -67,13 +67,13 @@ be fixed at the generation ownership boundary, not suppressed in terminal UI.
 
 ### Deterministic native failure matrix
 
-- [ ] Treat server application-protocol reader completion/failure as failure of
+- [x] Treat server application-protocol reader completion/failure as failure of
   the whole host-owned transport generation even when the native peer and every
   required data channel remain open.
-- [ ] Deliver that failure once, with the exact generation identity, to the
+- [x] Deliver that failure once, with the exact generation identity, to the
   unified renderer recovery controller; retire the stale application client,
   peer, lanes, subscriptions, and attachments before replacement begins.
-- [ ] Ensure automatic recovery and manual Retry create a fresh host generation
+- [x] Ensure automatic recovery and manual Retry create a fresh host generation
   rather than consulting, awaiting, or reusing the stale peer/channel state.
 
 - [x] Keep the clean Linux native proof self-contained: build workspace

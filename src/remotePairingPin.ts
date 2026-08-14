@@ -2,6 +2,7 @@ import type { TerminalSettings } from './types/settings';
 
 export type RemotePairingPinClient = Readonly<{
 	getTerminalSettings: () => Promise<TerminalSettings>;
+	isRemoteAccessPairingPinConfigured: () => Promise<boolean>;
 	setRemoteAccessPairingPin: (pin: string) => Promise<TerminalSettings>;
 }>;
 
@@ -11,8 +12,7 @@ export async function isRemoteAccessPairingPinConfigured(
 	client: RemotePairingPinClient,
 	_pairingMode: 'lan' | 'webrtc',
 ): Promise<boolean> {
-	const settings = await client.getTerminalSettings();
-	return settings.remoteAccess.pairingPinHash.trim().length > 0;
+	return client.isRemoteAccessPairingPinConfigured();
 }
 
 export async function saveRemoteAccessPairingPin(

@@ -21,7 +21,13 @@ function Fixture() {
 	return <>
 		<MobileDictationWorkflow
 			capture={capture}
-			disclosure={{ serverLabel: 'Project server', provider: 'openai', credentialStatus: 'configured', confirmed: true }}
+			disclosure={{
+				serverLabel: 'Project server',
+				provider: 'openai',
+				audioDestination: 'openai',
+				credentialStatus: 'configured',
+				confirmed: true,
+			}}
 			target={{ serverId: 'server:mobile', projectId: 'project:mobile', panelId: 'panel:terminal', sessionId: 'terminal:mobile' }}
 			upload={upload}
 		/>

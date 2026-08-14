@@ -25,30 +25,31 @@ import {
 	AgentStatusService,
 	AiService,
 	CanonicalProjectPathResolver,
+	composeRemoteMcpTerminalLifecycle,
+	createEnvironmentRoutedProjectServices,
 	createInitialWorkspace,
 	createNodePtyFactory,
 	createNodeShellDiscoveryHost,
+	createPuzedSshProductionExtensionManagement,
 	createServerAiProviderAdapters,
 	createServerCoreComposition,
-	createPuzedSshProductionExtensionManagement,
 	ExtensionProjectEnvironmentRuntime,
-	ExactTerminalTargetRegistry,
 	FileCatalog,
 	FileContentStreamService,
 	type FileObservationHost,
+	FileProjectEnvironmentStateBackend,
 	GitService,
 	MacroRepository,
 	type NodePtyModuleLike,
+	OpenAiDictationProvider,
 	OrderedEventJournal,
+	ParakeetRuntime,
 	ProjectEnvironmentRegistry,
 	ProjectEnvironmentRepository,
-	FileProjectEnvironmentStateBackend,
 	ProjectEnvironmentRouter,
+	RecordingService,
 	RemoteMcpBridgeAuthority,
 	RemoteMcpEnvironmentCoordinator,
-	createEnvironmentRoutedProjectServices,
-	composeRemoteMcpTerminalLifecycle,
-	RecordingService,
 	type RemoteReconnectGrantRecord,
 	type ServerCoreComposition,
 	ServerFileAdapter,
@@ -56,13 +57,15 @@ import {
 	ServerFileContentAdapter,
 	ServerFileObservationAdapter,
 	ServerGitAdapter,
+	ServerParakeetDictationProvider,
 	ServerRecordingAdapter,
-	ServerSettingsRepository,
 	type ServerRuntimeServices,
+	ServerSettingsRepository,
 	ShellProfileCatalogueService,
 	ShellProfileDiscoveryService,
 	TerminalActivityService,
 	TerminalReplayRegistry,
+	VaultProviderCredentialResolver,
 	WorkspaceStore,
 } from '@terminay/server-core';
 import * as nodePty from 'node-pty';
@@ -72,21 +75,21 @@ import {
 	parseServerCliOptions,
 	type ServerCliOptions,
 } from './cliOptions.js';
+import { createStandaloneVaultComposition } from './headlessVault.js';
 import {
 	createLocalUiServer,
 	createServerHealthServer,
 	createServerRemoteExposure,
+	createServerTerminalControlAdapter,
 	createStandaloneServer,
+	createTerminalControlAdapter,
 	type LocalUiServer,
 	runServerMcpStdio,
-	createServerTerminalControlAdapter,
-	createTerminalControlAdapter,
 	type ServerPairingHandoff,
 	type ServerRemoteExposure,
 } from './index.js';
 import { resolveTerminalProcessCwd } from './processCwd.js';
 import { assertStandaloneReleaseIntegrity } from './releaseIntegrity.js';
-import { createStandaloneVaultComposition } from './headlessVault.js';
 
 declare const process: {
 	readonly argv: readonly string[];
@@ -256,7 +259,10 @@ function createRuntime(
 	options: ServerCliOptions,
 	remote: ServerRemoteExposure,
 	uiServer?: LocalUiServer,
-	serverServices: Pick<ServerRuntimeServices, 'vault' | 'extensionSecrets' | 'extensionHosts'> = {},
+	serverServices: Pick<
+		ServerRuntimeServices,
+		'vault' | 'extensionSecrets' | 'extensionHosts'
+	> = {},
 ): StandaloneRuntime {
 	return createStandaloneServer({
 		serverId: options.serverId,
@@ -288,7 +294,13 @@ function createRemoteExposure(
 async function createServerComposition(
 	options: ServerCliOptions,
 	health: () => JsonValue,
-): Promise<Readonly<{ core: ServerCoreComposition; vault: Awaited<ReturnType<typeof createStandaloneVaultComposition>>; extensions: ReturnType<typeof createPuzedSshProductionExtensionManagement> }>> {
+): Promise<
+	Readonly<{
+		core: ServerCoreComposition;
+		vault: Awaited<ReturnType<typeof createStandaloneVaultComposition>>;
+		extensions: ReturnType<typeof createPuzedSshProductionExtensionManagement>;
+	}>
+> {
 	const eventJournal = new OrderedEventJournal();
 	const activity = new TerminalActivityService({ serverId: options.serverId });
 	const agents = new AgentStatusService({
@@ -299,7 +311,12 @@ async function createServerComposition(
 		options.serverId,
 		options.projectRoot,
 	);
-	const projectEnvironments = new ProjectEnvironmentRepository(new FileProjectEnvironmentStateBackend(join(options.dataRoot, 'project-environments.v1.json')), options.serverId);
+	const projectEnvironments = new ProjectEnvironmentRepository(
+		new FileProjectEnvironmentStateBackend(
+			join(options.dataRoot, 'project-environments.v1.json'),
+		),
+		options.serverId,
+	);
 	await projectEnvironments.load();
 	const projectEnvironmentRegistry = new ProjectEnvironmentRegistry();
 	const projectEnvironmentRouter = new ProjectEnvironmentRouter({
@@ -327,6 +344,7 @@ async function createServerComposition(
 		gitService,
 	);
 	const settings = createStandaloneSettingsRepository(options.dataRoot);
+	await settings.load();
 	const shellProfiles = new ShellProfileCatalogueService({
 		settings,
 		discovery: new ShellProfileDiscoveryService(
@@ -350,44 +368,125 @@ async function createServerComposition(
 	const vault = await createStandaloneVaultComposition({
 		dataRoot: options.dataRoot,
 		serverId: options.serverId,
-		...(options.vaultUnlockFd === undefined ? {} : { unlockFd: options.vaultUnlockFd }),
+		...(options.vaultUnlockFd === undefined
+			? {}
+			: { unlockFd: options.vaultUnlockFd }),
 	});
-	const extensions = createPuzedSshProductionExtensionManagement({ dataRoot: options.dataRoot, authorityLabel: 'This server', vault, projectEnvironments, workspace });
-	projectEnvironmentRegistry.register(new ExtensionProjectEnvironmentRuntime('com.terminay.ssh/connection', ['terminal', 'filesystem', 'mcp-bridge'], extensions.hosts, () => projectEnvironments.state));
+	const extensions = createPuzedSshProductionExtensionManagement({
+		dataRoot: options.dataRoot,
+		authorityLabel: 'This server',
+		vault,
+		projectEnvironments,
+		workspace,
+	});
+	projectEnvironmentRegistry.register(
+		new ExtensionProjectEnvironmentRuntime(
+			'com.terminay.ssh/connection',
+			['terminal', 'filesystem', 'mcp-bridge'],
+			extensions.hosts,
+			() => projectEnvironments.state,
+		),
+	);
 	const git = new ServerGitAdapter({
 		serverId: options.serverId,
 		git: gitService,
 		resolveProjectRoot: (projectId) =>
 			workspace.state.projects[projectId]?.root ?? null,
 	});
-	const ai =
-		options.aiProviders.length === 0
-			? undefined
-			: new AiService({
-					serverId: options.serverId,
-					authority: new ExactTerminalTargetRegistry(options.serverId),
-					replay: new TerminalReplayRegistry(),
-					providers: selectAiProviders(
-						options.aiProviders,
-						createServerAiProviderAdapters({
-							cwd: options.projectRoot,
-							// Authentication belongs to provider-owned login/keychain state. Never
-							// copy API keys or arbitrary server environment into the child.
-							environment: safeAiProviderEnvironment(process.env),
-						}),
-					),
-				});
+	const parakeetRuntime = new ParakeetRuntime({
+		rootDirectory: join(options.dataRoot, 'dictation', 'parakeet'),
+	});
+	const parakeetProvider = new ServerParakeetDictationProvider(
+		parakeetRuntime,
+		join(options.dataRoot, 'dictation', 'temporary'),
+	);
+	const openAiProvider = new OpenAiDictationProvider();
+	const openAiSecretId = 'dictation-openai-api-key';
 	let composition: ServerCoreComposition;
+	const ai = new AiService({
+		serverId: options.serverId,
+		authority: {
+			getTarget: (target) =>
+				standaloneAiTarget(options.serverId, workspace, composition, target),
+			authorize: (_clientId, target) =>
+				standaloneAiTarget(options.serverId, workspace, composition, target)
+					?.live === true,
+			writeInput: (target, input) =>
+				composition.terminal.input(target.sessionId, input),
+		},
+		replay: new TerminalReplayRegistry(),
+		dictationProvider: {
+			transcribe: (request) =>
+				request.model === 'mlx-community/parakeet-tdt-0.6b-v3'
+					? parakeetProvider.transcribe(request)
+					: openAiProvider.transcribe(request),
+		},
+		dictationRuntime: parakeetProvider,
+		credentialResolver: new VaultProviderCredentialResolver({
+			vault: vault.vault,
+			bindings: [{ provider: 'openai', secretId: openAiSecretId }],
+		}),
+		dictationCredential: {
+			status: () => ({
+				configured: vault
+					.status()
+					.entries.some((entry) => entry.id === openAiSecretId),
+			}),
+			set: async (value) => {
+				const exists = vault
+					.status()
+					.entries.some((entry) => entry.id === openAiSecretId);
+				await (exists
+					? vault.vault.replace({
+							id: openAiSecretId,
+							label: 'OpenAI API key',
+							value,
+						})
+					: vault.vault.put({
+							id: openAiSecretId,
+							label: 'OpenAI API key',
+							value,
+						}));
+				return { configured: true };
+			},
+			clear: async () => ({
+				configured: !(await vault.vault.remove(openAiSecretId)).deleted,
+			}),
+		},
+		dictationSettings: () => standaloneDictationSettings(settings.settings),
+		providers: selectAiProviders(
+			options.aiProviders,
+			createServerAiProviderAdapters({
+				cwd: options.projectRoot,
+				// Authentication belongs to provider-owned login/keychain state. Never
+				// copy API keys or arbitrary server environment into the child.
+				environment: safeAiProviderEnvironment(process.env),
+			}),
+		),
+	});
 	let remoteMcp: RemoteMcpEnvironmentCoordinator | undefined;
 	composition = createServerCoreComposition({
 		serverId: options.serverId,
 		serverVersion: options.serverVersion,
-		capabilities: ['terminal', 'workspace', 'files', 'agents', 'server.health'],
+		capabilities: [
+			'terminal',
+			'workspace',
+			'files',
+			'agents',
+			'server.health',
+			'ai.dictation',
+		],
 		eventJournal,
 		authenticate: ({ hello }) => ({
 			clientId: hello.clientId,
 			authScope: 'admin',
-			permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
+			permissions: [
+				'environments:read',
+				'environments:manage',
+				'workspace:write',
+				'extensions:read',
+				'extensions:manage',
+			],
 		}),
 		ptyFactory: createNodePtyFactory(nodePty as unknown as NodePtyModuleLike, {
 			resolveCwd: resolveTerminalProcessCwd,
@@ -396,7 +495,13 @@ async function createServerComposition(
 		agents,
 		workspace,
 		projectEnvironmentRouter,
-		projectEnvironments: { repository: projectEnvironments, thisServerRoot: () => options.projectRoot, ...(extensions !== undefined && "profiles" in extensions ? { providers: extensions.profiles } : {}) },
+		projectEnvironments: {
+			repository: projectEnvironments,
+			thisServerRoot: () => options.projectRoot,
+			...(extensions !== undefined && 'profiles' in extensions
+				? { providers: extensions.profiles }
+				: {}),
+		},
 		workspaceOperations: {
 			prepareProjectRootUpdate: files.prepareProjectRootUpdate,
 		},
@@ -415,7 +520,7 @@ async function createServerComposition(
 		recordings,
 		extensions,
 		git,
-		...(ai === undefined ? {} : { ai }),
+		ai,
 		serviceLifecycle: {
 			start: async () => {
 				await gitService.bindProject('default', options.projectRoot);
@@ -479,8 +584,20 @@ async function createServerComposition(
 	const remoteMcpAuthority = new RemoteMcpBridgeAuthority({
 		dispatch: async (scope, op, params, { signal }) => {
 			const result = await control(
-				{ id: `${op}:${Date.now()}`, version: 1, op: op as never, params: params as Record<string, unknown> },
-				{ terminalSessionId: scope.terminalSessionId, projectId: scope.projectId, scope: scope.scope, connectionId: `remote-mcp:${scope.terminalSessionId}`, requestId: `${op}:${Date.now()}`, signal },
+				{
+					id: `${op}:${Date.now()}`,
+					version: 1,
+					op: op as never,
+					params: params as Record<string, unknown>,
+				},
+				{
+					terminalSessionId: scope.terminalSessionId,
+					projectId: scope.projectId,
+					scope: scope.scope,
+					connectionId: `remote-mcp:${scope.terminalSessionId}`,
+					requestId: `${op}:${Date.now()}`,
+					signal,
+				},
 			);
 			return JSON.parse(JSON.stringify(result)) as JsonValue;
 		},
@@ -493,6 +610,7 @@ async function createServerComposition(
 	composition = Object.freeze({
 		...composition,
 		shutdown: async () => {
+			parakeetProvider.stop();
 			await remoteMcp?.shutdown();
 			await baseShutdown();
 		},
@@ -502,8 +620,60 @@ async function createServerComposition(
 
 function requireTerminalLaunchResolver(composition: ServerCoreComposition) {
 	if (composition.terminalLaunchResolver === undefined)
-		throw new Error('Remote MCP requires the canonical terminal launch resolver.');
+		throw new Error(
+			'Remote MCP requires the canonical terminal launch resolver.',
+		);
 	return composition.terminalLaunchResolver;
+}
+
+function standaloneDictationSettings(
+	settings: Readonly<Record<string, JsonValue>>,
+) {
+	const value = settings.dictation;
+	const dictation =
+		typeof value === 'object' && value !== null && !Array.isArray(value)
+			? (value as Record<string, JsonValue>)
+			: {};
+	return {
+		enabled: dictation.enabled !== false,
+		provider: dictation.provider === 'parakeet' ? 'parakeet' : 'disabled',
+		model:
+			typeof dictation.model === 'string' && dictation.model.length > 0
+				? dictation.model
+				: 'mlx-community/parakeet-tdt-0.6b-v3',
+		language: typeof dictation.language === 'string' ? dictation.language : '',
+		prompt: typeof dictation.prompt === 'string' ? dictation.prompt : '',
+	};
+}
+
+function standaloneAiTarget(
+	serverId: string,
+	workspace: WorkspaceStore,
+	composition: ServerCoreComposition,
+	target: {
+		readonly serverId: string;
+		readonly projectId: string;
+		readonly panelId: string;
+		readonly sessionId: string;
+	},
+) {
+	if (target.serverId !== serverId) return undefined;
+	const panel = workspace.state.panels[target.panelId];
+	const session = composition.terminal.getSession(target.sessionId);
+	if (
+		panel?.type !== 'terminal' ||
+		panel.projectId !== target.projectId ||
+		panel.sessionId !== target.sessionId ||
+		session?.projectId !== target.projectId
+	)
+		return undefined;
+	return {
+		...target,
+		live: session.status === 'running',
+		metadataRevision: 0,
+		title: panel.title ?? 'Terminal',
+		note: '',
+	};
 }
 
 function selectAiProviders(
@@ -994,7 +1164,13 @@ function createProtocolServer(
 		protocolAuthenticatedClientForCredential: (credential, clientId) => ({
 			clientId: credentials.clientId(credential) ?? clientId,
 			authScope: 'admin',
-			permissions: ['environments:read', 'environments:manage', 'workspace:write', 'extensions:read', 'extensions:manage'],
+			permissions: [
+				'environments:read',
+				'environments:manage',
+				'workspace:write',
+				'extensions:read',
+				'extensions:manage',
+			],
 		}),
 		reconnect: {
 			enroll: ({ clientId }) => {
@@ -1048,7 +1224,10 @@ function createProtocolServer(
 interface ProtocolCredentials {
 	readonly accept: (token: string) => boolean;
 	readonly clientId: (token: string) => string | undefined;
-	readonly issue: (clientId: string) => { readonly ticket: string; readonly expiresAt: number };
+	readonly issue: (clientId: string) => {
+		readonly ticket: string;
+		readonly expiresAt: number;
+	};
 }
 
 /** Short-lived application tickets are intentionally separate from the
@@ -1060,7 +1239,10 @@ function createProtocolCredentials(
 	_bootstrapExpiresAt: number,
 ): ProtocolCredentials {
 	const lifetimeMs = 15 * 60 * 1000;
-	const tickets = new Map<string, Readonly<{ expiresAt: number; clientId: string }>>();
+	const tickets = new Map<
+		string,
+		Readonly<{ expiresAt: number; clientId: string }>
+	>();
 	const prune = (now: number): void => {
 		for (const [ticket, value] of tickets)
 			if (value.expiresAt <= now) tickets.delete(ticket);
