@@ -269,6 +269,7 @@ jobs:
           APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && vars.APPLE_TEAM_ID || '' }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
         run: |
+          test ! -e release
           node scripts/stage-selected-secure-werift-runtime.mjs
           ${{ matrix.script }}
 
