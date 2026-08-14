@@ -12,7 +12,8 @@ async function getActiveSessionId(page: Page): Promise<string> {
 async function emitJournalRecord(page: Page, terminalSessionId: string, record: Record<string, unknown>): Promise<void> {
 	await page.evaluate(async ({ value, sessionId }) => {
 		if (!window.terminayAgentStatusTest) throw new Error('Agent status test seam is unavailable');
-		await window.terminayAgentStatusTest.emitJournalRecord({ provider: 'codex', terminalSessionId: sessionId, record: value });
+		const accepted = await window.terminayAgentStatusTest.emitJournalRecord({ provider: 'codex', terminalSessionId: sessionId, record: value });
+		if (!accepted) throw new Error('Agent journal record was not accepted');
 	}, { value: record, sessionId: terminalSessionId });
 }
 

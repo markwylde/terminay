@@ -12,7 +12,6 @@ export type FeatureQueryScope = Readonly<{
 
 export type ProjectFeatureAuthority = Readonly<{
 	applicationClient: NonNullable<TerminalPanelClientContextValue['applicationClient']>;
-	agentStatusClient: NonNullable<TerminalPanelClientContextValue['agentStatusClient']>;
 	fileObservationClient: NonNullable<TerminalPanelClientContextValue['fileObservationClient']>;
 	fileViewerClient: NonNullable<TerminalPanelClientContextValue['fileViewerClient']>;
 	gitClient: NonNullable<TerminalPanelClientContextValue['gitClient']>;
@@ -52,7 +51,6 @@ export function resolveProjectFeatureAuthority(
 		state: 'available',
 		authority: {
 			applicationClient: context.applicationClient!,
-			agentStatusClient: context.agentStatusClient!,
 			fileObservationClient: context.fileObservationClient!,
 			fileViewerClient: context.fileViewerClient!,
 			gitClient: context.gitClient!,
@@ -164,7 +162,6 @@ function scopeForProject(serverId: string, project: ServerWorkspaceProject): Fea
 
 function missingFeatureClient(context: Omit<TerminalPanelClientContextValue, 'projectId'>): string | null {
 	if (context.applicationClient === undefined) return 'Application queries';
-	if (context.agentStatusClient === undefined) return 'Agent status';
 	if (context.fileObservationClient === undefined) return 'File observation';
 	if (context.fileViewerClient === undefined) return 'Explorer';
 	if (context.gitClient === undefined) return 'Git';

@@ -60,6 +60,17 @@ describe('project feature authority', () => {
 		}
 	});
 
+	it('does not gate project features on the independent server agent projection', () => {
+		const withoutAgentProjection = context({ 'project-1': project }) as unknown as {
+			agentStatusClient?: unknown;
+		};
+		withoutAgentProjection.agentStatusClient = undefined;
+		assert.equal(
+			resolveProjectFeatureAuthority(withoutAgentProjection as never, 'project-1').state,
+			'available',
+		);
+	});
+
 	it('returns a typed unavailable state instead of inventing project scope', () => {
 		assert.deepEqual(resolveProjectFeatureAuthority(context({}), 'missing'), {
 			state: 'unavailable',
