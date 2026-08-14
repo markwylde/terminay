@@ -5851,8 +5851,9 @@ function App({
 	);
 
 	useEffect(() => {
-		const unsubscribeCommand = (subscribeAppCommands ??
-			window.terminayAppCommandHost?.subscribe)?.(executeCommandOnActiveProject);
+		const unsubscribeCommand = subscribeAppCommands?.(
+			executeCommandOnActiveProject,
+		);
 
 		return () => {
 			unsubscribeCommand?.();

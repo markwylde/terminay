@@ -358,15 +358,6 @@ declare global {
 				targetWindowId: number,
 			): Promise<{ ok: boolean }>;
 		};
-		/** Bounded native menu/keyboard command subscription. */
-		terminayAppCommandHost?: {
-			readonly version: 1;
-			subscribe(
-				listener: (
-					command: import('./types/terminay').AppCommand,
-				) => Promise<void> | void,
-			): () => void;
-		};
 		terminayHost?: {
 			getContext(): Promise<{
 				version: number;

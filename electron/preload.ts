@@ -14,7 +14,6 @@ import type {
 	AiTabMetadataGenerateResult,
 	AiTabMetadataModel,
 	AiTabMetadataProvider,
-	AppCommand,
 	DictationKeyStatus,
 	DictationMicrophonePermissionStatus,
 	DictationTranscribeRequest,
@@ -108,7 +107,6 @@ const DESKTOP_SETTINGS_WINDOW_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_PROJECT_ENVIRONMENTS_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_PROJECT_TAB_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_WORKSPACE_TRANSFER_HOST_BRIDGE_VERSION = 1 as const;
-const DESKTOP_APP_COMMAND_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_REMOTE_ACCESS_STATUS_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_SERVER_CONNECTION_HOST_BRIDGE_VERSION = 1 as const;
 const DESKTOP_TERMINAL_SETTINGS_COMPATIBILITY_HOST_BRIDGE_VERSION = 1 as const;
@@ -179,28 +177,6 @@ function isWorkspaceTransferPayload(
 			sessionId.length <= 512
 		);
 	});
-}
-
-const APP_COMMANDS = new Set<string>([
-	'clear-terminal',
-	'close-active',
-	'new-project',
-	'new-terminal',
-	'open-command-bar',
-	'open-recordings',
-	'open-project-environments',
-	'open-extensions',
-	'popout-active',
-	'save-active',
-	'set-project-root-folder-to-working-directory',
-	'split-horizontal',
-	'split-vertical',
-	'start-dictation',
-	'toggle-file-explorer-sidebar',
-]);
-
-function isAppCommand(value: unknown): value is AppCommand {
-	return typeof value === 'string' && APP_COMMANDS.has(value);
 }
 
 const RENDERER_ROOT_DIAGNOSTIC_LIMITS = {
@@ -2315,45 +2291,6 @@ contextBridge.exposeInMainWorld(
 					version: DESKTOP_WORKSPACE_TRANSFER_HOST_BRIDGE_VERSION,
 				},
 			) as Promise<{ ok: boolean }>;
-		},
-	}),
-);
-
-/** Native menus and keyboard shortcuts deliver only the closed command union. */
-contextBridge.exposeInMainWorld(
-	'terminayAppCommandHost',
-	Object.freeze({
-		version: DESKTOP_APP_COMMAND_HOST_BRIDGE_VERSION,
-		subscribe: (listener: unknown) => {
-			if (typeof listener !== 'function')
-				throw new TypeError('app command listener is invalid');
-			const wrapper = (
-				_event: Electron.IpcRendererEvent,
-				command: unknown,
-				requestId?: unknown,
-			) => {
-				if (!isAppCommand(command)) return;
-				void Promise.resolve(
-					(listener as (value: AppCommand) => Promise<void> | void)(command),
-				).then(
-					() => {
-						if (typeof requestId === 'string') {
-							ipcRenderer.send('test:app-command-complete', requestId, null);
-						}
-					},
-					(error) => {
-						if (typeof requestId === 'string') {
-							ipcRenderer.send(
-								'test:app-command-complete',
-								requestId,
-								error instanceof Error ? error.message : String(error),
-							);
-						}
-					},
-				);
-			};
-			ipcRenderer.on('app:command', wrapper);
-			return () => ipcRenderer.off('app:command', wrapper);
 		},
 	}),
 );
