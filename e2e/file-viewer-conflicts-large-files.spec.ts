@@ -88,7 +88,7 @@ test('dirty file edits stay local until saved even after an external write', asy
     )
     .toContain('local draft')
 
-  const conflict = mainWindow.getByRole('alert')
+  const conflict = mainWindow.locator('.file-conflict-banner')
   await expect(conflict).toContainText('changed on disk')
   await conflict.getByRole('button', { name: 'Keep local edits' }).click()
   await expect(conflict).toHaveCount(0)
