@@ -252,7 +252,7 @@ async function requireTerminalInputOutput(window, mode) {
 	await panel.locator('.xterm-helper-textarea').focus();
 	await window.keyboard.type(`printf '${marker}\\n'`);
 	await window.keyboard.press('Enter');
-	await rows.getByText(marker, { exact: false }).waitFor({ timeout: 10_000 });
+	await rows.getByText(marker, { exact: true }).waitFor({ timeout: 10_000 });
 }
 
 function captureRendererFailures(window, failures) {
@@ -283,6 +283,9 @@ function captureMainProcessFailures(process, failures) {
 }
 
 async function closeElectronApp(electronApp) {
+	// Playwright disposes the ElectronApplication connection as part of close(),
+	// so obtain the ChildProcess before closing and inspect that stable handle.
+	const electronProcess = electronApp.process();
 	let timeout;
 	try {
 		await Promise.race([
@@ -298,19 +301,25 @@ async function closeElectronApp(electronApp) {
 		if (timeout !== undefined) clearTimeout(timeout);
 	}
 	assert.notEqual(
-		electronApp.process().exitCode,
+		electronProcess.exitCode,
 		null,
 		'clean shutdown must exit without SIGKILL',
 	);
 }
 
 async function emergencyClose(electronApp) {
-	if (electronApp.process().exitCode !== null) return;
+	let electronProcess;
+	try {
+		electronProcess = electronApp.process();
+	} catch {
+		// The app may already have shut down and disposed Playwright's connection.
+		return;
+	}
+	if (electronProcess.exitCode !== null) return;
 	try {
 		await electronApp.close();
 	} catch {
-		if (electronApp.process().exitCode === null)
-			electronApp.process().kill('SIGKILL');
+		if (electronProcess.exitCode === null) electronProcess.kill('SIGKILL');
 	}
 }
 
