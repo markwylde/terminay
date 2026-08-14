@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 export interface ServerCliOptions {
@@ -44,7 +45,17 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
   const remoteOrigin = value(argv, "--remote-origin") ?? env.TERMINAY_REMOTE_ORIGIN ?? defaultRemoteOrigin(serverId);
   const publicOrigin = value(argv, "--public-origin") ?? env.TERMINAY_PUBLIC_ORIGIN;
   const logSink = value(argv, "--log-sink") ?? env.TERMINAY_LOG_SINK;
-  const uiBundle = value(argv, "--ui-bundle") ?? env.TERMINAY_UI_BUNDLE;
+  // The release launcher always supplies TERMINAY_UI_BUNDLE.  A direct CLI
+  // invocation from a checked-out repository (the supported development and
+  // local-Desktop pairing path) must nevertheless serve the matching built
+  // renderer; otherwise it advertises a protocol endpoint that Desktop can
+  // authenticate but cannot safely switch to because no verified manifest is
+  // available.  Only adopt this conventional bundle when it is complete, so
+  // arbitrary working directories retain the explicit-bundle contract.
+  const uiBundle =
+    value(argv, "--ui-bundle") ??
+    env.TERMINAY_UI_BUNDLE ??
+    discoveredWorkspaceUiBundle();
   const httpHost = value(argv, "--http-host") ?? env.TERMINAY_HTTP_HOST;
   const httpPortValue = value(argv, "--http-port") ?? env.TERMINAY_HTTP_PORT;
   const healthHost = value(argv, "--health-host") ?? env.TERMINAY_HEALTH_HOST;
@@ -72,6 +83,11 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
     aiProviders: parseAiProviders(aiProvidersValue),
     ...(vaultUnlockFdValue === undefined ? {} : { vaultUnlockFd: parseInheritedFd(vaultUnlockFdValue) }),
   });
+}
+
+function discoveredWorkspaceUiBundle(): string | undefined {
+  const candidate = resolve(process.cwd(), "dist");
+  return existsSync(resolve(candidate, "manifest.json")) ? candidate : undefined;
 }
 
 export function formatServerHelp(): string {
