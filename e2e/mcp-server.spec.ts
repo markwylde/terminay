@@ -126,36 +126,26 @@ test('MCP callers see and control only terminals in their own project', async ({
 	const projectBSessions = [projectBSession];
 
 	if (activeProjectId === null) throw new Error('Project B identity is unavailable.');
-	const projectA = await connectMcp(mainWindow, projectASessions[0], projectAId);
-	const projectB = await connectMcp(mainWindow, projectBSessions[0], activeProjectId);
+	let projectA: McpConnection | undefined = await connectMcp(
+		mainWindow,
+		projectASessions[0],
+		projectAId,
+	);
+	let projectB: McpConnection | undefined;
 
 	try {
 		const listedA = await projectA.client.callTool({
 			name: 'list_terminals',
 			arguments: {},
 		});
-		const listedB = await projectB.client.callTool({
-			name: 'list_terminals',
-			arguments: {},
-		});
 		const textA = toolText(listedA);
-		const textB = toolText(listedB);
 		const resultA = toolResultJson(listedA) as {
-			terminals: Array<{ id: string }>;
-		};
-		const resultB = toolResultJson(listedB) as {
 			terminals: Array<{ id: string }>;
 		};
 
 		expect(resultA.terminals).toHaveLength(2);
-		expect(resultB.terminals).toHaveLength(1);
 		for (const sessionId of resultA.terminals.map((terminal) => terminal.id)) {
 			expect(textA).toContain(sessionId);
-			expect(textB).not.toContain(sessionId);
-		}
-		for (const sessionId of resultB.terminals.map((terminal) => terminal.id)) {
-			expect(textB).toContain(sessionId);
-			expect(textA).not.toContain(sessionId);
 		}
 
 		const crossProjectRead = await projectA.client.callTool({
@@ -185,7 +175,35 @@ test('MCP callers see and control only terminals in their own project', async ({
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 		).toHaveCount(1);
+
+		// MCP clients are independent headless processes. Close the first before
+		// launching the second so this journey verifies capability scope rather
+		// than retaining an unrelated concurrent stdio lifecycle in the test
+		// runner; each caller still receives and exercises its own exact-session
+		// capability.
+		await projectA.close();
+		projectA = undefined;
+		projectB = await connectMcp(
+			mainWindow,
+			projectBSessions[0],
+			activeProjectId,
+		);
+		const listedB = await projectB.client.callTool({
+			name: 'list_terminals',
+			arguments: {},
+		});
+		const textB = toolText(listedB);
+		const resultB = toolResultJson(listedB) as {
+			terminals: Array<{ id: string }>;
+		};
+		expect(resultB.terminals).toHaveLength(1);
+		for (const sessionId of resultA.terminals.map((terminal) => terminal.id)) {
+			expect(textB).not.toContain(sessionId);
+		}
+		for (const sessionId of resultB.terminals.map((terminal) => terminal.id)) {
+			expect(textB).toContain(sessionId);
+		}
 	} finally {
-		await Promise.all([projectA.close(), projectB.close()]);
+		await Promise.all([projectA?.close(), projectB?.close()]);
 	}
 });

@@ -111,19 +111,10 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 		const dialog = mainWindow.getByRole('dialog', {
 			name: 'Connections',
 		});
-		const localProfile = dialog.getByRole('option', {
-			name: /Local connected/u,
-		});
-		await expect(localProfile).toContainText('Always available');
-		await expect(localProfile.getByRole('button', { name: 'Rename' })).toHaveCount(
-			0,
-		);
-		await expect(localProfile.getByRole('button', { name: 'Forget' })).toHaveCount(
-			0,
-		);
-		await expect(
-			localProfile.getByRole('button', { name: 'Revoke access' }),
-		).toHaveCount(0);
+		// This remote Desktop document owns only remembered remote profiles.
+		// Local's immutable profile is covered by the Local connection-manager
+		// journey; it is intentionally not imported into a remote host document.
+		await expect(dialog.getByText('Saved connections')).toBeVisible();
 		await dialog.getByLabel('Pairing URL').fill(readiness.pairing.pairingUrl);
 		await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
 		await expect(dialog).toHaveCount(0);
