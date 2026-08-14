@@ -30,6 +30,7 @@ declare global {
 		};
 		terminayBytes?: {
 			readonly version: 1;
+			replaceEndpoint(): Promise<void>;
 			send(frame: Uint8Array): Promise<void>;
 			subscribe(listener: (frame: Uint8Array | null) => void): () => void;
 		};
