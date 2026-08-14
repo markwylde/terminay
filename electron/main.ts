@@ -461,7 +461,6 @@ function resetZoom(): void {
 let serverTerminalAuthority: ServerTerminalAuthority | null = null;
 let privilegedWebRtcExposure: PrivilegedWebRtcExposure | null = null;
 const privilegedWebRtcSessions = new Set<string>();
-let localWorkspaceSeedPromise: Promise<void> | null = null;
 let appliedAgentIntegrationSetting: boolean | null = null;
 let applyAgentIntegrationPromise = Promise.resolve();
 
@@ -1303,24 +1302,6 @@ async function createServerOwnedTerminalSession(
 		recordingService.finalize(id, null, null, 'failed');
 		throw error;
 	}
-}
-
-async function ensureLocalWorkspaceSeed(webContentsId: number): Promise<void> {
-	if (!serverTerminalAuthority) return;
-	if (Object.keys(serverTerminalAuthority.workspace.state.projects).length > 0)
-		return;
-	localWorkspaceSeedPromise ??= createServerOwnedTerminalSession(
-		webContentsId,
-		'default',
-		app.getPath('home'),
-		'server-default',
-	)
-		.then(() => undefined)
-		.catch((error) => {
-			localWorkspaceSeedPromise = null;
-			throw error;
-		});
-	await localWorkspaceSeedPromise;
 }
 
 function serverTerminalRendererListener(
@@ -3115,11 +3096,10 @@ function createWindow(options?: {
 		return null;
 	}
 
-	const isCanonicalServerUi = !VITE_DEV_SERVER_URL;
-	const preloadPath = path.join(
-		__dirname,
-		isCanonicalServerUi ? 'serverUiPreload.cjs' : 'preload.mjs',
-	);
+	// Normal workspace windows always execute the selected server's verified UI
+	// bundle. Development changes where those bytes are built, never which
+	// renderer, preload, transport, or state owner is selected.
+	const preloadPath = path.join(__dirname, 'serverUiPreload.cjs');
 	const isMac = process.platform === 'darwin';
 	const usesOverlayTitlebar = process.platform === 'win32';
 	const windowIconPath = getWindowIconPath();
@@ -3155,7 +3135,9 @@ function createWindow(options?: {
 			preload: preloadPath,
 			contextIsolation: true,
 			nodeIntegration: false,
-			...(isCanonicalServerUi ? { partition: getServerUiPartitionName(options?.serverUiLaunch?.partitionKey ?? localServerUiPartitionKey) } : {}),
+			partition: getServerUiPartitionName(
+				options?.serverUiLaunch?.partitionKey ?? localServerUiPartitionKey,
+			),
 			sandbox: true,
 			webSecurity: true,
 			webviewTag: false,
@@ -3284,94 +3266,10 @@ function createWindow(options?: {
 		event.preventDefault();
 	});
 
-	let serverConnectionSentForLoad = false;
-	window.webContents.on('did-start-loading', () => {
-		serverConnectionSentForLoad = false;
-		const remoteConnection =
-			activeRemoteByteConnectionsByWebContents.get(windowWebContentsId);
-		if (remoteConnection !== undefined) {
-			activeRemoteByteConnectionsByWebContents.delete(windowWebContentsId);
-			void remoteConnection.close();
-		}
-	});
-	const sendServerConnection = () => {
-		if (isCanonicalServerUi) return;
-		if (window.isDestroyed() || !serverTerminalAuthority) return;
-		if (serverConnectionSentForLoad) return;
-		serverConnectionSentForLoad = true;
-		const remoteProfileId =
-			remoteProfileBindingsByWebContents.get(windowWebContentsId);
-		if (remoteProfileId !== undefined) {
-			loadRememberedRemoteConnections();
-			const profile = rememberedRemoteConnections.get(remoteProfileId);
-			if (profile === undefined || profile.kind !== 'device') {
-				console.error(
-					'[connection] selected remote profile is unavailable after reload',
-				);
-				return;
-			}
-			void reconnectRememberedRemoteProfile(window.webContents, profile).catch(
-				(error) =>
-					console.error(
-						'[connection] failed to restore selected remote profile after reload',
-						error,
-					),
-			);
-			return;
-		}
-		if (isPendingRemoteConnectionWindow(window)) return;
-		void ensureLocalWorkspaceSeed(window.webContents.id)
-			.catch((error) => {
-				console.error('[server] failed to seed local workspace', error);
-			})
-			.finally(() => {
-				if (window.isDestroyed() || !serverTerminalAuthority) return;
-				writePortDiagnostic({
-					phase: 'renderer-port-transfer-start',
-					serverId: serverTerminalAuthority.service.serverId,
-					webContentsId: window.webContents.id,
-				});
-				const channel = new MessageChannelMain();
-				serverTerminalAuthority.acceptRendererPort(
-					channel.port1 as unknown as ServerMessagePort,
-				);
-				window.webContents.postMessage(
-					'server:connection',
-					{
-						connectionId: randomUUID(),
-						serverId: serverTerminalAuthority.service.serverId,
-						label: 'Local',
-					},
-					[channel.port2],
-				);
-				writePortDiagnostic({
-					phase: 'renderer-port-transfer-complete',
-					serverId: serverTerminalAuthority.service.serverId,
-					webContentsId: window.webContents.id,
-				});
-			});
-	};
-	window.webContents.on('did-finish-load', sendServerConnection);
-
-	// A torn-off window boots in "adopt" mode so the renderer starts with no
-	// default project and instead pulls its adopted project on mount.
-	const isAdoptWindow =
-		Boolean(options?.adoptedProject) && !options?.workspaceViewId;
-	if (VITE_DEV_SERVER_URL) {
-		const target = new URL(VITE_DEV_SERVER_URL);
-		if (isAdoptWindow) {
-			target.searchParams.set('adopt', '1');
-		}
-		if (options?.workspaceViewId)
-			target.searchParams.set('view', options.workspaceViewId);
-		if (options?.workspaceViewId)
-			target.hash = `view=${encodeURIComponent(options.workspaceViewId)}`;
-		window.loadURL(target.toString());
-	} else {
-		// Production startup resolves and verifies the selected server's exact UI
-		// artifact before any workspace renderer executes. Local and remote launches
-		// both enter through this canonical host/preload boundary.
-		void (options?.serverUiLaunch === undefined
+	// Startup resolves and verifies the selected server's exact UI artifact
+	// before any workspace renderer executes. Local, remote, development, and
+	// packaged launches all enter through this canonical host/preload boundary.
+	void (options?.serverUiLaunch === undefined
 			? localServerUiSession.prepare(windowWebContentsId)
 			: Promise.resolve(options.serverUiLaunch))
 			.then((launch) => {
@@ -3418,7 +3316,6 @@ function createWindow(options?: {
 				console.error('[window] embedded server UI verification failed', error);
 				if (!window.isDestroyed()) window.close();
 			});
-	}
 
 	void getAppUpdateStatus();
 
