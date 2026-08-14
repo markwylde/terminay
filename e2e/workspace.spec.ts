@@ -146,16 +146,14 @@ test.describe('workspace shell', () => {
 			};
 		});
 
-		const sessionId = await writeToActiveTerminal(mainWindow, 'sleep 30\n');
-		await expect
-			.poll(() =>
-				mainWindow.evaluate(
-					(nextSessionId) =>
-						window.terminayTest!.getServerTerminalActivity(nextSessionId),
-					sessionId,
-				),
-			)
-			.toMatchObject({ foregroundBusy: true });
+		const foregroundStarted = `foreground-started-${Date.now()}`;
+		await writeToActiveTerminal(
+			mainWindow,
+			`sleep 1; printf '${foregroundStarted}\\n'; sleep 30\n`,
+		);
+		await expect(
+			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
+		).toContainText(foregroundStarted);
 		await closeButtons.last().click();
 		await expect
 			.poll(() =>
