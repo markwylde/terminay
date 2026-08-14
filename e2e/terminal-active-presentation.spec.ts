@@ -51,9 +51,12 @@ test('a protocol-created terminal launches the configured shell', async ({
 		/.+/,
 	);
 	await expect(activeTerminal).toContainText(/[$#]\s*$/u);
-	await activeTerminal.locator('.xterm-helper-textarea').focus();
-	await mainWindow.keyboard.insertText('shopt login_shell');
-	await mainWindow.keyboard.press('Enter');
+	const terminalInput = activeTerminal.getByRole('textbox', {
+		name: 'Terminal input',
+	});
+	await terminalInput.focus();
+	await terminalInput.pressSequentially('shopt login_shell');
+	await terminalInput.press('Enter');
 	await expect(activeTerminal).toContainText('shopt login_shell');
 	await expect(
 		activeTerminal
