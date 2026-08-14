@@ -5,8 +5,10 @@ import {
 	BrowserHostUpgradeRequiredError,
 	BrowserSessionBundleHost,
 	CacheStorageBrowserBundleStore,
-	currentBrowserExecutionRuntime,
+	createBrowserManagerBundleHost,
+	createDirectBrowserBundleHost,
 	MemoryBrowserBundleStore,
+	negotiateBrowserHostCapabilities,
 } from '../dist/index.js';
 import {
 	DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
@@ -30,7 +32,6 @@ const runtime = Object.freeze({
 	bundleFormatVersion: 1,
 	hostBridgeVersion: 1,
 	byteEndpointVersion: 1,
-	executionRuntimeVersion: 125,
 	capabilities: {},
 });
 
@@ -39,7 +40,6 @@ const compatible = Object.freeze({
 	bundleFormat: { minimum: 1, maximum: 1 },
 	hostBridge: { minimum: 1, maximum: 1 },
 	byteEndpoint: { minimum: 1, maximum: 1 },
-	executionRuntime: { minimum: 120, maximum: 130 },
 	requiredCapabilities: {},
 	optionalCapabilities: { notifications: { minimum: 1, maximum: 1 } },
 });
@@ -156,10 +156,16 @@ test('browser host rejects hashes, unsafe paths, identity drift, and mismatched 
 	assert.equal((await store.current('server-prod')).manifest.bundleId, first.manifest.bundleId);
 });
 
-test('required incompatibility is typed before asset reads while optional capabilities degrade', async () => {
+test('a missing required browser capability is typed before asset reads while optional capabilities degrade', async () => {
 	const store = new MemoryBrowserBundleStore();
 	const host = new BrowserSessionBundleHost({ store, runtime, crypto: webcrypto });
-	const incompatible = fixture('future', { compatibility: { ...compatible, executionRuntime: { minimum: 200, maximum: 210 } } });
+	const incompatible = fixture('required-capability', {
+		compatibility: {
+			...compatible,
+			requiredCapabilities: { clipboardWrite: { minimum: 1, maximum: 1 } },
+			optionalCapabilities: {},
+		},
+	});
 	let reads = 0;
 	await assert.rejects(host.installAndPrepare({
 		manifest: incompatible.manifest,
@@ -168,7 +174,11 @@ test('required incompatibility is typed before asset reads while optional capabi
 		context: context(incompatible.manifest.bundleId),
 		endpoint: endpoint(),
 		readAsset: async (path) => { reads += 1; return incompatible.assets.get(path); },
-	}), (error) => error instanceof BrowserHostUpgradeRequiredError && error.failure.component === 'execution-runtime');
+	}), (error) =>
+		error instanceof BrowserHostUpgradeRequiredError &&
+		error.failure.component === 'host-capability' &&
+		error.failure.code === 'missing-capability' &&
+		error.failure.capability === 'clipboardWrite');
 	assert.equal(reads, 0);
 	assert.equal(await store.current('server-prod'), undefined);
 });
@@ -198,8 +208,70 @@ test('browser launch URLs remain exact-origin and carry no credentials', async (
 	await assert.rejects(host.installAndPrepare({ manifest: selected.manifest, expectedServerId: 'server-prod', sessionOrigin: 'https://user:secret@session.example.test', context: context(selected.manifest.bundleId), endpoint: endpoint(), readAsset: async (path) => selected.assets.get(path) }), /exact HTTPS/);
 });
 
-test('browser runtime compatibility is derived from the actual Chromium user agent', () => {
-	assert.equal(currentBrowserExecutionRuntime('Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36'), 128);
-	assert.equal(currentBrowserExecutionRuntime('Mozilla/5.0 CriOS/126.0.0.0 Mobile'), 126);
-	assert.throws(() => currentBrowserExecutionRuntime('Firefox/130.0'), /supported Chromium/);
+test('direct-browser and manager launches accept Firefox, Chromium, and reduced or spoofed UAs with the same required capabilities', async () => {
+	const requiredCapabilities = Object.freeze({ clipboardWrite: { minimum: 1, maximum: 1 } });
+	const selected = fixture('ua-neutral', {
+		compatibility: {
+			...compatible,
+			requiredCapabilities,
+			optionalCapabilities: {},
+		},
+	});
+	const userAgents = [
+		'Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0',
+		'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/132.0.0.0 Safari/537.36',
+		'TerminayBrowser/1.0',
+		'Mozilla/5.0 Chrome/999.0.0.0 Safari/537.36 Terminay-spoof',
+	];
+	for (const [userAgentIndex, userAgent] of userAgents.entries()) {
+		const capabilities = negotiateBrowserHostCapabilities({
+			// A user agent is deliberately irrelevant to negotiation. Keeping it on
+			// the platform fixture makes this a regression test against brand gates.
+			userAgent,
+			clipboard: { writeText() {} },
+			Notification: function Notification() {},
+		});
+		assert.deepEqual(capabilities, { clipboardWrite: 1, notifications: 1 }, userAgent);
+		assert.ok(Object.isFrozen(capabilities), userAgent);
+		for (const [kind, host] of [
+			['direct', createDirectBrowserBundleHost(new MemoryCacheStorage(), capabilities)],
+			['manager', createBrowserManagerBundleHost(new MemoryCacheStorage(), capabilities)],
+		]) {
+			const launch = await host.installAndPrepare({
+				manifest: selected.manifest,
+				expectedServerId: 'server-prod',
+				sessionOrigin: 'https://prod.example.test',
+				context: context(selected.manifest.bundleId, { sourceId: `${kind}-${userAgentIndex}` }),
+				endpoint: endpoint(),
+				readAsset: async (path) => selected.assets.get(path),
+			});
+			assert.equal(launch.bundle.manifest.bundleId, selected.manifest.bundleId, `${kind}: ${userAgent}`);
+		}
+	}
+});
+
+test('direct-browser reports a typed missing capability rather than accepting a reduced platform', async () => {
+	const selected = fixture('reduced-browser', {
+		compatibility: {
+			...compatible,
+			requiredCapabilities: { clipboardWrite: { minimum: 1, maximum: 1 } },
+			optionalCapabilities: {},
+		},
+	});
+	const host = createDirectBrowserBundleHost(
+		new MemoryCacheStorage(),
+		negotiateBrowserHostCapabilities({}),
+	);
+	await assert.rejects(host.installAndPrepare({
+		manifest: selected.manifest,
+		expectedServerId: 'server-prod',
+		sessionOrigin: 'https://prod.example.test',
+		context: context(selected.manifest.bundleId),
+		endpoint: endpoint(),
+		readAsset: async (path) => selected.assets.get(path),
+	}), (error) =>
+		error instanceof BrowserHostUpgradeRequiredError &&
+		error.failure.component === 'host-capability' &&
+		error.failure.code === 'missing-capability' &&
+		error.failure.capability === 'clipboardWrite');
 });

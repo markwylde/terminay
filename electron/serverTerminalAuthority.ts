@@ -872,32 +872,28 @@ export class ServerTerminalAuthority {
 		for (const project of Object.values(this.workspace.state.projects)) {
 			await this.registerProjectRoot(project.id, project.root);
 		}
-		if (this.workspaceRepository?.wasCreated !== true) {
+		if (this.workspaceRepository?.wasCreated === false) {
 			// Local Desktop owns these PTYs. They cannot survive this authority
 			// generation, so reopening their persisted panels would manufacture a
 			// row of unusable interrupted tabs. Keep projects and non-terminal
-			// panels, then start one fresh terminal for every retained project.
+			// panels, then start exactly one fresh terminal in the restored active
+			// project. Starting one per project turns a Local restart into an
+			// accidental terminal-tab factory.
 			if (this.sessions.size > 0) return;
-			for (const panel of Object.values(this.workspace.state.panels)) {
-				if (panel.type !== 'terminal') continue;
-				const closed = this.composition.workspaceOperations?.applyHostCommand(
-					`authority:restart-close:${panel.id}`.slice(0, 128),
-					{ type: 'panel.close', panelId: panel.id },
-					this.workspace.state.revision,
-				);
-				if (closed === undefined || !closed.ok)
-					throw new Error('could not clear stale local terminal panels');
-			}
-			for (const project of Object.values(this.workspace.state.projects)) {
-				await this.create({
-					projectId: project.id,
-					cwd: project.root,
-					cols: 100,
-					rows: 30,
-				});
-			}
+			const restartProject = this.localRestartProject();
+			this.workspace.discardStaleLocalTerminalState();
+			await this.create({
+				projectId: restartProject.id,
+				cwd: restartProject.root,
+				cols: 100,
+				rows: 30,
+			});
 			return;
 		}
+		// Focused authority tests may inject no durable repository. Production
+		// Desktop always injects one, so only its persisted Local workspace takes
+		// the first-run or restart hydration branches below.
+		if (this.workspaceRepository === undefined) return;
 		const hydration = resolveWorkspaceHydration(this.workspace.state);
 		if (hydration.state !== 'ready')
 			throw new Error('fresh canonical workspace has no active terminal');
@@ -918,6 +914,22 @@ export class ServerTerminalAuthority {
 			this.workspace.markInterruptedSessions();
 			throw error;
 		}
+	}
+
+	/** The restored view selection, rather than object iteration order, chooses
+	 * where the one Local-restart terminal belongs. This keeps logical-view and
+	 * active-project identity authoritative across document reconstruction. */
+	private localRestartProject() {
+		for (const viewId of this.workspace.state.viewOrder) {
+			const view = this.workspace.state.views[viewId];
+			const projectId = view?.activeProjectId ?? view?.projectIds[0];
+			const project =
+				projectId === undefined
+					? undefined
+					: this.workspace.state.projects[projectId];
+			if (project !== undefined) return project;
+		}
+		throw new Error('restored local workspace has no project for its fresh terminal');
 	}
 
 	private async getFileDiff(

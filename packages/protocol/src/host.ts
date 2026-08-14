@@ -34,7 +34,6 @@ export interface TerminayHostCompatibilityRequirements {
 	readonly bundleFormat: TerminayVersionRange;
 	readonly hostBridge: TerminayVersionRange;
 	readonly byteEndpoint: TerminayVersionRange;
-	readonly executionRuntime: TerminayVersionRange;
 	readonly requiredCapabilities: Readonly<
 		Partial<Record<TerminayHostCapability, TerminayVersionRange>>
 	>;
@@ -48,7 +47,6 @@ export interface TerminayHostRuntimeSupport {
 	readonly bundleFormatVersion: number;
 	readonly hostBridgeVersion: number;
 	readonly byteEndpointVersion: number;
-	readonly executionRuntimeVersion: number;
 	readonly capabilities: TerminayHostCapabilityVersions;
 }
 
@@ -85,7 +83,6 @@ export type TerminayHostCompatibilityFailure = Readonly<{
 		| 'bundle-format'
 		| 'host-bridge'
 		| 'byte-endpoint'
-		| 'execution-runtime'
 		| 'host-capability';
 	code: 'below-minimum' | 'above-maximum' | 'missing-capability';
 	capability?: TerminayHostCapability;
@@ -465,7 +462,6 @@ export function parseTerminayHostCompatibilityRequirements(
 			'bundleFormat',
 			'hostBridge',
 			'byteEndpoint',
-			'executionRuntime',
 			'requiredCapabilities',
 			'optionalCapabilities',
 		],
@@ -500,10 +496,6 @@ export function parseTerminayHostCompatibilityRequirements(
 			input.byteEndpoint,
 			'host byte endpoint range',
 		),
-		executionRuntime: parseVersionRange(
-			input.executionRuntime,
-			'host execution runtime range',
-		),
 		requiredCapabilities,
 		optionalCapabilities,
 	});
@@ -521,11 +513,6 @@ export function evaluateTerminayHostCompatibility(
 		['bundle-format', requirements.bundleFormat, support.bundleFormatVersion],
 		['host-bridge', requirements.hostBridge, support.hostBridgeVersion],
 		['byte-endpoint', requirements.byteEndpoint, support.byteEndpointVersion],
-		[
-			'execution-runtime',
-			requirements.executionRuntime,
-			support.executionRuntimeVersion,
-		],
 	] as const;
 	for (const [component, range, actual] of versionChecks) {
 		const failure = compareVersion(component, range, actual);
@@ -1035,7 +1022,6 @@ function parseHostRuntimeSupport(
 			'bundleFormatVersion',
 			'hostBridgeVersion',
 			'byteEndpointVersion',
-			'executionRuntimeVersion',
 			'capabilities',
 		],
 		'host runtime support',
@@ -1050,10 +1036,6 @@ function parseHostRuntimeSupport(
 		byteEndpointVersion: version(
 			input.byteEndpointVersion,
 			'host byte endpoint version',
-		),
-		executionRuntimeVersion: version(
-			input.executionRuntimeVersion,
-			'host execution runtime version',
 		),
 		capabilities: parseCapabilityVersions(
 			input.capabilities,
