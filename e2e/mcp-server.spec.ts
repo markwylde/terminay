@@ -33,7 +33,9 @@ async function connectMcp(
 
 	const transport = new StdioClientTransport({
 		command: process.execPath,
-		args: [path.resolve('dist-electron/mcpEntry.js')],
+		// Desktop ships the selected server's MCP entrypoint. The retired
+		// Electron renderer entrypoint no longer exists in the canonical graph.
+		args: [path.resolve('dist-electron/serverMcpEntry.js')],
 		env: {
 			...process.env,
 			TERMINAY_CONTROL_SOCKET: control.socketPath,
