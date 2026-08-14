@@ -88,6 +88,11 @@ test('dirty file edits stay local until saved even after an external write', asy
     )
     .toContain('local draft')
 
+  const conflict = mainWindow.getByRole('alert')
+  await expect(conflict).toContainText('changed on disk')
+  await conflict.getByRole('button', { name: 'Keep local edits' }).click()
+  await expect(conflict).toHaveCount(0)
+
   await activateDockTab(mainWindow, 'conflict.txt')
   await appHarness.sendAppCommand('save-active')
   await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced')
