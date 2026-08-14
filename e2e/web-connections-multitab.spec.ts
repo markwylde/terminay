@@ -13,7 +13,7 @@ test.afterAll(async () => {
 	await fixture.close();
 });
 
-test('Connections pairing opens enrollment without saving metadata, while advanced imports converge across tabs', async ({
+test('Connections pairing handoff saves no metadata, while profile actions converge across tabs', async ({
 	context,
 }) => {
 	const first = await context.newPage();
@@ -37,6 +37,12 @@ test('Connections pairing opens enrollment without saving metadata, while advanc
 	await expect(secondConnections).toContainText('No saved servers yet', {
 		timeout: 30_000,
 	});
+	await first.route('https://paired.example/**', async (route) => {
+		await route.fulfill({
+			body: '<!doctype html><title>Pairing handoff</title>',
+			contentType: 'text/html',
+		});
+	});
 	await firstConnections
 		.getByRole('button', { name: 'Add connection…' })
 		.click();
@@ -46,22 +52,19 @@ test('Connections pairing opens enrollment without saving metadata, while advanc
 		.fill(
 			`https://paired.example/?transport=webrtc#pairingSessionId=pairing-session-tabs&pairingToken=${'a'.repeat(32)}&pairingExpiresAt=${encodeURIComponent(new Date(Date.now() + 60_000).toISOString())}`,
 		);
-	await pair.getByRole('button', { name: 'Continue pairing' }).click();
-
-	const enrollment = first.getByRole('dialog', {
-		name: 'Enroll browser device',
-	});
-	await expect(enrollment).toBeVisible();
-	await expect(enrollment.getByLabel('Device name')).toBeEditable();
-	await expect(enrollment.getByLabel('Pairing PIN')).toBeVisible();
-	await expect(secondConnections).toContainText('No saved servers yet');
-	const beforeEnrollment = await first.evaluate(
+	const beforeHandoff = await first.evaluate(
 		(key) => localStorage.getItem(key),
 		WEB_PROFILE_STORAGE_KEY,
 	);
-	expect(beforeEnrollment ?? '').not.toContain('paired.example');
-	expect(beforeEnrollment ?? '').not.toContain('pairing-session-tabs');
-	await enrollment.getByRole('button', { name: 'Cancel pairing' }).click();
+	await pair.getByRole('button', { name: 'Continue pairing' }).click();
+	await first.waitForURL(/paired\.example/u, { waitUntil: 'commit' });
+	await expect(secondConnections).toContainText('No saved servers yet');
+	expect(beforeHandoff ?? '').not.toContain('paired.example');
+	expect(beforeHandoff ?? '').not.toContain('pairing-session-tabs');
+	await first.goto(url, { waitUntil: 'commit' });
+	await expect(firstConnections).toContainText('No saved servers yet', {
+		timeout: 30_000,
+	});
 
 	await firstConnections
 		.getByRole('button', { name: 'Advanced: import profile metadata' })

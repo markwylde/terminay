@@ -33,9 +33,9 @@ duplicate every new feature and produce incompatible behaviour.
 
 ## Coordination
 
-[Task 27](./27-server-bundle-host-contracts.md),
+[Task 27](../tasks_completed/27-server-bundle-host-contracts.md),
 [Task 28](./28-desktop-server-bundle-host-and-state.md), and
-[Task 29](./29-browser-host-and-cross-version-convergence.md) own the stable
+[Task 29](../tasks_completed/29-browser-host-and-cross-version-convergence.md) own the stable
 bundle/host contracts, adoption of the verified server bundle by normal
 Desktop/web startup, host-state reduction, cross-version evidence, and deletion
 of the legacy Electron bootstrap. This task continues to own the one shared
@@ -176,14 +176,13 @@ rather than a separate fixture or compatibility renderer.
     resizes only through its exact shared-client attachment, and the legacy
     remote renderer contains neither raw socket sends nor `WebSocket`
     construction. Evidence: `scripts/terminal-authority-boundary.test.mjs`.
-- [ ] Make the production Electron and web hosts render the same extracted
+- [x] Make the production Electron and web hosts render the same extracted
   workspace component tree from the selected server's exact verified bundle.
   Electron and authenticated web now both enter the
   `ConnectedRendererWorkspace -> App` production tree, and the retired
-  `ServerWorkspaceSurface` path is deleted. This parent remains open until the
-  route-marker/`legacyFallback` wrapper is replaced by the extracted shared
-  route tree, Tasks 28–29 make that bundle the normal Desktop/web launch path,
-  and strict visual proof closes the parity gate. Evidence:
+  `ServerWorkspaceSurface` path is deleted. The route-marker/`legacyFallback`
+  wrapper is gone, and the verified selected-server bundle is the normal
+  Desktop and web launch path for Local and remote connections. Evidence:
   `src/rendererRuntime.tsx`, `src/web/main.tsx`,
   `src/web/ConnectedWebRendererWorkspace.tsx`,
   `src/shared/ConnectedRendererWorkspace.tsx`,
@@ -721,12 +720,18 @@ rather than a separate fixture or compatibility renderer.
     `src/shared/SharedEditTabRouteBody.tsx`,
     `scripts/shared-auxiliary-route-bodies.test.mjs`, and
     `e2e/shared-auxiliary-routes.spec.ts`.
-- [ ] Render the complete shared route components in the actual Electron and
+- [x] Render the complete shared route components in the actual Electron and
   web production trees, replacing host-specific feature bodies rather than
   testing renderer-neutral models or fixture-only route surfaces. The old web
-  `ServerWorkspaceSurface` duplicate is gone; this remains open for replacing
-  the remaining route-marker/`legacyFallback` wrapper and proving the actual
-  production bodies visually.
+  `ServerWorkspaceSurface` duplicate is gone. The production Desktop entry now
+  composes its actual shared route body as children of the responsive route
+  boundary; the obsolete route-marker and `legacyFallback` compatibility API
+  are deleted. Browser workspace composition already enters the same
+  `ConnectedRendererWorkspace -> App` tree, while Settings, Macros,
+  Recordings, and Edit consume the shared route bodies recorded below.
+  Evidence: `src/shared/ResponsiveWorkspaceEntry.tsx`,
+  `src/rendererRuntime.tsx`, and
+  `scripts/shared-responsive-entry.test.mjs`.
 	- [x] Wire the production browser Recordings route to canonical
 	  `RecordingsClient` list/delete operations through the authenticated
 	  `TerminayClient`, with loading, empty, error, selection, refresh, and

@@ -1,4 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+	parseTerminayHostActionRequest,
+	parseTerminayHostContext,
+	requiredTerminayHostCapability,
+	type TerminayHostActionRequest,
+	type TerminayHostContext,
+} from '@terminay/protocol';
 import {
 	BrowserWindow,
 	type BrowserWindowConstructorOptions,
@@ -8,22 +17,18 @@ import {
 	ipcMain,
 	type WebContents,
 } from 'electron';
-import type {
-	ServerUiHostAction,
-	ServerUiHostContext,
-} from './serverUiHostContract';
 
 const SERVER_UI_GET_CONTEXT_CHANNEL = 'server-ui-host:get-context';
 const SERVER_UI_REQUEST_ACTION_CHANNEL = 'server-ui-host:request-action';
 const OPAQUE_PARTITION_KEY_PATTERN = /^[a-zA-Z0-9_-]{22,128}$/;
-const PROFILE_ID_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
 
 type ServerUiBinding = {
-	context: ServerUiHostContext;
+	context: TerminayHostContext;
 	expectedOrigin: string;
+	allowedFileRoot?: string;
 	onHostAction?: (
-		action: ServerUiHostAction,
-		context: ServerUiHostContext,
+		action: TerminayHostActionRequest,
+		context: TerminayHostContext,
 	) => Promise<void> | void;
 	window: BrowserWindow;
 };
@@ -33,16 +38,15 @@ export type CreateServerUiWindowOptions = {
 	height?: number;
 	hostPartitionKey: string;
 	initialUrl: string;
-	label: string;
-	profiles?: readonly ServerUiHostContext['profiles'][number][];
-	capabilities?: Partial<ServerUiHostContext['capabilities']>;
+	context: TerminayHostContext;
 	onHostAction?: ServerUiBinding['onHostAction'];
 	preloadPath: string;
-	profileId: string;
 	show?: boolean;
 	title?: string;
 	width?: number;
 };
+
+export type BindServerUiWindowOptions = CreateServerUiWindowOptions & { window: BrowserWindow };
 
 const bindings = new Map<number, ServerUiBinding>();
 let ipcInstalled = false;
@@ -56,146 +60,19 @@ function parseOrigin(value: string, name: string): string {
 	}
 
 	const isSecureRemote = url.protocol === 'https:';
+	const isEmbeddedFile = url.protocol === 'file:';
 	const isLoopbackHttp =
 		url.protocol === 'http:' &&
 		(url.hostname === '127.0.0.1' ||
 			url.hostname === '[::1]' ||
 			url.hostname === 'localhost');
-	if (!isSecureRemote && !isLoopbackHttp) {
+	if (!isSecureRemote && !isLoopbackHttp && !isEmbeddedFile) {
 		throw new Error(
 			`${name} must use HTTPS, except for an embedded loopback server.`,
 		);
 	}
 
 	return url.origin;
-}
-
-function normalizeProfile(
-	profileId: string,
-	label: string,
-): ServerUiHostContext['profile'] {
-	if (!PROFILE_ID_PATTERN.test(profileId)) {
-		throw new Error('The host profile id is invalid.');
-	}
-
-	const normalizedLabel = label.trim();
-	if (!normalizedLabel || normalizedLabel.length > 160) {
-		throw new Error('The host profile label is invalid.');
-	}
-
-	return Object.freeze({
-		id: profileId,
-		label: normalizedLabel,
-	});
-}
-
-function normalizeAction(value: unknown): ServerUiHostAction {
-	if (!value || typeof value !== 'object') {
-		throw new Error('A host action is required.');
-	}
-
-	const action = value as Record<string, unknown>;
-	const keys = Object.keys(action).sort();
-	if (
-		(action.type === 'close-window' || action.type === 'manage-connections') &&
-		keys.length === 1 &&
-		keys[0] === 'type'
-	) {
-		return Object.freeze({ type: action.type });
-	}
-
-	if (
-		(action.type === 'open-connection' ||
-			action.type === 'connection.select' ||
-			action.type === 'connection.forget' ||
-			action.type === 'connection.revoke' ||
-			action.type === 'connection.expose') &&
-		keys.length === 2 &&
-		keys[0] === 'profileId' &&
-		keys[1] === 'type' &&
-		typeof action.profileId === 'string' &&
-		PROFILE_ID_PATTERN.test(action.profileId)
-	) {
-		return Object.freeze({
-			profileId: action.profileId,
-			type: action.type,
-		});
-	}
-	if (
-		action.type === 'connection.rename' &&
-		keys.join(',') === 'label,profileId,type' &&
-		typeof action.profileId === 'string' &&
-		PROFILE_ID_PATTERN.test(action.profileId) &&
-		typeof action.label === 'string' &&
-		action.label.trim().length > 0 &&
-		action.label.length <= 128
-	)
-		return Object.freeze({
-			type: action.type,
-			profileId: action.profileId,
-			label: action.label.trim(),
-		});
-	if (
-		action.type === 'connection.pair' &&
-		keys.join(',') === 'pairingUrl,type' &&
-		typeof action.pairingUrl === 'string' &&
-		action.pairingUrl.length <= 16_384
-	) {
-		const pairing = new URL(action.pairingUrl);
-		if (
-			pairing.protocol !== 'https:' ||
-			pairing.username ||
-			pairing.password ||
-			pairing.search ||
-			pairing.hash.length < 2
-		)
-			throw new Error('The pairing URL is invalid.');
-		return Object.freeze({ type: action.type, pairingUrl: action.pairingUrl });
-	}
-	if (
-		action.type === 'connection.remember' &&
-		keys.join(',') === 'profile,type'
-	) {
-		return Object.freeze({
-			type: action.type,
-			profile: normalizeConnectionProfile(action.profile),
-		});
-	}
-
-	throw new Error('That host action is not allowed.');
-}
-
-function normalizeConnectionProfile(
-	value: unknown,
-): ServerUiHostContext['profiles'][number] {
-	if (!value || typeof value !== 'object' || Array.isArray(value))
-		throw new Error('The connection profile is invalid.');
-	const profile = value as Record<string, unknown>;
-	const id = String(profile.id ?? '');
-	const serverId = String(profile.serverId ?? '');
-	if (!PROFILE_ID_PATTERN.test(id) || !PROFILE_ID_PATTERN.test(serverId))
-		throw new Error('The connection profile identity is invalid.');
-	const label = String(profile.label ?? '').trim();
-	if (!label || label.length > 128)
-		throw new Error('The connection profile label is invalid.');
-	const origin = parseOrigin(
-		String(profile.origin ?? ''),
-		'The connection profile origin',
-	);
-	if (
-		!['connected', 'connecting', 'offline', 'revoked', 'unreachable'].includes(
-			String(profile.status),
-		)
-	)
-		throw new Error('The connection profile status is invalid.');
-	return Object.freeze({
-		id,
-		serverId,
-		label,
-		origin,
-		status: profile.status as ServerUiHostContext['profiles'][number]['status'],
-		...(profile.isLocal === true ? { isLocal: true } : {}),
-	});
 }
 
 function bindingForEvent(event: IpcMainInvokeEvent): ServerUiBinding {
@@ -232,42 +109,24 @@ function installIpcHandlers(): void {
 		SERVER_UI_REQUEST_ACTION_CHANNEL,
 		async (event, value: unknown) => {
 			const binding = bindingForEvent(event);
-			const action = normalizeAction(value);
-			if (
-				action.type.startsWith('connection.') &&
-				binding.context.capabilities.connectionProfiles !== true
-			) {
-				throw new Error('Connection profile management is unavailable.');
-			}
-			if (
-				action.type === 'connection.expose' &&
-				binding.context.capabilities.serverExposure !== true
-			) {
-				throw new Error('Server exposure is unavailable.');
-			}
-			if ('profileId' in action && action.type.startsWith('connection.')) {
-				const profile = binding.context.profiles.find(
-					(candidate) => candidate.id === action.profileId,
-				);
-				if (profile === undefined)
-					throw new Error(
-						'The connection profile is outside this host context.',
-					);
-				if (
-					action.type === 'connection.expose' &&
-					profile.id !== binding.context.profile.id
-				) {
-					throw new Error('Only the current connection can be exposed.');
-				}
-			}
+			const action = parseTerminayHostActionRequest(value, binding.context);
+			const capability = requiredTerminayHostCapability(action.action);
+			if (capability !== undefined && binding.context.capabilities[capability] === undefined) throw new Error(`Host capability is unavailable: ${capability}`);
 			await binding.onHostAction?.(action, binding.context);
 		},
 	);
 }
 
-function isAllowedNavigation(target: string, expectedOrigin: string): boolean {
+function isAllowedNavigation(target: string, expectedOrigin: string, allowedFileRoot?: string): boolean {
 	try {
-		return new URL(target).origin === expectedOrigin;
+		const url = new URL(target);
+		if (allowedFileRoot !== undefined) {
+			if (url.protocol !== 'file:') return false;
+			const candidate = path.resolve(fileURLToPath(url));
+			const relative = path.relative(allowedFileRoot, candidate);
+			return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+		}
+		return url.origin === expectedOrigin;
 	} catch {
 		return false;
 	}
@@ -307,8 +166,6 @@ export function getServerUiPartitionName(hostPartitionKey: string): string {
 export function createServerUiWindow(
 	options: CreateServerUiWindowOptions,
 ): BrowserWindow {
-	installIpcHandlers();
-
 	const expectedOrigin = parseOrigin(
 		options.expectedOrigin,
 		'The expected server origin',
@@ -318,21 +175,11 @@ export function createServerUiWindow(
 		throw new Error('The initial server UI URL must use the expected origin.');
 	}
 
-	const context: ServerUiHostContext = Object.freeze({
-		hostKind: 'desktop',
-		capabilities: Object.freeze({
-			connectionProfiles: options.capabilities?.connectionProfiles === true,
-			serverExposure: options.capabilities?.serverExposure === true,
-		}),
-		profile: normalizeProfile(options.profileId, options.label),
-		profiles: Object.freeze(
-			(options.profiles ?? []).map(normalizeConnectionProfile),
-		),
-	});
+	const context = parseTerminayHostContext(options.context);
 	const windowOptions: BrowserWindowConstructorOptions = {
 		height: options.height ?? 900,
 		show: options.show ?? true,
-		title: options.title ?? `Terminay — ${context.profile.label}`,
+		title: options.title ?? `Terminay — ${context.profileId}`,
 		webPreferences: {
 			allowRunningInsecureContent: false,
 			contextIsolation: true,
@@ -346,10 +193,27 @@ export function createServerUiWindow(
 		width: options.width ?? 1400,
 	};
 	const window = new BrowserWindow(windowOptions);
+	bindServerUiWindow({ ...options, window });
+	void window.loadURL(initialUrl.toString());
+	return window;
+}
+
+/** Bind an already-created native shell to the same canonical server-UI
+ * policy. This lets normal Desktop startup retain native lifecycle ownership
+ * while using the exact verified bundle and narrow preload. */
+export function bindServerUiWindow(options: BindServerUiWindowOptions): BrowserWindow {
+	installIpcHandlers();
+	const window = options.window;
+	const expectedOrigin = parseOrigin(options.expectedOrigin, 'The expected server origin');
+	const initialUrl = new URL(options.initialUrl);
+	if (initialUrl.origin !== expectedOrigin) throw new Error('The initial server UI URL must use the expected origin.');
+	const context = parseTerminayHostContext(options.context);
 	const targetWebContents = window.webContents;
+	const allowedFileRoot = initialUrl.protocol === 'file:' ? path.dirname(path.resolve(fileURLToPath(initialUrl))) : undefined;
 	const binding: ServerUiBinding = {
 		context,
 		expectedOrigin,
+		...(allowedFileRoot === undefined ? {} : { allowedFileRoot }),
 		onHostAction: options.onHostAction,
 		window,
 	};
@@ -360,17 +224,17 @@ export function createServerUiWindow(
 		event.preventDefault();
 	});
 	targetWebContents.on('will-frame-navigate', (event) => {
-		if (!isAllowedNavigation(event.url, expectedOrigin)) {
+		if (!isAllowedNavigation(event.url, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
 	});
 	targetWebContents.on('will-navigate', (event, target) => {
-		if (!isAllowedNavigation(target, expectedOrigin)) {
+		if (!isAllowedNavigation(target, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
 	});
 	targetWebContents.on('will-redirect', (event, target) => {
-		if (!isAllowedNavigation(target, expectedOrigin)) {
+		if (!isAllowedNavigation(target, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
 	});
@@ -391,6 +255,5 @@ export function createServerUiWindow(
 		targetWebContents.session.off('will-download', denyDownload);
 	});
 
-	void window.loadURL(initialUrl.toString());
 	return window;
 }

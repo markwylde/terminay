@@ -4,21 +4,6 @@
 	height: 100%;
 }
 
-/* Keep the route registry in the accessibility/DOM contract without adding
- * a second visual navigation bar to the legacy feature body. */
-.responsive-workspace-entry__route-marker {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	padding: 0;
-	margin: -1px;
-	overflow: hidden;
-	clip: rect(0, 0, 0, 0);
-	white-space: nowrap;
-	border: 0;
-	clip-path: inset(50%);
-}
-
 /* Shared host-neutral preference fallbacks. Hosts may provide richer theme
  * tokens, but reduced motion and forced-colors must remain safe by default. */
 @media (prefers-reduced-motion: reduce) {

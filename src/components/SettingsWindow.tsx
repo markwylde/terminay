@@ -1,7 +1,11 @@
+import type {
+	ShellProfilesClient,
+	TerminayClient,
+} from '@terminay/client-core';
+import { TerminayAiClient, TerminayClientFacade } from '@terminay/client-core';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { Terminal } from '@xterm/xterm';
-import type { ShellProfilesClient, TerminayClient } from '@terminay/client-core';
 import type { ReactNode } from 'react';
 import {
 	type FormEvent,
@@ -27,8 +31,8 @@ import {
 	saveRemoteAccessPairingPin,
 } from '../remotePairingPin';
 import {
-	createLegacyAiTabMetadataClient,
 	type AiTabMetadataClient,
+	createLegacyAiTabMetadataClient,
 } from '../services/ai/legacyAiTabMetadataClient';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { SettingsMutationCoordinator } from '../settingsMutationCoordinator';
@@ -55,11 +59,28 @@ import type {
 	ParakeetRuntimeStatus,
 	RemoteAccessStatus,
 } from '../types/terminay';
-import '../settings.css';
-import { ShellProfilesSettings } from './ShellProfilesSettings';
-import { ExtensionSettingsSection } from './ExtensionSettingsSection';
 
-type CategoryId = (typeof terminalSettingsCategories)[number]['id'] | 'extensions';
+function toParakeetRuntimeStatus(status: {
+	readonly state: ParakeetRuntimeStatus['state'];
+	readonly model: string;
+	readonly message?: string;
+	readonly progress?: number;
+}): ParakeetRuntimeStatus {
+	return {
+		state: status.state,
+		model: 'mlx-community/parakeet-tdt-0.6b-v3',
+		...(status.message === undefined ? {} : { message: status.message }),
+		...(status.progress === undefined ? {} : { progress: status.progress }),
+	};
+}
+
+import '../settings.css';
+import { ExtensionSettingsSection } from './ExtensionSettingsSection';
+import { ShellProfilesSettings } from './ShellProfilesSettings';
+
+type CategoryId =
+	| (typeof terminalSettingsCategories)[number]['id']
+	| 'extensions';
 
 const extensionSettingsCategory = Object.freeze({
 	id: 'extensions' as const,
@@ -548,33 +569,37 @@ export function SettingsWindow({
 	shellProfilesClient?: ShellProfilesClient;
 	serverIdentity?: string;
 }>) {
-	const aiTabMetadataClient = useMemo(
-		() => {
-			if (aiTabMetadataClientOverride !== undefined) {
-				return aiTabMetadataClientOverride;
-			}
-			if (window.terminayAiMetadataHost !== undefined) {
-				return createLegacyAiTabMetadataClient(window.terminayAiMetadataHost);
-			}
-			return Object.freeze({
-				async generate() {
-					throw new Error('AI tab metadata is unavailable in this host.');
-				},
-				async listModels() {
-					return [];
-				},
-			}) satisfies AiTabMetadataClient;
-		},
-		[aiTabMetadataClientOverride],
+	const serverAiClient = useMemo(
+		() =>
+			applicationClient === undefined
+				? undefined
+				: new TerminayAiClient(new TerminayClientFacade(applicationClient)),
+		[applicationClient],
 	);
+	const aiTabMetadataClient = useMemo(() => {
+		if (aiTabMetadataClientOverride !== undefined) {
+			return aiTabMetadataClientOverride;
+		}
+		if (window.terminayAiMetadataHost !== undefined) {
+			return createLegacyAiTabMetadataClient(window.terminayAiMetadataHost);
+		}
+		return Object.freeze({
+			async generate() {
+				throw new Error('AI tab metadata is unavailable in this host.');
+			},
+			async listModels() {
+				return [];
+			},
+		}) satisfies AiTabMetadataClient;
+	}, [aiTabMetadataClientOverride]);
 	const searchParams = new URLSearchParams(window.location.search);
 	const initialSectionFromUrl = initialSectionId ?? searchParams.get('section');
-	const initialCategoryFromUrl: CategoryId = initialSectionFromUrl === 'extensions'
-		? 'extensions'
-		:
-		terminalSettingsSections.find(
-			(section) => section.id === initialSectionFromUrl,
-		)?.categoryId ?? 'appearance';
+	const initialCategoryFromUrl: CategoryId =
+		initialSectionFromUrl === 'extensions'
+			? 'extensions'
+			: (terminalSettingsSections.find(
+					(section) => section.id === initialSectionFromUrl,
+				)?.categoryId ?? 'appearance');
 	const {
 		settings: persistedSettings,
 		isLoading,
@@ -608,9 +633,7 @@ export function SettingsWindow({
 	const [remoteActionError, setRemoteActionError] = useState<string | null>(
 		null,
 	);
-	const [selectedRemotePairingMode, setSelectedRemotePairingMode] = useState<
-		'lan' | 'webrtc'
-	>('lan');
+	const [, setSelectedRemotePairingMode] = useState<'lan' | 'webrtc'>('webrtc');
 	const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
 	const [isPairingPinModalOpen, setIsPairingPinModalOpen] = useState(false);
 	const [pairingPinInput, setPairingPinInput] = useState('');
@@ -791,9 +814,11 @@ export function SettingsWindow({
 	useEffect(() => {
 		let isMounted = true;
 
-		void window.terminayDictationHost
-			?.getKeyStatus()
-			.then((status) => {
+		const credentialStatus =
+			serverAiClient?.dictationCredentialStatus() ??
+			window.terminayDictationHost?.getKeyStatus();
+		void credentialStatus
+			?.then((status) => {
 				if (isMounted) {
 					setDictationOpenAiKeyConfigured(status.configured);
 				}
@@ -806,10 +831,12 @@ export function SettingsWindow({
 				}
 			});
 
-		void window.terminayDictationHost
-			?.getParakeetStatus()
-			.then((status) => {
-				if (isMounted) setParakeetStatus(status);
+		void (
+			serverAiClient?.dictationRuntimeStatus() ??
+			window.terminayDictationHost?.getParakeetStatus()
+		)
+			?.then((status) => {
+				if (isMounted) setParakeetStatus(toParakeetRuntimeStatus(status));
 			})
 			.catch((error) => {
 				if (isMounted) {
@@ -829,17 +856,15 @@ export function SettingsWindow({
 			}
 		});
 
-		const unsubscribe = remoteAccessStatusClient.subscribe(
-			(status) => {
-				setRemoteStatus(status);
-			},
-		);
+		const unsubscribe = remoteAccessStatusClient.subscribe((status) => {
+			setRemoteStatus(status);
+		});
 
 		return () => {
 			isMounted = false;
 			unsubscribe?.();
 		};
-	}, [loadDictationMicrophones]);
+	}, [loadDictationMicrophones, serverAiClient]);
 
 	useEffect(() => {
 		setSelectedRemotePairingMode(
@@ -885,14 +910,17 @@ export function SettingsWindow({
 	}, [normalizedQuery]);
 
 	const visibleCategories = useMemo(() => {
-		if (!normalizedQuery) return [...terminalSettingsCategories, extensionSettingsCategory];
+		if (!normalizedQuery)
+			return [...terminalSettingsCategories, extensionSettingsCategory];
 		const categoryIds = new Set(
 			filteredSections.map((section) => section.categoryId),
 		);
 		const settingsCategories = terminalSettingsCategories.filter((category) =>
 			categoryIds.has(category.id),
 		);
-		return 'extensions trusted code npm project connection providers'.includes(normalizedQuery)
+		return 'extensions trusted code npm project connection providers'.includes(
+			normalizedQuery,
+		)
 			? [...settingsCategories, extensionSettingsCategory]
 			: settingsCategories;
 	}, [filteredSections, normalizedQuery]);
@@ -1189,9 +1217,11 @@ export function SettingsWindow({
 		setIsSavingDictationOpenAiKey(true);
 		try {
 			const dictationHost = window.terminayDictationHost;
-			if (dictationHost === undefined)
+			if (dictationHost === undefined && serverAiClient === undefined)
 				throw new Error('Desktop dictation is unavailable.');
-			const status = await dictationHost.saveKey(dictationOpenAiKeyDraft);
+			const status = await (serverAiClient?.setDictationCredential(
+				dictationOpenAiKeyDraft,
+			) ?? dictationHost!.saveKey(dictationOpenAiKeyDraft));
 			setDictationOpenAiKeyConfigured(status.configured);
 			setDictationOpenAiKeyDraft('');
 		} catch (error) {
@@ -1208,9 +1238,10 @@ export function SettingsWindow({
 		setIsSavingDictationOpenAiKey(true);
 		try {
 			const dictationHost = window.terminayDictationHost;
-			if (dictationHost === undefined)
+			if (dictationHost === undefined && serverAiClient === undefined)
 				throw new Error('Desktop dictation is unavailable.');
-			const status = await dictationHost.clearKey();
+			const status = await (serverAiClient?.clearDictationCredential() ??
+				dictationHost!.clearKey());
 			setDictationOpenAiKeyConfigured(status.configured);
 			setDictationOpenAiKeyDraft('');
 		} catch (error) {
@@ -1233,13 +1264,23 @@ export function SettingsWindow({
 		let statusPoll: ReturnType<typeof setInterval> | undefined;
 		try {
 			const host = window.terminayDictationHost;
-			if (!host) throw new Error('Desktop dictation is unavailable.');
+			if (!host && serverAiClient === undefined)
+				throw new Error('Dictation runtime management is unavailable.');
 			statusPoll = setInterval(() => {
-				void host.getParakeetStatus().then(setParakeetStatus).catch(() => {
-					// The install request owns final error reporting.
-				});
+				void (
+					serverAiClient?.dictationRuntimeStatus() ?? host!.getParakeetStatus()
+				)
+					.then((status) => setParakeetStatus(toParakeetRuntimeStatus(status)))
+					.catch(() => {
+						// The install request owns final error reporting.
+					});
 			}, 500);
-			setParakeetStatus(await host.installParakeet());
+			setParakeetStatus(
+				toParakeetRuntimeStatus(
+					await (serverAiClient?.installDictationRuntime() ??
+						host!.installParakeet()),
+				),
+			);
 		} catch (error) {
 			setParakeetStatus({
 				model: 'mlx-community/parakeet-tdt-0.6b-v3',
@@ -1673,8 +1714,18 @@ export function SettingsWindow({
 			return (
 				<div className="settings-shortcut-editor">
 					<div className="settings-shortcut-value">
-						<span className={`settings-shortcut-chip${state === 'ready' ? '' : ' settings-shortcut-chip--muted'}`}>
-							{state === 'ready' ? 'Ready' : state === 'installing' ? 'Installing…' : state === 'unsupported' ? 'Unsupported' : state === 'error' ? 'Setup failed' : 'Not installed'}
+						<span
+							className={`settings-shortcut-chip${state === 'ready' ? '' : ' settings-shortcut-chip--muted'}`}
+						>
+							{state === 'ready'
+								? 'Ready'
+								: state === 'installing'
+									? 'Installing…'
+									: state === 'unsupported'
+										? 'Unsupported'
+										: state === 'error'
+											? 'Setup failed'
+											: 'Not installed'}
 						</span>
 					</div>
 					{state === 'installing' ? (
@@ -1686,7 +1737,13 @@ export function SettingsWindow({
 						/>
 					) : null}
 					{parakeetStatus?.message ? (
-						<span className={state === 'error' || state === 'unsupported' ? 'settings-shortcut-warning' : 'settings-parakeet-status'}>
+						<span
+							className={
+								state === 'error' || state === 'unsupported'
+									? 'settings-shortcut-warning'
+									: 'settings-parakeet-status'
+							}
+						>
 							{parakeetStatus.message}
 						</span>
 					) : null}
@@ -2065,9 +2122,7 @@ export function SettingsWindow({
 					});
 				}
 
-				setRemoteStatus(
-					await remoteAccessStatusClient.getStatus(),
-				);
+				setRemoteStatus(await remoteAccessStatusClient.getStatus());
 				return true;
 			} catch (error) {
 				setRemoteActionError(
@@ -2157,20 +2212,19 @@ export function SettingsWindow({
 
 			if (
 				!remoteStatus?.isRunning &&
-				!(await selectRemotePairingMode(selectedRemotePairingMode))
+				!(await selectRemotePairingMode('webrtc'))
 			) {
 				return;
 			}
 
 			if (
 				!remoteStatus?.isRunning &&
-				!(await ensureRemoteAccessPairingPin(selectedRemotePairingMode))
+				!(await ensureRemoteAccessPairingPin('webrtc'))
 			) {
 				return;
 			}
 
-			const nextStatus =
-				await remoteAccessStatusClient.toggleServer();
+			const nextStatus = await remoteAccessStatusClient.toggleServer();
 			setRemoteStatus(nextStatus);
 			setRemoteActionError(nextStatus.errorMessage);
 		} catch (error) {
@@ -2187,11 +2241,31 @@ export function SettingsWindow({
 		}
 	};
 
+	const toggleDirectNetworkListener = async () => {
+		setIsTogglingRemoteAccess(true);
+		setRemoteActionError(null);
+		try {
+			if (
+				!remoteStatus?.directListenerRunning &&
+				!(await ensureRemoteAccessPairingPin('lan'))
+			)
+				return;
+			setRemoteStatus(await remoteAccessStatusClient.toggleDirectListener());
+		} catch (error) {
+			setRemoteActionError(
+				error instanceof Error
+					? error.message
+					: 'Unable to change the direct network listener.',
+			);
+		} finally {
+			setIsTogglingRemoteAccess(false);
+		}
+	};
+
 	const revokeDevice = async (deviceId: string) => {
 		setIsUpdatingRemoteDevices(true);
 		try {
-			const nextStatus =
-				await remoteAccessStatusClient.revokeDevice(deviceId);
+			const nextStatus = await remoteAccessStatusClient.revokeDevice(deviceId);
 			setRemoteStatus(nextStatus);
 		} finally {
 			setIsUpdatingRemoteDevices(false);
@@ -2202,9 +2276,7 @@ export function SettingsWindow({
 		setIsUpdatingRemoteDevices(true);
 		try {
 			const nextStatus =
-				await remoteAccessStatusClient.closeConnection(
-					connectionId,
-				);
+				await remoteAccessStatusClient.closeConnection(connectionId);
 			setRemoteStatus(nextStatus);
 		} finally {
 			setIsUpdatingRemoteDevices(false);
@@ -2227,7 +2299,7 @@ export function SettingsWindow({
 			: remoteActionError || remoteStatus?.errorMessage
 				? `${remoteActionError ?? remoteStatus?.errorMessage} You can also add your own certificate files below later if you want.`
 				: 'Terminay will use your Remote Access settings and generate a self-signed certificate automatically if you leave the TLS paths blank.';
-		const activePairingMode = selectedRemotePairingMode;
+		const activePairingMode = selectedRemoteTab === 'lan' ? 'lan' : 'webrtc';
 		const selectedPairingUrl =
 			activePairingMode === 'webrtc'
 				? remoteStatus?.webRtcPairingUrl
@@ -2244,7 +2316,9 @@ export function SettingsWindow({
 				? remoteStatus?.webRtcPairingExpiresAt
 				: remoteStatus?.lanPairingExpiresAt;
 		const selectedPairingLabel =
-			activePairingMode === 'webrtc' ? 'WebRTC Relay QR' : 'Local Network QR';
+			activePairingMode === 'webrtc'
+				? 'WebRTC pairing QR'
+				: 'Direct network pairing QR';
 		const pairedDevices = remoteStatus?.pairedDevices ?? [];
 		const activeConnections = remoteStatus?.connections ?? [];
 		const auditEvents = remoteStatus?.auditEvents ?? [];
@@ -2288,9 +2362,7 @@ export function SettingsWindow({
 					await remoteAccessStatusClient.revokeDevice(deviceId);
 				}
 				setSelectedDevicesToRevoke(new Set());
-				setRemoteStatus(
-					await remoteAccessStatusClient.getStatus(),
-				);
+				setRemoteStatus(await remoteAccessStatusClient.getStatus());
 			} finally {
 				setIsRevokingSelected(false);
 			}
@@ -2404,8 +2476,8 @@ export function SettingsWindow({
 					}}
 				>
 					{renderTabButton('all', 'Overview')}
-					{renderTabButton('lan', 'Local Network')}
-					{renderTabButton('webrtc', 'WebRTC Relay')}
+					{renderTabButton('webrtc', 'WebRTC exposure')}
+					{renderTabButton('lan', 'Direct network listener')}
 				</div>
 
 				<div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -2438,8 +2510,8 @@ export function SettingsWindow({
 										}}
 									>
 										{selectedRemoteTab === 'webrtc'
-											? 'WebRTC Relay Mode'
-											: 'Local Network Mode'}
+											? 'WebRTC exposure'
+											: 'Direct network listener'}
 									</h5>
 									<p
 										style={{
@@ -2451,7 +2523,7 @@ export function SettingsWindow({
 									>
 										{selectedRemoteTab === 'webrtc'
 											? 'Secure, encrypted peer-to-peer connection via Terminay Relay. Works over the internet without any firewall or router configuration.'
-											: 'Direct connection via your local network. Fast and private, but requires devices to be on the same Wi-Fi or LAN.'}
+											: 'Advanced direct HTTPS connection on your configured interface. It runs independently and is never started as a WebRTC fallback.'}
 									</p>
 								</div>
 								{remoteStatus?.isRunning && (
@@ -2471,6 +2543,18 @@ export function SettingsWindow({
 										}}
 									>
 										Show QR Code
+									</button>
+								)}
+								{selectedRemoteTab === 'lan' && (
+									<button
+										type="button"
+										className="settings-primary-button"
+										onClick={() => void toggleDirectNetworkListener()}
+										disabled={isTogglingRemoteAccess}
+									>
+										{remoteStatus?.directListenerRunning
+											? 'Stop direct listener'
+											: 'Start direct listener'}
 									</button>
 								)}
 							</div>
@@ -2988,9 +3072,11 @@ export function SettingsWindow({
 											type="button"
 											className="settings-remote-copy-button"
 											onClick={() => {
-												void (window.terminayClipboardHost?.writeText(
-													selectedPairingUrl,
-												) ?? navigator.clipboard.writeText(selectedPairingUrl))
+												void (
+													window.terminayClipboardHost?.writeText(
+														selectedPairingUrl,
+													) ?? navigator.clipboard.writeText(selectedPairingUrl)
+												)
 													.then(() => {
 														setIsLinkCopied(true);
 														setTimeout(() => setIsLinkCopied(false), 2000);
@@ -3189,14 +3275,19 @@ export function SettingsWindow({
 					setTimeout(() => scrollToSection(firstSection.id), 0);
 				}
 			}}
-			onResetAll={activeCategoryId === 'extensions' ? undefined : () => void resetAll()}
+			onResetAll={
+				activeCategoryId === 'extensions' ? undefined : () => void resetAll()
+			}
 			contentRef={contentRef}
 			preview={settingsPreview}
 			collapsedPreview={collapsedSettingsPreview}
 			modal={pairingPinModal}
 		>
 			{displayedCategories.some((category) => category.id === 'extensions') ? (
-				<ExtensionSettingsSection applicationClient={applicationClient} serverName={serverIdentity} />
+				<ExtensionSettingsSection
+					applicationClient={applicationClient}
+					serverName={serverIdentity}
+				/>
 			) : null}
 			{displayedCategories.map((cat) => {
 				if (cat.id === 'extensions') return null;
@@ -3233,9 +3324,27 @@ export function SettingsWindow({
 										</button>
 									) : null}
 								</div>
-								<div className={section.id === 'shell-launch' ? 'settings-shell-profile-container' : 'settings-group'}>
+								<div
+									className={
+										section.id === 'shell-launch'
+											? 'settings-shell-profile-container'
+											: 'settings-group'
+									}
+								>
 									{section.id === 'shell-launch' ? (
-										shellProfilesClient ? <ShellProfilesSettings client={shellProfilesClient} serverIdentity={serverIdentity} /> : <div className="settings-group shell-profiles-loading" role="status">Connect to a server to manage shell profiles.</div>
+										shellProfilesClient ? (
+											<ShellProfilesSettings
+												client={shellProfilesClient}
+												serverIdentity={serverIdentity}
+											/>
+										) : (
+											<div
+												className="settings-group shell-profiles-loading"
+												role="status"
+											>
+												Connect to a server to manage shell profiles.
+											</div>
+										)
 									) : null}
 									{section.fields.filter(isFieldVisible).map((field) => (
 										<div

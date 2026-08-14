@@ -223,7 +223,10 @@ test("failed explicit rebinding restores the previous native window binding", as
 
 test("identity mismatch is explicit and never falls back to Local", async () => {
   const profiles = new ConnectionProfileStore();
-  const host = new DesktopConnectionHost({ localServer: server("local-id", "http://localhost:4422"), profiles, transports: { connect: async () => transport("unexpected-id") } });
+  const host = new DesktopConnectionHost({ localServer: server("local-id", "http://localhost:4422"), profiles, transports: { connect: async () => {
+    const bytes = transport("unexpected-id");
+    return { serverId: "unexpected-id", state: "connected", transport: bytes, close: () => bytes.close() };
+  } } });
   await host.start();
   const remote = profiles.add(createRemoteProfile({ id: "remote-other", serverId: "expected-id", origin: "https://other.example", label: "Other", now: "2026-01-01T00:00:00.000Z" }));
   await assert.rejects(host.openProfile(remote.id), /identity mismatch/);

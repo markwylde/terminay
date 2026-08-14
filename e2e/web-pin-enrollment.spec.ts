@@ -16,6 +16,7 @@ test.afterAll(async () => {
 function pairingUrl(): string {
 	const fragment = new URLSearchParams({
 		pairingExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+		pairingFlow: 'device',
 		pairingSessionId: 'pairing-session-browser-pin',
 		pairingToken: 'pairing-token-browser-pin-0123456789abcdef',
 	});
@@ -23,16 +24,10 @@ function pairingUrl(): string {
 }
 
 async function openEnrollment(page: import('@playwright/test').Page) {
-	// Cold Vite compilation is fixture bootstrap, not an application operation.
-	await page.goto(`${fixture.origin}/web.html`, {
+	await page.goto(`${fixture.origin}/e2e/fixtures/web-session-enrollment.html#${new URL(pairingUrl()).hash.slice(1)}`, {
 		waitUntil: 'domcontentloaded',
 		timeout: 15_000,
 	});
-	const connect = page.getByRole('dialog', {
-		name: 'Connect to Remote Server',
-	});
-	await connect.getByLabel('Pairing URL').fill(pairingUrl());
-	await connect.getByRole('button', { name: 'Connect', exact: true }).click();
 	return page.getByRole('dialog', { name: 'Enroll browser device' });
 }
 
@@ -65,11 +60,14 @@ test('canonical manager hands a pairing URL to its exact session origin', async 
 		pairingToken: 'manager-session-handoff-token-0123456789abcdef',
 	});
 	const pairingUrl = `https://session-handoff.example.test/#${fragment}`;
-	const connect = page.getByRole('dialog', {
-		name: 'Connect to Remote Server',
+	const connections = page.locator('[data-shared-route-body="connections"]');
+	await expect(connections).toContainText('No saved servers yet', {
+		timeout: 30_000,
 	});
+	await connections.getByRole('button', { name: 'Add connection…' }).click();
+	const connect = connections.getByRole('form', { name: 'Add connection' });
 	await connect.getByLabel('Pairing URL').fill(pairingUrl);
-	await connect.getByRole('button', { name: 'Connect', exact: true }).click();
+	await connect.getByRole('button', { name: 'Continue pairing' }).click();
 
 	await page.waitForURL(pairingUrl);
 	await expect(page).toHaveTitle('Session handoff');
@@ -130,7 +128,7 @@ test('opening a direct device link consumes its fragment and asks for the PIN im
 		pairingSessionId: 'direct-device-browser-pin',
 		pairingToken: 'direct-device-token-browser-pin-0123456789',
 	});
-	await page.goto(`${fixture.origin}/web.html#${fragment}`, {
+	await page.goto(`${fixture.origin}/e2e/fixtures/web-session-enrollment.html#${fragment}`, {
 		waitUntil: 'domcontentloaded',
 		timeout: 15_000,
 	});
@@ -165,19 +163,15 @@ test('an expired pairing handoff fails before enrollment and saves nothing', asy
 }) => {
 	const expiredUrl = `https://expired.example.test/?transport=webrtc#${new URLSearchParams({
 		pairingExpiresAt: new Date(Date.now() - 60_000).toISOString(),
+		pairingFlow: 'device',
 		pairingSessionId: 'expired-browser-pairing',
 		pairingToken: 'expired-browser-token-0123456789abcdef',
 	})}`;
-	await page.goto(`${fixture.origin}/web.html`, {
+	await page.goto(`${fixture.origin}/e2e/fixtures/web-session-enrollment.html#${new URL(expiredUrl).hash.slice(1)}`, {
 		waitUntil: 'domcontentloaded',
 		timeout: 15_000,
 	});
-	const connect = page.getByRole('dialog', {
-		name: 'Connect to Remote Server',
-	});
-	await connect.getByLabel('Pairing URL').fill(expiredUrl);
-	await connect.getByRole('button', { name: 'Connect', exact: true }).click();
-	await expect(connect.getByRole('alert')).toContainText('expired');
+	await expect(page.getByRole('alert')).toContainText('expired');
 	await expect(
 		page.getByRole('dialog', { name: 'Enroll browser device' }),
 	).toHaveCount(0);
@@ -194,18 +188,14 @@ test('a pairing link missing its token fails before enrollment and saves nothing
 }) => {
 	const invalidUrl = `https://invalid.example.test/?transport=webrtc#${new URLSearchParams({
 		pairingExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+		pairingFlow: 'device',
 		pairingSessionId: 'missing-token-browser-pairing',
 	})}`;
-		await page.goto(`${fixture.origin}/web.html`, {
+		await page.goto(`${fixture.origin}/e2e/fixtures/web-session-enrollment.html#${new URL(invalidUrl).hash.slice(1)}`, {
 			waitUntil: 'domcontentloaded',
 			timeout: 15_000,
 		});
-		const connect = page.getByRole('dialog', {
-			name: 'Connect to Remote Server',
-		});
-		await connect.getByLabel('Pairing URL').fill(invalidUrl);
-		await connect.getByRole('button', { name: 'Connect', exact: true }).click();
-		await expect(connect.getByRole('alert')).toBeVisible();
+		await expect(page.getByRole('alert')).toBeVisible();
 		await expect(
 			page.getByRole('dialog', { name: 'Enroll browser device' }),
 		).toHaveCount(0);
@@ -236,7 +226,7 @@ test('a wrong PIN reports the server denial and persists no connection', async (
 		pairingSessionId: 'wrong-pin-browser-pairing',
 		pairingToken: 'wrong-pin-browser-token-0123456789abcdef',
 	});
-	await page.goto(`${fixture.origin}/web.html#${fragment}`, {
+	await page.goto(`${fixture.origin}/e2e/fixtures/web-session-enrollment.html#${fragment}`, {
 		waitUntil: 'commit',
 	});
 	const enrollment = page.getByRole('dialog', {

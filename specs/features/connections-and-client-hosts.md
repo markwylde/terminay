@@ -244,6 +244,16 @@ manager state or a session credential.
 `app.terminay.com` is a stable host/manager, not a latest independent workspace
 client. The selected server's verified bundle renders the workspace.
 
+The browser host exposes this boundary through a transactional bundle installer.
+It validates the selected server identity, exact session origin, Task 27 host
+compatibility declaration, bounded asset namespace, sizes, and SHA-256 hashes
+before changing the active bundle pointer. A failed or interrupted installation
+leaves the previous complete bundle active. The launch callback receives only
+the parsed browser host context and an opaque byte endpoint; bundle bytes,
+credentials, reconnect material, and feature frames are never promoted into the
+manager origin. Implementations backed by Cache Storage use a bundle-specific
+staging cache and publish the active metadata record last.
+
 ## Server-bundled workspace and host shell
 
 The product has one full responsive workspace UI implementation:
@@ -290,6 +300,23 @@ runtime, and required/optional host capabilities. Missing optional capabilities
 use browser-equivalent in-page behavior or a clear unavailable action. Missing
 required compatibility blocks launch before committing connection state and
 identifies whether the host or server must be upgraded.
+
+Desktop commits a native window only after the bundle inventory has been
+verified, its host/runtime requirements accepted, and an exact
+profile/server/bundle binding reserved. Local reads the pinned bundle directly
+from the embedded artifact and does not download it through a public listener.
+Remote reads through its authenticated asset lane into an atomic,
+content-addressed cache rooted beneath a digest of the exact server identity.
+Interrupted or invalid replacement retains the last complete verified bundle
+for that server; neither another server's cache nor the embedded Local bundle
+is a remote fallback.
+
+The resulting renderer context contains only non-secret identity, negotiated
+versions/capabilities, and an opaque byte-endpoint handle. Bootstrap
+credentials, reconnect grants, signaling state, transport objects, protected
+keys, and raw cache paths remain in Desktop main. Native window identity and
+server logical-view identity remain separate bindings, so focus/close does not
+mutate a logical view without a typed server command.
 
 ## Adding and pairing a connection
 
@@ -352,6 +379,10 @@ separate operation against that origin.
 - An optional **Direct network listener** is configured and started/stopped
   separately in advanced settings. It may publish its own origin-bound pairing
   handoff, but cannot replace or masquerade as WebRTC exposure.
+- Desktop projects independent WebRTC and direct-listener state through its
+  privileged host boundary. Stopping either route leaves the other route and
+  the private Local MessagePort/server authority untouched; an unavailable
+  WebRTC composition never starts the direct listener as a fallback.
 - Generating a fresh pairing room does not disconnect existing clients.
 - Stopping WebRTC exposure prevents new WebRTC reconnect/pairing but does not
   stop the Local server, its private local workspace, or an independently
@@ -403,6 +434,14 @@ Forbidden in connection-manager localStorage, URLs, host messages, and logs:
 - PINs, device private keys, reconnect grants, proof keys, signaling HMACs,
   terminal tickets, or server secrets;
 - terminal output, command history, project roots, filenames, or recordings.
+
+Desktop persistence is a closed allowlist: sanitized profiles, protected
+credential references, native geometry and exact profile/view bindings,
+verified bundle-cache metadata, update state, OS permission decisions, and
+explicit device preferences. A bounded legacy migration discards workspace
+snapshots, application DTOs, project roots, panel/terminal state, server
+settings, and feature capability projections instead of copying them into the
+host store. Unclassified fields fail closed.
 
 ## Failure behaviour
 

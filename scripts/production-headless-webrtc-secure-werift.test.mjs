@@ -465,7 +465,7 @@ test('a minimized Werift candidate is deterministic, auditable, and importable',
             ? /mock hosted signaling peer[\s\S]*1 passed/
           : process.env.TERMINAY_TURN_CONFIG_PATH
             ? /3 passed/
-            : /Chromium pairs, reconnects, and revokes through a plain-Node werift host[\s\S]*1 passed/,
+            : /Chromium (?:pairs, reconnects, and revokes|installs the verified server bundle and exchanges application bytes) through a plain-Node werift host[\s\S]*1 passed/,
       )
       assert.doesNotMatch(proof.stdout, /electron/i)
     }

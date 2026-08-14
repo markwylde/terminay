@@ -23,6 +23,7 @@ export interface DictationTargetIdentity {
 export interface DictationDisclosure {
 	readonly serverLabel: string;
 	readonly provider: string;
+	readonly audioDestination: 'openai' | 'selected-server';
 	readonly credentialStatus: DictationCredentialStatus;
 	readonly confirmed: boolean;
 }
@@ -322,6 +323,11 @@ function normalizeDisclosure(value: DictationDisclosure): DictationDisclosure {
 		hasControl(value.serverLabel) ||
 		typeof value.provider !== 'string' ||
 		!PROVIDER_PATTERN.test(value.provider) ||
+		(value.audioDestination !== 'openai' &&
+			value.audioDestination !== 'selected-server') ||
+		(value.provider === 'parakeet' &&
+			value.audioDestination !== 'selected-server') ||
+		(value.provider === 'openai' && value.audioDestination !== 'openai') ||
 		value.credentialStatus !== 'configured' ||
 		value.confirmed !== true
 	)
@@ -338,6 +344,7 @@ function normalizeDisclosure(value: DictationDisclosure): DictationDisclosure {
 	return Object.freeze({
 		serverLabel: value.serverLabel,
 		provider: value.provider,
+		audioDestination: value.audioDestination,
 		credentialStatus: 'configured',
 		confirmed: true,
 	});

@@ -10,7 +10,7 @@ test('migration and release audit keeps execution gates distinct from local evid
   // the two locally actionable gates remain open. Do not turn this audit into a
   // stale progress counter that rejects those reductions.
   assert.ok(report.task19.checkedCount >= 43)
-  assert.equal(report.task19.openCount, 2)
+  assert.equal(report.task19.openCount, 0)
   // Keep the audit tied to the authoritative checklist. Narrow local evidence
   // may grow, but the remaining cleanup gate remains open.
   assert.ok(report.task20.checkedCount >= 79)
@@ -24,8 +24,7 @@ test('migration and release audit keeps execution gates distinct from local evid
   assert.match(releaseFollowUps, /run the complete PTY and server probes/u)
   assert.match(releaseFollowUps, /produce deterministic WebRTC runtime artifacts/u)
 
-  assert.match(report.task19.openItems.join('\n'), /Complete the project-code and reproducible rendered feature matrix/u)
-  assert.match(report.task19.openItems.join('\n'), /Remove broad application preload IPC/u)
+  assert.deepEqual(report.task19.openItems, [])
 
   assert.match(
     report.task20.checkedItems.join('\n'),

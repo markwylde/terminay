@@ -31,7 +31,7 @@ import type {
 	FileViewerMode,
 	GitFileDiff,
 } from '../../types/fileViewer';
-import type { FileViewerDefaultMode } from '../../types/settings';
+import type { FileViewerDefaultMode, TerminalSettings } from '../../types/settings';
 import type {
 	FileViewerGitRepoInfo,
 	FileViewerSparseFileEdit,
@@ -114,7 +114,6 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 	const panelApiRef = useRef(props.api);
 	const containerApiRef = useRef(props.containerApi);
 	const {
-		isLoading: isLoadingSettings,
 		settings,
 		setSettings,
 		settingsClient,
@@ -314,37 +313,44 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 							currentInfo.path,
 							projectRoot,
 						);
-						while (!metadata.isComplete) {
+						while (page === null) {
+							let low = 0;
+							let high = Math.max(0, metadata.lineCount - 1);
+							while (low <= high) {
+								const middle = Math.floor((low + high) / 2);
+								const line = (
+									await fileViewerClient.readTextLines(
+										currentInfo.path,
+										projectRoot,
+										middle,
+										1,
+									)
+								).lines[0];
+								if (!line) {
+									break;
+								}
+								const lineEnd =
+									line.end + new TextEncoder().encode(line.eol).byteLength;
+								if (location.originalOffset < line.start) {
+									high = middle - 1;
+								} else if (location.originalOffset >= lineEnd) {
+									low = middle + 1;
+								} else {
+									page = Math.floor(line.lineNumber / 128);
+									break;
+								}
+							}
+							if (page !== null || metadata.isComplete) {
+								break;
+							}
+							// Index only another bounded chunk when the edited byte lies
+							// beyond the currently indexed prefix. Completing a very large
+							// file before mapping an early byte creates avoidable renderer
+							// pressure during HEX/Text transitions.
 							metadata = await fileViewerClient.getTextMetadata(
 								currentInfo.path,
 								projectRoot,
 							);
-						}
-						let low = 0;
-						let high = Math.max(0, metadata.lineCount - 1);
-						while (low <= high) {
-							const middle = Math.floor((low + high) / 2);
-							const line = (
-								await fileViewerClient.readTextLines(
-									currentInfo.path,
-									projectRoot,
-									middle,
-									1,
-								)
-							).lines[0];
-							if (!line) {
-								break;
-							}
-							const lineEnd =
-								line.end + new TextEncoder().encode(line.eol).byteLength;
-							if (location.originalOffset < line.start) {
-								high = middle - 1;
-							} else if (location.originalOffset >= lineEnd) {
-								low = middle + 1;
-							} else {
-								page = Math.floor(line.lineNumber / 128);
-								break;
-							}
 						}
 					} catch {
 						// Binary files have no UTF-8 line projection; their byte draft remains valid.
@@ -512,7 +518,12 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 			sessionStoreRef.current?.setDirty(false);
 			setConflict(false);
 			sessionStoreRef.current?.setConflict({ kind: 'none' });
-			await refreshDiff(nextInfo.path);
+			// A sparse save must remain sparse. Building an eager Git diff for a
+			// 100+ MiB file defeats the bounded editor path and can exhaust the
+			// renderer even when the Diff/Tasks presentation is not open.
+			if (modeRef.current === 'diff' || modeRef.current === 'tasks') {
+				await refreshDiff(nextInfo.path);
+			}
 			return nextInfo;
 		} catch (error) {
 			setConflict(true);
@@ -618,11 +629,15 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 				engineRef.current === 'auto' ? preferredEngine : engineRef.current,
 			);
 			setEngine(resolvedEngine);
-			if (!isLoadingSettings && !hasAppliedDefaultModeRef.current) {
+			if (!hasAppliedDefaultModeRef.current) {
+				const currentSettings = await settingsClient.get<TerminalSettings>();
+				if (!isMounted) {
+					return;
+				}
 				const defaultMode =
 					getCustomDefaultMode(
 						info,
-						settings.fileViewer.customFileExtensions,
+						currentSettings.fileViewer.customFileExtensions,
 					) ?? capabilities.defaultMode;
 				hasAppliedDefaultModeRef.current = true;
 				setMode(defaultMode);
@@ -693,12 +708,11 @@ export function FilePanel(props: IDockviewPanelProps<FilePanelInstanceParams>) {
 	}, [
 		fileGateway,
 		filePath,
-		isLoadingSettings,
 		loadRequest,
 		preferredEngine,
 		props.api,
 		refreshDiff,
-		settings.fileViewer.customFileExtensions,
+		settingsClient,
 	]);
 
 	useEffect(() => {

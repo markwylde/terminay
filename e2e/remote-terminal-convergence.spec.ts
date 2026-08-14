@@ -1,4 +1,3 @@
-import { createServer } from 'node:net';
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
@@ -8,51 +7,26 @@ import { sendAppCommand } from './support/app';
 // retry to warm the container cache.
 test.describe.configure({ timeout: 180_000 });
 
-async function reserveLoopbackPort(): Promise<number> {
-	const server = createServer();
-	await new Promise<void>((resolve, reject) => {
-		server.once('error', reject);
-		server.listen(0, '127.0.0.1', resolve);
-	});
-	const address = server.address();
-	if (address === null || typeof address === 'string') {
-		throw new Error('Unable to reserve a loopback port.');
-	}
-	await new Promise<void>((resolve, reject) => {
-		server.close((error) => (error ? reject(error) : resolve()));
-	});
-	return address.port;
-}
-
 async function exposeDesktopOnLan(mainWindow: Page): Promise<string> {
-	const port = await reserveLoopbackPort();
-	return mainWindow.evaluate(async (selectedPort) => {
-		const settings =
-			await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings();
-		await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings(
-			{
-				...settings,
-				remoteAccess: {
-					...settings.remoteAccess,
-					bindAddress: '127.0.0.1',
-					origin: `http://localhost:${selectedPort}`,
-					pairingMode: 'lan',
-				},
-			},
-		);
+	return mainWindow.evaluate(async () => {
 		await window.terminayRemotePairingPinHost.setRemoteAccessPairingPin(
 			'123456',
 		);
-		const status = await window.terminayRemoteAccessStatusHost.toggleServer();
+		const status =
+			await window.terminayRemoteAccessStatusHost.toggleDirectListener();
 		if (!status.lanPairingUrl) {
 			throw new Error('Direct exposure did not publish a pairing URL.');
 		}
 		return status.lanPairingUrl;
-	}, port);
+	});
 }
 
 async function connectBrowser(page: Page, pairingUrl: string): Promise<void> {
 	await page.setViewportSize({ width: 640, height: 900 });
+	const certificateSession = await page.context().newCDPSession(page);
+	await certificateSession.send('Security.setIgnoreCertificateErrors', {
+		ignore: true,
+	});
 	await page.goto(pairingUrl);
 	await expect(
 		page.getByRole('dialog', { name: 'Enroll browser device' }),
@@ -106,8 +80,8 @@ async function expectMatchingLogicalGrid(first: Locator, second: Locator, expect
 async function stopExposure(mainWindow: Page): Promise<void> {
 	await mainWindow.evaluate(async () => {
 		const status = await window.terminayRemoteAccessStatusHost.getStatus();
-		if (status.isRunning) {
-			await window.terminayRemoteAccessStatusHost.toggleServer();
+		if (status.directListenerRunning) {
+			await window.terminayRemoteAccessStatusHost.toggleDirectListener();
 		}
 	});
 }

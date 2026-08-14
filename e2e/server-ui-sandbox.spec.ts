@@ -22,15 +22,16 @@ type HostileProof = {
 };
 
 type ProofWindow = {
-	capabilities?: { connectionProfiles?: boolean; serverExposure?: boolean };
 	expectedOrigin: string;
 	hostPartitionKey: string;
 	initialUrl: string;
-	label: string;
-	profileId: string;
-	profiles?: readonly unknown[];
+	context: Record<string, unknown>;
 	show: boolean;
 };
+
+function hostContext(sourceId: string, windowId: string, profileId: string, serverId: string, bundleId: string, capabilities: Record<string, number> = {}) {
+	return { schemaVersion: 1, bootstrapVersion: 1, sourceId, windowId, serverId, profileId, bundleId, applicationProtocolVersion: '1', hostKind: 'desktop', hostBridgeVersion: 1, byteEndpointVersion: 1, capabilities };
+}
 
 let app: ElectronApplication;
 let hostileServer: Server;
@@ -104,26 +105,14 @@ test.beforeAll(async () => {
 			expectedOrigin: hostileOrigin,
 			hostPartitionKey: 'profile_A_opaque_partition_key',
 			initialUrl: `${hostileOrigin}/?profile=a`,
-			label: 'Profile A',
-			profileId: 'profile-a',
-			capabilities: { connectionProfiles: true, serverExposure: true },
-			profiles: [
-				{
-					id: 'profile-a',
-					serverId: 'server-a',
-					label: 'Profile A',
-					origin: hostileOrigin,
-					status: 'connected',
-				},
-			],
+			context: hostContext('source-a', 'window-a', 'profile-a', 'server-a', 'bundle_aaaaaaaa', { clipboardWrite: 1 }),
 			show: true,
 		},
 		{
 			expectedOrigin: hostileOrigin,
 			hostPartitionKey: 'profile_B_opaque_partition_key',
 			initialUrl: `${hostileOrigin}/?profile=b`,
-			label: 'Profile B',
-			profileId: 'profile-b',
+			context: hostContext('source-b', 'window-b', 'profile-b', 'server-b', 'bundle_bbbbbbbb'),
 			show: true,
 		},
 	];
@@ -169,26 +158,8 @@ test('server UI has only the minimal bound host bridge and no Node or generic IP
 		terminayWebRtcHost: 'undefined',
 	});
 
-	await expect(readHostContext(profileA)).resolves.toEqual({
-		capabilities: { connectionProfiles: true, serverExposure: true },
-		hostKind: 'desktop',
-		profile: { id: 'profile-a', label: 'Profile A' },
-		profiles: [
-			{
-				id: 'profile-a',
-				serverId: 'server-a',
-				label: 'Profile A',
-				origin: hostileOrigin,
-				status: 'connected',
-			},
-		],
-	});
-	await expect(readHostContext(profileB)).resolves.toEqual({
-		capabilities: { connectionProfiles: false, serverExposure: false },
-		hostKind: 'desktop',
-		profile: { id: 'profile-b', label: 'Profile B' },
-		profiles: [],
-	});
+	await expect(readHostContext(profileA)).resolves.toEqual(hostContext('source-a', 'window-a', 'profile-a', 'server-a', 'bundle_aaaaaaaa', { clipboardWrite: 1 }));
+	await expect(readHostContext(profileB)).resolves.toEqual(hostContext('source-b', 'window-b', 'profile-b', 'server-b', 'bundle_bbbbbbbb'));
 
 	const preferences = await app.evaluate(({ BrowserWindow }) =>
 		BrowserWindow.getAllWindows().map((window) => {
@@ -239,33 +210,17 @@ test('server UI has only the minimal bound host bridge and no Node or generic IP
 	).resolves.toBe('rejected');
 });
 
-test('server UI connection actions stay profile-scoped and pairing secrets are consumed by the host', async () => {
+test('server UI semantic actions stay source, window, profile, and server scoped', async () => {
 	const [profileA] = pagesByTitle();
-	await profileA.evaluate(async () => {
+	await profileA.evaluate(async (context) => {
 		const bridge = (
 			window as Window & {
 				terminayHost?: { requestAction(action: unknown): Promise<void> };
 			}
 		).terminayHost;
 		if (!bridge) throw new Error('Host bridge unavailable');
-		await bridge.requestAction({
-			type: 'connection.select',
-			profileId: 'profile-a',
-		});
-		await bridge.requestAction({
-			type: 'connection.rename',
-			profileId: 'profile-a',
-			label: 'Renamed',
-		});
-		await bridge.requestAction({
-			type: 'connection.expose',
-			profileId: 'profile-a',
-		});
-		await bridge.requestAction({
-			type: 'connection.pair',
-			pairingUrl: 'https://pair.example/session#one-time-secret',
-		});
-	});
+		await bridge.requestAction({ schemaVersion: 1, bridgeVersion: 1, sourceId: context.sourceId, windowId: context.windowId, profileId: context.profileId, serverId: context.serverId, userGesture: true, action: { type: 'clipboard.write', text: 'safe' } });
+	}, hostContext('source-a', 'window-a', 'profile-a', 'server-a', 'bundle_aaaaaaaa'));
 	const actions = await app.evaluate(
 		() =>
 			(
@@ -274,13 +229,7 @@ test('server UI connection actions stay profile-scoped and pairing secrets are c
 				}
 			).__terminayServerUiActionProofs,
 	);
-	expect(actions).toEqual([
-		{ type: 'connection.select', profileId: 'profile-a' },
-		{ type: 'connection.rename', profileId: 'profile-a', label: 'Renamed' },
-		{ type: 'connection.expose', profileId: 'profile-a' },
-		{ type: 'connection.pair', pairingHost: 'pair.example' },
-	]);
-	expect(JSON.stringify(actions)).not.toContain('one-time-secret');
+	expect(actions).toEqual([expect.objectContaining({ action: { type: 'clipboard.write', text: 'safe' }, serverId: 'server-a' })]);
 });
 
 test('server UI cannot open windows or gain permissions', async () => {

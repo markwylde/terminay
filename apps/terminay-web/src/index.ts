@@ -37,6 +37,20 @@ export {
 	type SimulatedBrowserLifecycleHost,
 	type SimulatedBrowserSuspendEvent,
 } from './simulatedLifecycle.js';
+export {
+	BrowserHostUpgradeRequiredError,
+	BrowserSessionBundleHost,
+	CacheStorageBrowserBundleStore,
+	createBrowserManagerBundleHost,
+	createDirectBrowserBundleHost,
+	currentBrowserExecutionRuntime,
+	MemoryBrowserBundleStore,
+	parseBrowserBundleManifest,
+	type BrowserBundleLaunch,
+	type BrowserBundleStore,
+	type OpaqueBrowserByteEndpoint,
+	type VerifiedBrowserBundle,
+} from './browserBundleHost.js';
 
 /** Stable manager origin used by the hosted connection shell. */
 export const WEB_MANAGER_ORIGIN = TERMINAY_WEB_MANAGER_ORIGIN;

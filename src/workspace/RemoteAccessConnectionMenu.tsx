@@ -2,7 +2,6 @@ import { ChevronDown } from 'lucide-react';
 import type { RefObject } from 'react';
 import type { RemoteAccessStatus } from '../types/terminay';
 
-type PairingMode = 'lan' | 'webrtc';
 export type ConnectionSwitcherEntry = {
 	id: string;
 	isLocal: boolean;
@@ -23,23 +22,16 @@ export function RemoteAccessConnectionMenu(props: {
 	onDisconnect?: () => void;
 	onOpenPairingQr: () => void;
 	onSelectConnection?: (profileId: string) => void;
-	onSelectAddress: (address: string) => void;
-	onSelectMode: (mode: PairingMode) => void;
 	onToggleExposure: () => void;
 	onToggleMenu: () => void;
-	preferredAddress: string | null;
-	selectedMode: PairingMode;
 	status: RemoteAccessStatus | null;
 	statusMessage: string | null;
 	tone: string;
-	webRtcDisplayUrl: string | null;
 }) {
 	const { status } = props;
 	const switcherEntries = props.connectionSwitcherEntries ?? [];
-	const selectedModeUnavailable =
-		props.selectedMode === 'webrtc' &&
-		!status?.isRunning &&
-		status?.webRtcStatus === 'error';
+	const webRtcUnavailable =
+		!status?.isRunning && status?.webRtcStatus === 'error';
 	return (
 		<div
 			ref={props.menuRef}
@@ -178,7 +170,7 @@ export function RemoteAccessConnectionMenu(props: {
 						type="button"
 						className="remote-access-menu__item"
 						onClick={props.onToggleExposure}
-						disabled={props.isToggling || selectedModeUnavailable}
+						disabled={props.isToggling || webRtcUnavailable}
 					>
 						<span>
 							{props.isToggling
@@ -190,8 +182,8 @@ export function RemoteAccessConnectionMenu(props: {
 						<span className="remote-access-menu__meta">
 							{status?.isRunning
 								? 'Exposed'
-								: selectedModeUnavailable
-									? 'Unavailable'
+								: webRtcUnavailable
+									? 'Unavailable in this build'
 									: 'Ready'}
 						</span>
 					</button>
@@ -209,75 +201,29 @@ export function RemoteAccessConnectionMenu(props: {
 						type="button"
 						className="remote-access-menu__item"
 						onClick={props.onOpenPairingQr}
-						disabled={props.isToggling || selectedModeUnavailable}
+						disabled={
+							props.isToggling || webRtcUnavailable || !status?.isRunning
+						}
 					>
-						<span>
-							{status?.isRunning ? 'Show Pairing QR' : 'Expose & show QR'}
-						</span>
+						<span>Show pairing link and QR</span>
 						<span className="remote-access-menu__meta">
 							{status?.isRunning
 								? 'Scan'
-								: selectedModeUnavailable
-									? 'Unavailable'
-									: 'Start'}
+								: webRtcUnavailable
+									? 'Unavailable in this build'
+									: 'Expose first'}
 						</span>
 					</button>
 					<div className="remote-access-menu__section">
-						<div className="remote-access-menu__section-label">QR Type</div>
-						{(['lan', 'webrtc'] as const).map((mode) => (
-							<button
-								key={mode}
-								type="button"
-								className={`remote-access-menu__address-btn${props.selectedMode === mode ? ' remote-access-menu__address-btn--active' : ''}`}
-								onClick={() => props.onSelectMode(mode)}
-							>
-								<span className="remote-access-menu__address-text">
-									{mode === 'lan' ? 'Local Network' : 'WebRTC Relay'}
-								</span>
-								{props.selectedMode === mode ? (
-									<span
-										className="remote-access-menu__address-check"
-										aria-hidden="true"
-									>
-										✓
-									</span>
-								) : null}
-							</button>
-						))}
-					</div>
-					<div className="remote-access-menu__section">
-						<div className="remote-access-menu__section-label">Expose At</div>
-						{props.selectedMode === 'webrtc' ? (
-							<div className="remote-access-menu__empty">
-								{props.webRtcDisplayUrl ??
-									'Start remote access to generate a relay pairing link.'}
-							</div>
-						) : status?.availableAddresses.length ? (
-							status.availableAddresses.map((address) => (
-								<button
-									key={address}
-									type="button"
-									className={`remote-access-menu__address-btn${address === props.preferredAddress ? ' remote-access-menu__address-btn--active' : ''}`}
-									onClick={() => props.onSelectAddress(address)}
-								>
-									<span className="remote-access-menu__address-text">
-										{address}
-									</span>
-									{address === props.preferredAddress ? (
-										<span
-											className="remote-access-menu__address-check"
-											aria-hidden="true"
-										>
-											✓
-										</span>
-									) : null}
-								</button>
-							))
-						) : (
-							<div className="remote-access-menu__empty">
-								No local addresses available yet.
-							</div>
-						)}
+						<div className="remote-access-menu__section-label">
+							WebRTC exposure
+						</div>
+						<div className="remote-access-menu__empty">
+							{status?.webRtcStatusMessage ??
+								(webRtcUnavailable
+									? 'The required WebRTC runtime or authenticated signaling registrar is missing.'
+									: "Ready to expose without changing this window's private Local connection.")}
+						</div>
 					</div>
 					<div className="remote-access-menu__section">
 						<div className="remote-access-menu__section-label">

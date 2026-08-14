@@ -1,13 +1,4 @@
-import {
-  createHostCapabilityProvider,
-  WorkspaceClient,
-  TerminayClient,
-  type HostCapabilityProvider,
-  type ProjectMoveResult,
-  type TerminayHost,
-  type WorkspaceCommandOptions,
-} from "@terminay/client-core";
-import type { ByteTransport, ProtocolId, ServerHello } from "@terminay/protocol";
+import type { ByteTransport, ProtocolId } from "@terminay/protocol";
 import {
   ConnectionProfileStore,
   createLocalProfile,
@@ -32,53 +23,6 @@ export interface DesktopLocalMode {
 }
 
 export const DESKTOP_LOCAL_MODE: DesktopLocalMode = Object.freeze({ transport: "loopback", internetRequired: false, usesWebRTC: false });
-
-export interface WorkspaceAdoptionRequest {
-  readonly connectionId: string;
-  readonly projectId: ProtocolId;
-  readonly targetViewId: ProtocolId;
-  readonly currentWindowId?: string;
-  readonly rebindCurrent?: boolean;
-  readonly createWindowId?: () => string;
-  readonly index?: number;
-  readonly commandId?: ProtocolId;
-  readonly expectedRevision?: number;
-  readonly deadlineMs?: number;
-  readonly signal?: AbortSignal;
-}
-
-export interface WorkspaceAdoptionResult {
-  readonly move: ProjectMoveResult;
-  readonly selection: WindowSelection;
-}
-
-export interface WorkspaceProjectPopoutRequest extends WorkspaceAdoptionRequest {
-  readonly targetViewName: string;
-  readonly createViewCommandId?: ProtocolId;
-  readonly rollbackViewCommandId?: ProtocolId;
-}
-
-export interface WorkspaceProjectPopoutResult extends WorkspaceAdoptionResult {
-  readonly view: {
-    readonly viewId: ProtocolId;
-    readonly revision: number;
-    readonly cursor: string;
-  };
-}
-
-export interface CloseWorkspaceViewRequest {
-  readonly connectionId: string;
-  readonly viewId: ProtocolId;
-  readonly commandId?: ProtocolId;
-  readonly expectedRevision?: number;
-  readonly deadlineMs?: number;
-  readonly signal?: AbortSignal;
-}
-
-export interface CloseWorkspaceViewResult {
-  readonly command: { readonly revision: number; readonly cursor: string };
-  readonly detachedBindings: readonly WorkspaceViewBinding[];
-}
 
 export interface LocalServerReadiness {
   readonly serverId: ProtocolId;
@@ -107,7 +51,17 @@ export interface EmbeddedLocalServer {
 }
 
 export interface ConnectionTransportFactory {
-  connect(profile: ConnectionProfile, localContext?: LocalTransportContext): Promise<ByteTransport>;
+  connect(profile: ConnectionProfile, localContext?: LocalTransportContext): Promise<ByteTransport | DesktopConnectionEndpoint>;
+}
+
+/** Opaque authenticated byte endpoint. Bootstrap/pairing code establishes and
+ * verifies the exact server identity; the Desktop presentation host neither
+ * speaks nor translates the application protocol. */
+export interface DesktopConnectionEndpoint {
+  readonly serverId: ProtocolId;
+  readonly state: "connected" | "closed";
+  readonly transport: ByteTransport;
+  close(): Promise<void>;
 }
 
 /** Private context supplied only while creating the embedded Local transport. */
@@ -127,17 +81,20 @@ export interface DesktopConnectionHostOptions {
   readonly localServer: EmbeddedLocalServer;
   readonly profiles?: ConnectionProfileStore;
   readonly transports?: ConnectionTransportFactory;
-  readonly clientId?: ProtocolId;
-  readonly clientVersion?: string;
-  readonly capabilities?: readonly string[];
-  readonly hostCapabilities?: HostCapabilityProvider;
+  readonly hostCapabilities?: DesktopCapabilityProvider;
   readonly windows?: WindowViewRegistry;
+}
+
+export interface DesktopCapabilityProvider {
+  has(capability: "connectionProfiles" | "serverExposure"): boolean;
 }
 
 export interface DesktopConnection {
   readonly profile: ConnectionProfile;
-  readonly client: TerminayClient;
-  readonly server: ServerHello;
+  readonly endpoint: DesktopConnectionEndpoint;
+  /** Compatibility aliases contain no feature client or application DTO. */
+  readonly client: DesktopConnectionEndpoint;
+  readonly server: { readonly serverId: ProtocolId };
 }
 
 export interface DesktopConnectionHeader {
@@ -174,18 +131,15 @@ export interface DesktopConnectionStateChange {
 }
 
 /** Native host composition for Local and remote server connections. It owns
- * only connection metadata and client transports; workspace and PTY state stay
- * behind the TerminayClient protocol. */
+ * only connection metadata and opaque byte endpoints; workspace and PTY state
+ * stay behind the server-owned application protocol. */
 export class DesktopConnectionHost {
   readonly localMode: DesktopLocalMode = DESKTOP_LOCAL_MODE;
   readonly profiles: ConnectionProfileStore;
   readonly windows: WindowViewRegistry;
-  readonly host: TerminayHost;
+  readonly host: { readonly capabilities: DesktopCapabilityProvider };
   private readonly localServer: EmbeddedLocalServer;
   private readonly transports: ConnectionTransportFactory | undefined;
-  private readonly clientId: ProtocolId | undefined;
-  private readonly clientVersion: string | undefined;
-  private readonly capabilities: readonly string[] | undefined;
   private readonly active = new Map<string, DesktopConnection>();
   private readonly listeners = new Set<(change: DesktopConnectionStateChange) => void>();
   private localServerState: LocalServerState = "created";
@@ -200,11 +154,8 @@ export class DesktopConnectionHost {
     this.localServer = options.localServer;
     this.profiles = options.profiles ?? new ConnectionProfileStore();
     this.transports = options.transports;
-    this.clientId = options.clientId;
-    this.clientVersion = options.clientVersion;
-    this.capabilities = options.capabilities;
     this.windows = options.windows ?? new WindowViewRegistry();
-    const capabilityProvider = options.hostCapabilities ?? createHostCapabilityProvider({ nativeWindows: true, connectionProfiles: true, secureStorage: false, updater: true, osIntegration: true });
+    const capabilityProvider = options.hostCapabilities ?? desktopCapabilityProvider({ connectionProfiles: true, serverExposure: false });
     this.host = Object.freeze({ capabilities: capabilityProvider });
     this.localStateUnsubscribe = options.localServer.onStateChange?.((state) => this.onLocalState(state));
     if (options.localServer.state !== undefined) this.localServerState = options.localServer.state;
@@ -302,7 +253,7 @@ export class DesktopConnectionHost {
   async stop(): Promise<void> {
     if (this.phase === "stopped") return;
     this.setPhase("stopping");
-    for (const connection of this.active.values()) await connection.client.close().catch(() => undefined);
+    for (const connection of this.active.values()) await connection.endpoint.close().catch(() => undefined);
     this.active.clear();
     await this.localServer.stop();
     this.setLocalServerState("stopped");
@@ -330,7 +281,7 @@ export class DesktopConnectionHost {
     this.setLocalServerState("restarting");
     const localConnection = this.active.get(localId);
     if (localConnection !== undefined) {
-      await localConnection.client.close().catch(() => undefined);
+      await localConnection.endpoint.close().catch(() => undefined);
       this.active.delete(localId);
     }
     if (this.currentProfileId === localId) this.currentProfileId = undefined;
@@ -362,33 +313,33 @@ export class DesktopConnectionHost {
     const profile = this.profiles.get(profileId);
     if (profile === undefined || profile.archived) throw new Error(`unknown or archived connection profile: ${profileId}`);
     const prior = this.active.get(profileId);
-    if (prior !== undefined && prior.client.state !== "closed") {
+    if (prior !== undefined && prior.endpoint.state !== "closed") {
       this.currentProfileId = profileId;
       return prior;
     }
     this.profiles.patch(profileId, { status: "connecting", lastOpenedAt: new Date().toISOString() });
-    let client: TerminayClient | undefined;
+    let endpoint: DesktopConnectionEndpoint | undefined;
     try {
-      let transport = localTransport;
-      if (transport === undefined && profile.kind === "local") transport = this.localReadiness?.transport;
-      if (transport === undefined) {
+      let connectionResource: ByteTransport | DesktopConnectionEndpoint | undefined = localTransport;
+      if (connectionResource === undefined && profile.kind === "local") connectionResource = this.localReadiness?.transport;
+      if (connectionResource === undefined) {
         if (this.transports === undefined) throw new Error("no transport factory is configured for this connection");
-        transport = profile.kind === "local" ? await this.transports.connect(profile, this.localTransportContext) : await this.transports.connect(profile);
+        connectionResource = profile.kind === "local" ? await this.transports.connect(profile, this.localTransportContext) : await this.transports.connect(profile);
       }
-      client = new TerminayClient({ transport, ...(this.clientId === undefined ? {} : { clientId: this.clientId }), ...(this.clientVersion === undefined ? {} : { clientVersion: this.clientVersion }), ...(this.capabilities === undefined ? {} : { capabilities: this.capabilities }), hostCapabilities: this.host.capabilities });
-      const server = await client.connect();
-      if (server.serverId !== profile.serverId) {
-        await client.close().catch(() => undefined);
+      endpoint = isDesktopConnectionEndpoint(connectionResource) ? connectionResource : opaqueEndpoint(profile.serverId, connectionResource);
+      if (endpoint.serverId !== profile.serverId) {
+        await endpoint.close().catch(() => undefined);
         this.profiles.patch(profileId, { status: "identity-mismatch" });
         throw new Error(`server identity mismatch for ${profile.label}`);
       }
       const connectedProfile = this.profiles.patch(profileId, { status: "connected", lastConnectedAt: new Date().toISOString() });
-      const connection = Object.freeze({ profile: connectedProfile, client, server });
+      const server = Object.freeze({ serverId: endpoint.serverId });
+      const connection = Object.freeze({ profile: connectedProfile, endpoint, client: endpoint, server });
       this.active.set(profileId, connection);
       this.currentProfileId = profileId;
       return connection;
     } catch (cause) {
-      await client?.close().catch(() => undefined);
+      await endpoint?.close().catch(() => undefined);
       if (this.profiles.get(profileId)?.status === "connecting") this.profiles.patch(profileId, { status: "failed" });
       throw cause;
     }
@@ -433,111 +384,6 @@ export class DesktopConnectionHost {
   }
 
   /**
-   * Adopt a project into another logical server view and present that view in
-   * the requested native window. The project move is authenticated by the
-   * selected server connection; the native binding is only a reversible host
-   * presentation update.
-   */
-  async adoptProjectWindow(
-    profileId: string,
-    request: Omit<WorkspaceAdoptionRequest, "connectionId">,
-  ): Promise<DesktopWindowOpenResult & Pick<WorkspaceAdoptionResult, "move">> {
-    const connection = await this.openProfile(profileId);
-    const previousBinding = request.currentWindowId === undefined
-      ? undefined
-      : this.windows.get(request.currentWindowId);
-    const selection = this.windows.select(profileId, request.targetViewId, windowSelectionOptions(request));
-    try {
-      const move = await new WorkspaceClient(connection.client).moveProject(
-        {
-          projectId: request.projectId,
-          targetViewId: request.targetViewId,
-          ...(request.index === undefined ? {} : { index: request.index }),
-        },
-        workspaceCommandOptions(request),
-      );
-      return Object.freeze({ connection, selection, move });
-    } catch (error) {
-      restoreFailedWindowSelection(this.windows, selection, previousBinding);
-      throw error;
-    }
-  }
-
-  /**
-   * Pop out a project by creating a server-owned logical workspace view and
-   * moving the project into it before presenting that view in a native window.
-   * Failed server mutations restore the host-local native binding.
-   */
-  async popoutProjectWindow(
-    profileId: string,
-    request: Omit<WorkspaceProjectPopoutRequest, "connectionId">,
-  ): Promise<DesktopWindowOpenResult & WorkspaceProjectPopoutResult> {
-    const connection = await this.openProfile(profileId);
-    const workspace = new WorkspaceClient(connection.client);
-    const previousBinding = request.currentWindowId === undefined
-      ? undefined
-      : this.windows.get(request.currentWindowId);
-    const selection = this.windows.select(profileId, request.targetViewId, windowSelectionOptions(request));
-    let view: WorkspaceProjectPopoutResult["view"] | undefined;
-    try {
-      const created = await workspace.createView(
-        { viewId: request.targetViewId, name: request.targetViewName },
-        {
-          ...(request.createViewCommandId === undefined ? {} : { commandId: request.createViewCommandId }),
-          ...(request.expectedRevision === undefined ? {} : { expectedRevision: request.expectedRevision }),
-          ...(request.deadlineMs === undefined ? {} : { deadlineMs: request.deadlineMs }),
-          ...(request.signal === undefined ? {} : { signal: request.signal }),
-        },
-      );
-      view = Object.freeze({ viewId: request.targetViewId, ...created });
-      const move = await workspace.moveProject(
-        {
-          projectId: request.projectId,
-          targetViewId: request.targetViewId,
-          ...(request.index === undefined ? {} : { index: request.index }),
-        },
-        workspaceCommandOptions({ ...request, expectedRevision: view.revision }),
-      );
-      return Object.freeze({ connection, selection, view, move });
-    } catch (error) {
-      restoreFailedWindowSelection(this.windows, selection, previousBinding);
-      if (view !== undefined) {
-        await workspace.closeView(request.targetViewId, {
-          commandId: request.rollbackViewCommandId ?? rollbackWorkspaceViewCommandId(request.targetViewId),
-          expectedRevision: view.revision,
-        }).catch(() => undefined);
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Explicitly close a logical server view through the authenticated
-   * workspace command. Native bindings for that view are detached only after
-   * the server accepts the command; closing a native window alone never calls
-   * this method.
-   */
-  async closeWorkspaceView(
-    profileId: string,
-    request: Omit<CloseWorkspaceViewRequest, "connectionId">,
-  ): Promise<{ readonly connection: DesktopConnection } & CloseWorkspaceViewResult> {
-    const connection = await this.openProfile(profileId);
-    const command = await new WorkspaceClient(connection.client).closeView(
-      request.viewId,
-      workspaceCommandOptions(request),
-    );
-    const detachedBindings = this.windows
-      .list(profileId)
-      .filter((binding) => binding.workspaceViewId === request.viewId);
-    for (const binding of detachedBindings) this.windows.unbind(binding.windowId);
-    return Object.freeze({
-      connection,
-      command,
-      detachedBindings: Object.freeze([...detachedBindings]),
-    });
-  }
-
-  /**
    * Detach one native window from its server connection/view presentation.
    *
    * The connection is shared by windows targeting the same profile, so a
@@ -554,7 +400,7 @@ export class DesktopConnectionHost {
   async disconnect(profileId: string): Promise<void> {
     const connection = this.active.get(profileId);
     if (connection !== undefined) {
-      await connection.client.close();
+      await connection.endpoint.close();
       this.active.delete(profileId);
     }
     const profile = this.profiles.get(profileId);
@@ -577,7 +423,7 @@ export class DesktopConnectionHost {
   get currentConnection(): DesktopConnection | undefined {
     if (this.currentProfileId === undefined) return undefined;
     const connection = this.active.get(this.currentProfileId);
-    return connection !== undefined && connection.client.state === "connected" && this.profiles.get(this.currentProfileId)?.status === "connected" ? connection : undefined;
+    return connection !== undefined && connection.endpoint.state === "connected" && this.profiles.get(this.currentProfileId)?.status === "connected" ? connection : undefined;
   }
 
   selectWindow(profileId: string, workspaceViewId?: ProtocolId, options?: { readonly currentWindowId?: string; readonly rebindCurrent?: boolean; readonly createWindowId?: () => string }): WindowSelection {
@@ -601,7 +447,7 @@ export class DesktopConnectionHost {
     if (localId !== undefined && state !== "ready") {
       const connection = this.active.get(localId);
       if (connection !== undefined) {
-        void connection.client.close().catch(() => undefined);
+        void connection.endpoint.close().catch(() => undefined);
         this.active.delete(localId);
       }
       if (this.currentProfileId === localId) this.currentProfileId = undefined;
@@ -609,7 +455,7 @@ export class DesktopConnectionHost {
       else if (state === "starting" || state === "restarting" || state === "migrating") this.phase = "starting";
     }
     if (localId !== undefined && this.profiles.get(localId) !== undefined) {
-      const status: ConnectionProfileStatus = state === "ready" ? (this.active.get(localId)?.client.state === "connected" ? "connected" : "known") : state === "starting" || state === "restarting" || state === "migrating" ? "connecting" : state === "crashed" || state === "failed" ? "failed" : state === "stopped" ? "offline" : "known";
+      const status: ConnectionProfileStatus = state === "ready" ? (this.active.get(localId)?.endpoint.state === "connected" ? "connected" : "known") : state === "starting" || state === "restarting" || state === "migrating" ? "connecting" : state === "crashed" || state === "failed" ? "failed" : state === "stopped" ? "offline" : "known";
       this.profiles.patch(localId, { status });
     }
     this.notify(previous);
@@ -664,45 +510,6 @@ export function normalizePairingDeepLink(rawUrl: string): PairingDeepLinkMetadat
   return Object.freeze({ origin: parsed.origin, path: parsed.pathname, fragmentLength: parsed.hash.length - 1 });
 }
 
-function windowSelectionOptions(
-  request: Pick<WorkspaceAdoptionRequest, "currentWindowId" | "rebindCurrent" | "createWindowId">,
-): {
-  readonly currentWindowId?: string;
-  readonly rebindCurrent?: boolean;
-  readonly createWindowId?: () => string;
-} {
-  return {
-    ...(request.currentWindowId === undefined ? {} : { currentWindowId: request.currentWindowId }),
-    ...(request.rebindCurrent === true ? { rebindCurrent: true } : {}),
-    ...(request.createWindowId === undefined ? {} : { createWindowId: request.createWindowId }),
-  };
-}
-
-function workspaceCommandOptions(
-  request: Pick<WorkspaceAdoptionRequest, "commandId" | "expectedRevision" | "deadlineMs" | "signal">,
-): WorkspaceCommandOptions {
-  return {
-    ...(request.commandId === undefined ? {} : { commandId: request.commandId }),
-    ...(request.expectedRevision === undefined ? {} : { expectedRevision: request.expectedRevision }),
-    ...(request.deadlineMs === undefined ? {} : { deadlineMs: request.deadlineMs }),
-    ...(request.signal === undefined ? {} : { signal: request.signal }),
-  };
-}
-
-function restoreFailedWindowSelection(
-  windows: WindowViewRegistry,
-  selection: WindowSelection,
-  previousBinding: WorkspaceViewBinding | undefined,
-): void {
-  if (selection.action !== "open") return;
-  windows.unbind(selection.binding.windowId);
-  if (previousBinding !== undefined) windows.bind(previousBinding);
-}
-
-function rollbackWorkspaceViewCommandId(viewId: ProtocolId): ProtocolId {
-  return `rollback-${viewId}`.slice(0, 128);
-}
-
 function hasControlCharacter(value: string): boolean {
   return [...value].some((character) => {
     const code = character.codePointAt(0) ?? 0;
@@ -720,4 +527,22 @@ function localTransportContext(readiness: LocalServerReadiness): LocalTransportC
     ...(readiness.bootstrapCredentialExpiresAt === undefined ? {} : { bootstrapCredentialExpiresAt: readiness.bootstrapCredentialExpiresAt }),
     ...(readiness.credentialDigest === undefined ? {} : { credentialDigest: readiness.credentialDigest }),
   });
+}
+
+function isDesktopConnectionEndpoint(value: ByteTransport | DesktopConnectionEndpoint): value is DesktopConnectionEndpoint {
+  return "transport" in value && "serverId" in value && typeof value.close === "function";
+}
+
+function opaqueEndpoint(serverId: ProtocolId, transport: ByteTransport): DesktopConnectionEndpoint {
+  let closed = false;
+  return {
+    serverId,
+    get state() { return closed || transport.state === "closed" ? "closed" : "connected"; },
+    transport,
+    async close() { closed = true; await transport.close(); },
+  };
+}
+
+function desktopCapabilityProvider(capabilities: Readonly<Record<string, boolean>>): DesktopCapabilityProvider {
+  return Object.freeze({ has: (capability: "connectionProfiles" | "serverExposure") => capabilities[capability] === true });
 }

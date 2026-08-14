@@ -1,9 +1,9 @@
 # Server-bundled clients and protocol-blind hosts
 
 Status: accepted architecture; delivery evidence is tracked by
-[Task 27](../tasks/27-server-bundle-host-contracts.md),
+[Task 27](../tasks_completed/27-server-bundle-host-contracts.md),
 [Task 28](../tasks/28-desktop-server-bundle-host-and-state.md), and
-[Task 29](../tasks/29-browser-host-and-cross-version-convergence.md).
+[Task 29](../tasks_completed/29-browser-host-and-cross-version-convergence.md).
 
 ## Context
 

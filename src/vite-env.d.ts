@@ -45,6 +45,9 @@ declare global {
 			readonly version: 1;
 			getStatus(): Promise<import('./types/terminay').RemoteAccessStatus>;
 			toggleServer(): Promise<import('./types/terminay').RemoteAccessStatus>;
+			toggleDirectListener(): Promise<
+				import('./types/terminay').RemoteAccessStatus
+			>;
 			revokeDevice(
 				deviceId: string,
 			): Promise<import('./types/terminay').RemoteAccessStatus>;

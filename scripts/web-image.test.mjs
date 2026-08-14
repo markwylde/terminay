@@ -18,6 +18,15 @@ test('web image packages only the browser manager without Electron', async () =>
 	assert.match(manager, /<title>Terminay Connections<\/title>/u);
 	assert.match(managerModuleGraph, /Connections/u);
 	assert.match(managerModuleGraph, /app\.terminay\.com/u);
+	assert.ok(
+		Buffer.byteLength(managerModuleGraph) < 350_000,
+		'the stable manager must remain a small bootstrap artifact',
+	);
+	assert.doesNotMatch(
+		managerModuleGraph,
+		/ConnectedWebRendererWorkspace|TerminayClientFacade|TerminalPanel|monaco-editor|pdfjs-dist/u,
+		'the manager must not package a full workspace fallback',
+	);
 	assert.doesNotMatch(
 		managerModuleGraph,
 		/ipcRenderer|electron\/|node:(?:fs|path|crypto|net)/u,

@@ -12,7 +12,7 @@ test('Task 19 shared workspace movement stays behind the typed canonical facade'
 		]).then((sources) => sources.join('\n')),
 	])
 
-	assert.match(facade, /async moveProject\(request: ProjectMoveRequest/u)
+	assert.match(facade, /async moveProject\(\s*request: ProjectMoveRequest/u)
 	assert.match(facade, /result\.projectId !== request\.projectId/u)
 	assert.match(facade, /project move response identity is invalid/u)
 	assert.doesNotMatch(sharedSources, /\.command\(['"]project\.move['"]/u)

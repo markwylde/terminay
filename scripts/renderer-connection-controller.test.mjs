@@ -133,3 +133,59 @@ test('stable client id replacement waits for retired client close', async () => 
   assert.equal(acquired, true)
   assert.equal(controller.current.id, 'new')
 })
+
+test('one generation-scoped protocol failure retires once and Retry acquires a fresh candidate', async () => {
+  const timers = []
+  const disposed = []
+  const acquired = []
+  let failReplacement = true
+  const controller = new RendererConnectionController({
+    clock: {
+      clearTimeout: () => undefined,
+      setTimeout: (callback, delay) => {
+        timers.push({ callback, delay })
+        return callback
+      },
+    },
+  })
+  const mountedAttempt = controller.begin('server-a')
+  await controller.activate(mountedAttempt, {
+    id: 'generation-1',
+    dispose: () => disposed.push('generation-1'),
+  })
+  controller.setRecoveryPipeline('server-a', {
+    acquire: async (attempt) => {
+      acquired.push(attempt.generation)
+      if (failReplacement) {
+        failReplacement = false
+        throw new Error('scripted relay outage')
+      }
+      return {
+        id: `generation-${attempt.generation}`,
+        dispose() { disposed.push(this.id) },
+      }
+    },
+    resubscribe: async () => {}, hydrate: async () => {}, verify: async () => {},
+  })
+
+  // The protocol reader callback carries the exact attempt which mounted the
+  // client. Repeated completion/error delivery for that attempt can start only
+  // one replacement because recover synchronously advances generation identity.
+  const reportProtocolFailure = () => {
+    if (controller.isCurrent(mountedAttempt)) controller.recover('server-a')
+  }
+  reportProtocolFailure()
+  reportProtocolFailure()
+  await settle(() => controller.state.phase === 'retry-wait')
+
+  assert.deepEqual(disposed, ['generation-1'])
+  assert.equal(acquired.length, 1)
+  assert.notEqual(acquired[0], mountedAttempt.generation)
+
+  const retry = controller.retry
+  retry()
+  await settle(() => controller.state.phase === 'connected')
+  assert.equal(acquired.length, 2)
+  assert.ok(acquired[1] > acquired[0])
+  assert.equal(controller.current.id, `generation-${acquired[1]}`)
+})

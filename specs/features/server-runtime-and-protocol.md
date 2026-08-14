@@ -16,6 +16,13 @@ the same source as the desktop experience. A browser or desktop connection
 therefore runs the UI version shipped with that server instead of depending on
 an independently deployed latest workspace build.
 
+The complete server-owned session entry is a separate artifact from the thin
+`app.terminay.com` connection manager. Embedded and standalone servers publish
+the session entry in their signed UI-bundle manifest; they never point that
+manifest at the manager entry. Direct-network pairing can therefore open
+enrollment and the workspace while the public manager stays a small,
+application-protocol-blind bootstrap.
+
 The bundle contains the application-protocol client that matches its server.
 Desktop and browser hosts establish authentication and an opaque byte
 transport, verify and launch the bundle, and then stay outside application

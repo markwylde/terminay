@@ -28,7 +28,7 @@ preserved rather than replaced.
 
 - [Server architecture decision spikes](../tasks_completed/3-server-architecture-decision-spikes.md)
 - [Standalone and embedded server runtime](../tasks_completed/6-standalone-and-embedded-server-runtime.md)
-- [Shared responsive server UI](../tasks/16-shared-responsive-server-ui.md)
+- [Shared responsive server UI](./16-shared-responsive-server-ui.md)
 
 ## Work slices
 

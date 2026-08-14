@@ -23,6 +23,7 @@ COPY packages/protocol/package.json ./packages/protocol/package.json
 COPY packages/protocol-conformance/package.json ./packages/protocol-conformance/package.json
 COPY packages/responsive-ui/package.json ./packages/responsive-ui/package.json
 COPY packages/server-core/package.json ./packages/server-core/package.json
+COPY packages/ui-bundle/package.json ./packages/ui-bundle/package.json
 COPY scripts/ensure-node-pty-helper-mode.mjs ./scripts/ensure-node-pty-helper-mode.mjs
 
 RUN --mount=type=cache,id=terminay-npm-cache-node24,target=/root/.npm,sharing=locked \
@@ -74,6 +75,8 @@ COPY --from=build --chown=terminay:terminay /workspace/apps/terminay-server/pack
 COPY --from=build --chown=terminay:terminay /workspace/apps/terminay-server/dist ./apps/terminay-server/dist
 COPY --from=build --chown=terminay:terminay /workspace/packages/server-core/package.json ./packages/server-core/package.json
 COPY --from=build --chown=terminay:terminay /workspace/packages/server-core/dist ./packages/server-core/dist
+COPY --from=build --chown=terminay:terminay /workspace/packages/ui-bundle/package.json ./packages/ui-bundle/package.json
+COPY --from=build --chown=terminay:terminay /workspace/packages/ui-bundle/dist ./packages/ui-bundle/dist
 COPY --from=build --chown=terminay:terminay /workspace/packages/protocol/package.json ./packages/protocol/package.json
 COPY --from=build --chown=terminay:terminay /workspace/packages/protocol/dist ./packages/protocol/dist
 

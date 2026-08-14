@@ -1,5 +1,5 @@
-import type { CSSProperties, JSX } from 'react';
 import { AlertTriangle, Mic, RotateCcw, Square, X } from 'lucide-react';
+import type { CSSProperties, JSX } from 'react';
 import './dictationOverlay.css';
 
 export type DictationOverlayStatus =
@@ -17,6 +17,7 @@ export interface DictationOverlayState {
 	waveformLevels: number[];
 	transcript?: string;
 	error?: string;
+	disclosure?: string;
 }
 
 export interface DictationOverlayProps extends DictationOverlayState {
@@ -28,8 +29,8 @@ export interface DictationOverlayProps extends DictationOverlayState {
 }
 
 const FALLBACK_LEVELS = [
-	0.24, 0.36, 0.52, 0.68, 0.44, 0.28, 0.62, 0.82, 0.56, 0.32, 0.48, 0.72,
-	0.88, 0.54, 0.34, 0.64, 0.76, 0.42,
+	0.24, 0.36, 0.52, 0.68, 0.44, 0.28, 0.62, 0.82, 0.56, 0.32, 0.48, 0.72, 0.88,
+	0.54, 0.34, 0.64, 0.76, 0.42,
 ];
 
 const STATUS_LABELS: Record<DictationOverlayStatus, string> = {
@@ -82,6 +83,7 @@ export function DictationOverlay({
 	accentColor = '#57b7ff',
 	transcript,
 	error,
+	disclosure,
 	className,
 	onStop,
 	onRetry,
@@ -121,6 +123,9 @@ export function DictationOverlay({
 				</div>
 
 				<div className="dictation-overlay__body">
+					{disclosure ? (
+						<div className="dictation-overlay__disclosure">{disclosure}</div>
+					) : null}
 					<div className="dictation-overlay__meta">
 						<span className="dictation-overlay__status">{statusText}</span>
 						<span className="dictation-overlay__time">

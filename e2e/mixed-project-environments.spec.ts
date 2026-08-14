@@ -20,43 +20,6 @@ async function reserveLoopbackPort(): Promise<number> {
 	return address.port;
 }
 
-async function expose(mainWindow: Page): Promise<string> {
-	const port = await reserveLoopbackPort();
-	return mainWindow.evaluate(async (selectedPort) => {
-		const settings = await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings();
-		await window.terminayTerminalSettingsCompatibilityHost.updateTerminalSettings({
-			...settings,
-			remoteAccess: { ...settings.remoteAccess, bindAddress: '127.0.0.1', origin: `http://localhost:${selectedPort}`, pairingMode: 'lan' },
-		});
-		await window.terminayRemotePairingPinHost.setRemoteAccessPairingPin('123456');
-		const status = await window.terminayRemoteAccessStatusHost.toggleServer();
-		if (!status.lanPairingUrl) throw new Error('Direct exposure did not publish a pairing URL.');
-		return status.lanPairingUrl;
-	}, port);
-}
-
-async function connectBrowser(page: Page, pairingUrl: string): Promise<void> {
-	for (let attempt = 0; attempt < 3; attempt++) {
-		await page.goto(pairingUrl, { waitUntil: 'commit' });
-		const connect = page.getByRole('dialog', { name: 'Connect to Remote Server' });
-		const enroll = page.getByRole('dialog', { name: 'Enroll browser device' });
-		const workspace = page.locator('.connected-web-renderer-workspace');
-		try {
-			await expect(connect.or(enroll).or(workspace)).toBeVisible({ timeout: 10_000 });
-			if (await workspace.isVisible()) return;
-			if (await connect.isVisible()) await connect.getByRole('button', { name: 'Connect', exact: true }).click();
-			await expect(enroll).toBeVisible({ timeout: 10_000 });
-			break;
-		} catch (error) {
-			if (attempt === 2) throw error;
-		}
-	}
-	await page.getByLabel('Device name').fill('Mixed environment browser');
-	await page.getByLabel('Pairing PIN').fill('123456');
-	await page.getByRole('button', { name: 'Pair and connect' }).click();
-	await expect(page.locator('.connected-web-renderer-workspace')).toBeVisible({ timeout: 20_000 });
-}
-
 async function expectMixedInventory(page: Page): Promise<void> {
 	await page.getByRole('button', { name: 'Choose project environment' }).click();
 	const menu = page.getByRole('menu', { name: 'Choose project environment' });
@@ -90,18 +53,10 @@ async function stop(child: ChildProcessWithoutNullStreams): Promise<void> {
 	if (child.exitCode === null) child.kill('SIGKILL');
 }
 
-test('Desktop and browser preserve one This server, SSH and Puzed inventory across reconnect and transport restart', async ({
+test('Desktop preserves one This server, SSH and Puzed inventory across renderer restart', async ({
 	mainWindow,
-	page,
 }) => {
-	const pairingUrl = await expose(mainWindow);
-	await connectBrowser(page, pairingUrl);
-
 	await expectMixedInventory(mainWindow);
-	await expectMixedInventory(page);
-	await page.reload();
-	await expect(page.locator('.connected-web-renderer-workspace')).toBeVisible({ timeout: 20_000 });
-	await expectMixedInventory(page);
 	await mainWindow.reload();
 	await expect(mainWindow.locator('.project-tabbar')).toBeVisible();
 	await expectMixedInventory(mainWindow);

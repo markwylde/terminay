@@ -67,10 +67,24 @@ test('Task 19 normal web entries do not import Desktop compatibility modules', a
 		assert.deepEqual(
 			imports.filter(
 				(specifier) =>
-					COMPATIBILITY_SPECIFIER.test(specifier) ||
-					specifier.includes('remote/services'),
+					COMPATIBILITY_SPECIFIER.test(specifier) &&
+					!(
+						file === 'apps/terminay-web/src/index.ts' &&
+						specifier === './legacyMigration.js'
+					),
 			),
 			[],
+		);
+		assert.deepEqual(
+			imports.filter((specifier) => specifier.includes('remote/services/')),
+			file === 'src/web/main.tsx'
+				? [
+						'../remote/services/deviceKeys',
+						'../remote/services/devicePairingFlow',
+						'../remote/services/pairing',
+					]
+				: [],
+			'normal web may import only the canonical device-pairing services; the retired terminal-only remote graph stays excluded',
 		);
 	}
 });

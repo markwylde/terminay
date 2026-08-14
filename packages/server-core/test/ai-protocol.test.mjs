@@ -54,10 +54,31 @@ function serviceFor(options = {}) {
 		},
 		dictationProvider: options.dictationProvider,
 		dictationSettings: options.dictationSettings,
+		dictationRuntime: options.dictationRuntime,
 		limits: options.limits,
 	});
 	return { authority, service };
 }
+
+test('TerminayClient manages the selected server dictation runtime without exposing host paths', async () => {
+	let installs = 0;
+	const { service } = serviceFor({
+		dictationRuntime: {
+			status: async () => ({ state: 'not-installed', model: 'mlx-community/parakeet-tdt-0.6b-v3', message: 'Install on this server.', engine: { package: 'parakeet-mlx', version: '0.5.2', license: 'Apache-2.0' }, modelRevision: 'ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15', modelLicense: 'CC-BY-4.0', audioFormat: 'WAV PCM signed 16-bit mono 16 kHz' }),
+			install: async () => { installs += 1; return { state: 'ready', model: 'mlx-community/parakeet-tdt-0.6b-v3' }; },
+		},
+	});
+	const { client, ai, serverTask } = await connectAi(service);
+	const status = await ai.dictationRuntimeStatus();
+	assert.equal(status.state, 'not-installed');
+	assert.equal(status.engine.version, '0.5.2');
+	assert.equal(status.modelLicense, 'CC-BY-4.0');
+	assert.equal(JSON.stringify(status).includes('/Users/'), false);
+	assert.equal((await ai.installDictationRuntime()).state, 'ready');
+	assert.equal(installs, 1);
+	await client.close();
+	await serverTask;
+});
 
 test("TerminayClient carries bounded AI model and metadata operations", async () => {
 	let providerContext;

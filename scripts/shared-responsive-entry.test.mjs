@@ -23,7 +23,7 @@ test('production renderer entry activates the shared responsive route boundary',
 	assert.match(mainSource, /window\.terminayHost\s*\?\s*\.getContext\(\)/u);
 	assert.match(
 		mainSource,
-		/<ResponsiveWorkspaceEntry[\s\S]*route=\{sharedRoute\}[\s\S]*capabilities=\{hostCapabilities\}[\s\S]*legacyFallback=\{legacyContent\}/u,
+		/<ResponsiveWorkspaceEntry[\s\S]*route=\{sharedRoute\}[\s\S]*capabilities=\{hostCapabilities\}[\s\S]*>\s*\{legacyContent\}\s*<\/ResponsiveWorkspaceEntry>/u,
 	);
 	assert.match(
 		mainSource,
@@ -32,11 +32,11 @@ test('production renderer entry activates the shared responsive route boundary',
 	assert.doesNotMatch(entrySource, /nativeWindows:\s*true/u);
 	assert.match(
 		entrySource,
-		/createSharedWorkspaceRouteEntries\(createHostCapabilityProvider\(capabilities\)\)/u,
+		/createSharedWorkspaceRouteEntries\(\s*createHostCapabilityProvider\(capabilities\),?\s*\)/u,
 	);
 	assert.match(entrySource, /data-shared-ui="responsive-workspace"/u);
-	assert.match(entrySource, /data-shared-route-registry=/u);
-	assert.match(entrySource, /legacyFallback/u);
+	assert.doesNotMatch(entrySource, /route-marker|legacyFallback/u);
+	assert.match(entrySource, /readonly children: ReactNode/u);
 });
 
 test('unsupported legacy views retain the direct fallback path without a hidden WebRTC host', () => {
@@ -54,7 +54,7 @@ test('Desktop recording auxiliary renders from an application-only server client
 	);
 	assert.match(
 		mainSource,
-		/connectRendererApplicationClient\(message\.serverId, message\.connectionId, undefined/u,
+		/connectRendererApplicationClient\(\s*serverId,\s*announcement\.connectionId,\s*undefined/u,
 	);
 	assert.match(
 		mainSource,

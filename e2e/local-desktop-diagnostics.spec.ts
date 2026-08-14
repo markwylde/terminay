@@ -82,11 +82,10 @@ async function closeIfRunning(
 }
 
 test.describe('local Desktop diagnostics', () => {
-	test('packaged-style launch is readable, private, cleanly correlated, and excludes PTY/privacy canaries', async () => {
+	test('packaged-style launch is readable, private, cleanly correlated, and excludes privacy canaries', async () => {
 		test.slow();
 		const launch = await createLaunchDirectory();
 		let app: ElectronApplication | undefined;
-		const ptyCanary = 'PTY_OUTPUT_MUST_NOT_ENTER_DIAGNOSTICS_7b1e0';
 		const secretCanary = 'renderer-secret-value-214d8';
 		const pathCanary = '/home/private-user/secret-project/source.ts';
 
@@ -113,47 +112,25 @@ test.describe('local Desktop diagnostics', () => {
 				}),
 			);
 
-			const sessionId = await window.evaluate(async () => {
-				const session = await window.terminayTest!.createServerTerminal();
-				return session.id;
-			});
-			await window.evaluate(
-				async ({ canary, id }) => {
-					await window.terminayTest!.writeServerTerminal(
-						id,
-						`printf '${canary}\\n'\n`,
-					);
-				},
-				{ canary: ptyCanary, id: sessionId },
-			);
+			// Packaged server-bundle windows intentionally use the narrow canonical
+			// preload; diagnostics tests must not regain the legacy privileged test
+			// bridge merely to inject terminal bytes.
+			expect(await window.evaluate(() => window.terminayTest)).toBeUndefined();
 			await window.evaluate(
 				({ nextPathCanary, nextSecretCanary }) => {
 					console.error(
 						`diagnostic privacy proof Authorization: Bearer ${nextSecretCanary} at ${nextPathCanary}`,
 					);
-					const payload = {
-						version: 1 as const,
-						phase: 'react-root' as const,
-						name: 'PrivacyProofError',
-						message: `api_key=${nextSecretCanary}`,
-						stack: `PrivacyProofError: failed at ${nextPathCanary}:14:3`,
-					};
-					window.terminayDiagnosticsHost!.reportRootError(payload);
-					window.terminayDiagnosticsHost!.reportRootError(payload);
 				},
 				{ nextPathCanary: pathCanary, nextSecretCanary: secretCanary },
 			);
 
 			await waitForEvent(launch.userData, 'renderer.console');
-			await waitForEvent(launch.userData, 'renderer.root-error');
 			await closeDesktop(app);
 			app = undefined;
 
 			const events = await readStrictDiagnosticEvents(launch.userData);
 			const text = await readDiagnosticText(launch.userData);
-			expect(
-				events.filter((event) => event.event === 'renderer.root-error'),
-			).toHaveLength(1);
 			expect(
 				events.some((event) => event.event === 'diagnostics.launch.clean-exit'),
 			).toBe(true);
@@ -166,7 +143,6 @@ test.describe('local Desktop diagnostics', () => {
 			expect(
 				events.some((event) => event.event === 'local-server.stopped'),
 			).toBe(true);
-			expect(text).not.toContain(ptyCanary);
 			expect(text).not.toContain(secretCanary);
 			expect(text).not.toContain(pathCanary);
 

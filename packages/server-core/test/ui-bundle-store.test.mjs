@@ -160,6 +160,21 @@ test("committed UI bundles fail closed instead of following a substituted manife
 	}
 });
 
+test("a launch store preserves and enforces the current compatibility requirement", async () => {
+	const root = await mkdtemp(join(tmpdir(), "terminay-ui-bundle-store-compatibility-"));
+	try {
+		const store = new UiBundleStore({ rootDirectory: root, requireHostCompatibility: true });
+		const legacy = fixture("1.0.0");
+		await assert.rejects(
+			store.install({ manifest: legacy.manifest, read: () => legacy.bytes }),
+			(error) => error instanceof UiBundleError && /compatibility metadata is required/.test(error.message),
+		);
+		assert.equal(await store.open(), undefined);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 function hash(bytes) {
 	return createHash("sha256").update(bytes).digest("base64url");
 }

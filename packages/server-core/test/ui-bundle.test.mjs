@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY, deriveUiBundleId, UiBundleError, validateUiBundleManifest, verifyUiBundle } from "../dist/index.js";
+import { DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY, deriveUiBundleId, evaluateUiBundleHostCompatibility, UiBundleError, validateUiBundleManifest, verifyUiBundle } from "../dist/index.js";
 
 function makeManifest() {
   const files = new Map([
@@ -26,6 +26,38 @@ function makeManifest() {
       assets,
     },
     files: new Map([...files].map(([relative, body]) => [`/remote-app/${bundleId}/${relative}`, body])),
+  };
+}
+
+function makeCurrentManifest() {
+  const fixture = makeManifest();
+  const hostCompatibility = {
+    bootstrap: { minimum: 1, maximum: 1 },
+    bundleFormat: { minimum: 1, maximum: 1 },
+    hostBridge: { minimum: 1, maximum: 1 },
+    byteEndpoint: { minimum: 1, maximum: 1 },
+    executionRuntime: { minimum: 120, maximum: 140 },
+    requiredCapabilities: { clipboardWrite: { minimum: 1, maximum: 1 } },
+    optionalCapabilities: { nativeWindows: { minimum: 1, maximum: 1 } },
+  };
+  const identity = {
+    bundleFormatVersion: 1,
+    protocolVersion: fixture.manifest.protocolVersion,
+    serverVersion: fixture.manifest.serverVersion,
+    hostCompatibility,
+  };
+  const bundleId = deriveUiBundleId(fixture.manifest.assets, fixture.manifest.bundleId, identity);
+  const replace = (path) => path.replace(/\/remote-app\/[^/]+\//u, `/remote-app/${bundleId}/`);
+  return {
+    ...fixture,
+    manifest: {
+      ...fixture.manifest,
+      bundleId,
+      entryPath: replace(fixture.manifest.entryPath),
+      bundleFormatVersion: 1,
+      hostCompatibility,
+      assets: fixture.manifest.assets.map((asset) => ({ ...asset, path: replace(asset.path) })),
+    },
   };
 }
 
@@ -129,6 +161,39 @@ test("UI bundle id is deterministic over relative paths and content hashes", () 
   assert.equal(deriveUiBundleId(shuffled, manifest.bundleId), manifest.bundleId);
   const changed = shuffled.map((asset, index) => index === 0 ? { ...asset, hash: hash(new TextEncoder().encode("changed")) } : asset);
   assert.notEqual(deriveUiBundleId(changed, manifest.bundleId), manifest.bundleId);
+});
+
+test("bundle compatibility validates the manifest and exact bootstrap before launch", () => {
+  const { manifest } = makeCurrentManifest();
+  const bootstrap = {
+    schemaVersion: 1,
+    bootstrapVersion: 1,
+    sourceId: "source-a",
+    windowId: "window-a",
+    serverId: "server-a",
+    profileId: "profile-a",
+    bundleId: manifest.bundleId,
+    applicationProtocolVersion: manifest.protocolVersion,
+    hostKind: "desktop",
+    hostBridgeVersion: 1,
+    byteEndpointVersion: 1,
+    capabilities: { clipboardWrite: 1 },
+  };
+  const support = {
+    bootstrapVersion: 1,
+    bundleFormatVersion: 1,
+    hostBridgeVersion: 1,
+    byteEndpointVersion: 1,
+    executionRuntimeVersion: 125,
+    capabilities: { clipboardWrite: 1 },
+  };
+  assert.deepEqual(evaluateUiBundleHostCompatibility(manifest, bootstrap, support), {
+    compatible: true,
+    unavailableOptionalCapabilities: ["nativeWindows"],
+  });
+  assert.equal(evaluateUiBundleHostCompatibility(manifest, { ...bootstrap, bundleId: "another_bundle" }, support).component, "bundle-binding");
+  assert.equal(evaluateUiBundleHostCompatibility(manifest, { ...bootstrap, applicationProtocolVersion: "2" }, support).component, "application-protocol");
+  assert.equal(evaluateUiBundleHostCompatibility({ ...manifest, unexpected: true }, bootstrap, support).component, "bundle-manifest");
 });
 
 function hash(bytes) { return createHash("sha256").update(bytes).digest("base64url"); }

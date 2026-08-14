@@ -15,7 +15,9 @@
   "dependencies": {
     "@terminay/client-core": "1.0.0",
     "@terminay/protocol": "1.0.0",
+    "@terminay/ui-bundle": "1.0.0",
     "@terminay/responsive-ui": "1.0.0",
+    "@terminay/server-core": "1.0.0",
     "@terminay/server": "file:../terminay-server"
   },
   "engines": {
@@ -24,6 +26,6 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "npm run build --workspace @terminay/protocol-conformance && npm run build && node --test test/*.test.mjs"
   }
 }

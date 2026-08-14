@@ -6,12 +6,12 @@ The completion standard is component reuse, not merely matching route names,
 protocol operations, responsive overflow constraints, or renderer-neutral
 models:
 
-- `specs/tasks/16-shared-responsive-server-ui.md`, Goal: “one complete
+- `specs/tasks_completed/16-shared-responsive-server-ui.md`, Goal: “one complete
   responsive workspace UI” driven through `TerminayClient`.
-- `specs/tasks/16-shared-responsive-server-ui.md`, Acceptance checks: “There is
+- `specs/tasks_completed/16-shared-responsive-server-ui.md`, Acceptance checks: “There is
   one production workspace UI implementation” and “Desktop native routes use
   the same components as web routes.”
-- `specs/tasks/16-shared-responsive-server-ui.md`, Definition of done:
+- `specs/tasks_completed/16-shared-responsive-server-ui.md`, Definition of done:
   “Desktop and browser are hosts for the same complete responsive
   server-bundled workspace.”
 - `specs/features/connections-and-client-hosts.md`, Responsive workspace

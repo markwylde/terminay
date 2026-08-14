@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  authorizeTerminayHostActionRequest,
   createTerminayHostBytePacket,
+  evaluateTerminayBundleCompatibility,
   evaluateTerminayHostCompatibility,
   parseTerminayHostAction,
   parseTerminayHostActionRequest,
@@ -23,11 +25,13 @@ const requirements = {
 test("host context is closed, immutable, and cannot select Electron mode", () => {
   const context = parseTerminayHostContext({
     schemaVersion: 1,
+    bootstrapVersion: 1,
     sourceId: "source-a",
     windowId: "window-a",
     serverId: "server-a",
     profileId: "profile-a",
     bundleId: "bundle_12345678",
+    applicationProtocolVersion: "1",
     hostKind: "desktop",
     hostBridgeVersion: 1,
     byteEndpointVersion: 1,
@@ -94,11 +98,13 @@ test("host compatibility separates required failures from optional degradation",
 test("semantic host actions are closed and exact-binding/gesture checked", () => {
   const context = parseTerminayHostContext({
     schemaVersion: 1,
+    bootstrapVersion: 1,
     sourceId: "source-a",
     windowId: "window-a",
     serverId: "server-a",
     profileId: "profile-a",
     bundleId: "bundle_12345678",
+    applicationProtocolVersion: "1",
     hostKind: "desktop",
     hostBridgeVersion: 1,
     byteEndpointVersion: 1,
@@ -152,6 +158,21 @@ test("semantic host actions are closed and exact-binding/gesture checked", () =>
       ),
     /outside its binding/u,
   );
+  assert.throws(
+    () =>
+      authorizeTerminayHostActionRequest(
+        { ...request, action: { type: "clipboard.write", text: "hello" } },
+        { ...context, capabilities: {} },
+      ),
+    /capability is unavailable/u,
+  );
+  assert.equal(
+    authorizeTerminayHostActionRequest(
+      { ...request, action: { type: "clipboard.write", text: "hello" } },
+      context,
+    ).action.type,
+    "clipboard.write",
+  );
 });
 
 test("host compatibility rejects ambiguous and unknown capability requirements", () => {
@@ -193,4 +214,52 @@ test("opaque host byte packets bind immutable bytes to one exact server", () => 
       ),
     /fields are invalid/u,
   );
+});
+
+test("opaque byte packets preserve unknown future application operations unchanged", () => {
+  const futureFrame = new TextEncoder().encode(JSON.stringify({
+    operation: "future.workspace.teleport",
+    payload: { revision: 9001, destination: "unknown-to-this-host" },
+  }));
+  const packet = parseTerminayHostBytePacket(
+    createTerminayHostBytePacket("server-a", futureFrame),
+    "server-a",
+  );
+  assert.deepEqual(packet.frame, futureFrame);
+});
+
+test("browser-safe bundle compatibility accepts the canonical manifest wire shape", () => {
+  const manifest = {
+    schemaVersion: 1,
+    bundleId: "bundle_12345678",
+    entryPath: "/remote-app/bundle_12345678/index.html",
+    protocolVersion: "1",
+    serverVersion: "3.0.0",
+    contentSecurityPolicy: "default-src 'self'",
+    bundleFormatVersion: 1,
+    hostCompatibility: requirements,
+    assets: [{ path: "/remote-app/bundle_12345678/index.html", size: 1, hash: "x", contentType: "text/html" }],
+  };
+  const bootstrap = {
+    schemaVersion: 1,
+    bootstrapVersion: 1,
+    sourceId: "source-a",
+    windowId: "window-a",
+    serverId: "server-a",
+    profileId: "profile-a",
+    bundleId: manifest.bundleId,
+    applicationProtocolVersion: "1",
+    hostKind: "browser",
+    hostBridgeVersion: 1,
+    byteEndpointVersion: 1,
+    capabilities: { clipboardWrite: 1 },
+  };
+  assert.deepEqual(evaluateTerminayBundleCompatibility(manifest, bootstrap, {
+    bootstrapVersion: 1,
+    bundleFormatVersion: 1,
+    hostBridgeVersion: 1,
+    byteEndpointVersion: 1,
+    executionRuntimeVersion: 125,
+    capabilities: { clipboardWrite: 1 },
+  }), { compatible: true, unavailableOptionalCapabilities: ["nativeWindows"] });
 });

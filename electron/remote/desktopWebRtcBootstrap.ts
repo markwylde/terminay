@@ -8,7 +8,11 @@ import {
 	type DesktopSignalingBootstrap,
 	parseDesktopSignalingBootstrap,
 } from './desktopSignalingBootstrap';
-import { createDesktopWebRtcTransport } from './desktopWebRtcTransport';
+import {
+	createDesktopWebRtcConnection,
+	createDesktopWebRtcTransport,
+	type DesktopWebRtcConnection,
+} from './desktopWebRtcTransport';
 
 const MAX_SEEN_NONCES = 256;
 const DEFAULT_SOCKET_OPEN_TIMEOUT_MS = 10_000;
@@ -32,6 +36,27 @@ export async function createDesktopBootstrappedWebRtcTransport(options: {
 	readonly socketOpenTimeoutMs?: number;
 	readonly createTransport?: typeof createDesktopWebRtcTransport;
 }): Promise<ByteTransport> {
+	return (await createDesktopBootstrappedWebRtcConnection({
+		...options,
+		createConnection: options.createTransport === undefined
+			? undefined
+			: async (input) => ({ transport: await options.createTransport!(input), assets: unavailableAssetLane, serverId: input.serverId }),
+	})).transport;
+}
+
+const unavailableAssetLane = Object.freeze({
+	manifest: async (): Promise<never> => { throw new Error('Desktop WebRTC asset lane is unavailable.'); },
+	read: async (): Promise<never> => { throw new Error('Desktop WebRTC asset lane is unavailable.'); },
+});
+
+export async function createDesktopBootstrappedWebRtcConnection(options: {
+	readonly bootstrap: DesktopSignalingBootstrap;
+	readonly expectedOrigin: string;
+	readonly now?: () => number;
+	readonly openSocket?: (url: string, origin: string) => Socket;
+	readonly socketOpenTimeoutMs?: number;
+	readonly createConnection?: typeof createDesktopWebRtcConnection;
+}): Promise<DesktopWebRtcConnection> {
 	const now = options.now ?? Date.now;
 	const bootstrap = parseDesktopSignalingBootstrap(
 		options.bootstrap,
@@ -45,8 +70,8 @@ export async function createDesktopBootstrappedWebRtcTransport(options: {
 			options.socketOpenTimeoutMs ?? DEFAULT_SOCKET_OPEN_TIMEOUT_MS,
 	});
 	try {
-		const transport = await (
-			options.createTransport ?? createDesktopWebRtcTransport
+		const connection = await (
+			options.createConnection ?? createDesktopWebRtcConnection
 		)({
 			deviceId: bootstrap.deviceId,
 			iceServers: bootstrap.iceServers.map((server) => ({
@@ -64,10 +89,10 @@ export async function createDesktopBootstrappedWebRtcTransport(options: {
 			sessionOrigin: bootstrap.sessionOrigin,
 			signaling,
 		});
-		transport.onStateChange((state) => {
+		connection.transport.onStateChange((state) => {
 			if (state === 'closed' || state === 'failed') signaling.close();
 		});
-		return transport;
+		return connection;
 	} catch (error) {
 		signaling.close();
 		throw error;

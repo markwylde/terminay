@@ -32,6 +32,54 @@ const TAB_THEME_HUE_COLOR_FALLBACKS: Partial<Record<TerminalThemeKey, string>> =
 		selectionBackground: '#ffff00',
 	};
 
+const SERVER_OWNED_TERMINAL_SETTING_KEYS = new Set<keyof TerminalSettings>([
+	'agentIntegration',
+	'aiTabMetadata',
+	'activityIndicators',
+	'autoCloseTerminalOnExitZero',
+	'convertEol',
+	'dictation',
+	'disableStdin',
+	'fileViewer',
+	'gitPushAgent',
+	'ignoreBracketedPasteMode',
+	'recording',
+	'remoteAccess',
+	'rightClickSelectsWord',
+	'scrollback',
+	'scrollOnEraseInDisplay',
+	'scrollOnUserInput',
+	'scrollSensitivity',
+	'shell',
+	'smoothScrollDuration',
+	'tabStopWidth',
+	'terminayMcp',
+	'wordSeparator',
+]);
+
+/**
+ * Return the device/native presentation projection that Electron may persist.
+ * Connected server settings deliberately never enter the Desktop JSON store.
+ */
+export function selectDeviceTerminalSettings(
+	settings: TerminalSettings,
+): Record<string, unknown> {
+	const normalized = normalizeTerminalSettings(settings);
+	return {
+		...Object.fromEntries(
+			Object.entries(normalized).filter(
+				([key]) =>
+					!SERVER_OWNED_TERMINAL_SETTING_KEYS.has(
+						key as keyof TerminalSettings,
+					),
+			),
+		),
+		dictation: {
+			microphoneDeviceId: normalized.dictation.microphoneDeviceId,
+		},
+	};
+}
+
 // "Tab Theme Hue" colors are stored either as the bare sentinel
 // (`tabThemeHue`, meaning default brightness) or with an explicit brightness
 // suffix (`tabThemeHue:40`, meaning 40% lightness).
@@ -79,11 +127,7 @@ function hexToRgb(hex: string): [number, number, number] | null {
 	return [r / 255, g / 255, b / 255];
 }
 
-function rgbToHsl(
-	r: number,
-	g: number,
-	b: number,
-): [number, number, number] {
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
 	const max = Math.max(r, g, b);
 	const min = Math.min(r, g, b);
 	const lightness = (max + min) / 2;
@@ -205,7 +249,8 @@ export const terminalSettingsCategories: SettingsCategoryDefinition[] = [
 	{
 		id: 'ai',
 		label: 'AI',
-		description: 'Agent status, providers, and models for AI-assisted workflows.',
+		description:
+			'Agent status, providers, and models for AI-assisted workflows.',
 	},
 	{
 		id: 'recording',
@@ -688,7 +733,8 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 			makeField({
 				key: 'dictation.provider',
 				label: 'Transcription provider',
-				description: 'Choose whether audio stays on this Mac or is sent to OpenAI.',
+				description:
+					'Choose whether audio stays on this Mac or is sent to OpenAI.',
 				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'select',
@@ -696,7 +742,14 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					{ label: 'On-device (Parakeet)', value: 'parakeet' },
 					{ label: 'OpenAI', value: 'openai' },
 				],
-				keywords: ['dictation', 'provider', 'local', 'on-device', 'parakeet', 'openai'],
+				keywords: [
+					'dictation',
+					'provider',
+					'local',
+					'on-device',
+					'parakeet',
+					'openai',
+				],
 			}),
 			makeField({
 				key: 'dictation.openaiApiKey',
@@ -743,29 +796,30 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					},
 				],
 				visibleWhen: { key: 'dictation.provider', value: 'openai' },
-				keywords: [
-					'openai',
-					'model',
-					'gpt-4o',
-					'transcribe',
-					'speech to text',
-				],
+				keywords: ['openai', 'model', 'gpt-4o', 'transcribe', 'speech to text'],
 			}),
 			makeField({
 				key: 'dictation.model',
 				label: 'On-device model',
-				description: 'Parakeet TDT 0.6B v3 runs locally using MLX and the Apple GPU.',
+				description:
+					'Parakeet TDT 0.6B v3 runs locally using MLX and the Apple GPU.',
 				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'select',
-				options: [{ label: 'Parakeet TDT 0.6B v3', value: 'mlx-community/parakeet-tdt-0.6b-v3' }],
+				options: [
+					{
+						label: 'Parakeet TDT 0.6B v3',
+						value: 'mlx-community/parakeet-tdt-0.6b-v3',
+					},
+				],
 				visibleWhen: { key: 'dictation.provider', value: 'parakeet' },
 				keywords: ['parakeet', 'mlx', 'metal', 'local', 'on-device'],
 			}),
 			makeField({
 				key: 'dictation.parakeetRuntime',
 				label: 'On-device engine',
-				description: 'Install the pinned MLX runtime and model before using local dictation.',
+				description:
+					'Install the pinned MLX runtime and model before using local dictation.',
 				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'text',
@@ -775,8 +829,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 			makeField({
 				key: 'dictation.microphoneDeviceId',
 				label: 'Microphone',
-				description:
-					'Audio input device used for dictation recording.',
+				description: 'Audio input device used for dictation recording.',
 				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'select',
@@ -787,8 +840,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 			makeField({
 				key: 'dictation.language',
 				label: 'Language hint',
-				description:
-					'ISO language hint for transcription. Defaults to en.',
+				description: 'ISO language hint for transcription. Defaults to en.',
 				sectionId: 'dictation',
 				categoryId: 'ai',
 				input: 'text',
@@ -932,15 +984,15 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		fields: [
 			makeField({
 				key: 'remoteAccess.pairingMode',
-				label: 'Pairing method',
+				label: 'Exposure route',
 				description:
-					'Choose Local Network for the built-in LAN server or WebRTC Relay for origin-isolated session subdomain pairing.',
+					'WebRTC is the primary Expose this server route. Direct network listener is an independently controlled advanced route and is never an automatic fallback.',
 				sectionId: 'remote-access-host',
 				categoryId: 'remote',
 				input: 'select',
 				options: [
-					{ label: 'Local Network', value: 'lan' },
-					{ label: 'WebRTC Relay', value: 'webrtc' },
+					{ label: 'Direct network listener (advanced)', value: 'lan' },
+					{ label: 'WebRTC exposure', value: 'webrtc' },
 				],
 				keywords: [
 					'remote',
@@ -1092,7 +1144,8 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 		id: 'shell-launch',
 		categoryId: 'shell',
 		title: 'Shell Profiles',
-		description: 'Choose defaults and manage profiles available on the connected server.',
+		description:
+			'Choose defaults and manage profiles available on the connected server.',
 		fields: [],
 	},
 	{
@@ -1274,7 +1327,8 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 			makeField({
 				key: 'sidebar.defaultGitPaneHeight',
 				label: 'Default Git pane height',
-				description: 'Initial height in pixels of the Git pane in new projects.',
+				description:
+					'Initial height in pixels of the Git pane in new projects.',
 				sectionId: 'sidebar',
 				categoryId: 'files',
 				input: 'number',
@@ -1306,7 +1360,14 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				sectionId: 'tab-indicators',
 				categoryId: 'appearance',
 				input: 'boolean',
-				keywords: ['activity', 'indicator', 'tab', 'active', 'recent', 'yellow'],
+				keywords: [
+					'activity',
+					'indicator',
+					'tab',
+					'active',
+					'recent',
+					'yellow',
+				],
 			}),
 			makeField({
 				key: 'activityIndicators.showFinishedTabs',
@@ -1316,7 +1377,14 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				sectionId: 'tab-indicators',
 				categoryId: 'appearance',
 				input: 'boolean',
-				keywords: ['activity', 'indicator', 'tab', 'finished', 'quiet', 'green'],
+				keywords: [
+					'activity',
+					'indicator',
+					'tab',
+					'finished',
+					'quiet',
+					'green',
+				],
 			}),
 			makeField({
 				key: 'activityIndicators.signalDetection',
@@ -1411,8 +1479,7 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 			makeField({
 				key: 'activityIndicators.tabSwitchSuppressionSeconds',
 				label: 'Ignore after tab switch',
-				description:
-					'Seconds of output to ignore from the tab you just left.',
+				description: 'Seconds of output to ignore from the tab you just left.',
 				sectionId: 'tab-indicators',
 				categoryId: 'appearance',
 				input: 'number',
@@ -2322,15 +2389,14 @@ export function normalizeTerminalSettings(
 			prompt:
 				typeof gitPushAgentInput.prompt === 'string'
 					? gitPushAgentInput.prompt
-				: defaultTerminalSettings.gitPushAgent.prompt,
+					: defaultTerminalSettings.gitPushAgent.prompt,
 		},
 		dictation: {
 			enabled:
 				typeof dictationInput.enabled === 'boolean'
 					? dictationInput.enabled
 					: defaultTerminalSettings.dictation.enabled,
-			provider:
-				dictationInput.provider === 'parakeet' ? 'parakeet' : 'openai',
+			provider: dictationInput.provider === 'parakeet' ? 'parakeet' : 'openai',
 			model:
 				dictationInput.provider === 'parakeet'
 					? 'mlx-community/parakeet-tdt-0.6b-v3'
@@ -2411,8 +2477,7 @@ export function normalizeTerminalSettings(
 			),
 			tabSwitchSuppressionSeconds: clampNumber(
 				Number(activityIndicatorsInput.tabSwitchSuppressionSeconds),
-				defaultTerminalSettings.activityIndicators
-					.tabSwitchSuppressionSeconds,
+				defaultTerminalSettings.activityIndicators.tabSwitchSuppressionSeconds,
 				0,
 				60,
 			),
@@ -2578,17 +2643,16 @@ export function normalizeTerminalSettings(
 									? entry.defaultMode
 									: 'preview';
 
-							return extension.length > 1
-								? { extension, defaultMode }
-								: null;
+							return extension.length > 1 ? { extension, defaultMode } : null;
 						})
 						.filter(
 							(entry): entry is NonNullable<typeof entry> => entry !== null,
 						)
-						.filter((entry, index, entries) =>
-							entries.findIndex(
-								(candidate) => candidate.extension === entry.extension,
-							) === index,
+						.filter(
+							(entry, index, entries) =>
+								entries.findIndex(
+									(candidate) => candidate.extension === entry.extension,
+								) === index,
 						)
 				: defaultTerminalSettings.fileViewer.customFileExtensions,
 			diffLayout:
@@ -2665,7 +2729,10 @@ export function normalizeTerminalSettings(
 			pinFailureLimit:
 				typeof remoteAccessInput.pinFailureLimit === 'number' &&
 				Number.isFinite(remoteAccessInput.pinFailureLimit)
-					? Math.min(10, Math.max(1, Math.floor(remoteAccessInput.pinFailureLimit)))
+					? Math.min(
+							10,
+							Math.max(1, Math.floor(remoteAccessInput.pinFailureLimit)),
+						)
 					: defaultTerminalSettings.remoteAccess.pinFailureLimit,
 			pairingPinHash:
 				typeof remoteAccessInput.pairingPinHash === 'string'

@@ -430,7 +430,7 @@ export async function runHost(
     })).then((message) => api.sendSignalMessage(message))
   })
 
-  channels.asset.addEventListener('message', (event) => {
+  const bindAssetProtocol = (channel: RTCDataChannel) => channel.addEventListener('message', (event) => {
     void (async () => {
       const request = parseJson(event.data)
       if (!request || typeof request.id !== 'string') return
@@ -460,7 +460,7 @@ export async function runHost(
         activeAssetRequestIds.has(request.id) ||
         activeAssetRequestIds.size >= MAX_ACTIVE_ASSET_REQUESTS
       ) {
-        channels.asset.send(JSON.stringify({
+        channel.send(JSON.stringify({
           error:
             `Asset request limit reached. Terminay permits ${MAX_ACTIVE_ASSET_REQUESTS} ` +
             `active request and ${MAX_UNACKNOWLEDGED_ASSET_BODY_CHARS} ` +
@@ -474,9 +474,9 @@ export async function runHost(
         const response = request.type === 'asset:get-manifest'
           ? await api.getAssetManifest()
           : await api.getAsset(String(request.path ?? ''))
-        await sendAssetResponse(channels.asset, assetTransfers, request.id, response)
+        await sendAssetResponse(channel, assetTransfers, request.id, response)
       } catch (error) {
-        channels.asset.send(JSON.stringify({
+        channel.send(JSON.stringify({
           error: error instanceof Error ? error.message : 'Asset request failed.',
           id: request.id,
         }))
@@ -485,6 +485,11 @@ export async function runHost(
       }
     })()
   })
+  // `assets` is the canonical authenticated lane used by native Desktop.
+  // Singular `asset` is a version-1 browser compatibility adapter and is not
+  // exposed through the canonical host context.
+  bindAssetProtocol(channels.assets)
+  bindAssetProtocol(channels.asset)
 
   channels.api.addEventListener('message', (event) => {
     void (async () => {

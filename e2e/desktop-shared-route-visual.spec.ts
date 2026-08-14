@@ -41,12 +41,6 @@ test('real Desktop renderer presents every production-mapped shared route withou
 				`[data-shared-ui="responsive-workspace"][data-shared-route="${route.route}"]`,
 			);
 			await expect(entry).toBeVisible();
-			await expect(
-				entry.locator('[data-shared-route-registry]'),
-			).toHaveAttribute(
-				'data-shared-route-registry',
-				/workspace,connections,settings,recordings,macros,file,git/u,
-			);
 			await expect(entry).toHaveAttribute('data-shared-route-count', '7');
 			await expect(entry).toHaveAttribute(
 				'data-shared-route-presentation',

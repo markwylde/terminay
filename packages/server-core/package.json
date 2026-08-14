@@ -12,8 +12,9 @@
   "dependencies": {
     "@terminay/extension-api": "1.0.0",
     "@terminay/protocol": "1.0.0",
+    "@terminay/ui-bundle": "1.0.0",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0"
   },
-  "scripts": { "build": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/extension-api && tsc -p tsconfig.json", "typecheck": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/extension-api && tsc -p tsconfig.json --noEmit", "test": "npm run build && node --test test/*.test.mjs" }
+  "scripts": { "build": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/extension-api && npm run build --workspace @terminay/ui-bundle && tsc -p tsconfig.json", "typecheck": "npm run build --workspace @terminay/protocol && npm run build --workspace @terminay/extension-api && npm run build --workspace @terminay/ui-bundle && tsc -p tsconfig.json --noEmit", "test": "npm run build && node --test test/*.test.mjs" }
 }

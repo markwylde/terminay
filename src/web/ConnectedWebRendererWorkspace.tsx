@@ -2,11 +2,11 @@ import {
 	RecordingsClient,
 	SettingsClient,
 	ShellProfilesClient,
+	TerminayAiClient,
 	TerminayClientFacade,
 } from '@terminay/client-core';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import 'dockview/dist/styles/dockview.css';
 import '@xterm/xterm/css/xterm.css';
 import '../index.css';
@@ -14,29 +14,27 @@ import { MacrosWindow } from '../components/MacrosWindow';
 import { RecordingsWindow } from '../components/RecordingsWindow';
 import { SettingsWindow } from '../components/SettingsWindow';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
-import { ProjectEnvironmentsWindow } from '../projectEnvironments/ProjectEnvironmentSurfaces';
-import {
-	LegacyMacroSettingsProvider,
-} from '../hooks/useMacroSettings';
+import { LegacyMacroSettingsProvider } from '../hooks/useMacroSettings';
 import {
 	createServerTerminalSettingsClient,
 	TerminalSettingsClientProvider,
 } from '../hooks/useTerminalSettings';
-import { ConnectedRendererWorkspace } from '../shared/ConnectedRendererWorkspace';
+import { ProjectEnvironmentsWindow } from '../projectEnvironments/ProjectEnvironmentSurfaces';
+import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import {
-	createAuxiliaryRouteController,
 	type AuxiliaryRouteRequest,
 	type AuxiliaryRouteRequestHandler,
+	createAuxiliaryRouteController,
 } from '../shared/auxiliaryRoutes';
+import { ConnectedRendererWorkspace } from '../shared/ConnectedRendererWorkspace';
 import {
 	SharedConnectionsRouteBody,
 	type SharedConnectionsRouteBodyProps,
 } from '../shared/SharedConnectionsRouteBody';
 import {
-	SharedEditTabRouteBody,
 	type SharedEditTabResult,
+	SharedEditTabRouteBody,
 } from '../shared/SharedEditTabRouteBody';
-import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { defaultTerminalSettings } from '../terminalSettings';
 import type { RemoteAccessStatus } from '../types/terminay';
 import {
@@ -86,44 +84,60 @@ export function ConnectedWebRendererWorkspace({
 	const auxiliaryFocusReturnRef = useRef<HTMLElement | null>(null);
 	const settingsClient = useMemo(createBrowserTerminalSettingsClient, []);
 	const applicationClient = terminalClientContext.applicationClient;
-	const macroCapability = useMemo(
-		() => {
-			if (applicationClient === undefined) {
-				throw new Error(
-					'Connected browser workspace requires its canonical application client',
-				);
-			}
-			return createBrowserMacroSettingsCapability(applicationClient);
-		},
-		[applicationClient],
-	);
-	const recordingsClient = useMemo(
-		() => {
-			if (applicationClient === undefined) {
-				throw new Error(
-					'Connected browser workspace requires its canonical application client',
-				);
-			}
-			return new RecordingsClient(new TerminayClientFacade(applicationClient));
-		},
-		[applicationClient],
-	);
-	const serverSettingsClient = useMemo(
-		() => {
-			if (applicationClient === undefined) {
-				throw new Error(
-					'Connected browser workspace requires its canonical application client',
-				);
-			}
-			return createServerTerminalSettingsClient(
-				new SettingsClient(new TerminayClientFacade(applicationClient)),
-				settingsClient,
+	const macroCapability = useMemo(() => {
+		if (applicationClient === undefined) {
+			throw new Error(
+				'Connected browser workspace requires its canonical application client',
 			);
-		},
-		[applicationClient, settingsClient],
-	);
+		}
+		return createBrowserMacroSettingsCapability(applicationClient);
+	}, [applicationClient]);
+	const recordingsClient = useMemo(() => {
+		if (applicationClient === undefined) {
+			throw new Error(
+				'Connected browser workspace requires its canonical application client',
+			);
+		}
+		return new RecordingsClient(new TerminayClientFacade(applicationClient));
+	}, [applicationClient]);
+	const aiMetadataClient = useMemo(() => {
+		if (applicationClient === undefined) {
+			throw new Error(
+				'Connected browser workspace requires its canonical application client',
+			);
+		}
+		const client = new TerminayAiClient(
+			new TerminayClientFacade(applicationClient),
+		);
+		return Object.freeze({
+			async generate() {
+				throw new Error(
+					'AI metadata generation requires an exact terminal target.',
+				);
+			},
+			async listModels(provider: 'codex' | 'claudeCode') {
+				return client.listModels(
+					provider === 'claudeCode' ? 'claude-code' : provider,
+				);
+			},
+		});
+	}, [applicationClient]);
+	const serverSettingsClient = useMemo(() => {
+		if (applicationClient === undefined) {
+			throw new Error(
+				'Connected browser workspace requires its canonical application client',
+			);
+		}
+		return createServerTerminalSettingsClient(
+			new SettingsClient(new TerminayClientFacade(applicationClient)),
+			settingsClient,
+		);
+	}, [applicationClient, settingsClient]);
 	const shellProfilesClient = useMemo(() => {
-		if (applicationClient === undefined) throw new Error('Connected browser workspace requires its canonical application client');
+		if (applicationClient === undefined)
+			throw new Error(
+				'Connected browser workspace requires its canonical application client',
+			);
 		return new ShellProfilesClient(new TerminayClientFacade(applicationClient));
 	}, [applicationClient]);
 	const remoteAccessStatusClient = useMemo(
@@ -206,8 +220,7 @@ export function ConnectedWebRendererWorkspace({
 						host={Object.freeze({
 							auxiliaryRoutes,
 							onDisconnect: onBack,
-							onOpenConnectionManager: () =>
-								setIsConnectionManagerOpen(true),
+							onOpenConnectionManager: () => setIsConnectionManagerOpen(true),
 						})}
 						terminalClientContext={terminalClientContext}
 					/>
@@ -239,11 +252,15 @@ export function ConnectedWebRendererWorkspace({
 								{auxiliaryRoute.kind === 'settings' ? (
 									<SettingsWindow
 										applicationClient={applicationClient}
+										aiTabMetadataClient={aiMetadataClient}
 										initialSectionId={auxiliaryRoute.sectionId}
 										remoteAccessStatusClient={remoteAccessStatusClient}
 										settingsClient={serverSettingsClient}
 										shellProfilesClient={shellProfilesClient}
-										serverIdentity={terminalClientContext.connectionLabel ?? terminalClientContext.serverId}
+										serverIdentity={
+											terminalClientContext.connectionLabel ??
+											terminalClientContext.serverId
+										}
 									/>
 								) : auxiliaryRoute.kind === 'macros' ? (
 									<MacrosWindow macroSettingsClient={macroCapability} />
@@ -301,53 +318,135 @@ function ConnectedBrowserMenuBar({
 	const itemRefs = useRef(new Map<string, HTMLButtonElement>());
 	const isMac = useMemo(() => navigator.userAgent.includes('Mac'), []);
 
-	const dispatchShortcut = useCallback((key: string, options: KeyboardEventInit = {}) => {
-		window.dispatchEvent(
-			new KeyboardEvent('keydown', {
-				bubbles: true,
-				cancelable: true,
-				ctrlKey: !isMac,
-				key,
-				metaKey: isMac,
-				...options,
-			}),
-		);
-	}, [isMac]);
+	const dispatchShortcut = useCallback(
+		(key: string, options: KeyboardEventInit = {}) => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					bubbles: true,
+					cancelable: true,
+					ctrlKey: !isMac,
+					key,
+					metaKey: isMac,
+					...options,
+				}),
+			);
+		},
+		[isMac],
+	);
 
-	const menuItems = useMemo<Readonly<Record<BrowserMenuId, readonly BrowserMenuItem[]>>>(
+	const menuItems = useMemo<
+		Readonly<Record<BrowserMenuId, readonly BrowserMenuItem[]>>
+	>(
 		() => ({
 			edit: [
-				{ id: 'undo', label: 'Undo', onSelect: () => document.execCommand('undo') },
-				{ id: 'redo', label: 'Redo', onSelect: () => document.execCommand('redo') },
-				{ id: 'cut', label: 'Cut', onSelect: () => document.execCommand('cut') },
-				{ id: 'copy', label: 'Copy', onSelect: () => document.execCommand('copy') },
-				{ id: 'paste', label: 'Paste', onSelect: () => document.execCommand('paste') },
-				{ id: 'select-all', label: 'Select All', onSelect: () => document.execCommand('selectAll') },
+				{
+					id: 'undo',
+					label: 'Undo',
+					onSelect: () => document.execCommand('undo'),
+				},
+				{
+					id: 'redo',
+					label: 'Redo',
+					onSelect: () => document.execCommand('redo'),
+				},
+				{
+					id: 'cut',
+					label: 'Cut',
+					onSelect: () => document.execCommand('cut'),
+				},
+				{
+					id: 'copy',
+					label: 'Copy',
+					onSelect: () => document.execCommand('copy'),
+				},
+				{
+					id: 'paste',
+					label: 'Paste',
+					onSelect: () => document.execCommand('paste'),
+				},
+				{
+					id: 'select-all',
+					label: 'Select All',
+					onSelect: () => document.execCommand('selectAll'),
+				},
 			],
 			file: [
-					{ id: 'new-terminal', label: 'New Terminal', onSelect: () => dispatchShortcut('t') },
-					{ id: 'new-project', label: 'New Project', onSelect: () => dispatchShortcut('p') },
-					{ id: 'project-environments', label: 'Project Environments…', onSelect: () => window.dispatchEvent(new Event('terminay-open-project-environments')) },
-					{ id: 'extensions', label: 'Extensions…', onSelect: () => window.dispatchEvent(new Event('terminay-open-extensions')) },
-					{ id: 'save', label: 'Save', onSelect: () => dispatchShortcut('s') },
-				{ id: 'settings', label: 'Settings', onSelect: () => onOpenAuxiliaryRoute('settings') },
-				{ id: 'macros', label: 'Macros', onSelect: () => onOpenAuxiliaryRoute('macros') },
-				{ id: 'recordings', label: 'Recordings', onSelect: () => onOpenAuxiliaryRoute('recordings') },
-				{ id: 'connections', label: 'Connections', onSelect: onOpenConnectionManager },
-					{ id: 'close-terminal', label: 'Close Terminal', onSelect: () => dispatchShortcut('w') },
+				{
+					id: 'new-terminal',
+					label: 'New Terminal',
+					onSelect: () => dispatchShortcut('t'),
+				},
+				{
+					id: 'new-project',
+					label: 'New Project',
+					onSelect: () => dispatchShortcut('p'),
+				},
+				{
+					id: 'project-environments',
+					label: 'Project Environments…',
+					onSelect: () =>
+						window.dispatchEvent(
+							new Event('terminay-open-project-environments'),
+						),
+				},
+				{
+					id: 'extensions',
+					label: 'Extensions…',
+					onSelect: () =>
+						window.dispatchEvent(new Event('terminay-open-extensions')),
+				},
+				{ id: 'save', label: 'Save', onSelect: () => dispatchShortcut('s') },
+				{
+					id: 'settings',
+					label: 'Settings',
+					onSelect: () => onOpenAuxiliaryRoute('settings'),
+				},
+				{
+					id: 'macros',
+					label: 'Macros',
+					onSelect: () => onOpenAuxiliaryRoute('macros'),
+				},
+				{
+					id: 'recordings',
+					label: 'Recordings',
+					onSelect: () => onOpenAuxiliaryRoute('recordings'),
+				},
+				{
+					id: 'connections',
+					label: 'Connections',
+					onSelect: onOpenConnectionManager,
+				},
+				{
+					id: 'close-terminal',
+					label: 'Close Terminal',
+					onSelect: () => dispatchShortcut('w'),
+				},
 				{ id: 'disconnect', label: 'Disconnect', onSelect: onBack },
 			],
 			help: [
 				{
 					id: 'documentation',
 					label: 'Documentation',
-					onSelect: () => window.open('https://github.com', '_blank', 'noopener,noreferrer'),
+					onSelect: () =>
+						window.open('https://github.com', '_blank', 'noopener,noreferrer'),
 				},
-				{ id: 'about', label: 'About Terminay', onSelect: () => onOpenAuxiliaryRoute('settings') },
+				{
+					id: 'about',
+					label: 'About Terminay',
+					onSelect: () => onOpenAuxiliaryRoute('settings'),
+				},
 			],
 			view: [
-					{ id: 'set-project-root', label: 'Set Project Root to Working Directory', onSelect: () => dispatchShortcut('r') },
-					{ id: 'toggle-file-explorer', label: 'Toggle File Explorer Sidebar', onSelect: () => dispatchShortcut('o') },
+				{
+					id: 'set-project-root',
+					label: 'Set Project Root to Working Directory',
+					onSelect: () => dispatchShortcut('r'),
+				},
+				{
+					id: 'toggle-file-explorer',
+					label: 'Toggle File Explorer Sidebar',
+					onSelect: () => dispatchShortcut('o'),
+				},
 			],
 		}),
 		[dispatchShortcut, onBack, onOpenAuxiliaryRoute, onOpenConnectionManager],
@@ -357,104 +456,129 @@ function ConnectedBrowserMenuBar({
 		menuButtonRefs.current.get(menuId)?.focus();
 	}, []);
 
-	const focusFirstMenuItem = useCallback((menuId: BrowserMenuId) => {
-		const first = menuItems[menuId][0];
-		if (first) itemRefs.current.get(`${menuId}:${first.id}`)?.focus();
-	}, [menuItems]);
+	const focusFirstMenuItem = useCallback(
+		(menuId: BrowserMenuId) => {
+			const first = menuItems[menuId][0];
+			if (first) itemRefs.current.get(`${menuId}:${first.id}`)?.focus();
+		},
+		[menuItems],
+	);
 
-	const moveMenuFocus = useCallback((current: BrowserMenuId, delta: number) => {
-		const index = menuOrder.indexOf(current);
-		const next = menuOrder[(index + delta + menuOrder.length) % menuOrder.length];
-		setOpenMenu(next);
-		focusMenuButton(next);
-		return next;
-	}, [focusMenuButton]);
+	const moveMenuFocus = useCallback(
+		(current: BrowserMenuId, delta: number) => {
+			const index = menuOrder.indexOf(current);
+			const next =
+				menuOrder[(index + delta + menuOrder.length) % menuOrder.length];
+			setOpenMenu(next);
+			focusMenuButton(next);
+			return next;
+		},
+		[focusMenuButton],
+	);
 
-	const activateItem = useCallback((menuId: BrowserMenuId, item: BrowserMenuItem) => {
-		setOpenMenu(null);
-		menuButtonRefs.current.get(menuId)?.focus();
-		item.onSelect();
-	}, []);
+	const activateItem = useCallback(
+		(menuId: BrowserMenuId, item: BrowserMenuItem) => {
+			setOpenMenu(null);
+			menuButtonRefs.current.get(menuId)?.focus();
+			item.onSelect();
+		},
+		[],
+	);
 
-	const onMenuButtonKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>, menuId: BrowserMenuId) => {
-		switch (event.key) {
-			case 'ArrowDown':
-			case 'Enter':
-			case ' ':
-				event.preventDefault();
-				setOpenMenu(menuId);
-				window.requestAnimationFrame(() => focusFirstMenuItem(menuId));
-				break;
-			case 'ArrowLeft':
-				event.preventDefault();
-				moveMenuFocus(menuId, -1);
-				break;
-			case 'ArrowRight':
-				event.preventDefault();
-				moveMenuFocus(menuId, 1);
-				break;
-			case 'Home':
-				event.preventDefault();
-				focusMenuButton(menuOrder[0]);
-				break;
-			case 'End':
-				event.preventDefault();
-				focusMenuButton(menuOrder[menuOrder.length - 1]);
-				break;
-			case 'Escape':
-				setOpenMenu(null);
-				break;
-			default:
-				break;
-		}
-	}, [focusFirstMenuItem, focusMenuButton, moveMenuFocus]);
+	const onMenuButtonKeyDown = useCallback(
+		(event: ReactKeyboardEvent<HTMLButtonElement>, menuId: BrowserMenuId) => {
+			switch (event.key) {
+				case 'ArrowDown':
+				case 'Enter':
+				case ' ':
+					event.preventDefault();
+					setOpenMenu(menuId);
+					window.requestAnimationFrame(() => focusFirstMenuItem(menuId));
+					break;
+				case 'ArrowLeft':
+					event.preventDefault();
+					moveMenuFocus(menuId, -1);
+					break;
+				case 'ArrowRight':
+					event.preventDefault();
+					moveMenuFocus(menuId, 1);
+					break;
+				case 'Home':
+					event.preventDefault();
+					focusMenuButton(menuOrder[0]);
+					break;
+				case 'End':
+					event.preventDefault();
+					focusMenuButton(menuOrder[menuOrder.length - 1]);
+					break;
+				case 'Escape':
+					setOpenMenu(null);
+					break;
+				default:
+					break;
+			}
+		},
+		[focusFirstMenuItem, focusMenuButton, moveMenuFocus],
+	);
 
-	const onMenuItemKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>, menuId: BrowserMenuId, itemIndex: number) => {
-		const items = menuItems[menuId];
-		const focusItem = (index: number) => {
-			const next = items[index];
-			if (next) itemRefs.current.get(`${menuId}:${next.id}`)?.focus();
-		};
-		switch (event.key) {
-			case 'ArrowDown':
-				event.preventDefault();
-				focusItem((itemIndex + 1) % items.length);
-				break;
-			case 'ArrowUp':
-				event.preventDefault();
-				focusItem((itemIndex - 1 + items.length) % items.length);
-				break;
-			case 'ArrowLeft':
-				event.preventDefault();
-				window.requestAnimationFrame(() => focusFirstMenuItem(moveMenuFocus(menuId, -1)));
-				break;
-			case 'ArrowRight':
-				event.preventDefault();
-				window.requestAnimationFrame(() => focusFirstMenuItem(moveMenuFocus(menuId, 1)));
-				break;
-			case 'Home':
-				event.preventDefault();
-				focusItem(0);
-				break;
-			case 'End':
-				event.preventDefault();
-				focusItem(items.length - 1);
-				break;
-			case 'Escape':
-				event.preventDefault();
-				setOpenMenu(null);
-				menuButtonRefs.current.get(menuId)?.focus();
-				break;
-			default:
-				break;
-		}
-	}, [focusFirstMenuItem, menuItems, moveMenuFocus]);
+	const onMenuItemKeyDown = useCallback(
+		(
+			event: ReactKeyboardEvent<HTMLButtonElement>,
+			menuId: BrowserMenuId,
+			itemIndex: number,
+		) => {
+			const items = menuItems[menuId];
+			const focusItem = (index: number) => {
+				const next = items[index];
+				if (next) itemRefs.current.get(`${menuId}:${next.id}`)?.focus();
+			};
+			switch (event.key) {
+				case 'ArrowDown':
+					event.preventDefault();
+					focusItem((itemIndex + 1) % items.length);
+					break;
+				case 'ArrowUp':
+					event.preventDefault();
+					focusItem((itemIndex - 1 + items.length) % items.length);
+					break;
+				case 'ArrowLeft':
+					event.preventDefault();
+					window.requestAnimationFrame(() =>
+						focusFirstMenuItem(moveMenuFocus(menuId, -1)),
+					);
+					break;
+				case 'ArrowRight':
+					event.preventDefault();
+					window.requestAnimationFrame(() =>
+						focusFirstMenuItem(moveMenuFocus(menuId, 1)),
+					);
+					break;
+				case 'Home':
+					event.preventDefault();
+					focusItem(0);
+					break;
+				case 'End':
+					event.preventDefault();
+					focusItem(items.length - 1);
+					break;
+				case 'Escape':
+					event.preventDefault();
+					setOpenMenu(null);
+					menuButtonRefs.current.get(menuId)?.focus();
+					break;
+				default:
+					break;
+			}
+		},
+		[focusFirstMenuItem, menuItems, moveMenuFocus],
+	);
 
 	useEffect(() => {
 		if (openMenu === null) return;
 		const onPointerDown = (event: PointerEvent) => {
 			const target = event.target;
-			if (target instanceof Element && target.closest('.connected-web-menubar')) return;
+			if (target instanceof Element && target.closest('.connected-web-menubar'))
+				return;
 			setOpenMenu(null);
 		};
 		window.addEventListener('pointerdown', onPointerDown);
@@ -476,13 +600,19 @@ function ConnectedBrowserMenuBar({
 							role="menuitem"
 							aria-haspopup="menu"
 							aria-expanded={openMenu === menuId}
-							onClick={() => setOpenMenu((current) => current === menuId ? null : menuId)}
+							onClick={() =>
+								setOpenMenu((current) => (current === menuId ? null : menuId))
+							}
 							onKeyDown={(event) => onMenuButtonKeyDown(event, menuId)}
 						>
 							{menuLabels[menuId]}
 						</button>
 						{openMenu === menuId ? (
-							<div className="connected-web-menu__popup" role="menu" aria-label={menuLabels[menuId]}>
+							<div
+								className="connected-web-menu__popup"
+								role="menu"
+								aria-label={menuLabels[menuId]}
+							>
 								{menuItems[menuId].map((item, index) => (
 									<button
 										ref={(node) => {
@@ -495,7 +625,9 @@ function ConnectedBrowserMenuBar({
 										className="connected-web-menu__item"
 										role="menuitem"
 										onClick={() => activateItem(menuId, item)}
-										onKeyDown={(event) => onMenuItemKeyDown(event, menuId, index)}
+										onKeyDown={(event) =>
+											onMenuItemKeyDown(event, menuId, index)
+										}
 									>
 										{item.label}
 									</button>
@@ -614,5 +746,6 @@ function createUnavailableRemoteAccessClient(): RemoteAccessStatusClient {
 		setPairingAddress: getStatus,
 		subscribe: () => () => undefined,
 		toggleServer: getStatus,
+		toggleDirectListener: getStatus,
 	});
 }

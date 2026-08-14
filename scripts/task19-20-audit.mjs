@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-const TASK19 = 'specs/tasks/19-migration-and-compatibility-cleanup.md'
+const TASK19 = 'specs/tasks_completed/19-migration-and-compatibility-cleanup.md'
 const TASK20 = 'specs/tasks_completed/20-security-release-and-operations.md'
 
 const EVIDENCE_FILES = Object.freeze([

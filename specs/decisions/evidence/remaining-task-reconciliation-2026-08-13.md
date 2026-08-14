@@ -42,7 +42,8 @@ completed implementation history remain intact.
 
 ## Honest implementation inventory
 
-After both passes, **54 direct implementation checkboxes remain**:
+After completing the WebRTC protocol-reader recovery slice, **51 direct
+implementation checkboxes remain** from this inventory:
 
 | Active area | Files | Remaining | Implementation still required |
 | --- | --- | ---: | --- |
@@ -50,9 +51,8 @@ After both passes, **54 direct implementation checkboxes remain**:
 | Embedded remote exposure | Task 23 | 5 | Replace the old dual transport presentation, keep Local private, prevent listener fallback, and compose the pinned WebRTC runtime. |
 | Server-bundle host architecture | Tasks 27, 28, 29 | 36 | Implement closed host capabilities, signed bundle compatibility, Local/remote Desktop bundle launch, isolated browser bundle execution, state migration, and legacy-host deletion. |
 | On-device Parakeet dictation | on-device Task 38 | 3 | Complete disclosure, audio conversion, and pinned runtime/model/license packaging. |
-| WebRTC protocol-reader recovery | Task 43 | 3 | Retire a split-brain transport generation and create one fresh generation after application-protocol reader failure. |
 
-Total: `7 + 5 + 36 + 3 + 3 = 54`.
+Total: `7 + 5 + 36 + 3 = 51`.
 
 Every remaining checkbox now names code or product behaviour to implement. Test
 expectations may accompany implementation in acceptance prose, but they no

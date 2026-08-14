@@ -8,6 +8,7 @@ import {
 	RecordingsClient,
 	SettingsClient,
 	ShellProfilesClient,
+	TerminayAiClient,
 	TerminayClientFacade,
 	TerminayTerminalPanelClient,
 } from '@terminay/client-core';
@@ -17,7 +18,6 @@ import { EditTabWindow } from './components/EditTabWindow.tsx';
 import { MacrosWindow } from './components/MacrosWindow.tsx';
 import { RecordingsWindow } from './components/RecordingsWindow.tsx';
 import { SettingsWindow } from './components/SettingsWindow.tsx';
-import { ProjectEnvironmentsWindow } from './projectEnvironments/ProjectEnvironmentSurfaces.tsx';
 import {
 	createServerMacroSettingsClient,
 	LegacyMacroSettingsProvider,
@@ -26,6 +26,7 @@ import {
 	createServerTerminalSettingsClient,
 	TerminalSettingsClientProvider,
 } from './hooks/useTerminalSettings.ts';
+import { ProjectEnvironmentsWindow } from './projectEnvironments/ProjectEnvironmentSurfaces.tsx';
 import {
 	type DisconnectedFileCompatibility,
 	DisconnectedFileCompatibilityProvider,
@@ -36,11 +37,6 @@ import { captureLegacyFileViewerCapability } from './services/fileViewer/termina
 import { captureLegacyMacroSettingsCapability } from './services/macros/legacyMacroSettingsCapability.ts';
 import { createLegacySettingsClient } from './services/settings/legacySettingsClient.ts';
 import { ConnectedRendererWorkspace } from './shared/ConnectedRendererWorkspace.tsx';
-import { SharedAgentRouteBody } from './shared/SharedAgentRouteBody.tsx';
-import { SharedConnectionsRouteBody } from './shared/SharedConnectionsRouteBody.tsx';
-import { SharedFolderRouteBody } from './shared/SharedFolderRouteBody.tsx';
-import { SharedGitRouteBody } from './shared/SharedGitRouteBody.tsx';
-import { SharedTerminalRouteBody } from './shared/SharedTerminalRouteBody.tsx';
 import { captureLegacyServerConnectionLifecycleCapability } from './shared/legacyServerConnectionLifecycleCapability.ts';
 import { captureLegacyServerFrameCapability } from './shared/legacyServerFrameCapability.ts';
 import {
@@ -48,8 +44,8 @@ import {
 	sharedRouteForView,
 } from './shared/ResponsiveWorkspaceEntry.tsx';
 import {
-	RendererConnectionController,
 	type RendererConnectionAttempt,
+	RendererConnectionController,
 	type RendererConnectionState,
 } from './shared/rendererConnectionController.ts';
 import {
@@ -59,10 +55,20 @@ import {
 	type RendererBootstrapPhase,
 } from './shared/rendererServerClient.ts';
 import { recordBoundedRendererRender } from './shared/renderLoopGuard.ts';
+import { SharedAgentRouteBody } from './shared/SharedAgentRouteBody.tsx';
+import { SharedConnectionsRouteBody } from './shared/SharedConnectionsRouteBody.tsx';
+import { SharedFolderRouteBody } from './shared/SharedFolderRouteBody.tsx';
+import { SharedGitRouteBody } from './shared/SharedGitRouteBody.tsx';
+import { SharedTerminalRouteBody } from './shared/SharedTerminalRouteBody.tsx';
 
 const searchParams = new URLSearchParams(window.location.search);
 const view = searchParams.get('view');
-const applicationOnlyViews = new Set(['settings', 'project-environments', 'macros', 'recordings']);
+const applicationOnlyViews = new Set([
+	'settings',
+	'project-environments',
+	'macros',
+	'recordings',
+]);
 const usesApplicationOnlyServerClient = applicationOnlyViews.has(view ?? '');
 const usesServerClient = view !== 'edit-tab';
 
@@ -510,9 +516,8 @@ export function RendererEntry() {
 				? undefined
 				: createServerMacroSettingsClient(
 						new MacroClient(new TerminayClientFacade(activeApplicationClient)),
-						legacyMacroSettingsCapability,
 					),
-		[activeApplicationClient, legacyMacroSettingsCapability],
+		[activeApplicationClient],
 	);
 	const serverRecordingsClient = useMemo(
 		() =>
@@ -532,6 +537,24 @@ export function RendererEntry() {
 					),
 		[activeApplicationClient],
 	);
+	const serverAiMetadataClient = useMemo(() => {
+		if (activeApplicationClient === undefined) return undefined;
+		const client = new TerminayAiClient(
+			new TerminayClientFacade(activeApplicationClient),
+		);
+		return Object.freeze({
+			async generate() {
+				throw new Error(
+					'AI metadata generation requires an exact terminal target.',
+				);
+			},
+			async listModels(provider: 'codex' | 'claudeCode') {
+				return client.listModels(
+					provider === 'claudeCode' ? 'claude-code' : provider,
+				);
+			},
+		});
+	}, [activeApplicationClient]);
 
 	const legacyContent = (() => {
 		const workspaceSnapshot =
@@ -614,6 +637,7 @@ export function RendererEntry() {
 				) : (
 					<SettingsWindow
 						applicationClient={activeApplicationClient}
+						aiTabMetadataClient={serverAiMetadataClient}
 						remoteAccessStatusClient={window.terminayRemoteAccessStatusHost}
 						settingsClient={serverSettingsClient}
 						shellProfilesClient={shellProfilesClient}
@@ -649,7 +673,10 @@ export function RendererEntry() {
 				) : (
 					<ProjectEnvironmentsWindow
 						applicationClient={auxiliaryClientContext.applicationClient}
-						serverName={auxiliaryClientContext.connectionLabel ?? auxiliaryClientContext.serverId}
+						serverName={
+							auxiliaryClientContext.connectionLabel ??
+							auxiliaryClientContext.serverId
+						}
 					/>
 				);
 			case 'recordings':
@@ -717,7 +744,9 @@ export function RendererEntry() {
 					{serverRecoveryStatus}
 				</div>
 			)}
-			<TerminalSettingsClientProvider client={legacySettingsClient}>
+			<TerminalSettingsClientProvider
+				client={serverSettingsClient ?? legacySettingsClient}
+			>
 				<LegacyMacroSettingsProvider capability={legacyMacroSettingsCapability}>
 					{sharedRoute === undefined ? (
 						legacyContent
@@ -726,8 +755,9 @@ export function RendererEntry() {
 							route={sharedRoute}
 							capabilities={hostCapabilities}
 							presentation={desktopRouteModel?.presentation}
-							legacyFallback={legacyContent}
-						/>
+						>
+							{legacyContent}
+						</ResponsiveWorkspaceEntry>
 					)}
 				</LegacyMacroSettingsProvider>
 			</TerminalSettingsClientProvider>

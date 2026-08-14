@@ -16,11 +16,11 @@ compatibility window.
 
 ## Dependencies
 
-- [Task 27: Server bundle and host contracts](./27-server-bundle-host-contracts.md)
+- [Task 27: Server bundle and host contracts](../tasks_completed/27-server-bundle-host-contracts.md)
 - [Task 28: Desktop server-bundle host and state extraction](./28-desktop-server-bundle-host-and-state.md)
-- [Task 23: Embedded Desktop WebRTC exposure](./23-embedded-desktop-remote-exposure.md)
+- [Task 23: Embedded Desktop WebRTC exposure](../tasks_completed/23-embedded-desktop-remote-exposure.md)
 - [Task 41: Single-owner WebRTC transport generations](../tasks_completed/41-single-owner-webrtc-transport-generations.md)
-- [Task 43: WebRTC transport recovery acceptance](./43-webrtc-transport-recovery-acceptance.md)
+- [Task 43: WebRTC transport recovery acceptance](../tasks_completed/43-webrtc-transport-recovery-acceptance.md)
 
 ## Current gap
 
@@ -34,27 +34,27 @@ same bundle id or cover compatible older/current/newer host and server fixtures.
 
 ### Thin browser shell
 
-- [ ] Limit the deployed manager to connection profiles, pairing/reconnect,
+- [x] Limit the deployed manager to connection profiles, pairing/reconnect,
   signaling/WebRTC bootstrap, bundle verification/installation, isolated
   session launch, and bounded failure/recovery UI.
-- [ ] Remove any independently versioned full workspace fallback from the
+- [x] Remove any independently versioned full workspace fallback from the
   manager artifact and normal module graph.
-- [ ] Install and execute each server bundle only in its exact isolated session
+- [x] Install and execute each server bundle only in its exact isolated session
   origin. Never execute unrelated server code or credentials in the manager
   origin.
-- [ ] Pass only the Task 27 browser host context and Task 41 opaque byte
+- [x] Pass only the Task 27 browser host context and Task 41 opaque byte
   endpoint across a closed exact-source/exact-origin bridge.
-- [ ] Keep `app.terminay.com` canonical, preserve its same-origin sanitized
+- [x] Keep `app.terminay.com` canonical, preserve its same-origin sanitized
   profile metadata, and use `web.terminay.com` only as a retired redirect.
 
 ### Origin, cache, and credential isolation
 
-- [ ] Commit verified bundles atomically and keep the previous complete bundle
+- [x] Commit verified bundles atomically and keep the previous complete bundle
   after interruption, invalid hashes, unsafe paths, incompatible requirements,
   or server-identity mismatch.
-- [ ] Keep manager persistence metadata-only and keep origin credentials and
+- [x] Keep manager persistence metadata-only and keep origin credentials and
   bundle storage out of profile messages, URLs, logs, and analytics.
-- [ ] Preserve direct session-origin launch and a safe route back to connection
+- [x] Preserve direct session-origin launch and a safe route back to connection
   management without transferring credentials.
 
 ## Acceptance checks

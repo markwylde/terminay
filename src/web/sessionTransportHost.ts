@@ -1,4 +1,5 @@
 import type { ByteTransport } from '@terminay/protocol';
+import type { OpaqueBrowserByteEndpoint } from '@terminay/web';
 
 export type BrowserDeviceEnrollment = Readonly<{
 	deviceId: string;
@@ -14,6 +15,13 @@ export type SessionTransportHost = Readonly<{
 	origin: string;
 	managerUrl?: string;
 	managerAction?: string;
+	prepareWorkspace(): Promise<Readonly<{
+		manifest: unknown;
+		expectedServerId: string;
+		context: unknown;
+		endpoint: OpaqueBrowserByteEndpoint;
+		readAsset(path: string): Promise<Uint8Array>;
+	}>>;
 	postJson<TResponse>(pathname: string, body: unknown): Promise<TResponse>;
 	acquireApplicationEndpoint(ticket: string): Promise<Readonly<{
 		generation: number;
@@ -47,10 +55,57 @@ export type SessionTransportHost = Readonly<{
 	}>): Promise<BrowserDeviceEnrollment>;
 }>;
 
+export type HostedBrowserSessionAuthority = Omit<SessionTransportHost, 'version' | 'prepareWorkspace'> & Readonly<{
+	serverId: string;
+	hostContext: unknown;
+	assetManifest(): Promise<unknown>;
+	readAsset(path: string): Promise<Uint8Array>;
+	byteEndpoint: OpaqueBrowserByteEndpoint;
+}>;
+
 declare global {
 	interface Window {
 		__TERMINAY_SESSION_TRANSPORT__?: unknown;
 	}
+}
+
+/** Sole browser producer for the privileged session host. Hosted bootstrap
+ * installs one closed contract before the server application module loads. */
+export function installSessionTransportHost(host: SessionTransportHost): SessionTransportHost {
+	if (window.__TERMINAY_SESSION_TRANSPORT__ !== undefined)
+		throw new Error('Terminay session transport host is already installed.');
+	const installed = Object.freeze({ ...host });
+	Object.defineProperty(window, '__TERMINAY_SESSION_TRANSPORT__', {
+		configurable: false,
+		enumerable: false,
+		writable: false,
+		value: installed,
+	});
+	return getSessionTransportHost()!;
+}
+
+/** Production hosted-bootstrap composition. Authentication/signaling owns the
+ * authority inputs; the page receives one closed session contract. */
+export function installHostedBrowserSession(authority: HostedBrowserSessionAuthority): SessionTransportHost {
+	const {
+		serverId,
+		hostContext,
+		assetManifest,
+		readAsset,
+		byteEndpoint,
+		...lifecycle
+	} = authority;
+	return installSessionTransportHost(Object.freeze({
+		...lifecycle,
+		version: 1,
+		prepareWorkspace: async () => Object.freeze({
+			manifest: await assetManifest(),
+			expectedServerId: serverId,
+			context: hostContext,
+			endpoint: byteEndpoint,
+			readAsset,
+		}),
+	}));
 }
 
 export function getSessionTransportHost(): SessionTransportHost | undefined {
@@ -61,7 +116,7 @@ export function getSessionTransportHost(): SessionTransportHost | undefined {
 		if (typeof value[name] !== 'string' || value[name].length === 0) fail(name);
 	}
 	if (new URL(value.origin as string).origin !== window.location.origin) fail('origin binding');
-	for (const name of ['postJson', 'acquireApplicationEndpoint', 'registerApplication', 'connect', 'enroll'] as const) {
+	for (const name of ['prepareWorkspace', 'postJson', 'acquireApplicationEndpoint', 'registerApplication', 'connect', 'enroll'] as const) {
 		if (typeof value[name] !== 'function') fail(name);
 	}
 	return value as SessionTransportHost;

@@ -75,7 +75,12 @@ test('shows selected-server extensions and saves a secret-backed connection prof
   await environmentsWindow.getByText('Add connection', { exact: true }).click()
   await environmentsWindow.getByRole('button', { name: 'New E2E uploaded' }).click()
   await expect(environmentsWindow.getByRole('heading', { name: 'Fixture connection' })).toBeVisible()
-  await expect(environmentsWindow.getByRole('heading', { name: 'Project Environments' })).toBeVisible()
+	await expect(
+		environmentsWindow.getByRole('heading', {
+			level: 1,
+			name: 'Project Environments',
+		}),
+	).toBeVisible()
   await expect(environmentsWindow.getByPlaceholder('Search environments...')).toBeVisible()
   await expect(environmentsWindow.getByRole('button', { name: 'This server' })).toBeVisible()
   await expect(environmentsWindow.locator('.declarative-provider-form .settings-group')).toHaveCount(2)
@@ -120,7 +125,12 @@ test('opens Project Environments as a full auxiliary window', async ({ appHarnes
     })
   })
 
-  await expect(environmentsWindow.getByRole('heading', { name: 'Project Environments' })).toBeVisible()
+	await expect(
+		environmentsWindow.getByRole('heading', {
+			level: 1,
+			name: 'Project Environments',
+		}),
+	).toBeVisible()
   await expect(environmentsWindow.locator('.project-environments-window')).toBeVisible()
   await expect(environmentsWindow.locator('[role="dialog"]')).toHaveCount(0)
   await expect(environmentsWindow.locator('.project-environment-surface-backdrop')).toHaveCount(0)
@@ -164,17 +174,26 @@ test('shows recording settings and saves recording defaults', async ({ appHarnes
   await settingsWindow.getByLabel('Open timeline after saving').check()
   await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
 
-  const savedRecordingSettings = await mainWindow.evaluate(async () => {
-    return (await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()).recording
-  })
-
-  expect(savedRecordingSettings).toMatchObject({
-    captureInput: true,
-    directory: recordingDir,
-    openTimelineAfterSaving: true,
-    recordNewTerminals: true,
-    sensitiveInputPolicy: 'mask',
-  })
+	await settingsWindow.close()
+	const reopened = await appHarness.openSettingsWindow({
+		page: mainWindow,
+		sectionId: 'recording-defaults',
+	})
+	await expect(reopened.getByLabel('Record new terminals')).toBeChecked()
+	await expect(
+		reopened
+			.locator('#section-recording-defaults .settings-row')
+			.filter({ hasText: 'Recording directory' })
+			.locator('input'),
+	).toHaveValue(recordingDir)
+	await expect(reopened.getByLabel('Capture input')).toBeChecked()
+	await expect(
+		reopened
+			.locator('#section-recording-defaults .settings-row')
+			.filter({ hasText: 'Sensitive input' })
+			.locator('select'),
+	).toHaveValue('mask')
+	await expect(reopened.getByLabel('Open timeline after saving')).toBeChecked()
 })
 
 test('normalizes custom file viewer extension defaults', () => {
@@ -259,14 +278,18 @@ test('saves custom file extension default tabs in settings', async ({ appHarness
   await row.getByLabel('Default file viewer tab').selectOption('text')
   await expect(settingsWindow.locator('.settings-status')).toContainText('Saved')
 
-  const savedFileViewerSettings = await mainWindow.evaluate(async () => {
-    return (await window.terminayTerminalSettingsCompatibilityHost.getTerminalSettings()).fileViewer
-  })
-
-  expect(savedFileViewerSettings.customFileExtensions).toContainEqual({
-    defaultMode: 'text',
-    extension: '.e2eunknown',
-  })
+	await settingsWindow.close()
+	const reopened = await appHarness.openSettingsWindow({
+		page: mainWindow,
+		sectionId: 'file-viewer-refresh',
+	})
+	const savedRow = customExtensionRows(reopened).filter({
+		has: reopened.locator('input[value=".e2eunknown"]'),
+	})
+	await expect(savedRow).toHaveCount(1)
+	await expect(savedRow.getByLabel('Default file viewer tab')).toHaveValue(
+		'text',
+	)
 })
 
 test('keeps the active terminal visible after changing settings and closing settings', async ({

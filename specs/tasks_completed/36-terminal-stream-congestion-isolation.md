@@ -14,7 +14,7 @@ shared-transport failure.
 - [Server-owned workspace state](../features/server-owned-workspace-state.md)
 - [Durable terminal presentation recovery](../tasks_completed/35-durable-terminal-presentation-recovery.md)
 - [Task 42: Unified renderer connection recovery](../tasks_completed/42-unified-renderer-connection-recovery.md)
-- [Task 43: WebRTC transport recovery acceptance](../tasks/43-webrtc-transport-recovery-acceptance.md)
+- [Task 43: WebRTC transport recovery acceptance](./43-webrtc-transport-recovery-acceptance.md)
 
 ## Current gap
 

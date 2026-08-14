@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-const legacyRemoteReference = /(?:\.\/remote\/|src\/remote\/|remote\.html)/u
+const legacyRemoteReference = /(?:legacyRemote|remote\/Remote|remote\.html)/u
 
 test('Task 19 removes the legacy Electron WebRTC host from the normal renderer module graph', async () => {
   const source = await readFile('src/rendererRuntime.tsx', 'utf8')

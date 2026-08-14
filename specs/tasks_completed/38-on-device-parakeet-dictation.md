@@ -65,7 +65,7 @@ must not be treated as renderer code or an unbounded shell command.
   controls without removing existing OpenAI behavior.
 - [x] Make capture preflight require an API key only for OpenAI and require a
   ready local runtime only for Parakeet.
-- [ ] Ensure request/disclosure snapshots identify whether audio stays on the
+- [x] Ensure request/disclosure snapshots identify whether audio stays on the
   selected Mac server or is forwarded to OpenAI.
 
 ### Privileged Parakeet runtime
@@ -82,10 +82,10 @@ must not be treated as renderer code or an unbounded shell command.
 - [x] Keep one worker warm, frame requests and responses with opaque bounded
   identifiers, enforce time/byte limits, and terminate it on application exit
   or protocol failure.
-- [ ] Convert supported captured formats to the worker's required mono 16-kHz
+- [x] Convert supported captured formats to the worker's required mono 16-kHz
   audio form without retaining audio. Missing conversion support must be a
   distinct actionable error.
-- [ ] Pin and document the runtime package/model versions and their licenses;
+- [x] Pin and document the runtime package/model versions and their licenses;
   ensure release packaging and diagnostics disclose versions/status but never
   audio, transcripts, environment secrets, or arbitrary local paths.
 

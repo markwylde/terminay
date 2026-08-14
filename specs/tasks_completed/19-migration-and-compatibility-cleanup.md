@@ -195,7 +195,7 @@ native-datachannel/TURN/provider cases plus external hosted pairing and
 reconnect on provisioned infrastructure and physical target devices. Record
 that evidence in the compatibility matrix as operational assurance; it is not
 part of the completed project-scoped parity or cleanup checkboxes.
-- [ ] Remove broad application preload IPC, renderer workspace authority,
+- [x] Remove broad application preload IPC, renderer workspace authority,
   hidden Electron WebRTC hosting, old terminal-only remote protocol/UI, and
   temporary adapters only after parity.
   - [x] Re-audit the hidden compatibility graph after the Task 16 move and the
@@ -675,28 +675,72 @@ part of the completed project-scoped parity or cleanup checkboxes.
     `scripts/task19-file-viewer-capability.test.mjs`,
     `scripts/folder-tasks-server-client.test.mjs`, and
     `scripts/task16-connected-folder-panel-capability.test.mjs`.
-  - [ ] Move legacy settings, macro, recordings, AI metadata, and dictation
+  - [x] Move legacy settings, macro, recordings, AI metadata, and dictation
     data paths out of Electron preload compatibility clients and into
     server-owned protocol clients for connected Desktop. Settings-window
     launch/focus and microphone permission may remain native host actions, but
     model metadata, secrets, transcription, recordings state, macro
     persistence, and terminal setting persistence should be server-owned.
-  - [ ] Replace `legacyFallback` in `src/rendererRuntime.tsx` and
-    `ResponsiveWorkspaceEntry` with the extracted shared route tree. Web and
-    Electron now both enter `ConnectedRendererWorkspace -> App`; the remaining
-    cleanup is the route-marker/fallback wrapper itself, so production Electron
-    should no longer wrap connected workspace features as a legacy body.
-  - [ ] Split the remaining native presentation actions into explicit
+    - [x] Remove connected macro persistence and subscriptions from the
+      Electron `macros.json` compatibility capability. Connected Desktop now
+      reads, replaces, resets, and observes definitions exclusively through
+      `MacroClient`; the legacy capability remains only for an explicitly
+      disconnected renderer (`src/hooks/useMacroSettings.ts`,
+      `scripts/task19-connected-macro-authority.test.mjs`).
+    - [x] Upload connected dictation audio through the selected server's
+      binary `TerminayAiClient` with the exact server/project/panel/session
+      identity. Electron retains microphone capture/permission as a native
+      device capability, while disconnected compatibility may still use its
+      local transcription host (`src/workspace/useDictationController.ts`,
+      `scripts/task19-connected-macro-authority.test.mjs`).
+	- [x] Persist only connection-host presentation fields and the microphone
+	  device override in Electron's local settings file. Terminal behavior,
+	  recording, remote, shell, AI, and dictation provider settings are written
+	  only through the selected server `SettingsClient`; server defaults include
+	  the provider discriminator required by the shared editor
+	  (`src/terminalSettings.ts`, `electron/main.ts`,
+	  `packages/server-core/src/settings/defaults.ts`,
+	  `scripts/task19-connected-macro-authority.test.mjs`).
+	- [x] Route connected model discovery, recording state, and Parakeet runtime
+	  management through the selected server clients. The Electron adapters are
+	  retained only for explicitly disconnected UI and native microphone/device
+	  work (`src/rendererRuntime.tsx`,
+	  `src/web/ConnectedWebRendererWorkspace.tsx`, `src/App.tsx`,
+	  `src/components/SettingsWindow.tsx`,
+	  `scripts/task19-connected-macro-authority.test.mjs`).
+	- [x] Move OpenAI transcription and API-key mutation into the selected
+	  Terminay Server. The client uploads the key only as a bounded binary
+	  command; the server stores it in its vault, exposes metadata-only status,
+	  scopes plaintext to the provider callback, and zeroizes vault inputs.
+	  Connected Settings never invokes Electron's legacy key store
+	  (`packages/server-core/src/aiService/openAiDictationProvider.ts`,
+	  `packages/server-core/src/aiService/protocol.ts`,
+	  `packages/client-core/src/ai.ts`, `src/components/SettingsWindow.tsx`,
+	  `packages/server-core/test/openai-dictation-provider.test.mjs`).
+  - [x] Remove `legacyFallback` from `src/rendererRuntime.tsx` and the shared
+    responsive entry. Web and Electron both enter
+    `ConnectedRendererWorkspace -> App`; `ResponsiveWorkspaceEntry` now owns
+    responsive presentation only and has no route marker or fallback body
+    (`scripts/task16-production-ui-route.test.mjs`).
+  - [x] Split the remaining native presentation actions into explicit
     versioned host capabilities with no durable project data authority:
     clipboard, reveal, external URL, app/menu commands, terminal presentation
     zoom/size, project tab drag/popout, workspace transfer, window lifecycle,
     and native dialogs. Add boundary tests proving these bridges cannot list,
     read, write, or mutate project/server data except by dispatching typed
     server-client commands.
-  - [ ] Remove terminal/server-frame compatibility bootstrap from normal
+	The declaration gate freezes the exact version-one operation set for every
+	listed host, so adding a file/project/server data method fails review
+	(`scripts/task19-native-presentation-capabilities.test.mjs`).
+  - [x] Remove terminal/server-frame compatibility bootstrap from normal
     Electron startup after the shared framed client is the only connection
     path. Keep any recovery or historical harnesses outside the production
-    module graph with exact allowlist coverage.
+    module graph with exact allowlist coverage. Packaged Local and remote
+    windows now launch the selected server's verified bundle with
+    `serverUiPreload` and its identity-bound byte endpoint; the legacy renderer
+    connection/frame capability remains reachable only from the explicit Vite
+    development harness (`apps/terminay-desktop/test/server-bundle-host.test.mjs`,
+    `scripts/task19-server-frame-capability.test.mjs`).
   - [x] Tighten boundary tests for the one-server-model baseline, hidden
     compatibility imports, preload compatibility boundary, and renderer
     preload boundary so any new connected-renderer import or call of a

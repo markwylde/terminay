@@ -89,6 +89,50 @@ test('Desktop projects the current configured pairing mode and LAN handoff', asy
 	await controller.shutdown();
 });
 
+test('independent Desktop exposure controllers stop one route without stopping the other or Local authority', async () => {
+	let localAuthorityRunning = true;
+	const directLifecycle = [];
+	const webRtc = new DesktopServerOwnedExposure({
+		serverId: 'desktop-server',
+		sessionOrigin: 'https://session.example',
+		pairingMode: () => 'webrtc',
+	});
+	const direct = new DesktopServerOwnedExposure({
+		serverId: 'desktop-server',
+		sessionOrigin: 'https://direct.example',
+		pairingMode: () => 'lan',
+		lanListener: {
+			async start() {
+				directLifecycle.push('start');
+			},
+			async stop() {
+				directLifecycle.push('stop');
+			},
+		},
+	});
+
+	await webRtc.toggle();
+	await direct.toggle();
+	assert.equal(webRtc.getStatus().isRunning, true);
+	assert.equal(direct.getStatus().directListenerRunning, true);
+	assert.equal(localAuthorityRunning, true);
+
+	await webRtc.toggle();
+	assert.equal(webRtc.getStatus().isRunning, false);
+	assert.equal(direct.getStatus().directListenerRunning, true);
+	assert.equal(localAuthorityRunning, true);
+
+	await webRtc.toggle();
+	await direct.toggle();
+	assert.equal(direct.getStatus().directListenerRunning, false);
+	assert.equal(webRtc.getStatus().isRunning, true);
+	assert.equal(localAuthorityRunning, true);
+	assert.deepEqual(directLifecycle, ['start', 'stop']);
+
+	localAuthorityRunning = false;
+	await Promise.all([webRtc.shutdown(), direct.shutdown()]);
+});
+
 test('Desktop resolves a fresh loopback WebRTC session origin when exposure starts', async () => {
 	const controller = new DesktopServerOwnedExposure({
 		serverId: 'desktop-server',
@@ -280,10 +324,12 @@ test('Desktop main routes connection-menu exposure controls to server ownership'
 		source,
 		/sessionOrigin: readTerminalSettings\(\)\.remoteAccess\.origin/,
 	);
+	assert.match(source, /pairingMode: \(\) => 'webrtc'/);
 	assert.match(
 		source,
-		/pairingMode: \(\) => readTerminalSettings\(\)\.remoteAccess\.pairingMode/,
+		/const desktopDirectNetworkExposure = new DesktopServerOwnedExposure/,
 	);
+	assert.match(source, /pairingMode: \(\) => 'lan'/);
 	assert.match(source, /resolveSessionOrigin: \(\) =>/);
 	assert.match(source, /function currentRemoteAccessStatus\(\)/);
 	assert.match(source, /privilegedWebRtcExposure!\.service\.getStatus\(\)/);

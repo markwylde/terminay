@@ -27,7 +27,7 @@ export function useRemoteAccessController(
 	const [pinInput, setPinInput] = useState('');
 	const [pinError, setPinError] = useState<string | null>(null);
 	const [isSavingPin, setIsSavingPin] = useState(false);
-	const [selectedMode, setSelectedMode] = useState<RemotePairingMode>('lan');
+	const [selectedMode, setSelectedMode] = useState<RemotePairingMode>('webrtc');
 	const [isLinkCopied, setIsLinkCopied] = useState(false);
 	const [isMenuOpen, setIsMenuOpen] = useState(false);
 	const menuRef = useRef<HTMLDivElement | null>(null);
@@ -51,9 +51,9 @@ export function useRemoteAccessController(
 		};
 	}, [statusClient]);
 
-	useEffect(() => {
-		if (status?.pairingMode) setSelectedMode(status.pairingMode);
-	}, [status?.pairingMode]);
+	// The primary exposure journey is always WebRTC. The direct listener is an
+	// independently labelled advanced setting, never an alternate QR type.
+	useEffect(() => setSelectedMode('webrtc'), []);
 
 	const previousConnectionCountRef = useRef<number | null>(null);
 	useEffect(() => {
@@ -180,15 +180,15 @@ export function useRemoteAccessController(
 			) {
 				throw new Error(
 					status.webRtcStatusMessage ??
-						'WebRTC Relay is unavailable in this build.',
+						'WebRTC exposure is unavailable in this build.',
 				);
 			}
 			if (status?.configurationIssue) {
 				await window.terminaySettingsWindowHost?.open('remote-access-host');
 				return;
 			}
-			if (!status?.isRunning && !(await selectMode(selectedMode))) return;
-			if (!status?.isRunning && !(await ensurePin(selectedMode))) return;
+			if (!status?.isRunning && !(await selectMode('webrtc'))) return;
+			if (!status?.isRunning && !(await ensurePin('webrtc'))) return;
 			const next = await statusClient.toggleServer();
 			setStatus(next);
 			setActionError(next.errorMessage);
@@ -201,14 +201,14 @@ export function useRemoteAccessController(
 		ensurePin,
 		recordFailure,
 		selectMode,
-		selectedMode,
 		status?.configurationIssue,
 		status?.isRunning,
 		statusClient,
 	]);
 
 	const openPairingQr = useCallback(
-		async (mode: RemotePairingMode = selectedMode) => {
+		async (_mode: RemotePairingMode = 'webrtc') => {
+			const mode: RemotePairingMode = 'webrtc';
 			setActionError(null);
 			try {
 				if (statusClient === undefined) {
@@ -223,7 +223,7 @@ export function useRemoteAccessController(
 				) {
 					throw new Error(
 						status.webRtcStatusMessage ??
-							'WebRTC Relay is unavailable in this build.',
+							'WebRTC exposure is unavailable in this build.',
 					);
 				}
 				if (status?.configurationIssue) {

@@ -5,11 +5,11 @@ import test from 'node:test'
 const app = await readFile('src/App.tsx', 'utf8')
 const settingsWindow = await readFile('src/components/SettingsWindow.tsx', 'utf8')
 const client = await readFile('src/services/ai/legacyAiTabMetadataClient.ts', 'utf8')
-const task = await readFile('specs/tasks/16-shared-responsive-server-ui.md', 'utf8')
+const task = await readFile('specs/tasks_completed/16-shared-responsive-server-ui.md', 'utf8')
 
 test('AI metadata uses the narrow injected Desktop adapter and isolates broad preload compatibility', () => {
 	assert.match(app, /createLegacyAiTabMetadataClient\(window\.terminayAiMetadataHost\)/)
-	assert.match(app, /aiTabMetadataClient\.generate\(/)
+	assert.match(app, /aiTabMetadataClient!\.generate\(/)
 	assert.match(
 		settingsWindow,
 		/createLegacyAiTabMetadataClient\(window\.terminayAiMetadataHost\)/,
