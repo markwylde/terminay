@@ -53,6 +53,11 @@ declare global {
 				titleResult?: string;
 			}) => Promise<void>;
 		};
+		terminayMcpControlTest?: {
+			getControlEnvironment: (
+				terminalSessionId: string,
+			) => Promise<{ socketPath: string; token: string }>;
+		};
 	}
 }
 

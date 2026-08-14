@@ -223,4 +223,13 @@ if (
 				) as Promise<boolean>,
 		}),
 	);
+	contextBridge.exposeInMainWorld(
+		'terminayMcpControlTest',
+		Object.freeze({
+			getControlEnvironment: (terminalSessionId: string) =>
+				ipcRenderer.invoke('test:get-mcp-control-environment', {
+					terminalSessionId,
+				}) as Promise<{ socketPath: string; token: string }>,
+		}),
+	);
 }

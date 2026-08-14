@@ -25,10 +25,10 @@ async function connectMcp(
 	sessionId: string,
 ): Promise<McpConnection> {
 	const control = await page.evaluate(async (terminalSessionId) => {
-		if (!window.terminayTest) {
-			throw new Error('The Terminay test bridge is unavailable.');
+		if (!window.terminayMcpControlTest) {
+			throw new Error('The canonical MCP test seam is unavailable.');
 		}
-		return window.terminayTest.getMcpControlEnvironment(terminalSessionId);
+		return window.terminayMcpControlTest.getControlEnvironment(terminalSessionId);
 	}, sessionId);
 
 	const transport = new StdioClientTransport({
