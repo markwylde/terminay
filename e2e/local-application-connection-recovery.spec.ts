@@ -24,11 +24,9 @@ test('a Local application transport loss recovers without replacing the terminal
 		.locator('.project-workspace--active .terminal-tab-content')
 		.count();
 
-	await mainWindow.evaluate(
-		async ({ id, marker }) =>
-			window.terminayTest!.writeServerTerminal(id, `printf '${marker}\\n'\r`),
-		{ id: sessionId, marker: beforeMarker },
-	);
+	await panel.locator('.xterm-helper-textarea').focus();
+	await mainWindow.keyboard.type(`printf '${beforeMarker}\\n'`);
+	await mainWindow.keyboard.press('Enter');
 	await expect(rows).toContainText(beforeMarker, { timeout: 5_000 });
 
 	const failure = await mainWindow.evaluate(async () => {
