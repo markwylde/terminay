@@ -762,8 +762,12 @@ export default function WebManagerApp() {
 				label: existing?.label ?? displayUrl.host,
 				origin: parsed.displayOrigin,
 			};
-			attempt = beginConnectionAttempt(pendingProfile.id);
-			rendererAttempt = connectionController.current!.begin(pendingProfile.id);
+			// A connection attempt has one controller generation.  Beginning it twice
+			// makes the first generation stale before its handshake completes, so a
+			// valid pairing silently disposes its client instead of selecting the
+			// newly paired server.
+			rendererAttempt = beginConnectionAttempt(pendingProfile.id);
+			attempt = rendererAttempt;
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : 'Unable to add that server.',
@@ -1338,8 +1342,9 @@ export default function WebManagerApp() {
 			await connectPairedWebRtcBrowser(profile.origin);
 			return;
 		}
-		const attempt = beginConnectionAttempt(profile.id);
-		const rendererAttempt = connectionController.current!.begin(profile.id);
+		// Keep the reconnect handshake and activation bound to the same generation.
+		const rendererAttempt = beginConnectionAttempt(profile.id);
+		const attempt = rendererAttempt;
 		try {
 			if (isBrowserReconnectOrigin(profile.origin)) {
 				const credential = await reconnectVault.credential(profile.origin);
