@@ -36,8 +36,9 @@ test('browser mounts the real App with the exact authenticated client context', 
 	);
 	assert.match(
 		sharedWorkspace,
-		/<App[\s\S]*quickPushClient=\{host\.quickPushClient\}[\s\S]*terminalClientContext=\{terminalClientContext\}/u,
+		/<App[\s\S]*terminalClientContext=\{terminalClientContext\}/u,
 	);
+	assert.doesNotMatch(sharedWorkspace, /quickPushClient/u);
 	assert.match(
 		remoteEntry,
 		/acquireHostedApplicationTransport\(authenticated\.ticket\)/u,

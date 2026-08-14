@@ -13,11 +13,9 @@ const DISCONNECTED_ALLOWLIST = [
 const PRESENTATION_HOSTS = new Set([
   'terminayClipboardHost',
   'terminayExternalHost',
-  'terminayProjectEditHost',
   'terminayProjectTabHost',
   'terminayRevealHost',
   'terminaySettingsWindowHost',
-  'terminayTerminalEditHost',
   'terminayTerminalPresentationHost',
   'terminayUpdateHost',
   'terminayWindowLifecycleHost',

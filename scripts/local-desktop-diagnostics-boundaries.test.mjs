@@ -11,10 +11,6 @@ const authority = await readFile(
 	new URL('../electron/serverTerminalAuthority.ts', import.meta.url),
 	'utf8',
 );
-const quickPush = await readFile(
-	new URL('../electron/quickPush/service.ts', import.meta.url),
-	'utf8',
-);
 const dictation = await readFile(
 	new URL('../src/workspace/useDictationController.ts', import.meta.url),
 	'utf8',
@@ -99,17 +95,7 @@ test('Local server diagnostics are semantic and PTY data paths never call the si
 	assert.doesNotMatch(authority, /desktopDiagnostics/u);
 });
 
-test('existing application logs no longer persist raw model output or microphone identity', () => {
-	const parserStart = quickPush.indexOf('export function parseQuickPushPlan');
-	const parserEnd = quickPush.indexOf('\nexport ', parserStart + 1);
-	const parser = quickPush.slice(
-		parserStart,
-		parserEnd < 0 ? quickPush.length : parserEnd,
-	);
-	assert.doesNotMatch(parser, /console\.warn\([^)]*raw\.slice/su);
-	assert.doesNotMatch(parser, /console\.warn\([^)]*json\.slice/su);
-	assert.match(parser, /outputBytes/u);
-
+test('application logs do not persist microphone identity', () => {
 	for (const privateField of [
 		'requestedDeviceId:',
 		'trackLabel:',

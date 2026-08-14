@@ -31,7 +31,6 @@ import {
 	Sidebar,
 	Sparkles,
 	Terminal,
-	Zap,
 } from 'lucide-react';
 import {
 	CSSProperties,
@@ -67,10 +66,6 @@ import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
 import { McpInstallModal } from './components/McpInstallModal';
-import {
-	type QuickPushClient,
-	QuickPushModal,
-} from './components/QuickPushModal';
 import {
 	SidebarPanelStack,
 	type SidebarPanelStackItem,
@@ -286,12 +281,8 @@ function buildGitPushMenuItems(options: {
 		action: GitPushAgentAction,
 		target: GitPushMenuTarget,
 	) => void;
-	onLaunchQuickPush: (
-		action: QuickPushAction,
-		target: GitPushMenuTarget,
-	) => void;
 }): ContextMenuItem[] {
-	const { target, onLaunchAgent, onLaunchQuickPush } = options;
+	const { target, onLaunchAgent } = options;
 	const currentBranch = formatGitPushBranchLabel(target.branch);
 	const defaultBranch = formatGitPushBranchLabel(
 		target.defaultBranch ?? 'main',
@@ -326,14 +317,6 @@ function buildGitPushMenuItems(options: {
 				label: entry.label,
 				icon: getGitPushActionIcon(entry.action),
 				onClick: () => onLaunchAgent(entry.action, target),
-				trailingAction: entry.quickPush
-					? {
-							icon: <Zap size={14} aria-hidden="true" />,
-							label: `${entry.label} (quick mode)`,
-							onClick: () =>
-								onLaunchQuickPush(entry.action as QuickPushAction, target),
-						}
-					: undefined,
 			});
 		}
 	}
@@ -462,7 +445,6 @@ type ProjectWorkspaceProps = {
 	popoutUrl: string;
 	project: ProjectTab;
 	projects: ProjectTab[];
-	quickPushClient?: QuickPushClient;
 	/** Optional connection-scoped client used by migrated terminal panels. */
 	terminalClientContext?: Omit<TerminalPanelClientContextValue, 'projectId'>;
 	/** Terminals to reattach instead of seeding a fresh terminal (adopted project). */
@@ -1206,7 +1188,6 @@ const ProjectWorkspace = forwardRef<
 			popoutUrl,
 			project,
 			projects,
-			quickPushClient,
 			terminalClientContext,
 			adoptedTerminals,
 		},
@@ -3036,13 +3017,9 @@ const ProjectWorkspace = forwardRef<
 
 		const {
 			closeGitPushMenu,
-			closeQuickPush,
 			gitPushMenuPosition,
 			handleOpenWorktreePushMenu,
 			launchGitPushAgent,
-			launchQuickPush,
-			quickPushAction,
-			quickPushCwd,
 		} = useGitPushMenuController({
 			defaultBranch: worktreePanelStatus?.defaultBranch,
 			isAgentEnabled: settings.gitPushAgent.provider !== 'disabled',
@@ -4556,8 +4533,6 @@ const ProjectWorkspace = forwardRef<
 										items={buildGitPushMenuItems({
 											target: gitPushMenuPosition.target,
 											onLaunchAgent: launchGitPushAgent,
-											onLaunchQuickPush: (action, target) =>
-												void launchQuickPush(action, target),
 										})}
 									/>
 								) : null}
@@ -4664,24 +4639,6 @@ const ProjectWorkspace = forwardRef<
 							</div>
 						</div>
 					</div>
-				) : null}
-				{quickPushClient !== undefined &&
-				quickPushAction &&
-				settings.gitPushAgent.provider !== 'disabled' ? (
-					<QuickPushModal
-						action={quickPushAction}
-						client={quickPushClient}
-						provider={settings.gitPushAgent.provider}
-						model={
-							settings.gitPushAgent.provider === 'claudeCode'
-								? settings.gitPushAgent.claudeCodeModel
-								: settings.gitPushAgent.codexModel
-						}
-						cwd={quickPushCwd ?? project.rootFolder}
-						onClose={() => {
-							closeQuickPush();
-						}}
-					/>
 				) : null}
 				<AnimatePresence>
 					{isMacroLauncherOpen && (
@@ -5049,8 +5006,6 @@ export type AppProps = {
 	) => () => void;
 	/** Connection-scoped shared client supplied by a migrated host shell. */
 	terminalClientContext?: Omit<TerminalPanelClientContextValue, 'projectId'>;
-	/** Narrow Desktop host client injected at the renderer composition root. */
-	quickPushClient?: QuickPushClient;
 	onDisconnect?: () => void;
 	onOpenConnectionManager?: () => void;
 };
@@ -5124,7 +5079,6 @@ function App({
 	hostPresentation,
 	onDisconnect,
 	onOpenConnectionManager,
-	quickPushClient,
 	subscribeAppCommands,
 	terminalClientContext,
 }: AppProps) {
@@ -6065,7 +6019,6 @@ function App({
 						popoutUrl={popoutUrl}
 						project={project}
 						projects={projects}
-						quickPushClient={quickPushClient}
 						terminalClientContext={terminalClientContext}
 						adoptedTerminals={adoptedTerminalsByProject[project.id]}
 					/>
