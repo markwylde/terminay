@@ -3,7 +3,12 @@ import { realpath } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import { fileExplorerItem, openFileExplorer, openProjectEditWindow, setProjectRoot } from './support/ui';
+import {
+	fileExplorerItem,
+	openFileExplorer,
+	openProjectEditWindow,
+	setProjectRoot,
+} from './support/ui';
 
 const execFileAsync = promisify(execFile);
 
@@ -110,15 +115,28 @@ test.describe('workspace shell', () => {
 		await fileExplorerItem(mainWindow, 'README.md').dblclick();
 		await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1);
 
-		for (const [index, title] of ['Terminal 1', 'Terminal 2', 'Terminal 3', 'Terminal 4'].entries()) {
-			await mainWindow.locator('.dv-tab:visible').filter({ hasText: title }).first().click();
+		for (const [index, title] of [
+			'Terminal 1',
+			'Terminal 2',
+			'Terminal 3',
+			'Terminal 4',
+		].entries()) {
+			await mainWindow
+				.locator('.dv-tab:visible')
+				.filter({ hasText: title })
+				.first()
+				.click();
 			await appHarness.sendAppCommand('close-active');
-			await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(3 - index);
+			await expect(mainWindow.getByLabel('Close terminal')).toHaveCount(
+				3 - index,
+			);
 		}
 
 		await expect(mainWindow.getByLabel('Close file tab')).toHaveCount(1);
 		await expect(
-			mainWindow.getByRole('alert').filter({ hasText: 'Workspace synchronization failed' }),
+			mainWindow
+				.getByRole('alert')
+				.filter({ hasText: 'Workspace synchronization failed' }),
 		).toHaveCount(0);
 	});
 
@@ -126,6 +144,8 @@ test.describe('workspace shell', () => {
 		appHarness,
 		mainWindow,
 	}) => {
+		const dialogs = await appHarness.dialogs(mainWindow);
+		await dialogs.reset();
 		await appHarness.sendAppCommand('new-terminal');
 		const closeButtons = mainWindow.getByLabel('Close terminal');
 		await expect(closeButtons).toHaveCount(2);
@@ -139,17 +159,19 @@ test.describe('workspace shell', () => {
 		await expect(
 			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
 		).toContainText(foregroundStarted);
-		const keepRunning = mainWindow.waitForEvent('dialog');
+		await dialogs.queueConfirm(false);
 		await closeButtons.last().click();
-		const dismissedDialog = await keepRunning;
-		expect(dismissedDialog.type()).toBe('confirm');
-		expect(dismissedDialog.message()).toContain('A process is still running');
-		await dismissedDialog.dismiss();
+		await expect
+			.poll(async () => (await dialogs.getCalls()).at(-1))
+			.toMatchObject({
+				kind: 'confirm',
+				message: expect.stringContaining('A process is still running'),
+				response: false,
+			});
 		await expect(closeButtons).toHaveCount(2);
 
-		const confirmClose = mainWindow.waitForEvent('dialog');
+		await dialogs.queueConfirm(true);
 		await closeButtons.last().click();
-		await (await confirmClose).accept();
 		await expect(closeButtons).toHaveCount(1);
 		await expect(
 			mainWindow
