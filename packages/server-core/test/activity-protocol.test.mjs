@@ -13,14 +13,14 @@ const context = Object.freeze({ connectionId: "connection-a", clientId: "client-
 const query = (operation, payload) => ({ envelope: { operation, payload }, body: new Uint8Array(), context });
 const command = (operation, payload, claims) => ({ envelope: { operation, commandId: "command-a", correlationId: "correlation-a", payload }, body: new Uint8Array(), context: claims === undefined ? context : { ...context, claims } });
 
-test("activity protocol publishes canonical snapshots, deltas, and ordered activity events", () => {
+test("activity protocol publishes canonical snapshots, deltas, and ordered activity events", async () => {
   const service = new TerminalActivityService({ serverId: identity.serverId });
   const journal = new OrderedEventJournal();
   const registry = createActivityOperationRegistry({ service, eventJournal: journal });
   service.register(identity);
   service.ingestSignal(identity, { kind: "bell" });
 
-  const snapshot = registry.operations.queries[ACTIVITY_OPERATIONS.snapshot](query(ACTIVITY_OPERATIONS.snapshot, {}));
+  const snapshot = await registry.operations.queries[ACTIVITY_OPERATIONS.snapshot](query(ACTIVITY_OPERATIONS.snapshot, {}));
   assert.equal(snapshot.sessions[identity.sessionId].attention, true);
   const delta = registry.operations.queries[ACTIVITY_OPERATIONS.delta](query(ACTIVITY_OPERATIONS.delta, { revision: 0, cursor: "0" }));
   assert.equal(delta.kind, "events");
@@ -105,7 +105,7 @@ test("racing activity acknowledgements from separate clients publish exactly one
   }
 });
 
-test("project claims receive only their activity snapshot, replay, and live events", () => {
+test("project claims receive only their activity snapshot, replay, and live events", async () => {
   const service = new TerminalActivityService({ serverId: identity.serverId });
   const journal = new OrderedEventJournal();
   const registry = createActivityOperationRegistry({ service, eventJournal: journal });
@@ -118,7 +118,7 @@ test("project claims receive only their activity snapshot, replay, and live even
     service.ingestSignal(projectA, { kind: "bell" });
     service.ingestSignal(projectB, { kind: "bell" });
 
-    const scopedSnapshot = registry.operations.queries[ACTIVITY_OPERATIONS.snapshot]({
+    const scopedSnapshot = await registry.operations.queries[ACTIVITY_OPERATIONS.snapshot]({
       envelope: { operation: ACTIVITY_OPERATIONS.snapshot, payload: {} }, body: new Uint8Array(), context: scopedContext,
     });
     assert.deepEqual(Object.keys(scopedSnapshot.sessions), ["session-a"]);
@@ -142,4 +142,30 @@ test("project claims receive only their activity snapshot, replay, and live even
   } finally {
     registry.close();
   }
+});
+
+test("activity snapshot waits for the host foreground observation fence", async () => {
+  const service = new TerminalActivityService({ serverId: identity.serverId });
+  let release;
+  const observed = new Promise((resolve) => { release = resolve; });
+  const registry = createActivityOperationRegistry({
+    service,
+    eventJournal: new OrderedEventJournal(),
+    beforeSnapshot: async () => {
+      await observed;
+      service.ingestSignal(identity, { kind: "foreground", busy: true, processName: "sleep" });
+    },
+  });
+  service.register(identity);
+
+  const pending = registry.operations.queries[ACTIVITY_OPERATIONS.snapshot](query(ACTIVITY_OPERATIONS.snapshot, {}));
+  let settled = false;
+  void pending.then(() => { settled = true; });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  release();
+
+  const snapshot = await pending;
+  assert.equal(snapshot.sessions[identity.sessionId].foregroundBusy, true);
+  registry.close();
 });
