@@ -32,6 +32,34 @@ export function useProjectTabTransfer({
 	const projectTabBarRef = useRef<HTMLDivElement | null>(null);
 	useEffect(() => subscribeWorkspaceDragState(setDraggingTabTornOff), []);
 
+	/** A native window may only be presented after the source renderer has
+	 * observed the server-authoritative move.  Presenting on the command ack
+	 * alone races the workspace delta: two renderers can briefly claim the
+	 * project, and a just-created child can be torn down with that stale view. */
+	const awaitProjectMove = useCallback(
+		async (projectId: string, targetViewId: string) => {
+			const snapshot = await workspaceSnapshotStore?.waitForSnapshot(
+				(candidate) =>
+					candidate.views[workspaceViewId ?? '']?.projectIds.includes(
+						projectId,
+					) === false &&
+					candidate.views[targetViewId]?.projectIds.includes(projectId) ===
+						true,
+				{ timeoutMs: 10_000 },
+			);
+			if (snapshot === null || snapshot === undefined) {
+				const reason = workspaceSnapshotStore?.status.error?.message;
+				throw new Error(
+					reason === undefined
+						? 'Timed out waiting for the project move to reconcile.'
+						: `Unable to reconcile the project move. ${reason}`,
+				);
+			}
+			return snapshot;
+		},
+		[workspaceSnapshotStore, workspaceViewId],
+	);
+
 	const handleProjectTabDragStart = useCallback(
 		(projectId: string) => {
 			setDraggingProjectId(projectId);
@@ -78,11 +106,7 @@ export function useProjectTabTransfer({
 					created = true;
 				}
 				await workspaceSnapshotStore.moveProject({ projectId, targetViewId });
-				await workspaceSnapshotStore.waitForSnapshot((snapshot) =>
-					snapshot.views[workspaceViewId]?.projectIds.includes(projectId) ===
-						false &&
-					snapshot.views[targetViewId]?.projectIds.includes(projectId) === true,
-				);
+				await awaitProjectMove(projectId, targetViewId);
 				if (decision.action === 'popout') {
 					await presentWorkspaceView(targetViewId, decision);
 				}
@@ -101,7 +125,7 @@ export function useProjectTabTransfer({
 				}
 			}
 		},
-		[projectsRef, workspaceSnapshotStore, workspaceViewId],
+		[awaitProjectMove, projectsRef, workspaceSnapshotStore, workspaceViewId],
 	);
 
 	/** A native popout is a second presentation of a server-owned workspace
@@ -123,11 +147,7 @@ export function useProjectTabTransfer({
 				});
 				created = true;
 				await workspaceSnapshotStore.moveProject({ projectId, targetViewId });
-				await workspaceSnapshotStore.waitForSnapshot((snapshot) =>
-					snapshot.views[workspaceViewId]?.projectIds.includes(projectId) ===
-						false &&
-					snapshot.views[targetViewId]?.projectIds.includes(projectId) === true,
-				);
+				await awaitProjectMove(projectId, targetViewId);
 				await presentWorkspaceView(targetViewId, { x: 120, y: 120 });
 				if (projectsRef.current.length === 1) {
 					await workspaceSnapshotStore.closeView(workspaceViewId);
@@ -144,7 +164,7 @@ export function useProjectTabTransfer({
 				}
 			}
 		},
-		[projectsRef, workspaceSnapshotStore, workspaceViewId],
+		[awaitProjectMove, projectsRef, workspaceSnapshotStore, workspaceViewId],
 	);
 
 	return {
