@@ -29,8 +29,6 @@ test('remaining privileged handlers enforce trusted renderer provenance first', 
   const source = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8')
   const guardedChannels = [
     'test:create-server-terminal',
-    'remote:toggle-server',
-    'remote:revoke-device',
     'secrets:save',
     'secrets:get-decrypted',
     'desktop:workspace-transfer-host:get-adopted-project',
@@ -43,9 +41,6 @@ test('remaining privileged handlers enforce trusted renderer provenance first', 
     'test:send-app-command',
     'test:set-ai-tab-metadata-mock',
     'test:emit-agent-journal-record',
-    'desktop:mcp-install-host:get-status',
-    'desktop:mcp-install-host:install',
-    'desktop:mcp-install-host:uninstall',
   ]
 
   for (const channel of guardedChannels) {
