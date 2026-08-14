@@ -35,6 +35,7 @@ import {
 	createLegacyAiTabMetadataClient,
 } from '../services/ai/legacyAiTabMetadataClient';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
+import { writeClipboardText } from '../host/nativeActions';
 import { SettingsMutationCoordinator } from '../settingsMutationCoordinator';
 import { SharedSettingsRouteBody } from '../shared/SharedSettingsRouteBody';
 import type { SettingsFieldDefinition } from '../terminalSettings';
@@ -3073,7 +3074,7 @@ export function SettingsWindow({
 											className="settings-remote-copy-button"
 											onClick={() => {
 												void (
-													window.terminayClipboardHost?.writeText(
+											writeClipboardText(
 														selectedPairingUrl,
 													) ?? navigator.clipboard.writeText(selectedPairingUrl)
 												)
