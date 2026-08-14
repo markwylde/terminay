@@ -37,16 +37,14 @@ test('a protocol-created terminal launches the configured shell', async ({
 
 	await sendAppCommand(mainWindow, 'new-terminal');
 	const terminal = mainWindow.locator('.terminal-panel:visible');
-	const sessionId = await terminal.getAttribute(
+	await expect(terminal).toHaveAttribute(
 		'data-terminay-terminal-session-id',
+		/.+/,
 	);
-	expect(sessionId).not.toBeNull();
-
-	await mainWindow.evaluate(async (id) => {
-		await window.terminayTest!.writeServerTerminal(
-			id!,
-			`printf '__TERMINAY_BASH__:%s\\n' "\${BASH_VERSION:-missing}"\r`,
-		);
-	}, sessionId);
+	await terminal.locator('.xterm-helper-textarea').focus();
+	await mainWindow.keyboard.type(
+		`printf '__TERMINAY_BASH__:%s\\n' "\${BASH_VERSION:-missing}"`,
+	);
+	await mainWindow.keyboard.press('Enter');
 	await expect(terminal).toContainText(/__TERMINAY_BASH__:\d/u);
 });
