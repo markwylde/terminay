@@ -115,7 +115,7 @@ declare module "node:fs" {
   export function renameSync(oldPath: string, newPath: string): void;
   export function rmSync(path: string, options?: { readonly force?: boolean }): void;
   export function statSync(path: string): Stats;
-  export function writeFileSync(fdOrPath: number | string, data: string | Uint8Array, encoding?: string): void;
+  export function writeFileSync(fdOrPath: number | string, data: string | Uint8Array, encodingOrOptions?: string | { readonly encoding?: string; readonly flag?: string; readonly mode?: number }): void;
 }
 
 declare module "node:fs/promises" {
