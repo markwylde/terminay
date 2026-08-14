@@ -15,6 +15,7 @@ export interface ActivityOperationRegistryOptions {
   /** The same journal installed in ServerCore, so activity subscriptions have
    * normal replay and ordering semantics alongside other server events. */
   readonly eventJournal: OrderedEventJournalLike;
+  readonly beforeSnapshot?: (request: QueryRequest) => Promise<void>;
 }
 
 export interface ActivityOperationRegistry {
@@ -51,8 +52,9 @@ export function createActivityOperationRegistry(options: ActivityOperationRegist
     close: unsubscribe,
   };
 
-  function snapshot(request: QueryRequest): JsonValue {
+  async function snapshot(request: QueryRequest): Promise<JsonValue> {
     assertReadable(request);
+    await options.beforeSnapshot?.(request);
     return options.service.snapshotForProject(projectClaim(request)) as unknown as JsonValue;
   }
 

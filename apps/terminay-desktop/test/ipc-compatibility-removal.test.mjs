@@ -49,7 +49,7 @@ test("workspace commands and feature clients stay out of the protocol-blind Desk
 });
 
 test("Desktop no longer ships the legacy agent-status application IPC bridge", async () => {
-  const preload = await readFile(new URL("../../../electron/preload.ts", import.meta.url), "utf8");
+  const preload = await readFile(new URL("../../../electron/serverUiPreload.ts", import.meta.url), "utf8");
   const main = await readFile(new URL("../../../electron/main.ts", import.meta.url), "utf8");
   assert.doesNotMatch(preload, /agent-status:(?:get-snapshot|acknowledge|acknowledge-terminal)|getAgentStatusSnapshot|acknowledgeAgentStatus|onAgentStatusSnapshot/u);
   assert.doesNotMatch(main, /registerAgentStatusIpcHandlers|AGENT_STATUS_SNAPSHOT_CHANNEL/u);
@@ -57,7 +57,7 @@ test("Desktop no longer ships the legacy agent-status application IPC bridge", a
 });
 
 test("Desktop registers project file roots inside the server authority, not through renderer IPC", async () => {
-  const preload = await readFile(new URL("../../../electron/preload.ts", import.meta.url), "utf8");
+  const preload = await readFile(new URL("../../../electron/serverUiPreload.ts", import.meta.url), "utf8");
   const main = await readFile(new URL("../../../electron/main.ts", import.meta.url), "utf8");
   const authority = await readFile(new URL("../../../electron/serverTerminalAuthority.ts", import.meta.url), "utf8");
   const folder = await readFile(new URL("../../../src/components/folder-viewer/FolderPanel.tsx", import.meta.url), "utf8");
@@ -75,12 +75,13 @@ test("Folder panels do not require Desktop disconnected file compatibility in co
   assert.doesNotMatch(folder, /useDisconnectedFolderCompatibility/u);
   assert.doesNotMatch(folder, /useDisconnectedFileCompatibility\(/u);
   assert.equal(throwLines.some((line) => /disconnected file compatibility|Disconnected folder compatibility/u.test(line)), false);
-  assert.match(folder, /useOptionalDisconnectedFileCompatibility/u);
+  assert.doesNotMatch(folder, /useOptionalDisconnectedFileCompatibility/u);
+  assert.match(folder, /TerminalPanelClientContext|FileAuthorityUnavailableState/u);
 });
 
 test("Desktop does not expose legacy terminal creation through production IPC", async () => {
   const [preload, main, renderer] = await Promise.all([
-    readFile(new URL("../../../electron/preload.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../../electron/serverUiPreload.ts", import.meta.url), "utf8"),
     readFile(new URL("../../../electron/main.ts", import.meta.url), "utf8"),
     readFile(new URL("../../../src/App.tsx", import.meta.url), "utf8"),
   ]);
@@ -88,13 +89,12 @@ test("Desktop does not expose legacy terminal creation through production IPC", 
   assert.doesNotMatch(preload, /createTerminal:\s*\(/u);
   assert.doesNotMatch(main, /['"]terminal:create['"]/u);
   assert.doesNotMatch(renderer, /window\.terminay\.createTerminal/u);
-  assert.match(preload, /test:create-server-terminal/u);
-  assert.match(main, /test:create-server-terminal/u);
+  assert.doesNotMatch(preload, /test:create-server-terminal/u);
 });
 
 test("Desktop does not expose an unused renderer app-quit capability", async () => {
   const [preload, main, types] = await Promise.all([
-    readFile(new URL("../../../electron/preload.ts", import.meta.url), "utf8"),
+    readFile(new URL("../../../electron/serverUiPreload.ts", import.meta.url), "utf8"),
     readFile(new URL("../../../electron/main.ts", import.meta.url), "utf8"),
     readFile(new URL("../../../src/types/terminay.ts", import.meta.url), "utf8"),
   ]);

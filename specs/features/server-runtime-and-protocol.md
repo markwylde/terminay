@@ -83,8 +83,9 @@ The exact ownership and compatibility split is recorded in
   silently starting a second authority over the same data directory.
 - An explicitly enabled direct network listener claims its configured socket
   atomically and remains separate from the private Local transport.
-- The embedded server uses a dedicated data directory and imports supported
-  legacy Desktop state exactly once.
+- The embedded server uses a dedicated data directory and the same canonical
+  repositories as standalone mode. It does not import or depend on an
+  Electron-owned workspace store.
 
 ### Standalone server
 
@@ -269,7 +270,10 @@ packet bound to the exact server identity before it reaches `TerminayClient`.
 The privileged host fixes that identity when constructing the endpoint;
 inbound packets for another server or with an invalid bounded shape are
 rejected, while feature-level frame contents remain opaque to the host. The
-renderer receives no raw native transport or credential authority.
+renderer receives no raw native transport or credential authority. The
+canonical renderer accepts only that selected-server byte endpoint. It has no
+preload-frame adapter, connection-generation fallback, or legacy server
+connection global that can bypass the endpoint's fixed identity.
 
 ## Transports
 

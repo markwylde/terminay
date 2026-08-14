@@ -28,19 +28,42 @@ export interface BinaryQueryTransport extends QueryCommandTransport {
   queryWithBody<T extends JsonValue = JsonValue>(operation: string, payload?: JsonValue, options?: QueryOptions): Promise<{ readonly result: T; readonly body: Uint8Array }>;
 }
 
+/** A feature operation failure with the operation retained for actionable UI. */
+export class ClientOperationError extends Error {
+	readonly operation: string;
+	readonly kind: 'query' | 'command';
+	override readonly cause: unknown;
+
+	constructor(kind: 'query' | 'command', operation: string, cause: unknown) {
+		super(cause instanceof Error ? cause.message : String(cause), { cause });
+		this.name = 'ClientOperationError';
+		this.kind = kind;
+		this.operation = operation;
+		this.cause = cause;
+	}
+}
+
 /** Adapt the canonical TerminayClient envelope API to feature-facing result
  * values. The transport remains injectable for browser, Desktop, and tests. */
 export class TerminayClientFacade implements QueryCommandTransport {
   constructor(private readonly client: Pick<TerminayClient, "query" | "command"> & Partial<Pick<TerminayClient, "subscribe" | "queryWithBody">>) {}
 
   async query<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}, options: QueryOptions = {}): Promise<T> {
-    const result: ClientQueryResult<T> = await this.client.query<T>(operation, payload, options);
-    return (result.result ?? null) as T;
+		try {
+			const result: ClientQueryResult<T> = await this.client.query<T>(operation, payload, options);
+			return (result.result ?? null) as T;
+		} catch (error) {
+			throw new ClientOperationError('query', operation, error);
+		}
   }
 
   async command<T extends JsonValue = JsonValue>(operation: string, payload: JsonValue = {}, options: CommandOptions = {}): Promise<T> {
-    const result: ClientCommandResult<T> = await this.client.command<T>(operation, payload, options);
-    return (result.result ?? null) as T;
+		try {
+			const result: ClientCommandResult<T> = await this.client.command<T>(operation, payload, options);
+			return (result.result ?? null) as T;
+		} catch (error) {
+			throw new ClientOperationError('command', operation, error);
+		}
   }
 
   /** Bridge the client's asynchronous subscription primitive to the small

@@ -251,3 +251,10 @@
 .connected-web-connection-dialog > header h2 {
 	margin: 0;
 }
+
+.connected-web-native-auxiliary {
+	width: 100vw;
+	height: 100vh;
+	overflow: hidden;
+	background: #10151b;
+}

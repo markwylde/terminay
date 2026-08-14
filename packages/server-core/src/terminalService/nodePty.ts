@@ -36,6 +36,7 @@ export interface NodePtyForegroundPollingOptions {
 export interface NodePtyFactoryOptions {
   readonly foregroundPolling?: NodePtyForegroundPollingOptions;
   readonly resolveCwd?: (pid: number, signal?: AbortSignal) => Promise<string | null>;
+  readonly resolveForegroundProcess?: (pid: number, signal?: AbortSignal) => Promise<string | null>;
 }
 
 /**
@@ -95,11 +96,36 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         cwd: options.cwd,
         ...(options.env === undefined ? {} : { env: cleanEnvironment(options.env) }),
       });
-      const foreground = createForegroundObserver(child, shellName(options.shellPath), foregroundPolling);
-      // This observer is intentionally independent from TerminalService's
-      // exit subscription: foreground polling must be released even when a
-      // host creates a PTY before the service attaches its own listener.
-      child.onExit(() => foreground.dispose());
+      const foreground = createForegroundObserver(
+        child,
+        shellName(options.shellPath),
+        foregroundPolling,
+        factoryOptions.resolveForegroundProcess,
+      );
+      const dataListeners = new Set<(data: string) => void>();
+      const exitListeners = new Set<(event: { readonly exitCode: number; readonly signal?: number }) => void>();
+      const pendingData: string[] = [];
+      let pendingExit: { readonly exitCode: number; readonly signal?: number } | undefined;
+      const childData = child.onData((data) => {
+        // Output is an authoritative indication that the PTY advanced. Refresh
+        // the foreground projection at the same host boundary so a delayed or
+        // starved interval cannot leave destructive-close protection stale.
+        // The interval remains necessary for silent foreground processes.
+        void foreground.poll();
+        if (dataListeners.size === 0) {
+          pendingData.push(data);
+          return;
+        }
+        for (const listener of [...dataListeners]) listener(data);
+      });
+      const childExit = child.onExit((event) => {
+        foreground.dispose();
+        if (exitListeners.size === 0) {
+          pendingExit = event;
+          return;
+        }
+        for (const listener of [...exitListeners]) listener(event);
+      });
       return {
         ...(typeof child.pid === "number" ? { pid: child.pid } : {}),
         write: (bytes) => child.write(new TextDecoder().decode(bytes)),
@@ -107,18 +133,45 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         kill: (signal) => child.kill(signal),
 				...(typeof child.pause === "function" ? { pause: () => child.pause?.() } : {}),
 				...(typeof child.resume === "function" ? { resume: () => child.resume?.() } : {}),
-        onData: (listener: PtyDataListener) => normalizeDisposable(child.onData((data) => listener(new TextEncoder().encode(data)))),
-        onExit: (listener: PtyExitListener) => normalizeDisposable(child.onExit((event) => listener({ exitCode: event.exitCode, signal: event.signal ?? null }))),
+        onData: (listener: PtyDataListener) => {
+          const forward = (data: string) => listener(new TextEncoder().encode(data));
+          dataListeners.add(forward);
+          if (pendingData.length > 0) {
+            const initial = pendingData.splice(0);
+            for (const data of initial) forward(data);
+          }
+          return () => dataListeners.delete(forward);
+        },
+        onExit: (listener: PtyExitListener) => {
+          const forward = (event: { readonly exitCode: number; readonly signal?: number }) =>
+            listener({ exitCode: event.exitCode, signal: event.signal ?? null });
+          exitListeners.add(forward);
+          if (pendingExit !== undefined) {
+            const initial = pendingExit;
+            pendingExit = undefined;
+            forward(initial);
+          }
+          return () => exitListeners.delete(forward);
+        },
         ...(typeof child.pid === "number" && factoryOptions.resolveCwd !== undefined
           ? { getCwd: (signal?: AbortSignal) => factoryOptions.resolveCwd!(child.pid!, signal) }
           : {}),
         onForegroundProcess: foreground.subscribe,
+        refreshForegroundProcess: foreground.poll,
         // TerminalService may authoritatively finish a session before
         // node-pty delivers its exit callback (for example while shutting
         // down a wedged child).  Its generic process disposal hook must also
         // release this adapter-owned interval; waiting only for `onExit`
         // leaves the Node event loop alive.
-        dispose: () => foreground.dispose(),
+        dispose: () => {
+          foreground.dispose();
+          childData?.dispose();
+          childExit?.dispose();
+          dataListeners.clear();
+          exitListeners.clear();
+          pendingData.splice(0);
+          pendingExit = undefined;
+        },
       };
     },
   };
@@ -126,10 +179,6 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
 
 /** Alias that makes host composition read naturally at the server boundary. */
 export const createServerPtyFactory = createNodePtyFactory;
-
-function normalizeDisposable(value: NodePtyDisposable | undefined): Unsubscribe | undefined {
-  return value === undefined ? undefined : () => value.dispose();
-}
 
 function cleanEnvironment(value: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
   const result: Record<string, string> = {};
@@ -155,30 +204,61 @@ function createForegroundObserver(
   child: NodePtyProcessLike,
   shellProcess: string,
   polling: ForegroundPolling,
-): { readonly subscribe: (listener: NodePtyForegroundListener) => Unsubscribe; readonly dispose: () => void } {
+  resolveProcess: NodePtyFactoryOptions["resolveForegroundProcess"],
+): { readonly subscribe: (listener: NodePtyForegroundListener) => Unsubscribe; readonly poll: (signal?: AbortSignal) => Promise<void>; readonly dispose: () => void } {
   const listeners = new Set<NodePtyForegroundListener>();
   let timer: unknown | undefined;
   let lastProcess: string | undefined;
   let disposed = false;
+  let resolving: Promise<void> | undefined;
+  let requestedObservation = 0;
+  let completedObservation = 0;
+  let latestSignal: AbortSignal | undefined;
 
   const stop = (): void => {
     if (timer === undefined) return;
     polling.clearInterval(timer);
     timer = undefined;
   };
-  const poll = (): void => {
+  const publish = (processName: string | undefined): void => {
     if (disposed || listeners.size === 0) return;
-    const processName = foregroundProcessName(child);
     if (processName === undefined || processName === lastProcess) return;
     lastProcess = processName;
     const event = Object.freeze({ processName, shellForeground: isConfiguredShellProcess(processName, shellProcess) });
     for (const listener of [...listeners]) listener(event);
   };
+  const poll = (signal?: AbortSignal): Promise<void> => {
+    if (disposed || listeners.size === 0) return Promise.resolve();
+    if (resolveProcess === undefined || child.pid === undefined) {
+      publish(foregroundProcessName(child));
+      return Promise.resolve();
+    }
+    // A close-time activity snapshot must not accept an observation that was
+    // already in flight while the shell still owned the foreground group. Each
+    // refresh requests a new host sample; concurrent callers are coalesced
+    // into at most one follow-up observation after the current one completes.
+    requestedObservation += 1;
+    latestSignal = signal;
+    if (resolving !== undefined) return resolving;
+    resolving = (async () => {
+      while (!disposed && completedObservation < requestedObservation) {
+        const target = requestedObservation;
+        const currentSignal = latestSignal;
+        await resolveProcess(child.pid!, currentSignal).then(
+          (processName) => publish(processName?.trim() || foregroundProcessName(child)),
+          () => publish(foregroundProcessName(child)),
+        );
+        completedObservation = target;
+      }
+    })().finally(() => { resolving = undefined; });
+    return resolving;
+  };
   const start = (): void => {
-    if (!disposed && timer === undefined) timer = polling.setInterval(poll, polling.intervalMs);
+    if (!disposed && timer === undefined) timer = polling.setInterval(() => { void poll(); }, polling.intervalMs);
   };
 
   return {
+    poll,
     subscribe(listener: NodePtyForegroundListener): Unsubscribe {
       if (typeof listener !== "function") throw new TypeError("foreground listener must be a function");
       if (disposed) return () => {};

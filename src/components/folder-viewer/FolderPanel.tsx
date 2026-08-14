@@ -6,10 +6,10 @@ import type {
 	FolderMarkdownTaskSection,
 } from '@terminay/client-core';
 import type { IDockviewPanelProps } from 'dockview';
+import { writeClipboardText } from '../../host/nativeActions';
 import {
 	Copy,
 	FileEdit,
-	FolderOpen,
 	FolderPlus,
 	PlusSquare,
 	Terminal,
@@ -28,11 +28,14 @@ import {
 import { FileTypeIcon } from '../../fileIcons';
 import { useTerminalSettings } from '../../hooks/useTerminalSettings';
 import { getPathRelativeToRoot } from '../../pathUtils';
-import { useOptionalDisconnectedFileCompatibility } from '../../services/fileViewer/DisconnectedFileCompatibilityProvider';
 import type { FileViewerMode } from '../../types/fileViewer';
 import { ContextMenu, type ContextMenuItem } from '../ContextMenu';
+import { FileAuthorityUnavailableState } from '../file-viewer/FileAuthorityUnavailableState';
 import type { TaskSection } from '../file-viewer/tasks/parseTasks';
-import { TerminalPanelClientContext } from '../TerminalPanel';
+import {
+	TerminalPanelClientContext,
+	type TerminalPanelClientContextValue,
+} from '../TerminalPanel';
 import {
 	type FolderTaskDocument,
 	FolderTasksViewer,
@@ -514,13 +517,10 @@ async function scanFolderTasks(
 	rootPath: string,
 	projectRootPath: string,
 	ignoredPatterns: string[],
-	fileViewerClient?: FileViewerClient,
-	projectId?: string,
+	fileViewerClient: FileViewerClient,
+	projectId: string,
 	signal?: AbortSignal,
 ): Promise<FolderTaskScanResult> {
-	if (fileViewerClient === undefined || projectId === undefined) {
-		throw new Error('The connected server file client is unavailable.');
-	}
 	const relativePath = toRelativePath(projectRootPath, rootPath);
 	const result = await withDeadline(
 		fileViewerClient.getFolderMarkdownTasks(
@@ -692,14 +692,11 @@ function toFileUrl(path: string): string {
 async function listDirectoryNodes(
 	rootPath: string,
 	targetPath: string,
-	fileViewerClient?: FileViewerClient,
-	projectId?: string,
+	fileViewerClient: FileViewerClient,
+	projectId: string,
 ): Promise<FolderTreeNode[]> {
-	if (fileViewerClient !== undefined) {
 		const page = await fileViewerClient.listFolder(
-			projectId === undefined
-				? targetPath
-				: toRelativePath(rootPath, targetPath),
+			toRelativePath(rootPath, targetPath),
 			projectId,
 		);
 		return page.entries.map((entry) => {
@@ -733,8 +730,6 @@ async function listDirectoryNodes(
 				stats,
 			} satisfies FolderFileNode;
 		});
-	}
-	throw new Error('The file viewer client is unavailable.');
 }
 
 function upsertDirectoryNode(
@@ -1007,10 +1002,49 @@ export function FolderPanel(
 		}
 	>,
 ) {
-	const disconnectedFileCompatibility =
-		useOptionalDisconnectedFileCompatibility();
-	const disconnectedFolderCompatibility =
-		disconnectedFileCompatibility?.folderPanel;
+	const terminalClientContext = useContext(TerminalPanelClientContext);
+	if (
+		terminalClientContext?.fileViewerClient === undefined ||
+		terminalClientContext.fileObservationClient === undefined ||
+		terminalClientContext.projectId.length === 0 ||
+		terminalClientContext.projectRoot === undefined
+	) {
+		return <FileAuthorityUnavailableState feature="Folder viewer" />;
+	}
+	return (
+		<CanonicalFolderPanel
+			{...props}
+			terminalClientContext={{
+				...terminalClientContext,
+				fileObservationClient: terminalClientContext.fileObservationClient,
+				fileViewerClient: terminalClientContext.fileViewerClient,
+				projectRoot: terminalClientContext.projectRoot,
+			}}
+		/>
+	);
+}
+
+function CanonicalFolderPanel(
+	props: IDockviewPanelProps<
+		FolderPanelInstanceParams & {
+			onRename?: (path: string) => void;
+			onDelete?: (path: string) => void;
+			onNewFile?: (dirPath: string) => void;
+			onNewFolder?: (dirPath: string) => void;
+			onOpenTerminal?: (path: string) => void;
+			onCopyPath?: (path: string) => void;
+			onCopyRelativePath?: (path: string) => void;
+			projectRootPath?: string;
+		}
+	> & {
+		terminalClientContext: TerminalPanelClientContextValue & {
+			fileObservationClient: NonNullable<TerminalPanelClientContextValue['fileObservationClient']>;
+			fileViewerClient: NonNullable<TerminalPanelClientContextValue['fileViewerClient']>;
+			projectRoot: string;
+		};
+	},
+) {
+	const { terminalClientContext } = props;
 	const {
 		folderPath,
 		color,
@@ -1022,21 +1056,10 @@ export function FolderPanel(
 		onOpenTerminal,
 		onCopyPath,
 		onCopyRelativePath,
-		projectRootPath,
-		projectId,
 	} = props.params;
-	const terminalClientContext = useContext(TerminalPanelClientContext);
-	const desktopFileViewerClient = useMemo(() => {
-		if (terminalClientContext?.fileViewerClient !== undefined) return undefined;
-		if (terminalClientContext !== null) return undefined;
-		return disconnectedFileCompatibility?.folderPanel.createClient();
-	}, [
-		disconnectedFileCompatibility,
-		terminalClientContext,
-		terminalClientContext?.fileViewerClient,
-	]);
-	const fileViewerClient =
-		terminalClientContext?.fileViewerClient ?? desktopFileViewerClient;
+	const projectId = terminalClientContext.projectId;
+	const projectRootPath = terminalClientContext.projectRoot;
+	const fileViewerClient = terminalClientContext.fileViewerClient;
 	const { settings } = useTerminalSettings();
 	const [treeRoot, setTreeRoot] = useState<FolderDirectoryNode | null>(null);
 	const [viewMode, setViewMode] = useState<FolderViewMode>('tree');
@@ -1132,47 +1155,15 @@ export function FolderPanel(
 		for (const directory of directories) {
 			const jobId = crypto.randomUUID();
 			activeJobIds.set(directory.path, jobId);
-			const usesServerClient =
-				terminalClientContext?.fileObservationClient !== undefined &&
-				projectId !== undefined &&
-				projectRootPath !== undefined;
 			const controller = new AbortController();
-			if (usesServerClient) activeControllers.set(directory.path, controller);
-			const folderCompatibility = disconnectedFolderCompatibility;
-			if (!usesServerClient && folderCompatibility === undefined) {
-				activeJobIds.delete(directory.path);
-				setFolderSizes((current) => ({
-					...current,
-					[directory.path]: { status: 'timeout' },
-				}));
-				continue;
-			}
-			let calculation: Promise<{
-				cancelled: boolean;
-				entryCount: number;
-				size: number;
-			}>;
-			if (usesServerClient) {
-				calculation = observeServerFolderSize(
-					terminalClientContext!.fileObservationClient!,
-					projectId!,
-					projectRootPath!,
-					directory.path,
-					controller.signal,
-				).then((result) => ({ cancelled: false, ...result }));
-			} else if (folderCompatibility !== undefined) {
-				calculation = folderCompatibility.calculateSize({
-					jobId,
-					path: directory.path,
-				});
-			} else {
-				activeJobIds.delete(directory.path);
-				setFolderSizes((current) => ({
-					...current,
-					[directory.path]: { status: 'timeout' },
-				}));
-				continue;
-			}
+			activeControllers.set(directory.path, controller);
+			const calculation = observeServerFolderSize(
+				terminalClientContext.fileObservationClient,
+				projectId,
+				projectRootPath,
+				directory.path,
+				controller.signal,
+			).then((result) => ({ cancelled: false, ...result }));
 			void calculation
 				.then((result) => {
 					activeJobIds.delete(directory.path);
@@ -1195,28 +1186,21 @@ export function FolderPanel(
 		}
 
 		const deadlineId = window.setTimeout(() => {
-			for (const [path, jobId] of activeJobIds) {
+			for (const [path] of activeJobIds) {
 				activeControllers.get(path)?.abort();
-				if (!activeControllers.has(path)) {
-					void disconnectedFolderCompatibility?.cancelSize(jobId);
-				}
 			}
 		}, FOLDER_SIZE_DEADLINE_MS);
 
 		return () => {
 			window.clearTimeout(deadlineId);
-			for (const [path, jobId] of activeJobIds) {
+			for (const [path] of activeJobIds) {
 				activeControllers.get(path)?.abort();
-				if (!activeControllers.has(path)) {
-					void disconnectedFolderCompatibility?.cancelSize(jobId);
-				}
 			}
 		};
 	}, [
-		disconnectedFolderCompatibility,
 		projectId,
 		projectRootPath,
-		terminalClientContext?.fileObservationClient,
+		terminalClientContext.fileObservationClient,
 		treeRoot,
 		viewMode,
 	]);
@@ -1224,58 +1208,8 @@ export function FolderPanel(
 	const handleCancelSizeModal = useCallback(() => {
 		sizeModalAbortRef.current?.abort();
 		sizeModalAbortRef.current = null;
-		setSizeModal((current) => {
-			if (current) {
-				if (terminalClientContext?.fileObservationClient === undefined) {
-					void disconnectedFolderCompatibility?.cancelSize(current.jobId);
-				}
-			}
-			return null;
-		});
-	}, [
-		disconnectedFolderCompatibility,
-		terminalClientContext?.fileObservationClient,
-	]);
-
-	const sizeModalJobId = sizeModal?.jobId;
-	useEffect(() => {
-		if (
-			!sizeModalJobId ||
-			terminalClientContext?.fileObservationClient !== undefined
-		) {
-			return;
-		}
-		const folderCompatibility = disconnectedFolderCompatibility;
-		if (folderCompatibility === undefined) {
-			return;
-		}
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') {
-				event.preventDefault();
-				handleCancelSizeModal();
-			}
-		};
-		window.addEventListener('keydown', onKeyDown);
-		const unsubscribe = folderCompatibility.subscribeSize((message) => {
-				if (message.jobId !== sizeModalJobId) {
-					return;
-				}
-				setSizeModal((current) =>
-					current?.jobId === message.jobId
-						? { ...current, entryCount: message.entryCount, size: message.size }
-						: current,
-				);
-			});
-		return () => {
-			window.removeEventListener('keydown', onKeyDown);
-			unsubscribe?.();
-		};
-	}, [
-		disconnectedFolderCompatibility,
-		handleCancelSizeModal,
-		sizeModalJobId,
-		terminalClientContext?.fileObservationClient,
-	]);
+		setSizeModal(null);
+	}, []);
 
 	const handleRecalculateFolderSize = useCallback(
 		(node: FolderDirectoryNode) => {
@@ -1288,20 +1222,9 @@ export function FolderPanel(
 				size: 0,
 			});
 			const controller = new AbortController();
-			const observationClient = terminalClientContext?.fileObservationClient;
-			let calculation: Promise<{
-				cancelled: boolean;
-				entryCount: number;
-				size: number;
-			}>;
-			if (
-				observationClient !== undefined &&
-				projectId !== undefined &&
-				projectRootPath !== undefined
-			) {
-				sizeModalAbortRef.current = controller;
-				calculation = observeServerFolderSize(
-					observationClient,
+			sizeModalAbortRef.current = controller;
+			const calculation = observeServerFolderSize(
+					terminalClientContext.fileObservationClient,
 					projectId,
 					projectRootPath,
 					node.path,
@@ -1314,19 +1237,6 @@ export function FolderPanel(
 						);
 					},
 				).then((result) => ({ cancelled: false, ...result }));
-			} else if (disconnectedFolderCompatibility !== undefined) {
-				calculation = disconnectedFolderCompatibility.calculateSize({
-					jobId,
-					path: node.path,
-				});
-			} else {
-				setFolderSizes((current) => ({
-					...current,
-					[node.path]: { status: 'timeout' },
-				}));
-				setSizeModal(null);
-				return;
-			}
 			void calculation
 				.then((result) => {
 					if (!result.cancelled) {
@@ -1348,10 +1258,9 @@ export function FolderPanel(
 				});
 		},
 		[
-			disconnectedFolderCompatibility,
 			projectId,
 			projectRootPath,
-			terminalClientContext?.fileObservationClient,
+			terminalClientContext.fileObservationClient,
 		],
 	);
 
@@ -1537,7 +1446,6 @@ export function FolderPanel(
 		}
 
 		const watchedDirectories = Array.from(new Set(taskWatchedDirectories));
-		const watchedDirectorySet = new Set(watchedDirectories);
 		let refreshTimeoutId: number | null = null;
 		let lastRefreshAt = 0;
 
@@ -1559,85 +1467,40 @@ export function FolderPanel(
 			}, delay);
 		};
 
-		if (
-			terminalClientContext?.fileObservationClient !== undefined &&
-			projectId !== undefined &&
-			projectRootPath !== undefined
-		) {
-			let disposed = false;
-			const cleanups: Array<() => void> = [];
-			void Promise.all(
-				watchedDirectories.map(async (directoryPath) => {
-					const handle =
-						await terminalClientContext.fileObservationClient!.startWatch(
-							projectId,
-							toRelativePath(projectRootPath, directoryPath),
-						);
-					if (disposed) {
-						await terminalClientContext.fileObservationClient!.stopWatch(
-							handle.subscriptionId,
-						);
-						return;
-					}
-					const unsubscribe =
-						await terminalClientContext.fileObservationClient!.subscribeWatch(
-							handle,
-							scheduleRefresh,
-							scheduleRefresh,
-						);
-					cleanups.push(() => {
-						unsubscribe();
-						void terminalClientContext.fileObservationClient!.stopWatch(
-							handle.subscriptionId,
-						);
-					});
-				}),
-			).catch(scheduleRefresh);
-			return () => {
-				disposed = true;
-				for (const cleanup of cleanups) cleanup();
-				if (refreshTimeoutId !== null) window.clearTimeout(refreshTimeoutId);
-			};
-		}
-
-		const folderCompatibility = disconnectedFolderCompatibility;
-		if (folderCompatibility === undefined) {
-			scheduleRefresh();
-			return () => {
-				if (refreshTimeoutId !== null) {
-					window.clearTimeout(refreshTimeoutId);
-				}
-			};
-		}
-		const unsubscribe = folderCompatibility.subscribeWatches(
-			(event: { path: string }) => {
-				if (!watchedDirectorySet.has(event.path)) {
+		let disposed = false;
+		const cleanups: Array<() => void> = [];
+		void Promise.all(
+			watchedDirectories.map(async (directoryPath) => {
+				const handle = await terminalClientContext.fileObservationClient.startWatch(
+					projectId,
+					toRelativePath(projectRootPath, directoryPath),
+				);
+				if (disposed) {
+					await terminalClientContext.fileObservationClient.stopWatch(handle.subscriptionId);
 					return;
 				}
-				scheduleRefresh();
-			},
-		);
-
-		for (const directoryPath of watchedDirectories) {
-			void folderCompatibility.watchDirectory(directoryPath);
-		}
-
+				const unsubscribe = await terminalClientContext.fileObservationClient.subscribeWatch(
+					handle,
+					scheduleRefresh,
+					scheduleRefresh,
+				);
+				cleanups.push(() => {
+					unsubscribe();
+					void terminalClientContext.fileObservationClient.stopWatch(handle.subscriptionId);
+				});
+			}),
+		).catch(scheduleRefresh);
 		return () => {
-			if (refreshTimeoutId !== null) {
-				window.clearTimeout(refreshTimeoutId);
-			}
-			unsubscribe?.();
-			for (const directoryPath of watchedDirectories) {
-				void folderCompatibility.unwatchDirectory(directoryPath);
-			}
+			disposed = true;
+			for (const cleanup of cleanups) cleanup();
+			if (refreshTimeoutId !== null) window.clearTimeout(refreshTimeoutId);
 		};
 	}, [
-		disconnectedFolderCompatibility,
 		folderTaskRefreshIntervalMs,
 		projectId,
 		projectRootPath,
 		taskWatchedDirectories,
-		terminalClientContext?.fileObservationClient,
+		terminalClientContext.fileObservationClient,
 		viewMode,
 	]);
 
@@ -2106,7 +1969,7 @@ export function FolderPanel(
 								onClick: () =>
 									onCopyPath
 										? onCopyPath(contextMenu.path)
-										: void window.terminayClipboardHost?.writeText(
+										: void writeClipboardText(
 												contextMenu.path,
 											),
 							},
@@ -2116,7 +1979,7 @@ export function FolderPanel(
 								onClick: () =>
 									onCopyRelativePath
 										? onCopyRelativePath(contextMenu.path)
-										: void window.terminayClipboardHost?.writeText(
+										: void writeClipboardText(
 												getPathRelativeToRoot(
 													contextMenu.path,
 													projectRootPath ?? folderPath,
@@ -2128,12 +1991,6 @@ export function FolderPanel(
 								label: 'Open shell in folder',
 								icon: <Terminal size={14} />,
 								onClick: () => onOpenTerminal?.(contextMenu.path),
-							},
-							{
-								label: 'Reveal in OS',
-								icon: <FolderOpen size={14} />,
-								onClick: () =>
-									void window.terminayRevealHost?.reveal(contextMenu.path),
 							},
 						].filter(Boolean) as ContextMenuItem[]
 					}

@@ -26,6 +26,6 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build --workspace @terminay/protocol-conformance && npm run build && node --test test/*.test.mjs"
+    "test": "npm run build --workspace @terminay/protocol-conformance && npm run build --workspace @terminay/server-core && npm run build --workspace @terminay/server && npm run build --workspace @terminay/client-core && npm run build --workspace @terminay/responsive-ui && npm run build --workspace @terminay/web && npm run build && node --test test/*.test.mjs"
   }
 }

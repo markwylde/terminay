@@ -10,13 +10,19 @@ export async function prepareWindow(page: Page): Promise<Page> {
 
 export async function sendAppCommand(page: Page, command: AppCommand): Promise<void> {
   await page.evaluate(async (nextCommand) => {
-    const bridge = window.terminayTest
-
-    if (!bridge) {
-      throw new Error('terminayTest bridge is unavailable')
-    }
-
-    await bridge.sendAppCommand(nextCommand)
+    const host = window.terminayHost
+    if (!host) throw new Error('canonical Terminay host is unavailable')
+    const context = await host.getContext()
+    await host.requestAction({
+      bridgeVersion: context.hostBridgeVersion,
+      profileId: context.profileId,
+      schemaVersion: context.schemaVersion,
+      serverId: context.serverId,
+      sourceId: context.sourceId,
+      userGesture: true,
+      windowId: context.windowId,
+      action: { command: nextCommand, type: 'menu.invoke' },
+    })
   }, command)
 }
 
@@ -51,33 +57,73 @@ export async function openChildWindow(
   return prepareWindow(nextWindow)
 }
 
+export async function presentNativeRoute(
+  page: Page,
+  route: string,
+  logicalViewId: string,
+): Promise<void> {
+  await page.evaluate(async ({ nextLogicalViewId, nextRoute }) => {
+    const host = window.terminayHost
+    if (!host) throw new Error('canonical Terminay host is unavailable')
+    const context = await host.getContext()
+    await host.requestAction({
+      bridgeVersion: context.hostBridgeVersion,
+      profileId: context.profileId,
+      schemaVersion: context.schemaVersion,
+      serverId: context.serverId,
+      sourceId: context.sourceId,
+      userGesture: true,
+      windowId: context.windowId,
+      action: {
+        disposition: 'native-window',
+        logicalViewId: nextLogicalViewId,
+        route: nextRoute,
+        type: 'route.present',
+      },
+    })
+  }, { nextLogicalViewId: logicalViewId, nextRoute: route })
+}
+
 export async function openSettingsWindow(
   electronApp: ElectronApplication,
   page: Page,
   options?: { sectionId?: string },
 ): Promise<Page> {
   return openChildWindow(electronApp, async () => {
-    await page.evaluate(async (nextOptions) => {
-      await window.terminaySettingsWindowHost?.open(nextOptions?.sectionId)
-    }, options ?? null)
+    const section = options?.sectionId
+    const params = new URLSearchParams({ auxiliary: 'settings' })
+    if (section) params.set('section', section)
+    await presentNativeRoute(
+      page,
+      `/?${params.toString()}`,
+      'settings',
+    )
   })
+}
+
+export async function openProjectEnvironmentsWindow(
+  electronApp: ElectronApplication,
+  page: Page,
+): Promise<Page> {
+  return openChildWindow(electronApp, () =>
+    presentNativeRoute(page, '/?auxiliary=project-environments', 'project-environments'),
+  )
+}
+
+export async function openRecordingsWindow(
+  electronApp: ElectronApplication,
+  page: Page,
+): Promise<Page> {
+  return openChildWindow(electronApp, () =>
+    presentNativeRoute(page, '/?auxiliary=recordings', 'recordings'),
+  )
 }
 
 export async function openMacrosWindow(
   electronApp: ElectronApplication,
-  _page: Page,
+  page: Page,
 ): Promise<Page> {
-  return openChildWindow(electronApp, async () => {
-    await electronApp.evaluate(({ Menu }) => {
-      const visit = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
-        for (const item of items) {
-          if (item.label === 'Macros') return item
-          const nested = item.submenu == null ? undefined : visit(item.submenu.items)
-          if (nested !== undefined) return nested
-        }
-        return undefined
-      }
-      visit(Menu.getApplicationMenu()?.items ?? [])?.click()
-    })
-  })
+  return openChildWindow(electronApp, () =>
+    presentNativeRoute(page, '/?auxiliary=macros', 'macros'),
+  )
 }

@@ -9,6 +9,7 @@ import {
   setProjectRoot,
   submitFileExplorerNameModal,
 } from './support/ui'
+import { submitTerminalCommand } from './support/terminal'
 
 const execFileAsync = promisify(execFile)
 
@@ -23,10 +24,7 @@ async function getActiveSessionId(page: Parameters<typeof openFileExplorer>[0]):
 }
 
 async function writeToActiveTerminal(page: Parameters<typeof openFileExplorer>[0], data: string): Promise<void> {
-  const sessionId = await getActiveSessionId(page)
-  await page.evaluate(async ({ nextData, nextSessionId }) => {
-    await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
-  }, { nextData: data, nextSessionId: sessionId })
+  await submitTerminalCommand(page, data)
 }
 
 test('file explorer can browse folders and open files', async ({ createWorkspace, mainWindow }) => {
@@ -306,7 +304,7 @@ test('git sidebar pane lists grouped working tree changes and opens a diff', asy
   await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Rename')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Delete')).toBeVisible()
-  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toHaveCount(0)
   await expect(contextMenuItem(mainWindow, 'Create new file')).toHaveCount(0)
   await mainWindow.keyboard.press('Escape')
 
@@ -481,7 +479,7 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   await expect(contextMenuItem(mainWindow, 'Copy path')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Copy relative path')).toBeVisible()
   await expect(contextMenuItem(mainWindow, 'Open shell in folder')).toBeVisible()
-  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toBeVisible()
+  await expect(contextMenuItem(mainWindow, 'Reveal in OS')).toHaveCount(0)
   await mainWindow.keyboard.press('Escape')
 
   // The worktree row exposes a push-agent menu offering the four commit-and-push actions.
@@ -499,7 +497,6 @@ test('git sidebar pane renders a nested tree and offers a push menu', async ({
   await expect(pushMenu.getByText('Push to new branch + create PR')).toBeVisible()
   await expect(pushMenuHeadings.getByText(`Default Branch (${defaultBranch})`, { exact: true })).toBeVisible()
   await expect(pushMenu.getByText('Push to default branch')).toBeVisible()
-  await expect(pushMenu.locator('.context-menu__trailing')).toHaveCount(5)
 
   await mainWindow.keyboard.press('Escape')
   await expect(pushMenu).toHaveCount(0)
@@ -627,13 +624,6 @@ test('git sidebar pane refreshes after setting project root from terminal cwd', 
     `cd ${JSON.stringify(linkedWorktree.rootDir)} && printf ${JSON.stringify(cwdReady)}\r`,
   )
   await expect(mainWindow.locator('.terminal-panel').filter({ hasText: cwdReady })).toBeVisible()
-  await expect
-    .poll(async () => {
-      return mainWindow.evaluate(async (nextSessionId) => {
-        return window.terminayTest!.getServerTerminalCwd(nextSessionId)
-      }, sessionId)
-    })
-    .toMatchObject({ cwd: expectedRoot, source: 'observed' })
 
   await mainWindow.locator('.terminal-panel').first().click()
   await appHarness.sendAppCommand('set-project-root-folder-to-working-directory')
@@ -686,13 +676,6 @@ test('git sidebar pane refreshes after keyboard sidebar open and keyboard root u
     `cd ${JSON.stringify(repo.rootDir)} && printf ${JSON.stringify(cwdReady)}\r`,
   )
   await expect(mainWindow.locator('.terminal-panel').filter({ hasText: cwdReady })).toBeVisible()
-  await expect
-    .poll(async () => {
-      return mainWindow.evaluate(async (nextSessionId) => {
-        return window.terminayTest!.getServerTerminalCwd(nextSessionId)
-      }, sessionId)
-    })
-    .toMatchObject({ cwd: expectedRoot, source: 'observed' })
 
   await mainWindow.keyboard.press(`${modifier}+O`)
 

@@ -32,12 +32,13 @@ test('browser mounts the real App with the exact authenticated client context', 
 	);
 	assert.match(
 		webWorkspace,
-		/createBrowserMacroSettingsCapability\(applicationClient\)/u,
+		/createBrowserMacroSettingsClient\(applicationClient\)/u,
 	);
 	assert.match(
 		sharedWorkspace,
-		/<App[\s\S]*quickPushClient=\{host\.quickPushClient\}[\s\S]*terminalClientContext=\{terminalClientContext\}/u,
+		/<App[\s\S]*terminalClientContext=\{terminalClientContext\}/u,
 	);
+	assert.doesNotMatch(sharedWorkspace, /quickPushClient/u);
 	assert.match(
 		remoteEntry,
 		/acquireHostedApplicationTransport\(authenticated\.ticket\)/u,
@@ -56,12 +57,9 @@ test('browser composition omits native host authority instead of fabricating pre
 	}
 	assert.match(
 		webWorkspace,
-		/host=\{Object\.freeze\(\{\s*auxiliaryRoutes,\s*onDisconnect: onBack,\s*onOpenConnectionManager: \(\) =>\s*setIsConnectionManagerOpen\(true\),?\s*\}\)\}/u,
+		/host=\{Object\.freeze\(\{[\s\S]*auxiliaryRoutes,[\s\S]*onDisconnect: onBack,[\s\S]*onOpenConnectionManager: \(\) =>[\s\S]*setIsConnectionManagerOpen\(true\),?[\s\S]*\}\)\}/u,
 	);
-	assert.doesNotMatch(
-		webWorkspace,
-		/quickPushClient|nativeWindows|clipboard|osIntegration/u,
-	);
+	assert.doesNotMatch(webWorkspace, /nativeWindows\s*:|clipboard\s*:|osIntegration\s*:/u);
 });
 
 test('browser-only adapters fail closed for unavailable secret operations', () => {
@@ -70,13 +68,10 @@ test('browser-only adapters fail closed for unavailable secret operations', () =
 		'saveSecret',
 		'deleteSecret',
 	]) {
-		assert.match(
-			browserAdapters,
-			new RegExp(
-				`async ${operation}\\(\\) \\{[\\s\\S]*?throw new Error\\('Browser secret storage is unavailable'\\)`,
-				'u',
-			),
-		);
+		assert.match(browserAdapters, new RegExp(
+			`async ${operation}\\(\\) \\{[\\s\\S]*?throw new MacroSettingsUnavailableError\\(`,
+			'u',
+		));
 	}
 	assert.doesNotMatch(browserAdapters, /window\.terminay|electron|ipcRenderer/u);
 });

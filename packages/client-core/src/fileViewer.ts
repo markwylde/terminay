@@ -313,17 +313,17 @@ export class FileViewerClient {
   constructor(private readonly transport: QueryCommandTransport) {}
 
   async getCapabilities(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerCapabilities> {
-    const payload = { path: boundedPath(path, "file path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) };
     return validateCapabilities(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.capabilities, payload, options));
   }
 
   async listFolder(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileCatalogPage> {
-    const payload = { path: boundedPath(path, "folder path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "folder path"), projectId: requiredProjectId(projectId) };
     return validateCatalogPage(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.list, payload, options));
   }
 
   async createDirectory(path: string, projectId?: string, options: CommandOptions = {}): Promise<void> {
-    const payload = { path: boundedPath(path, "folder path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "folder path"), projectId: requiredProjectId(projectId) };
     await this.transport.command<JsonValue>(FILE_VIEWER_OPERATIONS.createDirectory, payload, options);
   }
 
@@ -332,7 +332,7 @@ export class FileViewerClient {
     const payload = {
       path: boundedPath(path, "file path"),
       bytesBase64: bytesToBase64(bytes),
-      ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }),
+      projectId: requiredProjectId(projectId),
     };
     await this.transport.command<JsonValue>(FILE_VIEWER_OPERATIONS.createFile, payload, options);
   }
@@ -341,27 +341,27 @@ export class FileViewerClient {
     if (typeof query !== "string" || query.length === 0 || query.length > 256 || query.includes("\0")) throw new TypeError("file search query is invalid");
     const limit = options.limit ?? 60;
     if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 1_000) throw new RangeError("file search limit is invalid");
-    const payload = { path: boundedPath(path, "folder path"), query, options: { limit }, ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "folder path"), query, options: { limit }, projectId: requiredProjectId(projectId) };
     return validateCatalogSearchPage(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.search, payload, options));
   }
 
   async renameEntry(path: string, destination: string, projectId?: string, options: CommandOptions = {}): Promise<void> {
-    const payload = { path: boundedPath(path, "file path"), destination: boundedPath(destination, "destination path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "file path"), destination: boundedPath(destination, "destination path"), projectId: requiredProjectId(projectId) };
     await this.transport.command<JsonValue>(FILE_VIEWER_OPERATIONS.rename, payload, options);
   }
 
   async deleteEntry(path: string, recursive = false, projectId?: string, options: CommandOptions = {}): Promise<void> {
-    const payload = { path: boundedPath(path, "file path"), recursive, ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "file path"), recursive, projectId: requiredProjectId(projectId) };
     await this.transport.command<JsonValue>(FILE_VIEWER_OPERATIONS.delete, payload, options);
   }
 
   async getContentCapabilities(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentCapabilities> {
-    const payload = { path: boundedPath(path, "file path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) };
     return validateContentCapabilities(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentCapabilities, payload, options));
   }
 
   async readContentRange(path: string, offset: number, length: number, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange> {
-    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", MAX_FILE_CONTENT_RANGE_BYTES), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", MAX_FILE_CONTENT_RANGE_BYTES), projectId: requiredProjectId(projectId) };
     const binary = this.transport as Partial<BinaryQueryTransport>;
     if (typeof binary.queryWithBody !== "function") throw new TypeError("canonical file range transport does not support binary query results");
     const response = await binary.queryWithBody<JsonValue>(FILE_VIEWER_OPERATIONS.contentRange, payload, options);
@@ -371,14 +371,14 @@ export class FileViewerClient {
   }
 
   async readContentText(path: string, offset: number, length: number, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange & { readonly text: string; readonly invalidEncoding: boolean }> {
-    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), projectId: requiredProjectId(projectId) };
     const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentText, payload, options);
     if (!isRecord(value) || typeof value.text !== "string" || typeof value.invalidEncoding !== "boolean") throw new TypeError("file content text response is invalid");
     return Object.freeze({ ...validateContentRange(value), text: value.text, invalidEncoding: value.invalidEncoding });
   }
 
   async readContentHex(path: string, offset: number, length: number, bytesPerRow = 16, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange & { readonly bytesPerRow: number; readonly rows: readonly FileViewerHexRow[] }> {
-    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), bytesPerRow: boundedPositiveUInt(bytesPerRow, "bytes per row", 64), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "file path"), offset: boundedUInt(offset, "offset"), length: boundedPositiveUInt(length, "length", 1024 * 1024), bytesPerRow: boundedPositiveUInt(bytesPerRow, "bytes per row", 64), projectId: requiredProjectId(projectId) };
     const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentHex, payload, options);
     if (!isRecord(value) || !safeUInt(value.bytesPerRow) || !Array.isArray(value.rows) || value.rows.length > 16_384) throw new TypeError("file content HEX response is invalid");
     const rows = value.rows.map((row) => {
@@ -389,7 +389,7 @@ export class FileViewerClient {
   }
 
   async readContentPreview(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerContentRange & { readonly decodedImagePixelLimit: number }> {
-    const payload = { path: boundedPath(path, "file path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) };
     const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.contentPreview, payload, options);
     if (!isRecord(value) || !safeUInt(value.decodedImagePixelLimit)) throw new TypeError("file content preview response is invalid");
     return Object.freeze({ ...validateContentRange(value, 16 * 1024 * 1024), decodedImagePixelLimit: value.decodedImagePixelLimit });
@@ -402,6 +402,7 @@ export class FileViewerClient {
   * making the caller handle base64 or transport details.
   */
   async openContentStream(path: string, projectId?: string, options: FileViewerContentStreamOptions = {}): Promise<FileViewerContentStream> {
+	projectId = requiredProjectId(projectId);
     const capabilities = await this.getContentCapabilities(path, projectId, options.signal === undefined ? {} : { signal: options.signal });
     const startOffset = boundedUInt(options.startOffset ?? 0, "stream start offset");
     const chunkBytes = boundedPositiveUInt(options.chunkBytes ?? DEFAULT_CONTENT_STREAM_CHUNK_BYTES, "stream chunk size", MAX_CONTENT_STREAM_CHUNK_BYTES);
@@ -429,7 +430,7 @@ export class FileViewerClient {
   }
 
   async openFile(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileViewerSessionIdentity> {
-    const payload = { path: boundedPath(path, "file path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) };
     return validateSessionIdentity(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.open, payload, options));
   }
 
@@ -456,7 +457,7 @@ export class FileViewerClient {
   }
 
   async getFolderMarkdownTasks(path: string, projectId?: string, taskOptions: FolderMarkdownTaskOptions = {}, options: QueryOptions = {}): Promise<FolderMarkdownTaskAggregation> {
-    const payload = { path: boundedPath(path, "folder path"), options: validateFolderMarkdownTaskOptions(taskOptions), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "folder path"), options: validateFolderMarkdownTaskOptions(taskOptions), projectId: requiredProjectId(projectId) };
     const binary = this.transport as Partial<BinaryQueryTransport>;
     if (typeof binary.queryWithBody === "function") {
       const response = await binary.queryWithBody<JsonValue>(FILE_VIEWER_OPERATIONS.folderTasks, payload, options);
@@ -467,7 +468,7 @@ export class FileViewerClient {
 
   async getGitDiff(path: string, projectId?: string, options: QueryOptions = {}): Promise<JsonValue> {
     if (typeof path !== "string" || path.length === 0 || path.includes("\0")) throw new TypeError("file path is invalid");
-    const payload = { path, ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path, projectId: requiredProjectId(projectId) };
     const binary = this.transport as Partial<BinaryQueryTransport>;
     if (typeof binary.queryWithBody === "function") {
       const response = await binary.queryWithBody<JsonValue>(FILE_VIEWER_OPERATIONS.gitDiff, payload, options);
@@ -477,7 +478,7 @@ export class FileViewerClient {
   }
 
   async getMutationRevision(path: string, projectId?: string, options: QueryOptions = {}): Promise<{ readonly ino: number; readonly mtimeMs: number; readonly size: number }> {
-    const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.mutationRevision, { path: boundedPath(path, "file path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) }, options);
+    const value = await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.mutationRevision, { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) }, options);
     if (!isRecord(value) || !Number.isSafeInteger(value.ino) || (value.ino as number) < 0 || typeof value.mtimeMs !== "number" || !Number.isFinite(value.mtimeMs) || !Number.isSafeInteger(value.size) || (value.size as number) < 0) throw new TypeError("file mutation revision response is invalid");
     return Object.freeze({ ino: value.ino as number, mtimeMs: value.mtimeMs, size: value.size as number });
   }
@@ -487,13 +488,9 @@ export class FileViewerClient {
     return validateTextMetadata(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.textMetadata, payload, options));
   }
 
-  /**
-   * Server-scoped replacement for the legacy project-root metadata query.
-   * It remains separate until the matching line-window operation is server
-   * backed, so the existing Desktop viewer does not mix two authorities.
-   */
+  /** Read server-indexed metadata within an exact project scope. */
   async getServerTextMetadata(path: string, projectId?: string, options: QueryOptions = {}): Promise<FileTextMetadata> {
-    const payload = { path: boundedPath(path, "file path"), ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }) };
+    const payload = { path: boundedPath(path, "file path"), projectId: requiredProjectId(projectId) };
     return validateTextMetadata(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.textMetadata, payload, options));
   }
 
@@ -513,7 +510,7 @@ export class FileViewerClient {
       path: boundedPath(path, "file path"),
       startLine: boundedUInt(startLine, "start line"),
       lineCount: boundedPositiveUInt(lineCount, "line count", 512),
-      ...(projectId === undefined ? {} : { projectId: boundedPath(projectId, "project id") }),
+      projectId: requiredProjectId(projectId),
     };
     return validateTextWindow(await this.transport.query<JsonValue>(FILE_VIEWER_OPERATIONS.textLines, payload, options), true);
   }
@@ -616,6 +613,11 @@ type MutableFileViewerContentStreamOptions = FileViewerContentStreamOptions & {
 function boundedPath(value: string, name: string): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 4096 || value.includes("\0")) throw new TypeError(`${name} is invalid`);
   return value;
+}
+
+function requiredProjectId(value: string | undefined): string {
+	if (value === undefined) throw new TypeError('project id is required');
+	return boundedPath(value, 'project id');
 }
 
 function boundedUInt(value: number, name: string): number {

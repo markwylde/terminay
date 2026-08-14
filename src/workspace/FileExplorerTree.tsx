@@ -1,7 +1,6 @@
 import {
 	Copy,
 	FileEdit,
-	FolderOpen,
 	FolderPlus,
 	PlusSquare,
 	Terminal,
@@ -617,12 +616,6 @@ export function FileExplorerTree({
 								label: 'Open shell in folder',
 								icon: <Terminal size={14} />,
 								onClick: () => onOpenTerminal(contextMenu.path),
-							},
-							{
-								label: 'Reveal in OS',
-								icon: <FolderOpen size={14} />,
-								onClick: () =>
-									void window.terminayRevealHost?.reveal(contextMenu.path),
 							},
 						].filter(Boolean) as ContextMenuItem[]
 					}

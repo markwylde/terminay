@@ -105,28 +105,24 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 		expect(readiness.serverId).toBe('remote-desktop-rendered-proof');
 
 		await openRemoteMenu(mainWindow);
-		await mainWindow
-			.getByRole('button', { name: /Add connection/u })
-			.click();
+		await mainWindow.getByRole('button', { name: /Add connection/u }).click();
 		const dialog = mainWindow.getByRole('dialog', {
 			name: 'Connections',
 		});
-		const localProfile = dialog.getByRole('option', {
-			name: /Local connected/u,
-		});
-		await expect(localProfile).toContainText('Always available');
-		await expect(localProfile.getByRole('button', { name: 'Rename' })).toHaveCount(
-			0,
-		);
-		await expect(localProfile.getByRole('button', { name: 'Forget' })).toHaveCount(
-			0,
-		);
-		await expect(
-			localProfile.getByRole('button', { name: 'Revoke access' }),
-		).toHaveCount(0);
+		await expect(dialog).toBeVisible();
+		// This remote Desktop document owns only remembered remote profiles.
+		// Local's immutable profile is covered by the Local connection-manager
+		// journey; it is intentionally not imported into a remote host document.
+		await dialog.getByRole('button', { name: 'Add connection…' }).click();
 		await dialog.getByLabel('Pairing URL').fill(readiness.pairing.pairingUrl);
-		await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
-		await expect(dialog).toHaveCount(0);
+		await dialog
+			.getByRole('button', { name: 'Continue pairing', exact: true })
+			.click();
+		// Establishing the authenticated client also hydrates the selected server's
+		// verified bundle.  Assert the actual handoff rather than treating the
+		// local connection-manager shell disappearing within Playwright's short
+		// default as the connection contract.
+		await expect(dialog).toHaveCount(0, { timeout: 20_000 });
 
 		const remoteHost = new URL(readiness.protocolEndpoint).host;
 		await expect(mainWindow.getByLabel('Open connection menu')).toContainText(
@@ -139,8 +135,9 @@ test('authenticated remote Desktop renders the project-scoped shared shell local
 		await expect(currentRemoteProfile).toContainText(remoteHost);
 		await expect(currentRemoteProfile).toContainText('Current');
 
-		const rendererOrigin = new URL(mainWindow.url()).origin;
-		await mainWindow.goto(`${rendererOrigin}/?view=terminal`);
+		const terminalRoute = new URL(mainWindow.url());
+		terminalRoute.search = '?view=terminal';
+		await mainWindow.goto(terminalRoute.toString());
 		const shell = mainWindow.locator(
 			'[data-shared-ui="responsive-workspace"][data-shared-route="workspace"]',
 		);

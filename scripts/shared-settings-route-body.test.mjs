@@ -38,6 +38,12 @@ test('settings search has a durable accessible name independent of its placehold
   assert.match(source, /type="search"[\s\S]*aria-label=\{`Search \$\{title\} settings`\}/)
 })
 
+test('generated select controls expose their visible settings label', async () => {
+  const source = await readFile(settingsWindowPath, 'utf8')
+
+  assert.match(source, /<select[\s\S]{0,160}?aria-label=\{field\.label\}/u)
+})
+
 test('desktop settings route consumes the shared settings route body', async () => {
   const source = await readFile(settingsWindowPath, 'utf8')
 

@@ -27,7 +27,7 @@ import {
 	type RemoteServerMessage,
 	type RemoteSessionSnapshot,
 	type RemoteSessionSummary,
-} from './legacyTerminalProtocol';
+} from './deployedTerminalProtocol';
 import { ChallengeStore, serializeDeviceChallenge } from './challengeStore';
 import { AuditStore } from './auditStore';
 import {
@@ -86,11 +86,9 @@ type RemoteSizeOverride =
 	  };
 
 /**
- * The retired compatibility service deliberately has no Electron runtime
- * import.  Its only historical use of `app` was resolving the per-user remote
- * data directory; server-hosted migration harnesses can provide that concrete
- * path directly.  Keep the structural `app` fallback only for the untouched
- * legacy Desktop composition while its final WebRTC parity gate remains open.
+ * The remote exposure service deliberately has no Electron runtime import.
+ * Its structural `app` input exists only to resolve the Desktop-owned data
+ * directory; standalone hosts provide that concrete path directly.
  */
 export type RemoteAccessServiceOptions = {
 	app?: { getPath: (name: 'userData') => string };

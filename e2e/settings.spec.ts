@@ -1,9 +1,10 @@
-import { expect, test } from './fixtures'
-import type { Page } from '@playwright/test'
-import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
-import { gzipSync } from 'node:zlib'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
+import { gzipSync } from 'node:zlib'
+import type { Page } from '@playwright/test'
+import { defaultTerminalSettings, normalizeTerminalSettings } from '../src/terminalSettings'
+import { expect, test } from './fixtures'
+import { typeInVisibleTerminal } from './support/terminal-input'
 
 function remoteOriginInput(page: Page) {
   return page.locator('#section-remote-access-host .settings-row').filter({ hasText: 'Remote origin' }).locator('input')
@@ -17,20 +18,8 @@ function customExtensionRows(page: Page) {
   return page.locator('#section-file-viewer-refresh .settings-custom-extensions__item')
 }
 
-async function getActiveTerminalSessionId(page: Page): Promise<string> {
-  const sessionId = await page.locator('.terminal-panel').first().getAttribute('data-terminay-terminal-session-id')
-  if (!sessionId) {
-    throw new Error('Active terminal session id is unavailable')
-  }
-
-  return sessionId
-}
-
 async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
-  const sessionId = await getActiveTerminalSessionId(page)
-  await page.evaluate(async ({ nextData, nextSessionId }) => {
-    await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
-  }, { nextData: data, nextSessionId: sessionId })
+  await typeInVisibleTerminal(page, data)
 }
 
 test('opens settings focused to remote access and supports settings search', async ({ appHarness, mainWindow }) => {
@@ -71,7 +60,7 @@ test('shows selected-server extensions and saves a secret-backed connection prof
   await expect(settingsWindow.getByRole('article').filter({ hasText: 'terminay-e2e-uploaded-extension' })).toContainText('1.0.0', { timeout: 30_000 })
   await expect(settingsWindow.getByRole('heading', { name: /Review terminay-e2e-uploaded-extension/u })).toHaveCount(0)
   await expect(settingsWindow.getByRole('status').filter({ hasText: /was installed/u })).toBeVisible()
-  const environmentsWindow = await appHarness.openChildWindow(async () => { await mainWindow.evaluate(async () => { await window.terminayProjectEnvironmentsHost?.open() }) })
+  const environmentsWindow = await appHarness.openProjectEnvironmentsWindow(mainWindow)
   await environmentsWindow.getByText('Add connection', { exact: true }).click()
   await environmentsWindow.getByRole('button', { name: 'New E2E uploaded' }).click()
   await expect(environmentsWindow.getByRole('heading', { name: 'Fixture connection' })).toBeVisible()
@@ -119,11 +108,7 @@ function npmPackArchive(files: Readonly<Record<string, string>>): Buffer {
 function writeOctal(target: Buffer, offset: number, length: number, value: number): void { const text = value.toString(8).padStart(length - 2, '0'); target.write(`${text}\0 `, offset, length, 'ascii') }
 
 test('opens Project Environments as a full auxiliary window', async ({ appHarness, mainWindow }) => {
-  const environmentsWindow = await appHarness.openChildWindow(async () => {
-    await mainWindow.evaluate(async () => {
-      await window.terminayProjectEnvironmentsHost?.open()
-    })
-  })
+  const environmentsWindow = await appHarness.openProjectEnvironmentsWindow(mainWindow)
 
 	await expect(
 		environmentsWindow.getByRole('heading', {
@@ -134,7 +119,7 @@ test('opens Project Environments as a full auxiliary window', async ({ appHarnes
   await expect(environmentsWindow.locator('.project-environments-window')).toBeVisible()
   await expect(environmentsWindow.locator('[role="dialog"]')).toHaveCount(0)
   await expect(environmentsWindow.locator('.project-environment-surface-backdrop')).toHaveCount(0)
-  expect(new URL(environmentsWindow.url()).searchParams.get('view')).toBe('project-environments')
+	expect(new URL(environmentsWindow.url()).searchParams.get('auxiliary')).toBe('project-environments')
 })
 
 test('persists settings edits across reopening the settings window', async ({ appHarness, mainWindow }) => {

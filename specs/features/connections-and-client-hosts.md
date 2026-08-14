@@ -85,10 +85,10 @@ Git surfaces. Browser hosts keep every route in-page; Desktop may present
 eligible secondary routes in native auxiliary windows only when its
 `nativeWindows` capability is declared.
 
-Desktop development and auxiliary query routes render those same production
-shared route bodies against the authenticated embedded-server clients. They do
-not substitute legacy placeholder content for connections, Git, agents,
-folders, or terminal views.
+Desktop development, packaged Desktop, and auxiliary routes execute the same
+server-bundled route bodies against the authenticated selected-server client.
+No host substitutes an alternate workspace renderer or placeholder feature
+body for connections, Git, agents, folders, or terminals.
 
 The existing activity/notification indicator remains separate. Connection
 status must not be conflated with terminal or agent attention.
@@ -177,6 +177,13 @@ while a browser uses an in-page route or browser tab. The bridge never exposes
 `BrowserWindow`, arbitrary paths, raw transport handles, generic IPC, or server
 application commands. Server-bundled renderers receive a `TerminayClient` byte
 endpoint and capability provider rather than Electron APIs.
+Settings, recordings, and project/terminal editors request the canonical
+auxiliary route controller exclusively. They never probe ambient native-window
+globals; the presenter chooses an in-page or native disposition from the
+negotiated host context.
+Project and terminal tab editors use the canonical in-page auxiliary dialog.
+Their shared route body owns the single visible heading and Save/Cancel journey;
+opening a separate Electron child window is not part of this contract.
 
 A normal arrangement may therefore be one Local window plus three windows
 connected to three remote servers.
@@ -198,8 +205,8 @@ profile metadata remains at the exact manager origin, storage events rebuild
 the sanitized projection in other tabs, and one-time pairing fragments never
 enter localStorage. The connected shared workspace enables the Connections
 route with those same persisted callbacks. Desktop uses the same production
-server-UI window composition for normal Local and remote startup; there is no
-parallel legacy workspace-window owner.
+server-UI window composition for normal Local and remote startup; no second
+workspace-window owner exists.
 
 ## Web connection host
 
@@ -233,13 +240,10 @@ are consumed in memory and are not returned, persisted, or copied into the
 session URL. The host bridge accepts messages only from the exact selected
 session origin and expected window source, and rejects privileged payload keys.
 
-The new manager replaces the legacy manager at `app.terminay.com` and restores
-the existing same-origin record only as sanitized profile metadata. Profile ids,
-server ids, labels, fingerprints, and canonical origins may be retained;
-pairing fragments, device keys, reconnect grants, and other credentials are
-discarded. A session record retains only a canonical origin; legacy paths,
-queries, fragments, or origin userinfo are rejected rather than becoming
-manager state or a session credential.
+The manager accepts only sanitized profile metadata. A session record retains
+only a canonical origin; paths, queries, fragments, origin userinfo, pairing
+material, device keys, reconnect grants, and other credentials are rejected
+rather than becoming manager state or a session credential.
 
 `app.terminay.com` is a stable host/manager, not a latest independent workspace
 client. The selected server's verified bundle renders the workspace.
@@ -362,6 +366,12 @@ fragment and any pairing URL path are never returned by the host profile API or
 serialized into the connection menu store; protocol pairing completes as a
 separate operation against that origin.
 
+On Desktop that operation is a closed host action: Electron performs device
+enrollment, stores the durable grant in its credential compartment, verifies
+the selected server bundle, and replaces the current document's byte lane only
+after the authenticated remote transport is ready. The renderer receives no
+pairing fragment, grant, private key, or reconnect handle.
+
 ## Exposing a server
 
 - Embedded Local servers accept only the private Desktop transport and are not
@@ -393,6 +403,9 @@ separate operation against that origin.
 
 - Desktop and web render the same projects, panels, files, terminals, settings,
   recordings, agents, and connection state.
+- Development and packaged Desktop launch that same server-bundled workspace;
+  development changes asset delivery and rebuild cadence, not renderer entry,
+  preload, state hydration, authority, or host-capability behaviour.
 - Wide layouts resemble the Electron workspace.
 - Narrow layouts replace wide tab strips and sidebars with accessible
   selectors, drawers, stacked surfaces, and touch controls while retaining the
@@ -416,6 +429,9 @@ separate operation against that origin.
   equivalent capability. Native-only entries such as OS window management,
   Desktop update installation, native file dialogs, and DevTools remain absent
   or disabled unless the host capability exists.
+- Desktop hosts advertise native menus and therefore omit the in-page
+  application menu entirely. macOS native title-bar insets keep traffic lights
+  separate from project tabs and workspace controls.
 
 ## Connection persistence and privacy
 
@@ -438,10 +454,9 @@ Forbidden in connection-manager localStorage, URLs, host messages, and logs:
 Desktop persistence is a closed allowlist: sanitized profiles, protected
 credential references, native geometry and exact profile/view bindings,
 verified bundle-cache metadata, update state, OS permission decisions, and
-explicit device preferences. A bounded legacy migration discards workspace
-snapshots, application DTOs, project roots, panel/terminal state, server
-settings, and feature capability projections instead of copying them into the
-host store. Unclassified fields fail closed.
+explicit device preferences. Workspace snapshots, application DTOs, project
+roots, panel/terminal state, server settings, and feature capability
+projections are forbidden in the host store. Unclassified fields fail closed.
 
 ## Failure behaviour
 

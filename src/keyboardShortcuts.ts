@@ -46,6 +46,18 @@ export const appCommandMetadata: AppCommandMetadata[] = [
     keywords: 'open recordings timeline terminal session replay asciinema cast history',
   },
   {
+    command: 'open-settings',
+    title: 'Open settings',
+    description: 'Configure Terminay and the selected server.',
+    keywords: 'open settings preferences configuration',
+  },
+  {
+    command: 'open-macros',
+    title: 'Open macros',
+    description: 'Manage reusable terminal macros.',
+    keywords: 'open macros commands snippets',
+  },
+  {
     command: 'open-project-environments',
     title: 'Open Project Environments',
     description: 'Manage environments on the selected Terminay Server.',
@@ -112,6 +124,8 @@ export const defaultKeyboardShortcuts: KeyboardShortcutSettings = {
   'new-project': 'CmdOrCtrl+P',
   'clear-terminal': 'CmdOrCtrl+K',
   'open-recordings': '',
+  'open-settings': '',
+  'open-macros': '',
   'open-project-environments': '',
   'open-extensions': '',
   'save-active': 'CmdOrCtrl+S',

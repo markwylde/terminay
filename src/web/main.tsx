@@ -6,7 +6,7 @@ import {
 	TerminayClientFacade,
 	WebSocketByteTransport,
 } from '@terminay/client-core';
-import type { ByteTransport } from '@terminay/protocol';
+import type { ByteTransport, TerminayHostContext } from '@terminay/protocol';
 import {
 	commitPairedWebConnection,
 	consumeLegacyManagerMigration,
@@ -19,6 +19,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
+import { pairDesktopConnection } from '../host/nativeActions';
+import type { AppCommand } from '../types/terminay';
 import {
 	type RendererConnectionAttempt,
 	RendererConnectionController,
@@ -354,9 +356,18 @@ export default function WebManagerApp() {
 	const [pairingPin, setPairingPin] = useState('');
 	const [activeConnection, setActiveConnection] =
 		useState<ActiveTerminalConnection | null>(null);
+	const [desktopHostContext, setDesktopHostContext] =
+		useState<TerminayHostContext | undefined>();
+	const [desktopConnectionGeneration, setDesktopConnectionGeneration] =
+		useState(0);
 	const recoveryWatermarks = useRef(
 		new Map<string, Readonly<{ revision: number; cursor: string }>>(),
 	);
+	// A protocol reconnect is the same browser device, not a new presentation.
+	// Keeping this identity stable lets the server restore that device's terminal
+	// controller lease after a transient transport loss instead of demoting it to
+	// read-only behind the prior connection's lease.
+	const clientIdsByProfile = useRef(new Map<string, string>());
 	const autoRestoreAttemptedProfileId = useRef<string | null>(null);
 	const [reconnectVault] = useState<WebReconnectVault>(
 		() => new IndexedDbWebReconnectVault(),
@@ -426,10 +437,19 @@ export default function WebManagerApp() {
 		void acquireDesktopServerBootstrap(
 			window.terminayHost as DesktopHostBridge | undefined,
 			window.terminayBytes,
+			{ replaceEndpoint: desktopConnectionGeneration > 0 },
 		)
 			.then(async (bootstrap) => {
 				if (bootstrap === undefined) return;
-				const clientId = createWebClientId();
+				setDesktopHostContext(bootstrap.context);
+				// Replacing a Desktop byte endpoint keeps the same selected profile and
+				// browser-side workspace. Reuse its protocol identity so the server
+				// resumes the existing terminal presentation rather than treating the
+				// replacement lane as another client with a competing control lease.
+				const clientId =
+					clientIdsByProfile.current.get(bootstrap.context.profileId) ??
+					createWebClientId('desktop');
+				clientIdsByProfile.current.set(bootstrap.context.profileId, clientId);
 				client = new TerminayClient({
 					transport: bootstrap.transport,
 					clientId,
@@ -447,7 +467,10 @@ export default function WebManagerApp() {
 					throw new Error('Desktop connected to the wrong Terminay Server.');
 				const connectedContext = await createConnectedServerClientContext(client, hello, {
 					onTransportClosed: () => {
-						if (!cancelled) setError('The Desktop server connection closed.');
+						if (!cancelled) {
+							setError('Connection lost. Reconnecting…');
+							setDesktopConnectionGeneration((generation) => generation + 1);
+						}
 					},
 				});
 				if (cancelled) {
@@ -456,9 +479,10 @@ export default function WebManagerApp() {
 					return;
 				}
 				const label =
-					bootstrap.context.profileId === 'local:embedded'
+					bootstrap.context.profile?.label ??
+					(bootstrap.context.profileId === 'local:embedded'
 						? 'Local'
-						: bootstrap.context.profileId;
+						: bootstrap.context.profileId);
 				const labelledContext = Object.freeze({
 					...connectedContext,
 					connectionLabel: label,
@@ -488,9 +512,10 @@ export default function WebManagerApp() {
 			});
 		return () => {
 			cancelled = true;
+			setDesktopHostContext(undefined);
 			void client?.close().catch(() => undefined);
 		};
-	}, [hasDesktopServerBootstrap]);
+	}, [hasDesktopServerBootstrap, desktopConnectionGeneration]);
 
 	useEffect(() => {
 		const url = new URL(window.location.href);
@@ -751,8 +776,12 @@ export default function WebManagerApp() {
 				label: existing?.label ?? displayUrl.host,
 				origin: parsed.displayOrigin,
 			};
-			attempt = beginConnectionAttempt(pendingProfile.id);
-			rendererAttempt = connectionController.current!.begin(pendingProfile.id);
+			// A connection attempt has one controller generation.  Beginning it twice
+			// makes the first generation stale before its handshake completes, so a
+			// valid pairing silently disposes its client instead of selecting the
+			// newly paired server.
+			rendererAttempt = beginConnectionAttempt(pendingProfile.id);
+			attempt = rendererAttempt;
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : 'Unable to add that server.',
@@ -762,7 +791,10 @@ export default function WebManagerApp() {
 			return;
 		}
 
-		const clientId = createWebClientId();
+		const clientId =
+			clientIdsByProfile.current.get(pendingProfile.id) ??
+			createWebClientId();
+		clientIdsByProfile.current.set(pendingProfile.id, clientId);
 		const client = new TerminayClient({
 			transport: new WebSocketByteTransport({
 				origin: parsed.transportOrigin,
@@ -1015,7 +1047,18 @@ export default function WebManagerApp() {
 		const displayOrigin = origin.split('#', 1)[0] ?? origin;
 		const parsed = new URL(displayOrigin);
 		const stableProfileId = createProfileId(parsed.hostname);
-		const clientId = createWebClientId('web-webrtc');
+		// A session-host connection has no HTTP reconnect handshake to recover its
+		// renderer identity for us. Keep the same identity for the profile across
+		// initial pairing and a replacement lane so the server replaces this
+		// browser's terminal attachment instead of leaving it as a stale observer.
+		const existingProfile = host.profiles
+			.snapshot()
+			.profiles.find((profile) => profile.origin === parsed.origin);
+		const profileId = existingProfile?.id ?? stableProfileId;
+		const clientId =
+			clientIdsByProfile.current.get(profileId) ??
+			createWebClientId('web-webrtc');
+		clientIdsByProfile.current.set(profileId, clientId);
 		const client = new TerminayClient({
 			transport,
 			clientId,
@@ -1030,11 +1073,8 @@ export default function WebManagerApp() {
 		});
 		try {
 			const hello = await client.connect();
-			const existing = host.profiles
-				.snapshot()
-				.profiles.find((profile) => profile.origin === parsed.origin);
 			const profile =
-				existing ??
+				existingProfile ??
 					host.addConnection({
 					id: stableProfileId,
 					serverId: hello.serverId,
@@ -1166,7 +1206,9 @@ export default function WebManagerApp() {
 			},
 		});
 		}
-		const clientId = createWebClientId();
+		const clientId =
+			clientIdsByProfile.current.get(profile.id) ?? createWebClientId();
+		clientIdsByProfile.current.set(profile.id, clientId);
 		const initialWatermark = recoveryWatermarks.current.get(profile.id);
 		const client = new TerminayClient({
 			transport,
@@ -1222,6 +1264,7 @@ export default function WebManagerApp() {
 			const labelledContext = Object.freeze({
 				...context,
 				connectionLabel: profile.label,
+				connectionGeneration: crypto.randomUUID(),
 				retryConnection: connectionController.current?.retry,
 				canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 				reportConnectionHydrated: reportTerminalHydrated,
@@ -1327,8 +1370,9 @@ export default function WebManagerApp() {
 			await connectPairedWebRtcBrowser(profile.origin);
 			return;
 		}
-		const attempt = beginConnectionAttempt(profile.id);
-		const rendererAttempt = connectionController.current!.begin(profile.id);
+		// Keep the reconnect handshake and activation bound to the same generation.
+		const rendererAttempt = beginConnectionAttempt(profile.id);
+		const attempt = rendererAttempt;
 		try {
 			if (isBrowserReconnectOrigin(profile.origin)) {
 				const credential = await reconnectVault.credential(profile.origin);
@@ -1361,7 +1405,13 @@ export default function WebManagerApp() {
 						proof,
 					},
 				);
-				const clientId = createWebClientId();
+				// A device-paired direct connection must retain the same protocol
+				// identity across recovery. A new id makes the server treat the
+				// replacement as another device and loses this browser's terminal
+				// attachment during the reconnect handoff.
+				const clientId =
+					clientIdsByProfile.current.get(profile.id) ?? createWebClientId();
+				clientIdsByProfile.current.set(profile.id, clientId);
 				const hosted = await acquireHostedApplicationTransport(completion.ticket);
 				const transport = hosted ?? new WebSocketByteTransport({
 								origin: endpoint,
@@ -1385,12 +1435,20 @@ export default function WebManagerApp() {
 				try {
 					const hello = await client.connect();
 					if (!isCurrentConnectionAttempt(profile, attempt)) return;
+					const verifiedProfile =
+						profile.status === 'connecting'
+							? host.addConnection({
+									...profile,
+									serverId: hello.serverId,
+									status: 'connected',
+								})
+							: profile;
 					const context = await createConnectedServerClientContext(
 						client,
 						hello,
 						{
 							onTransportClosed: () =>
-								handleTransportClosed(profile.id, rendererAttempt, client),
+								handleTransportClosed(verifiedProfile.id, rendererAttempt, client),
 						},
 					);
 					if (!isCurrentConnectionAttempt(profile, attempt)) {
@@ -1399,14 +1457,14 @@ export default function WebManagerApp() {
 					}
 					const labelledContext = Object.freeze({
 						...context,
-						connectionLabel: profile.label,
+						connectionLabel: verifiedProfile.label,
 						retryConnection: connectionController.current?.retry,
 						canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 					});
 					const candidate = {
-						profileId: profile.id,
-						label: profile.label,
-						origin: profile.origin,
+						profileId: verifiedProfile.id,
+						label: verifiedProfile.label,
+						origin: verifiedProfile.origin,
 						client,
 						serverId: hello.serverId,
 						clientId,
@@ -1416,13 +1474,22 @@ export default function WebManagerApp() {
 					if (
 						!(await connectionController.current!.activate(
 							rendererAttempt,
-							managedWebCandidate(profile, client, clientId, hello, candidate),
+							managedWebCandidate(
+								verifiedProfile,
+								client,
+								clientId,
+								hello,
+								candidate,
+							),
 						))
 					)
 						return;
 					setActiveConnection(candidate);
-					connectionController.current!.setRecoveryPipeline(profile.id, browserRecoveryPipeline());
-					host.markStatus(profile.id, 'connected');
+					connectionController.current!.setRecoveryPipeline(
+						verifiedProfile.id,
+						browserRecoveryPipeline(),
+					);
+					host.markStatus(verifiedProfile.id, 'connected');
 					recordReconnectDiagnostic('succeeded', 0);
 					setError(null);
 					setStatus(null);
@@ -1467,6 +1534,7 @@ export default function WebManagerApp() {
 
 	async function forgetConnection(profileId: string): Promise<void> {
 		const origin = host.profiles.get(profileId)?.origin;
+		clientIdsByProfile.current.delete(profileId);
 		invalidateConnectionAttempt(profileId);
 		void connectionController.current?.stop(profileId, 'forgotten');
 		if (activeConnection?.profileId === profileId) {
@@ -1517,6 +1585,19 @@ export default function WebManagerApp() {
 			<ConnectedWorkspace
 				connection={activeConnection}
 				connectionProfiles={host.profiles}
+				hostContext={desktopHostContext}
+				subscribeAppCommands={
+					window.terminayHost !== undefined
+						? (listener: (command: AppCommand) => Promise<void> | void) =>
+								(
+									window.terminayHost as unknown as DesktopHostBridge
+								).subscribeEvent((event) => {
+									if (event.event.type === 'menu.command') {
+										return listener(event.event.command)
+									}
+								})
+						: undefined
+				}
 				connectionRoute={{
 					profileStore: sharedConnectionProfiles,
 					canPair: true,
@@ -1531,6 +1612,7 @@ export default function WebManagerApp() {
 					},
 					onForget: (profile) => forgetConnection(profile.id),
 					onPairingHandoff: async (rawUrl) => {
+						if (await pairDesktopConnection(rawUrl)) return;
 						setServerUrl(rawUrl);
 						await connectServer(undefined, rawUrl, true);
 					},
@@ -1774,6 +1856,7 @@ export default function WebManagerApp() {
 							}}
 							onForget={(profile) => forgetConnection(profile.id)}
 							onPairingHandoff={async (rawUrl) => {
+								if (await pairDesktopConnection(rawUrl)) return;
 								setServerUrl(rawUrl);
 								await connectServer(undefined, rawUrl, true);
 							}}
@@ -1789,16 +1872,24 @@ function ConnectedWorkspace({
 	connection,
 	connectionProfiles,
 	connectionRoute,
+	hostContext,
 	onBack,
+	subscribeAppCommands,
 }: {
 	connection: ActiveTerminalConnection;
 	connectionProfiles: ConnectionProfileStore;
 	connectionRoute?: Omit<SharedConnectionsRouteBodyProps, 'state'>;
+	hostContext?: TerminayHostContext;
 	onBack: () => void;
+	subscribeAppCommands?: (
+		listener: (command: AppCommand) => Promise<void> | void,
+	) => () => void;
 }) {
 	return (
 		<ConnectedWebRendererWorkspace
 			connectionRoute={connectionRoute ?? { profileStore: connectionProfiles }}
+			hostContext={hostContext}
+			subscribeAppCommands={subscribeAppCommands}
 			onBack={onBack}
 			terminalClientContext={connection.context}
 		/>

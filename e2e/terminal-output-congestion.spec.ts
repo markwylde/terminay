@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { submitTerminalCommand } from './support/terminal';
 
 async function activeSessionId(page: Page): Promise<string> {
 	const sessionId = await page
@@ -10,12 +11,10 @@ async function activeSessionId(page: Page): Promise<string> {
 }
 
 async function writeToSession(page: Page, sessionId: string, data: string): Promise<void> {
-	await page.evaluate(
-		async ({ id, input }) => {
-			await window.terminayTest!.writeServerTerminal(id, input);
-		},
-		{ id: sessionId, input: data },
+	const panel = page.locator(
+		`.terminal-panel[data-terminay-terminal-session-id="${sessionId}"]`,
 	);
+	await submitTerminalCommand(page, data, panel);
 }
 
 test('a high-volume terminal burst cannot kill the shared local application connection', async ({

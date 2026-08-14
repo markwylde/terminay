@@ -269,6 +269,7 @@ jobs:
           APPLE_TEAM_ID: ${{ matrix.os == 'macos-latest' && vars.APPLE_TEAM_ID || '' }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ matrix.os == 'macos-latest' && 'true' || 'false' }}
         run: |
+          test ! -e release
           node scripts/stage-selected-secure-werift-runtime.mjs
           ${{ matrix.script }}
 
@@ -356,7 +357,17 @@ jobs:
           # Boot the exact signed application from the read-only DMG and require
           # the real server workspace. This catches preload-format and file-URL
           # asset failures that build, signature, and notarization checks cannot.
-          TERMINAY_PACKAGED_APP="$APP_BUNDLE" npm run test:packaged-startup-macos
+          TERMINAY_PACKAGED_APP="$APP_BUNDLE" \
+            TERMINAY_RELEASE_DIAGNOSTICS_DIR="$RUNNER_TEMP/terminay-packaged-smoke" \
+            npm run test:packaged-startup-macos
+
+      - name: Preserve packaged startup diagnostics
+        if: ${{ always() && matrix.os == 'macos-latest' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-startup-diagnostics-${{ matrix.label }}
+          path: ${{ runner.temp }}/terminay-packaged-smoke
+          if-no-files-found: ignore
 
       - name: Write release asset checksums
         env:

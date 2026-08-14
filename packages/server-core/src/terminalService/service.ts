@@ -297,6 +297,14 @@ export class TerminalService {
     return () => this.inputListeners.delete(listener);
   }
 
+  /** Fence an activity snapshot against current host foreground state. */
+  async refreshForegroundProcesses(projectId?: string, signal?: AbortSignal): Promise<void> {
+    const refreshes = [...this.sessionsById.values()]
+      .filter((session) => session.status === "running" && (projectId === undefined || session.identity.projectId === projectId))
+      .map((session) => session.process?.refreshForegroundProcess?.(signal));
+    await Promise.all(refreshes);
+  }
+
   getSession(session: string | TerminalIdentity): TerminalSessionSnapshot | undefined {
     const sessionId = typeof session === "string" ? session : session.sessionId;
     const value = this.sessionsById.get(sessionId);

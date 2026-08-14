@@ -15,7 +15,7 @@ assert.equal(process.platform, 'darwin', 'real Parakeet smoke requires macOS')
 assert.equal(process.arch, 'arm64', 'real Parakeet smoke requires Apple Silicon')
 
 const execFileAsync = promisify(execFile)
-const runtimeModule = await importTransformed('../electron/dictation/parakeetRuntime.ts')
+const runtimeModule = await importTransformed('../packages/server-core/src/aiService/parakeetRuntime.ts')
 const rootDirectory = process.env.TERMINAY_PARAKEET_SMOKE_ROOT
   ?? join(homedir(), 'Library', 'Caches', 'Terminay', 'parakeet-smoke')
 await mkdir(rootDirectory, { recursive: true })

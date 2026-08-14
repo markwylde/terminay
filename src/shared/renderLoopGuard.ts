@@ -9,14 +9,14 @@ export function recordBoundedRendererRender(
 	key: string,
 	fingerprint: string,
 ): void {
-	if (window.terminayBootstrapDiagnostic === undefined) return
+	if (!hasRendererDiagnosticObserver()) return
 	const previous = renderCounts.get(key)
 	const next = {
 		count: (previous?.count ?? 0) + 1,
 		fingerprint,
 	}
 	renderCounts.set(key, next)
-	window.terminayBootstrapDiagnostic.record(`${key}.render`, next.count)
+	recordBootstrapDiagnostic(`${key}.render`, next.count)
 	if (next.count > 64) {
 		throw new Error(
 			`Synchronous renderer loop in ${key} after ${next.count} renders (${fingerprint}; previous ${previous?.fingerprint ?? 'none'})`,
@@ -30,3 +30,4 @@ export function recordBoundedRendererRender(
 		})
 	}
 }
+import { hasRendererDiagnosticObserver, recordBootstrapDiagnostic } from './rendererDiagnostics'

@@ -8,9 +8,9 @@ import type {
 	DictationOverlayProps,
 	DictationOverlayState,
 } from '../components/DictationOverlay';
+import { writeClipboardText } from '../host/nativeActions';
 import type { TerminalSettings } from '../types/settings';
 import {
-	blobToBase64,
 	DICTATION_INITIAL_SILENCE_GRACE_MS,
 	DICTATION_MIN_RECORDING_MS,
 	DICTATION_MIN_SPEECH_FRAMES,
@@ -25,7 +25,6 @@ import {
 	EMPTY_DICTATION_WAVEFORM,
 	encodeDictationWav,
 	formatDictationTranscriptForTerminal,
-	getDictationFileExtension,
 	getDictationMimeType,
 	measureDictationBlobAudio,
 } from './dictationAudioSupport';
@@ -50,6 +49,7 @@ type DictationControllerOptions = {
 		sessionId: string;
 	};
 	hasTargetSession: (sessionId: string) => boolean;
+	openSettings: (sectionId?: string) => void | Promise<void>;
 	sendTerminalInput: (sessionId: string, input: string) => void;
 	setErrorText: (message: string | null) => void;
 };
@@ -65,6 +65,7 @@ export function useDictationController({
 	getDisclosure,
 	getTargetIdentity,
 	hasTargetSession,
+	openSettings,
 	sendTerminalInput,
 	setErrorText,
 }: DictationControllerOptions) {
@@ -133,7 +134,7 @@ export function useDictationController({
 	const insertTranscript = useCallback(
 		async (sessionId: string, transcript: string) => {
 			if (!hasTargetSession(sessionId)) {
-				await window.terminayClipboardHost?.writeText(transcript);
+				await writeClipboardText(transcript);
 				throw new Error(
 					'The target terminal closed. Transcript copied to clipboard.',
 				);
@@ -157,7 +158,7 @@ export function useDictationController({
 
 		if (!getSettings().enabled) {
 			setErrorText('Enable dictation in Settings before recording.');
-			void window.terminaySettingsWindowHost?.open('dictation');
+			void openSettings('dictation');
 			return;
 		}
 
@@ -168,33 +169,13 @@ export function useDictationController({
 		}
 
 		try {
-			const dictationHost = window.terminayDictationHost;
-			if (dictationHost === undefined) {
-				throw new Error('Desktop dictation is unavailable.');
-			}
 			const dictationSettings = getSettings();
-			const keyStatus =
-				aiClient === undefined && dictationSettings.provider === 'openai'
-					? await dictationHost.getKeyStatus()
-					: null;
-			if (keyStatus !== null && !keyStatus.configured) {
-				setErrorText(
-					'Add an OpenAI API key in Settings before starting dictation.',
-				);
-				void window.terminaySettingsWindowHost?.open('dictation');
-				return;
-			}
-			if (aiClient === undefined && dictationSettings.provider === 'parakeet') {
-				const runtimeStatus = await dictationHost.getParakeetStatus();
-				if (runtimeStatus.state !== 'ready') {
-					setErrorText(
-						runtimeStatus.message ??
-							'Install the on-device Parakeet engine in Settings before starting dictation.',
-					);
-					void window.terminaySettingsWindowHost?.open('dictation');
-					return;
-				}
-			}
+			if (
+				aiClient === undefined ||
+				getDisclosure === undefined ||
+				getTargetIdentity === undefined
+			)
+				throw new Error('The selected server does not support dictation.');
 
 			if (
 				!navigator.mediaDevices?.getUserMedia ||
@@ -202,17 +183,6 @@ export function useDictationController({
 			) {
 				throw new Error(
 					'Microphone recording is not available in this environment.',
-				);
-			}
-
-			const microphonePermissionStatus =
-				await dictationHost.requestMicrophonePermission();
-			if (
-				microphonePermissionStatus === 'denied' ||
-				microphonePermissionStatus === 'restricted'
-			) {
-				throw new Error(
-					`Microphone access is ${microphonePermissionStatus}. Allow microphone access in macOS Privacy & Security settings, then restart Terminay.`,
 				);
 			}
 
@@ -236,15 +206,8 @@ export function useDictationController({
 					);
 				}
 
-				if (microphonePermissionStatus !== 'granted') {
-					const message =
-						error instanceof Error ? error.message : String(error);
-					throw new Error(
-						`Unable to open the microphone while permission is ${microphonePermissionStatus}: ${message}`,
-					);
-				}
-
-				throw error;
+				const message = error instanceof Error ? error.message : String(error);
+				throw new Error(`Unable to open the microphone: ${message}`);
 			}
 			const audioTrack = stream.getAudioTracks()[0] ?? null;
 			console.info('Dictation microphone stream opened', {
@@ -257,11 +220,7 @@ export function useDictationController({
 				? new MediaRecorder(stream, { mimeType })
 				: new MediaRecorder(stream);
 			const actualMimeType = recorder.mimeType || mimeType || 'audio/webm';
-			if (
-				aiClient !== undefined &&
-				getTargetIdentity !== undefined &&
-				getDisclosure !== undefined
-			) {
+			{
 				const capture = new DictationCaptureClient({
 					maxBytes: DICTATION_UPLOAD_LIMIT_BYTES,
 					maxDurationMs: dictationSettings.maxDurationSeconds * 1000,
@@ -509,44 +468,31 @@ export function useDictationController({
 
 					try {
 						const config = getSettings();
-						const result =
-							aiClient !== undefined && serverCaptureRef.current !== null
-								? await (async () => {
-										const capture = serverCaptureRef.current!;
-										serverCaptureRef.current = null;
-										capture.append(
-											new Uint8Array(await audioBlob.arrayBuffer()),
-										);
-										const upload = capture.finish({
-											durationMs: Math.max(1, durationMs),
-											mimeType: uploadMimeType,
-										});
-										return aiClient.transcribe({
-											requestId: upload.requestId,
-											target: upload.target,
-											audio: upload.audio,
-											durationMs: upload.durationMs,
-											language: config.language.trim() || defaultLanguage,
-											mimeType: upload.mimeType,
-											model: config.model,
-											peakLevel: effectivePeakRms,
-											prompt: config.prompt,
-										});
-									})()
-								: await (async () => {
-										const dictationHost = window.terminayDictationHost;
-										if (dictationHost === undefined)
-											throw new Error('Desktop dictation is unavailable.');
-										return dictationHost.transcribe({
-											audioBase64: await blobToBase64(audioBlob),
-											fileName: `dictation-${Date.now()}.${getDictationFileExtension(uploadMimeType)}`,
-											language: config.language.trim() || defaultLanguage,
-											mimeType: uploadMimeType,
-											model: config.model,
-											provider: config.provider,
-											prompt: config.prompt,
-										});
-									})();
+						if (serverCaptureRef.current === null) {
+							throw new Error(
+								'The selected-server dictation request is unavailable.',
+							);
+						}
+						const result = await (async () => {
+							const capture = serverCaptureRef.current!;
+							serverCaptureRef.current = null;
+							capture.append(new Uint8Array(await audioBlob.arrayBuffer()));
+							const upload = capture.finish({
+								durationMs: Math.max(1, durationMs),
+								mimeType: uploadMimeType,
+							});
+							return aiClient.transcribe({
+								requestId: upload.requestId,
+								target: upload.target,
+								audio: upload.audio,
+								durationMs: upload.durationMs,
+								language: config.language.trim() || defaultLanguage,
+								mimeType: upload.mimeType,
+								model: config.model,
+								peakLevel: effectivePeakRms,
+								prompt: config.prompt,
+							});
+						})();
 						const transcript =
 							typeof result === 'object' &&
 							result !== null &&

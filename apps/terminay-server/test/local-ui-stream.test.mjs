@@ -31,6 +31,14 @@ test("local UI stream authenticates upgrade and delegates to protocol core", asy
   });
   const address = await server.start();
   try {
+    const bootstrapResponse = await fetch(`${address.origin}/host-bootstrap.json`);
+    assert.equal(bootstrapResponse.status, 200);
+    assert.deepEqual(await bootstrapResponse.json(), {
+      schemaVersion: 1,
+      serverId: "stream-server",
+      manifestPath: "/manifest.json",
+      streamPath: "/protocol/stream",
+    });
     const notAppQuery = await fetch(`${address.origin}/protocol/query`, { method: "POST" });
     assert.equal(notAppQuery.status, 405);
 

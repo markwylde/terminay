@@ -1,6 +1,6 @@
 import App from '../App';
-import type { QuickPushClient } from '../components/QuickPushModal';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
+import type { AppCommand } from '../types/terminay';
 import type { AuxiliaryRouteController } from './auxiliaryRoutes';
 
 /**
@@ -10,7 +10,14 @@ import type { AuxiliaryRouteController } from './auxiliaryRoutes';
  */
 export type RendererHostAdapters = Readonly<{
 	auxiliaryRoutes?: AuxiliaryRouteController;
-	quickPushClient?: QuickPushClient;
+	/** Presentation is negotiated with the host; build-mode guesses are forbidden. */
+	presentation?: Readonly<{
+		nativeMenus: boolean;
+		nativeWindowControls: boolean;
+	}>;
+	subscribeAppCommands?: (
+		listener: (command: AppCommand) => Promise<void> | void,
+	) => () => void;
 	onDisconnect?: () => void;
 	onOpenConnectionManager?: () => void;
 }>;
@@ -32,10 +39,13 @@ export function ConnectedRendererWorkspace({
 	return (
 		<App
 			auxiliaryRoutes={host.auxiliaryRoutes}
-			key={terminalClientContext.serverId}
+			hostPresentation={host.presentation}
+			subscribeAppCommands={host.subscribeAppCommands}
+			// A replacement lane can retain both server and client identities. Its
+			// terminal tree still needs a fresh attachment to the new transport.
+			key={`${terminalClientContext.serverId}:${terminalClientContext.connectionGeneration ?? 'initial'}`}
 			onDisconnect={host.onDisconnect}
 			onOpenConnectionManager={host.onOpenConnectionManager}
-			quickPushClient={host.quickPushClient}
 			terminalClientContext={terminalClientContext}
 		/>
 	);

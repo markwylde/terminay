@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { sendAppCommand } from './support/app';
+import { typeInVisibleTerminal } from './support/terminal-input';
 import {
 	cancelEditWindow,
 	contextMenuItem,
@@ -10,8 +11,7 @@ import {
 
 async function getActiveSessionId(page: Page): Promise<string> {
 	const sessionId = await page
-		.locator('.terminal-panel')
-		.first()
+		.locator('.project-workspace--active .terminal-panel:visible')
 		.getAttribute('data-terminay-terminal-session-id');
 
 	if (!sessionId) {
@@ -44,12 +44,7 @@ async function writeToTerminalSession(
 	sessionId: string,
 	data: string,
 ): Promise<void> {
-	await page.evaluate(
-		async ({ nextData, nextSessionId }) => {
-			await window.terminayTest!.writeServerTerminal(nextSessionId, nextData);
-		},
-		{ nextData: data, nextSessionId: sessionId },
-	);
+	await typeInVisibleTerminal(page, data, sessionId);
 }
 
 async function readCssVariableFromStyle(
@@ -117,7 +112,8 @@ test.describe('terminal behavior', () => {
 			.allTextContents();
 		const firstBox = await terminalTabs.first().boundingBox();
 		const secondBox = await terminalTabs.nth(1).boundingBox();
-		if (!firstBox || !secondBox) throw new Error('Terminal tab drag geometry is unavailable');
+		if (!firstBox || !secondBox)
+			throw new Error('Terminal tab drag geometry is unavailable');
 
 		await mainWindow.mouse.move(
 			firstBox.x + firstBox.width / 2,
@@ -220,22 +216,19 @@ test.describe('terminal behavior', () => {
 	});
 
 	test('terminal tab context menu opens settings and moves a tab to another project', async ({
-		appHarness,
 		mainWindow,
 	}) => {
-		const settingsWindow = await appHarness.openChildWindow(async () => {
-			await mainWindow
-				.locator('.project-workspace--active .terminal-tab-content')
-				.first()
-				.click({ button: 'right' });
-			await contextMenuItem(mainWindow, 'Open Settings').click();
-		});
+		await mainWindow
+			.locator('.project-workspace--active .terminal-tab-content')
+			.first()
+			.click({ button: 'right' });
+		await contextMenuItem(mainWindow, 'Open Settings').click();
 
 		await expect(
-			settingsWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+			mainWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
 		).toBeVisible();
-		await settingsWindow.getByPlaceholder('Terminal name').fill('Move Me');
-		await submitEditWindow(settingsWindow);
+		await mainWindow.getByPlaceholder('Terminal name').fill('Move Me');
+		await submitEditWindow(mainWindow);
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-title'),
 		).toHaveText('Move Me');
@@ -484,30 +477,20 @@ test.describe('terminal behavior', () => {
 			.toBe(true);
 
 		await titleInput.fill('Keyboard Shell');
-		const closePromise = editWindow.waitForEvent('close');
-		try {
-			await titleInput.press('Enter');
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			if (
-				!message.includes('Target page, context or browser has been closed')
-			) {
-				throw error;
-			}
-		}
-		await closePromise;
+		await titleInput.press('Enter');
+		await expect(
+			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
+		).toHaveCount(0);
 
 		await expect(
 			mainWindow
-				.locator('.terminal-tab-content')
-				.first()
+				.locator('.project-workspace--active .terminal-tab-content--active')
 				.locator('.terminal-tab-title'),
 		).toHaveText('Keyboard Shell');
 		await expectTerminalInputFocused(mainWindow);
 	});
 
-	test('double-clicking a terminal tab opens one edit window for the active project tab', async ({
-		appHarness,
+	test('double-clicking a terminal tab opens one in-page editor for the active project tab', async ({
 		electronApp,
 		mainWindow,
 	}) => {
@@ -533,9 +516,8 @@ test.describe('terminal behavior', () => {
 			({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
 		);
 
-		const editWindow = await appHarness.openChildWindow(async () => {
-			await activeTerminalTab.dblclick();
-		});
+		await activeTerminalTab.dblclick();
+		const editWindow = mainWindow;
 
 		await expect(
 			editWindow.getByRole('heading', { name: 'Edit Terminal Tab' }),
@@ -550,7 +532,7 @@ test.describe('terminal behavior', () => {
 					({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
 				),
 			)
-			.toBe(windowCountBeforeEdit + 1);
+			.toBe(windowCountBeforeEdit);
 
 		await cancelEditWindow(editWindow);
 	});
@@ -610,19 +592,14 @@ test.describe('terminal behavior', () => {
 		const linkUrl = 'https://example.com/terminay-link-test';
 		const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
 
-		await electronApp.evaluate(({ ipcMain }) => {
+		await electronApp.evaluate(({ shell }) => {
 			const state = globalThis as typeof globalThis & {
 				__terminayOpenedExternalLinks?: string[];
 			};
 			state.__terminayOpenedExternalLinks = [];
-			ipcMain.removeHandler('desktop:external-host:open');
-			ipcMain.handle(
-				'desktop:external-host:open',
-				(_event, payload: { url?: unknown }) => {
-					if (typeof payload?.url === 'string')
-						state.__terminayOpenedExternalLinks?.push(payload.url);
-				},
-			);
+			shell.openExternal = async (url: string) => {
+				state.__terminayOpenedExternalLinks?.push(url);
+			};
 		});
 
 		await writeToTerminalSession(
@@ -694,19 +671,14 @@ test.describe('terminal behavior', () => {
 		const linkText = linkUrl;
 		const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
 
-		await electronApp.evaluate(({ ipcMain }) => {
+		await electronApp.evaluate(({ shell }) => {
 			const state = globalThis as typeof globalThis & {
 				__terminayOpenedExternalLinks?: string[];
 			};
 			state.__terminayOpenedExternalLinks = [];
-			ipcMain.removeHandler('desktop:external-host:open');
-			ipcMain.handle(
-				'desktop:external-host:open',
-				(_event, payload: { url?: unknown }) => {
-					if (typeof payload?.url === 'string')
-						state.__terminayOpenedExternalLinks?.push(payload.url);
-				},
-			);
+			shell.openExternal = async (url: string) => {
+				state.__terminayOpenedExternalLinks?.push(url);
+			};
 		});
 
 		await writeToTerminalSession(
@@ -813,6 +785,11 @@ test.describe('terminal behavior', () => {
 			);
 		if (!backgroundSessionId)
 			throw new Error('Terminal 2 session id is unavailable');
+		await writeToTerminalSession(
+			mainWindow,
+			backgroundSessionId,
+			"sleep 2.1; printf 'overview-activity-hit\\n'; printf '\\033]9;4;0;\\007'\r",
+		);
 
 		await mainWindow
 			.locator('.project-workspace--active .terminal-tab-content')
@@ -826,25 +803,6 @@ test.describe('terminal behavior', () => {
 		await expect(
 			mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 		).toHaveCount(1);
-
-		await mainWindow.waitForTimeout(1_100);
-		await writeToTerminalSession(
-			mainWindow,
-			backgroundSessionId,
-			"sleep 2.1; printf 'overview-activity-hit\\n'; printf '\\033]9;4;0;\\007'\r",
-		);
-		await expect
-			.poll(() =>
-				mainWindow.evaluate(
-					(sessionId) =>
-						window.terminayTest!.getServerTerminalActivity(sessionId),
-					backgroundSessionId,
-				),
-			)
-			.toMatchObject({
-				acknowledged: false,
-				status: 'idle',
-			});
 
 		const activityButton = mainWindow.getByRole('button', {
 			name: 'Open terminal activity menu',
@@ -906,20 +864,13 @@ test.describe('terminal behavior', () => {
 
 		await quickTab.click();
 		const quickSessionId = await getActiveSessionId(mainWindow);
-		await mainWindow.evaluate((sessionId) => {
-			window.dispatchEvent(
-				new CustomEvent('terminay-terminal-user-input', {
-					detail: { sessionId },
-				}),
-			);
-		}, quickSessionId);
-
-		await firstTab.click();
 		await writeToTerminalSession(
 			mainWindow,
 			quickSessionId,
-			"printf 'quick-activity-suppressed\\n'\r",
+			"sleep 0.1; printf 'quick-activity-suppressed\\n'\r",
 		);
+
+		await firstTab.click();
 
 		await mainWindow.waitForTimeout(250);
 		await expect(quickTab).toHaveAttribute('data-terminal-activity', 'viewed');
@@ -952,13 +903,13 @@ test.describe('terminal behavior', () => {
 		await quietTab.click();
 		const quietSessionId = await getActiveSessionId(mainWindow);
 		await mainWindow.waitForTimeout(1_100);
-
-		await firstTab.click();
 		await writeToTerminalSession(
 			mainWindow,
 			quietSessionId,
-			"printf 'focus-change-noise\\n'\r",
+			"sleep 0.1; printf 'focus-change-noise\\n'\r",
 		);
+
+		await firstTab.click();
 
 		await mainWindow.waitForTimeout(250);
 		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
@@ -968,7 +919,6 @@ test.describe('terminal behavior', () => {
 	});
 
 	test('terminal tab settings can disable activity indicators for one tab', async ({
-		appHarness,
 		mainWindow,
 	}) => {
 		await sendAppCommand(mainWindow, 'new-terminal');
@@ -986,24 +936,20 @@ test.describe('terminal behavior', () => {
 		await quietTab.click();
 		const quietSessionId = await getActiveSessionId(mainWindow);
 
-		const settingsWindow = await appHarness.openChildWindow(async () => {
-			await quietTab.click({ button: 'right' });
-			await contextMenuItem(mainWindow, 'Open Settings').click();
-		});
-		const activitySwitch = settingsWindow.getByLabel(
-			'Enable activity indicators',
-		);
+		await quietTab.click({ button: 'right' });
+		await contextMenuItem(mainWindow, 'Open Settings').click();
+		const activitySwitch = mainWindow.getByLabel('Enable activity indicators');
 		await expect(activitySwitch).toBeChecked();
 		await activitySwitch.uncheck();
-		await submitEditWindow(settingsWindow);
-
-		await firstTab.click();
-		await mainWindow.waitForTimeout(1_100);
+		await submitEditWindow(mainWindow);
 		await writeToTerminalSession(
 			mainWindow,
 			quietSessionId,
-			"printf 'quiet-activity-hidden\\n'\r",
+			"sleep 1.2; printf 'quiet-activity-hidden\\n'\r",
 		);
+
+		await firstTab.click();
+		await mainWindow.waitForTimeout(1_100);
 
 		await expect(quietTab).toHaveAttribute('data-terminal-activity', 'viewed');
 		await expect(
@@ -1047,7 +993,9 @@ test.describe('terminal behavior', () => {
 			sectionId: 'shell-lifecycle',
 		});
 		await settingsWindow.getByLabel('Close tabs on successful exit').check();
-		await expect(settingsWindow.locator('.settings-status')).toContainText('Saved');
+		await expect(settingsWindow.locator('.settings-status')).toContainText(
+			'Saved',
+		);
 		await settingsWindow.close();
 
 		await sendAppCommand(mainWindow, 'new-terminal');

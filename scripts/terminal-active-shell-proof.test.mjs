@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+const source = await readFile(
+	new URL('../e2e/terminal-active-presentation.spec.ts', import.meta.url),
+	'utf8',
+);
+
+test('configured-shell proof waits for the new canonical session and prompt', () => {
+	assert.match(source, /previousSessionId/u);
+	assert.match(source, /\.not\.toBe\(previousSessionId\)/u);
+	assert.match(source, /toContainText\(\/\[\$#\]/u);
+	assert.match(source, /terminalInput\.pressSequentially\('shopt login_shell'\)/u);
+	assert.match(source, /toContainText\('shopt login_shell'\)/u);
+	assert.match(source, /login_shell\\s\+off/u);
+	assert.doesNotMatch(source, /terminayTest|writeServerTerminal|keyboard\.(?:insertText|type)/u);
+});

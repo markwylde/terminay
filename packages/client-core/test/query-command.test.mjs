@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FILE_VIEWER_OPERATIONS, FileViewerClient, SettingsClient, TerminayClientFacade } from "../dist/index.js";
+import { ClientOperationError, FILE_VIEWER_OPERATIONS, FileViewerClient, SettingsClient, TerminayClientFacade } from "../dist/index.js";
 
 test("TerminayClientFacade adapts query and command envelopes to feature results", async () => {
   const calls = [];
@@ -20,6 +20,27 @@ test("TerminayClientFacade adapts query and command envelopes to feature results
     ["query", "workspace.snapshot", {}],
     ["command", "workspace.rename", { name: "Editor" }],
   ]);
+});
+
+test("TerminayClientFacade retains the failed operation for actionable feature errors", async () => {
+  const facade = new TerminayClientFacade({
+    async query() { throw new Error("query failed"); },
+    async command() { throw new Error("command failed"); },
+  });
+  await assert.rejects(
+    facade.query("files.list", { projectId: "project-1" }),
+    (error) => error instanceof ClientOperationError
+      && error.kind === "query"
+      && error.operation === "files.list"
+      && error.message === "query failed",
+  );
+  await assert.rejects(
+    facade.command("settings.update", {}),
+    (error) => error instanceof ClientOperationError
+      && error.kind === "command"
+      && error.operation === "settings.update"
+      && error.message === "command failed",
+  );
 });
 
 test("TerminayClientFacade rejects a query-command-only compatibility transport when an event subscription is requested", async () => {
@@ -96,10 +117,10 @@ test("FileViewerClient uses a bounded canonical query operation", async () => {
     },
     async command() { return null; },
   });
-  assert.deepEqual(await client.getGitDiff("src/App.tsx"), { path: "src/App.tsx", hunks: [] });
-  assert.deepEqual(calls, [["file.get-git-diff", { path: "src/App.tsx" }]]);
-  await assert.rejects(() => client.getGitDiff(""), /file path/);
-  await assert.rejects(() => client.getGitDiff("bad\0path"), /file path/);
+  assert.deepEqual(await client.getGitDiff("src/App.tsx", "project-a"), { path: "src/App.tsx", hunks: [] });
+  assert.deepEqual(calls, [["file.get-git-diff", { path: "src/App.tsx", projectId: "project-a" }]]);
+  await assert.rejects(() => client.getGitDiff("", "project-a"), /file path/);
+  await assert.rejects(() => client.getGitDiff("bad\0path", "project-a"), /file path/);
 });
 
 test("FileViewerClient bounds raw content ranges to the framed response budget", async () => {

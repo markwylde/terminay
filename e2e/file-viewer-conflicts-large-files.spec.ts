@@ -1,4 +1,4 @@
-import { appendFile, rename, writeFile } from 'node:fs/promises'
+import { appendFile, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from './fixtures'
 import { activateDockTab, fileExplorerItem, openFileExplorer, setMonacoValue, setProjectRoot } from './support/ui'
@@ -88,6 +88,11 @@ test('dirty file edits stay local until saved even after an external write', asy
     )
     .toContain('local draft')
 
+  const conflict = mainWindow.locator('.file-conflict-banner')
+  await expect(conflict).toContainText('changed on disk')
+  await conflict.getByRole('button', { name: 'Keep local edits' }).click()
+  await expect(conflict).toHaveCount(0)
+
   await activateDockTab(mainWindow, 'conflict.txt')
   await appHarness.sendAppCommand('save-active')
   await expect(mainWindow.locator('.file-status-bar')).toContainText('Synced')
@@ -114,15 +119,11 @@ test('large text files use bounded ranged editing in performant mode', async ({
   // performant path without manufacturing nearly another MiB of duplicate
   // content that adds no boundary coverage under constrained CI renderers.
   const targetSize = 100 * 1024 * 1024 + Buffer.byteLength(chunk)
-  while ((await mainWindow.evaluate((filePath) => window.terminayFileViewerCompatibilityHost.getFileInfo(filePath).then((info) => info.size), workspace.path('large.txt'))) < targetSize) {
+	while ((await stat(workspace.path('large.txt'))).size < targetSize) {
     await appendFile(workspace.path('large.txt'), chunk, 'utf8')
   }
-  const readDiskPrefix = () =>
-    mainWindow.evaluate((filePath) =>
-      window.terminayFileViewerCompatibilityHost
-        .readFileText({ length: 128, path: filePath, start: 0 })
-        .then((result) => result.text),
-    workspace.path('large.txt'))
+	const readDiskPrefix = async () =>
+		(await readFile(workspace.path('large.txt'))).subarray(0, 128).toString('utf8')
 
   await setProjectRoot(mainWindow, workspace.rootDir)
   await openFileExplorer(mainWindow)

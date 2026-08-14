@@ -1,9 +1,7 @@
-import type { Locator, Page } from '@playwright/test';
+import type { ElectronApplication, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
-import {
-	openProjectEditWindow,
-	submitEditWindow,
-} from './support/ui';
+import { typeInVisibleTerminal } from './support/terminal-input';
+import { openProjectEditWindow, submitEditWindow } from './support/ui';
 
 async function readCssVariableFromStyle(
 	locator: Locator,
@@ -31,6 +29,36 @@ async function expectTerminalInputFocused(page: Page): Promise<void> {
 			),
 		)
 		.toBe(true);
+}
+
+async function waitForWorkspacePopout(
+	electronApp: ElectronApplication,
+	mainWindow: Page,
+): Promise<Page> {
+	let popout: Page | undefined;
+	await expect
+		.poll(async () => {
+			popout = electronApp
+				.windows()
+				.find(
+					(page) =>
+						page !== mainWindow &&
+						!page.isClosed() &&
+						!page.url().startsWith('about:blank') &&
+						!page.url().startsWith('data:'),
+				);
+			return popout === undefined
+				? false
+				: (await popout.locator('[data-terminay-app-component]').count()) >
+						0;
+		}, { timeout: 20_000 })
+		.toBe(true);
+	if (popout === undefined)
+		throw new Error('Expected the project popout window');
+	await expect(popout.locator('[data-terminay-app-component]')).toBeVisible({
+		timeout: 20_000,
+	});
+	return popout;
 }
 
 test.describe('project tabs', () => {
@@ -62,11 +90,12 @@ test.describe('project tabs', () => {
 		if (!sessionId) throw new Error('Expected the moved terminal identity');
 
 		const projectBox = await draggedProject.boundingBox();
-		if (!projectBox) throw new Error('Expected the project tab to have a layout box');
+		if (!projectBox)
+			throw new Error('Expected the project tab to have a layout box');
 		const revisionBeforeMove = Number(
-			await mainWindow.locator('.app-shell').getAttribute(
-				'data-terminay-workspace-revision',
-			),
+			await mainWindow
+				.locator('.app-shell')
+				.getAttribute('data-terminay-workspace-revision'),
 		);
 
 		const centerX = projectBox.x + projectBox.width / 2;
@@ -75,37 +104,17 @@ test.describe('project tabs', () => {
 		await mainWindow.mouse.down();
 		await mainWindow.mouse.move(centerX, centerY + 180, { steps: 12 });
 		await mainWindow.mouse.up();
-		await expect
-			.poll(
-				() =>
-					electronApp
-						.windows()
-						.filter(
-							(page) =>
-								page !== mainWindow &&
-								!page.isClosed() &&
-								!page.url().startsWith('data:'),
-						).length,
-			)
-			.toBe(1);
-		const popoutWindow = electronApp
-			.windows()
-			.find(
-				(page) =>
-					page !== mainWindow &&
-					!page.isClosed() &&
-					!page.url().startsWith('data:'),
-			);
-		if (!popoutWindow) throw new Error('Expected the project popout window');
-		await popoutWindow.waitForLoadState('domcontentloaded');
+		const popoutWindow = await waitForWorkspacePopout(electronApp, mainWindow);
 
-		await expect(mainWindow.locator('.project-tab-title')).toHaveText(['Project']);
+		await expect(mainWindow.locator('.project-tab-title')).toHaveText([
+			'Project',
+		]);
 		await expect
 			.poll(async () =>
 				Number(
-					await popoutWindow.locator('.app-shell').getAttribute(
-						'data-terminay-workspace-revision',
-					),
+					await popoutWindow
+						.locator('.app-shell')
+						.getAttribute('data-terminay-workspace-revision'),
 				),
 			)
 			.toBeGreaterThan(revisionBeforeMove);
@@ -148,36 +157,15 @@ test.describe('project tabs', () => {
 		await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 		const draggedProject = mainWindow.locator('.project-tab').last();
 		const projectBox = await draggedProject.boundingBox();
-		if (!projectBox) throw new Error('Expected the project tab to have a layout box');
+		if (!projectBox)
+			throw new Error('Expected the project tab to have a layout box');
 		const centerX = projectBox.x + projectBox.width / 2;
 		const centerY = projectBox.y + projectBox.height / 2;
 		await mainWindow.mouse.move(centerX, centerY);
 		await mainWindow.mouse.down();
 		await mainWindow.mouse.move(centerX, centerY + 180, { steps: 12 });
 		await mainWindow.mouse.up();
-		await expect
-			.poll(
-				() =>
-					electronApp
-						.windows()
-						.filter(
-							(page) =>
-								page !== mainWindow &&
-								!page.isClosed() &&
-								!page.url().startsWith('data:'),
-						).length,
-			)
-			.toBe(1);
-		const popoutWindow = electronApp
-			.windows()
-			.find(
-				(page) =>
-					page !== mainWindow &&
-					!page.isClosed() &&
-					!page.url().startsWith('data:'),
-			);
-		if (!popoutWindow) throw new Error('Expected the project popout window');
-		await popoutWindow.waitForLoadState('domcontentloaded');
+		const popoutWindow = await waitForWorkspacePopout(electronApp, mainWindow);
 		const sessionId = await popoutWindow
 			.locator('.project-workspace--active .terminal-panel')
 			.getAttribute('data-terminay-terminal-session-id');
@@ -192,31 +180,19 @@ test.describe('project tabs', () => {
 				return { checkboxChecked: false, response: 0 };
 			};
 		});
-		await popoutWindow.evaluate(
-			async (nextSessionId) =>
-				window.terminayTest!.writeServerTerminal(nextSessionId, 'sleep 30\n'),
-			sessionId,
-		);
-		await expect
-			.poll(() =>
-				popoutWindow.evaluate(
-					(nextSessionId) =>
-						window.terminayTest!.getServerTerminalActivity(nextSessionId),
-					sessionId,
-				),
-			)
-			.toMatchObject({ foregroundBusy: true });
+		await typeInVisibleTerminal(popoutWindow, 'sleep 30\n', sessionId);
 		await electronApp.evaluate(({ BrowserWindow }) =>
 			BrowserWindow.getFocusedWindow()?.close(),
 		);
 		await expect
 			.poll(() =>
-				electronApp.evaluate(() =>
-					(
-						globalThis as typeof globalThis & {
-							closeDialog?: Electron.MessageBoxOptions;
-						}
-					).closeDialog?.buttons?.[0] ?? null,
+				electronApp.evaluate(
+					() =>
+						(
+							globalThis as typeof globalThis & {
+								closeDialog?: Electron.MessageBoxOptions;
+							}
+						).closeDialog?.buttons?.[0] ?? null,
 				),
 			)
 			.toBe('Close Window');
@@ -277,7 +253,10 @@ test.describe('project tabs', () => {
 			'Workspace QA',
 		);
 		await electronApp.evaluate(({ dialog }) => {
-			dialog.showMessageBox = async () => ({ checkboxChecked: false, response: 0 });
+			dialog.showMessageBox = async () => ({
+				checkboxChecked: false,
+				response: 0,
+			});
 		});
 
 		await initialProjectTab.getByLabel('Close Project').click();
@@ -290,7 +269,9 @@ test.describe('project tabs', () => {
 	test('new project tabs do not reuse palette colours until the palette is exhausted', async ({
 		mainWindow,
 	}) => {
-		const addProjectButton = mainWindow.getByLabel('Create project on This server');
+		const addProjectButton = mainWindow.getByLabel(
+			'Create project on This server',
+		);
 
 		for (let index = 0; index < 19; index += 1) {
 			await addProjectButton.click();
