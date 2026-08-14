@@ -50,11 +50,17 @@ async function exposeDirectAndReadPairingLink(
 	await settings.getByRole('button', { name: 'Direct network listener' }).click();
 	await settings.getByRole('button', { name: 'Start direct listener' }).click();
 	const pinDialog = settings.getByRole('dialog', { name: 'Remote Pairing PIN' });
-	if (await pinDialog.isVisible().catch(() => false)) {
-		await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill(pin);
-		await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
-		await expect(pinDialog).toHaveCount(0);
-	}
+	// A fresh Desktop authority has no PIN. Wait for the controller's required
+	// first-use continuation instead of sampling visibility before React has had
+	// a chance to render the dialog and accidentally leaving the start action
+	// suspended forever.
+	await expect(pinDialog).toBeVisible();
+	await expect(
+		settings.getByRole('button', { name: 'Starting direct listener…' }),
+	).toBeDisabled();
+	await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill(pin);
+	await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
+	await expect(pinDialog).toHaveCount(0);
 	const directListenerError = settings.getByTestId(
 		'direct-listener-operation-error',
 	);
