@@ -1,4 +1,4 @@
-import type { ActivitySnapshot } from '@terminay/client-core';
+import type { ActivityClient, ActivitySnapshot } from '@terminay/client-core';
 
 export function getRunningTerminalSessionIds(
 	snapshot: ActivitySnapshot | undefined,
@@ -13,6 +13,19 @@ export function getRunningTerminalSessionIds(
 		)
 		.map((session) => session.sessionId)
 		.sort();
+}
+
+/** Destructive close decisions use a fresh server snapshot rather than the
+ * eventually delivered activity event projection. If the authority cannot be
+ * refreshed, fail the close request instead of treating stale absence as proof
+ * that no foreground process exists. */
+export async function refreshRunningTerminalSessionIds(
+	client: ActivityClient | undefined,
+	projectId?: string,
+): Promise<string[]> {
+	if (client === undefined) return [];
+	await client.refresh();
+	return getRunningTerminalSessionIds(client.store.snapshot, projectId);
 }
 
 export async function confirmRunningTerminalClose(
