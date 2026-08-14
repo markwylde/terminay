@@ -9,6 +9,7 @@ import {
 	Trash2,
 } from 'lucide-react';
 import { type JSX, type MouseEvent, useState } from 'react';
+import { writeClipboardText } from '../../host/nativeActions';
 import type {
 	GitChangeEntry,
 	GitFileState,
@@ -491,13 +492,13 @@ function buildGitPathContextMenuItems(options: {
 		{
 			label: 'Copy path',
 			icon: <Copy size={14} />,
-			onClick: () => void window.terminayClipboardHost?.writeText(path),
+			onClick: () => void writeClipboardText(path),
 		},
 		{
 			label: 'Copy relative path',
 			icon: <Copy size={14} />,
 			onClick: () =>
-				void window.terminayClipboardHost?.writeText(
+				void writeClipboardText(
 					relativePath || getPathRelativeToRoot(path, repoRoot),
 				),
 		},

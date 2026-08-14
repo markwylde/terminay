@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import type { JSX } from 'react';
 import { useEffect, useId, useState } from 'react';
+import { openExternalUrl } from '../host/nativeActions';
 import type {
 	AiTabMetadataProvider,
 	QuickPushAction,
@@ -370,7 +371,7 @@ function QuickPushResult({
 					type="button"
 					className="quick-push-pr-link"
 					onClick={() =>
-						void window.terminayExternalHost?.open(
+						void openExternalUrl(
 							result.pullRequestUrl as string,
 						)
 					}
