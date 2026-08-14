@@ -39,7 +39,7 @@ const hostedRepo = readOption('hosted-repo');
 const hostedScope = readOption('hosted-scope') ?? 'full';
 const expectedArch = readOption('expected-arch');
 assert.notEqual(mock, Boolean(hostedRepo), 'choose exactly one of --mock or --hosted-repo=PATH');
-assert.match(hostedScope, /^(?:bootstrap|full)$/, 'hosted scope must be bootstrap or full');
+assert.match(hostedScope, /^(?:bootstrap|bundle|full)$/, 'hosted scope must be bootstrap, bundle, or full');
 assert.ok(hostedRepo || hostedScope === 'full', '--hosted-scope requires --hosted-repo');
 if (expectedArch) assert.equal(process.arch, expectedArch);
 
