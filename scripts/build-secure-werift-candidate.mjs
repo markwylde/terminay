@@ -53,6 +53,16 @@ export const DIRECT_RUNTIME_DEPENDENCIES = {
 // Upstream allows a range for pvutils. Keep source-mirror acquisition on the
 // audited candidate graph even when npm publishes a newer compatible release.
 export const TRANSITIVE_RUNTIME_DEPENDENCY_OVERRIDES = {
+  '@peculiar/asn1-cms': '2.8.0',
+  '@peculiar/asn1-csr': '2.8.0',
+  '@peculiar/asn1-ecc': '2.8.0',
+  '@peculiar/asn1-pfx': '2.8.0',
+  '@peculiar/asn1-pkcs8': '2.8.0',
+  '@peculiar/asn1-pkcs9': '2.8.0',
+  '@peculiar/asn1-rsa': '2.8.0',
+  '@peculiar/asn1-schema': '2.8.0',
+  '@peculiar/asn1-x509': '2.8.0',
+  '@peculiar/asn1-x509-attr': '2.8.0',
   pvutils: '1.1.5',
 }
 
