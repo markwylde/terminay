@@ -10,9 +10,9 @@ configurable keyboard accelerators.
 
 ## Behaviour
 
-- Settings search, edit, preview where appropriate, normalize invalid legacy
-  values, persist in their declared scope, and can reset to documented
-  defaults.
+- Settings search, edit, preview where appropriate, reject or normalize invalid
+  persisted values, persist in their declared scope, and can reset to
+  documented defaults.
 - Server values remain authoritative for shared state. An explicitly
   classified device override (currently the dictation microphone device) wins
   only in that device's effective read; host, transient, and unknown values
@@ -36,6 +36,11 @@ configurable keyboard accelerators.
   application lifecycle are coordinated by Electron. Browser hosts provide a
   visible in-page menu bar for File, Edit, View, and Help so shared commands
   remain discoverable without native application menus.
+- Host capability negotiation selects exactly one application-menu
+  presentation. Desktop uses its native menu and the shared renderer does not
+  render the browser menu bar. Browser hosts render the in-page menu. On macOS,
+  project controls respect the native title-bar/traffic-light inset and never
+  overlap either native chrome or an in-page menu.
 - File and the Command Bar expose **New Project with Environment…**, **Project
   Environments…**, and **Extensions…** through the same semantic route/command
   model. **Project Environments…** opens or focuses its dedicated management
@@ -109,5 +114,8 @@ forwarding paths, provider messages, or plaintext.
 - Web menu actions and tab/project double-click editing open the in-page
   settings, macros, recordings, or edit-tab route instead of no-oping when
   native windows are unavailable.
+- A Desktop workspace has one native application menu and no in-page
+  File/Edit/View/Help bar. The equivalent browser workspace has the in-page
+  menu and no native-only commands.
 - Server setting changes are revisioned and reach every authorized connected
   client without exposing secret values.
