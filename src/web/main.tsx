@@ -431,6 +431,7 @@ export default function WebManagerApp() {
 		void acquireDesktopServerBootstrap(
 			window.terminayHost as DesktopHostBridge | undefined,
 			window.terminayBytes,
+			{ replaceEndpoint: desktopConnectionGeneration > 0 },
 		)
 			.then(async (bootstrap) => {
 				if (bootstrap === undefined) return;
