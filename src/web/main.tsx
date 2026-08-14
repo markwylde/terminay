@@ -6,7 +6,7 @@ import {
 	TerminayClientFacade,
 	WebSocketByteTransport,
 } from '@terminay/client-core';
-import type { ByteTransport } from '@terminay/protocol';
+import type { ByteTransport, TerminayHostContext } from '@terminay/protocol';
 import {
 	commitPairedWebConnection,
 	consumeLegacyManagerMigration,
@@ -354,6 +354,8 @@ export default function WebManagerApp() {
 	const [pairingPin, setPairingPin] = useState('');
 	const [activeConnection, setActiveConnection] =
 		useState<ActiveTerminalConnection | null>(null);
+	const [desktopHostContext, setDesktopHostContext] =
+		useState<TerminayHostContext | undefined>();
 	const recoveryWatermarks = useRef(
 		new Map<string, Readonly<{ revision: number; cursor: string }>>(),
 	);
@@ -429,6 +431,7 @@ export default function WebManagerApp() {
 		)
 			.then(async (bootstrap) => {
 				if (bootstrap === undefined) return;
+				setDesktopHostContext(bootstrap.context);
 				const clientId = createWebClientId();
 				client = new TerminayClient({
 					transport: bootstrap.transport,
@@ -488,6 +491,7 @@ export default function WebManagerApp() {
 			});
 		return () => {
 			cancelled = true;
+			setDesktopHostContext(undefined);
 			void client?.close().catch(() => undefined);
 		};
 	}, [hasDesktopServerBootstrap]);
@@ -1517,6 +1521,13 @@ export default function WebManagerApp() {
 			<ConnectedWorkspace
 				connection={activeConnection}
 				connectionProfiles={host.profiles}
+				hostContext={desktopHostContext}
+				subscribeAppCommands={
+					window.terminayHost !== undefined
+						? (window.terminayHost as unknown as DesktopHostBridge)
+								.subscribeAppCommands
+						: undefined
+				}
 				connectionRoute={{
 					profileStore: sharedConnectionProfiles,
 					canPair: true,
@@ -1789,16 +1800,22 @@ function ConnectedWorkspace({
 	connection,
 	connectionProfiles,
 	connectionRoute,
+	hostContext,
 	onBack,
+	subscribeAppCommands,
 }: {
 	connection: ActiveTerminalConnection;
 	connectionProfiles: ConnectionProfileStore;
 	connectionRoute?: Omit<SharedConnectionsRouteBodyProps, 'state'>;
+	hostContext?: TerminayHostContext;
 	onBack: () => void;
+	subscribeAppCommands?: DesktopHostBridge['subscribeAppCommands'];
 }) {
 	return (
 		<ConnectedWebRendererWorkspace
 			connectionRoute={connectionRoute ?? { profileStore: connectionProfiles }}
+			hostContext={hostContext}
+			subscribeAppCommands={subscribeAppCommands}
 			onBack={onBack}
 			terminalClientContext={connection.context}
 		/>
