@@ -861,8 +861,10 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
     ).rejects.toThrow(/different origin/)
 		markPhase('origin-isolation-confirmed')
 
-		const terminalInputControl = page.getByRole('textbox', { name: 'Terminal input' })
-		await terminalInputControl.click()
+		const terminalInputControl = page
+			.locator('.terminal-panel:visible .xterm-helper-textarea')
+			.first()
+		await terminalInputControl.focus({ timeout: 15_000 })
 		markPhase('terminal-input-focused')
     const terminalInput = `${runtimeName}-terminal-input`
 		await terminalInputControl.pressSequentially(terminalInput, { timeout: 15_000 })
