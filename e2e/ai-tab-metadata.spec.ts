@@ -64,19 +64,22 @@ async function configureAiTabMetadata(
   await settings.close()
 }
 
-async function setAiMock(page: Page, options?: { error?: string | null }) {
+async function setAiMock(page: Page, options?: {
+	error?: string | null
+	models?: readonly Readonly<{ id: string; label: string }>[]
+}) {
   if (isRealProviderRun) {
     return
   }
 
   await page.evaluate(async (nextOptions) => {
-    if (!window.terminayTest) {
-      throw new Error('terminayTest bridge is unavailable')
-    }
+		if (!window.terminayAiMetadataTest) {
+			throw new Error('AI metadata test seam is unavailable')
+		}
 
-    await window.terminayTest.setAiTabMetadataMock({
-      error: nextOptions?.error ?? null,
-      models: [
+		await window.terminayAiMetadataTest.setMock({
+			error: nextOptions?.error ?? null,
+			models: nextOptions?.models ?? [
         { id: 'codex-test-model', label: 'Codex Test Model' },
         { id: 'codex-alt-model', label: 'Codex Alt Model' },
         { id: 'claude-test-model', label: 'Claude Test Model' },
@@ -141,17 +144,8 @@ test.describe('AI tab metadata settings', () => {
     await expect(aiMetadataSelect(settingsWindow, 'Note model')).toHaveValue('codex-test-model')
   })
 
-  test('keeps provider selected when model loading fails', async ({ appHarness, mainWindow }) => {
-    await mainWindow.evaluate(async () => {
-      if (!window.terminayTest) {
-        throw new Error('terminayTest bridge is unavailable')
-      }
-
-      await window.terminayTest.setAiTabMetadataMock({
-        error: null,
-        models: [],
-      })
-    })
+	test('keeps provider selected when model loading fails', async ({ appHarness, mainWindow }) => {
+		await setAiMock(mainWindow, { models: [] })
     const settingsWindow = await appHarness.openSettingsWindow({ page: mainWindow, sectionId: 'ai-tab-metadata' })
 
     await aiMetadataSelect(settingsWindow, 'Set note with AI').selectOption('codex')

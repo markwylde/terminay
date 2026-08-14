@@ -41,6 +41,14 @@ declare global {
 				record: Record<string, unknown>;
 			}) => Promise<boolean>;
 		};
+		terminayAiMetadataTest?: {
+			setMock: (mock: {
+				error?: string | null;
+				models?: readonly Readonly<{ id: string; label: string }>[];
+				noteResult?: string;
+				titleResult?: string;
+			}) => Promise<void>;
+		};
 	}
 }
 

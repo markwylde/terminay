@@ -3512,7 +3512,7 @@ if (process.env.TERMINAY_TEST === '1') {
 				titleResult?: string;
 			},
 		) => {
-			assertTrustedAppSender(event);
+			assertBoundServerUiEvent(event);
 			aiTabMetadataService.setTestMock(mock);
 		},
 	);
