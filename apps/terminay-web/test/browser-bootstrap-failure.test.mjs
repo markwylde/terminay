@@ -21,11 +21,11 @@ test('browser bootstrap failures list every missing required capability', () => 
 					capability: 'filePicker',
 					required: { minimum: 1, maximum: 1 },
 				},
-			{
-				compatible: false,
-				component: 'application-protocol',
-				code: 'version-mismatch',
-				message: 'protocol revisions differ',
+				{
+					compatible: false,
+					component: 'application-protocol',
+					code: 'version-mismatch',
+					message: 'protocol revisions differ',
 				},
 			],
 		},
