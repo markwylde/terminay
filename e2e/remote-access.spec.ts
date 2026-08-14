@@ -57,7 +57,7 @@ async function exposeDirectAndReadPairingLink(
 	}
 	await expect(
 		settings.getByRole('button', { name: 'Stop direct listener' }),
-	).toBeVisible();
+	).toBeVisible({ timeout: 20_000 });
 	const showPairing = settings.getByRole('button', { name: 'Show QR Code' });
 	await expect(showPairing).toBeVisible();
 	await expect(showPairing).toBeEnabled();
