@@ -390,6 +390,11 @@ declare global {
 				options?: { readonly userGesture?: boolean },
 			): Promise<unknown>;
 		};
+		terminayBytes?: {
+			readonly version: 1;
+			send(frame: Uint8Array): Promise<void>;
+			subscribe(listener: (frame: Uint8Array | null) => void): () => void;
+		};
 		terminayTest?: TerminayTestApi;
 	}
 }

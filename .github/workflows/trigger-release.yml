@@ -353,6 +353,11 @@ jobs:
           spctl --assess --type execute --verbose=4 "$APP_BUNDLE"
           xcrun stapler validate "$DMG"
 
+          # Boot the exact signed application from the read-only DMG and require
+          # the real server workspace. This catches preload-format and file-URL
+          # asset failures that build, signature, and notarization checks cannot.
+          TERMINAY_PACKAGED_APP="$APP_BUNDLE" npm run test:packaged-startup-macos
+
       - name: Write release asset checksums
         env:
           ASSET_PATTERN: ${{ matrix.pattern }}

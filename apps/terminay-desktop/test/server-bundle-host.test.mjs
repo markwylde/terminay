@@ -69,13 +69,16 @@ test("normal packaged Desktop startup launches the verified bundle through the c
   assert.match(main, /new LocalServerUiSession/u);
   assert.match(main, /bindServerUiWindow\(\{/u);
   assert.match(main, /pathToFileURL\(path\.join\(launch\.assetRoot, launch\.entryPath\)\)/u);
-  assert.match(main, /serverUiPreload\.js/u);
+  assert.match(main, /serverUiPreload\.cjs/u);
   assert.doesNotMatch(main, /localServerUiSession[\s\S]{0,500}loadFile\([\s\S]{0,100}RENDERER_DIST/u);
-  assert.match(vite, /serverUiPreload:\s*path\.join/u);
+  assert.doesNotMatch(vite, /serverUiPreload:\s*path\.join/u);
   assert.match(host, /path\.relative\(allowedFileRoot, candidate\)/u);
   const preload = await readFile(new URL("../../../electron/serverUiPreload.ts", import.meta.url), "utf8");
   assert.match(preload, /exposeInMainWorld\('terminayBytes'/u);
-  assert.match(preload, /parseTerminayHostBytePacket\(message\.data, bound\.serverId\)/u);
+  assert.match(
+    preload,
+    /parseTerminayHostBytePacket\(\s*message\.data,\s*bound\.serverId,?\s*\)/u,
+  );
   assert.match(main, /server-ui-host:byte-endpoint/u);
 });
 

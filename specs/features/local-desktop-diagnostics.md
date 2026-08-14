@@ -256,6 +256,15 @@ raw authority-bearing ids are not diagnostic correlation keys.
 - A packaged Desktop launch with no visible terminal creates a readable
   versioned application log in the platform Diagnostics folder and marks a
   clean exit.
+- The macOS release gate mounts the exact signed DMG, launches its contained
+  application with an isolated user-data directory, and waits for the real
+  server workspace to become ready. A preload failure, renderer exception,
+  failed navigation, or unresolved generated asset fails the release before
+  publication.
+- Generated server UI assets resolve from both their hosted HTTP origin and
+  the packaged Desktop `file:` entry location. The dedicated sandboxed preload
+  is emitted as a self-contained Electron-executable artifact; a successful
+  Vite compilation alone is not startup evidence.
 - Main and renderer test exceptions appear once with useful application frames,
   while the existing fatal/recovery behaviour remains unchanged.
 - Renderer load failure, preload failure, crash, out-of-memory termination,
