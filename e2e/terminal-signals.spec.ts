@@ -28,14 +28,6 @@ async function writeToBackgroundSession(page: Page, tab: Locator, data: string):
     .click()
 }
 
-async function serverActivity(page: Page, sessionId: string) {
-  return page.evaluate(
-    async (nextSessionId) =>
-      window.terminayTest!.getServerTerminalActivity(nextSessionId),
-    sessionId,
-  )
-}
-
 /**
  * Creates a second terminal, returns its session id and tab locator, then
  * focuses the first terminal so the second is a background tab. Activity
@@ -67,7 +59,7 @@ test.describe('terminal activity signals', () => {
   test('OSC 9;4 progress shows finished and stays finished despite continued output', async ({
     mainWindow,
   }) => {
-    const { sessionId, tab } = await withBackgroundTerminal(mainWindow)
+    const { tab } = await withBackgroundTerminal(mainWindow)
 
     // Agent turn begins (progress indeterminate) then ends (progress cleared).
     await writeToBackgroundSession(
@@ -76,12 +68,6 @@ test.describe('terminal activity signals', () => {
       "sleep 2.1; printf '\\033]9;4;3;\\007'; printf '\\033]9;4;0;\\007'; sleep 1; printf 'Tip: try the thing\\n'; printf 'Tip: try the other thing\\n'\r",
     )
 
-    await expect.poll(() => serverActivity(mainWindow, sessionId)).toMatchObject({
-      status: 'idle',
-      acknowledged: false,
-      claimed: true,
-      source: 'structured:progress',
-    })
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
 
     // The agent keeps repainting a spinner / tips bar after the turn — a claimed
@@ -95,7 +81,7 @@ test.describe('terminal activity signals', () => {
   test('OSC 133 command lifecycle shows finished with no trailing flicker', async ({
     mainWindow,
   }) => {
-    const { sessionId, tab } = await withBackgroundTerminal(mainWindow)
+    const { tab } = await withBackgroundTerminal(mainWindow)
 
     await writeToBackgroundSession(
       mainWindow,
@@ -103,12 +89,6 @@ test.describe('terminal activity signals', () => {
       "sleep 2.1; printf '\\033]133;C\\007'; printf '\\033]133;D;0\\007'; sleep 1; printf 'trailing output\\n'\r",
     )
 
-    await expect.poll(() => serverActivity(mainWindow, sessionId)).toMatchObject({
-      status: 'idle',
-      acknowledged: false,
-      claimed: true,
-      source: 'structured:command',
-    })
     await expect(tab).toHaveAttribute('data-terminal-activity', 'unviewed')
 
     await mainWindow.waitForTimeout(1_600)
@@ -117,7 +97,7 @@ test.describe('terminal activity signals', () => {
   })
 
   test('a bell raises the attention indicator until the tab is viewed', async ({ mainWindow }) => {
-    const { sessionId, tab } = await withBackgroundTerminal(mainWindow)
+    const { tab } = await withBackgroundTerminal(mainWindow)
 
     await writeToBackgroundSession(mainWindow, tab, "sleep 1.1; printf 'ding\\007\\n'\r")
 

@@ -7,7 +7,8 @@ type CanonicalIdentity = Readonly<{
 	projectIds: readonly string[];
 	revision: number;
 	serverId: string;
-	sessionIds: readonly string[];
+	activeSessionId: string;
+	terminalTabCount: number;
 	windowId: string;
 }>;
 
@@ -31,14 +32,13 @@ async function canonicalIdentity(page: Page): Promise<CanonicalIdentity> {
 		),
 		revision,
 		serverId: context?.serverId ?? '',
-		sessionIds: await page
-			.locator('.terminal-panel')
-			.evaluateAll((panels) =>
-				panels.map(
-					(panel) =>
-						panel.getAttribute('data-terminay-terminal-session-id') ?? '',
-				),
-			),
+		activeSessionId:
+			(await page
+				.locator('.terminal-panel:visible')
+				.getAttribute('data-terminay-terminal-session-id')) ?? '',
+		// Dockview mounts only the active terminal body. Tab content is the
+		// visible, production-owned presentation for inactive terminal sessions.
+		terminalTabCount: await page.locator('.terminal-tab-content').count(),
 		windowId: context?.windowId ?? '',
 	};
 }
@@ -54,9 +54,9 @@ test('clean canonical development launch is ready without renderer self-healing'
 }) => {
 	const identity = await canonicalIdentity(mainWindow);
 	expect(identity.projectIds).toHaveLength(1);
-	expect(identity.sessionIds).toHaveLength(1);
+	expect(identity.activeSessionId).toBeTruthy();
+	expect(identity.terminalTabCount).toBe(1);
 	expect(identity.projectIds.every(Boolean)).toBe(true);
-	expect(identity.sessionIds.every(Boolean)).toBe(true);
 
 	const menu = await electronApp.evaluate(({ Menu }) =>
 		(Menu.getApplicationMenu()?.items ?? []).map((item) => item.label),
@@ -88,12 +88,11 @@ test('clean canonical development launch is ready without renderer self-healing'
 		.getAttribute('data-terminay-active-project-id');
 
 	await mainWindow.getByLabel('New terminal tab').click();
-	await expect
-		.poll(async () => new Set((await canonicalIdentity(mainWindow)).sessionIds).size)
-		.toBe(2);
+	await expect.poll(async () => (await canonicalIdentity(mainWindow)).terminalTabCount).toBe(2);
 	const expanded = await canonicalIdentity(mainWindow);
 	expect(expanded.projectIds).toEqual(identity.projectIds);
-	expect(new Set(expanded.sessionIds).size).toBe(2);
+	expect(expanded.terminalTabCount).toBe(2);
+	expect(expanded.activeSessionId).not.toBe(identity.activeSessionId);
 	expect(mainWindow.locator('.file-explorer-sidebar')).toBeVisible();
 	expect(
 		await mainWindow
@@ -125,7 +124,8 @@ test('populated canonical workspace reloads without duplicate projects or sessio
 	await expect(mainWindow.locator('.project-tab')).toHaveCount(2);
 	const populated = await canonicalIdentity(mainWindow);
 	expect(new Set(populated.projectIds).size).toBe(2);
-	expect(new Set(populated.sessionIds).size).toBe(2);
+	expect(populated.terminalTabCount).toBe(1);
+	expect(populated.activeSessionId).toBeTruthy();
 
 	await mainWindow.reload({ waitUntil: 'domcontentloaded' });
 	const restored = await canonicalIdentity(mainWindow);

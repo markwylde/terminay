@@ -134,6 +134,39 @@ test("node-pty foreground refresh awaits an in-flight host observation fence", a
   process.dispose();
 });
 
+test("node-pty foreground refresh takes a follow-up sample when output races the close fence", async () => {
+  const child = createChild();
+  let releaseFirst;
+  let calls = 0;
+  const first = new Promise((resolve) => { releaseFirst = resolve; });
+  const factory = createNodePtyFactory(
+    { spawn: () => child },
+    {
+      resolveForegroundProcess: () => {
+        calls += 1;
+        return calls === 1 ? first : Promise.resolve("sleep");
+      },
+    },
+  );
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+
+  const snapshotFence = process.refreshForegroundProcess();
+  // Output may begin a host lookup while the shell is still foreground. The
+  // later close fence must wait for the post-output process-group sample.
+  child.emitData("foreground-marker\n");
+  releaseFirst("zsh");
+  await snapshotFence;
+
+  assert.equal(calls, 2);
+  assert.deepEqual(events, [
+    { processName: "zsh", shellForeground: true },
+    { processName: "sleep", shellForeground: false },
+  ]);
+  process.dispose();
+});
+
 test("node-pty foreground observer tears down on PTY exit and never enters output callbacks", () => {
   const scheduler = createScheduler();
   const child = createChild();
