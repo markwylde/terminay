@@ -16,7 +16,6 @@ import { MacrosWindow } from '../components/MacrosWindow';
 import { RecordingsWindow } from '../components/RecordingsWindow';
 import { SettingsWindow } from '../components/SettingsWindow';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
-import { LegacyMacroSettingsProvider } from '../hooks/useMacroSettings';
 import {
 	createServerTerminalSettingsClient,
 	TerminalSettingsClientProvider,
@@ -40,7 +39,7 @@ import {
 import { defaultTerminalSettings } from '../terminalSettings';
 import type { RemoteAccessStatus } from '../types/terminay';
 import {
-	createBrowserMacroSettingsCapability,
+	createBrowserMacroSettingsClient,
 	createBrowserTerminalSettingsClient,
 } from './browserRendererHostAdapters';
 import './connectedRendererWorkspace.css';
@@ -95,13 +94,13 @@ export function ConnectedWebRendererWorkspace({
 	const auxiliaryFocusReturnRef = useRef<HTMLElement | null>(null);
 	const settingsClient = useMemo(createBrowserTerminalSettingsClient, []);
 	const applicationClient = terminalClientContext.applicationClient;
-	const macroCapability = useMemo(() => {
+	const macroSettingsClient = useMemo(() => {
 		if (applicationClient === undefined) {
 			throw new Error(
 				'Connected browser workspace requires its canonical application client',
 			);
 		}
-		return createBrowserMacroSettingsCapability(applicationClient);
+		return createBrowserMacroSettingsClient(applicationClient);
 	}, [applicationClient]);
 	const recordingsClient = useMemo(() => {
 		if (applicationClient === undefined) {
@@ -220,7 +219,7 @@ export function ConnectedWebRendererWorkspace({
 	return (
 		<div className="connected-web-renderer-workspace">
 			<TerminalSettingsClientProvider client={settingsClient}>
-				<LegacyMacroSettingsProvider capability={macroCapability}>
+				<>
 					{hasNativeMenus ? null : (
 						<ConnectedBrowserMenuBar
 							onBack={onBack}
@@ -241,7 +240,7 @@ export function ConnectedWebRendererWorkspace({
 						})}
 						terminalClientContext={terminalClientContext}
 					/>
-				</LegacyMacroSettingsProvider>
+				</>
 			</TerminalSettingsClientProvider>
 			{auxiliaryRoute === null ? null : (
 				<ConnectedBrowserAuxiliaryDialog
@@ -265,7 +264,7 @@ export function ConnectedWebRendererWorkspace({
 						/>
 					) : (
 						<TerminalSettingsClientProvider client={settingsClient}>
-							<LegacyMacroSettingsProvider capability={macroCapability}>
+							<>
 								{auxiliaryRoute.kind === 'settings' ? (
 									<SettingsWindow
 										applicationClient={applicationClient}
@@ -280,11 +279,11 @@ export function ConnectedWebRendererWorkspace({
 										}
 									/>
 								) : auxiliaryRoute.kind === 'macros' ? (
-									<MacrosWindow macroSettingsClient={macroCapability} />
+									<MacrosWindow macroSettingsClient={macroSettingsClient} />
 								) : (
 									<RecordingsWindow client={recordingsClient} />
 								)}
-							</LegacyMacroSettingsProvider>
+							</>
 						</TerminalSettingsClientProvider>
 					)}
 				</ConnectedBrowserAuxiliaryDialog>
