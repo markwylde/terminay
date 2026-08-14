@@ -44,7 +44,7 @@ import { shouldReturnFocusToTerminalFromNote } from './terminalNoteInteraction'
 import { isTerminalPresentationOwnershipError, ServerTerminalInputQueue } from './terminalPanelInputQueue'
 import { isTerminalRetryActionable, TerminalPanelBindingFence, type TerminalPanelBinding } from './terminalPanelBindingFence'
 import { pasteTerminalClipboard } from './terminalPasteInteraction'
-import { publishTerminalPresentationMetadata } from './terminalPresentationHost'
+import { subscribeTerminalZoom } from '../host/nativeEvents'
 import { buildTerminalPresentationOptions } from './terminalPresentationInteraction'
 import { getTerminalScrollbackAction } from './terminalScrollbackInteraction'
 import { isTerminalSearchShortcut } from './terminalSearchInteraction'
@@ -185,13 +185,6 @@ const searchOptions = {
 
 function applyTerminalSettings(terminal: Terminal, settings: TerminalSettings, tabColor?: string, zoomLevel = 0) {
   Object.assign(terminal.options, buildTerminalPresentationOptions(settings, tabColor, zoomLevel))
-}
-
-function updateRemoteViewportMetadata(sessionId: string, root: HTMLElement) {
-  publishTerminalPresentationMetadata(sessionId, {
-    viewportHeight: Math.max(0, Math.round(root.clientHeight)),
-    viewportWidth: Math.max(0, Math.round(root.clientWidth)),
-  })
 }
 
 function updateTerminalGridMetadata(root: HTMLElement, cols: number, rows: number) {
@@ -747,7 +740,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 
       const nextRootSize = getTerminalRootSize(root)
       if (!force && nextRootSize.width === lastFitSize.width && nextRootSize.height === lastFitSize.height) {
-        updateRemoteViewportMetadata(sessionId, root)
         return
       }
 
@@ -763,7 +755,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
             currentOverride.rows === remoteSizeOverride.rows
           )
         })
-        updateRemoteViewportMetadata(sessionId, root)
         return
       }
 
@@ -774,7 +765,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
         lastSentSize = { cols: terminal.cols, rows: terminal.rows }
         resizePanel(terminal.cols, terminal.rows)
       }
-      updateRemoteViewportMetadata(sessionId, root)
     }
 
     const fitAndResize = (force = false) => {
@@ -978,7 +968,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
                         const currentOverride = remoteSizeOverrideRef.current
                         return terminalRef.current === terminal && currentOverride?.cols === event.cols && currentOverride.rows === event.rows
                       })
-                      updateRemoteViewportMetadata(sessionId, root)
                     }
                   } else if (event.type === 'presentation') {
                     applyPresentation(event)
@@ -1144,52 +1133,10 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       setServerTerminalError('The server terminal client is unavailable.')
     }
 
-    const zoomDisposer = window.terminayTerminalPresentationHost?.subscribeZoom((message) => {
-      zoomLevelRef.current = message.zoomLevel
-      const baseFontSize = settingsRef.current.fontSize ?? 13
-      terminal.options.fontSize = resolveTerminalZoomedFontSize(baseFontSize, message.zoomLevel)
-      fitAndResize(true)
-    })
-
-    const remoteSizeOverrideDisposer = window.terminayTerminalPresentationHost?.subscribeRemoteSizeOverride(
-      (message) => {
-        if (message.id !== sessionId) {
-          return
-        }
-
-        if (!message.active) {
-          remoteSizeOverrideRef.current = null
-          setIsRemoteSizeOverrideActive(false)
-          fitAndResize(true)
-          return
-        }
-
-        // Server presentation ownership is authoritative. A delayed legacy
-        // host notification from the former controller must never put the new
-        // controller back onto an observer-owned grid.
-        if (terminalPresentationControllerRef.current) {
-          return
-        }
-
-        const cols = Math.max(2, Math.floor(message.cols))
-        const rows = Math.max(1, Math.floor(message.rows))
-        remoteSizeOverrideRef.current = { cols, rows }
-        setIsRemoteSizeOverrideActive(true)
-        applyRemoteTerminalSize(root, terminal, cols, rows, () => {
-          const currentOverride = remoteSizeOverrideRef.current
-          return terminalRef.current === terminal && currentOverride?.cols === cols && currentOverride.rows === rows
-        })
-        updateRemoteViewportMetadata(sessionId, root)
-      },
-    )
-
-    void window.terminayTerminalPresentationHost?.getZoom().then((zoomLevel) => {
-      if (terminalRef.current !== terminal) {
-        return
-      }
-
-      terminal.options.fontSize = resolveTerminalZoomedFontSize(settingsRef.current.fontSize, zoomLevel)
+    const zoomDisposer = subscribeTerminalZoom((zoomLevel) => {
       zoomLevelRef.current = zoomLevel
+      const baseFontSize = settingsRef.current.fontSize ?? 13
+      terminal.options.fontSize = resolveTerminalZoomedFontSize(baseFontSize, zoomLevel)
       fitAndResize(true)
     })
 
@@ -1508,7 +1455,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       if (attachmentToDetach !== null) void attachmentToDetach.detach().catch(() => {})
       contextReaderDisposer?.()
       zoomDisposer?.()
-      remoteSizeOverrideDisposer?.()
       screenElement?.removeEventListener('mousedown', preventModifierLinkSelection)
       searchAddonRef.current = null
       fitAddonRef.current = null
@@ -1567,7 +1513,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
           currentOverride.rows === remoteSizeOverride.rows
         )
       })
-      updateRemoteViewportMetadata(props.params.sessionId, root)
       return
     }
 
@@ -1590,7 +1535,6 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
       if (useServerTerminal) {
         terminalPanelResizeRef.current(terminal.cols, terminal.rows)
       }
-      updateRemoteViewportMetadata(props.params.sessionId, root)
     })
     return () => window.cancelAnimationFrame(refreshFrame)
   }, [props.params.color, props.params.sessionId, resolvedTerminalClient, settings])

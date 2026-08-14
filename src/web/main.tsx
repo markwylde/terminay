@@ -1528,7 +1528,11 @@ export default function WebManagerApp() {
 						? (listener: (command: AppCommand) => Promise<void> | void) =>
 								(
 									window.terminayHost as unknown as DesktopHostBridge
-								).subscribeEvent((event) => listener(event.event.command))
+								).subscribeEvent((event) => {
+									if (event.event.type === 'menu.command') {
+										return listener(event.event.command)
+									}
+								})
 						: undefined
 				}
 				connectionRoute={{

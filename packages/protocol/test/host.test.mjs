@@ -88,6 +88,20 @@ test("host menu events are closed and bound to their negotiated context", () => 
     () => parseTerminayHostEvent({ ...event, event: { type: "menu.command", command: "open-devtools" } }, context),
     /menu command is invalid/u,
   );
+  const zoom = parseTerminayHostEvent({
+    ...event,
+    event: { type: "terminal.zoom", zoomLevel: 3 },
+  }, context);
+  assert.deepEqual(zoom.event, { type: "terminal.zoom", zoomLevel: 3 });
+  for (const zoomLevel of [-6, 1.5, 11, "3"]) {
+    assert.throws(
+      () => parseTerminayHostEvent({
+        ...event,
+        event: { type: "terminal.zoom", zoomLevel },
+      }, context),
+      /zoom level is invalid/u,
+    );
+  }
 });
 
 test("host compatibility separates required failures from optional degradation", () => {
