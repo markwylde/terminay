@@ -6,6 +6,7 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('canonical server UI host binds validated context and sender provenance', async () => {
 	const host = await read('electron/serverUiHost.ts');
+	const main = await read('electron/main.ts');
 	assert.match(host, /parseTerminayHostContext\(options\.context\)/u);
 	assert.match(host, /bindingForEvent\(event\)\.context/u);
 	assert.match(host, /senderFrame !== event\.sender\.mainFrame/u);
@@ -13,6 +14,15 @@ test('canonical server UI host binds validated context and sender provenance', a
 	assert.match(host, /parseTerminayHostActionRequest\(value, binding\.context\)/u);
 	assert.match(host, /requiredTerminayHostCapability\(action\.action\)/u);
 	assert.match(host, /Host capability is unavailable/u);
+	assert.match(host, /export function assertBoundServerUiEvent/u);
+	assert.match(
+		main,
+		/server-ui-host:subscribe-events[\s\S]{0,160}assertBoundServerUiEvent\(event\)/u,
+	);
+	assert.doesNotMatch(
+		main,
+		/server-ui-host:subscribe-events[\s\S]{0,160}assertTrustedAppSender\(event\)/u,
+	);
 	assert.doesNotMatch(host, /DesktopHostBridgeRouter|validateDesktopHostAction/u);
 });
 
@@ -129,5 +139,4 @@ test('binding lifecycle enumerates failures and releases active authority', asyn
 	assert.match(host, /bindings\.delete\(webContentsId\)/u);
 	assert.match(host, /targetSession\.off/u);
 });
-
 

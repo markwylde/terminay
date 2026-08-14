@@ -13,6 +13,7 @@ import {
 	type BrowserWindowConstructorOptions,
 	type DownloadItem,
 	type Event,
+	type IpcMainEvent,
 	type IpcMainInvokeEvent,
 	ipcMain,
 	type WebContents,
@@ -84,7 +85,9 @@ function parseOrigin(value: string, name: string): string {
 	return url.origin;
 }
 
-function bindingForEvent(event: IpcMainInvokeEvent): ServerUiBinding {
+function bindingForEvent(
+	event: IpcMainEvent | IpcMainInvokeEvent,
+): ServerUiBinding {
 	const binding = bindings.get(event.sender.id);
 	if (!binding || binding.window.isDestroyed()) {
 		throw new Error('This server UI is not bound to a desktop profile.');
@@ -103,6 +106,13 @@ function bindingForEvent(event: IpcMainInvokeEvent): ServerUiBinding {
 	}
 
 	return binding;
+}
+
+/** Validate one-way host IPC against the same closed document binding used by
+ * host action invocations. Server UI documents deliberately have a different
+ * origin from the application shell. */
+export function assertBoundServerUiEvent(event: IpcMainEvent): void {
+	bindingForEvent(event);
 }
 
 function installIpcHandlers(): void {
