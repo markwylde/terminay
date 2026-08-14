@@ -668,13 +668,18 @@ function getRunningTerminalCountForWindow(webContentsId: number): number {
 	if (projectIds === undefined) return 0;
 	const ownedProjects = new Set(projectIds);
 	return authority.list().filter(
-		(session) =>
-			ownedProjects.has(session.projectId) &&
-			authority.activity.get({
+		(session) => {
+			if (!ownedProjects.has(session.projectId)) return false;
+			const activity = authority.activity.get({
 				serverId: session.serverId,
 				projectId: session.projectId,
 				sessionId: session.id,
-			})?.foregroundBusy === true,
+			});
+			// Foreground-process polling is asynchronous.  The canonical reducer
+			// marks the PTY working immediately on accepted/echoed input, which is
+			// the safe close boundary until that poll confirms the child process.
+			return activity?.foregroundBusy === true || activity?.status === 'working';
+		},
 	).length;
 }
 
