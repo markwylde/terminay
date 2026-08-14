@@ -48,7 +48,7 @@ export function bindLocalServerUiDocumentEndpoint(options: {
 	const lifecycle = navigationLifecycle(sender, options.diagnostic);
 	let attachedForDocument = false;
 	const attach = (replace = false) => {
-		if (sender.isDestroyed()) return;
+		if (lifecycle.destroyed()) return;
 		if (attachedForDocument && !replace) return;
 		attachedForDocument = true;
 		const document = lifecycle.replace();
@@ -93,7 +93,7 @@ export function bindLocalServerUiDocumentEndpoint(options: {
 	return () => {
 		ipcMain.off(REPLACE_BYTE_ENDPOINT, onReplace);
 		ipcMain.off(DOCUMENT_READY, onDocumentReady);
-		if (!sender.isDestroyed())
+		if (!lifecycle.destroyed())
 			sender.off('did-start-navigation', onDocumentNavigation);
 		unbind();
 	};
@@ -148,7 +148,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	const attach = (replace = false) => {
 		if (
 			connectionClosed ||
-			sender.isDestroyed() ||
+			lifecycle.destroyed() ||
 			!documentReady ||
 			!transportReady
 		)
@@ -233,7 +233,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 		void Promise.resolve()
 			.then(() => activeTransport.open())
 			.then(async () => {
-				if (connectionClosed || sender.isDestroyed()) return;
+				if (connectionClosed || lifecycle.destroyed()) return;
 				if (transport !== activeTransport) return;
 				transportReady = true;
 				attach();
@@ -299,7 +299,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	return () => {
 		ipcMain.off(REPLACE_BYTE_ENDPOINT, onReplace);
 		ipcMain.off(DOCUMENT_READY, onDocumentReady);
-		if (!sender.isDestroyed())
+		if (!lifecycle.destroyed())
 			sender.off('did-start-loading', onDocumentLoadStart);
 		unbind();
 		closeConnection();
@@ -312,6 +312,8 @@ function navigationLifecycle(sender: WebContents, diagnostic?: Diagnostic) {
 	);
 	let closed = false;
 	let attachListener: (() => void) | undefined;
+	let destroyedListener: (() => void) | undefined;
+	let senderDestroyed = false;
 	let attachesOnDidFinishLoad = true;
 	let releasesOnDidStartNavigation = true;
 	const onNavigation = (
@@ -347,21 +349,34 @@ function navigationLifecycle(sender: WebContents, diagnostic?: Diagnostic) {
 				sender.on('did-start-navigation', onNavigation);
 			sender.on('render-process-gone', onGone);
 			if (attachOnDidFinishLoad) sender.on('did-finish-load', attach);
-			sender.once('destroyed', onDestroyed ?? (() => owner.close()));
+			// Capture the callback before subscribing. Once Electron emits
+			// `destroyed`, the WebContents object is no longer safe to query or
+			// mutate, so teardown relies only on this retained listener state.
+			destroyedListener = () => {
+				senderDestroyed = true;
+				(onDestroyed ?? (() => owner.close()))();
+			};
+			sender.once('destroyed', destroyedListener);
 			return () => owner.close();
+		},
+		destroyed() {
+			return senderDestroyed;
 		},
 		close() {
 			if (closed) return;
 			closed = true;
 			current.release('window-close');
-			if (!sender.isDestroyed()) {
+			if (!senderDestroyed) {
 				if (releasesOnDidStartNavigation)
 					sender.off('did-start-navigation', onNavigation);
 				sender.off('render-process-gone', onGone);
 				if (attachesOnDidFinishLoad && attachListener !== undefined)
 					sender.off('did-finish-load', attachListener);
+				if (destroyedListener !== undefined)
+					sender.off('destroyed', destroyedListener);
 			}
 			attachListener = undefined;
+			destroyedListener = undefined;
 		},
 	};
 	return owner;

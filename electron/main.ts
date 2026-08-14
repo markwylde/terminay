@@ -4078,6 +4078,7 @@ app.on('browser-window-created', (_event, window) => {
 });
 
 app.on('web-contents-created', (_event, contents) => {
+	const webContentsId = contents.id;
 	bindWebContentsDiagnostics({
 		app,
 		contents,
@@ -4086,11 +4087,11 @@ app.on('web-contents-created', (_event, contents) => {
 	bindAppShortcuts(contents);
 
 	contents.once('destroyed', () => {
-		if (contents.id === projectDragSourceWebContentsId) {
+		if (webContentsId === projectDragSourceWebContentsId) {
 			stopProjectDragTracking();
 		}
-		detachSessionsForWebContents(contents.id);
-		fileWatchService.disposeSubscriber(contents.id);
+		detachSessionsForWebContents(webContentsId);
+		fileWatchService.disposeSubscriber(webContentsId);
 	});
 });
 
