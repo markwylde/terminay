@@ -88,6 +88,31 @@ test("node-pty refreshes foreground activity when output advances while timer de
   process.dispose();
 });
 
+test("node-pty prefers host foreground process authority over a stale process title", async () => {
+  const scheduler = createScheduler();
+  const child = createChild();
+  child.process = "zsh";
+  const factory = createNodePtyFactory(
+    { spawn: () => child },
+    {
+      foregroundPolling: scheduler,
+      resolveForegroundProcess: async (pid) => {
+        assert.equal(pid, 41);
+        return "sleep";
+      },
+    },
+  );
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+
+  scheduler.tick();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(events, [{ processName: "sleep", shellForeground: false }]);
+  process.dispose();
+});
+
 test("node-pty foreground observer tears down on PTY exit and never enters output callbacks", () => {
   const scheduler = createScheduler();
   const child = createChild();

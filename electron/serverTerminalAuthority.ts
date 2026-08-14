@@ -118,7 +118,7 @@ import {
 	type AgentStatusIpcAuthority,
 	createServerAgentStatusIpcAdapter,
 } from './agentStatus/serverAdapter';
-import { resolveTerminalProcessCwd } from './processCwd';
+import { resolveTerminalForegroundProcess, resolveTerminalProcessCwd } from './processCwd';
 
 const require = createRequire(import.meta.url);
 type MainServerPortDiagnostics = {
@@ -777,7 +777,10 @@ export class ServerTerminalAuthority {
 						// native dependency from becoming part of host-only compositions.
 						ptyFactory: createNodePtyFactory(
 							require('node-pty') as NodePtyModule,
-							{ resolveCwd: resolveTerminalProcessCwd },
+							{
+								resolveCwd: resolveTerminalProcessCwd,
+								resolveForegroundProcess: resolveTerminalForegroundProcess,
+							},
 						),
 						terminalOptions: {
 							maxReplayBytes: this.maxReplayBytes,

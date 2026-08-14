@@ -10,6 +10,23 @@ export async function resolveTerminalProcessCwd(rootPid: number, signal?: AbortS
 		?? (deepestPid === rootPid ? null : await resolveProcessCwd(rootPid, signal))
 }
 
+/** Resolve the process group currently owning the PTY. node-pty's `process`
+ * getter is only a best-effort title and is not reliable in packaged Electron
+ * on every Unix host; TPGID is the kernel-owned foreground authority. */
+export async function resolveTerminalForegroundProcess(rootPid: number, signal?: AbortSignal): Promise<string | null> {
+	if (!Number.isSafeInteger(rootPid) || rootPid <= 0 || process.platform === 'win32') return null
+	try {
+		const { stdout: groupOutput } = await execFileAsync('ps', ['-o', 'tpgid=', '-p', String(rootPid)], { signal })
+		const groupPid = Number.parseInt(groupOutput.trim(), 10)
+		if (!Number.isSafeInteger(groupPid) || groupPid <= 0) return null
+		const { stdout } = await execFileAsync('ps', ['-o', 'comm=', '-p', String(groupPid)], { signal })
+		const command = stdout.trim().split(/[\\/]/u).pop()?.trim()
+		return command || null
+	} catch {
+		return null
+	}
+}
+
 async function resolveDeepestProcessPid(rootPid: number, signal?: AbortSignal): Promise<number> {
 	let current = rootPid
 	for (let depth = 0; depth < 32; depth += 1) {
