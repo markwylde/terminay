@@ -17,7 +17,10 @@ type McpControlEnvironment = Readonly<{
 	token: string;
 }>;
 
-async function projectSessionIds(page: Page, projectId: string): Promise<string[]> {
+async function projectSessionIds(
+	page: Page,
+	projectId: string,
+): Promise<string[]> {
 	return page
 		.locator(
 			`.project-workspace[data-terminay-project-id="${projectId}"] .terminal-panel`,
@@ -34,12 +37,14 @@ async function connectMcp(
 	sessionId: string,
 	projectId: string,
 ): Promise<McpConnection> {
-	const control = await page.evaluate(async (terminalSessionId) => {
+	const control = (await page.evaluate(async (terminalSessionId) => {
 		if (!window.terminayMcpControlTest) {
 			throw new Error('The canonical MCP test seam is unavailable.');
 		}
-		return window.terminayMcpControlTest.getControlEnvironment(terminalSessionId);
-	}, sessionId) as McpControlEnvironment;
+		return window.terminayMcpControlTest.getControlEnvironment(
+			terminalSessionId,
+		);
+	}, sessionId)) as McpControlEnvironment;
 	if (control.sessionId !== sessionId) {
 		throw new Error(
 			`Canonical MCP scope resolved ${control.sessionId} instead of ${sessionId}.`,
@@ -96,7 +101,8 @@ test('MCP callers see and control only terminals in their own project', async ({
 	const projectAId = await mainWindow
 		.locator('.app-shell')
 		.getAttribute('data-terminay-active-project-id');
-	if (projectAId === null) throw new Error('Project A identity is unavailable.');
+	if (projectAId === null)
+		throw new Error('Project A identity is unavailable.');
 	const projectASessions = await projectSessionIds(mainWindow, projectAId);
 	expect(projectASessions).toHaveLength(1);
 
@@ -107,9 +113,13 @@ test('MCP callers see and control only terminals in their own project', async ({
 	const activeProjectId = await mainWindow
 		.locator('.project-tab--active')
 		.getAttribute('data-project-id');
-	await expect.poll(async () =>
-		mainWindow.locator('.app-shell').getAttribute('data-terminay-active-project-id'),
-	).toBe(activeProjectId);
+	await expect
+		.poll(async () =>
+			mainWindow
+				.locator('.app-shell')
+				.getAttribute('data-terminay-active-project-id'),
+		)
+		.toBe(activeProjectId);
 	let projectBSession: string | undefined;
 	await expect
 		.poll(async () => {
@@ -122,10 +132,12 @@ test('MCP callers see and control only terminals in their own project', async ({
 			return false;
 		})
 		.toBe(true);
-	if (projectBSession === undefined) throw new Error('Project B has no canonical terminal session.');
+	if (projectBSession === undefined)
+		throw new Error('Project B has no canonical terminal session.');
 	const projectBSessions = [projectBSession];
 
-	if (activeProjectId === null) throw new Error('Project B identity is unavailable.');
+	if (activeProjectId === null)
+		throw new Error('Project B identity is unavailable.');
 	let projectA: McpConnection | undefined = await connectMcp(
 		mainWindow,
 		projectASessions[0],
@@ -159,7 +171,8 @@ test('MCP callers see and control only terminals in their own project', async ({
 			name: 'open_terminal',
 			arguments: { name: 'MCP Project A' },
 		});
-		expect(openedInA.isError).toBe(false);
+		// The MCP SDK omits isError for a successful tool result.
+		expect(openedInA.isError).not.toBe(true);
 
 		await mainWindow
 			.locator('.project-tab')
