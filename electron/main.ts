@@ -2521,6 +2521,19 @@ async function presentCanonicalAuxiliaryRoute(
 
 function waitForCanonicalWorkspaceDocument(window: BrowserWindow): Promise<void> {
 	return new Promise((resolve, reject) => {
+		// createWindow starts its canonical launch immediately.  A cached local
+		// bundle can finish loading before the caller has installed this waiter;
+		// treating that already-loaded document as pending made every such popout
+		// time out and roll its authoritative workspace move back.
+		const currentUrl = window.webContents.getURL();
+		if (
+			currentUrl.length > 0 &&
+			currentUrl !== 'about:blank' &&
+			!window.webContents.isLoadingMainFrame()
+		) {
+			resolve();
+			return;
+		}
 		const timeout = setTimeout(() => {
 			cleanup();
 			reject(new Error('Timed out loading the canonical workspace window.'));

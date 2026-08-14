@@ -403,7 +403,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 	const remoteSizeOverrideRef = useRef<{ cols: number; rows: number } | null>(
 		null,
 	);
-	const { settings } = useTerminalSettings();
+	const { settings, settingsClient } = useTerminalSettings();
 	const terminalClientContext = useContext(TerminalPanelClientContext);
 	const connectionActionsRef = useRef(terminalClientContext);
 	connectionActionsRef.current = terminalClientContext;
@@ -994,27 +994,33 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		fitAndResize(true);
 
 		const renderTerminalExit = (exitCode: number, signal: number | null) => {
-			window.dispatchEvent(
-				new CustomEvent(TERMINAL_PANEL_EXIT_EVENT, {
-					detail: {
-						autoCloseOnSuccessfulExit:
-							settingsRef.current.autoCloseTerminalOnExitZero,
+			// A Settings auxiliary window has its own protocol connection.  Its
+			// settings.changed event can arrive after this panel receives a fast
+			// terminal exit, so settle the server-owned value before deciding whether
+			// to persistently close the panel.
+			void settingsClient
+				.get<TerminalSettings>()
+				.catch(() => settingsRef.current)
+				.then((currentSettings) => {
+					const autoCloseOnSuccessfulExit =
+						currentSettings.autoCloseTerminalOnExitZero;
+					window.dispatchEvent(
+						new CustomEvent(TERMINAL_PANEL_EXIT_EVENT, {
+							detail: {
+								autoCloseOnSuccessfulExit,
+								exitCode,
+								sessionId,
+								signal,
+							},
+						}),
+					);
+					const notice = formatTerminalExitNotice({
+						autoCloseOnSuccessfulExit,
 						exitCode,
-						sessionId,
 						signal,
-					},
-				}),
-			);
-			const notice = formatTerminalExitNotice({
-				autoCloseOnSuccessfulExit:
-					settingsRef.current.autoCloseTerminalOnExitZero,
-				exitCode,
-				signal,
-			});
-			if (notice === null) {
-				return;
-			}
-			terminal.write(notice);
+					});
+					if (notice !== null) terminal.write(notice);
+				});
 		};
 
 		const renderTerminalOutput = (
@@ -1902,6 +1908,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		props.params.terminalClientMode,
 		props.params.terminalPanelClient,
 		resolvedTerminalClient,
+		settingsClient,
 	]);
 
 	useEffect(() => {
