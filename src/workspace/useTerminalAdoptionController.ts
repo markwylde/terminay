@@ -5,6 +5,7 @@ import {
 	type SetStateAction,
 	useCallback,
 } from 'react';
+import { recordBootstrapDiagnostic } from '../shared/rendererDiagnostics';
 import type {
 	TerminalContextReader,
 	TerminalPanelParams,
@@ -85,7 +86,7 @@ export function useTerminalAdoptionController({
 }: UseTerminalAdoptionControllerOptions) {
 	const acceptMovedTerminal = useCallback(
 		(movedTerminal: MovedTerminalTab) => {
-			window.terminayBootstrapDiagnostic?.record('app.workspace.adopt.begin');
+			recordBootstrapDiagnostic('app.workspace.adopt.begin');
 			const api = apiRef.current;
 			if (
 				[...panelSessionsRef.current.values()].includes(
@@ -107,7 +108,7 @@ export function useTerminalAdoptionController({
 				: (movedTerminal.color ?? project.color);
 			const macroRuns = movedTerminal.macroRuns ?? [];
 
-			window.terminayBootstrapDiagnostic?.record(
+			recordBootstrapDiagnostic(
 				'app.workspace.adopt.before-add-panel',
 			);
 			const panel = api.addPanel<TerminalPanelParams>({
@@ -167,7 +168,7 @@ export function useTerminalAdoptionController({
 				tabComponent: 'terminalTab',
 				title: movedTerminal.title,
 			});
-			window.terminayBootstrapDiagnostic?.record(
+			recordBootstrapDiagnostic(
 				'app.workspace.adopt.after-add-panel',
 			);
 
@@ -186,7 +187,7 @@ export function useTerminalAdoptionController({
 				title: movedTerminal.title,
 			});
 			hydrateRecording(movedTerminal.sessionId);
-			window.terminayBootstrapDiagnostic?.record(
+			recordBootstrapDiagnostic(
 				'app.workspace.adopt.before-activate',
 			);
 			panel.api.setActive();
@@ -194,7 +195,7 @@ export function useTerminalAdoptionController({
 			onError(null);
 			syncPanelFocusState();
 			window.requestAnimationFrame(publishActivityOverview);
-			window.terminayBootstrapDiagnostic?.record('app.workspace.adopt.end');
+			recordBootstrapDiagnostic('app.workspace.adopt.end');
 			return true;
 		},
 		[

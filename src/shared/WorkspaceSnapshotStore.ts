@@ -4,6 +4,7 @@ import {
 	parseServerWorkspaceDelta,
 	type ServerWorkspaceSnapshot,
 } from './serverWorkspaceReconciliation'
+import { recordBootstrapDiagnostic } from './rendererDiagnostics'
 
 export type WorkspaceSnapshotListener = (snapshot: ServerWorkspaceSnapshot) => void
 export type WorkspaceReconciliationStatus = Readonly<{
@@ -289,13 +290,6 @@ export class WorkspaceSnapshotStore {
 
 function asError(error: unknown): Error {
 	return error instanceof Error ? error : new Error('Workspace reconciliation failed.', { cause: error })
-}
-
-function recordBootstrapDiagnostic(phase: string, count?: number): void {
-	const diagnostic = (window as Window & {
-		terminayBootstrapDiagnostic?: { record?: (phase: string, count?: number) => void }
-	}).terminayBootstrapDiagnostic?.record
-	diagnostic?.(phase, count)
 }
 
 function isWorkspaceChange(value: unknown, serverId: string): value is { readonly serverId: string; readonly revision: number; readonly cursor: string } {
