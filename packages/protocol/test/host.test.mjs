@@ -316,6 +316,35 @@ test('semantic host actions are closed and exact-binding/gesture checked', () =>
 	);
 });
 
+test('native menu accelerator updates are bounded and immutable', () => {
+	const action = parseTerminayHostAction({
+		type: 'menu.accelerators.update',
+		accelerators: [
+			{ command: 'new-terminal', accelerator: 'CmdOrCtrl+Y' },
+			{ command: 'open-settings', accelerator: '' },
+		],
+	});
+	assert.deepEqual(action, {
+		type: 'menu.accelerators.update',
+		accelerators: [
+			{ command: 'new-terminal', accelerator: 'CmdOrCtrl+Y' },
+			{ command: 'open-settings', accelerator: '' },
+		],
+	});
+	assert.equal(Object.isFrozen(action.accelerators), true);
+	assert.throws(
+		() =>
+			parseTerminayHostAction({
+				type: 'menu.accelerators.update',
+				accelerators: [
+					{ command: 'new-terminal', accelerator: 'CmdOrCtrl+Y' },
+					{ command: 'new-terminal', accelerator: 'CmdOrCtrl+T' },
+				],
+			}),
+		/unique/u,
+	);
+});
+
 test('host compatibility rejects ambiguous and unknown capability requirements', () => {
 	assert.throws(
 		() =>
