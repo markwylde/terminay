@@ -3,38 +3,16 @@ import {
 	parseTerminayHostActionRequest,
 	parseTerminayHostBytePacket,
 	parseTerminayHostContext,
+	parseTerminayHostEvent,
 	type TerminayHostActionRequest,
 	type TerminayHostContext,
+	type TerminayHostMenuCommand,
 } from '@terminay/protocol';
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppCommand } from '../src/types/terminay';
 import type { ServerUiHostBridge } from './serverUiHostContract';
 
 const GET_CONTEXT = 'server-ui-host:get-context';
 const REQUEST_ACTION = 'server-ui-host:request-action';
-const APP_COMMANDS = new Set<AppCommand>([
-	'clear-terminal',
-	'close-active',
-	'new-project',
-	'new-terminal',
-	'open-command-bar',
-	'open-extensions',
-	'open-project-environments',
-	'open-recordings',
-	'open-settings',
-	'open-macros',
-	'popout-active',
-	'save-active',
-	'set-project-root-folder-to-working-directory',
-	'split-horizontal',
-	'split-vertical',
-	'start-dictation',
-	'toggle-file-explorer-sidebar',
-]);
-
-function isAppCommand(value: unknown): value is AppCommand {
-	return typeof value === 'string' && APP_COMMANDS.has(value as AppCommand);
-}
 let contextPromise: Promise<TerminayHostContext> | undefined;
 const context = () =>
 	(contextPromise ??= ipcRenderer
@@ -50,14 +28,29 @@ const bridge: ServerUiHostBridge = Object.freeze({
 			parseTerminayHostActionRequest(request, bound),
 		);
 	},
-	subscribeAppCommands: (listener) => {
+	subscribeEvent: (listener) => {
 		if (typeof listener !== 'function')
 			throw new TypeError('app command listener is invalid');
 		const wrapper = (
 			_event: Electron.IpcRendererEvent,
-			command: unknown,
+			command: TerminayHostMenuCommand,
 		) => {
-			if (isAppCommand(command)) void Promise.resolve(listener(command));
+			void context().then((bound) =>
+				listener(
+					parseTerminayHostEvent(
+						{
+							bridgeVersion: 1,
+							event: { command, type: 'menu.command' },
+							profileId: bound.profileId,
+							schemaVersion: 1,
+							serverId: bound.serverId,
+							sourceId: bound.sourceId,
+							windowId: bound.windowId,
+						},
+						bound,
+					),
+				),
+			);
 		};
 		ipcRenderer.on('app:command', wrapper);
 		return () => ipcRenderer.off('app:command', wrapper);

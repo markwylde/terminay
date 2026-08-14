@@ -19,6 +19,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
+import type { AppCommand } from '../types/terminay';
 import {
 	type RendererConnectionAttempt,
 	RendererConnectionController,
@@ -1524,8 +1525,10 @@ export default function WebManagerApp() {
 				hostContext={desktopHostContext}
 				subscribeAppCommands={
 					window.terminayHost !== undefined
-						? (window.terminayHost as unknown as DesktopHostBridge)
-								.subscribeAppCommands
+						? (listener: (command: AppCommand) => Promise<void> | void) =>
+								(
+									window.terminayHost as unknown as DesktopHostBridge
+								).subscribeEvent((event) => listener(event.event.command))
 						: undefined
 				}
 				connectionRoute={{
@@ -1809,7 +1812,9 @@ function ConnectedWorkspace({
 	connectionRoute?: Omit<SharedConnectionsRouteBodyProps, 'state'>;
 	hostContext?: TerminayHostContext;
 	onBack: () => void;
-	subscribeAppCommands?: DesktopHostBridge['subscribeAppCommands'];
+	subscribeAppCommands?: (
+		listener: (command: AppCommand) => Promise<void> | void,
+	) => () => void;
 }) {
 	return (
 		<ConnectedWebRendererWorkspace
