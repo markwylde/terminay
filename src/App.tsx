@@ -60,8 +60,8 @@ import {
 	type AgentsSidebarItem,
 } from './components/AgentsSidebar';
 import { ContextMenu, type ContextMenuItem } from './components/ContextMenu';
-import type { FilePanelInstanceParams } from './components/file-viewer';
-import { FilePanel, FileTab } from './components/file-viewer';
+import type { FilePanelInstanceParams, FilePanelSaveHandler } from './components/file-viewer';
+import { FilePanel, FilePanelSaveRegistryProvider, FileTab } from './components/file-viewer';
 import type { FolderPanelInstanceParams } from './components/folder-viewer';
 import { FolderPanel, FolderTab } from './components/folder-viewer';
 import { WorktreesPanel } from './components/git-panel/WorktreesPanel';
@@ -1300,6 +1300,15 @@ const ProjectWorkspace = forwardRef<
 		>(() => {});
 		const focusedSessionIdRef = useRef<string | null>(null);
 		const filePathPanelMapRef = useRef<Map<string, string>>(new Map());
+		const filePanelSaveHandlersRef = useRef<Map<string, FilePanelSaveHandler>>(new Map());
+		const filePanelSaveRegistry = useMemo(() => ({
+			register: (panelId: string, handler: FilePanelSaveHandler) => {
+				filePanelSaveHandlersRef.current.set(panelId, handler);
+				return () => {
+					if (filePanelSaveHandlersRef.current.get(panelId) === handler) filePanelSaveHandlersRef.current.delete(panelId);
+				};
+			},
+		}), []);
 		const folderPathPanelMapRef = useRef<Map<string, string>>(new Map());
 		const terminalCounterRef = useRef(0);
 		const filePanelCounterRef = useRef(0);
@@ -3497,15 +3506,20 @@ const ProjectWorkspace = forwardRef<
 			await requestClosePanel(panelId);
 		}, [requestClosePanel]);
 
-		const saveActivePanel = useCallback(
-			() =>
-				saveActiveDockviewPanel({
+		const saveActivePanel = useCallback(async () => {
+			const activePanel = dockviewApiRef.current?.activePanel;
+			const registeredSave = activePanel === undefined ? undefined : filePanelSaveHandlersRef.current.get(activePanel.id);
+			if (registeredSave !== undefined) {
+				try { await registeredSave(); }
+				catch (error) { setErrorText(error instanceof Error ? error.message : String(error)); }
+				return;
+			}
+			await saveActiveDockviewPanel({
 					api: dockviewApiRef.current,
 					onError: setErrorText,
 					onSaved: () => undefined,
-				}),
-			[],
-		);
+				});
+		}, []);
 
 		const popoutActivePanel = useCallback(
 			() =>
@@ -4451,6 +4465,7 @@ const ProjectWorkspace = forwardRef<
 							<TerminalPanelClientContext.Provider
 								value={terminalPanelClientContext}
 							>
+								<FilePanelSaveRegistryProvider registry={filePanelSaveRegistry}>
 								<DockviewReact
 									components={dockviewComponents}
 									tabComponents={dockviewTabComponents}
@@ -4458,6 +4473,7 @@ const ProjectWorkspace = forwardRef<
 									onReady={handleDockviewReady}
 									floatingGroupBounds="boundedWithinViewport"
 								/>
+								</FilePanelSaveRegistryProvider>
 							</TerminalPanelClientContext.Provider>
 						</div>
 					}
