@@ -30,10 +30,7 @@ import {
 	PAIRING_PIN_PATTERN,
 	saveRemoteAccessPairingPin,
 } from '../remotePairingPin';
-import {
-	type AiTabMetadataClient,
-	createLegacyAiTabMetadataClient,
-} from '../services/ai/legacyAiTabMetadataClient';
+import { type AiTabMetadataClient } from '../services/ai/aiTabMetadataClient';
 import type { RemoteAccessStatusClient } from '../services/remoteAccessStatusClient';
 import { writeClipboardText } from '../host/nativeActions';
 import { SettingsMutationCoordinator } from '../settingsMutationCoordinator';
@@ -581,18 +578,21 @@ export function SettingsWindow({
 		if (aiTabMetadataClientOverride !== undefined) {
 			return aiTabMetadataClientOverride;
 		}
-		if (window.terminayAiMetadataHost !== undefined) {
-			return createLegacyAiTabMetadataClient(window.terminayAiMetadataHost);
+		if (serverAiClient !== undefined) {
+			return Object.freeze({
+				listModels(provider: 'claudeCode' | 'codex') {
+					return serverAiClient.listModels(
+						provider === 'claudeCode' ? 'claude-code' : provider,
+					);
+				},
+			}) satisfies AiTabMetadataClient;
 		}
 		return Object.freeze({
-			async generate() {
-				throw new Error('AI tab metadata is unavailable in this host.');
-			},
 			async listModels() {
 				return [];
 			},
 		}) satisfies AiTabMetadataClient;
-	}, [aiTabMetadataClientOverride]);
+	}, [aiTabMetadataClientOverride, serverAiClient]);
 	const searchParams = new URLSearchParams(window.location.search);
 	const initialSectionFromUrl = initialSectionId ?? searchParams.get('section');
 	const initialCategoryFromUrl: CategoryId =
@@ -716,22 +716,10 @@ export function SettingsWindow({
 			setDictationMicrophoneError(null);
 
 			try {
-				const dictationHost = window.terminayDictationHost;
-				if (dictationHost === undefined)
-					throw new Error('Desktop dictation is unavailable.');
-				let permissionStatus =
-					await dictationHost.getMicrophonePermissionStatus();
+				let permissionStatus: DictationMicrophonePermissionStatus = 'unknown';
 				let permissionProbeError: string | null = null;
 
-				if (requestPermission && permissionStatus !== 'granted') {
-					permissionStatus = await dictationHost.requestMicrophonePermission();
-				}
-
-				if (
-					permissionStatus !== 'denied' &&
-					permissionStatus !== 'restricted' &&
-					navigator.mediaDevices?.getUserMedia
-				) {
+				if (requestPermission && navigator.mediaDevices?.getUserMedia) {
 					let permissionProbeStream: MediaStream | null = null;
 					try {
 						permissionProbeStream = await navigator.mediaDevices.getUserMedia({
@@ -741,8 +729,7 @@ export function SettingsWindow({
 					} catch (error) {
 						permissionProbeError =
 							error instanceof Error ? error.message : String(error);
-						permissionStatus =
-							await dictationHost.getMicrophonePermissionStatus();
+						permissionStatus = 'denied';
 					} finally {
 						permissionProbeStream?.getTracks().forEach((track) => {
 							track.stop();
@@ -780,9 +767,7 @@ export function SettingsWindow({
 				} else if (permissionStatus !== 'granted') {
 					setDictationMicrophoneError(
 						permissionProbeError ??
-							(permissionStatus === 'not-determined'
-								? 'Microphone access has not been requested yet.'
-								: `Microphone access is ${permissionStatus}.`),
+							'Microphone access has not been granted yet.',
 					);
 				} else {
 					setDictationMicrophoneError('No microphone devices were found.');
@@ -815,9 +800,7 @@ export function SettingsWindow({
 	useEffect(() => {
 		let isMounted = true;
 
-		const credentialStatus =
-			serverAiClient?.dictationCredentialStatus() ??
-			window.terminayDictationHost?.getKeyStatus();
+		const credentialStatus = serverAiClient?.dictationCredentialStatus();
 		void credentialStatus
 			?.then((status) => {
 				if (isMounted) {
@@ -832,10 +815,8 @@ export function SettingsWindow({
 				}
 			});
 
-		void (
-			serverAiClient?.dictationRuntimeStatus() ??
-			window.terminayDictationHost?.getParakeetStatus()
-		)
+		void serverAiClient
+			?.dictationRuntimeStatus()
 			?.then((status) => {
 				if (isMounted) setParakeetStatus(toParakeetRuntimeStatus(status));
 			})
@@ -1217,12 +1198,13 @@ export function SettingsWindow({
 		setDictationOpenAiKeyError(null);
 		setIsSavingDictationOpenAiKey(true);
 		try {
-			const dictationHost = window.terminayDictationHost;
-			if (dictationHost === undefined && serverAiClient === undefined)
-				throw new Error('Desktop dictation is unavailable.');
-			const status = await (serverAiClient?.setDictationCredential(
+			if (serverAiClient === undefined)
+				throw new Error(
+					'The selected server does not support dictation credentials.',
+				);
+			const status = await serverAiClient.setDictationCredential(
 				dictationOpenAiKeyDraft,
-			) ?? dictationHost!.saveKey(dictationOpenAiKeyDraft));
+			);
 			setDictationOpenAiKeyConfigured(status.configured);
 			setDictationOpenAiKeyDraft('');
 		} catch (error) {
@@ -1238,11 +1220,11 @@ export function SettingsWindow({
 		setDictationOpenAiKeyError(null);
 		setIsSavingDictationOpenAiKey(true);
 		try {
-			const dictationHost = window.terminayDictationHost;
-			if (dictationHost === undefined && serverAiClient === undefined)
-				throw new Error('Desktop dictation is unavailable.');
-			const status = await (serverAiClient?.clearDictationCredential() ??
-				dictationHost!.clearKey());
+			if (serverAiClient === undefined)
+				throw new Error(
+					'The selected server does not support dictation credentials.',
+				);
+			const status = await serverAiClient.clearDictationCredential();
 			setDictationOpenAiKeyConfigured(status.configured);
 			setDictationOpenAiKeyDraft('');
 		} catch (error) {
@@ -1264,23 +1246,18 @@ export function SettingsWindow({
 		});
 		let statusPoll: ReturnType<typeof setInterval> | undefined;
 		try {
-			const host = window.terminayDictationHost;
-			if (!host && serverAiClient === undefined)
+			if (serverAiClient === undefined)
 				throw new Error('Dictation runtime management is unavailable.');
 			statusPoll = setInterval(() => {
-				void (
-					serverAiClient?.dictationRuntimeStatus() ?? host!.getParakeetStatus()
-				)
+				void serverAiClient
+					.dictationRuntimeStatus()
 					.then((status) => setParakeetStatus(toParakeetRuntimeStatus(status)))
 					.catch(() => {
 						// The install request owns final error reporting.
 					});
 			}, 500);
 			setParakeetStatus(
-				toParakeetRuntimeStatus(
-					await (serverAiClient?.installDictationRuntime() ??
-						host!.installParakeet()),
-				),
+				toParakeetRuntimeStatus(await serverAiClient.installDictationRuntime()),
 			);
 		} catch (error) {
 			setParakeetStatus({
