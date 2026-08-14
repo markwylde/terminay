@@ -167,6 +167,17 @@ export function ConnectedWebRendererWorkspace({
 		() => sharedRouteForView(requestedView),
 		[requestedView],
 	);
+	const responsiveCapabilities = useMemo(() => {
+		if (hostContext === undefined) return undefined;
+		return Object.freeze({
+			clipboard: hostContext.capabilities.clipboardWrite !== undefined,
+			filePicker: hostContext.capabilities.filePicker !== undefined,
+			nativeWindows: hostContext.capabilities.nativeWindows !== undefined,
+			notifications: hostContext.capabilities.notifications !== undefined,
+			osIntegration: hostContext.capabilities.osIntegration !== undefined,
+			updater: hostContext.capabilities.updater !== undefined,
+		});
+	}, [hostContext]);
 	const [auxiliaryRoute, setAuxiliaryRoute] =
 		useState<AuxiliaryRouteRequest | null>(nativeAuxiliaryDocument);
 	const pendingEditRef = useRef<{
@@ -464,7 +475,7 @@ export function ConnectedWebRendererWorkspace({
 	const workspaceContent = (
 		<ResponsiveWorkspaceEntry
 			route={sharedRoute}
-			capabilities={hostContext?.capabilities}
+			capabilities={responsiveCapabilities}
 		>
 			{sharedRouteContent}
 		</ResponsiveWorkspaceEntry>

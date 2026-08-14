@@ -4050,7 +4050,7 @@ const ProjectWorkspace = forwardRef<
 					detail.signal == null
 				) {
 					const panel = getPanelForSession(detail.sessionId);
-					if (panel !== undefined) {
+					if (panel !== null && panel !== undefined) {
 						// A Dockview-only close is immediately undone by canonical
 						// workspace reconciliation. Route successful-exit cleanup through
 						// the same authoritative panel command as a user close.
