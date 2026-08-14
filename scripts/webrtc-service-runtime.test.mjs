@@ -927,7 +927,7 @@ test('RemoteAccessService updates remote resize ownership only after accepted re
 
 test('RemoteAccessService binds canonical browser host context to its exact manifest and server', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'terminay-host-context-test-'))
-  await writeFile(join(tempDir, 'remote.html'), '<!doctype html><title>Terminay</title>')
+  await writeFile(join(tempDir, 'server.html'), '<!doctype html><title>Terminay Server UI</title>')
   const service = createTestService({
     tempDir,
     serverId: 'server-context-proof',
@@ -946,6 +946,12 @@ test('RemoteAccessService binds canonical browser host context to its exact mani
   assert.equal(context.hostKind, 'browser')
   assert.equal(context.bootstrapVersion, 1)
   assert.equal(manifest.serverVersion, '3.2.1')
+  assert.equal(manifest.entryPath.endsWith('/server.html'), true)
+  assert.equal(manifest.assets.some((asset) => asset.path.endsWith('/remote.html')), false)
+  const browserEntry = await service.handleStaticRequest('/')
+  assert.equal(browserEntry.status, 200)
+  assert.match(browserEntry.body.toString('utf8'), /Terminay Server UI/u)
+  assert.equal(await service.handleStaticRequest('/remote.html'), null)
 })
 
 function createTestService({
