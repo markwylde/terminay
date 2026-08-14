@@ -5,19 +5,6 @@ import type { TerminayTestApi } from './types/terminay';
 
 declare global {
 	interface Window {
-		/** Observation-only reporting for failures at the shared React root. */
-		terminayDiagnosticsHost?: {
-			readonly version: 1;
-			reportRootError(
-				payload: import('./types/desktopDiagnostics').RendererRootDiagnosticPayload,
-			): void;
-			reportTerminalRecovery(
-				payload: import('./types/desktopDiagnostics').TerminalRecoveryDiagnosticPayload,
-			): void;
-		};
-		terminayBootstrapDiagnostic?: {
-			record(phase: string, count?: number): void;
-		};
 		/** Narrow native capability for selecting a Terminay server.  This is
 		 * intentionally separate from the legacy broad preload compatibility
 		 * surface while the rest of the Desktop migration is in progress. */
