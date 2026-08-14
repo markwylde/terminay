@@ -26,6 +26,17 @@ for (const fault of ['unreadable', 'invalid', 'uncommittable'] as const) {
 		await expect(page.locator('.project-tabbar')).toHaveCount(0);
 		await expect(page.locator('.terminal-tab-content')).toHaveCount(0);
 		expect(electronApp.windows()).toHaveLength(1);
+		// Closing a recovery-only window races the deliberately uninitialized Local
+		// UI session. It must be an ordinary Electron teardown, not a main-process
+		// exception or an extra recovery/blank window.
+		if (fault === 'unreadable') {
+			const closed = electronApp.waitForEvent('close');
+			await electronApp.evaluate(({ BrowserWindow }) => {
+				BrowserWindow.getAllWindows()[0]?.close();
+			});
+			await closed;
+			return;
+		}
 
 		await recovery.getByRole('link', { name: 'Retry' }).evaluate((link) => {
 			(link as HTMLAnchorElement).click();

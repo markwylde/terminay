@@ -12,7 +12,6 @@ export const UI_BUNDLE_HOST_COMPATIBILITY = Object.freeze({
   bundleFormat: Object.freeze({ minimum: 1, maximum: 1 }),
   hostBridge: Object.freeze({ minimum: 1, maximum: 1 }),
   byteEndpoint: Object.freeze({ minimum: 1, maximum: 1 }),
-  executionRuntime: Object.freeze({ minimum: 120, maximum: 255 }),
   requiredCapabilities: Object.freeze({}),
   optionalCapabilities: Object.freeze({
     nativeWindows: Object.freeze({ minimum: 1, maximum: 1 }),
@@ -111,7 +110,6 @@ function canonicalHostCompatibility(value) {
     bundleFormat: value.bundleFormat,
     hostBridge: value.hostBridge,
     byteEndpoint: value.byteEndpoint,
-    executionRuntime: value.executionRuntime,
     requiredCapabilities: capabilities(value.requiredCapabilities),
     optionalCapabilities: capabilities(value.optionalCapabilities),
   };

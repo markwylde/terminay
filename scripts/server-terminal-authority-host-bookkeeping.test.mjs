@@ -19,6 +19,8 @@ const {
   ServerTerminalAuthority,
   TerminalService,
   TerminalServiceError,
+  WorkspaceStore,
+  createInitialWorkspace,
 } = await importAuthority()
 
 test('Electron detaches authority consumers when a renderer is destroyed', async () => {
@@ -26,7 +28,7 @@ test('Electron detaches authority consumers when a renderer is destroyed', async
 
   assert.match(
     main,
-    /app\.on\('web-contents-created',[\s\S]*?contents\.once\('destroyed',[\s\S]*?detachSessionsForWebContents\(contents\.id\)/u,
+    /app\.on\('web-contents-created',[\s\S]*?const webContentsId = contents\.id;[\s\S]*?contents\.once\('destroyed',[\s\S]*?detachSessionsForWebContents\(webContentsId\)/u,
   )
   assert.match(
     main,
@@ -78,6 +80,72 @@ function systemShellProfiles(shellPath = '/bin/zsh', environment = {}) {
     async resolveProfile(_id, catalogue) { return { profile, definition, settingsRevision: catalogue.settingsRevision, target: { kind: 'executable', executable: shellPath } } },
   }
 }
+
+test('Local reopening drops every stale terminal tab and restores one fresh terminal in the active project', async () => {
+  const pty = createPtyFactory()
+  const workspace = new WorkspaceStore(createInitialWorkspace('desktop-local-reopen'))
+  const viewId = workspace.state.viewOrder[0]
+  if (viewId === undefined) throw new Error('Expected the initial Local workspace view.')
+  const apply = (commandId, command) => {
+    const result = workspace.apply({ commandId, command })
+    assert.equal(result.ok, true, result.ok ? undefined : result.conflict.message)
+  }
+  apply('seed-default-project', {
+    type: 'project.create', projectId: 'default', viewId, root: tmpdir(), name: 'Project',
+  })
+  apply('seed-default-terminal', {
+    type: 'terminal.createPanel', projectId: 'default', sessionId: 'stale-default',
+    panelId: 'stale-default-panel', title: 'Terminal 1', cwd: tmpdir(), createdAt: 1,
+  })
+  apply('seed-active-project', {
+    type: 'project.create', projectId: 'active-project', viewId, root: tmpdir(), name: 'Active',
+  })
+  apply('seed-active-terminal', {
+    type: 'terminal.createPanel', projectId: 'active-project', sessionId: 'stale-active',
+    panelId: 'stale-active-panel', title: 'Terminal 1', cwd: tmpdir(), createdAt: 2,
+  })
+  // A process can fail between creating a persisted session and its panel.
+  // Restart recovery must not retain that unpresented Local session either.
+  apply('seed-orphaned-terminal', {
+    type: 'terminal.create', projectId: 'active-project', sessionId: 'stale-orphan', createdAt: 3,
+  })
+  apply('restore-active-project', { type: 'project.activate', projectId: 'active-project' })
+
+  const authority = new ServerTerminalAuthority({
+    serverId: 'desktop-local-reopen',
+    terminalService: new TerminalService({
+      serverId: 'desktop-local-reopen',
+      ptyFactory: pty,
+      generateSessionId: () => 'fresh-after-reopen',
+    }),
+    shellProfiles: systemShellProfiles('/bin/sh'),
+    // The production host supplies this already-open durable repository. The
+    // recovery branch relies only on its loaded state and creation marker.
+    workspaceRepository: { wasCreated: false, workspace },
+  })
+
+  try {
+    await authority.initializeWorkspace()
+    const terminalPanels = Object.values(workspace.state.panels)
+      .filter((panel) => panel.type === 'terminal')
+    const sessions = Object.values(workspace.state.terminalSessions)
+    assert.equal(pty.processes.length, 1, 'Local reopening must spawn one replacement PTY')
+    assert.equal(terminalPanels.length, 1)
+    assert.equal(sessions.length, 1)
+    assert.equal(terminalPanels[0]?.sessionId, 'fresh-after-reopen')
+    assert.equal(sessions[0]?.id, 'fresh-after-reopen')
+    assert.equal(sessions[0]?.projectId, 'active-project')
+    assert.equal(workspace.state.terminalSessions['stale-orphan'], undefined)
+    assert.equal(workspace.state.projects.default?.panelIds.length, 0)
+    assert.equal(workspace.state.projects['active-project']?.panelIds.length, 1)
+
+    await authority.initializeWorkspace()
+    assert.equal(pty.processes.length, 1, 'recovery is idempotent once the fresh PTY exists')
+    assert.equal(Object.keys(workspace.state.terminalSessions).length, 1)
+  } finally {
+    await authority.shutdown()
+  }
+})
 
 test('Desktop production authority projects a real PTY foreground process onto its exact activity session', async () => {
   const authority = new ServerTerminalAuthority({
@@ -569,6 +637,7 @@ async function importAuthority() {
           `export { ServerTerminalAuthority } from ${JSON.stringify(new URL('../electron/serverTerminalAuthority.ts', import.meta.url).pathname)}`,
           `export { TerminalService } from ${JSON.stringify(new URL('../packages/server-core/src/terminalService/service.ts', import.meta.url).pathname)}`,
           `export { TerminalServiceError } from ${JSON.stringify(new URL('../packages/server-core/src/terminalService/errors.ts', import.meta.url).pathname)}`,
+          `export { WorkspaceStore, createInitialWorkspace } from ${JSON.stringify(new URL('../packages/server-core/src/workspace.ts', import.meta.url).pathname)}`,
           `export { ServerPortTransport, ServerScopedMessagePort } from ${JSON.stringify(new URL('../src/shared/serverPortTransport.ts', import.meta.url).pathname)}`,
         ].join('\n'),
         loader: 'ts',

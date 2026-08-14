@@ -28,7 +28,7 @@ Desktop and browser hosts establish authentication and an opaque byte
 transport, verify and launch the bundle, and then stay outside application
 protocol interpretation. This lets one host connect across server application
 versions while keeping its smaller bootstrap, transport, bundle-format,
-execution-runtime, and native-host-bridge compatibility boundaries explicit.
+native-host-bridge, and negotiated-capability compatibility boundaries explicit.
 
 ## Product topology
 
@@ -341,7 +341,7 @@ inspect the application protocol.
   exact entry path, content type, byte length, and SHA-256 content hash. Asset
   paths remain inside the bundle's `/remote-app/<bundle-id>/` namespace.
 - The manifest declares its application protocol, bundle format, supported
-  host-bridge range, and required/optional execution and host capabilities.
+  host-bridge range, and required/optional host capabilities.
   Browser compatibility uses those declarations and the protocol/schema
   revisions; it never uses browser brand, user agent, or numeric browser or
   Chromium runtime-version ranges. Optional native capabilities never become
