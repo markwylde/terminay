@@ -11,7 +11,7 @@ test('Electron retains the selected remote profile independently of its document
 	);
 	assert.match(
 		main,
-		/remoteProfileBindingsByWebContents\.set\(sender\.id, profile\.id\)/u,
+		/remoteProfileBindingsByWebContents\.set\([\s\S]*?sender\.id,[\s\S]*?profile\.id,[\s\S]*?\)/u,
 	);
 	assert.match(
 		main,
@@ -26,7 +26,6 @@ test('normal workspace windows always load the canonical selected-server bundle'
 	);
 	assert.match(createWindow, /serverUiPreload\.cjs/u);
 	assert.match(createWindow, /localServerUiSession\.prepare\(windowWebContentsId\)/u);
-	assert.match(createWindow, /server-ui-host:byte-endpoint/u);
 	assert.doesNotMatch(
 		createWindow,
 		/VITE_DEV_SERVER_URL|ensureLocalWorkspaceSeed|sendServerConnection/u,
@@ -42,6 +41,7 @@ test('reload reconnect uses the remembered OS-protected credential path', () => 
 	assert.match(reconnect, /createDesktopDeviceCredentialStore\(\)/u);
 	assert.match(reconnect, /createDesktopBootstrappedWebRtcConnection/u);
 	assert.match(reconnect, /openCanonicalRemoteServerWindow/u);
-	assert.match(reconnect, /connectRemoteByteTransport/u);
+	assert.match(reconnect, /openCanonicalHttpRemoteServerWindow/u);
+	assert.doesNotMatch(reconnect, /connectRemoteByteTransport/u);
 	assert.doesNotMatch(reconnect, /postLocalServerConnection|ensureLocalWorkspaceSeed/u);
 });
