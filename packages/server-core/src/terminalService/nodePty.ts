@@ -36,6 +36,7 @@ export interface NodePtyForegroundPollingOptions {
 export interface NodePtyFactoryOptions {
   readonly foregroundPolling?: NodePtyForegroundPollingOptions;
   readonly resolveCwd?: (pid: number, signal?: AbortSignal) => Promise<string | null>;
+  readonly resolveForegroundProcess?: (pid: number, signal?: AbortSignal) => Promise<string | null>;
 }
 
 /**
@@ -95,7 +96,12 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
         cwd: options.cwd,
         ...(options.env === undefined ? {} : { env: cleanEnvironment(options.env) }),
       });
-      const foreground = createForegroundObserver(child, shellName(options.shellPath), foregroundPolling);
+      const foreground = createForegroundObserver(
+        child,
+        shellName(options.shellPath),
+        foregroundPolling,
+        factoryOptions.resolveForegroundProcess,
+      );
       const dataListeners = new Set<(data: string) => void>();
       const exitListeners = new Set<(event: { readonly exitCode: number; readonly signal?: number }) => void>();
       const pendingData: string[] = [];
@@ -197,24 +203,38 @@ function createForegroundObserver(
   child: NodePtyProcessLike,
   shellProcess: string,
   polling: ForegroundPolling,
+  resolveProcess: NodePtyFactoryOptions["resolveForegroundProcess"],
 ): { readonly subscribe: (listener: NodePtyForegroundListener) => Unsubscribe; readonly poll: () => void; readonly dispose: () => void } {
   const listeners = new Set<NodePtyForegroundListener>();
   let timer: unknown | undefined;
   let lastProcess: string | undefined;
   let disposed = false;
+  let resolving = false;
 
   const stop = (): void => {
     if (timer === undefined) return;
     polling.clearInterval(timer);
     timer = undefined;
   };
-  const poll = (): void => {
+  const publish = (processName: string | undefined): void => {
     if (disposed || listeners.size === 0) return;
-    const processName = foregroundProcessName(child);
     if (processName === undefined || processName === lastProcess) return;
     lastProcess = processName;
     const event = Object.freeze({ processName, shellForeground: isConfiguredShellProcess(processName, shellProcess) });
     for (const listener of [...listeners]) listener(event);
+  };
+  const poll = (): void => {
+    if (disposed || listeners.size === 0) return;
+    if (resolveProcess === undefined || child.pid === undefined) {
+      publish(foregroundProcessName(child));
+      return;
+    }
+    if (resolving) return;
+    resolving = true;
+    void resolveProcess(child.pid).then(
+      (processName) => publish(processName?.trim() || foregroundProcessName(child)),
+      () => publish(foregroundProcessName(child)),
+    ).finally(() => { resolving = false; });
   };
   const start = (): void => {
     if (!disposed && timer === undefined) timer = polling.setInterval(poll, polling.intervalMs);
