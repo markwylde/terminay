@@ -240,11 +240,7 @@ test.describe('recordings UI', () => {
     await expect(contextMenuItem(mainWindow, 'Reveal Last Recording')).toBeVisible()
     await mainWindow.keyboard.press('Escape')
 
-    const recordingsWindow = await appHarness.openChildWindow(async () => {
-      await mainWindow.evaluate(async () => {
-        await window.terminayRecordingsHost!.open()
-      })
-    })
+    const recordingsWindow = await appHarness.openRecordingsWindow(mainWindow)
 
     await expect(recordingsWindow.getByRole('heading', { name: 'Recordings' })).toBeVisible()
     expect(
