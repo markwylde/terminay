@@ -1224,7 +1224,11 @@ const ProjectWorkspace = forwardRef<
 				[project.id, project.rootFolder, terminalClientContext],
 			);
 		const serverActivityClient = terminalClientContext?.activityClient;
-		const serverAgentStatusClient = featureAuthority?.agentStatusClient;
+		// Agent status is a selected-server projection, not a project-environment
+		// feature. A newly-created terminal can emit journal records before its
+		// project feature snapshot is hydrated, so bind its presentation scope to
+		// the canonical server client directly.
+		const serverAgentStatusClient = terminalClientContext?.agentStatusClient;
 		const serverMacroClient = useMemo(
 			() =>
 				terminalClientContext?.applicationClient === undefined
