@@ -5,27 +5,6 @@ import type { TerminayTestApi } from './types/terminay';
 
 declare global {
 	interface Window {
-		terminayEditWindowHost: import('./components/EditTabWindow').EditWindowClient & {
-			readonly version: 1;
-		};
-		terminayQuickPushHost: import('./components/QuickPushModal').QuickPushClient & {
-			readonly version: 1;
-		};
-		/** Bounded native project-editor capability for the current Desktop shell. */
-		terminayProjectEditHost?: {
-			readonly version: 1;
-			open(
-				request: import('./types/terminay').ProjectEditWindowDraft & {
-					projectId: string;
-				},
-			): Promise<import('./types/terminay').ProjectEditWindowResult | null>;
-		};
-		terminayTerminalEditHost?: {
-			readonly version: 1;
-			open(
-				draft: import('./types/terminay').TerminalEditWindowDraft,
-			): Promise<import('./types/terminay').TerminalEditWindowResult | null>;
-		};
 		/** Bounded wait capability for an already attached server terminal. */
 		terminayTerminalLifecycleHost: {
 			readonly version: 1;
@@ -40,12 +19,6 @@ declare global {
 			): Promise<void>;
 		};
 		/** Bounded Desktop-only MCP configuration capability. */
-		/** Bounded native recordings-window capability for the current Desktop shell. */
-		terminayRecordingsHost?: {
-			readonly version: 1;
-			open(): Promise<void>;
-		};
-		/** Bounded native settings-window capability for the current Desktop shell. */
 		/** Bounded native tab-bar presentation for the current Desktop window. */
 		terminayProjectTabHost?: {
 			readonly version: 1;

@@ -28,9 +28,7 @@ test('auxiliary route controller keeps settings and environments in the canonica
 	assert.match(controller, /editTerminalTab/u);
 	assert.doesNotMatch(controller, /terminaySettingsWindowHost/u);
 	assert.doesNotMatch(controller, /terminayProjectEnvironmentsHost/u);
-	assert.match(controller, /terminayRecordingsHost/u);
-	assert.match(controller, /terminayProjectEditHost/u);
-	assert.match(controller, /terminayTerminalEditHost/u);
+	assert.doesNotMatch(controller, /window\.|terminay(?:Recordings|ProjectEdit|TerminalEdit)Host/u);
 
 	assert.match(app, /createAuxiliaryRouteController\(\)/u);
 	assert.match(app, /auxiliaryRoutes\.openRecordings\(\)/u);
@@ -47,7 +45,7 @@ test('auxiliary route controller keeps settings and environments in the canonica
 
 	assert.match(sharedWorkspace, /auxiliaryRoutes\?: AuxiliaryRouteController/u);
 	assert.match(webWorkspace, /createAuxiliaryRouteController\(/u);
-	assert.match(webWorkspace, /getWindow: \(\) => undefined/u);
+	assert.doesNotMatch(webWorkspace, /getWindow:/u);
 	assert.match(webWorkspace, /data-connected-web-auxiliary-route/u);
 	assert.doesNotMatch(webWorkspace, /nativeWindows:\s*true/u);
 	assert.doesNotMatch(webWorkspace, /window\.terminay(?:SettingsWindowHost|RecordingsHost|ProjectEditHost|TerminalEditHost)/u);

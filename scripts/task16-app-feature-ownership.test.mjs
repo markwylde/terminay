@@ -63,13 +63,13 @@ test('project root updates are committed through the server workspace authority'
 	);
 });
 
-test('the Git push feature owns menu and quick-push state', () => {
+test('the Git push feature owns the canonical agent push menu state', () => {
 	assert.match(app, /useGitPushMenuController\(\{/);
 	assert.doesNotMatch(app, /setGitPushMenuPosition/);
 	assert.doesNotMatch(app, /setQuickPushAction/);
 	assert.match(gitPushMenuController, /setGitPushMenuPosition/);
-	assert.match(gitPushMenuController, /setQuickPushAction/);
-	assert.match(gitPushMenuController, /const launchQuickPush = useCallback/);
+	assert.doesNotMatch(gitPushMenuController, /setQuickPushAction|launchQuickPush|quickPushClient/u);
+	assert.match(gitPushMenuController, /const launchGitPushAgent = useCallback/);
 });
 
 test('the terminal switcher controller owns Dockview ordering and event lifecycle', () => {
