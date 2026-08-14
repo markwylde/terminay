@@ -18,15 +18,35 @@ function createScheduler() {
 }
 
 function createChild() {
+  const data = new Set();
   const exits = new Set();
   return {
     pid: 41,
     process: "zsh",
-    write() {}, resize() {}, kill() {}, onData() {},
+    write() {}, resize() {}, kill() {},
+    onData(listener) { data.add(listener); return { dispose: () => data.delete(listener) }; },
     onExit(listener) { exits.add(listener); return { dispose: () => exits.delete(listener) }; },
+    emitData(value) { for (const listener of [...data]) listener(value); },
     exit(event = { exitCode: 0 }) { for (const listener of [...exits]) listener(event); },
   };
 }
+
+test("node-pty retains output and exit emitted before TerminalService attaches", () => {
+  const child = createChild();
+  const process = createNodePtyFactory({ spawn: () => child }).spawn({
+    shellPath: "/bin/sh", shell: "/bin/sh", args: [], cwd: "/tmp", cols: 80, rows: 24,
+  });
+
+  child.emitData("READY\n");
+  child.exit({ exitCode: 7, signal: 9 });
+  const output = [];
+  const exits = [];
+  process.onData((bytes) => output.push(new TextDecoder().decode(bytes)));
+  process.onExit((event) => exits.push(event));
+
+  assert.deepEqual(output, ["READY\n"]);
+  assert.deepEqual(exits, [{ exitCode: 7, signal: 9 }]);
+});
 
 test("node-pty foreground observer deduplicates process changes and identifies the shell", () => {
   const scheduler = createScheduler();
