@@ -164,12 +164,6 @@ import {
 	FileSafeStorageVaultRepository,
 } from './vault/safeStorageVault';
 
-function hasOwn(value: object, key: PropertyKey): boolean {
-	// Calling the prototype method explicitly remains safe for arbitrary objects.
-	// biome-ignore lint/suspicious/noPrototypeBuiltins: do not trust a payload's own prototype.
-	return Object.prototype.hasOwnProperty.call(value, key);
-}
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RELEASES_LATEST_URL =
 	'https://github.com/markwylde/terminay/releases/latest';
@@ -582,12 +576,6 @@ function selectedSafeStorageBackend(): string | undefined {
 // A project torn off into its own window (or merged into another) travels as an
 // opaque payload built by the renderer. Main only needs the terminal session
 // ids so it can re-home ownership of the live PTYs to the receiving window.
-interface AdoptedProjectPayload {
-	project: unknown;
-	terminals: Array<{ sessionId: string; [key: string]: unknown }>;
-	activeSessionId?: string | null;
-}
-
 // Project-host (index.html) windows, as opposed to the auxiliary settings /
 // macros / recordings / edit windows. Multi-window project tabs are peers.
 const appWindows = new Set<BrowserWindow>();
@@ -623,14 +611,6 @@ function getOpenProjectWindowCount(): number {
 	}
 	return count;
 }
-// New popout windows pull their adopted project on boot through the transfer host.
-const pendingAdoptedProjects = new Map<number, AdoptedProjectPayload>();
-// Each project-host window publishes the screen-relative rect of its project tab
-// bar so a cross-window drag can be hit-tested against it on release.
-const tabBarRectsByWebContents = new Map<
-	number,
-	{ x: number; y: number; width: number; height: number }
->();
 const fileBufferService = new FileBufferService(() => app.getPath('home'));
 const fileWatchService = new FileWatchService(fileBufferService);
 const gitDiffService = new GitDiffService(fileBufferService);
@@ -1979,40 +1959,6 @@ function getFirstAppWindow(): BrowserWindow | null {
 	return null;
 }
 
-function reassignSessionOwner(
-	sessionId: string,
-	sourceWebContentsId: number,
-	newWebContentsId: number,
-): void {
-	if (
-		!serverTerminalAuthority?.isRendererAttached(sessionId, sourceWebContentsId)
-	) {
-		// Framed server clients subscribe with authenticated client identities,
-		// not the obsolete numeric renderer-consumer alias. Their PTY ownership
-		// remains server-side and the destination window resumes independently.
-		return;
-	}
-	const listener = serverTerminalRendererListener(newWebContentsId);
-	if (!listener) {
-		throw new Error('The destination renderer is unavailable.');
-	}
-	serverTerminalAuthority.handoffRenderer(
-		sessionId,
-		sourceWebContentsId,
-		newWebContentsId,
-		listener,
-	);
-
-	// Keep MCP control routing pointed at the window that now hosts the session.
-	const token = controlTokensBySession.get(sessionId);
-	if (token) {
-		const record = controlTokensByToken.get(token);
-		if (record) {
-			record.webContentsId = newWebContentsId;
-		}
-	}
-}
-
 function sendCommandToFocusedWindow(command: AppCommand): void {
 	if (isQuitting) {
 		return;
@@ -2350,6 +2296,80 @@ async function presentCanonicalAuxiliaryRoute(
 	context: TerminayHostContext,
 ): Promise<void> {
 	if (request.action.type !== 'route.present') return;
+	const workspaceRoute = new URL(request.action.route, 'https://terminay.invalid');
+	const workspaceViewId = workspaceRoute.searchParams.get('view');
+	if (
+		request.action.disposition === 'native-window' &&
+		workspaceRoute.pathname === '/' &&
+		workspaceViewId !== null &&
+		request.action.logicalViewId === `workspace:${workspaceViewId}` &&
+		/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(workspaceViewId)
+	) {
+		const x = Number(workspaceRoute.searchParams.get('x'));
+		const y = Number(workspaceRoute.searchParams.get('y'));
+		if (!Number.isFinite(x) || !Number.isFinite(y))
+			throw new Error('The workspace window position is invalid.');
+		const presentationId = `${context.profileId}:workspace:${workspaceViewId}`;
+		const existing = auxiliaryWindowsByPresentation.get(presentationId);
+		if (existing !== undefined && !existing.isDestroyed()) {
+			existing.show();
+			existing.focus();
+			return;
+		}
+		let workspaceWindow: BrowserWindow | null;
+		if (context.profileId === LocalServerUiSession.profileId) {
+			workspaceWindow = createWindow({
+				bounds: { x, y },
+				workspaceViewId,
+			});
+		} else {
+			const profile = rememberedRemoteConnections.get(context.profileId);
+			if (profile === undefined)
+				throw new Error('The selected remote profile is no longer available.');
+			const connected = await createDesktopReconnectTransport({
+				origin: profile.origin,
+				store: createDesktopDeviceCredentialStore(),
+			});
+			try {
+				if (connected.signalingBootstrap === undefined) {
+					const launch = await prepareCanonicalHttpRemoteLaunch(profile.origin, profile);
+					workspaceWindow = createWindow({
+						bounds: { x, y }, workspaceViewId,
+						serverUiLaunch: launch, serverUiTransport: connected.transport,
+					});
+				} else {
+					const webRtc = await createDesktopBootstrappedWebRtcConnection({
+						bootstrap: connected.signalingBootstrap,
+						expectedOrigin: profile.origin,
+					});
+					await connected.transport.close({ code: 'normal' });
+					const launch = await remoteServerUiBundleHost.prepareRemote({
+						lane: webRtc.assets, origin: profile.origin, profileId: profile.id,
+						serverId: webRtc.serverId, windowId: `window-${randomUUID()}`,
+					});
+					workspaceWindow = createWindow({
+						bounds: { x, y }, workspaceViewId,
+						serverUiLaunch: launch, serverUiTransport: webRtc.transport,
+					});
+				}
+			} catch (error) {
+				await connected.transport.close({ code: 'normal' });
+				throw error;
+			}
+			if (workspaceWindow !== null) {
+				remoteProfileBindingsByWebContents.set(workspaceWindow.webContents.id, profile.id);
+			}
+		}
+		if (workspaceWindow === null) throw new Error('Desktop is closing.');
+		auxiliaryWindowsByPresentation.set(presentationId, workspaceWindow);
+		workspaceWindow.once('ready-to-show', () => {
+			if (!workspaceWindow.isDestroyed()) {
+				workspaceWindow.show();
+				workspaceWindow.focus();
+			}
+		});
+		return;
+	}
 	const auxiliary = canonicalAuxiliaryRequest(request.action);
 	const presentationId = `${context.profileId}:${auxiliary.logicalViewId}`;
 	const existing = auxiliaryWindowsByPresentation.get(presentationId);
@@ -2478,7 +2498,6 @@ async function recoverEmbeddedWorkspaceOperation<T>(
 }
 
 function createWindow(options?: {
-	adoptedProject?: AdoptedProjectPayload;
 	auxiliary?: Readonly<{
 		presentationId: string;
 		route: string;
@@ -2567,9 +2586,6 @@ function createWindow(options?: {
 			console.error('[window] close confirmation failed', error),
 	});
 
-	if (options?.adoptedProject) {
-		pendingAdoptedProjects.set(windowWebContentsId, options.adoptedProject);
-	}
 	if (options?.workspaceViewId) {
 		workspaceViewByWebContents.set(
 			windowWebContentsId,
@@ -2584,6 +2600,11 @@ function createWindow(options?: {
 			window.show();
 			window.focus();
 		});
+	} else if (!isAuxiliary && options?.serverUiLaunch === undefined) {
+		const defaultViewId = serverTerminalAuthority?.workspace.state.viewOrder[0];
+		if (defaultViewId !== undefined) {
+			workspaceViewByWebContents.set(windowWebContentsId, defaultViewId);
+		}
 	}
 
 	window.on('closed', () => {
@@ -2593,8 +2614,6 @@ function createWindow(options?: {
 		);
 		localServerUiSession.release(windowWebContentsId);
 		appWindows.delete(window);
-		tabBarRectsByWebContents.delete(windowWebContentsId);
-		pendingAdoptedProjects.delete(windowWebContentsId);
 		workspaceViewByWebContents.delete(windowWebContentsId);
 		if (options?.auxiliary !== undefined) {
 			const key = options.auxiliary.presentationId;
@@ -2717,6 +2736,10 @@ function createWindow(options?: {
 							case 'menu.invoke': sendCommandToFocusedWindow(action.command as AppCommand); return;
 							case 'route.present': await presentCanonicalAuxiliaryRoute(window, request, launch.context); return;
 							case 'os.reveal': throw new Error('OS reveal requires a host-issued path token.');
+							case 'workspace.drag.start':
+								beginCanonicalProjectDrag(window.webContents.id, action.viewId, action.preview);
+								return;
+							case 'workspace.drag.end': return endCanonicalProjectDrag();
 						}
 					},
 				});
@@ -2885,260 +2908,6 @@ ipcMain.on('server-ui-host:subscribe-events', (event) => {
 	});
 });
 
-// --- Multi-window project tabs (tear-off, re-merge) -----------------------
-
-function isWorkspaceTransferPayload(
-	value: unknown,
-): value is AdoptedProjectPayload {
-	if (
-		typeof value !== 'object' ||
-		value === null ||
-		Array.isArray(value) ||
-		Object.getPrototypeOf(value) !== Object.prototype
-	) {
-		return false;
-	}
-	const candidate = value as Record<string, unknown>;
-	if (
-		!hasOwn(candidate, 'project') ||
-		!hasOwn(candidate, 'terminals') ||
-		typeof candidate.project !== 'object' ||
-		candidate.project === null ||
-		Array.isArray(candidate.project) ||
-		Object.getPrototypeOf(candidate.project) !== Object.prototype ||
-		!Array.isArray(candidate.terminals) ||
-		candidate.terminals.length > 512
-	)
-		return false;
-	if (
-		candidate.activeSessionId !== undefined &&
-		candidate.activeSessionId !== null &&
-		(typeof candidate.activeSessionId !== 'string' ||
-			candidate.activeSessionId.length > 512)
-	)
-		return false;
-	return candidate.terminals.every((terminal) => {
-		if (
-			typeof terminal !== 'object' ||
-			terminal === null ||
-			Array.isArray(terminal) ||
-			Object.getPrototypeOf(terminal) !== Object.prototype
-		)
-			return false;
-		const sessionId = (terminal as Record<string, unknown>).sessionId;
-		return (
-			typeof sessionId === 'string' &&
-			sessionId.length > 0 &&
-			sessionId.length <= 512
-		);
-	});
-}
-
-// A freshly torn-off window pulls its adopted project once on boot.
-ipcMain.handle(
-	'desktop:workspace-transfer-host:bind-view',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 2 ||
-			(payload as { version?: unknown }).version !== 1 ||
-			typeof (payload as { viewId?: unknown }).viewId !== 'string' ||
-			!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(
-				(payload as { viewId: string }).viewId,
-			)
-		)
-			throw new TypeError('desktop workspace view binding is invalid');
-		workspaceViewByWebContents.set(
-			event.sender.id,
-			(payload as { viewId: string }).viewId,
-		);
-	},
-);
-
-ipcMain.handle(
-	'desktop:workspace-transfer-host:get-adopted-project',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 1 ||
-			(payload as { version?: unknown }).version !== 1
-		)
-			throw new TypeError('desktop workspace transfer host request is invalid');
-		const adoptedProject = pendingAdoptedProjects.get(event.sender.id);
-		if (adoptedProject !== undefined) {
-			pendingAdoptedProjects.delete(event.sender.id);
-		}
-		return adoptedProject ?? null;
-	},
-);
-
-// Pop a project tab out into its own window near the drop point.
-ipcMain.handle(
-	'desktop:workspace-transfer-host:popout-project',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 5 ||
-			(payload as { version?: unknown }).version !== 1
-		)
-			throw new TypeError('desktop workspace transfer host request is invalid');
-		const request = payload as Record<string, unknown>;
-		if (
-			!isWorkspaceTransferPayload(request.project) ||
-			typeof request.targetViewId !== 'string' ||
-			!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(request.targetViewId) ||
-			typeof request.x !== 'number' ||
-			!Number.isFinite(request.x) ||
-			Math.abs(request.x) > 100_000 ||
-			typeof request.y !== 'number' ||
-			!Number.isFinite(request.y) ||
-			Math.abs(request.y) > 100_000
-		)
-			throw new TypeError('desktop workspace transfer host request is invalid');
-		const project = request.project;
-		if (
-			!serverTerminalAuthority ||
-			!project.terminals.every(
-				(terminal) =>
-					serverTerminalAuthority.get(terminal.sessionId) !== undefined,
-			)
-		) {
-			return { ok: false };
-		}
-		const window = createWindow({
-			bounds: { x: request.x, y: request.y },
-			workspaceViewId: request.targetViewId,
-		});
-		if (!window) return { ok: false };
-
-		for (const terminal of project.terminals) {
-			reassignSessionOwner(
-				terminal.sessionId,
-				event.sender.id,
-				window.webContents.id,
-			);
-		}
-		return { ok: true, windowId: window.webContents.id };
-	},
-);
-
-// Move a project tab into an already-open window's tab bar.
-ipcMain.handle(
-	'desktop:workspace-transfer-host:merge-project',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 3 ||
-			(payload as { version?: unknown }).version !== 1
-		)
-			throw new TypeError('desktop workspace transfer host request is invalid');
-		const request = payload as Record<string, unknown>;
-		if (
-			!isWorkspaceTransferPayload(request.project) ||
-			typeof request.targetWindowId !== 'number' ||
-			!Number.isSafeInteger(request.targetWindowId) ||
-			request.targetWindowId < 1 ||
-			request.targetWindowId > 2_147_483_647
-		)
-			throw new TypeError('desktop workspace transfer host request is invalid');
-		const project = request.project;
-		const target = webContents.fromId(request.targetWindowId);
-		if (!target || target.isDestroyed()) return { ok: false };
-		if (
-			!serverTerminalAuthority ||
-			!project.terminals.every(
-				(terminal) =>
-					serverTerminalAuthority.get(terminal.sessionId) !== undefined,
-			)
-		) {
-			return { ok: false };
-		}
-
-		for (const terminal of project.terminals) {
-			reassignSessionOwner(terminal.sessionId, event.sender.id, target.id);
-		}
-		if (!workspaceViewByWebContents.has(target.id)) {
-			target.send('app:adopt-project', project);
-		}
-		BrowserWindow.fromWebContents(target)?.focus();
-		return { ok: true };
-	},
-);
-
-// Each project-host window may publish only its own bounded tab-bar geometry.
-ipcMain.handle(
-	'desktop:project-tab-host:publish-bar-rect',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 2 ||
-			(payload as { version?: unknown }).version !== 1 ||
-			!hasOwn(payload, 'rect')
-		) {
-			throw new TypeError('desktop project-tab host request is invalid');
-		}
-		const rect = (payload as { rect: unknown }).rect;
-		if (rect === null) {
-			tabBarRectsByWebContents.delete(event.sender.id);
-			return;
-		}
-		if (
-			typeof rect !== 'object' ||
-			Array.isArray(rect) ||
-			Object.getPrototypeOf(rect) !== Object.prototype ||
-			Object.keys(rect).length !== 4 ||
-			!['height', 'width', 'x', 'y'].every((key) => hasOwn(rect, key))
-		) {
-			throw new TypeError('desktop project-tab host rectangle is invalid');
-		}
-		const candidate = rect as Record<string, unknown>;
-		if (
-			typeof candidate.x !== 'number' ||
-			!Number.isFinite(candidate.x) ||
-			Math.abs(candidate.x) > 100_000 ||
-			typeof candidate.y !== 'number' ||
-			!Number.isFinite(candidate.y) ||
-			Math.abs(candidate.y) > 100_000 ||
-			typeof candidate.width !== 'number' ||
-			!Number.isFinite(candidate.width) ||
-			candidate.width < 0 ||
-			candidate.width > 100_000 ||
-			typeof candidate.height !== 'number' ||
-			!Number.isFinite(candidate.height) ||
-			candidate.height < 0 ||
-			candidate.height > 100_000
-		) {
-			throw new TypeError('desktop project-tab host rectangle is invalid');
-		}
-		tabBarRectsByWebContents.set(event.sender.id, {
-			height: candidate.height,
-			width: candidate.width,
-			x: candidate.x,
-			y: candidate.y,
-		});
-	},
-);
-
 // Cross-window drag tracking with Chrome-style tear-off. While a project tab is
 // being dragged, framer-motion keeps it x-locked in its own bar (reorder). The
 // main process polls the cursor; once the cursor is dragged past a threshold
@@ -3153,13 +2922,13 @@ type ProjectDragPreview = {
 };
 
 const PROJECT_TAB_TEAR_OFF_DISTANCE = 100;
+const PROJECT_TAB_BAR_HEIGHT = 48;
 // Transparent padding around the ghost card so its drop shadow isn't clipped.
 const GHOST_PADDING = 24;
 const GHOST_HEIGHT = 56;
 
 let projectDragPollTimer: ReturnType<typeof setInterval> | null = null;
 let projectDragSourceWebContentsId: number | null = null;
-let projectDragHoverTargetId: number | null = null;
 let projectDragPreview: ProjectDragPreview | null = null;
 let projectDragTornOff = false;
 let tabGhostWindow: BrowserWindow | null = null;
@@ -3178,16 +2947,12 @@ function getBarScreenRect(webContentsId: number | null): ScreenRect | null {
 		if (window.webContents.id !== webContentsId) {
 			continue;
 		}
-		const rect = tabBarRectsByWebContents.get(webContentsId);
-		if (!rect) {
-			return null;
-		}
 		const content = window.getContentBounds();
 		return {
-			x: content.x + rect.x,
-			y: content.y + rect.y,
-			width: rect.width,
-			height: rect.height,
+			x: content.x,
+			y: content.y,
+			width: content.width,
+			height: Math.min(PROJECT_TAB_BAR_HEIGHT, content.height),
 		};
 	}
 	return null;
@@ -3218,24 +2983,6 @@ function findAppWindowTabBarAtPoint(point: {
 		}
 	}
 	return null;
-}
-
-// Clears the in-bar drop placeholder on whichever window previously had it, and
-// remembers the new hover target. The per-tick "active" message (with the live
-// cursor X for the insertion index) is sent from the poll loop, not here.
-function setProjectDragHoverTarget(targetId: number | null): void {
-	if (targetId === projectDragHoverTargetId) {
-		return;
-	}
-
-	if (projectDragHoverTargetId !== null) {
-		const previous = webContents.fromId(projectDragHoverTargetId);
-		if (previous && !previous.isDestroyed()) {
-			previous.send('app:project-drag-hover', { active: false });
-		}
-	}
-
-	projectDragHoverTargetId = targetId;
 }
 
 function escapeGhostHtml(value: string): string {
@@ -3323,16 +3070,6 @@ function moveTabGhostToCursor(point: { x: number; y: number }): void {
 	}
 }
 
-function hideTabGhostWindow(): void {
-	if (
-		tabGhostWindow &&
-		!tabGhostWindow.isDestroyed() &&
-		tabGhostWindow.isVisible()
-	) {
-		tabGhostWindow.hide();
-	}
-}
-
 function destroyTabGhostWindow(): void {
 	if (tabGhostWindow && !tabGhostWindow.isDestroyed()) {
 		tabGhostWindow.destroy();
@@ -3350,11 +3087,10 @@ function setProjectTabTornOff(tornOff: boolean): void {
 		if (projectDragPreview) {
 			showTabGhostWindow(projectDragPreview);
 		}
-		source?.send('app:project-tab-torn-off', { active: true });
+		source?.send('server-ui-host:event', { type: 'workspace.drag-state', active: true });
 	} else {
 		destroyTabGhostWindow();
-		setProjectDragHoverTarget(null);
-		source?.send('app:project-tab-torn-off', { active: false });
+		source?.send('server-ui-host:event', { type: 'workspace.drag-state', active: false });
 	}
 }
 
@@ -3363,182 +3099,63 @@ function stopProjectDragTracking(): void {
 		clearInterval(projectDragPollTimer);
 		projectDragPollTimer = null;
 	}
-	setProjectDragHoverTarget(null);
 	destroyTabGhostWindow();
 	projectDragTornOff = false;
 	projectDragSourceWebContentsId = null;
 	projectDragPreview = null;
 }
 
-ipcMain.handle(
-	'desktop:project-tab-host:start-drag',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 2 ||
-			(payload as { version?: unknown }).version !== 1 ||
-			!hasOwn(payload, 'preview')
-		) {
-			throw new TypeError('desktop project-tab host request is invalid');
-		}
-		const preview = (payload as { preview: unknown }).preview;
-		if (
-			typeof preview !== 'object' ||
-			preview === null ||
-			Array.isArray(preview) ||
-			Object.getPrototypeOf(preview) !== Object.prototype ||
-			Object.keys(preview).length !== 4 ||
-			!['color', 'emoji', 'title', 'width'].every((key) => hasOwn(preview, key))
-		) {
-			throw new TypeError('desktop project-tab drag preview is invalid');
-		}
-		const candidate = preview as Record<string, unknown>;
-		if (
-			typeof candidate.title !== 'string' ||
-			candidate.title.length > 512 ||
-			typeof candidate.emoji !== 'string' ||
-			candidate.emoji.length > 64 ||
-			typeof candidate.color !== 'string' ||
-			!/^#[0-9a-fA-F]{3,8}$/.test(candidate.color) ||
-			typeof candidate.width !== 'number' ||
-			!Number.isFinite(candidate.width) ||
-			candidate.width < 80 ||
-			candidate.width > 2_000
-		) {
-			throw new TypeError('desktop project-tab drag preview is invalid');
-		}
-		projectDragSourceWebContentsId = event.sender.id;
-		projectDragPreview = {
-			color: candidate.color,
-			emoji: candidate.emoji,
-			title: candidate.title,
-			width: candidate.width,
-		};
-		projectDragTornOff = false;
-		if (projectDragPollTimer) {
-			clearInterval(projectDragPollTimer);
-		}
-		projectDragPollTimer = setInterval(() => {
-			const point = screen.getCursorScreenPoint();
-			const sourceId = projectDragSourceWebContentsId;
-			const sourceBar = getBarScreenRect(sourceId);
-
-			if (!projectDragTornOff) {
-				// Still docked: tear off only once the cursor is dragged far enough away
-				// from the source tab bar.
-				if (
-					sourceBar &&
-					distanceToRect(point, sourceBar) > PROJECT_TAB_TEAR_OFF_DISTANCE
-				) {
-					setProjectTabTornOff(true);
-				}
-				return;
-			}
-
-			// Torn off: re-dock if the cursor returns to the source bar.
-			if (sourceBar && pointInRect(point, sourceBar)) {
-				setProjectTabTornOff(false);
-				return;
-			}
-
-			const hit = findAppWindowTabBarAtPoint(point);
-			const target = hit !== null && hit !== sourceId ? hit : null;
-			setProjectDragHoverTarget(target);
-
-			if (target !== null) {
-				// Over another window's bar: hide the floating ghost and let that window
-				// render a real in-bar placeholder at the cursor's insertion point, so the
-				// user can slot it into the exact position (Chrome-style). Forward the
-				// cursor as a viewport-relative X for that window's index calculation.
-				hideTabGhostWindow();
-				const targetWindow = getAppWindowByWebContentsId(target);
-				const viewportX = targetWindow
-					? point.x - targetWindow.getContentBounds().x
-					: point.x;
-				targetWindow?.webContents.send('app:project-drag-hover', {
-					active: true,
-					clientX: viewportX,
-					preview: projectDragPreview,
-				});
-				return;
-			}
-
-			moveTabGhostToCursor(point);
-		}, 16);
-	},
-);
-
-ipcMain.handle(
-	'desktop:project-tab-host:end-drag',
-	(event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload) ||
-			Object.getPrototypeOf(payload) !== Object.prototype ||
-			Object.keys(payload).length !== 1 ||
-			(payload as { version?: unknown }).version !== 1
-		) {
-			throw new TypeError('desktop project-tab host request is invalid');
-		}
-		const sourceId = projectDragSourceWebContentsId;
-		const wasTornOff = projectDragTornOff;
-		const hoverTargetId = projectDragHoverTargetId;
-		if (projectDragPollTimer) {
-			clearInterval(projectDragPollTimer);
-			projectDragPollTimer = null;
-		}
-		destroyTabGhostWindow();
-		projectDragTornOff = false;
-		projectDragSourceWebContentsId = null;
-		projectDragPreview = null;
-		projectDragHoverTargetId = null;
-
+function beginCanonicalProjectDrag(
+	senderId: number,
+	viewId: string,
+	preview: ProjectDragPreview,
+): void {
+	workspaceViewByWebContents.set(senderId, viewId);
+	projectDragSourceWebContentsId = senderId;
+	projectDragPreview = preview;
+	projectDragTornOff = false;
+	if (projectDragPollTimer) clearInterval(projectDragPollTimer);
+	projectDragPollTimer = setInterval(() => {
 		const point = screen.getCursorScreenPoint();
-		const hit = findAppWindowTabBarAtPoint(point);
-		const source = webContents.fromId(sourceId ?? -1);
-
-		const clearPlaceholder = (id: number | null) => {
-			if (id === null) {
-				return;
-			}
-			const wc = webContents.fromId(id);
-			if (wc && !wc.isDestroyed()) {
-				wc.send('app:project-drag-hover', { active: false });
-			}
-		};
-
-		// Never torn off, or dropped back on its own bar — a plain reorder.
-		if (!wasTornOff || hit === sourceId) {
-			clearPlaceholder(hoverTargetId);
-			source?.send('app:project-tab-torn-off', { active: false });
-			return { action: 'reorder' as const };
+		const sourceBar = getBarScreenRect(projectDragSourceWebContentsId);
+		if (!projectDragTornOff) {
+			if (
+				sourceBar &&
+				distanceToRect(point, sourceBar) > PROJECT_TAB_TEAR_OFF_DISTANCE
+			) setProjectTabTornOff(true);
+			return;
 		}
-
-		// Merge: leave the drop target's in-bar placeholder up so adoptProject can
-		// replace it in place (no flicker). Clear any other stale placeholder.
-		if (hit !== null) {
-			const targetViewId = workspaceViewByWebContents.get(hit);
-			if (targetViewId === undefined) {
-				clearPlaceholder(hit);
-				source?.send('app:project-tab-torn-off', { active: false });
-				return { action: 'reorder' as const };
-			}
-			if (hoverTargetId !== hit) {
-				clearPlaceholder(hoverTargetId);
-			}
-			return { action: 'merge' as const, targetWindowId: hit, targetViewId };
+		if (sourceBar && pointInRect(point, sourceBar)) {
+			setProjectTabTornOff(false);
+			return;
 		}
+		moveTabGhostToCursor(point);
+	}, 16);
+}
 
-		clearPlaceholder(hoverTargetId);
-		return { action: 'popout' as const, x: point.x, y: point.y };
-	},
-);
+function endCanonicalProjectDrag():
+	| { action: 'reorder' }
+	| { action: 'merge'; targetViewId: string }
+	| { action: 'popout'; x: number; y: number } {
+	const sourceId = projectDragSourceWebContentsId;
+	const wasTornOff = projectDragTornOff;
+	if (projectDragPollTimer) clearInterval(projectDragPollTimer);
+	projectDragPollTimer = null;
+	destroyTabGhostWindow();
+	projectDragTornOff = false;
+	projectDragSourceWebContentsId = null;
+	projectDragPreview = null;
+	const point = screen.getCursorScreenPoint();
+	const hit = findAppWindowTabBarAtPoint(point);
+	if (!wasTornOff || hit === sourceId) return { action: 'reorder' };
+	if (hit !== null) {
+		const targetViewId = workspaceViewByWebContents.get(hit);
+		return targetViewId === undefined
+			? { action: 'reorder' }
+			: { action: 'merge', targetViewId };
+	}
+	return { action: 'popout', x: point.x, y: point.y };
+}
 
 function usesPrivilegedWebRtcExposure(): boolean {
 	return privilegedWebRtcExposure !== null;
@@ -4026,7 +3643,6 @@ app.on('web-contents-created', (_event, contents) => {
 		if (contents.id === projectDragSourceWebContentsId) {
 			stopProjectDragTracking();
 		}
-		tabBarRectsByWebContents.delete(contents.id);
 		detachSessionsForWebContents(contents.id);
 		fileWatchService.disposeSubscriber(contents.id);
 	});

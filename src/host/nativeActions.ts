@@ -16,7 +16,9 @@ function bridge(): NativeHostBridge | undefined {
 
 async function request(
 	action: TerminayHostAction,
-): Promise<Readonly<{ handled: false }> | Readonly<{ handled: true; result: unknown }>> {
+): Promise<
+	Readonly<{ handled: false }> | Readonly<{ handled: true; result: unknown }>
+> {
 	const host = bridge();
 	if (host === undefined) return { handled: false };
 	const context = await host.getContext();
@@ -67,7 +69,8 @@ function parseUpdateStatus(value: unknown): AppUpdateStatus {
 		typeof status.currentVersion !== 'string' ||
 		(status.errorMessage !== null && typeof status.errorMessage !== 'string') ||
 		typeof status.hasUpdate !== 'boolean' ||
-		(status.latestVersion !== null && typeof status.latestVersion !== 'string') ||
+		(status.latestVersion !== null &&
+			typeof status.latestVersion !== 'string') ||
 		(status.releaseUrl !== null && typeof status.releaseUrl !== 'string')
 	)
 		throw new TypeError('native updater returned an invalid status');
@@ -82,4 +85,62 @@ export async function checkForAppUpdate(): Promise<AppUpdateStatus | null> {
 export async function closeHostPresentation(): Promise<void> {
 	if ((await request({ type: 'route.close' })).handled) return;
 	window.close();
+}
+
+export type WorkspaceDragDecision =
+	| Readonly<{ action: 'reorder' }>
+	| Readonly<{ action: 'merge'; targetViewId: string }>
+	| Readonly<{ action: 'popout'; x: number; y: number }>;
+
+export async function beginWorkspaceDrag(input: {
+	viewId: string;
+	preview: { title: string; emoji: string; color: string; width: number };
+}): Promise<void> {
+	await request({ type: 'workspace.drag.start', ...input });
+}
+
+export async function endWorkspaceDrag(): Promise<WorkspaceDragDecision> {
+	const response = await request({ type: 'workspace.drag.end' });
+	if (!response.handled) return { action: 'reorder' };
+	const value = response.result;
+	if (typeof value !== 'object' || value === null || Array.isArray(value))
+		throw new TypeError('native workspace drag result is invalid');
+	const result = value as Record<string, unknown>;
+	if (result.action === 'reorder' && Object.keys(result).length === 1)
+		return { action: 'reorder' };
+	if (
+		result.action === 'merge' &&
+		Object.keys(result).length === 2 &&
+		typeof result.targetViewId === 'string'
+	)
+		return { action: 'merge', targetViewId: result.targetViewId };
+	if (
+		result.action === 'popout' &&
+		Object.keys(result).length === 3 &&
+		typeof result.x === 'number' &&
+		Number.isFinite(result.x) &&
+		typeof result.y === 'number' &&
+		Number.isFinite(result.y)
+	)
+		return { action: 'popout', x: result.x, y: result.y };
+	throw new TypeError('native workspace drag result is invalid');
+}
+
+export async function presentWorkspaceView(
+	viewId: string,
+	position: { x: number; y: number },
+): Promise<void> {
+	const query = new URLSearchParams({
+		view: viewId,
+		x: String(position.x),
+		y: String(position.y),
+	});
+	const response = await request({
+		type: 'route.present',
+		route: `/?${query.toString()}`,
+		disposition: 'native-window',
+		logicalViewId: `workspace:${viewId}`,
+	});
+	if (!response.handled)
+		throw new Error('Native workspace windows are unavailable.');
 }
