@@ -21,14 +21,18 @@ async function getActiveSessionId(page: Page): Promise<string> {
 	return sessionId;
 }
 
-async function writeToActiveTerminal(page: Page, data: string): Promise<string> {
+async function writeToActiveTerminal(
+	page: Page,
+	data: string,
+): Promise<string> {
 	const sessionId = await getActiveSessionId(page);
-	await page.evaluate(
-		async ({ nextData, nextSessionId }) => {
-			await window.terminayTest!.writeServerTerminal(nextSessionId, nextData);
-		},
-		{ nextData: data, nextSessionId: sessionId },
+	const input = page.locator(
+		'.project-workspace--active .terminal-panel:has(.xterm-helper-textarea:focus) .xterm-helper-textarea',
 	);
+	await input.focus();
+	const command = data.replace(/[\r\n]+$/u, '');
+	if (command.length > 0) await page.keyboard.insertText(command);
+	if (command.length !== data.length) await page.keyboard.press('Enter');
 	return sessionId;
 }
 
