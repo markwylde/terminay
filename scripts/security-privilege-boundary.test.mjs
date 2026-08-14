@@ -147,10 +147,32 @@ test("server UI host keeps privileged navigation and browser permissions denied"
   assert.match(host, /webSecurity:\s*true/);
   assert.match(host, /allowRunningInsecureContent:\s*false/);
   assert.match(host, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/);
-  assert.match(host, /will-attach-webview[\s\S]{0,180}preventDefault/);
-  assert.match(host, /will-frame-navigate[\s\S]{0,240}isAllowedNavigation/);
-  assert.match(host, /will-navigate[\s\S]{0,240}isAllowedNavigation/);
-  assert.match(host, /will-redirect[\s\S]{0,240}isAllowedNavigation/);
+  assert.match(
+    host,
+    /const denyWebviewAttachment = \(event: Event\) => \{\s*event\.preventDefault\(\);\s*\};/,
+  );
+  assert.match(
+    host,
+    /\.on\('will-attach-webview', denyWebviewAttachment\)/,
+  );
+  assert.match(
+    host,
+    /const restrictFrameNavigation = \([\s\S]*?isAllowedNavigation\(event\.url, expectedOrigin, allowedFileRoot\)/,
+  );
+  assert.match(
+    host,
+    /\.on\('will-frame-navigate', restrictFrameNavigation\)/,
+  );
+  assert.match(
+    host,
+    /const restrictNavigation = \([\s\S]*?isAllowedNavigation\(target, expectedOrigin, allowedFileRoot\)/,
+  );
+  assert.match(host, /\.on\('will-navigate', restrictNavigation\)/);
+  assert.match(
+    host,
+    /const restrictRedirect = \([\s\S]*?isAllowedNavigation\(target, expectedOrigin, allowedFileRoot\)/,
+  );
+  assert.match(host, /\.on\('will-redirect', restrictRedirect\)/);
   assert.match(host, /item\.cancel\(\)/);
   assert.match(host, /setPermissionCheckHandler\(\(\) => false\)/);
   assert.match(host, /callback\(false\)/);
