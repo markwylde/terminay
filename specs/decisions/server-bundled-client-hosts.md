@@ -2,8 +2,9 @@
 
 Status: accepted architecture; delivery evidence is tracked by
 [Task 27](../tasks_completed/27-server-bundle-host-contracts.md),
-[Task 28](../tasks/28-desktop-server-bundle-host-and-state.md), and
-[Task 29](../tasks_completed/29-browser-host-and-cross-version-convergence.md).
+[Task 28](../tasks_completed/28-desktop-server-bundle-host-and-state.md),
+[Task 29](../tasks_completed/29-browser-host-and-cross-version-convergence.md),
+and [Task 54](../tasks/54-canonical-renderer-runtime-convergence.md).
 
 ## Context
 
@@ -111,6 +112,19 @@ server-UI window composition and receive the same host-context negotiation.
 The installed Electron application has no separately evolving Local workspace
 renderer.
 
+Development, packaged, signed, and released Desktop builds use this same
+server-bundle entry, preload boundary, host-context negotiation, byte endpoint,
+workspace hydration, and route composition. A development server may watch and
+rebuild the selected Local server bundle, but it does not select a different
+renderer entry or authority graph. There is no Electron-only full-workspace
+entry, fallback renderer, compatibility workspace client, or environment-based
+branch that changes the application architecture.
+
+The shared workspace exposes an in-page File/Edit/View/Help menu only when the
+negotiated host lacks native application menus. Desktop advertises and renders
+its native application menu, so its server bundle omits the in-page menu and
+reserves the native title-bar inset before placing project controls.
+
 ## State ownership
 
 | Owner | Durable state |
@@ -124,6 +138,14 @@ A native window binding contains local window identity, server profile identity,
 optional server-owned logical view identity, and geometry. It does not contain
 projects, panel layouts, terminal data, filesystem paths, server settings, or
 application-protocol snapshots.
+
+On the first successful start of a new server data root, the server commits one
+initial workspace view, one This server project, one terminal panel, and its
+terminal session as a single durable initialization. Later starts restore the
+canonical repository and never create a second default merely because a client
+window is new, reloaded, or temporarily disconnected. A connected renderer is
+not considered ready until the initial or restored snapshot can drive the
+project tabs, active terminal, and sidebar queries.
 
 ## Compatibility policy
 
@@ -180,6 +202,9 @@ QR is offered to a new device.
 - **Feature-aware Desktop compatibility adapters:** require the shell to
   understand every server application version and risk a second state
   authority.
+- **Development-only Electron workspace renderer:** makes normal development
+  test a different product from the packaged artifact and permits startup,
+  persistence, host-menu, and lifecycle defects to reach a release.
 - **Run every server bundle at the manager origin:** breaks credential and code
   isolation between servers.
 - **Treat Local Network as the exposure fallback:** changes transport semantics

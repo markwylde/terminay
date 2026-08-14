@@ -37,9 +37,9 @@ The shared client facade uses the canonical `recordings.*` operations for every
 host, validates bounded list/replay/state DTOs, caches list queries until an
 explicit recording mutation (including an uncertain reconnect outcome), and
 removes project roots and cast paths before data reaches shared UI code.
-The Desktop timeline keeps legacy preload calls in one host-local compatibility
-adapter; the timeline component itself uses that same facade for list, bounded
-replay, reveal, and deletion.
+The timeline uses that facade for list, bounded replay, reveal, and deletion on
+every host. Desktop supplies only the negotiated native reveal presentation;
+it does not implement or translate recording operations.
 
 ## Defaults and controls
 
