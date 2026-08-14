@@ -2,7 +2,6 @@ import {
 	ChevronDown,
 	Copy,
 	FileEdit,
-	FolderOpen,
 	FolderPlus,
 	PlusSquare,
 	Terminal,
@@ -508,11 +507,6 @@ function buildGitPathContextMenuItems(options: {
 			icon: <Terminal size={14} />,
 			disabled: !onOpenTerminal,
 			onClick: () => onOpenTerminal?.(terminalPath),
-		},
-		{
-			label: 'Reveal in OS',
-			icon: <FolderOpen size={14} />,
-			onClick: () => void window.terminayRevealHost?.reveal(path),
 		},
 	];
 }

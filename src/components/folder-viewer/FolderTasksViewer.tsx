@@ -1,4 +1,4 @@
-import { Copy, FolderOpen, Terminal } from 'lucide-react';
+import { Copy, Terminal } from 'lucide-react';
 import { type MouseEvent, useMemo, useState } from 'react';
 import { writeClipboardText } from '../../host/nativeActions';
 import type { FileViewerMode } from '../../types/fileViewer';
@@ -597,11 +597,6 @@ function buildTaskPathContextMenuItems(options: {
 			icon: <Terminal size={14} />,
 			disabled: !onOpenTerminal,
 			onClick: () => onOpenTerminal?.(directoryPath),
-		},
-		{
-			label: 'Reveal in OS',
-			icon: <FolderOpen size={14} />,
-			onClick: () => void window.terminayRevealHost?.reveal(document.path),
 		},
 	];
 }
