@@ -66,7 +66,14 @@ export function createProjectEnvironmentOperationHandlers(options: ProjectEnviro
 					?? (() => { throw failure('unavailable', 'project environment root validation is unavailable', true); })();
 			const projectId = uniqueId(`project:${request.envelope.commandId}`, options.workspace.state.projects);
 			let prepared: PreparedProjectRootUpdate | undefined;
-			if (options.prepareProjectRootUpdate !== undefined) {
+			// A newly-created This-server project has no workspace binding yet, so
+			// its local filesystem root must be prepared directly before the
+			// workspace publication. Remote environments keep their own validated
+			// root lifecycle and must not be routed through an as-yet absent project.
+			if (
+				environment.id === THIS_SERVER_ENVIRONMENT_ID &&
+				options.prepareProjectRootUpdate !== undefined
+			) {
 				try {
 					prepared = await options.prepareProjectRootUpdate(projectId, root);
 				} catch {
