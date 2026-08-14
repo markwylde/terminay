@@ -39,11 +39,6 @@ declare global {
 				durationMs: number,
 			): Promise<void>;
 		};
-		/** Narrow OS reveal capability for the current Desktop workspace. */
-		terminayRevealHost?: {
-			readonly version: 1;
-			reveal(filePath: string): Promise<void>;
-		};
 		/** Bounded Desktop-only MCP configuration capability. */
 		/** Bounded native recordings-window capability for the current Desktop shell. */
 		terminayRecordingsHost?: {
