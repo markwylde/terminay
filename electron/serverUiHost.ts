@@ -108,10 +108,12 @@ function bindingForEvent(
 	return binding;
 }
 
-/** Validate one-way host IPC against the same closed document binding used by
- * host action invocations. Server UI documents deliberately have a different
+/** Validate host IPC against the same closed document binding used by host
+ * action invocations. Server UI documents deliberately have a different
  * origin from the application shell. */
-export function assertBoundServerUiEvent(event: IpcMainEvent): void {
+export function assertBoundServerUiEvent(
+	event: IpcMainEvent | IpcMainInvokeEvent,
+): void {
 	bindingForEvent(event);
 }
 
