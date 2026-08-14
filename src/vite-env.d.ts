@@ -5,20 +5,6 @@ import type { TerminayTestApi } from './types/terminay';
 
 declare global {
 	interface Window {
-		/** Bounded wait capability for an already attached server terminal. */
-		terminayTerminalLifecycleHost: {
-			readonly version: 1;
-			waitForInactivity(
-				identity: {
-					readonly serverId: string;
-					readonly projectId: string;
-					readonly sessionId: string;
-					readonly clientId: string;
-				},
-				durationMs: number,
-			): Promise<void>;
-		};
-		/** Bounded Desktop-only MCP configuration capability. */
 		/** Bounded native tab-bar presentation for the current Desktop window. */
 		terminayProjectTabHost?: {
 			readonly version: 1;
