@@ -414,15 +414,11 @@ export function createServerCoreComposition(
 	...(options.workspaceOperations?.prepareProjectRootUpdate === undefined
 		? {}
 		: {
-				prepareProjectRootUpdate: (projectId: string, root: string) =>
-					options.projectEnvironmentRouter === undefined
-						? options.workspaceOperations!.prepareProjectRootUpdate!(projectId, root)
-						: prepareRoutedProjectRoot(
-								options.projectEnvironmentRouter,
-								options.workspaceOperations!.prepareProjectRootUpdate!,
-								projectId,
-								root,
-							),
+				// Project-environment creation prepares the built-in This-server
+				// root before its workspace object exists; routing by project id at
+				// that point would reject the legitimate new identity.
+				prepareProjectRootUpdate:
+					options.workspaceOperations.prepareProjectRootUpdate,
 			}),
     ...(options.projectEnvironments.providerDefinitions !== undefined || options.extensions?.hosts === undefined ? {} : { providerDefinitions: () => options.extensions!.hosts!.statuses().flatMap((status) => status.providers ?? []) }),
     ...(options.projectEnvironments.providerRuntime !== undefined || options.extensions?.hosts === undefined ? {} : { providerRuntime: options.extensions.hosts }),
