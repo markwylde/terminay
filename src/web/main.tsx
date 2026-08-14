@@ -1264,7 +1264,7 @@ export default function WebManagerApp() {
 			const labelledContext = Object.freeze({
 				...context,
 				connectionLabel: profile.label,
-				connectionGeneration: `${profile.id}:${recoveryAttempt.generation}`,
+				connectionGeneration: crypto.randomUUID(),
 				retryConnection: connectionController.current?.retry,
 				canRetryConnection: () => connectionController.current?.state.phase === 'retry-wait',
 				reportConnectionHydrated: reportTerminalHydrated,
