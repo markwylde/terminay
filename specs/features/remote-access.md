@@ -46,6 +46,18 @@ Rotation invalidates active rooms without changing the stable session origin or
 disconnecting existing peers; expired, consumed, and locked rooms are bounded
 and reclaimed.
 
+The isolated browser host supports current Chromium and Firefox releases when
+they provide the declared execution-runtime and host capabilities. It
+capability-negotiates those requirements before running server-provided assets;
+browser brand, user-agent string, and browser-version ranges must never gate
+startup or authorize compatibility. A user agent may be retained only for
+diagnostics or a narrowly documented, capability-backed workaround. Bundle
+compatibility is determined by protocol/schema revisions and required/optional
+capabilities, not a Chromium version range. An unsupported capability or
+failed bootstrap presents a typed, visible, non-secret recovery screen that
+names the missing capability or bootstrap failure; it must never leave a blank
+document or top-level uncaught error.
+
 Each server session has its own browser origin. Credentials issued for one
 origin or server identity do not authorize another.
 
@@ -291,10 +303,10 @@ generic Electron IPC.
 The host need not understand the server bundle's feature-level application
 protocol. Cross-version connection depends only on compatible
 pairing/reconnect and signaling bootstrap, byte transport, bundle
-manifest/transfer, execution runtime, and required host-bridge contracts. A
-missing optional native capability uses browser-equivalent presentation; a
-missing required compatibility boundary fails before launch with a typed
-upgrade requirement.
+manifest/transfer schema, declared required capabilities, and required
+host-bridge contracts. A missing optional native capability uses
+browser-equivalent presentation; a missing required compatibility boundary
+fails before launch with a typed upgrade requirement.
 
 The server-provided UI receives no ambient Electron, Node, connection-manager,
 or cross-origin credential authority. Desktop loads it in a sandboxed,
