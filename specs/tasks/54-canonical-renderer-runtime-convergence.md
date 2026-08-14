@@ -89,6 +89,24 @@ Electron renderer architecture or import its client-owned workspace state.
 Current canonical server repository schema migrations remain allowed because
 they are server persistence, not a second renderer.
 
+The remaining `legacy` names are classified narrowly:
+
+- `apps/terminay-web/src/legacyMigration.ts` and its web entry callers import
+  persisted browser connection-manager records once, then delete the source;
+- server-core migration inventory/runner/types, workspace/settings/shell
+  normalization, macro/terminal settings, and recording import code read
+  persisted older schemas into the canonical server-owned schema;
+- `legacyNodeDataChannelFallback: false` is a fail-closed runtime-selection
+  assertion, not an executable fallback.
+- `electron/remote/deployedTerminalProtocol.ts` is the deployed v1 remote wire
+  parser used by the privileged WebRTC service; it cannot load a renderer,
+  preload, workspace projection, or client-owned authority.
+
+Adapter recovery inventories that report deleted renderer preloads, terminal-
+only remote clients, or feature preloads as `retain-until-parity` are forbidden.
+They keep the removed architecture conceptually live and cannot be used for
+persisted-data recovery.
+
 ### 3. Canonical server persistence and first launch
 
 - [ ] Compose the same durable `WorkspaceRepository` and transaction boundary
