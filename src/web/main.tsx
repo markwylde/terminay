@@ -1388,7 +1388,13 @@ export default function WebManagerApp() {
 						proof,
 					},
 				);
-				const clientId = createWebClientId();
+				// A device-paired direct connection must retain the same protocol
+				// identity across recovery. A new id makes the server treat the
+				// replacement as another device and loses this browser's terminal
+				// attachment during the reconnect handoff.
+				const clientId =
+					clientIdsByProfile.current.get(profile.id) ?? createWebClientId();
+				clientIdsByProfile.current.set(profile.id, clientId);
 				const hosted = await acquireHostedApplicationTransport(completion.ticket);
 				const transport = hosted ?? new WebSocketByteTransport({
 								origin: endpoint,

@@ -32,8 +32,11 @@ export function bindLocalServerUiDocumentEndpoint(options: {
 }): () => void {
 	const sender = options.sender;
 	const lifecycle = navigationLifecycle(sender, options.diagnostic);
-	const attach = () => {
+	let attachedForDocument = false;
+	const attach = (replace = false) => {
 		if (sender.isDestroyed()) return;
+		if (attachedForDocument && !replace) return;
+		attachedForDocument = true;
 		const document = lifecycle.replace();
 		const channel = new MessageChannelMain();
 		document.add('message-port', () => channel.port1.close());
@@ -53,17 +56,31 @@ export function bindLocalServerUiDocumentEndpoint(options: {
 		});
 	};
 	const onReplace = (event: Electron.IpcMainEvent) => {
-		if (event.sender === sender) attach();
+		if (event.sender === sender) attach(true);
 	};
 	const onDocumentReady = (event: Electron.IpcMainEvent) => {
 		if (event.sender === sender) attach();
 	};
+	const onDocumentNavigation = (
+		_event: unknown,
+		_url: string,
+		_inPlace: boolean,
+		isMainFrame: boolean,
+	) => {
+		if (isMainFrame) attachedForDocument = false;
+	};
 	ipcMain.on(REPLACE_BYTE_ENDPOINT, onReplace);
 	ipcMain.on(DOCUMENT_READY, onDocumentReady);
-	const unbind = lifecycle.bind(attach, undefined, false);
+	sender.on('did-start-navigation', onDocumentNavigation);
+	// document-ready is the fast preload-owned handoff. did-finish-load is an
+	// idempotent fallback for a newly-created child whose early preload signal
+	// arrives before main has installed its endpoint binding.
+	const unbind = lifecycle.bind(attach);
 	return () => {
 		ipcMain.off(REPLACE_BYTE_ENDPOINT, onReplace);
 		ipcMain.off(DOCUMENT_READY, onDocumentReady);
+		if (!sender.isDestroyed())
+			sender.off('did-start-navigation', onDocumentNavigation);
 		unbind();
 	};
 }
@@ -89,6 +106,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	let connectionClosed = false;
 	let reconnecting: Promise<void> | undefined;
 	let transport = options.transport;
+	let attachedForDocument = false;
 
 	const closeConnection = () => {
 		if (connectionClosed) return;
@@ -104,8 +122,10 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	};
 	activeRemoteEndpoints.set(senderId, closeConnection);
 
-	const attach = () => {
+	const attach = (replace = false) => {
 		if (connectionClosed || sender.isDestroyed()) return;
+		if (attachedForDocument && !replace) return;
+		attachedForDocument = true;
 		const document = lifecycle.replace();
 		const channel = new MessageChannelMain();
 		documentPort = channel.port1;
@@ -141,7 +161,6 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 			onFailure: (message) => options.diagnostic?.('message-port', message),
 		});
 	};
-	const unbind = lifecycle.bind(attach, closeConnection, false);
 	const onReplace = (event: Electron.IpcMainEvent) => {
 		if (event.sender !== sender || connectionClosed) return;
 		// The renderer asks for a new endpoint after it receives the deliberate
@@ -150,13 +169,23 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 		// established. Recovery itself sends exactly one replacement port once the
 		// new lane is live; sending a second one would invalidate that fresh port.
 		if (reconnecting !== undefined) return;
-		attach();
+		attach(true);
 	};
 	const onDocumentReady = (event: Electron.IpcMainEvent) => {
 		if (event.sender === sender && !connectionClosed) attach();
 	};
+	const onDocumentNavigation = (
+		_event: unknown,
+		_url: string,
+		_inPlace: boolean,
+		isMainFrame: boolean,
+	) => {
+		if (isMainFrame) attachedForDocument = false;
+	};
 	ipcMain.on(REPLACE_BYTE_ENDPOINT, onReplace);
 	ipcMain.on(DOCUMENT_READY, onDocumentReady);
+	sender.on('did-start-navigation', onDocumentNavigation);
+	const unbind = lifecycle.bind(attach, closeConnection);
 
 	const startTransport = () => {
 		const activeTransport = transport;
@@ -199,7 +228,7 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 					await transport.close({ code: 'normal' }).catch(() => undefined);
 					return;
 				}
-				attach();
+				attach(true);
 				startTransport();
 			} catch (error) {
 				options.diagnostic?.('remote-reconnect', boundedMessage(error));
@@ -213,6 +242,8 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	return () => {
 		ipcMain.off(REPLACE_BYTE_ENDPOINT, onReplace);
 		ipcMain.off(DOCUMENT_READY, onDocumentReady);
+		if (!sender.isDestroyed())
+			sender.off('did-start-navigation', onDocumentNavigation);
 		unbind();
 		closeConnection();
 	};
