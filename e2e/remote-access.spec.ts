@@ -191,20 +191,17 @@ test('asks for a Remote Access PIN before generating the QR code', async ({
 
 	await openRemoteMenu(mainWindow);
 	await mainWindow.getByRole('button', { name: 'Expose this server…' }).click();
-	await expect
-		.poll(
-			async () =>
-				(
-					await mainWindow.evaluate(() =>
-						window.terminayRemoteAccessStatusHost.getStatus(),
-					)
-				).isRunning,
-		)
-		.toBe(true);
 	await openRemoteMenu(mainWindow);
-	await mainWindow
-		.getByRole('button', { name: 'Show pairing link and QR' })
-		.click();
+	const showPairing = mainWindow.getByRole('button', {
+		name: 'Show pairing link and QR',
+	});
+	// The selected server's canonical status subscription enables this action
+	// only after exposure has started and a pairing URL is available.
+	await expect(showPairing).toBeVisible();
+	await expect(
+		mainWindow.getByRole('button', { name: /^Stop exposing this server/ }),
+	).toBeVisible();
+	await showPairing.click();
 	const secondPairingDialog = mainWindow.getByRole('dialog', {
 		name: 'Pair device',
 	});
