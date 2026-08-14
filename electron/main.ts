@@ -58,7 +58,6 @@ import {
 import type { RemoteReconnectGrantRecord } from '../packages/server-core/src/remote/reconnect';
 import { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
 import { createServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
-import { FileWorkspaceStateBackend } from '../packages/server-core/src/workspaceRepository';
 import { openCanonicalWorkspace } from '../packages/server-core/src/workspaceHydration';
 import {
 	createNodeShellDiscoveryHost,
@@ -100,6 +99,7 @@ import {
 	bindRemoteServerUiDocumentEndpoint,
 } from './serverUiDocumentEndpoint';
 import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
+import { createEmbeddedWorkspaceStateBackend, embeddedWorkspacePersistenceFault } from './workspacePersistence';
 import {
 	bindServerUiWindow,
 	getServerUiPartitionName,
@@ -430,8 +430,11 @@ function resetZoom(): void {
 	broadcastZoomChange();
 }
 
-let serverTerminalAuthority: ServerTerminalAuthority | null = null;
+let serverTerminalAuthority: ServerTerminalAuthority;
 let privilegedWebRtcExposure: PrivilegedWebRtcExposure | null = null;
+let embeddedLanExposure: EmbeddedLanExposure;
+let desktopRemoteExposure: DesktopServerOwnedExposure;
+let desktopDirectNetworkExposure: DesktopServerOwnedExposure;
 const privilegedWebRtcSessions = new Set<string>();
 let appliedAgentIntegrationSetting: boolean | null = null;
 let applyAgentIntegrationPromise = Promise.resolve();
@@ -501,6 +504,7 @@ const pendingRemoteConnectionWindowsByProfile = new Map<
 >();
 const auxiliaryWindowsByPresentation = new Map<string, BrowserWindow>();
 const launchRecoveryWebContents = new Set<number>();
+const deferredCanonicalLaunches = new Map<number, () => Promise<void>>();
 
 type RememberedRemoteConnection = {
 	id: string;
@@ -888,14 +892,14 @@ const embeddedVaultAdapter = await ElectronSafeStorageVaultAdapter.open({
 				},
 });
 const embeddedVault = createServerVaultComposition(embeddedVaultAdapter);
-const embeddedWorkspace = await openCanonicalWorkspace({
-	backend: new FileWorkspaceStateBackend(
-		path.join(app.getPath('userData'), 'workspace.v3.json'),
-	),
-	serverId: 'desktop-local',
-	defaultProjectRoot: app.getPath('home'),
-});
-serverTerminalAuthority = new ServerTerminalAuthority({
+const embeddedRuntimeReady = prepareEmbeddedRuntime();
+
+async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
+await app.whenReady();
+const embeddedStartupWindow = createWindow({ deferCanonicalLaunch: true });
+if (embeddedStartupWindow === null) throw new Error('The embedded workspace window could not be created.');
+const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(embeddedStartupWindow);
+const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
 	serverId: 'desktop-local',
 	dataRoot: app.getPath('userData'),
 	extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
@@ -945,9 +949,7 @@ serverTerminalAuthority = new ServerTerminalAuthority({
 	macros: {
 		repository: embeddedMacros,
 		environmentFor: (request, target) => {
-			const authority = serverTerminalAuthority;
-			if (authority === null)
-				throw new Error('The embedded terminal authority is unavailable.');
+			const terminalAuthority = authority;
 			const authorization = {
 				...target,
 				clientId: request.context.clientId,
@@ -959,15 +961,15 @@ serverTerminalAuthority = new ServerTerminalAuthority({
 			return {
 				target,
 				write: (_candidate, bytes) =>
-					authority.service.input(target, bytes, authorization),
+					terminalAuthority.service.input(target, bytes, authorization),
 				key: (_candidate, key) =>
-					authority.service.input(
+					terminalAuthority.service.input(
 						target,
 						embeddedMacroKeyBytes(key),
 						authorization,
 					),
 				waitForInactivity: (_candidate, milliseconds, signal) =>
-					authority.service.waitForInactivity(target, milliseconds, {
+					terminalAuthority.service.waitForInactivity(target, milliseconds, {
 						authorization,
 						signal,
 					}),
@@ -1032,11 +1034,16 @@ serverTerminalAuthority = new ServerTerminalAuthority({
 		}
 	},
 });
+await recoverEmbeddedWorkspaceOperation(
+	embeddedStartupWindow,
+	() => authority.initializeWorkspace(),
+);
+serverTerminalAuthority = authority;
 localServerUiSession = new LocalServerUiSession({
 	bundleRoot: SERVER_UI_DIST,
 	cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
 	executionRuntimeVersion: Number.parseInt(process.versions.chrome, 10),
-	serverId: serverTerminalAuthority.service.serverId,
+	serverId: authority.service.serverId,
 });
 remoteServerUiBundleHost = new DesktopServerBundleHost({
 	cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
@@ -1075,8 +1082,8 @@ const persistEmbeddedReconnectRecords = (
 	});
 	renameSync(temporary, embeddedReconnectRecordsPath);
 };
-const embeddedLanExposure = new EmbeddedLanExposure({
-	core: serverTerminalAuthority.composition.core,
+embeddedLanExposure = new EmbeddedLanExposure({
+	core: authority.composition.core,
 	...(process.env.TERMINAY_TEST === '1' ? { enableTestControl: true } : {}),
 	getSettings: () => readTerminalSettings().remoteAccess,
 	onConnectionError: (error) => {
@@ -1093,12 +1100,12 @@ const embeddedLanExposure = new EmbeddedLanExposure({
 	},
 	onReconnectRecordsChanged: persistEmbeddedReconnectRecords,
 	remoteDirectory: path.join(app.getPath('userData'), 'remote-access'),
-	serverId: serverTerminalAuthority.service.serverId,
+	serverId: authority.service.serverId,
 	serverVersion: app.getVersion(),
 	uiBundleDirectory: SERVER_UI_DIST,
 });
-const desktopRemoteExposure = new DesktopServerOwnedExposure({
-	serverId: serverTerminalAuthority.service.serverId,
+desktopRemoteExposure = new DesktopServerOwnedExposure({
+	serverId: authority.service.serverId,
 	sessionOrigin: readTerminalSettings().remoteAccess.origin,
 	pairingMode: () => 'webrtc',
 	initialReconnectRecords: embeddedReconnectRecords,
@@ -1140,8 +1147,8 @@ const desktopRemoteExposure = new DesktopServerOwnedExposure({
 		return hosted.toString();
 	},
 });
-const desktopDirectNetworkExposure = new DesktopServerOwnedExposure({
-	serverId: serverTerminalAuthority.service.serverId,
+desktopDirectNetworkExposure = new DesktopServerOwnedExposure({
+	serverId: authority.service.serverId,
 	sessionOrigin: readTerminalSettings().remoteAccess.origin,
 	pairingMode: () => 'lan',
 	initialReconnectRecords: embeddedReconnectRecords,
@@ -1158,7 +1165,7 @@ if (desktopWebRtcRuntimeRoot !== undefined) {
 	privilegedWebRtcExposure = new PrivilegedWebRtcExposure(
 		desktopWebRtcRuntimeRoot,
 		{
-			serverId: serverTerminalAuthority.service.serverId,
+			serverId: authority.service.serverId,
 			serverVersion: app.getVersion(),
 			acceptApplicationTransport: (transport, authenticatedClient) => {
 				if (serverTerminalAuthority === null) {
@@ -1192,6 +1199,8 @@ if (desktopWebRtcRuntimeRoot !== undefined) {
 			userDataPath: app.getPath('userData'),
 		},
 	);
+}
+	return embeddedStartupWindow;
 }
 
 function readEmbeddedReconnectRecords(
@@ -2469,6 +2478,51 @@ async function presentCanonicalAuxiliaryRoute(
 	});
 }
 
+async function openEmbeddedWorkspaceWithRecovery(window: BrowserWindow): Promise<Awaited<ReturnType<typeof openCanonicalWorkspace>>> {
+	const openWorkspace = () => openCanonicalWorkspace({
+		backend: createEmbeddedWorkspaceStateBackend({
+			filePath: path.join(app.getPath('userData'), 'workspace.v3.json'),
+			testFault: embeddedWorkspacePersistenceFault(process.env),
+		}),
+		serverId: 'desktop-local',
+		defaultProjectRoot: app.getPath('home'),
+	});
+	return recoverEmbeddedWorkspaceOperation(window, openWorkspace);
+}
+
+async function recoverEmbeddedWorkspaceOperation<T>(
+	window: BrowserWindow,
+	operation: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await operation();
+	} catch (initialError) {
+		return new Promise((resolve) => {
+			const renderRecovery = async (cause: unknown): Promise<void> => {
+				console.error('[workspace] canonical persistence unavailable', cause);
+				await showCanonicalLaunchRecovery({
+					window,
+					error: new Error('Terminay could not read or update its saved workspace. Retry after checking that application storage is available.'),
+					retry: async () => {
+						try { resolve(await operation()); }
+						catch (error) { await renderRecovery(error); }
+					},
+					onRecoveryState: (active) => {
+						if (active) launchRecoveryWebContents.add(window.webContents.id);
+						else launchRecoveryWebContents.delete(window.webContents.id);
+					},
+					onDiagnostic: (message) => desktopDiagnostics.record({
+					component: 'renderer', event: 'renderer.bootstrap.failed', message,
+					severity: 'error', source: 'canonical-launch-recovery',
+				}, { channel: 'lifecycle' }),
+				});
+				if (!window.isDestroyed()) window.show();
+			};
+			void renderRecovery(initialError);
+		});
+	}
+}
+
 function createWindow(options?: {
 	adoptedProject?: AdoptedProjectPayload;
 	auxiliary?: Readonly<{
@@ -2478,6 +2532,7 @@ function createWindow(options?: {
 	}>;
 	bounds?: { x: number; y: number };
 	initialServerConnection?: 'local' | 'deferred';
+	deferCanonicalLaunch?: boolean;
 	workspaceViewId?: string;
 	serverUiLaunch?: DesktopBundleLaunch;
 	serverUiTransport?: ByteTransport;
@@ -2503,7 +2558,7 @@ function createWindow(options?: {
 		x: options?.bounds ? Math.round(options.bounds.x) - 120 : undefined,
 		y: options?.bounds ? Math.round(options.bounds.y) - 12 : undefined,
 		title: options?.auxiliary?.title ?? 'Terminay',
-		show: !isAuxiliary,
+		show: !isAuxiliary && options?.deferCanonicalLaunch !== true,
 		// Deliver the first click on an inactive window to the web contents instead of
 		// letting macOS swallow it purely to activate the window (electron/electron#212).
 		// Without this, clicking a background tab focuses the window but the click never
@@ -2602,6 +2657,7 @@ function createWindow(options?: {
 		}
 		remoteProfileBindingsByWebContents.delete(windowWebContentsId);
 		launchRecoveryWebContents.delete(windowWebContentsId);
+		deferredCanonicalLaunches.delete(windowWebContentsId);
 	});
 
 	window.on('page-title-updated', (event) => {
@@ -2738,6 +2794,7 @@ function createWindow(options?: {
 					});
 				}
 				await window.loadURL(entryUrl.toString());
+				if (options?.deferCanonicalLaunch === true && !window.isDestroyed()) window.show();
 			});
 	};
 	const launchWithRecovery = async (): Promise<void> => {
@@ -2768,11 +2825,19 @@ function createWindow(options?: {
 			});
 		}
 	};
-	void launchWithRecovery();
+	if (options?.deferCanonicalLaunch === true) deferredCanonicalLaunches.set(windowWebContentsId, launchWithRecovery);
+	else void launchWithRecovery();
 
 	void getAppUpdateStatus();
 
 	return window;
+}
+
+async function launchDeferredCanonicalWindow(window: BrowserWindow): Promise<void> {
+	const launch = deferredCanonicalLaunches.get(window.webContents.id);
+	if (launch === undefined) throw new Error('The embedded workspace launch was not prepared.');
+	deferredCanonicalLaunches.delete(window.webContents.id);
+	await launch();
 }
 
 async function connectRemoteServer(
@@ -4745,6 +4810,7 @@ app.on('activate', () => {
 });
 
 app.whenReady().then(async () => {
+	const embeddedStartupWindow = await embeddedRuntimeReady;
 	app.setName('Terminay');
 	app.setAboutPanelOptions({ applicationName: 'Terminay' });
 	// Electron safeStorage can report unavailable before app readiness even when
@@ -4772,7 +4838,6 @@ app.whenReady().then(async () => {
 	setDockIcon();
 	createAppMenu();
 	try {
-		await serverTerminalAuthority.initializeWorkspace();
 		await applyAgentIntegrationSetting(readTerminalSettings());
 		await desktopDiagnostics.record(
 			{
@@ -4796,7 +4861,7 @@ app.whenReady().then(async () => {
 		);
 		throw error;
 	}
-	createWindow();
+	await launchDeferredCanonicalWindow(embeddedStartupWindow);
 	applyControlServerSetting();
 });
 
