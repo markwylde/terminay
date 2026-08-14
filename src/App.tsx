@@ -2939,6 +2939,10 @@ const ProjectWorkspace = forwardRef<
 					: async (request) => {
 							const session =
 								await terminalPanelClientContext.client.create(request);
+							// Admit the immutable server session before the creation command
+							// resolves. Journal records may arrive as soon as the server creates
+							// the PTY, before a focus-driven React effect observes its panel.
+							serverAgentStatusClient?.mergeSessionScope([session.sessionId]);
 							return session;
 						},
 			hydrateRecording: hydrateRecordingStateForSession,
