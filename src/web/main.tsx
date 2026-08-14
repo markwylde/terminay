@@ -1522,6 +1522,14 @@ export default function WebManagerApp() {
 		// generation reconnects. Dropping it here flashes the initial pairing
 		// modal on every transient transport loss.
 		hostRef.current.markStatus(profileId, 'unreachable');
+		// Do not keep rendering a disposed transport as an apparently live remote
+		// workspace while its replacement is negotiated.  In particular, a remote
+		// presentation stream must reattach before it can claim that another device
+		// owns the terminal; otherwise output from the recovered PTY is silently
+		// stranded in the new client generation.
+		setActiveConnection((current) =>
+			current?.profileId === profileId ? null : current,
+		);
 		setError('Connection lost. Reconnecting…');
 		setStatus(null);
 		refresh();

@@ -620,7 +620,7 @@ export class LocalUiServer {
 		// exact opaque origin is what lets a user paste an authenticated pairing
 		// URL into Desktop without weakening the token boundary or falling back to
 		// a renderer-local server implementation.
-		if (origin === 'null') return origin;
+		if (origin === 'null' || origin === 'file://') return origin;
 		const normalizedOrigin = normalizeRequestOrigin(origin);
 		if (normalizedOrigin === null) return undefined;
 		if (sameOriginHost(normalizedOrigin, host)) return origin;

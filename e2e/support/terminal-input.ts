@@ -15,6 +15,9 @@ export async function typeInVisibleTerminal(
 	await input.focus();
 
 	const command = data.replace(/[\r\n]+$/u, '');
-	if (command.length > 0) await page.keyboard.insertText(command);
-	if (command.length !== data.length) await page.keyboard.press('Enter');
+	// xterm receives terminal bytes from keyboard events.  `insertText` only
+	// dispatches a DOM text-input event, which can leave punctuation-heavy shell
+	// commands half-rendered but never delivered to the PTY.
+	if (command.length > 0) await input.pressSequentially(command);
+	if (command.length !== data.length) await input.press('Enter');
 }
