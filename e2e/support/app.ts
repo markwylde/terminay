@@ -121,19 +121,9 @@ export async function openRecordingsWindow(
 
 export async function openMacrosWindow(
   electronApp: ElectronApplication,
-  _page: Page,
+  page: Page,
 ): Promise<Page> {
-  return openChildWindow(electronApp, async () => {
-    await electronApp.evaluate(({ Menu }) => {
-      const visit = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
-        for (const item of items) {
-          if (item.label === 'Macros') return item
-          const nested = item.submenu == null ? undefined : visit(item.submenu.items)
-          if (nested !== undefined) return nested
-        }
-        return undefined
-      }
-      visit(Menu.getApplicationMenu()?.items ?? [])?.click()
-    })
-  })
+  return openChildWindow(electronApp, () =>
+    presentNativeRoute(page, '/?auxiliary=macros', 'macros'),
+  )
 }

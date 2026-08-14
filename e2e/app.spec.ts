@@ -214,40 +214,16 @@ test('runs customized app shortcuts from the keyboard', async ({ appHarness, mai
   await expect(mainWindow.locator('.terminal-tab-content')).toHaveCount(2)
 })
 
-test('opens the macros window', async ({ electronApp }) => {
-  const macrosWindow = await openChildWindow(electronApp, async () => {
-    await electronApp.evaluate(({ Menu }) => {
-      const visit = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
-        for (const item of items) {
-          if (item.label === 'Macros') return item
-          const nested = item.submenu == null ? undefined : visit(item.submenu.items)
-          if (nested !== undefined) return nested
-        }
-        return undefined
-      }
-      visit(Menu.getApplicationMenu()?.items ?? [])?.click()
-    })
-  })
+test('opens the macros window', async ({ appHarness, mainWindow }) => {
+  const macrosWindow = await appHarness.openMacrosWindow(mainWindow)
 
   await expect(macrosWindow.getByRole('heading', { name: 'Macros' })).toBeVisible()
   await expect(macrosWindow.getByRole('button', { name: 'New Macro' })).toBeVisible()
   await expect(macrosWindow.getByText('Build reusable automation steps.')).toBeVisible()
 })
 
-test('persists server-owned macro edits across child-window reopen', async ({ electronApp }) => {
-  const openMacros = () => openChildWindow(electronApp, async () => {
-    await electronApp.evaluate(({ Menu }) => {
-      const visit = (items: Electron.MenuItem[]): Electron.MenuItem | undefined => {
-        for (const item of items) {
-          if (item.label === 'Macros') return item
-          const nested = item.submenu == null ? undefined : visit(item.submenu.items)
-          if (nested !== undefined) return nested
-        }
-        return undefined
-      }
-      visit(Menu.getApplicationMenu()?.items ?? [])?.click()
-    })
-  })
+test('persists server-owned macro edits across child-window reopen', async ({ appHarness, mainWindow }) => {
+  const openMacros = () => appHarness.openMacrosWindow(mainWindow)
   const title = `Persistent Macro ${Date.now()}`
   const firstWindow = await openMacros()
   await firstWindow.getByRole('button', { name: 'New Macro' }).click()
