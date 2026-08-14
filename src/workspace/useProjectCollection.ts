@@ -70,6 +70,9 @@ export function useProjectCollection<TTerminal>({
 					title: serverProject.name,
 					rootFolder: serverProject.root,
 					color,
+					...(serverProject.defaultShellProfileId === undefined
+						? {}
+						: { defaultShellProfileId: serverProject.defaultShellProfileId }),
 					...(serverProject.icon === undefined
 						? {}
 						: { emoji: serverProject.icon }),
@@ -168,6 +171,7 @@ export function useProjectCollection<TTerminal>({
 						title: serverProject.name,
 						rootFolder: serverProject.root,
 						color,
+						defaultShellProfileId: serverProject.defaultShellProfileId,
 						emoji: serverProject.icon ?? base.emoji,
 					};
 				});
