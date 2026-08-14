@@ -41,7 +41,6 @@ const { ServerPortTransport, ServerScopedMessagePort } = await import(
   outputFile
 )
 const {
-	PreloadServerMessagePort,
   connectRendererApplicationClient,
   connectRendererServerClient,
   createConnectedServerClientContext,
@@ -51,55 +50,6 @@ globalThis.window = globalThis
 
 test.after(async () => {
   await rm(outputDirectory, { recursive: true, force: true })
-})
-
-test('preload frame capabilities isolate simultaneous connection generations', () => {
-  const listeners = new Map()
-  const sent = []
-  const closed = []
-  const capability = {
-    closeServerConnection: (connectionId) => closed.push(connectionId),
-    sendServerFrame: (connectionId, frame) => sent.push([connectionId, [...frame]]),
-    onServerFrame: (connectionId, listener) => {
-      listeners.set(connectionId, listener)
-      return () => listeners.delete(connectionId)
-    },
-  }
-  const oldPort = new PreloadServerMessagePort('desktop-local', 'generation-old', capability)
-  const newPort = new PreloadServerMessagePort('desktop-local', 'generation-new', capability)
-  const oldFrames = []
-  const newFrames = []
-  let oldErrors = 0
-  let newErrors = 0
-  oldPort.onmessage = ({ data }) => oldFrames.push([...data])
-  newPort.onmessage = ({ data }) => newFrames.push([...data])
-  oldPort.onmessageerror = () => { oldErrors += 1 }
-  newPort.onmessageerror = () => { newErrors += 1 }
-  oldPort.start()
-  newPort.start()
-
-  listeners.get('generation-old')(new Uint8Array([1]))
-  listeners.get('generation-new')(new Uint8Array([2]))
-  oldPort.postMessage(new Uint8Array([3]))
-  newPort.postMessage(new Uint8Array([4]))
-  listeners.get('generation-old')(null)
-
-  assert.deepEqual(oldFrames, [[1]])
-  assert.deepEqual(newFrames, [[2]])
-  assert.deepEqual(sent, [
-    ['generation-old', [3]],
-    ['generation-new', [4]],
-  ])
-  assert.equal(oldErrors, 1)
-  assert.equal(newErrors, 0)
-
-  oldPort.close()
-  assert.deepEqual(closed, ['generation-old'])
-  assert.equal(listeners.has('generation-old'), false)
-  assert.equal(listeners.has('generation-new'), true)
-  listeners.get('generation-new')(new Uint8Array([5]))
-  assert.deepEqual(newFrames, [[2], [5]])
-  newPort.close()
 })
 
 test('server-scoped MessagePorts carry only framed bytes for the selected server', async () => {
@@ -276,7 +226,7 @@ test('the renderer connector aborts a server handshake that never replies', asyn
   const { port1, port2 } = new MessageChannel()
   try {
     await assert.rejects(
-      connectRendererServerClient('desktop-local', 'desktop-local', port2, {
+      connectRendererServerClient('desktop-local', port2, {
         connectionTimeoutMs: 10,
       }),
       (error) =>
@@ -295,7 +245,7 @@ test('application handshake stops promptly when its recovery attempt is supersed
   const startedAt = performance.now()
   try {
     await assert.rejects(
-      connectRendererApplicationClient('desktop-local', 'desktop-local', port2, {
+      connectRendererApplicationClient('desktop-local', port2, {
         connectionTimeoutMs: 15_000,
         signal,
         onPhaseChange: (phase, state) => {
@@ -672,7 +622,6 @@ test('the production renderer connector attaches through the server-owned compos
 
   try {
     context = await connectRendererServerClient(
-      'desktop-local',
       'desktop-local',
       port2,
     )
