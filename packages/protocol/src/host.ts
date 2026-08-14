@@ -138,6 +138,11 @@ export const TERMINAY_HOST_MENU_COMMANDS = [
 export type TerminayHostMenuCommand =
 	(typeof TERMINAY_HOST_MENU_COMMANDS)[number];
 
+export type TerminayHostMenuAccelerator = Readonly<{
+	command: TerminayHostMenuCommand;
+	accelerator: string;
+}>;
+
 export type TerminayHostEvent = Readonly<{
 	schemaVersion: typeof TERMINAY_HOST_CONTEXT_SCHEMA_VERSION;
 	bridgeVersion: typeof TERMINAY_HOST_BRIDGE_VERSION;
@@ -170,6 +175,10 @@ export type TerminayHostAction =
 	| Readonly<{ type: 'route.focus'; presentationId: string }>
 	| Readonly<{ type: 'route.close'; presentationId?: string }>
 	| Readonly<{ type: 'menu.invoke'; command: TerminayHostMenuCommand }>
+	| Readonly<{
+			type: 'menu.accelerators.update';
+			accelerators: readonly TerminayHostMenuAccelerator[];
+	  }>
 	| Readonly<{
 			type: 'file.choose';
 			multiple?: boolean;
@@ -652,6 +661,37 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 				type: 'menu.invoke',
 				command: parseTerminayHostMenuCommand(action.command),
 			});
+		case 'menu.accelerators.update': {
+			exactKeys(action, ['type', 'accelerators'], 'menu accelerators action');
+			if (
+				!Array.isArray(action.accelerators) ||
+				action.accelerators.length > 64
+			)
+				throw new TypeError('menu accelerators are invalid');
+			const commands = new Set<TerminayHostMenuCommand>();
+			const accelerators = action.accelerators.map((value) => {
+				const entry = record(value, 'menu accelerator');
+				exactKeys(entry, ['command', 'accelerator'], 'menu accelerator');
+				const command = parseTerminayHostMenuCommand(entry.command);
+				if (commands.has(command))
+					throw new TypeError('menu accelerator commands must be unique');
+				commands.add(command);
+				if (
+					typeof entry.accelerator !== 'string' ||
+					entry.accelerator.length > 128 ||
+					[...entry.accelerator].some((character) => {
+						const code = character.codePointAt(0) ?? 0;
+						return code < 0x20 || code === 0x7f;
+					})
+				)
+					throw new TypeError('menu accelerator is invalid');
+				return Object.freeze({ command, accelerator: entry.accelerator });
+			});
+			return Object.freeze({
+				type: 'menu.accelerators.update',
+				accelerators: Object.freeze(accelerators),
+			});
+		}
 		case 'file.choose': {
 			exactOptionalKeys(
 				action,
@@ -808,6 +848,7 @@ export function requiredTerminayHostCapability(
 		case 'route.close':
 			return 'nativeWindows';
 		case 'menu.invoke':
+		case 'menu.accelerators.update':
 			return 'nativeMenus';
 		case 'file.choose':
 			return 'filePicker';
