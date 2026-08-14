@@ -104,7 +104,7 @@ test('GHCR workflow smokes the repository Dockerfile before publishing', () => {
 	assert.doesNotMatch(workflow, /docker push /u);
 });
 
-test('server and static-web GHCR releases retain their verified multi-architecture metadata contract', () => {
+test('server and static-web GHCR releases retain their architecture-specific metadata contracts', () => {
 	assert.match(
 		workflow,
 		/images: ghcr\.io\/\$\{\{ github\.repository_owner \}\}\/terminay-server/u,
@@ -121,21 +121,29 @@ test('server and static-web GHCR releases retain their verified multi-architectu
 	assert.match(workflow, /sbom: true/u);
 	assert.match(workflow, /github\.event_name == 'push'/u);
 
+	const releaseWebImage = releaseWorkflow.slice(
+		releaseWorkflow.indexOf('  build-web-image:\n'),
+		releaseWorkflow.indexOf('  publish-release-notes:\n'),
+	);
+
 	assert.match(
-		releaseWorkflow,
+		releaseWebImage,
 		/IMAGE_NAME: ghcr\.io\/\$\{\{ github\.repository_owner \}\}\/terminay-web/u,
 	);
-	assert.match(releaseWorkflow, /echo "\$IMAGE_NAME:\$VERSION"/u);
-	assert.match(releaseWorkflow, /echo "\$IMAGE_NAME:\$MAJOR_MINOR"/u);
-	assert.match(releaseWorkflow, /echo "\$IMAGE_NAME:sha-\$EXPECTED_COMMIT"/u);
-	assert.match(releaseWorkflow, /platforms: linux\/amd64,linux\/arm64/u);
-	assert.match(releaseWorkflow, /provenance: mode=max/u);
-	assert.match(releaseWorkflow, /sbom: true/u);
+	assert.match(releaseWebImage, /echo "\$IMAGE_NAME:\$VERSION"/u);
+	assert.match(releaseWebImage, /echo "\$IMAGE_NAME:\$MAJOR_MINOR"/u);
+	assert.match(releaseWebImage, /echo "\$IMAGE_NAME:sha-\$EXPECTED_COMMIT"/u);
+	assert.match(releaseWebImage, /platforms: linux\/amd64/u);
+	assert.doesNotMatch(releaseWebImage, /linux\/arm64/u);
+	assert.match(releaseWebImage, /provenance: mode=max/u);
+	assert.match(releaseWebImage, /sbom: true/u);
 	assert.match(
-		releaseWorkflow,
+		releaseWebImage,
 		/push: true/u,
 	);
 	assert.match(webImageWorkflow, /workflow_dispatch:/u);
+	assert.match(webImageWorkflow, /platforms: linux\/amd64/u);
+	assert.doesNotMatch(webImageWorkflow, /linux\/arm64/u);
 	assert.doesNotMatch(webImageWorkflow, /push:\s*\n\s+tags:/u);
 });
 
