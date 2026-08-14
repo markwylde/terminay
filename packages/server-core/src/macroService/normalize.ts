@@ -13,7 +13,10 @@ import {
 
 export const DEFAULT_MACRO_LIMITS: Required<MacroLimits> = Object.freeze({
   maxSteps: 256,
-  maxFields: 64,
+  // Existing persisted macro documents can contain more than the original
+  // conservative default. Keep the default bounded, but do not reject those
+  // otherwise-valid documents during workspace hydration.
+  maxFields: 128,
   maxStringBytes: 16_384,
   maxOutputBytes: 131_072,
   maxDelayMs: 300_000,
