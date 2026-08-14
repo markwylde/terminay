@@ -177,6 +177,10 @@ while a browser uses an in-page route or browser tab. The bridge never exposes
 `BrowserWindow`, arbitrary paths, raw transport handles, generic IPC, or server
 application commands. Server-bundled renderers receive a `TerminayClient` byte
 endpoint and capability provider rather than Electron APIs.
+Settings, recordings, and project/terminal editors request the canonical
+auxiliary route controller exclusively. They never probe ambient native-window
+globals; the presenter chooses an in-page or native disposition from the
+negotiated host context.
 
 A normal arrangement may therefore be one Local window plus three windows
 connected to three remote servers.

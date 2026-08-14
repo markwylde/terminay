@@ -26,15 +26,7 @@ export function useGitPushMenuController({
 		x: number;
 		y: number;
 	} | null>(null);
-	const [quickPushAction, setQuickPushAction] =
-		useState<QuickPushAction | null>(null);
-	const [quickPushCwd, setQuickPushCwd] = useState<string | null>(null);
-
 	const closeGitPushMenu = useCallback(() => setGitPushMenuPosition(null), []);
-	const closeQuickPush = useCallback(() => {
-		setQuickPushAction(null);
-		setQuickPushCwd(null);
-	}, []);
 	const handleOpenWorktreePushMenu = useCallback(
 		(worktree: GitWorktreeStatus, anchor: { x: number; y: number }) => {
 			setGitPushMenuPosition((current) =>
@@ -65,27 +57,10 @@ export function useGitPushMenuController({
 		},
 		[closeGitPushMenu, isAgentEnabled, onDisabled, onLaunchAgent],
 	);
-	const launchQuickPush = useCallback(
-		(action: QuickPushAction, target: GitPushMenuTarget) => {
-			closeGitPushMenu();
-			if (!isAgentEnabled) {
-				onDisabled();
-				return;
-			}
-			setQuickPushCwd(target.cwd);
-			setQuickPushAction(action);
-		},
-		[closeGitPushMenu, isAgentEnabled, onDisabled],
-	);
-
 	return {
 		closeGitPushMenu,
-		closeQuickPush,
 		gitPushMenuPosition,
 		handleOpenWorktreePushMenu,
 		launchGitPushAgent,
-		launchQuickPush,
-		quickPushAction,
-		quickPushCwd,
 	};
 }

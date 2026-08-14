@@ -57,7 +57,6 @@ test('all direct and modular privileged IPC registrations establish provenance',
   const registrations = [
     ['electron/main.ts', 'assertTrustedAppSender'],
     ['electron/fileViewer/ipc.ts', 'assertTrustedSender'],
-    ['electron/quickPush/ipc.ts', 'assertTrustedSender'],
   ]
 
   for (const [relativePath, assertion] of registrations) {
@@ -101,7 +100,6 @@ test('all direct and modular privileged IPC registrations establish provenance',
 test('privileged IPC registration modules require the trusted sender before services run', async () => {
   const modules = [
     ['electron/fileViewer/ipc.ts', ['file:get-info', 'file:read-bytes', 'file:read-text', 'file:save', 'file:get-text-metadata', 'file:read-text-lines', 'file:save-sparse', 'file:watch', 'file:unwatch', 'file:get-preview-source', 'file:get-git-repo-info', 'file:get-git-diff']],
-    ['electron/quickPush/ipc.ts', ['quick-push:generate-plan', 'quick-push:apply']],
   ]
   for (const [file, channels] of modules) {
     const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8')

@@ -1,5 +1,4 @@
 import App from '../App';
-import type { QuickPushClient } from '../components/QuickPushModal';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
 import type { AppCommand } from '../types/terminay';
 import type { AuxiliaryRouteController } from './auxiliaryRoutes';
@@ -19,7 +18,6 @@ export type RendererHostAdapters = Readonly<{
 	subscribeAppCommands?: (
 		listener: (command: AppCommand) => Promise<void> | void,
 	) => () => void;
-	quickPushClient?: QuickPushClient;
 	onDisconnect?: () => void;
 	onOpenConnectionManager?: () => void;
 }>;
@@ -46,7 +44,6 @@ export function ConnectedRendererWorkspace({
 			key={terminalClientContext.serverId}
 			onDisconnect={host.onDisconnect}
 			onOpenConnectionManager={host.onOpenConnectionManager}
-			quickPushClient={host.quickPushClient}
 			terminalClientContext={terminalClientContext}
 		/>
 	);

@@ -140,8 +140,6 @@ import {
 	type McpServerCommand,
 	uninstallMcpAgent,
 } from './mcpInstall';
-import { registerQuickPushIpcHandlers } from './quickPush/ipc';
-import { QuickPushService } from './quickPush/service';
 import { TerminalRecordingService } from './recording/service';
 import { createDesktopReconnectTransport } from './remote/desktopReconnect';
 import { createDesktopBootstrappedWebRtcConnection } from './remote/desktopWebRtcBootstrap';
@@ -640,7 +638,6 @@ const aiTabMetadataService = new AiTabMetadataService(app.getPath('home'));
 const parakeetRuntime = new ParakeetRuntime({
 	rootDirectory: path.join(app.getPath('userData'), 'dictation', 'parakeet'),
 });
-const quickPushService = new QuickPushService(aiTabMetadataService);
 warmAiTabMetadataProviderEnv();
 let cachedAppUpdateStatus: AppUpdateStatus | null = null;
 let appUpdateFetchPromise: Promise<AppUpdateStatus> | null = null;
@@ -4130,12 +4127,6 @@ registerFileViewerIpcHandlers({
 	ipcMain,
 });
 
-registerQuickPushIpcHandlers({
-	assertTrustedSender: assertTrustedAppSender,
-	quickPushService,
-	ipcMain,
-});
-
 app.on('window-all-closed', () => {
 	if (process.platform !== 'darwin') {
 		app.quit();
@@ -4203,4 +4194,3 @@ app.whenReady().then(async () => {
 	await launchDeferredCanonicalWindow(embeddedStartupWindow);
 	applyControlServerSetting();
 });
-

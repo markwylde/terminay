@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const sharedPath = new URL('../src/shared/SharedEditTabRouteBody.tsx', import.meta.url)
-const desktopPath = new URL('../src/components/EditTabWindow.tsx', import.meta.url)
 
 test('edit tab form body is host-neutral shared route UI', async () => {
   const source = await readFile(sharedPath, 'utf8')
@@ -20,15 +19,4 @@ test('edit tab form body is host-neutral shared route UI', async () => {
   for (const forbidden of ['window.', 'document.', 'electron', 'node:', '@xterm/', 'TerminayClient', 'window.terminay']) {
     assert.equal(source.includes(forbidden), false, `shared edit body must not import host primitive ${forbidden}`)
   }
-})
-
-test('Desktop edit window is only the privileged draft/persistence wrapper', async () => {
-  const source = await readFile(desktopPath, 'utf8')
-  assert.match(source, /from '..\/shared\/SharedEditTabRouteBody'/)
-  assert.match(source, /getLegacyEditWindowCapability\(\)\.getEditWindowState/)
-  assert.match(source, /getLegacyEditWindowCapability\(\)\.submitEditWindowResult/)
-  assert.doesNotMatch(source, /window\.terminay/u)
-  assert.match(source, /<SharedEditTabRouteBody state=\{state\} onSubmit=\{submit\}/)
-  assert.doesNotMatch(source, /className="edit-window-card"/)
-  assert.doesNotMatch(source, /hue-slider-container/)
 })

@@ -231,7 +231,6 @@ export function ConnectedWebRendererWorkspace({
 	const auxiliaryRoutes = useMemo(
 		() =>
 			createAuxiliaryRouteController({
-				getWindow: () => undefined,
 				onRequest: async (request) => {
 					const route = nativeAuxiliaryRoute(request);
 					if (
