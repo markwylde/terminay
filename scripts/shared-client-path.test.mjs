@@ -7,7 +7,6 @@ const compatibility = await readFile('src/services/fileViewer/legacyFileViewerTr
 const performantTextViewer = await readFile('src/components/file-viewer/modes/PerformantTextViewer.tsx', 'utf8')
 const filePanel = await readFile('src/components/file-viewer/FilePanel.tsx', 'utf8')
 const settingsHook = await readFile('src/hooks/useTerminalSettings.ts', 'utf8')
-const settingsCompatibility = await readFile('src/services/settings/legacySettingsClient.ts', 'utf8')
 const recordingsWindow = await readFile('src/components/RecordingsWindow.tsx', 'utf8')
 const recordingsCompatibility = await readFile('src/services/recordings/legacyRecordingsClient.ts', 'utf8')
 const app = await readFile('src/App.tsx', 'utf8')
@@ -36,16 +35,12 @@ test('performant text viewer uses shared ranged text queries, with preload isola
   assert.doesNotMatch(compatibility, /window\.terminay/)
 })
 
-test('terminal settings hook uses SettingsClient, with preload isolated to compatibility adapter', () => {
+test('terminal settings hook uses the selected server SettingsClient', () => {
   assert.match(settingsHook, /useContext\(TerminalSettingsClientContext\)/)
   assert.doesNotMatch(settingsHook, /createLegacySettingsClient|getLegacySettingsCapability/)
   assert.match(settingsHook, /settingsClient\.(get|onChanged)/)
   assert.doesNotMatch(settingsHook, /window\.terminay\.getTerminalSettings/)
   assert.doesNotMatch(settingsHook, /window\.terminay\.onTerminalSettingsChanged/)
-  assert.match(settingsCompatibility, /new SettingsClient/)
-  assert.match(settingsCompatibility, /SETTINGS_(OPERATIONS|EVENTS)/)
-  assert.match(settingsCompatibility, /captureLegacySettingsCapability\(api\)/)
-  assert.doesNotMatch(settingsCompatibility, /window\.terminay/)
 })
 
 test('file panel uses shared file/settings clients, with preload isolated to adapters', () => {
@@ -57,7 +52,6 @@ test('file panel uses shared file/settings clients, with preload isolated to ada
   assert.match(filePanel, /settingsClient\.update\(/)
   assert.doesNotMatch(filePanel, /window\.terminay\./)
   assert.match(compatibility, /file\.save-sparse/)
-  assert.match(settingsCompatibility, /SETTINGS_OPERATIONS\.update/)
 })
 
 test('recordings timeline uses the shared client facade, with preload isolated to compatibility adapter', () => {
