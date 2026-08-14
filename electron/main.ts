@@ -909,6 +909,28 @@ serverTerminalAuthority = new ServerTerminalAuthority({
 	recordings: serverRecordingAdapter,
 	settings: embeddedServerSettings,
 	workspaceRepository: embeddedWorkspace,
+	applicationFeatures: {
+		mcpInstall: {
+			getStatus: getMcpInstallStatus,
+			install: (agent) => installMcpAgent(agent, getMcpServerCommand()),
+			uninstall: uninstallMcpAgent,
+		},
+		remoteAccess: {
+			getStatus: () => currentRemoteAccessStatus(),
+			command: async (operation, value) => {
+				switch (operation) {
+					case 'pairing-pin-status': return readTerminalSettings().remoteAccess.pairingPinHash.trim().length > 0;
+					case 'toggle-server': return toggleRemoteServer();
+					case 'toggle-direct-listener': return toggleDirectRemoteListener();
+					case 'revoke-device': return revokeRemoteDevice(value ?? '');
+					case 'close-connection': return closeRemoteConnection(value ?? '');
+					case 'set-pairing-address': return setRemotePairingAddress(value ?? '');
+					case 'set-pairing-pin': return setRemotePairingPin(value ?? '');
+					default: throw new Error('Remote access operation is unavailable.');
+				}
+			},
+		},
+	},
 	remoteMcpDispatch: async (sessionId, op, params, signal) =>
 		JSON.parse(
 			JSON.stringify(
@@ -4014,6 +4036,29 @@ function broadcastRemoteAccessStatus(): void {
 			window.webContents.send('remote:status-changed', status);
 	}
 }
+
+async function toggleRemoteServer(): Promise<RemoteAccessStatus> {
+	let status: RemoteAccessStatus;
+	if (usesPrivilegedWebRtcExposure()) {
+		for (const session of serverTerminalAuthority?.list() ?? []) {
+			if (!privilegedWebRtcSessions.has(session.id)) {
+				privilegedWebRtcSessions.add(session.id);
+				privilegedWebRtcExposure!.service.ensureSession(session.id);
+			}
+			const dimensions = serverTerminalAuthority?.service.getSession(session.id)?.dimensions;
+			if (dimensions !== undefined) privilegedWebRtcExposure!.service.updateSessionSize(session.id, dimensions.cols, dimensions.rows);
+		}
+		status = await privilegedWebRtcExposure!.toggle();
+	}
+	else status = await desktopRemoteExposure.toggle();
+	broadcastRemoteAccessStatus();
+	return status;
+}
+async function toggleDirectRemoteListener(): Promise<RemoteAccessStatus> { await desktopDirectNetworkExposure.toggle(); broadcastRemoteAccessStatus(); return currentRemoteAccessStatus(); }
+async function revokeRemoteDevice(deviceId: string): Promise<RemoteAccessStatus> { const value = usesPrivilegedWebRtcExposure() ? await privilegedWebRtcExposure!.service.revokeDevice(deviceId) : await desktopRemoteExposure.revokeDevice(deviceId); broadcastRemoteAccessStatus(); return value; }
+async function closeRemoteConnection(connectionId: string): Promise<RemoteAccessStatus> { const value = usesPrivilegedWebRtcExposure() ? await privilegedWebRtcExposure!.service.closeConnection(connectionId) : desktopRemoteExposure.closeConnection(connectionId); broadcastRemoteAccessStatus(); return value; }
+async function setRemotePairingAddress(address: string): Promise<RemoteAccessStatus> { if (!desktopDirectNetworkExposure.getStatus().isRunning) desktopDirectNetworkExposure.setPairingAddress(address); if (usesPrivilegedWebRtcExposure()) await privilegedWebRtcExposure!.service.setPairingAddress(address); else desktopRemoteExposure.setPairingAddress(address); broadcastRemoteAccessStatus(); return currentRemoteAccessStatus(); }
+function setRemotePairingPin(pin: string): TerminalSettings { const currentSettings = readTerminalSettings(); const pairingPinHash = createPairingPinHash(pin); writeRemotePairingPinVerifier(pairingPinHash); const settings = writeTerminalSettings({ ...currentSettings, remoteAccess: { ...currentSettings.remoteAccess, pairingPinHash } }); broadcastTerminalSettings(settings); privilegedWebRtcExposure?.service.notifyStatusChanged(); createAppMenu(settings); return settings; }
 
 ipcMain.handle('remote:toggle-server', async (event) => {
 	assertTrustedAppSender(event);

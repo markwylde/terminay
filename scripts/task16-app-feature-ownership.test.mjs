@@ -11,8 +11,8 @@ const [app, projectTabList, projectTabModel, terminalActivityOverview, dockviewL
 	readFile('src/workspace/useProjectCollection.ts', 'utf8'),
 	readFile('src/workspace/useProjectTabTransfer.ts', 'utf8'),
 	readFile('src/workspace/useProjectEditor.ts', 'utf8'),
-	readFile('src/workspace/useRemoteConnectionForm.ts', 'utf8'),
-	readFile('src/workspace/RemoteConnectionModal.tsx', 'utf8'),
+	Promise.resolve('removed'),
+	Promise.resolve('removed'),
 	readFile('src/workspace/RemoteAccessConnectionMenu.tsx', 'utf8'),
 	readFile('src/workspace/useRemoteAccessController.ts', 'utf8'),
 	readFile('src/workspace/useMacroRunController.ts', 'utf8'),
@@ -229,11 +229,11 @@ test('App delegates remote access menu rendering', () => {
 	assert.doesNotMatch(app, /className="remote-access-menu"/);
 	assert.match(remoteAccessMenu, /className="remote-access-menu"/);
 	assert.match(remoteAccessMenu, /Expose this server…/);
-	assert.match(remoteAccessMenu, /Manage connections…/);
+	assert.match(remoteAccessMenu, /Add connection…/);
 });
 
 test('the remote access controller owns exposure and pairing lifecycle', () => {
-	assert.match(app, /useRemoteAccessController\(\s*window\.terminayRemotePairingPinHost,\s*window\.terminayRemoteAccessStatusHost,\s*legacySettingsClient,?\s*\)/);
+	assert.match(app, /useRemoteAccessController\(\s*remoteAccessClients\?\.pairingPin,\s*remoteAccessClients\?\.status,/);
 	assert.doesNotMatch(app, /terminayRemoteAccessStatusHost\.(?:getStatus|subscribe|toggleServer|setPairingAddress)\(/);
 	assert.doesNotMatch(app, /isRemoteAccessPairingPinConfigured\(/);
 	assert.doesNotMatch(app, /saveRemoteAccessPairingPin\(/);
@@ -248,16 +248,10 @@ test('the remote access controller owns exposure and pairing lifecycle', () => {
 	assert.match(remoteAccessController, /import\('qrcode'\)/);
 });
 
-test('the remote connection form hook owns connection submission state', () => {
-	assert.match(app, /useRemoteConnectionForm\(closeRemoteMenu\)/);
-	assert.doesNotMatch(app, /terminayConnectionHost\.open\(/);
-	assert.doesNotMatch(app, /const submitRemoteConnection = useCallback/);
-	assert.match(remoteConnectionForm, /terminayConnectionHost\.open\(/);
-	assert.match(remoteConnectionForm, /const submit = useCallback/);
-	assert.match(remoteConnectionForm, /const reset = useCallback/);
-	assert.match(app, /<RemoteConnectionModal\b/);
-	assert.doesNotMatch(app, /className="project-edit-modal remote-connection-modal"/);
-	assert.match(remoteConnectionModal, /className="connection-manager-modal"/);
+test('connection management is delegated to the canonical host route', () => {
+	assert.doesNotMatch(app, /terminayConnectionHost/);
+	assert.doesNotMatch(app, /<RemoteConnectionModal\b/);
+	assert.match(app, /onOpenConnectionManager/);
 });
 
 test('the project editor hook owns canonical root conflict reconciliation', () => {

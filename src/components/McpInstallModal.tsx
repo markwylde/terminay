@@ -7,20 +7,16 @@ import type {
 	McpInstallStatus,
 } from '../types/terminay';
 import './mcpInstallModal.css';
+import type { McpInstallClient } from '../services/serverApplicationFeatureClients';
 
 export interface McpInstallModalProps {
+	client?: McpInstallClient;
 	open: boolean;
 	onClose: () => void;
 }
 
-function requireMcpInstallHost(): NonNullable<Window['terminayMcpInstallHost']> {
-	if (!window.terminayMcpInstallHost) {
-		throw new Error('MCP installation is only available in the Desktop host.')
-	}
-	return window.terminayMcpInstallHost
-}
-
 export function McpInstallModal({
+	client,
 	open,
 	onClose,
 }: McpInstallModalProps): JSX.Element | null {
@@ -38,7 +34,8 @@ export function McpInstallModal({
 		setIsLoading(true);
 		setLoadError(null);
 		try {
-			const nextStatus = await requireMcpInstallHost().getStatus();
+			if (client === undefined) throw new Error('MCP installation is unavailable on the selected server.');
+			const nextStatus = await client.getStatus();
 			setStatus(nextStatus);
 		} catch (error) {
 			setLoadError(
@@ -47,7 +44,7 @@ export function McpInstallModal({
 		} finally {
 			setIsLoading(false);
 		}
-	}, []);
+	}, [client]);
 
 	useEffect(() => {
 		if (!open) {
@@ -58,7 +55,12 @@ export function McpInstallModal({
 
 		setIsLoading(true);
 		setLoadError(null);
-		void requireMcpInstallHost()
+		if (client === undefined) {
+			setLoadError('MCP installation is unavailable on the selected server.');
+			setIsLoading(false);
+			return;
+		}
+		void client
 			.getStatus()
 			.then((nextStatus) => {
 				if (!isMounted) {
@@ -84,7 +86,7 @@ export function McpInstallModal({
 		return () => {
 			isMounted = false;
 		};
-	}, [open]);
+	}, [client, open]);
 
 	useEffect(() => {
 		if (!open) {
@@ -121,8 +123,9 @@ export function McpInstallModal({
 
 			try {
 				const result = installed
-					? await requireMcpInstallHost().uninstall(agent)
-					: await requireMcpInstallHost().install(agent);
+					? await client?.uninstall(agent)
+					: await client?.install(agent);
+				if (result === undefined) throw new Error('MCP installation is unavailable on the selected server.');
 
 				if (!result.ok) {
 					setRowErrors((previous) => ({
