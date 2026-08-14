@@ -90,7 +90,6 @@ import type {
 	TerminalTabMoveProject,
 } from './components/TerminalTab';
 import { TerminalTab } from './components/TerminalTab';
-import { publishTerminalPresentationMetadata } from './components/terminalPresentationHost';
 import {
 	createServerMacroSettingsClient,
 	useMacroSettings,
@@ -2654,32 +2653,6 @@ const ProjectWorkspace = forwardRef<
 				}
 			}
 
-			for (const [panelId, sessionId] of panelSessionMapRef.current.entries()) {
-				const panel = api?.getPanel(panelId);
-				const inheritsProjectColor =
-					panel?.params?.inheritsProjectColor === true;
-				const nextColor = getEffectiveTerminalTabColor(
-					panel?.params,
-					project.color,
-				);
-
-				if (panel) {
-					panel.api.updateParameters({
-						projectColor: project.color,
-						...(inheritsProjectColor ? { color: project.color } : {}),
-					});
-				}
-
-				publishTerminalPresentationMetadata(sessionId, {
-					color: nextColor,
-					inheritsProjectColor,
-					projectId: project.id,
-					projectTitle: project.title,
-					projectEmoji: project.emoji,
-					projectColor: project.color,
-					title: panel?.title ?? 'Terminal',
-				});
-			}
 			window.requestAnimationFrame(publishTerminalActivityOverview);
 		}, [
 			project.id,
@@ -2780,18 +2753,6 @@ const ProjectWorkspace = forwardRef<
 						projectColor: project.color,
 					});
 
-					if (sessionId) {
-						publishTerminalPresentationMetadata(sessionId, {
-							color: nextColor,
-							emoji: nextEmoji,
-							inheritsProjectColor: result.inheritsProjectColor,
-							title: nextTitle,
-							projectId: project.id,
-							projectTitle: project.title,
-							projectEmoji: project.emoji,
-							projectColor: project.color,
-						});
-					}
 					window.requestAnimationFrame(publishTerminalActivityOverview);
 				} finally {
 					window.requestAnimationFrame(() => {
@@ -2949,16 +2910,6 @@ const ProjectWorkspace = forwardRef<
 						activePanel.api.setTitle(text);
 						setTerminalTitleRevision((revision) => revision + 1);
 						activePanel.api.updateParameters({ titleUpdateNonce: Date.now() });
-						publishTerminalPresentationMetadata(sessionId, {
-							color: activePanel.params?.color ?? project.color,
-							emoji: activePanel.params?.emoji ?? '',
-							inheritsProjectColor: activePanel.params?.inheritsProjectColor,
-							title: text,
-							projectId: project.id,
-							projectTitle: project.title,
-							projectEmoji: project.emoji,
-							projectColor: project.color,
-						});
 						window.requestAnimationFrame(publishTerminalActivityOverview);
 					} else {
 						activePanel.api.updateParameters({ terminalNote: text });

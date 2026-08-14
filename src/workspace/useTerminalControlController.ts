@@ -4,7 +4,6 @@ import {
 	useCallback,
 } from 'react';
 import type { TerminalContextReader } from '../components/TerminalTab';
-import { publishTerminalPresentationMetadata } from '../components/terminalPresentationHost';
 import { formatRunCommandInput } from '../terminalInput';
 import type { AddTerminalOptions } from './useTerminalCreationController';
 
@@ -384,9 +383,6 @@ export function useTerminalControlController({
 						}
 						api?.getPanel(match.found.panelId)?.api.setTitle(name);
 						setTerminalTitleRevision((revision) => revision + 1);
-						publishTerminalPresentationMetadata(match.found.sessionId, {
-							title: name,
-						});
 						return { ok: true, result: { ok: true } };
 					}
 					case 'split_terminal': {
