@@ -2744,6 +2744,15 @@ function createWindow(options?: {
 							}
 							case 'route.focus': auxiliaryWindowsByPresentation.get(`${launch.context.profileId}:${action.presentationId}`)?.focus(); return;
 							case 'menu.invoke': sendCommandToFocusedWindow(action.command as AppCommand); return;
+							case 'menu.accelerators.update': {
+								const current = readTerminalSettings();
+								const shortcuts = { ...current.keyboardShortcuts };
+								for (const entry of action.accelerators)
+									shortcuts[entry.command as AppCommand] = entry.accelerator;
+								const settings = writeTerminalSettings({ ...current, keyboardShortcuts: shortcuts });
+								createAppMenu(settings);
+								return;
+							}
 							case 'route.present': await presentCanonicalAuxiliaryRoute(window, request, launch.context); return;
 							case 'os.reveal': throw new Error('OS reveal requires a host-issued path token.');
 							case 'workspace.drag.start':

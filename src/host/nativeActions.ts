@@ -2,6 +2,7 @@ import type {
 	TerminayHostAction,
 	TerminayHostActionRequest,
 	TerminayHostContext,
+	TerminayHostMenuAccelerator,
 } from '@terminay/protocol';
 import type { AppUpdateStatus } from '../types/terminay';
 
@@ -85,6 +86,12 @@ export async function checkForAppUpdate(): Promise<AppUpdateStatus | null> {
 export async function closeHostPresentation(): Promise<void> {
 	if ((await request({ type: 'route.close' })).handled) return;
 	window.close();
+}
+
+export async function updateNativeMenuAccelerators(
+	accelerators: readonly TerminayHostMenuAccelerator[],
+): Promise<void> {
+	await request({ type: 'menu.accelerators.update', accelerators });
 }
 
 export type WorkspaceDragDecision =
