@@ -9,6 +9,7 @@ import {
   setProjectRoot,
   submitFileExplorerNameModal,
 } from './support/ui'
+import { submitTerminalCommand } from './support/terminal'
 
 const execFileAsync = promisify(execFile)
 
@@ -23,10 +24,7 @@ async function getActiveSessionId(page: Parameters<typeof openFileExplorer>[0]):
 }
 
 async function writeToActiveTerminal(page: Parameters<typeof openFileExplorer>[0], data: string): Promise<void> {
-  const sessionId = await getActiveSessionId(page)
-  await page.evaluate(async ({ nextData, nextSessionId }) => {
-    await window.terminayTest!.writeServerTerminal(nextSessionId, nextData)
-  }, { nextData: data, nextSessionId: sessionId })
+  await submitTerminalCommand(page, data)
 }
 
 test('file explorer can browse folders and open files', async ({ createWorkspace, mainWindow }) => {
