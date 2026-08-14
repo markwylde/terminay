@@ -659,9 +659,17 @@ function getRunningTerminalCount(): number {
 function getRunningTerminalCountForWindow(webContentsId: number): number {
 	const authority = serverTerminalAuthority;
 	if (authority === null) return 0;
+	// A torn-off window owns a logical workspace view.  Its terminal stream can
+	// still be replaying into the new renderer when the user closes the window,
+	// so a transient renderer subscription is not a safe destructive-close
+	// boundary.  Resolve the terminal scope from the canonical view instead.
+	const viewId = workspaceViewByWebContents.get(webContentsId);
+	const projectIds = authority.workspace.state.views[viewId ?? '']?.projectIds;
+	if (projectIds === undefined) return 0;
+	const ownedProjects = new Set(projectIds);
 	return authority.list().filter(
 		(session) =>
-			authority.isRendererAttached(session.id, webContentsId) &&
+			ownedProjects.has(session.projectId) &&
 			authority.activity.get({
 				serverId: session.serverId,
 				projectId: session.projectId,
