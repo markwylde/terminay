@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ClientError } from '@terminay/client-core';
-import { describeFeatureFailure, resolveProjectFeatureAuthority } from './featureQueryAuthority';
+import {
+	describeFeatureFailure,
+	describeServerFeatureFailure,
+	resolveProjectFeatureAuthority,
+} from './featureQueryAuthority';
 
 function context(projects: Record<string, unknown>) {
 	const client = {};
@@ -76,6 +80,18 @@ describe('feature failures', () => {
 			detail: 'files.list failed for project project-1 on server server-1: query failed',
 			retryable: false,
 			operation: 'files.list',
+		});
+	});
+
+	it('gives server-scoped settings failures actionable reconnect copy', () => {
+		const error = Object.assign(new ClientError('disconnected', 'socket closed', { retryable: true }), {
+			operation: 'settings.get',
+		});
+		assert.deepEqual(describeServerFeatureFailure('Settings', error, 'server-1'), {
+			title: 'Settings is temporarily unavailable',
+			detail: 'Reconnect to server-1 and retry settings.get.',
+			retryable: true,
+			operation: 'settings.get',
 		});
 	});
 });
