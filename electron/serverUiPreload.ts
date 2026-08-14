@@ -26,7 +26,23 @@ const context = () =>
 const eventListeners = new Set<
 	(listener: ReturnType<typeof parseTerminayHostEvent>) => Promise<void> | void
 >();
+const latestEvents = new Map<
+	ReturnType<typeof parseTerminayHostEvent>['event']['type'],
+	ReturnType<typeof parseTerminayHostEvent>
+>();
 let hostEventsSubscribed = false;
+const deliverEvent = (
+	listener: (event: ReturnType<typeof parseTerminayHostEvent>) =>
+		| Promise<void>
+		| void,
+	event: ReturnType<typeof parseTerminayHostEvent>,
+) => {
+	try {
+		void Promise.resolve(listener(event)).catch(() => undefined);
+	} catch {
+		// A renderer subscriber must not destabilize the shared host bridge.
+	}
+};
 const hostEventWrapper = (
 	_event: Electron.IpcRendererEvent,
 	event: unknown,
@@ -47,13 +63,8 @@ const hostEventWrapper = (
 			),
 		)
 		.then((parsed) => {
-			for (const listener of [...eventListeners]) {
-				try {
-					void Promise.resolve(listener(parsed)).catch(() => undefined);
-				} catch {
-					// A renderer subscriber must not destabilize the shared host bridge.
-				}
-			}
+			latestEvents.set(parsed.event.type, parsed);
+			for (const listener of [...eventListeners]) deliverEvent(listener, parsed);
 		})
 		.catch(() => undefined);
 };
@@ -71,6 +82,7 @@ const bridge: ServerUiHostBridge = Object.freeze({
 		if (typeof listener !== 'function')
 			throw new TypeError('app command listener is invalid');
 		eventListeners.add(listener);
+		for (const event of latestEvents.values()) deliverEvent(listener, event);
 		if (!hostEventsSubscribed) {
 			hostEventsSubscribed = true;
 			ipcRenderer.on('server-ui-host:event', hostEventWrapper);
