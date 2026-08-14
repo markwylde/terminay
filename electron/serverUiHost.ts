@@ -17,6 +17,9 @@ import {
 	type IpcMainInvokeEvent,
 	ipcMain,
 	type WebContents,
+	type WebContentsWillFrameNavigateEventParams,
+	type WebContentsWillNavigateEventParams,
+	type WebContentsWillRedirectEventParams,
 } from 'electron';
 import {
 	DesktopDocumentLifecycle,
@@ -271,23 +274,45 @@ export function bindServerUiWindow(
 	});
 
 	targetWebContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-	targetWebContents.on('will-attach-webview', (event) => {
+	const denyWebviewAttachment = (event: Event) => {
 		event.preventDefault();
-	});
-	targetWebContents.on('will-frame-navigate', (event) => {
+	};
+	const restrictFrameNavigation = (
+		event: Event<WebContentsWillFrameNavigateEventParams>,
+	) => {
 		if (!isAllowedNavigation(event.url, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
-	});
-	targetWebContents.on('will-navigate', (event, target) => {
+	};
+	const restrictNavigation = (
+		event: Event<WebContentsWillNavigateEventParams>,
+		target: string,
+	) => {
 		if (!isAllowedNavigation(target, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
-	});
-	targetWebContents.on('will-redirect', (event, target) => {
+	};
+	const restrictRedirect = (
+		event: Event<WebContentsWillRedirectEventParams>,
+		target: string,
+	) => {
 		if (!isAllowedNavigation(target, expectedOrigin, allowedFileRoot)) {
 			event.preventDefault();
 		}
+	};
+	targetWebContents.on('will-attach-webview', denyWebviewAttachment);
+	targetWebContents.on('will-frame-navigate', restrictFrameNavigation);
+	targetWebContents.on('will-navigate', restrictNavigation);
+	targetWebContents.on('will-redirect', restrictRedirect);
+	// A BrowserWindow can switch only after its old server-UI policy is fully
+	// retired. Leaving these listeners attached made the former file-root deny
+	// a verified bundle from the newly selected server, leaving the old
+	// Connections dialog visible indefinitely.
+	lifecycle.add('navigation-policy', () => {
+		targetWebContents.off('will-attach-webview', denyWebviewAttachment);
+		targetWebContents.off('will-frame-navigate', restrictFrameNavigation);
+		targetWebContents.off('will-navigate', restrictNavigation);
+		targetWebContents.off('will-redirect', restrictRedirect);
 	});
 
 	const denyDownload = (
