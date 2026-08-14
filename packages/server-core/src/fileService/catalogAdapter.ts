@@ -42,6 +42,13 @@ export interface FileCatalogAdapterOptions {
   readonly serverId: string;
   readonly projects: ReadonlyMap<string, FileCatalogProjectContext> | Readonly<Record<string, FileCatalogProjectContext>>;
   readonly authorizeProject?: (authorization: FileCatalogAuthorization, projectId: string) => boolean;
+  /** Metadata-only host observation. Never receives a project id or path. */
+  readonly onOperationFailure?: (failure: FileCatalogOperationFailure) => void;
+}
+
+export interface FileCatalogOperationFailure {
+  readonly operation: string;
+  readonly code: FileServiceError["code"] | "internal";
 }
 
 export interface FileCatalogRequest {
@@ -123,19 +130,35 @@ export class ServerFileCatalogAdapter {
   operations(): { readonly queries: Readonly<Record<string, QueryHandler>>; readonly commands: Readonly<Record<string, (request: CommandRequest) => JsonValue | Promise<JsonValue>>> } {
     return {
       queries: {
-        [FILE_CATALOG_OPERATIONS.list]: (request) => this.list(this.listRequest(request)),
-        [FILE_CATALOG_OPERATIONS.search]: (request) => this.search(this.searchRequest(request)),
-        [FILE_CATALOG_OPERATIONS.size]: (request) => this.size(this.optionsRequest(request) as FileCatalogRequest & { readonly options?: FileCatalogSizeOptions }),
-        [FILE_CATALOG_OPERATIONS.previewMetadata]: (request) => this.previewMetadata(this.optionsRequest(request) as FileCatalogRequest & { readonly options?: FileCatalogPreviewOptions }),
-        [FILE_CATALOG_OPERATIONS.tasks]: (request) => this.tasks(this.optionsRequest(request) as FileCatalogRequest & { readonly options?: MarkdownTaskAggregationOptions }),
+        [FILE_CATALOG_OPERATIONS.list]: (request) => this.observed(FILE_CATALOG_OPERATIONS.list, () => this.list(this.listRequest(request))),
+        [FILE_CATALOG_OPERATIONS.search]: (request) => this.observed(FILE_CATALOG_OPERATIONS.search, () => this.search(this.searchRequest(request))),
+        [FILE_CATALOG_OPERATIONS.size]: (request) => this.observed(FILE_CATALOG_OPERATIONS.size, () => this.size(this.optionsRequest(request) as FileCatalogRequest & { readonly options?: FileCatalogSizeOptions })),
+        [FILE_CATALOG_OPERATIONS.previewMetadata]: (request) => this.observed(FILE_CATALOG_OPERATIONS.previewMetadata, () => this.previewMetadata(this.optionsRequest(request) as FileCatalogRequest & { readonly options?: FileCatalogPreviewOptions })),
+        [FILE_CATALOG_OPERATIONS.tasks]: (request) => this.observed(FILE_CATALOG_OPERATIONS.tasks, () => this.tasks(this.optionsRequest(request) as FileCatalogRequest & { readonly options?: MarkdownTaskAggregationOptions })),
       },
       commands: {
-        [FILE_CATALOG_OPERATIONS.createFile]: (request) => this.createFile(this.createFileRequest(request)),
-        [FILE_CATALOG_OPERATIONS.createDirectory]: (request) => this.createDirectory(this.pathRequest(request)),
-        [FILE_CATALOG_OPERATIONS.rename]: (request) => this.rename(this.renameRequest(request)),
-        [FILE_CATALOG_OPERATIONS.delete]: (request) => this.delete(this.deleteRequest(request)),
+        [FILE_CATALOG_OPERATIONS.createFile]: (request) => this.observed(FILE_CATALOG_OPERATIONS.createFile, () => this.createFile(this.createFileRequest(request))),
+        [FILE_CATALOG_OPERATIONS.createDirectory]: (request) => this.observed(FILE_CATALOG_OPERATIONS.createDirectory, () => this.createDirectory(this.pathRequest(request))),
+        [FILE_CATALOG_OPERATIONS.rename]: (request) => this.observed(FILE_CATALOG_OPERATIONS.rename, () => this.rename(this.renameRequest(request))),
+        [FILE_CATALOG_OPERATIONS.delete]: (request) => this.observed(FILE_CATALOG_OPERATIONS.delete, () => this.delete(this.deleteRequest(request))),
       },
     };
+  }
+
+  private async observed<T>(operation: string, invoke: () => Promise<T>): Promise<T> {
+    try {
+      return await invoke();
+    } catch (error) {
+      try {
+        this.options.onOperationFailure?.({
+          operation,
+          code: error instanceof FileServiceError ? error.code : "internal",
+        });
+      } catch {
+        // Host diagnostics must not change a filesystem operation's outcome.
+      }
+      throw error;
+    }
   }
 
   private authorizedCatalog(request: FileCatalogRequest, required: AuthScope): FileCatalog {

@@ -58,6 +58,7 @@ type Options = {
 	onOpenFile: OpenFile;
 	onOpenTerminalAt: (path: string, isDirectory?: boolean) => unknown;
 	onOperationError: (feature: 'Explorer' | 'Git', error: unknown) => string;
+	onOperationSucceeded: (feature: 'Explorer' | 'Git') => void;
 	onSetError: (message: string | null) => void;
 	onUpdateProject: (projectId: string, updates: Partial<ProjectTab>) => void;
 	project: ProjectTab;
@@ -174,6 +175,7 @@ export function useFileExplorerController({
 	onOpenFile,
 	onOpenTerminalAt,
 	onOperationError,
+	onOperationSucceeded,
 	onSetError,
 	onUpdateProject,
 	project,
@@ -291,6 +293,7 @@ export function useFileExplorerController({
 								size: entry.size,
 							})),
 						}));
+						onOperationSucceeded('Explorer');
 					} catch (error) {
 						if (
 							!isCurrentDirectoryLoad(
@@ -328,6 +331,7 @@ export function useFileExplorerController({
 			fileViewerClient,
 			isServerFileViewer,
 			onOperationError,
+			onOperationSucceeded,
 			project.rootFolder,
 		],
 	);
