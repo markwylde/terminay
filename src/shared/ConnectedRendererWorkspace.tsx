@@ -41,7 +41,9 @@ export function ConnectedRendererWorkspace({
 			auxiliaryRoutes={host.auxiliaryRoutes}
 			hostPresentation={host.presentation}
 			subscribeAppCommands={host.subscribeAppCommands}
-			key={terminalClientContext.serverId}
+			// A replacement lane can retain both server and client identities. Its
+			// terminal tree still needs a fresh attachment to the new transport.
+			key={`${terminalClientContext.serverId}:${terminalClientContext.connectionGeneration ?? 'initial'}`}
 			onDisconnect={host.onDisconnect}
 			onOpenConnectionManager={host.onOpenConnectionManager}
 			terminalClientContext={terminalClientContext}

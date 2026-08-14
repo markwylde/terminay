@@ -78,6 +78,11 @@ export function useProjectTabTransfer({
 					created = true;
 				}
 				await workspaceSnapshotStore.moveProject({ projectId, targetViewId });
+				await workspaceSnapshotStore.waitForSnapshot((snapshot) =>
+					snapshot.views[workspaceViewId]?.projectIds.includes(projectId) ===
+						false &&
+					snapshot.views[targetViewId]?.projectIds.includes(projectId) === true,
+				);
 				if (decision.action === 'popout') {
 					await presentWorkspaceView(targetViewId, decision);
 				}
@@ -118,6 +123,11 @@ export function useProjectTabTransfer({
 				});
 				created = true;
 				await workspaceSnapshotStore.moveProject({ projectId, targetViewId });
+				await workspaceSnapshotStore.waitForSnapshot((snapshot) =>
+					snapshot.views[workspaceViewId]?.projectIds.includes(projectId) ===
+						false &&
+					snapshot.views[targetViewId]?.projectIds.includes(projectId) === true,
+				);
 				await presentWorkspaceView(targetViewId, { x: 120, y: 120 });
 				if (projectsRef.current.length === 1) {
 					await workspaceSnapshotStore.closeView(workspaceViewId);

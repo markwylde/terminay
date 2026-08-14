@@ -122,6 +122,8 @@ export interface TerminalPanelClientContextValue {
 	/** Reports that this mounted panel rendered and attached the replacement client. */
 	readonly reportConnectionHydrated?: () => void;
 	readonly reportConnectionHydrationFailed?: (error: unknown) => void;
+	/** Changes when a recovered connection needs a fresh workspace tree. */
+	readonly connectionGeneration?: string;
 	readonly serverCapabilities?: readonly string[];
 }
 
