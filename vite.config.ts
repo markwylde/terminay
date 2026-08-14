@@ -36,7 +36,7 @@ const electronInput = {
   main: path.join(__dirname, 'electron/main.ts'),
   extensionHostEntry: path.join(__dirname, 'packages/server-core/src/extensions/child.ts'),
   // Desktop launches the server-owned, renderer-free MCP process.
-  serverMcpEntry: path.join(__dirname, 'apps/terminay-server/src/mcpEntry.ts'),
+  serverMcpEntry: path.join(__dirname, 'apps/terminay-server/src/desktopMcpEntry.ts'),
 }
 
 export default defineConfig({

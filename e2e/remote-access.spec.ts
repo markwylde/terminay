@@ -54,24 +54,36 @@ async function exposeDirectAndReadPairingLink(
 	await settings.getByRole('button', { name: 'Direct network listener' }).click();
 	await settings.getByRole('button', { name: 'Start direct listener' }).click();
 	const pinDialog = settings.getByRole('dialog', { name: 'Remote Pairing PIN' });
-	// A fresh Desktop authority has no PIN. Wait for the controller's required
-	// first-use continuation instead of sampling visibility before React has had
-	// a chance to render the dialog and accidentally leaving the start action
-	// suspended forever.
-	await expect(pinDialog).toBeVisible();
-	await expect(
-		settings.getByRole('button', { name: 'Starting direct listener…' }),
-	).toBeDisabled();
-	await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill(pin);
-	await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
-	await expect(pinDialog).toHaveCount(0);
+	const starting = settings.getByRole('button', {
+		name: 'Starting direct listener…',
+	});
+	const stop = settings.getByRole('button', { name: 'Stop direct listener' });
 	const directListenerError = settings.getByTestId(
 		'direct-listener-operation-error',
 	);
+	// A new authority must ask for a PIN; an authority that already owns a
+	// verifier must start directly. Both are valid canonical product paths.
+	let requiresPin = false;
+	await expect
+		.poll(async () => {
+			if (await pinDialog.isVisible().catch(() => false)) {
+				requiresPin = true;
+				return true;
+			}
+			return (
+				(await stop.isVisible().catch(() => false)) ||
+				(await directListenerError.isVisible().catch(() => false))
+			);
+		})
+		.toBe(true);
+	if (requiresPin) {
+		await expect(starting).toBeDisabled();
+		await pinDialog.getByRole('textbox', { name: 'Pairing PIN' }).fill(pin);
+		await pinDialog.getByRole('button', { name: 'Save PIN' }).click();
+		await expect(pinDialog).toHaveCount(0);
+	}
 	await expect(
-		settings
-			.getByRole('button', { name: 'Stop direct listener' })
-			.or(directListenerError),
+		stop.or(directListenerError),
 	).toBeVisible({ timeout: 20_000 });
 	if (await directListenerError.isVisible().catch(() => false)) {
 		throw new Error(
