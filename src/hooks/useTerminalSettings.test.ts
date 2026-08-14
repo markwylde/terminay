@@ -25,7 +25,15 @@ test('canonical settings client reads, writes, and observes only selected-server
 	} as never);
 	const initial = await client.get<{ cursorStyle: string }>();
 	assert.equal(initial.cursorStyle, 'bar');
-	await client.update({ cursorStyle: 'underline' });
+	const updated = await client.update<{
+		cursorStyle: string;
+		keyboardShortcuts: { 'new-terminal': string };
+	}>({
+		cursorStyle: 'underline',
+		keyboardShortcuts: { 'new-terminal': 'CmdOrCtrl+Y' },
+	});
+	assert.equal(updated.cursorStyle, 'underline');
+	assert.equal(updated.keyboardShortcuts['new-terminal'], 'CmdOrCtrl+Y');
 	await client.reset();
 	assert.deepEqual(calls, ['get', 'get', 'update', 'reset']);
 	let observed: unknown;
