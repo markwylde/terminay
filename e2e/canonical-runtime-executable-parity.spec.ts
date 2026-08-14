@@ -1,12 +1,16 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import {
 	_electron as electron,
 	expect,
 	test,
 	type ElectronApplication,
 } from '@playwright/test';
+
+const execFileAsync = promisify(execFile);
 
 type RuntimeEvidence = Readonly<{
 	bundleId: string;
@@ -21,10 +25,38 @@ type RuntimeEvidence = Readonly<{
 	sidebarProjectId: string;
 }>;
 
-async function launchComposition(
-	mode: 'development' | 'production-built',
-	userDataDir: string,
-): Promise<ElectronApplication> {
+async function buildExtractedPackagedExecutable(outputDirectory: string): Promise<string> {
+	const architecture = process.arch === 'arm64' ? 'arm64' : 'x64';
+	await execFileAsync(
+		path.resolve('node_modules/.bin/electron-builder'),
+		[
+			'--dir',
+			'--linux',
+			`--${architecture}`,
+			'--publish',
+			'never',
+			`--config.directories.output=${outputDirectory}`,
+		],
+		{
+			env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' },
+			maxBuffer: 16 * 1024 * 1024,
+			timeout: 180_000,
+		},
+	);
+	const directories = await readdir(outputDirectory, { withFileTypes: true });
+	const extracted = directories.find(
+		(entry) => entry.isDirectory() && entry.name.startsWith('linux-') && entry.name.endsWith('-unpacked'),
+	);
+	if (extracted === undefined)
+		throw new Error(
+			`electron-builder did not produce an extracted Linux application in ${outputDirectory}`,
+		);
+	return path.join(outputDirectory, extracted.name, 'terminay');
+}
+
+async function launchDevelopmentComposition(userDataDir: string): Promise<ElectronApplication> {
+	// This is the repository Electron process produced by the canonical
+	// development build/orchestration, with app.isPackaged=false.
 	return electron.launch({
 		args: ['.'],
 		env: {
@@ -32,9 +64,24 @@ async function launchComposition(
 			CI: '1',
 			TERMINAY_TEST: '1',
 			TERMINAY_USER_DATA_DIR: userDataDir,
-			...(mode === 'development'
-				? { VITE_DEV_SERVER_URL: 'http://127.0.0.1:9/' }
-				: { VITE_DEV_SERVER_URL: '' }),
+		},
+	});
+}
+
+async function launchExtractedPackagedComposition(
+	executablePath: string,
+	userDataDir: string,
+): Promise<ElectronApplication> {
+	// Launch the executable copied into electron-builder's extracted application
+	// directory. No repository Electron entry or development renderer selector is
+	// involved in this process.
+	return electron.launch({
+		executablePath,
+		env: {
+			...process.env,
+			CI: '1',
+			TERMINAY_TEST: '1',
+			TERMINAY_USER_DATA_DIR: userDataDir,
 		},
 	});
 }
@@ -84,26 +131,36 @@ async function closeCleanly(app: ElectronApplication): Promise<void> {
 	expect(app.process().signalCode).toBeNull();
 }
 
-test('development and production-built processes expose identical canonical runtime state', async () => {
+test('development orchestration and extracted packaged app expose identical canonical runtime state', async () => {
+	test.setTimeout(240_000);
 	const root = await mkdtemp(path.join(os.tmpdir(), 'terminay-runtime-parity-'));
 	let development: ElectronApplication | undefined;
-	let production: ElectronApplication | undefined;
+	let packaged: ElectronApplication | undefined;
 	try {
-		development = await launchComposition('development', path.join(root, 'development'));
+		const packagedExecutable = await buildExtractedPackagedExecutable(
+			path.join(root, 'electron-builder-output'),
+		);
+
+		development = await launchDevelopmentComposition(path.join(root, 'development'));
+		expect(await development.evaluate(({ app }) => app.isPackaged)).toBe(false);
 		const developmentEvidence = await observeRuntime(development);
 		await closeCleanly(development);
 		development = undefined;
 
-		production = await launchComposition('production-built', path.join(root, 'production'));
-		const productionEvidence = await observeRuntime(production);
-		expect(productionEvidence).toEqual(developmentEvidence);
-		await closeCleanly(production);
-		production = undefined;
+		packaged = await launchExtractedPackagedComposition(
+			packagedExecutable,
+			path.join(root, 'packaged'),
+		);
+		expect(await packaged.evaluate(({ app }) => app.isPackaged)).toBe(true);
+		const packagedEvidence = await observeRuntime(packaged);
+		expect(packagedEvidence).toEqual(developmentEvidence);
+		await closeCleanly(packaged);
+		packaged = undefined;
 	} finally {
 		if (development !== undefined && development.process().exitCode === null)
 			await development.close().catch(() => development?.process().kill('SIGKILL'));
-		if (production !== undefined && production.process().exitCode === null)
-			await production.close().catch(() => production?.process().kill('SIGKILL'));
+		if (packaged !== undefined && packaged.process().exitCode === null)
+			await packaged.close().catch(() => packaged?.process().kill('SIGKILL'));
 		await rm(root, { recursive: true, force: true });
 	}
 });
