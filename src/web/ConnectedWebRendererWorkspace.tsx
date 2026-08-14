@@ -44,6 +44,7 @@ import {
 	createBrowserTerminalSettingsClient,
 } from './browserRendererHostAdapters';
 import './connectedRendererWorkspace.css';
+import { isProjectEditCommitted } from './projectEditSettlement';
 
 export type ConnectedWebRendererWorkspaceProps = Readonly<{
 	terminalClientContext: Omit<TerminalPanelClientContextValue, 'projectId'>;
@@ -154,9 +155,10 @@ export function ConnectedWebRendererWorkspace({
 	const nativeAuxiliaryDocument = useMemo(initialAuxiliaryRoute, []);
 	const [auxiliaryRoute, setAuxiliaryRoute] =
 		useState<AuxiliaryRouteRequest | null>(nativeAuxiliaryDocument);
-	const pendingEditResolveRef = useRef<
-		((result: SharedEditTabResult | null) => void) | null
-	>(null);
+	const pendingEditRef = useRef<{
+		request: Extract<AuxiliaryRouteRequest, { kind: 'edit-tab' }>;
+		resolve: (result: SharedEditTabResult | null) => void;
+	} | null>(null);
 	const auxiliaryFocusReturnRef = useRef<HTMLElement | null>(null);
 	const settingsClient = useMemo(createBrowserTerminalSettingsClient, []);
 	const applicationClient = terminalClientContext.applicationClient;
@@ -214,8 +216,8 @@ export function ConnectedWebRendererWorkspace({
 	const remoteAccessStatusClient = remoteAccessClients?.status ?? createUnavailableRemoteAccessClient();
 	const handleAuxiliaryRouteRequest = useCallback<AuxiliaryRouteRequestHandler>(
 		async (request) => {
-			pendingEditResolveRef.current?.(null);
-			pendingEditResolveRef.current = null;
+			pendingEditRef.current?.resolve(null);
+			pendingEditRef.current = null;
 			auxiliaryFocusReturnRef.current =
 				document.activeElement instanceof HTMLElement
 					? document.activeElement
@@ -223,7 +225,7 @@ export function ConnectedWebRendererWorkspace({
 			setAuxiliaryRoute(request);
 			if (request.kind !== 'edit-tab') return undefined;
 			return new Promise((resolve) => {
-				pendingEditResolveRef.current = resolve;
+				pendingEditRef.current = { request, resolve };
 			});
 		},
 		[],
@@ -285,19 +287,32 @@ export function ConnectedWebRendererWorkspace({
 		[auxiliaryRoutes],
 	);
 	const cancelAuxiliaryRoute = useCallback(() => {
-		pendingEditResolveRef.current?.(null);
-		pendingEditResolveRef.current = null;
+		pendingEditRef.current?.resolve(null);
+		pendingEditRef.current = null;
 		setAuxiliaryRoute(null);
 		restoreAuxiliaryFocus();
 	}, [restoreAuxiliaryFocus]);
 	const submitEditTabRoute = useCallback(
 		async (result: SharedEditTabResult) => {
-			pendingEditResolveRef.current?.(result);
-			pendingEditResolveRef.current = null;
+			const pending = pendingEditRef.current;
+			if (pending === null) return;
+			pendingEditRef.current = null;
+			pending.resolve(result);
+			const editState = pending.request.state;
+			if (editState.kind === 'project' && 'defaultShellProfileId' in result) {
+				await terminalClientContext.workspaceSnapshotStore?.waitForSnapshot(
+					(snapshot) =>
+						isProjectEditCommitted(
+							snapshot.projects[editState.projectId],
+							result,
+						),
+					{ timeoutMs: 5_000 },
+				);
+			}
 			setAuxiliaryRoute(null);
 			restoreAuxiliaryFocus();
 		},
-		[restoreAuxiliaryFocus],
+		[restoreAuxiliaryFocus, terminalClientContext.workspaceSnapshotStore],
 	);
 	const auxiliaryContent = (route: AuxiliaryRouteRequest) =>
 		route.kind === 'edit-tab' ? (
