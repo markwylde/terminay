@@ -1588,48 +1588,6 @@ function writeSecrets(secrets: SecretRecord[]): void {
 	writeFileSync(getSecretsPath(), JSON.stringify(secrets, null, 2));
 }
 
-function shellEscapePath(pathValue: string): string {
-	return `'${pathValue.replace(/'/g, `'\\''`)}'`;
-}
-
-function expandClipboardFormatCandidates(format: string): string[] {
-	const candidates = new Set<string>([format]);
-
-	if (format.includes('.') && !format.includes('/')) {
-		candidates.add(format.replace('.', '/'));
-	}
-
-	if (format.includes('/') && !format.includes('.')) {
-		candidates.add(format.replace('/', '.'));
-	}
-
-	return [...candidates];
-}
-
-function readClipboardFormatText(format: string): string | null {
-	for (const candidate of expandClipboardFormatCandidates(format)) {
-		try {
-			const text = clipboard.read(candidate);
-			if (text.length > 0) {
-				return text;
-			}
-		} catch {
-			// Try the next candidate format.
-		}
-
-		try {
-			const data = clipboard.readBuffer(candidate);
-			if (data.length > 0) {
-				return data.toString('utf8');
-			}
-		} catch {
-			// Try the next candidate format.
-		}
-	}
-
-	return null;
-}
-
 function resolveExplorerPath(rawPath: string): string {
 	const trimmedPath = rawPath.trim();
 	if (trimmedPath === '~') {
@@ -1967,94 +1925,6 @@ async function searchFiles(
 		})
 		.slice(0, boundedLimit)
 		.map(({ score: _score, ...result }) => result);
-}
-
-function parseClipboardFilePaths(rawValue: string): string[] {
-	return rawValue
-		.split(/\r?\n/)
-		.map((value) => value.trim())
-		.filter((value) => value.length > 0)
-		.map((value) => {
-			if (value.startsWith('file://')) {
-				try {
-					return fileURLToPath(value);
-				} catch {
-					return value;
-				}
-			}
-
-			return value;
-		});
-}
-
-function readClipboardFilePaths(): string[] {
-	const availableFormats = clipboard
-		.availableFormats()
-		.map((format) => format.toLowerCase());
-	const fileUrlFormats = [
-		'public.file-url',
-		'public/file-url',
-		'text/uri-list',
-		'nsfilenamespboardtype',
-	];
-
-	for (const format of fileUrlFormats) {
-		const normalizedFormat = format.toLowerCase();
-		if (!availableFormats.includes(normalizedFormat)) {
-			continue;
-		}
-
-		const rawValue = readClipboardFormatText(format);
-		if (!rawValue) {
-			continue;
-		}
-
-		const paths = parseClipboardFilePaths(rawValue);
-		if (paths.length > 0) {
-			return paths;
-		}
-	}
-
-	return [];
-}
-
-function readClipboardImagePath(): string | null {
-	const image = clipboard.readImage();
-	if (image.isEmpty()) {
-		return null;
-	}
-
-	const imageBytes = image.toPNG();
-	if (imageBytes.length === 0) {
-		return null;
-	}
-
-	const tempDir = path.join(app.getPath('temp'), 'terminay-clipboard');
-	mkdirSync(tempDir, { recursive: true });
-	const filePath = path.join(tempDir, `clipboard-${randomUUID()}.png`);
-	writeFileSync(filePath, imageBytes);
-	return filePath;
-}
-
-function smartPasteClipboardContents(): string {
-	// Match terminal-emulator behavior: prefer explicit file URLs, then plain text,
-	// and only fall back to image-to-temp-file conversion when there is no text.
-	const filePaths = readClipboardFilePaths();
-	if (filePaths.length > 0) {
-		return filePaths.map(shellEscapePath).join(' ');
-	}
-
-	const text = clipboard.readText();
-	if (text.length > 0) {
-		return text;
-	}
-
-	const imagePath = readClipboardImagePath();
-	if (imagePath) {
-		return shellEscapePath(imagePath);
-	}
-
-	return '';
 }
 
 function broadcastTerminalSettings(settings: TerminalSettings): void {
@@ -4941,76 +4811,6 @@ ipcMain.handle(
 );
 
 /**
- * Narrow, versioned host capability used by the production workspace for
- * explicit release/documentation links. This is the sole renderer route to
- * the native shell; app services never receive shell authority.
- */
-ipcMain.handle(
-	'desktop:external-host:open',
-	async (event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload)
-		) {
-			throw new TypeError('desktop external host request is invalid');
-		}
-		const request = payload as Record<string, unknown>;
-		if (
-			Object.keys(request).length !== 2 ||
-			request.version !== 1 ||
-			typeof request.url !== 'string'
-		) {
-			throw new TypeError('desktop external host request is invalid');
-		}
-		await openInBrowser(request.url);
-	},
-);
-
-/**
- * Versioned native clipboard capability. Clipboard access is native-host
- * presentation state, never an application-service capability.
- */
-ipcMain.handle('desktop:clipboard-host:read', (event, payload: unknown) => {
-	assertTrustedAppSender(event);
-	if (
-		typeof payload !== 'object' ||
-		payload === null ||
-		Array.isArray(payload)
-	) {
-		throw new TypeError('desktop clipboard host request is invalid');
-	}
-	const request = payload as Record<string, unknown>;
-	if (Object.keys(request).length !== 1 || request.version !== 1) {
-		throw new TypeError('desktop clipboard host request is invalid');
-	}
-	return smartPasteClipboardContents();
-});
-
-ipcMain.handle('desktop:clipboard-host:write', (event, payload: unknown) => {
-	assertTrustedAppSender(event);
-	if (
-		typeof payload !== 'object' ||
-		payload === null ||
-		Array.isArray(payload)
-	) {
-		throw new TypeError('desktop clipboard host request is invalid');
-	}
-	const request = payload as Record<string, unknown>;
-	if (
-		Object.keys(request).length !== 2 ||
-		request.version !== 1 ||
-		typeof request.text !== 'string' ||
-		request.text.length === 0 ||
-		request.text.length > 1_048_576
-	) {
-		throw new TypeError('desktop clipboard host request is invalid');
-	}
-	clipboard.writeText(request.text);
-});
-
-/**
  * Versioned, least-authority bridge for the current-server picker.  The
  * current Desktop renderer reaches this separately exposed native-host
  * capability rather than the broad preload object.
@@ -5257,57 +5057,6 @@ ipcMain.handle(
 			rememberedRemoteConnections.delete(profile.id);
 			saveRememberedRemoteConnections();
 		}
-	},
-);
-
-/**
- * Native file reveal is deliberately a narrow workspace capability. A server
- * bundle receives no general-purpose preload object, and malformed
- * or relative paths cannot reach the operating-system shell.
- */
-ipcMain.handle('desktop:reveal-host:reveal', (event, payload: unknown) => {
-	assertTrustedAppSender(event);
-	if (
-		typeof payload !== 'object' ||
-		payload === null ||
-		Array.isArray(payload)
-	) {
-		throw new TypeError('desktop reveal host request is invalid');
-	}
-	const request = payload as Record<string, unknown>;
-	if (
-		Object.keys(request).length !== 2 ||
-		request.version !== 1 ||
-		typeof request.filePath !== 'string' ||
-		request.filePath.length === 0 ||
-		request.filePath.length > 32_768 ||
-		!path.isAbsolute(request.filePath)
-	) {
-		throw new TypeError('desktop reveal host request is invalid');
-	}
-	shell.showItemInFolder(request.filePath);
-});
-
-ipcMain.handle(
-	'desktop:update-host:get-status',
-	async (event, payload: unknown) => {
-		assertTrustedAppSender(event);
-		if (
-			typeof payload !== 'object' ||
-			payload === null ||
-			Array.isArray(payload)
-		) {
-			throw new TypeError('desktop update host request is invalid');
-		}
-		const request = payload as Record<string, unknown>;
-		if (
-			Object.keys(request).length !== 2 ||
-			request.version !== 1 ||
-			typeof request.force !== 'boolean'
-		) {
-			throw new TypeError('desktop update host request is invalid');
-		}
-		return getAppUpdateStatus({ force: request.force });
 	},
 );
 
