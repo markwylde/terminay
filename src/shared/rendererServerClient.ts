@@ -270,13 +270,17 @@ export async function createConnectedServerClientContext(
 			})();
 			return disposePromise;
 		};
-		const removeStateListener = client.onStateChange((change) => {
+		const publishClientState = (current: typeof client.snapshot): void => {
 			(
 				window as Window & { __terminayServerClientState?: string }
 			).__terminayServerClientState =
-				change.current.error === undefined
-					? change.current.state
-					: `${change.current.state}: ${change.current.error.message}`;
+				current.error === undefined
+					? current.state
+					: `${current.state}: ${current.error.message}`;
+		};
+		publishClientState(client.snapshot);
+		const removeStateListener = client.onStateChange((change) => {
+			publishClientState(change.current);
 			if (
 				change.current.state === 'stale' ||
 				change.current.state === 'closed' ||
