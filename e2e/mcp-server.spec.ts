@@ -17,9 +17,11 @@ type McpControlEnvironment = Readonly<{
 	token: string;
 }>;
 
-async function activeSessionIds(page: Page): Promise<string[]> {
+async function projectSessionIds(page: Page, projectId: string): Promise<string[]> {
 	return page
-		.locator('.project-workspace--active .terminal-panel')
+		.locator(
+			`.project-workspace[data-terminay-project-id="${projectId}"] .terminal-panel`,
+		)
 		.evaluateAll((panels) =>
 			panels
 				.map((panel) => panel.getAttribute('data-terminay-terminal-session-id'))
@@ -91,12 +93,12 @@ test('MCP callers see and control only terminals in their own project', async ({
 	await expect(
 		mainWindow.locator('.project-workspace--active .terminal-tab-content'),
 	).toHaveCount(2);
-	const projectASessions = await activeSessionIds(mainWindow);
-	expect(projectASessions).toHaveLength(1);
 	const projectAId = await mainWindow
 		.locator('.app-shell')
 		.getAttribute('data-terminay-active-project-id');
 	if (projectAId === null) throw new Error('Project A identity is unavailable.');
+	const projectASessions = await projectSessionIds(mainWindow, projectAId);
+	expect(projectASessions).toHaveLength(1);
 
 	await mainWindow.getByLabel('Create project on This server').click();
 	await expect(mainWindow.locator('.project-tab--active')).toContainText(
@@ -111,7 +113,8 @@ test('MCP callers see and control only terminals in their own project', async ({
 	let projectBSession: string | undefined;
 	await expect
 		.poll(async () => {
-			const session = (await activeSessionIds(mainWindow))[0];
+			if (activeProjectId === null) return false;
+			const session = (await projectSessionIds(mainWindow, activeProjectId))[0];
 			if (session !== undefined && session !== projectASessions[0]) {
 				projectBSession = session;
 				return true;

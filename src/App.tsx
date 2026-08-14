@@ -4411,6 +4411,7 @@ const ProjectWorkspace = forwardRef<
 		return (
 			<section
 				className={`project-workspace${isActive ? ' project-workspace--active' : ''}${isMac ? ' project-workspace--macos' : ''}`}
+				data-terminay-project-id={project.id}
 				data-terminay-git-client={
 					featureAuthority?.gitClient === undefined ? 'unavailable' : 'server'
 				}
