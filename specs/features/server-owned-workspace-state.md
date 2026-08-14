@@ -92,12 +92,6 @@ storage contains only sanitized profiles; origin-bound credentials, verified
 bundle caches, and ephemeral renderer state remain partitioned by the exact
 server session origin.
 
-The temporary Desktop compatibility lifecycle test recreates a renderer context
-and removes its native-window binding while retaining one server-scoped
-`TerminayClient` and terminal attachment. The client remains connected and the
-server/project/session identity is unchanged; window unbinding is host-local
-cleanup rather than a workspace or PTY lifecycle command.
-
 ## Commands, revisions, and conflicts
 
 - The server publishes a complete initial snapshot with a monotonically
@@ -212,14 +206,9 @@ and insertion into the intended terminal remain server-authorized operations.
   rather than stored in one undifferentiated Electron JSON file.
 - Server settings are normalized and migrated by the server and broadcast with
   revisions.
-- Server secrets use a pluggable vault. Embedded migration may use Electron
-  safe storage to decrypt old records and import them over the private local
-  bootstrap channel.
-- Embedded safe-storage import is source-marked and idempotent: ciphertext is
-  bounded and copied into the privileged adapter, decrypted bytes exist only
-  for the vault write, and the durable import marker contains source metadata
-  but never plaintext. A failed entry leaves the marker incomplete so restart
-  retries already-imported ids without replaying their values.
+- Server secrets use a pluggable vault. Embedded mode uses an OS-backed
+  protector for its server vault wrapping key without exposing plaintext to a
+  renderer or workspace bundle.
 - Electron safe storage protects embedded-vault wrapping keys only when the
   platform reports an OS-backed encryption backend. Linux `basic_text` storage
   is unavailable for this purpose.
@@ -233,7 +222,7 @@ and insertion into the intended terminal remain server-authorized operations.
   replace-by-rename writes), authenticates its metadata, zeroizes passphrase,
   derived-key, and scoped plaintext buffers, and starts locked after restart.
   Its protocol-facing status and references contain metadata only; Electron
-  safe-storage remains a separate embedded migration/protector boundary.
+  safe storage remains a separate embedded protector boundary.
 - The canonical state repository rejects a complete but stale vault envelope
   using its expected revision.
 - Secret values are not included in workspace snapshots, audit events, logs, or
@@ -252,43 +241,20 @@ and insertion into the intended terminal remain server-authorized operations.
 - State migrations create a recoverable backup or equivalent rollback point and
   are idempotent.
 
-## Legacy data migration
+## First-run initialization
 
-- Supported terminal settings, macros, encrypted secrets, remote device grants,
-  audit records, and recording paths are imported into the embedded server data
-  root exactly once.
-- Electron performs any safe-storage decryption needed for migration without
-  writing plaintext migration files.
-- Legacy state that was never persisted is represented by a new default
-  workspace; the migration does not claim to recover unavailable data.
-- Legacy projects without an environment id migrate idempotently to the
-  reserved This server environment without changing project, panel, or view
-  identities.
-- Existing recordings and project files are referenced in place unless the user
-  explicitly requests a move.
-- Embedded migration preflight produces a bounded, metadata-only inventory of
-  known legacy stores and versions, recognizing supported historical aliases
-  for settings, macros, devices, reconnect grants, audit records, TLS paths,
-  profiles, projects, and recordings. Per-store format/schema/version markers
-  contain no store payloads. Project and recording references retain their
-  original paths and explicitly report available, missing, inaccessible, or
-  invalid roots; renderer-only layouts are reported as unrecoverable.
-- Legacy manager metadata is restored by the `app.terminay.com` manager as a
-  sanitized profile list; server trust state remains on the exact session
-  origin. Pairing fragments, device keys, reconnect grants, and credentials
-  are not part of the migrated manager record. An explicit failed-import
-  marker retains an opaque backup id and can be reset only through a backend
-  restore boundary before retry.
-- Migration records source version, destination schema, completion, and
-  recoverable failure details.
-
-Workspace recovery reports missing project roots and interrupted terminal
-sessions as metadata over the canonical state. The Desktop compatibility seed
-adapter adopts legacy renderer projects through revisioned server commands,
-emits a server `project.move` for an existing project whose logical view
-changed, and ignores native window, renderer, and `webContentsId` fields. It
-never creates a new running session for a legacy session already marked
-interrupted or exited.
+- A new server data root is initialized through the canonical repository, not
+  by a renderer or host adapter.
+- Initialization atomically commits one workspace view, one This server
+  project rooted at the server-authorized home, one terminal panel, and its
+  terminal session before reporting the workspace ready.
+- Initialization is idempotent. A client reload, additional native window, or
+  reconnect cannot create another default project or terminal.
+- A non-empty repository is restored exactly as persisted. Missing roots and
+  interrupted sessions remain represented with typed recovery state.
+- A renderer never repairs an empty or malformed server snapshot by inventing
+  project, panel, or session identity. Repository initialization or recovery
+  either succeeds authoritatively or the client presents a bounded failure.
 
 ## Non-goals
 
@@ -303,6 +269,9 @@ interrupted or exited.
 
 ## Acceptance outcomes
 
+- A new server data root publishes exactly one initialized workspace view,
+  This server project, terminal panel, and terminal session before any client
+  renders the workspace as ready.
 - A project with terminal, file, and folder panels reconnects from a fresh
   client using only server state.
 - Closing or reloading the owning Electron window does not kill its PTYs.
@@ -318,5 +287,8 @@ interrupted or exited.
   service scope.
 - Files, Git, recordings, agents, MCP, macros, and settings work through the
   same server boundary locally and remotely.
+- A valid active project enables sidebar feature queries with its canonical
+  server/project/environment identity; an unscoped query fails with a typed,
+  actionable state rather than a generic `query failed` projection.
 - A remote client cannot obtain plaintext secrets or widen a project/session
   scope by changing titles, paths, or local state.

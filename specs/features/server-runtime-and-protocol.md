@@ -83,8 +83,9 @@ The exact ownership and compatibility split is recorded in
   silently starting a second authority over the same data directory.
 - An explicitly enabled direct network listener claims its configured socket
   atomically and remains separate from the private Local transport.
-- The embedded server uses a dedicated data directory and imports supported
-  legacy Desktop state exactly once.
+- The embedded server uses a dedicated data directory and the same canonical
+  repositories as standalone mode. It does not import or depend on an
+  Electron-owned workspace store.
 
 ### Standalone server
 
