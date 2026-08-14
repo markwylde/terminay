@@ -18,6 +18,6 @@ test('fails a hosted pairing closed when Desktop has no selected server-owned We
 	await expect(
 		openMenu.getByText(runtimeError, {
 			exact: true,
-		}),
+		}).first(),
 	).toBeVisible();
 });
