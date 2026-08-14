@@ -32,6 +32,13 @@ export async function resolveTerminalForegroundProcess(rootPid: number, signal?:
 	if (nonShellDescendants.length === 1) {
 		return nonShellDescendants[0].command
 	}
+	// node-pty can expose the current foreground child as its pid instead of
+	// the long-lived shell on Linux. In that shape the root itself is the
+	// authoritative observation; consulting its terminal process group next
+	// can incorrectly replace `sleep` with the shell group leader.
+	if (descendants.length === 0 && rootCommand !== null) {
+		return rootCommand
+	}
 	try {
 		const { stdout: groupOutput } = await execFileAsync('ps', ['-o', 'tpgid=', '-p', String(rootPid)], { signal })
 		const groupPid = Number.parseInt(groupOutput.trim(), 10)
