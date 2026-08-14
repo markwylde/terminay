@@ -96,3 +96,40 @@ export class DesktopDocumentLifecycle {
 		}
 	}
 }
+
+/** Complete a renderer document handoff without allowing a destruction race to
+ * escape into Electron's main event loop. Ownership transfers only after both
+ * the authority and renderer accept their respective endpoints. */
+export function handoffDocumentResource(options: {
+	readonly acceptAuthority: () => void;
+	readonly sendRenderer: () => void;
+	readonly release: () => void;
+	readonly onFailure?: (message: string) => void;
+}): boolean {
+	try {
+		options.acceptAuthority();
+		options.sendRenderer();
+		return true;
+	} catch (error) {
+		try {
+			options.release();
+		} catch {
+			// The original handoff failure remains authoritative. Cleanup failures
+			// are deliberately contained at this native boundary.
+		}
+		try {
+			options.onFailure?.(boundedDiagnostic(error));
+		} catch {
+			// Diagnostics must never turn a renderer destruction race into a crash.
+		}
+		return false;
+	}
+}
+
+function boundedDiagnostic(error: unknown): string {
+	const category = error instanceof Error ? error.name : typeof error;
+	return `Renderer document handoff failed (${category || 'unknown'}).`.slice(
+		0,
+		320,
+	);
+}
