@@ -19,22 +19,17 @@ test('Electron retains the selected remote profile independently of its document
 	);
 });
 
-test('a new document reconnects its bound remote profile and cannot fall through to Local', () => {
-	const finishLoad = main.slice(
-		main.indexOf("window.webContents.on('did-start-loading'"),
-		main.indexOf('// A torn-off window boots in "adopt" mode'),
+test('normal workspace windows always load the canonical selected-server bundle', () => {
+	const createWindow = main.slice(
+		main.indexOf('function createWindow('),
+		main.indexOf('function selectedProfileIdForRequester'),
 	);
-	assert.match(finishLoad, /remoteProfileBindingsByWebContents\.get/u);
-	assert.match(finishLoad, /reconnectRememberedRemoteProfile/u);
-	assert.match(finishLoad, /if \(isPendingRemoteConnectionWindow\(window\)\) return/u);
-	assert.ok(
-		finishLoad.indexOf('reconnectRememberedRemoteProfile') <
-			finishLoad.indexOf('ensureLocalWorkspaceSeed'),
-		'remote authority restoration must precede Local connection creation',
-	);
-	assert.match(
-		finishLoad,
-		/window\.webContents\.on\('did-finish-load', sendServerConnection\)/u,
+	assert.match(createWindow, /serverUiPreload\.cjs/u);
+	assert.match(createWindow, /localServerUiSession\.prepare\(windowWebContentsId\)/u);
+	assert.match(createWindow, /server-ui-host:byte-endpoint/u);
+	assert.doesNotMatch(
+		createWindow,
+		/VITE_DEV_SERVER_URL|ensureLocalWorkspaceSeed|sendServerConnection/u,
 	);
 });
 
