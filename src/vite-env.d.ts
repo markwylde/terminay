@@ -82,7 +82,6 @@ declare global {
 				listener: (frame: Uint8Array | null) => void,
 			): () => void;
 		};
-		terminayFileViewerCompatibilityHost: import('./services/fileViewer/terminayFileGateway').LegacyFileGatewayApi;
 		terminayTerminalSettingsCompatibilityHost: import('./services/settings/legacySettingsCapability').LegacySettingsApi & {
 			readonly version: 1;
 		};
@@ -94,34 +93,6 @@ declare global {
 		};
 		terminayRemotePairingPinHost: import('./remotePairingPin').RemotePairingPinClient & {
 			readonly version: 1;
-		};
-		/** Read-only Desktop file-explorer bootstrap capability. */
-		terminayFileExplorerHost?: {
-			readonly version: 1;
-			subscribeWatchEvents(
-				listener: (
-					message: import('./types/terminay').FileExplorerWatchEvent,
-				) => void,
-			): () => void;
-			subscribeFolderSizeProgress(
-				listener: (
-					message: import('./types/terminay').FolderSizeProgress,
-				) => void,
-			): () => void;
-			getHomePath(): Promise<string>;
-			calculateFolderSize(request: {
-				jobId: string;
-				path: string;
-			}): Promise<import('./types/terminay').FolderSizeResult>;
-			cancelFolderSize(jobId: string): Promise<void>;
-			resolveDroppedFilePath(file: File): string;
-			searchFiles(request: {
-				rootPath: string;
-				query: string;
-				limit: number;
-			}): Promise<import('./types/terminay').FileSearchResult[]>;
-			watchDirectory(path: string): Promise<void>;
-			unwatchDirectory(path: string): Promise<void>;
 		};
 		/** Bounded native project-editor capability for the current Desktop shell. */
 		terminayProjectEditHost?: {

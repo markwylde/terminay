@@ -18,7 +18,6 @@ await build({
 		serverFileGateway: 'src/services/fileViewer/serverFileGateway.ts',
 		sharedDraftTransition:
 			'src/components/file-viewer/modes/sharedDraftTransition.ts',
-		terminayFileGateway: 'src/services/fileViewer/terminayFileGateway.ts',
 	},
 	format: 'cjs',
 	logLevel: 'silent',
@@ -26,9 +25,6 @@ await build({
 	platform: 'node',
 });
 
-const { createTerminayFileGateway } = require(
-	path.join(bundleDirectory, 'terminayFileGateway.js'),
-);
 const { createServerFileGateway, toProjectRelativePath } = require(
 	path.join(bundleDirectory, 'serverFileGateway.js'),
 );
@@ -48,22 +44,19 @@ test.after(async () => {
 });
 
 test('workspace directory listing uses the shared FileViewerClient boundary', async () => {
-	const [app, controller, adapter] = await Promise.all([
+	const [app, controller] = await Promise.all([
 		readFile('src/App.tsx', 'utf8'),
 		readFile('src/workspace/useFileExplorerController.ts', 'utf8'),
-		readFile('src/services/fileViewer/legacyFileViewerTransport.ts', 'utf8'),
 	]);
 	assert.match(
 		app,
-		/useFileExplorerController\(\{[\s\S]*?fileViewerClient,[\s\S]*?isServerFileViewer:\s*serverFileViewerClient !== undefined,/,
+		/useFileExplorerController\(\{[\s\S]*?fileViewerClient,[\s\S]*?isServerFileViewer:\s*true,/,
 	);
 	assert.match(
 		controller,
 		/fileViewerClient\.listFolder\(\s*clientPath\(dirPath\),\s*clientProjectId,/,
 	);
 	assert.doesNotMatch(controller, /window\.terminay\.listDirectory/);
-	assert.match(adapter, /operation === 'files\.list'/);
-	assert.match(adapter, /api\.listDirectory\(path\)/);
 	assert.match(
 		controller,
 		/fileViewerClient\.renameEntry\(\s*clientPath\(oldPath\),\s*clientPath\(`\$\{parent\}\$\{next\}`\),\s*clientProjectId,/,
@@ -87,88 +80,8 @@ test('workspace directory listing uses the shared FileViewerClient boundary', as
 	);
 });
 
-test('FilePanel gateway uses validated shared capabilities for deterministic mode selection', async () => {
-	const calls = [];
-	globalThis.window = {
-		terminay: {
-			async getFileInfo(filePath) {
-				return {
-					birthtimeMs: null,
-					ctimeMs: null,
-					exists: true,
-					extension: '.txt',
-					ino: 7,
-					isDirectory: false,
-					isFile: true,
-					isSymbolicLink: false,
-					mtimeMs: 10,
-					name: 'notes.txt',
-					path: filePath,
-					size: 12,
-				};
-			},
-		},
-	};
-
-	const gateway = createTerminayFileGateway(globalThis.window.terminay, {
-		async getCapabilities(filePath) {
-			calls.push(filePath);
-			return {
-				relativePath: filePath,
-				size: 12,
-				mtimeMs: 11,
-				previewKind: 'text',
-				preferredMode: 'text',
-				isBinary: false,
-				isLargeFile: false,
-				safePreview: false,
-				canEditText: true,
-				canEditHex: true,
-				inspectedBytes: 12,
-				inspectionTruncated: false,
-			};
-		},
-	});
-
-	const file = await gateway.getFileInfo('/workspace/notes.txt');
-	assert.deepEqual(calls, ['/workspace/notes.txt']);
-	assert.equal(file.viewerCapabilities.preferredMode, 'text');
-	assert.equal(file.mtimeMs, 11);
-	assert.equal(detectFileCapabilities(file).defaultMode, 'text');
-});
-
-test('legacy Electron metadata is translated through the real FileViewerClient contract', async () => {
-	globalThis.window = {
-		terminay: {
-			async getFileInfo(filePath) {
-				return {
-					birthtimeMs: null,
-					ctimeMs: null,
-					exists: true,
-					extension: '.md',
-					ino: 8,
-					isDirectory: false,
-					isFile: true,
-					isSymbolicLink: false,
-					mtimeMs: 20,
-					name: 'README.md',
-					path: filePath,
-					size: 24,
-				};
-			},
-		},
-	};
-
-	const file = await createTerminayFileGateway(
-		globalThis.window.terminay,
-	).getFileInfo('/workspace/README.md');
-	assert.equal(file.viewerCapabilities.previewKind, 'markdown');
-	assert.equal(detectFileCapabilities(file).defaultMode, 'preview');
-});
-
 test('connected FilePanel reads use canonical server paths and never preload file reads', async () => {
 	const calls = [];
-	let legacyRead = 0;
 	let watchListener;
 	let stoppedWatch;
 	const gateway = createServerFileGateway({
@@ -215,38 +128,6 @@ test('connected FilePanel reads use canonical server paths and never preload fil
 		},
 		projectId: 'project-a',
 		projectRoot: '/workspace/project-a',
-		compatibilityGateway: {
-			aggregateFolderMarkdownTasks: async () => {
-				throw new Error('unexpected legacy task call');
-			},
-			getFileDiff: async () => {
-				throw new Error('unexpected legacy diff call');
-			},
-			getFileInfo: async () => {
-				legacyRead += 1;
-				throw new Error('unexpected preload metadata call');
-			},
-			getGitRepoInfo: async () => ({ canDiff: false }),
-			getPreviewSource: async () => null,
-			onFileWatchEvent: () => () => {},
-			readFileBytes: async () => {
-				legacyRead += 1;
-				throw new Error('unexpected preload byte read');
-			},
-			readFileText: async () => {
-				legacyRead += 1;
-				throw new Error('unexpected preload text read');
-			},
-			readFileTextWindow: async () => {
-				legacyRead += 1;
-				throw new Error('unexpected preload text-window read');
-			},
-			saveFile: async () => {
-				throw new Error('unexpected legacy save call');
-			},
-			unwatchFile: async () => {},
-			watchFile: async () => {},
-		},
 	});
 
 	const info = await gateway.getFileInfo(
@@ -281,7 +162,6 @@ test('connected FilePanel reads use canonical server paths and never preload fil
 	]);
 	assert.equal(stoppedWatch, 'watch-a');
 	assert.equal(watchEvents[0]?.type, 'updated');
-	assert.equal(legacyRead, 0);
 });
 
 test('canonical Monaco handoff orders concurrent chunks and preserves split UTF-8 plus sparse overlays', async () => {
@@ -539,10 +419,7 @@ test('connected performant text windows stay bounded and cancellable on the cano
 	assert.doesNotMatch(viewer, /averageLineBytes|estimatedOffset/u);
 	assert.doesNotMatch(viewer, /estimateCanonicalTextMetadata/u);
 	assert.doesNotMatch(viewer, /client\.readContentText\(/u);
-	assert.match(
-		viewer,
-		/fileViewerClient\.readTextLines\(\s*filePath,\s*projectRoot,/u,
-	);
+	assert.doesNotMatch(viewer, /fileViewerClient\.readTextLines\(/u);
 	assert.match(viewer, /const reservedPages = new Map<number, symbol>\(\)/u);
 	assert.match(
 		viewer,
@@ -627,23 +504,16 @@ test('Desktop file observation treats every atomic inode replacement as authorit
 	);
 });
 
-test('connected sparse saves fail closed instead of using disconnected preload revision authority', async () => {
+test('connected sparse saves use canonical revision authority', async () => {
 	const panel = await readFile(
 		'src/components/file-viewer/FilePanel.tsx',
 		'utf8',
 	);
-	assert.match(
-		panel,
-		/const activeDisconnectedFilePanelCompatibility =\s*terminalClientContext === null \? disconnectedFilePanelCompatibility : null/u,
-	);
-	assert.match(
-		panel,
-		/currentFileInfo\.ino === null \|\| currentFileInfo\.mtimeMs === null\s*\?\s*await activeDisconnectedFilePanelCompatibility\?\.getMutationRevision\(\s*currentFileInfo\.path,\s*\)/u,
-	);
+	assert.match(panel, /await fileGateway\.getMutationRevision\(currentFileInfo\.path\)/u);
 	assert.match(panel, /const expectedIno = mutationRevision\.ino/u);
 	assert.match(panel, /const expectedMtimeMs = mutationRevision\.mtimeMs/u);
 	assert.match(panel, /expectedSize: mutationRevision\.size/u);
-	assert.doesNotMatch(panel, /compatibilityGateway: disconnectedFilePanelCompatibility/u);
+	assert.doesNotMatch(panel, /DisconnectedFileCompatibility|disconnectedFilePanelCompatibility/u);
 	assert.doesNotMatch(panel, /window\.terminay\b/u);
 });
 
@@ -655,13 +525,10 @@ test('connected FolderPanel derives size and refresh state from the server file 
 	assert.match(panel, /async function observeServerFolderSize\(/u);
 	assert.match(panel, /client\.startFolderSize\(/u);
 	assert.match(panel, /client\s*\.subscribeFolderSize\(/u);
-	assert.match(panel, /fileObservationClient!\s*\.startWatch\(/u);
-	assert.match(panel, /fileObservationClient!\s*\.subscribeWatch\(/u);
+	assert.match(panel, /fileObservationClient\.startWatch\(/u);
+	assert.match(panel, /fileObservationClient\.subscribeWatch\(/u);
 	assert.doesNotMatch(panel, /terminayFileExplorerHost/u);
-	assert.match(
-		panel,
-		/if \(terminalClientContext !== null\) return undefined;\s*return disconnectedFileCompatibility\?\.folderPanel\.createClient\(\)/u,
-	);
+	assert.doesNotMatch(panel, /DisconnectedFileCompatibility|disconnectedFolderCompatibility/u);
 });
 
 test('embedded Desktop composes canonical file observations with the shared journal', async () => {

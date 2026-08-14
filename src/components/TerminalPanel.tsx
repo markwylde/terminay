@@ -520,7 +520,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
     const panelIdentity = resolvedTerminalClient.identity
     const panelClientId = resolvedTerminalClient.clientId
     const useServerTerminal = panelClient !== undefined && panelIdentity !== undefined && panelClientId !== undefined
-    const resolveDesktopDroppedFilePath = window.terminayFileExplorerHost === undefined ? undefined : (file: unknown) => window.terminayFileExplorerHost?.resolveDroppedFilePath(file as File)
+    const resolveDesktopDroppedFilePath = undefined
     const canUploadBrowserFiles = () => {
       const browserDropContext = browserFileDropContextRef.current
       return (

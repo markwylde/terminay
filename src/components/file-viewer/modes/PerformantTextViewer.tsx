@@ -19,7 +19,7 @@ type PerformantTextViewerProps = {
 		lineDelta?: number,
 	) => void;
 	onSwitchToMonaco: () => Promise<void>;
-	projectId?: string;
+	projectId: string;
 	projectRoot: string;
 	sparseEdits: Array<[string, FileViewerSparseFileEdit]>;
 	sparseLineDeltas: ReadonlyMap<string, number>;
@@ -170,10 +170,7 @@ export function PerformantTextViewer({
 	const loadedPagesRef = useRef<Set<number>>(new Set());
 	const loadingPagesRef = useRef<Map<number, symbol>>(new Map());
 	const canonicalFilePath = useMemo(
-		() =>
-			projectId === undefined
-				? filePath
-				: toProjectRelativePath(projectRoot, filePath),
+		() => toProjectRelativePath(projectRoot, filePath),
 		[filePath, projectId, projectRoot],
 	);
 	const pageLineDeltas = useMemo(() => {
@@ -243,18 +240,11 @@ export function PerformantTextViewer({
 		loadingPagesRef.current = new Map();
 
 		const advanceIndex = () => {
-			const metadataRequest =
-				projectId === undefined
-					? fileViewerClient.getTextMetadata(filePath, projectRoot, {
-							signal: controller.signal,
-						})
-					: fileViewerClient.getServerTextMetadata(
-							canonicalFilePath,
-							projectId,
-							{
-								signal: controller.signal,
-							},
-						);
+			const metadataRequest = fileViewerClient.getServerTextMetadata(
+				canonicalFilePath,
+				projectId,
+				{ signal: controller.signal },
+			);
 			void metadataRequest
 				.then((nextMetadata) => {
 					if (generationRef.current !== generation) {
@@ -328,21 +318,13 @@ export function PerformantTextViewer({
 			const reservation = Symbol(`page:${page}`);
 			reservedPages.set(page, reservation);
 			loadingPagesRef.current.set(page, reservation);
-			const pageRequest =
-				projectId === undefined
-					? fileViewerClient.readTextLines(
-							filePath,
-							projectRoot,
-							page * PAGE_LINES,
-							PAGE_LINES,
-						)
-					: readCanonicalTextPage(
-							fileViewerClient,
-							canonicalFilePath,
-							projectId,
-							page,
-							controller.signal,
-						);
+			const pageRequest = readCanonicalTextPage(
+				fileViewerClient,
+				canonicalFilePath,
+				projectId,
+				page,
+				controller.signal,
+			);
 			void pageRequest
 				.then((result) => {
 					if (
