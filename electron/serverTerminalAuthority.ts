@@ -876,7 +876,7 @@ export class ServerTerminalAuthority {
 			// Local Desktop owns these PTYs. They cannot survive this authority
 			// generation, so reopening their persisted panels would manufacture a
 			// row of unusable interrupted tabs. Keep projects and non-terminal
-			// panels, then start one fresh terminal below.
+			// panels, then start one fresh terminal for every retained project.
 			if (this.sessions.size > 0) return;
 			for (const panel of Object.values(this.workspace.state.panels)) {
 				if (panel.type !== 'terminal') continue;
@@ -888,21 +888,14 @@ export class ServerTerminalAuthority {
 				if (closed === undefined || !closed.ok)
 					throw new Error('could not clear stale local terminal panels');
 			}
-			const activeView =
-				this.workspace.state.views[this.workspace.state.viewOrder[0] ?? ''];
-			const projectId =
-				activeView?.activeProjectId ?? activeView?.projectIds[0];
-			const project =
-				projectId === undefined
-					? undefined
-					: this.workspace.state.projects[projectId];
-			if (project === undefined) return;
-			await this.create({
-				projectId: project.id,
-				cwd: project.root,
-				cols: 100,
-				rows: 30,
-			});
+			for (const project of Object.values(this.workspace.state.projects)) {
+				await this.create({
+					projectId: project.id,
+					cwd: project.root,
+					cols: 100,
+					rows: 30,
+				});
+			}
 			return;
 		}
 		const hydration = resolveWorkspaceHydration(this.workspace.state);
