@@ -792,6 +792,59 @@ export class WorkspaceStore {
 		return this.state;
 	}
 
+	/** Privileged Local-server restart recovery. A persisted Local terminal
+	 * describes a PTY owned by the previous Electron process, so neither its
+	 * panel nor an unpresented session record can be restored as live state.
+	 * This deliberately is not a renderer command: it is used before the new
+	 * Local authority starts its one replacement terminal. */
+	discardStaleLocalTerminalState(): WorkspaceState {
+		const next = clone(this.current) as MutableWorkspaceState;
+		const changedIds: ProtocolId[] = [];
+		const stalePanelIds = new Set(
+			Object.values(next.panels)
+				.filter((panel) => panel.type === 'terminal')
+				.map((panel) => panel.id),
+		);
+		for (const panelId of stalePanelIds) {
+			delete next.panels[panelId];
+			changedIds.push(panelId);
+		}
+		for (const project of Object.values(next.projects)) {
+			if (!project.panelIds.some((panelId) => stalePanelIds.has(panelId)))
+				continue;
+			const panelIds = project.panelIds.filter(
+				(panelId) => !stalePanelIds.has(panelId),
+			);
+			next.projects[project.id] = withActivePanel(
+				project,
+				panelIds,
+				project.activePanelId !== undefined && panelIds.includes(project.activePanelId)
+					? project.activePanelId
+					: panelIds[0],
+			);
+			changedIds.push(project.id);
+		}
+		for (const sessionId of Object.keys(next.terminalSessions)) {
+			delete next.terminalSessions[sessionId];
+			changedIds.push(sessionId);
+		}
+		if (changedIds.length === 0) return this.state;
+		next.revision += 1;
+		next.cursor = String(next.revision);
+		this.history.push({
+			revision: next.revision,
+			cursor: next.cursor,
+			commandId: 'system:local-terminal-restart',
+			type: 'terminal.markInterrupted',
+			changedIds,
+		});
+		while (this.history.length > this.maxHistory) this.history.shift();
+		validateWorkspace(next);
+		this.commit?.(clone(next));
+		this.current = next;
+		return this.state;
+	}
+
 	private reduce(
 		state: MutableWorkspaceState,
 		command: WorkspaceCommand,

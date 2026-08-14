@@ -154,7 +154,7 @@ persisted-data recovery.
 - [x] Project/terminal creation reconciles from the authoritative command
   result and revision exactly once; it cannot race initialization into
   duplicate default projects or sessions.
-- [ ] Reloading a window reconstructs the same project, panel, session,
+- [x] Reloading a window reconstructs the same project, panel, session,
   selected server, and logical view from server state. Reopening Local after
   its server stops restores the workspace without stale terminal tabs and
   starts one fresh terminal; reconnecting to a live remote server retains its
