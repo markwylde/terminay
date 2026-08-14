@@ -73,6 +73,21 @@ test("node-pty foreground observer deduplicates process changes and identifies t
   assert.equal(scheduler.active.size, 0, "last foreground listener stops polling");
 });
 
+test("node-pty refreshes foreground activity when output advances while timer delivery is starved", () => {
+  const scheduler = createScheduler();
+  const child = createChild();
+  const factory = createNodePtyFactory({ spawn: () => child }, { foregroundPolling: scheduler });
+  const process = factory.spawn({ shellPath: "/bin/zsh", shell: "/bin/zsh", args: [], cwd: "/tmp", cols: 80, rows: 24 });
+  const events = [];
+  process.onForegroundProcess((event) => events.push(event));
+
+  child.process = "sleep";
+  child.emitData("foreground-ready\n");
+
+  assert.deepEqual(events, [{ processName: "sleep", shellForeground: false }]);
+  process.dispose();
+});
+
 test("node-pty foreground observer tears down on PTY exit and never enters output callbacks", () => {
   const scheduler = createScheduler();
   const child = createChild();
