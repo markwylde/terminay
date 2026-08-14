@@ -118,9 +118,11 @@ persisted-data recovery.
 - [ ] Make first-run initialization idempotent across concurrent clients,
   renderer reload, additional windows, embedded-server restart, and process
   restart.
-- [ ] Restore an existing repository without manufacturing another project,
-  panel, or PTY. Previously live non-reattachable sessions become interrupted
-  according to the server lifecycle contract.
+- [ ] Restore an existing repository without manufacturing another project or
+  retaining unusable Local terminal tabs. A Local Desktop server restart removes
+  stale terminal panels/sessions and creates exactly one fresh active terminal;
+  a still-running remote server retains its live terminal sessions across
+  reconnect.
 - [ ] Fail startup/recovery with a bounded actionable state when canonical
   persistence cannot be read or committed. A renderer must never repair it by
   creating local identities.
@@ -148,8 +150,11 @@ persisted-data recovery.
 - [ ] Project/terminal creation reconciles from the authoritative command
   result and revision exactly once; it cannot race initialization into
   duplicate default projects or sessions.
-- [ ] Reloading or reopening a window reconstructs the same project, panel,
-  session, selected server, and logical view from server state.
+- [ ] Reloading a window reconstructs the same project, panel, session,
+  selected server, and logical view from server state. Reopening Local after
+  its server stops restores the workspace without stale terminal tabs and
+  starts one fresh terminal; reconnecting to a live remote server retains its
+  live terminal sessions.
 
 ### 6. Sidebar and feature-query authority
 
@@ -228,8 +233,10 @@ persisted-data recovery.
 4. A clean data root opens with one This server project, one active terminal,
    a working shell, and an enabled/queryable sidebar without test or user
    intervention.
-5. Restart restores canonical state without duplicate projects, panels, or
-   PTYs; client reload does not kill the PTY or change its identity.
+5. Client reload does not kill a live PTY or change its identity. A Local
+   server restart restores canonical projects/non-terminal panels, drops its
+   dead terminal tabs, and starts exactly one fresh terminal without duplicate
+   project state; a live remote server retains its terminal sessions.
 6. Creating projects/terminals leaves Explorer and other feature queries bound
    to the correct selected server/project and never produces an unexplained
    `query failed` banner.
