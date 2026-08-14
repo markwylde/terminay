@@ -731,7 +731,7 @@ const embeddedShellProfiles = new ShellProfileCatalogueService({
 		await createNodeShellDiscoveryHost(process.env),
 	),
 	projectReferences: (profileId) =>
-		serverTerminalAuthority === null
+		serverTerminalAuthority === undefined
 			? []
 			: Object.values(serverTerminalAuthority.workspace.state.projects)
 					.filter((project) => project.defaultShellProfileId === profileId)
