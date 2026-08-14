@@ -2958,17 +2958,6 @@ function getBarScreenRect(webContentsId: number | null): ScreenRect | null {
 	return null;
 }
 
-function getAppWindowByWebContentsId(
-	webContentsId: number,
-): BrowserWindow | null {
-	for (const window of appWindows) {
-		if (!window.isDestroyed() && window.webContents.id === webContentsId) {
-			return window;
-		}
-	}
-	return null;
-}
-
 function findAppWindowTabBarAtPoint(point: {
 	x: number;
 	y: number;
