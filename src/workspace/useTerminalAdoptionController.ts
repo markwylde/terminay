@@ -12,7 +12,6 @@ import type {
 	TerminalTabMacroRun,
 	TerminalTabMoveProject,
 } from '../components/TerminalTab';
-import { publishTerminalPresentationMetadata } from '../components/terminalPresentationHost';
 import {
 	getServerTerminalPresentationTitle,
 	type MovedTerminalTab,
@@ -176,16 +175,6 @@ export function useTerminalAdoptionController({
 			if (macroRuns.length > 0) {
 				replaceMacroRuns(movedTerminal.sessionId, macroRuns);
 			}
-			publishTerminalPresentationMetadata(movedTerminal.sessionId, {
-				color,
-				emoji: movedTerminal.emoji ?? '',
-				inheritsProjectColor,
-				projectColor: project.color,
-				projectEmoji: project.emoji,
-				projectId: project.id,
-				projectTitle: project.title,
-				title: movedTerminal.title,
-			});
 			hydrateRecording(movedTerminal.sessionId);
 			recordBootstrapDiagnostic(
 				'app.workspace.adopt.before-activate',

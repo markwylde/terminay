@@ -26,36 +26,6 @@ declare global {
 				draft: import('./types/terminay').TerminalEditWindowDraft,
 			): Promise<import('./types/terminay').TerminalEditWindowResult | null>;
 		};
-		/** Read-only native terminal presentation state. */
-		terminayTerminalPresentationHost?: {
-			readonly version: 1;
-			subscribeZoom(
-				listener: (
-					message: import('./types/terminay').TerminalZoomMessage,
-				) => void,
-			): () => void;
-			subscribeRemoteSizeOverride(
-				listener: (
-					message: import('./types/terminay').TerminalRemoteSizeOverrideMessage,
-				) => void,
-			): () => void;
-			getZoom(): Promise<number>;
-			updateMetadata(
-				sessionId: string,
-				metadata: {
-					title?: string;
-					emoji?: string;
-					color?: string;
-					inheritsProjectColor?: boolean;
-					viewportWidth?: number;
-					viewportHeight?: number;
-					projectId?: string;
-					projectTitle?: string;
-					projectEmoji?: string;
-					projectColor?: string;
-				},
-			): void;
-		};
 		/** Bounded wait capability for an already attached server terminal. */
 		terminayTerminalLifecycleHost: {
 			readonly version: 1;

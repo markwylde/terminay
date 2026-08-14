@@ -41,6 +41,11 @@ test('terminal stream/read/write application IPC stays removed after server-clie
 	}
 });
 
+test('terminal presentation metadata is server-owned rather than renderer IPC', () => {
+	assert.doesNotMatch(source, /terminal:update-remote-metadata/u);
+	assert.doesNotMatch(source, /desktop:terminal-presentation-host/u);
+});
+
 test('embedded renderer MessagePort receives explicit management permissions', () => {
 	const accept = authoritySource.match(
 		/acceptRendererPort\([\s\S]*?\n\t\}\n\n\tasync create/u,

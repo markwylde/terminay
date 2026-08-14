@@ -28,9 +28,10 @@ test('canonical preload exposes only protocol-validated semantic host events', a
 
 	assert.match(preload, /const bridge: ServerUiHostBridge/);
 	assert.match(preload, /subscribeEvent:/);
-	assert.match(preload, /ipcRenderer\.on\('app:command', wrapper\)/);
+	assert.match(preload, /ipcRenderer\.on\('server-ui-host:event', wrapper\)/);
 	assert.match(preload, /parseTerminayHostEvent/);
 	assert.match(protocol, /type:\s*"menu\.command"/);
+	assert.match(protocol, /type:\s*"terminal\.zoom"/);
 	for (const command of [
 		'new-terminal',
 		'new-project',

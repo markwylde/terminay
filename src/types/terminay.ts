@@ -389,22 +389,6 @@ export type WorktreePanelStatus = {
 	worktrees: GitWorktreeStatus[];
 };
 
-export type TerminalZoomMessage = {
-	zoomLevel: number;
-};
-
-export type TerminalRemoteSizeOverrideMessage =
-	| {
-			active: false;
-			id: string;
-	  }
-	| {
-			active: true;
-			cols: number;
-			id: string;
-			rows: number;
-	  };
-
 export type TerminalRecordingState = {
 	bytesWritten: number;
 	errorMessage: string | null;
