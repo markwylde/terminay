@@ -586,26 +586,30 @@ const appWindows = new Set<BrowserWindow>();
 const workspaceViewByWebContents = new Map<number, string>();
 
 function getRunningTerminalCount(): number {
-	return (
-		serverTerminalAuthority
-			?.list()
-			.filter((session) => session.status === 'running').length ?? 0
-	);
+	const authority = serverTerminalAuthority;
+	if (authority === null) return 0;
+	return authority.list().filter(
+		(session) =>
+			authority.activity.get({
+				serverId: session.serverId,
+				projectId: session.projectId,
+				sessionId: session.id,
+			})?.foregroundBusy === true,
+	).length;
 }
 
 function getRunningTerminalCountForWindow(webContentsId: number): number {
-	return (
-		serverTerminalAuthority
-			?.list()
-			.filter(
-				(session) =>
-					session.status === 'running' &&
-					serverTerminalAuthority?.isRendererAttached(
-						session.id,
-						webContentsId,
-					),
-			).length ?? 0
-	);
+	const authority = serverTerminalAuthority;
+	if (authority === null) return 0;
+	return authority.list().filter(
+		(session) =>
+			authority.isRendererAttached(session.id, webContentsId) &&
+			authority.activity.get({
+				serverId: session.serverId,
+				projectId: session.projectId,
+				sessionId: session.id,
+			})?.foregroundBusy === true,
+	).length;
 }
 
 function getOpenProjectWindowCount(): number {
@@ -3302,14 +3306,14 @@ function setRemotePairingPin(pin: string): TerminalSettings {
 
 if (process.env.TERMINAY_TEST === '1') {
 	ipcMain.handle('test:list-remote-protocol-connections', (event) => {
-		assertTrustedAppSender(event);
+		assertBoundServerUiEvent(event);
 		return embeddedLanExposure.testProtocolConnectionIds();
 	});
 
 	ipcMain.handle(
 		'test:fail-remote-protocol-connection',
 		async (event, payload?: { connectionId?: unknown }) => {
-			assertTrustedAppSender(event);
+			assertBoundServerUiEvent(event);
 			const connectionId = payload?.connectionId;
 			if (
 				typeof connectionId !== 'string' ||

@@ -111,6 +111,14 @@ test('canonical Desktop quits cleanly with a hydrated workspace', async ({
 	mainWindow,
 }) => {
 	await canonicalIdentity(mainWindow);
+	// A hydrated Local workspace contains a live shell. Confirm the real native
+	// quit warning rather than letting Electron wait indefinitely for input.
+	await electronApp.evaluate(({ dialog }) => {
+		dialog.showMessageBox = async () => ({
+			checkboxChecked: false,
+			response: 0,
+		});
+	});
 	await electronApp.close();
 	expect(electronApp.process().exitCode).not.toBeNull();
 	expect(electronApp.process().signalCode).toBeNull();

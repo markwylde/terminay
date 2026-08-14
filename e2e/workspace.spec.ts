@@ -124,27 +124,12 @@ test.describe('workspace shell', () => {
 
 	test('warns only when closing a terminal with a foreground process', async ({
 		appHarness,
-		electronApp,
 		mainWindow,
 	}) => {
 		await appHarness.sendAppCommand('new-terminal');
 		const closeButtons = mainWindow.getByLabel('Close terminal');
 		await expect(closeButtons).toHaveCount(2);
 		await mainWindow.locator('.terminal-panel').last().click();
-		await electronApp.evaluate(({ dialog }) => {
-			const state = globalThis as typeof globalThis & {
-				closeDialog?: Electron.MessageBoxOptions;
-				closeDialogResponse?: number;
-			};
-			state.closeDialogResponse = 1;
-			dialog.showMessageBox = async (...args) => {
-				state.closeDialog = args.at(-1) as Electron.MessageBoxOptions;
-				return {
-					checkboxChecked: false,
-					response: state.closeDialogResponse ?? 1,
-				};
-			};
-		});
 
 		const foregroundStarted = `foreground-started-${Date.now()}`;
 		await writeToActiveTerminal(
@@ -154,27 +139,17 @@ test.describe('workspace shell', () => {
 		await expect(
 			mainWindow.locator('.terminal-panel:visible .xterm-rows'),
 		).toContainText(foregroundStarted);
+		const keepRunning = mainWindow.waitForEvent('dialog');
 		await closeButtons.last().click();
-		await expect
-			.poll(() =>
-				electronApp.evaluate(
-					() =>
-						(
-							globalThis as typeof globalThis & {
-								closeDialog?: Electron.MessageBoxOptions;
-							}
-						).closeDialog?.buttons?.[0] ?? null,
-				),
-			)
-			.toBe('Close Terminal');
+		const dismissedDialog = await keepRunning;
+		expect(dismissedDialog.type()).toBe('confirm');
+		expect(dismissedDialog.message()).toContain('A process is still running');
+		await dismissedDialog.dismiss();
 		await expect(closeButtons).toHaveCount(2);
 
-		await electronApp.evaluate(() => {
-			(
-				globalThis as typeof globalThis & { closeDialogResponse?: number }
-			).closeDialogResponse = 0;
-		});
+		const confirmClose = mainWindow.waitForEvent('dialog');
 		await closeButtons.last().click();
+		await (await confirmClose).accept();
 		await expect(closeButtons).toHaveCount(1);
 		await expect(
 			mainWindow

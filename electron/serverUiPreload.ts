@@ -232,4 +232,17 @@ if (
 				}) as Promise<{ socketPath: string; token: string }>,
 		}),
 	);
+	contextBridge.exposeInMainWorld(
+		'terminayRemoteProtocolFaultTest',
+		Object.freeze({
+			listConnections: () =>
+				ipcRenderer.invoke('test:list-remote-protocol-connections') as Promise<
+					readonly string[]
+				>,
+			failConnection: (connectionId: string) =>
+				ipcRenderer.invoke('test:fail-remote-protocol-connection', {
+					connectionId,
+				}) as Promise<void>,
+		}),
+	);
 }

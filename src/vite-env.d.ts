@@ -58,6 +58,10 @@ declare global {
 				terminalSessionId: string,
 			) => Promise<{ socketPath: string; token: string }>;
 		};
+		terminayRemoteProtocolFaultTest?: {
+			listConnections: () => Promise<readonly string[]>;
+			failConnection: (connectionId: string) => Promise<void>;
+		};
 	}
 }
 
