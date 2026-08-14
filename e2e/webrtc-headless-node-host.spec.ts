@@ -799,6 +799,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
 
     const firstDevice = service.getStatus().pairedDevices[0]
     expect(firstDevice?.reconnectGrantStatus).toBe('valid')
+		markPhase('reading-browser-pairing-state')
     const stored = await page.evaluate((origin) => new Promise<{
       deviceId: string
       grantSessionId: string
@@ -808,8 +809,19 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
       origin: string
     }>((resolve, reject) => {
       const storageOrigin = `${origin}#transport=webrtc:${origin}`
-      const request = indexedDB.open('terminay-remote', 2)
+			const timeout = window.setTimeout(
+				() => reject(new Error('Timed out reading the browser pairing database.')),
+				10_000,
+			)
+			const fail = (error: unknown) => {
+				window.clearTimeout(timeout)
+				reject(error instanceof Error ? error : new Error(String(error)))
+			}
+			// Inspection must never initiate or wait on a schema upgrade owned by
+			// the production client. Open its current version as-is.
+			const request = indexedDB.open('terminay-remote')
       request.onerror = () => reject(request.error)
+			request.onblocked = () => fail(new Error('Browser pairing database inspection was blocked.'))
       request.onsuccess = () => {
         const database = request.result
         const transaction = database.transaction(
@@ -820,6 +832,7 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         const grant = transaction.objectStore('reconnectGrants').get(storageOrigin)
         const handle = transaction.objectStore('reconnectHandles').get(storageOrigin)
         transaction.oncomplete = () => {
+					window.clearTimeout(timeout)
           resolve({
             deviceId: pairing.result.deviceId,
             grantSessionId: grant.result.sessionId,
@@ -830,9 +843,11 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
           })
           database.close()
         }
-        transaction.onerror = () => reject(transaction.error)
+				transaction.onabort = () => fail(transaction.error ?? new Error('Pairing inspection aborted.'))
+				transaction.onerror = () => fail(transaction.error ?? new Error('Pairing inspection failed.'))
       }
     }), sessionOrigin)
+		markPhase('browser-pairing-state-read')
     expect(stored.origin).toBe(`${sessionOrigin}#transport=webrtc:${sessionOrigin}`)
     expect(stored.grantSessionId).toBe(sessionId)
     expect(stored.handleSessionId).toBe(sessionId)
