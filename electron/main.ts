@@ -25,6 +25,8 @@ import { promisify } from 'node:util';
 import {
 	type ByteTransport,
 	type JsonValue,
+	type TerminayHostActionRequest,
+	type TerminayHostContext,
 } from '@terminay/protocol';
 import {
 	app,
@@ -109,6 +111,7 @@ import {
 	bindLocalServerUiDocumentEndpoint,
 	bindRemoteServerUiDocumentEndpoint,
 } from './serverUiDocumentEndpoint';
+import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
 import {
 	bindServerUiWindow,
 	getServerUiPartitionName,
@@ -511,6 +514,8 @@ const pendingRemoteConnectionWindowsByProfile = new Map<
 	string,
 	BrowserWindow
 >();
+const auxiliaryWindowsByPresentation = new Map<string, BrowserWindow>();
+const launchRecoveryWebContents = new Set<number>();
 
 type RememberedRemoteConnection = {
 	id: string;
@@ -2916,8 +2921,135 @@ function createAppMenu(
 	Menu.setApplicationMenu(menu);
 }
 
+const AUXILIARY_TITLES: Readonly<Record<string, string>> = Object.freeze({
+	macros: 'Macros',
+	'project-environments': 'Project Environments',
+	recordings: 'Recordings',
+	settings: 'Settings',
+});
+
+function canonicalAuxiliaryRequest(
+	action: Extract<TerminayHostActionRequest['action'], { type: 'route.present' }>,
+): Readonly<{ logicalViewId: string; route: string; title: string }> {
+	if (
+		action.disposition !== 'native-window' ||
+		action.logicalViewId === undefined
+	) {
+		throw new Error(
+			'Desktop auxiliary routes require a logical native-window identity.',
+		);
+	}
+	const requested = new URL(action.route, 'https://terminay.invalid');
+	const kind = requested.searchParams.get('auxiliary');
+	if (
+		requested.pathname !== '/' ||
+		kind === null ||
+		AUXILIARY_TITLES[kind] === undefined ||
+		action.logicalViewId !== kind
+	) {
+		throw new Error('The requested Desktop auxiliary route is unavailable.');
+	}
+	return Object.freeze({
+		logicalViewId: action.logicalViewId,
+		route: `${requested.pathname}${requested.search}`,
+		title: AUXILIARY_TITLES[kind],
+	});
+}
+
+async function presentCanonicalAuxiliaryRoute(
+	sourceWindow: BrowserWindow,
+	request: TerminayHostActionRequest,
+	context: TerminayHostContext,
+): Promise<void> {
+	if (request.action.type !== 'route.present') return;
+	const auxiliary = canonicalAuxiliaryRequest(request.action);
+	const presentationId = `${context.profileId}:${auxiliary.logicalViewId}`;
+	const existing = auxiliaryWindowsByPresentation.get(presentationId);
+	if (existing !== undefined && !existing.isDestroyed()) {
+		const current = new URL(existing.webContents.getURL());
+		const requested = new URL(auxiliary.route, 'https://terminay.invalid');
+		if (current.search !== requested.search) {
+			current.search = requested.search;
+			await existing.loadURL(current.toString());
+		}
+		if (existing.isMinimized()) existing.restore();
+		existing.show();
+		existing.focus();
+		return;
+	}
+	auxiliaryWindowsByPresentation.delete(presentationId);
+
+	let auxiliaryWindow: BrowserWindow | null;
+	if (context.profileId === LocalServerUiSession.profileId) {
+		auxiliaryWindow = createWindow({
+			auxiliary: { ...auxiliary, presentationId },
+		});
+	} else {
+		const profile = rememberedRemoteConnections.get(context.profileId);
+		if (profile === undefined)
+			throw new Error('The selected remote profile is no longer available.');
+		const connected = await createDesktopReconnectTransport({
+			origin: profile.origin,
+			store: createDesktopDeviceCredentialStore(),
+		});
+		if (connected.signalingBootstrap === undefined) {
+			const launch = await prepareCanonicalHttpRemoteLaunch(
+				profile.origin,
+				profile,
+			);
+			auxiliaryWindow = createWindow({
+				auxiliary: { ...auxiliary, presentationId },
+				serverUiLaunch: launch,
+				serverUiTransport: connected.transport,
+			});
+		} else {
+			try {
+				const webRtc = await createDesktopBootstrappedWebRtcConnection({
+					bootstrap: connected.signalingBootstrap,
+					expectedOrigin: profile.origin,
+				});
+				await connected.transport.close({ code: 'normal' });
+				const launch = await remoteServerUiBundleHost.prepareRemote({
+					lane: webRtc.assets,
+					origin: profile.origin,
+					profileId: profile.id,
+					serverId: webRtc.serverId,
+					windowId: `window-${randomUUID()}`,
+				});
+				auxiliaryWindow = createWindow({
+					auxiliary: { ...auxiliary, presentationId },
+					serverUiLaunch: launch,
+					serverUiTransport: webRtc.transport,
+				});
+			} catch (error) {
+				await connected.transport.close({ code: 'normal' });
+				throw error;
+			}
+		}
+		if (auxiliaryWindow !== null) {
+			remoteProfileBindingsByWebContents.set(
+				auxiliaryWindow.webContents.id,
+				profile.id,
+			);
+		}
+	}
+	if (auxiliaryWindow === null) throw new Error('Desktop is closing.');
+	auxiliaryWindowsByPresentation.set(presentationId, auxiliaryWindow);
+	auxiliaryWindow.setParentWindow(sourceWindow);
+	auxiliaryWindow.once('ready-to-show', () => {
+		if (auxiliaryWindow.isDestroyed()) return;
+		auxiliaryWindow.show();
+		auxiliaryWindow.focus();
+	});
+}
+
 function createWindow(options?: {
 	adoptedProject?: AdoptedProjectPayload;
+	auxiliary?: Readonly<{
+		presentationId: string;
+		route: string;
+		title: string;
+	}>;
 	bounds?: { x: number; y: number };
 	initialServerConnection?: 'local' | 'deferred';
 	workspaceViewId?: string;
@@ -2935,15 +3067,17 @@ function createWindow(options?: {
 	const isMac = process.platform === 'darwin';
 	const usesOverlayTitlebar = process.platform === 'win32';
 	const windowIconPath = getWindowIconPath();
+	const isAuxiliary = options?.auxiliary !== undefined;
 
 	const window = new BrowserWindow({
 		icon: windowIconPath,
-		width: 1400,
-		height: 900,
+		width: isAuxiliary ? 1180 : 1400,
+		height: isAuxiliary ? 820 : 900,
 		// Place a torn-off window's title bar near the drop point, like a browser.
 		x: options?.bounds ? Math.round(options.bounds.x) - 120 : undefined,
 		y: options?.bounds ? Math.round(options.bounds.y) - 12 : undefined,
-		title: 'Terminay',
+		title: options?.auxiliary?.title ?? 'Terminay',
+		show: !isAuxiliary,
 		// Deliver the first click on an inactive window to the web contents instead of
 		// letting macOS swallow it purely to activate the window (electron/electron#212).
 		// Without this, clicking a background tab focuses the window but the click never
@@ -2976,11 +3110,11 @@ function createWindow(options?: {
 		},
 	});
 	securePrimaryWindow(window);
-	appWindows.add(window);
+	if (!isAuxiliary) appWindows.add(window);
 	// Capture the webContents id now; it's unreadable once the window is closed
 	// (accessing window.webContents after destruction throws).
 	const windowWebContentsId = window.webContents.id;
-	bindMainWindowCloseConfirmation({
+	if (!isAuxiliary) bindMainWindowCloseConfirmation({
 		window,
 		isQuitting: () => isQuitting,
 		getRunningTerminalCount: () =>
@@ -3031,6 +3165,11 @@ function createWindow(options?: {
 		tabBarRectsByWebContents.delete(windowWebContentsId);
 		pendingAdoptedProjects.delete(windowWebContentsId);
 		workspaceViewByWebContents.delete(windowWebContentsId);
+		if (options?.auxiliary !== undefined) {
+			const key = options.auxiliary.presentationId;
+			if (auxiliaryWindowsByPresentation.get(key) === window)
+				auxiliaryWindowsByPresentation.delete(key);
+		}
 		for (const [
 			profileId,
 			pendingWindow,
@@ -3040,6 +3179,7 @@ function createWindow(options?: {
 			}
 		}
 		remoteProfileBindingsByWebContents.delete(windowWebContentsId);
+		launchRecoveryWebContents.delete(windowWebContentsId);
 	});
 
 	window.on('page-title-updated', (event) => {
@@ -3091,6 +3231,10 @@ function createWindow(options?: {
 	});
 
 	window.webContents.on('will-navigate', (event) => {
+		if (
+			launchRecoveryWebContents.has(windowWebContentsId) &&
+			event.url.startsWith('data:text/html;charset=UTF-8,')
+		) return;
 		if (isAppNavigation(event.url)) {
 			return;
 		}
@@ -3101,12 +3245,17 @@ function createWindow(options?: {
 	// Startup resolves and verifies the selected server's exact UI artifact
 	// before any workspace renderer executes. Local, remote, development, and
 	// packaged launches all enter through this canonical host/preload boundary.
-	void (options?.serverUiLaunch === undefined
+	const launchCanonical = async (): Promise<void> => {
+		await (options?.serverUiLaunch === undefined
 			? localServerUiSession.prepare(windowWebContentsId)
 			: Promise.resolve(options.serverUiLaunch))
-			.then((launch) => {
+			.then(async (launch) => {
 				if (window.isDestroyed()) return;
 				const entryUrl = pathToFileURL(path.join(launch.assetRoot, launch.entryPath));
+				if (options?.auxiliary !== undefined) {
+					const requested = new URL(options.auxiliary.route, 'https://terminay.invalid');
+					entryUrl.search = requested.search;
+				}
 				if (options?.workspaceViewId) entryUrl.hash = `view=${encodeURIComponent(options.workspaceViewId)}`;
 				bindServerUiWindow({
 					window,
@@ -3128,7 +3277,7 @@ function createWindow(options?: {
 					onHostAction: async (request) => {
 						const action = request.action;
 						switch (action.type) {
-							case 'clipboard.write': clipboard.writeText(action.text); return;
+						case 'clipboard.write': clipboard.writeText(action.text); return;
 							case 'file.choose': {
 								const result = await dialog.showOpenDialog(window, { properties: action.multiple ? ['openFile', 'multiSelections'] : ['openFile'] });
 								return result.canceled ? [] : result.filePaths;
@@ -3136,10 +3285,13 @@ function createWindow(options?: {
 							case 'notification.show': new Notification({ title: action.title, ...(action.body === undefined ? {} : { body: action.body }) }).show(); return;
 							case 'updater.check': return getAppUpdateStatus({ force: true });
 							case 'os.open-external': await openInBrowser(action.url); return;
-							case 'route.close': window.close(); return;
-							case 'route.focus': window.focus(); return;
+							case 'route.close': {
+								const target = action.presentationId === undefined ? window : auxiliaryWindowsByPresentation.get(`${launch.context.profileId}:${action.presentationId}`);
+								target?.close(); return;
+							}
+							case 'route.focus': auxiliaryWindowsByPresentation.get(`${launch.context.profileId}:${action.presentationId}`)?.focus(); return;
 							case 'menu.invoke': sendCommandToFocusedWindow(action.command as AppCommand); return;
-							case 'route.present': throw new Error('Route presentation is unavailable during Desktop bootstrap.');
+							case 'route.present': await presentCanonicalAuxiliaryRoute(window, request, launch.context); return;
 							case 'os.reveal': throw new Error('OS reveal requires a host-issued path token.');
 						}
 					},
@@ -3163,14 +3315,38 @@ function createWindow(options?: {
 						diagnostic: endpointDiagnostic, handle: launch.byteEndpointHandle, sender: targetWebContents,
 					});
 				}
-				return window.loadURL(entryUrl.toString());
-			})
-			.catch((error) => {
-				console.error('[window] embedded server UI verification failed', error);
-				releaseServerUiWindowBinding(windowWebContentsId, 'failed-launch');
-				localServerUiSession.release(windowWebContentsId);
-				if (!window.isDestroyed()) window.close();
+				await window.loadURL(entryUrl.toString());
 			});
+	};
+	const launchWithRecovery = async (): Promise<void> => {
+		try {
+			await launchCanonical();
+		} catch (error) {
+			console.error('[window] canonical server UI launch failed', error);
+			releaseServerUiWindowBinding(windowWebContentsId, 'failed-launch');
+			localServerUiSession.release(windowWebContentsId);
+			await showCanonicalLaunchRecovery({
+				window,
+				error,
+				retry: launchWithRecovery,
+				onRecoveryState: (active) => {
+					if (active) launchRecoveryWebContents.add(windowWebContentsId);
+					else launchRecoveryWebContents.delete(windowWebContentsId);
+				},
+				onDiagnostic: (message) => desktopDiagnostics.record(
+					{
+						component: 'renderer',
+						event: 'renderer.bootstrap.failed',
+						message,
+						severity: 'error',
+						source: 'canonical-launch-recovery',
+					},
+					{ channel: 'lifecycle' },
+				),
+			});
+		}
+	};
+	void launchWithRecovery();
 
 	void getAppUpdateStatus();
 
