@@ -34,16 +34,19 @@ async function writeToActiveTerminal(page: Page, data: string): Promise<void> {
   )
 }
 
-async function firstAiProviderModel(page: Page, provider: AiTabMetadataProvider): Promise<string> {
-  return page.evaluate(async (nextProvider) => {
-    const models = await window.terminayAiMetadataHost.listAiTabMetadataModels(nextProvider)
-    const model = models[0]?.id
-    if (!model) {
-      throw new Error(`No ${nextProvider} model is available for AI tab metadata tests.`)
-    }
-
-    return model
-  }, provider)
+async function firstAiProviderModel(
+  appHarness: { openSettingsWindow: (options: { page: Page; sectionId: string }) => Promise<Page> },
+  page: Page,
+  provider: AiTabMetadataProvider,
+): Promise<string> {
+  const settingsWindow = await appHarness.openSettingsWindow({ page, sectionId: 'ai-tab-metadata' })
+  await aiMetadataSelect(settingsWindow, 'Set title with AI').selectOption(provider)
+  const model = await aiMetadataSelect(settingsWindow, 'Title model').inputValue()
+  if (!model) {
+    throw new Error(`No ${provider} model is available for AI tab metadata tests.`)
+  }
+  await settingsWindow.close()
+  return model
 }
 
 async function configureAiTabMetadata(page: Page, provider: 'claudeCode' | 'codex' = 'codex', model = 'codex-test-model') {
@@ -204,7 +207,7 @@ test.describe('AI tab metadata real Codex integration', () => {
   test.skip(!isRealCodexRun, 'Real Codex integration is opt-in for CI and local provider smoke tests.')
 
   test('generates a terminal title and note with Codex @real-codex', async ({ appHarness, mainWindow }) => {
-    const model = await firstAiProviderModel(mainWindow, 'codex')
+    const model = await firstAiProviderModel(appHarness, mainWindow, 'codex')
     await configureAiTabMetadata(mainWindow, 'codex', model)
     await runRealProviderGenerationAssertions(appHarness, mainWindow)
   })
@@ -214,7 +217,7 @@ test.describe('AI tab metadata real Claude Code integration', () => {
   test.skip(!isRealClaudeCodeRun, 'Real Claude Code integration is opt-in for CI and local provider smoke tests.')
 
   test('generates a terminal title and note with Claude Code @real-claude-code', async ({ appHarness, mainWindow }) => {
-    const model = await firstAiProviderModel(mainWindow, 'claudeCode')
+    const model = await firstAiProviderModel(appHarness, mainWindow, 'claudeCode')
     await configureAiTabMetadata(mainWindow, 'claudeCode', model)
     await runRealProviderGenerationAssertions(appHarness, mainWindow)
   })
