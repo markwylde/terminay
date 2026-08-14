@@ -15,7 +15,6 @@ const APPROVED_NATIVE_HOST_METHODS = Object.freeze({
 		'subscribeDragHover',
 		'subscribeTornOff',
 	],
-	terminayRevealHost: ['reveal'],
 	terminayWorkspaceTransferHost: [
 		'bindView',
 		'getAdoptedProject',
@@ -55,6 +54,7 @@ test('migrated ambient native globals stay absent', () => {
 		'terminayClipboardHost',
 		'terminayExternalHost',
 		'terminayTerminalPresentationHost',
+		'terminayRevealHost',
 		'terminayWindowLifecycleHost',
 	]) {
 		assert.doesNotMatch(globals, new RegExp(name, 'u'));
