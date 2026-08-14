@@ -190,6 +190,14 @@ if (
 )
 	contextBridge.exposeInMainWorld('terminayBytes', bytes);
 
+// The preload owns the byte-port listener. Tell main only after that listener
+// exists, so a workspace child cannot race its initial endpoint handoff while
+// React is still compiling/mounting the selected view.
+if (
+	(process as NodeJS.Process & { isMainFrame?: boolean }).isMainFrame !== false
+)
+	ipcRenderer.send('server-ui-host:document-ready');
+
 // Agent journal records are privileged server lifecycle input, so production
 // renderer code has no operation that can manufacture them. The E2E harness
 // gets one deliberately narrow, production-inert seam to exercise the real

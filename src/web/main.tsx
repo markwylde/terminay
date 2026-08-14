@@ -19,6 +19,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { TerminalPanelClientContextValue } from '../components/TerminalPanel';
+import { pairDesktopConnection } from '../host/nativeActions';
 import type { AppCommand } from '../types/terminay';
 import {
 	type RendererConnectionAttempt,
@@ -1571,6 +1572,7 @@ export default function WebManagerApp() {
 					},
 					onForget: (profile) => forgetConnection(profile.id),
 					onPairingHandoff: async (rawUrl) => {
+						if (await pairDesktopConnection(rawUrl)) return;
 						setServerUrl(rawUrl);
 						await connectServer(undefined, rawUrl, true);
 					},
@@ -1814,6 +1816,7 @@ export default function WebManagerApp() {
 							}}
 							onForget={(profile) => forgetConnection(profile.id)}
 							onPairingHandoff={async (rawUrl) => {
+								if (await pairDesktopConnection(rawUrl)) return;
 								setServerUrl(rawUrl);
 								await connectServer(undefined, rawUrl, true);
 							}}

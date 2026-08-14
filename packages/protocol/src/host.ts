@@ -174,6 +174,13 @@ export type TerminayHostEvent = Readonly<{
 
 export type TerminayHostAction =
 	| Readonly<{
+			/** Desktop consumes the one-time pairing fragment in the privileged
+			 * host. No pairing secret or durable credential returns to the
+			 * renderer. */
+			type: 'connection.pair';
+			pairingUrl: string;
+	  }>
+	| Readonly<{
 			type: 'route.present';
 			route: string;
 			disposition: TerminayHostRouteDisposition;
@@ -619,6 +626,18 @@ export function createTerminayHostBytePacket(
 export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 	const action = record(value, 'host action');
 	switch (action.type) {
+		case 'connection.pair':
+			exactKeys(action, ['type', 'pairingUrl'], 'connection pairing action');
+			if (
+				typeof action.pairingUrl !== 'string' ||
+				action.pairingUrl.length === 0 ||
+				action.pairingUrl.length > 16_384
+			)
+				throw new TypeError('connection pairing URL is invalid');
+			return Object.freeze({
+				type: 'connection.pair',
+				pairingUrl: action.pairingUrl,
+			});
 		case 'route.present': {
 			exactOptionalKeys(
 				action,
@@ -863,6 +882,8 @@ export function requiredTerminayHostCapability(
 	action: TerminayHostAction,
 ): TerminayHostCapability | undefined {
 	switch (action.type) {
+		case 'connection.pair':
+			return 'nativeWindows';
 		case 'route.present':
 			return action.disposition === 'native-window'
 				? 'nativeWindows'

@@ -366,6 +366,12 @@ fragment and any pairing URL path are never returned by the host profile API or
 serialized into the connection menu store; protocol pairing completes as a
 separate operation against that origin.
 
+On Desktop that operation is a closed host action: Electron performs device
+enrollment, stores the durable grant in its credential compartment, verifies
+the selected server bundle, and replaces the current document's byte lane only
+after the authenticated remote transport is ready. The renderer receives no
+pairing fragment, grant, private key, or reconnect handle.
+
 ## Exposing a server
 
 - Embedded Local servers accept only the private Desktop transport and are not

@@ -71,6 +71,7 @@ import {
 } from '../src/keyboardShortcuts';
 import { defaultMacros, normalizeMacros } from '../src/macroSettings';
 import { distanceToRect, pointInRect } from '../src/projectTabDrag';
+import { parseRemoteStreamConnectionUrl } from '../src/shared/remoteStreamTransport';
 import {
 	type ServerMessagePort,
 } from '../src/shared/serverPortTransport';
@@ -143,6 +144,7 @@ import {
 } from './mcpInstall';
 import { TerminalRecordingService } from './recording/service';
 import { createDesktopReconnectTransport } from './remote/desktopReconnect';
+import { enrollDesktopReconnectCredential } from './remote/desktopReconnectEnrollment';
 import { createDesktopBootstrappedWebRtcConnection } from './remote/desktopWebRtcBootstrap';
 import { resolveDesktopWebRtcRuntimeRoot } from './remote/desktopWebRtcRuntimeRoot';
 import {
@@ -555,6 +557,22 @@ function loadRememberedRemoteConnections(): void {
 		// A missing or malformed metadata file is an empty profile list. It
 		// contains no credentials and must never prevent Local from starting.
 	}
+}
+
+/** The connection menu contains only non-secret profile metadata. Write it as
+ * one replacement so a reconnect never observes half a newly paired profile. */
+function rememberRemoteConnection(profile: RememberedRemoteConnection): void {
+	loadRememberedRemoteConnections();
+	rememberedRemoteConnections.set(profile.id, profile);
+	const destination = rememberedRemoteConnectionsPath();
+	mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+	const temporary = `${destination}.${randomUUID()}.tmp`;
+	writeFileSync(
+		temporary,
+		JSON.stringify([...rememberedRemoteConnections.values()]),
+		{ encoding: 'utf8', mode: 0o600, flag: 'wx' },
+	);
+	renameSync(temporary, destination);
 }
 
 function createDesktopDeviceCredentialStore(): DesktopDeviceCredentialStore {
@@ -2428,7 +2446,13 @@ async function presentCanonicalAuxiliaryRoute(
 		// destination is still only a BrowserWindow shell.  A workspace move is
 		// authoritative before this call, but the destination must have loaded its
 		// canonical document before the source may close its view.
-		await waitForCanonicalWorkspaceDocument(workspaceWindow);
+		try {
+			await waitForCanonicalWorkspaceDocument(workspaceWindow);
+		} catch (error) {
+			auxiliaryWindowsByPresentation.delete(presentationId);
+			if (!workspaceWindow.isDestroyed()) workspaceWindow.close();
+			throw error;
+		}
 		workspaceWindow.once('ready-to-show', () => {
 			if (!workspaceWindow.isDestroyed()) {
 				workspaceWindow.show();
@@ -2831,13 +2855,14 @@ function createWindow(options?: {
 	});
 
 	// Startup resolves and verifies the selected server's exact UI artifact
-	// before any workspace renderer executes. Local, remote, development, and
-	// packaged launches all enter through this canonical host/preload boundary.
-	const launchCanonical = async (): Promise<void> => {
-		await (options?.serverUiLaunch === undefined
-			? localServerUiSession.prepare(windowWebContentsId)
-			: Promise.resolve(options.serverUiLaunch))
-			.then(async (launch) => {
+	// before any workspace renderer executes. A successful Desktop pairing can
+	// replace this window's selected server, so the same mounting transaction is
+	// reusable without returning credentials to the renderer.
+	let switchToPairedDesktopServer: (pairingUrl: string) => Promise<void>;
+	const mountCanonicalLaunch = async (
+		launch: DesktopBundleLaunch,
+		transport?: ByteTransport,
+	): Promise<void> => {
 				if (window.isDestroyed()) return;
 				const entryUrl = pathToFileURL(path.join(launch.assetRoot, launch.entryPath));
 				if (options?.auxiliary !== undefined) {
@@ -2865,6 +2890,9 @@ function createWindow(options?: {
 					onHostAction: async (request) => {
 						const action = request.action;
 						switch (action.type) {
+						case 'connection.pair':
+							await switchToPairedDesktopServer(action.pairingUrl);
+							return;
 						case 'clipboard.write': clipboard.writeText(action.text); return;
 							case 'file.choose': {
 								const result = await dialog.showOpenDialog(window, { properties: action.multiple ? ['openFile', 'multiSelections'] : ['openFile'] });
@@ -2924,8 +2952,17 @@ function createWindow(options?: {
 					);
 				};
 				const targetWebContents = window.webContents;
-				if (options?.serverUiTransport !== undefined) {
-					bindRemoteServerUiDocumentEndpoint({ diagnostic: endpointDiagnostic, launch, sender: targetWebContents, transport: options.serverUiTransport });
+				if (transport !== undefined) {
+					bindRemoteServerUiDocumentEndpoint({
+						diagnostic: endpointDiagnostic,
+						launch,
+						reconnect: () =>
+							reconnectCanonicalDesktopRemoteTransport(
+								launch.context.profileId,
+							),
+						sender: targetWebContents,
+						transport,
+					});
 				} else if (serverTerminalAuthority !== null) {
 					bindLocalServerUiDocumentEndpoint({
 						acceptPort: (port) => serverTerminalAuthority?.acceptRendererPort(port as unknown as ServerMessagePort),
@@ -2934,7 +2971,33 @@ function createWindow(options?: {
 				}
 				await window.loadURL(entryUrl.toString());
 				if (options?.deferCanonicalLaunch === true && !window.isDestroyed()) window.show();
-			});
+	};
+	switchToPairedDesktopServer = async (pairingUrl) => {
+		const profile = await enrollPairedDesktopRemoteProfile(pairingUrl);
+		// Keep the profile available for transport recovery during the first load,
+		// but do not serialize metadata until the verified bundle is mounted.
+		const replacedProfile = rememberedRemoteConnections.get(profile.id);
+		rememberedRemoteConnections.set(profile.id, profile);
+		try {
+			const remote = await prepareCanonicalDesktopRemoteConnection(profile);
+			releaseServerUiWindowBinding(windowWebContentsId, 'server-switch');
+			localServerUiSession.release(windowWebContentsId);
+			remoteProfileBindingsByWebContents.set(windowWebContentsId, profile.id);
+			await mountCanonicalLaunch(remote.launch, remote.transport);
+			rememberRemoteConnection(profile);
+		} catch (error) {
+			if (replacedProfile === undefined)
+				rememberedRemoteConnections.delete(profile.id);
+			else rememberedRemoteConnections.set(profile.id, replacedProfile);
+			remoteProfileBindingsByWebContents.delete(windowWebContentsId);
+			throw error;
+		}
+	};
+	const launchCanonical = async (): Promise<void> => {
+		const launch = await (options?.serverUiLaunch === undefined
+			? localServerUiSession.prepare(windowWebContentsId)
+			: Promise.resolve(options.serverUiLaunch));
+		await mountCanonicalLaunch(launch, options?.serverUiTransport);
 	};
 	const launchWithRecovery = async (): Promise<void> => {
 		try {
@@ -3026,6 +3089,105 @@ async function prepareCanonicalHttpRemoteLaunch(
 		serverId,
 		windowId: `window-${randomUUID()}`,
 	});
+}
+
+/** Consume a one-time pairing URL only in Electron. The resulting profile is
+ * intentionally just origin/id/label metadata; the encrypted device grant
+ * stays inside DesktopDeviceCredentialStore. */
+async function enrollPairedDesktopRemoteProfile(
+	pairingUrl: string,
+): Promise<RememberedRemoteConnection> {
+	const bootstrap = parseRemoteStreamConnectionUrl(pairingUrl);
+	const origin = new URL(bootstrap.origin).origin;
+	loadRememberedRemoteConnections();
+	const existing = [...rememberedRemoteConnections.values()].find(
+		(candidate) => candidate.origin === origin,
+	);
+	const profile: RememberedRemoteConnection = Object.freeze({
+		id: existing?.id ?? `remote:${randomUUID()}`,
+		kind: 'standalone',
+		label: existing?.label ?? new URL(origin).host,
+		origin,
+	});
+	await enrollDesktopReconnectCredential({
+		authToken: bootstrap.authToken,
+		clientId: `desktop-${randomUUID()}`,
+		deviceName: 'Terminay Desktop',
+		origin,
+		store: createDesktopDeviceCredentialStore(),
+	});
+	return profile;
+}
+
+/** Prepare one authenticated remote lane and its verified server bundle for a
+ * Desktop document. This is shared by initial pairing, auxiliary windows and
+ * reconnection; the renderer never sees enrollment or reconnect material. */
+async function prepareCanonicalDesktopRemoteConnection(
+	profile: RememberedRemoteConnection,
+): Promise<Readonly<{ launch: DesktopBundleLaunch; transport: ByteTransport }>> {
+	const connected = await createDesktopReconnectTransport({
+		origin: profile.origin,
+		store: createDesktopDeviceCredentialStore(),
+	});
+	if (connected.signalingBootstrap === undefined) {
+		try {
+			return Object.freeze({
+				launch: await prepareCanonicalHttpRemoteLaunch(profile.origin, profile),
+				transport: connected.transport,
+			});
+		} catch (error) {
+			await connected.transport.close({ code: 'normal' }).catch(() => undefined);
+			throw error;
+		}
+	}
+	try {
+		const webRtc = await createDesktopBootstrappedWebRtcConnection({
+			bootstrap: connected.signalingBootstrap,
+			expectedOrigin: profile.origin,
+		});
+		await connected.transport.close({ code: 'normal' });
+		return Object.freeze({
+			launch: await remoteServerUiBundleHost.prepareRemote({
+				lane: webRtc.assets,
+				origin: profile.origin,
+				profileId: profile.id,
+				serverId: webRtc.serverId,
+				windowId: `window-${randomUUID()}`,
+			}),
+			transport: webRtc.transport,
+		});
+	} catch (error) {
+		await connected.transport.close({ code: 'normal' }).catch(() => undefined);
+		throw error;
+	}
+}
+
+/** Reconnect a Desktop-owned remote byte lane without reloading the selected
+ * server bundle.  The renderer receives a fresh document MessagePort only
+ * after this authenticated transport has been established. */
+async function reconnectCanonicalDesktopRemoteTransport(
+	profileId: string,
+): Promise<ByteTransport> {
+	loadRememberedRemoteConnections();
+	const profile = rememberedRemoteConnections.get(profileId);
+	if (profile === undefined)
+		throw new Error('The selected remote profile is no longer available.');
+	const connected = await createDesktopReconnectTransport({
+		origin: profile.origin,
+		store: createDesktopDeviceCredentialStore(),
+	});
+	if (connected.signalingBootstrap === undefined) return connected.transport;
+	try {
+		const webRtc = await createDesktopBootstrappedWebRtcConnection({
+			bootstrap: connected.signalingBootstrap,
+			expectedOrigin: profile.origin,
+		});
+		await connected.transport.close({ code: 'normal' });
+		return webRtc.transport;
+	} catch (error) {
+		await connected.transport.close({ code: 'normal' });
+		throw error;
+	}
 }
 
 function setDockIcon(): void {
