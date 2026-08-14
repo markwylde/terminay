@@ -159,7 +159,10 @@ for (const kind of ["local", "remote"]) {
       assert.equal(run.target.sessionId, session.sessionId);
       assert.equal(JSON.stringify(run).includes("server-secret-value"), false);
 
-      await assert.rejects(() => macroClient.run("deploy", { ...target, sessionId: "other-session" }), (error) => error.code === "forbidden");
+      await assert.rejects(
+        () => macroClient.run("deploy", { ...target, sessionId: "other-session" }),
+        (error) => error.name === "ClientOperationError" && error.operation === "macros.run" && error.cause?.code === "forbidden",
+      );
 
       const cancelState = await macroClient.upsert({ id: "cancel-me", steps: [{ id: "wait", type: "wait_time", durationSeconds: "5" }] }, { expectedRevision: saved.revision });
       const cancelRun = await macroClient.run("cancel-me", target);
