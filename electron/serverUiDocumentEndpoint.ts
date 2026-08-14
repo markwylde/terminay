@@ -182,9 +182,17 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 	) => {
 		if (isMainFrame) attachedForDocument = false;
 	};
+	// Electron does not promise the same navigation event sequence for a
+	// renderer reload and a file-document query navigation.  Load start is the
+	// document boundary shared by both, so it must also retire the per-document
+	// attachment guard before the preload announces its fresh endpoint listener.
+	const onDocumentLoadStart = () => {
+		attachedForDocument = false;
+	};
 	ipcMain.on(REPLACE_BYTE_ENDPOINT, onReplace);
 	ipcMain.on(DOCUMENT_READY, onDocumentReady);
 	sender.on('did-start-navigation', onDocumentNavigation);
+	sender.on('did-start-loading', onDocumentLoadStart);
 	const unbind = lifecycle.bind(attach, closeConnection);
 
 	const startTransport = () => {
@@ -244,6 +252,8 @@ export function bindRemoteServerUiDocumentEndpoint(options: {
 		ipcMain.off(DOCUMENT_READY, onDocumentReady);
 		if (!sender.isDestroyed())
 			sender.off('did-start-navigation', onDocumentNavigation);
+		if (!sender.isDestroyed())
+			sender.off('did-start-loading', onDocumentLoadStart);
 		unbind();
 		closeConnection();
 	};
