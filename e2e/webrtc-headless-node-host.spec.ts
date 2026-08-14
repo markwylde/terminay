@@ -859,19 +859,29 @@ test(`Chromium ${hostedProofDescription} through a plain-Node ${runtimeName} hos
         deviceId: stored.deviceId,
       }, 'http://different-origin.localhost'),
     ).rejects.toThrow(/different origin/)
+		markPhase('origin-isolation-confirmed')
 
-    await page.getByRole('textbox', { name: 'Terminal input' }).click()
+		const terminalInputControl = page.getByRole('textbox', { name: 'Terminal input' })
+		await terminalInputControl.click()
+		markPhase('terminal-input-focused')
     const terminalInput = `${runtimeName}-terminal-input`
-    await page.keyboard.type(terminalInput)
+		await terminalInputControl.pressSequentially(terminalInput, { timeout: 15_000 })
+		markPhase('terminal-input-sent')
     await expect.poll(() => terminalWrites.join('')).toContain(terminalInput)
+		markPhase('terminal-input-confirmed')
 
     // Exercise the real application channel with sustained, mobile-like
     // one-character input before inducing any failure. This distinguishes a
     // transport killed by ordinary typing from a stale transport first exposed
     // by the next keypress.
     const typingSoak = `${runtimeName}-typing-soak-${'abcdefghij'.repeat(20)}`
-    await page.keyboard.type(typingSoak, { delay: 5 })
+		await terminalInputControl.pressSequentially(typingSoak, {
+			delay: 5,
+			timeout: 15_000,
+		})
+		markPhase('typing-soak-sent')
     await expect.poll(() => terminalWrites.join('')).toContain(typingSoak)
+		markPhase('typing-soak-confirmed')
     await expect.poll(() => service.getStatus().activeConnectionCount).toBe(1)
     await expect(page.getByText('client is not connected', { exact: true })).toHaveCount(0)
 
