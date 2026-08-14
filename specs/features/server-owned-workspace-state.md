@@ -250,12 +250,11 @@ and insertion into the intended terminal remain server-authorized operations.
   terminal session before reporting the workspace ready.
 - Initialization is idempotent. A client reload, additional native window, or
   reconnect cannot create another default project or terminal.
-- A non-empty repository restores its persisted identities. Missing roots and
-  interrupted sessions remain represented with typed recovery state. When a
-  restored workspace has no running terminal, the server appends and activates
-  exactly one recovery terminal so the application never opens without a usable
-  prompt; this is server-owned recovery and does not replace or disguise an
-  interrupted session.
+- A non-empty repository restores its projects and non-terminal panels. Local
+  Desktop restart does not restore terminal tabs: its PTYs died with the local
+  server, so the server removes their stale panels and sessions and creates one
+  fresh active terminal before the workspace is shown. A remote server that
+  remains alive retains its live terminal sessions across reconnect.
 - A renderer never repairs an empty or malformed server snapshot by inventing
   project, panel, or session identity. Repository initialization or recovery
   either succeeds authoritatively or the client presents a bounded failure.
