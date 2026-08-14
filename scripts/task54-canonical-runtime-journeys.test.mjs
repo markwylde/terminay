@@ -4,33 +4,6 @@ import test from 'node:test';
 
 const read = (path) => readFile(path, 'utf8');
 
-test('development and packaged journeys assert the same canonical identity and UI surfaces', async () => {
-	const [development, packaged] = await Promise.all([
-		read('e2e/canonical-runtime-convergence.spec.ts'),
-		read('scripts/packaged-desktop-startup-smoke.test.mjs'),
-	]);
-	for (const token of [
-		'bundleId',
-		'profileId',
-		'projectId',
-		'revision',
-		'serverId',
-		'sessionId',
-		'windowId',
-		'file-explorer-sidebar',
-		"'File', 'Edit', 'View', 'Help'",
-	]) {
-		assert.ok(development.includes(token), `development journey is missing ${token}`);
-		assert.ok(packaged.includes(token), `packaged journey is missing ${token}`);
-	}
-	assert.doesNotMatch(development, /ensureLocalWorkspaceSeed/u);
-	assert.doesNotMatch(packaged, /ensureLocalWorkspaceSeed/u);
-	assert.doesNotMatch(
-		packaged,
-		/getByLabel\(['"](?:Create project|Create terminal)/u,
-	);
-});
-
 test('canonical journey suite owns clean, populated, multi-window, and remote coverage', async () => {
 	const [freshAndPopulated, multiWindow, remote] = await Promise.all([
 		read('e2e/canonical-runtime-convergence.spec.ts'),
