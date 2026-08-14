@@ -9,6 +9,7 @@ import {
   type ProtocolId,
 } from "@terminay/protocol";
 import { forbiddenError, scopeAllows, unknownOperationError, validateIdentity } from "./auth.js";
+import { FileServiceError } from "./fileService/types.js";
 import type {
   CommandHandler,
   CommandRequest,
@@ -174,8 +175,38 @@ function dispatchError(error: unknown, fallback: string): ProtocolError {
     ...(error.supportedMin === undefined ? {} : { supportedMin: error.supportedMin }),
     ...(error.supportedMax === undefined ? {} : { supportedMax: error.supportedMax }),
   };
+  if (error instanceof FileServiceError) return fileServiceError(error);
   if (error instanceof Error) return { code: "internal", message: fallback, retryable: false };
   return { code: "internal", message: fallback, retryable: false };
+}
+
+/** FileServiceError has deliberately richer domain codes than the transport.
+ * Convert it here so every file adapter returns a safe, actionable protocol
+ * result instead of being collapsed into the dispatcher fallback. */
+function fileServiceError(error: FileServiceError): ProtocolError {
+  switch (error.code) {
+    case "invalid_path":
+    case "invalid_range":
+      return { code: "validation", message: "file request is invalid", retryable: false };
+    case "path_escape":
+      return { code: "forbidden", message: "file path is outside the authorized project", retryable: false };
+    case "path_missing":
+    case "not_directory":
+    case "not_file":
+    case "session_closed":
+      return { code: "not_found", message: "requested file resource is unavailable", retryable: true };
+    case "range_too_large":
+    case "draft_too_large":
+      return { code: "resource", message: "file operation exceeds the server limit", retryable: false };
+    case "revision_conflict":
+    case "save_precondition":
+    case "not_dirty":
+    case "confirmation_required":
+      return { code: "conflict", message: "file state changed; refresh and retry", retryable: true };
+    case "read_failed":
+    case "write_failed":
+      return { code: "internal", message: "file operation could not be completed", retryable: false };
+  }
 }
 
 function isProtocolError(value: unknown): value is ProtocolError {
