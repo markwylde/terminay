@@ -198,6 +198,9 @@ test('runs customized app shortcuts from the keyboard', async ({ appHarness, mai
   await terminalShortcutRow.getByRole('button', { name: 'Listen' }).click()
   await settingsWindow.keyboard.press(isMac ? 'Meta+Y' : 'Control+Y')
   await expect(terminalShortcutRow.locator('input')).toHaveValue('CmdOrCtrl+Y')
+  // The shortcut value is commit-gated: once visible, both the selected-server
+  // settings and the isolated Desktop device-host projection have completed.
+  await expect(settingsWindow.getByText('Saved', { exact: true })).toBeVisible()
   await settingsWindow.close()
 
   await expect(mainWindow.locator('.project-workspace--active')).toHaveAttribute(
