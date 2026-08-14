@@ -143,6 +143,11 @@ test('the terminal transfer feature owns immutable move snapshots and export boo
 
 test('terminal features own creation, adoption, and active Dockview commands', () => {
 	assert.match(app, /useTerminalCreationController\(\{/);
+	assert.match(
+		app,
+		/serverAgentStatusClient\?\.mergeSessionScope\(\[session\.sessionId\]\)/,
+		'canonical terminal creation must admit the exact server session to the agent projection before resolving',
+	);
 	assert.match(app, /useTerminalAdoptionController\(\{/);
 	assert.doesNotMatch(app, /app\.workspace\.adopt\.before-add-panel/);
 	assert.doesNotMatch(app, /formatMacroTypeTextForTerminal/);
