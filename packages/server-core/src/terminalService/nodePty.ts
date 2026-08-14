@@ -211,6 +211,9 @@ function createForegroundObserver(
   let lastProcess: string | undefined;
   let disposed = false;
   let resolving: Promise<void> | undefined;
+  let requestedObservation = 0;
+  let completedObservation = 0;
+  let latestSignal: AbortSignal | undefined;
 
   const stop = (): void => {
     if (timer === undefined) return;
@@ -230,11 +233,24 @@ function createForegroundObserver(
       publish(foregroundProcessName(child));
       return Promise.resolve();
     }
+    // A close-time activity snapshot must not accept an observation that was
+    // already in flight while the shell still owned the foreground group. Each
+    // refresh requests a new host sample; concurrent callers are coalesced
+    // into at most one follow-up observation after the current one completes.
+    requestedObservation += 1;
+    latestSignal = signal;
     if (resolving !== undefined) return resolving;
-    resolving = resolveProcess(child.pid, signal).then(
-      (processName) => publish(processName?.trim() || foregroundProcessName(child)),
-      () => publish(foregroundProcessName(child)),
-    ).finally(() => { resolving = undefined; });
+    resolving = (async () => {
+      while (!disposed && completedObservation < requestedObservation) {
+        const target = requestedObservation;
+        const currentSignal = latestSignal;
+        await resolveProcess(child.pid!, currentSignal).then(
+          (processName) => publish(processName?.trim() || foregroundProcessName(child)),
+          () => publish(foregroundProcessName(child)),
+        );
+        completedObservation = target;
+      }
+    })().finally(() => { resolving = undefined; });
     return resolving;
   };
   const start = (): void => {
