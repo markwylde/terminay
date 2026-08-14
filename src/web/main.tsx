@@ -442,7 +442,14 @@ export default function WebManagerApp() {
 			.then(async (bootstrap) => {
 				if (bootstrap === undefined) return;
 				setDesktopHostContext(bootstrap.context);
-				const clientId = createWebClientId();
+				// Replacing a Desktop byte endpoint keeps the same selected profile and
+				// browser-side workspace. Reuse its protocol identity so the server
+				// resumes the existing terminal presentation rather than treating the
+				// replacement lane as another client with a competing control lease.
+				const clientId =
+					clientIdsByProfile.current.get(bootstrap.context.profileId) ??
+					createWebClientId('desktop');
+				clientIdsByProfile.current.set(bootstrap.context.profileId, clientId);
 				client = new TerminayClient({
 					transport: bootstrap.transport,
 					clientId,
@@ -472,9 +479,10 @@ export default function WebManagerApp() {
 					return;
 				}
 				const label =
-					bootstrap.context.profileId === 'local:embedded'
+					bootstrap.context.profile?.label ??
+					(bootstrap.context.profileId === 'local:embedded'
 						? 'Local'
-						: bootstrap.context.profileId;
+						: bootstrap.context.profileId);
 				const labelledContext = Object.freeze({
 					...connectedContext,
 					connectionLabel: label,

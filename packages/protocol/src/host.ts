@@ -65,6 +65,17 @@ export interface TerminayHostContext {
 	readonly hostBridgeVersion: number;
 	readonly byteEndpointVersion: number;
 	readonly capabilities: TerminayHostCapabilityVersions;
+	/** Sanitized Desktop connection-menu metadata. It deliberately excludes
+	 * origins, credentials, pairing fragments, and all workspace data. */
+	readonly profile?: TerminayHostConnectionProfile;
+	readonly profiles?: readonly TerminayHostConnectionProfile[];
+}
+
+export interface TerminayHostConnectionProfile {
+	readonly id: string;
+	readonly isLocal: boolean;
+	readonly label: string;
+	readonly status: 'connected' | 'offline' | 'unavailable';
 }
 
 export type TerminayHostCompatibilityFailure = Readonly<{
@@ -327,7 +338,7 @@ export function parseTerminayHostEvent(
 
 export function parseTerminayHostContext(value: unknown): TerminayHostContext {
 	const input = record(value, 'host context');
-	exactKeys(
+	exactOptionalKeys(
 		input,
 		[
 			'schemaVersion',
@@ -343,6 +354,7 @@ export function parseTerminayHostContext(value: unknown): TerminayHostContext {
 			'byteEndpointVersion',
 			'capabilities',
 		],
+		['profile', 'profiles'],
 		'host context',
 	);
 	if (input.schemaVersion !== TERMINAY_HOST_CONTEXT_SCHEMA_VERSION)
@@ -373,6 +385,14 @@ export function parseTerminayHostContext(value: unknown): TerminayHostContext {
 		input.capabilities,
 		'host capabilities',
 	);
+	const profile =
+		input.profile === undefined
+			? undefined
+			: parseTerminayHostConnectionProfile(input.profile, 'host profile');
+	const profiles =
+		input.profiles === undefined
+			? undefined
+			: parseTerminayHostConnectionProfiles(input.profiles);
 	return Object.freeze({
 		schemaVersion: TERMINAY_HOST_CONTEXT_SCHEMA_VERSION,
 		bootstrapVersion: TERMINAY_HOST_BOOTSTRAP_VERSION,
@@ -386,6 +406,51 @@ export function parseTerminayHostContext(value: unknown): TerminayHostContext {
 		hostBridgeVersion,
 		byteEndpointVersion,
 		capabilities,
+		...(profile === undefined ? {} : { profile }),
+		...(profiles === undefined ? {} : { profiles }),
+	});
+}
+
+function parseTerminayHostConnectionProfiles(
+	value: unknown,
+): readonly TerminayHostConnectionProfile[] {
+	if (!Array.isArray(value) || value.length > 256)
+		throw new TypeError('host profiles are invalid');
+	const profiles = value.map((profile) =>
+		parseTerminayHostConnectionProfile(profile, 'host profile'),
+	);
+	if (new Set(profiles.map((profile) => profile.id)).size !== profiles.length)
+		throw new TypeError('host profiles contain duplicate ids');
+	return Object.freeze(profiles);
+}
+
+function parseTerminayHostConnectionProfile(
+	value: unknown,
+	name: string,
+): TerminayHostConnectionProfile {
+	const profile = record(value, name);
+	exactKeys(profile, ['id', 'isLocal', 'label', 'status'], name);
+	const id = identifier(profile.id, `${name} id`, ID);
+	if (
+		typeof profile.label !== 'string' ||
+		profile.label.trim().length === 0 ||
+		profile.label.length > 256 ||
+		/[\r\n\0]/u.test(profile.label)
+	)
+		throw new TypeError(`${name} label is invalid`);
+	if (typeof profile.isLocal !== 'boolean')
+		throw new TypeError(`${name} local flag is invalid`);
+	if (
+		profile.status !== 'connected' &&
+		profile.status !== 'offline' &&
+		profile.status !== 'unavailable'
+	)
+		throw new TypeError(`${name} status is invalid`);
+	return Object.freeze({
+		id,
+		isLocal: profile.isLocal,
+		label: profile.label,
+		status: profile.status,
 	});
 }
 
