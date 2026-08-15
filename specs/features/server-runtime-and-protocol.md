@@ -335,19 +335,21 @@ inspect the application protocol.
 ## Server-bundled workspace UI
 
 - The server distribution contains a complete production build of the
-  responsive Terminay workspace UI and one reusable `tar.gz` archive binding it
-  to the server and protocol versions.
-- The archive contains schema-versioned root metadata giving each bundle a
-  deterministic id and relative entry path. It does not expose a per-file
-  inventory or require per-file content hashes.
-- The archive metadata declares its application protocol, bundle format,
+  responsive Terminay workspace UI. For authenticated WebRTC installation, it
+  also exposes one reusable `tar.gz` archive binding that bundle to the server
+  and protocol versions. Direct HTTPS continues to serve ordinary static
+  browser resources.
+- The WebRTC archive contains schema-versioned root metadata giving each
+  bundle a deterministic id and relative entry path. It does not expose a
+  per-file inventory or require per-file content hashes.
+- The WebRTC archive metadata declares its application protocol, bundle format,
   supported host-bridge range, and required/optional host capabilities.
   Browser compatibility uses those declarations and the protocol/schema
   revisions; it never uses browser brand, user agent, or numeric browser or
   Chromium runtime-version ranges. Optional native capabilities never become
   requirements merely because the bundle is running inside Desktop.
-- The privileged server prepares the archive as a bounded immutable snapshot
-  and transfers its binary bytes as one backpressured operation. Archive
+- The privileged server prepares the WebRTC archive as a bounded immutable
+  snapshot and transfers its binary bytes as one backpressured operation. Archive
   creation rejects traversal, links, duplicate normalized paths, malformed
   metadata, and oversized bundles. The immutable snapshot prevents source-file
   replacement from changing UI code during or after transfer.

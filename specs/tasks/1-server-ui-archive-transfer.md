@@ -70,9 +70,11 @@ contract.
 
 ### 3. Remove obsolete protocol and repository coupling
 
-- [ ] Delete the old asset manifest, descriptor, response-hash, per-file fetch,
-  and filename-allowlist protocol from Terminay and `terminay.com` once the
-  archive path is deployed.
+- [ ] Delete the old WebRTC asset manifest, descriptor, response-hash,
+  per-file request, and filename-allowlist protocol from Terminay and
+  `terminay.com` once the archive path is deployed. This does not change the
+  ordinary direct-HTTPS static bundle routes, which remain normal browser
+  resource delivery rather than a WebRTC installation protocol.
 - [ ] Replace `terminay.com` CI's checkout/build of the private Terminay
   repository with an in-repository fixture server that implements the public
   archive protocol and supplies a small executable archive.
@@ -98,9 +100,10 @@ contract.
   the archive path uses one request and no base64 bodies.
 - [ ] The `terminay.com` compatibility workflow passes with network access to
   the Terminay source repositories denied.
-- [ ] Repository searches find no production `asset:get-manifest`, per-file
-  `asset:get`, generated filename allowlist, Terminay source pin, or
-  cross-repository checkout in the hosted manager.
+- [ ] Repository searches find no production WebRTC `asset:get-manifest` or
+  per-file `asset:get`, generated filename allowlist, Terminay source pin, or
+  cross-repository checkout in the hosted manager. Direct-HTTPS static resource
+  delivery remains outside this check.
 
 ## Definition of done
 
