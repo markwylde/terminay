@@ -27,6 +27,7 @@ declare global {
 				action: unknown,
 				options?: { readonly userGesture?: boolean },
 			): Promise<unknown>;
+			resolveDroppedFilePath?(file: File): string | undefined;
 		};
 		terminayBytes?: {
 			readonly version: 1;
