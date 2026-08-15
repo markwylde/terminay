@@ -1222,7 +1222,8 @@ async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
 				},
 				getRemoteAccessSettings: readEmbeddedRemoteAccessSettings,
 				notifyTerminalRemoteSizeOverride: () => undefined,
-				onStatusChanged: () => undefined,
+				onStatusChanged: () =>
+					serverTerminalAuthority?.notifyRemoteAccessChanged(),
 				// Direct-browser/WebRTC exposure serves the identical generated server
 				// workspace artifact used by Local Desktop.  `dist` only contains the
 				// host shell and must never become a second workspace release line.

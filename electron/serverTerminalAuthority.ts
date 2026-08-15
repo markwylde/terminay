@@ -350,6 +350,8 @@ export class ServerTerminalAuthority {
 	private shuttingDown = false;
 	private shutdownPromise: Promise<void> | undefined;
 	private readonly workspaceRepository: WorkspaceRepository | undefined;
+	/** Publishes asynchronous state changes from server-owned application features. */
+	private readonly eventJournal: OrderedEventJournal;
 
 	constructor(options: ServerTerminalAuthorityOptions) {
 		if (
@@ -398,6 +400,7 @@ export class ServerTerminalAuthority {
 			projects: this.fileSessionProjects,
 		});
 		const eventJournal = new OrderedEventJournal();
+		this.eventJournal = eventJournal;
 		const remoteAccess = options.applicationFeatures?.remoteAccess;
 		const mcpInstall = options.applicationFeatures?.mcpInstall;
 		const payloadText = (
@@ -420,7 +423,7 @@ export class ServerTerminalAuthority {
 				operation,
 				key === undefined ? undefined : payloadText(request, key),
 			);
-			eventJournal.append('remote-access.changed', { changed: true });
+			this.notifyRemoteAccessChanged();
 			return result as unknown as JsonValue;
 		};
 		const projectEnvironments =
@@ -864,6 +867,15 @@ export class ServerTerminalAuthority {
 			this.handleEvent(event),
 		);
 		this.consumers = new DetachableTerminalConsumerRegistry(this.service);
+	}
+
+	/**
+	 * Remote access changes after a command returns: for example, the host
+	 * registration acknowledgement from the relay. Publish those changes so
+	 * subscribed Desktop and browser workspaces refresh their status.
+	 */
+	notifyRemoteAccessChanged(): void {
+		this.eventJournal.append('remote-access.changed', { changed: true });
 	}
 
 	/** Complete canonical workspace hydration before the host publishes readiness. */
