@@ -17,7 +17,6 @@ concurrency:
 
 jobs:
   update-widget:
-    if: ${{ github.server_url == 'https://git.i.wylde.net' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main

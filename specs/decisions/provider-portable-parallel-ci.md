@@ -16,11 +16,13 @@ E2E-image build, and five Electron Playwright shards:
 3. Five `ubuntu-latest` jobs split the Electron Playwright suite with
    `--shard=N/5`.
 
-The fast gate is independent. The packaged macOS smoke uses a provider-resolved
-runner expression: GitHub runs the real macOS smoke and Gitea schedules its
-explicit unavailable-runner fallback on Ubuntu. Each provider selects one
-provider-specific E2E-image/shard pair at the job level; the five selected E2E
-shards depend only on that provider's E2E-image build, then run in parallel.
+The fast gate is independent. GitHub runs the real macOS smoke and Gitea
+schedules its explicit unavailable-runner fallback on Ubuntu. GitHub-only
+workflows live in `.github/workflows/`; Gitea-only workflows live in
+`.gitea/workflows/`. Gitea gives its own directory precedence and otherwise
+falls back to `.github/workflows/`, so both directories must exist and remain
+provider-exclusive. Each provider's five E2E shards depend only on that
+provider's E2E-image build, then run in parallel.
 
 ## E2E isolation
 
@@ -38,11 +40,11 @@ avoiding registry credentials and package publication for GitHub/Gitea and fork
 pull requests. Each shard writes Playwright output to a distinct shard directory
 and uploads it with a unique artifact name, even when the test step fails. The
 transfer image expires after one day; diagnostic shard reports expire after
-seven days. GitHub's E2E jobs contain only pinned artifact-action v4. The
-separate self-hosted Gitea E2E jobs contain only the pinned v3 action pair,
-because its artifact service does not support v4. Provider selection happens at
-the job level so GitHub never resolves the incompatible v3 actions and no
-Gitea-runnable job references artifact-action v4.
+seven days. GitHub's E2E workflow contains only pinned artifact-action v4. The
+separate self-hosted Gitea E2E workflow contains only the pinned v3 action
+pair, because its artifact service does not support v4. Directory-based
+provider selection ensures GitHub never resolves the incompatible v3 actions
+and Gitea never resolves artifact-action v4.
 
 ## Work kept out of pull requests
 
