@@ -17,7 +17,7 @@ await build({
   platform: 'node',
 })
 
-const { pasteTerminalClipboard } = await import(pathToFileURL(outputPath).href)
+const { pasteTerminalClipboard, shouldHandleTerminalPasteShortcut } = await import(pathToFileURL(outputPath).href)
 
 test.after(async () => {
   await rm(outputDirectory, { recursive: true, force: true })
@@ -80,4 +80,24 @@ test('terminal paste recovers from clipboard and xterm failures so the next past
   assert.equal(await pasteTerminalClipboard(async () => 'second', options), true)
   assert.deepEqual(pasted, ['second'])
   assert.equal(focusCalls, 1)
+})
+
+test('leaves macOS Cmd+V to Electron native paste rather than the renderer Clipboard API', () => {
+  assert.equal(
+    shouldHandleTerminalPasteShortcut(
+      { altKey: false, ctrlKey: false, key: 'v', metaKey: true, shiftKey: false },
+      true,
+    ),
+    false,
+  )
+})
+
+test('continues to handle the terminal-specific Ctrl+Shift+V shortcut in the renderer', () => {
+  assert.equal(
+    shouldHandleTerminalPasteShortcut(
+      { altKey: false, ctrlKey: true, key: 'v', metaKey: false, shiftKey: true },
+      true,
+    ),
+    true,
+  )
 })
