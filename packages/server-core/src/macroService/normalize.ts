@@ -66,7 +66,7 @@ export function normalizeMacro(input: unknown, index = 0, limits: MacroLimits = 
   if (rawSteps.length > normalizedLimits.maxSteps) throw new MacroServiceError("limit", "macro step count exceeds the limit", { id });
   const steps = rawSteps.map((step, stepIndex) => normalizeStep(step, stepIndex, normalizedLimits));
   const explicitFields = Array.isArray(record.fields)
-    ? record.fields.map((field, fieldIndex) => normalizeField(field, fieldIndex, normalizedLimits))
+    ? uniqueFieldsByName(record.fields.map((field, fieldIndex) => normalizeField(field, fieldIndex, normalizedLimits)))
     : [];
   if (explicitFields.length > normalizedLimits.maxFields) throw new MacroServiceError("limit", "macro field count exceeds the limit", { id });
   const fields = mergeFieldsWithSteps(steps, explicitFields, normalizedLimits.maxFields);
@@ -246,6 +246,15 @@ function mergeFieldsWithSteps(steps: readonly MacroStep[], explicit: readonly Ma
     }
   }
   return fields;
+}
+
+function uniqueFieldsByName(fields: readonly MacroFieldDefinition[]): readonly MacroFieldDefinition[] {
+  const names = new Set<string>();
+  return fields.filter((field) => {
+    if (names.has(field.name)) return false;
+    names.add(field.name);
+    return true;
+  });
 }
 
 function normalizeFieldType(value: unknown): MacroFieldType {
