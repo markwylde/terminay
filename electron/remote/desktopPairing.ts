@@ -72,8 +72,8 @@ async function postWithTimeout(
 
 /**
  * Execute the same one-time device pairing transaction used by the browser,
- * but keep the Desktop private key and reconnect grant inside the main-process
- * encrypted credential store.  The pairing URL is deliberately only used for
+ * but keep the Desktop private key inside the main-process encrypted credential
+ * store. The pairing URL is deliberately only used for
  * this transaction; callers must not reinterpret its fragment token as an
  * application-protocol bearer credential.
  */

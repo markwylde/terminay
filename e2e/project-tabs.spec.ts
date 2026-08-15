@@ -170,6 +170,7 @@ test.describe('project tabs', () => {
 			.locator('.project-workspace--active .terminal-panel')
 			.getAttribute('data-terminay-terminal-session-id');
 		if (!sessionId) throw new Error('Expected the popout terminal');
+		const foregroundStarted = `foreground-started-${Date.now()}`;
 
 		await electronApp.evaluate(({ dialog }) => {
 			const state = globalThis as typeof globalThis & {
@@ -180,7 +181,14 @@ test.describe('project tabs', () => {
 				return { checkboxChecked: false, response: 0 };
 			};
 		});
-		await typeInVisibleTerminal(popoutWindow, 'sleep 30\n', sessionId);
+		await typeInVisibleTerminal(
+			popoutWindow,
+			`sleep 2.1; printf '${foregroundStarted}\\n'; sleep 30\n`,
+			sessionId,
+		);
+		await expect(
+			popoutWindow.locator('.terminal-panel:visible .xterm-rows'),
+		).toContainText(foregroundStarted);
 		await electronApp.evaluate(({ BrowserWindow }) =>
 			BrowserWindow.getFocusedWindow()?.close(),
 		);

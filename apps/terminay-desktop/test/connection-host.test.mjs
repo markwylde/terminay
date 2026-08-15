@@ -174,7 +174,7 @@ test("Desktop host keeps one Local and three remote windows isolated while focus
     { id: "remote-three", origin: "https://three.example", status: "connected" },
     { id: "remote-two", origin: "https://two.example", status: "connected" },
   ]);
-  assert.equal(JSON.stringify(host.profiles.serialize()).includes("reconnectGrant"), false);
+  assert.equal(JSON.stringify(host.profiles.serialize()).includes("deviceKey"), false);
   assert.equal(JSON.stringify(host.windows.list()).includes("private"), false);
 
   const focused = await host.openProfileWindow("remote-one", "view-remote-one", { createWindowId: () => "must-not-open" });
@@ -514,14 +514,14 @@ test("profile persistence is sanitized and malformed snapshots do not partially 
   source.add(createRemoteProfile({ id: "remote-persist", serverId: "srv-persist", origin: "https://persist.example", label: "Persist", now: "2026-01-01T00:00:00.000Z" }));
   await source.flush();
   assert.equal(stored.length, 2);
-  assert.equal(Object.hasOwn(stored[0], "reconnectGrant"), false);
+  assert.equal(Object.hasOwn(stored[0], "deviceKey"), false);
   assert.equal(Object.isFrozen(source.serialize()), true);
   assert.equal(Object.isFrozen(source.serialize()[0]), true);
 
   const loaded = new ConnectionProfileStore({ storage });
   await loaded.load();
   assert.equal(loaded.get("remote-persist")?.label, "Persist");
-  stored = [{ ...stored[0], reconnectGrant: "must-not-load" }, ...stored.slice(1)];
+  stored = [{ ...stored[0], deviceKey: "must-not-load" }, ...stored.slice(1)];
   await assert.rejects(loaded.load(), /not allowed/);
   assert.equal(loaded.get("remote-persist")?.label, "Persist");
 });

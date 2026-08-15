@@ -4084,14 +4084,19 @@ const ProjectWorkspace = forwardRef<
 						// immediately be restored by workspace reconciliation.
 						const store = terminalClientContext?.workspaceSnapshotStore;
 						const canonicalPanel = store?.snapshot?.panels[panel.id];
-						if (store !== undefined && canonicalPanel?.projectId === project.id) {
-							void store.closePanel(panel.id).catch((error: unknown) =>
-								setErrorText(
-									error instanceof Error
-										? error.message
-										: 'Unable to close the completed terminal tab.',
-								),
-							);
+						if (
+							store !== undefined &&
+							canonicalPanel?.projectId === project.id
+						) {
+							void store
+								.closePanel(panel.id)
+								.catch((error: unknown) =>
+									setErrorText(
+										error instanceof Error
+											? error.message
+											: 'Unable to close the completed terminal tab.',
+									),
+								);
 						} else {
 							panel.api.close();
 						}
@@ -5221,9 +5226,7 @@ function App({
 		workspaceViewId: boundWorkspaceViewId,
 	});
 	const {
-		addresses: remoteAddresses,
 		closePinModal: closePairingPinModal,
-		isAdvancedOpen: isRemoteAdvancedOpen,
 		isLinkCopied,
 		isMenuOpen: isRemoteMenuOpen,
 		isPairingModalOpen,
@@ -5236,10 +5239,6 @@ function App({
 		pairingUrl: selectedPairingUrl,
 		pinError: pairingPinError,
 		pinInput: pairingPinInput,
-		preferredAddress: preferredRemoteAddress,
-		selectAddress: selectPairingAddress,
-		selectedMode: selectedRemotePairingMode,
-		setIsAdvancedOpen: setIsRemoteAdvancedOpen,
 		setIsLinkCopied,
 		setIsMenuOpen: setIsRemoteMenuOpen,
 		setIsPairingModalOpen,
@@ -5254,7 +5253,6 @@ function App({
 	} = useRemoteAccessController(
 		remoteAccessClients?.pairingPin,
 		remoteAccessClients?.status,
-		serverSettingsClient,
 		auxiliaryRouteController.openSettings,
 	);
 	const [connectionSwitcherEntries, setConnectionSwitcherEntries] = useState<
@@ -6140,9 +6138,9 @@ function App({
 
 						<div className="remote-pairing-modal__container">
 							<p className="remote-pairing-modal__copy">
-								Scan this QR code to add or re-add a browser to this Terminay
-								host. Saved WebRTC sessions can reconnect later while their
-								grant is valid.
+								Use this one-time link to pair a new browser or Desktop device.
+								That device can reconnect later from this server’s stable
+								origin.
 							</p>
 
 							{visiblePairingQrCodeDataUrl ? (
@@ -6154,10 +6152,9 @@ function App({
 											alt="Remote pairing QR code"
 										/>
 									</div>
-
 									<div className="remote-pairing-modal__address-section">
 										<div className="remote-pairing-modal__address-label">
-											Server/session origin
+											Session origin
 										</div>
 										<div className="remote-pairing-modal__address-text">
 											{selectedPairingUrl
@@ -6165,13 +6162,13 @@ function App({
 												: 'Not available'}
 										</div>
 										<div className="remote-pairing-modal__address-label">
-											Pairing link
+											One-time pairing link
 										</div>
 										<div className="remote-pairing-modal__address-box">
 											<div className="remote-pairing-modal__address-text">
 												{selectedPairingUrl || 'No pairing link available yet.'}
 											</div>
-											{selectedPairingUrl && (
+											{selectedPairingUrl ? (
 												<button
 													type="button"
 													className="remote-pairing-modal__copy-btn"
@@ -6189,81 +6186,24 @@ function App({
 												>
 													{isLinkCopied ? 'Copied' : 'Copy pairing link'}
 												</button>
-											)}
+											) : null}
 										</div>
-
-										<button
-											type="button"
-											className="remote-pairing-modal__advanced-toggle"
-											onClick={() =>
-												setIsRemoteAdvancedOpen(!isRemoteAdvancedOpen)
-											}
-										>
-											{isRemoteAdvancedOpen
-												? 'Hide Advanced Options'
-												: 'Show Advanced Options'}
-										</button>
-
-										{isRemoteAdvancedOpen && (
-											<div className="remote-pairing-modal__advanced-content">
-												{selectedRemotePairingMode === 'lan' && (
-													<div className="remote-pairing-modal__additional-section">
-														<h3>Available Addresses</h3>
-														<div className="remote-pairing-modal__additional-list">
-															{remoteAddresses.map((address) => (
-																<button
-																	key={address}
-																	type="button"
-																	className={`remote-pairing-modal__address-row-btn${address === preferredRemoteAddress ? ' remote-pairing-modal__address-row-btn--active' : ''}`}
-																	onClick={() =>
-																		void selectPairingAddress(address)
-																	}
-																	title={`Generate QR for ${address}`}
-																>
-																	<span className="remote-pairing-modal__address-label">
-																		{address}
-																	</span>
-																	{address === preferredRemoteAddress && (
-																		<span className="remote-pairing-modal__address-active-badge">
-																			Active
-																		</span>
-																	)}
-																</button>
-															))}
-														</div>
-													</div>
-												)}
-
-												<div className="remote-pairing-modal__footer">
-													<div className="remote-pairing-modal__tip">
-														{selectedRemotePairingMode === 'webrtc'
-															? (remoteStatus?.webRtcStatusMessage ??
-																'The WebRTC host is starting. Keep Terminay open while it becomes ready.')
-															: 'Best for mobile: Scan the QR code. Use the link for manual entry on desktop.'}
-													</div>
-													{selectedPairingExpiresAt && (
-														<p className="remote-pairing-modal__expires-text">
-															Expires{' '}
-															{new Date(
-																selectedPairingExpiresAt,
-															).toLocaleString()}
-															.
-														</p>
-													)}
-												</div>
-											</div>
-										)}
+										{selectedPairingExpiresAt ? (
+											<p className="remote-pairing-modal__expires-text">
+												Expires{' '}
+												{new Date(selectedPairingExpiresAt).toLocaleString()}.
+											</p>
+										) : null}
 									</div>
 								</div>
-							) : selectedRemotePairingMode === 'webrtc' &&
-								selectedPairingUrl ? (
+							) : selectedPairingUrl ? (
 								<p className="remote-pairing-modal__copy">
 									{remoteStatus?.webRtcStatusMessage ??
-										'WebRTC relay room is registering. Keep Terminay open while the browser connects.'}
+										'Preparing the secure WebRTC session…'}
 								</p>
 							) : (
 								<p className="remote-pairing-modal__copy">
-									Start the remote server first to generate a pairing QR code.
+									Expose this server to generate a pairing link.
 								</p>
 							)}
 						</div>

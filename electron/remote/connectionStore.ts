@@ -35,6 +35,13 @@ export class ConnectionStore {
     return ticket
   }
 
+  issueConnectionTicket(deviceId: string): Readonly<{ ticket: string; expiresAt: number }> {
+    const ticket = randomUUID()
+    const expiresAt = Date.now() + TICKET_TTL_MS
+    this.tickets.set(ticket, { deviceId, expiresAt })
+    return Object.freeze({ ticket, expiresAt })
+  }
+
   consumeTicket(ticket: string): { connectionId: string; deviceId: string } {
     const pending = this.tickets.get(ticket)
     if (!pending || pending.expiresAt < Date.now()) {

@@ -4,26 +4,21 @@ import type {
 	RemoteAuthProof,
 	RemoteCleanupReport,
 	RemoteConnectionManagerOptions,
-	RemoteDeviceStore,
+	RemoteDeviceAuthenticationOptions,
 	RemoteExposureController,
 	RemoteExposureStatus,
 	RemoteHeadlessSession,
 	RemotePairingAttempt,
 	RemotePairingHandoff,
 	RemoteRateLimiterOptions,
-	RemoteReconnectChallenge,
-	RemoteReconnectGrantLifetime,
-	RemoteReconnectGrantRecord,
-	RemoteReconnectGrantStoreOptions,
 } from '@terminay/server-core/remote';
 import {
 	RemoteAuditLog as AuditLog,
-	RemoteDeviceStore as DeviceStore,
+	RemoteDeviceAuthentication,
 	RemoteExposureController as ExposureController,
 	RemoteConnectionManager,
 	RemotePairingStore,
 	RemoteRateLimiter,
-	RemoteReconnectGrantStore,
 } from '@terminay/server-core/remote';
 import {
 	NodeDataChannelHeadlessHost,
@@ -47,12 +42,12 @@ export interface ServerRemoteExposureOptions {
 		readonly maxLifetimeMs?: number;
 		readonly randomBytes?: (size: number) => Uint8Array;
 	};
-	readonly reconnect?: Omit<
-		RemoteReconnectGrantStoreOptions,
+	readonly deviceAuthentication?: Omit<
+		RemoteDeviceAuthenticationOptions,
 		'serverId' | 'sessionOrigin' | 'now'
 	>;
 	readonly pairingRateLimit?: RemoteRateLimiterOptions;
-	readonly reconnectRateLimit?: RemoteRateLimiterOptions;
+	readonly deviceAuthenticationRateLimit?: RemoteRateLimiterOptions;
 	readonly audit?: RemoteAuditLog;
 	readonly auditSink?: RemoteAuditLogOptions['sink'];
 	readonly nodeDataChannel?: Omit<
@@ -72,13 +67,10 @@ export interface ServerRemoteExposureOptions {
 }
 
 export interface ServerRemoteCleanupReport extends RemoteCleanupReport {
-	readonly reconnectChallenges: number;
-	readonly reconnectRateLimitWindows: number;
+	readonly deviceAuthenticationRecords: number;
+	readonly deviceAuthenticationRateLimitWindows: number;
 	readonly headlessRuntime: 'node-datachannel' | 'werift' | null;
 	readonly headlessRateLimitWindows: number;
-	/** Expired node-datachannel authenticated-setup limiter windows removed. */
-	/** @deprecated Use headlessRateLimitWindows. */
-	readonly nodeDataChannelRateLimitWindows: number;
 }
 
 /**
@@ -95,18 +87,17 @@ export interface ServerPairingHandoff extends RemotePairingHandoff {
 /**
  * Complete server-owned remote authority. It is the composition seam between
  * the server runtime and the concrete node-datachannel host: pairing rooms,
- * device/grant metadata, audit, admission limits, and cleanup stay here while
+ * device-key metadata, audit, admission limits, and cleanup stay here while
  * SDP/ICE and native peer lifecycle stay inside the injected host.
  */
 export class ServerRemoteExposure {
 	readonly manager: RemoteConnectionManager;
 	readonly pairing: RemotePairingStore;
-	readonly reconnect: RemoteReconnectGrantStore;
-	readonly devices: RemoteDeviceStore;
+	readonly devices: RemoteDeviceAuthentication;
 	readonly audit: RemoteAuditLog;
 	readonly controller: RemoteExposureController;
 	readonly nodeDataChannelHost: NodeDataChannelHeadlessHost | undefined;
-	private readonly reconnectRateLimiter: RemoteRateLimiter;
+	private readonly deviceAuthenticationRateLimiter: RemoteRateLimiter;
 	private readonly cleanupTimer: ReturnType<typeof setInterval> | undefined;
 	private shutdownPromise: Promise<void> | undefined;
 	private activePairingHandoff: ServerPairingHandoff | undefined;
@@ -130,13 +121,12 @@ export class ServerRemoteExposure {
 			sessionOrigin: options.sessionOrigin,
 			now,
 		});
-		this.reconnect = new RemoteReconnectGrantStore({
-			...options.reconnect,
+		this.devices = new RemoteDeviceAuthentication({
+			...options.deviceAuthentication,
 			serverId: options.serverId,
 			sessionOrigin: options.sessionOrigin,
 			now,
 		});
-		this.devices = new DeviceStore(now);
 		this.audit =
 			options.audit ??
 			new AuditLog({
@@ -148,9 +138,9 @@ export class ServerRemoteExposure {
 			now,
 			...options.pairingRateLimit,
 		});
-		this.reconnectRateLimiter = new RemoteRateLimiter({
+		this.deviceAuthenticationRateLimiter = new RemoteRateLimiter({
 			now,
-			...options.reconnectRateLimit,
+			...options.deviceAuthenticationRateLimit,
 		});
 		if (
 			options.nodeDataChannel !== undefined &&
@@ -169,7 +159,7 @@ export class ServerRemoteExposure {
 					? undefined
 					: new NodeDataChannelHeadlessHost({
 						...options.nodeDataChannel,
-						// The exposure owns lifecycle time. Pairing, reconnect grants, and
+						// The exposure owns lifecycle time. Pairing, device authentication, and
 						// native setup rate limits must use one clock or cleanup can report
 						// an expired server ledger while the native host retains it.
 						now,
@@ -236,14 +226,8 @@ export class ServerRemoteExposure {
 		signal?: AbortSignal,
 	): Promise<RemoteHeadlessSession> {
 		const device = this.devices.get(proof.deviceId);
-		if (device !== undefined && device.revokedAt !== null)
-			throw new Error('remote device is revoked');
-		const registered = this.devices.register(proof.deviceId);
-		if (device === undefined)
-			this.audit.record({
-				action: 'device-registered',
-				deviceId: registered.deviceId,
-			});
+		if (device === undefined) throw new Error('remote device is not registered');
+		if (device.revokedAt !== null) throw new Error('remote device is revoked');
 		return this.controller.connectHeadless(
 			this.nodeDataChannelHost?.runtimeId ?? 'node-datachannel',
 			attempt,
@@ -252,52 +236,52 @@ export class ServerRemoteExposure {
 		);
 	}
 
-	issueReconnectGrant(options: {
-		readonly deviceId: string;
-		readonly lifetime?: RemoteReconnectGrantLifetime | string | null;
-	}): ReturnType<RemoteReconnectGrantStore['issue']> {
-		const device = this.devices.get(options.deviceId);
-		if (device !== undefined && device.revokedAt !== null)
-			throw new Error('remote device is revoked');
-		this.devices.register(options.deviceId);
-		const issued = this.reconnect.issue(options);
-		this.audit.record({
-			action: 'reconnect-grant-issued',
-			deviceId: options.deviceId,
+	/** Enroll a durable public device key after the one-time pairing admission. */
+	enrollDevice(input: {
+		readonly pairingSessionId: string;
+		readonly pairingToken: string;
+		readonly deviceName: string;
+		readonly publicKeyPem: string;
+	}) {
+		const pairingAttempt = {
+			roomId: input.pairingSessionId,
+			serverId: this.devices.serverId,
+			sessionOrigin: this.devices.sessionOrigin,
+			secret: input.pairingToken,
+		};
+		this.pairing.assertAvailable(pairingAttempt);
+		const device = this.devices.enroll({
+			deviceName: input.deviceName,
+			publicKeyPem: input.publicKeyPem,
 		});
-		return issued;
+		this.pairing.consume(pairingAttempt);
+		this.audit.record({ action: 'device-registered', deviceId: device.deviceId });
+		return device;
 	}
 
-	createReconnectChallenge(
-		options: Parameters<RemoteReconnectGrantStore['createChallenge']>[0],
-	): {
-		readonly challenge: RemoteReconnectChallenge;
-		readonly signingInput: string;
-	} {
-		// Do not let untrusted, nonexistent handles consume the bounded server
-		// limiter ledger. A valid handle is opaque and server-owned; only that
-		// retryable grant is entitled to an admission window.
-		this.reconnect.assertAvailable(options.handle, options.origin);
-		this.reconnectRateLimiter.consume(`reconnect:${options.handle}`);
-		return this.reconnect.createChallenge(options);
+	createDeviceChallenge(deviceId: string) {
+		this.deviceAuthenticationRateLimiter.consume(`device:${deviceId}`);
+		return this.devices.createChallenge(deviceId);
 	}
 
-	verifyReconnectProof(
-		options: Parameters<RemoteReconnectGrantStore['verifyProof']>[0],
-	): RemoteReconnectGrantRecord {
-		const record = this.reconnect.verifyProof(options);
-		// Only a complete, verified reconnect earns a fresh retry window. Creating
-		// challenges alone must remain bounded so a holder cannot fill the relay's
-		// finite pending-challenge capacity.
-		this.reconnectRateLimiter.reset(`reconnect:${record.handle}`);
-		return record;
+	verifyDeviceSignature(input: {
+		readonly deviceId: string;
+		readonly challengeId: string;
+		readonly deviceSignature: string;
+	}) {
+		const ticket = this.devices.verify(input);
+		this.deviceAuthenticationRateLimiter.reset(`device:${input.deviceId}`);
+		return ticket;
+	}
+
+	consumeConnectionTicket(token: string) {
+		return this.devices.consumeTicket(token);
 	}
 
 	async revokeDevice(deviceId: string): Promise<number> {
 		const count = await this.controller.revokeDevice(deviceId);
-		this.devices.revoke(deviceId);
-		this.reconnect.revokeDevice(deviceId);
-		this.audit.record({ action: 'reconnect-grant-revoked', deviceId });
+		this.devices.revokeDevice(deviceId);
+		this.audit.record({ action: 'device-revoked', deviceId });
 		return count;
 	}
 
@@ -306,16 +290,15 @@ export class ServerRemoteExposure {
 		const headlessCleanup = this.nodeDataChannelHost?.cleanup();
 		return Object.freeze({
 			...exposure,
-			reconnectChallenges: this.reconnect.cleanup(),
-			reconnectRateLimitWindows: this.reconnectRateLimiter.cleanup(),
+			deviceAuthenticationRecords: this.devices.cleanup(),
+			deviceAuthenticationRateLimitWindows:
+				this.deviceAuthenticationRateLimiter.cleanup(),
 			// The node-datachannel host owns a distinct authenticated setup limiter.
 			// It must participate in the server-owned timer/manual cleanup path;
 			// otherwise an idle exposed server would retain per-device admission
 			// metadata until a caller happened to inspect the native host directly.
 			headlessRuntime: headlessCleanup?.runtime ?? null,
 			headlessRateLimitWindows:
-				headlessCleanup?.connectionRateLimitWindows ?? 0,
-			nodeDataChannelRateLimitWindows:
 				headlessCleanup?.connectionRateLimitWindows ?? 0,
 		});
 	}

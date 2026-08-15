@@ -35,10 +35,10 @@
 
 .shared-connections {
 	--connection-accent: var(--accent-primary, #65d7b5);
-	--connection-surface: var(--background-secondary, #151b23);
-	--connection-surface-hover: var(--background-tertiary, #1a2330);
-	--connection-muted: var(--text-secondary, #94a3b5);
-	gap: 20px;
+	--connection-surface: var(--background-secondary, #121922);
+	--connection-surface-hover: var(--background-tertiary, #1a2633);
+	--connection-muted: var(--text-secondary, #9aaabd);
+	gap: 24px;
 }
 
 .shared-connections header {
@@ -71,10 +71,11 @@
 
 .shared-connections__empty {
 	display: grid;
-	gap: 5px;
-	padding: 18px;
+	gap: 7px;
+	padding: 22px;
 	border: 1px dashed var(--border-primary, #303946);
 	border-radius: 12px;
+	background: color-mix(in srgb, var(--connection-surface) 70%, transparent);
 	color: var(--connection-muted);
 	text-align: center;
 }
@@ -96,7 +97,7 @@
 		"actions actions";
 	align-items: center;
 	gap: 14px 18px;
-	padding: 16px;
+	padding: 18px;
 	border-color: var(--border-primary, #303946);
 	border-radius: 12px;
 	background: var(--connection-surface);
@@ -230,6 +231,7 @@
 
 .shared-connections__profile-actions button:first-child {
 	border-color: color-mix(in srgb, var(--connection-accent) 55%, transparent);
+	background: color-mix(in srgb, var(--connection-accent) 10%, transparent);
 	color: var(--connection-accent);
 }
 
@@ -265,11 +267,6 @@
 	background: var(--background-primary, #0d1117);
 	color: var(--text-primary, #e6edf3);
 	font: inherit;
-}
-
-.shared-connections__action-panel textarea {
-	min-height: 96px;
-	resize: vertical;
 }
 
 .shared-connections__action-panel input:focus,

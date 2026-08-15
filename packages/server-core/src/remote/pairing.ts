@@ -182,6 +182,26 @@ export class RemotePairingStore {
 		});
 	}
 
+	/** Check a pairing secret before device-key validation without consuming it.
+	 * Enrollment calls this first so malformed device keys do not burn a valid
+	 * one-time URL; the immediately following consume remains the authority. */
+	assertAvailable(attempt: RemotePairingAttempt): void {
+		this.expireRooms();
+		if (
+			!validId(attempt.roomId) ||
+			attempt.serverId !== this.options.serverId ||
+			attempt.sessionOrigin !== this.options.sessionOrigin
+		)
+			throw new Error('pairing room is unavailable');
+		const room = this.rooms.get(attempt.roomId);
+		if (room === undefined || room.state !== 'active')
+			throw new Error('pairing room is unavailable');
+		if (typeof attempt.secret !== 'string' || attempt.secret.length > 256)
+			throw new Error('pairing secret is invalid');
+		if (!constantTimeDigestEqual(room.secretDigest, digest(attempt.secret)))
+			throw new Error('pairing secret is invalid');
+	}
+
 	metadata(roomId: ProtocolId): RemotePairingRoomMetadata | undefined {
 		this.expireRooms();
 		const room = this.rooms.get(roomId);

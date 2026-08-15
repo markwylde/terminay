@@ -47,7 +47,7 @@ test('App-originated terminal commands reach the exact shared-client attachment 
 });
 
 test('remote entry reuses the shared browser workspace through the opaque session endpoint', () => {
-	assert.match(remoteEntry, /mountWebManagerApp/u);
+	assert.match(remoteEntry, /mountSessionWorkspace/u);
 	assert.doesNotMatch(remoteEntry, /new WebSocket|\.send\(/u);
 	assert.match(remoteEntry, /acquireHostedApplicationTransport\(authenticated\.ticket\)/u);
 	assert.doesNotMatch(remoteEntry, /RTCDataChannel|getChannel/u);

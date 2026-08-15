@@ -5,77 +5,49 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { build } from 'esbuild'
 
-const { loadPairing, loadReconnectGrant, loadReconnectHandle, saveEstablishedPairing, saveEstablishedPairingReversibly, saveReconnectGrant } = await importDeviceKeys()
+const {
+  generateDeviceKeyPair,
+  loadBrowserDeviceIdentity,
+  removeBrowserDeviceIdentity,
+  saveBrowserDeviceIdentity,
+} = await importDeviceKeys()
 
-test('saveReconnectGrant queues IndexedDB writes before the transaction can auto-close', async () => {
+test('generated browser device private keys are non-extractable signing keys', async () => {
+  const keyPair = await generateDeviceKeyPair()
+  assert.equal(keyPair.privateKey.extractable, false)
+  assert.equal(keyPair.privateKey.usages.includes('sign'), true)
+  await assert.rejects(() => crypto.subtle.exportKey('pkcs8', keyPair.privateKey))
+  assert.match(keyPair.publicKeyPem, /^-----BEGIN PUBLIC KEY-----/u)
+})
+
+test('browser device storage persists one identity by exact HTTPS session origin', async () => {
   const indexedDB = createStrictIndexedDB()
   globalThis.indexedDB = indexedDB
-  Object.defineProperty(globalThis, 'crypto', {
-    configurable: true,
-    value: {
-      subtle: {
-        async importKey(_format, _keyData, algorithm) {
-          await Promise.resolve()
-          return { type: typeof algorithm === 'string' ? 'hkdf-key' : 'hmac-proof-key' }
-        },
-        async deriveBits() {
-          await Promise.resolve()
-          return new Uint8Array(32).buffer
-        },
-      },
-    },
-  })
-
-  const origin = 'https://2d5057472b1731ccfb1a.terminay.com#transport=webrtc'
-  await saveReconnectGrant({
-    expiresAt: null,
-    grant: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-    handle: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
-    issuedAt: '2026-05-19T10:00:00.000Z',
+  const origin = 'https://2d5057472b1731ccfb1a.terminay.com'
+  const identity = {
+    deviceId: 'device-a',
+    deviceName: 'Browser',
     origin,
-    protocolVersion: 'v1',
-    sessionId: '2d5057472b1731ccfb1a',
-  })
+    privateKey: { key: 'non-extractable-key-reference' },
+  }
 
-  const grant = await loadReconnectGrant(origin)
-  const handle = await loadReconnectHandle(origin)
-
-  assert.equal(grant.origin, origin)
-  assert.equal(grant.sessionId, '2d5057472b1731ccfb1a')
-  assert.deepEqual(grant.proofKey, { type: 'hmac-proof-key' })
-  assert.deepEqual(grant.signalingKey, { type: 'hkdf-key' })
-  assert.equal(handle.origin, origin)
-  assert.equal(handle.handle, 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
+  await saveBrowserDeviceIdentity(identity)
+  assert.deepEqual(await loadBrowserDeviceIdentity(origin), identity)
+  await removeBrowserDeviceIdentity(origin)
+  assert.equal(await loadBrowserDeviceIdentity(origin), null)
   assert.equal(indexedDB.transactions.some((transaction) => transaction.closedWithoutRequests), false)
 })
 
-test('interrupted re-pair persistence restores the prior exact-origin device compartment', async () => {
-  const indexedDB = createStrictIndexedDB()
-  globalThis.indexedDB = indexedDB
-  Object.defineProperty(globalThis, 'crypto', {
-    configurable: true,
-    value: {
-      subtle: {
-        async importKey(_format, _keyData, algorithm) {
-          return { type: typeof algorithm === 'string' ? 'hkdf-key' : 'hmac-proof-key' }
-        },
-        async deriveBits() { return new Uint8Array(32).buffer },
-      },
-    },
-  })
-  const origin = 'https://pair.example.test'
-  const grant = (handle, sessionId) => ({ expiresAt: null, grant: 'A'.repeat(43), handle, issuedAt: '2026-08-09T10:00:00.000Z', origin, protocolVersion: 'v1', sessionId })
-  await saveEstablishedPairing({ deviceId: 'old-device', deviceName: 'Old browser', origin, privateKey: { key: 'old' }, publicKeyPem: 'old-public-key' }, grant('B'.repeat(43), 'old-session'))
-
-  const replacement = await saveEstablishedPairingReversibly(
-    { deviceId: 'new-device', deviceName: 'New browser', origin, privateKey: { key: 'new' }, publicKeyPem: 'new-public-key' },
-    grant('C'.repeat(43), 'new-session'),
-  )
-  assert.equal((await loadPairing(origin)).deviceId, 'new-device')
-  await replacement.rollback()
-  assert.equal((await loadPairing(origin)).deviceId, 'old-device')
-  assert.equal((await loadReconnectHandle(origin)).handle, 'B'.repeat(43))
-  assert.equal((await loadReconnectGrant(origin)).sessionId, 'old-session')
+test('browser device storage rejects origins that could cross the origin boundary', async () => {
+  globalThis.indexedDB = createStrictIndexedDB()
+  for (const origin of [
+    'http://server.example',
+    'https://server.example/path',
+    'https://server.example?query=1',
+    'https://server.example#transport=webrtc',
+  ]) {
+    await assert.rejects(() => loadBrowserDeviceIdentity(origin), /exact HTTPS origin/)
+  }
 })
 
 async function importDeviceKeys() {
@@ -95,7 +67,6 @@ async function importDeviceKeys() {
 function createStrictIndexedDB() {
   const database = new FakeDatabase()
   const transactions = []
-
   return {
     transactions,
     open() {
@@ -112,28 +83,18 @@ function createStrictIndexedDB() {
 
 class FakeDatabase {
   constructor() {
-    this.closed = false
     this.stores = new Map()
-    this.objectStoreNames = {
-      contains: (name) => this.stores.has(name),
-    }
+    this.objectStoreNames = { contains: (name) => this.stores.has(name) }
   }
-
   createObjectStore(name, options) {
-    const store = new Map()
-    this.stores.set(name, { keyPath: options.keyPath, records: store })
-    return store
+    this.stores.set(name, { keyPath: options.keyPath, records: new Map() })
   }
-
   transaction(storeNames) {
     const transaction = new FakeTransaction(this, Array.isArray(storeNames) ? storeNames : [storeNames])
     globalThis.indexedDB.transactions.push(transaction)
     return transaction
   }
-
-  close() {
-    this.closed = true
-  }
+  close() {}
 }
 
 class FakeTransaction {
@@ -146,7 +107,6 @@ class FakeTransaction {
     this.onabort = null
     this.oncomplete = null
     this.onerror = null
-
     queueMicrotask(() => {
       if (this.pendingRequestCount === 0) {
         this.active = false
@@ -155,71 +115,37 @@ class FakeTransaction {
       }
     })
   }
-
   objectStore(name) {
-    if (!this.storeNames.includes(name)) {
-      throw new Error(`Store ${name} is not in this transaction.`)
-    }
+    if (!this.storeNames.includes(name)) throw new Error(`Store ${name} is not in this transaction.`)
     const store = this.database.stores.get(name)
     if (!store) throw new Error(`Store ${name} does not exist.`)
     return new FakeObjectStore(this, store)
   }
-
   requestStarted() {
-    if (!this.active) {
-      throw new Error('Failed to store record in an IDBObjectStore: The transaction is inactive or finished.')
-    }
+    if (!this.active) throw new Error('The transaction is inactive.')
     this.pendingRequestCount += 1
   }
-
   requestFinished() {
     this.pendingRequestCount -= 1
-    if (this.pendingRequestCount === 0) {
-      queueMicrotask(() => {
-        if (this.pendingRequestCount === 0 && this.active) {
-          this.active = false
-          this.oncomplete?.()
-        }
-      })
-    }
+    if (this.pendingRequestCount === 0) queueMicrotask(() => {
+      if (this.pendingRequestCount === 0 && this.active) {
+        this.active = false
+        this.oncomplete?.()
+      }
+    })
   }
 }
 
 class FakeObjectStore {
-  constructor(transaction, store) {
-    this.transaction = transaction
-    this.store = store
-  }
-
-  put(record) {
+  constructor(transaction, store) { this.transaction = transaction; this.store = store }
+  put(record) { return this.request(() => { this.store.records.set(record[this.store.keyPath], structuredClone(record)); return record[this.store.keyPath] }) }
+  get(key) { return this.request(() => this.store.records.get(key)) }
+  delete(key) { return this.request(() => this.store.records.delete(key)) }
+  request(operation) {
     this.transaction.requestStarted()
     const request = createRequest()
     queueMicrotask(() => {
-      this.store.records.set(record[this.store.keyPath], structuredClone(record))
-      request.result = record[this.store.keyPath]
-      request.onsuccess?.()
-      this.transaction.requestFinished()
-    })
-    return request
-  }
-
-  get(key) {
-    this.transaction.requestStarted()
-    const request = createRequest()
-    queueMicrotask(() => {
-      request.result = this.store.records.get(key)
-      request.onsuccess?.()
-      this.transaction.requestFinished()
-    })
-    return request
-  }
-
-  delete(key) {
-    this.transaction.requestStarted()
-    const request = createRequest()
-    queueMicrotask(() => {
-      this.store.records.delete(key)
-      request.result = undefined
+      request.result = operation()
       request.onsuccess?.()
       this.transaction.requestFinished()
     })
@@ -228,11 +154,5 @@ class FakeObjectStore {
 }
 
 function createRequest() {
-  return {
-    error: null,
-    onerror: null,
-    onsuccess: null,
-    onupgradeneeded: null,
-    result: undefined,
-  }
+  return { error: null, onerror: null, onsuccess: null, onupgradeneeded: null, result: undefined }
 }

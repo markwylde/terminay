@@ -1,13 +1,14 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 
 export type DeviceChallengePayload = {
-  action: 'open-terminal-session'
+  action: 'connect'
   challengeId: string
   deviceId: string
   expiresAt: string
   issuedAt: string
   nonce: string
   origin: string
+  serverId: string
 }
 
 type AuthChallenge = {
@@ -30,6 +31,7 @@ export class ChallengeStore {
   async create(options: {
     deviceId: string
     origin: string
+    serverId: string
   }): Promise<{
     payload: DeviceChallengePayload
     signingInput: string
@@ -39,13 +41,14 @@ export class ChallengeStore {
     const expiresAt = new Date(issuedAt.getTime() + CHALLENGE_TTL_MS)
 
     const payload: DeviceChallengePayload = {
-      action: 'open-terminal-session',
+      action: 'connect',
       challengeId,
       deviceId: options.deviceId,
       expiresAt: expiresAt.toISOString(),
       issuedAt: issuedAt.toISOString(),
       nonce: randomBytes(24).toString('base64url'),
       origin: options.origin,
+      serverId: options.serverId,
     }
 
     this.challenges.set(challengeId, {

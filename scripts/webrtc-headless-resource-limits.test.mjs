@@ -182,7 +182,6 @@ function createHostConfig(index) {
     relayJoinTokenHash: `relay-token-hash-${index}`,
     roomId: `room-${index}`,
     sessionId: `session-${index}`,
-    signalingAuthToken: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
     signalingUrl: `wss://session-${index}.terminay.com/signal`,
   }
 }

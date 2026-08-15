@@ -6,7 +6,7 @@ const identity = {
   profileId: "remote-secure",
   serverId: "server-secure",
   origin: "https://secure.example",
-  kind: "reconnect-grant",
+  kind: "device-key",
 };
 
 function backend({ available = true, stored = new Map(), fail = false } = {}) {
@@ -30,9 +30,9 @@ test("secure credential store round-trips through the OS backend and deletes by 
   const store = new SecureCredentialStore(native);
 
   assert.deepEqual(await store.status(), { status: "available", backend: "os" });
-  assert.deepEqual(await store.save(identity, "reconnect-secret"), { status: "available", backend: "os" });
+  assert.deepEqual(await store.save(identity, "protected-device-key"), { status: "available", backend: "os" });
   const loaded = await store.load(identity);
-  assert.deepEqual(loaded, { status: "available", backend: "os", value: { ...identity, secret: "reconnect-secret" } });
+  assert.deepEqual(loaded, { status: "available", backend: "os", value: { ...identity, secret: "protected-device-key" } });
   assert.equal(native.calls.filter(([operation]) => operation === "write").length, 1);
 
   assert.deepEqual(await store.remove(identity), { status: "available", backend: "os" });

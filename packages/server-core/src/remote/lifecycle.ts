@@ -13,8 +13,6 @@ export type RemoteAuditAction =
 	| 'peer-closed'
 	| 'device-registered'
 	| 'device-revoked'
-	| 'reconnect-grant-issued'
-	| 'reconnect-grant-revoked'
 	| 'cleanup';
 
 /** Reasons are intentionally a closed set so relay failures never become a
@@ -128,7 +126,7 @@ interface RateWindow {
 	startedAt: number;
 }
 
-/** Fixed-window limiter for pairing/reconnect admission attempts. */
+/** Fixed-window limiter for pairing and device-authentication attempts. */
 export class RemoteRateLimiter {
 	private readonly now: () => number;
 	private readonly maxAttempts: number;
@@ -177,62 +175,6 @@ export class RemoteRateLimiter {
 	}
 }
 
-export interface RemoteDeviceRecord {
-	readonly deviceId: ProtocolId;
-	readonly firstSeenAt: number;
-	lastSeenAt: number;
-	revokedAt: number | null;
-}
-
-/** Metadata-only device registry; device keys and grants remain separate. */
-export class RemoteDeviceStore {
-	private readonly now: () => number;
-	private readonly devices = new Map<ProtocolId, RemoteDeviceRecord>();
-
-	constructor(now = () => Date.now()) {
-		this.now = now;
-	}
-
-	register(deviceId: ProtocolId): RemoteDeviceRecord {
-		if (!validKey(deviceId))
-			throw new TypeError('remote device identity is invalid');
-		const now = this.now();
-		const existing = this.devices.get(deviceId);
-		if (existing !== undefined) {
-			existing.lastSeenAt = now;
-			return snapshotDevice(existing);
-		}
-		const record: RemoteDeviceRecord = {
-			deviceId,
-			firstSeenAt: now,
-			lastSeenAt: now,
-			revokedAt: null,
-		};
-		this.devices.set(deviceId, record);
-		return snapshotDevice(record);
-	}
-
-	revoke(deviceId: ProtocolId): boolean {
-		const record = this.devices.get(deviceId);
-		if (record === undefined || record.revokedAt !== null) return false;
-		record.revokedAt = this.now();
-		return true;
-	}
-
-	get(deviceId: ProtocolId): RemoteDeviceRecord | undefined {
-		const record = this.devices.get(deviceId);
-		return record === undefined ? undefined : snapshotDevice(record);
-	}
-
-	list(): readonly RemoteDeviceRecord[] {
-		return Object.freeze([...this.devices.values()].map(snapshotDevice));
-	}
-}
-
-function snapshotDevice(record: RemoteDeviceRecord): RemoteDeviceRecord {
-	return Object.freeze({ ...record });
-}
-
 function validKey(value: string): boolean {
 	return (
 		typeof value === 'string' &&
@@ -253,8 +195,6 @@ const AUDIT_ACTIONS: ReadonlySet<RemoteAuditAction> = new Set([
 	'peer-closed',
 	'device-registered',
 	'device-revoked',
-	'reconnect-grant-issued',
-	'reconnect-grant-revoked',
 	'cleanup',
 ]);
 

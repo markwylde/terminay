@@ -130,12 +130,10 @@ export class BrowserSessionBundleHost {
 	}
 }
 
-export function createBrowserManagerBundleHost(cacheStorage: CacheStorage): BrowserSessionBundleHost {
-	return new BrowserSessionBundleHost({ store: new CacheStorageBrowserBundleStore(cacheStorage, 'terminay.manager-session-archives.v1') });
-}
-
-export function createDirectBrowserBundleHost(cacheStorage: CacheStorage): BrowserSessionBundleHost {
-	return new BrowserSessionBundleHost({ store: new CacheStorageBrowserBundleStore(cacheStorage, 'terminay.direct-session-archives.v1') });
+/** The session origin owns workspace bundle installation. The PWA manager
+ * never creates this host or receives bundle bytes. */
+export function createBrowserSessionBundleHost(cacheStorage: CacheStorage): BrowserSessionBundleHost {
+	return new BrowserSessionBundleHost({ store: new CacheStorageBrowserBundleStore(cacheStorage, 'terminay.session-archives.v1') });
 }
 
 /** No browser brand detection: capability negotiation remains available to the

@@ -37,7 +37,7 @@ test("profile import rejects credentials, fragments, and token-like fields", () 
   const store = new ConnectionProfileStore();
   assert.throws(() => store.import({ id: "bad", serverId: "srv", label: "Bad", origin: "https://example.test/path#pairing-secret" }), /origin/);
   assert.throws(() => store.import({ id: "bad", serverId: "srv", label: "Bad", origin: "https://user:pass@example.test" }), /origin/);
-  assert.throws(() => store.import({ id: "bad", serverId: "srv", label: "Bad", origin: "https://example.test", reconnectGrant: "secret" }), /origin|credential|invalid/);
+  assert.throws(() => store.import({ id: "bad", serverId: "srv", label: "Bad", origin: "https://example.test", deviceKey: "secret" }), /origin|credential|invalid/);
 });
 
 test("profile import fails closed on legacy authority-shaped metadata", () => {

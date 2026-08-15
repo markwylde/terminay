@@ -89,10 +89,10 @@ the selected server's exact verified bundle over an opaque host-provided byte
 transport. A separate, capability-negotiated host bridge provides optional
 native presentation without becoming a server or workspace API.
 
-The web host has no local server. Its stable shell adds, remembers, opens, and
-manages remote connections, establishes the compatible bootstrap transport,
-and installs the selected server's bundle into an isolated session origin. It
-does not ship a second full workspace build.
+The web host has no local server. `app.terminay.com` adds, remembers, opens, and
+manages non-secret bookmarks to remote servers. The selected stable session
+origin owns device authentication, WebRTC, and installation of that server's
+workspace bundle. The PWA does not ship a workspace build.
 
 Desktop and browser hosts never install or execute project-environment
 extensions, connect to SSH/Puzed targets, or hold their credentials. A remote

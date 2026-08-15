@@ -53,7 +53,7 @@ The server persists and publishes:
   remote exposure, agents, AI providers, macros, and server automation;
 - macros and server-held secrets;
 - authoritative agent/activity state and acknowledgement;
-- paired devices, reconnect grants, exposure state, and audit records; and
+- paired devices, public device keys, exposure state, and audit records; and
 - schema and revision metadata needed for safe migration and resync.
 
 The persistence contract does not include unbounded terminal scrollback, live

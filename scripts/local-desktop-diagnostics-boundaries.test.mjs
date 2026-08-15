@@ -72,7 +72,6 @@ test('Local server diagnostics are semantic and PTY data paths never call the si
 		'local-server.starting',
 		'local-server.ready',
 		'local-server.failed',
-		'local-server.connection.failed',
 		'local-server.file-operation.failed',
 		'local-server.stopping',
 		'local-server.stopped',
