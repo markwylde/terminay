@@ -24,6 +24,11 @@ const reviewedPins = new Map([
   ["docker/build-push-action", "10e90e3645eae34f1e60eeb005ba3a3d33f178e8"],
 ]);
 
+const additionalReviewedPins = new Map([
+  ["actions/upload-artifact", new Set(["ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5"])],
+  ["actions/download-artifact", new Set(["9bc31d5ccc31df68ecc42ccf4149144866c47d8a"])],
+]);
+
 function actionReferences(contents) {
   return [...contents.matchAll(/^\s*(?:-\s*)?uses:\s+([^@\s]+)@([^\s#]+)(?:\s+#.*)?$/gmu)];
 }
@@ -34,7 +39,10 @@ test("all GitHub Actions dependencies use reviewed immutable commit pins", () =>
     assert.ok(references.length > 0, `${name} must be scanned for action pins`);
     for (const [, action, revision] of references) {
       assert.match(revision, /^[0-9a-f]{40}$/u, `${name}: ${action} must use a full commit SHA`);
-      assert.equal(revision, reviewedPins.get(action), `${name}: ${action} pin must be explicitly reviewed`);
+      assert.ok(
+        revision === reviewedPins.get(action) || additionalReviewedPins.get(action)?.has(revision),
+        `${name}: ${action} pin must be explicitly reviewed`,
+      );
     }
   }
 });
@@ -118,11 +126,12 @@ test("every release job has an explicit bounded runtime", () => {
   }
 });
 
-test("ordinary CI has a read-only token", () => {
+test("ordinary CI retains a read-only token while using provider-neutral E2E artifacts", () => {
   const ci = workflows.get("ci.yml");
   assert.ok(ci, "ci.yml must exist");
   assert.match(ci, /^permissions:\n {2}contents: read$/mu);
   assert.doesNotMatch(ci, /^\s+(?:contents|packages|id-token|actions|checks|deployments|discussions|issues|pull-requests|security-events|statuses): write$/mu);
+  assert.doesNotMatch(ci, /docker (?:login|push|pull)/u);
 });
 
 test("production WebRTC evidence is pinned to an immutable hosted signaling commit", () => {
