@@ -35,16 +35,14 @@ import {
 	sharedRouteForView,
 } from '../shared/ResponsiveWorkspaceEntry';
 import { SharedAgentRouteBody } from '../shared/SharedAgentRouteBody';
-import {
-	SharedConnectionsRouteBody,
-	type SharedConnectionsRouteBodyProps,
-} from '../shared/SharedConnectionsRouteBody';
+import { type SharedConnectionsRouteBodyProps } from '../shared/SharedConnectionsRouteBody';
 import {
 	type SharedEditTabResult,
 	SharedEditTabRouteBody,
 } from '../shared/SharedEditTabRouteBody';
 import { SharedFolderRouteBody } from '../shared/SharedFolderRouteBody';
 import { SharedGitRouteBody } from '../shared/SharedGitRouteBody';
+import { RemoteControlWindow } from '../shared/RemoteControlWindow';
 import { SharedTerminalRouteBody } from '../shared/SharedTerminalRouteBody';
 import type { RemoteAccessStatus } from '../types/terminay';
 import { createBrowserMacroSettingsClient } from './browserRendererHostAdapters';
@@ -61,7 +59,7 @@ export type ConnectedWebRendererWorkspaceProps = Readonly<{
 	) => () => void;
 }>;
 
-type BrowserAuxiliaryRoute = 'settings' | 'macros' | 'recordings';
+type BrowserAuxiliaryRoute = 'settings' | 'macros' | 'recordings' | 'remote-control';
 
 function initialAuxiliaryRoute(): AuxiliaryRouteRequest | null {
 	const params = new URLSearchParams(window.location.search);
@@ -77,6 +75,8 @@ function initialAuxiliaryRoute(): AuxiliaryRouteRequest | null {
 			return { kind: 'macros' };
 		case 'recordings':
 			return { kind: 'recordings' };
+		case 'remote-control':
+			return { kind: 'remote-control' };
 		case 'project-environments': {
 			const providerId = params.get('provider');
 			const mode = params.get('mode');
@@ -110,6 +110,7 @@ function nativeAuxiliaryRoute(request: AuxiliaryRouteRequest): string | null {
 			break;
 		case 'macros':
 		case 'recordings':
+		case 'remote-control':
 			params.set('auxiliary', request.kind);
 			break;
 		case 'project-environments':
@@ -133,6 +134,7 @@ type BrowserMenuItem = Readonly<{
 	id: string;
 	label: string;
 	onSelect: () => void;
+	startsGroup?: boolean;
 }>;
 
 const menuOrder: readonly BrowserMenuId[] = ['file', 'edit', 'view', 'help'];
@@ -156,7 +158,6 @@ export function ConnectedWebRendererWorkspace({
 	const hasNativeMenus = hostContext?.capabilities.nativeMenus !== undefined;
 	const hasNativeWindowControls =
 		hostContext?.capabilities.nativeWindows !== undefined;
-	const [isConnectionManagerOpen, setIsConnectionManagerOpen] = useState(false);
 	const nativeAuxiliaryDocument = useMemo(initialAuxiliaryRoute, []);
 	const requestedView = useMemo(() => {
 		// Canonical route presentations use the query form.  Retain fragment
@@ -322,6 +323,9 @@ export function ConnectedWebRendererWorkspace({
 				case 'recordings':
 					void auxiliaryRoutes.openRecordings();
 					break;
+				case 'remote-control':
+					void auxiliaryRoutes.openRemoteControl();
+					break;
 			}
 		},
 		[auxiliaryRoutes],
@@ -388,6 +392,8 @@ export function ConnectedWebRendererWorkspace({
 					/>
 				) : route.kind === 'macros' ? (
 					<MacrosWindow macroSettingsClient={macroSettingsClient} />
+				) : route.kind === 'remote-control' ? (
+					<RemoteControlWindow {...connectionRoute} />
 				) : (
 					<RecordingsWindow client={recordingsClient} />
 				)}
@@ -403,9 +409,7 @@ export function ConnectedWebRendererWorkspace({
 	const sharedRouteContent = (() => {
 		switch (requestedView) {
 			case 'connections':
-				return (
-					<SharedConnectionsRouteBody state="ready" {...connectionRoute} />
-				);
+				return <RemoteControlWindow {...connectionRoute} />;
 			case 'git':
 				return (
 					<SharedGitRouteBody
@@ -453,7 +457,9 @@ export function ConnectedWebRendererWorkspace({
 						host={Object.freeze({
 							auxiliaryRoutes,
 							onDisconnect: onBack,
-							onOpenConnectionManager: () => setIsConnectionManagerOpen(true),
+							onOpenConnectionManager: () => {
+								void auxiliaryRoutes.openRemoteControl();
+							},
 							presentation: Object.freeze({
 								nativeMenus: hasNativeMenus,
 								nativeWindowControls: hasNativeWindowControls,
@@ -494,7 +500,6 @@ export function ConnectedWebRendererWorkspace({
 						<ConnectedBrowserMenuBar
 							onBack={onBack}
 							onOpenAuxiliaryRoute={requestBrowserAuxiliaryRoute}
-							onOpenConnectionManager={() => setIsConnectionManagerOpen(true)}
 						/>
 					)}
 					{workspaceContent}
@@ -508,43 +513,6 @@ export function ConnectedWebRendererWorkspace({
 					{auxiliaryContent(auxiliaryRoute)}
 				</ConnectedBrowserAuxiliaryDialog>
 			)}
-			{isConnectionManagerOpen ? (
-				<div
-					className="connected-web-connection-backdrop"
-					role="presentation"
-					onMouseDown={(event) => {
-						if (event.target === event.currentTarget)
-							setIsConnectionManagerOpen(false);
-					}}
-				>
-					<section
-						aria-labelledby="connected-web-connections-title"
-						aria-modal="true"
-						className="connected-web-connection-dialog"
-						role="dialog"
-					>
-						<header>
-							<div>
-								<h2 id="connected-web-connections-title">Connections</h2>
-								<p>
-									Choose and manage the Terminay server for this workspace.
-								</p>
-							</div>
-							<button
-								type="button"
-								onClick={() => setIsConnectionManagerOpen(false)}
-							>
-								Close
-							</button>
-						</header>
-						<SharedConnectionsRouteBody
-							embedded
-							state="ready"
-							{...connectionRoute}
-						/>
-					</section>
-				</div>
-			) : null}
 		</div>
 	);
 }
@@ -552,11 +520,9 @@ export function ConnectedWebRendererWorkspace({
 function ConnectedBrowserMenuBar({
 	onBack,
 	onOpenAuxiliaryRoute,
-	onOpenConnectionManager,
 }: Readonly<{
 	onBack: () => void;
 	onOpenAuxiliaryRoute: (route: BrowserAuxiliaryRoute) => void;
-	onOpenConnectionManager: () => void;
 }>) {
 	const [openMenu, setOpenMenu] = useState<BrowserMenuId | null>(null);
 	const menuButtonRefs = useRef(new Map<BrowserMenuId, HTMLButtonElement>());
@@ -618,13 +584,19 @@ function ConnectedBrowserMenuBar({
 			file: [
 				{
 					id: 'new-terminal',
-					label: 'New Terminal',
+					label: 'Create a new terminal tab',
 					onSelect: () => dispatchShortcut('t'),
 				},
 				{
 					id: 'new-project',
-					label: 'New Project',
+					label: 'Create a new project',
 					onSelect: () => dispatchShortcut('p'),
+				},
+				{
+					id: 'remote-control',
+					label: 'Remote Control',
+					startsGroup: true,
+					onSelect: () => onOpenAuxiliaryRoute('remote-control'),
 				},
 				{
 					id: 'project-environments',
@@ -640,12 +612,6 @@ function ConnectedBrowserMenuBar({
 					onSelect: () =>
 						window.dispatchEvent(new Event('terminay-open-extensions')),
 				},
-				{ id: 'save', label: 'Save', onSelect: () => dispatchShortcut('s') },
-				{
-					id: 'settings',
-					label: 'Settings',
-					onSelect: () => onOpenAuxiliaryRoute('settings'),
-				},
 				{
 					id: 'macros',
 					label: 'Macros',
@@ -657,16 +623,11 @@ function ConnectedBrowserMenuBar({
 					onSelect: () => onOpenAuxiliaryRoute('recordings'),
 				},
 				{
-					id: 'connections',
-					label: 'Connections',
-					onSelect: onOpenConnectionManager,
+					id: 'settings',
+					label: 'Settings',
+					onSelect: () => onOpenAuxiliaryRoute('settings'),
 				},
-				{
-					id: 'close-terminal',
-					label: 'Close Terminal',
-					onSelect: () => dispatchShortcut('w'),
-				},
-				{ id: 'disconnect', label: 'Disconnect', onSelect: onBack },
+				{ id: 'disconnect', label: 'Disconnect', startsGroup: true, onSelect: onBack },
 			],
 			help: [
 				{
@@ -694,7 +655,7 @@ function ConnectedBrowserMenuBar({
 				},
 			],
 		}),
-		[dispatchShortcut, onBack, onOpenAuxiliaryRoute, onOpenConnectionManager],
+		[dispatchShortcut, onBack, onOpenAuxiliaryRoute],
 	);
 
 	const focusMenuButton = useCallback((menuId: BrowserMenuId) => {
@@ -867,7 +828,7 @@ function ConnectedBrowserMenuBar({
 										}}
 										key={item.id}
 										type="button"
-										className="connected-web-menu__item"
+										className={`connected-web-menu__item${item.startsGroup === true ? ' connected-web-menu__item--group' : ''}`}
 										role="menuitem"
 										onClick={() => activateItem(menuId, item)}
 										onKeyDown={(event) =>
@@ -948,6 +909,8 @@ function getAuxiliaryRouteTitle(route: AuxiliaryRouteRequest): string {
 			return 'Recordings';
 		case 'project-environments':
 			return 'Project Environments';
+		case 'remote-control':
+			return 'Remote Control';
 		case 'edit-tab':
 			return route.state.kind === 'project'
 				? 'Edit Project Tab'

@@ -1,19 +1,19 @@
 import { expect, test } from './fixtures';
 
-test('Electron exposes the connection manager for canonical remote profiles', async ({
+test('Electron opens Remote Control as a full auxiliary window', async ({
+	appHarness,
 	mainWindow,
 }) => {
 	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
-	await mainWindow.getByLabel('Open connection menu').click();
-	await mainWindow.getByRole('button', { name: 'Add connection…' }).click();
-
-	const manager = mainWindow.getByRole('dialog', {
-		name: 'Connections',
-	});
-	await expect(manager).toBeVisible();
+	const manager = await appHarness.openRemoteControlWindow(mainWindow);
+	await expect(manager.locator('.remote-control-window')).toBeVisible();
 	await expect(
-		manager.getByRole('heading', { name: 'Connections' }),
-	).toHaveCount(1);
+		manager.getByRole('heading', { name: 'Remote Control' }),
+	).toBeVisible();
+	await expect(manager.locator('[role="dialog"]')).toHaveCount(0);
+	expect(new URL(manager.url()).searchParams.get('auxiliary')).toBe(
+		'remote-control',
+	);
 	await expect(
 		manager.getByRole('listbox', { name: 'Saved Terminay servers' }),
 	).toHaveCount(1);
@@ -26,4 +26,19 @@ test('Electron exposes the connection manager for canonical remote profiles', as
 	await expect(
 		manager.getByRole('button', { name: 'Continue pairing', exact: true }),
 	).toBeVisible();
+});
+
+test('the header connection menu opens the Remote Control window', async ({
+	appHarness,
+	mainWindow,
+}) => {
+	await mainWindow.locator('.project-tabbar').waitFor({ state: 'visible' });
+	const manager = await appHarness.openChildWindow(async () => {
+		await mainWindow.getByLabel('Open connection menu').click();
+		await mainWindow.getByRole('button', { name: 'Remote Control' }).click();
+	});
+	await expect(manager.locator('.remote-control-window')).toBeVisible();
+	expect(new URL(manager.url()).searchParams.get('auxiliary')).toBe(
+		'remote-control',
+	);
 });

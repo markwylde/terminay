@@ -136,6 +136,7 @@ export const TERMINAY_HOST_MENU_COMMANDS = [
 	'open-macros',
 	'open-project-environments',
 	'open-recordings',
+	'open-remote-control',
 	'open-settings',
 	'popout-active',
 	'save-active',

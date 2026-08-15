@@ -79,6 +79,13 @@
 	white-space: nowrap;
 }
 
+.connected-web-menu__item--group {
+	margin-top: 4px;
+	padding-top: 10px;
+	border-top: 1px solid #303b47;
+	border-radius: 0 0 5px 5px;
+}
+
 .connected-web-menu__item:hover,
 .connected-web-menu__item:focus-visible {
 	background: #2b3744;

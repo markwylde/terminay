@@ -44,13 +44,16 @@ configurable keyboard accelerators.
   render the browser menu bar. Browser hosts render the in-page menu. On macOS,
   project controls respect the native title-bar/traffic-light inset and never
   overlap either native chrome or an in-page menu.
-- File and the Command Bar expose **New Project with Environment…**, **Project
-  Environments…**, and **Extensions…** through the same semantic route/command
-  model. **Project Environments…** opens or focuses its dedicated management
-  window on Desktop; **Extensions…** opens or focuses the established Settings
-  window at the Extensions section. Web uses the corresponding in-page routes.
-  Both manage the selected Terminay Server, not client-local state, and neither
-  management surface uses project/tab editor sheet chrome.
+- File and the Command Bar expose **Create a new terminal tab**, **Create a
+  new project**, then the management surfaces **Remote Control**, **Project
+  Environments…**, **Extensions…**, **Macros**, **Recordings**, and
+  **Settings** through the same semantic route/command model. **Remote
+  Control** opens or focuses the connection-management window on Desktop.
+  **Project Environments…** opens or focuses its dedicated management window
+  on Desktop; **Extensions…** opens or focuses the established Settings window
+  at the Extensions section. Web uses the corresponding in-page routes. These
+  surfaces manage the selected Terminay Server or host connection list as
+  specified, not project/tab editor sheet chrome.
 - Closing Terminay proceeds immediately when every terminal is at its shell
   prompt. If any terminal in any open project has a non-shell foreground
   process, Desktop reports the affected terminal count and asks whether to
@@ -113,9 +116,9 @@ forwarding paths, provider messages, or plaintext.
 - Desktop actions preserve window/project/session boundaries.
 - Extensions appear within the ordinary Settings navigation, and all extension
   commands focus that section rather than creating an Extensions-only modal.
-- Project Environments opens as a reusable management window consistent with
-  Settings, Macros, and Recordings on Desktop and as the equivalent shared
-  in-page route on web.
+- Project Environments and Remote Control open as reusable management windows
+  consistent with Settings, Macros, and Recordings on Desktop and as the
+  equivalent shared in-page routes on web.
 - An idle application closes without a warning. When foreground work exists,
   dismissing the close alert or choosing **Keep Running** leaves every project
   and terminal running, while choosing **Quit Terminay** performs the normal
