@@ -1,7 +1,7 @@
 import type { ProtocolId } from "@terminay/protocol";
 
-/** Host-local state deliberately excludes device keys, reconnect grants,
- * pairing fragments, and any server workspace data. */
+/** Host-local state deliberately excludes device keys, pairing fragments,
+ * and any server workspace data. */
 export type ConnectionProfileStatus =
   | "known"
   | "connecting"

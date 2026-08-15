@@ -228,33 +228,17 @@ export type RemoteAccessStatus = {
 		deviceId: string;
 		deviceName: string;
 	}>;
-	availableAddresses: string[];
 	configurationIssue: string | null;
 	configurationPath: string;
 	errorMessage: string | null;
 	isRunning: boolean;
-	directListenerRunning?: boolean;
-	lanPairingExpiresAt: string | null;
-	lanPairingQrCodeDataUrl: string | null;
-	lanPairingQrCodePath: string | null;
-	lanPairingUrl: string | null;
-	origin: string | null;
 	pairedDeviceCount: number;
 	pairedDevices: Array<{
 		addedAt: string;
 		deviceId: string;
 		lastSeenAt: string | null;
 		name: string;
-		origin: string;
-		reconnectGrantExpiresAt: string | null;
-		reconnectGrantLastUsedAt: string | null;
-		reconnectGrantStatus: 'none' | 'valid' | 'expired' | 'revoked';
 	}>;
-	pairingMode: 'lan' | 'webrtc';
-	pairingExpiresAt: string | null;
-	pairingQrCodeDataUrl: string | null;
-	pairingQrCodePath: string | null;
-	pairingUrl: string | null;
 	webRtcPairingExpiresAt: string | null;
 	webRtcPairingQrCodeDataUrl: string | null;
 	webRtcPairingUrl: string | null;
@@ -624,10 +608,6 @@ export interface McpInstallActionResult {
 export interface TerminayTestApi {
 	/** Test-only renderer-side failure of the one exact active Local application transport. */
 	failActiveLocalServerConnection: () => Promise<{ connectionId: string }>;
-	/** Test-only opaque LAN application-transport identifiers. */
-	listRemoteProtocolConnections: () => Promise<readonly string[]>;
-	/** Test-only server-side failure for one exact LAN application transport. */
-	failRemoteProtocolConnection: (connectionId: string) => Promise<void>;
 	/** Test-only server-owned terminal creation. Never exposed in production. */
 	createServerTerminal: (options?: {
 		cwd?: string;

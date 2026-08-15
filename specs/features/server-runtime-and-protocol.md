@@ -19,16 +19,16 @@ an independently deployed latest workspace build.
 The complete server-owned session entry is a separate artifact from the thin
 `app.terminay.com` connection manager. Embedded and standalone servers publish
 the session entry in their signed UI-bundle manifest; they never point that
-manifest at the manager entry. Direct-network pairing can therefore open
-enrollment and the workspace while the public manager stays a small,
+manifest at the manager entry. A pairing link can therefore open enrollment
+and the workspace while the public manager stays a small,
 application-protocol-blind bootstrap.
 
 The bundle contains the application-protocol client that matches its server.
 Desktop and browser hosts establish authentication and an opaque byte
 transport, verify and launch the bundle, and then stay outside application
-protocol interpretation. This lets one host connect across server application
-versions while keeping its smaller bootstrap, transport, bundle-format,
-native-host-bridge, and negotiated-capability compatibility boundaries explicit.
+protocol interpretation. The host validates the bootstrap, transport,
+bundle-format, native-host-bridge, and declared capability contracts before
+launching the selected server bundle.
 
 ## Product topology
 
@@ -40,18 +40,16 @@ Terminay has four distinct runtime roles:
 2. **Terminay Desktop** owns native application windows, local-server
    supervision, OS integration, connection credentials, verified bundle
    installation, and opaque local/remote transport delivery.
-3. **The web connection host** at `app.terminay.com` owns browser-local
-   connection metadata and launches or embeds an origin-isolated server UI.
-4. **The hosted bootstrap/signaling service** owns only static bootstrap,
-   manager-shell, WebRTC signaling, and operational relay state. It never
-   becomes a terminal, filesystem, or application-data proxy.
+3. **The PWA connection manager** at `app.terminay.com` owns browser-local
+   stable-origin bookmarks and navigation.
+4. **The hosted session/signaling service** owns the origin-isolated session
+   bootstrap, WebRTC signaling, and operational relay state. It never becomes
+   a terminal, filesystem, or application-data proxy.
 
-Hosted bootstrap and signaling revisions publish a compatibility window for
-dependent client versions. A new hosted revision must continue to accept every
-currently deployed dependent client while its replacement Desktop/web clients
-roll out; hosted publication and compatibility verification precede dependent
-client publication, and the previous hosted revision is retired only after
-those clients are covered by the new window.
+Hosted bootstrap, signaling, Desktop, and web releases publish one declared set
+of current contracts. A component whose required contract does not validate
+fails before pairing, profile persistence, bundle launch, or application
+connection.
 
 These are deployable roles, not four independent product implementations. The
 server-bundled workspace UI and its matching application client are one
@@ -81,8 +79,6 @@ The exact ownership and compatibility split is recorded in
 - Closing or reloading an individual renderer does not terminate PTYs.
 - Desktop supervises unexpected server exit and presents recovery rather than
   silently starting a second authority over the same data directory.
-- An explicitly enabled direct network listener claims its configured socket
-  atomically and remains separate from the private Local transport.
 - The embedded server uses a dedicated data directory and the same canonical
   repositories as standalone mode. It does not import or depend on an
   Electron-owned workspace store.
@@ -133,8 +129,8 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
   malformed results.
 - CI exercises node-pty through the canonical server-core terminal authority on
   native x64 and arm64 runners. Desktop packaging proves its extracted
-  `@terminay/server` dependency closure; the removed Electron `ptyHost` child
-  artifact is not a v2 release input.
+  `@terminay/server` dependency closure and contains no separate Electron PTY
+  child artifact.
 - A clean dependency install normalizes the executable mode of node-pty's
   platform `spawn-helper` before development, tests, or artifact staging. The
   normalization is bounded to that named helper inside the installed node-pty
@@ -146,7 +142,7 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
   network address, pairing room, or connection label.
 - Reinstall/import and data-directory cloning must not accidentally advertise
   two live authorities with one identity. Identity rotation is explicit.
-- Workspace state, settings, macros, trust records, reconnect grants, audit
+- Workspace state, settings, macros, registered device public keys, audit
   events, extension packages/receipts/data, project-environment profiles, and
   service metadata live under one documented server data root.
 - The embedded and standalone runtimes compose the revisioned settings
@@ -162,9 +158,8 @@ foreground start emits a bounded readiness record and handles `SIGINT` and
 - Writes that define canonical state are transactional or atomically
   replaceable, schema-versioned, and recoverable after interruption.
 - The storage implementation remains behind a repository boundary. Canonical
-  state supports atomic multi-object commits, numbered migrations, revision
-  lookup, bounded concurrent access, integrity checks, and recoverable
-  backups.
+  state supports atomic multi-object commits, revision lookup, bounded
+  concurrent access, integrity checks, and recoverable backups.
 
 ## Application protocol
 
@@ -190,10 +185,11 @@ The protocol includes:
 - reconnect/resync rules that never require the client to guess whether a
   mutation committed.
 
-Cross-surface compatibility gates use bounded semantic versions for Desktop,
-Server, the bundled UI, bootstrap, and signaling. A missing, below-minimum, or
-above-maximum version fails before migration or connection state is committed
-with a typed component-specific incompatibility error.
+Cross-surface contract gates use explicit versions for Desktop, Server, the
+bundled UI, bootstrap, and signaling. A missing or non-matching required
+contract fails before connection state is committed with a typed,
+component-specific error. No adapter translates between application protocol,
+bootstrap, transport, bundle, or host-bridge contracts.
 
 Protocol types and runtime validators live in a dependency-light shared
 package. UI code consumes a `TerminayClient` interface and does not call
@@ -222,7 +218,7 @@ agent, MCP, and lifecycle capabilities by canonical project identity. Renderer
 input, host bridges, paths, and labels cannot select an adapter. Missing or
 failed capabilities never fall back to the server machine.
 
-## Client and host compatibility boundaries
+## Client and host contracts
 
 Every selected server supplies its matching workspace bundle and
 application-protocol client. The host supplies two independent boundaries:
@@ -245,8 +241,7 @@ OS integration. Capability selection is injected by the trusted host after
 binding the exact window/source and server profile. It is never selected by a
 URL parameter, renderer setting, server response, or generic Electron IPC.
 
-Application feature evolution does not require a matching Desktop release.
-Compatibility is gated independently for:
+The host validates these contracts independently:
 
 - pairing/reconnect and signaling bootstrap;
 - the framed byte-transport ABI and resource limits;
@@ -254,18 +249,18 @@ Compatibility is gated independently for:
 - the host bridge version and required versus optional capabilities; and
 - the declared required execution/runtime capabilities for the selected host.
 
-For browser hosts, compatibility is established by the manifest's
-protocol/schema revisions and declared required capabilities. Browser brand,
-user-agent strings, and numeric browser or Chromium version ranges are not
-compatibility boundaries and must not gate bootstrap or bundle execution.
+For browser hosts, the manifest's protocol/schema revisions and declared
+required capabilities determine whether launch is valid. Browser brand,
+user-agent strings, and numeric browser or Chromium version ranges do not gate
+bootstrap or bundle execution.
 
-An unsupported optional host capability falls back to the browser-equivalent
-in-page behavior or a clear disabled action. An incompatible required bridge,
-bundle format, transport/bootstrap version, or declared capability fails before
-the workspace is launched or connection state is committed and identifies the
-component that must be upgraded. Direct-browser bootstrap renders that failure
-as typed, visible, non-secret recovery UI rather than leaving a blank document
-or top-level uncaught error.
+An optional host capability is presented only when the host declares it; the
+workspace supplies its normal in-page action where that action is part of the
+browser product. A missing required bridge, bundle format,
+transport/bootstrap version, or declared capability fails before the workspace
+is launched or connection state is committed. Direct-browser bootstrap renders
+that failure as typed, visible, non-secret UI rather than leaving a blank
+document or top-level uncaught error.
 
 Feature-owned client facades inside the server bundle may reduce the shared
 query/command envelope to typed feature results. A host bridge never satisfies
@@ -278,9 +273,8 @@ The privileged host fixes that identity when constructing the endpoint;
 inbound packets for another server or with an invalid bounded shape are
 rejected, while feature-level frame contents remain opaque to the host. The
 renderer receives no raw native transport or credential authority. The
-canonical renderer accepts only that selected-server byte endpoint. It has no
-preload-frame adapter, connection-generation fallback, or legacy server
-connection global that can bypass the endpoint's fixed identity.
+canonical renderer accepts only that selected-server byte endpoint, whose fixed
+server identity is established by the privileged host.
 
 ## Transports
 
@@ -344,10 +338,10 @@ inspect the application protocol.
   per-file inventory or require per-file content hashes.
 - The WebRTC archive metadata declares its application protocol, bundle format,
   supported host-bridge range, and required/optional host capabilities.
-  Browser compatibility uses those declarations and the protocol/schema
-  revisions; it never uses browser brand, user agent, or numeric browser or
-  Chromium runtime-version ranges. Optional native capabilities never become
-  requirements merely because the bundle is running inside Desktop.
+  The host validates those declarations and protocol/schema revisions; it never
+  uses browser brand, user agent, or numeric browser or Chromium runtime-version
+  ranges. Optional native capabilities never become requirements merely because
+  the bundle is running inside Desktop.
 - The privileged server prepares the WebRTC archive as a bounded immutable
   snapshot and transfers its binary bytes as one backpressured operation. Archive
   creation rejects traversal, links, duplicate normalized paths, malformed
@@ -365,15 +359,16 @@ inspect the application protocol.
   `ServerConnection` protocol. Local Desktop provides a private MessagePort
   byte transport; remote Desktop and browser hosts provide an authenticated
   WebRTC byte transport. HTTP remains limited to bootstrap, health, pairing,
-  reconnect, and static asset delivery where required and is not an alternate
-  query/command/event application protocol.
+  and static asset delivery where required. Application queries, commands, and
+  events use `ServerConnection`.
 - WebRTC clients obtain and hash-verify the bundle through the existing
   origin-isolated asset-install flow.
 - The hosted bootstrap refuses incomplete, oversized, path-unsafe, or
   hash-invalid bundles.
 - A server UI remains usable when opened directly at its session origin.
-- `app.terminay.com` is not a second independently evolving full workspace
-  build. It is a stable connection host around the selected server's bundle.
+- `app.terminay.com` is the connection manager only. It stores stable-origin
+  bookmarks and navigates to them; it does not load, wrap, or run a server's
+  workspace bundle.
 - A Desktop remote connection downloads and commits the selected server's
   bundle before opening its sandboxed connection window. Desktop does not run
   its embedded server's UI against a different remote server version.
@@ -385,8 +380,8 @@ inspect the application protocol.
 - Remote first pairing requires the one-time URL secret plus the configured PIN
   or an explicit approval policy. The public server/session identifier is not
   sufficient authority.
-- Reconnect proves possession of the origin-bound device key and reconnect
-  grant before receiving a fresh connection ticket.
+- Reconnect proves possession of the registered origin-bound device key before
+  receiving a fresh connection ticket.
 - Every command is authorized against the authenticated device, server,
   project, panel, terminal, or administrative scope. User-supplied titles and
   paths never define authorization.
@@ -441,12 +436,10 @@ inspect the application protocol.
 - Loss of an outbound event stream is treated as loss of the connection even if
   inbound bytes were recently accepted. The client never remains apparently
   connected with silently frozen workspace or terminal subscriptions.
-- An incompatible protocol receives a clear version/capability error. Direct
-  server URLs remain the recovery path because their UI ships with the server.
-- Host failure recovery exposes metadata for a direct server-bundled client:
-  the exact verified session origin and root entry path, `requiresHostShell:
-  false`, and server authority. Recovery metadata never carries endpoint
-  credentials, pairing fragments, or renderer state.
+- An invalid protocol or capability contract receives a clear error before the
+  application connection opens.
+- Bootstrap failure identifies the failing session-origin contract without
+  exposing endpoint credentials, pairing fragments, or renderer state.
 - Corrupt canonical state is preserved for diagnosis and recovered from the
   last valid committed state where possible; it is never silently replaced with
   defaults.
@@ -507,7 +500,6 @@ the probed bytes to the checked-out commit and proves that worktree clean.
   alive.
 - A direct session URL installs and runs the exact UI bundle shipped by the
   selected server.
-- The hosted relay can be removed from the application-data path without
-  affecting local operation.
+- Local operation carries no application data through the hosted relay.
 - An unauthorized, stale, cross-server, cross-project, or replayed command is
   rejected at the server boundary.

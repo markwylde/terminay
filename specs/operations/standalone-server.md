@@ -25,6 +25,7 @@ option uses the documented default:
 | Structured log destination | `--log-sink PATH` | `TERMINAY_LOG_SINK` | host-selected |
 | Matching server UI bundle | `--ui-bundle PATH` | `TERMINAY_UI_BUNDLE` | host-selected |
 | Reported server version | *(none)* | `TERMINAY_SERVER_VERSION` | `0.0.0` |
+| Remote pairing PIN | *(none)* | `TERMINAY_REMOTE_PAIRING_PIN` | required for pairing/exposure |
 
 The data root is the server's authority boundary. Keep it on a local disk
 with owner-only permissions, back it up as one unit, and do not put it below a
@@ -49,11 +50,10 @@ terminay-server --pairing --server-id workstation-a --endpoint loopback
 terminay-server --data-root /var/lib/terminay --log-sink /var/log/terminay/server.jsonl
 ```
 
-`--pairing` emits a short-lived, non-secret handoff record. It does not print
-a PIN, private key, reconnect grant, or application token. The authenticated
-pairing URL and device approval flow are owned by the remote-access service;
-operators should use that service's UI/API rather than placing credentials in
-unit files or command history.
+`--pairing` requires `TERMINAY_REMOTE_PAIRING_PIN` to be configured as exactly
+six digits in a protected environment file. It emits a short-lived handoff
+record and never prints that PIN, a private key, durable browser credential,
+or application token.
 
 Stop the foreground process with `SIGTERM` for a bounded graceful shutdown.
 `SIGINT` is equivalent for an interactive terminal. A supervisor must not
@@ -69,8 +69,8 @@ encrypted transport traffic; they do not grant access by themselves. Keep
 STUN/TURN credentials in the server vault or deployment secret store, never in
 the connection-manager profile or a public unit file.
 
-Pairing requires the one-time room secret plus the configured PIN or explicit
-approval and a new device key. Revocation is server-side: revoke the device or
+Pairing requires the one-time room secret, the configured PIN, and a new device
+key. Revocation is server-side: revoke the device or
 stop exposure in the remote-access administration surface. Forgetting a local
 profile only removes client metadata and is not revocation. See
 [remote access](../features/remote-access.md) for credential lifetimes,
@@ -78,9 +78,11 @@ expiry, reconnect, and live-connection behavior.
 
 Standalone vault unlock is an operator action at startup or through the
 configured headless-vault integration. Secret values must only be available to
-the provider callback while unlocked. A vault key, PIN, reconnect grant, or
+the provider callback while unlocked. A vault key, browser credential, or
 provider credential must not be placed in `TERMINAY_*` environment variables,
-service-manager arguments, logs, or support bundles.
+service-manager arguments, logs, or support bundles. The sole exception is
+`TERMINAY_REMOTE_PAIRING_PIN`, which must be set only in a protected operator
+environment file and never passed as a command-line argument.
 
 ## Service-manager examples
 
@@ -99,6 +101,7 @@ TERMINAY_SERVER_VERSION=1.2.3
 TERMINAY_DATA_ROOT=/var/lib/terminay
 TERMINAY_LOG_SINK=journal
 TERMINAY_ENDPOINT=loopback
+TERMINAY_REMOTE_PAIRING_PIN=736941
 ```
 
 `/etc/systemd/system/terminay-server.service`:
@@ -189,7 +192,7 @@ For incident diagnostics, collect:
    identity; and
 4. migration or integrity errors plus the path of the preserved failed root.
 
-Remove pairing URLs, PINs, device keys, reconnect grants, vault material,
+Remove pairing URLs, PINs, device keys, browser credentials, vault material,
 provider credentials, terminal output, command history, project paths, and
 filenames before sharing a support bundle. Terminay diagnostics are local and
 telemetry-free by default.

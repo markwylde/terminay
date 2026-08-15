@@ -1,9 +1,9 @@
-import { mountWebManagerApp } from '../web/main';
+import { mountSessionWorkspace } from '../web/main';
 import { establishDevicePairing } from './services/devicePairingFlow';
 import {
 	generateDeviceKeyPair,
-	loadPairing,
-	saveEstablishedPairing,
+	loadBrowserDeviceIdentity,
+	saveBrowserDeviceIdentity,
 	signDeviceChallenge,
 } from './services/deviceKeys';
 import { authenticateDevice } from './services/auth';
@@ -13,13 +13,13 @@ import {
 	acquireHostedApplicationTransport,
 	bootstrapHostedBrowserSession,
 } from '../web/sessionTransportHost';
-import { createDirectBrowserBundleHost } from '@terminay/web';
+import { createBrowserSessionBundleHost } from '@terminay/web';
 import { renderDirectBrowserBootstrapFailure } from './bootstrapFailure';
 
 /**
  * Installs the session-origin browser host before mounting the canonical
- * workspace. `remote.html` calls this directly for legacy routes; `server.html`
- * calls it through web/main once the hosted bootstrap authority is present.
+ * workspace. `remote.html` is the browser shell entry and `server.html`
+ * invokes it once the hosted bootstrap authority is present.
  */
 export async function launchDirectBrowserWorkspace(
 	mountRoot?: HTMLElement,
@@ -35,7 +35,7 @@ export async function launchDirectBrowserWorkspace(
 	try {
 		// Capability negotiation is feature-based inside the host. Never gate a
 		// direct session on a mutable browser brand or user-agent string.
-		const directBrowserBundleHost = createDirectBrowserBundleHost(caches);
+		const sessionBrowserBundleHost = createBrowserSessionBundleHost(caches);
 
 		step = 'session-host';
 		const sessionHost = bootstrapHostedBrowserSession();
@@ -46,7 +46,7 @@ export async function launchDirectBrowserWorkspace(
 		const workspacePreparation = await sessionHost.prepareWorkspace();
 
 		step = 'bundle-installation';
-		const preparedWorkspace = await directBrowserBundleHost.installAndPrepare({
+		const preparedWorkspace = await sessionBrowserBundleHost.installAndPrepare({
 			...workspacePreparation,
 			sessionOrigin: sessionHost.origin,
 		});
@@ -67,22 +67,18 @@ export async function launchDirectBrowserWorkspace(
 		sessionHost.registerApplication({
 			async connect(options) {
 				const runtime = createRemoteTransportRuntime();
-				const canonicalOrigin = `${sessionHost.origin}#transport=webrtc:${sessionHost.origin}`;
-				if (
-					options.origin !== sessionHost.origin &&
-					options.origin !== canonicalOrigin
-				) {
+				if (options.origin !== sessionHost.origin) {
 					throw new Error(
 						'Saved browser profile belongs to a different session origin.',
 					);
 				}
-				const pairing = await loadPairing(canonicalOrigin);
+				const pairing = await loadBrowserDeviceIdentity(sessionHost.origin);
 				if (pairing === null)
 					throw new Error('This browser has no saved pairing.');
 				const authenticated = await authenticateDevice({
 					api: runtime.api,
 					deviceId: pairing.deviceId,
-					pairingPin: options.pairingPin,
+					origin: sessionHost.origin,
 					signChallenge: (input) =>
 						signDeviceChallenge(pairing.privateKey, input),
 				});
@@ -106,8 +102,7 @@ export async function launchDirectBrowserWorkspace(
 					api: runtime.api,
 					bootstrap: parsePairingBootstrap(options.pairingUrl),
 					credentials: {
-						saveEstablishedPairing: ({ pairing: value, reconnectGrant }) =>
-							saveEstablishedPairing(value, reconnectGrant),
+						saveDeviceIdentity: saveBrowserDeviceIdentity,
 					},
 					deviceName: options.deviceName.trim(),
 					generateKeyPair: generateDeviceKeyPair,
@@ -128,7 +123,7 @@ export async function launchDirectBrowserWorkspace(
 		step = 'application-mount';
 		const root = mountRoot ?? document.getElementById('remote-root');
 		if (root === null) throw new Error('Direct browser root is missing.');
-		mountWebManagerApp(root);
+		mountSessionWorkspace(root);
 	} catch (error) {
 		renderDirectBrowserBootstrapFailure({ step, error });
 	}

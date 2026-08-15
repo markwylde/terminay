@@ -434,14 +434,8 @@ export const defaultTerminalSettings: TerminalSettings = {
 		sensitiveInputPolicy: 'drop',
 	},
 	remoteAccess: {
-		bindAddress: '0.0.0.0',
-		origin: 'https://localhost:9443',
-		pairingMode: 'lan',
 		pinFailureLimit: 3,
 		pairingPinHash: '',
-		reconnectGrantLifetime: '24h',
-		tlsCertPath: '',
-		tlsKeyPath: '',
 		webRtcHostedDomain: 'terminay.com',
 		webRtcIceServers: 'stun:stun.l.google.com:19302',
 	},
@@ -978,32 +972,10 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 	{
 		id: 'remote-access-host',
 		categoryId: 'remote',
-		title: 'Host & Origin',
+		title: 'Remote exposure',
 		description:
-			'Choose the HTTPS origin browsers will pair against and the local address Terminay binds.',
+			'Configure WebRTC signaling and the pairing policy for this server.',
 		fields: [
-			makeField({
-				key: 'remoteAccess.pairingMode',
-				label: 'Exposure route',
-				description:
-					'WebRTC is the primary Expose this server route. Direct network listener is an independently controlled advanced route and is never an automatic fallback.',
-				sectionId: 'remote-access-host',
-				categoryId: 'remote',
-				input: 'select',
-				options: [
-					{ label: 'Direct network listener (advanced)', value: 'lan' },
-					{ label: 'WebRTC exposure', value: 'webrtc' },
-				],
-				keywords: [
-					'remote',
-					'pairing',
-					'local network',
-					'lan',
-					'webrtc',
-					'relay',
-					'qr',
-				],
-			}),
 			makeField({
 				key: 'remoteAccess.pinFailureLimit',
 				label: 'Incorrect PIN limit',
@@ -1024,35 +996,6 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 					'revoke',
 					'security',
 				],
-			}),
-			makeField({
-				key: 'remoteAccess.origin',
-				label: 'Remote origin',
-				description:
-					'Exact HTTPS origin browsers use for pairing and remote terminal access. Defaults to https://localhost:9443 for local setup.',
-				sectionId: 'remote-access-host',
-				categoryId: 'remote',
-				input: 'text',
-				placeholder: 'https://terminay.example.com',
-				keywords: [
-					'https',
-					'origin',
-					'hostname',
-					'domain',
-					'pairing',
-					'remote',
-				],
-			}),
-			makeField({
-				key: 'remoteAccess.bindAddress',
-				label: 'Bind address',
-				description:
-					'Local interface address to bind the HTTPS server to. The default 0.0.0.0 listens on all interfaces.',
-				sectionId: 'remote-access-host',
-				categoryId: 'remote',
-				input: 'text',
-				placeholder: '0.0.0.0',
-				keywords: ['host', 'listen', 'bind', 'network', 'interface', '0.0.0.0'],
 			}),
 			makeField({
 				key: 'remoteAccess.webRtcHostedDomain',
@@ -1082,61 +1025,6 @@ export const terminalSettingsSections: SettingsSectionDefinition[] = [
 				input: 'text',
 				placeholder: 'stun:stun.l.google.com:19302',
 				keywords: ['webrtc', 'ice', 'stun', 'turn', 'nat', 'relay'],
-			}),
-			makeField({
-				key: 'remoteAccess.reconnectGrantLifetime',
-				label: 'Saved reconnect lifetime',
-				description:
-					'How long a WebRTC paired browser can reconnect without scanning a fresh QR code.',
-				sectionId: 'remote-access-host',
-				categoryId: 'remote',
-				input: 'select',
-				options: [
-					{ label: '1 hour', value: '1h' },
-					{ label: '24 hours', value: '24h' },
-					{ label: '7 days', value: '7d' },
-					{ label: 'Until revoked', value: 'until-revoked' },
-				],
-				keywords: [
-					'webrtc',
-					'reconnect',
-					'saved session',
-					'expiry',
-					'expiration',
-					'grant',
-					'revoke',
-				],
-			}),
-		],
-	},
-	{
-		id: 'remote-access-tls',
-		categoryId: 'remote',
-		title: 'TLS',
-		description:
-			'Leave these blank to let Terminay generate a self-signed certificate automatically.',
-		fields: [
-			makeField({
-				key: 'remoteAccess.tlsCertPath',
-				label: 'TLS certificate path',
-				description:
-					'Optional absolute path to a PEM certificate or full chain. Leave blank to use an auto-generated self-signed cert.',
-				sectionId: 'remote-access-tls',
-				categoryId: 'remote',
-				input: 'text',
-				placeholder: '/etc/letsencrypt/live/terminay.example.com/fullchain.pem',
-				keywords: ['certificate', 'cert', 'pem', 'fullchain', 'https'],
-			}),
-			makeField({
-				key: 'remoteAccess.tlsKeyPath',
-				label: 'TLS private key path',
-				description:
-					'Optional absolute path to the PEM private key. Leave blank to use an auto-generated self-signed cert.',
-				sectionId: 'remote-access-tls',
-				categoryId: 'remote',
-				input: 'text',
-				placeholder: '/etc/letsencrypt/live/terminay.example.com/privkey.pem',
-				keywords: ['private key', 'key', 'pem', 'tls', 'https'],
 			}),
 		],
 	},
@@ -2712,20 +2600,6 @@ export function normalizeTerminalSettings(
 					: defaultTerminalSettings.recording.sensitiveInputPolicy,
 		},
 		remoteAccess: {
-			bindAddress:
-				typeof remoteAccessInput.bindAddress === 'string' &&
-				remoteAccessInput.bindAddress.trim().length > 0
-					? remoteAccessInput.bindAddress
-					: defaultTerminalSettings.remoteAccess.bindAddress,
-			origin:
-				typeof remoteAccessInput.origin === 'string'
-					? remoteAccessInput.origin
-					: defaultTerminalSettings.remoteAccess.origin,
-			pairingMode:
-				remoteAccessInput.pairingMode === 'webrtc' ||
-				remoteAccessInput.pairingMode === 'lan'
-					? remoteAccessInput.pairingMode
-					: defaultTerminalSettings.remoteAccess.pairingMode,
 			pinFailureLimit:
 				typeof remoteAccessInput.pinFailureLimit === 'number' &&
 				Number.isFinite(remoteAccessInput.pinFailureLimit)
@@ -2738,21 +2612,6 @@ export function normalizeTerminalSettings(
 				typeof remoteAccessInput.pairingPinHash === 'string'
 					? remoteAccessInput.pairingPinHash
 					: defaultTerminalSettings.remoteAccess.pairingPinHash,
-			reconnectGrantLifetime:
-				remoteAccessInput.reconnectGrantLifetime === '1h' ||
-				remoteAccessInput.reconnectGrantLifetime === '24h' ||
-				remoteAccessInput.reconnectGrantLifetime === '7d' ||
-				remoteAccessInput.reconnectGrantLifetime === 'until-revoked'
-					? remoteAccessInput.reconnectGrantLifetime
-					: defaultTerminalSettings.remoteAccess.reconnectGrantLifetime,
-			tlsCertPath:
-				typeof remoteAccessInput.tlsCertPath === 'string'
-					? remoteAccessInput.tlsCertPath
-					: defaultTerminalSettings.remoteAccess.tlsCertPath,
-			tlsKeyPath:
-				typeof remoteAccessInput.tlsKeyPath === 'string'
-					? remoteAccessInput.tlsKeyPath
-					: defaultTerminalSettings.remoteAccess.tlsKeyPath,
 			webRtcHostedDomain:
 				typeof remoteAccessInput.webRtcHostedDomain === 'string' &&
 				remoteAccessInput.webRtcHostedDomain.trim().length > 0

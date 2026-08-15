@@ -161,11 +161,11 @@ async function bootstrapDirectBrowserBundle(page: Page): Promise<string> {
 		const host = window.__TERMINAY_SESSION_TRANSPORT__;
 		if (host === undefined) throw new Error('The direct-browser session host is missing.');
 		const workspace = await host.prepareWorkspace();
-		const { createDirectBrowserBundleHost } = await import(
+		const { createBrowserSessionBundleHost } = await import(
 			'/apps/terminay-web/src/browserBundleHost.ts'
 		);
 		return (
-			await createDirectBrowserBundleHost(caches).installAndPrepare({
+			await createBrowserSessionBundleHost(caches).installAndPrepare({
 				...workspace,
 				sessionOrigin: host.origin,
 			})

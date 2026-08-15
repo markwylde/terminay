@@ -9,6 +9,8 @@ export interface ServerCliOptions {
   readonly webOrigin: string;
   readonly endpoint: string;
   readonly remoteOrigin: string;
+  /** Exact six-digit pairing PIN kept in the operator's protected environment. */
+  readonly remotePairingPin?: string;
   readonly publicOrigin?: string;
   readonly httpHost?: string;
   readonly httpPort?: number;
@@ -42,6 +44,7 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
   const command = argv.includes("--help") ? "help" : argv.includes("--version") ? "version" : argv.includes("--status") ? "status" : argv.includes("--pairing") ? "pairing" : argv[0] === "mcp" ? "mcp" : "start";
   const serverId = value(argv, "--server-id") ?? env.TERMINAY_SERVER_ID ?? "local-server";
   const remoteOrigin = value(argv, "--remote-origin") ?? env.TERMINAY_REMOTE_ORIGIN ?? defaultRemoteOrigin(serverId);
+  const remotePairingPin = env.TERMINAY_REMOTE_PAIRING_PIN;
   const publicOrigin = value(argv, "--public-origin") ?? env.TERMINAY_PUBLIC_ORIGIN;
   const logSink = value(argv, "--log-sink") ?? env.TERMINAY_LOG_SINK;
   const uiBundle = value(argv, "--ui-bundle") ?? env.TERMINAY_UI_BUNDLE;
@@ -61,6 +64,7 @@ export function parseServerCliOptions(argv: readonly string[], env: Readonly<Rec
     webOrigin: normalizePublicOrigin(value(argv, "--web-origin") ?? env.TERMINAY_WEB_ORIGIN ?? "http://localhost:8080"),
     endpoint: value(argv, "--endpoint") ?? env.TERMINAY_ENDPOINT ?? "loopback",
     remoteOrigin,
+    ...(remotePairingPin === undefined ? {} : { remotePairingPin }),
     ...(publicOrigin === undefined ? {} : { publicOrigin: normalizePublicOrigin(publicOrigin) }),
     ...(httpHost === undefined ? {} : { httpHost }),
     ...(httpPortValue === undefined ? {} : { httpPort: parsePort(httpPortValue, "--http-port") }),
@@ -87,6 +91,7 @@ export function formatServerHelp(): string {
     "  --http-port PORT   authenticated HTTP port; 0 selects one (TERMINAY_HTTP_PORT)",
     "  --public-origin URL advertised browser URL for the authenticated HTTP server (TERMINAY_PUBLIC_ORIGIN)",
     "  --remote-origin URL remote WebRTC session origin (TERMINAY_REMOTE_ORIGIN)",
+    "  TERMINAY_REMOTE_PAIRING_PIN  required six-digit PIN for remote pairing; keep it in a protected environment file",
     "  --log-sink PATH    structured log destination (TERMINAY_LOG_SINK)",
     "  --ui-bundle PATH   matching workspace bundle (TERMINAY_UI_BUNDLE)",
     "  --agent-integration MODE  observe supported agent session journals: enabled or disabled (TERMINAY_AGENT_INTEGRATION)",

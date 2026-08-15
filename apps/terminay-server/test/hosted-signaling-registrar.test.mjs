@@ -20,7 +20,6 @@ const valid = () => ({
 	peerId: request.peerId,
 	sessionOrigin: request.sessionOrigin,
 	signalingUrl: 'wss://session.example/signal',
-	signalingAuthToken: 'hosted_signaling_token_123456',
 	expiresAt: NOW + 30_000,
 	iceServers: [{ urls: ['stun:stun.example:3478'] }],
 });
@@ -49,7 +48,6 @@ test('rejects identity, origin, expiry, credential, and cancellation mismatches'
 		{ ...valid(), peerId: 'peer-b' },
 		{ ...valid(), sessionOrigin: 'https://other.example' },
 		{ ...valid(), expiresAt: request.expiresAt + 1 },
-		{ ...valid(), signalingAuthToken: 'short' },
 		{ ...valid(), signalingUrl: 'wss://session.example/signaling' },
 	]) {
 		await assert.rejects(() =>
