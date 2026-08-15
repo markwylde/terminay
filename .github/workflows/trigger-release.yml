@@ -48,22 +48,8 @@ jobs:
       - name: Run smoke checks
         run: npm run smoke
 
-      - name: Validate release configuration
-        run: npm run test:release-config
-
       - name: Validate release evidence and production dependency audit
-        run: |
-          npm run test:release-readiness
-          npm run test:task18-web-host-readiness
-          npm run test:hosted-deployment-order
-          npm run test:standalone-artifact
-          npm run test:task20-artifact-contract
-          npm run test:security-fuzz
-          npm run test:security-boundaries
-          node --test scripts/task20-supply-chain-audit.test.mjs scripts/task20-release-lifecycle.test.mjs scripts/repository-ownership-release.test.mjs scripts/task20-direct-ui-mismatch.test.mjs
-          node scripts/task20-supply-chain-audit.mjs --npm-audit
-          node --test scripts/production-dependency-audit.test.mjs
-          node scripts/production-dependency-audit.mjs
+        run: npm run test:release-evidence
 
   release:
     name: Create Release
