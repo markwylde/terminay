@@ -186,7 +186,7 @@ export const test = base.extend<ElectronFixtures>({
         name,
         endpointSummary,
         defaultRoot,
-        declaredCapabilities: ['terminal', 'filesystem', 'mcp-bridge'],
+        declaredCapabilities: ['terminal', 'filesystem'],
         availableCapabilities: [],
         // This metadata-only fixture intentionally has no activated external
         // provider. Provisioning records remain visible without pretending a
@@ -205,8 +205,8 @@ export const test = base.extend<ElectronFixtures>({
         pinnedRevision: 1,
         name: 'This server',
         endpointSummary: 'Local to this Terminay Server',
-        declaredCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'mcp-bridge', 'shell-discovery'],
-        availableCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'mcp-bridge', 'shell-discovery'],
+        declaredCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'shell-discovery'],
+        availableCapabilities: ['terminal', 'filesystem', 'filesystem-observation', 'git', 'process-observation', 'agent-journal', 'shell-discovery'],
         status: 'ready',
         operationReferences: [],
         projectReferenceCount: 0,
