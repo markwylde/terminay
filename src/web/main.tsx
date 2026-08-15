@@ -14,7 +14,6 @@ import {
 	type DesktopHostBridge,
 } from './desktopByteTransport';
 import {
-	bootstrapHostedBrowserSession,
 	getSessionTransportHost,
 } from './sessionTransportHost';
 import './index.css';
@@ -232,18 +231,4 @@ export default function SessionWorkspaceApp(): React.JSX.Element {
 
 export function mountSessionWorkspace(root: HTMLElement): void {
 	createRoot(root).render(<SessionWorkspaceApp />);
-}
-
-const root = document.getElementById('web-root');
-if (root !== null) {
-	if (window.__TERMINAY_HOSTED_SESSION_AUTHORITY__ === undefined) {
-		mountSessionWorkspace(root);
-	} else {
-		// Consume the hosted shell authority before asynchronous module loading.
-		// Later browser modules use only the sealed session host.
-		bootstrapHostedBrowserSession();
-		void import('../remote/main').then(({ launchDirectBrowserWorkspace }) =>
-			launchDirectBrowserWorkspace(root),
-		);
-	}
 }

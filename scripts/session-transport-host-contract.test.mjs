@@ -97,7 +97,12 @@ test('production sources contain no retired raw-channel globals or adapter', asy
 });
 
 test('remote production entry consumes hosted authority before workspace preparation without reloading', async () => {
+	const serverEntry = await readFile('src/web/serverEntry.ts', 'utf8');
 	const source = await readFile('src/remote/main.tsx', 'utf8');
+	assert.match(
+		serverEntry,
+		/const root = document\.getElementById\('web-root'\);[\s\S]*bootstrapHostedBrowserSession\(\);[\s\S]*import\('\.\.\/remote\/main'\)/u,
+	);
 	assert.match(source, /const sessionHost = bootstrapHostedBrowserSession\(\);[\s\S]*sessionHost\.prepareWorkspace\(\)/u);
 	assert.match(source, /window\.history\.replaceState/u);
 	assert.doesNotMatch(source, /window\.location\.replace\(preparedWorkspace\.entryUrl\)/u);
