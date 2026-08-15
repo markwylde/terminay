@@ -10,6 +10,7 @@ import {
   submitFileExplorerNameModal,
 } from './support/ui'
 import { submitTerminalCommand } from './support/terminal'
+import { readDiagnosticEvents } from './support/local-desktop-diagnostics'
 
 const execFileAsync = promisify(execFile)
 
@@ -405,6 +406,58 @@ test('git sidebar switches project root before opening a file from another workt
 
   await expect(mainWindow.locator('.file-preview-markdown')).toContainText('Opened safely.', { timeout: 6000 })
   await expect(mainWindow.locator('.file-panel--loading')).toHaveCount(0)
+})
+
+test('deleting a sibling worktree does not request its parent through Explorer', async ({
+  appHarness,
+  createWorkspace,
+  mainWindow,
+  userDataDir,
+}) => {
+  const mainRepo = await createWorkspace({
+    name: 'git-pane-delete-worktree-main',
+    seed: { files: { 'README.md': 'main worktree\n' } },
+  })
+  const linkedWorktree = await createWorkspace({
+    name: 'git-pane-delete-worktree-linked',
+  })
+  const dialogs = await appHarness.dialogs()
+
+  await rm(linkedWorktree.rootDir, { recursive: true, force: true })
+  await execFileAsync('git', ['init'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['config', 'user.name', 'Terminay E2E'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['config', 'user.email', 'terminay@example.com'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['add', '.'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: mainRepo.rootDir })
+  await execFileAsync('git', ['worktree', 'add', '-b', 'delete-sibling-worktree', linkedWorktree.rootDir], {
+    cwd: mainRepo.rootDir,
+  })
+
+  await setProjectRoot(mainWindow, mainRepo.rootDir)
+  await openFileExplorer(mainWindow)
+
+  const gitPane = mainWindow
+    .locator('.sidebar-pane')
+    .filter({ has: mainWindow.locator('.sidebar-pane__title', { hasText: 'Git' }) })
+  const linked = gitPane
+    .locator('.worktrees-panel__worktree')
+    .filter({ hasText: 'git-pane-delete-worktree-linked' })
+  await expect(linked).toBeVisible({ timeout: 6000 })
+
+  await linked.locator('.worktrees-panel__worktree-header').click({ button: 'right' })
+  await expect(contextMenuItem(mainWindow, 'Delete worktree')).toBeVisible()
+  await dialogs.queueConfirm(true)
+  await contextMenuItem(mainWindow, 'Delete worktree').click()
+
+  await expect(linked).toHaveCount(0, { timeout: 6000 })
+  // Worktree removal publishes Git status before the follow-up Explorer
+  // refresh settles. Its file-operation diagnostic is durable even if another
+  // successful Explorer request immediately clears the visible banner.
+  await mainWindow.waitForTimeout(1000)
+  const explorerFailures = (await readDiagnosticEvents(userDataDir)).filter(
+    (event) => event.event === 'local-server.file-operation.failed',
+  )
+  expect(explorerFailures).toHaveLength(0)
 })
 
 test('git sidebar pane renders a nested tree and offers a push menu', async ({
