@@ -160,7 +160,8 @@
 }
 
 .connected-web-auxiliary-dialog--recordings,
-.connected-web-auxiliary-dialog--macros {
+.connected-web-auxiliary-dialog--macros,
+.connected-web-auxiliary-dialog--remote-control {
 	width: min(1240px, 100%);
 }
 
