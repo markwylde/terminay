@@ -22,6 +22,9 @@ in a persistent, reorderable vertical stack.
 - Filesystem operations execute in Terminay Server and validate the requested
   path against the intended project/root scope. Watch updates cope with atomic
   saves, rename/delete events, and temporary unavailable paths.
+- While a project root update is reconciling into the renderer, Explorer path
+  calculations use the latest hydrated server root. A stale client root must
+  not be relativized into a traversal request against the new server root.
 - When a filesystem query fails, the server returns a bounded typed protocol
   error rather than a generic dispatcher failure. The Explorer keeps its last
   successful tree while a refresh fails, and clears its own visible failure once
