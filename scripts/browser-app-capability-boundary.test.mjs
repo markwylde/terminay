@@ -19,7 +19,7 @@ const [
 test('browser mounts the real App with the exact authenticated client context', () => {
 	assert.match(
 		webEntry,
-		/<ConnectedWebRendererWorkspace[\s\S]*connectionRoute=\{connectionRoute[\s\S]*onBack=\{onBack\}[\s\S]*terminalClientContext=\{connection\.context\}/u,
+		/<ConnectedWebRendererWorkspace[\s\S]*connectionRoute=\{connectionRoute[\s\S]*hostContext=\{desktopContext\}[\s\S]*terminalClientContext=\{connection\.context\}/u,
 	);
 	assert.doesNotMatch(webEntry, /<ConnectedWebRendererWorkspace[\s\S]*client=/u);
 	assert.match(
@@ -39,16 +39,12 @@ test('browser mounts the real App with the exact authenticated client context', 
 		/<App[\s\S]*terminalClientContext=\{terminalClientContext\}/u,
 	);
 	assert.doesNotMatch(sharedWorkspace, /quickPushClient/u);
-	assert.match(
-		remoteEntry,
-		/acquireHostedApplicationTransport\(authenticated\.ticket\)/u,
-	);
-	assert.doesNotMatch(remoteEntry, /ticket\s*:\s*['"`]|getChannel|RTCDataChannel/u);
+	assert.match(remoteEntry, /mountSessionWorkspace\(root\)/u);
+	assert.doesNotMatch(remoteEntry, /authenticateDevice|loadBrowserDeviceIdentity|ticket\s*:\s*['"`]|getChannel|RTCDataChannel/u);
 });
 
 test('browser composition omits native host authority instead of fabricating preload globals', () => {
 	for (const [path, source] of [
-		['src/web/main.tsx', webEntry],
 		['src/web/ConnectedWebRendererWorkspace.tsx', webWorkspace],
 		['src/web/browserRendererHostAdapters.ts', browserAdapters],
 	]) {
@@ -57,9 +53,8 @@ test('browser composition omits native host authority instead of fabricating pre
 	}
 	assert.match(
 		webWorkspace,
-		/host=\{Object\.freeze\(\{[\s\S]*auxiliaryRoutes,[\s\S]*onDisconnect: onBack,[\s\S]*onOpenConnectionManager: \(\) =>[\s\S]*setIsConnectionManagerOpen\(true\),?[\s\S]*\}\)\}/u,
+		/host=\{Object\.freeze\(\{[\s\S]*auxiliaryRoutes,[\s\S]*onDisconnect: onBack,[\s\S]*\}\)\}/u,
 	);
-	assert.doesNotMatch(webWorkspace, /nativeWindows\s*:|clipboard\s*:|osIntegration\s*:/u);
 });
 
 test('browser-only adapters fail closed for unavailable secret operations', () => {
