@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, sep } from 'node:path'
 
 const PACKAGE_NAME = '@terminay/server'
-const REQUIRED_FILES = ['package.json', 'dist/cli.js', 'dist/index.js', 'dist/mcpEntry.js', 'dist/bundled-npm-evidence.json']
+const REQUIRED_FILES = ['package.json', 'dist/cli.js', 'dist/index.js', 'dist/bundled-npm-evidence.json']
 const NODE_ENGINE = '24.15.0'
 const NPM_INSTALLER = '12.0.2'
 
@@ -50,7 +50,6 @@ export async function inspectStandaloneArtifact(root) {
   if (npmEvidence?.schemaVersion !== 1 || npmEvidence?.version !== NPM_INSTALLER || !Number.isSafeInteger(npmEvidence?.packageCount) || npmEvidence.packageCount < 50 || !Array.isArray(npmEvidence.packages) || npmEvidence.packages.length !== npmEvidence.packageCount || !/^[a-f0-9]{64}$/u.test(npmEvidence.closureSha256)) fail('bundled npm closure evidence is invalid')
   if (!Array.isArray(packageJson.files) || !packageJson.files.includes('dist')) fail('package files must include dist')
   if (packageJson.bin?.['terminay-server'] !== 'dist/cli.js') fail('terminay-server bin must point to dist/cli.js')
-  if (packageJson.bin?.['terminay-mcp'] !== 'dist/mcpEntry.js') fail('terminay-mcp bin must point to dist/mcpEntry.js')
 
   const files = []
   for (const path of REQUIRED_FILES) {
@@ -60,7 +59,7 @@ export async function inspectStandaloneArtifact(root) {
     files.push({ path: normalizedPath, size: file.size, sha256: sha256(file.bytes) })
   }
 
-  for (const path of ['dist/cli.js', 'dist/index.js', 'dist/mcpEntry.js']) {
+  for (const path of ['dist/cli.js', 'dist/index.js']) {
     const source = (await readFile(join(root, path), 'utf8'))
     if (/['"]electron(?:\/|['"])/u.test(source)) fail(`${path} imports Electron`)
   }

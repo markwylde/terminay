@@ -76,7 +76,6 @@ export const DEFAULT_SERVER_SETTINGS: SettingsObject = {
 	shell: { program: '', startupMode: 'auto', extraArgs: '' },
 	shellProfiles: shellProfilesSettingsAsJson(DEFAULT_SHELL_PROFILES_SETTINGS),
 	tabStopWidth: 8,
-	terminayMcp: { enabled: true },
 	wordSeparator: ' ()[]{}\',"`',
 };
 

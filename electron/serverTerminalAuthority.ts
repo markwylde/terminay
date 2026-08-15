@@ -40,9 +40,6 @@ import {
 	type ServerCoreComposition,
 } from '../packages/server-core/src/composition';
 import {
-	composeRemoteMcpTerminalLifecycle,
-	RemoteMcpBridgeAuthority,
-	RemoteMcpEnvironmentCoordinator,
 } from '../packages/server-core/src/control/index';
 import { OrderedEventJournal } from '../packages/server-core/src/events';
 import {
@@ -68,7 +65,6 @@ import { ServerFileObservationAdapter } from '../packages/server-core/src/fileSe
 import { ServerGitAdapter } from '../packages/server-core/src/gitService/adapter';
 import { GitService } from '../packages/server-core/src/gitService/service';
 import {
-	createEnvironmentRoutedProjectServices,
 	createInitialProjectEnvironmentState,
 	ProjectEnvironmentRegistry,
 	ProjectEnvironmentRepository,
@@ -110,9 +106,6 @@ import type {
 	AiTabMetadataGenerateRequest,
 	AiTabMetadataGenerateResult,
 	FileViewerSparseFileSaveRequest,
-	McpAgentId,
-	McpInstallActionResult,
-	McpInstallStatus,
 	RemoteAccessStatus,
 } from '../src/types/terminay';
 import {
@@ -260,16 +253,7 @@ export interface ServerTerminalAuthorityOptions {
 	readonly projectEnvironmentRepository?: ProjectEnvironmentRepository;
 	/** Already-loaded canonical repository. Production hosts must inject this;
 	 * the in-memory default remains available only to focused authority tests. */
-	readonly workspaceRepository?: WorkspaceRepository;
-	/** Existing server-owned, project-implicit MCP dispatcher. Remote helper
-	 * frames receive no separate operation table or renderer authority. */
-	readonly remoteMcpDispatch?: (
-		sessionId: string,
-		op: string,
-		params: JsonValue,
-		signal: AbortSignal,
-	) => Promise<JsonValue>;
-	/** Desktop provider adapter retained behind the server protocol while the
+	readonly workspaceRepository?: WorkspaceRepository;	/** Desktop provider adapter retained behind the server protocol while the
 	 * canonical AI target registry is wired to workspace presentation state. */
 	readonly aiMetadata?: {
 		readonly listModels: (
@@ -293,11 +277,6 @@ export interface ServerTerminalAuthorityOptions {
 				operation: string,
 				value?: string,
 			): Promise<RemoteAccessStatus | boolean | unknown>;
-		};
-		readonly mcpInstall?: {
-			getStatus(): McpInstallStatus | Promise<McpInstallStatus>;
-			install(agent: McpAgentId): Promise<McpInstallActionResult>;
-			uninstall(agent: McpAgentId): Promise<McpInstallActionResult>;
 		};
 	};
 }
@@ -328,7 +307,6 @@ export class ServerTerminalAuthority {
 	readonly workspace: WorkspaceStore;
 	/** Server-owned Git authority shared by embedded Desktop and remote hosts. */
 	readonly git: GitService;
-	readonly remoteMcp?: RemoteMcpEnvironmentCoordinator;
 
 	private readonly options: ServerTerminalAuthorityOptions;
 	private readonly sessions = new Map<string, AuthoritySession>();
@@ -402,7 +380,6 @@ export class ServerTerminalAuthority {
 		const eventJournal = new OrderedEventJournal();
 		this.eventJournal = eventJournal;
 		const remoteAccess = options.applicationFeatures?.remoteAccess;
-		const mcpInstall = options.applicationFeatures?.mcpInstall;
 		const payloadText = (
 			request: QueryRequest | CommandRequest,
 			key: string,
@@ -652,7 +629,6 @@ export class ServerTerminalAuthority {
 			dictationAi === undefined
 				? undefined
 				: dictationOnlyOperations(createAiOperationHandlers(dictationAi));
-		let remoteMcp: RemoteMcpEnvironmentCoordinator | undefined;
 		this.composition = createServerCoreComposition({
 			serverId: options.serverId,
 			serverVersion: 'desktop-local',
@@ -695,9 +671,6 @@ export class ServerTerminalAuthority {
 				...(extensionProfiles === undefined
 					? {}
 					: { providers: extensionProfiles }),
-			},
-			terminalOptions: {
-				sessionLifecycle: composeRemoteMcpTerminalLifecycle(() => remoteMcp),
 			},
 			...(extensionManagement === undefined
 				? {}
@@ -756,12 +729,6 @@ export class ServerTerminalAuthority {
 										'pairing-pin-status',
 									)) as JsonValue,
 							}),
-					...(mcpInstall === undefined
-						? {}
-						: {
-								'mcp-install.status': async () =>
-									(await mcpInstall.getStatus()) as unknown as JsonValue,
-							}),
 					...dictationOperations?.queries,
 					...(options.aiMetadata === undefined
 						? {}
@@ -789,18 +756,6 @@ export class ServerTerminalAuthority {
 									remoteCommand(request, 'close-connection', 'connectionId'),
 								'remote-access.set-pairing-pin': (request: CommandRequest) =>
 									remoteCommand(request, 'set-pairing-pin', 'pin'),
-							}),
-					...(mcpInstall === undefined
-						? {}
-						: {
-								'mcp-install.install': (request: CommandRequest) =>
-									mcpInstall.install(
-										payloadText(request, 'agent') as McpAgentId,
-									) as unknown as Promise<JsonValue>,
-								'mcp-install.uninstall': (request: CommandRequest) =>
-									mcpInstall.uninstall(
-										payloadText(request, 'agent') as McpAgentId,
-									) as unknown as Promise<JsonValue>,
 							}),
 					...dictationOperations?.commands,
 					...fileSessionOperations.commands,
@@ -842,23 +797,6 @@ export class ServerTerminalAuthority {
 					}
 				: { terminalService: options.terminalService }),
 		});
-		if (options.remoteMcpDispatch !== undefined) {
-			const authority = new RemoteMcpBridgeAuthority({
-				dispatch: (scope, op, params, { signal }) =>
-					options.remoteMcpDispatch!(
-						scope.terminalSessionId,
-						op,
-						params,
-						signal,
-					),
-			});
-			remoteMcp = new RemoteMcpEnvironmentCoordinator(
-				createEnvironmentRoutedProjectServices(projectEnvironmentRouter)
-					.mcpBridge,
-				authority,
-			);
-			this.remoteMcp = remoteMcp;
-		}
 		this.service = this.composition.terminal;
 		// Observe the final composed service in both production and injected-test
 		// modes. Host recording/remote cleanup must not depend on who constructed
@@ -1631,7 +1569,6 @@ export class ServerTerminalAuthority {
 		this.shuttingDown = true;
 		this.consumers.clear();
 		this.shutdownPromise = (async () => {
-			await this.remoteMcp?.shutdown();
 			await this.composition.shutdown();
 		})().finally(() => {
 			this.serviceEventsUnsubscribe?.();
