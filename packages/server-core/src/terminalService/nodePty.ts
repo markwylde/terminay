@@ -16,6 +16,7 @@ import type {
 export interface NodePtyForegroundProcess {
   readonly processName: string;
   readonly shellForeground: boolean;
+  readonly observation: "available" | "limited";
 }
 
 export type NodePtyForegroundListener = (event: NodePtyForegroundProcess) => void;
@@ -157,7 +158,7 @@ export function createNodePtyFactory(module: NodePtyModuleLike, factoryOptions: 
           ? { getCwd: (signal?: AbortSignal) => factoryOptions.resolveCwd!(child.pid!, signal) }
           : {}),
         onForegroundProcess: foreground.subscribe,
-        refreshForegroundProcess: foreground.poll,
+        refreshForegroundProcess: foreground.observeFresh,
         // TerminalService may authoritatively finish a session before
         // node-pty delivers its exit callback (for example while shutting
         // down a wedged child).  Its generic process disposal hook must also
@@ -200,58 +201,170 @@ function createForegroundPolling(options: NodePtyForegroundPollingOptions | unde
   return { intervalMs, setInterval: setTimer, clearInterval: clearTimer };
 }
 
+interface FreshObservationWaiter {
+  needEpoch: number;
+  abortListener?: () => void;
+  readonly resolve: () => void;
+  readonly reject: (reason: unknown) => void;
+  readonly signal?: AbortSignal;
+}
+
 function createForegroundObserver(
   child: NodePtyProcessLike,
   shellProcess: string,
   polling: ForegroundPolling,
   resolveProcess: NodePtyFactoryOptions["resolveForegroundProcess"],
-): { readonly subscribe: (listener: NodePtyForegroundListener) => Unsubscribe; readonly poll: (signal?: AbortSignal) => Promise<void>; readonly dispose: () => void } {
+): {
+  readonly subscribe: (listener: NodePtyForegroundListener) => Unsubscribe;
+  readonly poll: (signal?: AbortSignal) => Promise<void>;
+  readonly observeFresh: (signal?: AbortSignal) => Promise<void>;
+  readonly dispose: () => void;
+} {
   const listeners = new Set<NodePtyForegroundListener>();
+  const freshWaiters = new Set<FreshObservationWaiter>();
   let timer: unknown | undefined;
   let lastProcess: string | undefined;
+  let lastObservation: "available" | "limited" | undefined;
   let disposed = false;
-  let resolving: Promise<void> | undefined;
-  let requestedObservation = 0;
-  let completedObservation = 0;
+  let inFlight: Promise<void> | undefined;
+  let pending = false;
   let latestSignal: AbortSignal | undefined;
+  let sampleAbort: AbortController | undefined;
+  let epoch = 0;
+  let completedEpoch = 0;
 
   const stop = (): void => {
     if (timer === undefined) return;
     polling.clearInterval(timer);
     timer = undefined;
   };
-  const publish = (processName: string | undefined): void => {
+  const publish = (processName: string | undefined, observation: "available" | "limited"): void => {
     if (disposed || listeners.size === 0) return;
-    if (processName === undefined || processName === lastProcess) return;
-    lastProcess = processName;
-    const event = Object.freeze({ processName, shellForeground: isConfiguredShellProcess(processName, shellProcess) });
+    if (observation === "available") {
+      if (processName === undefined) return;
+      if (processName === lastProcess && lastObservation === "available") return;
+      lastProcess = processName;
+    } else if (lastObservation === "limited") {
+      return;
+    }
+    lastObservation = observation;
+    const publishedName = processName ?? lastProcess ?? "";
+    const event = Object.freeze({
+      processName: publishedName,
+      shellForeground: publishedName.length > 0 && isConfiguredShellProcess(publishedName, shellProcess),
+      observation,
+    });
     for (const listener of [...listeners]) listener(event);
   };
-  const poll = (signal?: AbortSignal): Promise<void> => {
-    if (disposed || listeners.size === 0) return Promise.resolve();
-    if (resolveProcess === undefined || child.pid === undefined) {
-      publish(foregroundProcessName(child));
-      return Promise.resolve();
+  const detachWaiter = (waiter: FreshObservationWaiter): boolean => {
+    if (!freshWaiters.delete(waiter)) return false;
+    if (waiter.abortListener !== undefined) {
+      waiter.signal?.removeEventListener("abort", waiter.abortListener);
     }
-    // A close-time activity snapshot must not accept an observation that was
-    // already in flight while the shell still owned the foreground group. Each
-    // refresh requests a new host sample; concurrent callers are coalesced
-    // into at most one follow-up observation after the current one completes.
-    requestedObservation += 1;
-    latestSignal = signal;
-    if (resolving !== undefined) return resolving;
-    resolving = (async () => {
-      while (!disposed && completedObservation < requestedObservation) {
-        const target = requestedObservation;
-        const currentSignal = latestSignal;
-        await resolveProcess(child.pid!, currentSignal).then(
-          (processName) => publish(processName?.trim() || foregroundProcessName(child)),
-          () => publish(foregroundProcessName(child)),
-        );
-        completedObservation = target;
+    return true;
+  };
+  const settleWaiters = (): void => {
+    for (const waiter of [...freshWaiters]) {
+      if (completedEpoch < waiter.needEpoch) continue;
+      if (detachWaiter(waiter)) waiter.resolve();
+    }
+  };
+  const rejectWaiter = (waiter: FreshObservationWaiter, reason: unknown): void => {
+    if (detachWaiter(waiter)) waiter.reject(reason);
+  };
+  const runSample = async (sampleEpoch: number, signal: AbortSignal | undefined): Promise<void> => {
+    if (resolveProcess === undefined || child.pid === undefined) {
+      if (sampleEpoch !== epoch) return;
+      publish(foregroundProcessName(child), "available");
+      return;
+    }
+    try {
+      const processName = await resolveProcess(child.pid, signal);
+      if (disposed || sampleEpoch !== epoch) return;
+      publish(processName?.trim() || foregroundProcessName(child), "available");
+    } catch {
+      if (disposed || sampleEpoch !== epoch || signal?.aborted) return;
+      publish(foregroundProcessName(child), "limited");
+    }
+  };
+  const startSample = (): void => {
+    if (disposed || inFlight !== undefined || listeners.size === 0) return;
+    const sampleEpoch = epoch;
+    const controller = new AbortController();
+    sampleAbort = controller;
+    const onLatestAbort = (): void => {
+      controller.abort(latestSignal?.reason ?? new Error("foreground observation aborted"));
+    };
+    if (latestSignal?.aborted) onLatestAbort();
+    else latestSignal?.addEventListener("abort", onLatestAbort, { once: true });
+    inFlight = (async () => {
+      try {
+        await runSample(sampleEpoch, controller.signal);
+        if (!disposed && sampleEpoch === epoch && !controller.signal.aborted) {
+          completedEpoch = sampleEpoch;
+          settleWaiters();
+        }
+      } catch (error) {
+        for (const waiter of [...freshWaiters]) {
+          if (waiter.needEpoch === sampleEpoch) rejectWaiter(waiter, error);
+        }
+      } finally {
+        latestSignal?.removeEventListener("abort", onLatestAbort);
+        if (sampleAbort === controller) sampleAbort = undefined;
+        inFlight = undefined;
+        if (pending && !disposed) {
+          pending = false;
+          startSample();
+        }
       }
-    })().finally(() => { resolving = undefined; });
-    return resolving;
+    })();
+  };
+  const requestSample = (signal?: AbortSignal): void => {
+    if (disposed || listeners.size === 0) return;
+    if (signal !== undefined) latestSignal = signal;
+    if (resolveProcess === undefined || child.pid === undefined) {
+      publish(foregroundProcessName(child), "available");
+      completedEpoch = epoch;
+      settleWaiters();
+      return;
+    }
+    if (inFlight !== undefined) {
+      pending = true;
+      return;
+    }
+    startSample();
+  };
+  const poll = (signal?: AbortSignal): Promise<void> => {
+    requestSample(signal);
+    return inFlight ?? Promise.resolve();
+  };
+  const observeFresh = (signal?: AbortSignal): Promise<void> => {
+    if (disposed || listeners.size === 0) return Promise.resolve();
+    if (signal?.aborted) {
+      return Promise.reject(signal.reason ?? new Error("foreground observation aborted"));
+    }
+    return new Promise((resolve, reject) => {
+      epoch += 1;
+      const waiter: FreshObservationWaiter = {
+        needEpoch: epoch,
+        resolve,
+        reject,
+        signal,
+      };
+      const abortListener = (): void => {
+        rejectWaiter(waiter, signal?.reason ?? new Error("foreground observation aborted"));
+      };
+      waiter.abortListener = abortListener;
+      signal?.addEventListener("abort", abortListener, { once: true });
+      freshWaiters.add(waiter);
+      sampleAbort?.abort(signal?.reason ?? new Error("foreground observation replaced"));
+      pending = false;
+      queueMicrotask(() => {
+        if (!freshWaiters.has(waiter)) return;
+        requestSample(signal);
+        settleWaiters();
+      });
+    });
   };
   const start = (): void => {
     if (!disposed && timer === undefined) timer = polling.setInterval(() => { void poll(); }, polling.intervalMs);
@@ -259,6 +372,7 @@ function createForegroundObserver(
 
   return {
     poll,
+    observeFresh,
     subscribe(listener: NodePtyForegroundListener): Unsubscribe {
       if (typeof listener !== "function") throw new TypeError("foreground listener must be a function");
       if (disposed) return () => {};
@@ -272,6 +386,10 @@ function createForegroundObserver(
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      sampleAbort?.abort(new Error("foreground observation disposed"));
+      for (const waiter of [...freshWaiters]) {
+        rejectWaiter(waiter, new Error("foreground observation disposed"));
+      }
       listeners.clear();
       stop();
     },
