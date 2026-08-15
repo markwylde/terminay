@@ -81,7 +81,6 @@ async function requireCanonicalArtifactInventory() {
 	);
 	for (const forbidden of [
 		'dist/index.html',
-		'dist/legacy.html',
 		'dist/server.html',
 		'dist-electron/preload.mjs',
 		'dist-electron/serverUiPreload.js',

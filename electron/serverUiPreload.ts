@@ -217,7 +217,6 @@ if (
 				}
 				const bound = await context();
 				for (const listener of [...byteListeners]) listener(null);
-				await bytes.replaceEndpoint();
 				return { connectionId: `local:${bound.windowId}` };
 			},
 		}),
@@ -263,19 +262,6 @@ if (
 					socketPath: string;
 					token: string;
 				}>,
-		}),
-	);
-	contextBridge.exposeInMainWorld(
-		'terminayRemoteProtocolFaultTest',
-		Object.freeze({
-			listConnections: () =>
-				ipcRenderer.invoke('test:list-remote-protocol-connections') as Promise<
-					readonly string[]
-				>,
-			failConnection: (connectionId: string) =>
-				ipcRenderer.invoke('test:fail-remote-protocol-connection', {
-					connectionId,
-				}) as Promise<void>,
 		}),
 	);
 }

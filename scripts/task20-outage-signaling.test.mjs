@@ -81,12 +81,8 @@ function healthySignaling() {
 				inbound.push(listener);
 				return () => inbound.splice(inbound.indexOf(listener), 1);
 			},
-			sign: (message) => ({ ...message, signature: 'valid' }),
-			verify: (message) => message?.signature === 'valid'
-				? { type: message.type, ...(message.sdp === undefined
-					? { candidate: message.candidate, mid: message.mid }
-					: { sdp: message.sdp }) }
-				: null,
+			encode: (message) => ({ ...message }),
+			decode: (message) => message,
 			close: () => { closed = true; },
 		},
 		isClosed: () => closed,
@@ -130,7 +126,7 @@ test('a transient authenticated signaling outage fails closed, leaves no peer, a
 	const pending = host.connect(proof('device-recovered'));
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(healthy.inbound.length, 1, 'the recovered attempt gets one fresh authenticated subscription');
-	healthy.inbound[0]({ type: 'offer', sdp: 'offer-sdp', signature: 'valid' });
+	healthy.inbound[0]({ type: 'offer', sdp: 'offer-sdp' });
 	const session = await pending;
 	assert.equal(session.snapshot().state, 'connected');
 	assert.equal(host.snapshot.activeSessions, 1);

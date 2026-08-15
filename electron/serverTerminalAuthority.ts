@@ -780,16 +780,10 @@ export class ServerTerminalAuthority {
 						: {
 								'remote-access.toggle-server': (request: CommandRequest) =>
 									remoteCommand(request, 'toggle-server'),
-								'remote-access.toggle-direct-listener': (
-									request: CommandRequest,
-								) => remoteCommand(request, 'toggle-direct-listener'),
 								'remote-access.revoke-device': (request: CommandRequest) =>
 									remoteCommand(request, 'revoke-device', 'deviceId'),
 								'remote-access.close-connection': (request: CommandRequest) =>
 									remoteCommand(request, 'close-connection', 'connectionId'),
-								'remote-access.set-pairing-address': (
-									request: CommandRequest,
-								) => remoteCommand(request, 'set-pairing-address', 'address'),
 								'remote-access.set-pairing-pin': (request: CommandRequest) =>
 									remoteCommand(request, 'set-pairing-pin', 'pin'),
 							}),

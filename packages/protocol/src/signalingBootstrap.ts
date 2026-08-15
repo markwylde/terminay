@@ -1,5 +1,5 @@
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
-const TOKEN = /^[A-Za-z0-9_-]{16,512}$/u;
+const TURN_CREDENTIAL = /^[A-Za-z0-9_-]{16,512}$/u;
 
 export interface DesktopSignalingIceServer {
 	readonly urls: readonly string[];
@@ -17,7 +17,6 @@ export interface DesktopSignalingBootstrap {
 	readonly peerId: string;
 	readonly sessionOrigin: string;
 	readonly signalingUrl: string;
-	readonly signalingAuthToken: string;
 	readonly expiresAt: number;
 	readonly iceServers: readonly DesktopSignalingIceServer[];
 }
@@ -37,7 +36,6 @@ export function parseDesktopSignalingBootstrap(
 		'peerId',
 		'sessionOrigin',
 		'signalingUrl',
-		'signalingAuthToken',
 		'expiresAt',
 		'iceServers',
 	]);
@@ -55,7 +53,6 @@ export function parseDesktopSignalingBootstrap(
 	const serverId = identifier(input.serverId);
 	const deviceId = identifier(input.deviceId);
 	const peerId = identifier(input.peerId);
-	const signalingAuthToken = token(input.signalingAuthToken);
 	const expiresAt = expiry(input.expiresAt, now, now + 10 * 60_000);
 	const signalingUrl = normalizeSignalingUrl(input.signalingUrl, origin);
 	if (!Array.isArray(input.iceServers) || input.iceServers.length > 16)
@@ -74,7 +71,6 @@ export function parseDesktopSignalingBootstrap(
 		peerId,
 		sessionOrigin: origin,
 		signalingUrl,
-		signalingAuthToken,
 		expiresAt,
 		iceServers,
 	});
@@ -123,7 +119,7 @@ function parseIceServer(
 		input.username.length === 0 ||
 		input.username.length > 512 ||
 		typeof input.credential !== 'string' ||
-		!TOKEN.test(input.credential)
+		!TURN_CREDENTIAL.test(input.credential)
 	)
 		throw new Error('Desktop WebRTC TURN credentials are invalid.');
 	const expiresAt = expiry(input.expiresAt, now, bootstrapExpiresAt);
@@ -183,12 +179,6 @@ function normalizeOrigin(value: string): string {
 function identifier(value: unknown): string {
 	if (typeof value !== 'string' || !ID.test(value))
 		throw new Error('Desktop WebRTC signaling identity is invalid.');
-	return value;
-}
-
-function token(value: unknown): string {
-	if (typeof value !== 'string' || !TOKEN.test(value))
-		throw new Error('Desktop WebRTC signaling credential is invalid.');
 	return value;
 }
 

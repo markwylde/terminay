@@ -72,7 +72,7 @@ test('deployment verifier rejects a healthy CDN whose origin does not serve the 
 	);
 });
 
-test('deployment verifier rejects the legacy manager even when health and release marker pass', async () => {
+test('deployment verifier rejects a remote workspace document even when health and release marker pass', async () => {
 	await assert.rejects(
 		verifyWebHostDeployment({
 			fetchImpl: async (url) =>
@@ -89,7 +89,7 @@ test('deployment verifier rejects the legacy manager even when health and releas
 								{ status: 200, headers },
 							),
 		}),
-		/legacy Terminay Remote manager/u,
+		/not the Terminay connection manager/u,
 	);
 });
 

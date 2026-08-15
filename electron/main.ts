@@ -7,13 +7,7 @@ import {
 	renameSync,
 	writeFileSync,
 } from 'node:fs';
-import {
-	mkdir,
-	readFile,
-	rename,
-	rm,
-	writeFile,
-} from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -54,7 +48,6 @@ import {
 	RecordingService,
 	ServerRecordingAdapter,
 } from '../packages/server-core/src/recordingService/index';
-import type { RemoteReconnectGrantRecord } from '../packages/server-core/src/remote/reconnect';
 import { ServerSettingsRepository } from '../packages/server-core/src/settings/repository';
 import { createServerVaultComposition } from '../packages/server-core/src/settings/vaultComposition';
 import { openCanonicalWorkspace } from '../packages/server-core/src/workspaceHydration';
@@ -71,10 +64,7 @@ import {
 } from '../src/keyboardShortcuts';
 import { defaultMacros, normalizeMacros } from '../src/macroSettings';
 import { distanceToRect, pointInRect } from '../src/projectTabDrag';
-import { parseRemoteStreamConnectionUrl } from '../src/shared/remoteStreamTransport';
-import {
-	type ServerMessagePort,
-} from '../src/shared/serverPortTransport';
+import { type ServerMessagePort } from '../src/shared/serverPortTransport';
 import {
 	defaultTerminalSettings,
 	normalizeTerminalSettings,
@@ -98,7 +88,10 @@ import {
 	bindRemoteServerUiDocumentEndpoint,
 } from './serverUiDocumentEndpoint';
 import { showCanonicalLaunchRecovery } from './canonicalLaunchRecovery';
-import { createEmbeddedWorkspaceStateBackend, embeddedWorkspacePersistenceFault } from './workspacePersistence';
+import {
+	createEmbeddedWorkspaceStateBackend,
+	embeddedWorkspacePersistenceFault,
+} from './workspacePersistence';
 import {
 	assertBoundServerUiEvent,
 	bindServerUiWindow,
@@ -144,14 +137,13 @@ import {
 } from './mcpInstall';
 import { TerminalRecordingService } from './recording/service';
 import { createDesktopReconnectTransport } from './remote/desktopReconnect';
-import { enrollDesktopReconnectCredential } from './remote/desktopReconnectEnrollment';
+import { establishDesktopDevicePairing } from './remote/desktopPairing';
 import { createDesktopBootstrappedWebRtcConnection } from './remote/desktopWebRtcBootstrap';
 import { resolveDesktopWebRtcRuntimeRoot } from './remote/desktopWebRtcRuntimeRoot';
 import {
 	createEphemeralTestProtectedValueCodec,
 	DesktopDeviceCredentialStore,
 } from './remote/deviceCredentialStore';
-import { EmbeddedLanExposure } from './remote/embeddedLanExposure';
 import { createHostedSignalingRoomRegistrar } from './remote/hostedSignalingRegistration';
 import { createPairingPinHash } from './remote/pin';
 import { PrivilegedWebRtcExposure } from './remote/privilegedWebRtcExposure';
@@ -451,9 +443,7 @@ function resetZoom(): void {
 // uninitialised binding for a published workspace authority.
 let serverTerminalAuthority: ServerTerminalAuthority | null = null;
 let privilegedWebRtcExposure: PrivilegedWebRtcExposure | null = null;
-let embeddedLanExposure: EmbeddedLanExposure;
 let desktopRemoteExposure: DesktopServerOwnedExposure;
-let desktopDirectNetworkExposure: DesktopServerOwnedExposure;
 const privilegedWebRtcSessions = new Set<string>();
 let appliedAgentIntegrationSetting: boolean | null = null;
 let applyAgentIntegrationPromise = Promise.resolve();
@@ -639,7 +629,9 @@ const workspaceViewByWebContents = new Map<number, string>();
 // can race to deliver a port and the new document can reconnect to Local.
 const documentEndpointUnbindByWebContents = new Map<number, () => void>();
 
-function sanitizedDesktopConnectionProfiles(selectedProfileId: string): Readonly<{
+function sanitizedDesktopConnectionProfiles(
+	selectedProfileId: string,
+): Readonly<{
 	profile: Readonly<{
 		id: string;
 		isLocal: boolean;
@@ -659,9 +651,10 @@ function sanitizedDesktopConnectionProfiles(selectedProfileId: string): Readonly
 			id: LocalServerUiSession.profileId,
 			isLocal: true,
 			label: 'Local',
-			status: selectedProfileId === LocalServerUiSession.profileId
-				? ('connected' as const)
-				: ('offline' as const),
+			status:
+				selectedProfileId === LocalServerUiSession.profileId
+					? ('connected' as const)
+					: ('offline' as const),
 		},
 		...[...rememberedRemoteConnections.values()]
 			.sort((left, right) => left.label.localeCompare(right.label))
@@ -675,12 +668,16 @@ function sanitizedDesktopConnectionProfiles(selectedProfileId: string): Readonly
 						: ('offline' as const),
 			})),
 	];
-	const profile = profiles.find((candidate) => candidate.id === selectedProfileId);
+	const profile = profiles.find(
+		(candidate) => candidate.id === selectedProfileId,
+	);
 	if (profile === undefined)
 		throw new Error('The Desktop window profile is unavailable.');
 	return Object.freeze({
 		profile: Object.freeze(profile),
-		profiles: Object.freeze(profiles.map((candidate) => Object.freeze(candidate))),
+		profiles: Object.freeze(
+			profiles.map((candidate) => Object.freeze(candidate)),
+		),
 	});
 }
 
@@ -708,20 +705,18 @@ function getRunningTerminalCountForWindow(webContentsId: number): number {
 	const projectIds = authority.workspace.state.views[viewId ?? '']?.projectIds;
 	if (projectIds === undefined) return 0;
 	const ownedProjects = new Set(projectIds);
-	return authority.list().filter(
-		(session) => {
-			if (!ownedProjects.has(session.projectId)) return false;
-			const activity = authority.activity.get({
-				serverId: session.serverId,
-				projectId: session.projectId,
-				sessionId: session.id,
-			});
-			// Foreground-process polling is asynchronous.  The canonical reducer
-			// marks the PTY working immediately on accepted/echoed input, which is
-			// the safe close boundary until that poll confirms the child process.
-			return activity?.foregroundBusy === true || activity?.status === 'working';
-		},
-	).length;
+	return authority.list().filter((session) => {
+		if (!ownedProjects.has(session.projectId)) return false;
+		const activity = authority.activity.get({
+			serverId: session.serverId,
+			projectId: session.projectId,
+			sessionId: session.id,
+		});
+		// Foreground-process polling is asynchronous.  The canonical reducer
+		// marks the PTY working immediately on accepted/echoed input, which is
+		// the safe close boundary until that poll confirms the child process.
+		return activity?.foregroundBusy === true || activity?.status === 'working';
+	}).length;
 }
 
 function getOpenProjectWindowCount(): number {
@@ -853,7 +848,8 @@ const embeddedServerSettings = new ServerSettingsRepository({
  * deliberately not included in the server settings snapshot.
  */
 function readEmbeddedRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
-	const serverSettings = embeddedServerSettings.settings as Partial<TerminalSettings>;
+	const serverSettings =
+		embeddedServerSettings.settings as Partial<TerminalSettings>;
 	return {
 		...normalizeTerminalSettings({
 			...defaultTerminalSettings,
@@ -966,373 +962,277 @@ const embeddedVault = createServerVaultComposition(embeddedVaultAdapter);
 const embeddedRuntimeReady = prepareEmbeddedRuntime();
 
 async function prepareEmbeddedRuntime(): Promise<BrowserWindow> {
-await app.whenReady();
-const embeddedStartupWindow = createWindow({ deferCanonicalLaunch: true });
-if (embeddedStartupWindow === null) throw new Error('The embedded workspace window could not be created.');
-embeddedStartupWindowForRecovery = embeddedStartupWindow;
-const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(embeddedStartupWindow);
-const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
-	serverId: 'desktop-local',
-	dataRoot: app.getPath('userData'),
-	extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
-	vault: embeddedVault,
-	parakeetRuntime,
-	defaultProjectRoot: () => app.getPath('home'),
-	projectEnvironmentRepository: embeddedProjectEnvironments,
-	shellProfiles: embeddedShellProfiles,
-	aiMetadata: aiTabMetadataService,
-	saveSparseFile: (request) => fileBufferService.saveSparseFile(request),
-	recordings: serverRecordingAdapter,
-	settings: embeddedServerSettings,
-	workspaceRepository: embeddedWorkspace,
-	applicationFeatures: {
-		mcpInstall: {
-			getStatus: getMcpInstallStatus,
-			install: (agent) => installMcpAgent(agent, getMcpServerCommand()),
-			uninstall: uninstallMcpAgent,
-		},
-		remoteAccess: {
-			getStatus: () => currentRemoteAccessStatus(),
-			command: async (operation, value) => {
-				switch (operation) {
-					case 'pairing-pin-status': return readTerminalSettings().remoteAccess.pairingPinHash.trim().length > 0;
-					case 'toggle-server': return toggleRemoteServer();
-					case 'toggle-direct-listener': return toggleDirectRemoteListener();
-					case 'revoke-device': return revokeRemoteDevice(value ?? '');
-					case 'close-connection': return closeRemoteConnection(value ?? '');
-					case 'set-pairing-address': return setRemotePairingAddress(value ?? '');
-					case 'set-pairing-pin': return setRemotePairingPin(value ?? '');
-					default: throw new Error('Remote access operation is unavailable.');
-				}
-			},
-		},
-	},
-	remoteMcpDispatch: async (sessionId, op, params, signal) =>
-		JSON.parse(
-			JSON.stringify(
-				await dispatchServerControlRequest(
-					sessionId,
-					op as ControlOp,
-					params,
-					signal,
-				),
-			),
-		) as JsonValue,
-	macros: {
-		repository: embeddedMacros,
-		environmentFor: (request, target) => {
-			const terminalAuthority = authority;
-			const authorization = {
-				...target,
-				clientId: request.context.clientId,
-				scope:
-					request.context.authScope === 'admin'
-						? ('admin' as const)
-						: ('write' as const),
-			};
-			return {
-				target,
-				write: (_candidate, bytes) =>
-					terminalAuthority.service.input(target, bytes, authorization),
-				key: (_candidate, key) =>
-					terminalAuthority.service.input(
-						target,
-						embeddedMacroKeyBytes(key),
-						authorization,
-					),
-				waitForInactivity: (_candidate, milliseconds, signal) =>
-					terminalAuthority.service.waitForInactivity(target, milliseconds, {
-						authorization,
-						signal,
-					}),
-				resolveSecret: (_candidate, secretId) => {
-					if (
-						secretId === DICTATION_OPENAI_SECRET_ID ||
-						!safeStorage.isEncryptionAvailable()
-					)
-						throw new Error('Macro secret is unavailable.');
-					const secret = readSecrets().find(
-						(candidate) => candidate.id === secretId,
-					);
-					if (secret === undefined)
-						throw new Error('Macro secret is unavailable.');
-					return new TextEncoder().encode(
-						safeStorage.decryptString(
-							Buffer.from(secret.encryptedValue, 'base64'),
-						),
-					);
-				},
-			};
-		},
-	},
-	onEvent: handleServerTerminalEvent,
-	onDeliveryDiagnostic: (diagnostic) => {
-		if (diagnostic.phase !== 'terminal_congestion') return;
-		void desktopDiagnostics.record(
-			{
-				component: 'local-server',
-				event: 'local-server.terminal-congestion',
-				fields: {
-					code: diagnostic.code,
-					queuedBytes: diagnostic.queuedBytes,
-					queuedFrames: diagnostic.queuedFrames,
-					confirmedPosition: diagnostic.confirmedPosition,
-					headPosition: diagnostic.headPosition,
-				},
-				severity: 'warning',
-				source: 'local-server-protocol',
-			},
-			{ channel: 'lifecycle' },
-		);
-	},
-	onFileOperationFailure: (failure) => {
-		void desktopDiagnostics.record(
-			{
-				component: 'local-server',
-				event: 'local-server.file-operation.failed',
-				fields: {
-					operation: failure.operation,
-					code: failure.code,
-				},
-				severity: 'warning',
-				source: 'local-server-files',
-			},
-			{ channel: 'lifecycle' },
-		);
-	},
-	// These callbacks run only after the server has accepted the operation.
-	// Recording and remote bookkeeping must never be driven by renderer intent.
-	onAcceptedWrite: ({ sessionId, data }) => {
-		try {
-			recordingService.appendInput(
-				sessionId,
-				typeof data === 'string' ? data : new TextDecoder().decode(data),
-			);
-		} catch {
-			// Recording remains optional and cannot affect a committed PTY write.
-		}
-	},
-	onAcceptedResize: ({ sessionId, cols, rows }) => {
-		try {
-			recordingService.appendResize(sessionId, cols, rows);
-			recordingService.updateSessionMetadata(sessionId, { cols, rows });
-		} catch {
-			// Recording remains optional and cannot affect a committed PTY resize.
-		}
-	},
-});
-await recoverEmbeddedWorkspaceOperation(
-	embeddedStartupWindow,
-	() => authority.initializeWorkspace(),
-);
-serverTerminalAuthority = authority;
-localServerUiSession = new LocalServerUiSession({
-	bundleRoot: SERVER_UI_DIST,
-	cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
-	serverId: authority.service.serverId,
-});
-remoteServerUiBundleHost = new DesktopServerBundleHost({
-	cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
-	capabilities: { clipboardWrite: 1, filePicker: 1, nativeMenus: 1, nativeWindows: 1, notifications: 1, osIntegration: 1, updater: 1 },
-});
-const embeddedReconnectRecordsPath = path.join(
-	app.getPath('userData'),
-	'embedded-reconnect-grants.v1.json',
-);
-let embeddedReconnectRecords = readEmbeddedReconnectRecords(
-	embeddedReconnectRecordsPath,
-);
-const persistEmbeddedReconnectRecords = (
-	records: readonly RemoteReconnectGrantRecord[],
-) => {
-	const scopes = new Set(
-		records.map((record) => `${record.serverId}\u0000${record.sessionOrigin}`),
+	await app.whenReady();
+	const embeddedStartupWindow = createWindow({ deferCanonicalLaunch: true });
+	if (embeddedStartupWindow === null)
+		throw new Error('The embedded workspace window could not be created.');
+	embeddedStartupWindowForRecovery = embeddedStartupWindow;
+	const embeddedWorkspace = await openEmbeddedWorkspaceWithRecovery(
+		embeddedStartupWindow,
 	);
-	embeddedReconnectRecords = [
-		...embeddedReconnectRecords.filter(
-			(record) =>
-				!scopes.has(`${record.serverId}\u0000${record.sessionOrigin}`),
-		),
-		...records,
-	];
-	mkdirSync(path.dirname(embeddedReconnectRecordsPath), {
-		recursive: true,
-		mode: 0o700,
-	});
-	const temporary = `${embeddedReconnectRecordsPath}.${randomUUID()}.tmp`;
-	writeFileSync(temporary, JSON.stringify(embeddedReconnectRecords), {
-		encoding: 'utf8',
-		mode: 0o600,
-		flag: 'wx',
-	});
-	renameSync(temporary, embeddedReconnectRecordsPath);
-};
-embeddedLanExposure = new EmbeddedLanExposure({
-	core: authority.composition.core,
-	...(process.env.TERMINAY_TEST === '1' ? { enableTestControl: true } : {}),
-	getSettings: readEmbeddedRemoteAccessSettings,
-	onConnectionError: (error) => {
-		void desktopDiagnostics.record(
-			{
-				component: 'local-server',
-				event: 'local-server.connection.failed',
-				message: error,
-				severity: 'error',
-				source: 'local-server-protocol',
+	const authority: ServerTerminalAuthority = new ServerTerminalAuthority({
+		serverId: 'desktop-local',
+		dataRoot: app.getPath('userData'),
+		extensionHostChildEntrypoint: path.join(MAIN_DIST, 'extensionHostEntry.js'),
+		vault: embeddedVault,
+		parakeetRuntime,
+		defaultProjectRoot: () => app.getPath('home'),
+		projectEnvironmentRepository: embeddedProjectEnvironments,
+		shellProfiles: embeddedShellProfiles,
+		aiMetadata: aiTabMetadataService,
+		saveSparseFile: (request) => fileBufferService.saveSparseFile(request),
+		recordings: serverRecordingAdapter,
+		settings: embeddedServerSettings,
+		workspaceRepository: embeddedWorkspace,
+		applicationFeatures: {
+			mcpInstall: {
+				getStatus: getMcpInstallStatus,
+				install: (agent) => installMcpAgent(agent, getMcpServerCommand()),
+				uninstall: uninstallMcpAgent,
 			},
-			{ channel: 'lifecycle' },
-		);
-	},
-	onReconnectRecordsChanged: persistEmbeddedReconnectRecords,
-	remoteDirectory: path.join(app.getPath('userData'), 'remote-access'),
-	serverId: authority.service.serverId,
-	serverVersion: app.getVersion(),
-	uiBundleDirectory: SERVER_UI_DIST,
-});
-desktopRemoteExposure = new DesktopServerOwnedExposure({
-	serverId: authority.service.serverId,
-	sessionOrigin: readEmbeddedRemoteAccessSettings().origin,
-	pairingMode: () => 'webrtc',
-	initialReconnectRecords: embeddedReconnectRecords,
-	lanListener: embeddedLanExposure,
-	onReconnectRecordsChanged: persistEmbeddedReconnectRecords,
-	...(process.env.TERMINAY_TEST === '1' &&
-	process.env.TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI === '1'
-		? {}
-		: {
-				webRtcUnavailableReason:
-					'Desktop WebRTC Relay is unavailable in this build because its authenticated hosted signaling runtime is not installed.',
-				signalingRegistrar: createHostedSignalingRoomRegistrar(),
-				ensureWebRtcRuntimeAvailable: () => {
-					throw new Error(
-						'Desktop WebRTC runtime is unavailable in this build. Install a build with an approved production WebRTC runtime before enabling WebRTC Remote Access.',
-					);
+			remoteAccess: {
+				getStatus: () => currentRemoteAccessStatus(),
+				command: async (operation, value) => {
+					switch (operation) {
+						case 'pairing-pin-status':
+							return (
+								readTerminalSettings().remoteAccess.pairingPinHash.trim()
+									.length > 0
+							);
+						case 'toggle-server':
+							return toggleRemoteServer();
+						case 'revoke-device':
+							return revokeRemoteDevice(value ?? '');
+						case 'close-connection':
+							return closeRemoteConnection(value ?? '');
+						case 'set-pairing-pin':
+							return setRemotePairingPin(value ?? '');
+						default:
+							throw new Error('Remote access operation is unavailable.');
+					}
 				},
-			}),
-	resolveSessionOrigin: () => {
-		const settings = readEmbeddedRemoteAccessSettings();
-		if (settings.pairingMode === 'lan') return settings.origin;
-		const configured = settings.webRtcHostedDomain.includes('://')
-			? settings.webRtcHostedDomain
-			: `https://${settings.webRtcHostedDomain}`;
-		const hosted = new URL(configured);
-		const loopbackHostedDomain =
-			hosted.hostname === 'localhost' ||
-			hosted.hostname.endsWith('.localhost') ||
-			hosted.hostname === '127.0.0.1' ||
-			hosted.hostname === '[::1]';
-		// Loopback development hosts are the sole HTTP exception. Normalized
-		// settings intentionally store only the hosted authority, so derive the
-		// transport from the parsed hostname rather than from a stripped scheme.
-		hosted.protocol = loopbackHostedDomain ? 'http:' : 'https:';
-		hosted.hostname = `${randomUUID().replace(/-/g, '')}.${hosted.hostname}`;
-		hosted.pathname = '/';
-		hosted.search = '';
-		hosted.hash = '';
-		return hosted.toString();
-	},
-});
-desktopDirectNetworkExposure = new DesktopServerOwnedExposure({
-	serverId: authority.service.serverId,
-	sessionOrigin: readTerminalSettings().remoteAccess.origin,
-	pairingMode: () => 'lan',
-	initialReconnectRecords: embeddedReconnectRecords,
-	lanListener: embeddedLanExposure,
-	onReconnectRecordsChanged: persistEmbeddedReconnectRecords,
-});
-
-const desktopWebRtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
-	isPackaged: app.isPackaged,
-	resourcesPath: process.resourcesPath,
-	environment: process.env,
-});
-if (desktopWebRtcRuntimeRoot !== undefined) {
-	privilegedWebRtcExposure = new PrivilegedWebRtcExposure(
-		desktopWebRtcRuntimeRoot,
-		{
-			serverId: authority.service.serverId,
-			serverVersion: app.getVersion(),
-			acceptApplicationTransport: (transport, authenticatedClient) => {
-				if (serverTerminalAuthority === null) {
-					throw new Error('The embedded server is unavailable.');
-				}
-				return serverTerminalAuthority.composition.core.accept(transport, {
-					authenticatedClient,
-				});
 			},
-			getControllableSession: (sessionId) => {
-				const authority = serverTerminalAuthority;
-				const session = authority?.get(sessionId);
-				if (
-					authority === null ||
-					authority === undefined ||
-					session === undefined
-				)
-					return null;
+		},
+		remoteMcpDispatch: async (sessionId, op, params, signal) =>
+			JSON.parse(
+				JSON.stringify(
+					await dispatchServerControlRequest(
+						sessionId,
+						op as ControlOp,
+						params,
+						signal,
+					),
+				),
+			) as JsonValue,
+		macros: {
+			repository: embeddedMacros,
+			environmentFor: (request, target) => {
+				const terminalAuthority = authority;
+				const authorization = {
+					...target,
+					clientId: request.context.clientId,
+					scope:
+						request.context.authScope === 'admin'
+							? ('admin' as const)
+							: ('write' as const),
+				};
 				return {
-					close: () => authority.kill(sessionId),
-					resize: (cols, rows) => authority.resize(sessionId, { cols, rows }),
-					write: (data) => authority.write(sessionId, data),
+					target,
+					write: (_candidate, bytes) =>
+						terminalAuthority.service.input(target, bytes, authorization),
+					key: (_candidate, key) =>
+						terminalAuthority.service.input(
+							target,
+							embeddedMacroKeyBytes(key),
+							authorization,
+						),
+					waitForInactivity: (_candidate, milliseconds, signal) =>
+						terminalAuthority.service.waitForInactivity(target, milliseconds, {
+							authorization,
+							signal,
+						}),
+					resolveSecret: (_candidate, secretId) => {
+						if (
+							secretId === DICTATION_OPENAI_SECRET_ID ||
+							!safeStorage.isEncryptionAvailable()
+						)
+							throw new Error('Macro secret is unavailable.');
+						const secret = readSecrets().find(
+							(candidate) => candidate.id === secretId,
+						);
+						if (secret === undefined)
+							throw new Error('Macro secret is unavailable.');
+						return new TextEncoder().encode(
+							safeStorage.decryptString(
+								Buffer.from(secret.encryptedValue, 'base64'),
+							),
+						);
+					},
 				};
 			},
-			getRemoteAccessSettings: readEmbeddedRemoteAccessSettings,
-			notifyTerminalRemoteSizeOverride: () => undefined,
-			onStatusChanged: () => undefined,
-			// Direct-browser/WebRTC exposure serves the identical generated server
-			// workspace artifact used by Local Desktop.  `dist` only contains the
-			// host shell and must never become a second workspace release line.
-			publicDir: SERVER_UI_DIST,
-			rendererDistDir: SERVER_UI_DIST,
-			saveGeneratedTlsPaths: () => undefined,
-			userDataPath: app.getPath('userData'),
 		},
+		onEvent: handleServerTerminalEvent,
+		onDeliveryDiagnostic: (diagnostic) => {
+			if (diagnostic.phase !== 'terminal_congestion') return;
+			void desktopDiagnostics.record(
+				{
+					component: 'local-server',
+					event: 'local-server.terminal-congestion',
+					fields: {
+						code: diagnostic.code,
+						queuedBytes: diagnostic.queuedBytes,
+						queuedFrames: diagnostic.queuedFrames,
+						confirmedPosition: diagnostic.confirmedPosition,
+						headPosition: diagnostic.headPosition,
+					},
+					severity: 'warning',
+					source: 'local-server-protocol',
+				},
+				{ channel: 'lifecycle' },
+			);
+		},
+		onFileOperationFailure: (failure) => {
+			void desktopDiagnostics.record(
+				{
+					component: 'local-server',
+					event: 'local-server.file-operation.failed',
+					fields: {
+						operation: failure.operation,
+						code: failure.code,
+					},
+					severity: 'warning',
+					source: 'local-server-files',
+				},
+				{ channel: 'lifecycle' },
+			);
+		},
+		// These callbacks run only after the server has accepted the operation.
+		// Recording and remote bookkeeping must never be driven by renderer intent.
+		onAcceptedWrite: ({ sessionId, data }) => {
+			try {
+				recordingService.appendInput(
+					sessionId,
+					typeof data === 'string' ? data : new TextDecoder().decode(data),
+				);
+			} catch {
+				// Recording remains optional and cannot affect a committed PTY write.
+			}
+		},
+		onAcceptedResize: ({ sessionId, cols, rows }) => {
+			try {
+				recordingService.appendResize(sessionId, cols, rows);
+				recordingService.updateSessionMetadata(sessionId, { cols, rows });
+			} catch {
+				// Recording remains optional and cannot affect a committed PTY resize.
+			}
+		},
+	});
+	await recoverEmbeddedWorkspaceOperation(embeddedStartupWindow, () =>
+		authority.initializeWorkspace(),
 	);
-}
-	return embeddedStartupWindow;
-}
+	serverTerminalAuthority = authority;
+	localServerUiSession = new LocalServerUiSession({
+		bundleRoot: SERVER_UI_DIST,
+		cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
+		serverId: authority.service.serverId,
+	});
+	remoteServerUiBundleHost = new DesktopServerBundleHost({
+		cacheRoot: path.join(app.getPath('userData'), 'ui-bundles'),
+		capabilities: {
+			clipboardWrite: 1,
+			filePicker: 1,
+			nativeMenus: 1,
+			nativeWindows: 1,
+			notifications: 1,
+			osIntegration: 1,
+			updater: 1,
+		},
+	});
+	desktopRemoteExposure = new DesktopServerOwnedExposure({
+		serverId: authority.service.serverId,
+		...(process.env.TERMINAY_TEST === '1' &&
+		process.env.TERMINAY_TEST_ALLOW_UNAVAILABLE_WEBRTC_UI === '1'
+			? {}
+			: {
+					webRtcUnavailableReason:
+						'Desktop WebRTC Relay is unavailable in this build because its authenticated hosted signaling runtime is not installed.',
+					signalingRegistrar: createHostedSignalingRoomRegistrar(),
+					ensureWebRtcRuntimeAvailable: () => {
+						throw new Error(
+							'Desktop WebRTC runtime is unavailable in this build. Install a build with an approved production WebRTC runtime before enabling WebRTC Remote Access.',
+						);
+					},
+				}),
+		resolveSessionOrigin: () => {
+			const settings = readEmbeddedRemoteAccessSettings();
+			const configured = settings.webRtcHostedDomain.includes('://')
+				? settings.webRtcHostedDomain
+				: `https://${settings.webRtcHostedDomain}`;
+			const hosted = new URL(configured);
+			const loopbackHostedDomain =
+				hosted.hostname === 'localhost' ||
+				hosted.hostname.endsWith('.localhost') ||
+				hosted.hostname === '127.0.0.1' ||
+				hosted.hostname === '[::1]';
+			// Loopback development hosts are the sole HTTP exception. Normalized
+			// settings intentionally store only the hosted authority, so derive the
+			// transport from the parsed hostname rather than from a stripped scheme.
+			hosted.protocol = loopbackHostedDomain ? 'http:' : 'https:';
+			hosted.hostname = `${randomUUID().replace(/-/g, '')}.${hosted.hostname}`;
+			hosted.pathname = '/';
+			hosted.search = '';
+			hosted.hash = '';
+			return hosted.toString();
+		},
+	});
 
-function readEmbeddedReconnectRecords(
-	file: string,
-): readonly RemoteReconnectGrantRecord[] {
-	try {
-		const value: unknown = JSON.parse(readFileSync(file, 'utf8'));
-		return Array.isArray(value) && value.every(isEmbeddedReconnectRecord)
-			? value
-			: [];
-	} catch (error) {
-		if ((error as { code?: unknown }).code === 'ENOENT') return [];
-		console.error('[remote] unable to read embedded reconnect records', error);
-		return [];
+	const desktopWebRtcRuntimeRoot = resolveDesktopWebRtcRuntimeRoot({
+		isPackaged: app.isPackaged,
+		resourcesPath: process.resourcesPath,
+		environment: process.env,
+	});
+	if (desktopWebRtcRuntimeRoot !== undefined) {
+		privilegedWebRtcExposure = new PrivilegedWebRtcExposure(
+			desktopWebRtcRuntimeRoot,
+			{
+				serverId: authority.service.serverId,
+				serverVersion: app.getVersion(),
+				acceptApplicationTransport: (transport, authenticatedClient) => {
+					if (serverTerminalAuthority === null) {
+						throw new Error('The embedded server is unavailable.');
+					}
+					return serverTerminalAuthority.composition.core.accept(transport, {
+						authenticatedClient,
+					});
+				},
+				getControllableSession: (sessionId) => {
+					const authority = serverTerminalAuthority;
+					const session = authority?.get(sessionId);
+					if (
+						authority === null ||
+						authority === undefined ||
+						session === undefined
+					)
+						return null;
+					return {
+						close: () => authority.kill(sessionId),
+						resize: (cols, rows) => authority.resize(sessionId, { cols, rows }),
+						write: (data) => authority.write(sessionId, data),
+					};
+				},
+				getRemoteAccessSettings: readEmbeddedRemoteAccessSettings,
+				notifyTerminalRemoteSizeOverride: () => undefined,
+				onStatusChanged: () => undefined,
+				// Direct-browser/WebRTC exposure serves the identical generated server
+				// workspace artifact used by Local Desktop.  `dist` only contains the
+				// host shell and must never become a second workspace release line.
+				publicDir: SERVER_UI_DIST,
+				rendererDistDir: SERVER_UI_DIST,
+				userDataPath: app.getPath('userData'),
+			},
+		);
 	}
-}
-
-function isEmbeddedReconnectRecord(
-	value: unknown,
-): value is RemoteReconnectGrantRecord {
-	if (typeof value !== 'object' || value === null || Array.isArray(value))
-		return false;
-	const record = value as Record<string, unknown>;
-	const id = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
-	const token = /^[A-Za-z0-9_-]{16,512}$/u;
-	return (
-		typeof record.id === 'string' &&
-		id.test(record.id) &&
-		typeof record.deviceId === 'string' &&
-		id.test(record.deviceId) &&
-		typeof record.serverId === 'string' &&
-		id.test(record.serverId) &&
-		typeof record.handle === 'string' &&
-		token.test(record.handle) &&
-		typeof record.sessionOrigin === 'string' &&
-		typeof record.grantHash === 'string' &&
-		token.test(record.grantHash) &&
-		typeof record.proofVerifier === 'string' &&
-		token.test(record.proofVerifier) &&
-		Number.isSafeInteger(record.issuedAt) &&
-		(record.expiresAt === null || Number.isSafeInteger(record.expiresAt)) &&
-		(record.lastUsedAt === null || Number.isSafeInteger(record.lastUsedAt)) &&
-		(record.revokedAt === null || Number.isSafeInteger(record.revokedAt))
-	);
+	return embeddedStartupWindow;
 }
 
 async function createServerOwnedTerminalSession(
@@ -1557,7 +1457,10 @@ function getRemoteAccessSettingsPath(): string {
 
 function readRemotePairingPinVerifier(): string {
 	try {
-		const verifier = readFileSync(getRemotePairingPinVerifierPath(), 'utf8').trim();
+		const verifier = readFileSync(
+			getRemotePairingPinVerifierPath(),
+			'utf8',
+		).trim();
 		return /^scrypt-v1:[A-Za-z0-9_-]{8,}:[A-Za-z0-9_-]{32,}$/u.test(verifier)
 			? verifier
 			: '';
@@ -1576,16 +1479,7 @@ function readRemoteAccessSettings(): TerminalSettings['remoteAccess'] {
 	let candidate: unknown;
 	try {
 		candidate = JSON.parse(readFileSync(getRemoteAccessSettingsPath(), 'utf8'));
-	} catch {
-		try {
-			const legacy = JSON.parse(readFileSync(getTerminalSettingsPath(), 'utf8')) as {
-				remoteAccess?: unknown;
-			};
-			candidate = legacy.remoteAccess;
-		} catch {
-			candidate = undefined;
-		}
-	}
+	} catch {}
 	return normalizeTerminalSettings({
 		...defaultTerminalSettings,
 		remoteAccess: candidate,
@@ -1809,7 +1703,9 @@ function registerControlToken(
 	controlTokensByToken.set(token, {
 		token,
 		sessionId,
-		...(resolvedProjectId === undefined ? {} : { projectId: resolvedProjectId }),
+		...(resolvedProjectId === undefined
+			? {}
+			: { projectId: resolvedProjectId }),
 		webContentsId,
 	});
 	controlTokensBySession.set(sessionId, token);
@@ -2143,13 +2039,15 @@ function getFirstAppWindow(): BrowserWindow | null {
 	return null;
 }
 
-function sendCommandToFocusedWindow(command: AppCommand): void {
+function sendCommandToWindow(
+	targetWindow: BrowserWindow,
+	command: AppCommand,
+): void {
 	if (isQuitting) {
 		return;
 	}
 
-	const targetWindow = BrowserWindow.getFocusedWindow() ?? getFirstAppWindow();
-	if (!targetWindow || targetWindow.isDestroyed()) {
+	if (targetWindow.isDestroyed()) {
 		return;
 	}
 
@@ -2157,6 +2055,12 @@ function sendCommandToFocusedWindow(command: AppCommand): void {
 		type: 'menu.command',
 		command,
 	});
+}
+
+function sendCommandToFocusedWindow(command: AppCommand): void {
+	const targetWindow = BrowserWindow.getFocusedWindow() ?? getFirstAppWindow();
+	if (targetWindow === null) return;
+	sendCommandToWindow(targetWindow, command);
 }
 
 function isMacQuitInput(input: Electron.Input): boolean {
@@ -2453,7 +2357,10 @@ const AUXILIARY_TITLES: Readonly<Record<string, string>> = Object.freeze({
 });
 
 function canonicalAuxiliaryRequest(
-	action: Extract<TerminayHostActionRequest['action'], { type: 'route.present' }>,
+	action: Extract<
+		TerminayHostActionRequest['action'],
+		{ type: 'route.present' }
+	>,
 ): Readonly<{ logicalViewId: string; route: string; title: string }> {
 	if (
 		action.disposition !== 'native-window' ||
@@ -2486,7 +2393,10 @@ async function presentCanonicalAuxiliaryRoute(
 	context: TerminayHostContext,
 ): Promise<void> {
 	if (request.action.type !== 'route.present') return;
-	const workspaceRoute = new URL(request.action.route, 'https://terminay.invalid');
+	const workspaceRoute = new URL(
+		request.action.route,
+		'https://terminay.invalid',
+	);
 	const workspaceViewId = workspaceRoute.searchParams.get('view');
 	if (
 		request.action.disposition === 'native-window' &&
@@ -2522,10 +2432,15 @@ async function presentCanonicalAuxiliaryRoute(
 			});
 			try {
 				if (connected.signalingBootstrap === undefined) {
-					const launch = await prepareCanonicalHttpRemoteLaunch(profile.origin, profile);
+					const launch = await prepareCanonicalHttpRemoteLaunch(
+						profile.origin,
+						profile,
+					);
 					workspaceWindow = createWindow({
-						bounds: { x, y }, workspaceViewId,
-						serverUiLaunch: launch, serverUiTransport: connected.transport,
+						bounds: { x, y },
+						workspaceViewId,
+						serverUiLaunch: launch,
+						serverUiTransport: connected.transport,
 					});
 				} else {
 					const webRtc = await createDesktopBootstrappedWebRtcConnection({
@@ -2534,12 +2449,17 @@ async function presentCanonicalAuxiliaryRoute(
 					});
 					await connected.transport.close({ code: 'normal' });
 					const launch = await remoteServerUiBundleHost.prepareRemote({
-						lane: webRtc.assets, origin: profile.origin, profileId: profile.id,
-						serverId: webRtc.serverId, windowId: `window-${randomUUID()}`,
+						lane: webRtc.assets,
+						origin: profile.origin,
+						profileId: profile.id,
+						serverId: webRtc.serverId,
+						windowId: `window-${randomUUID()}`,
 					});
 					workspaceWindow = createWindow({
-						bounds: { x, y }, workspaceViewId,
-						serverUiLaunch: launch, serverUiTransport: webRtc.transport,
+						bounds: { x, y },
+						workspaceViewId,
+						serverUiLaunch: launch,
+						serverUiTransport: webRtc.transport,
 					});
 				}
 			} catch (error) {
@@ -2547,7 +2467,10 @@ async function presentCanonicalAuxiliaryRoute(
 				throw error;
 			}
 			if (workspaceWindow !== null) {
-				remoteProfileBindingsByWebContents.set(workspaceWindow.webContents.id, profile.id);
+				remoteProfileBindingsByWebContents.set(
+					workspaceWindow.webContents.id,
+					profile.id,
+				);
 			}
 		}
 		if (workspaceWindow === null) throw new Error('Desktop is closing.');
@@ -2653,7 +2576,9 @@ async function presentCanonicalAuxiliaryRoute(
 	});
 }
 
-function waitForCanonicalWorkspaceDocument(window: BrowserWindow): Promise<void> {
+function waitForCanonicalWorkspaceDocument(
+	window: BrowserWindow,
+): Promise<void> {
 	return new Promise((resolve, reject) => {
 		// A popout's logical view is already authoritative before this call.  Do
 		// not close/rebind the source window merely because the child has finished
@@ -2717,29 +2642,32 @@ function waitForCanonicalWorkspaceDocument(window: BrowserWindow): Promise<void>
 			);
 		};
 		const onClosed = () => {
-			settle(new Error('The canonical workspace window closed before mounting.'));
+			settle(
+				new Error('The canonical workspace window closed before mounting.'),
+			);
 		};
 		window.webContents.on('did-finish-load', onLoaded);
 		window.webContents.on('did-fail-load', onFailed);
 		window.once('closed', onClosed);
 		timeout = setTimeout(() => {
-			settle(
-				new Error('Timed out mounting the canonical workspace window.'),
-			);
+			settle(new Error('Timed out mounting the canonical workspace window.'));
 		}, 15_000);
 		waitForMountedRoot();
 	});
 }
 
-async function openEmbeddedWorkspaceWithRecovery(window: BrowserWindow): Promise<Awaited<ReturnType<typeof openCanonicalWorkspace>>> {
-	const openWorkspace = () => openCanonicalWorkspace({
-		backend: createEmbeddedWorkspaceStateBackend({
-			filePath: path.join(app.getPath('userData'), 'workspace.v3.json'),
-			testFault: embeddedWorkspacePersistenceFault(process.env),
-		}),
-		serverId: 'desktop-local',
-		defaultProjectRoot: app.getPath('home'),
-	});
+async function openEmbeddedWorkspaceWithRecovery(
+	window: BrowserWindow,
+): Promise<Awaited<ReturnType<typeof openCanonicalWorkspace>>> {
+	const openWorkspace = () =>
+		openCanonicalWorkspace({
+			backend: createEmbeddedWorkspaceStateBackend({
+				filePath: path.join(app.getPath('userData'), 'workspace.v3.json'),
+				testFault: embeddedWorkspacePersistenceFault(process.env),
+			}),
+			serverId: 'desktop-local',
+			defaultProjectRoot: app.getPath('home'),
+		});
 	return recoverEmbeddedWorkspaceOperation(window, openWorkspace);
 }
 
@@ -2755,10 +2683,15 @@ async function recoverEmbeddedWorkspaceOperation<T>(
 				console.error('[workspace] canonical persistence unavailable', cause);
 				await showCanonicalLaunchRecovery({
 					window,
-					error: new Error('Terminay could not read or update its saved workspace. Retry after checking that application storage is available.'),
+					error: new Error(
+						'Terminay could not read or update its saved workspace. Retry after checking that application storage is available.',
+					),
 					retry: async () => {
-						try { resolve(await operation()); }
-						catch (error) { await renderRecovery(error); }
+						try {
+							resolve(await operation());
+						} catch (error) {
+							await renderRecovery(error);
+						}
 					},
 					onRecoveryState: (active) => {
 						if (active) launchRecoveryWebContents.add(window.webContents.id);
@@ -2844,23 +2777,24 @@ function createWindow(options?: {
 	// Capture the webContents id now; it's unreadable once the window is closed
 	// (accessing window.webContents after destruction throws).
 	const windowWebContentsId = window.webContents.id;
-	if (!isAuxiliary) bindMainWindowCloseConfirmation({
-		window,
-		isQuitting: () => isQuitting,
-		getRunningTerminalCount: () =>
-			getRunningTerminalCountForWindow(windowWebContentsId),
-		isLastWindow: () => getOpenProjectWindowCount() <= 1,
-		showConfirmation: (target, dialogOptions) =>
-			dialog.showMessageBox(target as BrowserWindow, dialogOptions),
-		requestQuit: () => {
-			isQuitConfirmed = true;
-			isQuitting = true;
-			app.quit();
-		},
-		requestClose: () => window.close(),
-		onError: (error) =>
-			console.error('[window] close confirmation failed', error),
-	});
+	if (!isAuxiliary)
+		bindMainWindowCloseConfirmation({
+			window,
+			isQuitting: () => isQuitting,
+			getRunningTerminalCount: () =>
+				getRunningTerminalCountForWindow(windowWebContentsId),
+			isLastWindow: () => getOpenProjectWindowCount() <= 1,
+			showConfirmation: (target, dialogOptions) =>
+				dialog.showMessageBox(target as BrowserWindow, dialogOptions),
+			requestQuit: () => {
+				isQuitConfirmed = true;
+				isQuitting = true;
+				app.quit();
+			},
+			requestClose: () => window.close(),
+			onError: (error) =>
+				console.error('[window] close confirmation failed', error),
+		});
 
 	if (options?.workspaceViewId) {
 		workspaceViewByWebContents.set(
@@ -2955,146 +2889,215 @@ function createWindow(options?: {
 	// before any workspace renderer executes. A successful Desktop pairing can
 	// replace this window's selected server, so the same mounting transaction is
 	// reusable without returning credentials to the renderer.
-	let switchToPairedDesktopServer: (pairingUrl: string) => Promise<void>;
+	let switchToPairedDesktopServer: (
+		pairingUrl: string,
+		pairingPin: string,
+	) => Promise<void>;
 	const mountCanonicalLaunch = async (
 		launch: DesktopBundleLaunch,
 		transport?: ByteTransport,
 	): Promise<void> => {
-				if (window.isDestroyed()) return;
-				documentEndpointUnbindByWebContents.get(windowWebContentsId)?.();
-				documentEndpointUnbindByWebContents.delete(windowWebContentsId);
-				const entryUrl = pathToFileURL(path.join(launch.assetRoot, launch.entryPath));
-				if (options?.auxiliary !== undefined) {
-					const requested = new URL(options.auxiliary.route, 'https://terminay.invalid');
-					entryUrl.search = requested.search;
-				}
-				// `route.present` is a canonical application route, whose logical view
-				// lives in the query string.  Preserve that route when Desktop opens a
-				// second workspace presentation instead of translating it into a hash:
-				// the server bundle's route shell (and not only App's workspace picker)
-				// then mounts the intended view before the source presentation closes.
-				if (options?.workspaceViewId) {
-					entryUrl.searchParams.set('view', options.workspaceViewId);
-				}
-				const connectionProfiles = sanitizedDesktopConnectionProfiles(
-					launch.context.profileId,
-				);
-				bindServerUiWindow({
-					window,
-					context: {
-						...launch.context,
-						profile: connectionProfiles.profile,
-						profiles: connectionProfiles.profiles,
-					},
-					expectedOrigin: entryUrl.toString(),
-					hostPartitionKey: launch.partitionKey,
-					initialUrl: entryUrl.toString(),
-					preloadPath,
-					onLifecycleDiagnostic: (event) => {
-						void desktopDiagnostics.record(
-							{
-								component: 'renderer', event: 'diagnostics.cleanup.failed',
-								fields: { reason: event.reason, resource: event.resource, webContentsId: windowWebContentsId },
-								message: event.message, severity: 'warning', source: 'server-ui-lifecycle',
-							},
-							{ channel: 'lifecycle' },
-						);
-					},
-					onHostAction: async (request) => {
-						const action = request.action;
-						switch (action.type) {
-						case 'connection.pair':
-							await switchToPairedDesktopServer(action.pairingUrl);
-							return;
-						case 'clipboard.write': clipboard.writeText(action.text); return;
-							case 'file.choose': {
-								const result = await dialog.showOpenDialog(window, { properties: action.multiple ? ['openFile', 'multiSelections'] : ['openFile'] });
-								return result.canceled ? [] : result.filePaths;
-							}
-							case 'notification.show': new Notification({ title: action.title, ...(action.body === undefined ? {} : { body: action.body }) }).show(); return;
-							case 'updater.check': return getAppUpdateStatus({ force: true });
-							case 'os.open-external': await openInBrowser(action.url); return;
-							case 'route.close': {
-								const target = action.presentationId === undefined ? window : auxiliaryWindowsByPresentation.get(`${launch.context.profileId}:${action.presentationId}`);
-								target?.close(); return;
-							}
-							case 'route.focus': auxiliaryWindowsByPresentation.get(`${launch.context.profileId}:${action.presentationId}`)?.focus(); return;
-							case 'menu.invoke': sendCommandToFocusedWindow(action.command as AppCommand); return;
-							case 'menu.accelerators.update': {
-								const current = readTerminalSettings();
-								const shortcuts = { ...current.keyboardShortcuts };
-								for (const entry of action.accelerators)
-									shortcuts[entry.command as AppCommand] = entry.accelerator;
-								const settings = writeTerminalSettings({ ...current, keyboardShortcuts: shortcuts });
-								createAppMenu(settings);
-								return;
-							}
-							case 'device.settings.update': {
-								if (
-									typeof action.settings !== 'object' ||
-									action.settings === null ||
-									Array.isArray(action.settings)
-								)
-									throw new TypeError('Device settings must be an object.');
-								const current = readTerminalSettings();
-								const settings = writeTerminalSettings({
-									...current,
-									...action.settings,
-								});
-								createAppMenu(settings);
-								broadcastDeviceTerminalSettings();
-								return selectDeviceTerminalSettings(settings);
-							}
-							case 'route.present': await presentCanonicalAuxiliaryRoute(window, request, launch.context); return;
-							case 'os.reveal': throw new Error('OS reveal requires a host-issued path token.');
-							case 'workspace.drag.start':
-								beginCanonicalProjectDrag(window.webContents.id, action.viewId, action.preview);
-								return;
-							case 'workspace.drag.end': return endCanonicalProjectDrag();
-						}
-					},
-				});
-				const endpointDiagnostic = (resource: string, message: string) => {
-					void desktopDiagnostics.record(
-						{
-							component: 'renderer', event: 'diagnostics.cleanup.failed',
-							fields: { resource, webContentsId: windowWebContentsId }, message,
-							severity: 'warning', source: 'server-ui-document-endpoint',
+		if (window.isDestroyed()) return;
+		documentEndpointUnbindByWebContents.get(windowWebContentsId)?.();
+		documentEndpointUnbindByWebContents.delete(windowWebContentsId);
+		const entryUrl = pathToFileURL(
+			path.join(launch.assetRoot, launch.entryPath),
+		);
+		if (options?.auxiliary !== undefined) {
+			const requested = new URL(
+				options.auxiliary.route,
+				'https://terminay.invalid',
+			);
+			entryUrl.search = requested.search;
+		}
+		// `route.present` is a canonical application route, whose logical view
+		// lives in the query string.  Preserve that route when Desktop opens a
+		// second workspace presentation instead of translating it into a hash:
+		// the server bundle's route shell (and not only App's workspace picker)
+		// then mounts the intended view before the source presentation closes.
+		if (options?.workspaceViewId) {
+			entryUrl.searchParams.set('view', options.workspaceViewId);
+		}
+		const connectionProfiles = sanitizedDesktopConnectionProfiles(
+			launch.context.profileId,
+		);
+		bindServerUiWindow({
+			window,
+			context: {
+				...launch.context,
+				profile: connectionProfiles.profile,
+				profiles: connectionProfiles.profiles,
+			},
+			expectedOrigin: entryUrl.toString(),
+			hostPartitionKey: launch.partitionKey,
+			initialUrl: entryUrl.toString(),
+			preloadPath,
+			onLifecycleDiagnostic: (event) => {
+				void desktopDiagnostics.record(
+					{
+						component: 'renderer',
+						event: 'diagnostics.cleanup.failed',
+						fields: {
+							reason: event.reason,
+							resource: event.resource,
+							webContentsId: windowWebContentsId,
 						},
-						{ channel: 'lifecycle' },
-					);
-				};
-				const targetWebContents = window.webContents;
-				if (transport !== undefined) {
-					const unbindEndpoint = bindRemoteServerUiDocumentEndpoint({
-						diagnostic: endpointDiagnostic,
-						launch,
-						reconnect: () =>
-							reconnectCanonicalDesktopRemoteTransport(
-								launch.context.profileId,
-							),
-						sender: targetWebContents,
-						transport,
-					});
-					documentEndpointUnbindByWebContents.set(
-						windowWebContentsId,
-						unbindEndpoint,
-					);
-				} else if (serverTerminalAuthority !== null) {
-					const unbindEndpoint = bindLocalServerUiDocumentEndpoint({
-						acceptPort: (port) => serverTerminalAuthority?.acceptRendererPort(port as unknown as ServerMessagePort),
-						diagnostic: endpointDiagnostic, handle: launch.byteEndpointHandle, sender: targetWebContents,
-					});
-					documentEndpointUnbindByWebContents.set(
-						windowWebContentsId,
-						unbindEndpoint,
-					);
+						message: event.message,
+						severity: 'warning',
+						source: 'server-ui-lifecycle',
+					},
+					{ channel: 'lifecycle' },
+				);
+			},
+			onHostAction: async (request) => {
+				const action = request.action;
+				switch (action.type) {
+					case 'connection.pair':
+						await switchToPairedDesktopServer(
+							action.pairingUrl,
+							action.pairingPin,
+						);
+						return;
+					case 'clipboard.write':
+						clipboard.writeText(action.text);
+						return;
+					case 'file.choose': {
+						const result = await dialog.showOpenDialog(window, {
+							properties: action.multiple
+								? ['openFile', 'multiSelections']
+								: ['openFile'],
+						});
+						return result.canceled ? [] : result.filePaths;
+					}
+					case 'notification.show':
+						new Notification({
+							title: action.title,
+							...(action.body === undefined ? {} : { body: action.body }),
+						}).show();
+						return;
+					case 'updater.check':
+						return getAppUpdateStatus({ force: true });
+					case 'os.open-external':
+						await openInBrowser(action.url);
+						return;
+					case 'route.close': {
+						const target =
+							action.presentationId === undefined
+								? window
+								: auxiliaryWindowsByPresentation.get(
+										`${launch.context.profileId}:${action.presentationId}`,
+									);
+						target?.close();
+						return;
+					}
+					case 'route.focus':
+						auxiliaryWindowsByPresentation
+							.get(`${launch.context.profileId}:${action.presentationId}`)
+							?.focus();
+						return;
+					case 'menu.invoke':
+						sendCommandToWindow(window, action.command as AppCommand);
+						return;
+					case 'menu.accelerators.update': {
+						const current = readTerminalSettings();
+						const shortcuts = { ...current.keyboardShortcuts };
+						for (const entry of action.accelerators)
+							shortcuts[entry.command as AppCommand] = entry.accelerator;
+						const settings = writeTerminalSettings({
+							...current,
+							keyboardShortcuts: shortcuts,
+						});
+						createAppMenu(settings);
+						return;
+					}
+					case 'device.settings.update': {
+						if (
+							typeof action.settings !== 'object' ||
+							action.settings === null ||
+							Array.isArray(action.settings)
+						)
+							throw new TypeError('Device settings must be an object.');
+						const current = readTerminalSettings();
+						const settings = writeTerminalSettings({
+							...current,
+							...action.settings,
+						});
+						createAppMenu(settings);
+						broadcastDeviceTerminalSettings();
+						return selectDeviceTerminalSettings(settings);
+					}
+					case 'route.present':
+						await presentCanonicalAuxiliaryRoute(
+							window,
+							request,
+							launch.context,
+						);
+						return;
+					case 'os.reveal':
+						throw new Error('OS reveal requires a host-issued path token.');
+					case 'workspace.drag.start':
+						beginCanonicalProjectDrag(
+							window.webContents.id,
+							action.viewId,
+							action.preview,
+						);
+						return;
+					case 'workspace.drag.end':
+						return endCanonicalProjectDrag();
 				}
-				await window.loadURL(entryUrl.toString());
-				if (options?.deferCanonicalLaunch === true && !window.isDestroyed()) window.show();
+			},
+		});
+		const endpointDiagnostic = (resource: string, message: string) => {
+			void desktopDiagnostics.record(
+				{
+					component: 'renderer',
+					event: 'diagnostics.cleanup.failed',
+					fields: { resource, webContentsId: windowWebContentsId },
+					message,
+					severity: 'warning',
+					source: 'server-ui-document-endpoint',
+				},
+				{ channel: 'lifecycle' },
+			);
+		};
+		const targetWebContents = window.webContents;
+		if (transport !== undefined) {
+			const unbindEndpoint = bindRemoteServerUiDocumentEndpoint({
+				diagnostic: endpointDiagnostic,
+				launch,
+				reconnect: () =>
+					reconnectCanonicalDesktopRemoteTransport(launch.context.profileId),
+				sender: targetWebContents,
+				transport,
+			});
+			documentEndpointUnbindByWebContents.set(
+				windowWebContentsId,
+				unbindEndpoint,
+			);
+		} else if (serverTerminalAuthority !== null) {
+			const unbindEndpoint = bindLocalServerUiDocumentEndpoint({
+				acceptPort: (port) =>
+					serverTerminalAuthority?.acceptRendererPort(
+						port as unknown as ServerMessagePort,
+					),
+				diagnostic: endpointDiagnostic,
+				handle: launch.byteEndpointHandle,
+				sender: targetWebContents,
+			});
+			documentEndpointUnbindByWebContents.set(
+				windowWebContentsId,
+				unbindEndpoint,
+			);
+		}
+		await window.loadURL(entryUrl.toString());
+		if (options?.deferCanonicalLaunch === true && !window.isDestroyed())
+			window.show();
 	};
-	switchToPairedDesktopServer = async (pairingUrl) => {
-		const profile = await enrollPairedDesktopRemoteProfile(pairingUrl);
+	switchToPairedDesktopServer = async (pairingUrl, pairingPin) => {
+		const profile = await enrollPairedDesktopRemoteProfile(
+			pairingUrl,
+			pairingPin,
+		);
 		// Keep the profile available for transport recovery during the first load,
 		// but do not serialize metadata until the verified bundle is mounted.
 		const replacedProfile = rememberedRemoteConnections.get(profile.id);
@@ -3139,7 +3142,8 @@ function createWindow(options?: {
 			});
 		}
 	};
-	if (options?.deferCanonicalLaunch === true) deferredCanonicalLaunches.set(windowWebContentsId, launchWithRecovery);
+	if (options?.deferCanonicalLaunch === true)
+		deferredCanonicalLaunches.set(windowWebContentsId, launchWithRecovery);
 	else void launchWithRecovery();
 
 	void getAppUpdateStatus();
@@ -3147,9 +3151,12 @@ function createWindow(options?: {
 	return window;
 }
 
-async function launchDeferredCanonicalWindow(window: BrowserWindow): Promise<void> {
+async function launchDeferredCanonicalWindow(
+	window: BrowserWindow,
+): Promise<void> {
 	const launch = deferredCanonicalLaunches.get(window.webContents.id);
-	if (launch === undefined) throw new Error('The embedded workspace launch was not prepared.');
+	if (launch === undefined)
+		throw new Error('The embedded workspace launch was not prepared.');
 	deferredCanonicalLaunches.delete(window.webContents.id);
 	await launch();
 }
@@ -3165,7 +3172,8 @@ async function prepareCanonicalHttpRemoteLaunch(
 		headers: { accept: 'application/json' },
 		redirect: 'error',
 	});
-	if (!response.ok) throw new Error('The remote server host bootstrap is unavailable.');
+	if (!response.ok)
+		throw new Error('The remote server host bootstrap is unavailable.');
 	const bootstrap = (await response.json()) as Record<string, unknown>;
 	if (
 		bootstrap.schemaVersion !== 1 ||
@@ -3210,7 +3218,9 @@ async function prepareCanonicalHttpRemoteLaunch(
 			throw new Error('The remote UI asset escaped its server origin.');
 		const assetResponse = await fetch(url, { redirect: 'error' });
 		if (!assetResponse.ok)
-			throw new Error(`The remote UI asset is unavailable (${assetResponse.status}).`);
+			throw new Error(
+				`The remote UI asset is unavailable (${assetResponse.status}).`,
+			);
 		return new Uint8Array(await assetResponse.arrayBuffer());
 	};
 	const lane: DesktopAuthenticatedAssetLane = {
@@ -3227,13 +3237,13 @@ async function prepareCanonicalHttpRemoteLaunch(
 }
 
 /** Consume a one-time pairing URL only in Electron. The resulting profile is
- * intentionally just origin/id/label metadata; the encrypted device grant
- * stays inside DesktopDeviceCredentialStore. */
+ * intentionally just origin/id/label metadata; the protected device key stays
+ * inside DesktopDeviceCredentialStore. */
 async function enrollPairedDesktopRemoteProfile(
 	pairingUrl: string,
+	pairingPin: string,
 ): Promise<RememberedRemoteConnection> {
-	const bootstrap = parseRemoteStreamConnectionUrl(pairingUrl);
-	const origin = new URL(bootstrap.origin).origin;
+	const origin = new URL(pairingUrl).origin;
 	loadRememberedRemoteConnections();
 	const existing = [...rememberedRemoteConnections.values()].find(
 		(candidate) => candidate.origin === origin,
@@ -3244,11 +3254,10 @@ async function enrollPairedDesktopRemoteProfile(
 		label: existing?.label ?? new URL(origin).host,
 		origin,
 	});
-	await enrollDesktopReconnectCredential({
-		authToken: bootstrap.authToken,
-		clientId: `desktop-${randomUUID()}`,
+	await establishDesktopDevicePairing({
 		deviceName: 'Terminay Desktop',
-		origin,
+		pairingPin,
+		pairingUrl,
 		store: createDesktopDeviceCredentialStore(),
 	});
 	return profile;
@@ -3259,7 +3268,9 @@ async function enrollPairedDesktopRemoteProfile(
  * reconnection; the renderer never sees enrollment or reconnect material. */
 async function prepareCanonicalDesktopRemoteConnection(
 	profile: RememberedRemoteConnection,
-): Promise<Readonly<{ launch: DesktopBundleLaunch; transport: ByteTransport }>> {
+): Promise<
+	Readonly<{ launch: DesktopBundleLaunch; transport: ByteTransport }>
+> {
 	const connected = await createDesktopReconnectTransport({
 		origin: profile.origin,
 		store: createDesktopDeviceCredentialStore(),
@@ -3271,7 +3282,9 @@ async function prepareCanonicalDesktopRemoteConnection(
 				transport: connected.transport,
 			});
 		} catch (error) {
-			await connected.transport.close({ code: 'normal' }).catch(() => undefined);
+			await connected.transport
+				.close({ code: 'normal' })
+				.catch(() => undefined);
 			throw error;
 		}
 	}
@@ -3544,10 +3557,16 @@ function setProjectTabTornOff(tornOff: boolean): void {
 		if (projectDragPreview) {
 			showTabGhostWindow(projectDragPreview);
 		}
-		source?.send('server-ui-host:event', { type: 'workspace.drag-state', active: true });
+		source?.send('server-ui-host:event', {
+			type: 'workspace.drag-state',
+			active: true,
+		});
 	} else {
 		destroyTabGhostWindow();
-		source?.send('server-ui-host:event', { type: 'workspace.drag-state', active: false });
+		source?.send('server-ui-host:event', {
+			type: 'workspace.drag-state',
+			active: false,
+		});
 	}
 }
 
@@ -3579,7 +3598,8 @@ function beginCanonicalProjectDrag(
 			if (
 				sourceBar &&
 				distanceToRect(point, sourceBar) > PROJECT_TAB_TEAR_OFF_DISTANCE
-			) setProjectTabTornOff(true);
+			)
+				setProjectTabTornOff(true);
 			return;
 		}
 		if (sourceBar && pointInRect(point, sourceBar)) {
@@ -3619,19 +3639,9 @@ function usesPrivilegedWebRtcExposure(): boolean {
 }
 
 function currentRemoteAccessStatus(): RemoteAccessStatus {
-	const webRtc = usesPrivilegedWebRtcExposure()
+	return usesPrivilegedWebRtcExposure()
 		? privilegedWebRtcExposure!.service.getStatus()
 		: desktopRemoteExposure.getStatus();
-	const direct = desktopDirectNetworkExposure.getStatus();
-	return {
-		...webRtc,
-		directListenerRunning: direct.isRunning,
-		lanPairingExpiresAt: direct.lanPairingExpiresAt,
-		lanPairingQrCodeDataUrl: direct.lanPairingQrCodeDataUrl,
-		lanPairingQrCodePath: direct.lanPairingQrCodePath,
-		lanPairingUrl: direct.lanPairingUrl,
-		availableAddresses: direct.availableAddresses,
-	};
 }
 
 async function toggleRemoteServer(): Promise<RemoteAccessStatus> {
@@ -3642,7 +3652,9 @@ async function toggleRemoteServer(): Promise<RemoteAccessStatus> {
 				privilegedWebRtcSessions.add(session.id);
 				privilegedWebRtcExposure!.service.ensureSession(session.id);
 			}
-			const dimensions = serverTerminalAuthority?.service.getSession(session.id)?.dimensions;
+			const dimensions = serverTerminalAuthority?.service.getSession(
+				session.id,
+			)?.dimensions;
 			if (dimensions !== undefined) {
 				privilegedWebRtcExposure!.service.updateSessionSize(
 					session.id,
@@ -3658,33 +3670,20 @@ async function toggleRemoteServer(): Promise<RemoteAccessStatus> {
 	return status;
 }
 
-async function toggleDirectRemoteListener(): Promise<RemoteAccessStatus> {
-	await desktopDirectNetworkExposure.toggle();
-	return currentRemoteAccessStatus();
-}
-
-async function revokeRemoteDevice(deviceId: string): Promise<RemoteAccessStatus> {
+async function revokeRemoteDevice(
+	deviceId: string,
+): Promise<RemoteAccessStatus> {
 	return usesPrivilegedWebRtcExposure()
 		? privilegedWebRtcExposure!.service.revokeDevice(deviceId)
 		: desktopRemoteExposure.revokeDevice(deviceId);
 }
 
-async function closeRemoteConnection(connectionId: string): Promise<RemoteAccessStatus> {
+async function closeRemoteConnection(
+	connectionId: string,
+): Promise<RemoteAccessStatus> {
 	return usesPrivilegedWebRtcExposure()
 		? privilegedWebRtcExposure!.service.closeConnection(connectionId)
 		: desktopRemoteExposure.closeConnection(connectionId);
-}
-
-async function setRemotePairingAddress(address: string): Promise<RemoteAccessStatus> {
-	if (!desktopDirectNetworkExposure.getStatus().isRunning) {
-		desktopDirectNetworkExposure.setPairingAddress(address);
-	}
-	if (usesPrivilegedWebRtcExposure()) {
-		await privilegedWebRtcExposure!.service.setPairingAddress(address);
-	} else {
-		desktopRemoteExposure.setPairingAddress(address);
-	}
-	return currentRemoteAccessStatus();
 }
 
 function setRemotePairingPin(pin: string): TerminalSettings {
@@ -3701,27 +3700,6 @@ function setRemotePairingPin(pin: string): TerminalSettings {
 }
 
 if (process.env.TERMINAY_TEST === '1') {
-	ipcMain.handle('test:list-remote-protocol-connections', (event) => {
-		assertBoundServerUiEvent(event);
-		return embeddedLanExposure.testProtocolConnectionIds();
-	});
-
-	ipcMain.handle(
-		'test:fail-remote-protocol-connection',
-		async (event, payload?: { connectionId?: unknown }) => {
-			assertBoundServerUiEvent(event);
-			const connectionId = payload?.connectionId;
-			if (
-				typeof connectionId !== 'string' ||
-				connectionId.length === 0 ||
-				connectionId.length > 128
-			) {
-				throw new TypeError('test protocol connection id is invalid');
-			}
-			await embeddedLanExposure.failTestProtocolConnection(connectionId);
-		},
-	);
-
 	ipcMain.handle(
 		'test:create-server-terminal',
 		async (event, payload?: { cwd?: unknown; projectId?: unknown }) => {
@@ -4304,6 +4282,7 @@ async function recoverFailedDesktopBootstrap(error: unknown): Promise<void> {
 	});
 }
 
-void app.whenReady()
+void app
+	.whenReady()
 	.then(completeDesktopStartup)
 	.catch((error) => recoverFailedDesktopBootstrap(error));

@@ -186,6 +186,7 @@ export type TerminayHostAction =
 			 * host. No pairing secret or durable credential returns to the
 			 * renderer. */
 			type: 'connection.pair';
+			pairingPin: string;
 			pairingUrl: string;
 	  }>
 	| Readonly<{
@@ -679,15 +680,22 @@ export function parseTerminayHostAction(value: unknown): TerminayHostAction {
 	const action = record(value, 'host action');
 	switch (action.type) {
 		case 'connection.pair':
-			exactKeys(action, ['type', 'pairingUrl'], 'connection pairing action');
+			exactKeys(
+				action,
+				['type', 'pairingPin', 'pairingUrl'],
+				'connection pairing action',
+			);
 			if (
 				typeof action.pairingUrl !== 'string' ||
 				action.pairingUrl.length === 0 ||
-				action.pairingUrl.length > 16_384
+				action.pairingUrl.length > 16_384 ||
+				typeof action.pairingPin !== 'string' ||
+				!/^\d{6}$/u.test(action.pairingPin)
 			)
 				throw new TypeError('connection pairing URL is invalid');
 			return Object.freeze({
 				type: 'connection.pair',
+				pairingPin: action.pairingPin,
 				pairingUrl: action.pairingUrl,
 			});
 		case 'route.present': {
