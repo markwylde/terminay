@@ -14,10 +14,6 @@ const workflow = await readFile(
 	new URL('../.github/workflows/server-image.yml', import.meta.url),
 	'utf8',
 );
-const webImageWorkflow = await readFile(
-	new URL('../.github/workflows/web-image.yml', import.meta.url),
-	'utf8',
-);
 const releaseWorkflow = await readFile(
 	new URL('../.github/workflows/trigger-release.yml', import.meta.url),
 	'utf8',
@@ -28,7 +24,7 @@ const operatorGuide = await readFile(
 );
 const workflows = new Map(
 	await Promise.all(
-		['ci.yml', 'trigger-release.yml', 'web-image.yml'].map(async (name) => [
+		['ci.yml', 'trigger-release.yml'].map(async (name) => [
 			name,
 			await readFile(
 				new URL(`../.github/workflows/${name}`, import.meta.url),
@@ -104,7 +100,7 @@ test('GHCR workflow smokes the repository Dockerfile before publishing', () => {
 	assert.doesNotMatch(workflow, /docker push /u);
 });
 
-test('server and static-web GHCR releases retain their architecture-specific metadata contracts', () => {
+test('server GHCR release retains its metadata contract', () => {
 	assert.match(
 		workflow,
 		/images: ghcr\.io\/\$\{\{ github\.repository_owner \}\}\/terminay-server/u,
@@ -121,35 +117,11 @@ test('server and static-web GHCR releases retain their architecture-specific met
 	assert.match(workflow, /sbom: true/u);
 	assert.match(workflow, /github\.event_name == 'push'/u);
 
-	const releaseWebImage = releaseWorkflow.slice(
-		releaseWorkflow.indexOf('  build-web-image:\n'),
-		releaseWorkflow.indexOf('  publish-release-notes:\n'),
-	);
-
-	assert.match(
-		releaseWebImage,
-		/IMAGE_NAME: ghcr\.io\/\$\{\{ github\.repository_owner \}\}\/terminay-web/u,
-	);
-	assert.match(releaseWebImage, /echo "\$IMAGE_NAME:\$VERSION"/u);
-	assert.match(releaseWebImage, /echo "\$IMAGE_NAME:\$MAJOR_MINOR"/u);
-	assert.match(releaseWebImage, /echo "\$IMAGE_NAME:sha-\$EXPECTED_COMMIT"/u);
-	assert.match(releaseWebImage, /platforms: linux\/amd64/u);
-	assert.doesNotMatch(releaseWebImage, /linux\/arm64/u);
-	assert.match(releaseWebImage, /provenance: mode=max/u);
-	assert.match(releaseWebImage, /sbom: true/u);
-	assert.match(
-		releaseWebImage,
-		/push: true/u,
-	);
-	assert.match(webImageWorkflow, /workflow_dispatch:/u);
-	assert.match(webImageWorkflow, /platforms: linux\/amd64/u);
-	assert.doesNotMatch(webImageWorkflow, /linux\/arm64/u);
-	assert.doesNotMatch(webImageWorkflow, /push:\s*\n\s+tags:/u);
+	assert.doesNotMatch(releaseWorkflow, /build-web-image|terminay-web|Dockerfile\.web|web-image-integration/u);
 });
 
 test('Docker image operator guide requires digest-pinned controlled deployments', () => {
 	assert.match(operatorGuide, /ghcr\.io\/<owner>\/terminay-server/u);
-	assert.match(operatorGuide, /ghcr\.io\/<owner>\/terminay-web/u);
 	assert.match(operatorGuide, /@sha256:<manifest-digest>/u);
 	assert.match(operatorGuide, /docker buildx imagetools inspect/u);
 	assert.match(
