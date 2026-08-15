@@ -91,7 +91,7 @@ server response, or local storage.
 
 ## Bundle ownership and launch
 
-The bundle manifest binds the immutable asset inventory to:
+The server UI archive metadata binds the immutable bundle to:
 
 - bundle format and id;
 - server and application-protocol versions;
@@ -100,9 +100,10 @@ The bundle manifest binds the immutable asset inventory to:
 - required and optional host capabilities.
 
 The browser manager is a small stable shell. It establishes pairing/reconnect
-and WebRTC, verifies and atomically installs the server bundle, and launches it
-in the exact server session origin. It never installs unrelated server code in
-the manager origin and never ships a fallback full workspace.
+and WebRTC, performs bounded atomic installation of the authenticated server's
+archive, and launches it in the exact server session origin. It never installs
+server code in the manager origin, interprets the server's generated asset
+inventory, or ships a fallback full workspace.
 
 Desktop Local obtains the bundle from the pinned embedded-server artifact and
 does not need a network listener. Desktop remote downloads the bundle through
@@ -188,8 +189,11 @@ QR is offered to a new device.
   transport objects remain in the privileged host.
 - Every host action is closed-schema, source/window/profile-bound, capability
   checked, and user-gesture checked where it reads or changes native state.
-- Bundle verification, compatibility checks, and exact server identity binding
-  complete before executable assets launch.
+- Exact server authentication, archive containment/resource checks,
+  compatibility checks, and server identity binding complete before executable
+  assets launch. Per-file content hashes are not an additional trust boundary:
+  the authenticated WebRTC transport already protects transfer integrity and
+  the exact session subdomain isolates the selected server's executable code.
 - One server bundle cannot read another profile partition, bundle cache,
   credentials, window bridge, or application transport.
 
