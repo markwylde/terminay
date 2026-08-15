@@ -1787,6 +1787,24 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			announceTerminalFocus();
 		};
 
+		const handleNativeTerminalPaste = (event: ClipboardEvent) => {
+			if (!canUseDesktopTerminalClipboard()) {
+				announceTerminalUserInput();
+				return;
+			}
+
+			// macOS Edit > Paste can bypass xterm's key handler. Intercept the
+			// trusted native paste before xterm consumes only text clipboard data,
+			// then use the same Desktop smart-paste path as Cmd+V.
+			event.preventDefault();
+			event.stopPropagation();
+			void pasteTerminalClipboard(readTerminalClipboard, {
+				announceInput: announceTerminalUserInput,
+				paste: (text) => terminal.paste(text),
+				focus: () => terminal.focus(),
+			});
+		};
+
 		// Commands initiated by another renderer surface (for example dictation)
 		// must use this panel's exact attachment when it is server-backed. The
 		// panel owns the ordered input queue, so this cannot bypass its transport
@@ -1803,6 +1821,7 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		};
 
 		const dragListenerOptions = { capture: true } as const;
+		const pasteListenerOptions = { capture: true } as const;
 		const contextReaderDisposer = props.params.registerTerminalContextReader?.(
 			sessionId,
 			() => ({
@@ -1821,7 +1840,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 		root.addEventListener('dragenter', handleDragEnter, dragListenerOptions);
 		root.addEventListener('dragover', handleDragOver, dragListenerOptions);
 		root.addEventListener('drop', handleDrop, dragListenerOptions);
-		root.addEventListener('paste', announceTerminalUserInput);
+		root.addEventListener(
+			'paste',
+			handleNativeTerminalPaste,
+			pasteListenerOptions,
+		);
 		root.addEventListener('contextmenu', openTerminalContextMenu);
 		root.addEventListener('pointerdown', announceTerminalUserInput);
 		root.addEventListener('pointerdown', markPointerDownInside);
@@ -1860,7 +1883,11 @@ export function TerminalPanel(props: IDockviewPanelProps<TerminalPanelParams>) {
 			);
 			root.removeEventListener('dragover', handleDragOver, dragListenerOptions);
 			root.removeEventListener('drop', handleDrop, dragListenerOptions);
-			root.removeEventListener('paste', announceTerminalUserInput);
+			root.removeEventListener(
+				'paste',
+				handleNativeTerminalPaste,
+				pasteListenerOptions,
+			);
 			root.removeEventListener('contextmenu', openTerminalContextMenu);
 			root.removeEventListener('pointerdown', announceTerminalUserInput);
 			root.removeEventListener('pointerdown', markPointerDownInside);

@@ -43,17 +43,7 @@ for (const viewport of [
     )
     elapsedMs.push(await page.evaluate(started => performance.now() - started, inputStartedAt))
 
-    const result = await page.evaluate(async () => {
-      const probe = window as typeof window & {
-        __terminayTask20Pressure?: { frames: number; running: boolean }
-      }
-      const deadline = performance.now() + 2_000
-      while (probe.__terminayTask20Pressure?.running && performance.now() < deadline) {
-        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-      }
-      return probe.__terminayTask20Pressure
-    })
-
+    const result = await waitForPressure(page)
     expect(result?.running).toBe(false)
     expect(result?.frames).toBeGreaterThanOrEqual(90)
     expect(Math.max(...elapsedMs)).toBeLessThan(500)
@@ -97,15 +87,30 @@ function createMobileContext(browser: Browser) {
 }
 
 async function waitForPressure(page: Page) {
-  return page.evaluate(async () => {
-    const probe = window as typeof window & {
-      __terminayTask20Pressure?: { frames: number; running: boolean }
-    }
-    const deadline = performance.now() + 2_000
-    while (probe.__terminayTask20Pressure?.running && performance.now() < deadline) {
-      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
-    }
-    return probe.__terminayTask20Pressure
+  // 120 rAF frames can take longer than two seconds on a loaded CI runner,
+  // especially after a fresh mobile context. Keep the interactivity bounds
+  // and only wait for the probe to finish.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const probe = (
+            window as typeof window & {
+              __terminayTask20Pressure?: { frames: number; running: boolean }
+            }
+          ).__terminayTask20Pressure
+          return probe?.running === false
+        }),
+      { timeout: 10_000 },
+    )
+    .toBe(true)
+
+  return page.evaluate(() => {
+    return (
+      window as typeof window & {
+        __terminayTask20Pressure?: { frames: number; running: boolean }
+      }
+    ).__terminayTask20Pressure
   })
 }
 
