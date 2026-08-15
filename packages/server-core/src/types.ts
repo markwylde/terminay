@@ -99,6 +99,8 @@ export interface OrderedEvent {
   readonly cursor: string;
   readonly event: string;
   readonly payload: JsonValue;
+  /** Ephemeral transport bytes for a live event. They are never journaled. */
+  readonly body?: Uint8Array;
 }
 
 export interface EventSubscription {
@@ -152,7 +154,7 @@ export interface OrderedEventJournalLike {
   readonly cursor: string;
   append(event: string, payload: JsonValue): OrderedEvent;
   /** Publish a live event without advancing or consuming retained history. */
-  publishTransient(event: string, payload: JsonValue): OrderedEvent;
+  publishTransient(event: string, payload: JsonValue, body?: Uint8Array): OrderedEvent;
   replay(afterRevision?: number): EventReplay | Promise<EventReplay>;
   subscribe(listener: EventListener): () => void;
 }
