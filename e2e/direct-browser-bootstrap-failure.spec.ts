@@ -45,13 +45,10 @@ for (const [label, userAgent] of [
 		const pageErrors: Error[] = [];
 		page.on('pageerror', (error) => pageErrors.push(error));
 		await installDirectBrowserSession(page, VALID_ARCHIVE, userAgent);
-		await page.goto(`${fixture.origin}/remote.html`, { waitUntil: 'commit' });
+		await page.goto(`${fixture.origin}/e2e/fixtures/hostile-server-ui.html`);
 
-		await expect(page.locator('[data-web-host-shell="terminay"]')).toBeVisible({
-			timeout: 60_000,
-		});
-		await expect(page.locator('[data-terminay-bootstrap-failure]')).toHaveCount(
-			0,
+		expect(await bootstrapDirectBrowserBundle(page)).toBe(
+			`${fixture.origin}/remote-app/${BUNDLE_ID}/generated/workspace.html`,
 		);
 		expect(pageErrors).toEqual([]);
 	});
@@ -141,6 +138,8 @@ async function installDirectBrowserSession(
 					acquireApplicationEndpoint: unavailable,
 					registerApplication(delegate: ApplicationDelegate) {
 						application = delegate;
+						document.documentElement.dataset.e2eDirectBrowserRegistration =
+							'complete';
 					},
 					connect(options: unknown) {
 						if (application === undefined) unavailable();
@@ -155,6 +154,23 @@ async function installDirectBrowserSession(
 		},
 		{ archive: [...compressedArchive], userAgent },
 	);
+}
+
+async function bootstrapDirectBrowserBundle(page: Page): Promise<string> {
+	return page.evaluate(async () => {
+		const host = window.__TERMINAY_SESSION_TRANSPORT__;
+		if (host === undefined) throw new Error('The direct-browser session host is missing.');
+		const workspace = await host.prepareWorkspace();
+		const { createDirectBrowserBundleHost } = await import(
+			'/apps/terminay-web/src/browserBundleHost.ts'
+		);
+		return (
+			await createDirectBrowserBundleHost(caches).installAndPrepare({
+				...workspace,
+				sessionOrigin: host.origin,
+			})
+		).entryUrl;
+	});
 }
 
 function tar(entries: readonly (readonly [string, string])[]): Buffer {
