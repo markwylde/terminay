@@ -1,29 +1,15 @@
 # Docker image release contract
 
-Terminay publishes two independently consumable OCI images to GitHub Container
-Registry when the image workflows run on a `main` push or a semver `v*.*.*`
-tag:
+Terminay publishes its standalone server OCI image to GitHub Container Registry
+when the image workflow runs on a `main` push or a semver `v*.*.*` tag:
 
 | Image | Purpose |
 | --- | --- |
 | `ghcr.io/<owner>/terminay-server` | Standalone, non-root Terminay Server runtime. |
-| `ghcr.io/<owner>/terminay-web` | Static Terminay browser client served by nginx. |
 
-The web image workflow also supports an explicit `workflow_dispatch` run. This
-is the operator entry point when the reviewed web-host commit is ready to
-publish but no unrelated source change should be introduced merely to trigger
-the image build. A manual run publishes the immutable `sha-<commit>` selector;
-the workflow fails if publication does not return a canonical SHA-256 manifest
-digest and writes the exact digest reference plus source revision to its job
-summary. That summary is the handoff into the deployment lock below; the
-resulting manifest digest must still be recorded and validated before any CDN
-origin is changed.
-
-The server image publishes Linux `amd64` and `arm64` manifests. The static web
-image publishes Linux `amd64` only. Both attach an SBOM and BuildKit provenance
-attestation and are labelled with the source, revision, and version. A pull
-request builds the server image for smoke tests but must not publish either
-image.
+The server image publishes Linux `amd64` and `arm64` manifests with an SBOM and
+BuildKit provenance attestation. A pull request builds it for smoke tests but
+does not publish it. The hosted PWA is built and released by `terminay.com`.
 
 ## Selecting an image
 
@@ -32,7 +18,6 @@ the release evidence:
 
 ```sh
 docker pull ghcr.io/<owner>/terminay-server@sha256:<manifest-digest>
-docker pull ghcr.io/<owner>/terminay-web@sha256:<manifest-digest>
 ```
 
 Version tags (`vX.Y.Z`) and major/minor tags (`X.Y`) are convenience selectors;
@@ -47,39 +32,6 @@ deployment record:
 docker buildx imagetools inspect \
   ghcr.io/<owner>/terminay-server@sha256:<manifest-digest>
 ```
-
-## Controlled deployment lock
-
-Record the selected server and web image together in a JSON lock. This avoids
-accidentally deploying a mutable tag, an image from a different owner, or the
-server image in the web slot (and vice versa):
-
-```json
-{
-  "schemaVersion": 1,
-  "owner": "<owner>",
-  "version": "X.Y.Z",
-  "revision": "<40-lowercase-hex-commit>",
-  "images": {
-    "server": "ghcr.io/<owner>/terminay-server@sha256:<64-lowercase-hex-digest>",
-    "web": "ghcr.io/<owner>/terminay-web@sha256:<64-lowercase-hex-digest>"
-  }
-}
-```
-
-Validate the record before applying it to Compose, Kubernetes, or another
-deployment system:
-
-```sh
-node scripts/release-image-deployment.mjs deployment-images.json
-```
-
-The validator accepts only exact `ghcr.io/<owner>/terminay-server` and
-`ghcr.io/<owner>/terminay-web` digest references, a full lowercase commit SHA,
-and a semantic release version. It rejects tags, registries/owners outside the
-record, credential-bearing URLs, malformed digests, and duplicate server/web
-digests. Retain both the validated lock and the manifest inspection output with
-the deployment record.
 
 The GitHub workflow's SBOM and provenance are release metadata, not proof that
 the image is signed by a separately distributed trust root. Signature
