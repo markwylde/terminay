@@ -129,8 +129,9 @@ hashes. Other tar members are regular server UI files.
   benchmark:server-ui-archive` records the actual built UI; on 2026-08-15 its
   110-file build transferred 4,629,888 archive wire bytes in one binary request
   with zero base64 bytes, versus 24,765,484 wire bytes in 111 legacy requests.
-- [ ] The `terminay.com` compatibility workflow passes with network access to
-  the Terminay source repositories denied.
+- [x] The `terminay.com` compatibility workflow passes with network access to
+  the Terminay source repositories denied. PR #39 run 7140 passed on
+  2026-08-15 using only the in-repository archive fixture.
 - [x] Repository searches find no production WebRTC `asset:get-manifest` or
   per-file `asset:get`, generated filename allowlist, Terminay source pin, or
   cross-repository checkout in the hosted manager. Direct-HTTPS static resource
