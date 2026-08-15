@@ -33,15 +33,15 @@ contract.
 
 ### 1. Define one archive protocol
 
-- [ ] Replace manifest enumeration plus `asset:get` per file with one versioned
+- [x] Replace manifest enumeration plus `asset:get` per file with one versioned
   `asset:get-bundle` request and a binary chunk stream.
-- [ ] Specify transfer framing, ordering, backpressure, cancellation, timeout,
+- [x] Specify transfer framing, ordering, backpressure, cancellation, timeout,
   compressed-byte limit, and typed failure messages. Binary bodies must not be
   base64-wrapped in JSON.
-- [ ] Make the response a gzip-compressed tar archive containing a required
+- [x] Make the response a gzip-compressed tar archive containing a required
   root metadata file with the archive-format version and relative UI entry
   path. Metadata must not enumerate or hash every generated asset.
-- [ ] Permit the Terminay Server to prepare the archive once per built bundle
+- [x] Permit the Terminay Server to prepare the archive once per built bundle
   and reuse its immutable bytes for all clients. Archive creation and delivery
   belong to the server bundle host, not the Desktop renderer or
   `terminay.com`.
