@@ -1,14 +1,10 @@
 import { ServerRuntime, validateServerPlatformPaths, type ServerRuntimeConfig, type ServerRuntimeHooks, type ServerRuntimeServices, type ServerPlatformPaths } from "@terminay/server-core";
 import type { LocalUiServer } from "./localUiServer.js";
 
-export * from "./mcp/controlEndpoint.js";
 export * from "./bootstrap.js";
 export * from "./embeddedAuthority.js";
 export * from "./dataRootLease.js";
-export * from "./mcp/dispatcher.js";
-export * from "./mcp/terminalAdapter.js";
 export * from "./cliOptions.js";
-export * from "./mcp/stdio.js";
 export * from "./localUiServer.js";
 export * from "./healthServer.js";
 export * from "./remote/nodeDataChannelRuntime.js";

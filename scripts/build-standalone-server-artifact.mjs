@@ -130,7 +130,6 @@ try {
 		new Set([
 			join(root, 'bin', 'node'),
 			join(root, 'bin', 'terminay-server'),
-			join(root, 'bin', 'terminay-mcp'),
 		]),
 	);
 
@@ -147,7 +146,7 @@ try {
 			version: nodePtyPackage.version,
 			nativePath: 'node_modules/node-pty/build/Release/pty.node',
 		},
-		entrypoints: { mcp: 'bin/terminay-mcp', server: 'bin/terminay-server' },
+		entrypoints: { server: 'bin/terminay-server' },
 		webrtcRuntime: {
 			root: 'webrtc-runtime',
 			selection: JSON.parse(
@@ -166,7 +165,6 @@ try {
 		new Set([
 			join(root, 'bin', 'node'),
 			join(root, 'bin', 'terminay-server'),
-			join(root, 'bin', 'terminay-mcp'),
 		]),
 	);
 	await mkdir(outputDirectory, { recursive: true });
@@ -189,12 +187,9 @@ async function writeLaunchers(root) {
 		'{TERMINAY_UI_BUNDLE:=$ROOT/ui}"\n: "$' +
 		'{TERMINAY_WEBRTC_RUNTIME_ROOT:=$ROOT/webrtc-runtime}"\n' +
 		'export TERMINAY_UI_BUNDLE TERMINAY_WEBRTC_RUNTIME_ROOT\nexec "$ROOT/bin/node" "$ROOT/server/dist/cli.js" "$@"\n';
-	const mcp =
-		'#!/bin/sh\nset -eu\nROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\nexec "$ROOT/bin/node" "$ROOT/server/dist/mcpEntry.js" "$@"\n';
 	await writeFile(join(root, 'bin', 'terminay-server'), server, {
 		mode: 0o755,
 	});
-	await writeFile(join(root, 'bin', 'terminay-mcp'), mcp, { mode: 0o755 });
 }
 
 async function stageCompiledWorkspacePackage(sourceRoot, destination) {
