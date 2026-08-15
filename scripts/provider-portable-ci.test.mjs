@@ -32,6 +32,8 @@ test("pull-request CI contains a packaged macOS smoke, one fast gate, one E2E im
   assert.match(ci, /image-id: \$\{\{ steps\.archive\.outputs\.image_id \}\}/u);
   assert.match(ci, /name: terminay-e2e-image-\$\{\{ github\.sha \}\}/u);
   assert.match(ci, /retention-days: 1/u);
+  assert.match(ci, /Upload shared E2E image on GitHub\n\s+if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}\n\s+uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/u);
+  assert.match(ci, /Upload shared E2E image on Gitea\n\s+if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}\n\s+uses: actions\/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5/u);
   assert.match(ci, /shard: \[1, 2, 3, 4, 5\]/u);
   assert.match(ci, /name: E2E \(\$\{\{ matrix\.shard \}\}\/5\)/u);
   assert.doesNotMatch(ci, /ubuntu-24\.04|standalone-server|WebRTC/u);
@@ -51,7 +53,8 @@ test("only E2E shards wait for their shared image and all jobs use declared runn
 
 test("Electron shards load the shared Docker image and preserve distinct Playwright artifacts", () => {
   const e2e = ci.slice(ci.indexOf("  e2e-test:"));
-  assert.match(e2e, /uses: actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/u);
+  assert.match(e2e, /Download shared E2E image on GitHub\n\s+if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}\n\s+uses: actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/u);
+  assert.match(e2e, /Download shared E2E image on Gitea\n\s+if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}\n\s+uses: actions\/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a/u);
   assert.match(e2e, /docker load --input \.docker-cache\/e2e-image\/terminay-e2e-image\.tar\.gz/u);
   assert.match(e2e, /EXPECTED_IMAGE_ID: \$\{\{ needs\.e2e-image\.outputs\.image-id \}\}/u);
   assert.match(e2e, /TERMINAY_E2E_IMAGE: \$\{\{ needs\.e2e-image\.outputs\.image \}\}/u);
@@ -60,7 +63,8 @@ test("Electron shards load the shared Docker image and preserve distinct Playwri
   assert.match(e2e, /TERMINAY_E2E_ARTIFACT_DIR: \$\{\{ github\.workspace \}\}\/.docker-cache\/e2e\/shard-\$\{\{ matrix\.shard \}\}-of-5/u);
   assert.match(e2e, /npm run test:e2e -- --shard=\$\{\{ matrix\.shard \}\}\/5/u);
   assert.doesNotMatch(e2e, /test:e2e:host|playwright install|setup-node/u);
-  assert.match(e2e, /if: \$\{\{ always\(\) \}\}/u);
+  assert.match(e2e, /Upload Playwright artifacts on GitHub\n\s+if: \$\{\{ always\(\) && github\.server_url == 'https:\/\/github\.com' \}\}/u);
+  assert.match(e2e, /Upload Playwright artifacts on Gitea\n\s+if: \$\{\{ always\(\) && github\.server_url != 'https:\/\/github\.com' \}\}/u);
   assert.match(e2e, /name: playwright-report-\$\{\{ matrix\.shard \}\}-of-5/u);
   assert.match(e2e, /retention-days: 7/u);
 });

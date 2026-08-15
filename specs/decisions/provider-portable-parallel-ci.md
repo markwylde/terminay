@@ -35,7 +35,8 @@ avoiding registry credentials and package publication for GitHub/Gitea and fork
 pull requests. Each shard writes Playwright output to a distinct shard directory
 and uploads it with a unique artifact name, even when the test step fails. The
 transfer image expires after one day; diagnostic shard reports expire after
-seven days.
+seven days. GitHub uses pinned artifact-action v4; self-hosted Gitea uses the
+pinned v3 action pair because its artifact service does not support v4.
 
 ## Work kept out of pull requests
 
