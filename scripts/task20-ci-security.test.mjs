@@ -134,6 +134,49 @@ test("ordinary CI retains a read-only token while using provider-neutral E2E art
   assert.doesNotMatch(ci, /docker (?:login|push|pull)/u);
 });
 
+test("CI isolates incompatible artifact actions from every provider-runnable job", () => {
+  const ci = workflows.get("ci.yml");
+  assert.ok(ci, "ci.yml must exist");
+
+  const job = (name) => {
+    const header = `  ${name}:\n`;
+    const start = ci.indexOf(header);
+    assert.notEqual(start, -1, `CI must declare ${name}`);
+    const remainder = ci.slice(start + header.length);
+    const next = remainder.search(/^  [a-z][a-z0-9-]+:\n/mu);
+    return next === -1 ? ci.slice(start) : ci.slice(start, start + header.length + next);
+  };
+
+  const githubImage = job("github-e2e-image");
+  const githubShard = job("github-e2e-test");
+  const giteaImage = job("gitea-e2e-image");
+  const giteaShard = job("gitea-e2e-test");
+  assert.match(githubImage, /if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}/u);
+  assert.match(githubShard, /needs: github-e2e-image/u);
+  assert.match(githubShard, /d3f86a106a0bac45b974a628896c90dbdf5c8093/u);
+  assert.doesNotMatch(`${githubImage}\n${githubShard}`, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u);
+  assert.match(giteaImage, /if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}/u);
+  assert.match(giteaShard, /needs: gitea-e2e-image/u);
+  assert.match(giteaShard, /9bc31d5ccc31df68ecc42ccf4149144866c47d8a/u);
+  assert.doesNotMatch(`${giteaImage}\n${giteaShard}`, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u);
+
+  const jobs = [...ci.slice(ci.indexOf("jobs:\n")).matchAll(
+    /^  ([a-z][a-z0-9-]+):\n([\s\S]*?)(?=^  [a-z][a-z0-9-]+:\n|(?![\s\S]))/gmu,
+  )];
+  for (const [, name, contents] of jobs) {
+    const githubOnly = /^    if: \$\{\{ github\.server_url == 'https:\/\/github\.com' \}\}$/mu.test(contents);
+    const giteaOnly = /^    if: \$\{\{ github\.server_url != 'https:\/\/github\.com' \}\}$/mu.test(contents);
+    if (!githubOnly) {
+      assert.doesNotMatch(contents, /(?:ea165f8d65b6e75b540449e92b4886f43607fa02|d3f86a106a0bac45b974a628896c90dbdf5c8093)/u,
+        `${name} can run on Gitea and must not resolve artifact v4`);
+    }
+    if (!giteaOnly) {
+      assert.doesNotMatch(contents, /(?:ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5|9bc31d5ccc31df68ecc42ccf4149144866c47d8a)/u,
+        `${name} can run on GitHub and must not resolve artifact v3`);
+    }
+  }
+});
+
 test("production WebRTC evidence is pinned to an immutable hosted signaling commit", () => {
   const ci = workflows.get("ci.yml");
   assert.ok(ci, "ci.yml must exist");
