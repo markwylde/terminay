@@ -138,6 +138,16 @@ test("every release job has an explicit bounded runtime", () => {
   }
 });
 
+test("spec-progress push uses a step-scoped token instead of checkout credentials", () => {
+  const workflow = giteaWorkflows.get("spec-progress.yml");
+  assert.ok(workflow, ".gitea/workflows/spec-progress.yml must exist");
+  assert.match(workflow, /persist-credentials:\s*false/u);
+  assert.match(workflow, /GITHUB_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/u);
+  assert.match(workflow, /http\.extraHeader=AUTHORIZATION: basic \$\{AUTH\}/u);
+  assert.match(workflow, /git -c "http\.extraHeader=AUTHORIZATION: basic \$\{AUTH\}" push origin HEAD:main/u);
+  assert.doesNotMatch(workflow, /^\s+git push origin HEAD:main$/mu);
+});
+
 test("ordinary CI retains a read-only token while using provider-neutral E2E artifacts", () => {
   const ci = workflows.get("ci.yml");
   const giteaCi = giteaWorkflows.get("ci.yml");
