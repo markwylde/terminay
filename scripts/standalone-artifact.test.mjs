@@ -50,34 +50,6 @@ function run(command, args, options = {}) {
 	});
 }
 
-function runFailure(command, args, options = {}) {
-	return new Promise((resolve, reject) => {
-		const child = spawn(command, args, {
-			cwd: options.cwd,
-			env: options.env,
-			stdio: ['ignore', 'pipe', 'pipe'],
-		});
-		let stdout = '';
-		let stderr = '';
-		child.stdout.setEncoding('utf8');
-		child.stderr.setEncoding('utf8');
-		child.stdout.on('data', (chunk) => {
-			stdout += chunk;
-		});
-		child.stderr.on('data', (chunk) => {
-			stderr += chunk;
-		});
-		child.once('error', reject);
-		child.once('close', (code) => {
-			if (code !== 0) resolve({ code, stdout, stderr });
-			else
-				reject(
-					new Error(`${command} ${args.join(' ')} unexpectedly succeeded`),
-				);
-		});
-	});
-}
-
 async function createFixture() {
 	const root = await mkdtemp(join(tmpdir(), 'terminay-standalone-artifact-'));
 	await mkdir(join(root, 'dist'));
@@ -91,7 +63,6 @@ async function createFixture() {
 			dependencies: { npm: '12.0.2' },
 			bin: {
 				'terminay-server': 'dist/cli.js',
-				'terminay-mcp': 'dist/mcpEntry.js',
 			},
 		})}\n`,
 	);
@@ -102,10 +73,6 @@ async function createFixture() {
 	await writeFile(
 		join(root, 'dist/index.js'),
 		'export const serverApplicationBoundary = "@terminay/server"\n',
-	);
-	await writeFile(
-		join(root, 'dist/mcpEntry.js'),
-		'export const mcpEntry = true\n',
 	);
 	await writeFile(join(root, 'dist/bundled-npm-evidence.json'), JSON.stringify({ schemaVersion: 1, version: '12.0.2', packageCount: 50, closureSha256: 'a'.repeat(64), packages: Array.from({ length: 50 }, (_, index) => ({ name: `p${index}` })) }));
 	return root;
@@ -127,7 +94,7 @@ test('standalone artifact manifest is deterministic and validates exact payload 
 			first.provenance.generatedBy,
 			'scripts/standalone-artifact.mjs',
 		);
-		assert.equal(first.files.length, 5);
+		assert.equal(first.files.length, 4);
 		assert.ok(first.files.every((file) => /^[a-f0-9]{64}$/u.test(file.sha256)));
 	} finally {
 		await rm(root, { recursive: true, force: true });
@@ -228,7 +195,6 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 			'package.json',
 			'dist/cli.js',
 			'dist/index.js',
-			'dist/mcpEntry.js',
 			'dist/release-integrity.json',
 		]) {
 			assert.ok(
@@ -259,7 +225,6 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 			rootPackages: [
 				'@terminay/server-core',
 				'@terminay/protocol',
-				'@modelcontextprotocol/sdk',
 				'node-pty',
 				'ws',
 				'zod',
@@ -320,30 +285,6 @@ test('the actual packed standalone artifact is byte-reproducible and its CLI sta
 		);
 		assert.ok(bootstrap.get('pairingToken'));
 		assert.equal(bootstrap.get('pairingExpiresAt'), pairingRecord.expiresAt);
-
-		// The extracted MCP executable must resolve from the packed payload too.
-		// This reaches its release-integrity preflight and then deliberately
-		// rejects the absent inherited control capability; it must not reach for
-		// Electron, a workspace module, or an ambient control socket.
-		const mcp = await runFailure(
-			process.execPath,
-			[join(packageRoot, packageJson.bin['terminay-mcp'])],
-			{
-				cwd: packageRoot,
-				env: {
-					...process.env,
-					TERMINAY_SERVER_VERSION: packageJson.version,
-					TERMINAY_CONTROL_SOCKET: '',
-					TERMINAY_CONTROL_TOKEN: '',
-				},
-			},
-		);
-		assert.equal(mcp.code, 1);
-		assert.equal(mcp.stdout, '');
-		assert.match(
-			mcp.stderr,
-			/terminay mcp failed: TypeError: Terminay MCP requires an absolute local control socket/,
-		);
 
 		// The packed standalone runtime must execute the same server-owned
 		// provider CLI adapter as the development and Desktop layouts. Import it

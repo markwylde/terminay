@@ -79,10 +79,10 @@ test('standalone release archive contains only safe regular package entries and 
       assert.equal(sha256(bytes), descriptor.sha256, `integrity hash must bind ${packedPath}`)
     }
 
-    // The descriptor itself and both independently executable entrypoints are
-    // release-critical; pin their presence rather than allowing a truncated
-    // archive to pass based only on a subset of declared payloads.
-    for (const path of ['package/dist/release-integrity.json', 'package/dist/cli.js', 'package/dist/mcpEntry.js']) {
+    // The descriptor itself and the independently executable CLI entrypoint
+    // are release-critical; pin their presence rather than allowing a
+    // truncated archive to pass based only on a subset of declared payloads.
+    for (const path of ['package/dist/release-integrity.json', 'package/dist/cli.js']) {
       assert.ok(paths.includes(path), `release archive must contain ${path}`)
     }
     assert.equal((await readFile(archive)).byteLength, pack[0].size, 'npm pack metadata must describe the exact archive bytes')
