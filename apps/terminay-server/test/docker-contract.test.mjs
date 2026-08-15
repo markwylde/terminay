@@ -53,11 +53,7 @@ test('Docker server contract builds a non-root, read-only-root image with a boun
 	assert.match(dockerfile, /VOLUME \["\/var\/lib\/terminay"\]/u);
 	assert.match(dockerfile, /HEALTHCHECK[^\n]+\/readyz/u);
 	assert.match(dockerfile, /STOPSIGNAL SIGTERM/u);
-	assert.match(dockerfile, /\/usr\/local\/bin\/terminay-mcp/u);
-	assert.match(
-		dockerfile,
-		/exec node \/opt\/terminay\/apps\/terminay-server\/dist\/mcpEntry\.js "\$@"/u,
-	);
+	assert.doesNotMatch(dockerfile, /terminay-mcp|mcpEntry/u);
 	assert.match(
 		entrypoint,
 		/exec node \/opt\/terminay\/apps\/terminay-server\/dist\/cli\.js/gu,

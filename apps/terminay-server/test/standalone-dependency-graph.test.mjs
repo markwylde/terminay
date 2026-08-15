@@ -11,7 +11,6 @@ const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url))
 const standaloneEntrypoints = [
   join(serverRoot, 'dist/cli.js'),
   join(serverRoot, 'dist/index.js'),
-  join(serverRoot, 'dist/mcpEntry.js'),
 ]
 const javascriptModule = /\.(?:[cm]?js)$/u
 const importPatterns = [
