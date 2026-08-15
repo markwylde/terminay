@@ -36,7 +36,7 @@ test("responsive layout breakpoints are deterministic", () => {
 test("shared navigation is route-based and host bridge rejects privileged payloads", () => {
   assert.deepEqual(createResponsiveWorkspaceNavigation({ route: "settings", projectId: "project-a" }), { route: "settings", projectId: "project-a" });
   assert.deepEqual(parseHostBridgeMessage({ type: "workspace.ready", payload: { serverLabel: "Local" } }), { type: "workspace.ready", payload: { serverLabel: "Local" } });
-  assert.equal(parseHostBridgeMessage({ type: "host.profile", payload: { reconnectGrant: "secret" } }), undefined);
+  assert.equal(parseHostBridgeMessage({ type: "host.profile", payload: { unexpectedCredential: "secret" } }), undefined);
   assert.equal(parseHostBridgeMessage({ type: "host.profile", payload: { terminalOutput: "secret" } }), undefined);
 });
 

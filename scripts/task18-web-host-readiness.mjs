@@ -33,23 +33,15 @@ export async function inspectTask18WebHostReadiness(root = process.cwd()) {
 	const moduleUrl = `${pathToFileURL(join(packageRoot, 'dist/index.js')).href}?task18=${artifactEntries[0].sha256}`
 	const webHost = await import(moduleUrl)
 	if (webHost.WEB_MANAGER_ORIGIN !== TASK18_WEB_MANAGER_ORIGIN) throw new Error('web host manager origin is not the stable origin')
-	if (typeof webHost.WebConnectionHost !== 'function') throw new Error('web connection host export is missing')
+	if (typeof webHost.PwaConnectionManager !== 'function') throw new Error('PWA connection manager export is missing')
 
-	const host = new webHost.WebConnectionHost({ storage: memoryStorage() })
-	const initial = host.snapshot()
-	if (initial.profiles.profiles.some((profile) => profile.isLocal === true)) throw new Error('web host must not invent a Local profile')
-	if (host.openManager() !== TASK18_WEB_MANAGER_ORIGIN) throw new Error('web host manager navigation is not stable')
-	const profile = host.addConnection({
-		id: 'task18-readiness',
-		serverId: 'task18-server',
-		label: 'Task 18 readiness',
-		origin: 'https://task18-session.example.test',
-		status: 'connected',
-	})
-	const opened = host.open(profile.id, { route: 'settings', projectId: 'task18-project' })
-	if (opened.url !== 'https://task18-session.example.test/?route=settings&project=task18-project') {
-		throw new Error('web host session navigation is not exact-origin and route-only')
-	}
+	const host = new webHost.PwaConnectionManager({ storage: memoryStorage(), now: () => 1 })
+	if (host.snapshot().profiles.length !== 0) throw new Error('PWA manager must start with an empty bookmark list')
+	const pairing = host.addPairingUrl('https://task18-session.example.test/v1/#one-time-pairing-secret', 'Task 18 readiness')
+	if (pairing.profile.origin !== 'https://task18-session.example.test') throw new Error('PWA manager did not derive the stable session origin')
+	if (JSON.stringify(host.snapshot()).includes('one-time-pairing-secret')) throw new Error('PWA manager stored a pairing fragment')
+	const opened = host.open(pairing.profile.origin)
+	if (opened.url !== 'https://task18-session.example.test') throw new Error('PWA manager did not open the exact stable session origin')
 
 	return {
 		schemaVersion: 1,

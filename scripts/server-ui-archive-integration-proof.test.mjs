@@ -21,8 +21,7 @@ test('generic hosted-manager fixture installs the real server archive through on
     createWebRtcHostWindow: () => { throw new Error('fixture supplies its own authenticated host bridge') },
     getControllableSession: () => null,
     getRemoteAccessSettings: () => ({
-      bindAddress: '127.0.0.1', origin: 'https://127.0.0.1:9443', pairingMode: 'webrtc',
-      pairingPinHash: '', pinFailureLimit: 3, reconnectGrantLifetime: '24h', tlsCertPath: '', tlsKeyPath: '',
+      pairingPinHash: '', pinFailureLimit: 3,
       webRtcHostedDomain: 'localhost', webRtcIceServers: '',
     }),
     notifyTerminalRemoteSizeOverride: () => {}, onStatusChanged: () => {}, publicDir: join(root, 'public'),
@@ -128,7 +127,7 @@ function hostConfig() {
   return {
     appOrigin: 'https://fixture-session.terminay.test', expiresAt: new Date(Date.now() + 60_000).toISOString(),
     iceServers: [], relayJoinTokenHash: 'fixture-relay', roomId: 'fixture-room', sessionId: 'fixture-session',
-    signalingAuthToken: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8', signalingUrl: 'wss://fixture-session.terminay.test/signal',
+    signalingUrl: 'wss://fixture-session.terminay.test/signal',
   }
 }
 

@@ -754,83 +754,9 @@
   transform: translateY(0);
 }
 
-.remote-pairing-modal__advanced-toggle {
-  all: unset;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(214, 227, 240, 0.4);
-  cursor: pointer;
-  border-radius: 8px;
-  transition: all 150ms ease;
-  margin-top: 8px;
-}
-
-.remote-pairing-modal__advanced-toggle:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(214, 227, 240, 0.7);
-}
-
-.remote-pairing-modal__advanced-content {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding-top: 20px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  animation: remote-fade-in 200ms ease-out;
-}
-
 @keyframes remote-fade-in {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
-}
-
-.remote-pairing-modal__additional-section h3 {
-  margin: 0 0 12px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: rgba(214, 227, 240, 0.3);
-  text-align: center;
-}
-
-.remote-pairing-modal__additional-list {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.remote-pairing-modal__address-row-btn {
-  all: unset;
-  box-sizing: border-box;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 120ms ease;
-}
-
-.remote-pairing-modal__address-row-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-.remote-pairing-modal__address-row-btn--active {
-  background: rgba(87, 183, 255, 0.08);
-  border-color: rgba(87, 183, 255, 0.3);
 }
 
 .remote-pairing-modal__address-label {
@@ -841,23 +767,6 @@
   text-align: left;
   word-break: break-all;
   flex: 1;
-}
-
-.remote-pairing-modal__address-row-btn--active .remote-pairing-modal__address-label {
-  color: #bfe7ff;
-  font-weight: 600;
-}
-
-.remote-pairing-modal__address-active-badge {
-  flex-shrink: 0;
-  background: rgba(87, 183, 255, 0.2);
-  color: #8dc8ff;
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: 4px;
-  letter-spacing: 0.02em;
 }
 
 .remote-pairing-modal__footer {

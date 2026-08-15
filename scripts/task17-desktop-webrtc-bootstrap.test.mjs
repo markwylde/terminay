@@ -34,7 +34,6 @@ const bootstrap = () => ({
 	peerId: 'peer-a',
 	sessionOrigin: 'https://session.example',
 	signalingUrl: 'wss://session.example/signal',
-	signalingAuthToken: 'signaling_auth_token_123456',
 	expiresAt: NOW + 60_000,
 	iceServers: [],
 });
@@ -80,7 +79,7 @@ function fakeTransport() {
 	};
 }
 
-test('authenticated bootstrap selects WebRTC and owns signaling cleanup', async () => {
+test('relay-bound bootstrap selects WebRTC and owns signaling cleanup', async () => {
 	const socket = new FakeSocket();
 	let receivedOptions;
 	const pending = createDesktopBootstrappedWebRtcTransport({
@@ -95,22 +94,22 @@ test('authenticated bootstrap selects WebRTC and owns signaling cleanup', async 
 		},
 		async createTransport(options) {
 			receivedOptions = options;
-			const signed = await options.signaling.sign({
+			const encoded = await options.signaling.encode({
 				type: 'answer',
 				sdp: 'answer-sdp',
 			});
-			assert.deepEqual(await options.signaling.verify(signed), {
+			assert.deepEqual(await options.signaling.decode(encoded), {
 				type: 'answer',
 				sdp: 'answer-sdp',
 			});
-			assert.throws(() => options.signaling.verify(signed), /replay/u);
-			const widened = await options.signaling.sign({
+			assert.throws(() => options.signaling.decode(encoded), /replay/u);
+			const widened = await options.signaling.encode({
 				type: 'answer',
 				sdp: 'answer-sdp',
 				extra: 'signed-but-not-allowed',
 			});
-			assert.throws(() => options.signaling.verify(widened), /invalid fields/u);
-			await options.signaling.send(signed);
+			assert.throws(() => options.signaling.decode(widened), /invalid fields/u);
+			await options.signaling.send(encoded);
 			return fakeTransport();
 		},
 	});
@@ -146,7 +145,7 @@ test('cross-origin bootstrap fails before socket or runtime allocation', async (
 	assert.equal(runtimeCalls, 0);
 });
 
-test('runtime allocation failure closes authenticated signaling without fallback', async () => {
+test('runtime allocation failure closes relay signaling', async () => {
 	const socket = new FakeSocket();
 	await assert.rejects(
 		() =>

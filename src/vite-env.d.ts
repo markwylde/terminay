@@ -63,10 +63,6 @@ declare global {
 				token: string;
 			}>;
 		};
-		terminayRemoteProtocolFaultTest?: {
-			listConnections: () => Promise<readonly string[]>;
-			failConnection: (connectionId: string) => Promise<void>;
-		};
 	}
 }
 
