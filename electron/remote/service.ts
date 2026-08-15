@@ -1,6 +1,5 @@
 import {
 	constants,
-	createHash,
 	hkdfSync,
 	randomBytes,
 	randomUUID,
@@ -14,11 +13,6 @@ import path from 'node:path';
 import QRCode from 'qrcode';
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
-import {
-	DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
-	deriveUiBundleId,
-	type UiBundleManifest,
-} from '@terminay/ui-bundle';
 import type { RemoteAccessStatus } from '../../src/types/terminay';
 import type { RemoteAccessSettings } from '../../src/types/settings';
 import {
@@ -55,6 +49,10 @@ import {
 	parseSignalingMessage,
 	serializeSignalingMessage,
 } from './signalingBoundary';
+import {
+	buildServerUiArchive,
+	type ServerUiArchive,
+} from './serverUiArchive';
 
 type TerminalRemoteMetadata = {
 	color: string;
@@ -447,25 +445,6 @@ function isAddressInUseError(error: unknown): boolean {
 	);
 }
 
-function isRemoteAppAssetEntry(entry: string): boolean {
-	return (
-		// The remote-access shell exposes the server-owned workspace artifact,
-		// not the retired browser-specific workspace entry.  `server.html` is
-		// generated alongside its manifest and is also what Local Desktop loads.
-		entry === 'server.html' ||
-		entry === 'terminay.svg' ||
-		entry.startsWith('assets/')
-	);
-}
-
-function isPathInside(candidate: string, directory: string): boolean {
-	const relative = path.relative(path.resolve(directory), candidate);
-	return (
-		relative === '' ||
-		(!relative.startsWith('..') && !path.isAbsolute(relative))
-	);
-}
-
 function getContentType(filePath: string): string {
 	const extension = path.extname(filePath).toLowerCase();
 	switch (extension) {
@@ -538,6 +517,8 @@ export class RemoteAccessService {
 		PendingWebRtcReconnect
 	>();
 	private readonly webRtcReconnectAuthorizedDevices = new Map<string, number>();
+	/** Immutable archive promise, prepared at most once per built server UI. */
+	private webRtcUiArchive: Promise<ServerUiArchive> | undefined;
 	private readonly webRtcTerminalConnectionsByChannelId = new Map<
 		string,
 		string
@@ -550,7 +531,6 @@ export class RemoteAccessService {
 	private webRtcStatusMessage: string | null = null;
 	private readonly wsServer = new WebSocketServer({ noServer: true });
 	private readonly serverId: string;
-	private readonly serverVersion: string;
 
 	constructor(options: RemoteAccessServiceOptions) {
 		const userDataPath =
@@ -568,7 +548,6 @@ export class RemoteAccessService {
 		this.rendererDistDir = options.rendererDistDir;
 		this.saveGeneratedTlsPaths = options.saveGeneratedTlsPaths;
 		this.serverId = options.serverId ?? 'desktop-local';
-		this.serverVersion = options.serverVersion ?? process.env.npm_package_version ?? '0.0.0';
 		this.remoteDir = path.join(userDataPath, 'remote-access');
 		this.auditStore = new AuditStore(
 			path.join(this.remoteDir, 'audit-log.json'),
@@ -2283,72 +2262,19 @@ export class RemoteAccessService {
 		return this.webRtcHostConfigByWebContentsId.get(webContentsId) ?? null;
 	}
 
-	async getWebRtcAssetManifest(): Promise<UiBundleManifest> {
-		const assetEntries = await this.collectRemoteAppAssetEntries();
-		const assetRecords = await Promise.all(
-			assetEntries.map(async (entry) => {
-				const body = await fs.readFile(
-					path.resolve(this.rendererDistDir, entry),
-				);
-				return {
-					contentType: getContentType(
-						path.resolve(this.rendererDistDir, entry),
-					),
-					entry,
-					hash: createHash('sha256').update(body).digest('base64url'),
-					size: body.byteLength,
-				};
-			}),
-		);
-		const provisionalAssets = assetRecords.map((record) => ({
-			contentType: record.contentType,
-			hash: record.hash,
-			path: `/remote-app/provisional/${record.entry}`,
-			size: record.size,
-		}));
-		const hostCompatibility = {
-			bootstrap: { minimum: 1, maximum: 1 }, bundleFormat: { minimum: 1, maximum: 1 },
-			hostBridge: { minimum: 1, maximum: 1 }, byteEndpoint: { minimum: 1, maximum: 1 },
-			requiredCapabilities: {},
-			optionalCapabilities: { clipboardWrite: { minimum: 1, maximum: 1 }, notifications: { minimum: 1, maximum: 1 } },
-		} as const;
-		const serverVersion = this.serverVersion;
-		const identity = { bundleFormatVersion: 1 as const, protocolVersion: '1', serverVersion, hostCompatibility };
-		const bundleId = deriveUiBundleId(provisionalAssets, 'provisional', identity);
-
-		return {
-			schemaVersion: 1,
-			assets: assetRecords.map((record) => ({
-				contentType: record.contentType,
-				hash: record.hash,
-				path: `/remote-app/${bundleId}/${record.entry}`,
-				size: record.size,
-			})),
-			bundleId,
-			entryPath: `/remote-app/${bundleId}/server.html`,
+	/**
+	 * Return the immutable server UI archive used by every authenticated WebRTC
+	 * client. The hosted connection manager never receives a file manifest or
+	 * needs to understand a generated filename.
+	 */
+	getWebRtcUiArchive(): Promise<ServerUiArchive> {
+		this.webRtcUiArchive ??= buildServerUiArchive({
+			entryPath: 'server.html',
 			protocolVersion: '1',
-			serverVersion,
-			contentSecurityPolicy: DEFAULT_UI_BUNDLE_CONTENT_SECURITY_POLICY,
-			bundleFormatVersion: 1,
-			hostCompatibility,
-		};
-	}
-
-	async getWebRtcAsset(
-		assetPath: string,
-	): Promise<{
-		bodyBase64: string;
-		contentType: string;
-		hash: string;
-		path: string;
-	}> {
-		const body = await this.readRemoteAppAssetBody(assetPath);
-		return {
-			bodyBase64: body.toString('base64'),
-			contentType: getContentType(this.remoteAppAssetPathToFilePath(assetPath)),
-			hash: createHash('sha256').update(body).digest('base64url'),
-			path: assetPath,
-		};
+			publicDirectory: this.publicDir,
+			rendererDirectory: this.rendererDistDir,
+		});
+		return this.webRtcUiArchive;
 	}
 
 	async handleWebRtcApiRequest(
@@ -2359,13 +2285,13 @@ export class RemoteAccessService {
 		const origin = this.createWebRtcPairingOrigin(appOrigin);
 
 		if (pathname === '/api/host-context') {
-			const manifest = await this.getWebRtcAssetManifest();
+			const archive = await this.getWebRtcUiArchive();
 			const sessionId = this.createWebRtcSessionId(appOrigin);
 			return {
 				schemaVersion: 1,
 				bootstrapVersion: 1,
-				applicationProtocolVersion: manifest.protocolVersion,
-				bundleId: manifest.bundleId,
+				applicationProtocolVersion: '1',
+				bundleId: archive.bundleId,
 				byteEndpointVersion: 1,
 				capabilities: { clipboardWrite: 1, notifications: 1 },
 				hostBridgeVersion: 1,
@@ -2633,35 +2559,6 @@ export class RemoteAccessService {
 			})
 			.then(() => this.emitStatus());
 		this.emitStatus();
-	}
-
-	private async collectRemoteAppAssetEntries(): Promise<string[]> {
-		const files = await fs.readdir(this.rendererDistDir, { recursive: true });
-		return files
-			.filter((entry) => typeof entry === 'string' && !entry.endsWith('.map'))
-			.filter(isRemoteAppAssetEntry);
-	}
-
-	private remoteAppAssetPathToFilePath(assetPath: string): string {
-		const match = assetPath.match(
-			/^\/remote-app\/(?:current|[a-zA-Z0-9_-]{8,128})\/(.+)$/,
-		);
-		if (
-			!match ||
-			assetPath.includes('..') ||
-			!isRemoteAppAssetEntry(match[1])
-		) {
-			throw new Error('Remote app asset path is invalid.');
-		}
-		return path.resolve(this.rendererDistDir, match[1]);
-	}
-
-	private async readRemoteAppAssetBody(assetPath: string): Promise<Buffer> {
-		const filePath = this.remoteAppAssetPathToFilePath(assetPath);
-		if (!isPathInside(filePath, this.rendererDistDir)) {
-			throw new Error('Remote app asset path is invalid.');
-		}
-		return fs.readFile(filePath);
 	}
 
 	private async handleStaticRequest(
